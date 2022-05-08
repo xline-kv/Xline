@@ -3,14 +3,20 @@ name = "xline"
 version = "0.1.0"
 edition = "2021"
 authors = ["DatenLord <dev@datenlord.io>"]
+description = "Distributed KV storage for metadata"
 repository = "https://github.com/datenlord/Xline"
 readme = "README.md"
-license = "MIT"
+license = "Apache-2.0"
 keywords = ["KV", "consistency", "metadata"]
+categories = ["KV"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+anyhow = "1.0.57"
+clap = { version = "3.1.17", features = ["derive"] }
+env_logger = "0.9.0"
+log = "0.4.17"
 prost = "0.10.3"
 tokio = { version = "1.0", features = [ "rt-multi-thread", "time", "fs", "macros", "net",] }
 tonic = "0.7.2"
