@@ -1,21 +1,6 @@
-[package]
-name = "xline"
-version = "0.1.0"
-edition = "2021"
-authors = ["DatenLord <dev@datenlord.io>"]
-repository = "https://github.com/datenlord/Xline"
-readme = "README.md"
-license = "MIT"
-keywords = ["KV", "consistency", "metadata"]
+[workspace]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
-prost = "0.10.3"
-tokio = { version = "1.0", features = [ "rt-multi-thread", "time", "fs", "macros", "net",] }
-tonic = "0.7.2"
-
-
-
-[build-dependencies]
-tonic-build = "0.7.2"
+members= [
+    "kv",
+    "curp"
+]
