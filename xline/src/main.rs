@@ -5,7 +5,7 @@
 
     absolute_paths_not_starting_with_crate,
     // box_pointers, async trait must use it
-    elided_lifetimes_in_paths,
+    // elided_lifetimes_in_paths,  // allow anonymous lifetime
     explicit_outlives_requirements,
     keyword_idents,
     macro_use_extern_crate,
@@ -48,15 +48,22 @@
 #![allow(
     clippy::implicit_return, // actually omitting the return keyword is idiomatic Rust code
     clippy::panic, // allow debug_assert, panic in production code
+    clippy::shadow_same, // TODO: False alarm for async function
 )]
 
-/// Xline server
-mod server;
+use std::net::{AddrParseError, SocketAddr};
+
 use anyhow::Result;
 use clap::Parser;
 use log::debug;
+
+/// rpc definition module
+mod rpc;
+/// Xline server
+mod server;
+/// Storage module
+mod storage;
 use server::XlineServer;
-use std::net::{AddrParseError, SocketAddr};
 
 /// Command line arguments
 #[derive(Parser)]
