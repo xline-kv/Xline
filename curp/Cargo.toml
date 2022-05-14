@@ -2,6 +2,13 @@
 name = "curp"
 version = "0.1.0"
 edition = "2021"
+authors = ["DatenLord <dev@datenlord.io>"]
+description = "Curp consensus protocol"
+repository = "https://github.com/datenlord/Xline/curp"
+readme = "README.md"
+license = "Apache-2.0"
+keywords = ["consensus", "distributed"]
+categories = ["Algorithms"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
