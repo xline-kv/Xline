@@ -137,6 +137,9 @@ struct ServerArgs {
     /// Current node ip and port. eg: 192.168.x.x:8080
     #[clap(long, parse(try_from_str=parse_ip_port))]
     ip_port: SocketAddr,
+    /// Node ID: Should start from 0
+    #[clap(long)]
+    id: usize,
 }
 
 /// Parse server address
@@ -160,8 +163,14 @@ async fn main() -> Result<()> {
     let members = parse_members(&server_args.cluster_members)
         .unwrap_or_else(|e| panic!("Failed to parse member list, error is {:?}", e));
     debug!("cluster_members = {:?}", members);
-    let server = XlineServer::new(server_args.name, server_args.ip_port, members);
-    debug!("{:?}", server);
+    let server = XlineServer::new(
+        server_args.name,
+        server_args.ip_port,
+        members,
+        server_args.id,
+    )
+    .await;
+    //debug!("{:?}", server);
     server.start().await?;
     Ok(())
 }

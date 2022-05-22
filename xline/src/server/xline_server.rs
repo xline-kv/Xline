@@ -3,8 +3,12 @@ use std::{net::SocketAddr, sync::Arc};
 use anyhow::Result;
 use log::debug;
 use prost::Message;
-use serde::{Deserialize, Serialize};
-use tokio::sync::oneshot::{channel, Receiver, Sender};
+use rpaxos::{
+    client::{RpcClient, TcpRpcClient},
+    config::Configure,
+    server::DefaultServer,
+};
+use tokio::sync::oneshot;
 use tonic::transport::Server;
 
 use crate::rpc::{
@@ -13,11 +17,13 @@ use crate::rpc::{
     TxnRequest, TxnResponse,
 };
 
+use super::command::{Command, CommandExecutor, CommandResponse};
+
 use crate::storage::KvStore;
 
 /// Xline server
 #[allow(dead_code)] // Remove this after feature is completed
-#[derive(Debug)]
+                    //#[derive(Debug)]
 pub(crate) struct XlineServer {
     /// Server name
     name: String,
@@ -27,27 +33,97 @@ pub(crate) struct XlineServer {
     members: Vec<SocketAddr>,
     /// Kv storage
     storage: Arc<Storage>,
+    /// Node id
+    id: usize,
+    /// Consensus Server
+    node: Arc<DefaultServer<Command, CommandExecutor>>,
+    /// Consensus client
+    //client: Arc<TcpRpcClient<Command>>,
+    /// Consensus configuration
+    config: Configure,
 }
 
 /// server storage
 #[derive(Debug)]
-struct Storage {
+pub(crate) struct Storage {
     /// KV storage
     storage: KvStore,
 }
 
 impl Storage {
     /// Send execution request
-    async fn send_req(&self, req: ExecutionRequset) {
-        self.storage.send_req(req).await;
+    pub(crate) async fn send_req(&self, req: Command) -> oneshot::Receiver<CommandResponse> {
+        self.storage.send_req(req).await
     }
 }
 
 /// Xline Server Inner
-#[derive(Debug)]
+//#[derive(Debug)]
+#[allow(dead_code)] // Remove this after feature is completed
 struct XlineRpcServer {
     /// KV storage
     storage: Arc<Storage>,
+    /// Consensus client
+    //client: Arc<TcpRpcClient<Command>>,
+    /// Consensus configuration
+    config: Configure,
+}
+
+impl XlineServer {
+    /// New `XlineServer`
+    pub(crate) async fn new(
+        name: String,
+        addr: SocketAddr,
+        members: Vec<SocketAddr>,
+        id: usize,
+    ) -> Self {
+        let config = Configure::new(
+            members.len(),
+            members
+                .clone()
+                .into_iter()
+                .map(|address| address.to_string())
+                .collect(),
+            id,
+            0,
+        );
+        let storage = Arc::new(Storage {
+            storage: KvStore::new(),
+        });
+        let server = Arc::new(
+            DefaultServer::new(config.clone(), CommandExecutor::new(Arc::clone(&storage))).await,
+        );
+        let server_clone = Arc::clone(&server);
+        //let client = Arc::new(TcpRpcClient::<Command>::new(config, 0).await);
+        let _handle = tokio::spawn(async move {
+            (*server_clone).run().await;
+        });
+        Self {
+            name,
+            addr,
+            members,
+            storage: Arc::new(Storage {
+                storage: KvStore::new(),
+            }),
+            id,
+            node: server,
+            //client,
+            config,
+        }
+    }
+
+    /// Start `XlineServer`
+    pub(crate) async fn start(&self) -> Result<()> {
+        let rpc_server = XlineRpcServer {
+            storage: Arc::clone(&self.storage),
+            //client: Arc::clone(&self.client),
+            config: self.config.clone(),
+        };
+        Ok(Server::builder()
+            .add_service(KvServer::new(rpc_server))
+            .serve(self.addr)
+            .await?)
+    }
 }
 
 impl XlineRpcServer {
@@ -59,86 +135,28 @@ impl XlineRpcServer {
             panic!("Receive empty ResponseOp");
         }
     }
-}
-
-impl XlineServer {
-    /// New `XlineServer`
-    pub(crate) fn new(name: String, addr: SocketAddr, members: Vec<SocketAddr>) -> Self {
-        Self {
-            name,
-            addr,
-            members,
-            storage: Arc::new(Storage {
-                storage: KvStore::new(),
-            }),
-        }
-    }
-
-    /// Start `XlineServer`
-    pub(crate) async fn start(&self) -> Result<()> {
-        let rpc_server = XlineRpcServer {
-            storage: Arc::clone(&self.storage),
+    /// Propose request and get result
+    async fn propose(&self, request: Request) -> Vec<Result<CommandResponse, String>> {
+        //let range_request = request.into_inner();
+        let key = match request {
+            Request::RequestRange(ref req) => req.key.clone(),
+            Request::RequestPut(ref req) => req.key.clone(),
+            Request::RequestDeleteRange(ref req) => req.key.clone(),
+            Request::RequestTxn(_) => {
+                panic!("Unsupported request");
+            }
         };
-        Ok(Server::builder()
-            .add_service(KvServer::new(rpc_server))
-            .serve(self.addr)
-            .await?)
-    }
-}
-
-/// Command to run consensus protocal
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct Command {
-    /// Key of request
-    key: String,
-    ///
-    /// Encoded request data
-    request: Vec<u8>,
-}
-
-impl Command {
-    /// New `Command`
-    pub(crate) fn new(key: String, request: Vec<u8>) -> Self {
-        Self { key, request }
-    }
-
-    /*
-    /// Get key of `Command`
-    pub(crate) fn key(&self) -> &String {
-        &self.key
-    }
-    /// Get request of `Command`
-    pub(crate) fn request(&self) -> &Vec<u8> {
-        &self.request
-    }
-    */
-
-    /// Consume `Command` and get ownership of each field
-    pub(crate) fn unpack(self) -> (String, Vec<u8>) {
-        let Self { key, request } = self;
-        (key, request)
-    }
-}
-
-/// Execution Request
-#[derive(Debug)]
-pub(crate) struct ExecutionRequset {
-    /// Command to execute
-    command: Command,
-    /// Execution result sender
-    notifier: Sender<ResponseOp>,
-}
-
-impl ExecutionRequset {
-    /// New `ExecutionRequest`
-    pub(crate) fn new(command: Command) -> (Self, Receiver<ResponseOp>) {
-        let (notifier, receiver) = channel();
-        (Self { command, notifier }, receiver)
-    }
-    /// Consume `ExecutionRequest` and get ownership of each field
-    pub(crate) fn unpack(self) -> (Command, Sender<ResponseOp>) {
-        let Self { command, notifier } = self;
-        (command, notifier)
+        let key = std::str::from_utf8(&key)
+            .unwrap_or_else(|_| panic!("Failed to convert Vec<u8> to String"))
+            .to_owned();
+        let range_request_op = RequestOp {
+            request: Some(request),
+        };
+        let cmd = Command::new(key, range_request_op.encode_to_vec());
+        let mut client =
+            TcpRpcClient::<Command>::new(self.config.clone(), self.config.index()).await;
+        client.propose(vec![cmd]).await
+        //let result = self.client.propose(vec![cmd]).await;
     }
 }
 
@@ -152,25 +170,21 @@ impl Kv for XlineRpcServer {
         debug!("Receive RangeRequest {:?}", request);
 
         let range_request = request.into_inner();
-        let key = std::str::from_utf8(&range_request.key.clone())
-            .unwrap_or_else(|_| panic!("Failed to convert Vec<u8> to String"))
-            .to_owned();
-        let range_request_op = RequestOp {
-            request: Some(Request::RequestRange(range_request)),
-        };
-        let cmd = Command::new(key, range_request_op.encode_to_vec());
-        let (execution_req, receiver) = ExecutionRequset::new(cmd);
-        self.storage.send_req(execution_req).await;
-        match receiver.await {
+        let mut result = self.propose(Request::RequestRange(range_request)).await;
+        //let result = self.client.propose(vec![cmd]).await;
+        match result.swap_remove(0) {
             Ok(res_op) => {
-                let res = XlineRpcServer::parse_response_op(res_op);
+                let res = XlineRpcServer::parse_response_op(res_op.decode());
                 if let Response::ResponseRange(response) = res {
                     Ok(tonic::Response::new(response))
                 } else {
                     panic!("Receive wrong response {:?}", res);
                 }
             }
-            Err(_) => panic!("Failed to receive response from KV storage"),
+            Err(e) => panic!(
+                "Failed to receive response from KV storage, error is {:?}",
+                e
+            ),
         }
     }
     /// Put puts the given key into the key-value store.
@@ -182,25 +196,20 @@ impl Kv for XlineRpcServer {
     ) -> Result<tonic::Response<PutResponse>, tonic::Status> {
         debug!("Receive PutRequest {:?}", request);
         let put_request = request.into_inner();
-        let key = std::str::from_utf8(&put_request.key.clone())
-            .unwrap_or_else(|_| panic!("Failed to convert Vec<u8> to String"))
-            .to_owned();
-        let put_request_op = RequestOp {
-            request: Some(Request::RequestPut(put_request)),
-        };
-        let cmd = Command::new(key, put_request_op.encode_to_vec());
-        let (execution_req, receiver) = ExecutionRequset::new(cmd);
-        self.storage.send_req(execution_req).await;
-        match receiver.await {
+        let mut result = self.propose(Request::RequestPut(put_request)).await;
+        match result.swap_remove(0) {
             Ok(res_op) => {
-                let res = XlineRpcServer::parse_response_op(res_op);
+                let res = XlineRpcServer::parse_response_op(res_op.decode());
                 if let Response::ResponsePut(response) = res {
                     Ok(tonic::Response::new(response))
                 } else {
                     panic!("Receive wrong response {:?}", res);
                 }
             }
-            Err(_) => panic!("Failed to receive response from KV storage"),
+            Err(e) => panic!(
+                "Failed to receive response from KV storage, error is {:?}",
+                e
+            ),
         }
     }
     /// DeleteRange deletes the given range from the key-value store.
@@ -212,25 +221,22 @@ impl Kv for XlineRpcServer {
     ) -> Result<tonic::Response<DeleteRangeResponse>, tonic::Status> {
         debug!("Receive DeleteRangeRequest {:?}", request);
         let delete_range_request = request.into_inner();
-        let key = std::str::from_utf8(&delete_range_request.key.clone())
-            .unwrap_or_else(|_| panic!("Failed to convert Vec<u8> to String"))
-            .to_owned();
-        let delete_range_request_op = RequestOp {
-            request: Some(Request::RequestDeleteRange(delete_range_request)),
-        };
-        let cmd = Command::new(key, delete_range_request_op.encode_to_vec());
-        let (execution_req, receiver) = ExecutionRequset::new(cmd);
-        self.storage.send_req(execution_req).await;
-        match receiver.await {
+        let mut result = self
+            .propose(Request::RequestDeleteRange(delete_range_request))
+            .await;
+        match result.swap_remove(0) {
             Ok(res_op) => {
-                let res = XlineRpcServer::parse_response_op(res_op);
+                let res = XlineRpcServer::parse_response_op(res_op.decode());
                 if let Response::ResponseDeleteRange(response) = res {
                     Ok(tonic::Response::new(response))
                 } else {
                     panic!("Receive wrong response {:?}", res);
                 }
             }
-            Err(_) => panic!("Failed to receive response from KV storage"),
+            Err(e) => panic!(
+                "Failed to receive response from KV storage, error is {:?}",
+                e
+            ),
         }
     }
     /// Txn processes multiple requests in a single transaction.

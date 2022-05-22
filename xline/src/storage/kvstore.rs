@@ -5,14 +5,15 @@ use std::sync::Arc;
 use clippy_utilities::Cast;
 use log::debug;
 use prost::Message;
-use tokio::sync::mpsc::{channel, Sender};
+use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 use tokio::sync::{Mutex, MutexGuard};
 
 use crate::rpc::{
     DeleteRangeRequest, DeleteRangeResponse, KeyValue, PutRequest, PutResponse, RangeRequest,
     RangeResponse, Request, RequestOp, Response, ResponseOp, TxnRequest, TxnResponse,
 };
-use crate::server::ExecutionRequset;
+use crate::server::{Command, CommandResponse};
 
 /// Default channel size
 const CHANNEL_SIZE: usize = 100;
@@ -28,7 +29,7 @@ pub(crate) struct KvStore {
     /// KV store inner
     inner: Arc<KvStoreInner>,
     /// Sender to send command
-    request_tx: Sender<ExecutionRequset>,
+    request_tx: mpsc::Sender<ExecutionRequest>,
 }
 
 /// KV store inner
@@ -38,16 +39,46 @@ struct KvStoreInner {
     btree: Mutex<BTreeMap<Vec<u8>, KeyValue>>,
 }
 
+/// Execution Request
+#[derive(Debug)]
+struct ExecutionRequest {
+    /// Command to execute
+    cmd: Command,
+    /// Command request sender
+    res_sender: oneshot::Sender<CommandResponse>,
+}
+
+impl ExecutionRequest {
+    /// New `ExectionRequest`
+    fn new(cmd: Command) -> (Self, oneshot::Receiver<CommandResponse>) {
+        let (tx, rx) = oneshot::channel();
+        (
+            Self {
+                cmd,
+                res_sender: tx,
+            },
+            rx,
+        )
+    }
+
+    /// Consume `ExecutionRequest` and get ownership of each field
+    fn unpack(self) -> (Command, oneshot::Sender<CommandResponse>) {
+        let Self { cmd, res_sender } = self;
+        (cmd, res_sender)
+    }
+}
+
 impl KvStore {
     /// New `KvStore`
     pub(crate) fn new() -> Self {
-        let (request_tx, mut request_rx) = channel(CHANNEL_SIZE);
+        let (request_tx, mut request_rx) = mpsc::channel(CHANNEL_SIZE);
         let inner = Arc::new(KvStoreInner::new());
         let inner_clone = Arc::clone(&inner);
         let _handle = tokio::spawn(async move {
             let mut btree = inner.btree.lock().await;
             while let Some(req) = request_rx.recv().await {
                 KvStoreInner::dispatch(&mut btree, req);
+                debug!("Current KvStoreInner {:?}", *btree);
             }
         });
 
@@ -58,10 +89,13 @@ impl KvStore {
     }
 
     /// Send execution request to KV store
-    pub(crate) async fn send_req(&self, req: ExecutionRequset) {
-        if self.request_tx.send(req).await.is_err() {
-            panic!("Command receiver dropped");
-        }
+    pub(crate) async fn send_req(&self, cmd: Command) -> oneshot::Receiver<CommandResponse> {
+        let (req, receiver) = ExecutionRequest::new(cmd);
+        assert!(
+            self.request_tx.send(req).await.is_ok(),
+            "Command receiver dropped"
+        );
+        receiver
     }
 }
 
@@ -75,10 +109,10 @@ impl KvStoreInner {
     /// Dispatch and handle command
     pub(crate) fn dispatch(
         btree: &mut MutexGuard<BTreeMap<Vec<u8>, KeyValue>>,
-        execution_req: ExecutionRequset,
+        execution_req: ExecutionRequest,
     ) {
         debug!("Receive Execution Request {:?}", execution_req);
-        let (cmd, notifier) = execution_req.unpack();
+        let (cmd, res_sender) = execution_req.unpack();
         let (key, request_data) = cmd.unpack();
         let request_op = RequestOp::decode(request_data.as_slice()).unwrap_or_else(|e| {
             panic!(
@@ -120,9 +154,10 @@ impl KvStoreInner {
                 }
             }
         };
-        if notifier.send(response).is_err() {
-            panic!("Failed to send response");
-        }
+        assert!(
+            res_sender.send(CommandResponse::new(&response)).is_ok(),
+            "Failed to send response"
+        );
     }
 
     #[allow(clippy::pattern_type_mismatch)]
