@@ -44,6 +44,7 @@ pub(crate) use self::etcdserverpb::{
     request_op::Request,
     response_op::Response,
     CompactionRequest, CompactionResponse, DeleteRangeRequest, DeleteRangeResponse, PutRequest,
-    PutResponse, RangeRequest, RangeResponse, RequestOp, ResponseOp, TxnRequest, TxnResponse,
+    PutResponse, RangeRequest, RangeResponse, RequestOp, ResponseHeader, ResponseOp, TxnRequest,
+    TxnResponse,
 };
 pub(crate) use self::mvccpb::KeyValue;

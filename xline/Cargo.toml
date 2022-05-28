@@ -19,7 +19,7 @@ clap = { version = "3.1.17", features = ["derive"] }
 clippy-utilities = "0.1.0"
 env_logger = "0.9.0"
 log = "0.4.17"
-#parking_lot = "0.12.0"
+parking_lot = "0.12.0"
 prost = "0.10.3"
 rpaxos = { git = "https://github.com/datenlord/r-epaxos", rev = "5af286a" }
 serde = { version = "1.0.137", features = ["derive"] }
