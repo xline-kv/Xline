@@ -181,10 +181,7 @@ impl Kv for XlineRpcServer {
                     panic!("Receive wrong response {:?}", res);
                 }
             }
-            Err(e) => panic!(
-                "Failed to receive response from KV storage, error is {:?}",
-                e
-            ),
+            Err(e) => panic!("Failed to receive response from KV storage, {e}"),
         }
     }
     /// Put puts the given key into the key-value store.
@@ -206,10 +203,7 @@ impl Kv for XlineRpcServer {
                     panic!("Receive wrong response {:?}", res);
                 }
             }
-            Err(e) => panic!(
-                "Failed to receive response from KV storage, error is {:?}",
-                e
-            ),
+            Err(e) => panic!("Failed to receive response from KV storage, {e}"),
         }
     }
     /// DeleteRange deletes the given range from the key-value store.
@@ -233,10 +227,7 @@ impl Kv for XlineRpcServer {
                     panic!("Receive wrong response {:?}", res);
                 }
             }
-            Err(e) => panic!(
-                "Failed to receive response from KV storage, error is {:?}",
-                e
-            ),
+            Err(e) => panic!("Failed to receive response from KV storage, {e}"),
         }
     }
     /// Txn processes multiple requests in a single transaction.

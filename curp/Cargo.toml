@@ -1,15 +1,20 @@
 [package]
-name = "curp"
-version = "0.1.0"
-edition = "2021"
 authors = ["DatenLord <dev@datenlord.io>"]
-description = "Curp consensus protocol"
-repository = "https://github.com/datenlord/Xline/curp"
-readme = "README.md"
-license = "Apache-2.0"
-keywords = ["consensus", "distributed"]
 categories = ["Algorithms"]
+description = "Curp consensus protocol"
+edition = "2021"
+keywords = ["consensus", "distributed"]
+license = "Apache-2.0"
+name = "curp"
+readme = "README.md"
+repository = "https://github.com/datenlord/Xline/curp"
+version = "0.1.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+async-trait = "0.1.53"
+madsim = {version = "0.2.0-alpha.3", features = ["rpc", "logger", "macros"]}
+serde = {version = "1.0.130", features = ["derive"]}
+thiserror = "1.0.31"
+parking_lot = "0.12.1"
