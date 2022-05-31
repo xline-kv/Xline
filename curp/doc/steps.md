@@ -104,13 +104,13 @@ Send request <QueryMasterInfo> to all witnesses. Wait for replies:
     - If the replies with the highest TermId number >= (f + 1), and the masterinfo from all of them are the same, client accept the master info and term number.
     - otherwise, wait a random timeout and retry.
 
-## H. Witness Handle Latest Master 
+## H. Witness Handle Latest Master Infomation
 
 Request: <QueryMasterInfo>
 
 Reply <TermId, MasterInfo>
 
-## I. Witness Elect Master 
+## I. Witness Send Latest Master
 
 Use the same protocol from the Raft.
 
