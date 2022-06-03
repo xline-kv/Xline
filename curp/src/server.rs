@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{ops::Not, sync::Arc};
 
 use parking_lot::Mutex;
 
@@ -12,7 +12,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct Server<C: Command, CE: CommandExecutor<C>> {
     /// The speculative cmd pool
-    spec: Arc<Mutex<HashMap<C::K, Arc<C>>>>,
+    spec: Arc<Mutex<Vec<C>>>,
     /// Command executor
     cmd_exeutor: Arc<CE>,
 }
@@ -32,7 +32,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Server<C, CE> {
     #[inline]
     pub fn new() -> Self {
         Self {
-            spec: Arc::new(Mutex::new(HashMap::new())),
+            spec: Arc::new(Mutex::new(Vec::new())),
             cmd_exeutor: Arc::new(CE::new()),
         }
     }
@@ -40,17 +40,14 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Server<C, CE> {
     /// Check if the `cmd` conflict with any conflicts in the speculative cmd pool
     fn add_spec(&self, cmd: &C) -> bool {
         self.spec.map(|mut spec| {
-            let can_insert = cmd
-                .keys()
+            let can_insert = spec
                 .iter()
-                .map(|k| spec.contains_key(k))
-                .any(|has| has);
+                .map(|spec_cmd| spec_cmd.is_conflict(cmd))
+                .any(|has| has)
+                .not();
 
             if can_insert {
-                let cmd_arc = Arc::new(cmd.clone());
-                cmd.keys().iter().for_each(|k| {
-                    let _old_v = spec.insert(k.clone(), Arc::clone(&cmd_arc));
-                });
+                spec.push(cmd.clone());
             }
 
             can_insert
