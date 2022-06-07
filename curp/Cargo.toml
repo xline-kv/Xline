@@ -15,6 +15,9 @@ version = "0.1.0"
 [dependencies]
 async-trait = "0.1.53"
 madsim = {version = "0.2.0-alpha.3", features = ["rpc", "logger", "macros"]}
+parking_lot = "0.12.1"
 serde = {version = "1.0.130", features = ["derive"]}
 thiserror = "1.0.31"
-parking_lot = "0.12.1"
+tokio = "1.19.0"
+tracing = "0.1.34"
+futures = "0.3.21"

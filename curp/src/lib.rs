@@ -126,3 +126,6 @@ mod util;
 
 /// Message sent between servers and clients
 mod message;
+
+/// Log
+mod log;
