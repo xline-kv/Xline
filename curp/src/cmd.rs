@@ -7,7 +7,7 @@ use std::hash::Hash;
 /// Command to execute on the server side
 #[async_trait]
 pub trait Command:
-    Sized + Sync + Send + DeserializeOwned + Serialize + Clone + ConflictCheck
+    Sized + Sync + Send + DeserializeOwned + Serialize + std::fmt::Debug + Clone + ConflictCheck
 {
     /// K (key) is used to tell confliction
     /// The key can be a single key or a key range
@@ -19,6 +19,9 @@ pub trait Command:
     /// Get keys of the command
     fn keys(&self) -> &[Self::K];
 
+    /// Get propose id
+    fn id(&self) -> &ProposeId;
+
     /// Execute the command according to the executor
     #[inline]
     async fn execute<E>(&self, e: &E) -> Result<Self::ER, ExecuteError>
@@ -28,6 +31,11 @@ pub trait Command:
         <E as CommandExecutor<Self>>::execute(e, self).await
     }
 }
+
+/// Command Id wrapper, abstracting underlying implementation
+#[allow(clippy::module_name_repetitions)] // the name is ok even with repetitions
+#[derive(Debug, PartialEq, Eq)]
+pub struct ProposeId(String);
 
 /// Check conflict of two keys
 pub trait ConflictCheck {
@@ -42,7 +50,7 @@ pub trait ConflictCheck {
 /// Command executor which actually executes the command.
 /// It usually defined by the protocol user.
 #[async_trait]
-pub trait CommandExecutor<C>: Sync + Send + Clone
+pub trait CommandExecutor<C>: Sync + Send + Clone + std::fmt::Debug
 where
     C: Command,
 {

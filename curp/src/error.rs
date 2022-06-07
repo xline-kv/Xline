@@ -23,3 +23,17 @@ pub enum RpcError {
     #[error("meet io related error")]
     IoError(#[from] io::Error),
 }
+
+/// Server side error
+#[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
+#[non_exhaustive]
+#[derive(Error, Debug)]
+pub enum ServerError {
+    /// Met I/O error during rpc communication
+    #[error("meet io related error")]
+    IoError(#[from] io::Error),
+
+    /// Rpc Service Error reported by madsim
+    #[error("rpc service error")]
+    RpcServiceError(String),
+}
