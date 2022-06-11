@@ -2,7 +2,7 @@ use std::{fmt::Debug, marker::PhantomData, net::SocketAddr, sync::Arc, time::Dur
 
 use futures::{stream::FuturesUnordered, StreamExt};
 use madsim::net::Endpoint;
-use tracing::{error, log::warn};
+use tracing::{error, warn};
 
 use crate::{
     cmd::Command,

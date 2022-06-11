@@ -31,18 +31,19 @@ impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> RpcServerWrap<C, CE
     }
 
     /// Run a new rpc server
-    #[allow(dead_code)]
-    async fn run(
+    #[inline]
+    pub async fn run(
         is_leader: bool,
         term: u64,
-        others: &[SocketAddr],
+        others: Vec<SocketAddr>,
         server_port: Option<u16>,
+        executor: CE,
     ) -> Result<(), ServerError> {
         let port = server_port.unwrap_or(DEFAULT_SERVER_PORT);
         let rx_ep = Endpoint::bind(format!("0.0.0.0:{port}")).await?;
         let tx_ep = Endpoint::bind("127.0.0.1:0").await?;
         let server = Self {
-            inner: Arc::new(Server::new(is_leader, term, tx_ep, others)),
+            inner: Arc::new(Server::new(is_leader, term, tx_ep, &others, executor)),
         };
         Self::serve_on(server, rx_ep)
             .await
@@ -116,7 +117,13 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Server<C, CE> {
     /// Create a new server instance
     #[must_use]
     #[inline]
-    pub fn new(is_leader: bool, term: u64, self_ep: Endpoint, others: &[SocketAddr]) -> Self {
+    pub fn new(
+        is_leader: bool,
+        term: u64,
+        self_ep: Endpoint,
+        others: &[SocketAddr],
+        cmd_executor: CE,
+    ) -> Self {
         Self {
             role: RwLock::new(if is_leader {
                 ServerRole::Leader
@@ -126,7 +133,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Server<C, CE> {
             term: RwLock::new(term),
             spec: Arc::new(Mutex::new(VecDeque::new())),
             pending: Arc::new(Mutex::new(VecDeque::new())),
-            cmd_executor: CE::new(),
+            cmd_executor,
             log: RwLock::new(Vec::new()),
             others: RwLock::new(others.to_vec()),
             ep: self_ep,
