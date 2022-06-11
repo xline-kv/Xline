@@ -41,6 +41,7 @@ impl DB {
     }
 
     /// Mark deletion for keys
+    /// TODO support don't return `prev_kvs`
     pub(crate) fn mark_deletions(&self, revisions: &[(Revision, Revision)]) -> Vec<KeyValue> {
         let mut storage = self.storage.lock();
         let prev_kvs: Vec<KeyValue> = revisions

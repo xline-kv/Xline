@@ -8,8 +8,8 @@ use rpaxos::{
     config::Configure,
     server::DefaultServer,
 };
-use tokio::sync::oneshot;
 use tonic::transport::Server;
+use uuid::Uuid;
 
 use crate::rpc::{
     CompactionRequest, CompactionResponse, DeleteRangeRequest, DeleteRangeResponse, Kv, KvServer,
@@ -32,7 +32,7 @@ pub(crate) struct XlineServer {
     /// Address of members
     members: Vec<SocketAddr>,
     /// Kv storage
-    storage: Arc<Storage>,
+    storage: Arc<KvStore>,
     /// Node id
     id: usize,
     /// Consensus Server
@@ -43,30 +43,18 @@ pub(crate) struct XlineServer {
     config: Configure,
 }
 
-/// server storage
-#[derive(Debug)]
-pub(crate) struct Storage {
-    /// KV storage
-    storage: KvStore,
-}
-
-impl Storage {
-    /// Send execution request
-    pub(crate) async fn send_req(&self, req: Command) -> oneshot::Receiver<CommandResponse> {
-        self.storage.send_req(req).await
-    }
-}
-
 /// Xline Server Inner
 //#[derive(Debug)]
 #[allow(dead_code)] // Remove this after feature is completed
 struct XlineRpcServer {
     /// KV storage
-    storage: Arc<Storage>,
+    storage: Arc<KvStore>,
     /// Consensus client
     //client: Arc<TcpRpcClient<Command>>,
     /// Consensus configuration
     config: Configure,
+    /// Server name
+    name: String,
 }
 
 impl XlineServer {
@@ -87,9 +75,7 @@ impl XlineServer {
             id,
             0,
         );
-        let storage = Arc::new(Storage {
-            storage: KvStore::new(),
-        });
+        let storage = Arc::new(KvStore::new());
         let server = Arc::new(
             DefaultServer::new(config.clone(), CommandExecutor::new(Arc::clone(&storage))).await,
         );
@@ -102,9 +88,7 @@ impl XlineServer {
             name,
             addr,
             members,
-            storage: Arc::new(Storage {
-                storage: KvStore::new(),
-            }),
+            storage: Arc::clone(&storage),
             id,
             node: server,
             //client,
@@ -118,6 +102,7 @@ impl XlineServer {
             storage: Arc::clone(&self.storage),
             //client: Arc::clone(&self.client),
             config: self.config.clone(),
+            name: self.name.clone(),
         };
         Ok(Server::builder()
             .add_service(KvServer::new(rpc_server))
@@ -136,7 +121,11 @@ impl XlineRpcServer {
         }
     }
     /// Propose request and get result
-    async fn propose(&self, request: Request) -> Vec<Result<CommandResponse, String>> {
+    async fn propose(
+        &self,
+        propose_id: String,
+        request: Request,
+    ) -> Vec<Result<CommandResponse, String>> {
         //let range_request = request.into_inner();
         let key = match request {
             Request::RequestRange(ref req) => req.key.clone(),
@@ -152,11 +141,44 @@ impl XlineRpcServer {
         let range_request_op = RequestOp {
             request: Some(request),
         };
-        let cmd = Command::new(key, range_request_op.encode_to_vec());
+        let cmd = Command::new(key, range_request_op.encode_to_vec(), propose_id);
         let mut client =
             TcpRpcClient::<Command>::new(self.config.clone(), self.config.index()).await;
-        client.propose(vec![cmd]).await
+        let response = client.propose(vec![cmd]).await;
+        response
         //let result = self.client.propose(vec![cmd]).await;
+    }
+
+    /// Update revision of `ResponseHeader`
+    fn update_header_revision(mut response: Response, revision: i64) -> Response {
+        match response {
+            Response::ResponseRange(ref mut res) => {
+                if let Some(header) = res.header.as_mut() {
+                    header.revision = revision;
+                }
+            }
+            Response::ResponsePut(ref mut res) => {
+                if let Some(header) = res.header.as_mut() {
+                    header.revision = revision;
+                }
+            }
+            Response::ResponseDeleteRange(ref mut res) => {
+                if let Some(header) = res.header.as_mut() {
+                    header.revision = revision;
+                }
+            }
+            Response::ResponseTxn(ref mut res) => {
+                if let Some(header) = res.header.as_mut() {
+                    header.revision = revision;
+                }
+            }
+        }
+        response
+    }
+
+    /// Generate propose id
+    fn generate_propose_id(&self) -> String {
+        format!("{}-{}", self.name, Uuid::new_v4())
     }
 }
 
@@ -170,11 +192,21 @@ impl Kv for XlineRpcServer {
         debug!("Receive RangeRequest {:?}", request);
 
         let range_request = request.into_inner();
-        let mut result = self.propose(Request::RequestRange(range_request)).await;
+        let propose_id = self.generate_propose_id();
+        let receiver = self.storage.register_rev_notifier(propose_id.clone());
+        let mut result = self
+            .propose(propose_id.clone(), Request::RequestRange(range_request))
+            .await;
+        let revv = self.storage.send_sync(propose_id).await;
+        println!("rev {:?}", revv);
         //let result = self.client.propose(vec![cmd]).await;
+
         match result.swap_remove(0) {
             Ok(res_op) => {
                 let res = XlineRpcServer::parse_response_op(res_op.decode());
+                let revision = receiver.await.unwrap_or_else(|_| panic!("Sender dropped"));
+                debug!("Get revision {:?} for RangeRequest", revision);
+                let res = Self::update_header_revision(res, revision);
                 if let Response::ResponseRange(response) = res {
                     Ok(tonic::Response::new(response))
                 } else {
@@ -193,10 +225,19 @@ impl Kv for XlineRpcServer {
     ) -> Result<tonic::Response<PutResponse>, tonic::Status> {
         debug!("Receive PutRequest {:?}", request);
         let put_request = request.into_inner();
-        let mut result = self.propose(Request::RequestPut(put_request)).await;
+        let propose_id = self.generate_propose_id();
+        let receiver = self.storage.register_rev_notifier(propose_id.clone());
+        let mut result = self
+            .propose(propose_id.clone(), Request::RequestPut(put_request))
+            .await;
+        let revv = self.storage.send_sync(propose_id).await;
+        println!("rev {:?}", revv);
         match result.swap_remove(0) {
             Ok(res_op) => {
                 let res = XlineRpcServer::parse_response_op(res_op.decode());
+                let revision = receiver.await.unwrap_or_else(|_| panic!("Sender dropped"));
+                debug!("Get revision {:?} for PutRequest", revision);
+                let res = Self::update_header_revision(res, revision);
                 if let Response::ResponsePut(response) = res {
                     Ok(tonic::Response::new(response))
                 } else {
@@ -215,12 +256,22 @@ impl Kv for XlineRpcServer {
     ) -> Result<tonic::Response<DeleteRangeResponse>, tonic::Status> {
         debug!("Receive DeleteRangeRequest {:?}", request);
         let delete_range_request = request.into_inner();
+        let propose_id = self.generate_propose_id();
+        let receiver = self.storage.register_rev_notifier(propose_id.clone());
         let mut result = self
-            .propose(Request::RequestDeleteRange(delete_range_request))
+            .propose(
+                propose_id.clone(),
+                Request::RequestDeleteRange(delete_range_request),
+            )
             .await;
+        let revv = self.storage.send_sync(propose_id).await;
+        println!("rev {:?}", revv);
         match result.swap_remove(0) {
             Ok(res_op) => {
                 let res = XlineRpcServer::parse_response_op(res_op.decode());
+                let revision = receiver.await.unwrap_or_else(|_| panic!("Sender dropped"));
+                debug!("Get revision {:?} for PutRequest", revision);
+                let res = Self::update_header_revision(res, revision);
                 if let Response::ResponseDeleteRange(response) = res {
                     Ok(tonic::Response::new(response))
                 } else {
