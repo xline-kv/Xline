@@ -56,7 +56,7 @@ impl KeyRevision {
 
     /// If current `KeyRevision` represent deletion
     pub(crate) fn is_deleted(&self) -> bool {
-        self.create_revision == 0 && self.version == 0 && self.sub_revision == 0
+        self.create_revision == 0 && self.version == 0
     }
 
     /// Create `Revision` from `KeyRevision`

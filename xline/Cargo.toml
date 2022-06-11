@@ -25,7 +25,7 @@ rpaxos = { git = "https://github.com/datenlord/r-epaxos", rev = "5af286a" }
 serde = { version = "1.0.137", features = ["derive"] }
 tokio = { version = "1.0", features = [ "rt-multi-thread", "time", "fs", "macros", "net",] }
 tonic = "0.7.2"
-
+uuid = "1.1.2"
 
 
 [build-dependencies]
