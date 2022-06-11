@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::error::ExecuteError;
 use std::hash::Hash;
@@ -34,8 +34,17 @@ pub trait Command:
 
 /// Command Id wrapper, abstracting underlying implementation
 #[allow(clippy::module_name_repetitions)] // the name is ok even with repetitions
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct ProposeId(String);
+
+impl ProposeId {
+    /// Create a new propose id
+    #[inline]
+    #[must_use]
+    pub fn new(id: String) -> Self {
+        Self(id)
+    }
+}
 
 /// Check conflict of two keys
 pub trait ConflictCheck {
@@ -47,6 +56,13 @@ pub trait ConflictCheck {
     fn is_conflict(&self, other: &Self) -> bool;
 }
 
+impl ConflictCheck for String {
+    #[inline]
+    fn is_conflict(&self, other: &Self) -> bool {
+        self == other
+    }
+}
+
 /// Command executor which actually executes the command.
 /// It usually defined by the protocol user.
 #[async_trait]
@@ -54,8 +70,6 @@ pub trait CommandExecutor<C>: Sync + Send + Clone + std::fmt::Debug
 where
     C: Command,
 {
-    /// Create a new command executor
-    fn new() -> Self;
     /// Execute the command
     async fn execute(&self, cmd: &C) -> Result<C::ER, ExecuteError>;
 }
