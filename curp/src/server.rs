@@ -5,9 +5,9 @@ use parking_lot::{Mutex, RwLock};
 
 use crate::{
     cmd::{Command, CommandExecutor, ProposeId},
-    error::ServerError,
+    error::{ProposeError, ServerError},
     log::LogEntry,
-    message::{Propose, ProposeError, ProposeResponse},
+    message::{Propose, ProposeResponse},
     util::MutexMap,
 };
 

@@ -1,10 +1,7 @@
-use std::fmt::{Display, Formatter, Result};
-
 use madsim::Request;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use thiserror::Error;
 
-use crate::cmd::Command;
+use crate::{cmd::Command, error::ProposeError};
 
 ////////////////////////// Propose ///////////////////////////////
 
@@ -96,23 +93,4 @@ pub(crate) enum ProposeResponseInner<C: Command> {
     ReturnValue(Option<C::ER>),
     /// Any error met
     Error(ProposeError),
-}
-
-/// The error met during propose phase
-#[derive(Error, Debug, Serialize, Deserialize)]
-pub enum ProposeError {
-    /// The command conflicts with keys in the speculative commands
-    KeyConflict,
-    /// Command execution error
-    ExecutionError(String),
-}
-
-impl Display for ProposeError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        match self {
-            &(ProposeError::KeyConflict | ProposeError::ExecutionError(_)) => {
-                write!(f, "{:?}", self)
-            }
-        }
-    }
 }

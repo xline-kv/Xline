@@ -4,10 +4,7 @@ use futures::{stream::FuturesUnordered, StreamExt};
 use madsim::net::Endpoint;
 use tracing::{error, warn};
 
-use crate::{
-    cmd::Command,
-    message::{Propose, ProposeError},
-};
+use crate::{cmd::Command, error::ProposeError, message::Propose};
 
 /// Propose request default timeout
 static PROPOSE_TIMEOUT: Duration = Duration::from_secs(1);
