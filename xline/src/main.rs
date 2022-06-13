@@ -131,15 +131,21 @@ struct ServerArgs {
     /// Node name
     #[clap(long)]
     name: String,
-    /// Cluster members including current node. eg: node1=192.168.x.x:8080;node2=192.168.x.x:8080
+    /// Cluster peers. eg: node1=192.168.x.x:8080;node2=192.168.x.x:8080
     #[clap(long)]
-    cluster_members: String,
+    cluster_peers: String,
     /// Current node ip and port. eg: 192.168.x.x:8080
     #[clap(long, parse(try_from_str=parse_ip_port))]
     ip_port: SocketAddr,
-    /// Node ID: Should start from 0
+    /// if node is leader
     #[clap(long)]
-    id: usize,
+    is_leader: bool,
+    /// leader's ip and port. eg: 192.168.x.x:8080
+    #[clap(long, parse(try_from_str=parse_ip_port))]
+    leader_ip_port: SocketAddr,
+    /// current node ip and port. eg: 192.168.x.x:8080
+    #[clap(long, parse(try_from_str=parse_ip_port))]
+    self_ip_port: SocketAddr,
 }
 
 /// Parse server address
@@ -160,14 +166,16 @@ async fn main() -> Result<()> {
     let server_args = ServerArgs::parse();
     debug!("name = {:?}", server_args.name);
     debug!("server_addr = {:?}", server_args.ip_port);
-    let members = parse_members(&server_args.cluster_members)
+    let peers = parse_members(&server_args.cluster_peers)
         .unwrap_or_else(|e| panic!("Failed to parse member list, error is {:?}", e));
-    debug!("cluster_members = {:?}", members);
+    debug!("cluster_peers = {:?}", peers);
     let server = XlineServer::new(
         server_args.name,
         server_args.ip_port,
-        members,
-        server_args.id,
+        peers,
+        server_args.is_leader,
+        server_args.leader_ip_port,
+        server_args.self_ip_port,
     )
     .await;
     //debug!("{:?}", server);

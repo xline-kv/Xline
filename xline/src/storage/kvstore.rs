@@ -1,7 +1,8 @@
-use std::{collections::HashMap, ops::Range, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use clippy_utilities::Cast;
 use clippy_utilities::OverflowArithmetic;
+use curp::cmd::ProposeId;
 use log::debug;
 use parking_lot::Mutex;
 use prost::Message;
@@ -13,7 +14,9 @@ use crate::rpc::{
     RangeResponse, Request, RequestOp, Response, ResponseHeader, ResponseOp, TxnRequest,
     TxnResponse,
 };
-use crate::server::{Command, CommandResponse};
+use crate::server::command::{
+    Command, CommandResponse, ExecutionRequest, KeyRange, SyncRequest, SyncResponse,
+};
 
 /// Default channel size
 const CHANNEL_SIZE: usize = 100;
@@ -44,86 +47,8 @@ struct KvStoreInner {
     db: DB,
     /// Revision
     revision: Mutex<i64>,
-    /// Mapping from propose id to sender of revision notifier
-    rev_notifier: Mutex<HashMap<String, oneshot::Sender<i64>>>,
     /// Speculative execution pool. Mapping from propose id to request
-    sp_exec_pool: Mutex<HashMap<String, Request>>,
-}
-
-/// Execution Request
-#[derive(Debug)]
-struct ExecutionRequest {
-    /// Command to execute
-    cmd: Command,
-    /// Command response sender
-    res_sender: oneshot::Sender<CommandResponse>,
-}
-
-impl ExecutionRequest {
-    /// New `ExectionRequest`
-    fn new(cmd: Command) -> (Self, oneshot::Receiver<CommandResponse>) {
-        let (tx, rx) = oneshot::channel();
-        (
-            Self {
-                cmd,
-                res_sender: tx,
-            },
-            rx,
-        )
-    }
-
-    /// Consume `ExecutionRequest` and get ownership of each field
-    fn unpack(self) -> (Command, oneshot::Sender<CommandResponse>) {
-        let Self { cmd, res_sender } = self;
-        (cmd, res_sender)
-    }
-}
-
-/// Sync Request
-#[derive(Debug)]
-pub(crate) struct SyncRequest {
-    /// Propose id to sync
-    propose_id: String,
-    /// Command response sender
-    res_sender: oneshot::Sender<SyncResponse>,
-}
-
-impl SyncRequest {
-    /// New `SyncRequest`
-    #[allow(dead_code)]
-    fn new(propose_id: String) -> (Self, oneshot::Receiver<SyncResponse>) {
-        let (tx, rx) = oneshot::channel();
-        (
-            Self {
-                propose_id,
-                res_sender: tx,
-            },
-            rx,
-        )
-    }
-
-    /// Consume `ExecutionRequest` and get ownership of each field
-    fn unpack(self) -> (String, oneshot::Sender<SyncResponse>) {
-        let Self {
-            propose_id,
-            res_sender,
-        } = self;
-        (propose_id, res_sender)
-    }
-}
-
-/// Sync Response
-#[derive(Debug)]
-#[allow(dead_code)]
-pub(crate) struct SyncResponse {
-    /// Revision of this request
-    revision: i64,
-}
-impl SyncResponse {
-    /// New `SyncRequest`
-    fn new(revision: i64) -> Self {
-        Self { revision }
-    }
+    sp_exec_pool: Mutex<HashMap<ProposeId, Request>>,
 }
 
 impl KvStore {
@@ -168,14 +93,8 @@ impl KvStore {
         receiver
     }
 
-    /// Register notifier for one `Command`
-    /// Client will be notified when the revision of a command is confirmed
-    pub(crate) fn register_rev_notifier(&self, propose_id: String) -> oneshot::Receiver<i64> {
-        self.inner.register_rev_notifier(propose_id)
-    }
-
     /// Send sync request to KV store
-    pub(crate) async fn send_sync(&self, propose_id: String) -> oneshot::Receiver<SyncResponse> {
+    pub(crate) async fn send_sync(&self, propose_id: ProposeId) -> oneshot::Receiver<SyncResponse> {
         let (req, receiver) = SyncRequest::new(propose_id);
         assert!(
             self.sync_tx.send(req).await.is_ok(),
@@ -192,7 +111,6 @@ impl KvStoreInner {
             index: Index::new(),
             db: DB::new(),
             revision: Mutex::new(1),
-            rev_notifier: Mutex::new(HashMap::new()),
             sp_exec_pool: Mutex::new(HashMap::new()),
         }
     }
@@ -263,8 +181,7 @@ impl KvStoreInner {
                 kvs.append(&mut values);
             }
             _ => {
-                // TODO: reduce clone
-                let range = Range {
+                let range = KeyRange {
                     start: key.to_vec(),
                     end: range_end.to_vec(),
                 };
@@ -276,7 +193,6 @@ impl KvStoreInner {
         kvs
     }
 
-    #[allow(clippy::pattern_type_mismatch)]
     /// Handle `RangeRequest`
     fn handle_range_request(&self, req: &RangeRequest) -> RangeResponse {
         //let revision = self.revision.lock();
@@ -345,7 +261,7 @@ impl KvStoreInner {
         TxnResponse::default()
     }
 
-    /// Sync a Command to storage.
+    /// Sync a Command to storage and generate revision for Command.
     fn sync_cmd(&self, sync_req: SyncRequest) {
         debug!("Receive SyncRequest {:?}", sync_req);
         let (propose_id, res_sender) = sync_req.unpack();
@@ -381,7 +297,6 @@ impl KvStoreInner {
             res_sender.send(SyncResponse::new(revision)).is_ok(),
             "Failed to send response"
         );
-        self.notify_revision(&propose_id, revision);
     }
 
     /// Sync range request
@@ -434,7 +349,7 @@ impl KvStoreInner {
                 let _kv = self.db.mark_deletions(&revisions);
             }
             _ => {
-                let range = Range {
+                let range = KeyRange {
                     start: req.key,
                     end: req.range_end,
                 };
@@ -450,25 +365,6 @@ impl KvStoreInner {
             }
         };
         *revision
-    }
-
-    /// Register notifier for one proposal
-    /// Client will be notified when the revision of a command is confirmed
-    pub(crate) fn register_rev_notifier(&self, propose_id: String) -> oneshot::Receiver<i64> {
-        let (tx, rx) = oneshot::channel();
-        let _prev = self.rev_notifier.lock().insert(propose_id, tx);
-        rx
-    }
-
-    /// Notify revision of one proposal
-    pub(crate) fn notify_revision(&self, propose_id: &String, revision: i64) {
-        if let Some(sender) = self.rev_notifier.lock().remove(propose_id) {
-            assert!(
-                sender.send(revision).is_ok(),
-                "Failed to notify revision of propose id {:?}",
-                propose_id
-            );
-        }
     }
 }
 

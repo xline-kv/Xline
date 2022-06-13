@@ -15,17 +15,19 @@ categories = ["KV"]
 [dependencies]
 anyhow = "1.0.57"
 async-trait = "0.1.53"
-clap = { version = "3.1.17", features = ["derive"] }
+clap = { version = "3.1.*", features = ["derive"] }
 clippy-utilities = "0.1.0"
+curp = { path = "../curp" }
 env_logger = "0.9.0"
+itertools = "0.10.3"
 log = "0.4.17"
 parking_lot = "0.12.0"
 prost = "0.10.3"
-rpaxos = { git = "https://github.com/datenlord/r-epaxos", rev = "5af286a" }
+#rpaxos = { git = "https://github.com/datenlord/r-epaxos", rev = "5af286a" }
 serde = { version = "1.0.137", features = ["derive"] }
 tokio = { version = "1.0", features = [ "rt-multi-thread", "time", "fs", "macros", "net",] }
 tonic = "0.7.2"
-uuid = "1.1.2"
+uuid = { version = "1.1.2", features = ["v4"] }
 
 
 [build-dependencies]

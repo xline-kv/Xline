@@ -1,9 +1,10 @@
-use std::{collections::BTreeMap, ops::Range};
+use std::collections::BTreeMap;
 
 use clippy_utilities::OverflowArithmetic;
 use parking_lot::Mutex;
 
 use super::revision::{KeyRevision, Revision};
+use crate::server::command::KeyRange;
 
 /// KV store inner
 #[derive(Debug)]
@@ -63,7 +64,7 @@ impl Index {
     }
 
     /// Get `Revision` of a range of keys
-    pub(crate) fn get_range(&self, range: Range<Vec<u8>>) -> Vec<Revision> {
+    pub(crate) fn get_range(&self, range: KeyRange) -> Vec<Revision> {
         self.index
             .lock()
             .range(range)
@@ -130,11 +131,7 @@ impl Index {
     }
 
     /// Mark range of keys as deleted and return latest revision before deletion and deletion revision
-    pub(crate) fn delete_range(
-        &self,
-        revision: i64,
-        range: Range<Vec<u8>>,
-    ) -> Vec<(Revision, Revision)> {
+    pub(crate) fn delete_range(&self, revision: i64, range: KeyRange) -> Vec<(Revision, Revision)> {
         let next_revision = revision.overflow_add(1);
         let mut sub_rev = 0;
         self.index
