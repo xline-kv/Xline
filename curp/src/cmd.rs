@@ -34,7 +34,7 @@ pub trait Command:
 
 /// Command Id wrapper, abstracting underlying implementation
 #[allow(clippy::module_name_repetitions)] // the name is ok even with repetitions
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize, Hash)]
 pub struct ProposeId(String);
 
 impl ProposeId {

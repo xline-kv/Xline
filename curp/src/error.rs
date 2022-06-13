@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::io;
 use thiserror::Error;
 
@@ -36,4 +37,17 @@ pub enum ServerError {
     /// Rpc Service Error reported by madsim
     #[error("rpc service error")]
     RpcServiceError(String),
+}
+
+/// The error met during propose phase
+#[derive(Error, Debug, Serialize, Deserialize)]
+#[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
+#[non_exhaustive]
+pub enum ProposeError {
+    /// The command conflicts with keys in the speculative commands
+    #[error("key conflict error")]
+    KeyConflict,
+    /// Command execution error
+    #[error("command execution error {0}")]
+    ExecutionError(String),
 }
