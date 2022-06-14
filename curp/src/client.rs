@@ -62,7 +62,7 @@ where
     ///   `ProposeError::ExecutionError` if execution error is met
     #[inline]
     pub async fn propose(&self, cmd: C) -> Result<C::ER, ProposeError> {
-        let ft = self.addrs.len() / 2;
+        let ft = self.addrs.len().wrapping_div(2);
         let rpcs = self.addrs.iter().map(|addr| {
             let cmd = cmd.clone();
             self.ep

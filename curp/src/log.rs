@@ -1,4 +1,4 @@
-use crate::cmd::Command;
+use crate::{cmd::Command, message::TermNum};
 
 /// Log entry status
 #[derive(Debug, Clone)]
@@ -16,7 +16,7 @@ pub(crate) enum EntryStatus {
 pub(crate) struct LogEntry<C: Command> {
     /// Term id
     #[allow(dead_code)]
-    term_id: u64,
+    term: TermNum,
     /// Command
     #[allow(dead_code)]
     cmd: C,
@@ -26,10 +26,15 @@ pub(crate) struct LogEntry<C: Command> {
 }
 
 impl<C: Command> LogEntry<C> {
+    /// Create a new `LogEntry`
+    pub(crate) fn new(term: TermNum, cmd: C, status: EntryStatus) -> Self {
+        Self { term, cmd, status }
+    }
+
     /// Get term id
     #[allow(dead_code)]
-    pub(crate) fn term_id(&self) -> u64 {
-        self.term_id
+    pub(crate) fn term(&self) -> TermNum {
+        self.term
     }
 
     /// Get command in the entry

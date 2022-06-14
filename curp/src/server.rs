@@ -1,18 +1,36 @@
-use std::{collections::VecDeque, fmt::Debug, net::SocketAddr, ops::Not, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    fmt::Debug,
+    net::SocketAddr,
+    sync::Arc,
+    time::Duration,
+};
 
+use clippy_utilities::{NumericCast, OverflowArithmetic};
+use futures::{stream::FuturesUnordered, FutureExt, StreamExt};
 use madsim::net::Endpoint;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{Mutex, MutexGuard, RwLock};
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinHandle,
+};
+use tracing::log::{error, warn};
 
 use crate::{
     cmd::{Command, CommandExecutor, ProposeId},
     error::{ProposeError, ServerError},
-    log::LogEntry,
-    message::{Propose, ProposeResponse},
-    util::MutexMap,
+    log::{EntryStatus, LogEntry},
+    message::{
+        LogIndex, Propose, ProposeResponse, SyncCommand, SyncResponse, TermNum, WaitSynced,
+        WaitSyncedResponse,
+    },
+    util::{MutexMap, RwLockMap},
 };
 
 /// Default server serving port
 pub(crate) static DEFAULT_SERVER_PORT: u16 = 12345;
+/// Sync request default timeout
+static SYNC_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// The Rpc Server to handle rpc requests
 #[derive(Clone, Debug)]
@@ -24,10 +42,22 @@ pub struct RpcServerWrap<C: Command + 'static, CE: CommandExecutor<C> + 'static>
 #[allow(missing_docs)]
 #[madsim::service]
 impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> RpcServerWrap<C, CE> {
-    /// handle Propose
+    /// Handle propose request
     #[rpc]
     async fn propose(&self, p: Propose<C>) -> ProposeResponse<C> {
         self.inner.propose(p).await
+    }
+
+    /// Handle sync request
+    #[rpc]
+    async fn sync(&self, sc: SyncCommand<C>) -> SyncResponse<C> {
+        self.inner.sync(sc).await
+    }
+
+    /// Handle wait_sync request
+    #[rpc]
+    async fn wait_sync(&self, sc: WaitSynced) -> WaitSyncedResponse {
+        self.inner.wait_sync(sc).await
     }
 
     /// Run a new rpc server
@@ -57,21 +87,19 @@ pub struct Server<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
     #[allow(dead_code)]
     role: RwLock<ServerRole>,
     /// Current term
-    term: RwLock<u64>,
+    term: RwLock<TermNum>,
     /// The speculative cmd pool, shared with executor
     spec: Arc<Mutex<VecDeque<C>>>,
-    /// The pending cmd pool, shared with executor
-    pending: Arc<Mutex<VecDeque<C>>>,
     /// Command executor
     cmd_executor: CE,
     /// Consensus log
-    #[allow(dead_code)]
-    log: RwLock<Vec<LogEntry<C>>>,
-    /// Other server address
-    others: RwLock<Vec<SocketAddr>>,
-    /// Self endpoint
-    #[allow(dead_code)]
-    ep: Endpoint,
+    log: Arc<Mutex<Vec<LogEntry<C>>>>,
+    /// The channel to send synced command
+    sync_chan: mpsc::UnboundedSender<(TermNum, C, oneshot::Sender<LogIndex>)>,
+    /// Synced manager handler
+    sm_handle: JoinHandle<()>,
+    /// Sync event listener map
+    synced_events: Mutex<HashMap<ProposeId, JoinHandle<LogIndex>>>,
 }
 
 impl<C, CE> Debug for Server<C, CE>
@@ -85,31 +113,22 @@ where
             .field("role", &self.role)
             .field("term", &self.term)
             .field("spec", &self.spec)
-            .field("pending", &self.pending)
             .field("cmd_executor", &self.cmd_executor)
             .field("log", &self.log)
-            .field("others", &self.others)
-            // .field("ep", &self.ep) `Endpoint` missing debug impl
+            .field("synced_events", &self.synced_events)
             .finish()
     }
 }
 
-// fn block_on<F: Future>(fut: F) -> F::Output {
-//     match tokio::runtime::Handle::try_current() {
-//         Err(_) => tokio::runtime::Runtime::new().block_on(fut),
-//         Ok(handle) => handle.block_on(fut),
-//     }
-// }
-
 /// The server role same as Raft
 #[derive(Debug, Clone, Copy)]
 enum ServerRole {
-    /// The follower
+    /// A follower
     Follower,
-    /// The candidater
+    /// A candidater
     #[allow(dead_code)]
     Candidater,
-    /// The leader
+    /// A leader
     Leader,
 }
 
@@ -120,10 +139,20 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Server<C, CE> {
     pub fn new(
         is_leader: bool,
         term: u64,
-        self_ep: Endpoint,
+        send_ep: Endpoint,
         others: &[SocketAddr],
         cmd_executor: CE,
     ) -> Self {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let other_addrs = Arc::new(RwLock::new(others.to_vec()));
+        let log = Arc::new(Mutex::new(Vec::new()));
+
+        let log_clone = Arc::<_>::clone(&log);
+        let sm_handle = tokio::spawn(async {
+            let mut sm = SyncManager::new(send_ep, rx, other_addrs, log_clone);
+            sm.run().await;
+        });
+
         Self {
             role: RwLock::new(if is_leader {
                 ServerRole::Leader
@@ -132,73 +161,279 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Server<C, CE> {
             }),
             term: RwLock::new(term),
             spec: Arc::new(Mutex::new(VecDeque::new())),
-            pending: Arc::new(Mutex::new(VecDeque::new())),
             cmd_executor,
-            log: RwLock::new(Vec::new()),
-            others: RwLock::new(others.to_vec()),
-            ep: self_ep,
+            log,
+            sync_chan: tx,
+            sm_handle,
+            synced_events: Mutex::new(HashMap::new()),
         }
     }
 
     /// Check if the `cmd` conflict with any conflicts in the speculative cmd pool
-    fn add_spec(&self, cmd: &C) -> bool {
-        self.spec.map(|mut spec| {
-            let can_insert = spec
-                .iter()
-                .map(|spec_cmd| spec_cmd.is_conflict(cmd))
-                .any(|has| has)
-                .not();
+    fn is_spec_conflict(spec: &MutexGuard<'_, VecDeque<C>>, cmd: &C) -> bool {
+        spec.iter()
+            .map(|spec_cmd| spec_cmd.is_conflict(cmd))
+            .any(|conflict| conflict)
+    }
 
-            if can_insert {
-                spec.push_back(cmd.clone());
-            }
-
-            can_insert
-        })
+    /// Check if the current server is leader
+    fn is_leader(&self) -> bool {
+        matches!(*self.role.read(), ServerRole::Leader)
     }
 
     /// Remove command from the speculative cmd pool
-    #[allow(dead_code)]
-    fn spec_remove_cmd(&self, cmd_id: &ProposeId) -> Option<C> {
-        self.spec
-            .map(|mut spec| {
-                spec.iter()
-                    .position(|s| s.id() == cmd_id)
-                    .map(|index| spec.swap_remove_back(index))
-            })
-            .flatten()
+    fn spec_remove_cmd(spec: &Arc<Mutex<VecDeque<C>>>, cmd_id: &ProposeId) -> Option<C> {
+        spec.map_lock(|mut spec_unlocked| {
+            spec_unlocked
+                .iter()
+                .position(|s| s.id() == cmd_id)
+                .map(|index| spec_unlocked.swap_remove_back(index))
+        })
+        .flatten()
+    }
+
+    /// Send sync event to the `SyncManager`
+    fn sync_to_others(&self, term: TermNum, cmd: &C) -> bool {
+        let (tx, rx) = oneshot::channel();
+
+        if let Err(e) = self.sync_chan.send((term, cmd.clone(), tx)) {
+            error!("Error while sending sync event, {e}");
+            false
+        } else {
+            let id = cmd.id().clone();
+            let spec = Arc::<_>::clone(&self.spec);
+            let handle = tokio::spawn(async move {
+                let index = rx.await;
+                if Self::spec_remove_cmd(&spec, &id).is_none() {
+                    unreachable!("{:?} should be in the spec pool", id);
+                }
+                match index {
+                    Ok(index) => index,
+                    // TODO: handle the sync task fail
+                    Err(_) => unreachable!("{:?} sync task failed", id),
+                }
+            });
+            self.synced_events.map_lock(|mut events| {
+                if events.insert(cmd.id().clone(), handle).is_some() {
+                    unreachable!("{:?} should not be inserted in events map", cmd.id());
+                }
+            });
+            true
+        }
     }
 
     /// Propose request handler
     async fn propose(&self, p: Propose<C>) -> ProposeResponse<C> {
-        if self.add_spec(p.cmd()) {
-            let role = *self.role.read();
-            if let ServerRole::Leader = role {
-                // only the leader executes the command in speculative pool
-                p.cmd().execute(&self.cmd_executor).await.map_or_else(
-                    |err| {
-                        ProposeResponse::new_error(
-                            true,
-                            *self.term.read(),
-                            ProposeError::ExecutionError(err.to_string()),
-                        )
-                    },
-                    |er| ProposeResponse::new_ok(true, *self.term.read(), er),
-                )
-            } else {
-                ProposeResponse::new_empty(false, *self.term.read())
+        let is_leader = self.is_leader();
+        let self_term = *self.term.read();
+        self.spec
+            .map_lock(|mut spec| {
+                let is_conflict = Self::is_spec_conflict(&spec, p.cmd());
+                spec.push_back(p.cmd().clone());
+
+                match (is_conflict, is_leader) {
+                    (true, true) => async {
+                        // the leader need to sync cmd
+                        if self.sync_to_others(self_term, p.cmd()) {
+                            ProposeResponse::new_error(
+                                is_leader,
+                                self_term,
+                                ProposeError::KeyConflict,
+                            )
+                        } else {
+                            ProposeResponse::new_error(
+                                is_leader,
+                                *self.term.read(),
+                                ProposeError::SyncedError("Sync cmd channel closed".to_owned()),
+                            )
+                        }
+                    }
+                    .left_future()
+                    .left_future(),
+                    (true, false) => async {
+                        ProposeResponse::new_error(is_leader, self_term, ProposeError::KeyConflict)
+                    }
+                    .left_future()
+                    .right_future(),
+                    (false, true) => {
+                        // only the leader executes the command in speculative pool
+                        p.cmd()
+                            .execute(&self.cmd_executor)
+                            .map(|er| {
+                                er.map_or_else(
+                                    |err| {
+                                        ProposeResponse::new_error(
+                                            is_leader,
+                                            self_term,
+                                            ProposeError::ExecutionError(err.to_string()),
+                                        )
+                                    },
+                                    |rv| {
+                                        // the leader need to sync cmd
+                                        if self.sync_to_others(self_term, p.cmd()) {
+                                            ProposeResponse::new_ok(is_leader, self_term, rv)
+                                        } else {
+                                            ProposeResponse::new_error(
+                                                is_leader,
+                                                *self.term.read(),
+                                                ProposeError::SyncedError(
+                                                    "Sync cmd channel closed".to_owned(),
+                                                ),
+                                            )
+                                        }
+                                    },
+                                )
+                            })
+                            .right_future()
+                            .left_future()
+                    }
+                    (false, false) => {
+                        async { ProposeResponse::new_empty(false, *self.term.read()) }
+                            .right_future()
+                            .right_future()
+                    }
+                }
+            })
+            .await
+    }
+
+    /// Handle wait sync request
+    async fn wait_sync(&self, ws: WaitSynced) -> WaitSyncedResponse {
+        let handle = match self
+            .synced_events
+            .map_lock(|mut events| events.remove(ws.id()))
+        {
+            Some(handle) => handle,
+            None => {
+                return WaitSyncedResponse::new_error(format!(
+                    "command {:?} is not in the event hashmap",
+                    ws.id()
+                ))
             }
-        } else {
-            // only the leader puts the command in the pending list
-            let is_leader = if let ServerRole::Leader = *self.role.read() {
-                self.pending.map(|mut pending| {
-                    pending.push_back(p.cmd().clone());
-                });
-                true
-            } else {
-                false
-            };
-            ProposeResponse::new_error(is_leader, *self.term.read(), ProposeError::KeyConflict)
+        };
+        let index = match handle.await {
+            Ok(index) => index,
+            Err(e) => return WaitSyncedResponse::new_error(format!("sync task failed, {:?}", e)),
+        };
+        WaitSyncedResponse::new_success(index)
+    }
+
+    /// Handle sync request
+    async fn sync(&self, sc: SyncCommand<C>) -> SyncResponse<C> {
+        self.log.map_lock(|mut log| {
+            let local_len = log.len();
+            match sc.index() {
+                t if t > local_len.numeric_cast() => {
+                    SyncResponse::PrevNotReady(local_len.numeric_cast())
+                }
+                t if t < local_len.numeric_cast() => {
+                    // checked in the if condition
+                    #[allow(clippy::unwrap_used)]
+                    let entry: &LogEntry<C> = log.get(t.numeric_cast::<usize>()).unwrap();
+                    SyncResponse::EntryNotEmpty((entry.term(), entry.cmd().clone()))
+                }
+                _ => {
+                    let self_term = *self.term.read();
+                    if sc.term() < self_term {
+                        SyncResponse::WrongTerm(self_term)
+                    } else {
+                        log.push(LogEntry::new(
+                            sc.term(),
+                            sc.cmd().clone(),
+                            EntryStatus::Unsynced,
+                        ));
+                        SyncResponse::Synced
+                    }
+                }
+            }
+        })
+    }
+}
+
+impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Drop for Server<C, CE> {
+    #[inline]
+    fn drop(&mut self) {
+        self.sm_handle.abort();
+    }
+}
+
+/// The manager to sync commands to other follower servers
+struct SyncManager<C: Command + 'static> {
+    /// The endpoint to call rpc to other servers
+    ep: Endpoint,
+    /// Get cmd sync request from speculative command
+    sync_chan: mpsc::UnboundedReceiver<(TermNum, C, oneshot::Sender<LogIndex>)>,
+    /// Other server address
+    others: Arc<RwLock<Vec<SocketAddr>>>,
+    /// Consensus log
+    log: Arc<Mutex<Vec<LogEntry<C>>>>,
+}
+
+impl<C: Command + 'static> SyncManager<C> {
+    /// Create a `SyncedManager`
+    fn new(
+        ep: Endpoint,
+        cmd_chan: mpsc::UnboundedReceiver<(TermNum, C, oneshot::Sender<LogIndex>)>,
+        others: Arc<RwLock<Vec<SocketAddr>>>,
+        log: Arc<Mutex<Vec<LogEntry<C>>>>,
+    ) -> Self {
+        Self {
+            ep,
+            sync_chan: cmd_chan,
+            others,
+            log,
+        }
+    }
+
+    /// Run the `SyncManager`
+    async fn run(&mut self) {
+        let f = self.others.read().len().wrapping_div(2);
+        while let Some((term, cmd, complete_chan)) = self.sync_chan.recv().await {
+            let others: Vec<SocketAddr> = self
+                .others
+                .map_read(|others| others.iter().copied().collect());
+
+            let index = self.log.map_lock(|mut log| {
+                log.push(LogEntry::new(term, cmd.clone(), EntryStatus::Unsynced));
+                // length must be larger than 1
+                log.len().wrapping_sub(1)
+            });
+
+            let rpcs = others.iter().map(|addr| {
+                let cmd = cmd.clone();
+                self.ep.call_timeout(
+                    *addr,
+                    SyncCommand::new(term, index.numeric_cast(), cmd),
+                    SYNC_TIMEOUT,
+                )
+            });
+
+            let mut rpcs: FuturesUnordered<_> = rpcs.collect();
+            let mut synced_cnt = 0;
+
+            while let Some(resp) = rpcs.next().await {
+                let _result = resp
+                    .map_err(|err| {
+                        warn!("rpc error when sending `Sync` request, {err}");
+                    })
+                    .map(|r| {
+                        match r {
+                            SyncResponse::Synced => {
+                                synced_cnt = synced_cnt.overflow_add(1);
+                            }
+                            SyncResponse::WrongTerm(_)
+                            | SyncResponse::EntryNotEmpty(_)
+                            | SyncResponse::PrevNotReady(_) => {
+                                // todo
+                            }
+                        }
+                    });
+
+                if synced_cnt == f {
+                    let _r = complete_chan.send(index.numeric_cast());
+                    break;
+                }
+            }
         }
     }
 }

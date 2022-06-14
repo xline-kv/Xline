@@ -1,7 +1,16 @@
 use madsim::Request;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::{cmd::Command, error::ProposeError};
+use crate::{
+    cmd::{Command, ProposeId},
+    error::ProposeError,
+};
+
+/// Term Number
+pub(crate) type TermNum = u64;
+
+/// Log Index
+pub(crate) type LogIndex = u64;
 
 ////////////////////////// Propose ///////////////////////////////
 
@@ -35,14 +44,14 @@ pub(crate) struct ProposeResponse<C: Command> {
     /// is_leader
     is_leader: bool,
     /// Term number
-    term: u64,
+    term: TermNum,
     /// Response inner data
     inner: ProposeResponseInner<C>,
 }
 
 impl<C: Command> ProposeResponse<C> {
     /// Create an ok propose response
-    pub(crate) fn new_ok(is_leader: bool, term: u64, return_value: C::ER) -> Self {
+    pub(crate) fn new_ok(is_leader: bool, term: TermNum, return_value: C::ER) -> Self {
         ProposeResponse {
             is_leader,
             term,
@@ -51,7 +60,7 @@ impl<C: Command> ProposeResponse<C> {
     }
 
     /// Create an empty propose response
-    pub(crate) fn new_empty(is_leader: bool, term: u64) -> Self {
+    pub(crate) fn new_empty(is_leader: bool, term: TermNum) -> Self {
         ProposeResponse {
             is_leader,
             term,
@@ -60,7 +69,7 @@ impl<C: Command> ProposeResponse<C> {
     }
 
     /// Create an error propose response
-    pub(crate) fn new_error(is_leader: bool, term: u64, error: ProposeError) -> Self {
+    pub(crate) fn new_error(is_leader: bool, term: TermNum, error: ProposeError) -> Self {
         ProposeResponse {
             is_leader,
             term,
@@ -69,7 +78,7 @@ impl<C: Command> ProposeResponse<C> {
     }
 
     /// Response term
-    pub(crate) fn term(&self) -> u64 {
+    pub(crate) fn term(&self) -> TermNum {
         self.term
     }
 
@@ -93,4 +102,92 @@ pub(crate) enum ProposeResponseInner<C: Command> {
     ReturnValue(Option<C::ER>),
     /// Any error met
     Error(ProposeError),
+}
+
+////////////////////////// Wait Synced ///////////////////////////////
+
+/// Wait sync request
+#[derive(Serialize, Deserialize, Request)]
+#[rtype("WaitSyncedResponse")]
+pub(crate) struct WaitSynced {
+    /// The propose id to wait
+    id: ProposeId,
+}
+
+impl WaitSynced {
+    /// The propose id
+    pub(crate) fn id(&self) -> &ProposeId {
+        &self.id
+    }
+}
+
+/// Wait sync response
+#[derive(Serialize, Deserialize)]
+pub(crate) enum WaitSyncedResponse {
+    /// Success with log index
+    Success(LogIndex),
+    /// Error
+    Error(String),
+}
+
+impl WaitSyncedResponse {
+    /// Create a success response
+    pub(crate) fn new_success(index: LogIndex) -> Self {
+        Self::Success(index)
+    }
+    /// Create a error response
+    pub(crate) fn new_error(err: String) -> Self {
+        Self::Error(err)
+    }
+}
+
+////////////////////////// Sync ///////////////////////////////
+
+/// The sync message sent by the leader to followers
+#[derive(Serialize, Deserialize, Request)]
+#[serde(bound = "C: Serialize + DeserializeOwned")]
+#[rtype("SyncResponse<C>")]
+pub(crate) struct SyncCommand<C: 'static + Command> {
+    /// Term number of current leader
+    term: TermNum,
+    /// Log Index
+    index: LogIndex,
+    /// Command
+    cmd: C,
+}
+
+impl<C: 'static + Command> SyncCommand<C> {
+    /// Create a new Sync command
+    pub(crate) fn new(term: TermNum, index: LogIndex, cmd: C) -> Self {
+        Self { term, index, cmd }
+    }
+
+    /// Get term
+    pub(crate) fn term(&self) -> TermNum {
+        self.term
+    }
+
+    /// Get index
+    pub(crate) fn index(&self) -> LogIndex {
+        self.index
+    }
+
+    /// Get cmd
+    pub(crate) fn cmd(&self) -> &C {
+        &self.cmd
+    }
+}
+
+/// Response for propose request
+#[derive(Serialize, Deserialize)]
+#[serde(bound = "C: Serialize + DeserializeOwned")]
+pub(crate) enum SyncResponse<C: Command> {
+    /// The log entry synced
+    Synced,
+    /// The term is wrong, means you're not the leader now
+    WrongTerm(TermNum),
+    /// The entry is occupied
+    EntryNotEmpty((TermNum, C)),
+    /// The previous log is not ready
+    PrevNotReady(LogIndex),
 }
