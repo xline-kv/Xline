@@ -50,4 +50,7 @@ pub enum ProposeError {
     /// Command execution error
     #[error("command execution error {0}")]
     ExecutionError(String),
+    /// Command syncing error
+    #[error("syncing error {0}")]
+    SyncedError(String),
 }
