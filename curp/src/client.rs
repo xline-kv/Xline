@@ -4,7 +4,11 @@ use futures::{stream::FuturesUnordered, StreamExt};
 use madsim::net::Endpoint;
 use tracing::{error, warn};
 
-use crate::{cmd::Command, error::ProposeError, message::Propose};
+use crate::{
+    cmd::Command,
+    error::ProposeError,
+    message::{LogIndex, Propose, WaitSynced, WaitSyncedResponse},
+};
 
 /// Propose request default timeout
 static PROPOSE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -60,6 +64,7 @@ where
     /// Propose the request to servers
     /// # Errors
     ///   `ProposeError::ExecutionError` if execution error is met
+    ///   `ProposeError::SyncedError` error met while syncing logs to followers
     #[inline]
     pub async fn propose(&self, cmd: C) -> Result<C::ER, ProposeError> {
         let ft = self.addrs.len().wrapping_div(2);
@@ -127,10 +132,72 @@ where
         if let Some(er) = execute_result {
             Ok(er)
         } else {
-            // TODO propose propose synced
-            Err(ProposeError::ExecutionError(
-                "fake execution error".to_owned(),
-            ))
+            match self
+                .ep
+                .call_timeout(
+                    self.leader,
+                    WaitSynced::<C>::new(cmd.id().clone()),
+                    PROPOSE_TIMEOUT,
+                )
+                .await
+            {
+                Ok(resp) => match resp {
+                    WaitSyncedResponse::Success((_index, er)) => Ok(er.unwrap_or_else(|| {
+                        unreachable!("Wait Synced Response should contain the execution value");
+                    })),
+                    WaitSyncedResponse::Error(e) => Err(ProposeError::SyncedError(e)),
+                },
+                Err(e) => Err(ProposeError::SyncedError(format!(
+                    "Sending `WaitSyncedResponse` rpc error: {e}"
+                ))),
+            }
+        }
+    }
+
+    /// Propose a command and wait for the synced index
+    /// # Errors
+    ///   `ProposeError::SyncedError` error met while syncing logs to followers
+    ///   `ProposeError::RpcError` rpc error met, usually it's network error
+    ///   `ProposeError::ProtocolError` execution result is not got from the two requests
+    #[inline]
+    pub async fn propose_indexed(&self, cmd: C) -> Result<(C::ER, LogIndex), ProposeError> {
+        let execute_result = match self
+            .ep
+            .call_timeout(self.leader, Propose::new(cmd.clone()), PROPOSE_TIMEOUT)
+            .await
+        {
+            Ok(er) => er.map_or_else(
+                |option_er| Ok(option_er.map(|r| Some(r.clone()))),
+                |err| Err(err.clone()),
+            )?,
+            Err(e) => return Err(ProposeError::RpcError(format!("{e}"))),
+        }
+        .flatten();
+
+        match self
+            .ep
+            .call_timeout(
+                self.leader,
+                WaitSynced::<C>::new(cmd.id().clone()),
+                PROPOSE_TIMEOUT,
+            )
+            .await
+        {
+            Ok(resp) => match resp {
+                WaitSyncedResponse::Success((index, option_er)) => match option_er {
+                    Some(er) => Ok((er, index)),
+                    None => match execute_result {
+                        Some(er) => Ok((er, index)),
+                        None => Err(ProposeError::ProtocolError(
+                            "Can't get the execution result".to_owned(),
+                        )),
+                    },
+                },
+                WaitSyncedResponse::Error(e) => Err(ProposeError::SyncedError(e)),
+            },
+            Err(e) => Err(ProposeError::SyncedError(format!(
+                "Sending `WaitSyncedResponse` rpc error: {e}"
+            ))),
         }
     }
 }
