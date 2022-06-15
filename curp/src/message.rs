@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use madsim::Request;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
@@ -108,13 +110,24 @@ pub(crate) enum ProposeResponseInner<C: Command> {
 
 /// Wait sync request
 #[derive(Serialize, Deserialize, Request)]
-#[rtype("WaitSyncedResponse")]
-pub(crate) struct WaitSynced {
+#[serde(bound = "C: Serialize + DeserializeOwned")]
+#[rtype("WaitSyncedResponse<C>")]
+pub(crate) struct WaitSynced<C: Command + 'static> {
     /// The propose id to wait
     id: ProposeId,
+    /// To keep the `C` type
+    phantom: PhantomData<C>,
 }
 
-impl WaitSynced {
+impl<C: Command> WaitSynced<C> {
+    /// Create a new `WaitSynced` request
+    pub(crate) fn new(id: ProposeId) -> Self {
+        Self {
+            id,
+            phantom: PhantomData,
+        }
+    }
+
     /// The propose id
     pub(crate) fn id(&self) -> &ProposeId {
         &self.id
@@ -123,18 +136,19 @@ impl WaitSynced {
 
 /// Wait sync response
 #[derive(Serialize, Deserialize)]
-pub(crate) enum WaitSyncedResponse {
+pub(crate) enum WaitSyncedResponse<C: Command> {
     /// Success with log index
-    Success(LogIndex),
+    Success((LogIndex, Option<C::ER>)),
     /// Error
     Error(String),
 }
 
-impl WaitSyncedResponse {
+impl<C: Command> WaitSyncedResponse<C> {
     /// Create a success response
-    pub(crate) fn new_success(index: LogIndex) -> Self {
-        Self::Success(index)
+    pub(crate) fn new_success(index: LogIndex, er: Option<C::ER>) -> Self {
+        Self::Success((index, er))
     }
+
     /// Create a error response
     pub(crate) fn new_error(err: String) -> Self {
         Self::Error(err)

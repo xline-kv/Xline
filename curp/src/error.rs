@@ -40,7 +40,7 @@ pub enum ServerError {
 }
 
 /// The error met during propose phase
-#[derive(Error, Debug, Serialize, Deserialize)]
+#[derive(Error, Debug, Serialize, Deserialize, Clone)]
 #[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
 #[non_exhaustive]
 pub enum ProposeError {
@@ -53,4 +53,10 @@ pub enum ProposeError {
     /// Command syncing error
     #[error("syncing error {0}")]
     SyncedError(String),
+    /// Rpc error
+    #[error("rpc error {0}")]
+    RpcError(String),
+    /// Protocol error
+    #[error("protocol error {0}")]
+    ProtocolError(String),
 }

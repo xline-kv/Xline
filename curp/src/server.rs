@@ -56,7 +56,7 @@ impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> RpcServerWrap<C, CE
 
     /// Handle wait_sync request
     #[rpc]
-    async fn wait_sync(&self, sc: WaitSynced) -> WaitSyncedResponse {
+    async fn wait_sync(&self, sc: WaitSynced<C>) -> WaitSyncedResponse<C> {
         self.inner.wait_sync(sc).await
     }
 
@@ -81,10 +81,16 @@ impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> RpcServerWrap<C, CE
     }
 }
 
+/// "sync task complete" message channel sender
+type CompleteSender = oneshot::Sender<(LogIndex, bool)>;
+
+/// The join handler of synced task
+#[derive(Debug)]
+struct SyncedTaskJoinHandle<C: Command + 'static>(JoinHandle<(LogIndex, bool, C)>);
+
 /// The server that handles client request and server consensus protocol
 pub struct Server<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
     /// the server role
-    #[allow(dead_code)]
     role: RwLock<ServerRole>,
     /// Current term
     term: RwLock<TermNum>,
@@ -95,11 +101,11 @@ pub struct Server<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
     /// Consensus log
     log: Arc<Mutex<Vec<LogEntry<C>>>>,
     /// The channel to send synced command
-    sync_chan: mpsc::UnboundedSender<(TermNum, C, oneshot::Sender<LogIndex>)>,
+    sync_chan: mpsc::UnboundedSender<(TermNum, C, CompleteSender, bool)>,
     /// Synced manager handler
     sm_handle: JoinHandle<()>,
     /// Sync event listener map
-    synced_events: Mutex<HashMap<ProposeId, JoinHandle<LogIndex>>>,
+    synced_events: Mutex<HashMap<ProposeId, SyncedTaskJoinHandle<C>>>,
 }
 
 impl<C, CE> Debug for Server<C, CE>
@@ -125,9 +131,9 @@ where
 enum ServerRole {
     /// A follower
     Follower,
-    /// A candidater
+    /// A candidate
     #[allow(dead_code)]
-    Candidater,
+    Candidate,
     /// A leader
     Leader,
 }
@@ -171,9 +177,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Server<C, CE> {
 
     /// Check if the `cmd` conflict with any conflicts in the speculative cmd pool
     fn is_spec_conflict(spec: &MutexGuard<'_, VecDeque<C>>, cmd: &C) -> bool {
-        spec.iter()
-            .map(|spec_cmd| spec_cmd.is_conflict(cmd))
-            .any(|conflict| conflict)
+        spec.iter().any(|spec_cmd| spec_cmd.is_conflict(cmd))
     }
 
     /// Check if the current server is leader
@@ -193,28 +197,32 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Server<C, CE> {
     }
 
     /// Send sync event to the `SyncManager`
-    fn sync_to_others(&self, term: TermNum, cmd: &C) -> bool {
+    fn sync_to_others(&self, term: TermNum, cmd: &C, need_execute: bool) -> bool {
         let (tx, rx) = oneshot::channel();
 
-        if let Err(e) = self.sync_chan.send((term, cmd.clone(), tx)) {
+        if let Err(e) = self.sync_chan.send((term, cmd.clone(), tx, need_execute)) {
             error!("Error while sending sync event, {e}");
             false
         } else {
             let id = cmd.id().clone();
             let spec = Arc::<_>::clone(&self.spec);
+            let cmd_clone = cmd.clone();
             let handle = tokio::spawn(async move {
                 let index = rx.await;
                 if Self::spec_remove_cmd(&spec, &id).is_none() {
                     unreachable!("{:?} should be in the spec pool", id);
                 }
                 match index {
-                    Ok(index) => index,
+                    Ok((index, ne)) => (index, ne, cmd_clone),
                     // TODO: handle the sync task fail
                     Err(_) => unreachable!("{:?} sync task failed", id),
                 }
             });
             self.synced_events.map_lock(|mut events| {
-                if events.insert(cmd.id().clone(), handle).is_some() {
+                if events
+                    .insert(cmd.id().clone(), SyncedTaskJoinHandle(handle))
+                    .is_some()
+                {
                     unreachable!("{:?} should not be inserted in events map", cmd.id());
                 }
             });
@@ -234,7 +242,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Server<C, CE> {
                 match (is_conflict, is_leader) {
                     (true, true) => async {
                         // the leader need to sync cmd
-                        if self.sync_to_others(self_term, p.cmd()) {
+                        if self.sync_to_others(self_term, p.cmd(), true) {
                             ProposeResponse::new_error(
                                 is_leader,
                                 self_term,
@@ -270,7 +278,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Server<C, CE> {
                                     },
                                     |rv| {
                                         // the leader need to sync cmd
-                                        if self.sync_to_others(self_term, p.cmd()) {
+                                        if self.sync_to_others(self_term, p.cmd(), false) {
                                             ProposeResponse::new_ok(is_leader, self_term, rv)
                                         } else {
                                             ProposeResponse::new_error(
@@ -298,7 +306,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Server<C, CE> {
     }
 
     /// Handle wait sync request
-    async fn wait_sync(&self, ws: WaitSynced) -> WaitSyncedResponse {
+    async fn wait_sync(&self, ws: WaitSynced<C>) -> WaitSyncedResponse<C> {
         let handle = match self
             .synced_events
             .map_lock(|mut events| events.remove(ws.id()))
@@ -311,11 +319,19 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Server<C, CE> {
                 ))
             }
         };
-        let index = match handle.await {
-            Ok(index) => index,
-            Err(e) => return WaitSyncedResponse::new_error(format!("sync task failed, {:?}", e)),
-        };
-        WaitSyncedResponse::new_success(index)
+        match handle.0.await {
+            Ok((index, need_execute, cmd)) => {
+                if need_execute {
+                    cmd.execute(&self.cmd_executor).await.map_or_else(
+                        |e| WaitSyncedResponse::new_error(format!("{:?}", e)),
+                        |er| WaitSyncedResponse::new_success(index, Some(er)),
+                    )
+                } else {
+                    WaitSyncedResponse::new_success(index, None)
+                }
+            }
+            Err(e) => WaitSyncedResponse::new_error(format!("sync task failed, {:?}", e)),
+        }
     }
 
     /// Handle sync request
@@ -362,7 +378,7 @@ struct SyncManager<C: Command + 'static> {
     /// The endpoint to call rpc to other servers
     ep: Endpoint,
     /// Get cmd sync request from speculative command
-    sync_chan: mpsc::UnboundedReceiver<(TermNum, C, oneshot::Sender<LogIndex>)>,
+    sync_chan: mpsc::UnboundedReceiver<(TermNum, C, CompleteSender, bool)>,
     /// Other server address
     others: Arc<RwLock<Vec<SocketAddr>>>,
     /// Consensus log
@@ -373,7 +389,7 @@ impl<C: Command + 'static> SyncManager<C> {
     /// Create a `SyncedManager`
     fn new(
         ep: Endpoint,
-        cmd_chan: mpsc::UnboundedReceiver<(TermNum, C, oneshot::Sender<LogIndex>)>,
+        cmd_chan: mpsc::UnboundedReceiver<(TermNum, C, CompleteSender, bool)>,
         others: Arc<RwLock<Vec<SocketAddr>>>,
         log: Arc<Mutex<Vec<LogEntry<C>>>>,
     ) -> Self {
@@ -388,7 +404,7 @@ impl<C: Command + 'static> SyncManager<C> {
     /// Run the `SyncManager`
     async fn run(&mut self) {
         let f = self.others.read().len().wrapping_div(2);
-        while let Some((term, cmd, complete_chan)) = self.sync_chan.recv().await {
+        while let Some((term, cmd, complete_chan, need_execute)) = self.sync_chan.recv().await {
             let others: Vec<SocketAddr> = self
                 .others
                 .map_read(|others| others.iter().copied().collect());
@@ -430,7 +446,7 @@ impl<C: Command + 'static> SyncManager<C> {
                     });
 
                 if synced_cnt == f {
-                    let _r = complete_chan.send(index.numeric_cast());
+                    let _r = complete_chan.send((index.numeric_cast(), need_execute));
                     break;
                 }
             }
