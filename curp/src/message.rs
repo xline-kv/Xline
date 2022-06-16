@@ -12,7 +12,7 @@ use crate::{
 pub(crate) type TermNum = u64;
 
 /// Log Index
-pub(crate) type LogIndex = u64;
+pub type LogIndex = u64;
 
 ////////////////////////// Propose ///////////////////////////////
 
@@ -138,15 +138,15 @@ impl<C: Command> WaitSynced<C> {
 #[derive(Serialize, Deserialize)]
 pub(crate) enum WaitSyncedResponse<C: Command> {
     /// Success with log index
-    Success((LogIndex, Option<C::ER>)),
+    Success((C::ASR, Option<C::ER>)),
     /// Error
     Error(String),
 }
 
 impl<C: Command> WaitSyncedResponse<C> {
     /// Create a success response
-    pub(crate) fn new_success(index: LogIndex, er: Option<C::ER>) -> Self {
-        Self::Success((index, er))
+    pub(crate) fn new_success(asr: C::ASR, er: Option<C::ER>) -> Self {
+        Self::Success((asr, er))
     }
 
     /// Create a error response

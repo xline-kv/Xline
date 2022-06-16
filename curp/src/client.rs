@@ -7,7 +7,7 @@ use tracing::{error, warn};
 use crate::{
     cmd::Command,
     error::ProposeError,
-    message::{LogIndex, Propose, WaitSynced, WaitSyncedResponse},
+    message::{Propose, WaitSynced, WaitSyncedResponse},
 };
 
 /// Propose request default timeout
@@ -160,7 +160,7 @@ where
     ///   `ProposeError::RpcError` rpc error met, usually it's network error
     ///   `ProposeError::ProtocolError` execution result is not got from the two requests
     #[inline]
-    pub async fn propose_indexed(&self, cmd: C) -> Result<(C::ER, LogIndex), ProposeError> {
+    pub async fn propose_indexed(&self, cmd: C) -> Result<(C::ER, C::ASR), ProposeError> {
         let execute_result = match self
             .ep
             .call_timeout(self.leader, Propose::new(cmd.clone()), PROPOSE_TIMEOUT)

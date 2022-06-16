@@ -129,3 +129,5 @@ mod message;
 
 /// Log
 mod log;
+
+pub use message::LogIndex;

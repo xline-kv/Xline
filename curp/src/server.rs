@@ -322,12 +322,26 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Server<C, CE> {
         match handle.0.await {
             Ok((index, need_execute, cmd)) => {
                 if need_execute {
-                    cmd.execute(&self.cmd_executor).await.map_or_else(
-                        |e| WaitSyncedResponse::new_error(format!("{:?}", e)),
-                        |er| WaitSyncedResponse::new_success(index, Some(er)),
-                    )
+                    match cmd.execute(&self.cmd_executor).await {
+                        Ok(er) => match cmd.after_sync(&self.cmd_executor, index).await {
+                            Ok(asr) => WaitSyncedResponse::<C>::new_success(asr, Some(er)),
+                            Err(e) => WaitSyncedResponse::<C>::new_error(format!(
+                                "after_sync execution error: {:?}",
+                                e
+                            )),
+                        },
+                        Err(e) => {
+                            WaitSyncedResponse::new_error(format!("cmd execution error: {:?}", e))
+                        }
+                    }
                 } else {
-                    WaitSyncedResponse::new_success(index, None)
+                    match cmd.after_sync(&self.cmd_executor, index).await {
+                        Ok(asr) => WaitSyncedResponse::<C>::new_success(asr, None),
+                        Err(e) => WaitSyncedResponse::<C>::new_error(format!(
+                            "after_sync execution error: {:?}",
+                            e
+                        )),
+                    }
                 }
             }
             Err(e) => WaitSyncedResponse::new_error(format!("sync task failed, {:?}", e)),

@@ -6,6 +6,7 @@ use curp::{
     cmd::{Command, CommandExecutor, ConflictCheck, ProposeId},
     error::ExecuteError,
     server::RpcServerWrap,
+    LogIndex,
 };
 
 use itertools::Itertools;
@@ -36,6 +37,8 @@ impl Command for TestCommand {
     type K = String;
 
     type ER = TestCommandResult;
+
+    type ASR = LogIndex;
 
     fn keys(&self) -> &[Self::K] {
         &self.keys
@@ -75,6 +78,14 @@ impl CommandExecutor<TestCommand> for TestExecutor {
             TestCommandType::Get => Ok(TestCommandResult::GetResult("".to_owned())),
             TestCommandType::Put => Ok(TestCommandResult::PutResult("".to_owned())),
         }
+    }
+
+    async fn after_sync(
+        &self,
+        _cmd: &TestCommand,
+        index: LogIndex,
+    ) -> Result<LogIndex, ExecuteError> {
+        Ok(index)
     }
 }
 
