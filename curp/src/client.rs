@@ -168,7 +168,14 @@ where
         {
             Ok(er) => er.map_or_else(
                 |option_er| Ok(option_er.map(|r| Some(r.clone()))),
-                |err| Err(err.clone()),
+                |err| {
+                    if let &ProposeError::KeyConflict = err {
+                        // key conflict is ok as we alaways wait the sync result
+                        Ok(None)
+                    } else {
+                        Err(err.clone())
+                    }
+                },
             )?,
             Err(e) => return Err(ProposeError::RpcError(format!("{e}"))),
         }
