@@ -135,7 +135,7 @@ impl<C: Command> WaitSynced<C> {
 }
 
 /// Wait sync response
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub(crate) enum WaitSyncedResponse<C: Command> {
     /// Success with log index
     Success((C::ASR, Option<C::ER>)),
