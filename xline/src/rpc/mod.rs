@@ -39,6 +39,34 @@ mod mvccpb {
     tonic::include_proto!("mvccpb");
 }
 
+#[allow(
+    clippy::all,
+    clippy::restriction,
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::cargo,
+    unused_qualifications,
+    unreachable_pub,
+    variant_size_differences
+)]
+mod v3lockpb {
+    tonic::include_proto!("v3lockpb");
+}
+
+#[allow(
+    clippy::all,
+    clippy::restriction,
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::cargo,
+    unused_qualifications,
+    unreachable_pub,
+    variant_size_differences
+)]
+mod leasepb {
+    tonic::include_proto!("leasepb");
+}
+
 pub(crate) use self::etcdserverpb::{
     kv_server::{Kv, KvServer},
     request_op::Request,
