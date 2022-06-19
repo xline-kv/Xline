@@ -82,11 +82,11 @@ impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> RpcServerWrap<C, CE
 }
 
 /// "sync task complete" message channel sender
-type CompleteSender = oneshot::Sender<(LogIndex, bool)>;
+type CompleteSender = oneshot::Sender<LogIndex>;
 
 /// The join handler of synced task
 #[derive(Debug)]
-struct SyncedTaskJoinHandle<C: Command + 'static>(JoinHandle<(LogIndex, bool, C)>);
+struct SyncedTaskJoinHandle<C: Command + 'static>(JoinHandle<WaitSyncedResponse<C>>);
 
 /// The server that handles client request and server consensus protocol
 pub struct Server<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
@@ -97,11 +97,11 @@ pub struct Server<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
     /// The speculative cmd pool, shared with executor
     spec: Arc<Mutex<VecDeque<C>>>,
     /// Command executor
-    cmd_executor: CE,
+    cmd_executor: Arc<CE>,
     /// Consensus log
     log: Arc<Mutex<Vec<LogEntry<C>>>>,
     /// The channel to send synced command
-    sync_chan: mpsc::UnboundedSender<(TermNum, C, CompleteSender, bool)>,
+    sync_chan: mpsc::UnboundedSender<(TermNum, C, CompleteSender)>,
     /// Synced manager handler
     sm_handle: JoinHandle<()>,
     /// Sync event listener map
@@ -167,7 +167,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Server<C, CE> {
             }),
             term: RwLock::new(term),
             spec: Arc::new(Mutex::new(VecDeque::new())),
-            cmd_executor,
+            cmd_executor: Arc::new(cmd_executor),
             log,
             sync_chan: tx,
             sm_handle,
@@ -196,26 +196,53 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Server<C, CE> {
         .flatten()
     }
 
-    /// Send sync event to the `SyncManager`
+    /// Send sync event to the `SyncManager`, it's not a blocking function
     fn sync_to_others(&self, term: TermNum, cmd: &C, need_execute: bool) -> bool {
-        let (tx, rx) = oneshot::channel();
+        let (complete_sender, rx) = oneshot::channel();
 
-        if let Err(e) = self.sync_chan.send((term, cmd.clone(), tx, need_execute)) {
+        if let Err(e) = self.sync_chan.send((term, cmd.clone(), complete_sender)) {
             error!("Error while sending sync event, {e}");
             false
         } else {
-            let id = cmd.id().clone();
             let spec = Arc::<_>::clone(&self.spec);
-            let cmd_clone = cmd.clone();
+            let cmd2exe = cmd.clone();
+            let dispatch_executor = Arc::<CE>::clone(&self.cmd_executor);
+
             let handle = tokio::spawn(async move {
-                let index = rx.await;
-                if Self::spec_remove_cmd(&spec, &id).is_none() {
-                    unreachable!("{:?} should be in the spec pool", id);
+                let index_result = rx.await;
+                let cmd_id = cmd2exe.id().clone();
+                if Self::spec_remove_cmd(&spec, &cmd_id).is_none() {
+                    unreachable!("{:?} should be in the spec pool", cmd_id);
                 }
-                match index {
-                    Ok((index, ne)) => (index, ne, cmd_clone),
+
+                let call_after_sync = |index, er| {
+                    cmd2exe
+                        .after_sync(dispatch_executor.as_ref(), index)
+                        .map(|after_sync_result| match after_sync_result {
+                            Ok(asr) => WaitSyncedResponse::<C>::new_success(asr, er),
+                            Err(e) => WaitSyncedResponse::<C>::new_error(format!(
+                                "after_sync execution error: {:?}",
+                                e
+                            )),
+                        })
+                };
+
+                match index_result {
+                    Ok(index) => {
+                        if need_execute {
+                            match cmd2exe.execute(dispatch_executor.as_ref()).await {
+                                Ok(er) => call_after_sync(index, Some(er)).await,
+                                Err(e) => WaitSyncedResponse::new_error(format!(
+                                    "cmd execution error: {:?}",
+                                    e
+                                )),
+                            }
+                        } else {
+                            call_after_sync(index, None).await
+                        }
+                    }
                     // TODO: handle the sync task fail
-                    Err(_) => unreachable!("{:?} sync task failed", id),
+                    Err(_) => unreachable!("{:?} sync task failed", cmd_id),
                 }
             });
             self.synced_events.map_lock(|mut events| {
@@ -266,7 +293,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Server<C, CE> {
                     (false, true) => {
                         // only the leader executes the command in speculative pool
                         p.cmd()
-                            .execute(&self.cmd_executor)
+                            .execute(self.cmd_executor.as_ref())
                             .map(|er| {
                                 er.map_or_else(
                                     |err| {
@@ -320,30 +347,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Server<C, CE> {
             }
         };
         match handle.0.await {
-            Ok((index, need_execute, cmd)) => {
-                if need_execute {
-                    match cmd.execute(&self.cmd_executor).await {
-                        Ok(er) => match cmd.after_sync(&self.cmd_executor, index).await {
-                            Ok(asr) => WaitSyncedResponse::<C>::new_success(asr, Some(er)),
-                            Err(e) => WaitSyncedResponse::<C>::new_error(format!(
-                                "after_sync execution error: {:?}",
-                                e
-                            )),
-                        },
-                        Err(e) => {
-                            WaitSyncedResponse::new_error(format!("cmd execution error: {:?}", e))
-                        }
-                    }
-                } else {
-                    match cmd.after_sync(&self.cmd_executor, index).await {
-                        Ok(asr) => WaitSyncedResponse::<C>::new_success(asr, None),
-                        Err(e) => WaitSyncedResponse::<C>::new_error(format!(
-                            "after_sync execution error: {:?}",
-                            e
-                        )),
-                    }
-                }
-            }
+            Ok(wsr) => wsr,
             Err(e) => WaitSyncedResponse::new_error(format!("sync task failed, {:?}", e)),
         }
     }
@@ -392,7 +396,7 @@ struct SyncManager<C: Command + 'static> {
     /// The endpoint to call rpc to other servers
     ep: Endpoint,
     /// Get cmd sync request from speculative command
-    sync_chan: mpsc::UnboundedReceiver<(TermNum, C, CompleteSender, bool)>,
+    sync_chan: mpsc::UnboundedReceiver<(TermNum, C, CompleteSender)>,
     /// Other server address
     others: Arc<RwLock<Vec<SocketAddr>>>,
     /// Consensus log
@@ -403,7 +407,7 @@ impl<C: Command + 'static> SyncManager<C> {
     /// Create a `SyncedManager`
     fn new(
         ep: Endpoint,
-        cmd_chan: mpsc::UnboundedReceiver<(TermNum, C, CompleteSender, bool)>,
+        cmd_chan: mpsc::UnboundedReceiver<(TermNum, C, CompleteSender)>,
         others: Arc<RwLock<Vec<SocketAddr>>>,
         log: Arc<Mutex<Vec<LogEntry<C>>>>,
     ) -> Self {
@@ -418,7 +422,7 @@ impl<C: Command + 'static> SyncManager<C> {
     /// Run the `SyncManager`
     async fn run(&mut self) {
         let f = self.others.read().len().wrapping_div(2);
-        while let Some((term, cmd, complete_chan, need_execute)) = self.sync_chan.recv().await {
+        while let Some((term, cmd, complete_chan)) = self.sync_chan.recv().await {
             let others: Vec<SocketAddr> = self
                 .others
                 .map_read(|others| others.iter().copied().collect());
@@ -460,7 +464,7 @@ impl<C: Command + 'static> SyncManager<C> {
                     });
 
                 if synced_cnt == f {
-                    let _r = complete_chan.send((index.numeric_cast(), need_execute));
+                    let _r = complete_chan.send(index.numeric_cast());
                     break;
                 }
             }
