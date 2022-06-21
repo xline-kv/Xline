@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::{collections::HashMap, sync::Arc};
 
 use clippy_utilities::Cast;
@@ -10,9 +11,9 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::{db::DB, index::Index};
 use crate::rpc::{
-    DeleteRangeRequest, DeleteRangeResponse, KeyValue, PutRequest, PutResponse, RangeRequest,
-    RangeResponse, Request, RequestOp, Response, ResponseHeader, ResponseOp, TxnRequest,
-    TxnResponse,
+    Compare, CompareResult, CompareTarget, DeleteRangeRequest, DeleteRangeResponse, KeyValue,
+    PutRequest, PutResponse, RangeRequest, RangeResponse, Request, RequestOp, Response,
+    ResponseHeader, ResponseOp, TargetUnion, TxnRequest, TxnResponse,
 };
 use crate::server::command::{
     Command, CommandResponse, ExecutionRequest, KeyRange, SyncRequest, SyncResponse,
@@ -48,7 +49,7 @@ struct KvStoreInner {
     /// Revision
     revision: Mutex<i64>,
     /// Speculative execution pool. Mapping from propose id to request
-    sp_exec_pool: Mutex<HashMap<ProposeId, Request>>,
+    sp_exec_pool: Mutex<HashMap<ProposeId, Vec<Request>>>,
 }
 
 impl KvStore {
@@ -125,43 +126,70 @@ impl KvStoreInner {
                 key, e
             )
         });
-        let request = request_op
-            .request
-            .unwrap_or_else(|| panic!("Received empty request, key is {:?}", key));
-        debug!("Receive request {:?}", request);
-        let _prev = self.sp_exec_pool.lock().insert(id, request.clone());
-        let response = match request {
-            Request::RequestRange(req) => {
-                debug!("Receive RangeRequest {:?}", req);
-                ResponseOp {
-                    response: Some(Response::ResponseRange(self.handle_range_request(&req))),
-                }
-            }
-            Request::RequestPut(req) => {
-                debug!("Receive PutRequest {:?}", req);
-                ResponseOp {
-                    response: Some(Response::ResponsePut(self.handle_put_request(&req))),
-                }
-            }
-            Request::RequestDeleteRange(req) => {
-                debug!("Receive DeleteRequest {:?}", req);
-                ResponseOp {
-                    response: Some(Response::ResponseDeleteRange(
-                        self.handle_delete_range_request(&req),
-                    )),
-                }
-            }
-            Request::RequestTxn(req) => {
-                debug!("Receive TxnRequest {:?}", req);
-                ResponseOp {
-                    response: Some(Response::ResponseTxn(Self::handle_txn_request(&req))),
-                }
-            }
-        };
+        let response = self.handle_request_op(&id, request_op);
         assert!(
             res_sender.send(CommandResponse::new(&response)).is_ok(),
             "Failed to send response"
         );
+    }
+
+    /// Handle `RequestOp`
+    fn handle_request_op(&self, id: &ProposeId, request_op: RequestOp) -> ResponseOp {
+        let request = request_op
+            .request
+            .unwrap_or_else(|| panic!("Received empty request"));
+        debug!("Receive request {:?}", request);
+        let (response, is_txn) = match request {
+            Request::RequestRange(ref req) => {
+                debug!("Receive RangeRequest {:?}", req);
+                (
+                    ResponseOp {
+                        response: Some(Response::ResponseRange(self.handle_range_request(req))),
+                    },
+                    false,
+                )
+            }
+            Request::RequestPut(ref req) => {
+                debug!("Receive PutRequest {:?}", req);
+                (
+                    ResponseOp {
+                        response: Some(Response::ResponsePut(self.handle_put_request(req))),
+                    },
+                    false,
+                )
+            }
+            Request::RequestDeleteRange(ref req) => {
+                debug!("Receive DeleteRequest {:?}", req);
+                (
+                    ResponseOp {
+                        response: Some(Response::ResponseDeleteRange(
+                            self.handle_delete_range_request(req),
+                        )),
+                    },
+                    false,
+                )
+            }
+            Request::RequestTxn(ref req) => {
+                debug!("Receive TxnRequest {:?}", req);
+                (
+                    ResponseOp {
+                        response: Some(Response::ResponseTxn(self.handle_txn_request(id, req))),
+                    },
+                    true,
+                )
+            }
+        };
+        if is_txn {
+            let _prev = self.sp_exec_pool.lock().entry(id.clone()).or_insert(vec![]);
+        } else {
+            let _prev = self
+                .sp_exec_pool
+                .lock()
+                .entry(id.clone())
+                .and_modify(|req| req.push(request.clone()))
+                .or_insert_with(|| vec![request.clone()]);
+        }
+        response
     }
 
     /// Get `KeyValue` of a range
@@ -240,7 +268,6 @@ impl KvStoreInner {
         response
     }
 
-    #[allow(clippy::pattern_type_mismatch)]
     /// Handle `DeleteRangeRequest`
     fn handle_delete_range_request(&self, req: &DeleteRangeRequest) -> DeleteRangeResponse {
         let mut response = DeleteRangeResponse::default();
@@ -256,16 +283,128 @@ impl KvStoreInner {
         });
         response
     }
+
+    /// Compare i64
+    fn compare_i64(val: i64, target: i64) -> CompareResult {
+        match val.cmp(&target) {
+            Ordering::Greater => CompareResult::Greater,
+            Ordering::Less => CompareResult::Less,
+            Ordering::Equal => CompareResult::Equal,
+        }
+    }
+
+    /// Compare vec<u8>
+    fn compare_vec_u8(val: &[u8], target: &[u8]) -> CompareResult {
+        match val.cmp(target) {
+            Ordering::Greater => CompareResult::Greater,
+            Ordering::Less => CompareResult::Less,
+            Ordering::Equal => CompareResult::Equal,
+        }
+    }
+
+    /// Check one `KeyValue` with `Compare`
+    fn compare_kv(cmp: &Compare, kv: &KeyValue) -> bool {
+        let result = match CompareTarget::from_i32(cmp.target) {
+            Some(CompareTarget::Version) => {
+                let rev = if let Some(TargetUnion::Version(v)) = cmp.target_union {
+                    v
+                } else {
+                    0
+                };
+                Self::compare_i64(kv.version, rev)
+            }
+            Some(CompareTarget::Create) => {
+                let rev = if let Some(TargetUnion::CreateRevision(v)) = cmp.target_union {
+                    v
+                } else {
+                    0
+                };
+                Self::compare_i64(kv.create_revision, rev)
+            }
+            Some(CompareTarget::Mod) => {
+                let rev = if let Some(TargetUnion::ModRevision(v)) = cmp.target_union {
+                    v
+                } else {
+                    0
+                };
+                Self::compare_i64(kv.mod_revision, rev)
+            }
+            Some(CompareTarget::Value) => {
+                let empty = vec![];
+                let val = if let Some(TargetUnion::Value(ref v)) = cmp.target_union {
+                    v
+                } else {
+                    &empty
+                };
+                Self::compare_vec_u8(&kv.value, val)
+            }
+            Some(CompareTarget::Lease) => {
+                let les = if let Some(TargetUnion::Lease(v)) = cmp.target_union {
+                    v
+                } else {
+                    0
+                };
+                Self::compare_i64(kv.mod_revision, les)
+            }
+            None => panic!("Invalid CompareTarget {:?}", cmp.target),
+        };
+
+        match CompareResult::from_i32(cmp.result) {
+            Some(CompareResult::Equal) => result == CompareResult::Equal,
+            Some(CompareResult::Greater) => result == CompareResult::Greater,
+            Some(CompareResult::Less) => result == CompareResult::Less,
+            Some(CompareResult::NotEqual) => result != CompareResult::Equal,
+            None => panic!("Invalid CompareResult {:?}", cmp.result),
+        }
+    }
+
+    /// Check result of a `Compare`
+    fn check_compare(&self, cmp: &Compare) -> bool {
+        let kvs = self.get_range(&cmp.key, &cmp.range_end);
+        if kvs.is_empty() {
+            if let Some(TargetUnion::Value(_)) = cmp.target_union {
+                false
+            } else {
+                Self::compare_kv(cmp, &KeyValue::default())
+            }
+        } else {
+            kvs.iter().all(|kv| Self::compare_kv(cmp, kv))
+        }
+    }
+
     /// Handle `TxnRequest`
-    fn handle_txn_request(_req: &TxnRequest) -> TxnResponse {
-        TxnResponse::default()
+    fn handle_txn_request(&self, id: &ProposeId, req: &TxnRequest) -> TxnResponse {
+        let success = req
+            .compare
+            .iter()
+            .all(|compare| self.check_compare(compare));
+
+        let responses = if success {
+            req.success
+                .iter()
+                .map(|op| self.handle_request_op(id, op.clone()))
+                .collect()
+        } else {
+            req.failure
+                .iter()
+                .map(|op| self.handle_request_op(id, op.clone()))
+                .collect()
+        };
+        TxnResponse {
+            header: Some(ResponseHeader {
+                revision: -1,
+                ..ResponseHeader::default()
+            }),
+            succeeded: success,
+            responses,
+        }
     }
 
     /// Sync a Command to storage and generate revision for Command.
     fn sync_cmd(&self, sync_req: SyncRequest) {
         debug!("Receive SyncRequest {:?}", sync_req);
         let (propose_id, res_sender) = sync_req.unpack();
-        let request = self
+        let requests = self
             .sp_exec_pool
             .lock()
             .remove(&propose_id)
@@ -275,41 +414,65 @@ impl KvStoreInner {
                     propose_id
                 );
             });
-        let revision = match request {
-            Request::RequestRange(req) => {
-                debug!("Sync RequestRange {:?}", req);
-                self.sync_range_request(&req)
-            }
-            Request::RequestPut(req) => {
-                debug!("Sync RequestPut {:?}", req);
-                self.sync_put_request(req)
-            }
-            Request::RequestDeleteRange(req) => {
-                debug!("Receive DeleteRequest {:?}", req);
-                self.sync_delete_range_request(req)
-            }
-            Request::RequestTxn(req) => {
-                debug!("Receive TxnRequest {:?}", req);
-                panic!("Unsupported")
-            }
-        };
+        let revision = self.sync_requests(requests);
         assert!(
             res_sender.send(SyncResponse::new(revision)).is_ok(),
             "Failed to send response"
         );
     }
 
-    /// Sync range request
-    fn sync_range_request(&self, _req: &RangeRequest) -> i64 {
-        *self.revision.lock()
+    /// Sync a vec of requests
+    fn sync_requests(&self, requests: Vec<Request>) -> i64 {
+        let revision = *self.revision.lock();
+        let next_revision = revision.overflow_add(1);
+        let mut sub_revision = 0;
+        let mut modify = false;
+
+        for request in requests {
+            let res = self.sync_request(request, next_revision, &mut sub_revision);
+            modify = modify || res;
+        }
+
+        if modify {
+            *self.revision.lock() = next_revision;
+            next_revision
+        } else {
+            revision
+        }
     }
 
-    /// Sync put request
-    fn sync_put_request(&self, req: PutRequest) -> i64 {
-        let mut revision = self.revision.lock();
-        *revision = (*revision).overflow_add(1);
+    /// Sync one `Request`
+    fn sync_request(&self, req: Request, revision: i64, sub_revision: &mut i64) -> bool {
+        match req {
+            Request::RequestRange(req) => {
+                debug!("Sync RequestRange {:?}", req);
+                Self::sync_range_request(&req)
+            }
+            Request::RequestPut(req) => {
+                debug!("Sync RequestPut {:?}", req);
+                self.sync_put_request(req, revision, sub_revision)
+            }
+            Request::RequestDeleteRange(req) => {
+                debug!("Receive DeleteRequest {:?}", req);
+                self.sync_delete_range_request(req, revision, sub_revision)
+            }
+            Request::RequestTxn(req) => {
+                debug!("Receive TxnRequest {:?}", req);
+                panic!("Sync for TxnRequest is impossible");
+            }
+        }
+    }
 
-        let new_rev = self.index.insert_or_update_revision(&req.key, *revision);
+    /// Sync `RangeRequest` and return of kvstore is changed
+    fn sync_range_request(_req: &RangeRequest) -> bool {
+        false
+    }
+
+    /// Sync `PutRequest` and return if kvstore is changed
+    fn sync_put_request(&self, req: PutRequest, revision: i64, sub_revision: &mut i64) -> bool {
+        let new_rev = self
+            .index
+            .insert_or_update_revision(&req.key, revision, sub_revision);
 
         let kv = KeyValue {
             key: req.key,
@@ -320,51 +483,51 @@ impl KvStoreInner {
             ..KeyValue::default()
         };
         let _prev = self.db.insert(new_rev.as_revision(), kv);
-        *revision
+        true
     }
 
-    /// Sync put request
-    fn sync_delete_range_request(&self, req: DeleteRangeRequest) -> i64 {
-        let mut revision = self.revision.lock();
-
+    /// Sync `DeleteRangeRequest` and return if kvstore is changed
+    fn sync_delete_range_request(
+        &self,
+        req: DeleteRangeRequest,
+        revision: i64,
+        sub_revision: &mut i64,
+    ) -> bool {
         let key = &req.key;
         let range_end = &req.range_end;
         match range_end.as_slice() {
             ONE_KEY => {
-                if let Some(rev) = self.index.delete_one(key, *revision) {
+                if let Some(rev) = self.index.delete_one(key, revision, sub_revision) {
                     debug!("sync_delete_range_request delete one: revisions {:?}", rev);
-                    *revision = (*revision).overflow_add(1);
                     let _kv = self.db.mark_deletions(&[rev]);
+                    true
+                } else {
+                    false
                 }
             }
             ALL_KEYS => {
-                let revisions = self.index.delete_all(*revision);
+                let revisions = self.index.delete_all(revision, sub_revision);
                 debug!(
                     "sync_delete_range_request delete all: revisions {:?}",
                     revisions
                 );
-                if !revisions.is_empty() {
-                    *revision = (*revision).overflow_add(1);
-                }
                 let _kv = self.db.mark_deletions(&revisions);
+                !revisions.is_empty()
             }
             _ => {
                 let range = KeyRange {
                     start: req.key,
                     end: req.range_end,
                 };
-                let revisions = self.index.delete_range(*revision, range);
+                let revisions = self.index.delete_range(range, revision, sub_revision);
                 debug!(
                     "sync_delete_range_request delete range: revisions {:?}",
                     revisions
                 );
-                if !revisions.is_empty() {
-                    *revision = (*revision).overflow_add(1);
-                }
                 let _kv = self.db.mark_deletions(&revisions);
+                !revisions.is_empty()
             }
-        };
-        *revision
+        }
     }
 }
 

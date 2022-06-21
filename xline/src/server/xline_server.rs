@@ -133,38 +133,39 @@ impl XlineRpcServer {
         propose_id: ProposeId,
         request: Request,
     ) -> Result<(CommandResponse, SyncResponse), ProposeError> {
-        let key_range = match request {
-            Request::RequestRange(ref req) => KeyRange {
+        let key_ranges = match request {
+            Request::RequestRange(ref req) => vec![KeyRange {
                 start: req.key.clone(),
                 end: req.range_end.clone(),
-            },
-            Request::RequestPut(ref req) => KeyRange {
+            }],
+            Request::RequestPut(ref req) => vec![KeyRange {
                 start: req.key.clone(),
                 end: vec![],
-            },
-            Request::RequestDeleteRange(ref req) => KeyRange {
+            }],
+            Request::RequestDeleteRange(ref req) => vec![KeyRange {
                 start: req.key.clone(),
                 end: req.range_end.clone(),
-            },
-            Request::RequestTxn(_) => {
-                panic!("Unsupported request");
-            }
+            }],
+            Request::RequestTxn(ref req) => req
+                .compare
+                .iter()
+                .map(|cmp| KeyRange {
+                    start: cmp.key.clone(),
+                    end: cmp.range_end.clone(),
+                })
+                .collect(),
         };
         let range_request_op = RequestOp {
             request: Some(request),
         };
-        let cmd = Command::new(
-            vec![key_range],
-            range_request_op.encode_to_vec(),
-            propose_id,
-        );
+        let cmd = Command::new(key_ranges, range_request_op.encode_to_vec(), propose_id);
         let response = self.client.propose_indexed(cmd.clone()).await;
         response
     }
 
     /// Update revision of `ResponseHeader`
-    fn update_header_revision(mut response: Response, revision: i64) -> Response {
-        match response {
+    fn update_header_revision(response: &mut Response, revision: i64) {
+        match *response {
             Response::ResponseRange(ref mut res) => {
                 if let Some(header) = res.header.as_mut() {
                     header.revision = revision;
@@ -184,9 +185,13 @@ impl XlineRpcServer {
                 if let Some(header) = res.header.as_mut() {
                     header.revision = revision;
                 }
+                for resp in &mut res.responses {
+                    if let Some(re) = resp.response.as_mut() {
+                        Self::update_header_revision(re, revision);
+                    }
+                }
             }
-        }
-        response
+        };
     }
 
     /// Generate propose id
@@ -212,10 +217,10 @@ impl Kv for XlineRpcServer {
 
         match result {
             Ok((res_op, sync_res)) => {
-                let res = XlineRpcServer::parse_response_op(res_op.decode());
+                let mut res = XlineRpcServer::parse_response_op(res_op.decode());
                 let revision = sync_res.revision();
                 debug!("Get revision {:?} for RangeRequest", revision);
-                let res = Self::update_header_revision(res, revision);
+                Self::update_header_revision(&mut res, revision);
                 if let Response::ResponseRange(response) = res {
                     Ok(tonic::Response::new(response))
                 } else {
@@ -241,10 +246,10 @@ impl Kv for XlineRpcServer {
             .await;
         match result {
             Ok((res_op, sync_res)) => {
-                let res = XlineRpcServer::parse_response_op(res_op.decode());
+                let mut res = XlineRpcServer::parse_response_op(res_op.decode());
                 let revision = sync_res.revision();
                 debug!("Get revision {:?} for PutRequest", revision);
-                let res = Self::update_header_revision(res, revision);
+                Self::update_header_revision(&mut res, revision);
                 if let Response::ResponsePut(response) = res {
                     Ok(tonic::Response::new(response))
                 } else {
@@ -273,10 +278,10 @@ impl Kv for XlineRpcServer {
             .await;
         match result {
             Ok((res_op, sync_res)) => {
-                let res = XlineRpcServer::parse_response_op(res_op.decode());
+                let mut res = XlineRpcServer::parse_response_op(res_op.decode());
                 let revision = sync_res.revision();
                 debug!("Get revision {:?} for PutRequest", revision);
-                let res = Self::update_header_revision(res, revision);
+                Self::update_header_revision(&mut res, revision);
                 if let Response::ResponseDeleteRange(response) = res {
                     Ok(tonic::Response::new(response))
                 } else {
@@ -296,10 +301,31 @@ impl Kv for XlineRpcServer {
         request: tonic::Request<TxnRequest>,
     ) -> Result<tonic::Response<TxnResponse>, tonic::Status> {
         debug!("Receive TxnRequest {:?}", request);
+        let txn_request = request.into_inner();
+        let propose_id = self.generate_propose_id();
+        let result = self
+            .propose(propose_id.clone(), Request::RequestTxn(txn_request))
+            .await;
+        match result {
+            Ok((res_op, sync_res)) => {
+                let mut res = XlineRpcServer::parse_response_op(res_op.decode());
+                let revision = sync_res.revision();
+                debug!("Get revision {:?} for PutRequest", revision);
+                Self::update_header_revision(&mut res, revision);
+                if let Response::ResponseTxn(response) = res {
+                    Ok(tonic::Response::new(response))
+                } else {
+                    panic!("Receive wrong response {:?}", res);
+                }
+            }
+            Err(e) => panic!("Failed to receive response from KV storage, {e}"),
+        }
+        /*
         Err(tonic::Status::new(
             tonic::Code::Unimplemented,
             "Not Implemented".to_owned(),
         ))
+        */
     }
 
     /// Compact compacts the event history in the etcd key-value store. The key-value
