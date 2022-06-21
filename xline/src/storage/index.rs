@@ -75,18 +75,23 @@ impl Index {
     }
 
     /// Insert or update `KeyRevision` of a key
-    pub(crate) fn insert_or_update_revision(&self, key: &[u8], revision: i64) -> KeyRevision {
+    pub(crate) fn insert_or_update_revision(
+        &self,
+        key: &[u8],
+        revision: i64,
+        sub_revision: &mut i64,
+    ) -> KeyRevision {
         let mut index = self.index.lock();
-        if let Some(revisions) = index.get_mut(key) {
+        let kv_rev = if let Some(revisions) = index.get_mut(key) {
             if let Some(rev) = revisions.last() {
                 let new_rev = if rev.is_deleted() {
-                    KeyRevision::new(revision, 1, revision, 0)
+                    KeyRevision::new(revision, 1, revision, *sub_revision)
                 } else {
                     KeyRevision::new(
                         rev.create_revision,
                         rev.version.overflow_add(1),
                         revision,
-                        0,
+                        *sub_revision,
                     )
                 };
                 revisions.push(new_rev);
@@ -95,35 +100,45 @@ impl Index {
                 panic!("Get empty revision list for key {:?}", key);
             }
         } else {
-            let new_rev = KeyRevision::new(revision, 1, revision, 0);
+            let new_rev = KeyRevision::new(revision, 1, revision, *sub_revision);
             let _prev_val = index.insert(key.to_vec(), vec![new_rev]);
             new_rev
-        }
+        };
+        *sub_revision = sub_revision.overflow_add(1);
+        kv_rev
     }
 
     /// Mark one key as deleted and return latest revision before deletion
-    pub(crate) fn delete_one(&self, key: &[u8], revision: i64) -> Option<(Revision, Revision)> {
-        let del_rev = KeyRevision::new_deletion(revision.overflow_add(1), 0);
+    pub(crate) fn delete_one(
+        &self,
+        key: &[u8],
+        revision: i64,
+        sub_revision: &mut i64,
+    ) -> Option<(Revision, Revision)> {
+        let del_rev = KeyRevision::new_deletion(revision, *sub_revision);
         self.index.lock().get_mut(key).and_then(|revisions| {
             Self::get_last_revision(revisions).map(|rev| {
                 revisions.push(del_rev);
+                *sub_revision = sub_revision.overflow_add(1);
                 (rev.as_revision(), del_rev.as_revision())
             })
         })
     }
 
     /// Mark all keys as deleted and return latest revision before deletion and deletion revision
-    pub(crate) fn delete_all(&self, revision: i64) -> Vec<(Revision, Revision)> {
-        let next_rev = revision.overflow_add(1);
-        let mut sub_rev = 0;
+    pub(crate) fn delete_all(
+        &self,
+        revision: i64,
+        sub_revision: &mut i64,
+    ) -> Vec<(Revision, Revision)> {
         self.index
             .lock()
             .values_mut()
             .filter_map(|revisions| {
                 Self::get_last_revision(revisions).map(|rev| {
-                    let del_rev = KeyRevision::new_deletion(next_rev, sub_rev);
+                    let del_rev = KeyRevision::new_deletion(revision, *sub_revision);
                     revisions.push(del_rev);
-                    sub_rev = sub_rev.overflow_add(1);
+                    *sub_revision = sub_revision.overflow_add(1);
                     (rev.as_revision(), del_rev.as_revision())
                 })
             })
@@ -131,17 +146,20 @@ impl Index {
     }
 
     /// Mark range of keys as deleted and return latest revision before deletion and deletion revision
-    pub(crate) fn delete_range(&self, revision: i64, range: KeyRange) -> Vec<(Revision, Revision)> {
-        let next_revision = revision.overflow_add(1);
-        let mut sub_rev = 0;
+    pub(crate) fn delete_range(
+        &self,
+        range: KeyRange,
+        revision: i64,
+        sub_revision: &mut i64,
+    ) -> Vec<(Revision, Revision)> {
         self.index
             .lock()
             .range_mut(range)
             .filter_map(|(_k, revisions)| {
                 Self::get_last_revision(revisions).map(|rev| {
-                    let del_rev = KeyRevision::new_deletion(next_revision, sub_rev);
+                    let del_rev = KeyRevision::new_deletion(revision, *sub_revision);
                     revisions.push(del_rev);
-                    sub_rev = sub_rev.overflow_add(1);
+                    *sub_revision = sub_revision.overflow_add(1);
                     (rev.as_revision(), del_rev.as_revision())
                 })
             })
