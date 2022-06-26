@@ -178,7 +178,7 @@ async fn main() -> Result<()> {
         server_args.self_ip_port,
     )
     .await;
-    //debug!("{:?}", server);
+    debug!("{:?}", server);
     server.start().await?;
     Ok(())
 }
