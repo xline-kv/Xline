@@ -70,10 +70,17 @@ mod leasepb {
 pub(crate) use self::etcdserverpb::{
     compare::{CompareResult, CompareTarget, TargetUnion},
     kv_server::{Kv, KvServer},
+    lease_server::{Lease, LeaseServer},
     request_op::Request,
     response_op::Response,
     CompactionRequest, CompactionResponse, Compare, DeleteRangeRequest, DeleteRangeResponse,
-    PutRequest, PutResponse, RangeRequest, RangeResponse, RequestOp, ResponseHeader, ResponseOp,
-    TxnRequest, TxnResponse,
+    LeaseGrantRequest, LeaseGrantResponse, LeaseKeepAliveRequest, LeaseKeepAliveResponse,
+    LeaseLeasesRequest, LeaseLeasesResponse, LeaseRevokeRequest, LeaseRevokeResponse,
+    LeaseTimeToLiveRequest, LeaseTimeToLiveResponse, PutRequest, PutResponse, RangeRequest,
+    RangeResponse, RequestOp, ResponseHeader, ResponseOp, TxnRequest, TxnResponse,
 };
 pub(crate) use self::mvccpb::KeyValue;
+pub(crate) use self::v3lockpb::{
+    lock_server::{Lock, LockServer},
+    LockRequest, LockResponse, UnlockRequest, UnlockResponse,
+};
