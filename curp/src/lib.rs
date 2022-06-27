@@ -130,4 +130,7 @@ mod message;
 /// Log
 mod log;
 
+/// The special keybased channel
+mod keybased_channel;
+
 pub use message::LogIndex;
