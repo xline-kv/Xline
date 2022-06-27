@@ -2,10 +2,11 @@ use std::{net::SocketAddr, thread, time::Duration};
 
 use async_trait::async_trait;
 use curp::{
+    client::Client,
     cmd::{Command, CommandExecutor, ConflictCheck, ProposeId},
     error::ExecuteError,
     server::RpcServerWrap,
-    LogIndex, client::Client,
+    LogIndex,
 };
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -104,7 +105,8 @@ impl TestExecutor {
     }
 }
 
-pub(crate) async fn create_servers_client() -> (Receiver<(TestCommandType, String)>, Client<TestCommand>) {
+pub(crate) async fn create_servers_client(
+) -> (Receiver<(TestCommandType, String)>, Client<TestCommand>) {
     let addrs: Vec<SocketAddr> = vec![
         "127.0.0.1:8765".parse().expect("parse address failed"),
         "127.0.0.1:8766".parse().expect("parse address failed"),
