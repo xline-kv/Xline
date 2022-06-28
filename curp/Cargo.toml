@@ -17,6 +17,7 @@ async-trait = "0.1.53"
 clippy-utilities = "0.2.0"
 event-listener = "2.5.2"
 futures = "0.3.21"
+itertools = "0.10.3"
 madsim = {version = "0.2.0-alpha.3", features = ["rpc", "logger", "macros"]}
 parking_lot = "0.12.1"
 serde = {version = "1.0.130", features = ["derive"]}
