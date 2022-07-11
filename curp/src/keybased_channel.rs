@@ -69,13 +69,13 @@ impl<K, M> KeysMessage<K, M> {
     }
 
     /// Get keys
-    fn keys(&self) -> &[K] {
+    pub(crate) fn keys(&self) -> &[K] {
         self.inner.keys.as_ref()
     }
 
     /// Get the message
     #[allow(dead_code)]
-    fn message(&self) -> &M {
+    pub(crate) fn message(&self) -> &M {
         &self.inner.message
     }
 }
