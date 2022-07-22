@@ -133,4 +133,7 @@ mod log;
 /// The special keybased channel
 mod keybased_channel;
 
+/// Sync manager to sync command to all other peers
+mod sync_manager;
+
 pub use message::LogIndex;
