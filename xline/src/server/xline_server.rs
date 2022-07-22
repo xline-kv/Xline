@@ -4,7 +4,7 @@ use anyhow::Result;
 //use log::debug;
 //use prost::Message;
 
-use curp::{client::Client, server::RpcServerWrap};
+use curp::{client::Client, server::Rpc};
 use tonic::transport::Server;
 
 use crate::rpc::{
@@ -72,7 +72,7 @@ impl XlineServer {
         let peers_clone = peers.clone();
         let _handle = tokio::spawn(async move {
             let cmd_executor = CommandExecutor::new(storage_clone);
-            RpcServerWrap::<Command, CommandExecutor>::run(
+            Rpc::<Command, CommandExecutor>::run(
                 is_leader,
                 0,
                 peers_clone,

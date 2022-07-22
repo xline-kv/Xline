@@ -11,7 +11,15 @@ pub trait Command:
 {
     /// K (key) is used to tell confliction
     /// The key can be a single key or a key range
-    type K: Eq + Hash + Send + Sync + Clone + Serialize + DeserializeOwned + ConflictCheck;
+    type K: std::fmt::Debug
+        + Eq
+        + Hash
+        + Send
+        + Sync
+        + Clone
+        + Serialize
+        + DeserializeOwned
+        + ConflictCheck;
 
     /// Execution result
     type ER: std::fmt::Debug + Send + Sync + Clone + Serialize + DeserializeOwned;

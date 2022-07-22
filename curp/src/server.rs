@@ -10,10 +10,7 @@ use clippy_utilities::{NumericCast, OverflowArithmetic};
 use futures::{stream::FuturesUnordered, FutureExt, StreamExt};
 use madsim::net::Endpoint;
 use parking_lot::{Mutex, MutexGuard, RwLock};
-use tokio::{
-    sync::mpsc::{self, error::SendError},
-    task::JoinHandle,
-};
+use tokio::{sync::oneshot, task::JoinHandle};
 use tracing::log::warn;
 
 use crate::{
@@ -34,28 +31,29 @@ pub(crate) static DEFAULT_SERVER_PORT: u16 = 12345;
 static SYNC_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// The Rpc Server to handle rpc requests
+/// This Wrapper is introduced due to the madsim rpc lib
 #[derive(Clone, Debug)]
-pub struct RpcServerWrap<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
+pub struct Rpc<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
     /// The inner server wrappped in an Arc so that we share state while clone the rpc wrapper
-    inner: Arc<Server<C, CE>>,
+    inner: Arc<Protocol<C, CE>>,
 }
 
 #[allow(missing_docs)]
 #[madsim::service]
-impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> RpcServerWrap<C, CE> {
-    /// Handle propose request
+impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
+    /// Handle propose request, from client
     #[rpc]
     async fn propose(&self, p: Propose<C>) -> ProposeResponse<C> {
         self.inner.propose(p).await
     }
 
-    /// Handle sync request
+    /// Handle sync request, from server
     #[rpc]
     async fn sync(&self, sc: SyncCommand<C>) -> SyncResponse<C> {
         self.inner.sync(sc).await
     }
 
-    /// Handle wait_sync request
+    /// Handle wait_sync request, from client
     #[rpc]
     async fn wait_sync(&self, sc: WaitSynced<C>) -> WaitSyncedResponse<C> {
         self.inner.wait_sync(sc).await
@@ -74,7 +72,7 @@ impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> RpcServerWrap<C, CE
         let rx_ep = Endpoint::bind(format!("0.0.0.0:{port}")).await?;
         let tx_ep = Endpoint::bind("127.0.0.1:0").await?;
         let server = Self {
-            inner: Arc::new(Server::new(is_leader, term, tx_ep, &others, executor)),
+            inner: Arc::new(Protocol::new(is_leader, term, tx_ep, &others, executor)),
         };
         Self::serve_on(server, rx_ep)
             .await
@@ -106,41 +104,6 @@ where
     }
 }
 
-/// "sync task complete" message channel sender
-struct LogSyncCompleteSender<C>
-where
-    C: Command,
-{
-    /// The inner mpsc sender
-    tx: mpsc::Sender<SyncCompleteMessage<C>>,
-}
-
-impl<C: Command> Clone for LogSyncCompleteSender<C> {
-    fn clone(&self) -> Self {
-        Self {
-            tx: self.tx.clone(),
-        }
-    }
-}
-
-impl<C> LogSyncCompleteSender<C>
-where
-    C: Command,
-{
-    /// Create a new Sender
-    fn new(tx: mpsc::Sender<SyncCompleteMessage<C>>) -> Self {
-        Self { tx }
-    }
-
-    /// Send the `KeysMessage`
-    async fn send(
-        &self,
-        keys_msg: SyncCompleteMessage<C>,
-    ) -> Result<(), SendError<SyncCompleteMessage<C>>> {
-        self.tx.send(keys_msg).await
-    }
-}
-
 /// The message sent to the `SyncManager`
 struct SyncMessage<C>
 where
@@ -148,10 +111,10 @@ where
 {
     /// Term number
     term: TermNum,
-    /// Command
-    cmd: C,
-    /// The sync task compelte sender
-    next_step: LogSyncCompleteSender<C>,
+    /// Command, may be taken out
+    cmd: Option<Box<C>>,
+    /// The sync task compelte hook, may be taken out
+    sync_comp: Option<oneshot::Sender<SyncCompleteMessage<C>>>,
 }
 
 impl<C> SyncMessage<C>
@@ -159,12 +122,27 @@ where
     C: Command,
 {
     /// Create a new `SyncMessage`
-    fn new(term: TermNum, cmd: C, next_step: LogSyncCompleteSender<C>) -> Self {
+    fn new(term: TermNum, cmd: C, sync_comp: oneshot::Sender<SyncCompleteMessage<C>>) -> Self {
         Self {
             term,
-            cmd,
-            next_step,
+            cmd: Some(Box::new(cmd)),
+            sync_comp: Some(sync_comp),
         }
+    }
+
+    /// Take all values from the message
+    ///
+    /// # Panic
+    /// If the function is called more than once, it will panic
+    #[allow(clippy::expect_used)]
+    fn take_all(&mut self) -> (TermNum, Box<C>, oneshot::Sender<SyncCompleteMessage<C>>) {
+        (
+            self.term,
+            self.cmd.take().expect("cmd should only be taken once"),
+            self.sync_comp
+                .take()
+                .expect("sync_comp should only be taken once"),
+        )
     }
 }
 
@@ -173,7 +151,7 @@ where
 struct SyncedTaskJoinHandle<C: Command + 'static>(JoinHandle<WaitSyncedResponse<C>>);
 
 /// The server that handles client request and server consensus protocol
-pub struct Server<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
+pub struct Protocol<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
     /// the server role
     role: RwLock<ServerRole>,
     /// Current term
@@ -192,7 +170,7 @@ pub struct Server<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
     synced_events: Mutex<HashMap<ProposeId, SyncedTaskJoinHandle<C>>>,
 }
 
-impl<C, CE> Debug for Server<C, CE>
+impl<C, CE> Debug for Protocol<C, CE>
 where
     C: Command,
     CE: CommandExecutor<C>,
@@ -222,7 +200,7 @@ enum ServerRole {
     Leader,
 }
 
-impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Server<C, CE> {
+impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
     /// Create a new server instance
     #[must_use]
     #[inline]
@@ -282,22 +260,18 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Server<C, CE> {
 
     /// Send sync event to the `SyncManager`, it's not a blocking function
     fn sync_to_others(&self, term: TermNum, cmd: &C, need_execute: bool) -> bool {
-        let (complete_sender, mut rx) = mpsc::channel(1);
+        let (complete_sender, sync_comp_rx) = oneshot::channel();
 
         let complete_notify = self.sync_chan.send(
             cmd.keys(),
-            SyncMessage::new(
-                term,
-                cmd.clone(),
-                LogSyncCompleteSender::new(complete_sender),
-            ),
+            SyncMessage::new(term, cmd.clone(), complete_sender),
         );
         let spec = Arc::<_>::clone(&self.spec);
         let cmd2exe = cmd.clone();
         let dispatch_executor = Arc::<CE>::clone(&self.cmd_executor);
 
         let handle = tokio::spawn(async move {
-            let index_result = rx.recv().await;
+            let sync_compl_result = sync_comp_rx.await;
             let cmd_id = cmd2exe.id().clone();
             if Self::spec_remove_cmd(&spec, &cmd_id).is_none() {
                 unreachable!("{:?} should be in the spec pool", cmd_id);
@@ -315,8 +289,8 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Server<C, CE> {
                     })
             };
 
-            match index_result {
-                Some(reply) => {
+            match sync_compl_result {
+                Ok(reply) => {
                     let (index, keys_msg) = (reply.log_index, reply.keys_msg);
                     let after_sync_result = if need_execute {
                         match cmd2exe.execute(dispatch_executor.as_ref()).await {
@@ -332,8 +306,8 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Server<C, CE> {
                     let _ignore = complete_notify.send(keys_msg);
                     after_sync_result
                 }
-                // TODO: handle the sync task fail
-                None => unreachable!("{:?} sync task failed", cmd_id),
+                // TODO: handle the sync task stop, usually we should stop working
+                Err(e) => unreachable!("{:?} sync task failed, {}", cmd_id, e),
             }
         });
         self.synced_events.map_lock(|mut events| {
@@ -474,7 +448,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Server<C, CE> {
     }
 }
 
-impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Drop for Server<C, CE> {
+impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Drop for Protocol<C, CE> {
     #[inline]
     fn drop(&mut self) {
         self.sm_handle.abort();
@@ -514,19 +488,22 @@ impl<C: Command + 'static> SyncManager<C> {
         let f = self.others.read().len().wrapping_div(2);
 
         loop {
-            let keys_msg = self.sync_chan.async_recv().await;
-            let (cmd, term, complete_chan) = (
-                &keys_msg.message().cmd,
-                keys_msg.message().term,
-                keys_msg.message().next_step.clone(),
-            );
+            let sync_msg = self.sync_chan.async_recv().await;
+            let (term, cmd, sync_comp) =
+                if let Some(real_msg) = sync_msg.map_msg(SyncMessage::take_all) {
+                    real_msg
+                } else {
+                    // FIXME: should panic here?
+                    warn!("empty sync message, should not happen");
+                    continue;
+                };
 
             let others: Vec<SocketAddr> = self
                 .others
                 .map_read(|others| others.iter().copied().collect());
 
             let index = self.log.map_lock(|mut log| {
-                log.push(LogEntry::new(term, cmd.clone(), EntryStatus::Unsynced));
+                log.push(LogEntry::new(term, *(cmd.clone()), EntryStatus::Unsynced));
                 // length must be larger than 1
                 log.len().wrapping_sub(1)
             });
@@ -534,7 +511,7 @@ impl<C: Command + 'static> SyncManager<C> {
             let rpcs = others.iter().map(|addr| {
                 self.ep.call_timeout(
                     *addr,
-                    SyncCommand::new(term, index.numeric_cast(), cmd.clone()),
+                    SyncCommand::new(term, index.numeric_cast(), *(cmd.clone())),
                     SYNC_TIMEOUT,
                 )
             });
@@ -561,9 +538,8 @@ impl<C: Command + 'static> SyncManager<C> {
                     });
 
                 if synced_cnt == f {
-                    let _r = complete_chan
-                        .send(SyncCompleteMessage::new(index.numeric_cast(), keys_msg))
-                        .await;
+                    let _r =
+                        sync_comp.send(SyncCompleteMessage::new(index.numeric_cast(), sync_msg));
                     break;
                 }
             }
