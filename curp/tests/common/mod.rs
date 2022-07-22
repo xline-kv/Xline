@@ -5,7 +5,7 @@ use curp::{
     client::Client,
     cmd::{Command, CommandExecutor, ConflictCheck, ProposeId},
     error::ExecuteError,
-    server::RpcServerWrap,
+    server::Rpc,
     LogIndex,
 };
 use itertools::Itertools;
@@ -118,19 +118,19 @@ pub(crate) async fn create_servers_client(
     let addr1 = vec![addrs[1], addrs[2]];
     tokio::spawn(async move {
         let exe = TestExecutor::new(tx1);
-        RpcServerWrap::<TestCommand, TestExecutor>::run(true, 0, addr1, Some(8765), exe).await
+        Rpc::<TestCommand, TestExecutor>::run(true, 0, addr1, Some(8765), exe).await
     });
     let tx2 = tx.clone();
     let addr2 = vec![addrs[0], addrs[2]];
     tokio::spawn(async move {
         let exe = TestExecutor::new(tx2);
-        RpcServerWrap::<TestCommand, TestExecutor>::run(false, 0, addr2, Some(8766), exe).await
+        Rpc::<TestCommand, TestExecutor>::run(false, 0, addr2, Some(8766), exe).await
     });
     let tx3 = tx.clone();
     let addr3 = vec![addrs[0], addrs[1]];
     tokio::spawn(async move {
         let exe = TestExecutor::new(tx3);
-        RpcServerWrap::<TestCommand, TestExecutor>::run(false, 0, addr3, Some(8767), exe).await
+        Rpc::<TestCommand, TestExecutor>::run(false, 0, addr3, Some(8767), exe).await
     });
 
     thread::sleep(Duration::from_secs(1));

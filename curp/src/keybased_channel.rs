@@ -8,8 +8,10 @@ use clippy_utilities::OverflowArithmetic;
 use event_listener::{Event, EventListener};
 use itertools::Itertools;
 use parking_lot::Mutex;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
-use tokio::task::JoinHandle;
+use tokio::{
+    sync::mpsc::{unbounded_channel, UnboundedSender},
+    task::JoinHandle,
+};
 
 use crate::cmd::ConflictCheck;
 
@@ -18,13 +20,27 @@ struct KeysMessageInner<K, M> {
     /// The keys
     keys: Vec<K>,
     /// The message
-    message: M,
+    msg: Mutex<Option<M>>,
 }
 
 impl<K, M> KeysMessageInner<K, M> {
     /// Create a new `KeysMessageInner` structure
-    fn new(keys: Vec<K>, message: M) -> Self {
-        Self { keys, message }
+    fn new(keys: Vec<K>, msg: M) -> Self {
+        Self {
+            keys,
+            msg: Mutex::new(Some(msg)),
+        }
+    }
+
+    /// Access modify data in the message via a closure
+    fn map_msg<R, F: FnOnce(&mut M) -> R>(&self, f: F) -> Option<R> {
+        let mut msg_guard = self.msg.lock();
+        msg_guard.as_mut().map(f)
+    }
+
+    /// Get keys ref
+    fn keys(&self) -> &[K] {
+        self.keys.as_ref()
     }
 }
 
@@ -36,14 +52,13 @@ pub(crate) struct KeysMessage<K, M> {
 
 impl<K, M> Hash for KeysMessage<K, M> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        Arc::<KeysMessageInner<K, M>>::as_ptr(&self.inner).hash(state);
+        Arc::<_>::as_ptr(&self.inner).hash(state);
     }
 }
 
 impl<K, M> PartialEq for KeysMessage<K, M> {
     fn eq(&self, other: &Self) -> bool {
-        Arc::<KeysMessageInner<K, M>>::as_ptr(&self.inner)
-            == Arc::<KeysMessageInner<K, M>>::as_ptr(&other.inner)
+        Arc::<_>::as_ptr(&self.inner) == Arc::<_>::as_ptr(&other.inner)
     }
 }
 
@@ -68,15 +83,14 @@ impl<K, M> KeysMessage<K, M> {
         }
     }
 
-    /// Get keys
+    /// modify data in the message if necessary
     pub(crate) fn keys(&self) -> &[K] {
-        self.inner.keys.as_ref()
+        self.inner.keys()
     }
 
-    /// Get the message
-    #[allow(dead_code)]
-    pub(crate) fn message(&self) -> &M {
-        &self.inner.message
+    /// Access modify data in the message via a closure
+    pub(crate) fn map_msg<R, F: FnOnce(&mut M) -> R>(&self, f: F) -> Option<R> {
+        self.inner.map_msg(f)
     }
 }
 
@@ -338,16 +352,22 @@ mod test {
         tx.send(&["2".to_owned()], "C".to_owned());
         let resv_result = rx.recv_timeout(Duration::from_secs(1));
         assert!(resv_result.is_some());
-        let msg = resv_result.unwrap();
-        assert_eq!(msg.message(), "A");
+        let first_msg = resv_result.unwrap();
+        first_msg.map_msg(|msg| {
+            assert_eq!(msg, "A");
+        });
 
         let second_msg = rx.recv();
-        assert_eq!(second_msg.message(), "C");
+        second_msg.map_msg(|msg| {
+            assert_eq!(msg, "C");
+        });
 
         assert!(rx.recv_timeout(Duration::from_secs(1)).is_none());
-        assert!(complete.send(msg).is_ok());
+        assert!(complete.send(first_msg).is_ok());
         let third_msg = rx.recv();
-        assert_eq!(third_msg.message(), "B");
+        third_msg.map_msg(|msg| {
+            assert_eq!(msg, "B");
+        });
     }
 
     #[allow(clippy::unwrap_used, unused_results)]
@@ -357,20 +377,24 @@ mod test {
 
         let complete = tx.send(&["1".to_owned()], "A".to_owned());
         tx.send(&["1".to_owned()], "B".to_owned());
-        let msg = rx.recv();
-        assert_eq!(msg.message(), "A");
+        let first_msg = rx.recv();
+        first_msg.map_msg(|msg| {
+            assert_eq!(msg, "A");
+        });
 
         let (oneshot_tx, mut oneshot_rx) = tokio::sync::oneshot::channel();
         let _ignore = tokio::spawn(async move {
             let second_msg = rx.async_recv().await;
-            assert_eq!(second_msg.message(), "B");
+            second_msg.map_msg(|msg| {
+                assert_eq!(msg, "B");
+            });
 
             let _ignore = oneshot_tx.send(1);
         });
 
         sleep(Duration::from_secs(1));
         assert!(oneshot_rx.try_recv().is_err());
-        assert!(complete.send(msg).is_ok());
+        assert!(complete.send(first_msg).is_ok());
 
         let oneshot_result = oneshot_rx.await;
         assert!(oneshot_result.is_ok());
