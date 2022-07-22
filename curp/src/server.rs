@@ -3,32 +3,29 @@ use std::{
     fmt::Debug,
     net::SocketAddr,
     sync::Arc,
-    time::Duration,
 };
 
-use clippy_utilities::{NumericCast, OverflowArithmetic};
-use futures::{stream::FuturesUnordered, FutureExt, StreamExt};
+use clippy_utilities::NumericCast;
+use futures::FutureExt;
 use madsim::net::Endpoint;
 use parking_lot::{Mutex, MutexGuard, RwLock};
 use tokio::{sync::oneshot, task::JoinHandle};
-use tracing::log::warn;
 
 use crate::{
     cmd::{Command, CommandExecutor, ProposeId},
     error::{ProposeError, ServerError},
-    keybased_channel::{self, KeybasedChannelReceiver, KeybasedChannelSender, KeysMessage},
+    keybased_channel::{self, KeybasedChannelSender},
     log::{EntryStatus, LogEntry},
     message::{
-        LogIndex, Propose, ProposeResponse, SyncCommand, SyncResponse, TermNum, WaitSynced,
+        Propose, ProposeResponse, SyncCommand, SyncResponse, TermNum, WaitSynced,
         WaitSyncedResponse,
     },
-    util::{MutexMap, RwLockMap},
+    sync_manager::{SyncManager, SyncMessage},
+    util::MutexMap,
 };
 
 /// Default server serving port
 pub(crate) static DEFAULT_SERVER_PORT: u16 = 12345;
-/// Sync request default timeout
-static SYNC_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// The Rpc Server to handle rpc requests
 /// This Wrapper is introduced due to the madsim rpc lib
@@ -77,72 +74,6 @@ impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
         Self::serve_on(server, rx_ep)
             .await
             .map_err(|e| ServerError::RpcServiceError(format!("{e}")))
-    }
-}
-
-/// "sync task complete" message
-struct SyncCompleteMessage<C>
-where
-    C: Command,
-{
-    /// The log index
-    log_index: LogIndex,
-    /// The keys message
-    keys_msg: KeysMessage<C::K, SyncMessage<C>>,
-}
-
-impl<C> SyncCompleteMessage<C>
-where
-    C: Command,
-{
-    /// Create a new `SyncCompleteMessage`
-    fn new(log_index: LogIndex, keys_msg: KeysMessage<C::K, SyncMessage<C>>) -> Self {
-        Self {
-            log_index,
-            keys_msg,
-        }
-    }
-}
-
-/// The message sent to the `SyncManager`
-struct SyncMessage<C>
-where
-    C: Command,
-{
-    /// Term number
-    term: TermNum,
-    /// Command, may be taken out
-    cmd: Option<Box<C>>,
-    /// The sync task compelte hook, may be taken out
-    sync_comp: Option<oneshot::Sender<SyncCompleteMessage<C>>>,
-}
-
-impl<C> SyncMessage<C>
-where
-    C: Command,
-{
-    /// Create a new `SyncMessage`
-    fn new(term: TermNum, cmd: C, sync_comp: oneshot::Sender<SyncCompleteMessage<C>>) -> Self {
-        Self {
-            term,
-            cmd: Some(Box::new(cmd)),
-            sync_comp: Some(sync_comp),
-        }
-    }
-
-    /// Take all values from the message
-    ///
-    /// # Panic
-    /// If the function is called more than once, it will panic
-    #[allow(clippy::expect_used)]
-    fn take_all(&mut self) -> (TermNum, Box<C>, oneshot::Sender<SyncCompleteMessage<C>>) {
-        (
-            self.term,
-            self.cmd.take().expect("cmd should only be taken once"),
-            self.sync_comp
-                .take()
-                .expect("sync_comp should only be taken once"),
-        )
     }
 }
 
@@ -291,7 +222,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
 
             match sync_compl_result {
                 Ok(reply) => {
-                    let (index, keys_msg) = (reply.log_index, reply.keys_msg);
+                    let (index, keys_msg) = (reply.log_index(), reply.keys_msg());
                     let after_sync_result = if need_execute {
                         match cmd2exe.execute(dispatch_executor.as_ref()).await {
                             Ok(er) => call_after_sync(index, Some(er)).await,
@@ -452,97 +383,5 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Drop for Protocol<C
     #[inline]
     fn drop(&mut self) {
         self.sm_handle.abort();
-    }
-}
-
-/// The manager to sync commands to other follower servers
-struct SyncManager<C: Command + 'static> {
-    /// The endpoint to call rpc to other servers
-    ep: Endpoint,
-    /// Get cmd sync request from speculative command
-    sync_chan: KeybasedChannelReceiver<C::K, SyncMessage<C>>,
-    /// Other server address
-    others: Arc<RwLock<Vec<SocketAddr>>>,
-    /// Consensus log
-    log: Arc<Mutex<Vec<LogEntry<C>>>>,
-}
-
-impl<C: Command + 'static> SyncManager<C> {
-    /// Create a `SyncedManager`
-    fn new(
-        ep: Endpoint,
-        cmd_chan: KeybasedChannelReceiver<C::K, SyncMessage<C>>,
-        others: Arc<RwLock<Vec<SocketAddr>>>,
-        log: Arc<Mutex<Vec<LogEntry<C>>>>,
-    ) -> Self {
-        Self {
-            ep,
-            sync_chan: cmd_chan,
-            others,
-            log,
-        }
-    }
-
-    /// Run the `SyncManager`
-    async fn run(&mut self) {
-        let f = self.others.read().len().wrapping_div(2);
-
-        loop {
-            let sync_msg = self.sync_chan.async_recv().await;
-            let (term, cmd, sync_comp) =
-                if let Some(real_msg) = sync_msg.map_msg(SyncMessage::take_all) {
-                    real_msg
-                } else {
-                    // FIXME: should panic here?
-                    warn!("empty sync message, should not happen");
-                    continue;
-                };
-
-            let others: Vec<SocketAddr> = self
-                .others
-                .map_read(|others| others.iter().copied().collect());
-
-            let index = self.log.map_lock(|mut log| {
-                log.push(LogEntry::new(term, *(cmd.clone()), EntryStatus::Unsynced));
-                // length must be larger than 1
-                log.len().wrapping_sub(1)
-            });
-
-            let rpcs = others.iter().map(|addr| {
-                self.ep.call_timeout(
-                    *addr,
-                    SyncCommand::new(term, index.numeric_cast(), *(cmd.clone())),
-                    SYNC_TIMEOUT,
-                )
-            });
-
-            let mut rpcs: FuturesUnordered<_> = rpcs.collect();
-            let mut synced_cnt = 0;
-
-            while let Some(resp) = rpcs.next().await {
-                let _result = resp
-                    .map_err(|err| {
-                        warn!("rpc error when sending `Sync` request, {err}");
-                    })
-                    .map(|r| {
-                        match r {
-                            SyncResponse::Synced => {
-                                synced_cnt = synced_cnt.overflow_add(1);
-                            }
-                            SyncResponse::WrongTerm(_)
-                            | SyncResponse::EntryNotEmpty(_)
-                            | SyncResponse::PrevNotReady(_) => {
-                                // todo
-                            }
-                        }
-                    });
-
-                if synced_cnt == f {
-                    let _r =
-                        sync_comp.send(SyncCompleteMessage::new(index.numeric_cast(), sync_msg));
-                    break;
-                }
-            }
-        }
     }
 }
