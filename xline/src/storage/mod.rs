@@ -10,4 +10,7 @@ pub(crate) mod revision;
 /// Index module
 pub(crate) mod index;
 
+/// KV watcher module
+pub(crate) mod kvwatcher;
+
 pub(crate) use self::kvstore::KvStore;

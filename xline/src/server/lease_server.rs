@@ -15,6 +15,9 @@ use crate::{
     storage::KvStore,
 };
 
+/// Default channel size
+const CHANNEL_SIZE: usize = 128;
+
 /// Lease Server
 //#[derive(Debug)]
 #[allow(dead_code)] // Remove this after feature is completed
@@ -74,12 +77,12 @@ impl Lease for LeaseServer {
         debug!("Receive LeaseKeepAliveRequest {:?}", request);
         // TODO: Temporary solution
         let mut req_stream = request.into_inner();
-        let (tx, rx) = mpsc::channel(100);
+        let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
         let _hd = tokio::spawn(async move {
             while let Some(req_result) = req_stream.next().await {
                 match req_result {
                     Ok(req) => {
-                        debug!("receive LeaseKeepAliveRequest {:?}", req);
+                        debug!("Receive LeaseKeepAliveRequest {:?}", req);
                         assert!(
                             tx.send(Ok(LeaseKeepAliveResponse {
                                 id: req.id,
@@ -92,7 +95,7 @@ impl Lease for LeaseServer {
                         );
                     }
                     Err(e) => {
-                        warn!("Receive LeaseKeepAliveRequest errer {:?}", e);
+                        warn!("Receive LeaseKeepAliveRequest error {:?}", e);
                         break;
                         //panic!("Failed to receive LeaseKeepAliveRequest {:?}", e),
                     }

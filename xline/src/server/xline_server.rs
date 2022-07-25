@@ -9,6 +9,7 @@ use tonic::transport::Server;
 
 use crate::rpc::{
     KvServer as RpcKvServer, LeaseServer as RpcLeaseServer, LockServer as RpcLockServer,
+    WatchServer as RpcWatchServer,
 };
 
 use super::{
@@ -16,6 +17,7 @@ use super::{
     kv_server::KvServer,
     lease_server::LeaseServer,
     lock_server::LockServer,
+    watch_server::WatchServer,
 };
 
 use crate::storage::KvStore;
@@ -110,11 +112,13 @@ impl XlineServer {
             Arc::clone(&self.client),
             self.name.clone(),
         );
+        let watch_server = WatchServer::new(self.storage.kv_watcher());
 
         Ok(Server::builder()
             .add_service(RpcLockServer::new(lock_server))
             .add_service(RpcKvServer::new(kv_server))
             .add_service(RpcLeaseServer::new(lease_server))
+            .add_service(RpcWatchServer::new(watch_server))
             .serve(self.addr)
             .await?)
     }

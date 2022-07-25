@@ -63,6 +63,7 @@ impl DB {
             .for_each(|(kv, &(_, new_rev))| {
                 let del_kv = KeyValue {
                     key: kv.key.clone(),
+                    mod_revision: new_rev.revision(),
                     ..KeyValue::default()
                 };
                 let _prev_val = storage.insert(new_rev, del_kv);
