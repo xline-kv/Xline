@@ -27,6 +27,11 @@ impl Revision {
             sub_revision,
         }
     }
+
+    /// Get revision
+    pub(crate) fn revision(&self) -> i64 {
+        self.revision
+    }
 }
 
 impl KeyRevision {

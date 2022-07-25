@@ -20,32 +20,15 @@ impl Index {
             index: Mutex::new(BTreeMap::new()),
         }
     }
+
     /// Get last `KeyRevision` if the key is not deleted
     fn get_last_revision(rvs: &[KeyRevision]) -> Option<KeyRevision> {
         assert!(!rvs.is_empty(), "Get empty revision list");
         rvs.last().filter(|index| !index.is_deleted()).copied()
     }
 
-    /*
-    /// Get `KeyRevison` of a key return `None` if key doesn't exist or is deleted
-    pub(crate) fn get_one_keyrevision(&self, key: &[u8]) -> Option<KeyRevision> {
-        self.index
-            .lock()
-            .get(key)
-            .and_then(|revisions| Self::get_last_revision(revisions))
-    }
-
-    /// Get last `KeyRevison` of a key return `None` if key doesn't exist
-    pub(crate) fn get_last_keyrevision(&self, key: &[u8]) -> Option<KeyRevision> {
-        self.index
-            .lock()
-            .get(key)
-            .and_then(|revisions| revisions.last())
-            .cloned()
-    }
-    */
-
-    /// Get `Revison` of a key
+    // TODO refactor to combine get_xxx and get_xxx_from_rev
+    /// Get `Revision` of a key
     pub(crate) fn get_one(&self, key: &[u8]) -> Option<Revision> {
         self.index.lock().get(key).and_then(|revisions| {
             Self::get_last_revision(revisions).map(|kv_rev| kv_rev.as_revision())
@@ -71,6 +54,40 @@ impl Index {
             .filter_map(|(_k, indexes)| {
                 Self::get_last_revision(indexes).map(|kv_rev| kv_rev.as_revision())
             })
+            .collect()
+    }
+
+    /// Filter out `KeyRevision` that is less than one revision and convert to `Revision`
+    fn filter_revision(revs: &[KeyRevision], revision: i64) -> Vec<Revision> {
+        revs.iter()
+            .filter(|rev| rev.mod_revision >= revision)
+            .map(KeyRevision::as_revision)
+            .collect()
+    }
+
+    /// Get `Revision` of a key start from one revision
+    pub(crate) fn get_one_from_rev(&self, key: &[u8], revision: i64) -> Vec<Revision> {
+        match self.index.lock().get(key) {
+            Some(revs) => Self::filter_revision(revs, revision),
+            None => vec![],
+        }
+    }
+
+    /// Get `Revision` of a range of keys from one revision
+    pub(crate) fn get_range_from_rev(&self, range: KeyRange, revision: i64) -> Vec<Revision> {
+        self.index
+            .lock()
+            .range(range)
+            .flat_map(|(_k, revs)| Self::filter_revision(revs, revision))
+            .collect()
+    }
+
+    /// Get `Revision` of all keys from one revision
+    pub(crate) fn get_all_from_rev(&self, revision: i64) -> Vec<Revision> {
+        self.index
+            .lock()
+            .values()
+            .flat_map(|revs| Self::filter_revision(revs, revision))
             .collect()
     }
 

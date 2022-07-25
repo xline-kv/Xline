@@ -6,6 +6,8 @@ mod kv_server;
 mod lease_server;
 /// Xline lock server
 mod lock_server;
+/// Xline watch server
+mod watch_server;
 /// Xline server
 pub(crate) mod xline_server;
 
