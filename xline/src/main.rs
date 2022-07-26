@@ -1,6 +1,6 @@
 //! Xline
 #![deny(
-    // The following are allowed by default lints according to
+    // The following are allowed by default &lints according to
     // https://doc.rust-lang.org/rustc/lints/listing/allowed-by-default.html
 
     absolute_paths_not_starting_with_crate,
@@ -110,55 +110,12 @@
     clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
 )]
 
-use std::net::{AddrParseError, SocketAddr};
-
 use anyhow::Result;
 use clap::Parser;
 use log::debug;
 
-/// rpc definition module
-mod rpc;
-/// Xline server
-mod server;
-/// Storage module
-mod storage;
-use server::XlineServer;
-
-/// Command line arguments
-#[derive(Parser)]
-#[clap(author, version, about, long_about = None)]
-struct ServerArgs {
-    /// Node name
-    #[clap(long)]
-    name: String,
-    /// Cluster peers. eg: node1=192.168.x.x:8080;node2=192.168.x.x:8080
-    #[clap(long)]
-    cluster_peers: String,
-    /// Current node ip and port. eg: 192.168.x.x:8080
-    #[clap(long, parse(try_from_str=parse_ip_port))]
-    ip_port: SocketAddr,
-    /// if node is leader
-    #[clap(long)]
-    is_leader: bool,
-    /// leader's ip and port. eg: 192.168.x.x:8080
-    #[clap(long, parse(try_from_str=parse_ip_port))]
-    leader_ip_port: SocketAddr,
-    /// current node ip and port. eg: 192.168.x.x:8080
-    #[clap(long, parse(try_from_str=parse_ip_port))]
-    self_ip_port: SocketAddr,
-}
-
-/// Parse server address
-fn parse_ip_port(ip_port: &str) -> Result<SocketAddr, String> {
-    ip_port
-        .parse()
-        .map_err(|e| format!("failed to parse {:?}, error is {:?}", ip_port, e))
-}
-
-/// Parse member list
-fn parse_members(member_list: &str) -> Result<Vec<SocketAddr>, AddrParseError> {
-    member_list.split(';').map(str::parse).collect()
-}
+use xline::server::XlineServer;
+use xline::{parse_members, ServerArgs};
 
 #[tokio::main]
 async fn main() -> Result<()> {
