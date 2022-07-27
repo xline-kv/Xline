@@ -157,6 +157,9 @@ impl Kv for KvServer {
     ) -> Result<tonic::Response<PutResponse>, tonic::Status> {
         debug!("Receive PutRequest {:?}", request);
         let put_request = request.into_inner();
+        if put_request.key.is_empty() {
+            return Err(tonic::Status::invalid_argument("key is empty"));
+        }
         let propose_id = self.generate_propose_id();
         let result = self
             .propose(propose_id.clone(), Request::RequestPut(put_request))

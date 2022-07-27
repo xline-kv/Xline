@@ -189,10 +189,7 @@ async fn test_kv_put_error() {
 
     let put_req = EtcdPutRequest::new("", "data");
     let result = client.kv().put(put_req).await;
-    println!("result: {:?}", result);
-
-    // FIXME: this result should be an error.
-    // assert!(result.is_err());
+    assert!(result.is_err());
 
     // TODO: request with a too large value.
     // let put_req = PutRequest::new("key", "a".repeat(MAX_REQUEST_SIZE+100));
