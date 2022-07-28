@@ -1,4 +1,4 @@
-use etcd_client::{Client, ClientConfig};
+use etcd_rs::{Client, ClientConfig, Endpoint};
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
@@ -20,7 +20,6 @@ impl Cluster {
         let peers = (0..size)
             .map(|i| SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), i as u16 + 20000))
             .collect::<Vec<_>>();
-
         let mut servers = Vec::with_capacity(size);
         for i in 0..size {
             let mut my_peers = peers.clone();
@@ -35,12 +34,17 @@ impl Cluster {
             let server = Arc::new(
                 XlineServer::new(name, addr, my_peers, is_leader, leader_address, self_addr).await,
             );
-            let server_clone = Arc::clone(&server);
-            servers.push(server);
+            servers.push(Arc::clone(&server));
 
             thread::spawn(move || {
-                let rt = tokio::runtime::Runtime::new().unwrap();
-                rt.block_on(server_clone.start()).unwrap();
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                // let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(async {
+                    server.start().await.unwrap();
+                });
             });
         }
 
@@ -55,10 +59,9 @@ impl Cluster {
     pub(crate) async fn cluster_client(&mut self) -> &Client {
         if self.cluster_client.is_none() {
             let endpoints = (0..self.size)
-                .map(|i| format!("127.0.0.1:{}", i + 10000))
+                .map(|i| Endpoint::new(format!("http://127.0.0.1:{}", i + 10000)))
                 .collect::<Vec<_>>();
-            println!("endpoints: {:?}", endpoints);
-            let cfg = ClientConfig::new(endpoints, None, 0, false);
+            let cfg = ClientConfig::new(endpoints);
             let client = Client::connect(cfg)
                 .await
                 .unwrap_or_else(|e| panic!("Client connect error: {:?}", e));
@@ -68,9 +71,10 @@ impl Cluster {
     }
 
     pub(crate) async fn client(&mut self, i: usize) -> &Client {
+        assert!(i < self.size);
         if self.clients[i].is_none() {
-            let endpoints = vec![format!("127.0.0.1:{}", i + 10000)];
-            let cfg = ClientConfig::new(endpoints, None, 0, false);
+            let endpoints = vec![Endpoint::new(format!("http://127.0.0.1:{}", i + 10000))];
+            let cfg = ClientConfig::new(endpoints);
             let client = Client::connect(cfg)
                 .await
                 .unwrap_or_else(|e| panic!("Client connect error: {:?}", e));

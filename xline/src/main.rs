@@ -113,9 +113,38 @@
 use anyhow::Result;
 use clap::Parser;
 use log::debug;
+use std::net::{AddrParseError, SocketAddr};
 
 use xline::server::XlineServer;
-use xline::{parse_members, ServerArgs};
+
+/// Command line arguments
+#[derive(Parser)]
+#[clap(author, version, about, long_about = None)]
+struct ServerArgs {
+    /// Node name
+    #[clap(long)]
+    name: String,
+    /// Cluster peers. eg: node1=192.168.x.x:8080;node2=192.168.x.x:8080
+    #[clap(long)]
+    cluster_peers: String,
+    /// Current node ip and port. eg: 192.168.x.x:8080
+    #[clap(long, parse(try_from_str))]
+    ip_port: SocketAddr,
+    /// if node is leader
+    #[clap(long)]
+    is_leader: bool,
+    /// leader's ip and port. eg: 192.168.x.x:8080
+    #[clap(long, parse(try_from_str))]
+    leader_ip_port: SocketAddr,
+    /// current node ip and port. eg: 192.168.x.x:8080
+    #[clap(long, parse(try_from_str))]
+    self_ip_port: SocketAddr,
+}
+
+/// Parse member list
+fn parse_members(member_list: &str) -> Result<Vec<SocketAddr>, AddrParseError> {
+    member_list.split(';').map(str::parse).collect()
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
