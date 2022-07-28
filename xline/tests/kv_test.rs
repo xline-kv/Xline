@@ -5,11 +5,14 @@ use etcd_rs::{DeleteRequest, KeyRange, KeyValueOp, PutRequest, RangeRequest};
 
 #[tokio::test]
 async fn test_kv_put() {
-    let mut cluster = Cluster::run(3).await;
+    let mut cluster = Cluster::new(3);
+    cluster.start().await;
     let client = cluster.client(0).await;
 
     let put_req = PutRequest::new("foo", "bar");
     let result = client.put(put_req).await;
+    println!("{:?}", result);
+
     assert!(result.is_ok());
 
     let key_range = KeyRange::key("foo");
@@ -191,7 +194,8 @@ async fn test_kv_delete() {
         want_keys: &'a [&'a str],
     }
 
-    let mut cluster = Cluster::run(3).await;
+    let mut cluster = Cluster::new(3);
+    cluster.start().await;
     let client = cluster.client(0).await;
 
     let keys = ["a", "b", "c", "c/abc", "d"];
@@ -283,7 +287,8 @@ async fn test_kv_delete() {
 
 #[tokio::test]
 async fn test_kv_with_empty_key() {
-    let mut cluster = Cluster::run(3).await;
+    let mut cluster = Cluster::new(3);
+    cluster.start().await;
     let client = cluster.client(0).await;
 
     let put_req = PutRequest::new("my-namespace/foobar", "data");
@@ -316,7 +321,8 @@ async fn test_kv_with_empty_key() {
 #[tokio::test]
 async fn test_kv_put_error() {
     // TODO: initialize the cluster with quota
-    let mut cluster = Cluster::run(3).await;
+    let mut cluster = Cluster::new(3);
+    cluster.start().await;
     let client = cluster.client(0).await;
 
     let put_req = PutRequest::new("", "data");
