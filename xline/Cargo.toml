@@ -35,4 +35,5 @@ tonic-build = "0.7.2"
 
 [dev-dependencies]
 # etcd-client = { git = "https://github.com/datenlord/etcd-client.git", branch = "main" }
-etcd-rs = { git = "https://github.com/lodrem/etcd-rs.git", branch="master" }
+# etcd-rs = { git = "https://github.com/lodrem/etcd-rs.git", branch="master" }
+etcd-client = "0.9.2"

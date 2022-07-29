@@ -1,4 +1,4 @@
-use etcd_rs::{Client, ClientConfig, Endpoint};
+use etcd_client::Client;
 use std::{net::SocketAddr, sync::Arc, thread};
 use xline::server::XlineServer;
 
@@ -56,32 +56,34 @@ impl Cluster {
         }
     }
 
-    pub(crate) async fn cluster_client(&mut self) -> &Client {
+    pub(crate) async fn cluster_client(&mut self) -> &mut Client {
         if self.cluster_client.is_none() {
             let endpoints = self
                 .service_addrs
                 .iter()
-                .map(|addr| Endpoint::new(format!("http://{}", addr)))
+                .map(|addr| addr.to_string())
                 .collect::<Vec<_>>();
-            let cfg = ClientConfig::new(endpoints);
-            let client = Client::connect(cfg)
+            let client = Client::connect(endpoints, None)
                 .await
                 .unwrap_or_else(|e| panic!("Client connect error: {:?}", e));
             self.cluster_client = Some(client);
         }
-        self.cluster_client.as_ref().unwrap()
+        self.cluster_client.as_mut().unwrap()
     }
 
-    pub(crate) async fn client(&mut self, i: usize) -> &Client {
+    pub(crate) async fn client(&mut self, i: usize) -> &mut Client {
         assert!(i < self.size);
         if self.clients[i].is_none() {
-            let endpoints = vec![Endpoint::new(format!("http://{}", self.service_addrs[i]))];
-            let cfg = ClientConfig::new(endpoints);
-            let client = Client::connect(cfg)
+            let client = Client::connect([self.service_addrs[i].to_string()], None)
                 .await
                 .unwrap_or_else(|e| panic!("Client connect error: {:?}", e));
             self.clients[i] = Some(client);
         }
-        self.clients[i].as_ref().unwrap()
+        self.clients[i].as_mut().unwrap()
+    }
+
+    pub(crate) async fn server(&self, i: usize) -> Arc<XlineServer> {
+        assert!(i < self.size);
+        Arc::clone(&self.servers[i])
     }
 }
