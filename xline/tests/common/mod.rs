@@ -43,6 +43,7 @@ impl Cluster {
             let server = Arc::new(
                 XlineServer::new(name, addr, peers, is_leader, leader_address, self_addr).await,
             );
+            self.servers.push(Arc::clone(&server));
 
             thread::spawn(move || {
                 let rt = tokio::runtime::Builder::new_current_thread()

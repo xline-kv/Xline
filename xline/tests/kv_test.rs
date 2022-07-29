@@ -1,7 +1,7 @@
 mod common;
 
 use common::Cluster;
-use etcd_client::{DeleteOptions, GetOptions, SortOrder, SortTarget};
+use etcd_client::{DeleteOptions, GetOptions};
 
 #[tokio::test]
 async fn test_kv_put() {
@@ -34,8 +34,8 @@ async fn test_kv_get() {
 
     let kvs = ["a", "b", "c", "c", "c", "foo", "foo/abc", "fop"];
     let want_kvs = ["a", "b", "c", "foo", "foo/abc", "fop"];
-    let kvs_by_version = ["a", "b", "foo", "foo/abc", "fop", "c"];
-    let reversed_kvs = ["fop", "foo/abc", "foo", "c", "b", "a"];
+    // let kvs_by_version = ["a", "b", "foo", "foo/abc", "fop", "c"];
+    // let reversed_kvs = ["fop", "foo/abc", "foo", "c", "b", "a"];
 
     let tests = [
         TestCase {
@@ -93,52 +93,53 @@ async fn test_kv_get() {
         //     opts: Some(GetOptions::new().with_prefix().with_limit(2)),
         //     want_kvs: &want_kvs[..2],
         // },
-        TestCase {
-            key: "",
-            opts: Some(
-                GetOptions::new()
-                    .with_prefix()
-                    .with_sort(SortTarget::Mod, SortOrder::Ascend),
-            ),
-            want_kvs: &want_kvs[..],
-        },
-        TestCase {
-            key: "",
-            opts: Some(
-                GetOptions::new()
-                    .with_prefix()
-                    .with_sort(SortTarget::Version, SortOrder::Ascend),
-            ),
-            want_kvs: &kvs_by_version[..],
-        },
-        TestCase {
-            key: "",
-            opts: Some(
-                GetOptions::new()
-                    .with_prefix()
-                    .with_sort(SortTarget::Create, SortOrder::None),
-            ),
-            want_kvs: &want_kvs[..],
-        },
-        TestCase {
-            key: "",
-            opts: Some(
-                GetOptions::new()
-                    .with_prefix()
-                    .with_sort(SortTarget::Create, SortOrder::Descend),
-            ),
+        // TODO: Range with sort
+        // TestCase {
+        //     key: "",
+        //     opts: Some(
+        //         GetOptions::new()
+        //             .with_prefix()
+        //             .with_sort(SortTarget::Mod, SortOrder::Ascend),
+        //     ),
+        //     want_kvs: &want_kvs[..],
+        // },
+        // TestCase {
+        //     key: "",
+        //     opts: Some(
+        //         GetOptions::new()
+        //             .with_prefix()
+        //             .with_sort(SortTarget::Version, SortOrder::Ascend),
+        //     ),
+        //     want_kvs: &kvs_by_version[..],
+        // },
+        // TestCase {
+        //     key: "",
+        //     opts: Some(
+        //         GetOptions::new()
+        //             .with_prefix()
+        //             .with_sort(SortTarget::Create, SortOrder::None),
+        //     ),
+        //     want_kvs: &want_kvs[..],
+        // },
+        // TestCase {
+        //     key: "",
+        //     opts: Some(
+        //         GetOptions::new()
+        //             .with_prefix()
+        //             .with_sort(SortTarget::Create, SortOrder::Descend),
+        //     ),
 
-            want_kvs: &reversed_kvs[..],
-        },
-        TestCase {
-            key: "",
-            opts: Some(
-                GetOptions::new()
-                    .with_prefix()
-                    .with_sort(SortTarget::Key, SortOrder::Descend),
-            ),
-            want_kvs: &reversed_kvs[..],
-        },
+        //     want_kvs: &reversed_kvs[..],
+        // },
+        // TestCase {
+        //     key: "",
+        //     opts: Some(
+        //         GetOptions::new()
+        //             .with_prefix()
+        //             .with_sort(SortTarget::Key, SortOrder::Descend),
+        //     ),
+        //     want_kvs: &reversed_kvs[..],
+        // },
     ];
 
     for key in kvs {
