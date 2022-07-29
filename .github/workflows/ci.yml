@@ -74,6 +74,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: test
+          args: -- --test-threads=1 # TODO: Remove this when fixed the address already in use error
 
   clippy:
     name: Clippy

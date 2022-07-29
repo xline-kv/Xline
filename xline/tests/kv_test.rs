@@ -11,8 +11,6 @@ async fn test_kv_put() {
 
     let put_req = PutRequest::new("foo", "bar");
     let result = client.put(put_req).await;
-    println!("{:?}", result);
-
     assert!(result.is_ok());
 
     let key_range = KeyRange::key("foo");
