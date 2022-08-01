@@ -1,7 +1,7 @@
 mod common;
 
 use common::Cluster;
-use etcd_client::{DeleteOptions, GetOptions};
+use etcd_client::{DeleteOptions, GetOptions, PutOptions};
 
 #[tokio::test]
 async fn test_kv_put() {
@@ -310,6 +310,15 @@ async fn test_kv_with_empty_key() {
 
     let res = result.unwrap();
     assert_eq!(res.kvs().len(), 3);
+
+    // FIXME: it should return an error
+    // let result = client.delete("", None).await;
+    // assert!(result.is_err());
+
+    // let result = client
+    //     .delete("", Some(DeleteOptions::new().with_from_key()))
+    //     .await;
+    // assert!(result.is_ok());
 }
 
 #[tokio::test]
@@ -334,4 +343,94 @@ async fn test_kv_put_error() {
 
     // let result = client.put("key","a".repeat(MAX_REQUEST_SIZE - 50), None).await;
     // assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_kv_put_with_lease() {
+    let mut cluster = Cluster::new(3);
+    cluster.start().await;
+    let client = cluster.client(0).await;
+
+    let result = client.lease_grant(0, None).await;
+    assert!(result.is_ok());
+    let lease = result.unwrap();
+
+    let result = client
+        .put(
+            "key",
+            "data",
+            Some(PutOptions::new().with_lease(lease.id())),
+        )
+        .await;
+    assert!(result.is_ok());
+
+    let result = client.get("key", None).await;
+    assert!(result.is_ok());
+
+    let res = result.unwrap();
+    assert_eq!(res.kvs().len(), 1);
+    assert_eq!(res.kvs()[0].lease(), lease.id());
+    assert_eq!(res.kvs()[0].value(), b"data");
+}
+
+#[tokio::test]
+async fn test_kv_put_with_ignore_value() {
+    let mut cluster = Cluster::new(3);
+    cluster.start().await;
+    let client = cluster.client(0).await;
+
+    // FIXME: it should return an error, because the key is not exist.
+    // let result = client
+    //     .put("foo", "", Some(PutOptions::new().with_ignore_value()))
+    //     .await;
+    // assert!(result.is_err());
+
+    let result = client.put("foo", "bar", None).await;
+    assert!(result.is_ok());
+
+    // let result = client
+    //     .put("foo", "", Some(PutOptions::new().with_ignore_value()))
+    //     .await;
+    // assert!(result.is_ok());
+
+    let result = client.get("foo", None).await;
+    assert!(result.is_ok());
+
+    let res = result.unwrap();
+    assert_eq!(res.kvs().len(), 1);
+    assert_eq!(res.kvs()[0].value(), b"bar");
+}
+
+#[tokio::test]
+async fn test_kv_put_with_ignore_lease() {
+    let mut cluster = Cluster::new(3);
+    cluster.start().await;
+    let client = cluster.client(0).await;
+
+    let result = client.lease_grant(10, None).await;
+    assert!(result.is_ok());
+    let lease = result.unwrap();
+
+    // FIXME: it should return an error, because the key is not exist.
+    // let result = client
+    //     .put("foo", "bar", Some(PutOptions::new().with_ignore_lease()))
+    //     .await;
+    // assert!(result.is_err());
+
+    let result = client
+        .put("foo", "bar", Some(PutOptions::new().with_lease(lease.id())))
+        .await;
+    assert!(result.is_ok());
+
+    let result = client
+        .put("foo", "bar", Some(PutOptions::new().with_ignore_lease()))
+        .await;
+    assert!(result.is_ok());
+
+    let result = client.get("foo", None).await;
+    assert!(result.is_ok());
+
+    let res = result.unwrap();
+    assert_eq!(res.kvs().len(), 1);
+    assert_eq!(res.kvs()[0].lease(), lease.id());
 }
