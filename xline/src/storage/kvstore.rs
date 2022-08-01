@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::{collections::HashMap, sync::Arc};
 
-use clippy_utilities::Cast;
+use clippy_utilities::NumericCast;
 use clippy_utilities::OverflowArithmetic;
 use curp::cmd::ProposeId;
 use log::debug;
@@ -234,7 +234,7 @@ impl KvStoreInner {
                 revision: -1,
                 ..ResponseHeader::default()
             }),
-            count: kvs.len().cast(),
+            count: kvs.len().numeric_cast(),
             ..RangeResponse::default()
         };
         response.kvs = kvs;
@@ -273,7 +273,7 @@ impl KvStoreInner {
         let mut response = DeleteRangeResponse::default();
         let prev_kvs = self.get_range(&req.key, &req.range_end);
         debug!("handle_delete_range_request prev_kvs {:?}", prev_kvs);
-        response.deleted = prev_kvs.len().cast();
+        response.deleted = prev_kvs.len().numeric_cast();
         if req.prev_kv {
             response.prev_kvs = prev_kvs;
         }
