@@ -113,7 +113,7 @@
 use anyhow::Result;
 use clap::Parser;
 use log::debug;
-use std::net::{AddrParseError, SocketAddr};
+use std::net::SocketAddr;
 
 use xline::server::XlineServer;
 
@@ -124,26 +124,21 @@ struct ServerArgs {
     /// Node name
     #[clap(long)]
     name: String,
-    /// Cluster peers. eg: node1=192.168.x.x:8080;node2=192.168.x.x:8080
-    #[clap(long)]
-    cluster_peers: String,
+    /// Cluster peers. eg: 192.168.x.x:8080 192.168.x.x:8080
+    #[clap(long, multiple = true, required = true)]
+    cluster_peers: Vec<SocketAddr>,
     /// Current node ip and port. eg: 192.168.x.x:8080
-    #[clap(long, parse(try_from_str))]
+    #[clap(long)]
     ip_port: SocketAddr,
     /// if node is leader
     #[clap(long)]
     is_leader: bool,
     /// leader's ip and port. eg: 192.168.x.x:8080
-    #[clap(long, parse(try_from_str))]
+    #[clap(long)]
     leader_ip_port: SocketAddr,
     /// current node ip and port. eg: 192.168.x.x:8080
-    #[clap(long, parse(try_from_str))]
+    #[clap(long)]
     self_ip_port: SocketAddr,
-}
-
-/// Parse member list
-fn parse_members(member_list: &str) -> Result<Vec<SocketAddr>, AddrParseError> {
-    member_list.split(';').map(str::parse).collect()
 }
 
 #[tokio::main]
@@ -152,13 +147,11 @@ async fn main() -> Result<()> {
     let server_args = ServerArgs::parse();
     debug!("name = {:?}", server_args.name);
     debug!("server_addr = {:?}", server_args.ip_port);
-    let peers = parse_members(&server_args.cluster_peers)
-        .unwrap_or_else(|e| panic!("Failed to parse member list, error is {:?}", e));
-    debug!("cluster_peers = {:?}", peers);
+    debug!("cluster_peers = {:?}", server_args.cluster_peers);
     let server = XlineServer::new(
         server_args.name,
         server_args.ip_port,
-        peers,
+        server_args.cluster_peers,
         server_args.is_leader,
         server_args.leader_ip_port,
         server_args.self_ip_port,
