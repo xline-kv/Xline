@@ -88,11 +88,11 @@ async fn test_kv_get() {
         //     opts: Some(GetOptions::new().with_from_key()),
         //     want_kvs: &["foo", "foo/abc", "fop"],
         // },
-        // TestCase { // TODO: Range with limit
-        //     key: "",
-        //     opts: Some(GetOptions::new().with_prefix().with_limit(2)),
-        //     want_kvs: &want_kvs[..2],
-        // },
+        TestCase {
+            key: "",
+            opts: Some(GetOptions::new().with_prefix().with_limit(2)),
+            want_kvs: &want_kvs[..2],
+        },
         // TODO: Range with sort
         // TestCase {
         //     key: "",

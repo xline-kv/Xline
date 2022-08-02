@@ -238,7 +238,11 @@ impl KvStoreInner {
             ..RangeResponse::default()
         };
         if !req.count_only {
-            response.kvs = kvs;
+            response.kvs = if req.limit > 0 {
+                kvs.into_iter().take(req.limit as usize).collect()
+            } else {
+                kvs
+            };
         }
         response
     }
