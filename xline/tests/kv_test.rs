@@ -73,11 +73,11 @@ async fn test_kv_get() {
         //     opts: Some(GetOptions::new().with_prefix().with_revision(4)),
         //     want_kvs: &want_kvs[..3],
         // },
-        // TestCase { // TODO: Range with count only
-        //     key: "a",
-        //     opts: Some(GetOptions::new().with_count_only()),
-        //     want_kvs: &[],
-        // },
+        TestCase {
+            key: "a",
+            opts: Some(GetOptions::new().with_count_only()),
+            want_kvs: &[],
+        },
         TestCase {
             key: "foo",
             opts: Some(GetOptions::new().with_prefix()),

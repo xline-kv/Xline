@@ -237,7 +237,9 @@ impl KvStoreInner {
             count: kvs.len().numeric_cast(),
             ..RangeResponse::default()
         };
-        response.kvs = kvs;
+        if !req.count_only {
+            response.kvs = kvs;
+        }
         response
     }
 
