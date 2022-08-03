@@ -1,5 +1,6 @@
-use etcd_client::Client;
 use std::{net::SocketAddr, sync::Arc, thread};
+
+use etcd_client::Client;
 use xline::server::XlineServer;
 
 #[allow(dead_code)] // TODO: Remove this
