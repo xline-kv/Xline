@@ -110,10 +110,10 @@
     clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
 )]
 
-use std::net::SocketAddr;
 use anyhow::Result;
 use clap::Parser;
 use log::debug;
+use std::net::SocketAddr;
 
 use xline::server::XlineServer;
 
