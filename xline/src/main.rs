@@ -1,6 +1,6 @@
 //! Xline
 #![deny(
-    // The following are allowed by default &lints according to
+    // The following are allowed by default lints according to
     // https://doc.rust-lang.org/rustc/lints/listing/allowed-by-default.html
 
     absolute_paths_not_starting_with_crate,
@@ -110,10 +110,10 @@
     clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
 )]
 
+use std::net::SocketAddr;
 use anyhow::Result;
 use clap::Parser;
 use log::debug;
-use std::net::SocketAddr;
 
 use xline::server::XlineServer;
 
