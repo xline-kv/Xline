@@ -58,11 +58,11 @@ async fn test_kv_get() {
             opts: Some(GetOptions::new().with_prefix()),
             want_kvs: &want_kvs[..],
         },
-        // TestCase {
-        //     key: "",
-        //     opts: Some(GetOptions::new().with_from_key()),
-        //     want_kvs: &want_kvs[..],
-        // },
+        TestCase {
+            key: "",
+            opts: Some(GetOptions::new().with_from_key()),
+            want_kvs: &want_kvs[..],
+        },
         TestCase {
             key: "a",
             opts: Some(GetOptions::new().with_range("x")),
@@ -83,11 +83,11 @@ async fn test_kv_get() {
             opts: Some(GetOptions::new().with_prefix()),
             want_kvs: &["foo", "foo/abc"],
         },
-        // TestCase {
-        //     key: "foo",
-        //     opts: Some(GetOptions::new().with_from_key()),
-        //     want_kvs: &["foo", "foo/abc", "fop"],
-        // },
+        TestCase {
+            key: "foo",
+            opts: Some(GetOptions::new().with_from_key()),
+            want_kvs: &["foo", "foo/abc", "fop"],
+        },
         TestCase {
             key: "",
             opts: Some(GetOptions::new().with_prefix().with_limit(2)),
@@ -176,7 +176,6 @@ async fn test_kv_delete() {
 
     let keys = ["a", "b", "c", "c/abc", "d"];
 
-    // FIXME: this test is not working. because `from_key` is not implemented yet.
     let tests = [
         TestCase {
             key: "",
@@ -184,12 +183,12 @@ async fn test_kv_delete() {
             want_deleted: 5,
             want_keys: &[],
         },
-        // TestCase {
-        //     key: "",
-        //     opts: Some(DeleteOptions::new().with_from_key()),
-        //     want_deleted: 5,
-        //     want_keys: &[],
-        // },
+        TestCase {
+            key: "",
+            opts: Some(DeleteOptions::new().with_from_key()),
+            want_deleted: 5,
+            want_keys: &[],
+        },
         TestCase {
             key: "a",
             opts: Some(DeleteOptions::new().with_range("c")),
@@ -208,12 +207,12 @@ async fn test_kv_delete() {
             want_deleted: 2,
             want_keys: &["a", "b", "d"],
         },
-        // TestCase {
-        //     key: "c",
-        //     opts: Some(DeleteOptions::new().with_from_key()),
-        //     want_deleted: 3,
-        //     want_keys: &["a", "b"],
-        // },
+        TestCase {
+            key: "c",
+            opts: Some(DeleteOptions::new().with_from_key()),
+            want_deleted: 3,
+            want_keys: &["a", "b"],
+        },
         TestCase {
             key: "e",
             opts: None,
@@ -295,14 +294,13 @@ async fn test_kv_with_empty_key() {
     let result = client.put("namespace/foobar1", "data", None).await;
     assert!(result.is_ok());
 
-    // FIXME: from-key returns all keys, it should return only keys greater than the start key
-    // let result = client
-    //     .get("n", Some(GetOptions::new().with_from_key()))
-    //     .await;
-    // assert!(result.is_ok());
+    let result = client
+        .get("n", Some(GetOptions::new().with_from_key()))
+        .await;
+    assert!(result.is_ok());
 
-    // let res = result.unwrap();
-    // assert_eq!(res.kvs().len(), 1);
+    let res = result.unwrap();
+    assert_eq!(res.kvs().len(), 1);
 
     let result = client.get("", Some(GetOptions::new().with_prefix())).await;
     assert!(result.is_ok());
@@ -313,10 +311,10 @@ async fn test_kv_with_empty_key() {
     let result = client.delete("", None).await;
     assert!(result.is_err());
 
-    // let result = client
-    //     .delete("", Some(DeleteOptions::new().with_from_key()))
-    //     .await;
-    // assert!(result.is_ok());
+    let result = client
+        .delete("", Some(DeleteOptions::new().with_from_key()))
+        .await;
+    assert!(result.is_ok());
 }
 
 #[tokio::test]

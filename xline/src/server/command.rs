@@ -1,6 +1,6 @@
 use std::{
     ops::{
-        Bound::{self, Excluded, Included},
+        Bound::{self, Excluded, Included, Unbounded},
         RangeBounds,
     },
     sync::Arc,
@@ -21,7 +21,7 @@ use crate::rpc::ResponseOp;
 use crate::storage::KvStore;
 
 /// Range end to get all keys
-const ALL_KEYS: &[u8] = &[0_u8];
+const UNLIMITED: &[u8] = &[0_u8];
 /// Range end to get one key
 const ONE_KEY: &[u8] = &[];
 
@@ -37,19 +37,16 @@ pub(crate) struct KeyRange {
 impl KeyRange {
     /// Return if `KeyRange` is conflicted with another
     pub(crate) fn is_conflicted(&self, other: &Self) -> bool {
-        // All keys conflict with any key range
-        if self.end == ALL_KEYS || other.end == ALL_KEYS {
-            true
-        } else {
-            match self.end.as_slice() {
-                ONE_KEY => match other.end.as_slice() {
-                    ONE_KEY => self.start == other.start,
-                    _ => (self.start >= other.start) && (self.start < other.end),
-                },
-                _ => match other.end.as_slice() {
-                    ONE_KEY => (other.start >= self.start) && (other.start < self.end),
-                    _ => (self.start < other.end) && (self.end > other.start),
-                },
+        match (self.end.as_slice(), other.end.as_slice()) {
+            (UNLIMITED, UNLIMITED) => true,
+            (ONE_KEY, ONE_KEY) => self.start == other.start,
+            (UNLIMITED, ONE_KEY) => self.start <= other.start,
+            (ONE_KEY, UNLIMITED) => self.start >= other.start,
+            (_, UNLIMITED) => self.end >= other.start || other.start == UNLIMITED,
+            (UNLIMITED, _) => self.start >= other.end || self.start == UNLIMITED,
+            (_, _) => {
+                (self.start >= other.start && self.start <= other.end)
+                    || (self.start <= other.start && self.end >= other.start)
             }
         }
     }
@@ -57,10 +54,18 @@ impl KeyRange {
 
 impl RangeBounds<Vec<u8>> for KeyRange {
     fn start_bound(&self) -> Bound<&Vec<u8>> {
-        Included(&self.start)
+        if self.start == UNLIMITED {
+            Unbounded
+        } else {
+            Included(&self.start)
+        }
     }
     fn end_bound(&self) -> Bound<&Vec<u8>> {
-        Excluded(&self.end)
+        if self.end == UNLIMITED {
+            Unbounded
+        } else {
+            Excluded(&self.end)
+        }
     }
 }
 

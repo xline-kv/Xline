@@ -22,7 +22,7 @@ use crate::server::command::{
 /// Default channel size
 const CHANNEL_SIZE: usize = 100;
 /// Range end to get all keys
-const ALL_KEYS: &[u8] = &[0_u8];
+const UNLIMITED: &[u8] = &[0_u8];
 /// Range end to get one key
 const ONE_KEY: &[u8] = &[];
 
@@ -203,7 +203,7 @@ impl KvStoreInner {
                     }
                 }
             }
-            ALL_KEYS => {
+            UNLIMITED if key == UNLIMITED => {
                 let revisions = self.index.get_all();
                 let mut values = self.db.get_values(&revisions);
                 kvs.append(&mut values);
@@ -544,7 +544,7 @@ impl KvStoreInner {
                     false
                 }
             }
-            ALL_KEYS => {
+            UNLIMITED => {
                 let revisions = self.index.delete_all(revision, sub_revision);
                 debug!(
                     "sync_delete_range_request delete all: revisions {:?}",
