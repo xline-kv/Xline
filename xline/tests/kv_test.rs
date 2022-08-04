@@ -433,3 +433,117 @@ async fn test_kv_put_with_ignore_lease() {
     assert_eq!(res.kvs().len(), 1);
     assert_eq!(res.kvs()[0].lease(), lease.id());
 }
+
+#[tokio::test]
+async fn test_kv_range() {
+    struct KeyValue {
+        key: Vec<u8>,
+        create_revision: i64,
+        mod_revision: i64,
+        version: i64,
+        value: Vec<u8>,
+        // lease: i64,
+    }
+    let mut cluster = Cluster::new(3);
+    cluster.start().await;
+    let client = cluster.client(0).await;
+
+    let key_set = ["a", "b", "c", "c", "c", "foo", "foo/abc", "fop"];
+    for key in key_set {
+        let result = client.put(key, "", None).await;
+        assert!(result.is_ok());
+    }
+
+    let result = client.get(key_set[0], None).await;
+    assert!(result.is_ok());
+    let wheader = result.unwrap().take_header().unwrap();
+
+    let opts = Some(
+        GetOptions::new()
+            .with_from_key()
+            .with_sort(SortTarget::Key, SortOrder::Ascend),
+    );
+    let wantset = vec![
+        KeyValue {
+            key: Vec::from("a"),
+            value: Vec::from(""),
+            create_revision: 2,
+            mod_revision: 2,
+            version: 1,
+        },
+        KeyValue {
+            key: Vec::from("b"),
+            value: Vec::from(""),
+            create_revision: 3,
+            mod_revision: 3,
+            version: 1,
+        },
+        KeyValue {
+            key: Vec::from("c"),
+            value: Vec::from(""),
+            create_revision: 4,
+            mod_revision: 6,
+            version: 3,
+        },
+        KeyValue {
+            key: Vec::from("foo"),
+            value: Vec::from(""),
+            create_revision: 7,
+            mod_revision: 7,
+            version: 1,
+        },
+        KeyValue {
+            key: Vec::from("foo/abc"),
+            value: Vec::from(""),
+            create_revision: 8,
+            mod_revision: 8,
+            version: 1,
+        },
+        KeyValue {
+            key: Vec::from("fop"),
+            value: Vec::from(""),
+            create_revision: 9,
+            mod_revision: 9,
+            version: 1,
+        },
+    ];
+
+    let result = client.get("", opts).await;
+    assert!(result.is_ok());
+    let res = result.unwrap();
+    let header = res.header().unwrap();
+    assert_eq!(header.revision(), wheader.revision());
+    let is_identical = res.kvs().iter().zip(wantset.iter()).all(|(kv, want)| {
+        kv.key() == want.key
+            && kv.value() == want.value
+            && kv.create_revision() == want.create_revision
+            && kv.mod_revision() == want.mod_revision
+            && kv.version() == want.version
+    });
+    assert!(is_identical);
+}
+
+#[tokio::test]
+async fn test_kv_delete_range() {
+    let mut cluster = Cluster::new(3);
+    cluster.start().await;
+    let client = cluster.client(0).await;
+
+    let key_set = ["a", "b", "c", "c/abc", "d"];
+    for key in key_set {
+        let result = client.put(key, "", None).await;
+        assert!(result.is_ok());
+    }
+
+    let result = client
+        .delete("", Some(DeleteOptions::new().with_from_key()))
+        .await;
+    assert!(result.is_ok());
+
+    let result = client
+        .get("", Some(GetOptions::new().with_all_keys()))
+        .await;
+    assert!(result.is_ok());
+    let res = result.unwrap();
+    assert_eq!(res.count(), 0);
+}
