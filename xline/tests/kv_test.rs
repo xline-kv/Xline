@@ -310,9 +310,8 @@ async fn test_kv_with_empty_key() {
     let res = result.unwrap();
     assert_eq!(res.kvs().len(), 3);
 
-    // FIXME: it should return an error
-    // let result = client.delete("", None).await;
-    // assert!(result.is_err());
+    let result = client.delete("", None).await;
+    assert!(result.is_err());
 
     // let result = client
     //     .delete("", Some(DeleteOptions::new().with_from_key()))

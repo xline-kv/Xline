@@ -127,6 +127,9 @@ impl Kv for KvServer {
         debug!("Receive RangeRequest {:?}", request);
 
         let range_request = request.into_inner();
+        if range_request.key.is_empty() && range_request.range_end.is_empty() {
+            return Err(tonic::Status::invalid_argument("key is empty"));
+        }
         let propose_id = self.generate_propose_id();
         let result = self
             .propose(propose_id.clone(), Request::RequestRange(range_request))
@@ -189,6 +192,9 @@ impl Kv for KvServer {
     ) -> Result<tonic::Response<DeleteRangeResponse>, tonic::Status> {
         debug!("Receive DeleteRangeRequest {:?}", request);
         let delete_range_request = request.into_inner();
+        if delete_range_request.key.is_empty() && delete_range_request.range_end.is_empty() {
+            return Err(tonic::Status::invalid_argument("key is empty"));
+        }
         let propose_id = self.generate_propose_id();
         let result = self
             .propose(
