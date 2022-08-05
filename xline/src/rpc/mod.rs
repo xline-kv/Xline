@@ -71,15 +71,19 @@ pub(crate) use self::etcdserverpb::{
     compare::{CompareResult, CompareTarget, TargetUnion},
     kv_server::{Kv, KvServer},
     lease_server::{Lease, LeaseServer},
+    range_request::{SortOrder, SortTarget},
     request_op::Request,
     response_op::Response,
+    watch_request::RequestUnion,
+    watch_server::{Watch, WatchServer},
     CompactionRequest, CompactionResponse, Compare, DeleteRangeRequest, DeleteRangeResponse,
     LeaseGrantRequest, LeaseGrantResponse, LeaseKeepAliveRequest, LeaseKeepAliveResponse,
     LeaseLeasesRequest, LeaseLeasesResponse, LeaseRevokeRequest, LeaseRevokeResponse,
     LeaseTimeToLiveRequest, LeaseTimeToLiveResponse, PutRequest, PutResponse, RangeRequest,
     RangeResponse, RequestOp, ResponseHeader, ResponseOp, TxnRequest, TxnResponse,
+    WatchCancelRequest, WatchCreateRequest, WatchRequest, WatchResponse,
 };
-pub(crate) use self::mvccpb::KeyValue;
+pub(crate) use self::mvccpb::{event::EventType, Event, KeyValue};
 pub(crate) use self::v3lockpb::{
     lock_server::{Lock, LockServer},
     LockRequest, LockResponse, UnlockRequest, UnlockResponse,

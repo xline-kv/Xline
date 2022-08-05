@@ -53,6 +53,15 @@ impl KeyRange {
             }
         }
     }
+
+    /// Check if `KeyRange` contains a key
+    pub(crate) fn contains_key(&self, key: &[u8]) -> bool {
+        match self.end.as_slice() {
+            ONE_KEY => self.start == key,
+            ALL_KEYS => true,
+            _ => (key >= self.start.as_slice()) && (key < self.end.as_slice()),
+        }
+    }
 }
 
 impl RangeBounds<Vec<u8>> for KeyRange {
