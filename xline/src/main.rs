@@ -110,19 +110,13 @@
     clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
 )]
 
-use std::net::{AddrParseError, SocketAddr};
+use std::net::SocketAddr;
 
 use anyhow::Result;
 use clap::Parser;
 use log::debug;
 
-/// rpc definition module
-mod rpc;
-/// Xline server
-mod server;
-/// Storage module
-mod storage;
-use server::XlineServer;
+use xline::server::XlineServer;
 
 /// Command line arguments
 #[derive(Parser)]
@@ -132,32 +126,20 @@ struct ServerArgs {
     #[clap(long)]
     name: String,
     /// Cluster peers. eg: node1=192.168.x.x:8080;node2=192.168.x.x:8080
-    #[clap(long)]
-    cluster_peers: String,
+    #[clap(long, multiple = true, required = true)]
+    cluster_peers: Vec<SocketAddr>,
     /// Current node ip and port. eg: 192.168.x.x:8080
-    #[clap(long, parse(try_from_str=parse_ip_port))]
+    #[clap(long)]
     ip_port: SocketAddr,
     /// if node is leader
     #[clap(long)]
     is_leader: bool,
     /// leader's ip and port. eg: 192.168.x.x:8080
-    #[clap(long, parse(try_from_str=parse_ip_port))]
+    #[clap(long)]
     leader_ip_port: SocketAddr,
     /// current node ip and port. eg: 192.168.x.x:8080
-    #[clap(long, parse(try_from_str=parse_ip_port))]
+    #[clap(long)]
     self_ip_port: SocketAddr,
-}
-
-/// Parse server address
-fn parse_ip_port(ip_port: &str) -> Result<SocketAddr, String> {
-    ip_port
-        .parse()
-        .map_err(|e| format!("failed to parse {:?}, error is {:?}", ip_port, e))
-}
-
-/// Parse member list
-fn parse_members(member_list: &str) -> Result<Vec<SocketAddr>, AddrParseError> {
-    member_list.split(';').map(str::parse).collect()
 }
 
 #[tokio::main]
@@ -166,13 +148,11 @@ async fn main() -> Result<()> {
     let server_args = ServerArgs::parse();
     debug!("name = {:?}", server_args.name);
     debug!("server_addr = {:?}", server_args.ip_port);
-    let peers = parse_members(&server_args.cluster_peers)
-        .unwrap_or_else(|e| panic!("Failed to parse member list, error is {:?}", e));
-    debug!("cluster_peers = {:?}", peers);
+    debug!("cluster_peers = {:?}", server_args.cluster_peers);
     let server = XlineServer::new(
         server_args.name,
         server_args.ip_port,
-        peers,
+        server_args.cluster_peers,
         server_args.is_leader,
         server_args.leader_ip_port,
         server_args.self_ip_port,

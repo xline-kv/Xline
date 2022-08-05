@@ -23,7 +23,7 @@ use crate::storage::KvStore;
 /// Xline server
 #[allow(dead_code)] // Remove this after feature is completed
 #[derive(Debug)]
-pub(crate) struct XlineServer {
+pub struct XlineServer {
     /// Server name
     name: String,
     /// Address of server
@@ -47,7 +47,7 @@ pub(crate) struct XlineServer {
 
 impl XlineServer {
     /// New `XlineServer`
-    pub(crate) async fn new(
+    pub async fn new(
         name: String,
         addr: SocketAddr,
         peers: Vec<SocketAddr>,
@@ -92,7 +92,7 @@ impl XlineServer {
     }
 
     /// Start `XlineServer`
-    pub(crate) async fn start(&self) -> Result<()> {
+    pub async fn start(&self) -> Result<()> {
         let kv_server = KvServer::new(
             Arc::clone(&self.storage),
             Arc::clone(&self.client),
