@@ -9,4 +9,4 @@ mod lock_server;
 /// Xline server
 pub(crate) mod xline_server;
 
-pub(crate) use self::xline_server::XlineServer;
+pub use self::xline_server::XlineServer;
