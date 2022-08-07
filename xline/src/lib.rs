@@ -2,5 +2,5 @@
 mod rpc;
 /// Xline server
 pub mod server;
-// Storage module
+/// Storage module
 mod storage;
