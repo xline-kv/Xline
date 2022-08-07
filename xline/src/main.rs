@@ -125,7 +125,7 @@ struct ServerArgs {
     /// Node name
     #[clap(long)]
     name: String,
-    /// Cluster peers. eg: node1=192.168.x.x:8080;node2=192.168.x.x:8080
+    /// Cluster peers. eg: 192.168.x.x:8080 192.168.x.x:8080
     #[clap(long, multiple = true, required = true)]
     cluster_peers: Vec<SocketAddr>,
     /// Current node ip and port. eg: 192.168.x.x:8080
