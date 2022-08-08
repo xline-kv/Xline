@@ -18,7 +18,6 @@ pub struct Client<C: Command> {
     /// Client endpoint to send requests
     ep: Arc<Endpoint>,
     /// Leader address
-    #[allow(dead_code)] // should use in propose synced
     leader: SocketAddr,
     /// All servers addresses including leader address
     addrs: Vec<SocketAddr>,
@@ -79,13 +78,10 @@ where
         let mut ok_cnt: usize = 0;
         let mut max_term = 0;
         let mut execute_result: Option<C::ER> = None;
-
-        while ok_cnt
-            < (ft
-                .wrapping_add(ft.wrapping_add(1).wrapping_div(2))
-                .wrapping_add(1))
-            || execute_result.is_none()
-        {
+        let major_cnt = ft
+            .wrapping_add(ft.wrapping_add(1).wrapping_div(2))
+            .wrapping_add(1);
+        while ok_cnt < major_cnt || execute_result.is_none() {
             if rpcs
                 .next()
                 .await

@@ -4,12 +4,11 @@ use clippy_utilities::{NumericCast, OverflowArithmetic};
 use futures::{stream::FuturesUnordered, StreamExt};
 use madsim::net::Endpoint;
 use parking_lot::{Mutex, RwLock};
-use tokio::sync::oneshot;
-use tracing::warn;
+use tracing::{error, warn};
 
 use crate::{
+    channel::{key_mpsc::MpscKeybasedReceiver, key_spmc::SpmcKeybasedSender},
     cmd::Command,
-    keybased_channel::{KeybasedChannelReceiver, KeysMessage},
     log::{EntryStatus, LogEntry},
     message::{SyncCommand, SyncResponse, TermNum},
     util::{MutexMap, RwLockMap},
@@ -20,36 +19,20 @@ use crate::{
 static SYNC_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// "sync task complete" message
-pub(crate) struct SyncCompleteMessage<C>
-where
-    C: Command,
-{
+pub(crate) struct SyncCompleteMessage {
     /// The log index
     log_index: LogIndex,
-    /// The keys message
-    keys_msg: KeysMessage<C::K, SyncMessage<C>>,
 }
 
-impl<C> SyncCompleteMessage<C>
-where
-    C: Command,
-{
+impl SyncCompleteMessage {
     /// Create a new `SyncCompleteMessage`
-    fn new(log_index: LogIndex, keys_msg: KeysMessage<C::K, SyncMessage<C>>) -> Self {
-        Self {
-            log_index,
-            keys_msg,
-        }
+    fn new(log_index: LogIndex) -> Self {
+        Self { log_index }
     }
 
     /// Get Log Index
     pub(crate) fn log_index(&self) -> u64 {
         self.log_index
-    }
-
-    /// Get the `KeysMessage`
-    pub(crate) fn keys_msg(&self) -> KeysMessage<C::K, SyncMessage<C>> {
-        self.keys_msg.clone()
     }
 }
 
@@ -62,8 +45,6 @@ where
     term: TermNum,
     /// Command, may be taken out
     cmd: Option<Box<C>>,
-    /// The sync task compelte hook, may be taken out
-    sync_comp: Option<oneshot::Sender<SyncCompleteMessage<C>>>,
 }
 
 impl<C> SyncMessage<C>
@@ -71,15 +52,10 @@ where
     C: Command,
 {
     /// Create a new `SyncMessage`
-    pub(crate) fn new(
-        term: TermNum,
-        cmd: C,
-        sync_comp: oneshot::Sender<SyncCompleteMessage<C>>,
-    ) -> Self {
+    pub(crate) fn new(term: TermNum, cmd: C) -> Self {
         Self {
             term,
             cmd: Some(Box::new(cmd)),
-            sync_comp: Some(sync_comp),
         }
     }
 
@@ -88,13 +64,10 @@ where
     /// # Panic
     /// If the function is called more than once, it will panic
     #[allow(clippy::expect_used)]
-    fn take_all(&mut self) -> (TermNum, Box<C>, oneshot::Sender<SyncCompleteMessage<C>>) {
+    fn take_all(&mut self) -> (TermNum, Box<C>) {
         (
             self.term,
             self.cmd.take().expect("cmd should only be taken once"),
-            self.sync_comp
-                .take()
-                .expect("sync_comp should only be taken once"),
         )
     }
 }
@@ -104,7 +77,9 @@ pub(crate) struct SyncManager<C: Command + 'static> {
     /// The endpoint to call rpc to other servers
     ep: Endpoint,
     /// Get cmd sync request from speculative command
-    sync_chan: KeybasedChannelReceiver<C::K, SyncMessage<C>>,
+    sync_chan: MpscKeybasedReceiver<C::K, SyncMessage<C>>,
+    /// Send cmd to sync complete handler
+    comp_chan: SpmcKeybasedSender<C::K, SyncCompleteMessage>,
     /// Other server address
     others: Arc<RwLock<Vec<SocketAddr>>>,
     /// Consensus log
@@ -115,13 +90,15 @@ impl<C: Command + 'static> SyncManager<C> {
     /// Create a `SyncedManager`
     pub(crate) fn new(
         ep: Endpoint,
-        cmd_chan: KeybasedChannelReceiver<C::K, SyncMessage<C>>,
+        sync_chan: MpscKeybasedReceiver<C::K, SyncMessage<C>>,
+        comp_chan: SpmcKeybasedSender<C::K, SyncCompleteMessage>,
         others: Arc<RwLock<Vec<SocketAddr>>>,
         log: Arc<Mutex<Vec<LogEntry<C>>>>,
     ) -> Self {
         Self {
             ep,
-            sync_chan: cmd_chan,
+            sync_chan,
+            comp_chan,
             others,
             log,
         }
@@ -129,18 +106,14 @@ impl<C: Command + 'static> SyncManager<C> {
 
     /// Run the `SyncManager`
     pub(crate) async fn run(&mut self) {
-        let f = self.others.read().len().wrapping_div(2);
+        let max_fail = self.others.read().len().wrapping_div(2);
 
         loop {
-            let sync_msg = self.sync_chan.async_recv().await;
-            let (term, cmd, sync_comp) =
-                if let Some(real_msg) = sync_msg.map_msg(SyncMessage::take_all) {
-                    real_msg
-                } else {
-                    // FIXME: should panic here?
-                    warn!("empty sync message, should not happen");
-                    continue;
-                };
+            let sync_msg = match self.sync_chan.async_recv().await {
+                Ok(sync_msg) => sync_msg,
+                Err(_) => return,
+            };
+            let (term, cmd) = sync_msg.map_msg(SyncMessage::take_all);
 
             let others: Vec<SocketAddr> = self
                 .others
@@ -181,9 +154,15 @@ impl<C: Command + 'static> SyncManager<C> {
                         }
                     });
 
-                if synced_cnt == f {
-                    let _r =
-                        sync_comp.send(SyncCompleteMessage::new(index.numeric_cast(), sync_msg));
+                if synced_cnt > max_fail {
+                    if self
+                        .comp_chan
+                        .send(cmd.keys(), SyncCompleteMessage::new(index.numeric_cast()))
+                        .is_err()
+                    {
+                        error!("The comp_chan is closed on the remote side");
+                        return;
+                    }
                     break;
                 }
             }
