@@ -6,21 +6,26 @@ use std::{
 };
 
 use clippy_utilities::NumericCast;
+use event_listener::Event;
 use futures::FutureExt;
 use madsim::net::Endpoint;
 use parking_lot::{Mutex, MutexGuard, RwLock};
-use tokio::{sync::oneshot, task::JoinHandle};
+use tokio::task::JoinHandle;
 
 use crate::{
+    channel::{
+        key_mpsc::{self, MpscKeybasedSender},
+        key_spmc::{self, SpmcKeybasedReceiver},
+        SendError,
+    },
     cmd::{Command, CommandExecutor, ProposeId},
     error::{ProposeError, ServerError},
-    keybased_channel::{self, KeybasedChannelSender},
     log::{EntryStatus, LogEntry},
     message::{
         Propose, ProposeResponse, SyncCommand, SyncResponse, TermNum, WaitSynced,
         WaitSyncedResponse,
     },
-    sync_manager::{SyncManager, SyncMessage},
+    sync_manager::{SyncCompleteMessage, SyncManager, SyncMessage},
     util::MutexMap,
 };
 
@@ -93,8 +98,10 @@ pub struct Protocol<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
     cmd_executor: Arc<CE>,
     /// Consensus log
     log: Arc<Mutex<Vec<LogEntry<C>>>>,
-    /// The channel to send synced command
-    sync_chan: KeybasedChannelSender<C::K, SyncMessage<C>>,
+    /// The channel to send synced command to sync manager
+    sync_chan: MpscKeybasedSender<C::K, SyncMessage<C>>,
+    /// The channel to receive synced command from sync manager
+    comp_chan: SpmcKeybasedReceiver<C::K, SyncCompleteMessage>,
     /// Synced manager handler
     sm_handle: JoinHandle<()>,
     /// Sync event listener map
@@ -142,13 +149,14 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         others: &[SocketAddr],
         cmd_executor: CE,
     ) -> Self {
-        let (tx, rx) = keybased_channel::channel();
+        let (sync_tx, sync_rx) = key_mpsc::channel();
+        let (comp_tx, comp_rx) = key_spmc::channel();
         let other_addrs = Arc::new(RwLock::new(others.to_vec()));
         let log = Arc::new(Mutex::new(Vec::new()));
 
         let log_clone = Arc::<_>::clone(&log);
         let sm_handle = tokio::spawn(async {
-            let mut sm = SyncManager::new(send_ep, rx, other_addrs, log_clone);
+            let mut sm = SyncManager::new(send_ep, sync_rx, comp_tx, other_addrs, log_clone);
             sm.run().await;
         });
 
@@ -162,7 +170,8 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             spec: Arc::new(Mutex::new(VecDeque::new())),
             cmd_executor: Arc::new(cmd_executor),
             log,
-            sync_chan: tx,
+            sync_chan: sync_tx,
+            comp_chan: comp_rx,
             sm_handle,
             synced_events: Mutex::new(HashMap::new()),
         }
@@ -190,23 +199,23 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
     }
 
     /// Send sync event to the `SyncManager`, it's not a blocking function
-    fn sync_to_others(&self, term: TermNum, cmd: &C, need_execute: bool) -> bool {
-        let (complete_sender, sync_comp_rx) = oneshot::channel();
-
-        let complete_notify = self.sync_chan.send(
-            cmd.keys(),
-            SyncMessage::new(term, cmd.clone(), complete_sender),
-        );
+    fn sync_to_others(
+        &self,
+        term: TermNum,
+        cmd: &C,
+        need_execute: bool,
+    ) -> Result<Event, SendError> {
+        let comp_rx = self.comp_chan.clone();
+        let ready_notify = self
+            .sync_chan
+            .send(cmd.keys(), SyncMessage::new(term, cmd.clone()))?;
         let spec = Arc::<_>::clone(&self.spec);
         let cmd2exe = cmd.clone();
         let dispatch_executor = Arc::<CE>::clone(&self.cmd_executor);
 
         let handle = tokio::spawn(async move {
-            let sync_compl_result = sync_comp_rx.await;
+            let sync_compl_result = comp_rx.recv().await;
             let cmd_id = cmd2exe.id().clone();
-            if Self::spec_remove_cmd(&spec, &cmd_id).is_none() {
-                unreachable!("{:?} should be in the spec pool", cmd_id);
-            }
 
             let call_after_sync = |index, er| {
                 cmd2exe
@@ -220,9 +229,9 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                     })
             };
 
-            match sync_compl_result {
-                Ok(reply) => {
-                    let (index, keys_msg) = (reply.log_index(), reply.keys_msg());
+            let after_sync_result = match sync_compl_result {
+                Ok((reply, notifier)) => {
+                    let index = reply.map_msg(|csm| csm.log_index());
                     let after_sync_result = if need_execute {
                         match cmd2exe.execute(dispatch_executor.as_ref()).await {
                             Ok(er) => call_after_sync(index, Some(er)).await,
@@ -234,22 +243,31 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                     } else {
                         call_after_sync(index, None).await
                     };
-                    let _ignore = complete_notify.send(keys_msg);
+                    let _ignore = notifier.send(reply);
                     after_sync_result
                 }
                 // TODO: handle the sync task stop, usually we should stop working
                 Err(e) => unreachable!("{:?} sync task failed, {}", cmd_id, e),
+            };
+
+            if Self::spec_remove_cmd(&spec, &cmd_id).is_none() {
+                unreachable!("{:?} should be in the spec pool", cmd_id);
             }
+
+            after_sync_result
         });
         self.synced_events.map_lock(|mut events| {
             if events
                 .insert(cmd.id().clone(), SyncedTaskJoinHandle(handle))
                 .is_some()
             {
-                unreachable!("{:?} should not be inserted in events map", cmd.id());
+                unreachable!(
+                    "{:?} should not be inserted in events map, it's synced before?",
+                    cmd.id()
+                );
             }
         });
-        true
+        Ok(ready_notify)
     }
 
     /// Propose request handler
@@ -264,18 +282,20 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                 match (is_conflict, is_leader) {
                     (true, true) => async {
                         // the leader need to sync cmd
-                        if self.sync_to_others(self_term, p.cmd(), true) {
-                            ProposeResponse::new_error(
-                                is_leader,
-                                self_term,
-                                ProposeError::KeyConflict,
-                            )
-                        } else {
-                            ProposeResponse::new_error(
+                        match self.sync_to_others(self_term, p.cmd(), true) {
+                            Ok(notifier) => {
+                                notifier.notify(1);
+                                ProposeResponse::new_error(
+                                    is_leader,
+                                    self_term,
+                                    ProposeError::KeyConflict,
+                                )
+                            }
+                            Err(_err) => ProposeResponse::new_error(
                                 is_leader,
                                 *self.term.read(),
                                 ProposeError::SyncedError("Sync cmd channel closed".to_owned()),
-                            )
+                            ),
                         }
                     }
                     .left_future()
@@ -286,6 +306,10 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                     .left_future()
                     .right_future(),
                     (false, true) => {
+                        let notifier = match self.sync_to_others(self_term, p.cmd(), false) {
+                            Ok(notifier) => Some(notifier),
+                            Err(_) => None,
+                        };
                         // only the leader executes the command in speculative pool
                         p.cmd()
                             .execute(self.cmd_executor.as_ref())
@@ -300,9 +324,11 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                                     },
                                     |rv| {
                                         // the leader need to sync cmd
-                                        if self.sync_to_others(self_term, p.cmd(), false) {
+                                        if let Some(n) = notifier {
+                                            n.notify(1);
                                             ProposeResponse::new_ok(is_leader, self_term, rv)
                                         } else {
+                                            // TODO: this error should be reported ealier?
                                             ProposeResponse::new_error(
                                                 is_leader,
                                                 *self.term.read(),
