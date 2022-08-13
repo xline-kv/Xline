@@ -11,7 +11,8 @@ use super::{db::DB, index::Index, kvwatcher::KvWatcher};
 use crate::rpc::{
     Compare, CompareResult, CompareTarget, DeleteRangeRequest, DeleteRangeResponse, Event,
     EventType, KeyValue, PutRequest, PutResponse, RangeRequest, RangeResponse, Request, RequestOp,
-    Response, ResponseHeader, ResponseOp, TargetUnion, TxnRequest, TxnResponse,
+    Response, ResponseHeader, ResponseOp, SortOrder, SortTarget, TargetUnion, TxnRequest,
+    TxnResponse,
 };
 use crate::server::command::{
     Command, CommandResponse, ExecutionRequest, KeyRange, SyncRequest, SyncResponse,
@@ -279,7 +280,7 @@ impl KvStoreBackend {
     fn handle_range_request(&self, req: &RangeRequest) -> RangeResponse {
         let key = &req.key;
         let range_end = &req.range_end;
-        let kvs = self.get_range(key, range_end);
+        let mut kvs = self.get_range(key, range_end);
         debug!("handle_range_request kvs {:?}", kvs);
         let mut response = RangeResponse {
             header: Some(ResponseHeader {
@@ -289,7 +290,46 @@ impl KvStoreBackend {
             count: kvs.len().cast(),
             ..RangeResponse::default()
         };
-        response.kvs = kvs;
+        if !req.count_only {
+            match (req.sort_target(), req.sort_order()) {
+                (SortTarget::Key, SortOrder::None) => {}
+                (SortTarget::Key, SortOrder::Ascend) => {
+                    kvs.sort_by(|a, b| a.key.cmp(&b.key));
+                }
+                (SortTarget::Key, SortOrder::Descend) => {
+                    kvs.sort_by(|a, b| b.key.cmp(&a.key));
+                }
+                (SortTarget::Version, SortOrder::Ascend | SortOrder::None) => {
+                    kvs.sort_by(|a, b| a.version.cmp(&b.version));
+                }
+                (SortTarget::Version, SortOrder::Descend) => {
+                    kvs.sort_by(|a, b| b.version.cmp(&a.version));
+                }
+                (SortTarget::Create, SortOrder::Ascend | SortOrder::None) => {
+                    kvs.sort_by(|a, b| a.create_revision.cmp(&b.create_revision));
+                }
+                (SortTarget::Create, SortOrder::Descend) => {
+                    kvs.sort_by(|a, b| b.create_revision.cmp(&a.create_revision));
+                }
+                (SortTarget::Mod, SortOrder::Ascend | SortOrder::None) => {
+                    kvs.sort_by(|a, b| a.mod_revision.cmp(&b.mod_revision));
+                }
+                (SortTarget::Mod, SortOrder::Descend) => {
+                    kvs.sort_by(|a, b| b.mod_revision.cmp(&a.mod_revision));
+                }
+                (SortTarget::Value, SortOrder::Ascend | SortOrder::None) => {
+                    kvs.sort_by(|a, b| a.value.cmp(&b.value));
+                }
+                (SortTarget::Value, SortOrder::Descend) => {
+                    kvs.sort_by(|a, b| b.value.cmp(&a.value));
+                }
+            }
+            if (req.limit > 0) && (kvs.len() > req.limit.cast()) {
+                response.more = true;
+                kvs.truncate(req.limit.cast())
+            }
+            response.kvs = kvs
+        }
         response
     }
 
