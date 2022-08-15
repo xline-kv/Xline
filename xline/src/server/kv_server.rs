@@ -44,12 +44,9 @@ impl KvServer {
             panic!("Receive empty ResponseOp");
         }
     }
-    /// Propose request and get result
-    async fn propose(
-        &self,
-        propose_id: ProposeId,
-        request: Request,
-    ) -> Result<(CommandResponse, SyncResponse), ProposeError> {
+
+    /// Generate `Command` proposal from `Request`
+    fn command_from_request(propose_id: ProposeId, request: Request) -> Command {
         let key_ranges = match request {
             Request::RequestRange(ref req) => vec![KeyRange {
                 start: req.key.clone(),
@@ -75,9 +72,27 @@ impl KvServer {
         let range_request_op = RequestOp {
             request: Some(request),
         };
-        let cmd = Command::new(key_ranges, range_request_op.encode_to_vec(), propose_id);
-        let response = self.client.propose_indexed(cmd.clone()).await;
-        response
+        Command::new(key_ranges, range_request_op.encode_to_vec(), propose_id)
+    }
+
+    /// Propose request and get result with slow path
+    async fn propose_slow_path(
+        &self,
+        propose_id: ProposeId,
+        request: Request,
+    ) -> Result<(CommandResponse, SyncResponse), ProposeError> {
+        let cmd = Self::command_from_request(propose_id, request);
+        self.client.propose_indexed(cmd).await
+    }
+
+    /// Propose request and get result with fast path
+    async fn propose_fast_path(
+        &self,
+        propose_id: ProposeId,
+        request: Request,
+    ) -> Result<CommandResponse, ProposeError> {
+        let cmd = Self::command_from_request(propose_id, request);
+        self.client.propose(cmd).await
     }
 
     /// Update revision of `ResponseHeader`
@@ -128,23 +143,31 @@ impl Kv for KvServer {
 
         let range_request = request.into_inner();
         let propose_id = self.generate_propose_id();
-        let result = self
-            .propose(propose_id.clone(), Request::RequestRange(range_request))
-            .await;
+        let is_fast_path = true;
+        let (res_op, sync_res) = if is_fast_path {
+            let res_op = self
+                .propose_fast_path(propose_id.clone(), Request::RequestRange(range_request))
+                .await
+                .unwrap_or_else(|e| panic!("failed to receive response from kv storage, {e}"));
+            (res_op, None)
+        } else {
+            let (res_op, sync_res) = self
+                .propose_slow_path(propose_id.clone(), Request::RequestRange(range_request))
+                .await
+                .unwrap_or_else(|e| panic!("failed to receive response from kv storage, {e}"));
+            (res_op, Some(sync_res))
+        };
 
-        match result {
-            Ok((res_op, sync_res)) => {
-                let mut res = Self::parse_response_op(res_op.decode());
-                let revision = sync_res.revision();
-                debug!("Get revision {:?} for RangeRequest", revision);
-                Self::update_header_revision(&mut res, revision);
-                if let Response::ResponseRange(response) = res {
-                    Ok(tonic::Response::new(response))
-                } else {
-                    panic!("Receive wrong response {:?} for RangeRequest", res);
-                }
-            }
-            Err(e) => panic!("Failed to receive response from KV storage, {e}"),
+        let mut res = Self::parse_response_op(res_op.decode());
+        if let Some(sync_res) = sync_res {
+            let revision = sync_res.revision();
+            debug!("Get revision {:?} for RangeRequest", revision);
+            Self::update_header_revision(&mut res, revision);
+        }
+        if let Response::ResponseRange(response) = res {
+            Ok(tonic::Response::new(response))
+        } else {
+            panic!("Receive wrong response {:?} for RangeRequest", res);
         }
     }
 
@@ -158,22 +181,31 @@ impl Kv for KvServer {
         debug!("Receive PutRequest {:?}", request);
         let put_request = request.into_inner();
         let propose_id = self.generate_propose_id();
-        let result = self
-            .propose(propose_id.clone(), Request::RequestPut(put_request))
-            .await;
-        match result {
-            Ok((res_op, sync_res)) => {
-                let mut res = Self::parse_response_op(res_op.decode());
-                let revision = sync_res.revision();
-                debug!("Get revision {:?} for PutRequest", revision);
-                Self::update_header_revision(&mut res, revision);
-                if let Response::ResponsePut(response) = res {
-                    Ok(tonic::Response::new(response))
-                } else {
-                    panic!("Receive wrong response {:?} for PutRequest", res);
-                }
-            }
-            Err(e) => panic!("Failed to receive response from KV storage, {e}"),
+        let is_fast_path = true;
+        let (res_op, sync_res) = if is_fast_path {
+            let res_op = self
+                .propose_fast_path(propose_id.clone(), Request::RequestPut(put_request))
+                .await
+                .unwrap_or_else(|e| panic!("failed to receive response from kv storage, {e}"));
+            (res_op, None)
+        } else {
+            let (res_op, sync_res) = self
+                .propose_slow_path(propose_id.clone(), Request::RequestPut(put_request))
+                .await
+                .unwrap_or_else(|e| panic!("failed to receive response from kv storage, {e}"));
+            (res_op, Some(sync_res))
+        };
+
+        let mut res = Self::parse_response_op(res_op.decode());
+        if let Some(sync_res) = sync_res {
+            let revision = sync_res.revision();
+            debug!("Get revision {:?} for PutRequest", revision);
+            Self::update_header_revision(&mut res, revision);
+        }
+        if let Response::ResponsePut(response) = res {
+            Ok(tonic::Response::new(response))
+        } else {
+            panic!("Receive wrong response {:?} for PutRequest", res);
         }
     }
 
@@ -187,25 +219,37 @@ impl Kv for KvServer {
         debug!("Receive DeleteRangeRequest {:?}", request);
         let delete_range_request = request.into_inner();
         let propose_id = self.generate_propose_id();
-        let result = self
-            .propose(
-                propose_id.clone(),
-                Request::RequestDeleteRange(delete_range_request),
-            )
-            .await;
-        match result {
-            Ok((res_op, sync_res)) => {
-                let mut res = Self::parse_response_op(res_op.decode());
-                let revision = sync_res.revision();
-                debug!("Get revision {:?} for PutRequest", revision);
-                Self::update_header_revision(&mut res, revision);
-                if let Response::ResponseDeleteRange(response) = res {
-                    Ok(tonic::Response::new(response))
-                } else {
-                    panic!("Receive wrong response {:?} DeleteRangeRequest", res);
-                }
-            }
-            Err(e) => panic!("Failed to receive response from KV storage, {e}"),
+        let is_fast_path = true;
+        let (res_op, sync_res) = if is_fast_path {
+            let res_op = self
+                .propose_fast_path(
+                    propose_id.clone(),
+                    Request::RequestDeleteRange(delete_range_request),
+                )
+                .await
+                .unwrap_or_else(|e| panic!("failed to receive response from kv storage, {e}"));
+            (res_op, None)
+        } else {
+            let (res_op, sync_res) = self
+                .propose_slow_path(
+                    propose_id.clone(),
+                    Request::RequestDeleteRange(delete_range_request),
+                )
+                .await
+                .unwrap_or_else(|e| panic!("failed to receive response from kv storage, {e}"));
+            (res_op, Some(sync_res))
+        };
+
+        let mut res = Self::parse_response_op(res_op.decode());
+        if let Some(sync_res) = sync_res {
+            let revision = sync_res.revision();
+            debug!("Get revision {:?} for DeleteRangeRequest", revision);
+            Self::update_header_revision(&mut res, revision);
+        }
+        if let Response::ResponseDeleteRange(response) = res {
+            Ok(tonic::Response::new(response))
+        } else {
+            panic!("Receive wrong response {:?} for DeleteRangeRequest", res);
         }
     }
 
@@ -220,22 +264,31 @@ impl Kv for KvServer {
         debug!("Receive TxnRequest {:?}", request);
         let txn_request = request.into_inner();
         let propose_id = self.generate_propose_id();
-        let result = self
-            .propose(propose_id.clone(), Request::RequestTxn(txn_request))
-            .await;
-        match result {
-            Ok((res_op, sync_res)) => {
-                let mut res = Self::parse_response_op(res_op.decode());
-                let revision = sync_res.revision();
-                debug!("Get revision {:?} for PutRequest", revision);
-                Self::update_header_revision(&mut res, revision);
-                if let Response::ResponseTxn(response) = res {
-                    Ok(tonic::Response::new(response))
-                } else {
-                    panic!("Receive wrong response {:?} TxnRequest", res);
-                }
-            }
-            Err(e) => panic!("Failed to receive response from KV storage, {e}"),
+        let is_fast_path = true;
+        let (res_op, sync_res) = if is_fast_path {
+            let res_op = self
+                .propose_fast_path(propose_id.clone(), Request::RequestTxn(txn_request))
+                .await
+                .unwrap_or_else(|e| panic!("failed to receive response from kv storage, {e}"));
+            (res_op, None)
+        } else {
+            let (res_op, sync_res) = self
+                .propose_slow_path(propose_id.clone(), Request::RequestTxn(txn_request))
+                .await
+                .unwrap_or_else(|e| panic!("failed to receive response from kv storage, {e}"));
+            (res_op, Some(sync_res))
+        };
+
+        let mut res = Self::parse_response_op(res_op.decode());
+        if let Some(sync_res) = sync_res {
+            let revision = sync_res.revision();
+            debug!("Get revision {:?} for TxnRequest", revision);
+            Self::update_header_revision(&mut res, revision);
+        }
+        if let Response::ResponseTxn(response) = res {
+            Ok(tonic::Response::new(response))
+        } else {
+            panic!("Receive wrong response {:?} for TxnRequest", res);
         }
     }
 
