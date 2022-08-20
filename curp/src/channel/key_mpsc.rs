@@ -119,8 +119,7 @@ impl<K: Eq + Hash + Clone + ConflictCheck, M> KeybasedChannel<MpscKeysMessage<K,
         }
 
         while let Some(cur) = ready_pool.pop_front() {
-            self.inner.push_back(cur.clone());
-            if let Some(successor) = self.successor.remove(km) {
+            if let Some(successor) = self.successor.remove(&cur) {
                 for s in successor {
                     let (no_proceeder, has_pre) = if let Some(s_p) = self.proceeder.get_mut(&s) {
                         *s_p = s_p.overflow_sub(1);
@@ -139,6 +138,7 @@ impl<K: Eq + Hash + Clone + ConflictCheck, M> KeybasedChannel<MpscKeysMessage<K,
                     }
                 }
             }
+            self.inner.push_back(cur);
         }
 
         if ready_cnt > 0 {
@@ -357,5 +357,86 @@ mod test {
         let oneshot_result = oneshot_rx.await;
         assert!(oneshot_result.is_ok());
         assert_eq!(oneshot_result.unwrap(), 1);
+    }
+
+    #[allow(clippy::expect_used, clippy::unwrap_used, unused_results)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    async fn test_1000_send() {
+        let (tx, mut rx) = channel::<String, String>();
+
+        let _tx_hold = tx.clone();
+        let handle = tokio::spawn(async move {
+            let mut readys = vec![];
+            for i in 0..1000 {
+                let r = tx
+                    .send(&["1".to_owned()], format!("1_{}", i))
+                    .expect("Async send should success");
+                readys.push(r);
+            }
+
+            readys
+        });
+        let mut readys = handle.await.expect("task1 should success");
+        readys.reverse();
+        for r in readys {
+            r.notify(1);
+        }
+
+        let mut recv_cnt = 0;
+        while recv_cnt < 1000 {
+            assert!(
+                rx.recv_timeout(Duration::from_secs(10)).is_ok(),
+                "cannot recv value within timeout limit"
+            );
+            recv_cnt += 1;
+        }
+    }
+
+    #[allow(clippy::expect_used, clippy::unwrap_used, unused_results)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    async fn test_parallel() {
+        let (tx, mut rx) = channel::<String, String>();
+
+        let tx1 = tx.clone();
+        let handle1 = tokio::spawn(async move {
+            let mut readys = vec![];
+            for i in 0..1000 {
+                let r = tx1
+                    .send(&["1".to_owned()], format!("1_{}", i))
+                    .expect("Async send should success");
+                readys.push(r);
+            }
+
+            readys
+        });
+
+        let tx2 = tx.clone();
+        let handle2 = tokio::spawn(async move {
+            let mut readys = vec![];
+            for i in 0..1000 {
+                let r = tx2
+                    .send(&["1".to_owned()], format!("2_{}", i))
+                    .expect("Async send should success");
+                readys.push(r);
+            }
+
+            readys
+        });
+
+        for r in handle1.await.expect("task1 should success") {
+            r.notify(1);
+        }
+        for r in handle2.await.expect("task2 should success") {
+            r.notify(1);
+        }
+
+        let mut recv_cnt = 0;
+        while recv_cnt < 2000 {
+            assert!(
+                rx.recv_timeout(Duration::from_secs(10)).is_ok(),
+                "cannot recv value within timeout limit"
+            );
+            recv_cnt += 1;
+        }
     }
 }
