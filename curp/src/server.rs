@@ -397,6 +397,9 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                             sc.cmd().clone(),
                             EntryStatus::Unsynced,
                         ));
+
+                        // TODO: remove this workaround after commit feature is done.
+                        let _skip = Self::spec_remove_cmd(&Arc::clone(&self.spec), sc.cmd().id());
                         SyncResponse::Synced
                     }
                 }
