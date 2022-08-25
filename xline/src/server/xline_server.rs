@@ -41,8 +41,8 @@ pub struct XlineServer {
     /// If current node is leader when it starts
     /// TODO: remove this when leader selection is supported
     is_leader: bool,
-    /// Leader address
-    leader_address: SocketAddr,
+    /// Leader index
+    leader_index: usize,
     /// Address of self node
     self_addr: SocketAddr,
 }
@@ -54,7 +54,7 @@ impl XlineServer {
         addr: SocketAddr,
         peers: Vec<SocketAddr>,
         is_leader: bool,
-        leader_address: SocketAddr,
+        leader_addr: SocketAddr,
         self_addr: SocketAddr,
     ) -> Self {
         let storage = Arc::new(KvStore::new());
@@ -62,11 +62,18 @@ impl XlineServer {
 
         let mut all_members = peers.clone();
         all_members.push(self_addr);
+        all_members.sort();
+
+        let leader_index = all_members
+            .binary_search(&leader_addr)
+            .expect("leader address should be in the collection of peers and self address");
 
         let client = Arc::new(
-            Client::<Command>::new(&leader_address, &all_members)
-                .await
-                .unwrap_or_else(|| panic!("Failed to create client")),
+            Client::<Command>::new(
+                leader_index,
+                all_members.into_iter().map(|m| m.to_string()).collect(),
+            )
+            .await,
         );
 
         let peers_clone = peers.clone();
@@ -75,7 +82,7 @@ impl XlineServer {
             Rpc::<Command, CommandExecutor>::run(
                 is_leader,
                 0,
-                peers_clone,
+                peers_clone.into_iter().map(|p| p.to_string()).collect(),
                 Some(self_addr.port()),
                 cmd_executor,
             )
@@ -88,7 +95,7 @@ impl XlineServer {
             storage: Arc::clone(&storage),
             client,
             is_leader,
-            leader_address,
+            leader_index,
             self_addr,
         }
     }

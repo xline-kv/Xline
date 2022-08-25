@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package messagepb;
+
+// Propose command from client to servers
+message ProposeRequest {
+    // The serialized command
+    // Original type is Command trait
+    bytes command = 1;
+};
+
+message ProposeResponse {
+    bool is_leader = 1;
+    uint64 term = 2;
+    oneof exe_result {
+        // The original type is Command::ER
+        bytes result = 3;
+        // The original type is ProposeError
+        bytes error = 4;
+    }
+};
+
+message WaitSyncedRequest {
+    bytes id = 1;
+}
+
+message WaitSyncedResponse {
+    message Success {
+        bytes after_sync_result = 1;
+        bytes exe_result = 2;
+    }
+    oneof sync_result {
+        Success success = 1;
+        bytes   error = 2;
+    }
+}
+
+message SyncRequest {
+    uint64 term = 1;
+    uint64 index = 2;
+    bytes  cmd = 3;
+}
+
+message SyncResponse {
+    message EntryNotEmpty {
+        uint64 term = 1;
+        bytes  cmd = 2;
+    }
+    oneof sync_response {
+        bool synced = 1;
+        uint64 wrong_term = 2; 
+        EntryNotEmpty entry_not_empty = 3;
+        uint64 prev_not_ready = 4;
+    }
+}
+
+service Protocol {
+    rpc Propose (ProposeRequest) returns (ProposeResponse);
+    rpc WaitSynced (WaitSyncedRequest) returns (WaitSyncedResponse);
+    rpc Sync (SyncRequest) returns (SyncResponse);
+}

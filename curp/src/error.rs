@@ -37,10 +37,18 @@ pub enum ServerError {
     /// Rpc Service Error reported by madsim
     #[error("rpc service error")]
     RpcServiceError(String),
+
+    /// Parsing error
+    #[error("parsing error: {0}")]
+    ParsingError(String),
+
+    /// Rpc Error
+    #[error("rpc error: {0}")]
+    RpcError(#[from] tonic::transport::Error),
 }
 
 /// The error met during propose phase
-#[derive(Error, Debug, Serialize, Deserialize, Clone)]
+#[derive(Error, Debug, Serialize, Deserialize)]
 #[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
 #[non_exhaustive]
 pub enum ProposeError {
@@ -54,9 +62,36 @@ pub enum ProposeError {
     #[error("syncing error {0}")]
     SyncedError(String),
     /// Rpc error
-    #[error("rpc error {0}")]
+    #[error("rpc error: {0}")]
     RpcError(String),
+    /// Rpc status
+    #[error("rpc status: {0}")]
+    RpcStatus(String),
+    /// Encode error
+    #[error("encode error: {0}")]
+    EncodeError(String),
     /// Protocol error
     #[error("protocol error {0}")]
     ProtocolError(String),
+}
+
+impl From<tonic::transport::Error> for ProposeError {
+    #[inline]
+    fn from(e: tonic::transport::Error) -> Self {
+        Self::RpcError(e.to_string())
+    }
+}
+
+impl From<tonic::Status> for ProposeError {
+    #[inline]
+    fn from(e: tonic::Status) -> Self {
+        Self::RpcError(e.to_string())
+    }
+}
+
+impl From<bincode::Error> for ProposeError {
+    #[inline]
+    fn from(e: bincode::Error) -> Self {
+        Self::EncodeError(e.to_string())
+    }
 }
