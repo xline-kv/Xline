@@ -136,4 +136,7 @@ mod channel;
 /// Sync manager to sync command to all other peers
 mod sync_manager;
 
+/// Protobuf generated types that are used in RPC
+mod rpc;
+
 pub use message::LogIndex;

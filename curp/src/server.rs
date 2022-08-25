@@ -1,14 +1,12 @@
 use std::{
     collections::{HashMap, VecDeque},
     fmt::Debug,
-    net::SocketAddr,
     sync::Arc,
 };
 
 use clippy_utilities::NumericCast;
 use event_listener::Event;
 use futures::FutureExt;
-use madsim::net::Endpoint;
 use parking_lot::{Mutex, MutexGuard, RwLock};
 use tokio::task::JoinHandle;
 
@@ -21,9 +19,10 @@ use crate::{
     cmd::{Command, CommandExecutor, ProposeId},
     error::{ProposeError, ServerError},
     log::{EntryStatus, LogEntry},
-    message::{
-        Propose, ProposeResponse, SyncCommand, SyncResponse, TermNum, WaitSynced,
-        WaitSyncedResponse,
+    message::TermNum,
+    rpc::{
+        ProposeRequest, ProposeResponse, ProtocolServer, SyncRequest, SyncResponse,
+        WaitSyncedRequest, WaitSyncedResponse,
     },
     sync_manager::{SyncCompleteMessage, SyncManager, SyncMessage},
     util::MutexMap,
@@ -40,51 +39,65 @@ pub struct Rpc<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
     inner: Arc<Protocol<C, CE>>,
 }
 
-#[allow(missing_docs)]
-#[madsim::service]
+#[tonic::async_trait]
+impl<C, CE> crate::rpc::Protocol for Rpc<C, CE>
+where
+    C: 'static + Command,
+    CE: 'static + CommandExecutor<C>,
+{
+    async fn propose(
+        &self,
+        request: tonic::Request<ProposeRequest>,
+    ) -> Result<tonic::Response<ProposeResponse>, tonic::Status> {
+        self.inner.propose(request).await
+    }
+    async fn wait_synced(
+        &self,
+        request: tonic::Request<WaitSyncedRequest>,
+    ) -> Result<tonic::Response<WaitSyncedResponse>, tonic::Status> {
+        self.inner.wait_synced(request).await
+    }
+    async fn sync(
+        &self,
+        request: tonic::Request<SyncRequest>,
+    ) -> Result<tonic::Response<SyncResponse>, tonic::Status> {
+        self.inner.sync(request).await
+    }
+}
+
 impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
-    /// Handle propose request, from client
-    #[rpc]
-    async fn propose(&self, p: Propose<C>) -> ProposeResponse<C> {
-        self.inner.propose(p).await
-    }
-
-    /// Handle sync request, from server
-    #[rpc]
-    async fn sync(&self, sc: SyncCommand<C>) -> SyncResponse<C> {
-        self.inner.sync(sc).await
-    }
-
-    /// Handle wait_sync request, from client
-    #[rpc]
-    async fn wait_sync(&self, sc: WaitSynced<C>) -> WaitSyncedResponse<C> {
-        self.inner.wait_sync(sc).await
-    }
-
     /// Run a new rpc server
+    ///
+    /// # Errors
+    ///   `ServerError::ParsingError` if parsing failed for the local server address
+    ///   `ServerError::RpcError` if any rpc related error met
     #[inline]
     pub async fn run(
         is_leader: bool,
         term: u64,
-        others: Vec<SocketAddr>,
+        others: Vec<String>,
         server_port: Option<u16>,
         executor: CE,
     ) -> Result<(), ServerError> {
         let port = server_port.unwrap_or(DEFAULT_SERVER_PORT);
-        let rx_ep = Endpoint::bind(format!("0.0.0.0:{port}")).await?;
-        let tx_ep = Endpoint::bind("127.0.0.1:0").await?;
         let server = Self {
-            inner: Arc::new(Protocol::new(is_leader, term, tx_ep, &others, executor)),
+            inner: Arc::new(Protocol::new(is_leader, term, others, executor)),
         };
-        Self::serve_on(server, rx_ep)
-            .await
-            .map_err(|e| ServerError::RpcServiceError(format!("{e}")))
+        tonic::transport::Server::builder()
+            .add_service(ProtocolServer::new(server))
+            .serve(
+                format!("0.0.0.0:{}", port)
+                    .parse()
+                    .map_err(|e| ServerError::ParsingError(format!("{}", e)))?,
+            )
+            .await?;
+        Ok(())
     }
 }
 
 /// The join handler of synced task
 #[derive(Debug)]
-struct SyncedTaskJoinHandle<C: Command + 'static>(JoinHandle<WaitSyncedResponse<C>>);
+struct SyncedTaskJoinHandle(JoinHandle<Result<WaitSyncedResponse, bincode::Error>>);
 
 /// The server that handles client request and server consensus protocol
 pub struct Protocol<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
@@ -105,7 +118,7 @@ pub struct Protocol<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
     /// Synced manager handler
     sm_handle: JoinHandle<()>,
     /// Sync event listener map
-    synced_events: Mutex<HashMap<ProposeId, SyncedTaskJoinHandle<C>>>,
+    synced_events: Mutex<HashMap<ProposeId, SyncedTaskJoinHandle>>,
 }
 
 impl<C, CE> Debug for Protocol<C, CE>
@@ -142,21 +155,14 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
     /// Create a new server instance
     #[must_use]
     #[inline]
-    pub fn new(
-        is_leader: bool,
-        term: u64,
-        send_ep: Endpoint,
-        others: &[SocketAddr],
-        cmd_executor: CE,
-    ) -> Self {
+    pub fn new(is_leader: bool, term: u64, others: Vec<String>, cmd_executor: CE) -> Self {
         let (sync_tx, sync_rx) = key_mpsc::channel();
         let (comp_tx, comp_rx) = key_spmc::channel();
-        let other_addrs = Arc::new(RwLock::new(others.to_vec()));
         let log = Arc::new(Mutex::new(Vec::new()));
 
         let log_clone = Arc::<_>::clone(&log);
         let sm_handle = tokio::spawn(async {
-            let mut sm = SyncManager::new(send_ep, sync_rx, comp_tx, other_addrs, log_clone);
+            let mut sm = SyncManager::new(sync_rx, comp_tx, others, log_clone).await;
             sm.run().await;
         });
 
@@ -218,15 +224,15 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             let cmd_id = cmd2exe.id().clone();
 
             let call_after_sync = |index, er| {
-                cmd2exe
-                    .after_sync(dispatch_executor.as_ref(), index)
-                    .map(|after_sync_result| match after_sync_result {
-                        Ok(asr) => WaitSyncedResponse::<C>::new_success(asr, er),
-                        Err(e) => WaitSyncedResponse::<C>::new_error(format!(
+                cmd2exe.after_sync(dispatch_executor.as_ref(), index).map(
+                    move |after_sync_result| match after_sync_result {
+                        Ok(asr) => WaitSyncedResponse::new_success::<C>(&asr, &er),
+                        Err(e) => WaitSyncedResponse::new_error::<C>(&format!(
                             "after_sync execution error: {:?}",
                             e
                         )),
-                    })
+                    },
+                )
             };
 
             let after_sync_result = match sync_compl_result {
@@ -235,7 +241,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                     let after_sync_result = if need_execute {
                         match cmd2exe.execute(dispatch_executor.as_ref()).await {
                             Ok(er) => call_after_sync(index, Some(er)).await,
-                            Err(e) => WaitSyncedResponse::new_error(format!(
+                            Err(e) => WaitSyncedResponse::new_error::<C>(&format!(
                                 "cmd execution error: {:?}",
                                 e
                             )),
@@ -270,69 +276,78 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         Ok(ready_notify)
     }
 
-    /// Propose request handler
-    async fn propose(&self, p: Propose<C>) -> ProposeResponse<C> {
+    /// handle "propose" request
+    async fn propose(
+        &self,
+        request: tonic::Request<ProposeRequest>,
+    ) -> Result<tonic::Response<ProposeResponse>, tonic::Status> {
         let is_leader = self.is_leader();
         let self_term = *self.term.read();
+        let p = request.into_inner();
+        let cmd = p.cmd().map_err(|e| {
+            tonic::Status::invalid_argument(format!("propose cmd decode failed: {}", e))
+        })?;
         self.spec
             .map_lock(|mut spec| {
-                let is_conflict = Self::is_spec_conflict(&spec, p.cmd());
-                spec.push_back(p.cmd().clone());
+                let is_conflict = Self::is_spec_conflict(&spec, &cmd);
+                spec.push_back(cmd.clone());
 
                 match (is_conflict, is_leader) {
+                    // conflict and leader
                     (true, true) => async {
                         // the leader need to sync cmd
-                        match self.sync_to_others(self_term, p.cmd(), true) {
+                        match self.sync_to_others(self_term, &cmd, true) {
                             Ok(notifier) => {
                                 notifier.notify(1);
                                 ProposeResponse::new_error(
                                     is_leader,
                                     self_term,
-                                    ProposeError::KeyConflict,
+                                    &ProposeError::KeyConflict,
                                 )
                             }
                             Err(_err) => ProposeResponse::new_error(
                                 is_leader,
                                 *self.term.read(),
-                                ProposeError::SyncedError("Sync cmd channel closed".to_owned()),
+                                &ProposeError::SyncedError("Sync cmd channel closed".to_owned()),
                             ),
                         }
                     }
                     .left_future()
                     .left_future(),
                     (true, false) => async {
-                        ProposeResponse::new_error(is_leader, self_term, ProposeError::KeyConflict)
+                        ProposeResponse::new_error(is_leader, self_term, &ProposeError::KeyConflict)
                     }
                     .left_future()
                     .right_future(),
                     (false, true) => {
-                        let notifier = match self.sync_to_others(self_term, p.cmd(), false) {
+                        let notifier = match self.sync_to_others(self_term, &cmd, false) {
                             Ok(notifier) => Some(notifier),
                             Err(_) => None,
                         };
                         // only the leader executes the command in speculative pool
-                        p.cmd()
-                            .execute(self.cmd_executor.as_ref())
+                        cmd.execute(self.cmd_executor.as_ref())
                             .map(|er| {
                                 er.map_or_else(
                                     |err| {
                                         ProposeResponse::new_error(
                                             is_leader,
                                             self_term,
-                                            ProposeError::ExecutionError(err.to_string()),
+                                            &ProposeError::ExecutionError(err.to_string()),
                                         )
                                     },
                                     |rv| {
                                         // the leader need to sync cmd
                                         if let Some(n) = notifier {
                                             n.notify(1);
-                                            ProposeResponse::new_ok(is_leader, self_term, rv)
+                                            ProposeResponse::new_result::<C>(
+                                                is_leader, self_term, &rv,
+                                            )
                                         } else {
                                             // TODO: this error should be reported ealier?
                                             ProposeResponse::new_error(
                                                 is_leader,
                                                 *self.term.read(),
-                                                ProposeError::SyncedError(
+                                                &ProposeError::SyncedError(
                                                     "Sync cmd channel closed".to_owned(),
                                                 ),
                                             )
@@ -351,60 +366,86 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                 }
             })
             .await
+            .map(tonic::Response::new)
+            .map_err(|err| tonic::Status::internal(format!("encode or decode error, {}", err)))
     }
 
-    /// Handle wait sync request
-    async fn wait_sync(&self, ws: WaitSynced<C>) -> WaitSyncedResponse<C> {
-        let handle = match self
-            .synced_events
-            .map_lock(|mut events| events.remove(ws.id()))
-        {
-            Some(handle) => handle,
-            None => {
-                return WaitSyncedResponse::new_error(format!(
-                    "command {:?} is not in the event hashmap",
-                    ws.id()
-                ))
+    /// handle "wait synced" request
+    async fn wait_synced(
+        &self,
+        request: tonic::Request<WaitSyncedRequest>,
+    ) -> Result<tonic::Response<WaitSyncedResponse>, tonic::Status> {
+        let ws = request.into_inner();
+        let id = ws.id().map_err(|e| {
+            tonic::Status::invalid_argument(format!("wait_synced id decode failed: {}", e))
+        })?;
+
+        let handle = match self.synced_events.map_lock(|mut events| events.remove(&id)) {
+            Some(handle) => Ok(handle),
+            None => Err(WaitSyncedResponse::new_error::<C>(&format!(
+                "command {:?} is not in the event hashmap",
+                &id
+            ))),
+        };
+        let handle = match handle {
+            Ok(h) => h,
+            Err(resp) => {
+                return Ok(tonic::Response::new(resp.map_err(|e| {
+                    tonic::Status::internal(format!("encode or decode error, {}", e))
+                })?))
             }
         };
-        match handle.0.await {
-            Ok(wsr) => wsr,
-            Err(e) => WaitSyncedResponse::new_error(format!("sync task failed, {:?}", e)),
-        }
+        Ok(tonic::Response::new(
+            match handle.0.await {
+                Ok(wsr) => wsr,
+                Err(e) => WaitSyncedResponse::new_error::<C>(&format!("sync task failed, {:?}", e)),
+            }
+            .map_err(|e| tonic::Status::internal(format!("encode or decode error, {}", e)))?,
+        ))
     }
 
-    /// Handle sync request
-    async fn sync(&self, sc: SyncCommand<C>) -> SyncResponse<C> {
-        self.log.map_lock(|mut log| {
-            let local_len = log.len();
-            match sc.index() {
-                t if t > local_len.numeric_cast() => {
-                    SyncResponse::PrevNotReady(local_len.numeric_cast())
-                }
-                t if t < local_len.numeric_cast() => {
-                    // checked in the if condition
-                    #[allow(clippy::unwrap_used)]
-                    let entry: &LogEntry<C> = log.get(t.numeric_cast::<usize>()).unwrap();
-                    SyncResponse::EntryNotEmpty((entry.term(), entry.cmd().clone()))
-                }
-                _ => {
-                    let self_term = *self.term.read();
-                    if sc.term() < self_term {
-                        SyncResponse::WrongTerm(self_term)
-                    } else {
-                        log.push(LogEntry::new(
-                            sc.term(),
-                            sc.cmd().clone(),
-                            EntryStatus::Unsynced,
-                        ));
+    /// handle "sync" request
+    async fn sync(
+        &self,
+        request: tonic::Request<SyncRequest>,
+    ) -> Result<tonic::Response<SyncResponse>, tonic::Status> {
+        let sr = request.into_inner();
 
-                        // TODO: remove this workaround after commit feature is done.
-                        let _skip = Self::spec_remove_cmd(&Arc::clone(&self.spec), sc.cmd().id());
-                        SyncResponse::Synced
+        self.log
+            .map_lock(|mut log| {
+                let local_len = log.len();
+                match sr.index() {
+                    t if t > local_len.numeric_cast() => {
+                        Ok(SyncResponse::new_prev_not_ready(local_len.numeric_cast()))
+                    }
+                    t if t < local_len.numeric_cast() => {
+                        // checked in the if condition
+                        #[allow(clippy::unwrap_used)]
+                        let entry: &LogEntry<C> = log.get(t.numeric_cast::<usize>()).unwrap();
+                        Ok(SyncResponse::new_entry_not_empty(
+                            entry.term(),
+                            entry.cmd(),
+                        )?)
+                    }
+                    _ => {
+                        let self_term = *self.term.read();
+                        if sr.term() < self_term {
+                            Ok(SyncResponse::new_wrong_term(self_term))
+                        } else {
+                            let cmd: C = sr.cmd()?;
+                            let id = cmd.id().clone();
+                            log.push(LogEntry::new(sr.term(), cmd, EntryStatus::Unsynced));
+                            // TODO: remove this workaround after commit feature is done.
+                            let _skip = Self::spec_remove_cmd(&Arc::clone(&self.spec), &id);
+                            Ok(SyncResponse::new_synced())
+                        }
                     }
                 }
-            }
-        })
+            })
+            .map(tonic::Response::new)
+            .map_err(|e: bincode::Error| {
+                tonic::Status::internal(format!("encode or decode error, {}", e))
+            })
     }
 }
 

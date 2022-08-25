@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, thread, time::Duration};
+use std::{thread, time::Duration};
 
 use async_trait::async_trait;
 use curp::{
@@ -107,34 +107,38 @@ impl TestExecutor {
 
 pub(crate) async fn create_servers_client(
 ) -> (Receiver<(TestCommandType, String)>, Client<TestCommand>) {
-    let addrs: Vec<SocketAddr> = vec![
-        "127.0.0.1:8765".parse().expect("parse address failed"),
-        "127.0.0.1:8766".parse().expect("parse address failed"),
-        "127.0.0.1:8767".parse().expect("parse address failed"),
+    let addrs: Vec<String> = vec![
+        "127.0.0.1:8765".to_owned(),
+        "127.0.0.1:8766".to_owned(),
+        "127.0.0.1:8767".to_owned(),
     ];
 
     let (tx, rx) = mpsc::channel(10);
     let tx1 = tx.clone();
-    let addr1 = vec![addrs[1], addrs[2]];
+    let addr1 = vec![addrs[1].clone(), addrs[2].clone()];
     tokio::spawn(async move {
         let exe = TestExecutor::new(tx1);
         Rpc::<TestCommand, TestExecutor>::run(true, 0, addr1, Some(8765), exe).await
     });
     let tx2 = tx.clone();
-    let addr2 = vec![addrs[0], addrs[2]];
+    let addr2 = vec![addrs[0].clone(), addrs[2].clone()];
     tokio::spawn(async move {
         let exe = TestExecutor::new(tx2);
         Rpc::<TestCommand, TestExecutor>::run(false, 0, addr2, Some(8766), exe).await
     });
     let tx3 = tx.clone();
-    let addr3 = vec![addrs[0], addrs[1]];
+    let addr3 = vec![addrs[0].clone(), addrs[1].clone()];
     tokio::spawn(async move {
         let exe = TestExecutor::new(tx3);
-        Rpc::<TestCommand, TestExecutor>::run(false, 0, addr3, Some(8767), exe).await
+        let _ = Rpc::<TestCommand, TestExecutor>::run(false, 0, addr3, Some(8767), exe).await;
     });
 
     thread::sleep(Duration::from_secs(1));
 
-    let client = Client::<TestCommand>::new(&addrs[0], &addrs).await.unwrap();
+    let client = Client::<TestCommand>::new(
+        0,
+        addrs.into_iter().map(|a| format!("http://{a}")).collect(),
+    )
+    .await;
     (rx, client)
 }
