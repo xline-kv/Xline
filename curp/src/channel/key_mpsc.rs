@@ -209,9 +209,15 @@ impl<K: Eq + Hash + Clone + ConflictCheck, M> MpscKeybasedReceiver<K, M> {
         self.inner.recv_timeout(timeout)
     }
 
+    #[allow(dead_code)]
     /// Receive a message async.
     pub(crate) async fn async_recv(&mut self) -> Result<MpscKeysMessage<K, M>, RecvError> {
         self.inner.async_recv().await
+    }
+
+    /// Try to receive a message
+    pub(crate) fn try_recv(&mut self) -> Result<MpscKeysMessage<K, M>, RecvError> {
+        self.inner.try_recv()
     }
 }
 

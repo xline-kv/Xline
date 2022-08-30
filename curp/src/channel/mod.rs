@@ -91,6 +91,9 @@ pub(crate) enum RecvError {
     /// Timeout
     #[error("timeout")]
     Timeout,
+    /// Current no available
+    #[error("Current there's no available message")]
+    NoAvailable,
 }
 
 /// This is a kind of key-based channel.
@@ -224,6 +227,15 @@ impl<KM> KeybasedReceiverInner<KM> {
                 }
                 MessageOrListener::Stop => return Err(RecvError::ChannelStop),
             }
+        }
+    }
+
+    /// Try to receive a message
+    pub(crate) fn try_recv(&mut self) -> Result<KM, RecvError> {
+        match self.get_msg_or_listener() {
+            MessageOrListener::Message(msg) => Ok(msg),
+            MessageOrListener::Listen(_) => Err(RecvError::NoAvailable),
+            MessageOrListener::Stop => Err(RecvError::ChannelStop),
         }
     }
 

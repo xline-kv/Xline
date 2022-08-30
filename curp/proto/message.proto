@@ -38,13 +38,13 @@ message WaitSyncedResponse {
 message SyncRequest {
     uint64 term = 1;
     uint64 index = 2;
-    bytes  cmd = 3;
+    repeated bytes cmds = 3;
 }
 
 message SyncResponse {
     message EntryNotEmpty {
         uint64 term = 1;
-        bytes  cmd = 2;
+        repeated bytes cmds = 2;
     }
     oneof sync_response {
         bool synced = 1;

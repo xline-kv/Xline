@@ -6,7 +6,7 @@ use parking_lot::Mutex;
 use tracing::{error, warn};
 
 use crate::{
-    channel::{key_mpsc::MpscKeybasedReceiver, key_spmc::SpmcKeybasedSender},
+    channel::{key_mpsc::MpscKeybasedReceiver, key_spmc::SpmcKeybasedSender, RecvError},
     cmd::Command,
     log::{EntryStatus, LogEntry},
     message::TermNum,
@@ -19,20 +19,33 @@ use crate::{
 static SYNC_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// "sync task complete" message
-pub(crate) struct SyncCompleteMessage {
+pub(crate) struct SyncCompleteMessage<C>
+where
+    C: Command,
+{
     /// The log index
     log_index: LogIndex,
+    /// Command
+    cmd: Arc<C>,
 }
 
-impl SyncCompleteMessage {
+impl<C> SyncCompleteMessage<C>
+where
+    C: Command,
+{
     /// Create a new `SyncCompleteMessage`
-    fn new(log_index: LogIndex) -> Self {
-        Self { log_index }
+    fn new(log_index: LogIndex, cmd: Arc<C>) -> Self {
+        Self { log_index, cmd }
     }
 
     /// Get Log Index
     pub(crate) fn log_index(&self) -> u64 {
         self.log_index
+    }
+
+    /// Get commands
+    pub(crate) fn cmd(&self) -> Arc<C> {
+        Arc::clone(&self.cmd)
     }
 }
 
@@ -43,8 +56,8 @@ where
 {
     /// Term number
     term: TermNum,
-    /// Command, may be taken out
-    cmd: Option<Arc<C>>,
+    /// Command
+    cmd: Arc<C>,
 }
 
 impl<C> SyncMessage<C>
@@ -52,23 +65,13 @@ where
     C: Command,
 {
     /// Create a new `SyncMessage`
-    pub(crate) fn new(term: TermNum, cmd: C) -> Self {
-        Self {
-            term,
-            cmd: Some(Arc::new(cmd)),
-        }
+    pub(crate) fn new(term: TermNum, cmd: Arc<C>) -> Self {
+        Self { term, cmd }
     }
 
-    /// Take all values from the message
-    ///
-    /// # Panic
-    /// If the function is called more than once, it will panic
-    #[allow(clippy::expect_used)]
-    fn take_all(&mut self) -> (TermNum, Arc<C>) {
-        (
-            self.term,
-            self.cmd.take().expect("cmd should only be taken once"),
-        )
+    /// Get all values from the message
+    fn inner(&mut self) -> (TermNum, Arc<C>) {
+        (self.term, Arc::clone(&self.cmd))
     }
 }
 
@@ -79,7 +82,7 @@ pub(crate) struct SyncManager<C: Command + 'static> {
     /// Get cmd sync request from speculative command
     sync_chan: MpscKeybasedReceiver<C::K, SyncMessage<C>>,
     /// Send cmd to sync complete handler
-    comp_chan: SpmcKeybasedSender<C::K, SyncCompleteMessage>,
+    comp_chan: SpmcKeybasedSender<C::K, SyncCompleteMessage<C>>,
     /// Consensus log
     log: Arc<Mutex<Vec<LogEntry<C>>>>,
 }
@@ -88,7 +91,7 @@ impl<C: Command + 'static> SyncManager<C> {
     /// Create a `SyncedManager`
     pub(crate) async fn new(
         sync_chan: MpscKeybasedReceiver<C::K, SyncMessage<C>>,
-        comp_chan: SpmcKeybasedSender<C::K, SyncCompleteMessage>,
+        comp_chan: SpmcKeybasedSender<C::K, SyncCompleteMessage<C>>,
         others: Vec<String>,
         log: Arc<Mutex<Vec<LogEntry<C>>>>,
     ) -> Self {
@@ -106,26 +109,46 @@ impl<C: Command + 'static> SyncManager<C> {
         let max_fail = self.connets.len().wrapping_div(2);
 
         loop {
-            let sync_msg = match self.sync_chan.async_recv().await {
-                Ok(sync_msg) => sync_msg,
-                Err(_) => return,
-            };
-            let (term, cmd) = sync_msg.map_msg(SyncMessage::take_all);
+            let mut met_msg = false;
+            let mut term = 0;
+            let mut cmds = vec![];
+            loop {
+                let sync_msg = match self.sync_chan.try_recv() {
+                    Ok(sync_msg) => sync_msg,
+                    Err(RecvError::ChannelStop) => return,
+                    Err(RecvError::NoAvailable) => {
+                        if met_msg {
+                            break;
+                        }
+
+                        match self.sync_chan.async_recv().await {
+                            Ok(msg) => msg,
+                            Err(_) => return,
+                        }
+                    }
+                    Err(RecvError::Timeout) => unreachable!("try_recv won't return timeout error"),
+                };
+                met_msg = true;
+                let (t, cmd) = sync_msg.map_msg(SyncMessage::inner);
+                term = t;
+                cmds.push(cmd);
+            }
 
             let index = self.log.map_lock(|mut log| {
-                log.push(LogEntry::new(term, (*cmd).clone(), EntryStatus::Unsynced));
+                log.push(LogEntry::new(term, &cmds, EntryStatus::Unsynced));
                 // length must be larger than 1
                 log.len().wrapping_sub(1)
             });
+            let cmds_arc: Arc<[_]> = cmds.into();
 
             let rpcs = self
                 .connets
                 .iter()
-                .zip(iter::repeat_with(|| Arc::clone(&cmd)))
-                .map(|(connect, cmd_cloned)| async move {
+                .zip(iter::repeat_with(|| Arc::clone(&cmds_arc)))
+                .map(|(connect, cmds_cloned)| async move {
                     connect
                         .sync(
-                            SyncRequest::new(term, index.numeric_cast(), &cmd_cloned)?,
+                            SyncRequest::new(term, index.numeric_cast(), cmds_cloned.as_ref())?,
                             SYNC_TIMEOUT,
                         )
                         .await
@@ -156,13 +179,18 @@ impl<C: Command + 'static> SyncManager<C> {
                     });
 
                 if synced_cnt > max_fail {
-                    if self
-                        .comp_chan
-                        .send(cmd.keys(), SyncCompleteMessage::new(index.numeric_cast()))
-                        .is_err()
-                    {
-                        error!("The comp_chan is closed on the remote side");
-                        return;
+                    for c in cmds_arc.iter() {
+                        if self
+                            .comp_chan
+                            .send(
+                                c.keys(),
+                                SyncCompleteMessage::new(index.numeric_cast(), Arc::clone(c)),
+                            )
+                            .is_err()
+                        {
+                            error!("The comp_chan is closed on the remote side");
+                            return;
+                        }
                     }
                     break;
                 }
