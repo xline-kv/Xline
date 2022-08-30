@@ -1,4 +1,4 @@
-use std::{fmt::Debug, iter, marker::PhantomData, sync::Arc, time::Duration};
+use std::{fmt::Debug, iter, marker::PhantomData, net::SocketAddr, sync::Arc, time::Duration};
 
 use futures::{stream::FuturesUnordered, StreamExt};
 use tracing::{trace, warn};
@@ -29,10 +29,24 @@ where
 {
     /// Create a new protocol client based on the addresses
     #[inline]
-    pub async fn new(leader: usize, addrs: Vec<String>) -> Self {
+    pub async fn new(leader: usize, addrs: Vec<SocketAddr>) -> Self {
         Self {
             leader,
-            connects: rpc::try_connect(addrs).await,
+            connects: rpc::try_connect(
+                // Addrs must start with "http" to communicate with the server
+                addrs
+                    .into_iter()
+                    .map(|addr| {
+                        let addr_str = addr.to_string();
+                        if addr_str.starts_with("http") {
+                            addr_str
+                        } else {
+                            format!("http://{addr_str}")
+                        }
+                    })
+                    .collect(),
+            )
+            .await,
             phatom: PhantomData,
         }
     }

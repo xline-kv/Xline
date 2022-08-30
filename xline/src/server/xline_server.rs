@@ -68,13 +68,7 @@ impl XlineServer {
             .binary_search(&leader_addr)
             .expect("leader address should be in the collection of peers and self address");
 
-        let client = Arc::new(
-            Client::<Command>::new(
-                leader_index,
-                all_members.into_iter().map(|m| m.to_string()).collect(),
-            )
-            .await,
-        );
+        let client = Arc::new(Client::<Command>::new(leader_index, all_members).await);
 
         let peers_clone = peers.clone();
         let _handle = tokio::spawn(async move {
