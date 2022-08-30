@@ -1,4 +1,4 @@
-use std::{thread, time::Duration};
+use std::{net::SocketAddr, thread, time::Duration};
 
 use async_trait::async_trait;
 use curp::{
@@ -137,7 +137,11 @@ pub(crate) async fn create_servers_client(
 
     let client = Client::<TestCommand>::new(
         0,
-        addrs.into_iter().map(|a| format!("http://{a}")).collect(),
+        addrs
+            .into_iter()
+            .map(|a| a.parse())
+            .collect::<Result<Vec<SocketAddr>, _>>()
+            .unwrap(),
     )
     .await;
     (rx, client)
