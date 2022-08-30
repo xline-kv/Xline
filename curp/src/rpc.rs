@@ -178,11 +178,14 @@ impl WaitSyncedResponse {
 
 impl SyncRequest {
     /// Create a new `SyncResult`
-    pub(crate) fn new<C: Command>(term: u64, index: u64, cmd: &Arc<C>) -> bincode::Result<Self> {
+    pub(crate) fn new<C: Command>(term: u64, index: u64, cmds: &[Arc<C>]) -> bincode::Result<Self> {
         Ok(Self {
             term,
             index,
-            cmd: bincode::serialize(cmd.as_ref())?,
+            cmds: cmds
+                .iter()
+                .map(|c| bincode::serialize(c.as_ref()))
+                .collect::<bincode::Result<Vec<Vec<u8>>>>()?,
         })
     }
 
@@ -197,8 +200,11 @@ impl SyncRequest {
     }
 
     /// Get command
-    pub(crate) fn cmd<C: Command>(&self) -> bincode::Result<C> {
-        bincode::deserialize(&self.cmd)
+    pub(crate) fn cmds<C: Command>(&self) -> bincode::Result<Vec<Arc<C>>> {
+        self.cmds
+            .iter()
+            .map(|c| Ok(Arc::new(bincode::deserialize(c)?)))
+            .collect::<bincode::Result<Vec<Arc<C>>>>()
     }
 }
 
@@ -225,12 +231,18 @@ impl SyncResponse {
     }
 
     /// Create a "entry not empty" response
-    pub(crate) fn new_entry_not_empty<C: Command>(term: u64, cmd: &C) -> bincode::Result<Self> {
+    pub(crate) fn new_entry_not_empty<C>(term: u64, cmds: &[Arc<C>]) -> bincode::Result<Self>
+    where
+        C: Command,
+    {
         Ok(Self {
             sync_response: Some(sync_response::SyncResponse::EntryNotEmpty(
                 sync_response::EntryNotEmpty {
                     term,
-                    cmd: bincode::serialize(cmd)?,
+                    cmds: cmds
+                        .iter()
+                        .map(|c| bincode::serialize(c.as_ref()))
+                        .collect::<Result<Vec<Vec<u8>>, bincode::Error>>()?,
                 },
             )),
         })

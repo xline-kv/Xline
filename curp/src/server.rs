@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, VecDeque},
     fmt::Debug,
+    iter,
     sync::Arc,
 };
 
@@ -9,6 +10,7 @@ use event_listener::Event;
 use futures::FutureExt;
 use parking_lot::{Mutex, MutexGuard, RwLock};
 use tokio::task::JoinHandle;
+use tracing::error;
 
 use crate::{
     channel::{
@@ -25,11 +27,14 @@ use crate::{
         WaitSyncedRequest, WaitSyncedResponse,
     },
     sync_manager::{SyncCompleteMessage, SyncManager, SyncMessage},
-    util::MutexMap,
+    util::{MutexMap, RwLockMap},
 };
 
 /// Default server serving port
 pub(crate) static DEFAULT_SERVER_PORT: u16 = 12345;
+
+/// Default after sync task count
+pub static DEFAULT_AFTER_SYNC_CNT: usize = 10;
 
 /// The Rpc Server to handle rpc requests
 /// This Wrapper is introduced due to the madsim rpc lib
@@ -81,7 +86,13 @@ impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
     ) -> Result<(), ServerError> {
         let port = server_port.unwrap_or(DEFAULT_SERVER_PORT);
         let server = Self {
-            inner: Arc::new(Protocol::new(is_leader, term, others, executor)),
+            inner: Arc::new(Protocol::new(
+                is_leader,
+                term,
+                others,
+                executor,
+                DEFAULT_AFTER_SYNC_CNT,
+            )),
         };
         tonic::transport::Server::builder()
             .add_service(ProtocolServer::new(server))
@@ -99,6 +110,16 @@ impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
 #[derive(Debug)]
 struct SyncedTaskJoinHandle(JoinHandle<Result<WaitSyncedResponse, bincode::Error>>);
 
+/// The state of a command in cmd watch board
+enum CmdBoardState {
+    /// Command need execute
+    NeedExecute,
+    /// Command need not execute
+    NoExecute,
+    /// Command gotten the final result
+    FinalResult(Result<WaitSyncedResponse, bincode::Error>),
+}
+
 /// The server that handles client request and server consensus protocol
 pub struct Protocol<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
     /// the server role
@@ -113,12 +134,13 @@ pub struct Protocol<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
     log: Arc<Mutex<Vec<LogEntry<C>>>>,
     /// The channel to send synced command to sync manager
     sync_chan: MpscKeybasedSender<C::K, SyncMessage<C>>,
-    /// The channel to receive synced command from sync manager
-    comp_chan: SpmcKeybasedReceiver<C::K, SyncCompleteMessage>,
     /// Synced manager handler
     sm_handle: JoinHandle<()>,
-    /// Sync event listener map
-    synced_events: Mutex<HashMap<ProposeId, SyncedTaskJoinHandle>>,
+    /// After sync tasks handle
+    after_sync_handle: Vec<JoinHandle<()>>,
+    // TODO: clean up the board when the size is too large
+    /// Cmd watch board, used to track the cmd sync result
+    cmd_board: Arc<RwLock<HashMap<ProposeId, (Event, CmdBoardState)>>>,
 }
 
 impl<C, CE> Debug for Protocol<C, CE>
@@ -134,7 +156,6 @@ where
             .field("spec", &self.spec)
             .field("cmd_executor", &self.cmd_executor)
             .field("log", &self.log)
-            .field("synced_events", &self.synced_events)
             .finish()
     }
 }
@@ -152,10 +173,115 @@ enum ServerRole {
 }
 
 impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
+    /// Init `after_sync` tasks
+    fn init_after_sync_tasks(
+        cnt: usize,
+        comp_rx: &SpmcKeybasedReceiver<C::K, SyncCompleteMessage<C>>,
+        spec: &Arc<Mutex<VecDeque<C>>>,
+        cmd_board: &Arc<RwLock<HashMap<ProposeId, (Event, CmdBoardState)>>>,
+        cmd_executor: &Arc<CE>,
+    ) -> Vec<JoinHandle<()>> {
+        (0..cnt)
+            .zip(iter::repeat((
+                comp_rx.clone(),
+                Arc::clone(spec),
+                Arc::clone(cmd_board),
+                Arc::clone(cmd_executor),
+            )))
+            .map(
+                |(_, (rx, spec_clone, cmd_board_clone, dispatch_executor))| {
+                    tokio::spawn(async move {
+                        loop {
+                            let sync_compl_result = rx.recv().await;
+
+                            /// Call `after_sync` function. As async closure is still nightly, we
+                            /// use macro here.
+                            macro_rules! call_after_sync {
+                                ($cmd: ident, $index: ident, $er: expr) => {
+                                    $cmd.after_sync(dispatch_executor.as_ref(), $index)
+                                        .map(move |after_sync_result| match after_sync_result {
+                                            Ok(asr) => {
+                                                WaitSyncedResponse::new_success::<C>(&asr, &$er)
+                                            }
+                                            Err(e) => WaitSyncedResponse::new_error::<C>(&format!(
+                                                "after_sync execution error: {:?}",
+                                                e
+                                            )),
+                                        })
+                                        .await
+                                };
+                            }
+
+                            let (after_sync_result, cmd_id) = match sync_compl_result {
+                                Ok((reply, notifier)) => {
+                                    let (index, cmd): (_, Arc<C>) =
+                                        reply.map_msg(|csm| (csm.log_index(), csm.cmd()));
+
+                                    let cmd_id = cmd.id().clone();
+
+                                    let (need_execute, miss_entry) =
+                                        match cmd_board_clone.read().get(&cmd_id) {
+                                            Some(&(_, CmdBoardState::NeedExecute)) => (true, false),
+                                            Some(&(_, CmdBoardState::NoExecute)) => (false, false),
+                                            Some(&(_, CmdBoardState::FinalResult(_))) => {
+                                                // Should not hit this state, but just log it
+                                                error!("Should not get final result");
+                                                continue;
+                                            }
+                                            None => (false, true),
+                                        };
+
+                                    let after_sync_result = if miss_entry {
+                                        WaitSyncedResponse::new_error::<C>(&format!(
+                                            "cmd {:?} is not be waited",
+                                            cmd_id
+                                        ))
+                                    } else if need_execute {
+                                        match cmd.execute(dispatch_executor.as_ref()).await {
+                                            Ok(er) => call_after_sync!(cmd, index, Some(er)),
+                                            Err(e) => WaitSyncedResponse::new_error::<C>(&format!(
+                                                "cmd execution error: {:?}",
+                                                e
+                                            )),
+                                        }
+                                    } else {
+                                        call_after_sync!(cmd, index, None)
+                                    };
+
+                                    let _ignore = notifier.send(reply);
+                                    (after_sync_result, cmd_id)
+                                }
+                                // TODO: handle the sync task stop, usually we should stop working
+                                Err(e) => unreachable!("sync manager stopped, {}", e),
+                            };
+
+                            let mut board_write = cmd_board_clone.write();
+                            if let Some((e, _)) = board_write.remove(&cmd_id) {
+                                let entry = board_write.entry(cmd_id.clone());
+                                let e = entry
+                                    .or_insert((e, CmdBoardState::FinalResult(after_sync_result)));
+                                e.0.notify(1);
+                            }
+
+                            if Self::spec_remove_cmd(&spec_clone, &cmd_id).is_none() {
+                                unreachable!("{:?} should be in the spec pool", cmd_id);
+                            }
+                        }
+                    })
+                },
+            )
+            .collect()
+    }
     /// Create a new server instance
     #[must_use]
     #[inline]
-    pub fn new(is_leader: bool, term: u64, others: Vec<String>, cmd_executor: CE) -> Self {
+    pub fn new(
+        is_leader: bool,
+        term: u64,
+        others: Vec<String>,
+        cmd_executor: CE,
+        after_sync_cnt: usize,
+    ) -> Self {
         let (sync_tx, sync_rx) = key_mpsc::channel();
         let (comp_tx, comp_rx) = key_spmc::channel();
         let log = Arc::new(Mutex::new(Vec::new()));
@@ -165,6 +291,12 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             let mut sm = SyncManager::new(sync_rx, comp_tx, others, log_clone).await;
             sm.run().await;
         });
+        let cmd_board = Arc::new(RwLock::new(HashMap::new()));
+        let spec = Arc::new(Mutex::new(VecDeque::new()));
+        let cmd_executor = Arc::new(cmd_executor);
+
+        let after_sync_handle =
+            Self::init_after_sync_tasks(after_sync_cnt, &comp_rx, &spec, &cmd_board, &cmd_executor);
 
         Self {
             role: RwLock::new(if is_leader {
@@ -173,13 +305,13 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                 ServerRole::Follower
             }),
             term: RwLock::new(term),
-            spec: Arc::new(Mutex::new(VecDeque::new())),
-            cmd_executor: Arc::new(cmd_executor),
+            spec,
+            cmd_executor,
             log,
             sync_chan: sync_tx,
-            comp_chan: comp_rx,
             sm_handle,
-            synced_events: Mutex::new(HashMap::new()),
+            cmd_board,
+            after_sync_handle,
         }
     }
 
@@ -211,68 +343,23 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         cmd: &C,
         need_execute: bool,
     ) -> Result<Event, SendError> {
-        let comp_rx = self.comp_chan.clone();
+        self.cmd_board.map_write(|mut board| {
+            let _ignore = board.insert(
+                cmd.id().clone(),
+                (
+                    Event::new(),
+                    if need_execute {
+                        CmdBoardState::NeedExecute
+                    } else {
+                        CmdBoardState::NoExecute
+                    },
+                ),
+            );
+        });
         let ready_notify = self
             .sync_chan
-            .send(cmd.keys(), SyncMessage::new(term, cmd.clone()))?;
-        let spec = Arc::<_>::clone(&self.spec);
-        let cmd2exe = cmd.clone();
-        let dispatch_executor = Arc::<CE>::clone(&self.cmd_executor);
+            .send(cmd.keys(), SyncMessage::new(term, Arc::new(cmd.clone())))?;
 
-        let handle = tokio::spawn(async move {
-            let sync_compl_result = comp_rx.recv().await;
-            let cmd_id = cmd2exe.id().clone();
-
-            let call_after_sync = |index, er| {
-                cmd2exe.after_sync(dispatch_executor.as_ref(), index).map(
-                    move |after_sync_result| match after_sync_result {
-                        Ok(asr) => WaitSyncedResponse::new_success::<C>(&asr, &er),
-                        Err(e) => WaitSyncedResponse::new_error::<C>(&format!(
-                            "after_sync execution error: {:?}",
-                            e
-                        )),
-                    },
-                )
-            };
-
-            let after_sync_result = match sync_compl_result {
-                Ok((reply, notifier)) => {
-                    let index = reply.map_msg(|csm| csm.log_index());
-                    let after_sync_result = if need_execute {
-                        match cmd2exe.execute(dispatch_executor.as_ref()).await {
-                            Ok(er) => call_after_sync(index, Some(er)).await,
-                            Err(e) => WaitSyncedResponse::new_error::<C>(&format!(
-                                "cmd execution error: {:?}",
-                                e
-                            )),
-                        }
-                    } else {
-                        call_after_sync(index, None).await
-                    };
-                    let _ignore = notifier.send(reply);
-                    after_sync_result
-                }
-                // TODO: handle the sync task stop, usually we should stop working
-                Err(e) => unreachable!("{:?} sync task failed, {}", cmd_id, e),
-            };
-
-            if Self::spec_remove_cmd(&spec, &cmd_id).is_none() {
-                unreachable!("{:?} should be in the spec pool", cmd_id);
-            }
-
-            after_sync_result
-        });
-        self.synced_events.map_lock(|mut events| {
-            if events
-                .insert(cmd.id().clone(), SyncedTaskJoinHandle(handle))
-                .is_some()
-            {
-                unreachable!(
-                    "{:?} should not be inserted in events map, it's synced before?",
-                    cmd.id()
-                );
-            }
-        });
         Ok(ready_notify)
     }
 
@@ -293,7 +380,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                 spec.push_back(cmd.clone());
 
                 match (is_conflict, is_leader) {
-                    // conflict and leader
+                    // conflict and is leader
                     (true, true) => async {
                         // the leader need to sync cmd
                         match self.sync_to_others(self_term, &cmd, true) {
@@ -314,11 +401,13 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                     }
                     .left_future()
                     .left_future(),
+                    // conflict but not leader
                     (true, false) => async {
                         ProposeResponse::new_error(is_leader, self_term, &ProposeError::KeyConflict)
                     }
                     .left_future()
                     .right_future(),
+                    // not conflict but is leader
                     (false, true) => {
                         let notifier = match self.sync_to_others(self_term, &cmd, false) {
                             Ok(notifier) => Some(notifier),
@@ -358,6 +447,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                             .right_future()
                             .left_future()
                     }
+                    // not conflict and is not leader
                     (false, false) => {
                         async { ProposeResponse::new_empty(false, *self.term.read()) }
                             .right_future()
@@ -380,14 +470,18 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             tonic::Status::invalid_argument(format!("wait_synced id decode failed: {}", e))
         })?;
 
-        let handle = match self.synced_events.map_lock(|mut events| events.remove(&id)) {
-            Some(handle) => Ok(handle),
+        let handle = self.cmd_board.map_read(|board| match board.get(&id) {
+            Some(e_state) => Ok((
+                e_state.0.listen(),
+                matches!(e_state.1, CmdBoardState::FinalResult(_)),
+            )),
             None => Err(WaitSyncedResponse::new_error::<C>(&format!(
                 "command {:?} is not in the event hashmap",
                 &id
             ))),
-        };
-        let handle = match handle {
+        });
+
+        let (listener, has_result) = match handle {
             Ok(h) => h,
             Err(resp) => {
                 return Ok(tonic::Response::new(resp.map_err(|e| {
@@ -395,13 +489,30 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                 })?))
             }
         };
-        Ok(tonic::Response::new(
-            match handle.0.await {
-                Ok(wsr) => wsr,
-                Err(e) => WaitSyncedResponse::new_error::<C>(&format!("sync task failed, {:?}", e)),
-            }
-            .map_err(|e| tonic::Status::internal(format!("encode or decode error, {}", e)))?,
-        ))
+
+        // wait for the final result
+        if !has_result {
+            listener.await;
+        }
+
+        self.cmd_board
+            .map_write(|mut board| match board.remove(&id) {
+                Some((_, final_result)) => match final_result {
+                    CmdBoardState::NeedExecute | CmdBoardState::NoExecute => {
+                        unreachable!("should have final result")
+                    }
+                    CmdBoardState::FinalResult(result) => result.map_err(|e| {
+                        tonic::Status::internal(format!("encode or decode error, {}", e))
+                    }),
+                },
+                None => {
+                    return Err(tonic::Status::internal(format!(
+                        "command {:?} is not in the event hashmap",
+                        &id
+                    )))
+                }
+            })
+            .map(tonic::Response::new)
     }
 
     /// handle "sync" request
@@ -424,7 +535,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                         let entry: &LogEntry<C> = log.get(t.numeric_cast::<usize>()).unwrap();
                         Ok(SyncResponse::new_entry_not_empty(
                             entry.term(),
-                            entry.cmd(),
+                            entry.cmds(),
                         )?)
                     }
                     _ => {
@@ -432,11 +543,12 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                         if sr.term() < self_term {
                             Ok(SyncResponse::new_wrong_term(self_term))
                         } else {
-                            let cmd: C = sr.cmd()?;
-                            let id = cmd.id().clone();
-                            log.push(LogEntry::new(sr.term(), cmd, EntryStatus::Unsynced));
+                            let cmds = sr.cmds::<C>()?;
+                            log.push(LogEntry::new(sr.term(), &cmds, EntryStatus::Unsynced));
                             // TODO: remove this workaround after commit feature is done.
-                            let _skip = Self::spec_remove_cmd(&Arc::clone(&self.spec), &id);
+                            for id in cmds.iter().map(|c| c.id()) {
+                                let _ignore = Self::spec_remove_cmd(&Arc::clone(&self.spec), id);
+                            }
                             Ok(SyncResponse::new_synced())
                         }
                     }
@@ -453,5 +565,8 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Drop for Protocol<C
     #[inline]
     fn drop(&mut self) {
         self.sm_handle.abort();
+        for h in &self.after_sync_handle {
+            h.abort();
+        }
     }
 }

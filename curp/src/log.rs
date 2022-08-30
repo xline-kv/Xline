@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{cmd::Command, message::TermNum};
 
 /// Log entry status
@@ -17,9 +19,9 @@ pub(crate) struct LogEntry<C: Command> {
     /// Term id
     #[allow(dead_code)]
     term: TermNum,
-    /// Command
+    /// Commands
     #[allow(dead_code)]
-    cmd: C,
+    cmds: Arc<[Arc<C>]>,
     /// Log entry status
     #[allow(dead_code)]
     status: EntryStatus,
@@ -27,8 +29,12 @@ pub(crate) struct LogEntry<C: Command> {
 
 impl<C: Command> LogEntry<C> {
     /// Create a new `LogEntry`
-    pub(crate) fn new(term: TermNum, cmd: C, status: EntryStatus) -> Self {
-        Self { term, cmd, status }
+    pub(crate) fn new(term: TermNum, cmds: &[Arc<C>], status: EntryStatus) -> Self {
+        Self {
+            term,
+            cmds: cmds.into(),
+            status,
+        }
     }
 
     /// Get term id
@@ -39,8 +45,8 @@ impl<C: Command> LogEntry<C> {
 
     /// Get command in the entry
     #[allow(dead_code)]
-    pub(crate) fn cmd(&self) -> &C {
-        &self.cmd
+    pub(crate) fn cmds(&self) -> &[Arc<C>] {
+        &self.cmds
     }
 
     /// Get status in the entry
