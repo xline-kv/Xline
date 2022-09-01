@@ -7,6 +7,7 @@ use parking_lot::Mutex;
 use prost::Message;
 use tokio::sync::{mpsc, oneshot};
 
+use super::index::IndexOperate;
 use super::{db::DB, index::Index, kvwatcher::KvWatcher};
 use crate::rpc::{
     Compare, CompareResult, CompareTarget, DeleteRangeRequest, DeleteRangeResponse, Event,
@@ -15,7 +16,7 @@ use crate::rpc::{
     TxnResponse,
 };
 use crate::server::command::{
-    Command, CommandResponse, ExecutionRequest, KeyRange, RangeType, SyncRequest, SyncResponse,
+    Command, CommandResponse, ExecutionRequest, KeyRange, SyncRequest, SyncResponse,
 };
 
 /// Default channel size
@@ -215,41 +216,16 @@ impl KvStoreBackend {
     }
 
     /// Get `KeyValue` of a range
-    fn get_range(&self, key: &[u8], range_end: &[u8]) -> Vec<KeyValue> {
-        let mut kvs = vec![];
-        match RangeType::get_range_type(key, range_end) {
-            RangeType::OneKey => {
-                if let Some(index) = self.index.get_one(key) {
-                    if let Some(kv) = self.db.get(&index) {
-                        kvs.push(kv);
-                    }
-                }
-            }
-            RangeType::AllKeys => {
-                let revisions = self.index.get_all();
-                let mut values = self.db.get_values(&revisions);
-                kvs.append(&mut values);
-            }
-            RangeType::Range => {
-                let range = KeyRange {
-                    start: key.to_vec(),
-                    end: range_end.to_vec(),
-                };
-                let revisions = self.index.get_range(range);
-                let mut values = self.db.get_values(&revisions);
-                kvs.append(&mut values);
-            }
-        }
-        kvs
+    fn get_range(&self, key: &[u8], range_end: &[u8], revision: i64) -> Vec<KeyValue> {
+        let revisions = self.index.get(key, range_end, revision);
+        self.db.get_values(&revisions)
     }
 
     /// Get `KeyValue` start from a revision and convert to `Event`
     pub(crate) fn get_event_from_revision(&self, key_range: KeyRange, revision: i64) -> Vec<Event> {
-        let revisions = match key_range.range_type() {
-            RangeType::OneKey => self.index.get_one_from_rev(&key_range.start, revision),
-            RangeType::AllKeys => self.index.get_all_from_rev(revision),
-            RangeType::Range => self.index.get_range_from_rev(key_range, revision),
-        };
+        let key = key_range.start.as_slice();
+        let range_end = key_range.end.as_slice();
+        let revisions = self.index.get_from_rev(key, range_end, revision);
         let values = self.db.get_values(&revisions);
         values
             .into_iter()
@@ -276,7 +252,7 @@ impl KvStoreBackend {
     fn handle_range_request(&self, req: &RangeRequest) -> RangeResponse {
         let key = &req.key;
         let range_end = &req.range_end;
-        let mut kvs = self.get_range(key, range_end);
+        let mut kvs = self.get_range(key, range_end, req.revision);
         debug!("handle_range_request kvs {:?}", kvs);
         let mut response = RangeResponse {
             header: Some(ResponseHeader {
@@ -331,7 +307,7 @@ impl KvStoreBackend {
 
     /// Handle `PutRequest`
     fn handle_put_request(&self, req: &PutRequest) -> PutResponse {
-        let mut prev_kvs = self.get_range(&req.key, &[]);
+        let mut prev_kvs = self.get_range(&req.key, &[], 0);
         debug!("handle_put_request prev_kvs {:?}", prev_kvs);
         let prev = if prev_kvs.len() == 1 {
             Some(prev_kvs.swap_remove(0))
@@ -359,7 +335,7 @@ impl KvStoreBackend {
     /// Handle `DeleteRangeRequest`
     fn handle_delete_range_request(&self, req: &DeleteRangeRequest) -> DeleteRangeResponse {
         let mut response = DeleteRangeResponse::default();
-        let prev_kvs = self.get_range(&req.key, &req.range_end);
+        let prev_kvs = self.get_range(&req.key, &req.range_end, 0);
         debug!("handle_delete_range_request prev_kvs {:?}", prev_kvs);
         response.deleted = prev_kvs.len().cast();
         if req.prev_kv {
@@ -446,7 +422,7 @@ impl KvStoreBackend {
 
     /// Check result of a `Compare`
     fn check_compare(&self, cmp: &Compare) -> bool {
-        let kvs = self.get_range(&cmp.key, &cmp.range_end);
+        let kvs = self.get_range(&cmp.key, &cmp.range_end, 0);
         if kvs.is_empty() {
             if let Some(TargetUnion::Value(_)) = cmp.target_union {
                 false
@@ -519,11 +495,10 @@ impl KvStoreBackend {
         let mut all_events = vec![];
 
         for request in requests {
-            let (res, events) = self.sync_request(request, next_revision, &mut sub_revision);
-            modify = modify || res;
-            if let Some(mut events) = events {
-                all_events.append(&mut events);
-            }
+            let mut events = self.sync_request(request, next_revision, sub_revision);
+            modify = modify || !events.is_empty();
+            sub_revision = sub_revision.overflow_add(events.len().cast());
+            all_events.append(&mut events);
         }
 
         if modify {
@@ -535,12 +510,7 @@ impl KvStoreBackend {
     }
 
     /// Sync one `Request`
-    fn sync_request(
-        &self,
-        req: Request,
-        revision: i64,
-        sub_revision: &mut i64,
-    ) -> (bool, Option<Vec<Event>>) {
+    fn sync_request(&self, req: Request, revision: i64, sub_revision: i64) -> Vec<Event> {
         match req {
             Request::RequestRange(req) => {
                 debug!("Sync RequestRange {:?}", req);
@@ -562,17 +532,12 @@ impl KvStoreBackend {
     }
 
     /// Sync `RangeRequest` and return of kvstore is changed
-    fn sync_range_request(_req: &RangeRequest) -> (bool, Option<Vec<Event>>) {
-        (false, None)
+    fn sync_range_request(_req: &RangeRequest) -> Vec<Event> {
+        Vec::new()
     }
 
     /// Sync `PutRequest` and return if kvstore is changed
-    fn sync_put_request(
-        &self,
-        req: PutRequest,
-        revision: i64,
-        sub_revision: &mut i64,
-    ) -> (bool, Option<Vec<Event>>) {
+    fn sync_put_request(&self, req: PutRequest, revision: i64, sub_revision: i64) -> Vec<Event> {
         let new_rev = self
             .index
             .insert_or_update_revision(&req.key, revision, sub_revision);
@@ -592,7 +557,7 @@ impl KvStoreBackend {
             kv: Some(kv),
             prev_kv: prev,
         };
-        (true, Some(vec![event]))
+        vec![event]
     }
 
     /// create events for a deletion
@@ -620,61 +585,14 @@ impl KvStoreBackend {
         &self,
         req: DeleteRangeRequest,
         revision: i64,
-        sub_revision: &mut i64,
-    ) -> (bool, Option<Vec<Event>>) {
-        let key = &req.key;
-        let range_end = &req.range_end;
-        match RangeType::get_range_type(key, range_end) {
-            RangeType::OneKey => {
-                if let Some(rev) = self.index.delete_one(key, revision, sub_revision) {
-                    debug!("sync_delete_range_request delete one: revisions {:?}", rev);
-                    let prev_kv = self.db.mark_deletions(&[rev]);
-
-                    let events = Self::new_deletion_events(revision, prev_kv);
-                    (true, Some(events))
-                } else {
-                    (false, None)
-                }
-            }
-            RangeType::AllKeys => {
-                let revisions = self.index.delete_all(revision, sub_revision);
-                debug!(
-                    "sync_delete_range_request delete all: revisions {:?}",
-                    revisions
-                );
-                let prev_kv = self.db.mark_deletions(&revisions);
-                let events = Self::new_deletion_events(revision, prev_kv);
-                (
-                    !revisions.is_empty(),
-                    if revisions.is_empty() {
-                        None
-                    } else {
-                        Some(events)
-                    },
-                )
-            }
-            RangeType::Range => {
-                let range = KeyRange {
-                    start: req.key,
-                    end: req.range_end,
-                };
-                let revisions = self.index.delete_range(range, revision, sub_revision);
-                debug!(
-                    "sync_delete_range_request delete range: revisions {:?}",
-                    revisions
-                );
-                let prev_kv = self.db.mark_deletions(&revisions);
-                let events = Self::new_deletion_events(revision, prev_kv);
-                (
-                    !revisions.is_empty(),
-                    if revisions.is_empty() {
-                        None
-                    } else {
-                        Some(events)
-                    },
-                )
-            }
-        }
+        sub_revision: i64,
+    ) -> Vec<Event> {
+        let key = req.key;
+        let range_end = req.range_end;
+        let revisions = self.index.delete(&key, &range_end, revision, sub_revision);
+        debug!("sync_delete_range_request: revisions {:?}", revisions);
+        let prev_kv = self.db.mark_deletions(&revisions);
+        Self::new_deletion_events(revision, prev_kv)
     }
 }
 

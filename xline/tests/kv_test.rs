@@ -69,12 +69,11 @@ async fn test_kv_get() -> Result<(), Box<dyn Error>> {
             opts: Some(GetOptions::new().with_range("x")),
             want_kvs: &want_kvs[..],
         },
-        // TODO: Range with revision
-        // TestCase {
-        //     key: "",
-        //     opts: Some(GetOptions::new().with_prefix().with_revision(4)),
-        //     want_kvs: &want_kvs[..3],
-        // },
+        TestCase {
+            key: "",
+            opts: Some(GetOptions::new().with_prefix().with_revision(4)),
+            want_kvs: &want_kvs[..3],
+        },
         TestCase {
             key: "a",
             opts: Some(GetOptions::new().with_count_only()),

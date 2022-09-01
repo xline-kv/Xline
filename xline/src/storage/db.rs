@@ -26,11 +26,6 @@ impl DB {
         self.storage.lock().insert(revision, kv)
     }
 
-    /// Get a `KeyValue`
-    pub(crate) fn get(&self, revision: &Revision) -> Option<KeyValue> {
-        self.storage.lock().get(revision).cloned()
-    }
-
     /// Get a list of `KeyValue`
     pub(crate) fn get_values(&self, revisions: &[Revision]) -> Vec<KeyValue> {
         let storage = self.storage.lock();

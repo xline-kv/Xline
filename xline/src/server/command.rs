@@ -98,11 +98,6 @@ impl KeyRange {
     pub(crate) fn contains_key(&self, key: &[u8]) -> bool {
         self.contains(key)
     }
-
-    /// Return `RangeType` of this `KeyRange`
-    pub(crate) fn range_type(&self) -> RangeType {
-        RangeType::get_range_type(&self.start, &self.end)
-    }
 }
 
 impl RangeBounds<[u8]> for KeyRange {
