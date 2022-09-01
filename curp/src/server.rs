@@ -505,12 +505,10 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                         tonic::Status::internal(format!("encode or decode error, {}", e))
                     }),
                 },
-                None => {
-                    return Err(tonic::Status::internal(format!(
-                        "command {:?} is not in the event hashmap",
-                        &id
-                    )))
-                }
+                None => Err(tonic::Status::internal(format!(
+                    "command {:?} is not in the event hashmap",
+                    &id
+                ))),
             })
             .map(tonic::Response::new)
     }
