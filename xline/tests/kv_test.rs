@@ -59,12 +59,11 @@ async fn test_kv_get() -> Result<(), Box<dyn Error>> {
             opts: Some(GetOptions::new().with_prefix()),
             want_kvs: &want_kvs[..],
         },
-        // TODO: Range with from-key
-        // TestCase {
-        //     key: "",
-        //     opts: Some(GetOptions::new().with_from_key()),
-        //     want_kvs: &want_kvs[..],
-        // },
+        TestCase {
+            key: "",
+            opts: Some(GetOptions::new().with_from_key()),
+            want_kvs: &want_kvs[..],
+        },
         TestCase {
             key: "a",
             opts: Some(GetOptions::new().with_range("x")),
@@ -86,12 +85,11 @@ async fn test_kv_get() -> Result<(), Box<dyn Error>> {
             opts: Some(GetOptions::new().with_prefix()),
             want_kvs: &["foo", "foo/abc"],
         },
-        // TODO: Range with from-key
-        // TestCase {
-        //     key: "foo",
-        //     opts: Some(GetOptions::new().with_from_key()),
-        //     want_kvs: &["foo", "foo/abc", "fop"],
-        // },
+        TestCase {
+            key: "foo",
+            opts: Some(GetOptions::new().with_from_key()),
+            want_kvs: &["foo", "foo/abc", "fop"],
+        },
         TestCase {
             key: "",
             opts: Some(GetOptions::new().with_prefix().with_limit(2)),
@@ -185,13 +183,12 @@ async fn test_kv_delete() -> Result<(), Box<dyn Error>> {
             want_deleted: 5,
             want_keys: &[],
         },
-        // TODO: Delete with from-key
-        // TestCase {
-        //     key: "",
-        //     opts: Some(DeleteOptions::new().with_from_key()),
-        //     want_deleted: 5,
-        //     want_keys: &[],
-        // },
+        TestCase {
+            key: "",
+            opts: Some(DeleteOptions::new().with_from_key()),
+            want_deleted: 5,
+            want_keys: &[],
+        },
         TestCase {
             key: "a",
             opts: Some(DeleteOptions::new().with_range("c")),
@@ -210,13 +207,12 @@ async fn test_kv_delete() -> Result<(), Box<dyn Error>> {
             want_deleted: 2,
             want_keys: &["a", "b", "d"],
         },
-        // TODO: Delete with from-key
-        // TestCase {
-        //     key: "c",
-        //     opts: Some(DeleteOptions::new().with_from_key()),
-        //     want_deleted: 3,
-        //     want_keys: &["a", "b"],
-        // },
+        TestCase {
+            key: "c",
+            opts: Some(DeleteOptions::new().with_from_key()),
+            want_deleted: 3,
+            want_keys: &["a", "b"],
+        },
         TestCase {
             key: "e",
             opts: None,

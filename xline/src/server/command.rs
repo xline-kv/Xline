@@ -1,8 +1,5 @@
 use std::{
-    ops::{
-        Bound::{self, Excluded, Included},
-        RangeBounds,
-    },
+    ops::{Bound, RangeBounds},
     sync::Arc,
 };
 
@@ -20,10 +17,33 @@ use tokio::sync::oneshot;
 use crate::rpc::ResponseOp;
 use crate::storage::KvStore;
 
-/// Range end to get all keys
-const ALL_KEYS: &[u8] = &[0_u8];
+/// Range start and end to get all keys
+const UNBOUNDED: &[u8] = &[0_u8];
 /// Range end to get one key
 const ONE_KEY: &[u8] = &[];
+
+/// Type of `KeyRange`
+pub(crate) enum RangeType {
+    /// `KeyRange` contains only one key
+    OneKey,
+    /// `KeyRange` contains all keys
+    AllKeys,
+    /// `KeyRange` contains the keys in the range
+    Range,
+}
+
+impl RangeType {
+    /// Get `RangeType` by given `key` and `range_end`
+    pub(crate) fn get_range_type(key: &[u8], range_end: &[u8]) -> Self {
+        if key == ONE_KEY {
+            RangeType::OneKey
+        } else if key == UNBOUNDED && range_end == UNBOUNDED {
+            RangeType::AllKeys
+        } else {
+            RangeType::Range
+        }
+    }
+}
 
 /// Key Range for Command
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
@@ -37,39 +57,67 @@ pub(crate) struct KeyRange {
 impl KeyRange {
     /// Return if `KeyRange` is conflicted with another
     pub(crate) fn is_conflicted(&self, other: &Self) -> bool {
-        // All keys conflict with any key range
-        if self.end == ALL_KEYS || other.end == ALL_KEYS {
-            true
+        // s1 < s2 ?
+        if match (self.start_bound(), other.start_bound()) {
+            (Bound::Included(s1), Bound::Included(s2)) => {
+                if s1 == s2 {
+                    return true;
+                }
+                s1 < s2
+            }
+            (Bound::Included(_), Bound::Unbounded) => false,
+            (Bound::Unbounded, Bound::Included(_)) => true,
+            (Bound::Unbounded, Bound::Unbounded) => return true,
+            _ => unreachable!("KeyRange::start_bound() cannot be Excluded"),
+        } {
+            // s1 < s2
+            // s2 < e1 ?
+            match (other.start_bound(), self.end_bound()) {
+                (Bound::Included(s2), Bound::Included(e1)) => s2 <= e1,
+                (Bound::Included(s2), Bound::Excluded(e1)) => s2 < e1,
+                (Bound::Included(_), Bound::Unbounded) => true,
+                // if other.start_bound() is Unbounded, programe cannot enter this branch
+                // KeyRange::start_bound() cannot be Excluded
+                _ => unreachable!("other.start_bound() should be Include"),
+            }
         } else {
-            match self.end.as_slice() {
-                ONE_KEY => match other.end.as_slice() {
-                    ONE_KEY => self.start == other.start,
-                    _ => (self.start >= other.start) && (self.start < other.end),
-                },
-                _ => match other.end.as_slice() {
-                    ONE_KEY => (other.start >= self.start) && (other.start < self.end),
-                    _ => (self.start < other.end) && (self.end > other.start),
-                },
+            // s2 < s1
+            // s1 < e2 ?
+            match (self.start_bound(), other.end_bound()) {
+                (Bound::Included(s1), Bound::Included(e2)) => s1 <= e2,
+                (Bound::Included(s1), Bound::Excluded(e2)) => s1 < e2,
+                (Bound::Included(_), Bound::Unbounded) => true,
+                // if self.start_bound() is Unbounded, programe cannnot enter this branch
+                // KeyRange::start_bound() cannot be Excluded
+                _ => unreachable!("self.start_bound() should be Include"),
             }
         }
     }
 
     /// Check if `KeyRange` contains a key
     pub(crate) fn contains_key(&self, key: &[u8]) -> bool {
-        match self.end.as_slice() {
-            ONE_KEY => self.start == key,
-            ALL_KEYS => true,
-            _ => (key >= self.start.as_slice()) && (key < self.end.as_slice()),
-        }
+        self.contains(key)
+    }
+
+    /// Return `RangeType` of this `KeyRange`
+    pub(crate) fn range_type(&self) -> RangeType {
+        RangeType::get_range_type(&self.start, &self.end)
     }
 }
 
-impl RangeBounds<Vec<u8>> for KeyRange {
-    fn start_bound(&self) -> Bound<&Vec<u8>> {
-        Included(&self.start)
+impl RangeBounds<[u8]> for KeyRange {
+    fn start_bound(&self) -> Bound<&[u8]> {
+        match self.start.as_slice() {
+            UNBOUNDED => Bound::Unbounded,
+            _ => Bound::Included(&self.start),
+        }
     }
-    fn end_bound(&self) -> Bound<&Vec<u8>> {
-        Excluded(&self.end)
+    fn end_bound(&self) -> Bound<&[u8]> {
+        match self.end.as_slice() {
+            UNBOUNDED => Bound::Unbounded,
+            ONE_KEY => Bound::Included(&self.start),
+            _ => Bound::Excluded(&self.end),
+        }
     }
 }
 
