@@ -15,15 +15,11 @@ use crate::rpc::{
     TxnResponse,
 };
 use crate::server::command::{
-    Command, CommandResponse, ExecutionRequest, KeyRange, SyncRequest, SyncResponse,
+    Command, CommandResponse, ExecutionRequest, KeyRange, RangeType, SyncRequest, SyncResponse,
 };
 
 /// Default channel size
 const CHANNEL_SIZE: usize = 128;
-/// Range end to get all keys
-const ALL_KEYS: &[u8] = &[0_u8];
-/// Range end to get one key
-const ONE_KEY: &[u8] = &[];
 
 /// KV store
 #[allow(dead_code)]
@@ -221,20 +217,20 @@ impl KvStoreBackend {
     /// Get `KeyValue` of a range
     fn get_range(&self, key: &[u8], range_end: &[u8]) -> Vec<KeyValue> {
         let mut kvs = vec![];
-        match range_end {
-            ONE_KEY => {
+        match RangeType::get_range_type(key, range_end) {
+            RangeType::OneKey => {
                 if let Some(index) = self.index.get_one(key) {
                     if let Some(kv) = self.db.get(&index) {
                         kvs.push(kv);
                     }
                 }
             }
-            ALL_KEYS => {
+            RangeType::AllKeys => {
                 let revisions = self.index.get_all();
                 let mut values = self.db.get_values(&revisions);
                 kvs.append(&mut values);
             }
-            _ => {
+            RangeType::Range => {
                 let range = KeyRange {
                     start: key.to_vec(),
                     end: range_end.to_vec(),
@@ -249,10 +245,10 @@ impl KvStoreBackend {
 
     /// Get `KeyValue` start from a revision and convert to `Event`
     pub(crate) fn get_event_from_revision(&self, key_range: KeyRange, revision: i64) -> Vec<Event> {
-        let revisions = match key_range.end.as_slice() {
-            ONE_KEY => self.index.get_one_from_rev(&key_range.start, revision),
-            ALL_KEYS => self.index.get_all_from_rev(revision),
-            _ => self.index.get_range_from_rev(key_range, revision),
+        let revisions = match key_range.range_type() {
+            RangeType::OneKey => self.index.get_one_from_rev(&key_range.start, revision),
+            RangeType::AllKeys => self.index.get_all_from_rev(revision),
+            RangeType::Range => self.index.get_range_from_rev(key_range, revision),
         };
         let values = self.db.get_values(&revisions);
         values
@@ -628,8 +624,8 @@ impl KvStoreBackend {
     ) -> (bool, Option<Vec<Event>>) {
         let key = &req.key;
         let range_end = &req.range_end;
-        match range_end.as_slice() {
-            ONE_KEY => {
+        match RangeType::get_range_type(key, range_end) {
+            RangeType::OneKey => {
                 if let Some(rev) = self.index.delete_one(key, revision, sub_revision) {
                     debug!("sync_delete_range_request delete one: revisions {:?}", rev);
                     let prev_kv = self.db.mark_deletions(&[rev]);
@@ -640,7 +636,7 @@ impl KvStoreBackend {
                     (false, None)
                 }
             }
-            ALL_KEYS => {
+            RangeType::AllKeys => {
                 let revisions = self.index.delete_all(revision, sub_revision);
                 debug!(
                     "sync_delete_range_request delete all: revisions {:?}",
@@ -657,7 +653,7 @@ impl KvStoreBackend {
                     },
                 )
             }
-            _ => {
+            RangeType::Range => {
                 let range = KeyRange {
                     start: req.key,
                     end: req.range_end,
