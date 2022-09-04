@@ -153,6 +153,8 @@ where
                     |(_index, er)| {
                         if let Some(er) = er {
                             Ok(er)
+                        } else if let Some(er_from_propose) = execute_result {
+                            Ok(er_from_propose)
                         } else {
                             Err(ProposeError::ProtocolError(
                                 "synced response should contain execution result".to_owned(),
