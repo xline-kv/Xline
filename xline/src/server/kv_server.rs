@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use curp::{client::Client, cmd::ProposeId, error::ProposeError};
 use log::debug;
@@ -10,10 +10,13 @@ use crate::{
     rpc::{
         CompactionRequest, CompactionResponse, DeleteRangeRequest, DeleteRangeResponse, Kv,
         PutRequest, PutResponse, RangeRequest, RangeResponse, Request, RequestOp, Response,
-        ResponseOp, TxnRequest, TxnResponse,
+        ResponseOp, SortOrder, SortTarget, TxnRequest, TxnResponse,
     },
     storage::KvStore,
 };
+
+/// Default max txn ops
+const DEFAULT_MAX_TXN_OPS: usize = 128;
 
 /// KV Server
 #[derive(Debug)]
@@ -130,6 +133,193 @@ impl KvServer {
     fn generate_propose_id(&self) -> ProposeId {
         ProposeId::new(format!("{}-{}", self.name, Uuid::new_v4()))
     }
+
+    /// Validate range request before handle
+    fn check_range_request(req: &RangeRequest) -> Result<(), tonic::Status> {
+        if req.serializable {
+            return Err(tonic::Status::unimplemented(
+                "serializable is unimplemented",
+            ));
+        }
+        if req.keys_only {
+            return Err(tonic::Status::unimplemented("keys_only is unimplemented"));
+        }
+        if req.revision != 0 {
+            return Err(tonic::Status::unimplemented(
+                "specific revision is unimplemented",
+            ));
+        }
+        if req.min_mod_revision != 0
+            || req.max_mod_revision != 0
+            || req.min_create_revision != 0
+            || req.max_create_revision != 0
+        {
+            return Err(tonic::Status::unimplemented(
+                "min/max mod/create revision is unimplemented",
+            ));
+        }
+        // TODO: Remove the above errors after implementation
+
+        if req.key.is_empty() {
+            return Err(tonic::Status::invalid_argument("key is not provided"));
+        }
+        if !SortOrder::is_valid(req.sort_order) || !SortTarget::is_valid(req.sort_target) {
+            return Err(tonic::Status::invalid_argument("invalid sort option"));
+        }
+
+        Ok(())
+    }
+
+    /// Validate put request before handle
+    fn check_put_request(req: &PutRequest) -> Result<(), tonic::Status> {
+        if req.lease != 0 {
+            return Err(tonic::Status::unimplemented("lease is unimplemented"));
+        }
+        if req.ignore_lease {
+            return Err(tonic::Status::unimplemented(
+                "ignore_lease is unimplemented",
+            ));
+        }
+        if req.ignore_value {
+            return Err(tonic::Status::unimplemented(
+                "ignore_value is unimplemented",
+            ));
+        }
+        // TODO: Remove the above errors after implementation
+
+        if req.key.is_empty() {
+            return Err(tonic::Status::invalid_argument("key is not provided"));
+        }
+        if req.ignore_value && !req.value.is_empty() {
+            return Err(tonic::Status::invalid_argument("value is provided"));
+        }
+        if req.ignore_lease && req.lease != 0 {
+            return Err(tonic::Status::invalid_argument("lease is provided"));
+        }
+
+        Ok(())
+    }
+
+    /// Validate delete range request before handle
+    fn check_delete_range_request(req: &DeleteRangeRequest) -> Result<(), tonic::Status> {
+        if req.key.is_empty() {
+            return Err(tonic::Status::invalid_argument("key is not provided"));
+        }
+
+        Ok(())
+    }
+
+    /// Validate txn request before handle
+    fn check_txn_request(req: &TxnRequest) -> Result<(), tonic::Status> {
+        let opc = req
+            .compare
+            .len()
+            .max(req.success.len())
+            .max(req.failure.len());
+        if opc > DEFAULT_MAX_TXN_OPS {
+            return Err(tonic::Status::invalid_argument(
+                "too many operations in txn request",
+            ));
+        }
+        for c in &req.compare {
+            if c.key.is_empty() {
+                return Err(tonic::Status::invalid_argument("key is not provided"));
+            }
+        }
+        for op in req.success.iter().chain(req.failure.iter()) {
+            if let Some(ref request) = op.request {
+                match *request {
+                    Request::RequestRange(ref r) => Self::check_range_request(r),
+                    Request::RequestPut(ref r) => Self::check_put_request(r),
+                    Request::RequestDeleteRange(ref r) => Self::check_delete_range_request(r),
+                    Request::RequestTxn(ref r) => Self::check_txn_request(r),
+                }?;
+            } else {
+                return Err(tonic::Status::invalid_argument("key not found"));
+            }
+        }
+
+        let _ignore_success = Self::check_intervals(&req.success)?;
+        let _ignore_failure = Self::check_intervals(&req.failure)?;
+
+        Ok(())
+    }
+    /// Check if puts and deletes overlap
+    fn check_intervals(
+        ops: &[RequestOp],
+    ) -> Result<(HashSet<&[u8]>, Vec<KeyRange>), tonic::Status> {
+        // TODO: use interval tree is better?
+
+        let mut dels = Vec::new();
+
+        for op in ops {
+            if let Some(Request::RequestDeleteRange(ref req)) = op.request {
+                // collect dels
+                let del = KeyRange {
+                    start: req.key.clone(),
+                    end: req.range_end.clone(),
+                };
+                dels.push(del);
+            }
+        }
+
+        let mut puts: HashSet<&[u8]> = HashSet::new();
+
+        for op in ops {
+            if let Some(Request::RequestTxn(ref req)) = op.request {
+                // handle child txn request
+                let (success_puts, mut success_dels) = Self::check_intervals(&req.success)?;
+                let (failure_puts, mut failure_dels) = Self::check_intervals(&req.failure)?;
+
+                for k in &success_puts {
+                    if !puts.insert(k) {
+                        return Err(tonic::Status::invalid_argument(
+                            "duplicate key given in txn request",
+                        ));
+                    }
+                    if dels.iter().any(|del| del.contains_key(k)) {
+                        return Err(tonic::Status::invalid_argument(
+                            "duplicate key given in txn request",
+                        ));
+                    }
+                }
+
+                for k in failure_puts {
+                    if !puts.insert(k) && !success_puts.contains(k) {
+                        // only keys in the puts and not in the success_puts is overlap
+                        return Err(tonic::Status::invalid_argument(
+                            "duplicate key given in txn request",
+                        ));
+                    }
+                    if dels.iter().any(|del| del.contains_key(k)) {
+                        return Err(tonic::Status::invalid_argument(
+                            "duplicate key given in txn request",
+                        ));
+                    }
+                }
+
+                dels.append(&mut success_dels);
+                dels.append(&mut failure_dels);
+            }
+        }
+
+        for op in ops {
+            if let Some(Request::RequestPut(ref req)) = op.request {
+                // check puts in this level
+                if !puts.insert(&req.key) {
+                    return Err(tonic::Status::invalid_argument(
+                        "duplicate key given in txn request",
+                    ));
+                }
+                if dels.iter().any(|del| del.contains_key(&req.key)) {
+                    return Err(tonic::Status::invalid_argument(
+                        "duplicate key given in txn request",
+                    ));
+                }
+            }
+        }
+        Ok((puts, dels))
+    }
 }
 
 #[tonic::async_trait]
@@ -140,7 +330,7 @@ impl Kv for KvServer {
         request: tonic::Request<RangeRequest>,
     ) -> Result<tonic::Response<RangeResponse>, tonic::Status> {
         debug!("Receive RangeRequest {:?}", request);
-
+        Self::check_range_request(request.get_ref())?;
         let range_request = request.into_inner();
         let propose_id = self.generate_propose_id();
         let is_fast_path = true;
@@ -179,6 +369,7 @@ impl Kv for KvServer {
         request: tonic::Request<PutRequest>,
     ) -> Result<tonic::Response<PutResponse>, tonic::Status> {
         debug!("Receive PutRequest {:?}", request);
+        Self::check_put_request(request.get_ref())?;
         let put_request = request.into_inner();
         let propose_id = self.generate_propose_id();
         let is_fast_path = true;
@@ -217,6 +408,7 @@ impl Kv for KvServer {
         request: tonic::Request<DeleteRangeRequest>,
     ) -> Result<tonic::Response<DeleteRangeResponse>, tonic::Status> {
         debug!("Receive DeleteRangeRequest {:?}", request);
+        Self::check_delete_range_request(request.get_ref())?;
         let delete_range_request = request.into_inner();
         let propose_id = self.generate_propose_id();
         let is_fast_path = true;
@@ -262,6 +454,7 @@ impl Kv for KvServer {
         request: tonic::Request<TxnRequest>,
     ) -> Result<tonic::Response<TxnResponse>, tonic::Status> {
         debug!("Receive TxnRequest {:?}", request);
+        Self::check_txn_request(request.get_ref())?;
         let txn_request = request.into_inner();
         let propose_id = self.generate_propose_id();
         let is_fast_path = true;
@@ -304,5 +497,53 @@ impl Kv for KvServer {
             tonic::Code::Unimplemented,
             "Not Implemented".to_owned(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    #[test]
+    fn txn_check() {
+        let txn_req = TxnRequest {
+            compare: vec![],
+            success: vec![
+                RequestOp {
+                    request: Some(Request::RequestDeleteRange(DeleteRangeRequest {
+                        key: b"foo1".to_vec(),
+                        range_end: vec![],
+                        prev_kv: false,
+                    })),
+                },
+                RequestOp {
+                    request: Some(Request::RequestTxn(TxnRequest {
+                        compare: vec![],
+                        success: vec![RequestOp {
+                            request: Some(Request::RequestPut(PutRequest {
+                                key: b"foo".to_vec(),
+                                value: b"bar".to_vec(),
+                                lease: 0,
+                                prev_kv: false,
+                                ignore_value: false,
+                                ignore_lease: false,
+                            })),
+                        }],
+                        failure: vec![RequestOp {
+                            request: Some(Request::RequestPut(PutRequest {
+                                key: b"foo".to_vec(),
+                                value: b"bar".to_vec(),
+                                lease: 0,
+                                prev_kv: false,
+                                ignore_value: false,
+                                ignore_lease: false,
+                            })),
+                        }],
+                    })),
+                },
+            ],
+            failure: vec![],
+        };
+        let result = KvServer::check_txn_request(&txn_req);
+        assert!(result.is_ok());
     }
 }

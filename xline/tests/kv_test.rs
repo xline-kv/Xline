@@ -44,11 +44,11 @@ async fn test_kv_get() -> Result<(), Box<dyn Error>> {
             opts: None,
             want_kvs: &want_kvs[..1],
         },
-        TestCase {
-            key: "a",
-            opts: Some(GetOptions::new().with_serializable()),
-            want_kvs: &want_kvs[..1],
-        },
+        // TestCase {
+        //     key: "a",
+        //     opts: Some(GetOptions::new().with_serializable()),
+        //     want_kvs: &want_kvs[..1],
+        // },
         TestCase {
             key: "a",
             opts: Some(GetOptions::new().with_range("c")),
