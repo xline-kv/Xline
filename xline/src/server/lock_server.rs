@@ -68,8 +68,7 @@ impl LockServer {
             request: Some(request),
         };
         let cmd = Command::new(key_ranges, range_request_op.encode_to_vec(), propose_id);
-        let response = self.client.propose_indexed(cmd.clone()).await;
-        response
+        self.client.propose_indexed(cmd.clone()).await
     }
 
     /// Generate propose id
