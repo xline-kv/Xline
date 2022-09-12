@@ -326,9 +326,9 @@ impl KvStoreBackend {
             }
             if (req.limit > 0) && (kvs.len() > req.limit.cast()) {
                 response.more = true;
-                kvs.truncate(req.limit.cast())
+                kvs.truncate(req.limit.cast());
             }
-            response.kvs = kvs
+            response.kvs = kvs;
         }
         response
     }

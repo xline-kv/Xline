@@ -49,6 +49,11 @@ pub struct XlineServer {
 
 impl XlineServer {
     /// New `XlineServer`
+    ///
+    /// # Panics
+    ///
+    /// panic when peers do not contain leader address
+    #[inline]
     pub async fn new(
         name: String,
         addr: SocketAddr,
@@ -64,9 +69,9 @@ impl XlineServer {
         all_members.push(self_addr);
         all_members.sort();
 
-        let leader_index = all_members
-            .binary_search(&leader_addr)
-            .expect("leader address should be in the collection of peers and self address");
+        let leader_index = all_members.binary_search(&leader_addr).unwrap_or_else(|_| {
+            panic!("leader address should be in the collection of peers and self address")
+        });
 
         let client = Arc::new(Client::<Command>::new(leader_index, all_members).await);
 
@@ -86,7 +91,7 @@ impl XlineServer {
             name,
             addr,
             peers,
-            storage: Arc::clone(&storage),
+            storage,
             client,
             is_leader,
             leader_index,
@@ -95,6 +100,11 @@ impl XlineServer {
     }
 
     /// Start `XlineServer`
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` when `tonic::Server` serve return an error
+    #[inline]
     pub async fn start(&self) -> Result<()> {
         let kv_server = KvServer::new(
             Arc::clone(&self.storage),
