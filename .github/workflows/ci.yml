@@ -5,7 +5,6 @@ on:
     branches: [master]
 
 env:
-  # TODO: Update to 1.61.0, 1.58-1.60 has regression
   CI_RUST_TOOLCHAIN: 1.61.0
 
 jobs:
@@ -46,6 +45,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: check
+  
   fmt:
     name: Format
     runs-on: ubuntu-latest
@@ -60,6 +60,7 @@ jobs:
         with:
           command: fmt
           args: --all -- --check
+  
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -90,3 +91,40 @@ jobs:
         with:
           command: clippy
           args: --all-targets --all-features -- -D warnings
+
+  becnmark:
+    name: benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - run: sudo apt install -y cmake g++ libprotobuf-dev protobuf-compiler
+      - uses: actions/checkout@v2
+      - uses: actions/checkout@v2
+        with:
+          repository: etcd-io/etcd
+          ref: v3.5.5
+          path: etcd
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: default
+          toolchain: ${{ env.CI_RUST_TOOLCHAIN }}
+          override: true
+      - uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release
+      - uses: actions/setup-go@v3
+      - run: |
+          cd etcd
+          bash ./build.sh
+          go build ./tools/benchmark
+          cd ../benchmark
+          mv ../target/release/xline .
+          mv ../etcd/benchmark .
+          mv ../etcd/bin/etcd .
+          mv ../etcd/bin/etcdctl .
+          docker build . -t xline 
+          bash ./benchmark.sh
+      - uses: actions/upload-artifact@v1
+        with:
+          name: benchmark-output
+          path: benchmark/out
