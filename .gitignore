@@ -12,3 +12,9 @@ Cargo.lock
 
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
+
+benchmark/benchmark
+benchmark/xline
+benchmark/etcd
+benchmark/etcdctl
+benchmark/out
