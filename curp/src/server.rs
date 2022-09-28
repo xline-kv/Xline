@@ -219,50 +219,59 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
 
                                     let cmd_id = cmd.id().clone();
 
-                                    let (need_execute, miss_entry) =
-                                        match cmd_board_clone.read().get(&cmd_id) {
-                                            Some(&(_, CmdBoardState::NeedExecute)) => (true, false),
-                                            Some(&(_, CmdBoardState::NoExecute)) => (false, false),
+                                    let option = cmd_board_clone.map_read(|board| {
+                                        match board.get(&cmd_id) {
+                                            Some(&(_, CmdBoardState::NeedExecute)) => {
+                                                Some((true, false))
+                                            }
+                                            Some(&(_, CmdBoardState::NoExecute)) => {
+                                                Some((false, false))
+                                            }
                                             Some(&(_, CmdBoardState::FinalResult(_))) => {
                                                 // Should not hit this state, but just log it
                                                 error!("Should not get final result");
-                                                continue;
+                                                None
                                             }
-                                            None => (false, true),
+                                            None => Some((false, true)),
+                                        }
+                                    });
+                                    if let Some((need_execute, miss_entry)) = option {
+                                        let after_sync_result = if miss_entry {
+                                            WaitSyncedResponse::new_error::<C>(&format!(
+                                                "cmd {:?} is not be waited",
+                                                cmd_id
+                                            ))
+                                        } else if need_execute {
+                                            match cmd.execute(dispatch_executor.as_ref()).await {
+                                                Ok(er) => call_after_sync!(cmd, index, Some(er)),
+                                                Err(e) => WaitSyncedResponse::new_error::<C>(
+                                                    &format!("cmd execution error: {:?}", e),
+                                                ),
+                                            }
+                                        } else {
+                                            call_after_sync!(cmd, index, None)
                                         };
 
-                                    let after_sync_result = if miss_entry {
-                                        WaitSyncedResponse::new_error::<C>(&format!(
-                                            "cmd {:?} is not be waited",
-                                            cmd_id
-                                        ))
-                                    } else if need_execute {
-                                        match cmd.execute(dispatch_executor.as_ref()).await {
-                                            Ok(er) => call_after_sync!(cmd, index, Some(er)),
-                                            Err(e) => WaitSyncedResponse::new_error::<C>(&format!(
-                                                "cmd execution error: {:?}",
-                                                e
-                                            )),
-                                        }
+                                        let _ignore = notifier.send(reply);
+                                        (after_sync_result, cmd_id)
                                     } else {
-                                        call_after_sync!(cmd, index, None)
-                                    };
-
-                                    let _ignore = notifier.send(reply);
-                                    (after_sync_result, cmd_id)
+                                        continue;
+                                    }
                                 }
                                 // TODO: handle the sync task stop, usually we should stop working
                                 Err(e) => unreachable!("sync manager stopped, {}", e),
                             };
 
-                            let mut board_write = cmd_board_clone.write();
-                            if let Some((e, _)) = board_write.remove(&cmd_id) {
-                                let entry = board_write.entry(cmd_id.clone());
-                                let e = entry
-                                    .or_insert((e, CmdBoardState::FinalResult(after_sync_result)));
-                                e.0.notify(1);
-                            }
-
+                            cmd_board_clone.map_write(|mut board| {
+                                if let Some((e, _)) = board.remove(&cmd_id) {
+                                    let entry = board.entry(cmd_id.clone());
+                                    let e = entry.or_insert((
+                                        e,
+                                        CmdBoardState::FinalResult(after_sync_result),
+                                    ));
+                                    e.0.notify(1);
+                                }
+                            });
                             if Self::spec_remove_cmd(&spec_clone, &cmd_id).is_none() {
                                 unreachable!("{:?} should be in the spec pool", cmd_id);
                             }
