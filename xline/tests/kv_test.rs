@@ -8,7 +8,7 @@ use crate::common::Cluster;
 
 #[tokio::test]
 async fn test_kv_put() -> Result<(), Box<dyn Error>> {
-    let mut cluster = Cluster::new(3);
+    let mut cluster = Cluster::new(3).await;
     cluster.start().await;
     let client = cluster.client(0).await;
 
@@ -29,7 +29,7 @@ async fn test_kv_get() -> Result<(), Box<dyn Error>> {
         want_kvs: &'a [&'a str],
     }
 
-    let mut cluster = Cluster::new(3);
+    let mut cluster = Cluster::new(3).await;
     cluster.start().await;
     let client = cluster.client(0).await;
 
@@ -170,7 +170,7 @@ async fn test_kv_delete() -> Result<(), Box<dyn Error>> {
         want_keys: &'a [&'a str],
     }
 
-    let mut cluster = Cluster::new(3);
+    let mut cluster = Cluster::new(3).await;
     cluster.start().await;
     let client = cluster.client(0).await;
 

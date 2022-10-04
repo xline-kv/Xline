@@ -151,7 +151,6 @@ async fn main() -> Result<()> {
     debug!("cluster_peers = {:?}", server_args.cluster_peers);
     let server = XlineServer::new(
         server_args.name,
-        server_args.ip_port,
         server_args.cluster_peers,
         server_args.is_leader,
         server_args.leader_ip_port,
@@ -159,6 +158,6 @@ async fn main() -> Result<()> {
     )
     .await;
     debug!("{:?}", server);
-    server.start().await?;
+    server.start(server_args.ip_port).await?;
     Ok(())
 }
