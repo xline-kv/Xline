@@ -325,7 +325,7 @@ impl Connect {
 }
 
 /// Convert a vec of addr string to a vec of `Connect`
-pub(crate) async fn try_connect(addrs: Vec<String>) -> Vec<Connect> {
+pub(crate) async fn try_connect(addrs: Vec<String>) -> Vec<Arc<Connect>> {
     futures::future::join_all(
         addrs
             .iter()
@@ -334,9 +334,11 @@ pub(crate) async fn try_connect(addrs: Vec<String>) -> Vec<Connect> {
     .await
     .into_iter()
     .zip(addrs.into_iter())
-    .map(|(conn, addr)| Connect {
-        rpc_connect: RwLock::new(conn),
-        addr,
+    .map(|(conn, addr)| {
+        Arc::new(Connect {
+            rpc_connect: RwLock::new(conn),
+            addr,
+        })
     })
     .collect()
 }
