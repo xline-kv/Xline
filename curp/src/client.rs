@@ -18,7 +18,7 @@ pub struct Client<C: Command> {
     /// Leader index in the connections
     leader: usize,
     /// All servers addresses including leader address
-    connects: Vec<Connect>,
+    connects: Vec<Arc<Connect>>,
     /// To keep Command type
     phatom: PhantomData<C>,
 }
