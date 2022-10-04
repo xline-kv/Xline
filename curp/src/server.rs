@@ -9,7 +9,8 @@ use clippy_utilities::NumericCast;
 use event_listener::Event;
 use futures::FutureExt;
 use parking_lot::{Mutex, MutexGuard, RwLock};
-use tokio::task::JoinHandle;
+use tokio::{net::TcpListener, task::JoinHandle};
+use tokio_stream::wrappers::TcpListenerStream;
 use tracing::error;
 
 use crate::{
@@ -101,6 +102,35 @@ impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
                     .parse()
                     .map_err(|e| ServerError::ParsingError(format!("{}", e)))?,
             )
+            .await?;
+        Ok(())
+    }
+
+    /// Run a new rpc server from a listener, designed to be used in the test
+    ///
+    /// # Errors
+    ///   `ServerError::ParsingError` if parsing failed for the local server address
+    ///   `ServerError::RpcError` if any rpc related error met
+    #[inline]
+    pub async fn run_from_listener(
+        is_leader: bool,
+        term: u64,
+        others: Vec<String>,
+        listener: TcpListener,
+        executor: CE,
+    ) -> Result<(), ServerError> {
+        let server = Self {
+            inner: Arc::new(Protocol::new(
+                is_leader,
+                term,
+                others,
+                executor,
+                DEFAULT_AFTER_SYNC_CNT,
+            )),
+        };
+        tonic::transport::Server::builder()
+            .add_service(ProtocolServer::new(server))
+            .serve_with_incoming(TcpListenerStream::new(listener))
             .await?;
         Ok(())
     }
