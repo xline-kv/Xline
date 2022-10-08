@@ -74,62 +74,89 @@ impl ConflictCheck for TestCommand {
 
 #[derive(Debug, Clone)]
 pub(crate) struct TestExecutor {
-    sender: mpsc::Sender<(TestCommandType, String)>,
+    exe_sender: mpsc::Sender<(TestCommandType, String)>,
+    after_sync_sender: mpsc::Sender<(TestCommandType, String)>,
 }
 
 #[async_trait]
 impl CommandExecutor<TestCommand> for TestExecutor {
     async fn execute(&self, cmd: &TestCommand) -> Result<TestCommandResult, ExecuteError> {
         let _ = self
-            .sender
+            .exe_sender
             .send((cmd.t.clone(), cmd.keys()[0].clone()))
             .await;
         match cmd.t {
             TestCommandType::Get => Ok(TestCommandResult::GetResult("".to_owned())),
-            TestCommandType::Put => Ok(TestCommandResult::PutResult("".to_owned())),
+            TestCommandType::Put => Ok(TestCommandResult::PutResult(
+                cmd.value
+                    .as_ref()
+                    .expect("push command should contain value")
+                    .clone(),
+            )),
         }
     }
 
     async fn after_sync(
         &self,
-        _cmd: &TestCommand,
+        cmd: &TestCommand,
         index: LogIndex,
     ) -> Result<LogIndex, ExecuteError> {
-        Ok(index)
+        let _ = self
+            .after_sync_sender
+            .send((cmd.t.clone(), cmd.keys()[0].clone()))
+            .await;
+        match cmd.t {
+            TestCommandType::Get => Ok(index),
+            TestCommandType::Put => Ok(index),
+        }
     }
 }
 
 impl TestExecutor {
-    pub(crate) fn new(sender: mpsc::Sender<(TestCommandType, String)>) -> Self {
-        Self { sender }
+    pub(crate) fn new(
+        exe_sender: mpsc::Sender<(TestCommandType, String)>,
+        after_sync_sender: mpsc::Sender<(TestCommandType, String)>,
+    ) -> Self {
+        Self {
+            exe_sender,
+            after_sync_sender,
+        }
     }
 }
 
-pub(crate) async fn create_servers_client(
-) -> (Receiver<(TestCommandType, String)>, Client<TestCommand>) {
+pub(crate) async fn create_servers_client() -> (
+    Receiver<(TestCommandType, String)>,
+    Receiver<(TestCommandType, String)>,
+    Client<TestCommand>,
+) {
     let addrs: Vec<String> = vec![
         "127.0.0.1:8765".to_owned(),
         "127.0.0.1:8766".to_owned(),
         "127.0.0.1:8767".to_owned(),
     ];
 
-    let (tx, rx) = mpsc::channel(10);
-    let tx1 = tx.clone();
+    let (exe_tx, exe_rx) = mpsc::channel(10);
+    let (after_sync_tx, after_sync_rx) = mpsc::channel(10);
+
+    let exe_tx1 = exe_tx.clone();
+    let after_sync_tx1 = after_sync_tx.clone();
     let addr1 = vec![addrs[1].clone(), addrs[2].clone()];
     tokio::spawn(async move {
-        let exe = TestExecutor::new(tx1);
+        let exe = TestExecutor::new(exe_tx1, after_sync_tx1);
         Rpc::<TestCommand, TestExecutor>::run(true, 0, addr1, Some(8765), exe).await
     });
-    let tx2 = tx.clone();
+    let exe_tx2 = exe_tx.clone();
+    let after_sync_tx2 = after_sync_tx.clone();
     let addr2 = vec![addrs[0].clone(), addrs[2].clone()];
     tokio::spawn(async move {
-        let exe = TestExecutor::new(tx2);
+        let exe = TestExecutor::new(exe_tx2, after_sync_tx2);
         Rpc::<TestCommand, TestExecutor>::run(false, 0, addr2, Some(8766), exe).await
     });
-    let tx3 = tx.clone();
+    let exe_tx3 = exe_tx.clone();
+    let after_sync_tx3 = after_sync_tx.clone();
     let addr3 = vec![addrs[0].clone(), addrs[1].clone()];
     tokio::spawn(async move {
-        let exe = TestExecutor::new(tx3);
+        let exe = TestExecutor::new(exe_tx3, after_sync_tx3);
         let _ = Rpc::<TestCommand, TestExecutor>::run(false, 0, addr3, Some(8767), exe).await;
     });
 
@@ -144,5 +171,5 @@ pub(crate) async fn create_servers_client(
             .unwrap(),
     )
     .await;
-    (rx, client)
+    (exe_rx, after_sync_rx, client)
 }
