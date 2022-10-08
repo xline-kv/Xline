@@ -23,13 +23,14 @@ use crate::{
 };
 
 pub(crate) use self::proto::{
+    commit_response,
     propose_response::ExeResult,
     protocol_client::ProtocolClient,
     protocol_server::{Protocol, ProtocolServer},
     sync_response,
     wait_synced_response::{Success, SyncResult},
-    ProposeRequest, ProposeResponse, SyncRequest, SyncResponse, WaitSyncedRequest,
-    WaitSyncedResponse,
+    CommitRequest, CommitResponse, ProposeRequest, ProposeResponse, SyncRequest, SyncResponse,
+    WaitSyncedRequest, WaitSyncedResponse,
 };
 
 impl ProposeRequest {
@@ -249,6 +250,61 @@ impl SyncResponse {
     }
 }
 
+impl CommitRequest {
+    /// Create a new `CommitResult`
+    pub(crate) fn new<C: Command>(term: u64, index: u64, cmds: &[Arc<C>]) -> bincode::Result<Self> {
+        Ok(Self {
+            term,
+            index,
+            cmds: cmds
+                .iter()
+                .map(|c| bincode::serialize(c.as_ref()))
+                .collect::<bincode::Result<Vec<Vec<u8>>>>()?,
+        })
+    }
+
+    /// Get term number
+    pub(crate) fn term(&self) -> u64 {
+        self.term
+    }
+
+    /// Get log index
+    pub(crate) fn index(&self) -> u64 {
+        self.index
+    }
+
+    /// Get command
+    pub(crate) fn cmds<C: Command>(&self) -> bincode::Result<Vec<Arc<C>>> {
+        self.cmds
+            .iter()
+            .map(|c| Ok(Arc::new(bincode::deserialize(c)?)))
+            .collect::<bincode::Result<Vec<Arc<C>>>>()
+    }
+}
+
+impl CommitResponse {
+    /// Create a "synced" response
+    pub(crate) fn new_committed() -> Self {
+        Self {
+            commit_response: Some(commit_response::CommitResponse::Committed(true)),
+        }
+    }
+
+    /// Create a "wrong term" reponse
+    pub(crate) fn new_wrong_term(term: u64) -> Self {
+        Self {
+            commit_response: Some(commit_response::CommitResponse::WrongTerm(term)),
+        }
+    }
+
+    /// Create a "previous not ready" response
+    pub(crate) fn new_prev_not_ready(index: u64) -> Self {
+        Self {
+            commit_response: Some(commit_response::CommitResponse::PrevNotReady(index)),
+        }
+    }
+}
+
 /// The connection struct to hold the real rpc connections, it may failed to connect, but it also
 /// retries the next time
 #[derive(Debug)]
@@ -319,6 +375,18 @@ impl Connect {
         tr.set_timeout(timeout);
         match option_client {
             Ok(mut client) => Ok(client.sync(tr).await?),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// send "commit" request
+    pub(crate) async fn commit(
+        &self,
+        request: CommitRequest,
+    ) -> Result<tonic::Response<CommitResponse>, ProposeError> {
+        let option_client = self.get().await;
+        match option_client {
+            Ok(mut client) => Ok(client.commit(tonic::Request::new(request)).await?),
             Err(e) => Err(e.into()),
         }
     }

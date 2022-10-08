@@ -24,8 +24,8 @@ use crate::{
     log::{EntryStatus, LogEntry},
     message::TermNum,
     rpc::{
-        ProposeRequest, ProposeResponse, ProtocolServer, SyncRequest, SyncResponse,
-        WaitSyncedRequest, WaitSyncedResponse,
+        commit_response, CommitRequest, CommitResponse, ProposeRequest, ProposeResponse,
+        ProtocolServer, SyncRequest, SyncResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
     sync_manager::{SyncCompleteMessage, SyncManager, SyncMessage},
     util::{MutexMap, RwLockMap},
@@ -68,6 +68,13 @@ where
         request: tonic::Request<SyncRequest>,
     ) -> Result<tonic::Response<SyncResponse>, tonic::Status> {
         self.inner.sync(request).await
+    }
+
+    async fn commit(
+        &self,
+        request: tonic::Request<CommitRequest>,
+    ) -> Result<tonic::Response<CommitResponse>, tonic::Status> {
+        self.inner.commit(request).await
     }
 }
 
@@ -311,6 +318,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             )
             .collect()
     }
+
     /// Create a new server instance
     #[must_use]
     #[inline]
@@ -582,15 +590,74 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                         } else {
                             let cmds = sr.cmds::<C>()?;
                             log.push(LogEntry::new(sr.term(), &cmds, EntryStatus::Unsynced));
-                            // TODO: remove this workaround after commit feature is done.
-                            for id in cmds.iter().map(|c| c.id()) {
-                                let _ignore = Self::spec_remove_cmd(&Arc::clone(&self.spec), id);
-                            }
                             Ok(SyncResponse::new_synced())
                         }
                     }
                 }
             })
+            .map(tonic::Response::new)
+            .map_err(|e: bincode::Error| {
+                tonic::Status::internal(format!("encode or decode error, {}", e))
+            })
+    }
+
+    /// handle `commit` request
+    #[allow(clippy::indexing_slicing)] // The length is check before use
+    async fn commit(
+        &self,
+        request: tonic::Request<CommitRequest>,
+    ) -> Result<tonic::Response<CommitResponse>, tonic::Status> {
+        let cr = request.into_inner();
+        let commit_result = self.log.map_lock(|mut log| {
+            let local_len = log.len();
+            let index: usize = cr.index().numeric_cast();
+            let cmds = cr.cmds::<C>()?;
+            if index > local_len
+                || (index > 0
+                    && matches!(log[index.wrapping_sub(1)].status(), &EntryStatus::Unsynced))
+            {
+                Ok(CommitResponse::new_prev_not_ready(local_len.numeric_cast()))
+            } else {
+                let self_term = *self.term.read();
+                if cr.term() < self_term {
+                    Ok(CommitResponse::new_wrong_term(self_term))
+                } else if index < local_len && log[index].term() > self_term {
+                    Ok(CommitResponse::new_wrong_term(log[index].term()))
+                } else {
+                    if index < local_len {
+                        log[index] = LogEntry::new(cr.term(), &cmds, EntryStatus::Synced);
+                    } else {
+                        log.push(LogEntry::new(cr.term(), &cmds, EntryStatus::Synced));
+                    }
+
+                    for id in cmds.iter().map(|c| c.id()) {
+                        let _ignore = Self::spec_remove_cmd(&Arc::clone(&self.spec), id);
+                    }
+                    Ok(CommitResponse::new_committed())
+                }
+            }
+        });
+
+        // Need to execute if the message is correctly committed
+        if let Ok(CommitResponse {
+            commit_response: Some(commit_response::CommitResponse::Committed(true)),
+        }) = commit_result
+        {
+            let cmds = cr.cmds::<C>().map_err(|e: bincode::Error| {
+                tonic::Status::internal(format!("encode or decode error, {}", e))
+            })?;
+
+            let index = cr.index();
+
+            // TODO: execute command parallelly
+            // TODO: handle execution error
+            for c in cmds {
+                let _execute_result = c.execute(self.cmd_executor.as_ref()).await;
+                let _after_sync_result = c.after_sync(self.cmd_executor.as_ref(), index).await;
+            }
+        }
+
+        commit_result
             .map(tonic::Response::new)
             .map_err(|e: bincode::Error| {
                 tonic::Status::internal(format!("encode or decode error, {}", e))

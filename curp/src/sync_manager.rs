@@ -11,7 +11,10 @@ use crate::{
     error::ProposeError,
     log::{EntryStatus, LogEntry},
     message::TermNum,
-    rpc::{self, sync_response::SyncResponse, Connect, SyncRequest},
+    rpc::{
+        self, commit_response::CommitResponse, sync_response::SyncResponse, CommitRequest, Connect,
+        SyncRequest,
+    },
     util::MutexMap,
     LogIndex,
 };
@@ -105,6 +108,11 @@ impl<C: Command + 'static> SyncManager<C> {
         }
     }
 
+    /// Get a clone of the connections
+    fn connects(&self) -> Vec<Arc<Connect>> {
+        self.connets.clone()
+    }
+
     /// Try to receive all the messages in `sync_chan`, preparing for the batch sync.
     /// The term number comes from the command received.
     // TODO: set a maximum value
@@ -141,7 +149,7 @@ impl<C: Command + 'static> SyncManager<C> {
     ///
     /// Return true if the broadcast success, otherwise return false.
     async fn broadcast_and_wait<I, SendFn, R, SendRet, RespFn, CompFn>(
-        &self,
+        connects: Vec<Arc<Connect>>,
         args: I,
         send_fn: SendFn,
         resp_fn: RespFn,
@@ -155,12 +163,7 @@ impl<C: Command + 'static> SyncManager<C> {
         RespFn: Fn(tonic::Response<R>) -> usize,
         CompFn: Fn() -> bool,
     {
-        let rpcs = self
-            .connets
-            .iter()
-            .cloned()
-            .zip(args.into_iter())
-            .map(send_fn);
+        let rpcs = connects.into_iter().zip(args.into_iter()).map(send_fn);
 
         let mut rpcs: FuturesUnordered<_> = rpcs.collect();
         let mut synced_cnt: usize = 0;
@@ -220,33 +223,58 @@ impl<C: Command + 'static> SyncManager<C> {
                 true
             };
 
-            if !self
-                .broadcast_and_wait(
-                    iter::repeat_with(|| Arc::clone(&cmds_arc)),
-                    |(connect, cmds_cloned)| async move {
-                        connect
-                            .sync(
-                                SyncRequest::new(term, index.numeric_cast(), cmds_cloned.as_ref())?,
-                                SYNC_TIMEOUT,
-                            )
-                            .await
-                    },
-                    |r| match r.into_inner().sync_response {
-                        Some(SyncResponse::Synced(_)) => 1,
-                        Some(
-                            SyncResponse::WrongTerm(_)
-                            | SyncResponse::EntryNotEmpty(_)
-                            | SyncResponse::PrevNotReady(_),
-                        ) => 0,
-                        None => unreachable!("Should contain sync response"),
-                    },
-                    comp_fn,
-                    max_fail,
-                )
-                .await
+            if !Self::broadcast_and_wait(
+                self.connects(),
+                iter::repeat_with(|| Arc::clone(&cmds_arc)),
+                |(connect, cmds_cloned)| async move {
+                    connect
+                        .sync(
+                            SyncRequest::new(term, index.numeric_cast(), cmds_cloned.as_ref())?,
+                            SYNC_TIMEOUT,
+                        )
+                        .await
+                },
+                |r| match r.into_inner().sync_response {
+                    Some(SyncResponse::Synced(_)) => 1,
+                    Some(
+                        SyncResponse::WrongTerm(_)
+                        | SyncResponse::EntryNotEmpty(_)
+                        | SyncResponse::PrevNotReady(_),
+                    ) => 0,
+                    None => unreachable!("Should contain sync response"),
+                },
+                comp_fn,
+                max_fail,
+            )
+            .await
             {
                 return;
             }
+
+            let connects = self.connects();
+            let _ignore_handle = tokio::spawn(async move {
+                Self::broadcast_and_wait(
+                    connects,
+                    iter::repeat_with(|| Arc::clone(&cmds_arc)),
+                    |(connect, cmds_cloned)| async move {
+                        connect
+                            .commit(CommitRequest::new(
+                                term,
+                                index.numeric_cast(),
+                                cmds_cloned.as_ref(),
+                            )?)
+                            .await
+                    },
+                    |r| match r.into_inner().commit_response {
+                        Some(CommitResponse::Committed(_)) => 1,
+                        Some(CommitResponse::WrongTerm(_) | CommitResponse::PrevNotReady(_)) => 0,
+                        None => unreachable!("Should contain sync response"),
+                    },
+                    || true,
+                    max_fail,
+                )
+                .await
+            });
         }
     }
 }
