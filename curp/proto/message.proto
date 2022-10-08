@@ -54,8 +54,23 @@ message SyncResponse {
     }
 }
 
+message CommitRequest {
+    uint64 term = 1;
+    uint64 index = 2;
+    repeated bytes cmds = 3;
+}
+
+message CommitResponse {
+    oneof commit_response {
+        bool committed = 1;
+        uint64 wrong_term = 2;
+        uint64 prev_not_ready = 3;
+    }
+}
+
 service Protocol {
     rpc Propose (ProposeRequest) returns (ProposeResponse);
     rpc WaitSynced (WaitSyncedRequest) returns (WaitSyncedResponse);
     rpc Sync (SyncRequest) returns (SyncResponse);
+    rpc Commit (CommitRequest) returns (CommitResponse);
 }
