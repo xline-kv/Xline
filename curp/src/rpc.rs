@@ -48,16 +48,6 @@ impl ProposeRequest {
         })
     }
 
-    /// Create a new `Propose` request
-    pub(crate) fn new<C>(cmd: &C) -> bincode::Result<Self>
-    where
-        C: Command,
-    {
-        Ok(Self {
-            command: bincode::serialize(&cmd)?,
-        })
-    }
-
     /// Get command
     pub(crate) fn cmd<C: Command>(&self) -> bincode::Result<C> {
         bincode::deserialize(&self.command)
@@ -356,6 +346,7 @@ impl Connect {
     }
 
     /// send "wait synced" request
+    #[allow(dead_code)] // false positive report
     pub(crate) async fn wait_synced(
         &self,
         request: WaitSyncedRequest,

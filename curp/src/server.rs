@@ -6,7 +6,7 @@ use std::{
 };
 
 use clippy_utilities::NumericCast;
-use event_listener::Event;
+use event_listener::{Event, EventListener};
 use futures::FutureExt;
 use parking_lot::{Mutex, MutexGuard, RwLock};
 use tokio::{net::TcpListener, task::JoinHandle};
@@ -28,7 +28,7 @@ use crate::{
         ProtocolServer, SyncRequest, SyncResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
     sync_manager::{SyncCompleteMessage, SyncManager, SyncMessage},
-    util::{MutexMap, RwLockMap},
+    util::MutexMap,
 };
 
 /// Default server serving port
@@ -163,6 +163,26 @@ enum CmdBoardState {
     FinalResult(Result<WaitSyncedResponse, bincode::Error>),
 }
 
+/// Command board value stored in the command board map
+enum CmdBoardValue {
+    /// There's an wait_sync request waiting
+    EarlyArrive(Event),
+    /// Wait for the sync procedure complete
+    Wait4Sync(Box<(Event, CmdBoardState)>),
+}
+
+impl CmdBoardValue {
+    /// Create an early arrive variat
+    fn new_early_arrive(event: Event) -> Self {
+        Self::EarlyArrive(event)
+    }
+
+    /// Create an wait sync variat
+    fn new_wait_sync(event: Event, state: CmdBoardState) -> Self {
+        Self::Wait4Sync(Box::new((event, state)))
+    }
+}
+
 /// The server that handles client request and server consensus protocol
 pub struct Protocol<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
     /// the server role
@@ -183,7 +203,7 @@ pub struct Protocol<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
     after_sync_handle: Vec<JoinHandle<()>>,
     // TODO: clean up the board when the size is too large
     /// Cmd watch board, used to track the cmd sync result
-    cmd_board: Arc<RwLock<HashMap<ProposeId, (Event, CmdBoardState)>>>,
+    cmd_board: Arc<Mutex<HashMap<ProposeId, CmdBoardValue>>>,
 }
 
 impl<C, CE> Debug for Protocol<C, CE>
@@ -217,11 +237,12 @@ enum ServerRole {
 
 impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
     /// Init `after_sync` tasks
+    #[allow(clippy::too_many_lines)] // FIXME: refactor too long function
     fn init_after_sync_tasks(
         cnt: usize,
         comp_rx: &SpmcKeybasedReceiver<C::K, SyncCompleteMessage<C>>,
         spec: &Arc<Mutex<VecDeque<C>>>,
-        cmd_board: &Arc<RwLock<HashMap<ProposeId, (Event, CmdBoardState)>>>,
+        cmd_board: &Arc<Mutex<HashMap<ProposeId, CmdBoardValue>>>,
         cmd_executor: &Arc<CE>,
     ) -> Vec<JoinHandle<()>> {
         (0..cnt)
@@ -262,19 +283,30 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
 
                                     let cmd_id = cmd.id().clone();
 
-                                    let option = cmd_board_clone.map_read(|board| {
+                                    let option = cmd_board_clone.map_lock(|board| {
                                         match board.get(&cmd_id) {
-                                            Some(&(_, CmdBoardState::NeedExecute)) => {
-                                                Some((true, false))
-                                            }
-                                            Some(&(_, CmdBoardState::NoExecute)) => {
-                                                Some((false, false))
-                                            }
-                                            Some(&(_, CmdBoardState::FinalResult(_))) => {
-                                                // Should not hit this state, but just log it
-                                                error!("Should not get final result");
-                                                None
-                                            }
+                                            Some(value) => match *value {
+                                                CmdBoardValue::Wait4Sync(ref event_state) => {
+                                                    match event_state.1 {
+                                                        CmdBoardState::NeedExecute => {
+                                                            Some((true, false))
+                                                        }
+                                                        CmdBoardState::NoExecute => {
+                                                            Some((false, false))
+                                                        }
+                                                        CmdBoardState::FinalResult(_) => {
+                                                            // Should not hit this state, but just log it
+                                                            error!("Should not get final result");
+                                                            None
+                                                        }
+                                                    }
+                                                }
+
+                                                CmdBoardValue::EarlyArrive(_) => {
+                                                    error!("Should not get eary arrive while executing");
+                                                    None
+                                                }
+                                            },
                                             None => Some((false, true)),
                                         }
                                     });
@@ -305,14 +337,17 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                                 Err(e) => unreachable!("sync manager stopped, {}", e),
                             };
 
-                            cmd_board_clone.map_write(|mut board| {
-                                if let Some((e, _)) = board.remove(&cmd_id) {
+                            cmd_board_clone.map_lock(|mut board| {
+                                if let Some(CmdBoardValue::Wait4Sync(event_state)) = board.remove(&cmd_id) {
                                     let entry = board.entry(cmd_id.clone());
-                                    let e = entry.or_insert((
-                                        e,
+                                    let value = entry.or_insert_with(|| CmdBoardValue::new_wait_sync(
+                                        event_state.0,
                                         CmdBoardState::FinalResult(after_sync_result),
                                     ));
-                                    e.0.notify(1);
+
+                                    if let CmdBoardValue::Wait4Sync(ref es) = *value {
+                                        es.0.notify(1);
+                                    }
                                 }
                             });
                             if Self::spec_remove_cmd(&spec_clone, &cmd_id).is_none() {
@@ -344,7 +379,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             let mut sm = SyncManager::new(sync_rx, comp_tx, others, log_clone).await;
             sm.run().await;
         });
-        let cmd_board = Arc::new(RwLock::new(HashMap::new()));
+        let cmd_board = Arc::new(Mutex::new(HashMap::new()));
         let spec = Arc::new(Mutex::new(VecDeque::new()));
         let cmd_executor = Arc::new(cmd_executor);
 
@@ -396,10 +431,11 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         cmd: &C,
         need_execute: bool,
     ) -> Result<Event, SendError> {
-        self.cmd_board.map_write(|mut board| {
+        self.cmd_board.map_lock(|mut board| {
+            let old_value = board.remove(cmd.id());
             let _ignore = board.insert(
                 cmd.id().clone(),
-                (
+                CmdBoardValue::new_wait_sync(
                     Event::new(),
                     if need_execute {
                         CmdBoardState::NeedExecute
@@ -408,6 +444,11 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                     },
                 ),
             );
+
+            if let Some(CmdBoardValue::EarlyArrive(event)) = old_value {
+                // FIXME: Maybe more than one waiting?
+                event.notify(1);
+            }
         });
         let ready_notify = self
             .sync_chan
@@ -518,52 +559,74 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         &self,
         request: tonic::Request<WaitSyncedRequest>,
     ) -> Result<tonic::Response<WaitSyncedResponse>, tonic::Status> {
+        /// Get the final result or the listener.
+        /// We wait for the listener and repeat the steps until we get the
+        /// finale result.
+        enum FrOrListener {
+            /// Internal state telling that we've got a final result
+            MetFr,
+            /// The real final result
+            Fr(Box<Result<tonic::Response<WaitSyncedResponse>, tonic::Status>>),
+            /// The event listenner
+            Listener(EventListener),
+        }
+
         let ws = request.into_inner();
         let id = ws.id().map_err(|e| {
             tonic::Status::invalid_argument(format!("wait_synced id decode failed: {}", e))
         })?;
 
-        let handle = self.cmd_board.map_read(|board| match board.get(&id) {
-            Some(e_state) => Ok((
-                e_state.0.listen(),
-                matches!(e_state.1, CmdBoardState::FinalResult(_)),
-            )),
-            None => Err(WaitSyncedResponse::new_error::<C>(&format!(
-                "command {:?} is not in the event hashmap",
-                &id
-            ))),
-        });
-
-        let (listener, has_result) = match handle {
-            Ok(h) => h,
-            Err(resp) => {
-                return Ok(tonic::Response::new(resp.map_err(|e| {
-                    tonic::Status::internal(format!("encode or decode error, {}", e))
-                })?))
-            }
-        };
-
-        // wait for the final result
-        if !has_result {
-            listener.await;
-        }
-
-        self.cmd_board
-            .map_write(|mut board| match board.remove(&id) {
-                Some((_, final_result)) => match final_result {
-                    CmdBoardState::NeedExecute | CmdBoardState::NoExecute => {
-                        unreachable!("should have final result")
+        loop {
+            let fr_or_listener = self.cmd_board.map_lock(|mut board| {
+                let fr_or_listener = match board.get(&id) {
+                    Some(value) => match *value {
+                        CmdBoardValue::Wait4Sync(ref event_state) => match event_state.1 {
+                            CmdBoardState::FinalResult(_) => FrOrListener::MetFr,
+                            CmdBoardState::NeedExecute | CmdBoardState::NoExecute => {
+                                FrOrListener::Listener(event_state.0.listen())
+                            }
+                        },
+                        CmdBoardValue::EarlyArrive(ref event) => {
+                            FrOrListener::Listener(event.listen())
+                        }
+                    },
+                    None => {
+                        let event = Event::new();
+                        let listener = event.listen();
+                        let _ignore =
+                            board.insert(id.clone(), CmdBoardValue::new_early_arrive(event));
+                        FrOrListener::Listener(listener)
                     }
-                    CmdBoardState::FinalResult(result) => result.map_err(|e| {
-                        tonic::Status::internal(format!("encode or decode error, {}", e))
-                    }),
-                },
-                None => Err(tonic::Status::internal(format!(
-                    "command {:?} is not in the event hashmap",
-                    &id
-                ))),
-            })
-            .map(tonic::Response::new)
+                };
+
+                if let FrOrListener::MetFr = fr_or_listener {
+                    if let Some(CmdBoardValue::Wait4Sync(event_state)) = board.remove(&id) {
+                        if let CmdBoardState::FinalResult(fr) = event_state.1 {
+                            return FrOrListener::Fr(Box::new(
+                                fr.map_err(|e| {
+                                    tonic::Status::internal(format!(
+                                        "encode or decode error, {}",
+                                        e
+                                    ))
+                                })
+                                .map(tonic::Response::new),
+                            ));
+                        }
+                    }
+                    unreachable!("cmd board for id {:?} should have had final result", id);
+                }
+
+                fr_or_listener
+            });
+
+            match fr_or_listener {
+                FrOrListener::Fr(fr) => break *fr,
+                FrOrListener::Listener(l) => l.await,
+                FrOrListener::MetFr => {
+                    unreachable!("EmptyFr is the internal state, should not appear here")
+                }
+            }
+        }
     }
 
     /// handle "sync" request

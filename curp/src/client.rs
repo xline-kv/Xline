@@ -1,7 +1,7 @@
 use std::{fmt::Debug, iter, marker::PhantomData, net::SocketAddr, sync::Arc, time::Duration};
 
-use futures::{stream::FuturesUnordered, StreamExt};
-use tracing::{trace, warn};
+use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
+use tracing::warn;
 
 use crate::{
     cmd::Command,
@@ -51,18 +51,13 @@ where
         }
     }
 
-    /// Propose the request to servers
-    /// # Errors
-    ///   `ProposeError::ExecutionError` if execution error is met
-    ///   `ProposeError::SyncedError` error met while syncing logs to followers
-    /// # Panics
-    ///   If leader index is out of bound of all the connections, panic
-    #[inline]
-    #[allow(clippy::too_many_lines)] // FIXME: split to smaller functions
-    pub async fn propose(&self, cmd: C) -> Result<C::ER, ProposeError> {
-        let ft = self.connects.len().wrapping_div(2);
-
-        let cmd_arc = Arc::new(cmd);
+    /// The fast round of Curp protocol
+    /// It broadcast the requests to all the curp servers.
+    async fn fast_round(
+        &self,
+        cmd_arc: Arc<C>,
+    ) -> Result<<C as Command>::ER, Option<<C as Command>::ER>> {
+        let max_fault = self.connects.len().wrapping_div(2);
         let rpcs = self
             .connects
             .iter()
@@ -72,14 +67,13 @@ where
                     .propose(ProposeRequest::new_from_rc(cmd_cloned)?, PROPOSE_TIMEOUT)
                     .await
             });
-
         let mut rpcs: FuturesUnordered<_> = rpcs.collect();
 
         let mut ok_cnt: usize = 0;
         let mut max_term = 0;
         let mut execute_result: Option<C::ER> = None;
-        let major_cnt = ft
-            .wrapping_add(ft.wrapping_add(1).wrapping_div(2))
+        let major_cnt = max_fault
+            .wrapping_add(max_fault.wrapping_add(1).wrapping_div(2))
             .wrapping_add(1);
         while ok_cnt < major_cnt || execute_result.is_none() {
             if rpcs
@@ -130,7 +124,14 @@ where
                 return Ok(er);
             }
         }
+        Err(execute_result)
+    }
 
+    /// The slow round of Curp protocol
+    async fn slow_round(
+        &self,
+        cmd_arc: Arc<C>,
+    ) -> Result<(<C as Command>::ASR, Option<<C as Command>::ER>), ProposeError> {
         #[allow(clippy::panic)]
         match self
             .connects
@@ -150,15 +151,11 @@ where
             Ok(resp) => {
                 let resp = resp.into_inner();
                 resp.map_success_error::<C, _, _, _>(
-                    |(_index, er)| {
+                    |(index, er)| {
                         if let Some(er) = er {
-                            Ok(er)
-                        } else if let Some(er_from_propose) = execute_result {
-                            Ok(er_from_propose)
+                            Ok((index, Some(er)))
                         } else {
-                            Err(ProposeError::ProtocolError(
-                                "synced response should contain execution result".to_owned(),
-                            ))
+                            Ok((index, None))
                         }
                     },
                     |e| Err(ProposeError::SyncedError(e)),
@@ -167,6 +164,68 @@ where
             Err(e) => Err(ProposeError::SyncedError(format!(
                 "Sending `WaitSyncedResponse` rpc error: {e}"
             ))),
+        }
+    }
+
+    /// Propose the request to servers
+    /// # Errors
+    ///   `ProposeError::ExecutionError` if execution error is met
+    ///   `ProposeError::SyncedError` error met while syncing logs to followers
+    /// # Panics
+    ///   If leader index is out of bound of all the connections, panic
+    #[inline]
+    #[allow(clippy::too_many_lines)] // FIXME: split to smaller functions
+    pub async fn propose(&self, cmd: C) -> Result<C::ER, ProposeError> {
+        let cmd_arc = Arc::new(cmd);
+        let fast_round = self.fast_round(Arc::clone(&cmd_arc));
+        let slow_round = self.slow_round(cmd_arc);
+
+        pin_mut!(fast_round);
+        pin_mut!(slow_round);
+
+        // Wait for the fast and slow round at the same time
+        match futures::future::select(fast_round, slow_round).await {
+            futures::future::Either::Left((fast_result, slow_round)) => match fast_result {
+                Ok(er) => Ok(er),
+                Err(fast_er) => {
+                    let slow_result = slow_round.await?;
+                    if let (_, Some(slow_er)) = slow_result {
+                        return Ok(slow_er);
+                    }
+                    if let Some(er) = fast_er {
+                        return Ok(er);
+                    }
+                    Err(ProposeError::ProtocolError(
+                        "There's no execution result from both fast and slow round".to_owned(),
+                    ))
+                }
+            },
+            futures::future::Either::Right((slow_result, fast_round)) => match slow_result {
+                Ok(slow_er_option) => {
+                    if let (_, Some(slow_er)) = slow_er_option {
+                        return Ok(slow_er);
+                    }
+
+                    match fast_round.await {
+                        Ok(er) => Ok(er),
+                        Err(er_option) => {
+                            if let Some(er) = er_option {
+                                return Ok(er);
+                            }
+                            Err(ProposeError::ProtocolError(
+                                "There's no execution result from both fast and slow round"
+                                    .to_owned(),
+                            ))
+                        }
+                    }
+                }
+                Err(e) => {
+                    if let Ok(er) = fast_round.await {
+                        return Ok(er);
+                    }
+                    Err(e)
+                }
+            },
         }
     }
 
@@ -179,51 +238,32 @@ where
     /// # Panics
     ///   If leader index is out of bound of all the connections, panic
     #[inline]
+    #[allow(clippy::else_if_without_else)] // the else is redundent
     pub async fn propose_indexed(&self, cmd: C) -> Result<(C::ER, C::ASR), ProposeError> {
-        #[allow(clippy::panic)]
-        let client = self.connects.get(self.leader).unwrap_or_else(|| {
-            panic!(
-                "leader is out of bound, leader index: {}, total connect count: {}",
-                self.leader,
-                self.connects.len()
-            )
-        });
-        let execute_result = client
-            .propose(ProposeRequest::new(&cmd)?, PROPOSE_TIMEOUT)
-            .await?
-            .into_inner()
-            .map_or_else::<C, _, _, _>(
-                |er_option: Option<C::ER>| {
-                    er_option
-                        .ok_or_else(|| {
-                            ProposeError::ProtocolError(
-                                "leader should contain execution result".to_owned(),
-                            )
-                        })
-                        .map(Some)
-                },
-                |err| {
-                    // ignore conflict error
-                    if matches!(err, ProposeError::KeyConflict) {
-                        trace!("`ProposeError` met, {err}");
-                        return Ok(None);
-                    }
-                    Err(err)
-                },
-            )??;
+        let cmd_arc = Arc::new(cmd);
+        let fast_round = self.fast_round(Arc::clone(&cmd_arc));
+        let slow_round = self.slow_round(cmd_arc);
 
-        client
-            .wait_synced(WaitSyncedRequest::new(cmd.id())?)
-            .await?
-            .into_inner()
-            .map_success_error::<C, _, _, _>(
-                |(asr, er)| {
-                    Ok(match (execute_result, er) {
-                        (None, None) => unreachable!("execute result should exist"),
-                        (Some(er), _) | (_, Some(er)) => (er, asr),
-                    })
-                },
-                |err_msg| Err(ProposeError::ProtocolError(err_msg)),
-            )
+        #[allow(clippy::integer_arithmetic)] // tokio framework triggers
+        let (fast_result, slow_result) = tokio::join!(fast_round, slow_round);
+
+        let fast_result_option = match fast_result {
+            Ok(er) => Some(er),
+            Err(er_option) => er_option,
+        };
+
+        match slow_result {
+            Ok((asr, er_option)) => {
+                if let Some(er) = er_option {
+                    return Ok((er, asr));
+                } else if let Some(er) = fast_result_option {
+                    return Ok((er, asr));
+                }
+                Err(ProposeError::ProtocolError(
+                    "There's no execution result from both fast and slow round".to_owned(),
+                ))
+            }
+            Err(e) => Err(e),
+        }
     }
 }
