@@ -111,6 +111,8 @@
     clippy::module_name_repetitions, // TODO: refactor module to remove this
 )]
 
+/// Xline client
+pub mod client;
 /// rpc definition module
 mod rpc;
 /// Xline server

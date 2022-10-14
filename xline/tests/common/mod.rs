@@ -1,12 +1,11 @@
 use std::{collections::BTreeMap, net::SocketAddr, thread};
 
-use etcd_client::Client;
 use tokio::{
     net::TcpListener,
     sync::broadcast::{self, Sender},
     time::{self, Duration},
 };
-use xline::server::XlineServer;
+use xline::{client::Client, server::XlineServer};
 
 /// Cluster
 pub struct Cluster {
@@ -14,8 +13,8 @@ pub struct Cluster {
     listeners: BTreeMap<usize, TcpListener>,
     /// address of members
     addrs: Vec<SocketAddr>,
-    /// Clients of cluster
-    clients: Vec<Option<Client>>,
+    /// Client of cluster
+    client: Option<Client>,
     /// Stop sender
     stop_tx: Option<Sender<()>>,
     /// Cluster size
@@ -37,7 +36,7 @@ impl Cluster {
         Self {
             listeners,
             addrs,
-            clients: vec![None; size],
+            client: None,
             stop_tx: None,
             size,
         }
@@ -88,14 +87,15 @@ impl Cluster {
     }
 
     /// Create or get the client with the specified index
-    pub(crate) async fn client(&mut self, i: usize) -> &mut Client {
-        assert!(i < self.size);
-        if self.clients[i].is_none() {
-            let client = Client::connect([self.addrs[i].to_string()], None)
+    pub(crate) async fn client(&mut self) -> &mut Client {
+        if self.client.is_none() {
+            let client = Client::new(0, self.addrs.clone(), true)
                 .await
-                .unwrap_or_else(|e| panic!("Client connect error: {:?}", e));
-            self.clients[i] = Some(client);
+                .unwrap_or_else(|e| {
+                    panic!("Client connect error: {:?}", e);
+                });
+            self.client = Some(client);
         }
-        self.clients[i].as_mut().unwrap()
+        self.client.as_mut().unwrap()
     }
 }

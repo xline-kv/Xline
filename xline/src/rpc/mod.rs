@@ -7,7 +7,9 @@
     clippy::cargo,
     unused_qualifications,
     unreachable_pub,
-    variant_size_differences
+    variant_size_differences,
+    missing_copy_implementations,
+    missing_docs
 )]
 mod etcdserverpb {
     tonic::include_proto!("etcdserverpb");
@@ -67,11 +69,11 @@ mod leasepb {
     tonic::include_proto!("leasepb");
 }
 
+pub use self::etcdserverpb::range_request::{SortOrder, SortTarget};
 pub(crate) use self::etcdserverpb::{
     compare::{CompareResult, CompareTarget, TargetUnion},
     kv_server::{Kv, KvServer},
     lease_server::{Lease, LeaseServer},
-    range_request::{SortOrder, SortTarget},
     request_op::Request,
     response_op::Response,
     watch_request::RequestUnion,
