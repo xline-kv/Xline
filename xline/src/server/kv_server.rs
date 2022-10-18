@@ -144,11 +144,6 @@ impl KvServer {
         if req.keys_only {
             return Err(tonic::Status::unimplemented("keys_only is unimplemented"));
         }
-        if req.revision != 0 {
-            return Err(tonic::Status::unimplemented(
-                "specific revision is unimplemented",
-            ));
-        }
         if req.min_mod_revision != 0
             || req.max_mod_revision != 0
             || req.min_create_revision != 0
