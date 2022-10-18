@@ -140,3 +140,4 @@ mod sync_manager;
 mod rpc;
 
 pub use message::LogIndex;
+pub use rpc::ProtocolServer;

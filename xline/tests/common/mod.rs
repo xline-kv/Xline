@@ -10,14 +10,10 @@ use xline::server::XlineServer;
 
 /// Cluster
 pub struct Cluster {
-    /// Curp listeners of members
-    curp_listeners: BTreeMap<usize, TcpListener>,
-    /// Curp address of members
-    curp_addrs: Vec<SocketAddr>,
-    /// Service listeners of members
-    service_listeners: BTreeMap<usize, TcpListener>,
-    /// Service address of members
-    service_addrs: Vec<SocketAddr>,
+    /// listeners of members
+    listeners: BTreeMap<usize, TcpListener>,
+    /// address of members
+    addrs: Vec<SocketAddr>,
     /// Clients of cluster
     clients: Vec<Option<Client>>,
     /// Stop sender
@@ -29,28 +25,18 @@ pub struct Cluster {
 impl Cluster {
     /// New `Cluster`
     pub(crate) async fn new(size: usize) -> Self {
-        let mut service_listeners = BTreeMap::new();
+        let mut listeners = BTreeMap::new();
         for i in 0..size {
-            service_listeners.insert(i, TcpListener::bind("0.0.0.0:0").await.unwrap());
+            listeners.insert(i, TcpListener::bind("0.0.0.0:0").await.unwrap());
         }
-        let service_addrs = service_listeners
+        let addrs = listeners
             .iter()
             .map(|l| l.1.local_addr().unwrap())
             .collect();
 
-        let mut curp_listeners = BTreeMap::new();
-        for i in 0..size {
-            curp_listeners.insert(i, TcpListener::bind("0.0.0.0:0").await.unwrap());
-        }
-        let curp_addrs = curp_listeners
-            .iter()
-            .map(|l| l.1.local_addr().unwrap())
-            .collect();
         Self {
-            curp_listeners,
-            curp_addrs,
-            service_listeners,
-            service_addrs,
+            listeners,
+            addrs,
             clients: vec![None; size],
             stop_tx: None,
             size,
@@ -61,26 +47,25 @@ impl Cluster {
     pub(crate) async fn start(&mut self) {
         let (stop_tx, _) = broadcast::channel(1);
         for i in 0..self.size {
-            let mut peers = self.curp_addrs.clone();
+            let mut peers = self.addrs.clone();
             peers.remove(i);
             let name = format!("server{}", i);
             let is_leader = i == 0;
-            let leader_addr = self.curp_addrs[0];
-            let curp_addr = self.curp_addrs[i];
+            let leader_addr = self.addrs[0];
+            let self_addr = self.addrs[i];
             let mut rx = stop_tx.subscribe();
-            let curp_listener = self.curp_listeners.remove(&i).unwrap();
-            let service_listener = self.service_listeners.remove(&i).unwrap();
+            let listener = self.listeners.remove(&i).unwrap();
 
             thread::spawn(move || {
                 tokio::runtime::Runtime::new()
                     .unwrap_or_else(|e| panic!("Create runtime error: {}", e))
                     .block_on(async move {
                         let server =
-                            XlineServer::new(name, peers, is_leader, leader_addr, curp_addr).await;
+                            XlineServer::new(name, peers, is_leader, leader_addr, self_addr).await;
 
                         tokio::select! {
                             _ = rx.recv() => {} // tx droped, or tx send ()
-                            result = server.start_from_listener(service_listener, curp_listener) => {
+                            result = server.start_from_listener(listener) => {
                                 if let Err(e) = result {
                                     panic!("Server start error: {e}");
                                 }
@@ -106,7 +91,7 @@ impl Cluster {
     pub(crate) async fn client(&mut self, i: usize) -> &mut Client {
         assert!(i < self.size);
         if self.clients[i].is_none() {
-            let client = Client::connect([self.service_addrs[i].to_string()], None)
+            let client = Client::connect([self.addrs[i].to_string()], None)
                 .await
                 .unwrap_or_else(|e| panic!("Client connect error: {:?}", e));
             self.clients[i] = Some(client);

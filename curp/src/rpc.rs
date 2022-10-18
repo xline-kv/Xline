@@ -7,7 +7,8 @@
     clippy::cargo,
     unused_qualifications,
     unreachable_pub,
-    variant_size_differences
+    variant_size_differences,
+    missing_copy_implementations
 )]
 mod proto {
     tonic::include_proto!("messagepb");
@@ -26,12 +27,14 @@ pub(crate) use self::proto::{
     commit_response,
     propose_response::ExeResult,
     protocol_client::ProtocolClient,
-    protocol_server::{Protocol, ProtocolServer},
+    protocol_server::Protocol,
     sync_response,
     wait_synced_response::{Success, SyncResult},
     CommitRequest, CommitResponse, ProposeRequest, ProposeResponse, SyncRequest, SyncResponse,
     WaitSyncedRequest, WaitSyncedResponse,
 };
+
+pub use self::proto::protocol_server::ProtocolServer;
 
 impl ProposeRequest {
     /// Create a new `Propose` request
