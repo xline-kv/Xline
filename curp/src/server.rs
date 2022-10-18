@@ -79,6 +79,20 @@ where
 }
 
 impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
+    /// New `Rpc`
+    #[inline]
+    pub fn new(is_leader: bool, term: u64, others: Vec<String>, executor: CE) -> Self {
+        Self {
+            inner: Arc::new(Protocol::new(
+                is_leader,
+                term,
+                others,
+                executor,
+                DEFAULT_AFTER_SYNC_CNT,
+            )),
+        }
+    }
+
     /// Run a new rpc server
     ///
     /// # Errors
@@ -93,15 +107,7 @@ impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
         executor: CE,
     ) -> Result<(), ServerError> {
         let port = server_port.unwrap_or(DEFAULT_SERVER_PORT);
-        let server = Self {
-            inner: Arc::new(Protocol::new(
-                is_leader,
-                term,
-                others,
-                executor,
-                DEFAULT_AFTER_SYNC_CNT,
-            )),
-        };
+        let server = Self::new(is_leader, term, others, executor);
         tonic::transport::Server::builder()
             .add_service(ProtocolServer::new(server))
             .serve(

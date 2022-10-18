@@ -128,16 +128,13 @@ struct ServerArgs {
     /// Cluster peers. eg: 192.168.x.x:8080 192.168.x.x:8080
     #[clap(long, multiple = true, required = true)]
     cluster_peers: Vec<SocketAddr>,
-    /// Current node ip and port. eg: 192.168.x.x:8080
-    #[clap(long)]
-    ip_port: SocketAddr,
-    /// if node is leader
+    /// If node is leader
     #[clap(long)]
     is_leader: bool,
-    /// leader's ip and port. eg: 192.168.x.x:8080
+    /// Leader's ip and port. eg: 192.168.x.x:8080
     #[clap(long)]
     leader_ip_port: SocketAddr,
-    /// current node ip and port. eg: 192.168.x.x:8080
+    /// Current node ip and port. eg: 192.168.x.x:8080
     #[clap(long)]
     self_ip_port: SocketAddr,
 }
@@ -147,7 +144,7 @@ async fn main() -> Result<()> {
     env_logger::init();
     let server_args = ServerArgs::parse();
     debug!("name = {:?}", server_args.name);
-    debug!("server_addr = {:?}", server_args.ip_port);
+    debug!("server_addr = {:?}", server_args.self_ip_port);
     debug!("cluster_peers = {:?}", server_args.cluster_peers);
     let server = XlineServer::new(
         server_args.name,
@@ -158,6 +155,6 @@ async fn main() -> Result<()> {
     )
     .await;
     debug!("{:?}", server);
-    server.start(server_args.ip_port).await?;
+    server.start(server_args.self_ip_port).await?;
     Ok(())
 }
