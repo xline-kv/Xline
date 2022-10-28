@@ -1,10 +1,7 @@
 FROM ubuntu:latest
 
-WORKDIR /xline
+COPY xline /usr/local/bin
 
-COPY xline .
-COPY benchmark .
-COPY etcdctl .
-COPY etcd .
+RUN apt-get update && apt-get install -y iproute2 iputils-ping
 
-RUN apt-get update && apt-get install -y iproute2 iputils-ping dnsutils
+CMD ["/usr/local/bin/xline"]
