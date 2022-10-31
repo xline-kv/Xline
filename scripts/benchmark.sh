@@ -10,15 +10,15 @@ CLUSTER_PEERS=(
 )
 # container endpoints
 XLINE_TESTCASE=(
-    "node1   ${SERVERS[1]}:2379"
-    "node2   ${SERVERS[2]}:2379"
-    "client  ${SERVERS[3]}:2379"
-    # TODO add use curp testcase
+    "node1  false ${SERVERS[1]}:2379"
+    "node2  false ${SERVERS[2]}:2379"
+    "client false ${SERVERS[3]}:2379"
+    "client true  ${SERVERS[1]}:2379 ${SERVERS[2]}:2379 ${SERVERS[3]}:2379"
 )
 ETCD_TESTCASE=(
-    "node1   ${SERVERS[1]}:2379"
-    "node2   ${SERVERS[2]}:2379"
-    "client  ${SERVERS[3]}:2379"
+    "node1  false ${SERVERS[1]}:2379"
+    "node2  false ${SERVERS[2]}:2379"
+    "client false ${SERVERS[3]}:2379"
 )
 KEY_SPACE_SIZE=("1" "100000")
 CLIENTS_TOTAL=("1 50" "10 300" "50 1000" "100 3000" "200 5000")
@@ -31,7 +31,7 @@ benchmark_cmd() {
     clients=$4
     total=$5
     key_space_size=$6
-    echo "docker exec ${container_name} /mnt/benchmark --endpoints=http://${endpoints} --conns=${clients} --clients=${clients} put --key-size=8 --val-size=256 --total=${total} --key-space-size=${key_space_size}"
+    echo "docker exec ${container_name} /usr/local/bin/benchmark --endpoints ${endpoints} --leader-index=0 ${use_curp} --clients=${clients} --stdout put --key-size=8 --val-size=256 --total=${total} --key-space-size=${key_space_size}"
 }
 
 run_xline() {
@@ -91,10 +91,10 @@ stop_cluster() {
 }
 
 stop_all() {
-    echo stoping
+    echo stopping
     docker stop $(docker ps -a -q)
     sleep 1
-    echo stoped
+    echo stopped
 }
 
 set_latency() {
@@ -152,7 +152,7 @@ rm -r ${OUTPUT_DIR} >/dev/null 2>&1
 mkdir ${OUTPUT_DIR}
 mkdir ${OUTPUT_DIR}/logs
 
-for server in xline etcd; do
+for server in "xline" "etcd"; do
     count=0
     logs_dir=${OUTPUT_DIR}/logs/${server}_logs
     mkdir -p ${logs_dir}
@@ -171,8 +171,15 @@ for server in xline etcd; do
 
         tmp=(${testcase})
         container_name=${tmp[0]}
-        use_curp="" # TODO: add use curp testcase
-        endpoints=${tmp[@]:1}
+        case ${tmp[1]} in
+        true)
+            use_curp="--use-curp"
+            ;;
+        false)
+            use_curp=""
+            ;;
+        esac
+        endpoints=${tmp[@]:2}
         for key_space_size in "${KEY_SPACE_SIZE[@]}"; do
             for clients_total in "${CLIENTS_TOTAL[@]}"; do
                 tmp=(${clients_total})
