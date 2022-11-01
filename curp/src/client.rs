@@ -1,12 +1,15 @@
 use std::{fmt::Debug, iter, marker::PhantomData, net::SocketAddr, sync::Arc, time::Duration};
 
 use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
-use tracing::warn;
+use opentelemetry::global;
+use tracing::{info_span, instrument, warn, Instrument};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{
     cmd::Command,
     error::ProposeError,
     rpc::{self, Connect, ProposeRequest, WaitSyncedRequest},
+    util::InjectMap,
 };
 
 /// Propose request default timeout
@@ -53,6 +56,7 @@ where
 
     /// The fast round of Curp protocol
     /// It broadcast the requests to all the curp servers.
+    #[instrument(skip(self))]
     async fn fast_round(
         &self,
         cmd_arc: Arc<C>,
@@ -128,10 +132,16 @@ where
     }
 
     /// The slow round of Curp protocol
+    #[instrument(skip(self))]
     async fn slow_round(
         &self,
         cmd_arc: Arc<C>,
     ) -> Result<(<C as Command>::ASR, Option<<C as Command>::ER>), ProposeError> {
+        let mut tr = tonic::Request::new(WaitSyncedRequest::new(cmd_arc.id())?);
+        let rpc_span = info_span!("client wait_synced");
+        global::get_text_map_propagator(|prop| {
+            prop.inject_context(&rpc_span.context(), &mut InjectMap(tr.metadata_mut()));
+        });
         #[allow(clippy::panic)]
         match self
             .connects
@@ -145,7 +155,8 @@ where
             })
             .get()
             .await?
-            .wait_synced(tonic::Request::new(WaitSyncedRequest::new(cmd_arc.id())?))
+            .wait_synced(tr)
+            .instrument(rpc_span)
             .await
         {
             Ok(resp) => {

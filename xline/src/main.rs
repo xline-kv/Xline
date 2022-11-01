@@ -110,12 +110,15 @@
     clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
 )]
 
-use std::net::SocketAddr;
+use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::Result;
 use clap::Parser;
 use log::debug;
-
+use opentelemetry::{global, runtime::Tokio, sdk::propagation::TraceContextPropagator};
+use opentelemetry_contrib::trace::exporter::jaeger_json::JaegerJsonExporter;
+use tracing::metadata::LevelFilter;
+use tracing_subscriber::prelude::*;
 use xline::server::XlineServer;
 
 /// Command line arguments
@@ -137,12 +140,74 @@ struct ServerArgs {
     /// Current node ip and port. eg: 192.168.x.x:8080
     #[clap(long)]
     self_ip_port: SocketAddr,
+    /// Open jaeger offline
+    #[clap(long)]
+    jaeger_offline: bool,
+    /// ouput dir for jaeger offline
+    #[clap(long)]
+    jaeger_output_dir: Option<PathBuf>,
+    /// Open jaeger online
+    #[clap(long)]
+    jaeger_online: bool,
+    /// Trace level of jaeger
+    #[clap(long)]
+    jaeger_level: Option<LevelFilter>,
+}
+
+/// init tracing subscriber
+fn init_subscriber(
+    jaeger_online: bool,
+    jaeger_offline: bool,
+    jaeger_output_dir: Option<PathBuf>,
+    name: &str,
+    level: Option<LevelFilter>,
+) -> Result<()> {
+    let jaeger_online_layer = jaeger_online
+        .then(|| {
+            opentelemetry_jaeger::new_agent_pipeline()
+                .with_service_name(name)
+                .install_batch(Tokio)
+                .ok()
+        })
+        .flatten()
+        .map(|tracer| {
+            tracing_opentelemetry::layer()
+                .with_tracer(tracer)
+                .with_filter(level.unwrap_or(LevelFilter::INFO))
+        });
+    let jaeger_offline_layer = jaeger_offline.then(|| {
+        tracing_opentelemetry::layer().with_tracer(
+            JaegerJsonExporter::new(
+                jaeger_output_dir.unwrap_or_else(|| PathBuf::from("./jaeger_jsons")),
+                name.to_owned(),
+                name.to_owned(),
+                Tokio,
+            )
+            .install_batch(),
+        )
+    });
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .with_filter(tracing_subscriber::EnvFilter::from_default_env());
+    tracing_subscriber::registry()
+        .with(fmt_layer)
+        .with(jaeger_online_layer)
+        .with(jaeger_offline_layer)
+        .try_init()?;
+
+    Ok(())
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    env_logger::init();
-    let server_args = ServerArgs::parse();
+    global::set_text_map_propagator(TraceContextPropagator::new());
+    let server_args: ServerArgs = ServerArgs::parse();
+    init_subscriber(
+        server_args.jaeger_online,
+        server_args.jaeger_offline,
+        server_args.jaeger_output_dir,
+        &server_args.name,
+        server_args.jaeger_level,
+    )?;
     debug!("name = {:?}", server_args.name);
     debug!("server_addr = {:?}", server_args.self_ip_port);
     debug!("cluster_peers = {:?}", server_args.cluster_peers);
@@ -156,5 +221,6 @@ async fn main() -> Result<()> {
     .await;
     debug!("{:?}", server);
     server.start(server_args.self_ip_port).await?;
+    global::shutdown_tracer_provider();
     Ok(())
 }

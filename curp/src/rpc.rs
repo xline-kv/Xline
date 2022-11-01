@@ -16,11 +16,15 @@ mod proto {
 
 use std::{sync::Arc, time::Duration};
 
+use opentelemetry::global;
 use tokio::sync::RwLock;
+use tracing::{info_span, Instrument};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{
     cmd::{Command, ProposeId},
     error::ProposeError,
+    util::InjectMap,
 };
 
 pub(crate) use self::proto::{
@@ -339,8 +343,14 @@ impl Connect {
         let option_client = self.get().await;
         let mut tr = tonic::Request::new(request);
         tr.set_timeout(timeout);
+
+        let rpc_span = info_span!("client propose");
+        global::get_text_map_propagator(|prop| {
+            prop.inject_context(&rpc_span.context(), &mut InjectMap(tr.metadata_mut()));
+        });
+
         match option_client {
-            Ok(mut client) => Ok(client.propose(tr).await?),
+            Ok(mut client) => Ok(client.propose(tr).instrument(rpc_span).await?),
             Err(e) => Err(e.into()),
         }
     }

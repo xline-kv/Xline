@@ -8,10 +8,12 @@ use std::{
 use clippy_utilities::NumericCast;
 use event_listener::{Event, EventListener};
 use futures::FutureExt;
+use opentelemetry::global;
 use parking_lot::{Mutex, MutexGuard, RwLock};
 use tokio::{net::TcpListener, task::JoinHandle};
 use tokio_stream::wrappers::TcpListenerStream;
-use tracing::error;
+use tracing::{error, instrument, Span};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{
     channel::{
@@ -28,7 +30,7 @@ use crate::{
         ProtocolServer, SyncRequest, SyncResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
     sync_manager::{SyncCompleteMessage, SyncManager, SyncMessage},
-    util::MutexMap,
+    util::{ExtractMap, MutexMap},
 };
 
 /// Default server serving port
@@ -51,18 +53,28 @@ where
     C: 'static + Command,
     CE: 'static + CommandExecutor<C>,
 {
+    #[instrument(skip(self), name = "server propose")]
     async fn propose(
         &self,
         request: tonic::Request<ProposeRequest>,
     ) -> Result<tonic::Response<ProposeResponse>, tonic::Status> {
+        Span::current().set_parent(global::get_text_map_propagator(|prop| {
+            prop.extract(&ExtractMap(request.metadata()))
+        }));
         self.inner.propose(request).await
     }
+
+    #[instrument(skip(self), name = "server wait_synced")]
     async fn wait_synced(
         &self,
         request: tonic::Request<WaitSyncedRequest>,
     ) -> Result<tonic::Response<WaitSyncedResponse>, tonic::Status> {
+        Span::current().set_parent(global::get_text_map_propagator(|prop| {
+            prop.extract(&ExtractMap(request.metadata()))
+        }));
         self.inner.wait_synced(request).await
     }
+
     async fn sync(
         &self,
         request: tonic::Request<SyncRequest>,
@@ -420,6 +432,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
     }
 
     /// Send sync event to the `SyncManager`, it's not a blocking function
+    #[instrument(skip(self))]
     fn sync_to_others(
         &self,
         term: TermNum,

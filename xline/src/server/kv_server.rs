@@ -3,6 +3,7 @@ use std::{collections::HashSet, sync::Arc};
 use curp::{client::Client, cmd::ProposeId, error::ProposeError};
 use log::debug;
 use prost::Message;
+use tracing::instrument;
 use uuid::Uuid;
 
 use super::command::{Command, CommandResponse, KeyRange, SyncResponse};
@@ -89,6 +90,7 @@ impl KvServer {
     }
 
     /// Propose request and get result with fast path
+    #[instrument(skip(self))]
     async fn propose_fast_path(
         &self,
         propose_id: ProposeId,
@@ -359,6 +361,7 @@ impl Kv for KvServer {
     /// Put puts the given key into the key-value store.
     /// A put request increments the revision of the key-value store
     /// and generates one event in the event history.
+    #[instrument(skip(self))]
     async fn put(
         &self,
         request: tonic::Request<PutRequest>,
