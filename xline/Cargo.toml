@@ -18,7 +18,6 @@ async-trait = "0.1.53"
 clap = { version = "3.2.16", features = ["derive"] }
 clippy-utilities = "0.1.0"
 curp = { path = "../curp" }
-env_logger = "0.9.0"
 itertools = "0.10.3"
 log = "0.4.17"
 parking_lot = "0.12.0"
@@ -36,6 +35,17 @@ tonic = "0.7.2"
 uuid = { version = "1.1.2", features = ["v4"] }
 etcd-client = "0.10.1"
 thiserror = "1.0.37"
+
+tracing = "0.1.37"
+tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
+tracing-opentelemetry = "0.18.0"
+opentelemetry = { version = "0.18.0", features = ["rt-tokio"] }
+opentelemetry-jaeger = { version = "0.17.0", features = ["rt-tokio"] }
+opentelemetry-contrib = { version = "0.10.0", features = [
+    "jaeger_json_exporter",
+    "rt-tokio",
+] }
+
 
 [build-dependencies]
 tonic-build = "0.7.2"
