@@ -82,7 +82,7 @@ impl<K, M> MpscKeysMessage<K, M> {
 impl<K: Eq + Hash + Clone + ConflictCheck, M> KeyBasedChannel<MpscKeysMessage<K, M>> {
     /// Insert successors and predecessors info
     fn insert_graph(&mut self, new_km: MpscKeysMessage<K, M>) {
-        let predecessor_cnt = self
+        let predecessor_cnt: u64 = self
             .successor
             .iter_mut()
             .filter_map(|(k, v)| {

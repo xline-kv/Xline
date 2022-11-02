@@ -13,13 +13,13 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::{self, Receiver};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum TestCommandType {
+pub enum TestCommandType {
     Get,
     Put,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub(crate) struct TestCommand {
+pub struct TestCommand {
     id: ProposeId,
     t: TestCommandType,
     keys: Vec<String>,
@@ -27,7 +27,7 @@ pub(crate) struct TestCommand {
 }
 
 impl TestCommand {
-    pub(crate) fn new(
+    pub fn new(
         id: ProposeId,
         t: TestCommandType,
         keys: Vec<String>,
@@ -38,7 +38,7 @@ impl TestCommand {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum TestCommandResult {
+pub enum TestCommandResult {
     PutResult(String),
     GetResult(String),
 }
@@ -124,7 +124,7 @@ impl TestExecutor {
     }
 }
 
-pub(crate) async fn create_servers_client() -> (
+pub async fn create_servers_client() -> (
     Receiver<(TestCommandType, String)>,
     Receiver<(TestCommandType, String)>,
     Client<TestCommand>,

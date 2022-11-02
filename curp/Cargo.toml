@@ -22,7 +22,7 @@ itertools = "0.10.3"
 madsim = { version = "0.2.0-alpha.3", features = ["rpc", "logger", "macros"] }
 parking_lot = "0.12.1"
 prost = "0.10.3"
-serde = { version = "1.0.130", features = ["derive"] }
+serde = { version = "1.0.130", features = ["derive", "rc"] }
 thiserror = "1.0.31"
 tokio = { version = "1.19.0", features = ["rt-multi-thread"] }
 tokio-stream = { version = "0.1.9", features = ["net"] }
@@ -33,6 +33,7 @@ tracing-opentelemetry = "0.18.0"
 
 [dev-dependencies]
 itertools = "0.10.3"
+tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 
 [build-dependencies]
 tonic-build = "0.7.2"
