@@ -1,8 +1,10 @@
+use std::cmp::min;
 use std::{
     collections::{HashMap, VecDeque},
     fmt::Debug,
     iter,
     sync::Arc,
+    vec,
 };
 
 use clippy_utilities::NumericCast;
@@ -12,9 +14,11 @@ use opentelemetry::global;
 use parking_lot::{Mutex, MutexGuard, RwLock};
 use tokio::{net::TcpListener, task::JoinHandle};
 use tokio_stream::wrappers::TcpListenerStream;
-use tracing::{debug, error, instrument, Span};
+use tracing::{debug, error, info, instrument, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
+use crate::rpc::{AppendEntriesRequest, AppendEntriesResponse};
+use crate::util::RwLockMap;
 use crate::{
     channel::{
         key_mpsc::{self, MpscKeyBasedSender},
@@ -23,12 +27,9 @@ use crate::{
     },
     cmd::{Command, CommandExecutor, ProposeId},
     error::{ProposeError, ServerError},
-    log::{EntryStatus, LogEntry},
+    log::LogEntry,
     message::TermNum,
-    rpc::{
-        commit_response, CommitRequest, CommitResponse, ProposeRequest, ProposeResponse,
-        ProtocolServer, SyncRequest, SyncResponse, WaitSyncedRequest, WaitSyncedResponse,
-    },
+    rpc::{ProposeRequest, ProposeResponse, ProtocolServer, WaitSyncedRequest, WaitSyncedResponse},
     sync_manager::{SyncCompleteMessage, SyncManager, SyncMessage},
     util::{ExtractMap, MutexMap},
 };
@@ -75,18 +76,11 @@ where
         self.inner.wait_synced(request).await
     }
 
-    async fn sync(
+    async fn append_entries(
         &self,
-        request: tonic::Request<SyncRequest>,
-    ) -> Result<tonic::Response<SyncResponse>, tonic::Status> {
-        self.inner.sync(request).await
-    }
-
-    async fn commit(
-        &self,
-        request: tonic::Request<CommitRequest>,
-    ) -> Result<tonic::Response<CommitResponse>, tonic::Status> {
-        self.inner.commit(request).await
+        request: tonic::Request<AppendEntriesRequest>,
+    ) -> Result<tonic::Response<AppendEntriesResponse>, tonic::Status> {
+        self.inner.append_entries(request)
     }
 }
 
@@ -120,6 +114,8 @@ impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
     ) -> Result<(), ServerError> {
         let port = server_port.unwrap_or(DEFAULT_SERVER_PORT);
         let server = Self::new(is_leader, term, others, executor);
+        info!("RPC server started, listening on port {port}");
+
         tonic::transport::Server::builder()
             .add_service(ProtocolServer::new(server))
             .serve(
@@ -197,16 +193,13 @@ impl CmdBoardValue {
 
 /// The server that handles client request and server consensus protocol
 pub struct Protocol<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
-    /// Role of the server
-    role: RwLock<ServerRole>,
-    /// Current term
-    term: RwLock<TermNum>,
+    /// Current state
+    // TODO: apply fine-grain locking
+    state: Arc<RwLock<State<C>>>,
     /// The speculative cmd pool, shared with executor
     spec: Arc<Mutex<VecDeque<C>>>,
     /// Command executor
     cmd_executor: Arc<CE>,
-    /// Consensus log
-    log: Arc<Mutex<Vec<LogEntry<C>>>>,
     /// The channel to send synced command to sync manager
     sync_chan: MpscKeyBasedSender<C::K, SyncMessage<C>>,
     /// Synced manager handler
@@ -218,6 +211,71 @@ pub struct Protocol<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
     cmd_board: Arc<Mutex<HashMap<ProposeId, CmdBoardValue>>>,
 }
 
+/// State of the server
+pub(crate) struct State<C: Command + 'static> {
+    /// Role of the server
+    pub(crate) role: ServerRole,
+    /// Current term
+    pub(crate) term: TermNum,
+    /// Consensus log
+    pub(crate) log: Vec<LogEntry<C>>,
+    /// Index of highest log entry known to be committed
+    pub(crate) commit_index: usize,
+    /// Index of highest log entry applied to state machine
+    #[allow(dead_code)]
+    pub(crate) last_applied: usize,
+    /// For each server, index of the next log entry to send to that server
+    // TODO: this should be indexed by server id and changed into a vec for efficiency
+    #[allow(dead_code)]
+    pub(crate) next_index: HashMap<String, usize>,
+    /// For each server, index of highest log entry known to be replicated on server
+    #[allow(dead_code)]
+    pub(crate) match_index: HashMap<String, usize>,
+}
+
+impl<C: Command + 'static> State<C> {
+    /// Init server state
+    pub(crate) fn new(role: ServerRole, term: TermNum, others: &[String]) -> Self {
+        let mut next_index = HashMap::new();
+        let mut match_index = HashMap::new();
+        for other in others.iter() {
+            assert!(next_index.insert(format!("http://{}", other), 1).is_none());
+            assert!(match_index.insert(format!("http://{}", other), 0).is_none());
+        }
+        Self {
+            role,
+            term,
+            log: vec![LogEntry::new(0, &[])], // a fake log[0] will simplify the boundary check significantly
+            commit_index: 0,
+            last_applied: 0,
+            next_index, // TODO: next_index should be initialized upon becoming a leader
+            match_index,
+        }
+    }
+
+    /// Is leader?
+    pub(crate) fn is_leader(&self) -> bool {
+        matches!(self.role, ServerRole::Leader)
+    }
+
+    /// Last log index
+    #[allow(clippy::integer_arithmetic)] // log.len() >= 1 because we have a fake log[0]
+    pub(crate) fn last_log_index(&self) -> usize {
+        self.log.len() - 1
+    }
+
+    /// Last log term
+    #[allow(dead_code, clippy::integer_arithmetic, clippy::indexing_slicing)] // log.len() >= 1 because we have a fake log[0]
+    pub(crate) fn last_log_term(&self) -> TermNum {
+        self.log[self.log.len() - 1].term()
+    }
+
+    /// Need to commit
+    pub(crate) fn need_commit(&self) -> bool {
+        self.last_applied < self.commit_index
+    }
+}
+
 impl<C, CE> Debug for Protocol<C, CE>
 where
     C: Command,
@@ -225,19 +283,21 @@ where
 {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Server")
-            .field("role", &self.role)
-            .field("term", &self.term)
-            .field("spec", &self.spec)
-            .field("cmd_executor", &self.cmd_executor)
-            .field("log", &self.log)
-            .finish()
+        self.state.map_read(|state| {
+            f.debug_struct("Server")
+                .field("role", &state.role)
+                .field("term", &state.term)
+                .field("spec", &self.spec)
+                .field("cmd_executor", &self.cmd_executor)
+                .field("log", &state.log)
+                .finish()
+        })
     }
 }
 
 /// The server role same as Raft
 #[derive(Debug, Clone, Copy)]
-enum ServerRole {
+pub(crate) enum ServerRole {
     /// A follower
     Follower,
     /// A candidate
@@ -379,30 +439,34 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
     ) -> Self {
         let (sync_tx, sync_rx) = key_mpsc::channel();
         let (comp_tx, comp_rx) = key_spmc::channel();
-        let log = Arc::new(Mutex::new(Vec::new()));
+        let cmd_executor = Arc::new(cmd_executor);
 
-        let log_clone = Arc::<_>::clone(&log);
+        let state = Arc::new(RwLock::new(State::new(
+            if is_leader {
+                ServerRole::Leader
+            } else {
+                ServerRole::Follower
+            },
+            term,
+            &others,
+        )));
+
+        let state_clone = Arc::clone(&state);
+        let ce_clone = Arc::clone(&cmd_executor);
         let sm_handle = tokio::spawn(async {
-            let mut sm = SyncManager::new(sync_rx, comp_tx, others, log_clone).await;
-            sm.run().await;
+            let mut sm = SyncManager::new(sync_rx, others, state_clone).await;
+            sm.run(comp_tx, ce_clone).await;
         });
         let cmd_board = Arc::new(Mutex::new(HashMap::new()));
         let spec = Arc::new(Mutex::new(VecDeque::new()));
-        let cmd_executor = Arc::new(cmd_executor);
 
         let after_sync_handle =
             Self::init_after_sync_tasks(after_sync_cnt, &comp_rx, &spec, &cmd_board, &cmd_executor);
 
         Self {
-            role: RwLock::new(if is_leader {
-                ServerRole::Leader
-            } else {
-                ServerRole::Follower
-            }),
-            term: RwLock::new(term),
+            state,
             spec,
             cmd_executor,
-            log,
             sync_chan: sync_tx,
             sm_handle,
             cmd_board,
@@ -417,7 +481,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
 
     /// Check if the current server is leader
     fn is_leader(&self) -> bool {
-        matches!(*self.role.read(), ServerRole::Leader)
+        self.state.read().is_leader()
     }
 
     /// Remove command from the speculative cmd pool
@@ -472,7 +536,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         request: tonic::Request<ProposeRequest>,
     ) -> Result<tonic::Response<ProposeResponse>, tonic::Status> {
         let is_leader = self.is_leader();
-        let self_term = *self.term.read();
+        let self_term = self.state.read().term;
         let p = request.into_inner();
         let cmd = p.cmd().map_err(|e| {
             tonic::Status::invalid_argument(format!("propose cmd decode failed: {}", e))
@@ -497,7 +561,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                             }
                             Err(_err) => ProposeResponse::new_error(
                                 is_leader,
-                                *self.term.read(),
+                                self.state.read().term,
                                 &ProposeError::SyncedError("Sync cmd channel closed".to_owned()),
                             ),
                         }
@@ -524,7 +588,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                                 } else {
                                     return ProposeResponse::new_error(
                                         is_leader,
-                                        *self.term.read(),
+                                        self.state.read().term,
                                         &ProposeError::SyncedError(
                                             "Sync cmd channel closed".to_owned(),
                                         ),
@@ -548,7 +612,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                     }
                     // not conflict and is not leader
                     (false, false) => {
-                        async { ProposeResponse::new_empty(false, *self.term.read()) }
+                        async { ProposeResponse::new_empty(false, self.state.read().term) }
                             .right_future()
                             .right_future()
                     }
@@ -634,108 +698,47 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         }
     }
 
-    /// handle "sync" request
-    async fn sync(
+    /// Handle `AppendEntries` requests
+    fn append_entries(
         &self,
-        request: tonic::Request<SyncRequest>,
-    ) -> Result<tonic::Response<SyncResponse>, tonic::Status> {
-        let sr = request.into_inner();
+        request: tonic::Request<AppendEntriesRequest>,
+    ) -> Result<tonic::Response<AppendEntriesResponse>, tonic::Status> {
+        let req = request.into_inner();
+        debug!("append_entries received: term({}), leader({}), commit({}), prev_log_index({}), prev_log_term({}), {} entries", 
+            req.term, req.leader_id, req.leader_commit, req.prev_log_index, req.prev_log_term, req.entries.len());
 
-        self.log
-            .map_lock(|mut log| {
-                let local_len = log.len();
-                match sr.index() {
-                    t if t > local_len.numeric_cast() => {
-                        Ok(SyncResponse::new_prev_not_ready(local_len.numeric_cast()))
-                    }
-                    t if t < local_len.numeric_cast() => {
-                        // checked in the if condition
-                        #[allow(clippy::unwrap_used)]
-                        let entry: &LogEntry<C> = log.get(t.numeric_cast::<usize>()).unwrap();
-                        Ok(SyncResponse::new_entry_not_empty(
-                            entry.term(),
-                            entry.cmds(),
-                        )?)
-                    }
-                    _ => {
-                        let self_term = *self.term.read();
-                        if sr.term() < self_term {
-                            Ok(SyncResponse::new_wrong_term(self_term))
-                        } else {
-                            let cmds = sr.cmds::<C>()?;
-                            log.push(LogEntry::new(sr.term(), &cmds, EntryStatus::Unsynced));
-                            Ok(SyncResponse::new_synced())
-                        }
-                    }
-                }
-            })
-            .map(tonic::Response::new)
-            .map_err(|e: bincode::Error| {
-                tonic::Status::internal(format!("encode or decode error, {}", e))
-            })
-    }
+        let mut state = self.state.write();
 
-    /// handle `commit` request
-    #[allow(clippy::indexing_slicing)] // The length is check before use
-    async fn commit(
-        &self,
-        request: tonic::Request<CommitRequest>,
-    ) -> Result<tonic::Response<CommitResponse>, tonic::Status> {
-        let cr = request.into_inner();
-        let commit_result = self.log.map_lock(|mut log| {
-            let local_len = log.len();
-            let index: usize = cr.index().numeric_cast();
-            let cmds = cr.cmds::<C>()?;
-            if index > local_len
-                || (index > 0
-                    && matches!(log[index.wrapping_sub(1)].status(), &EntryStatus::Unsynced))
-            {
-                Ok(CommitResponse::new_prev_not_ready(local_len.numeric_cast()))
-            } else {
-                let self_term = *self.term.read();
-                if cr.term() < self_term {
-                    Ok(CommitResponse::new_wrong_term(self_term))
-                } else if index < local_len && log[index].term() > self_term {
-                    Ok(CommitResponse::new_wrong_term(log[index].term()))
-                } else {
-                    if index < local_len {
-                        log[index] = LogEntry::new(cr.term(), &cmds, EntryStatus::Synced);
-                    } else {
-                        log.push(LogEntry::new(cr.term(), &cmds, EntryStatus::Synced));
-                    }
+        // TODO: check leader's term
 
-                    for id in cmds.iter().map(|c| c.id()) {
-                        let _ignore = Self::spec_remove_cmd(&Arc::clone(&self.spec), id);
-                    }
-                    Ok(CommitResponse::new_committed())
-                }
-            }
-        });
-
-        // Need to execute if the message is correctly committed
-        if let Ok(CommitResponse {
-            commit_response: Some(commit_response::CommitResponse::Committed(true)),
-        }) = commit_result
-        {
-            let cmds = cr.cmds::<C>().map_err(|e: bincode::Error| {
-                tonic::Status::internal(format!("encode or decode error, {}", e))
-            })?;
-
-            let index = cr.index();
-
-            // TODO: execute command parallelly
-            // TODO: handle execution error
-            for c in cmds {
-                let _execute_result = c.execute(self.cmd_executor.as_ref()).await;
-                let _after_sync_result = c.after_sync(self.cmd_executor.as_ref(), index).await;
-            }
+        // remove inconsistencies
+        while state.last_log_index() > req.prev_log_index.numeric_cast() {
+            let _drop = state.log.pop();
         }
 
-        commit_result
-            .map(tonic::Response::new)
-            .map_err(|e: bincode::Error| {
-                tonic::Status::internal(format!("encode or decode error, {}", e))
-            })
+        // check if previous log index match leader's one
+        if state
+            .log
+            .get(req.prev_log_index.numeric_cast::<usize>())
+            .map_or(false, |entry| entry.term() != req.prev_log_term)
+        {
+            return Ok(tonic::Response::new(AppendEntriesResponse::new_reject(
+                state.term,
+            )));
+        }
+
+        // append new logs
+        let entries = req
+            .entries()
+            .map_err(|e| tonic::Status::internal(format!("encode or decode error, {}", e)))?;
+        state.log.extend(entries.into_iter());
+
+        // update commit index
+        state.commit_index = min(req.leader_commit.numeric_cast(), state.last_log_index());
+
+        Ok(tonic::Response::new(AppendEntriesResponse::new_accept(
+            state.term,
+        )))
     }
 }
 

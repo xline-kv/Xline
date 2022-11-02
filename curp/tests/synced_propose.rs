@@ -6,6 +6,7 @@ mod common;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 async fn synced_propose() {
+    tracing_subscriber::fmt::init();
     let (mut exe_rx, mut after_sync_rx, client) = create_servers_client().await;
     let result = client
         .propose_indexed(TestCommand::new(
@@ -19,7 +20,7 @@ async fn synced_propose() {
     assert!(result.is_ok());
     assert_eq!(
         result.unwrap(),
-        (TestCommandResult::GetResult("".to_owned()), 0)
+        (TestCommandResult::GetResult("".to_owned()), 1) // log[0] is a fake one
     );
 
     for _ in 0..3 {

@@ -35,42 +35,22 @@ message WaitSyncedResponse {
     }
 }
 
-message SyncRequest {
+message AppendEntriesRequest {
     uint64 term = 1;
-    uint64 index = 2;
-    repeated bytes cmds = 3;
+    uint64 leader_id = 2;
+    uint64 prev_log_index = 3;
+    uint64 prev_log_term = 4;
+    repeated bytes entries = 5;
+    uint64 leader_commit = 6;
 }
 
-message SyncResponse {
-    message EntryNotEmpty {
-        uint64 term = 1;
-        repeated bytes cmds = 2;
-    }
-    oneof sync_response {
-        bool synced = 1;
-        uint64 wrong_term = 2; 
-        EntryNotEmpty entry_not_empty = 3;
-        uint64 prev_not_ready = 4;
-    }
-}
-
-message CommitRequest {
+message AppendEntriesResponse {
     uint64 term = 1;
-    uint64 index = 2;
-    repeated bytes cmds = 3;
-}
-
-message CommitResponse {
-    oneof commit_response {
-        bool committed = 1;
-        uint64 wrong_term = 2;
-        uint64 prev_not_ready = 3;
-    }
+    bool success = 2;
 }
 
 service Protocol {
     rpc Propose (ProposeRequest) returns (ProposeResponse);
     rpc WaitSynced (WaitSyncedRequest) returns (WaitSyncedResponse);
-    rpc Sync (SyncRequest) returns (SyncResponse);
-    rpc Commit (CommitRequest) returns (CommitResponse);
+    rpc AppendEntries (AppendEntriesRequest) returns (AppendEntriesResponse);
 }

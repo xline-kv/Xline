@@ -14,6 +14,8 @@ mod proto {
     tonic::include_proto!("messagepb");
 }
 
+use clippy_utilities::NumericCast;
+use serde::Serialize;
 use std::{sync::Arc, time::Duration};
 
 use opentelemetry::global;
@@ -21,6 +23,8 @@ use tokio::sync::RwLock;
 use tracing::{info_span, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
+use crate::log::LogEntry;
+use crate::message::TermNum;
 use crate::{
     cmd::{Command, ProposeId},
     error::ProposeError,
@@ -28,13 +32,11 @@ use crate::{
 };
 
 pub(crate) use self::proto::{
-    commit_response,
     propose_response::ExeResult,
     protocol_client::ProtocolClient,
     protocol_server::Protocol,
-    sync_response,
     wait_synced_response::{Success, SyncResult},
-    CommitRequest, CommitResponse, ProposeRequest, ProposeResponse, SyncRequest, SyncResponse,
+    AppendEntriesRequest, AppendEntriesResponse, ProposeRequest, ProposeResponse,
     WaitSyncedRequest, WaitSyncedResponse,
 };
 
@@ -174,130 +176,70 @@ impl WaitSyncedResponse {
     }
 }
 
-impl SyncRequest {
-    /// Create a new `SyncResult`
-    pub(crate) fn new<C: Command>(term: u64, index: u64, cmds: &[Arc<C>]) -> bincode::Result<Self> {
+impl AppendEntriesRequest {
+    /// Create a new `append_entries` request
+    pub(crate) fn new<C: Command + Serialize>(
+        term: TermNum,
+        leader_id: u64,
+        prev_log_index: usize,
+        prev_log_term: TermNum,
+        entries: Vec<LogEntry<C>>,
+        leader_commit: usize,
+    ) -> bincode::Result<Self> {
         Ok(Self {
             term,
-            index,
-            cmds: cmds
-                .iter()
-                .map(|c| bincode::serialize(c.as_ref()))
+            leader_id,
+            prev_log_index: prev_log_index.numeric_cast(),
+            prev_log_term: prev_log_term.numeric_cast(),
+            entries: entries
+                .into_iter()
+                .map(|e| bincode::serialize(&e))
                 .collect::<bincode::Result<Vec<Vec<u8>>>>()?,
+            leader_commit: leader_commit.numeric_cast(),
         })
     }
 
-    /// Get term number
-    pub(crate) fn term(&self) -> u64 {
-        self.term
-    }
-
-    /// Get log index
-    pub(crate) fn index(&self) -> u64 {
-        self.index
-    }
-
-    /// Get command
-    pub(crate) fn cmds<C: Command>(&self) -> bincode::Result<Vec<Arc<C>>> {
-        self.cmds
-            .iter()
-            .map(|c| Ok(Arc::new(bincode::deserialize(c)?)))
-            .collect::<bincode::Result<Vec<Arc<C>>>>()
-    }
-}
-
-impl SyncResponse {
-    /// Create a "synced" response
-    pub(crate) fn new_synced() -> Self {
+    /// Create a new heartbeat request
+    pub(crate) fn new_heart_beat(
+        term: TermNum,
+        leader_id: u64,
+        leader_commit: usize,
+        prev_log_index: usize,
+        prev_log_term: TermNum,
+    ) -> Self {
         Self {
-            sync_response: Some(sync_response::SyncResponse::Synced(true)),
-        }
-    }
-
-    /// Create a "wrong term" response
-    pub(crate) fn new_wrong_term(term: u64) -> Self {
-        Self {
-            sync_response: Some(sync_response::SyncResponse::WrongTerm(term)),
-        }
-    }
-
-    /// Create a "previous not ready" response
-    pub(crate) fn new_prev_not_ready(index: u64) -> Self {
-        Self {
-            sync_response: Some(sync_response::SyncResponse::PrevNotReady(index)),
-        }
-    }
-
-    /// Create a "entry not empty" response
-    pub(crate) fn new_entry_not_empty<C>(term: u64, cmds: &[Arc<C>]) -> bincode::Result<Self>
-    where
-        C: Command,
-    {
-        Ok(Self {
-            sync_response: Some(sync_response::SyncResponse::EntryNotEmpty(
-                sync_response::EntryNotEmpty {
-                    term,
-                    cmds: cmds
-                        .iter()
-                        .map(|c| bincode::serialize(c.as_ref()))
-                        .collect::<Result<Vec<Vec<u8>>, bincode::Error>>()?,
-                },
-            )),
-        })
-    }
-}
-
-impl CommitRequest {
-    /// Create a new `CommitResult`
-    pub(crate) fn new<C: Command>(term: u64, index: u64, cmds: &[Arc<C>]) -> bincode::Result<Self> {
-        Ok(Self {
             term,
-            index,
-            cmds: cmds
-                .iter()
-                .map(|c| bincode::serialize(c.as_ref()))
-                .collect::<bincode::Result<Vec<Vec<u8>>>>()?,
-        })
+            leader_id,
+            prev_log_index: prev_log_index.numeric_cast(),
+            entries: vec![],
+            leader_commit: leader_commit.numeric_cast(),
+            prev_log_term,
+        }
     }
 
-    /// Get term number
-    pub(crate) fn term(&self) -> u64 {
-        self.term
-    }
-
-    /// Get log index
-    pub(crate) fn index(&self) -> u64 {
-        self.index
-    }
-
-    /// Get command
-    pub(crate) fn cmds<C: Command>(&self) -> bincode::Result<Vec<Arc<C>>> {
-        self.cmds
+    /// Get log entries
+    pub(crate) fn entries<C: Command>(&self) -> bincode::Result<Vec<LogEntry<C>>> {
+        self.entries
             .iter()
-            .map(|c| Ok(Arc::new(bincode::deserialize(c)?)))
-            .collect::<bincode::Result<Vec<Arc<C>>>>()
+            .map(|entry| bincode::deserialize(entry))
+            .collect()
     }
 }
 
-impl CommitResponse {
-    /// Create a "synced" response
-    pub(crate) fn new_committed() -> Self {
+impl AppendEntriesResponse {
+    /// Create a new rejected response
+    pub(crate) fn new_reject(term: TermNum) -> Self {
         Self {
-            commit_response: Some(commit_response::CommitResponse::Committed(true)),
+            term,
+            success: false,
         }
     }
 
-    /// Create a "wrong term" response
-    pub(crate) fn new_wrong_term(term: u64) -> Self {
+    /// Create a new accepted response
+    pub(crate) fn new_accept(term: TermNum) -> Self {
         Self {
-            commit_response: Some(commit_response::CommitResponse::WrongTerm(term)),
-        }
-    }
-
-    /// Create a "previous not ready" response
-    pub(crate) fn new_prev_not_ready(index: u64) -> Self {
-        Self {
-            commit_response: Some(commit_response::CommitResponse::PrevNotReady(index)),
+            term,
+            success: true,
         }
     }
 }
@@ -309,7 +251,7 @@ pub(crate) struct Connect {
     /// The rpc connection, if it fails it contains a error, otherwise the rpc client is there
     rpc_connect: RwLock<Result<ProtocolClient<tonic::transport::Channel>, tonic::transport::Error>>,
     /// The addr used to connect if failing met
-    addr: String,
+    pub(crate) addr: String,
 }
 
 impl Connect {
@@ -369,29 +311,17 @@ impl Connect {
         }
     }
 
-    /// send "sync" request
-    pub(crate) async fn sync(
+    /// Send `AppendEntries` request
+    pub(crate) async fn append_entries(
         &self,
-        request: SyncRequest,
+        request: AppendEntriesRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<SyncResponse>, ProposeError> {
+    ) -> Result<tonic::Response<AppendEntriesResponse>, ProposeError> {
         let option_client = self.get().await;
-        let mut tr = tonic::Request::new(request);
-        tr.set_timeout(timeout);
+        let mut req = tonic::Request::new(request);
+        req.set_timeout(timeout);
         match option_client {
-            Ok(mut client) => Ok(client.sync(tr).await?),
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    /// send "commit" request
-    pub(crate) async fn commit(
-        &self,
-        request: CommitRequest,
-    ) -> Result<tonic::Response<CommitResponse>, ProposeError> {
-        let option_client = self.get().await;
-        match option_client {
-            Ok(mut client) => Ok(client.commit(tonic::Request::new(request)).await?),
+            Ok(mut client) => Ok(client.append_entries(req).await?),
             Err(e) => Err(e.into()),
         }
     }

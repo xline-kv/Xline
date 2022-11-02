@@ -1,26 +1,23 @@
-use std::{iter, sync::Arc, time::Duration};
+use std::cmp::max;
+use std::{sync::Arc, time::Duration};
 
-use clippy_utilities::{NumericCast, OverflowArithmetic};
-use futures::{stream::FuturesUnordered, Future, StreamExt};
-use parking_lot::Mutex;
-use tracing::{error, warn};
+use clippy_utilities::NumericCast;
+use futures::{stream::FuturesUnordered, StreamExt};
+use parking_lot::RwLock;
+use tracing::{debug, error, warn};
 
+use crate::cmd::CommandExecutor;
+use crate::rpc::AppendEntriesRequest;
+use crate::server::State;
+use crate::util::RwLockMap;
 use crate::{
     channel::{key_mpsc::MpscKeyBasedReceiver, key_spmc::SpmcKeyBasedSender, RecvError},
     cmd::Command,
-    error::ProposeError,
-    log::{EntryStatus, LogEntry},
+    log::LogEntry,
     message::TermNum,
-    rpc::{
-        self, commit_response::CommitResponse, sync_response::SyncResponse, CommitRequest, Connect,
-        SyncRequest,
-    },
-    util::MutexMap,
+    rpc::{self, Connect},
     LogIndex,
 };
-
-/// Sync request default timeout
-static SYNC_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// "sync task complete" message
 pub(crate) struct SyncCompleteMessage<C>
@@ -81,28 +78,24 @@ where
 
 /// The manager to sync commands to other follower servers
 pub(crate) struct SyncManager<C: Command + 'static> {
+    /// Current state
+    state: Arc<RwLock<State<C>>>,
     /// Other addrs
     connects: Vec<Arc<Connect>>,
     /// Get cmd sync request from speculative command
     sync_chan: MpscKeyBasedReceiver<C::K, SyncMessage<C>>,
-    /// Send cmd to sync complete handler
-    comp_chan: SpmcKeyBasedSender<C::K, SyncCompleteMessage<C>>,
-    /// Consensus log
-    log: Arc<Mutex<Vec<LogEntry<C>>>>,
 }
 
 impl<C: Command + 'static> SyncManager<C> {
     /// Create a `SyncedManager`
     pub(crate) async fn new(
         sync_chan: MpscKeyBasedReceiver<C::K, SyncMessage<C>>,
-        comp_chan: SpmcKeyBasedSender<C::K, SyncCompleteMessage<C>>,
         others: Vec<String>,
-        log: Arc<Mutex<Vec<LogEntry<C>>>>,
+        state: Arc<RwLock<State<C>>>,
     ) -> Self {
         Self {
             sync_chan,
-            comp_chan,
-            log,
+            state,
             connects: rpc::try_connect(others.into_iter().map(|a| format!("http://{a}")).collect())
                 .await,
         }
@@ -144,54 +137,26 @@ impl<C: Command + 'static> SyncManager<C> {
         Ok((cmds, term))
     }
 
-    /// Broadcast the request via `send_fn`, handle each response with `resp_fn` and wait at least
-    /// `wait_cnt + 1` response, then finally call `comp_fn` to complete .
-    ///
-    /// Return true if the broadcast success, otherwise return false.
-    async fn broadcast_and_wait<I, SendFn, R, SendRet, RespFn, CompFn>(
-        connects: Vec<Arc<Connect>>,
-        args: I,
-        send_fn: SendFn,
-        resp_fn: RespFn,
-        comp_fn: CompFn,
-        wait_cnt: usize,
-    ) -> bool
-    where
-        I: IntoIterator,
-        SendRet: Future<Output = Result<tonic::Response<R>, ProposeError>>,
-        SendFn: Fn((Arc<Connect>, I::Item)) -> SendRet,
-        RespFn: Fn(tonic::Response<R>) -> usize,
-        CompFn: Fn() -> bool,
-    {
-        let rpcs = connects.into_iter().zip(args.into_iter()).map(send_fn);
-
-        let mut rpcs: FuturesUnordered<_> = rpcs.collect();
-        let mut synced_cnt: usize = 0;
-
-        while let Some(resp) = rpcs.next().await {
-            let _result = resp
-                .map_err(|err| {
-                    warn!("rpc error when sending `Sync` request, {err}");
-                })
-                .map(|r| {
-                    synced_cnt = synced_cnt.overflow_add(resp_fn(r));
-                });
-
-            if synced_cnt > wait_cnt {
-                if comp_fn() {
-                    return true;
-                }
-                // TODO: collect unfinished tasks
-                break;
-            }
-        }
-
-        false
-    }
-
     /// Run the `SyncManager`
-    pub(crate) async fn run(&mut self) {
-        let max_fail = self.connects.len().wrapping_div(2);
+    pub(crate) async fn run<CE: 'static + CommandExecutor<C>>(
+        &mut self,
+        comp_chan: SpmcKeyBasedSender<C::K, SyncCompleteMessage<C>>,
+        cmd_executor: Arc<CE>,
+    ) {
+        // TODO: gracefully stop the background tasks
+        let _background_ping_handle = tokio::spawn(Self::background_ping(
+            self.connects(),
+            Arc::clone(&self.state),
+        ));
+        let _background_commit_handle = tokio::spawn(Self::background_commit(
+            self.connects(),
+            Arc::clone(&self.state),
+        ));
+        let _background_apply_handle = tokio::spawn(Self::background_apply(
+            Arc::clone(&self.state),
+            cmd_executor,
+            comp_chan,
+        ));
 
         loop {
             let (cmds, term) = match self.fetch_sync_msgs().await {
@@ -199,82 +164,247 @@ impl<C: Command + 'static> SyncManager<C> {
                 Err(_) => return,
             };
 
-            let index = self.log.map_lock(|mut log| {
-                let len = log.len();
-                log.push(LogEntry::new(term, &cmds, EntryStatus::Unsynced));
-                len
+            self.state.map_write(|mut state| {
+                state.log.push(LogEntry::new(term, &cmds));
+                debug!(
+                    "received new log, index {:?}",
+                    state.log.len().checked_sub(1)
+                );
             });
-            let cmds_arc: Arc<[_]> = cmds.into();
+        }
+    }
 
-            let comp_fn = || {
-                for c in cmds_arc.iter() {
-                    if self
-                        .comp_chan
-                        .send(
-                            c.keys(),
-                            SyncCompleteMessage::new(index.numeric_cast(), Arc::clone(c)),
-                        )
-                        .is_err()
-                    {
-                        error!("The comp_chan is closed on the remote side");
-                        return false;
-                    }
-                }
-                true
-            };
+    /// Heartbeat Interval
+    const HEART_BEAT_INTERVAL: Duration = Duration::from_millis(150);
+    /// Heartbeat Timeout
+    const HEART_BEAT_TIMEOUT: Duration = Duration::from_millis(100);
 
-            if !Self::broadcast_and_wait(
-                self.connects(),
-                iter::repeat_with(|| Arc::clone(&cmds_arc)),
-                |(connect, cmds_cloned)| async move {
-                    connect
-                        .sync(
-                            SyncRequest::new(term, index.numeric_cast(), cmds_cloned.as_ref())?,
-                            SYNC_TIMEOUT,
-                        )
-                        .await
-                },
-                |r| match r.into_inner().sync_response {
-                    Some(SyncResponse::Synced(_)) => 1,
-                    Some(
-                        SyncResponse::WrongTerm(_)
-                        | SyncResponse::EntryNotEmpty(_)
-                        | SyncResponse::PrevNotReady(_),
-                    ) => 0,
-                    None => unreachable!("Should contain sync response"),
-                },
-                comp_fn,
-                max_fail,
+    /// Background ping, only work for the leader
+    async fn background_ping(connects: Vec<Arc<Connect>>, state: Arc<RwLock<State<C>>>) {
+        loop {
+            tokio::time::sleep(Self::HEART_BEAT_INTERVAL).await;
+            if state.read().is_leader() {
+                // send out heartbeat to each server in parallel
+
+                let rpcs: FuturesUnordered<_> = connects
+                    .iter()
+                    .map(|connect| Self::heartbeat(Arc::clone(connect), Arc::clone(&state)))
+                    .collect();
+                let _drop = tokio::spawn(async move {
+                    let _drop: Vec<_> = rpcs.collect().await;
+                });
+            }
+        }
+    }
+
+    /// Send heartbeat to a server
+    #[allow(clippy::integer_arithmetic, clippy::indexing_slicing)] // log.len() >= 1 because we have a fake log[0], indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
+    async fn heartbeat(connect: Arc<Connect>, state: Arc<RwLock<State<C>>>) {
+        let (term, commit_index, prev_log_index, prev_log_term) = state.map_read(|st| {
+            (
+                st.term,
+                st.commit_index,
+                st.next_index[&connect.addr] - 1,
+                st.log[st.next_index[&connect.addr] - 1].term(),
             )
-            .await
-            {
-                return;
+        });
+        debug!("heartbeat sent to {}", connect.addr);
+        let res = connect
+            .append_entries(
+                AppendEntriesRequest::new_heart_beat(
+                    term,
+                    0,
+                    commit_index,
+                    prev_log_index,
+                    prev_log_term,
+                ),
+                Self::HEART_BEAT_TIMEOUT,
+            )
+            .await;
+
+        #[allow(clippy::unwrap_used)]
+        // indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
+        match res {
+            Err(e) => warn!("Heartbeat error: {}", e),
+            Ok(res) => {
+                // TODO: update term
+
+                let res = res.into_inner();
+                let mut state = state.write();
+                if res.success {
+                    if let Some(index) = state.match_index.get_mut(&connect.addr) {
+                        *index = max(*index, prev_log_index);
+                    } else {
+                        unreachable!("no match_index for server {}", connect.addr);
+                    }
+                } else {
+                    *state.next_index.get_mut(&connect.addr).unwrap() -= 1;
+                }
+            }
+        };
+    }
+
+    /// How frequently leader should check if a follower has lagged behind
+    const SYNC_INTERVAL: Duration = Duration::from_millis(10);
+    /// Sync timeout
+    const SYNC_TIMEOUT: Duration = Duration::from_millis(8);
+
+    /// Background sync
+    #[allow(clippy::integer_arithmetic, clippy::indexing_slicing)] // log.len() >= 1 because we have a fake log[0], indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
+    async fn background_commit(connects: Vec<Arc<Connect>>, state: Arc<RwLock<State<C>>>) {
+        let majority_cnt = connects.len() / 2 + 1;
+        loop {
+            tokio::time::sleep(Self::SYNC_INTERVAL).await;
+            if !state.read().is_leader() {
+                continue;
             }
 
-            let connects = self.connects();
-            let _ignore_handle = tokio::spawn(async move {
-                Self::broadcast_and_wait(
-                    connects,
-                    iter::repeat_with(|| Arc::clone(&cmds_arc)),
-                    |(connect, cmds_cloned)| async move {
-                        connect
-                            .commit(CommitRequest::new(
-                                term,
-                                index.numeric_cast(),
-                                cmds_cloned.as_ref(),
-                            )?)
-                            .await
-                    },
-                    |r| match r.into_inner().commit_response {
-                        Some(CommitResponse::Committed(_)) => 1,
-                        Some(CommitResponse::WrongTerm(_) | CommitResponse::PrevNotReady(_)) => 0,
-                        None => unreachable!("Should contain sync response"),
-                    },
-                    || true,
-                    max_fail,
-                )
-                .await
+            // recalculate the commit index: find the largest committed log index
+            if let Some(i) = state.map_read(|state| {
+                for i in ((state.commit_index + 1)..=state.last_log_index()).rev() {
+                    // should not commit logs from previous term
+                    if state.log[i].term() != state.term {
+                        break;
+                    }
+
+                    // calculate the number of servers that has matched log[i]
+                    let match_count = connects
+                        .iter()
+                        .filter(|connect| state.match_index[&connect.addr] >= i)
+                        .count();
+
+                    // If the majority of servers has replicated the log, commit
+                    // + 1 means including the leader itself
+                    if match_count + 1 >= majority_cnt {
+                        debug!("commit_index updated to {i}");
+                        return Some(i);
+                    }
+                }
+                None
+            }) {
+                state.write().commit_index = i;
+            }
+
+            // send new logs to followers if possible
+            let rpcs: FuturesUnordered<_> = connects
+                .iter()
+                .map(|connect| Self::append_entries(Arc::clone(connect), Arc::clone(&state)))
+                .collect();
+            let _drop = tokio::spawn(async move {
+                let _drop: Vec<_> = rpcs.collect().await;
             });
+        }
+    }
+
+    /// Send `append_entries` request
+    #[allow(clippy::integer_arithmetic, clippy::indexing_slicing)] // log.len() >= 1 because we have a fake log[0], indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
+    async fn append_entries(connect: Arc<Connect>, state: Arc<RwLock<State<C>>>) {
+        // fetch request args
+        let (term, leader_id, prev_log_index, prev_log_term, entries, leader_commit) = {
+            let state = state.read();
+            // return if the follower is not lagging behind
+            if state.next_index[&connect.addr] > state.last_log_index() {
+                return;
+            }
+            let next_index = state.next_index[&connect.addr];
+            (
+                state.term,
+                0, // TODO: add leader_id
+                next_index - 1,
+                state.log[next_index - 1].term(),
+                state.log[next_index..].to_vec(),
+                state.commit_index,
+            )
+        };
+        let last_sent_index = prev_log_index + entries.len();
+        let req = match AppendEntriesRequest::new(
+            term,
+            leader_id,
+            prev_log_index,
+            prev_log_term,
+            entries,
+            leader_commit,
+        ) {
+            Err(e) => {
+                error!("unable to serialize append entries request: {}", e);
+                return;
+            }
+            Ok(req) => req,
+        };
+
+        // send the request
+        debug!("send append_entries request: prev_log_index({}), prev_log_term({}), last_sent_index({}), leader_commit({})", prev_log_index, prev_log_term, last_sent_index, leader_commit);
+        let resp = connect.append_entries(req, Self::SYNC_TIMEOUT).await;
+
+        #[allow(clippy::unwrap_used)]
+        // indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
+        match resp {
+            Err(e) => warn!("Send append_entries error: {}", e),
+            Ok(resp) => {
+                // TODO: update term
+
+                let resp = resp.into_inner();
+                let mut state = state.write();
+                if resp.success {
+                    *state.match_index.get_mut(&connect.addr).unwrap() = last_sent_index;
+                    *state.next_index.get_mut(&connect.addr).unwrap() = last_sent_index + 1;
+                } else {
+                    *state.next_index.get_mut(&connect.addr).unwrap() -= 1;
+                }
+            }
+        };
+    }
+
+    /// How frequently the server should check if there are any logs that have been committed and needed to be executed
+    const APPLY_INTERVAL: Duration = Duration::from_millis(10);
+
+    /// Background apply
+    async fn background_apply<CE: 'static + CommandExecutor<C>>(
+        state: Arc<RwLock<State<C>>>,
+        cmd_executor: Arc<CE>,
+        comp_chan: SpmcKeyBasedSender<C::K, SyncCompleteMessage<C>>,
+    ) {
+        loop {
+            tokio::time::sleep(Self::APPLY_INTERVAL).await;
+            if state.read().need_commit() {
+                let mut state = state.write();
+                #[allow(clippy::integer_arithmetic, clippy::indexing_slicing)]
+                // TODO: will last_applied overflow?
+                for i in (state.last_applied + 1)..=state.commit_index {
+                    debug!("commit log[{}]", i);
+                    for cmd in state.log[i].cmds().iter() {
+                        // TODO: execution of leaders and followers should be merged
+                        // leader commits a log by sending it through compl_chan
+                        if state.is_leader() {
+                            if comp_chan
+                                .send(
+                                    cmd.keys(),
+                                    SyncCompleteMessage::new(i.numeric_cast(), Arc::clone(cmd)),
+                                )
+                                .is_err()
+                            {
+                                error!("The comp_chan is closed on the remote side");
+                                break;
+                            }
+                        } else {
+                            // followers execute commands directly
+                            let cmd_executor = Arc::clone(&cmd_executor);
+                            let cmd = Arc::clone(cmd);
+                            let _handle = tokio::spawn(async move {
+                                // TODO: execute command in parallel
+                                // TODO: handle execution error
+                                let _execute_result = cmd.execute(cmd_executor.as_ref()).await;
+                                let _after_sync_result = cmd
+                                    .after_sync(cmd_executor.as_ref(), i.numeric_cast())
+                                    .await;
+                            });
+                        }
+                        // TODO: remove the cmd from speculative command pool
+                    }
+                    debug!("last_applied updated to {}", i);
+                    state.last_applied = i;
+                }
+            }
         }
     }
 }
