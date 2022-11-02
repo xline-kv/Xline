@@ -6,7 +6,7 @@ use parking_lot::Mutex;
 use tracing::{error, warn};
 
 use crate::{
-    channel::{key_mpsc::MpscKeybasedReceiver, key_spmc::SpmcKeybasedSender, RecvError},
+    channel::{key_mpsc::MpscKeyBasedReceiver, key_spmc::SpmcKeyBasedSender, RecvError},
     cmd::Command,
     error::ProposeError,
     log::{EntryStatus, LogEntry},
@@ -82,11 +82,11 @@ where
 /// The manager to sync commands to other follower servers
 pub(crate) struct SyncManager<C: Command + 'static> {
     /// Other addrs
-    connets: Vec<Arc<Connect>>,
+    connects: Vec<Arc<Connect>>,
     /// Get cmd sync request from speculative command
-    sync_chan: MpscKeybasedReceiver<C::K, SyncMessage<C>>,
+    sync_chan: MpscKeyBasedReceiver<C::K, SyncMessage<C>>,
     /// Send cmd to sync complete handler
-    comp_chan: SpmcKeybasedSender<C::K, SyncCompleteMessage<C>>,
+    comp_chan: SpmcKeyBasedSender<C::K, SyncCompleteMessage<C>>,
     /// Consensus log
     log: Arc<Mutex<Vec<LogEntry<C>>>>,
 }
@@ -94,8 +94,8 @@ pub(crate) struct SyncManager<C: Command + 'static> {
 impl<C: Command + 'static> SyncManager<C> {
     /// Create a `SyncedManager`
     pub(crate) async fn new(
-        sync_chan: MpscKeybasedReceiver<C::K, SyncMessage<C>>,
-        comp_chan: SpmcKeybasedSender<C::K, SyncCompleteMessage<C>>,
+        sync_chan: MpscKeyBasedReceiver<C::K, SyncMessage<C>>,
+        comp_chan: SpmcKeyBasedSender<C::K, SyncCompleteMessage<C>>,
         others: Vec<String>,
         log: Arc<Mutex<Vec<LogEntry<C>>>>,
     ) -> Self {
@@ -103,14 +103,14 @@ impl<C: Command + 'static> SyncManager<C> {
             sync_chan,
             comp_chan,
             log,
-            connets: rpc::try_connect(others.into_iter().map(|a| format!("http://{a}")).collect())
+            connects: rpc::try_connect(others.into_iter().map(|a| format!("http://{a}")).collect())
                 .await,
         }
     }
 
     /// Get a clone of the connections
     fn connects(&self) -> Vec<Arc<Connect>> {
-        self.connets.clone()
+        self.connects.clone()
     }
 
     /// Try to receive all the messages in `sync_chan`, preparing for the batch sync.
@@ -191,7 +191,7 @@ impl<C: Command + 'static> SyncManager<C> {
 
     /// Run the `SyncManager`
     pub(crate) async fn run(&mut self) {
-        let max_fail = self.connets.len().wrapping_div(2);
+        let max_fail = self.connects.len().wrapping_div(2);
 
         loop {
             let (cmds, term) = match self.fetch_sync_msgs().await {

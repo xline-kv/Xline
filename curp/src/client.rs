@@ -238,7 +238,7 @@ where
     /// # Panics
     ///   If leader index is out of bound of all the connections, panic
     #[inline]
-    #[allow(clippy::else_if_without_else)] // the else is redundent
+    #[allow(clippy::else_if_without_else)] // the else is redundant
     pub async fn propose_indexed(&self, cmd: C) -> Result<(C::ER, C::ASR), ProposeError> {
         let cmd_arc = Arc::new(cmd);
         let fast_round = self.fast_round(Arc::clone(&cmd_arc));
