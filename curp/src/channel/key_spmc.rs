@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 
-use clippy_utilities::OverflowArithmetic;
+use clippy_utilities::{NumericCast, OverflowArithmetic};
 use event_listener::Event;
 use parking_lot::Mutex;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
@@ -77,7 +77,8 @@ impl<K: Eq + Hash + Clone + ConflictCheck, M> KeyBasedChannel<SpmcKeysMessage<K,
                     let _ignore = v.insert(new_km.clone());
                 })
             })
-            .count() as u64;
+            .count()
+            .numeric_cast();
         // the message can only be inserted once, so we ignore the return value
         let _ignore = self.successor.insert(new_km.clone(), HashSet::new());
 
