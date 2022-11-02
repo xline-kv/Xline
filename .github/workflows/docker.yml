@@ -5,6 +5,9 @@ on:
     branches: [master]
     types: [closed]
 
+env:
+  CI_RUST_TOOLCHAIN: 1.61.0
+
 jobs:
   docker:
     name: Docker

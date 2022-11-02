@@ -2,6 +2,12 @@ pull_request_rules:
   - name: Automatic merge on approval
     conditions:
       - "#approved-reviews-by>=1"
+      - check-success=Outdated
+      - check-success=Audit
+      - check-success=Check
+      - check-success=Format
+      - check-success=Test
+      - check-success=Clippy
     actions:
       merge:
         method: rebase

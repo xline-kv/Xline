@@ -38,7 +38,7 @@ pub(crate) static DEFAULT_SERVER_PORT: u16 = 12345;
 pub static DEFAULT_AFTER_SYNC_CNT: usize = 10;
 
 /// The Rpc Server to handle rpc requests
-/// This Wrapper is introduced due to the MadSim rpc lib
+/// This Wrapper is introduced due to the `MadSim` rpc lib
 #[derive(Clone, Debug)]
 pub struct Rpc<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
     /// The inner server is wrapped in an Arc so that its state can be shared while cloning the rpc wrapper
