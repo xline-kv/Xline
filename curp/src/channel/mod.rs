@@ -98,13 +98,13 @@ pub(crate) enum RecvError {
 
 /// This is a kind of key-based channel.
 ///
-/// It receives and sends messages as usual, but the recv end can't receive messages for a
-/// the same key simutanously. Any message with the same key is blocked, if there's a previous
+/// It receives and sends messages as usual, but the recv end can't receive messages with
+/// the same key simultaneously. Any message with the same key is blocked, if there's a previous
 /// message not ready or not complete.
-struct KeybasedChannel<KM> {
-    /// Proceeders that arrive eailer and have key confliction with this message, we only record count
-    proceeder: HashMap<KM, u64>,
-    /// Successors that arrive later and have key confliction with this message
+struct KeyBasedChannel<KM> {
+    /// Predecessors that arrive earlier with keys that conflict with this message, we only record count
+    predecessor: HashMap<KM, u64>,
+    /// Successors that arrive later with keys that conflict with this message
     successor: HashMap<KM, HashSet<KM>>,
     /// The real queue the receivers get the message from.
     inner: VecDeque<KM>,
@@ -114,7 +114,7 @@ struct KeybasedChannel<KM> {
     is_working: bool,
 }
 
-impl<KM> KeybasedChannel<KM> {
+impl<KM> KeyBasedChannel<KM> {
     /// Flush the inner queue to the `new_queue`
     fn flush_queue(&mut self, new_queue: &mut VecDeque<KM>) {
         assert!(new_queue.is_empty());
@@ -130,22 +130,22 @@ impl<KM> KeybasedChannel<KM> {
 }
 
 /// Channel Sender Inner
-struct KeybasedSenderInner<KM> {
+struct KeyBasedSenderInner<KM> {
     /// The channel
-    channel: Arc<Mutex<KeybasedChannel<KM>>>,
+    channel: Arc<Mutex<KeyBasedChannel<KM>>>,
 }
 
 /// If all the Sender is dropped, the channel should be closed
-impl<KM> Drop for KeybasedSenderInner<KM> {
+impl<KM> Drop for KeyBasedSenderInner<KM> {
     fn drop(&mut self) {
         self.channel.lock().mark_stop();
     }
 }
 
 /// Channel Receiver Inner
-pub(crate) struct KeybasedReceiverInner<KM> {
+pub(crate) struct KeyBasedReceiverInner<KM> {
     /// The channel
-    channel: Arc<Mutex<KeybasedChannel<KM>>>,
+    channel: Arc<Mutex<KeyBasedChannel<KM>>>,
     /// Local message buf
     buf: VecDeque<KM>,
 }
@@ -160,7 +160,7 @@ enum MessageOrListener<M> {
     Stop,
 }
 
-impl<KM> KeybasedReceiverInner<KM> {
+impl<KM> KeyBasedReceiverInner<KM> {
     /// check if it's still working
     fn is_working(&self) -> bool {
         self.channel.lock().is_working
@@ -251,7 +251,7 @@ impl<KM> KeybasedReceiverInner<KM> {
     }
 }
 
-impl<KM> Drop for KeybasedReceiverInner<KM> {
+impl<KM> Drop for KeyBasedReceiverInner<KM> {
     fn drop(&mut self) {
         self.channel.lock().mark_stop();
     }

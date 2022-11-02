@@ -21,7 +21,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use crate::cmd::ConflictCheck;
 
 use super::{
-    hash_eq, KeybasedChannel, KeybasedReceiverInner, KeybasedSenderInner, KeysMessageInner,
+    hash_eq, KeyBasedChannel, KeyBasedReceiverInner, KeyBasedSenderInner, KeysMessageInner,
     RecvError, SendError,
 };
 
@@ -66,27 +66,26 @@ impl<K, M> SpmcKeysMessage<K, M> {
     }
 }
 
-impl<K: Eq + Hash + Clone + ConflictCheck, M> KeybasedChannel<SpmcKeysMessage<K, M>> {
-    /// Insert successors and proceeders info and return if it conflicts with any previous message
+impl<K: Eq + Hash + Clone + ConflictCheck, M> KeyBasedChannel<SpmcKeysMessage<K, M>> {
+    /// Insert successors and predecessors info and return if it conflicts with any previous message
     fn insert_graph(&mut self, new_km: SpmcKeysMessage<K, M>) -> bool {
-        let proceeder_cnt: u64 = self
+        let predecessor_cnt: u64 = self
             .successor
             .iter_mut()
             .filter_map(|(k, v)| {
                 super::keys_conflict(k.keys(), new_km.keys()).then(|| {
                     let _ignore = v.insert(new_km.clone());
-                    1
                 })
             })
-            .sum();
+            .count() as u64;
         // the message can only be inserted once, so we ignore the return value
         let _ignore = self.successor.insert(new_km.clone(), HashSet::new());
 
-        if proceeder_cnt == 0 {
+        if predecessor_cnt == 0 {
             false
         } else {
             // the message can only be inserted once, so we ignore the return value
-            let _ignore2 = self.proceeder.insert(new_km, proceeder_cnt);
+            let _ignore2 = self.predecessor.insert(new_km, predecessor_cnt);
             true
         }
     }
@@ -106,18 +105,19 @@ impl<K: Eq + Hash + Clone + ConflictCheck, M> KeybasedChannel<SpmcKeysMessage<K,
             successor
                 .into_iter()
                 .map(|s| {
-                    let (no_proceeder, has_pre) = if let Some(s_p) = self.proceeder.get_mut(&s) {
+                    let (no_predecessor, has_pre) = if let Some(s_p) = self.predecessor.get_mut(&s)
+                    {
                         *s_p = s_p.overflow_sub(1);
                         (*s_p == 0, true)
                     } else {
                         (true, false)
                     };
 
-                    if no_proceeder && has_pre {
-                        let _ignore_removed = self.proceeder.remove(&s);
+                    if no_predecessor && has_pre {
+                        let _ignore_removed = self.predecessor.remove(&s);
                     }
 
-                    if no_proceeder {
+                    if no_predecessor {
                         self.inner.push_back(s);
                         1
                     } else {
@@ -135,14 +135,14 @@ impl<K: Eq + Hash + Clone + ConflictCheck, M> KeybasedChannel<SpmcKeysMessage<K,
     }
 }
 
-/// The Sender for the `KeybasedChannel`
-pub(crate) struct SpmcKeybasedSender<K, M> {
+/// The Sender for the `KeyBasedChannel`
+pub(crate) struct SpmcKeyBasedSender<K, M> {
     /// inner sender
-    inner: KeybasedSenderInner<SpmcKeysMessage<K, M>>,
+    inner: KeyBasedSenderInner<SpmcKeysMessage<K, M>>,
 }
 
 impl<K: Eq + Hash + Clone + ConflictCheck + Send + 'static, M: Send + 'static>
-    SpmcKeybasedSender<K, M>
+    SpmcKeyBasedSender<K, M>
 {
     /// Send a key and message to the channel
     pub(crate) fn send(&self, keys: &[K], msg: M) -> Result<(), SendError> {
@@ -160,7 +160,7 @@ impl<K: Eq + Hash + Clone + ConflictCheck + Send + 'static, M: Send + 'static>
 /// The Receiver for the `KeybasedChannel`
 pub(crate) struct SpmcKeybasedReceiver<K, M> {
     /// Inner receiver
-    inner: Arc<tokio::sync::Mutex<KeybasedReceiverInner<SpmcKeysMessage<K, M>>>>,
+    inner: Arc<tokio::sync::Mutex<KeyBasedReceiverInner<SpmcKeysMessage<K, M>>>>,
     /// Message done notifier
     done_tx: UnboundedSender<SpmcKeysMessage<K, M>>,
 }
@@ -220,11 +220,11 @@ impl<K: Eq + Hash + Clone + ConflictCheck, M> SpmcKeybasedReceiver<K, M> {
 pub(crate) fn channel<
     K: Clone + Eq + Hash + Send + Sync + ConflictCheck + 'static,
     M: Send + 'static,
->() -> (SpmcKeybasedSender<K, M>, SpmcKeybasedReceiver<K, M>) {
-    let inner_channel = Arc::new(Mutex::new(KeybasedChannel {
+>() -> (SpmcKeyBasedSender<K, M>, SpmcKeybasedReceiver<K, M>) {
+    let inner_channel = Arc::new(Mutex::new(KeyBasedChannel {
         inner: VecDeque::new(),
         new_msg_event: Event::new(),
-        proceeder: HashMap::new(),
+        predecessor: HashMap::new(),
         successor: HashMap::new(),
         is_working: true,
     }));
@@ -240,13 +240,13 @@ pub(crate) fn channel<
     });
 
     (
-        SpmcKeybasedSender {
-            inner: KeybasedSenderInner {
+        SpmcKeyBasedSender {
+            inner: KeyBasedSenderInner {
                 channel: Arc::<_>::clone(&inner_channel),
             },
         },
         SpmcKeybasedReceiver {
-            inner: Arc::new(tokio::sync::Mutex::new(KeybasedReceiverInner {
+            inner: Arc::new(tokio::sync::Mutex::new(KeyBasedReceiverInner {
                 channel: inner_channel,
                 buf: VecDeque::new(),
             })),

@@ -72,7 +72,7 @@ pub trait ConflictCheck {
     ///
     /// Return：
     ///     - True: conflict
-    ///     - False: not conflit
+    ///     - False: not conflict
     fn is_conflict(&self, other: &Self) -> bool;
 }
 
@@ -84,7 +84,7 @@ impl ConflictCheck for String {
 }
 
 /// Command executor which actually executes the command.
-/// It usually defined by the protocol user.
+/// It is usually defined by the protocol user.
 #[async_trait]
 pub trait CommandExecutor<C>: Sync + Send + Clone + std::fmt::Debug
 where

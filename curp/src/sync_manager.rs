@@ -2,11 +2,13 @@ use std::{iter, sync::Arc, time::Duration};
 
 use clippy_utilities::{NumericCast, OverflowArithmetic};
 use futures::{stream::FuturesUnordered, Future, StreamExt};
-use parking_lot::Mutex;
+use parking_lot::RwLock;
 use tracing::{error, warn};
 
+use crate::server::State;
+use crate::util::RwLockMap;
 use crate::{
-    channel::{key_mpsc::MpscKeybasedReceiver, key_spmc::SpmcKeybasedSender, RecvError},
+    channel::{key_mpsc::MpscKeyBasedReceiver, key_spmc::SpmcKeyBasedSender, RecvError},
     cmd::Command,
     error::ProposeError,
     log::{EntryStatus, LogEntry},
@@ -15,7 +17,6 @@ use crate::{
         self, commit_response::CommitResponse, sync_response::SyncResponse, CommitRequest, Connect,
         SyncRequest,
     },
-    util::MutexMap,
     LogIndex,
 };
 
@@ -81,36 +82,36 @@ where
 
 /// The manager to sync commands to other follower servers
 pub(crate) struct SyncManager<C: Command + 'static> {
+    /// Current state
+    state: Arc<RwLock<State<C>>>,
     /// Other addrs
-    connets: Vec<Arc<Connect>>,
+    connects: Vec<Arc<Connect>>,
     /// Get cmd sync request from speculative command
-    sync_chan: MpscKeybasedReceiver<C::K, SyncMessage<C>>,
+    sync_chan: MpscKeyBasedReceiver<C::K, SyncMessage<C>>,
     /// Send cmd to sync complete handler
-    comp_chan: SpmcKeybasedSender<C::K, SyncCompleteMessage<C>>,
-    /// Consensus log
-    log: Arc<Mutex<Vec<LogEntry<C>>>>,
+    comp_chan: SpmcKeyBasedSender<C::K, SyncCompleteMessage<C>>,
 }
 
 impl<C: Command + 'static> SyncManager<C> {
     /// Create a `SyncedManager`
     pub(crate) async fn new(
-        sync_chan: MpscKeybasedReceiver<C::K, SyncMessage<C>>,
-        comp_chan: SpmcKeybasedSender<C::K, SyncCompleteMessage<C>>,
+        sync_chan: MpscKeyBasedReceiver<C::K, SyncMessage<C>>,
+        comp_chan: SpmcKeyBasedSender<C::K, SyncCompleteMessage<C>>,
         others: Vec<String>,
-        log: Arc<Mutex<Vec<LogEntry<C>>>>,
+        state: Arc<RwLock<State<C>>>,
     ) -> Self {
         Self {
             sync_chan,
             comp_chan,
-            log,
-            connets: rpc::try_connect(others.into_iter().map(|a| format!("http://{a}")).collect())
+            state,
+            connects: rpc::try_connect(others.into_iter().map(|a| format!("http://{a}")).collect())
                 .await,
         }
     }
 
     /// Get a clone of the connections
     fn connects(&self) -> Vec<Arc<Connect>> {
-        self.connets.clone()
+        self.connects.clone()
     }
 
     /// Try to receive all the messages in `sync_chan`, preparing for the batch sync.
@@ -191,7 +192,7 @@ impl<C: Command + 'static> SyncManager<C> {
 
     /// Run the `SyncManager`
     pub(crate) async fn run(&mut self) {
-        let max_fail = self.connets.len().wrapping_div(2);
+        let max_fail = self.connects.len().wrapping_div(2);
 
         loop {
             let (cmds, term) = match self.fetch_sync_msgs().await {
@@ -199,9 +200,11 @@ impl<C: Command + 'static> SyncManager<C> {
                 Err(_) => return,
             };
 
-            let index = self.log.map_lock(|mut log| {
-                let len = log.len();
-                log.push(LogEntry::new(term, &cmds, EntryStatus::Unsynced));
+            let index = self.state.map_write(|mut state| {
+                let len = state.log.len();
+                state
+                    .log
+                    .push(LogEntry::new(term, &cmds, EntryStatus::Unsynced));
                 len
             });
             let cmds_arc: Arc<[_]> = cmds.into();

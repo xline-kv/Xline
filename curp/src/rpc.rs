@@ -69,7 +69,7 @@ impl ProposeResponse {
     }
 
     /// Create an empty propose response
-    #[allow(clippy::unnecessary_wraps)] // To keep the new funtions return the same type
+    #[allow(clippy::unnecessary_wraps)] // To keep the new functions return the same type
     pub(crate) fn new_empty(is_leader: bool, term: u64) -> bincode::Result<Self> {
         Ok(Self {
             is_leader,
@@ -210,7 +210,7 @@ impl SyncResponse {
         }
     }
 
-    /// Create a "wrong term" reponse
+    /// Create a "wrong term" response
     pub(crate) fn new_wrong_term(term: u64) -> Self {
         Self {
             sync_response: Some(sync_response::SyncResponse::WrongTerm(term)),
@@ -283,7 +283,7 @@ impl CommitResponse {
         }
     }
 
-    /// Create a "wrong term" reponse
+    /// Create a "wrong term" response
     pub(crate) fn new_wrong_term(term: u64) -> Self {
         Self {
             commit_response: Some(commit_response::CommitResponse::WrongTerm(term)),

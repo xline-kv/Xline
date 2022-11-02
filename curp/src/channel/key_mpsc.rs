@@ -20,7 +20,7 @@ use parking_lot::Mutex;
 use crate::cmd::ConflictCheck;
 
 use super::{
-    hash_eq, KeybasedChannel, KeybasedReceiverInner, KeybasedSenderInner, KeysMessageInner,
+    hash_eq, KeyBasedChannel, KeyBasedReceiverInner, KeyBasedSenderInner, KeysMessageInner,
     RecvError, SendError,
 };
 
@@ -79,29 +79,28 @@ impl<K, M> MpscKeysMessage<K, M> {
     }
 }
 
-impl<K: Eq + Hash + Clone + ConflictCheck, M> KeybasedChannel<MpscKeysMessage<K, M>> {
-    /// Insert successors and proceeders info
+impl<K: Eq + Hash + Clone + ConflictCheck, M> KeyBasedChannel<MpscKeysMessage<K, M>> {
+    /// Insert successors and predecessors info
     fn insert_graph(&mut self, new_km: MpscKeysMessage<K, M>) {
-        let proceeder_cnt: u64 = self
+        let predecessor_cnt = self
             .successor
             .iter_mut()
             .filter_map(|(k, v)| {
                 super::keys_conflict(k.keys(), new_km.keys()).then(|| {
                     let _ignore = v.insert(new_km.clone());
-                    1
                 })
             })
-            .sum();
+            .count() as u64;
         // the message can only be inserted once, so we ignore the return value
         let _ignore = self.successor.insert(new_km.clone(), HashSet::new());
 
-        if proceeder_cnt != 0 {
+        if predecessor_cnt != 0 {
             // the message can only be inserted once, so we ignore the return value
-            let _ignore2 = self.proceeder.insert(new_km, proceeder_cnt);
+            let _ignore2 = self.predecessor.insert(new_km, predecessor_cnt);
         }
     }
 
-    /// Append a key and message to this `KeybasedChannel`
+    /// Append a key and message to this `KeyBasedChannel`
     fn append(&mut self, keys: &[K], msg: M) -> MpscKeysMessage<K, M> {
         let km = MpscKeysMessage::new(keys.to_vec(), msg);
         self.insert_graph(km.clone());
@@ -113,7 +112,7 @@ impl<K: Eq + Hash + Clone + ConflictCheck, M> KeybasedChannel<MpscKeysMessage<K,
         km.mark_ready();
         let mut ready_pool = VecDeque::new();
         let mut ready_cnt = 0;
-        if self.proceeder.get(km).is_none() {
+        if self.predecessor.get(km).is_none() {
             ready_pool.push_back(km.clone());
             ready_cnt = 1;
         }
@@ -121,18 +120,19 @@ impl<K: Eq + Hash + Clone + ConflictCheck, M> KeybasedChannel<MpscKeysMessage<K,
         while let Some(cur) = ready_pool.pop_front() {
             if let Some(successor) = self.successor.remove(&cur) {
                 for s in successor {
-                    let (no_proceeder, has_pre) = if let Some(s_p) = self.proceeder.get_mut(&s) {
+                    let (no_predecessor, has_pre) = if let Some(s_p) = self.predecessor.get_mut(&s)
+                    {
                         *s_p = s_p.overflow_sub(1);
                         (*s_p == 0, true)
                     } else {
-                        unreachable!("Any successor should have a proceeder");
+                        unreachable!("Any successor should have a predecessor");
                     };
 
-                    if no_proceeder && has_pre {
-                        let _ignore_removed = self.proceeder.remove(&s);
+                    if no_predecessor && has_pre {
+                        let _ignore_removed = self.predecessor.remove(&s);
                     }
 
-                    if no_proceeder && s.ready() {
+                    if no_predecessor && s.ready() {
                         ready_pool.push_back(s);
                         ready_cnt = ready_cnt.overflow_add(1);
                     }
@@ -148,22 +148,22 @@ impl<K: Eq + Hash + Clone + ConflictCheck, M> KeybasedChannel<MpscKeysMessage<K,
 }
 
 /// The sender inner type
-type MpscKeybasedSenderInner<K, M> = KeybasedSenderInner<MpscKeysMessage<K, M>>;
+type MpscKeyBasedSenderInner<K, M> = KeyBasedSenderInner<MpscKeysMessage<K, M>>;
 
 #[derive(Clone)]
-/// The Sender for the `KeybasedChannel`
-pub(crate) struct MpscKeybasedSender<K, M> {
+/// The Sender for the `KeyBasedChannel`
+pub(crate) struct MpscKeyBasedSender<K, M> {
     /// The channel
-    inner: Arc<MpscKeybasedSenderInner<K, M>>,
+    inner: Arc<MpscKeyBasedSenderInner<K, M>>,
 }
 
 impl<K: Eq + Hash + Clone + ConflictCheck + Send + 'static, M: Send + 'static>
-    MpscKeybasedSender<K, M>
+    MpscKeyBasedSender<K, M>
 {
     /// Create a new sender
-    fn new(channel: Arc<Mutex<KeybasedChannel<MpscKeysMessage<K, M>>>>) -> Self {
+    fn new(channel: Arc<Mutex<KeyBasedChannel<MpscKeysMessage<K, M>>>>) -> Self {
         Self {
-            inner: Arc::new(MpscKeybasedSenderInner { channel }),
+            inner: Arc::new(MpscKeyBasedSenderInner { channel }),
         }
     }
 
@@ -187,13 +187,13 @@ impl<K: Eq + Hash + Clone + ConflictCheck + Send + 'static, M: Send + 'static>
     }
 }
 
-/// The Receiver for the `KeybasedChannel`
-pub(crate) struct MpscKeybasedReceiver<K, M> {
+/// The Receiver for the `KeyBasedChannel`
+pub(crate) struct MpscKeyBasedReceiver<K, M> {
     /// The inner receiver
-    inner: KeybasedReceiverInner<MpscKeysMessage<K, M>>,
+    inner: KeyBasedReceiverInner<MpscKeysMessage<K, M>>,
 }
 
-impl<K: Eq + Hash + Clone + ConflictCheck, M> MpscKeybasedReceiver<K, M> {
+impl<K: Eq + Hash + Clone + ConflictCheck, M> MpscKeyBasedReceiver<K, M> {
     /// Receive a message
     #[allow(dead_code)]
     pub(crate) fn recv(&mut self) -> Result<MpscKeysMessage<K, M>, RecvError> {
@@ -221,24 +221,24 @@ impl<K: Eq + Hash + Clone + ConflictCheck, M> MpscKeybasedReceiver<K, M> {
     }
 }
 
-/// Create a `KeybasedQueue`
+/// Create a `KeyBasedQueue`
 /// Return (sender, receiver)
 pub(crate) fn channel<
     K: Clone + Eq + Hash + Send + Sync + ConflictCheck + 'static,
     M: Send + 'static,
->() -> (MpscKeybasedSender<K, M>, MpscKeybasedReceiver<K, M>) {
-    let inner_channel = Arc::new(Mutex::new(KeybasedChannel {
+>() -> (MpscKeyBasedSender<K, M>, MpscKeyBasedReceiver<K, M>) {
+    let inner_channel = Arc::new(Mutex::new(KeyBasedChannel {
         inner: VecDeque::new(),
         new_msg_event: Event::new(),
-        proceeder: HashMap::new(),
+        predecessor: HashMap::new(),
         successor: HashMap::new(),
         is_working: true,
     }));
 
     (
-        MpscKeybasedSender::new(Arc::<_>::clone(&inner_channel)),
-        MpscKeybasedReceiver {
-            inner: KeybasedReceiverInner {
+        MpscKeyBasedSender::new(Arc::<_>::clone(&inner_channel)),
+        MpscKeyBasedReceiver {
+            inner: KeyBasedReceiverInner {
                 channel: inner_channel,
                 buf: VecDeque::new(),
             },
