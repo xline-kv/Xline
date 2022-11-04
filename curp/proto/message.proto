@@ -68,9 +68,24 @@ message CommitResponse {
     }
 }
 
+message AppendEntriesRequest {
+    uint64 term = 1;
+    uint64 leader_id = 2;
+    uint64 prev_log_index = 3;
+    uint64 prev_log_term = 4;
+    repeated bytes entries = 5;
+    uint64 leader_commit = 6;
+}
+
+message AppendEntriesResponse {
+    uint64 term = 1;
+    bool success = 2;
+}
+
 service Protocol {
     rpc Propose (ProposeRequest) returns (ProposeResponse);
     rpc WaitSynced (WaitSyncedRequest) returns (WaitSyncedResponse);
     rpc Sync (SyncRequest) returns (SyncResponse);
     rpc Commit (CommitRequest) returns (CommitResponse);
+    rpc AppendEntries (AppendEntriesRequest) returns (AppendEntriesResponse);
 }

@@ -1,3 +1,4 @@
+use std::cmp::min;
 use std::{
     collections::{HashMap, VecDeque},
     fmt::Debug,
@@ -13,6 +14,7 @@ use tokio::{net::TcpListener, task::JoinHandle};
 use tokio_stream::wrappers::TcpListenerStream;
 use tracing::error;
 
+use crate::rpc::{AppendEntriesRequest, AppendEntriesResponse};
 use crate::util::RwLockMap;
 use crate::{
     channel::{
@@ -70,12 +72,17 @@ where
     ) -> Result<tonic::Response<SyncResponse>, tonic::Status> {
         self.inner.sync(request).await
     }
-
     async fn commit(
         &self,
         request: tonic::Request<CommitRequest>,
     ) -> Result<tonic::Response<CommitResponse>, tonic::Status> {
         self.inner.commit(request).await
+    }
+    async fn append_entries(
+        &self,
+        request: tonic::Request<AppendEntriesRequest>,
+    ) -> Result<tonic::Response<AppendEntriesResponse>, tonic::Status> {
+        self.inner.append_entries(request).await
     }
 }
 
@@ -211,15 +218,29 @@ pub(crate) struct State<C: Command + 'static> {
     pub(crate) term: TermNum,
     /// Consensus log
     pub(crate) log: Vec<LogEntry<C>>,
+    /// Index of highest log entry known to be committed
+    pub(crate) commit_index: usize,
 }
 
 impl<C: Command + 'static> State<C> {
+    /// Init server state
     pub(crate) fn new(role: ServerRole, term: TermNum) -> Self {
         Self {
             role,
             term,
-            log: Vec::new(),
+            log: vec![LogEntry::new(0, &vec![], EntryStatus::Synced)], // a fake log[0] will simplify the boundary check significantly
+            commit_index: 0,
         }
+    }
+
+    /// Is leader?
+    pub(crate) fn is_leader(&self) -> bool {
+        matches!(self.role, ServerRole::Leader)
+    }
+
+    /// Last log index
+    pub(crate) fn last_log_index(&self) -> usize {
+        self.log.len() - 1 // this should not overflow since we have a fake log[0] that should never be deleted
     }
 }
 
@@ -425,7 +446,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
 
     /// Check if the current server is leader
     fn is_leader(&self) -> bool {
-        matches!(self.state.read().role, ServerRole::Leader)
+        self.state.read().is_leader()
     }
 
     /// Remove command from the speculative cmd pool
@@ -674,7 +695,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                             let cmds = sr.cmds::<C>()?;
                             state
                                 .log
-                                .push(LogEntry::new(sr.term(), &cmds, EntryStatus::Unsynced));
+                                .push(LogEntry::new(sr.term(), &cmds, EntryStatus::UnSynced));
                             Ok(SyncResponse::new_synced())
                         }
                     }
@@ -701,7 +722,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             let cmds = cr.cmds::<C>()?;
             if index > local_len
                 || (index > 0
-                    && matches!(log[index.wrapping_sub(1)].status(), &EntryStatus::Unsynced))
+                    && matches!(log[index.wrapping_sub(1)].status(), &EntryStatus::UnSynced))
             {
                 Ok(CommitResponse::new_prev_not_ready(local_len.numeric_cast()))
             } else {
@@ -748,6 +769,43 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             .map_err(|e: bincode::Error| {
                 tonic::Status::internal(format!("encode or decode error, {}", e))
             })
+    }
+
+    async fn append_entries(
+        &self,
+        request: tonic::Request<AppendEntriesRequest>,
+    ) -> Result<tonic::Response<AppendEntriesResponse>, tonic::Status> {
+        let req = request.into_inner();
+        let mut state = self.state.write();
+
+        // TODO: check leader's term
+
+        // remove inconsistencies
+        while state.last_log_index() > req.prev_log_index.numeric_cast() {
+            let _drop = state.log.pop();
+        }
+
+        // check if previous log index match leader's one
+        if state.last_log_index() < req.prev_log_index.numeric_cast()
+            || state.log[req.prev_log_index as usize].term != req.prev_log_term
+        {
+            return Ok(tonic::Response::new(AppendEntriesResponse::new_reject(
+                state.term,
+            )));
+        }
+
+        // append new logs
+        let entries = req
+            .entries()
+            .map_err(|e| tonic::Status::internal(format!("encode or decode error, {}", e)))?;
+        state.log.extend(entries.into_iter());
+
+        // update commit index
+        state.commit_index = min(req.leader_commit.numeric_cast(), state.last_log_index());
+
+        Ok(tonic::Response::new(AppendEntriesResponse::new_accept(
+            state.term,
+        )))
     }
 }
 

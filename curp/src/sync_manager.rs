@@ -25,8 +25,8 @@ static SYNC_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// "sync task complete" message
 pub(crate) struct SyncCompleteMessage<C>
-where
-    C: Command,
+    where
+        C: Command,
 {
     /// The log index
     log_index: LogIndex,
@@ -35,8 +35,8 @@ where
 }
 
 impl<C> SyncCompleteMessage<C>
-where
-    C: Command,
+    where
+        C: Command,
 {
     /// Create a new `SyncCompleteMessage`
     fn new(log_index: LogIndex, cmd: Arc<C>) -> Self {
@@ -56,8 +56,8 @@ where
 
 /// The message sent to the `SyncManager`
 pub(crate) struct SyncMessage<C>
-where
-    C: Command,
+    where
+        C: Command,
 {
     /// Term number
     term: TermNum,
@@ -66,8 +66,8 @@ where
 }
 
 impl<C> SyncMessage<C>
-where
-    C: Command,
+    where
+        C: Command,
 {
     /// Create a new `SyncMessage`
     pub(crate) fn new(term: TermNum, cmd: Arc<C>) -> Self {
@@ -157,12 +157,12 @@ impl<C: Command + 'static> SyncManager<C> {
         comp_fn: CompFn,
         wait_cnt: usize,
     ) -> bool
-    where
-        I: IntoIterator,
-        SendRet: Future<Output = Result<tonic::Response<R>, ProposeError>>,
-        SendFn: Fn((Arc<Connect>, I::Item)) -> SendRet,
-        RespFn: Fn(tonic::Response<R>) -> usize,
-        CompFn: Fn() -> bool,
+        where
+            I: IntoIterator,
+            SendRet: Future<Output=Result<tonic::Response<R>, ProposeError>>,
+            SendFn: Fn((Arc<Connect>, I::Item)) -> SendRet,
+            RespFn: Fn(tonic::Response<R>) -> usize,
+            CompFn: Fn() -> bool,
     {
         let rpcs = connects.into_iter().zip(args.into_iter()).map(send_fn);
 
@@ -204,7 +204,7 @@ impl<C: Command + 'static> SyncManager<C> {
                 let len = state.log.len();
                 state
                     .log
-                    .push(LogEntry::new(term, &cmds, EntryStatus::Unsynced));
+                    .push(LogEntry::new(term, &cmds, EntryStatus::UnSynced));
                 len
             });
             let cmds_arc: Arc<[_]> = cmds.into();
@@ -249,7 +249,7 @@ impl<C: Command + 'static> SyncManager<C> {
                 comp_fn,
                 max_fail,
             )
-            .await
+                .await
             {
                 return;
             }
@@ -276,8 +276,18 @@ impl<C: Command + 'static> SyncManager<C> {
                     || true,
                     max_fail,
                 )
-                .await
+                    .await
             });
+        }
+    }
+
+    /// Heartbeat Interval
+    const HEART_BEAT_INTERVAL: Duration = Duration::from_millis(150);
+    /// Background ping, only work for the leader
+    async fn background_ping(state: Arc<RwLock<State<C>>>) {
+        loop {
+            tokio::time::sleep(Self::HEART_BEAT_INTERVAL).await;
+            if state.read().is_leader() {}
         }
     }
 }

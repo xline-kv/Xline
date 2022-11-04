@@ -14,10 +14,14 @@ mod proto {
     tonic::include_proto!("messagepb");
 }
 
+use clippy_utilities::NumericCast;
+use serde::Serialize;
 use std::{sync::Arc, time::Duration};
 
 use tokio::sync::RwLock;
 
+use crate::log::LogEntry;
+use crate::message::TermNum;
 use crate::{
     cmd::{Command, ProposeId},
     error::ProposeError,
@@ -30,8 +34,8 @@ pub(crate) use self::proto::{
     protocol_server::Protocol,
     sync_response,
     wait_synced_response::{Success, SyncResult},
-    CommitRequest, CommitResponse, ProposeRequest, ProposeResponse, SyncRequest, SyncResponse,
-    WaitSyncedRequest, WaitSyncedResponse,
+    AppendEntriesRequest, AppendEntriesResponse, CommitRequest, CommitResponse, ProposeRequest,
+    ProposeResponse, SyncRequest, SyncResponse, WaitSyncedRequest, WaitSyncedResponse,
 };
 
 pub use self::proto::protocol_server::ProtocolServer;
@@ -172,7 +176,11 @@ impl WaitSyncedResponse {
 
 impl SyncRequest {
     /// Create a new `SyncResult`
-    pub(crate) fn new<C: Command>(term: u64, index: u64, cmds: &[Arc<C>]) -> bincode::Result<Self> {
+    pub(crate) fn new<C: Command + Serialize>(
+        term: u64,
+        index: u64,
+        cmds: &[Arc<C>],
+    ) -> bincode::Result<Self> {
         Ok(Self {
             term,
             index,
@@ -298,6 +306,48 @@ impl CommitResponse {
     }
 }
 
+impl AppendEntriesRequest {
+    pub(crate) fn new_heart_beat(
+        term: TermNum,
+        leader_id: u64,
+        leader_commit: usize,
+        prev_log_index: usize,
+        prev_log_term: TermNum,
+    ) -> Self {
+        Self {
+            term,
+            leader_id,
+            prev_log_index: prev_log_index.numeric_cast(),
+            entries: vec![],
+            leader_commit: leader_commit.numeric_cast(),
+            prev_log_term,
+        }
+    }
+
+    pub(crate) fn entries<C: Command>(&self) -> bincode::Result<Vec<LogEntry<C>>> {
+        self.entries
+            .iter()
+            .map(|entry| bincode::deserialize(entry))
+            .collect()
+    }
+}
+
+impl AppendEntriesResponse {
+    pub(crate) fn new_reject(term: TermNum) -> Self {
+        Self {
+            term,
+            success: false,
+        }
+    }
+
+    pub(crate) fn new_accept(term: TermNum) -> Self {
+        Self {
+            term,
+            success: true,
+        }
+    }
+}
+
 /// The connection struct to hold the real rpc connections, it may failed to connect, but it also
 /// retries the next time
 #[derive(Debug)]
@@ -381,6 +431,18 @@ impl Connect {
         let option_client = self.get().await;
         match option_client {
             Ok(mut client) => Ok(client.commit(tonic::Request::new(request)).await?),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Send `AppendEntries` request
+    pub(crate) async fn append_entries(
+        &self,
+        request: AppendEntriesRequest,
+    ) -> Result<tonic::Response<AppendEntriesResponse>, ProposeError> {
+        let option_client = self.get().await;
+        match option_client {
+            Ok(mut client) => Ok(client.append_entries(tonic::Request::new(request)).await?),
             Err(e) => Err(e.into()),
         }
     }

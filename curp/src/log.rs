@@ -1,31 +1,50 @@
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::{cmd::Command, message::TermNum};
 
 /// Log entry status
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) enum EntryStatus {
     /// The entry has not synced
     #[allow(dead_code)]
-    Unsynced,
+    UnSynced,
     /// The entry has been synced to the majority to the
     #[allow(dead_code)]
     Synced,
 }
 
 /// Log entry
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct LogEntry<C: Command> {
     /// Term id
     #[allow(dead_code)]
-    term: TermNum,
+    pub(crate) term: TermNum,
     /// Commands
     #[allow(dead_code)]
-    cmds: Arc<[Arc<C>]>,
+    pub(crate) cmds: Arc<[Arc<C>]>,
     /// Log entry status
     #[allow(dead_code)]
-    status: EntryStatus,
+    pub(crate) status: EntryStatus,
 }
+
+// struct CmdVisitor;
+// impl<'de, C: Command> Visitor<'de> for CmdVisitor {
+//     type Value = LogEntry<C>;
+//
+//     fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
+//         formatter.write_str("LogEntry")
+//     }
+// }
+//
+// impl<'de, C: Command> de::Deserialize<'de> for LogEntry<C> {
+//     fn deserialize<D>(deserializer: D) -> Result<Self, dyn de::Error>
+//     where
+//         D: Deserializer<'de>,
+//     {
+//         deserializer.deserialize_map(CmdVisitor)
+//     }
+// }
 
 impl<C: Command> LogEntry<C> {
     /// Create a new `LogEntry`
