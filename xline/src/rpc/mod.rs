@@ -69,6 +69,8 @@ mod leasepb {
     tonic::include_proto!("leasepb");
 }
 
+use serde::{Deserialize, Serialize};
+
 pub use self::etcdserverpb::range_request::{SortOrder, SortTarget};
 pub(crate) use self::etcdserverpb::{
     compare::{CompareResult, CompareTarget, TargetUnion},
@@ -90,3 +92,65 @@ pub(crate) use self::v3lockpb::{
     lock_server::{Lock, LockServer},
     LockRequest, LockResponse, UnlockRequest, UnlockResponse,
 };
+
+/// Wrapper for requests
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub(crate) enum RequestWrapper {
+    /// `RequestOp`
+    RequestOp(RequestOp),
+}
+
+/// Wrapper for responses
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub(crate) enum ResponseWrapper {
+    /// `ResponseOp`
+    ResponseOp(ResponseOp),
+}
+
+/// impl `From` trait for all request types
+macro_rules! impl_from_requests {
+    ($($req:ident),*) => {
+        $(
+            impl From<$req> for RequestWrapper {
+                fn from(req: $req) -> Self {
+                    RequestWrapper::$req(req)
+                }
+            }
+
+            impl From<RequestWrapper> for $req {
+                fn from(req: RequestWrapper) -> Self {
+                    match req {
+                        RequestWrapper::$req(req) => req,
+                        // _ => panic!("wrong request type"),
+                    }
+                }
+            }
+        )*
+    };
+}
+
+/// impl `From` trait for all response types
+macro_rules! impl_from_responses {
+    ($($resp:ident),*) => {
+        $(
+            impl From<$resp> for ResponseWrapper {
+                fn from(resp: $resp) -> Self {
+                    ResponseWrapper::$resp(resp)
+                }
+            }
+
+            impl From<ResponseWrapper> for $resp {
+                fn from(resp: ResponseWrapper) -> Self {
+                    match resp {
+                        ResponseWrapper::$resp(resp) => resp,
+                        // _ => panic!("wrong response type"),
+                    }
+                }
+            }
+        )*
+    };
+}
+
+impl_from_requests!(RequestOp);
+
+impl_from_responses!(ResponseOp);

@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use curp::{client::Client, cmd::ProposeId, error::ProposeError};
 use log::debug;
-use prost::Message;
 use tokio::time::Duration;
 use uuid::Uuid;
 
@@ -13,8 +12,8 @@ use super::{
 use crate::{
     rpc::{
         Compare, CompareResult, CompareTarget, DeleteRangeRequest, Lock, LockRequest, LockResponse,
-        PutRequest, Request, RequestOp, Response, TargetUnion, TxnRequest, UnlockRequest,
-        UnlockResponse,
+        PutRequest, Request, RequestOp, RequestWrapper, Response, TargetUnion, TxnRequest,
+        UnlockRequest, UnlockResponse,
     },
     storage::KvStore,
 };
@@ -67,7 +66,9 @@ impl LockServer {
         let range_request_op = RequestOp {
             request: Some(request),
         };
-        let cmd = Command::new(key_ranges, range_request_op.encode_to_vec(), propose_id);
+        let bin_req = bincode::serialize(&RequestWrapper::RequestOp(range_request_op))
+            .unwrap_or_else(|e| panic!("Failed to serialize RequestWrapper, error: {e}"));
+        let cmd = Command::new(key_ranges, bin_req, propose_id);
         self.client.propose_indexed(cmd.clone()).await
     }
 
@@ -124,7 +125,7 @@ impl Lock for LockServer {
                 .await;
             match result {
                 Ok((res_op, sync_res)) => {
-                    let mut res = KvServer::parse_response_op(res_op.decode());
+                    let mut res = KvServer::parse_response_op(res_op.decode().into());
                     let revision = sync_res.revision();
                     debug!("Get revision {:?} for LockRequest", revision);
                     KvServer::update_header_revision(&mut res, revision);
@@ -169,7 +170,7 @@ impl Lock for LockServer {
             .await;
         match result {
             Ok((res_op, sync_res)) => {
-                let mut res = KvServer::parse_response_op(res_op.decode());
+                let mut res = KvServer::parse_response_op(res_op.decode().into());
                 let revision = sync_res.revision();
                 debug!("Get revision {:?} for UnlockRequest", revision);
                 KvServer::update_header_revision(&mut res, revision);

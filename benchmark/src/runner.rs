@@ -163,7 +163,6 @@ impl CommandRunner {
     }
 
     /// Create clients
-    #[allow(clippy::panic)]
     async fn crate_clients(&self) -> Result<Vec<Client>> {
         let mut clients = Vec::with_capacity(self.args.clients);
         for _ in 0..self.args.clients {
