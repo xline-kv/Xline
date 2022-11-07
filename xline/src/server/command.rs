@@ -16,7 +16,7 @@ use tokio::sync::oneshot;
 
 use crate::{
     rpc::{RequestWrapper, ResponseWrapper},
-    storage::KvStore,
+    storage::{authstore::AuthStore, KvStore},
 };
 
 /// Range start and end to get all keys
@@ -100,6 +100,21 @@ impl KeyRange {
     pub(crate) fn contains_key(&self, key: &[u8]) -> bool {
         self.contains(key)
     }
+
+    /// Get end of range with prefix
+    #[allow(clippy::indexing_slicing)] // end[i] is always valid
+    pub(crate) fn get_prefix(key: &[u8]) -> Vec<u8> {
+        let mut end = key.to_vec();
+        for i in (0..key.len()).rev() {
+            if key[i] < 0xFF {
+                end[i] = end[i].wrapping_add(1);
+                end.truncate(i.wrapping_add(1));
+                return end;
+            }
+        }
+        // next prefix does not exist (e.g., 0xffff);
+        vec![0]
+    }
 }
 
 impl RangeBounds<[u8]> for KeyRange {
@@ -123,12 +138,17 @@ impl RangeBounds<[u8]> for KeyRange {
 pub(crate) struct CommandExecutor {
     /// Kv Storage
     storage: Arc<KvStore>,
+    /// Auth Storage
+    auth_storage: Arc<AuthStore>,
 }
 
 impl CommandExecutor {
     /// New `CommandExecutor`
-    pub(crate) fn new(storage: Arc<KvStore>) -> Self {
-        Self { storage }
+    pub(crate) fn new(storage: Arc<KvStore>, auth_storage: Arc<AuthStore>) -> Self {
+        Self {
+            storage,
+            auth_storage,
+        }
     }
 }
 
@@ -138,7 +158,11 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
         let (_, request_data, id) = cmd.clone().unpack();
         let wrapper: RequestWrapper = bincode::deserialize(&request_data)
             .unwrap_or_else(|e| panic!("Failed to serialize RequestWrapper, error: {e}"));
-        let receiver = self.storage.send_req(id, wrapper).await;
+        #[allow(clippy::wildcard_enum_match_arm)]
+        let receiver = match wrapper {
+            RequestWrapper::RequestOp(_) => self.storage.send_req(id, wrapper).await,
+            _ => self.auth_storage.send_req(id, wrapper).await,
+        };
         receiver
             .await
             .unwrap_or_else(|_| panic!("Failed to receive response from storage"))
@@ -149,7 +173,14 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
         cmd: &Command,
         _index: LogIndex,
     ) -> Result<SyncResponse, ExecuteError> {
-        let receiver = self.storage.send_sync(cmd.id().clone()).await;
+        let (_, request_data, id) = cmd.clone().unpack();
+        let wrapper: RequestWrapper = bincode::deserialize(&request_data)
+            .unwrap_or_else(|e| panic!("Failed to serialize RequestWrapper, error: {e}"));
+        #[allow(clippy::wildcard_enum_match_arm)]
+        let receiver = match wrapper {
+            RequestWrapper::RequestOp(_) => self.storage.send_sync(id).await,
+            _ => self.auth_storage.send_sync(id).await,
+        };
         receiver
             .await
             .or_else(|_| panic!("Failed to receive response from storage"))

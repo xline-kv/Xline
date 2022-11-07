@@ -63,10 +63,10 @@ impl LockServer {
                 })
                 .collect(),
         };
-        let range_request_op = RequestOp {
+        let request_op = RequestOp {
             request: Some(request),
         };
-        let bin_req = bincode::serialize(&RequestWrapper::RequestOp(range_request_op))
+        let bin_req = bincode::serialize(&RequestWrapper::from(request_op))
             .unwrap_or_else(|e| panic!("Failed to serialize RequestWrapper, error: {e}"));
         let cmd = Command::new(key_ranges, bin_req, propose_id);
         self.client.propose_indexed(cmd.clone()).await

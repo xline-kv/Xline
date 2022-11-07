@@ -1,3 +1,5 @@
+/// Xline auth server
+mod auth_server;
 /// Command to be executed
 pub(crate) mod command;
 /// Xline kv server

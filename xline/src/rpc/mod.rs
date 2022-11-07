@@ -71,8 +71,9 @@ mod leasepb {
 
 use serde::{Deserialize, Serialize};
 
-pub use self::etcdserverpb::range_request::{SortOrder, SortTarget};
+pub(crate) use self::authpb::{permission::Type, Permission, Role, User};
 pub(crate) use self::etcdserverpb::{
+    auth_server::{Auth, AuthServer},
     compare::{CompareResult, CompareTarget, TargetUnion},
     kv_server::{Kv, KvServer},
     lease_server::{Lease, LeaseServer},
@@ -80,12 +81,22 @@ pub(crate) use self::etcdserverpb::{
     response_op::Response,
     watch_request::RequestUnion,
     watch_server::{Watch, WatchServer},
-    CompactionRequest, CompactionResponse, Compare, DeleteRangeRequest, DeleteRangeResponse,
-    LeaseGrantRequest, LeaseGrantResponse, LeaseKeepAliveRequest, LeaseKeepAliveResponse,
-    LeaseLeasesRequest, LeaseLeasesResponse, LeaseRevokeRequest, LeaseRevokeResponse,
-    LeaseTimeToLiveRequest, LeaseTimeToLiveResponse, PutRequest, PutResponse, RangeRequest,
-    RangeResponse, RequestOp, ResponseHeader, ResponseOp, TxnRequest, TxnResponse,
-    WatchCancelRequest, WatchCreateRequest, WatchRequest, WatchResponse,
+    AuthDisableRequest, AuthDisableResponse, AuthEnableRequest, AuthEnableResponse,
+    AuthRoleAddRequest, AuthRoleAddResponse, AuthRoleDeleteRequest, AuthRoleDeleteResponse,
+    AuthRoleGetRequest, AuthRoleGetResponse, AuthRoleGrantPermissionRequest,
+    AuthRoleGrantPermissionResponse, AuthRoleListRequest, AuthRoleListResponse,
+    AuthRoleRevokePermissionRequest, AuthRoleRevokePermissionResponse, AuthStatusRequest,
+    AuthStatusResponse, AuthUserAddRequest, AuthUserAddResponse, AuthUserChangePasswordRequest,
+    AuthUserChangePasswordResponse, AuthUserDeleteRequest, AuthUserDeleteResponse,
+    AuthUserGetRequest, AuthUserGetResponse, AuthUserGrantRoleRequest, AuthUserGrantRoleResponse,
+    AuthUserListRequest, AuthUserListResponse, AuthUserRevokeRoleRequest,
+    AuthUserRevokeRoleResponse, AuthenticateRequest, AuthenticateResponse, CompactionRequest,
+    CompactionResponse, Compare, DeleteRangeRequest, DeleteRangeResponse, LeaseGrantRequest,
+    LeaseGrantResponse, LeaseKeepAliveRequest, LeaseKeepAliveResponse, LeaseLeasesRequest,
+    LeaseLeasesResponse, LeaseRevokeRequest, LeaseRevokeResponse, LeaseTimeToLiveRequest,
+    LeaseTimeToLiveResponse, PutRequest, PutResponse, RangeRequest, RangeResponse, RequestOp,
+    ResponseHeader, ResponseOp, TxnRequest, TxnResponse, WatchCancelRequest, WatchCreateRequest,
+    WatchRequest, WatchResponse,
 };
 pub(crate) use self::mvccpb::{event::EventType, Event, KeyValue};
 pub(crate) use self::v3lockpb::{
@@ -93,11 +104,47 @@ pub(crate) use self::v3lockpb::{
     LockRequest, LockResponse, UnlockRequest, UnlockResponse,
 };
 
+pub use self::etcdserverpb::range_request::{SortOrder, SortTarget};
+
 /// Wrapper for requests
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) enum RequestWrapper {
     /// `RequestOp`
     RequestOp(RequestOp),
+    /// `AuthEnableRequest`
+    AuthEnableRequest(AuthEnableRequest),
+    /// `AuthDisableRequest`
+    AuthDisableRequest(AuthDisableRequest),
+    /// `AuthStatusRequest`
+    AuthStatusRequest(AuthStatusRequest),
+    /// `AuthRoleAddRequest`
+    AuthRoleAddRequest(AuthRoleAddRequest),
+    /// `AuthRoleDeleteRequest`
+    AuthRoleDeleteRequest(AuthRoleDeleteRequest),
+    /// `AuthRoleGetRequest`
+    AuthRoleGetRequest(AuthRoleGetRequest),
+    /// `AuthRoleGrantPermissionRequest`
+    AuthRoleGrantPermissionRequest(AuthRoleGrantPermissionRequest),
+    /// `AuthRoleListRequest`
+    AuthRoleListRequest(AuthRoleListRequest),
+    /// `AuthRoleRevokePermissionRequest`
+    AuthRoleRevokePermissionRequest(AuthRoleRevokePermissionRequest),
+    /// `AuthUserAddRequest`
+    AuthUserAddRequest(AuthUserAddRequest),
+    /// `AuthUserChangePasswordRequest`
+    AuthUserChangePasswordRequest(AuthUserChangePasswordRequest),
+    /// `AuthUserDeleteRequest`
+    AuthUserDeleteRequest(AuthUserDeleteRequest),
+    /// `AuthUserGetRequest`
+    AuthUserGetRequest(AuthUserGetRequest),
+    /// `AuthUserGrantRoleRequest`
+    AuthUserGrantRoleRequest(AuthUserGrantRoleRequest),
+    /// `AuthUserListRequest`
+    AuthUserListRequest(AuthUserListRequest),
+    /// `AuthUserRevokeRoleRequest`
+    AuthUserRevokeRoleRequest(AuthUserRevokeRoleRequest),
+    /// `AuthenticateRequest`
+    AuthenticateRequest(AuthenticateRequest),
 }
 
 /// Wrapper for responses
@@ -105,6 +152,40 @@ pub(crate) enum RequestWrapper {
 pub(crate) enum ResponseWrapper {
     /// `ResponseOp`
     ResponseOp(ResponseOp),
+    /// `AuthEnableResponse`
+    AuthEnableResponse(AuthEnableResponse),
+    /// `AuthDisableResponse`
+    AuthDisableResponse(AuthDisableResponse),
+    /// `AuthStatusResponse`
+    AuthStatusResponse(AuthStatusResponse),
+    /// `AuthRoleAddResponse`
+    AuthRoleAddResponse(AuthRoleAddResponse),
+    /// `AuthRoleDeleteResponse`
+    AuthRoleDeleteResponse(AuthRoleDeleteResponse),
+    /// `AuthRoleGetResponse`
+    AuthRoleGetResponse(AuthRoleGetResponse),
+    /// `AuthRoleGrantPermissionResponse`
+    AuthRoleGrantPermissionResponse(AuthRoleGrantPermissionResponse),
+    /// `AuthRoleListResponse`
+    AuthRoleListResponse(AuthRoleListResponse),
+    /// `AuthRoleRevokePermissionResponse`
+    AuthRoleRevokePermissionResponse(AuthRoleRevokePermissionResponse),
+    /// `AuthUserAddResponse`
+    AuthUserAddResponse(AuthUserAddResponse),
+    /// `AuthUserChangePasswordResponse`
+    AuthUserChangePasswordResponse(AuthUserChangePasswordResponse),
+    /// `AuthUserDeleteResponse`
+    AuthUserDeleteResponse(AuthUserDeleteResponse),
+    /// `AuthUserGetResponse`
+    AuthUserGetResponse(AuthUserGetResponse),
+    /// `AuthUserGrantRoleResponse`
+    AuthUserGrantRoleResponse(AuthUserGrantRoleResponse),
+    /// `AuthUserListResponse`
+    AuthUserListResponse(AuthUserListResponse),
+    /// `AuthUserRevokeRoleResponse`
+    AuthUserRevokeRoleResponse(AuthUserRevokeRoleResponse),
+    /// `AuthenticateResponse`
+    AuthenticateResponse(AuthenticateResponse),
 }
 
 /// impl `From` trait for all request types
@@ -121,7 +202,7 @@ macro_rules! impl_from_requests {
                 fn from(req: RequestWrapper) -> Self {
                     match req {
                         RequestWrapper::$req(req) => req,
-                        // _ => panic!("wrong request type"),
+                        _ => panic!("wrong request type"),
                     }
                 }
             }
@@ -143,7 +224,7 @@ macro_rules! impl_from_responses {
                 fn from(resp: ResponseWrapper) -> Self {
                     match resp {
                         ResponseWrapper::$resp(resp) => resp,
-                        // _ => panic!("wrong response type"),
+                        _ => panic!("wrong response type"),
                     }
                 }
             }
@@ -151,6 +232,44 @@ macro_rules! impl_from_responses {
     };
 }
 
-impl_from_requests!(RequestOp);
+impl_from_requests!(
+    RequestOp,
+    AuthEnableRequest,
+    AuthDisableRequest,
+    AuthStatusRequest,
+    AuthRoleAddRequest,
+    AuthRoleDeleteRequest,
+    AuthRoleGetRequest,
+    AuthRoleGrantPermissionRequest,
+    AuthRoleListRequest,
+    AuthRoleRevokePermissionRequest,
+    AuthUserAddRequest,
+    AuthUserChangePasswordRequest,
+    AuthUserDeleteRequest,
+    AuthUserGetRequest,
+    AuthUserGrantRoleRequest,
+    AuthUserListRequest,
+    AuthUserRevokeRoleRequest,
+    AuthenticateRequest
+);
 
-impl_from_responses!(ResponseOp);
+impl_from_responses!(
+    ResponseOp,
+    AuthEnableResponse,
+    AuthDisableResponse,
+    AuthStatusResponse,
+    AuthRoleAddResponse,
+    AuthRoleDeleteResponse,
+    AuthRoleGetResponse,
+    AuthRoleGrantPermissionResponse,
+    AuthRoleListResponse,
+    AuthRoleRevokePermissionResponse,
+    AuthUserAddResponse,
+    AuthUserChangePasswordResponse,
+    AuthUserDeleteResponse,
+    AuthUserGetResponse,
+    AuthUserGrantRoleResponse,
+    AuthUserListResponse,
+    AuthUserRevokeRoleResponse,
+    AuthenticateResponse
+);

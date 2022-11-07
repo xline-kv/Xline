@@ -156,11 +156,14 @@ impl KvStoreBackend {
     fn handle_kv_requests(
         &self,
         id: &ProposeId,
-        request_wrapper: RequestWrapper,
+        wrapper: RequestWrapper,
     ) -> Result<ResponseWrapper, ExecuteError> {
-        let RequestWrapper::RequestOp(request_op) = request_wrapper;
-        self.handle_request_op(id, request_op)
-            .map(ResponseWrapper::ResponseOp)
+        if let RequestWrapper::RequestOp(request_op) = wrapper {
+            self.handle_request_op(id, request_op)
+                .map(ResponseWrapper::ResponseOp)
+        } else {
+            unreachable!("RequestWrapper should be RequestOp")
+        }
     }
 
     /// Handle `RequestOp`
