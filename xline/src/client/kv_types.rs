@@ -1,19 +1,5 @@
 pub use crate::rpc::{SortOrder, SortTarget};
-
-/// Get end of range with prefix
-#[allow(clippy::indexing_slicing)] // end[i] is always valid
-fn get_prefix(key: &[u8]) -> Vec<u8> {
-    let mut end = key.to_vec();
-    for i in (0..key.len()).rev() {
-        if key[i] < 0xFF {
-            end[i] = end[i].wrapping_add(1);
-            end.truncate(i.wrapping_add(1));
-            return end;
-        }
-    }
-    // next prefix does not exist (e.g., 0xffff);
-    vec![0]
-}
+use crate::server::command::KeyRange;
 
 /// Request for `Put`
 #[derive(Debug)]
@@ -143,7 +129,7 @@ impl RangeRequest {
             self.inner.key = vec![0];
             self.inner.range_end = vec![0];
         } else {
-            self.inner.range_end = get_prefix(&self.inner.key);
+            self.inner.range_end = KeyRange::get_prefix(&self.inner.key);
         }
         self
     }
@@ -382,7 +368,7 @@ impl DeleteRangeRequest {
             self.inner.key = vec![0];
             self.inner.range_end = vec![0];
         } else {
-            self.inner.range_end = get_prefix(&self.inner.key);
+            self.inner.range_end = KeyRange::get_prefix(&self.inner.key);
         }
         self
     }

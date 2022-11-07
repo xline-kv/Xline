@@ -7,6 +7,7 @@ use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
 
 use super::{
+    auth_server::AuthServer,
     command::{Command, CommandExecutor},
     kv_server::KvServer,
     lease_server::LeaseServer,
@@ -15,10 +16,10 @@ use super::{
 };
 use crate::{
     rpc::{
-        KvServer as RpcKvServer, LeaseServer as RpcLeaseServer, LockServer as RpcLockServer,
-        WatchServer as RpcWatchServer,
+        AuthServer as RpcAuthServer, KvServer as RpcKvServer, LeaseServer as RpcLeaseServer,
+        LockServer as RpcLockServer, WatchServer as RpcWatchServer,
     },
-    storage::KvStore,
+    storage::{authstore::AuthStore, KvStore},
 };
 
 /// Rpc Server of curp protocol
@@ -33,7 +34,9 @@ pub struct XlineServer {
     /// Address of peers
     peers: Vec<SocketAddr>,
     /// Kv storage
-    storage: Arc<KvStore>,
+    kv_storage: Arc<KvStore>,
+    /// Auth storage
+    auth_storage: Arc<AuthStore>,
     /// Consensus Server
     //node: Arc<DefaultServer<Command, CommandExecutor>>,
     /// Consensus client
@@ -61,7 +64,8 @@ impl XlineServer {
         leader_addr: SocketAddr,
         self_addr: SocketAddr,
     ) -> Self {
-        let storage = Arc::new(KvStore::new());
+        let kv_storage = Arc::new(KvStore::new());
+        let auth_storage = Arc::new(AuthStore::new());
 
         let mut all_members = peers.clone();
         all_members.push(self_addr);
@@ -76,7 +80,8 @@ impl XlineServer {
         Self {
             name,
             peers,
-            storage,
+            kv_storage,
+            auth_storage,
             client,
             is_leader,
             leader_index,
@@ -91,11 +96,13 @@ impl XlineServer {
     /// Will return `Err` when `tonic::Server` serve return an error
     #[inline]
     pub async fn start(&self, addr: SocketAddr) -> Result<()> {
-        let (kv_server, lock_server, lease_server, watch_server, curp_server) = self.init_servers();
+        let (kv_server, lock_server, lease_server, auth_server, watch_server, curp_server) =
+            self.init_servers();
         Ok(Server::builder()
             .add_service(RpcLockServer::new(lock_server))
             .add_service(RpcKvServer::new(kv_server))
             .add_service(RpcLeaseServer::new(lease_server))
+            .add_service(RpcAuthServer::new(auth_server))
             .add_service(RpcWatchServer::new(watch_server))
             .add_service(ProtocolServer::new(curp_server))
             .serve(addr)
@@ -109,11 +116,13 @@ impl XlineServer {
     /// Will return `Err` when `tonic::Server` serve return an error
     #[inline]
     pub async fn start_from_listener(&self, xline_listener: TcpListener) -> Result<()> {
-        let (kv_server, lock_server, lease_server, watch_server, curp_server) = self.init_servers();
+        let (kv_server, lock_server, lease_server, auth_server, watch_server, curp_server) =
+            self.init_servers();
         Ok(Server::builder()
             .add_service(RpcLockServer::new(lock_server))
             .add_service(RpcKvServer::new(kv_server))
             .add_service(RpcLeaseServer::new(lease_server))
+            .add_service(RpcAuthServer::new(auth_server))
             .add_service(RpcWatchServer::new(watch_server))
             .add_service(ProtocolServer::new(curp_server))
             .serve_with_incoming(TcpListenerStream::new(xline_listener))
@@ -122,30 +131,44 @@ impl XlineServer {
 
     /// Init `KvServer`, `LockServer`, `LeaseServer`, `WatchServer` and `CurpServer`
     /// for the Xline Server.
-    fn init_servers(&self) -> (KvServer, LockServer, LeaseServer, WatchServer, CurpServer) {
+    fn init_servers(
+        &self,
+    ) -> (
+        KvServer,
+        LockServer,
+        LeaseServer,
+        AuthServer,
+        WatchServer,
+        CurpServer,
+    ) {
         (
             KvServer::new(
-                Arc::clone(&self.storage),
+                Arc::clone(&self.kv_storage),
                 Arc::clone(&self.client),
                 self.name.clone(),
             ),
             LockServer::new(
-                Arc::clone(&self.storage),
+                Arc::clone(&self.kv_storage),
                 Arc::clone(&self.client),
                 self.name.clone(),
             ),
             LeaseServer::new(
-                Arc::clone(&self.storage),
+                Arc::clone(&self.kv_storage),
                 Arc::clone(&self.client),
                 self.name.clone(),
             ),
-            WatchServer::new(self.storage.kv_watcher()),
+            AuthServer::new(
+                Arc::clone(&self.auth_storage),
+                Arc::clone(&self.client),
+                self.name.clone(),
+            ),
+            WatchServer::new(self.kv_storage.kv_watcher()),
             CurpServer::new(
                 self.self_addr.to_string().as_str(),
                 self.is_leader,
                 0,
                 self.peers.iter().map(ToString::to_string).collect(),
-                CommandExecutor::new(Arc::clone(&self.storage)),
+                CommandExecutor::new(Arc::clone(&self.kv_storage), Arc::clone(&self.auth_storage)),
             ),
         )
     }
