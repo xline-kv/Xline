@@ -4,7 +4,6 @@ use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::cmd::ProposeId;
 use log::debug;
 use parking_lot::Mutex;
-use prost::Message;
 use tokio::sync::{mpsc, oneshot};
 
 use super::index::IndexOperate;
@@ -12,11 +11,11 @@ use super::{db::DB, index::Index, kvwatcher::KvWatcher};
 use crate::rpc::{
     Compare, CompareResult, CompareTarget, DeleteRangeRequest, DeleteRangeResponse, Event,
     EventType, KeyValue, PutRequest, PutResponse, RangeRequest, RangeResponse, Request, RequestOp,
-    Response, ResponseHeader, ResponseOp, SortOrder, SortTarget, TargetUnion, TxnRequest,
-    TxnResponse,
+    RequestWrapper, Response, ResponseHeader, ResponseOp, ResponseWrapper, SortOrder, SortTarget,
+    TargetUnion, TxnRequest, TxnResponse,
 };
 use crate::server::command::{
-    Command, CommandResponse, ExecutionRequest, KeyRange, SyncRequest, SyncResponse,
+    CommandResponse, ExecutionRequest, KeyRange, SyncRequest, SyncResponse,
 };
 
 /// Default channel size
@@ -88,8 +87,12 @@ impl KvStore {
     }
 
     /// Send execution request to KV store
-    pub(crate) async fn send_req(&self, cmd: Command) -> oneshot::Receiver<CommandResponse> {
-        let (req, receiver) = ExecutionRequest::new(cmd);
+    pub(crate) async fn send_req(
+        &self,
+        id: ProposeId,
+        req: RequestWrapper,
+    ) -> oneshot::Receiver<CommandResponse> {
+        let (req, receiver) = ExecutionRequest::new(id, req);
         assert!(
             self.exec_tx.send(req).await.is_ok(),
             "Command receiver dropped"
@@ -141,19 +144,23 @@ impl KvStoreBackend {
     /// speculative execute command
     pub(crate) fn speculative_exec(&self, execution_req: ExecutionRequest) {
         debug!("Receive Execution Request {:?}", execution_req);
-        let (cmd, res_sender) = execution_req.unpack();
-        let (key, request_data, id) = cmd.unpack();
-        let request_op = RequestOp::decode(request_data.as_slice()).unwrap_or_else(|e| {
-            panic!(
-                "Failed to decode request, key is {:?}, error is {:?}",
-                key, e
-            )
-        });
-        let response = self.handle_request_op(&id, request_op);
+        let (id, req, res_sender) = execution_req.unpack();
+        let response = self.handle_kv_requests(&id, req);
         assert!(
             res_sender.send(CommandResponse::new(&response)).is_ok(),
             "Failed to send response"
         );
+    }
+
+    /// Handle KV requests
+    fn handle_kv_requests(
+        &self,
+        id: &ProposeId,
+        request_wrapper: RequestWrapper,
+    ) -> ResponseWrapper {
+        let RequestWrapper::RequestOp(request_op) = request_wrapper;
+        let response = self.handle_request_op(id, request_op);
+        ResponseWrapper::ResponseOp(response)
     }
 
     /// Handle `RequestOp`

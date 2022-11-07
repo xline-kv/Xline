@@ -10,12 +10,13 @@ use curp::{
     error, LogIndex,
 };
 use itertools::Itertools;
-use prost::Message;
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
-use crate::rpc::ResponseOp;
-use crate::storage::KvStore;
+use crate::{
+    rpc::{RequestWrapper, ResponseWrapper},
+    storage::KvStore,
+};
 
 /// Range start and end to get all keys
 const UNBOUNDED: &[u8] = &[0_u8];
@@ -133,7 +134,10 @@ impl CommandExecutor {
 #[async_trait::async_trait]
 impl CurpCommandExecutor<Command> for CommandExecutor {
     async fn execute(&self, cmd: &Command) -> Result<CommandResponse, error::ExecuteError> {
-        let receiver = self.storage.send_req(cmd.clone()).await;
+        let (_, request_data, id) = cmd.clone().unpack();
+        let wrapper: RequestWrapper = bincode::deserialize(&request_data)
+            .unwrap_or_else(|e| panic!("Failed to serialize RequestWrapper, error: {e}"));
+        let receiver = self.storage.send_req(id, wrapper).await;
         receiver
             .await
             .or_else(|_| panic!("Failed to receive response from storage"))
@@ -201,16 +205,17 @@ pub(crate) struct CommandResponse {
 
 impl CommandResponse {
     /// New `ResponseOp` from `CommandResponse`
-    pub(crate) fn new(res: &ResponseOp) -> Self {
+    pub(crate) fn new(res: &ResponseWrapper) -> Self {
         Self {
-            response: res.encode_to_vec(),
+            response: bincode::serialize(res)
+                .unwrap_or_else(|e| panic!("Failed to serialize ResponseWrapper, error: {e}")),
         }
     }
 
     /// Decode `CommandResponse` and get `ResponseOp`
-    pub(crate) fn decode(&self) -> ResponseOp {
-        ResponseOp::decode(self.response.as_slice())
-            .unwrap_or_else(|e| panic!("Failed to decode CommandResponse, error is {:?}", e))
+    pub(crate) fn decode(&self) -> ResponseWrapper {
+        bincode::deserialize(&self.response)
+            .unwrap_or_else(|e| panic!("Failed to deserialize ResponseWrapper, error: {e}"))
     }
 }
 
@@ -266,19 +271,25 @@ impl SyncResponse {
 /// Execution Request
 #[derive(Debug)]
 pub(crate) struct ExecutionRequest {
-    /// Command to execute
-    cmd: Command,
+    /// Propose Id
+    id: ProposeId,
+    /// Request to execute
+    req: RequestWrapper,
     /// Command response sender
     res_sender: oneshot::Sender<CommandResponse>,
 }
 
 impl ExecutionRequest {
     /// New `ExectionRequest`
-    pub(crate) fn new(cmd: Command) -> (Self, oneshot::Receiver<CommandResponse>) {
+    pub(crate) fn new(
+        id: ProposeId,
+        req: RequestWrapper,
+    ) -> (Self, oneshot::Receiver<CommandResponse>) {
         let (tx, rx) = oneshot::channel();
         (
             Self {
-                cmd,
+                id,
+                req,
                 res_sender: tx,
             },
             rx,
@@ -286,9 +297,13 @@ impl ExecutionRequest {
     }
 
     /// Consume `ExecutionRequest` and get ownership of each field
-    pub(crate) fn unpack(self) -> (Command, oneshot::Sender<CommandResponse>) {
-        let Self { cmd, res_sender } = self;
-        (cmd, res_sender)
+    pub(crate) fn unpack(self) -> (ProposeId, RequestWrapper, oneshot::Sender<CommandResponse>) {
+        let Self {
+            id,
+            req,
+            res_sender,
+        } = self;
+        (id, req, res_sender)
     }
 }
 

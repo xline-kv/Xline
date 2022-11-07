@@ -3,11 +3,13 @@ use std::net::SocketAddr;
 // use anyhow::{anyhow, Result};
 use curp::{client::Client as CurpClient, cmd::ProposeId};
 use etcd_client::Client as EtcdClient;
-use prost::Message;
 use uuid::Uuid;
 
 use crate::{
-    rpc::{DeleteRangeResponse, PutResponse, RangeResponse, Request, RequestOp, Response},
+    rpc::{
+        DeleteRangeResponse, PutResponse, RangeResponse, Request, RequestOp, RequestWrapper,
+        Response, ResponseOp,
+    },
     server::command::{Command, KeyRange},
 };
 
@@ -87,18 +89,18 @@ impl Client {
                 start: request.key().to_vec(),
                 end: vec![],
             }];
-            let req_op = RequestOp {
+            let request_op = RequestOp {
                 request: Some(Request::RequestPut(request.into())),
             };
             let propose_id = self.generate_propose_id();
-            let cmd = Command::new(key_ranges, req_op.encode_to_vec(), propose_id);
+            let bin_req = bincode::serialize(&RequestWrapper::RequestOp(request_op))?;
+            let cmd = Command::new(key_ranges, bin_req, propose_id);
             let cmd_res = self.curp_client.propose(cmd).await?;
-            if let Some(Response::ResponsePut(response)) = cmd_res.decode().response {
+            let response_op: ResponseOp = cmd_res.decode().into();
+            if let Some(Response::ResponsePut(response)) = response_op.response {
                 Ok(response)
             } else {
-                Err(ClientError::ParseError(String::from(
-                    "PutResponse parse error",
-                )))
+                unreachable!("ResponsePut is expected");
             }
         } else {
             let opts = (&request).into();
@@ -122,18 +124,18 @@ impl Client {
                 start: request.key().to_vec(),
                 end: request.range_end().to_vec(),
             }];
-            let req_op = RequestOp {
+            let request_op = RequestOp {
                 request: Some(Request::RequestRange(request.into())),
             };
             let propose_id = self.generate_propose_id();
-            let cmd = Command::new(key_ranges, req_op.encode_to_vec(), propose_id);
+            let bin_req = bincode::serialize(&RequestWrapper::RequestOp(request_op))?;
+            let cmd = Command::new(key_ranges, bin_req, propose_id);
             let cmd_res = self.curp_client.propose(cmd).await?;
-            if let Some(Response::ResponseRange(response)) = cmd_res.decode().response {
+            let response_op: ResponseOp = cmd_res.decode().into();
+            if let Some(Response::ResponseRange(response)) = response_op.response {
                 Ok(response)
             } else {
-                Err(ClientError::ParseError(String::from(
-                    "RangeResponse parse error",
-                )))
+                unreachable!("ResponseRange is expected");
             }
         } else {
             let opts = (&request).into();
@@ -157,18 +159,18 @@ impl Client {
                 start: request.key().to_vec(),
                 end: request.range_end().to_vec(),
             }];
-            let req_op = RequestOp {
+            let request_op = RequestOp {
                 request: Some(Request::RequestDeleteRange(request.into())),
             };
             let propose_id = self.generate_propose_id();
-            let cmd = Command::new(key_ranges, req_op.encode_to_vec(), propose_id);
+            let bin_req = bincode::serialize(&RequestWrapper::RequestOp(request_op))?;
+            let cmd = Command::new(key_ranges, bin_req, propose_id);
             let cmd_res = self.curp_client.propose(cmd).await?;
-            if let Some(Response::ResponseDeleteRange(response)) = cmd_res.decode().response {
+            let response_op: ResponseOp = cmd_res.decode().into();
+            if let Some(Response::ResponseDeleteRange(response)) = response_op.response {
                 Ok(response)
             } else {
-                Err(ClientError::ParseError(String::from(
-                    "DeleteRangeResponse parse error",
-                )))
+                unreachable!("ResponseDeleteRange is expected");
             }
         } else {
             let opts = (&request).into();

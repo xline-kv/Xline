@@ -2,7 +2,6 @@ use std::{collections::HashSet, sync::Arc};
 
 use curp::{client::Client, cmd::ProposeId, error::ProposeError};
 use log::debug;
-use prost::Message;
 use tracing::instrument;
 use uuid::Uuid;
 
@@ -10,8 +9,8 @@ use super::command::{Command, CommandResponse, KeyRange, SyncResponse};
 use crate::{
     rpc::{
         CompactionRequest, CompactionResponse, DeleteRangeRequest, DeleteRangeResponse, Kv,
-        PutRequest, PutResponse, RangeRequest, RangeResponse, Request, RequestOp, Response,
-        ResponseOp, SortOrder, SortTarget, TxnRequest, TxnResponse,
+        PutRequest, PutResponse, RangeRequest, RangeResponse, Request, RequestOp, RequestWrapper,
+        Response, ResponseOp, SortOrder, SortTarget, TxnRequest, TxnResponse,
     },
     storage::KvStore,
 };
@@ -40,6 +39,7 @@ impl KvServer {
             name,
         }
     }
+
     /// Parse `ResponseOp`
     pub(crate) fn parse_response_op(response_op: ResponseOp) -> Response {
         if let Some(response) = response_op.response {
@@ -76,7 +76,9 @@ impl KvServer {
         let range_request_op = RequestOp {
             request: Some(request),
         };
-        Command::new(key_ranges, range_request_op.encode_to_vec(), propose_id)
+        let bin_req = bincode::serialize(&RequestWrapper::RequestOp(range_request_op))
+            .unwrap_or_else(|e| panic!("Failed to serialize RequestWrapper, error: {e}"));
+        Command::new(key_ranges, bin_req, propose_id)
     }
 
     /// Propose request and get result with slow path
@@ -344,8 +346,7 @@ impl Kv for KvServer {
                 .unwrap_or_else(|e| panic!("failed to receive response from kv storage, {e}"));
             (res_op, Some(sync_res))
         };
-
-        let mut res = Self::parse_response_op(res_op.decode());
+        let mut res = Self::parse_response_op(res_op.decode().into());
         if let Some(sync_res) = sync_res {
             let revision = sync_res.revision();
             debug!("Get revision {:?} for RangeRequest", revision);
@@ -385,7 +386,7 @@ impl Kv for KvServer {
             (res_op, Some(sync_res))
         };
 
-        let mut res = Self::parse_response_op(res_op.decode());
+        let mut res = Self::parse_response_op(res_op.decode().into());
         if let Some(sync_res) = sync_res {
             let revision = sync_res.revision();
             debug!("Get revision {:?} for PutRequest", revision);
@@ -430,7 +431,7 @@ impl Kv for KvServer {
             (res_op, Some(sync_res))
         };
 
-        let mut res = Self::parse_response_op(res_op.decode());
+        let mut res = Self::parse_response_op(res_op.decode().into());
         if let Some(sync_res) = sync_res {
             let revision = sync_res.revision();
             debug!("Get revision {:?} for DeleteRangeRequest", revision);
@@ -470,7 +471,7 @@ impl Kv for KvServer {
             (res_op, Some(sync_res))
         };
 
-        let mut res = Self::parse_response_op(res_op.decode());
+        let mut res = Self::parse_response_op(res_op.decode().into());
         if let Some(sync_res) = sync_res {
             let revision = sync_res.revision();
             debug!("Get revision {:?} for TxnRequest", revision);
