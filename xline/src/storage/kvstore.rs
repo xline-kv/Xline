@@ -538,6 +538,7 @@ impl KvStoreBackend {
 
     /// Sync `PutRequest` and return if kvstore is changed
     fn sync_put_request(&self, req: PutRequest, revision: i64, sub_revision: i64) -> Vec<Event> {
+        let prev_kv = self.get_range(&req.key, &[], 0).first().cloned();
         let new_rev = self
             .index
             .insert_or_update_revision(&req.key, revision, sub_revision);
@@ -550,12 +551,12 @@ impl KvStoreBackend {
             version: new_rev.version,
             ..KeyValue::default()
         };
-        let prev = self.db.insert(new_rev.as_revision(), kv.clone());
+        let _prev = self.db.insert(new_rev.as_revision(), kv.clone());
         let event = Event {
             #[allow(clippy::as_conversions)] // This cast is always valid
             r#type: EventType::Put as i32,
             kv: Some(kv),
-            prev_kv: prev,
+            prev_kv,
         };
         vec![event]
     }
