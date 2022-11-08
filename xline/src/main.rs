@@ -155,6 +155,7 @@ struct ServerArgs {
 }
 
 /// init tracing subscriber
+#[allow(unused)]
 fn init_subscriber(
     jaeger_online: bool,
     jaeger_offline: bool,

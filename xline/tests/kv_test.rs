@@ -10,15 +10,34 @@ use crate::common::Cluster;
 
 #[tokio::test]
 async fn test_kv_put() -> Result<(), Box<dyn Error>> {
+    struct TestCase {
+        req: PutRequest,
+        want_err: bool,
+    }
+
+    let tests = [
+        TestCase {
+            req: PutRequest::new("foo", "").with_ignore_value(true),
+            want_err: true,
+        },
+        TestCase {
+            req: PutRequest::new("foo", "bar"),
+            want_err: false,
+        },
+        TestCase {
+            req: PutRequest::new("foo", "").with_ignore_value(true),
+            want_err: false,
+        },
+    ];
+
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;
     let client = cluster.client().await;
 
-    client.put(PutRequest::new("foo", "bar")).await?;
-    let res = client.range(RangeRequest::new("foo")).await?;
-    assert_eq!(res.kvs.len(), 1);
-    assert_eq!(res.kvs[0].key, b"foo");
-    assert_eq!(res.kvs[0].value, b"bar");
+    for test in tests {
+        let res = client.put(test.req).await;
+        assert_eq!(res.is_err(), test.want_err);
+    }
 
     Ok(())
 }
