@@ -174,18 +174,7 @@ impl KvServer {
         if req.lease != 0 {
             return Err(tonic::Status::unimplemented("lease is unimplemented"));
         }
-        if req.ignore_lease {
-            return Err(tonic::Status::unimplemented(
-                "ignore_lease is unimplemented",
-            ));
-        }
-        if req.ignore_value {
-            return Err(tonic::Status::unimplemented(
-                "ignore_value is unimplemented",
-            ));
-        }
         // TODO: Remove the above errors after implementation
-
         if req.key.is_empty() {
             return Err(tonic::Status::invalid_argument("key is not provided"));
         }
@@ -376,7 +365,14 @@ impl Kv for KvServer {
             let res_op = self
                 .propose_fast_path(propose_id.clone(), Request::RequestPut(put_request))
                 .await
-                .unwrap_or_else(|e| panic!("failed to receive response from kv storage, {e}"));
+                .map_err(|err| {
+                    if let ProposeError::ExecutionError(e) = err {
+                        tonic::Status::invalid_argument(e)
+                    } else {
+                        panic!("failed to receive response from kv storage, {err}")
+                    }
+                })?;
+            // .unwrap_or_else(|e| panic!("failed to receive response from kv storage, {e}"));
             (res_op, None)
         } else {
             let (res_op, sync_res) = self

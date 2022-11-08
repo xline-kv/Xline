@@ -340,7 +340,7 @@ impl Connect {
         request: ProposeRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<ProposeResponse>, ProposeError> {
-        let option_client = self.get().await;
+        let mut client = self.get().await?;
         let mut tr = tonic::Request::new(request);
         tr.set_timeout(timeout);
 
@@ -349,10 +349,11 @@ impl Connect {
             prop.inject_context(&rpc_span.context(), &mut InjectMap(tr.metadata_mut()));
         });
 
-        match option_client {
-            Ok(mut client) => Ok(client.propose(tr).instrument(rpc_span).await?),
-            Err(e) => Err(e.into()),
-        }
+        client
+            .propose(tr)
+            .instrument(rpc_span)
+            .await
+            .map_err(Into::into)
     }
 
     /// send "wait synced" request

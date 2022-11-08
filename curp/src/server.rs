@@ -12,7 +12,7 @@ use opentelemetry::global;
 use parking_lot::{Mutex, MutexGuard, RwLock};
 use tokio::{net::TcpListener, task::JoinHandle};
 use tokio_stream::wrappers::TcpListenerStream;
-use tracing::{error, instrument, Span};
+use tracing::{debug, error, instrument, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{
@@ -422,6 +422,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
 
     /// Remove command from the speculative cmd pool
     fn spec_remove_cmd(spec: &Arc<Mutex<VecDeque<C>>>, cmd_id: &ProposeId) -> Option<C> {
+        debug!("remove cmd {:?} from spec pool", cmd_id);
         spec.map_lock(|mut spec_unlocked| {
             spec_unlocked
                 .iter()
@@ -480,7 +481,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             .map_lock(|mut spec| {
                 let is_conflict = Self::is_spec_conflict(&spec, &cmd);
                 spec.push_back(cmd.clone());
-
+                debug!("insert cmd {:?} to spec pool", cmd.id());
                 match (is_conflict, is_leader) {
                     // conflict and is leader
                     (true, true) => async {
@@ -518,6 +519,17 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                         // only the leader executes the command in speculative pool
                         cmd.execute(self.cmd_executor.as_ref())
                             .map(|er| {
+                                if let Some(n) = notifier {
+                                    n.notify(1);
+                                } else {
+                                    return ProposeResponse::new_error(
+                                        is_leader,
+                                        *self.term.read(),
+                                        &ProposeError::SyncedError(
+                                            "Sync cmd channel closed".to_owned(),
+                                        ),
+                                    );
+                                }
                                 er.map_or_else(
                                     |err| {
                                         ProposeResponse::new_error(
@@ -527,22 +539,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                                         )
                                     },
                                     |rv| {
-                                        // the leader needs to sync cmd
-                                        if let Some(n) = notifier {
-                                            n.notify(1);
-                                            ProposeResponse::new_result::<C>(
-                                                is_leader, self_term, &rv,
-                                            )
-                                        } else {
-                                            // TODO: this error should be reported earlier?
-                                            ProposeResponse::new_error(
-                                                is_leader,
-                                                *self.term.read(),
-                                                &ProposeError::SyncedError(
-                                                    "Sync cmd channel closed".to_owned(),
-                                                ),
-                                            )
-                                        }
+                                        ProposeResponse::new_result::<C>(is_leader, self_term, &rv)
                                     },
                                 )
                             })

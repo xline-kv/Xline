@@ -7,7 +7,8 @@ use curp::{
     cmd::{
         Command as CurpCommand, CommandExecutor as CurpCommandExecutor, ConflictCheck, ProposeId,
     },
-    error, LogIndex,
+    error::ExecuteError,
+    LogIndex,
 };
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -133,21 +134,21 @@ impl CommandExecutor {
 
 #[async_trait::async_trait]
 impl CurpCommandExecutor<Command> for CommandExecutor {
-    async fn execute(&self, cmd: &Command) -> Result<CommandResponse, error::ExecuteError> {
+    async fn execute(&self, cmd: &Command) -> Result<CommandResponse, ExecuteError> {
         let (_, request_data, id) = cmd.clone().unpack();
         let wrapper: RequestWrapper = bincode::deserialize(&request_data)
             .unwrap_or_else(|e| panic!("Failed to serialize RequestWrapper, error: {e}"));
         let receiver = self.storage.send_req(id, wrapper).await;
         receiver
             .await
-            .or_else(|_| panic!("Failed to receive response from storage"))
+            .unwrap_or_else(|_| panic!("Failed to receive response from storage"))
     }
 
     async fn after_sync(
         &self,
         cmd: &Command,
         _index: LogIndex,
-    ) -> Result<SyncResponse, error::ExecuteError> {
+    ) -> Result<SyncResponse, ExecuteError> {
         let receiver = self.storage.send_sync(cmd.id().clone()).await;
         receiver
             .await
@@ -276,7 +277,7 @@ pub(crate) struct ExecutionRequest {
     /// Request to execute
     req: RequestWrapper,
     /// Command response sender
-    res_sender: oneshot::Sender<CommandResponse>,
+    res_sender: oneshot::Sender<Result<CommandResponse, ExecuteError>>,
 }
 
 impl ExecutionRequest {
@@ -284,7 +285,10 @@ impl ExecutionRequest {
     pub(crate) fn new(
         id: ProposeId,
         req: RequestWrapper,
-    ) -> (Self, oneshot::Receiver<CommandResponse>) {
+    ) -> (
+        Self,
+        oneshot::Receiver<Result<CommandResponse, ExecuteError>>,
+    ) {
         let (tx, rx) = oneshot::channel();
         (
             Self {
@@ -297,7 +301,13 @@ impl ExecutionRequest {
     }
 
     /// Consume `ExecutionRequest` and get ownership of each field
-    pub(crate) fn unpack(self) -> (ProposeId, RequestWrapper, oneshot::Sender<CommandResponse>) {
+    pub(crate) fn unpack(
+        self,
+    ) -> (
+        ProposeId,
+        RequestWrapper,
+        oneshot::Sender<Result<CommandResponse, ExecuteError>>,
+    ) {
         let Self {
             id,
             req,

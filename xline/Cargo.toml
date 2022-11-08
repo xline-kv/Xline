@@ -47,6 +47,7 @@ opentelemetry-contrib = { version = "0.10.0", features = [
     "rt-tokio",
 ] }
 
+env_logger = "0.9.3"
 
 [build-dependencies]
 tonic-build = "0.7.2"

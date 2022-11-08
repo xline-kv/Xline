@@ -2,6 +2,7 @@ use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 
 use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::cmd::ProposeId;
+use curp::error::ExecuteError;
 use log::debug;
 use parking_lot::Mutex;
 use tokio::sync::{mpsc, oneshot};
@@ -91,7 +92,7 @@ impl KvStore {
         &self,
         id: ProposeId,
         req: RequestWrapper,
-    ) -> oneshot::Receiver<CommandResponse> {
+    ) -> oneshot::Receiver<Result<CommandResponse, ExecuteError>> {
         let (req, receiver) = ExecutionRequest::new(id, req);
         assert!(
             self.exec_tx.send(req).await.is_ok(),
@@ -145,11 +146,10 @@ impl KvStoreBackend {
     pub(crate) fn speculative_exec(&self, execution_req: ExecutionRequest) {
         debug!("Receive Execution Request {:?}", execution_req);
         let (id, req, res_sender) = execution_req.unpack();
-        let response = self.handle_kv_requests(&id, req);
-        assert!(
-            res_sender.send(CommandResponse::new(&response)).is_ok(),
-            "Failed to send response"
-        );
+        let result = self
+            .handle_kv_requests(&id, req)
+            .map(|res| CommandResponse::new(&res));
+        assert!(res_sender.send(result).is_ok(), "Failed to send response");
     }
 
     /// Handle KV requests
@@ -157,59 +157,23 @@ impl KvStoreBackend {
         &self,
         id: &ProposeId,
         request_wrapper: RequestWrapper,
-    ) -> ResponseWrapper {
+    ) -> Result<ResponseWrapper, ExecuteError> {
         let RequestWrapper::RequestOp(request_op) = request_wrapper;
-        let response = self.handle_request_op(id, request_op);
-        ResponseWrapper::ResponseOp(response)
+        self.handle_request_op(id, request_op)
+            .map(ResponseWrapper::ResponseOp)
     }
 
     /// Handle `RequestOp`
-    fn handle_request_op(&self, id: &ProposeId, request_op: RequestOp) -> ResponseOp {
+    fn handle_request_op(
+        &self,
+        id: &ProposeId,
+        request_op: RequestOp,
+    ) -> Result<ResponseOp, ExecuteError> {
         let request = request_op
             .request
             .unwrap_or_else(|| panic!("Received empty request"));
         debug!("Receive request {:?}", request);
-        let (response, is_txn) = match request {
-            Request::RequestRange(ref req) => {
-                debug!("Receive RangeRequest {:?}", req);
-                (
-                    ResponseOp {
-                        response: Some(Response::ResponseRange(self.handle_range_request(req))),
-                    },
-                    false,
-                )
-            }
-            Request::RequestPut(ref req) => {
-                debug!("Receive PutRequest {:?}", req);
-                (
-                    ResponseOp {
-                        response: Some(Response::ResponsePut(self.handle_put_request(req))),
-                    },
-                    false,
-                )
-            }
-            Request::RequestDeleteRange(ref req) => {
-                debug!("Receive DeleteRequest {:?}", req);
-                (
-                    ResponseOp {
-                        response: Some(Response::ResponseDeleteRange(
-                            self.handle_delete_range_request(req),
-                        )),
-                    },
-                    false,
-                )
-            }
-            Request::RequestTxn(ref req) => {
-                debug!("Receive TxnRequest {:?}", req);
-                (
-                    ResponseOp {
-                        response: Some(Response::ResponseTxn(self.handle_txn_request(id, req))),
-                    },
-                    true,
-                )
-            }
-        };
-        if is_txn {
+        if matches!(request, Request::RequestTxn(_)) {
             let _prev = self.sp_exec_pool.lock().entry(id.clone()).or_insert(vec![]);
         } else {
             let _prev = self
@@ -219,7 +183,35 @@ impl KvStoreBackend {
                 .and_modify(|req| req.push(request.clone()))
                 .or_insert_with(|| vec![request.clone()]);
         }
-        response
+        let response = match request {
+            Request::RequestRange(ref req) => {
+                debug!("Receive RangeRequest {:?}", req);
+                ResponseOp {
+                    response: Some(Response::ResponseRange(self.handle_range_request(req))),
+                }
+            }
+            Request::RequestPut(ref req) => {
+                debug!("Receive PutRequest {:?}", req);
+                ResponseOp {
+                    response: Some(Response::ResponsePut(self.handle_put_request(req)?)),
+                }
+            }
+            Request::RequestDeleteRange(ref req) => {
+                debug!("Receive DeleteRequest {:?}", req);
+                ResponseOp {
+                    response: Some(Response::ResponseDeleteRange(
+                        self.handle_delete_range_request(req),
+                    )),
+                }
+            }
+            Request::RequestTxn(ref req) => {
+                debug!("Receive TxnRequest {:?}", req);
+                ResponseOp {
+                    response: Some(Response::ResponseTxn(self.handle_txn_request(id, req)?)),
+                }
+            }
+        };
+        Ok(response)
     }
 
     /// Get `KeyValue` of a range
@@ -313,7 +305,7 @@ impl KvStoreBackend {
     }
 
     /// Handle `PutRequest`
-    fn handle_put_request(&self, req: &PutRequest) -> PutResponse {
+    fn handle_put_request(&self, req: &PutRequest) -> Result<PutResponse, ExecuteError> {
         let mut prev_kvs = self.get_range(&req.key, &[], 0);
         debug!("handle_put_request prev_kvs {:?}", prev_kvs);
         let prev = if prev_kvs.len() == 1 {
@@ -326,6 +318,11 @@ impl KvStoreBackend {
                 prev_kvs, req
             );
         };
+        if prev.is_none() && (req.ignore_lease || req.ignore_value) {
+            return Err(ExecuteError::InvalidCommand(
+                "ignore_lease or ignore_value is set but there is no previous value".to_owned(),
+            ));
+        }
         let mut response = PutResponse {
             header: Some(ResponseHeader {
                 revision: -1,
@@ -336,7 +333,7 @@ impl KvStoreBackend {
         if req.prev_kv {
             response.prev_kv = prev;
         }
-        response
+        Ok(response)
     }
 
     /// Handle `DeleteRangeRequest`
@@ -442,31 +439,33 @@ impl KvStoreBackend {
     }
 
     /// Handle `TxnRequest`
-    fn handle_txn_request(&self, id: &ProposeId, req: &TxnRequest) -> TxnResponse {
+    fn handle_txn_request(
+        &self,
+        id: &ProposeId,
+        req: &TxnRequest,
+    ) -> Result<TxnResponse, ExecuteError> {
         let success = req
             .compare
             .iter()
             .all(|compare| self.check_compare(compare));
-
-        let responses = if success {
-            req.success
-                .iter()
-                .map(|op| self.handle_request_op(id, op.clone()))
-                .collect()
+        let requests = if success {
+            req.success.iter()
         } else {
-            req.failure
-                .iter()
-                .map(|op| self.handle_request_op(id, op.clone()))
-                .collect()
+            req.failure.iter()
         };
-        TxnResponse {
+        let mut responses = Vec::with_capacity(requests.len());
+        for request_op in requests {
+            let response = self.handle_request_op(id, request_op.clone())?;
+            responses.push(response);
+        }
+        Ok(TxnResponse {
             header: Some(ResponseHeader {
                 revision: -1,
                 ..ResponseHeader::default()
             }),
             succeeded: success,
             responses,
-        }
+        })
     }
 
     /// Sync a Command to storage and generate revision for Command.
@@ -528,11 +527,11 @@ impl KvStoreBackend {
                 self.sync_put_request(req, revision, sub_revision)
             }
             Request::RequestDeleteRange(req) => {
-                debug!("Receive DeleteRequest {:?}", req);
+                debug!("Sync DeleteRequest {:?}", req);
                 self.sync_delete_range_request(req, revision, sub_revision)
             }
             Request::RequestTxn(req) => {
-                debug!("Receive TxnRequest {:?}", req);
+                debug!("Sync TxnRequest {:?}", req);
                 panic!("Sync for TxnRequest is impossible");
             }
         }
@@ -546,18 +545,32 @@ impl KvStoreBackend {
     /// Sync `PutRequest` and return if kvstore is changed
     fn sync_put_request(&self, req: PutRequest, revision: i64, sub_revision: i64) -> Vec<Event> {
         let prev_kv = self.get_range(&req.key, &[], 0).first().cloned();
+        if prev_kv.is_none() && (req.ignore_lease || req.ignore_value) {
+            return vec![];
+        }
         let new_rev = self
             .index
             .insert_or_update_revision(&req.key, revision, sub_revision);
-
-        let kv = KeyValue {
+        let mut kv = KeyValue {
             key: req.key,
             value: req.value,
             create_revision: new_rev.create_revision,
             mod_revision: new_rev.mod_revision,
             version: new_rev.version,
-            ..KeyValue::default()
+            lease: req.lease,
         };
+
+        if req.ignore_lease || req.ignore_value {
+            #[allow(clippy::unwrap_used)] // checked when execute cmd
+            let prev = prev_kv.as_ref().unwrap();
+            if req.ignore_lease {
+                kv.lease = prev.lease;
+            }
+            if req.ignore_value {
+                kv.value = prev.value.clone();
+            }
+        }
+
         let _prev = self.db.insert(new_rev.as_revision(), kv.clone());
         let event = Event {
             #[allow(clippy::as_conversions)] // This cast is always valid
