@@ -180,7 +180,6 @@ impl AppendEntriesRequest {
     /// Create a new `append_entries` request
     pub(crate) fn new<C: Command + Serialize>(
         term: TermNum,
-        leader_id: u64,
         prev_log_index: usize,
         prev_log_term: TermNum,
         entries: Vec<LogEntry<C>>,
@@ -188,7 +187,6 @@ impl AppendEntriesRequest {
     ) -> bincode::Result<Self> {
         Ok(Self {
             term,
-            leader_id,
             prev_log_index: prev_log_index.numeric_cast(),
             prev_log_term: prev_log_term.numeric_cast(),
             entries: entries
@@ -197,24 +195,6 @@ impl AppendEntriesRequest {
                 .collect::<bincode::Result<Vec<Vec<u8>>>>()?,
             leader_commit: leader_commit.numeric_cast(),
         })
-    }
-
-    /// Create a new heartbeat request
-    pub(crate) fn new_heart_beat(
-        term: TermNum,
-        leader_id: u64,
-        leader_commit: usize,
-        prev_log_index: usize,
-        prev_log_term: TermNum,
-    ) -> Self {
-        Self {
-            term,
-            leader_id,
-            prev_log_index: prev_log_index.numeric_cast(),
-            entries: vec![],
-            leader_commit: leader_commit.numeric_cast(),
-            prev_log_term,
-        }
     }
 
     /// Get log entries
