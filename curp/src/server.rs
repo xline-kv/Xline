@@ -12,6 +12,7 @@ use event_listener::{Event, EventListener};
 use futures::FutureExt;
 use opentelemetry::global;
 use parking_lot::{Mutex, MutexGuard, RwLock};
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::{net::TcpListener, task::JoinHandle};
 use tokio_stream::wrappers::TcpListenerStream;
 use tracing::{debug, error, info, instrument, Span};
@@ -209,6 +210,8 @@ pub struct Protocol<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
     // TODO: clean up the board when the size is too large
     /// Cmd watch board for tracking the cmd sync results
     cmd_board: Arc<Mutex<HashMap<ProposeId, CmdBoardValue>>>,
+    /// trigger when commit_index changes
+    commit_trigger: UnboundedSender<()>,
 }
 
 /// State of the server
@@ -222,25 +225,28 @@ pub(crate) struct State<C: Command + 'static> {
     /// Index of highest log entry known to be committed
     pub(crate) commit_index: usize,
     /// Index of highest log entry applied to state machine
-    #[allow(dead_code)]
     pub(crate) last_applied: usize,
     /// For each server, index of the next log entry to send to that server
     // TODO: this should be indexed by server id and changed into a vec for efficiency
-    #[allow(dead_code)]
     pub(crate) next_index: HashMap<String, usize>,
     /// For each server, index of highest log entry known to be replicated on server
-    #[allow(dead_code)]
     pub(crate) match_index: HashMap<String, usize>,
+    /// Other server ids
+    pub(crate) others: Vec<String>,
 }
 
 impl<C: Command + 'static> State<C> {
     /// Init server state
-    pub(crate) fn new(role: ServerRole, term: TermNum, others: &[String]) -> Self {
+    pub(crate) fn new(role: ServerRole, term: TermNum, others: Vec<String>) -> Self {
         let mut next_index = HashMap::new();
         let mut match_index = HashMap::new();
-        for other in others.iter() {
-            assert!(next_index.insert(format!("http://{}", other), 1).is_none());
-            assert!(match_index.insert(format!("http://{}", other), 0).is_none());
+        let others: Vec<String> = others
+            .into_iter()
+            .map(|other| format!("http://{}", other))
+            .collect();
+        for other in &others {
+            assert!(next_index.insert(other.clone(), 1).is_none());
+            assert!(match_index.insert(other.clone(), 0).is_none());
         }
         Self {
             role,
@@ -250,6 +256,7 @@ impl<C: Command + 'static> State<C> {
             last_applied: 0,
             next_index, // TODO: next_index should be initialized upon becoming a leader
             match_index,
+            others,
         }
     }
 
@@ -440,6 +447,9 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         let (sync_tx, sync_rx) = key_mpsc::channel();
         let (comp_tx, comp_rx) = key_spmc::channel();
         let cmd_executor = Arc::new(cmd_executor);
+        let cmd_board = Arc::new(Mutex::new(HashMap::new()));
+        let spec = Arc::new(Mutex::new(VecDeque::new()));
+        let (commit_trigger, commit_trigger_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
 
         let state = Arc::new(RwLock::new(State::new(
             if is_leader {
@@ -448,17 +458,24 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                 ServerRole::Follower
             },
             term,
-            &others,
+            others.clone(),
         )));
 
         let state_clone = Arc::clone(&state);
         let ce_clone = Arc::clone(&cmd_executor);
-        let sm_handle = tokio::spawn(async {
+        let commit_trigger_clone = commit_trigger.clone();
+        let spec_clone = Arc::clone(&spec);
+        let sm_handle = tokio::spawn(async move {
             let mut sm = SyncManager::new(sync_rx, others, state_clone).await;
-            sm.run(comp_tx, ce_clone).await;
+            sm.run(
+                comp_tx,
+                ce_clone,
+                commit_trigger_clone,
+                commit_trigger_rx,
+                spec_clone,
+            )
+            .await;
         });
-        let cmd_board = Arc::new(Mutex::new(HashMap::new()));
-        let spec = Arc::new(Mutex::new(VecDeque::new()));
 
         let after_sync_handle =
             Self::init_after_sync_tasks(after_sync_cnt, &comp_rx, &spec, &cmd_board, &cmd_executor);
@@ -471,6 +488,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             sm_handle,
             cmd_board,
             after_sync_handle,
+            commit_trigger,
         }
     }
 
@@ -485,7 +503,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
     }
 
     /// Remove command from the speculative cmd pool
-    fn spec_remove_cmd(spec: &Arc<Mutex<VecDeque<C>>>, cmd_id: &ProposeId) -> Option<C> {
+    pub(crate) fn spec_remove_cmd(spec: &Arc<Mutex<VecDeque<C>>>, cmd_id: &ProposeId) -> Option<C> {
         debug!("remove cmd {:?} from spec pool", cmd_id);
         spec.map_lock(|mut spec_unlocked| {
             spec_unlocked
@@ -704,17 +722,16 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         request: tonic::Request<AppendEntriesRequest>,
     ) -> Result<tonic::Response<AppendEntriesResponse>, tonic::Status> {
         let req = request.into_inner();
-        debug!("append_entries received: term({}), leader({}), commit({}), prev_log_index({}), prev_log_term({}), {} entries", 
-            req.term, req.leader_id, req.leader_commit, req.prev_log_index, req.prev_log_term, req.entries.len());
+        debug!("append_entries received: term({}), commit({}), prev_log_index({}), prev_log_term({}), {} entries", 
+            req.term, req.leader_commit, req.prev_log_index, req.prev_log_term, req.entries.len());
 
         let mut state = self.state.write();
 
         // TODO: check leader's term
 
         // remove inconsistencies
-        while state.last_log_index() > req.prev_log_index.numeric_cast() {
-            let _drop = state.log.pop();
-        }
+        #[allow(clippy::integer_arithmetic)] // TODO: overflow of log index should be prevented
+        state.log.truncate((req.prev_log_index + 1).numeric_cast());
 
         // check if previous log index match leader's one
         if state
@@ -734,7 +751,14 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         state.log.extend(entries.into_iter());
 
         // update commit index
+        let prev_commit_index = state.commit_index;
         state.commit_index = min(req.leader_commit.numeric_cast(), state.last_log_index());
+        if prev_commit_index != state.commit_index {
+            debug!("commit_index updated to {}", state.commit_index);
+            if let Err(e) = self.commit_trigger.send(()) {
+                error!("commit_trigger failed: {}", e);
+            }
+        }
 
         Ok(tonic::Response::new(AppendEntriesResponse::new_accept(
             state.term,
