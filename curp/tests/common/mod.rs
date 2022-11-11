@@ -135,8 +135,8 @@ pub async fn create_servers_client() -> (
         "127.0.0.1:8767".to_owned(),
     ];
 
-    let (exe_tx, exe_rx) = mpsc::channel(10);
-    let (after_sync_tx, after_sync_rx) = mpsc::channel(10);
+    let (exe_tx, exe_rx) = mpsc::channel(100);
+    let (after_sync_tx, after_sync_rx) = mpsc::channel(100);
 
     let exe_tx1 = exe_tx.clone();
     let after_sync_tx1 = after_sync_tx.clone();
