@@ -191,9 +191,9 @@ impl<C: Command + 'static> SyncManager<C> {
     }
 
     /// Interval between sending `append_entries`
-    const APPEND_ENTRIES_INTERVAL: Duration = Duration::from_millis(150);
+    const APPEND_ENTRIES_INTERVAL: Duration = Duration::from_secs(1);
     /// `append_entries` request timeout
-    const APPEND_ENTRIES_TIMEOUT: Duration = Duration::from_millis(50);
+    const APPEND_ENTRIES_TIMEOUT: Duration = Duration::from_secs(1);
 
     /// Background `append_entries`, only works for the leader
     async fn bg_append_entries(
