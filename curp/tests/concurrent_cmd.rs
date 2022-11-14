@@ -5,7 +5,6 @@ use tracing::debug;
 
 mod common;
 
-// #[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 async fn concurrent_cmd() {
     tracing_subscriber::fmt::init();
