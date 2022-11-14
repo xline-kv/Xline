@@ -56,7 +56,8 @@ impl Cluster {
             let listener = self.listeners.remove(&i).unwrap();
 
             tokio::spawn(async move {
-                let server = XlineServer::new(name, peers, is_leader, leader_addr, self_addr).await;
+                let server =
+                    XlineServer::new(name, peers, is_leader, leader_addr, self_addr, None).await;
 
                 tokio::select! {
                     _ = rx.recv() => {} // tx droped, or tx send ()

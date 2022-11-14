@@ -1,11 +1,21 @@
+use std::fmt;
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 
 use anyhow::Result;
 use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{cmd::ProposeId, error::ExecuteError};
+use jsonwebtoken::{
+    errors::Error as JwtError, Algorithm, DecodingKey, EncodingKey, Header, Validation,
+};
 use log::debug;
 use parking_lot::Mutex;
+use pbkdf2::{
+    password_hash::{PasswordHash, PasswordVerifier},
+    Pbkdf2,
+};
 use prost::Message;
+use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 
 use super::index::IndexOperate;
@@ -39,6 +49,8 @@ const AUTH_ENABLE_KEY: &[u8] = b"auth_enable";
 const ROOT_USER: &str = "root";
 /// Root role
 const ROOT_ROLE: &str = "root";
+/// default tolen ttl
+const DEFAULT_TOKEN_TTL: u64 = 300;
 
 /// Auth store
 #[allow(dead_code)]
@@ -54,7 +66,6 @@ pub(crate) struct AuthStore {
 }
 
 /// Auth store inner
-#[derive(Debug)]
 pub(crate) struct AuthStoreBackend {
     /// Key Index
     index: Index,
@@ -66,15 +77,29 @@ pub(crate) struct AuthStoreBackend {
     sp_exec_pool: Mutex<HashMap<ProposeId, RequestWrapper>>,
     /// Enabled
     enabled: Mutex<bool>,
+    /// The manager of token
+    token_manager: Option<JwtTokenManager>,
+}
+
+impl fmt::Debug for AuthStoreBackend {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AuthStoreBackend")
+            .field("index", &self.index)
+            .field("db", &self.db)
+            .field("revision", &self.revision)
+            .field("sp_exec_pool", &self.sp_exec_pool)
+            .field("enabled", &self.enabled)
+            .finish()
+    }
 }
 
 impl AuthStore {
     /// New `AuthStore`
     #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(key_pair: Option<(EncodingKey, DecodingKey)>) -> Self {
         let (exec_tx, mut exec_rx) = mpsc::channel(CHANNEL_SIZE);
         let (sync_tx, mut sync_rx) = mpsc::channel(CHANNEL_SIZE);
-        let inner = Arc::new(AuthStoreBackend::new());
+        let inner = Arc::new(AuthStoreBackend::new(key_pair));
 
         let inner_clone = Arc::clone(&inner);
         let _handle = tokio::spawn(async move {
@@ -124,17 +149,29 @@ impl AuthStore {
         );
         receiver
     }
+
+    /// Check password
+    pub(crate) fn check_password(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<i64, ExecuteError> {
+        self.inner.check_password(username, password)
+    }
 }
 
 impl AuthStoreBackend {
     /// New `AuthStoreBackend`
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(key_pair: Option<(EncodingKey, DecodingKey)>) -> Self {
         Self {
             index: Index::new(),
             db: DB::new(),
             revision: Mutex::new(1),
             sp_exec_pool: Mutex::new(HashMap::new()),
             enabled: Mutex::new(false),
+            token_manager: key_pair.map(|(encoding_key, decoding_key)| {
+                JwtTokenManager::new(encoding_key, decoding_key)
+            }),
         }
     }
 
@@ -146,6 +183,43 @@ impl AuthStoreBackend {
     /// Get enabled of Auth store
     fn is_enabled(&self) -> bool {
         *self.enabled.lock()
+    }
+
+    /// Check password
+    fn check_password(&self, username: &str, password: &str) -> Result<i64, ExecuteError> {
+        if !self.is_enabled() {
+            return Err(ExecuteError::InvalidCommand(
+                "auth is not enabled".to_owned(),
+            ));
+        }
+        let user = self.get_user(username)?;
+        let need_password = user.options.as_ref().map_or(true, |o| !o.no_password);
+        if !need_password {
+            return Err(ExecuteError::InvalidCommand(
+                "password was given for no password user".to_owned(),
+            ));
+        }
+
+        let hash = String::from_utf8_lossy(&user.password);
+        let hash = PasswordHash::new(&hash)
+            .unwrap_or_else(|e| panic!("Failed to parse password hash, error: {e}"));
+        Pbkdf2
+            .verify_password(password.as_bytes(), &hash)
+            .map_err(|e| ExecuteError::InvalidCommand(format!("verify password error: {e}")))?;
+
+        Ok(self.revision())
+    }
+
+    /// Assign token
+    fn assign(&self, username: &str) -> Result<String, ExecuteError> {
+        match self.token_manager {
+            Some(ref token_manager) => token_manager
+                .assign(username, self.revision())
+                .map_err(|e| ExecuteError::InvalidCommand(format!("assign token error: {e}"))),
+            None => Err(ExecuteError::InvalidCommand(
+                "token_manager is not initialized".to_owned(),
+            )),
+        }
     }
 
     /// get `KeyValue` in `AuthStore`
@@ -344,7 +418,7 @@ impl AuthStoreBackend {
                 ResponseWrapper::AuthRoleListResponse(self.handle_role_list_request(req))
             }
             RequestWrapper::AuthenticateRequest(ref req) => {
-                ResponseWrapper::AuthenticateResponse(Self::handle_authenticate_request(req))
+                ResponseWrapper::AuthenticateResponse(self.handle_authenticate_request(req)?)
             }
             RequestWrapper::RequestOp(_) => {
                 unreachable!("RequestOp will send to kvstore")
@@ -408,16 +482,24 @@ impl AuthStoreBackend {
     }
 
     /// Handle `AuthenticateRequest`
-    fn handle_authenticate_request(_req: &AuthenticateRequest) -> AuthenticateResponse {
+    fn handle_authenticate_request(
+        &self,
+        req: &AuthenticateRequest,
+    ) -> Result<AuthenticateResponse, ExecuteError> {
         debug!("handle_authenticate_request");
-        // TODO: implement this
-        AuthenticateResponse {
+        if !self.is_enabled() {
+            return Err(ExecuteError::InvalidCommand(
+                "auth is not enabled".to_owned(),
+            ));
+        }
+        let token = self.assign(&req.name)?;
+        Ok(AuthenticateResponse {
             header: Some(ResponseHeader {
                 revision: -1,
                 ..ResponseHeader::default()
             }),
-            ..AuthenticateResponse::default()
-        }
+            token,
+        })
     }
 
     /// Handle `AuthUserAddRequest`
@@ -478,7 +560,7 @@ impl AuthStoreBackend {
         req: &AuthUserDeleteRequest,
     ) -> Result<AuthUserDeleteResponse, ExecuteError> {
         debug!("handle_user_delete_request");
-        if self.is_enabled() && req.name == ROOT_USER {
+        if self.is_enabled() && (req.name == ROOT_USER) {
             return Err(ExecuteError::InvalidCommand(
                 "root user cannot be deleted".to_owned(),
             ));
@@ -1023,5 +1105,79 @@ impl AuthStoreBackend {
         let _ignore = role.key_permission.remove(idx);
         self.put_role(&role, next_revision, 0);
         true
+    }
+}
+
+/// Claims of Token
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct TokenClaims {
+    /// Username
+    username: String,
+    /// Revision
+    revision: i64,
+    /// Expiration
+    exp: u64,
+}
+
+/// Operations of token manager
+trait TokenOperate {
+    /// Claims type
+    type Claims;
+
+    /// Error type
+    type Error;
+
+    /// Assign a token with claims.
+    fn assign(&self, username: &str, revision: i64) -> Result<String, Self::Error>;
+
+    /// Verify token and return claims.
+    fn verify(&self, token: &str) -> Result<Self::Claims, Self::Error>;
+}
+
+/// `TokenManager` of Json Web Token.
+struct JwtTokenManager {
+    /// The key used to sign the token.
+    encoding_key: EncodingKey,
+    /// The key used to verify the token.
+    decoding_key: DecodingKey,
+}
+
+impl JwtTokenManager {
+    /// New `JwtTokenManager`
+    fn new(encoding_key: EncodingKey, decoding_key: DecodingKey) -> Self {
+        Self {
+            encoding_key,
+            decoding_key,
+        }
+    }
+}
+
+impl TokenOperate for JwtTokenManager {
+    type Error = JwtError;
+
+    type Claims = TokenClaims;
+
+    fn assign(&self, username: &str, revision: i64) -> Result<String, Self::Error> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_else(|e| panic!("SystemTime before UNIX EPOCH! {}", e))
+            .as_secs();
+        let claims = TokenClaims {
+            username: username.to_owned(),
+            revision,
+            exp: now.wrapping_add(DEFAULT_TOKEN_TTL),
+        };
+        let token =
+            jsonwebtoken::encode(&Header::new(Algorithm::RS256), &claims, &self.encoding_key)?;
+        Ok(token)
+    }
+
+    fn verify(&self, token: &str) -> Result<Self::Claims, Self::Error> {
+        jsonwebtoken::decode::<TokenClaims>(
+            token,
+            &self.decoding_key,
+            &Validation::new(Algorithm::RS256),
+        )
+        .map(|d| d.claims)
     }
 }

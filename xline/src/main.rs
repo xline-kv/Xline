@@ -110,14 +110,15 @@
     clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
 )]
 
-use std::{net::SocketAddr, path::PathBuf};
+use std::{fs, net::SocketAddr, path::PathBuf};
 
 use anyhow::Result;
 use clap::Parser;
+use jsonwebtoken::{DecodingKey, EncodingKey};
 use log::debug;
 use opentelemetry::{global, runtime::Tokio, sdk::propagation::TraceContextPropagator};
 use opentelemetry_contrib::trace::exporter::jaeger_json::JaegerJsonExporter;
-use tracing::metadata::LevelFilter;
+use tracing::{error, metadata::LevelFilter};
 use tracing_subscriber::prelude::*;
 use xline::server::XlineServer;
 
@@ -140,6 +141,12 @@ struct ServerArgs {
     /// Current node ip and port. eg: 192.168.x.x:8080
     #[clap(long)]
     self_ip_port: SocketAddr,
+    /// Private key uesd to sign the token
+    #[clap(long)]
+    auth_private_key: Option<PathBuf>,
+    /// Public key uesd to verify the token
+    #[clap(long)]
+    auth_public_key: Option<PathBuf>,
     /// Open jaeger offline
     #[clap(long)]
     jaeger_offline: bool,
@@ -155,7 +162,6 @@ struct ServerArgs {
 }
 
 /// init tracing subscriber
-#[allow(unused)]
 fn init_subscriber(
     jaeger_online: bool,
     jaeger_offline: bool,
@@ -198,6 +204,40 @@ fn init_subscriber(
     Ok(())
 }
 
+/// Read key pair from file
+fn read_key_pair(
+    private_key_path: Option<PathBuf>,
+    public_key_path: Option<PathBuf>,
+) -> Option<(EncodingKey, DecodingKey)> {
+    let encoding_key = match fs::read(private_key_path?) {
+        Ok(key) => match EncodingKey::from_rsa_pem(&key) {
+            Ok(key) => key,
+            Err(e) => {
+                error!("parse private key failed: {:?}", e);
+                return None;
+            }
+        },
+        Err(e) => {
+            error!("read private key failed: {:?}", e);
+            return None;
+        }
+    };
+    let decoding_key = match fs::read(public_key_path?) {
+        Ok(key) => match DecodingKey::from_rsa_pem(&key) {
+            Ok(key) => key,
+            Err(e) => {
+                error!("parse public key failed: {:?}", e);
+                return None;
+            }
+        },
+        Err(e) => {
+            error!("read public key failed: {:?}", e);
+            return None;
+        }
+    };
+    Some((encoding_key, decoding_key))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     global::set_text_map_propagator(TraceContextPropagator::new());
@@ -212,12 +252,14 @@ async fn main() -> Result<()> {
     debug!("name = {:?}", server_args.name);
     debug!("server_addr = {:?}", server_args.self_ip_port);
     debug!("cluster_peers = {:?}", server_args.cluster_peers);
+    let key_pair = read_key_pair(server_args.auth_private_key, server_args.auth_public_key);
     let server = XlineServer::new(
         server_args.name,
         server_args.cluster_peers,
         server_args.is_leader,
         server_args.leader_ip_port,
         server_args.self_ip_port,
+        key_pair,
     )
     .await;
     debug!("{:?}", server);

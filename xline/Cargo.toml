@@ -49,6 +49,7 @@ opentelemetry-contrib = { version = "0.10.0", features = [
 ] }
 
 env_logger = "0.9.3"
+jsonwebtoken = "8.1.1"
 
 [build-dependencies]
 tonic-build = "0.7.2"

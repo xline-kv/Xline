@@ -2,6 +2,7 @@ use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::Result;
 use curp::{client::Client, server::Rpc, ProtocolServer};
+use jsonwebtoken::{DecodingKey, EncodingKey};
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
@@ -63,9 +64,10 @@ impl XlineServer {
         is_leader: bool,
         leader_addr: SocketAddr,
         self_addr: SocketAddr,
+        key_pair: Option<(EncodingKey, DecodingKey)>,
     ) -> Self {
         let kv_storage = Arc::new(KvStore::new());
-        let auth_storage = Arc::new(AuthStore::new());
+        let auth_storage = Arc::new(AuthStore::new(key_pair));
 
         let mut all_members = peers.clone();
         all_members.push(self_addr);
