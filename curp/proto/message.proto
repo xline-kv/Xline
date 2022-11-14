@@ -48,8 +48,21 @@ message AppendEntriesResponse {
     bool success = 2;
 }
 
+message VoteRequest {
+    uint64 term = 1;
+    string candidate_id = 2;
+    uint64 last_log_index = 3;
+    uint64 last_log_term = 4;
+}
+
+message VoteResponse {
+    uint64 term = 1;
+    bool   vote_granted = 2;
+}
+
 service Protocol {
     rpc Propose (ProposeRequest) returns (ProposeResponse);
     rpc WaitSynced (WaitSyncedRequest) returns (WaitSyncedResponse);
     rpc AppendEntries (AppendEntriesRequest) returns (AppendEntriesResponse);
+    rpc Vote (VoteRequest) returns (VoteResponse);
 }

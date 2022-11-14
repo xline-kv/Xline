@@ -11,14 +11,16 @@ use clippy_utilities::NumericCast;
 use event_listener::{Event, EventListener};
 use futures::FutureExt;
 use opentelemetry::global;
+use parking_lot::lock_api::RwLockUpgradableReadGuard;
 use parking_lot::{Mutex, MutexGuard, RwLock};
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::time::Instant;
 use tokio::{net::TcpListener, task::JoinHandle};
 use tokio_stream::wrappers::TcpListenerStream;
 use tracing::{debug, error, info, instrument, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-use crate::rpc::{AppendEntriesRequest, AppendEntriesResponse};
+use crate::rpc::{AppendEntriesRequest, AppendEntriesResponse, VoteRequest, VoteResponse};
 use crate::util::RwLockMap;
 use crate::{
     channel::{
@@ -83,14 +85,22 @@ where
     ) -> Result<tonic::Response<AppendEntriesResponse>, tonic::Status> {
         self.inner.append_entries(request)
     }
+
+    async fn vote(
+        &self,
+        request: tonic::Request<VoteRequest>,
+    ) -> Result<tonic::Response<VoteResponse>, tonic::Status> {
+        self.inner.vote(request)
+    }
 }
 
 impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
     /// New `Rpc`
     #[inline]
-    pub fn new(is_leader: bool, term: u64, others: Vec<String>, executor: CE) -> Self {
+    pub fn new(id: &str, is_leader: bool, term: u64, others: Vec<String>, executor: CE) -> Self {
         Self {
             inner: Arc::new(Protocol::new(
+                id,
                 is_leader,
                 term,
                 others,
@@ -107,15 +117,16 @@ impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
     ///   `ServerError::RpcError` if any rpc related error met
     #[inline]
     pub async fn run(
-        is_leader: bool,
+        id: &str,
+        is_leader: bool, // TODO: remove this option
         term: u64,
         others: Vec<String>,
         server_port: Option<u16>,
         executor: CE,
     ) -> Result<(), ServerError> {
         let port = server_port.unwrap_or(DEFAULT_SERVER_PORT);
-        let server = Self::new(is_leader, term, others, executor);
-        info!("RPC server started, listening on port {port}");
+        info!("RPC server {id} started, listening on port {port}");
+        let server = Self::new(id, is_leader, term, others, executor);
 
         tonic::transport::Server::builder()
             .add_service(ProtocolServer::new(server))
@@ -135,6 +146,7 @@ impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
     ///   `ServerError::RpcError` if any rpc related error met
     #[inline]
     pub async fn run_from_listener(
+        id: &str,
         is_leader: bool,
         term: u64,
         others: Vec<String>,
@@ -143,6 +155,7 @@ impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
     ) -> Result<(), ServerError> {
         let server = Self {
             inner: Arc::new(Protocol::new(
+                id,
                 is_leader,
                 term,
                 others,
@@ -197,6 +210,8 @@ pub struct Protocol<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
     /// Current state
     // TODO: apply fine-grain locking
     state: Arc<RwLock<State<C>>>,
+    /// Last time a rpc is received
+    last_rpc_time: Arc<RwLock<Instant>>,
     /// The speculative cmd pool, shared with executor
     spec: Arc<Mutex<VecDeque<C>>>,
     /// Command executor
@@ -216,12 +231,18 @@ pub struct Protocol<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
 
 /// State of the server
 pub(crate) struct State<C: Command + 'static> {
+    /// Id of the server
+    pub(crate) id: String,
     /// Role of the server
     pub(crate) role: ServerRole,
     /// Current term
     pub(crate) term: TermNum,
     /// Consensus log
     pub(crate) log: Vec<LogEntry<C>>,
+    /// Candidate id that received vote in current term
+    pub(crate) voted_for: Option<String>,
+    /// Votes received in the election
+    pub(crate) votes_received: usize,
     /// Index of highest log entry known to be committed
     pub(crate) commit_index: usize,
     /// Index of highest log entry applied to state machine
@@ -237,7 +258,7 @@ pub(crate) struct State<C: Command + 'static> {
 
 impl<C: Command + 'static> State<C> {
     /// Init server state
-    pub(crate) fn new(role: ServerRole, term: TermNum, others: Vec<String>) -> Self {
+    pub(crate) fn new(id: &str, role: ServerRole, term: TermNum, others: Vec<String>) -> Self {
         let mut next_index = HashMap::new();
         let mut match_index = HashMap::new();
         let others: Vec<String> = others
@@ -249,9 +270,12 @@ impl<C: Command + 'static> State<C> {
             assert!(match_index.insert(other.clone(), 0).is_none());
         }
         Self {
+            id: format!("http://{}", id),
             role,
             term,
             log: vec![LogEntry::new(0, &[])], // a fake log[0] will simplify the boundary check significantly
+            voted_for: None,
+            votes_received: 0,
             commit_index: 0,
             last_applied: 0,
             next_index, // TODO: next_index should be initialized upon becoming a leader
@@ -281,6 +305,16 @@ impl<C: Command + 'static> State<C> {
     pub(crate) fn need_commit(&self) -> bool {
         self.last_applied < self.commit_index
     }
+
+    /// Update to `term`
+    pub(crate) fn update_to_term(&mut self, term: TermNum) {
+        debug_assert!(self.term <= term);
+        self.term = term;
+        self.role = ServerRole::Follower;
+        self.voted_for = None;
+        self.votes_received = 0;
+        debug!("updated to term {term}");
+    }
 }
 
 impl<C, CE> Debug for Protocol<C, CE>
@@ -308,7 +342,6 @@ pub(crate) enum ServerRole {
     /// A follower
     Follower,
     /// A candidate
-    #[allow(dead_code)]
     Candidate,
     /// A leader
     Leader,
@@ -438,6 +471,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
     #[must_use]
     #[inline]
     pub fn new(
+        id: &str,
         is_leader: bool,
         term: u64,
         others: Vec<String>,
@@ -450,8 +484,10 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         let cmd_board = Arc::new(Mutex::new(HashMap::new()));
         let spec = Arc::new(Mutex::new(VecDeque::new()));
         let (commit_trigger, commit_trigger_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
+        let last_rpc_time = Arc::new(RwLock::new(Instant::now()));
 
         let state = Arc::new(RwLock::new(State::new(
+            id,
             if is_leader {
                 ServerRole::Leader
             } else {
@@ -465,8 +501,9 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         let ce_clone = Arc::clone(&cmd_executor);
         let commit_trigger_clone = commit_trigger.clone();
         let spec_clone = Arc::clone(&spec);
+        let last_rpc_time_clone = Arc::clone(&last_rpc_time);
         let sm_handle = tokio::spawn(async move {
-            let mut sm = SyncManager::new(sync_rx, others, state_clone).await;
+            let mut sm = SyncManager::new(sync_rx, others, state_clone, last_rpc_time_clone).await;
             sm.run(
                 comp_tx,
                 ce_clone,
@@ -482,6 +519,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
 
         Self {
             state,
+            last_rpc_time,
             spec,
             cmd_executor,
             sync_chan: sync_tx,
@@ -563,7 +601,6 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             .map_lock(|mut spec| {
                 let is_conflict = Self::is_spec_conflict(&spec, &cmd);
                 spec.push_back(cmd.clone());
-                debug!("insert cmd {:?} to spec pool", cmd.id());
                 match (is_conflict, is_leader) {
                     // conflict and is leader
                     (true, true) => async {
@@ -725,9 +762,21 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         debug!("append_entries received: term({}), commit({}), prev_log_index({}), prev_log_term({}), {} entries", 
             req.term, req.leader_commit, req.prev_log_index, req.prev_log_term, req.entries.len());
 
-        let mut state = self.state.write();
+        let state = self.state.upgradable_read();
 
-        // TODO: check leader's term
+        // calibrate term
+        if req.term < state.term {
+            return Ok(tonic::Response::new(AppendEntriesResponse::new_reject(
+                state.term,
+            )));
+        }
+
+        let mut state = RwLockUpgradableReadGuard::upgrade(state);
+        if req.term > state.term {
+            state.update_to_term(req.term);
+        }
+
+        *self.last_rpc_time.write() = Instant::now();
 
         // remove inconsistencies
         #[allow(clippy::integer_arithmetic)] // TODO: overflow of log index should be prevented
@@ -763,6 +812,44 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         Ok(tonic::Response::new(AppendEntriesResponse::new_accept(
             state.term,
         )))
+    }
+
+    /// Handle `Vote` requests
+    #[allow(clippy::pedantic)]
+    fn vote(
+        &self,
+        request: tonic::Request<VoteRequest>,
+    ) -> Result<tonic::Response<VoteResponse>, tonic::Status> {
+        let req = request.into_inner();
+        debug!(
+            "vote received: term({}), last_log_index({}), last_log_term({}), id({})",
+            req.term, req.last_log_index, req.last_log_term, req.candidate_id
+        );
+
+        let state = self.state.upgradable_read();
+        if req.term < state.term || state.voted_for.is_some() {
+            return Ok(tonic::Response::new(VoteResponse::new_reject(state.term)));
+        }
+
+        // If a follower receives votes from a candidate, it should update last_rpc_time to prevent itself from starting election
+        *self.last_rpc_time.write() = Instant::now();
+
+        let mut state = RwLockUpgradableReadGuard::upgrade(state);
+        // calibrate term
+        if req.term > state.term {
+            state.update_to_term(req.term);
+        }
+
+        if req.last_log_term > state.last_log_term()
+            || (req.last_log_term == state.last_log_term()
+                && req.last_log_index.numeric_cast::<usize>() >= state.last_log_index())
+        {
+            debug!("vote for server {}", req.candidate_id);
+            state.voted_for = Some(req.candidate_id);
+            Ok(tonic::Response::new(VoteResponse::new_accept(state.term)))
+        } else {
+            Ok(tonic::Response::new(VoteResponse::new_reject(state.term)))
+        }
     }
 }
 

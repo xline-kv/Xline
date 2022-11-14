@@ -36,8 +36,8 @@ pub(crate) use self::proto::{
     protocol_client::ProtocolClient,
     protocol_server::Protocol,
     wait_synced_response::{Success, SyncResult},
-    AppendEntriesRequest, AppendEntriesResponse, ProposeRequest, ProposeResponse,
-    WaitSyncedRequest, WaitSyncedResponse,
+    AppendEntriesRequest, AppendEntriesResponse, ProposeRequest, ProposeResponse, VoteRequest,
+    VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
 };
 
 pub use self::proto::protocol_server::ProtocolServer;
@@ -240,6 +240,35 @@ impl AppendEntriesResponse {
     }
 }
 
+impl VoteRequest {
+    /// Create a new vote request
+    pub fn new(term: u64, candidate_id: String, last_log_index: usize, last_log_term: u64) -> Self {
+        Self {
+            term,
+            candidate_id,
+            last_log_index: last_log_index.numeric_cast(),
+            last_log_term,
+        }
+    }
+}
+
+impl VoteResponse {
+    /// Create a new accepted vote response
+    pub fn new_accept(term: TermNum) -> Self {
+        Self {
+            term: term.numeric_cast(),
+            vote_granted: true,
+        }
+    }
+    /// Create a new rejected vote response
+    pub fn new_reject(term: TermNum) -> Self {
+        Self {
+            term: term.numeric_cast(),
+            vote_granted: false,
+        }
+    }
+}
+
 /// The connection struct to hold the real rpc connections, it may failed to connect, but it also
 /// retries the next time
 #[derive(Debug)]
@@ -318,6 +347,21 @@ impl Connect {
         req.set_timeout(timeout);
         match option_client {
             Ok(mut client) => Ok(client.append_entries(req).await?),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Send `Vote` request
+    pub(crate) async fn vote(
+        &self,
+        request: VoteRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<VoteResponse>, ProposeError> {
+        let option_client = self.get().await;
+        let mut req = tonic::Request::new(request);
+        req.set_timeout(timeout);
+        match option_client {
+            Ok(mut client) => Ok(client.vote(req).await?),
             Err(e) => Err(e.into()),
         }
     }

@@ -141,6 +141,7 @@ impl XlineServer {
             ),
             WatchServer::new(self.storage.kv_watcher()),
             CurpServer::new(
+                self.self_addr.to_string().as_str(),
                 self.is_leader,
                 0,
                 self.peers.iter().map(ToString::to_string).collect(),

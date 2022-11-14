@@ -73,7 +73,7 @@ impl ConflictCheck for TestCommand {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct TestExecutor {
+pub struct TestExecutor {
     exe_sender: mpsc::Sender<(TestCommandType, String)>,
     after_sync_sender: mpsc::Sender<(TestCommandType, String)>,
 }
@@ -113,7 +113,7 @@ impl CommandExecutor<TestCommand> for TestExecutor {
 }
 
 impl TestExecutor {
-    pub(crate) fn new(
+    pub fn new(
         exe_sender: mpsc::Sender<(TestCommandType, String)>,
         after_sync_sender: mpsc::Sender<(TestCommandType, String)>,
     ) -> Self {
@@ -124,6 +124,7 @@ impl TestExecutor {
     }
 }
 
+#[allow(dead_code)]
 pub async fn create_servers_client() -> (
     Receiver<(TestCommandType, String)>,
     Receiver<(TestCommandType, String)>,
@@ -140,24 +141,30 @@ pub async fn create_servers_client() -> (
 
     let exe_tx1 = exe_tx.clone();
     let after_sync_tx1 = after_sync_tx.clone();
+    let addr0 = addrs[0].clone();
     let addr1 = vec![addrs[1].clone(), addrs[2].clone()];
     tokio::spawn(async move {
         let exe = TestExecutor::new(exe_tx1, after_sync_tx1);
-        Rpc::<TestCommand, TestExecutor>::run(true, 0, addr1, Some(8765), exe).await
+        Rpc::<TestCommand, TestExecutor>::run(addr0.as_str(), true, 0, addr1, Some(8765), exe).await
     });
     let exe_tx2 = exe_tx.clone();
     let after_sync_tx2 = after_sync_tx.clone();
+    let addr1 = addrs[1].clone();
     let addr2 = vec![addrs[0].clone(), addrs[2].clone()];
     tokio::spawn(async move {
         let exe = TestExecutor::new(exe_tx2, after_sync_tx2);
-        Rpc::<TestCommand, TestExecutor>::run(false, 0, addr2, Some(8766), exe).await
+        Rpc::<TestCommand, TestExecutor>::run(addr1.as_str(), false, 0, addr2, Some(8766), exe)
+            .await
     });
     let exe_tx3 = exe_tx.clone();
     let after_sync_tx3 = after_sync_tx.clone();
+    let addr2 = addrs[2].clone();
     let addr3 = vec![addrs[0].clone(), addrs[1].clone()];
     tokio::spawn(async move {
         let exe = TestExecutor::new(exe_tx3, after_sync_tx3);
-        let _ = Rpc::<TestCommand, TestExecutor>::run(false, 0, addr3, Some(8767), exe).await;
+        let _ =
+            Rpc::<TestCommand, TestExecutor>::run(addr2.as_str(), false, 0, addr3, Some(8767), exe)
+                .await;
     });
 
     thread::sleep(Duration::from_secs(1));
