@@ -85,6 +85,17 @@ impl AuthServer {
             .unwrap_or_else(|e| panic!("Failed to hash password: {}", e));
         hashed_password.to_string()
     }
+
+    /// Check password in storage
+    pub(crate) fn check_password(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<i64, tonic::Status> {
+        self.storage
+            .check_password(username, password)
+            .map_err(|e| tonic::Status::invalid_argument(format!("Auth failed, error: {e}")))
+    }
 }
 
 #[tonic::async_trait]
@@ -157,8 +168,27 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthenticateRequest>,
     ) -> Result<tonic::Response<AuthenticateResponse>, tonic::Status> {
         debug!("Receive AuthenticateRequest {:?}", request);
-        // TODO: add implementation
-        Err(tonic::Status::unimplemented("Not implemented"))
+        let authenticate_req = request.into_inner();
+        loop {
+            let checked_revision =
+                self.check_password(&authenticate_req.name, &authenticate_req.password)?;
+            let mut req_clone = authenticate_req.clone();
+            req_clone.password = "".to_owned();
+
+            let (res, sync_res) = self
+                .propose_slow_path(self.generate_propose_id(), req_clone.into())
+                .await?;
+
+            let revision = sync_res.revision();
+            debug!("Get revision {:?} for AuthenticateResponse", revision);
+            if revision == checked_revision {
+                let mut res: AuthenticateResponse = res.decode().into();
+                if let Some(mut header) = res.header.as_mut() {
+                    header.revision = revision;
+                }
+                return Ok(tonic::Response::new(res));
+            }
+        }
     }
 
     async fn user_add(
