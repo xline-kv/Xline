@@ -13,7 +13,6 @@ use futures::FutureExt;
 use opentelemetry::global;
 use parking_lot::lock_api::RwLockUpgradableReadGuard;
 use parking_lot::{Mutex, MutexGuard, RwLock};
-use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::Instant;
 use tokio::{net::TcpListener, task::JoinHandle};
 use tokio_stream::wrappers::TcpListenerStream;
@@ -23,6 +22,7 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 use crate::rpc::{AppendEntriesRequest, AppendEntriesResponse, VoteRequest, VoteResponse};
 use crate::util::RwLockMap;
 use crate::{
+    bg_tasks::{run_bg_tasks, SyncCompleteMessage, SyncMessage},
     channel::{
         key_mpsc::{self, MpscKeyBasedSender},
         key_spmc::{self, SpmcKeybasedReceiver},
@@ -33,7 +33,6 @@ use crate::{
     log::LogEntry,
     message::TermNum,
     rpc::{ProposeRequest, ProposeResponse, ProtocolServer, WaitSyncedRequest, WaitSyncedResponse},
-    sync_manager::{SyncCompleteMessage, SyncManager, SyncMessage},
     util::{ExtractMap, MutexMap},
 };
 
@@ -219,14 +218,12 @@ pub struct Protocol<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
     /// The channel to send synced command to sync manager
     sync_chan: MpscKeyBasedSender<C::K, SyncMessage<C>>,
     /// Synced manager handler
-    sm_handle: JoinHandle<()>,
+    bg_handle: JoinHandle<()>,
     /// After sync tasks handle
     after_sync_handle: Vec<JoinHandle<()>>,
     // TODO: clean up the board when the size is too large
     /// Cmd watch board for tracking the cmd sync results
     cmd_board: Arc<Mutex<HashMap<ProposeId, CmdBoardValue>>>,
-    /// trigger when commit_index changes
-    commit_trigger: UnboundedSender<()>,
 }
 
 /// State of the server
@@ -255,18 +252,14 @@ pub(crate) struct State<C: Command + 'static> {
     /// Other server ids
     pub(crate) others: Vec<String>,
     /// Trigger when server role changes
-    role_trigger: Arc<Event>,
+    pub(crate) role_trigger: Arc<Event>,
+    /// Trigger when there might be some logs to commit
+    pub(crate) commit_trigger: Arc<Event>,
 }
 
 impl<C: Command + 'static> State<C> {
     /// Init server state
-    pub(crate) fn new(
-        id: &str,
-        role: ServerRole,
-        term: TermNum,
-        others: Vec<String>,
-        role_trigger: Arc<Event>,
-    ) -> Self {
+    pub(crate) fn new(id: &str, role: ServerRole, term: TermNum, others: Vec<String>) -> Self {
         let mut next_index = HashMap::new();
         let mut match_index = HashMap::new();
         let others: Vec<String> = others
@@ -289,7 +282,8 @@ impl<C: Command + 'static> State<C> {
             next_index, // TODO: next_index should be initialized upon becoming a leader
             match_index,
             others,
-            role_trigger,
+            role_trigger: Arc::new(Event::new()),
+            commit_trigger: Arc::new(Event::new()),
         }
     }
 
@@ -339,9 +333,14 @@ impl<C: Command + 'static> State<C> {
         self.role
     }
 
-    /// Get Role trigger
+    /// Get role trigger
     pub(crate) fn role_trigger(&self) -> Arc<Event> {
         Arc::clone(&self.role_trigger)
+    }
+
+    /// Get commit trigger
+    pub(crate) fn commit_trigger(&self) -> Arc<Event> {
+        Arc::clone(&self.commit_trigger)
     }
 }
 
@@ -511,9 +510,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         let cmd_executor = Arc::new(cmd_executor);
         let cmd_board = Arc::new(Mutex::new(HashMap::new()));
         let spec = Arc::new(Mutex::new(VecDeque::new()));
-        let (commit_trigger, commit_trigger_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
         let last_rpc_time = Arc::new(RwLock::new(Instant::now()));
-        let event = Arc::new(Event::new());
 
         let state = Arc::new(RwLock::new(State::new(
             id,
@@ -524,25 +521,17 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             },
             term,
             others.clone(),
-            Arc::clone(&event),
         )));
 
-        let state_clone = Arc::clone(&state);
-        let ce_clone = Arc::clone(&cmd_executor);
-        let commit_trigger_clone = commit_trigger.clone();
-        let spec_clone = Arc::clone(&spec);
-        let last_rpc_time_clone = Arc::clone(&last_rpc_time);
-        let sm_handle = tokio::spawn(async move {
-            let mut sm = SyncManager::new(sync_rx, others, state_clone, last_rpc_time_clone).await;
-            sm.run(
-                comp_tx,
-                ce_clone,
-                commit_trigger_clone,
-                commit_trigger_rx,
-                spec_clone,
-            )
-            .await;
-        });
+        // run background tasks
+        let bg_handle = tokio::spawn(run_bg_tasks(
+            Arc::clone(&state),
+            Arc::clone(&last_rpc_time),
+            sync_rx,
+            comp_tx,
+            Arc::clone(&cmd_executor),
+            Arc::clone(&spec),
+        ));
 
         let after_sync_handle =
             Self::init_after_sync_tasks(after_sync_cnt, &comp_rx, &spec, &cmd_board, &cmd_executor);
@@ -553,10 +542,9 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             spec,
             cmd_executor,
             sync_chan: sync_tx,
-            sm_handle,
+            bg_handle,
             cmd_board,
             after_sync_handle,
-            commit_trigger,
         }
     }
 
@@ -834,9 +822,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         state.commit_index = min(req.leader_commit.numeric_cast(), state.last_log_index());
         if prev_commit_index != state.commit_index {
             debug!("commit_index updated to {}", state.commit_index);
-            if let Err(e) = self.commit_trigger.send(()) {
-                error!("commit_trigger failed: {}", e);
-            }
+            state.commit_trigger.notify(1);
         }
 
         Ok(tonic::Response::new(AppendEntriesResponse::new_accept(
@@ -886,7 +872,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
 impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Drop for Protocol<C, CE> {
     #[inline]
     fn drop(&mut self) {
-        self.sm_handle.abort();
+        self.bg_handle.abort();
         for h in &self.after_sync_handle {
             h.abort();
         }
