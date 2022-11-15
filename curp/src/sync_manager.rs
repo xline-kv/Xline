@@ -1,7 +1,9 @@
 use std::collections::VecDeque;
+use std::ops::Range;
 use std::{sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
+use event_listener::Event;
 use futures::{stream::FuturesUnordered, StreamExt};
 use madsim::rand::{thread_rng, Rng};
 use parking_lot::lock_api::{Mutex, RwLockUpgradableReadGuard};
@@ -157,8 +159,7 @@ impl<C: Command + 'static> SyncManager<C> {
         // notify when a broadcast of append_entries is needed immediately(a new log is received or committed)
         let (ae_trigger, ae_trigger_rx) = tokio::sync::mpsc::unbounded_channel::<usize>();
         // notify when heartbeat is needed immediately
-        let (heartbeat_trigger, heartbeat_trigger_rx) =
-            tokio::sync::mpsc::unbounded_channel::<()>();
+        let heartbeat_trigger = Arc::new(Event::new());
         // TODO: gracefully stop the background tasks
         let _background_ae_handle = tokio::spawn(Self::bg_append_entries(
             self.connects(),
@@ -170,7 +171,7 @@ impl<C: Command + 'static> SyncManager<C> {
             self.connects(),
             Arc::clone(&self.state),
             Arc::clone(&self.last_rpc_time),
-            heartbeat_trigger,
+            Arc::clone(&heartbeat_trigger),
         ));
         let _background_apply_handle = tokio::spawn(Self::bg_apply(
             Arc::clone(&self.state),
@@ -182,7 +183,7 @@ impl<C: Command + 'static> SyncManager<C> {
         let _background_heartbeat_handle = tokio::spawn(Self::bg_heartbeat(
             self.connects(),
             Arc::clone(&self.state),
-            heartbeat_trigger_rx,
+            heartbeat_trigger,
         ));
 
         loop {
@@ -330,25 +331,29 @@ impl<C: Command + 'static> SyncManager<C> {
     async fn bg_heartbeat(
         connects: Vec<Arc<Connect>>,
         state: Arc<RwLock<State<C>>>,
-        mut heartbeat_trigger_rx: UnboundedReceiver<()>,
+        heartbeat_trigger: Arc<Event>,
     ) {
+        let role_trigger = state.read().role_trigger();
         #[allow(clippy::integer_arithmetic)] // tokio internal triggered
         loop {
-            // TODO: notify when server's role changes instead of busy polling
-            if state.read().is_leader() {
-                // send append_entries to each server in parallel
-                let rpcs: FuturesUnordered<_> = connects
-                    .iter()
-                    .map(|connect| Self::send_heartbeat(Arc::clone(connect), Arc::clone(&state)))
-                    .collect();
-                let _drop = tokio::spawn(async move {
-                    let _drop: Vec<_> = rpcs.collect().await;
-                });
+            // only leader should run this task
+            while !state.read().is_leader() {
+                role_trigger.listen().await;
             }
+
             tokio::select! {
-                _ = heartbeat_trigger_rx.recv() => {},
+                _ = heartbeat_trigger.listen() => {},
                 _ = tokio::time::sleep(Self::HEARTBEAT_INTERVAL) => {}
             }
+
+            // send append_entries to each server in parallel
+            let rpcs: FuturesUnordered<_> = connects
+                .iter()
+                .map(|connect| Self::send_heartbeat(Arc::clone(connect), Arc::clone(&state)))
+                .collect();
+            let _drop = tokio::spawn(async move {
+                let _drop: Vec<_> = rpcs.collect().await;
+            });
         }
     }
 
@@ -451,28 +456,38 @@ impl<C: Command + 'static> SyncManager<C> {
         info!("background apply stopped");
     }
 
-    /// The time a candidate should wait before it starts another round of election
+    /// How long a candidate should wait before it starts another round of election
     const CANDIDATE_TIMEOUT: Duration = Duration::from_secs(1);
+    /// How long a follower should wait before it starts a round of election (in millis)
+    const FOLLOWER_TIMEOUT: Range<u64> = 300..500;
 
     /// Background election
     async fn bg_election(
         connects: Vec<Arc<Connect>>,
         state: Arc<RwLock<State<C>>>,
         last_rpc_time: Arc<RwLock<Instant>>,
-        heartbeat_trigger: UnboundedSender<()>,
+        heartbeat_trigger: Arc<Event>,
     ) {
+        let role_trigger = state.read().role_trigger();
         loop {
-            // TODO: notify when server's role changes instead of busy polling
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            // only follower or candidate should run this task
+            while state.read().is_leader() {
+                role_trigger.listen().await;
+            }
+
             let timeout = {
                 let mut rng = thread_rng();
-                match state.read().role {
-                    ServerRole::Follower => Duration::from_millis(rng.gen_range(300..500)),
+                match state.read().role() {
+                    ServerRole::Follower => {
+                        Duration::from_millis(rng.gen_range(Self::FOLLOWER_TIMEOUT))
+                    }
                     ServerRole::Candidate => Self::CANDIDATE_TIMEOUT,
-                    ServerRole::Leader => Duration::from_secs(1), // it's a fake one, since leader will never timeout
+                    ServerRole::Leader => continue, // leader should not vote
                 }
             };
-            if state.read().is_leader() || Instant::now() - *last_rpc_time.read() < timeout {
+            let next_check = last_rpc_time.read().to_owned() + timeout;
+            tokio::time::sleep_until(next_check).await;
+            if Instant::now() - *last_rpc_time.read() < timeout {
                 continue;
             }
 
@@ -480,12 +495,9 @@ impl<C: Command + 'static> SyncManager<C> {
             #[allow(clippy::integer_arithmetic)] // TODO: handle possible overflow
             let req = {
                 let mut state = state.write();
-                if state.is_leader() {
-                    return;
-                }
                 let new_term = state.term + 1;
                 state.update_to_term(new_term);
-                state.role = ServerRole::Candidate;
+                state.set_role(ServerRole::Candidate);
                 VoteRequest::new(
                     state.term,
                     state.id.clone(),
@@ -493,13 +505,15 @@ impl<C: Command + 'static> SyncManager<C> {
                     state.last_log_term(),
                 )
             };
+            // reset
+            *last_rpc_time.write() = Instant::now();
             debug!("server {} starts election", req.candidate_id);
 
             for connect in &connects {
                 let _ignore = tokio::spawn(Self::send_vote(
                     Arc::clone(connect),
                     Arc::clone(&state),
-                    heartbeat_trigger.clone(),
+                    Arc::clone(&heartbeat_trigger),
                     req.clone(),
                 ));
             }
@@ -510,7 +524,7 @@ impl<C: Command + 'static> SyncManager<C> {
     async fn send_vote(
         connect: Arc<Connect>,
         state: Arc<RwLock<State<C>>>,
-        heartbeat_trigger: UnboundedSender<()>,
+        heartbeat_trigger: Arc<Event>,
         req: VoteRequest,
     ) {
         let resp = connect.vote(req, Self::RPC_TIMEOUT).await;
@@ -528,7 +542,7 @@ impl<C: Command + 'static> SyncManager<C> {
                 }
 
                 // is still a candidate
-                if !matches!(state.role, ServerRole::Candidate) {
+                if !matches!(state.role(), ServerRole::Candidate) {
                     return;
                 }
 
@@ -541,18 +555,17 @@ impl<C: Command + 'static> SyncManager<C> {
                     // the majority has granted the vote
                     let min_granted = (state.others.len() + 1) / 2;
                     if state.votes_received > min_granted {
-                        state.role = ServerRole::Leader;
-                        let last_log_index = state.last_log_index();
+                        state.set_role(ServerRole::Leader);
+                        debug!("server becomes leader");
+
                         // init next_index
+                        let last_log_index = state.last_log_index();
                         for index in state.next_index.values_mut() {
                             *index = last_log_index + 1; // iter from the end to front is more likely to match the follower
                         }
-                        debug!("server becomes leader");
 
                         // trigger heartbeat immediately to establish leadership
-                        if let Err(e) = heartbeat_trigger.send(()) {
-                            error!("commit_trigger failed: {}", e);
-                        }
+                        heartbeat_trigger.notify(1);
                     }
                 }
             }
