@@ -234,7 +234,7 @@ pub(crate) struct State<C: Command + 'static> {
     /// Id of the server
     pub(crate) id: String,
     /// Role of the server
-    pub(crate) role: ServerRole,
+    role: ServerRole,
     /// Current term
     pub(crate) term: TermNum,
     /// Consensus log
@@ -254,11 +254,19 @@ pub(crate) struct State<C: Command + 'static> {
     pub(crate) match_index: HashMap<String, usize>,
     /// Other server ids
     pub(crate) others: Vec<String>,
+    /// Trigger when server role changes
+    role_trigger: Arc<Event>,
 }
 
 impl<C: Command + 'static> State<C> {
     /// Init server state
-    pub(crate) fn new(id: &str, role: ServerRole, term: TermNum, others: Vec<String>) -> Self {
+    pub(crate) fn new(
+        id: &str,
+        role: ServerRole,
+        term: TermNum,
+        others: Vec<String>,
+        role_trigger: Arc<Event>,
+    ) -> Self {
         let mut next_index = HashMap::new();
         let mut match_index = HashMap::new();
         let others: Vec<String> = others
@@ -281,6 +289,7 @@ impl<C: Command + 'static> State<C> {
             next_index, // TODO: next_index should be initialized upon becoming a leader
             match_index,
             others,
+            role_trigger,
         }
     }
 
@@ -310,10 +319,29 @@ impl<C: Command + 'static> State<C> {
     pub(crate) fn update_to_term(&mut self, term: TermNum) {
         debug_assert!(self.term <= term);
         self.term = term;
-        self.role = ServerRole::Follower;
+        self.set_role(ServerRole::Follower);
         self.voted_for = None;
         self.votes_received = 0;
         debug!("updated to term {term}");
+    }
+
+    /// Set server role
+    pub(crate) fn set_role(&mut self, role: ServerRole) {
+        let prev_role = self.role;
+        self.role = role;
+        if prev_role != role {
+            self.role_trigger.notify(usize::MAX);
+        }
+    }
+
+    /// Get server role
+    pub(crate) fn role(&self) -> ServerRole {
+        self.role
+    }
+
+    /// Get Role trigger
+    pub(crate) fn role_trigger(&self) -> Arc<Event> {
+        Arc::clone(&self.role_trigger)
     }
 }
 
@@ -337,7 +365,7 @@ where
 }
 
 /// The server role same as Raft
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum ServerRole {
     /// A follower
     Follower,
@@ -485,6 +513,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         let spec = Arc::new(Mutex::new(VecDeque::new()));
         let (commit_trigger, commit_trigger_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
         let last_rpc_time = Arc::new(RwLock::new(Instant::now()));
+        let event = Arc::new(Event::new());
 
         let state = Arc::new(RwLock::new(State::new(
             id,
@@ -495,6 +524,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             },
             term,
             others.clone(),
+            Arc::clone(&event),
         )));
 
         let state_clone = Arc::clone(&state);
@@ -815,7 +845,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
     }
 
     /// Handle `Vote` requests
-    #[allow(clippy::pedantic)]
+    #[allow(clippy::pedantic)] // need not return result, but to keep it consistent with rpc handler functions, we keep it this way
     fn vote(
         &self,
         request: tonic::Request<VoteRequest>,
