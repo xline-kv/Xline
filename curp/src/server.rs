@@ -1,4 +1,4 @@
-use std::cmp::min;
+use std::cmp::{min, Ordering};
 use std::{
     collections::{HashMap, VecDeque},
     fmt::Debug,
@@ -631,6 +631,8 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             .map_lock(|mut spec| {
                 let is_conflict = Self::is_spec_conflict(&spec, &cmd);
                 spec.push_back(cmd.clone());
+                debug!("insert cmd {:?} to spec pool", cmd.id());
+
                 match (is_conflict, is_leader) {
                     // conflict and is leader
                     (true, true) => async {
@@ -856,18 +858,29 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             req.term, req.last_log_index, req.last_log_term, req.candidate_id
         );
 
-        let state = self.state.upgradable_read();
-        if req.term < state.term || state.voted_for.is_some() {
-            return Ok(tonic::Response::new(VoteResponse::new_reject(state.term)));
+        // just grab a write lock because it's highly likely that term is updated and a vote is granted
+        let mut state = self.state.write();
+
+        // calibrate term
+        match req.term.cmp(&state.term) {
+            Ordering::Less => {
+                return Ok(tonic::Response::new(VoteResponse::new_reject(state.term)));
+            }
+            Ordering::Equal => {}
+            Ordering::Greater => {
+                state.update_to_term(req.term);
+            }
+        }
+
+        if let Some(id) = state.voted_for.as_ref() {
+            if id != &req.candidate_id {
+                return Ok(tonic::Response::new(VoteResponse::new_reject(state.term)));
+            }
         }
 
         // If a follower receives votes from a candidate, it should update last_rpc_time to prevent itself from starting election
-        *self.last_rpc_time.write() = Instant::now();
-
-        let mut state = RwLockUpgradableReadGuard::upgrade(state);
-        // calibrate term
-        if req.term > state.term {
-            state.update_to_term(req.term);
+        if state.role() == ServerRole::Follower {
+            *self.last_rpc_time.write() = Instant::now();
         }
 
         if req.last_log_term > state.last_log_term()

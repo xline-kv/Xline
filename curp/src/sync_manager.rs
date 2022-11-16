@@ -475,19 +475,39 @@ impl<C: Command + 'static> SyncManager<C> {
                 role_trigger.listen().await;
             }
 
-            let timeout = {
-                let mut rng = thread_rng();
-                match state.read().role() {
-                    ServerRole::Follower => {
-                        Duration::from_millis(rng.gen_range(Self::FOLLOWER_TIMEOUT))
+            let current_role = state.read().role();
+            let start_vote = match current_role {
+                ServerRole::Follower => {
+                    let timeout =
+                        Duration::from_millis(thread_rng().gen_range(Self::FOLLOWER_TIMEOUT));
+                    // wait until it needs to vote
+                    loop {
+                        let next_check = last_rpc_time.read().to_owned() + timeout;
+                        tokio::time::sleep_until(next_check).await;
+                        if Instant::now() - *last_rpc_time.read() > timeout {
+                            break;
+                        }
                     }
-                    ServerRole::Candidate => Self::CANDIDATE_TIMEOUT,
-                    ServerRole::Leader => continue, // leader should not vote
+                    true
                 }
+                ServerRole::Candidate => loop {
+                    let next_check = last_rpc_time.read().to_owned() + Self::CANDIDATE_TIMEOUT;
+                    tokio::time::sleep_until(next_check).await;
+                    // check election status
+                    match state.read().role() {
+                        // election failed, becomes a follower || election succeeded, becomes a leader
+                        ServerRole::Follower | ServerRole::Leader => {
+                            break false;
+                        }
+                        ServerRole::Candidate => {}
+                    }
+                    if Instant::now() - *last_rpc_time.read() > Self::CANDIDATE_TIMEOUT {
+                        break true;
+                    }
+                },
+                ServerRole::Leader => false, // leader should not vote
             };
-            let next_check = last_rpc_time.read().to_owned() + timeout;
-            tokio::time::sleep_until(next_check).await;
-            if Instant::now() - *last_rpc_time.read() < timeout {
+            if !start_vote {
                 continue;
             }
 
@@ -498,6 +518,8 @@ impl<C: Command + 'static> SyncManager<C> {
                 let new_term = state.term + 1;
                 state.update_to_term(new_term);
                 state.set_role(ServerRole::Candidate);
+                state.voted_for = Some(state.id.clone());
+                state.votes_received = 1;
                 VoteRequest::new(
                     state.term,
                     state.id.clone(),
@@ -553,7 +575,7 @@ impl<C: Command + 'static> SyncManager<C> {
                     state.votes_received += 1;
 
                     // the majority has granted the vote
-                    let min_granted = (state.others.len() + 1) / 2;
+                    let min_granted = (state.others.len() + 1) / 2 + 1;
                     if state.votes_received > min_granted {
                         state.set_role(ServerRole::Leader);
                         debug!("server becomes leader");
