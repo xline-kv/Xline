@@ -1,9 +1,7 @@
 name: Docker
 
 on:
-  pull_request:
-    branches: [master]
-    types: [closed]
+  workflow_dispatch: {}
 
 env:
   CI_RUST_TOOLCHAIN: 1.61.0
@@ -11,7 +9,6 @@ env:
 jobs:
   docker:
     name: Docker
-    if: ${{ github.event.pull_request.merged }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
