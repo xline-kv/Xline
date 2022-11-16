@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
 use crate::{
-    rpc::{RequestWrapper, ResponseWrapper},
+    rpc::{RequestWithToken, RequestWrapper, ResponseWrapper},
     storage::{authstore::AuthStore, KvStore},
 };
 
@@ -101,6 +101,28 @@ impl KeyRange {
         self.contains(key)
     }
 
+    /// Check if `KeyRange` contains another `KeyRange`
+    pub(crate) fn contains_range(&self, other: &Self) -> bool {
+        if other.end.is_empty() {
+            self.contains_key(other.start.as_slice())
+        } else {
+            let s1_lt_s2 = match (self.start_bound(), other.start_bound()) {
+                (Bound::Included(s1), Bound::Included(s2)) => s1 <= s2,
+                (Bound::Unbounded, _) => true,
+                (_, Bound::Unbounded) => false,
+                _ => unreachable!("KeyRange::start_bound() cannot be Excluded"),
+            };
+            let e1_gt_e2 = match (self.end_bound(), other.end_bound()) {
+                (Bound::Excluded(e1) | Bound::Included(e1), Bound::Excluded(e2))
+                | (Bound::Included(e1), Bound::Included(e2)) => e1 >= e2,
+                (Bound::Excluded(e1), Bound::Included(e2)) => e1 > e2,
+                (Bound::Unbounded, _) => true,
+                (_, Bound::Unbounded) => false,
+            };
+            s1_lt_s2 && e1_gt_e2
+        }
+    }
+
     /// Get end of range with prefix
     #[allow(clippy::indexing_slicing)] // end[i] is always valid
     pub(crate) fn get_prefix(key: &[u8]) -> Vec<u8> {
@@ -156,11 +178,16 @@ impl CommandExecutor {
 impl CurpCommandExecutor<Command> for CommandExecutor {
     async fn execute(&self, cmd: &Command) -> Result<CommandResponse, ExecuteError> {
         let (_, request_data, id) = cmd.clone().unpack();
-        let wrapper: RequestWrapper = bincode::deserialize(&request_data)
+        let wrapper: RequestWithToken = bincode::deserialize(&request_data)
             .unwrap_or_else(|e| panic!("Failed to serialize RequestWrapper, error: {e}"));
+        self.auth_storage.check_permission(&wrapper)?;
         #[allow(clippy::wildcard_enum_match_arm)]
-        let receiver = match wrapper {
-            RequestWrapper::RequestOp(_) => self.storage.send_req(id, wrapper).await,
+        let receiver = match wrapper.request {
+            RequestWrapper::RangeRequest(_)
+            | RequestWrapper::PutRequest(_)
+            | RequestWrapper::DeleteRangeRequest(_)
+            | RequestWrapper::TxnRequest(_)
+            | RequestWrapper::CompactionRequest(_) => self.storage.send_req(id, wrapper).await,
             _ => self.auth_storage.send_req(id, wrapper).await,
         };
         receiver
@@ -174,11 +201,16 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
         _index: LogIndex,
     ) -> Result<SyncResponse, ExecuteError> {
         let (_, request_data, id) = cmd.clone().unpack();
-        let wrapper: RequestWrapper = bincode::deserialize(&request_data)
+        let wrapper: RequestWithToken = bincode::deserialize(&request_data)
             .unwrap_or_else(|e| panic!("Failed to serialize RequestWrapper, error: {e}"));
+        self.auth_storage.check_permission(&wrapper)?;
         #[allow(clippy::wildcard_enum_match_arm)]
-        let receiver = match wrapper {
-            RequestWrapper::RequestOp(_) => self.storage.send_sync(id).await,
+        let receiver = match wrapper.request {
+            RequestWrapper::RangeRequest(_)
+            | RequestWrapper::PutRequest(_)
+            | RequestWrapper::DeleteRangeRequest(_)
+            | RequestWrapper::TxnRequest(_)
+            | RequestWrapper::CompactionRequest(_) => self.storage.send_sync(id).await,
             _ => self.auth_storage.send_sync(id).await,
         };
         receiver
@@ -306,7 +338,7 @@ pub(crate) struct ExecutionRequest {
     /// Propose Id
     id: ProposeId,
     /// Request to execute
-    req: RequestWrapper,
+    req: RequestWithToken,
     /// Command response sender
     res_sender: oneshot::Sender<Result<CommandResponse, ExecuteError>>,
 }
@@ -315,7 +347,7 @@ impl ExecutionRequest {
     /// New `ExectionRequest`
     pub(crate) fn new(
         id: ProposeId,
-        req: RequestWrapper,
+        req: RequestWithToken,
     ) -> (
         Self,
         oneshot::Receiver<Result<CommandResponse, ExecuteError>>,
@@ -336,7 +368,7 @@ impl ExecutionRequest {
         self,
     ) -> (
         ProposeId,
-        RequestWrapper,
+        RequestWithToken,
         oneshot::Sender<Result<CommandResponse, ExecuteError>>,
     ) {
         let Self {

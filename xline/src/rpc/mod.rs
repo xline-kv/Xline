@@ -106,11 +106,36 @@ pub(crate) use self::v3lockpb::{
 
 pub use self::etcdserverpb::range_request::{SortOrder, SortTarget};
 
+impl User {
+    /// Check if user has the given role
+    pub(crate) fn has_role(&self, role: &str) -> bool {
+        self.roles.binary_search(&role.to_owned()).is_ok()
+    }
+}
+
 /// Wrapper for requests
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub(crate) struct RequestWithToken {
+    /// token for authentication
+    pub(crate) token: Option<String>,
+    /// Internal request
+    pub(crate) request: RequestWrapper,
+}
+
+/// Internal request
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[allow(clippy::enum_variant_names)]
 pub(crate) enum RequestWrapper {
-    /// `RequestOp`
-    RequestOp(RequestOp),
+    /// `RangeRequest`
+    RangeRequest(RangeRequest),
+    /// `PutRequest`
+    PutRequest(PutRequest),
+    /// `DeleteRangeRequest`
+    DeleteRangeRequest(DeleteRangeRequest),
+    /// `TxnRequest`
+    TxnRequest(TxnRequest),
+    /// `CompactionRequest`
+    CompactionRequest(CompactionRequest),
     /// `AuthEnableRequest`
     AuthEnableRequest(AuthEnableRequest),
     /// `AuthDisableRequest`
@@ -149,9 +174,18 @@ pub(crate) enum RequestWrapper {
 
 /// Wrapper for responses
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[allow(clippy::enum_variant_names)]
 pub(crate) enum ResponseWrapper {
-    /// `ResponseOp`
-    ResponseOp(ResponseOp),
+    /// `RangeResponse`
+    RangeResponse(RangeResponse),
+    /// `PutResponse`
+    PutResponse(PutResponse),
+    /// `DeleteRangeResponse`
+    DeleteRangeResponse(DeleteRangeResponse),
+    /// `TxnResponse`
+    TxnResponse(TxnResponse),
+    /// `CompactionResponse`
+    CompactionResponse(CompactionResponse),
     /// `AuthEnableResponse`
     AuthEnableResponse(AuthEnableResponse),
     /// `AuthDisableResponse`
@@ -233,7 +267,11 @@ macro_rules! impl_from_responses {
 }
 
 impl_from_requests!(
-    RequestOp,
+    RangeRequest,
+    PutRequest,
+    DeleteRangeRequest,
+    TxnRequest,
+    CompactionRequest,
     AuthEnableRequest,
     AuthDisableRequest,
     AuthStatusRequest,
@@ -254,7 +292,11 @@ impl_from_requests!(
 );
 
 impl_from_responses!(
-    ResponseOp,
+    RangeResponse,
+    PutResponse,
+    DeleteRangeResponse,
+    TxnResponse,
+    CompactionResponse,
     AuthEnableResponse,
     AuthDisableResponse,
     AuthStatusResponse,
@@ -273,3 +315,51 @@ impl_from_responses!(
     AuthUserRevokeRoleResponse,
     AuthenticateResponse
 );
+
+impl From<RequestOp> for RequestWrapper {
+    fn from(request_op: RequestOp) -> Self {
+        match request_op.request {
+            Some(Request::RequestRange(req)) => RequestWrapper::RangeRequest(req),
+            Some(Request::RequestPut(req)) => RequestWrapper::PutRequest(req),
+            Some(Request::RequestDeleteRange(req)) => RequestWrapper::DeleteRangeRequest(req),
+            Some(Request::RequestTxn(req)) => RequestWrapper::TxnRequest(req),
+            None => panic!("request is not set"),
+        }
+    }
+}
+
+impl From<ResponseWrapper> for ResponseOp {
+    fn from(response_wrapper: ResponseWrapper) -> Self {
+        #[allow(clippy::wildcard_enum_match_arm)]
+        match response_wrapper {
+            ResponseWrapper::RangeResponse(resp) => ResponseOp {
+                response: Some(Response::ResponseRange(resp)),
+            },
+            ResponseWrapper::PutResponse(resp) => ResponseOp {
+                response: Some(Response::ResponsePut(resp)),
+            },
+            ResponseWrapper::DeleteRangeResponse(resp) => ResponseOp {
+                response: Some(Response::ResponseDeleteRange(resp)),
+            },
+            ResponseWrapper::TxnResponse(resp) => ResponseOp {
+                response: Some(Response::ResponseTxn(resp)),
+            },
+            _ => panic!("wrong response type"),
+        }
+    }
+}
+
+impl RequestWithToken {
+    /// New `RequestWithToken`
+    pub(crate) fn new(request: RequestWrapper) -> Self {
+        RequestWithToken {
+            token: None,
+            request,
+        }
+    }
+
+    /// New `RequestWithToken` with token
+    pub(crate) fn new_with_token(request: RequestWrapper, token: Option<String>) -> Self {
+        RequestWithToken { token, request }
+    }
+}

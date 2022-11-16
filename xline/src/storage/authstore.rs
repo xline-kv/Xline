@@ -30,8 +30,9 @@ use crate::rpc::{
     AuthUserChangePasswordResponse, AuthUserDeleteRequest, AuthUserDeleteResponse,
     AuthUserGetRequest, AuthUserGetResponse, AuthUserGrantRoleRequest, AuthUserGrantRoleResponse,
     AuthUserListRequest, AuthUserListResponse, AuthUserRevokeRoleRequest,
-    AuthUserRevokeRoleResponse, AuthenticateRequest, AuthenticateResponse, KeyValue, Permission,
-    RequestWrapper, ResponseHeader, ResponseWrapper, Role, Type, User,
+    AuthUserRevokeRoleResponse, AuthenticateRequest, AuthenticateResponse, DeleteRangeRequest,
+    KeyValue, Permission, PutRequest, RangeRequest, Request, RequestWithToken, RequestWrapper,
+    ResponseHeader, ResponseWrapper, Role, TxnRequest, Type, User,
 };
 use crate::server::command::{
     CommandResponse, ExecutionRequest, KeyRange, SyncRequest, SyncResponse,
@@ -74,9 +75,11 @@ pub(crate) struct AuthStoreBackend {
     /// Revision
     revision: Mutex<i64>,
     /// Speculative execution pool. Mapping from propose id to request
-    sp_exec_pool: Mutex<HashMap<ProposeId, RequestWrapper>>,
+    sp_exec_pool: Mutex<HashMap<ProposeId, RequestWithToken>>,
     /// Enabled
     enabled: Mutex<bool>,
+    /// Permission cache
+    permission_cache: Mutex<HashMap<String, UserPermissions>>,
     /// The manager of token
     token_manager: Option<JwtTokenManager>,
 }
@@ -130,7 +133,7 @@ impl AuthStore {
     pub(crate) async fn send_req(
         &self,
         id: ProposeId,
-        req: RequestWrapper,
+        req: RequestWithToken,
     ) -> oneshot::Receiver<Result<CommandResponse, ExecuteError>> {
         let (req, receiver) = ExecutionRequest::new(id, req);
         assert!(
@@ -158,6 +161,182 @@ impl AuthStore {
     ) -> Result<i64, ExecuteError> {
         self.inner.check_password(username, password)
     }
+
+    /// check if the request is permitted
+    pub(crate) fn check_permission(&self, wrapper: &RequestWithToken) -> Result<(), ExecuteError> {
+        if !self.inner.is_enabled() {
+            return Ok(());
+        }
+        if let RequestWrapper::AuthenticateRequest(_) = wrapper.request {
+            return Ok(());
+        }
+        let claims = match wrapper.token {
+            Some(ref token) => self.inner.verify_token(token)?,
+            None => {
+                return Err(ExecuteError::InvalidCommand(
+                    "token is not provided".to_owned(),
+                ))
+            }
+        };
+        if claims.revision < self.inner.revision() {
+            return Err(ExecuteError::InvalidCommand(
+                "request's revision is older than current revision".to_owned(),
+            ));
+        }
+        let username = claims.username;
+        #[allow(clippy::wildcard_enum_match_arm)]
+        match wrapper.request {
+            RequestWrapper::RangeRequest(ref range_req) => {
+                self.check_range_permission(&username, range_req)?;
+            }
+            RequestWrapper::PutRequest(ref put_req) => {
+                self.check_put_permission(&username, put_req)?;
+            }
+            RequestWrapper::DeleteRangeRequest(ref del_range_req) => {
+                self.check_delete_permission(&username, del_range_req)?;
+            }
+            RequestWrapper::TxnRequest(ref txn_req) => {
+                self.check_txn_permission(&username, txn_req)?;
+            }
+            RequestWrapper::AuthUserGetRequest(ref user_get_req) => {
+                self.check_admin_permission(&username).map_or_else(
+                    |e| {
+                        if user_get_req.name == username {
+                            Ok(())
+                        } else {
+                            Err(e)
+                        }
+                    },
+                    |_| Ok(()),
+                )?;
+            }
+            RequestWrapper::AuthRoleGetRequest(ref role_get_req) => {
+                self.check_admin_permission(&username).map_or_else(
+                    |e| {
+                        let user = self.inner.get_user(&username)?;
+                        if user.has_role(&role_get_req.role) {
+                            Ok(())
+                        } else {
+                            Err(e)
+                        }
+                    },
+                    |_| Ok(()),
+                )?;
+            }
+            _ => {
+                self.check_admin_permission(&username)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// check if range request is permitted
+    fn check_range_permission(
+        &self,
+        username: &str,
+        req: &RangeRequest,
+    ) -> Result<(), ExecuteError> {
+        self.check_op_permission(username, &req.key, &req.range_end, Type::Read)
+    }
+
+    /// check if put request is permitted
+    fn check_put_permission(&self, username: &str, req: &PutRequest) -> Result<(), ExecuteError> {
+        if req.prev_kv {
+            self.check_op_permission(username, &req.key, &[], Type::Read)?;
+        }
+        self.check_op_permission(username, &req.key, &[], Type::Write)
+    }
+
+    /// check if delete request is permitted
+    fn check_delete_permission(
+        &self,
+        username: &str,
+        req: &DeleteRangeRequest,
+    ) -> Result<(), ExecuteError> {
+        if req.prev_kv {
+            self.check_op_permission(username, &req.key, &req.range_end, Type::Read)?;
+        }
+        self.check_op_permission(username, &req.key, &req.range_end, Type::Write)
+    }
+
+    /// check if txn request is permitted
+    fn check_txn_permission(&self, username: &str, req: &TxnRequest) -> Result<(), ExecuteError> {
+        for compare in &req.compare {
+            self.check_op_permission(username, &compare.key, &compare.range_end, Type::Read)?;
+        }
+        for op in req.success.iter().chain(req.failure.iter()) {
+            match op.request {
+                Some(Request::RequestRange(ref range_req)) => {
+                    self.check_range_permission(username, range_req)?;
+                }
+                Some(Request::RequestPut(ref put_req)) => {
+                    self.check_put_permission(username, put_req)?;
+                }
+                Some(Request::RequestDeleteRange(ref del_range_req)) => {
+                    self.check_delete_permission(username, del_range_req)?;
+                }
+                Some(Request::RequestTxn(ref txn_req)) => {
+                    self.check_txn_permission(username, txn_req)?;
+                }
+                None => unreachable!("txn operation should have request"),
+            }
+        }
+        Ok(())
+    }
+
+    /// Check if the user has admin permission
+    fn check_admin_permission(&self, username: &str) -> Result<(), ExecuteError> {
+        if !self.inner.is_enabled() {
+            return Ok(());
+        }
+        let user = self.inner.get_user(username)?;
+        if user.has_role(ROOT_ROLE) {
+            return Ok(());
+        }
+        Err(ExecuteError::InvalidCommand("premission denied".to_owned()))
+    }
+
+    /// check permission for a kv operation
+    fn check_op_permission(
+        &self,
+        username: &str,
+        key: &[u8],
+        range_end: &[u8],
+        perm_type: Type,
+    ) -> Result<(), ExecuteError> {
+        let user = self.inner.get_user(username)?;
+        if user.has_role(ROOT_ROLE) {
+            return Ok(());
+        }
+        let user_perms = self.inner.get_user_permissions(username)?;
+        match perm_type {
+            Type::Read => {
+                if user_perms.read.iter().any(|kr| {
+                    kr.contains_range(&KeyRange {
+                        start: key.to_vec(),
+                        end: range_end.to_vec(),
+                    })
+                }) {
+                    return Ok(());
+                }
+            }
+            Type::Write => {
+                if user_perms.write.iter().any(|kr| {
+                    kr.contains_range(&KeyRange {
+                        start: key.to_vec(),
+                        end: range_end.to_vec(),
+                    })
+                }) {
+                    return Ok(());
+                }
+            }
+            Type::Readwrite => {
+                unreachable!("Readwrite is unreachable");
+            }
+        }
+        Err(ExecuteError::InvalidCommand("premission denied".to_owned()))
+    }
 }
 
 impl AuthStoreBackend {
@@ -172,6 +351,7 @@ impl AuthStoreBackend {
             token_manager: key_pair.map(|(encoding_key, decoding_key)| {
                 JwtTokenManager::new(encoding_key, decoding_key)
             }),
+            permission_cache: Mutex::new(HashMap::new()),
         }
     }
 
@@ -218,6 +398,67 @@ impl AuthStoreBackend {
                 .map_err(|e| ExecuteError::InvalidCommand(format!("assign token error: {e}"))),
             None => Err(ExecuteError::InvalidCommand(
                 "token_manager is not initialized".to_owned(),
+            )),
+        }
+    }
+
+    /// verify token
+    fn verify_token(&self, token: &str) -> Result<TokenClaims, ExecuteError> {
+        match self.token_manager {
+            Some(ref token_manager) => token_manager
+                .verify(token)
+                .map_err(|e| ExecuteError::InvalidCommand(format!("verify token error: {e}"))),
+            None => Err(ExecuteError::InvalidCommand(
+                "token_manager is not initialized".to_owned(),
+            )),
+        }
+    }
+
+    /// refresh permission cache
+    fn refresh_permission_cache(&self) {
+        let mut permission_cache = HashMap::new();
+        for user in self.get_all_users() {
+            let mut user_permisiion = UserPermissions::new();
+            for role_name in user.roles {
+                let role = match self.get_role(&role_name) {
+                    Ok(role) => role,
+                    Err(_) => continue,
+                };
+                for permission in role.key_permission {
+                    let key_range = KeyRange {
+                        start: permission.key,
+                        end: permission.range_end,
+                    };
+                    #[allow(clippy::unwrap_used)] // safe unwrap
+                    match Type::from_i32(permission.perm_type).unwrap() {
+                        Type::Readwrite => {
+                            user_permisiion.read.push(key_range.clone());
+                            user_permisiion.write.push(key_range.clone());
+                        }
+                        Type::Write => {
+                            user_permisiion.write.push(key_range.clone());
+                        }
+                        Type::Read => {
+                            user_permisiion.read.push(key_range.clone());
+                        }
+                    }
+                }
+            }
+            if !user_permisiion.is_empty() {
+                let username = String::from_utf8_lossy(&user.name).to_string();
+                let _ignore = permission_cache.insert(username, user_permisiion);
+            }
+        }
+        *self.permission_cache.lock() = permission_cache;
+    }
+
+    /// get user permissions
+    fn get_user_permissions(&self, username: &str) -> Result<UserPermissions, ExecuteError> {
+        let permission_cache = self.permission_cache.lock();
+        match permission_cache.get(username) {
+            Some(user_permissions) => Ok(user_permissions.clone()),
+            None => Err(ExecuteError::InvalidCommand(
+                "user permissions not found".to_owned(),
             )),
         }
     }
@@ -351,14 +592,15 @@ impl AuthStoreBackend {
         assert!(res_sender.send(result).is_ok(), "Failed to send response");
     }
 
-    /// Handle `RequestWrapper`
+    /// Handle `InternalRequest`
     fn handle_auth_req(
         &self,
         id: ProposeId,
-        wrapper: &RequestWrapper,
+        wrapper: &RequestWithToken,
     ) -> Result<ResponseWrapper, ExecuteError> {
         let _prev = self.sp_exec_pool.lock().insert(id, wrapper.clone());
-        let response = match *wrapper {
+        #[allow(clippy::wildcard_enum_match_arm)]
+        let response = match wrapper.request {
             RequestWrapper::AuthEnableRequest(ref req) => {
                 ResponseWrapper::AuthEnableResponse(self.handle_auth_enable_request(req)?)
             }
@@ -420,8 +662,8 @@ impl AuthStoreBackend {
             RequestWrapper::AuthenticateRequest(ref req) => {
                 ResponseWrapper::AuthenticateResponse(self.handle_authenticate_request(req)?)
             }
-            RequestWrapper::RequestOp(_) => {
-                unreachable!("RequestOp will send to kvstore")
+            _ => {
+                unreachable!("Other request should not be sent to this store");
             }
         };
         Ok(response)
@@ -785,10 +1027,11 @@ impl AuthStoreBackend {
     }
 
     /// Sync `RequestWrapper`
-    fn sync_request(&self, wrapper: RequestWrapper) -> i64 {
+    fn sync_request(&self, wrapper: RequestWithToken) -> i64 {
         let revision = *self.revision.lock();
         let next_revision = revision.overflow_add(1);
-        let modify = match wrapper {
+        #[allow(clippy::wildcard_enum_match_arm)]
+        let modify = match wrapper.request {
             RequestWrapper::AuthEnableRequest(req) => {
                 debug!("Sync AuthEnableRequest {:?}", req);
                 self.sync_auth_enable_request(&req, next_revision)
@@ -858,8 +1101,8 @@ impl AuthStoreBackend {
                 debug!("Sync AuthenticateRequest {:?}", req);
                 Self::sync_authenticate_request(&req)
             }
-            RequestWrapper::RequestOp(_) => {
-                unreachable!("RequestOp will send to kvstore");
+            _ => {
+                unreachable!("Other request should not be sent to this store");
             }
         };
         if modify {
@@ -884,6 +1127,7 @@ impl AuthStoreBackend {
         }
         self.put(AUTH_ENABLE_KEY.to_vec(), vec![1], revision, 0);
         *self.enabled.lock() = true;
+        self.refresh_permission_cache();
         true
     }
 
@@ -919,6 +1163,7 @@ impl AuthStoreBackend {
             roles: Vec::new(),
         };
         self.put_user(&user, revision, 0);
+        self.refresh_permission_cache();
         true
     }
 
@@ -941,6 +1186,7 @@ impl AuthStoreBackend {
             return false;
         }
         self.delete_user(&req.name, next_revision, 0);
+        self.refresh_permission_cache();
         true
     }
 
@@ -960,6 +1206,7 @@ impl AuthStoreBackend {
         }
         user.password = req.hashed_password.into_bytes();
         self.put_user(&user, revision, 0);
+        self.refresh_permission_cache();
         true
     }
 
@@ -979,6 +1226,7 @@ impl AuthStoreBackend {
         user.roles.push(req.role);
         user.roles.sort();
         self.put_user(&user, revision, 0);
+        self.refresh_permission_cache();
         true
     }
 
@@ -1001,6 +1249,7 @@ impl AuthStoreBackend {
         };
         let _ignore = user.roles.remove(idx);
         self.put_user(&user, revision, 0);
+        self.refresh_permission_cache();
         true
     }
 
@@ -1045,6 +1294,7 @@ impl AuthStoreBackend {
                 sub_revision = sub_revision.wrapping_add(1);
             }
         }
+        self.refresh_permission_cache();
         true
     }
 
@@ -1079,6 +1329,7 @@ impl AuthStoreBackend {
             }
         };
         self.put_role(&role, revision, 0);
+        self.refresh_permission_cache();
         true
     }
 
@@ -1104,6 +1355,7 @@ impl AuthStoreBackend {
         };
         let _ignore = role.key_permission.remove(idx);
         self.put_role(&role, next_revision, 0);
+        self.refresh_permission_cache();
         true
     }
 }
@@ -1179,5 +1431,29 @@ impl TokenOperate for JwtTokenManager {
             &Validation::new(Algorithm::RS256),
         )
         .map(|d| d.claims)
+    }
+}
+
+/// Permissions if a user
+#[derive(Debug, Clone)]
+struct UserPermissions {
+    /// `KeyRange` has read permission
+    read: Vec<KeyRange>,
+    /// `KeyRange` has write permission
+    write: Vec<KeyRange>,
+}
+
+impl UserPermissions {
+    /// New `UserPermissions`
+    fn new() -> Self {
+        Self {
+            read: Vec::new(),
+            write: Vec::new(),
+        }
+    }
+
+    /// Check if user permissions is empty
+    fn is_empty(&self) -> bool {
+        self.read.is_empty() && self.write.is_empty()
     }
 }

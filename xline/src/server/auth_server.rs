@@ -6,6 +6,7 @@ use pbkdf2::{
     password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
     Pbkdf2,
 };
+use tonic::metadata::MetadataMap;
 use uuid::Uuid;
 
 use crate::{
@@ -20,7 +21,7 @@ use crate::{
         AuthUserGetRequest, AuthUserGetResponse, AuthUserGrantRoleRequest,
         AuthUserGrantRoleResponse, AuthUserListRequest, AuthUserListResponse,
         AuthUserRevokeRoleRequest, AuthUserRevokeRoleResponse, AuthenticateRequest,
-        AuthenticateResponse, RequestWrapper,
+        AuthenticateResponse, RequestWithToken, RequestWrapper,
     },
     storage::AuthStore,
 };
@@ -39,6 +40,14 @@ pub(crate) struct AuthServer {
     name: String,
 }
 
+/// Get token from metadata
+pub(crate) fn get_token(metadata: &MetadataMap) -> Option<String> {
+    metadata
+        .get("token")
+        .or_else(|| metadata.get("authorization"))
+        .and_then(|v| v.to_str().map(String::from).ok())
+}
+
 impl AuthServer {
     /// New `AuthServer`
     pub(crate) fn new(storage: Arc<AuthStore>, client: Arc<Client<Command>>, name: String) -> Self {
@@ -55,18 +64,23 @@ impl AuthServer {
     }
 
     /// Generate `Command` proposal from `Request`
-    fn command_from_request_wrapper(propose_id: ProposeId, wrapper: &RequestWrapper) -> Command {
+    fn command_from_request_wrapper(propose_id: ProposeId, wrapper: &RequestWithToken) -> Command {
         let bin_req = bincode::serialize(&wrapper)
             .unwrap_or_else(|e| panic!("Failed to serialize RequestWrapper, error: {e}"));
         Command::new(vec![], bin_req, propose_id)
     }
 
     /// Propose request and get result with slow path
-    async fn propose_slow_path(
+    async fn propose_slow_path<T>(
         &self,
-        propose_id: ProposeId,
-        wrapper: RequestWrapper,
-    ) -> Result<(CommandResponse, SyncResponse), tonic::Status> {
+        request: tonic::Request<T>,
+    ) -> Result<(CommandResponse, SyncResponse), tonic::Status>
+    where
+        T: Into<RequestWrapper>,
+    {
+        let token = get_token(request.metadata());
+        let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
+        let propose_id = self.generate_propose_id();
         let cmd = Self::command_from_request_wrapper(propose_id, &wrapper);
         self.client.propose_indexed(cmd).await.map_err(|err| {
             if let ProposeError::ExecutionError(e) = err {
@@ -105,12 +119,8 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthEnableRequest>,
     ) -> Result<tonic::Response<AuthEnableResponse>, tonic::Status> {
         debug!("Receive AuthEnableRequest {:?}", request);
-        let auth_enable_req = request.into_inner();
-        let propose_id = self.generate_propose_id();
 
-        let (res, sync_res) = self
-            .propose_slow_path(propose_id, auth_enable_req.into())
-            .await?;
+        let (res, sync_res) = self.propose_slow_path(request).await?;
 
         let mut res: AuthEnableResponse = res.decode().into();
         let revision = sync_res.revision();
@@ -126,12 +136,8 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthDisableRequest>,
     ) -> Result<tonic::Response<AuthDisableResponse>, tonic::Status> {
         debug!("Receive AuthDisableRequest {:?}", request);
-        let auth_disable_req = request.into_inner();
-        let propose_id = self.generate_propose_id();
 
-        let (res, sync_res) = self
-            .propose_slow_path(propose_id, auth_disable_req.into())
-            .await?;
+        let (res, sync_res) = self.propose_slow_path(request).await?;
 
         let mut res: AuthDisableResponse = res.decode().into();
         let revision = sync_res.revision();
@@ -147,12 +153,8 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthStatusRequest>,
     ) -> Result<tonic::Response<AuthStatusResponse>, tonic::Status> {
         debug!("Receive AuthStatusRequest {:?}", request);
-        let auth_status_req = request.into_inner();
-        let propose_id = self.generate_propose_id();
 
-        let (res, sync_res) = self
-            .propose_slow_path(propose_id, auth_status_req.into())
-            .await?;
+        let (res, sync_res) = self.propose_slow_path(request).await?;
 
         let mut res: AuthStatusResponse = res.decode().into();
         let revision = sync_res.revision();
@@ -168,15 +170,14 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthenticateRequest>,
     ) -> Result<tonic::Response<AuthenticateResponse>, tonic::Status> {
         debug!("Receive AuthenticateRequest {:?}", request);
-        let authenticate_req = request.into_inner();
         loop {
             let checked_revision =
-                self.check_password(&authenticate_req.name, &authenticate_req.password)?;
-            let mut req_clone = authenticate_req.clone();
-            req_clone.password = "".to_owned();
+                self.check_password(&request.get_ref().name, &request.get_ref().password)?;
+            let mut authenticate_req = request.get_ref().clone();
+            authenticate_req.password = "".to_owned();
 
             let (res, sync_res) = self
-                .propose_slow_path(self.generate_propose_id(), req_clone.into())
+                .propose_slow_path(tonic::Request::new(authenticate_req))
                 .await?;
 
             let revision = sync_res.revision();
@@ -193,10 +194,10 @@ impl Auth for AuthServer {
 
     async fn user_add(
         &self,
-        request: tonic::Request<AuthUserAddRequest>,
+        mut request: tonic::Request<AuthUserAddRequest>,
     ) -> Result<tonic::Response<AuthUserAddResponse>, tonic::Status> {
         debug!("Receive AuthUserAddRequest {:?}", request);
-        let mut user_add_req = request.into_inner();
+        let user_add_req = request.get_mut();
         if user_add_req.name.is_empty() {
             return Err(tonic::Status::invalid_argument("user name is empty"));
         }
@@ -212,11 +213,8 @@ impl Auth for AuthServer {
         let hashed_password = Self::hash_password(user_add_req.password.as_bytes());
         user_add_req.hashed_password = hashed_password;
         user_add_req.password = "".to_owned();
-        let propose_id = self.generate_propose_id();
 
-        let (res, sync_res) = self
-            .propose_slow_path(propose_id, user_add_req.into())
-            .await?;
+        let (res, sync_res) = self.propose_slow_path(request).await?;
 
         let mut res: AuthUserAddResponse = res.decode().into();
         let revision = sync_res.revision();
@@ -232,12 +230,8 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthUserGetRequest>,
     ) -> Result<tonic::Response<AuthUserGetResponse>, tonic::Status> {
         debug!("Receive AuthUserGetRequest {:?}", request);
-        let user_get_req = request.into_inner();
-        let propose_id = self.generate_propose_id();
 
-        let (res, sync_res) = self
-            .propose_slow_path(propose_id, user_get_req.into())
-            .await?;
+        let (res, sync_res) = self.propose_slow_path(request).await?;
 
         let mut res: AuthUserGetResponse = res.decode().into();
         if let Some(mut header) = res.header.as_mut() {
@@ -251,12 +245,8 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthUserListRequest>,
     ) -> Result<tonic::Response<AuthUserListResponse>, tonic::Status> {
         debug!("Receive AuthUserListRequest {:?}", request);
-        let user_list_req = request.into_inner();
-        let propose_id = self.generate_propose_id();
 
-        let (res, sync_res) = self
-            .propose_slow_path(propose_id, user_list_req.into())
-            .await?;
+        let (res, sync_res) = self.propose_slow_path(request).await?;
 
         let mut res: AuthUserListResponse = res.decode().into();
         if let Some(mut header) = res.header.as_mut() {
@@ -270,12 +260,8 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthUserDeleteRequest>,
     ) -> Result<tonic::Response<AuthUserDeleteResponse>, tonic::Status> {
         debug!("Receive AuthUserDeleteRequest {:?}", request);
-        let user_delete_req = request.into_inner();
-        let propose_id = self.generate_propose_id();
 
-        let (res, sync_res) = self
-            .propose_slow_path(propose_id, user_delete_req.into())
-            .await?;
+        let (res, sync_res) = self.propose_slow_path(request).await?;
 
         let mut res: AuthUserDeleteResponse = res.decode().into();
         if let Some(mut header) = res.header.as_mut() {
@@ -286,18 +272,15 @@ impl Auth for AuthServer {
 
     async fn user_change_password(
         &self,
-        request: tonic::Request<AuthUserChangePasswordRequest>,
+        mut request: tonic::Request<AuthUserChangePasswordRequest>,
     ) -> Result<tonic::Response<AuthUserChangePasswordResponse>, tonic::Status> {
         debug!("Receive AuthUserChangePasswordRequest {:?}", request);
-        let mut user_change_password_req = request.into_inner();
+        let mut user_change_password_req = request.get_mut();
         let hashed_password = Self::hash_password(user_change_password_req.password.as_bytes());
         user_change_password_req.hashed_password = hashed_password;
         user_change_password_req.password = "".to_owned();
-        let propose_id = self.generate_propose_id();
 
-        let (res, sync_res) = self
-            .propose_slow_path(propose_id, user_change_password_req.into())
-            .await?;
+        let (res, sync_res) = self.propose_slow_path(request).await?;
 
         let mut res: AuthUserChangePasswordResponse = res.decode().into();
         let revision = sync_res.revision();
@@ -316,12 +299,8 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthUserGrantRoleRequest>,
     ) -> Result<tonic::Response<AuthUserGrantRoleResponse>, tonic::Status> {
         debug!("Receive AuthUserGrantRoleRequest {:?}", request);
-        let user_grant_role_req = request.into_inner();
-        let propose_id = self.generate_propose_id();
 
-        let (res, sync_res) = self
-            .propose_slow_path(propose_id, user_grant_role_req.into())
-            .await?;
+        let (res, sync_res) = self.propose_slow_path(request).await?;
 
         let mut res: AuthUserGrantRoleResponse = res.decode().into();
         let revision = sync_res.revision();
@@ -337,12 +316,8 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthUserRevokeRoleRequest>,
     ) -> Result<tonic::Response<AuthUserRevokeRoleResponse>, tonic::Status> {
         debug!("Receive AuthUserRevokeRoleRequest {:?}", request);
-        let user_revoke_role_req = request.into_inner();
-        let propose_id = self.generate_propose_id();
 
-        let (res, sync_res) = self
-            .propose_slow_path(propose_id, user_revoke_role_req.into())
-            .await?;
+        let (res, sync_res) = self.propose_slow_path(request).await?;
 
         let mut res: AuthUserRevokeRoleResponse = res.decode().into();
         let revision = sync_res.revision();
@@ -358,15 +333,11 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthRoleAddRequest>,
     ) -> Result<tonic::Response<AuthRoleAddResponse>, tonic::Status> {
         debug!("Receive AuthRoleAddRequest {:?}", request);
-        let role_add_req = request.into_inner();
-        if role_add_req.name.is_empty() {
+        if request.get_ref().name.is_empty() {
             return Err(tonic::Status::invalid_argument("Role name is empty"));
         }
-        let propose_id = self.generate_propose_id();
 
-        let (res, sync_res) = self
-            .propose_slow_path(propose_id, role_add_req.into())
-            .await?;
+        let (res, sync_res) = self.propose_slow_path(request).await?;
 
         let mut res: AuthRoleAddResponse = res.decode().into();
         let revision = sync_res.revision();
@@ -382,12 +353,8 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthRoleGetRequest>,
     ) -> Result<tonic::Response<AuthRoleGetResponse>, tonic::Status> {
         debug!("Receive AuthRoleGetRequest {:?}", request);
-        let role_get_req = request.into_inner();
-        let propose_id = self.generate_propose_id();
 
-        let (res, sync_res) = self
-            .propose_slow_path(propose_id, role_get_req.into())
-            .await?;
+        let (res, sync_res) = self.propose_slow_path(request).await?;
 
         let mut res: AuthRoleGetResponse = res.decode().into();
         let revision = sync_res.revision();
@@ -403,12 +370,8 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthRoleListRequest>,
     ) -> Result<tonic::Response<AuthRoleListResponse>, tonic::Status> {
         debug!("Receive AuthRoleListRequest {:?}", request);
-        let role_list_req = request.into_inner();
-        let propose_id = self.generate_propose_id();
 
-        let (res, sync_res) = self
-            .propose_slow_path(propose_id, role_list_req.into())
-            .await?;
+        let (res, sync_res) = self.propose_slow_path(request).await?;
 
         let mut res: AuthRoleListResponse = res.decode().into();
         let revision = sync_res.revision();
@@ -424,12 +387,8 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthRoleDeleteRequest>,
     ) -> Result<tonic::Response<AuthRoleDeleteResponse>, tonic::Status> {
         debug!("Receive AuthRoleDeleteRequest {:?}", request);
-        let role_delete_req = request.into_inner();
-        let propose_id = self.generate_propose_id();
 
-        let (res, sync_res) = self
-            .propose_slow_path(propose_id, role_delete_req.into())
-            .await?;
+        let (res, sync_res) = self.propose_slow_path(request).await?;
 
         let mut res: AuthRoleDeleteResponse = res.decode().into();
         let revision = sync_res.revision();
@@ -445,15 +404,11 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthRoleGrantPermissionRequest>,
     ) -> Result<tonic::Response<AuthRoleGrantPermissionResponse>, tonic::Status> {
         debug!("Receive AuthRoleGrantPermissionRequest {:?}", request);
-        let role_grant_permission_req = request.into_inner();
-        if role_grant_permission_req.perm.is_none() {
+        if request.get_ref().perm.is_none() {
             return Err(tonic::Status::invalid_argument("Permission not given"));
         }
-        let propose_id = self.generate_propose_id();
 
-        let (res, sync_res) = self
-            .propose_slow_path(propose_id, role_grant_permission_req.into())
-            .await?;
+        let (res, sync_res) = self.propose_slow_path(request).await?;
 
         let mut res: AuthRoleGrantPermissionResponse = res.decode().into();
         let revision = sync_res.revision();
@@ -472,12 +427,8 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthRoleRevokePermissionRequest>,
     ) -> Result<tonic::Response<AuthRoleRevokePermissionResponse>, tonic::Status> {
         debug!("Receive AuthRoleRevokePermissionRequest {:?}", request);
-        let role_revoke_permission_req = request.into_inner();
-        let propose_id = self.generate_propose_id();
 
-        let (res, sync_res) = self
-            .propose_slow_path(propose_id, role_revoke_permission_req.into())
-            .await?;
+        let (res, sync_res) = self.propose_slow_path(request).await?;
 
         let mut res: AuthRoleRevokePermissionResponse = res.decode().into();
         let revision = sync_res.revision();

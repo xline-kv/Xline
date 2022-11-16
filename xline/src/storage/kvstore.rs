@@ -11,9 +11,9 @@ use super::index::IndexOperate;
 use super::{db::DB, index::Index, kvwatcher::KvWatcher};
 use crate::rpc::{
     Compare, CompareResult, CompareTarget, DeleteRangeRequest, DeleteRangeResponse, Event,
-    EventType, KeyValue, PutRequest, PutResponse, RangeRequest, RangeResponse, Request, RequestOp,
-    RequestWrapper, Response, ResponseHeader, ResponseOp, ResponseWrapper, SortOrder, SortTarget,
-    TargetUnion, TxnRequest, TxnResponse,
+    EventType, KeyValue, PutRequest, PutResponse, RangeRequest, RangeResponse, RequestWithToken,
+    RequestWrapper, ResponseHeader, ResponseWrapper, SortOrder, SortTarget, TargetUnion,
+    TxnRequest, TxnResponse,
 };
 use crate::server::command::{
     CommandResponse, ExecutionRequest, KeyRange, SyncRequest, SyncResponse,
@@ -47,7 +47,7 @@ pub(crate) struct KvStoreBackend {
     /// Revision
     revision: Mutex<i64>,
     /// Speculative execution pool. Mapping from propose id to request
-    sp_exec_pool: Mutex<HashMap<ProposeId, Vec<Request>>>,
+    sp_exec_pool: Mutex<HashMap<ProposeId, Vec<RequestWrapper>>>,
     /// KV update sender
     kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
 }
@@ -91,7 +91,7 @@ impl KvStore {
     pub(crate) async fn send_req(
         &self,
         id: ProposeId,
-        req: RequestWrapper,
+        req: RequestWithToken,
     ) -> oneshot::Receiver<Result<CommandResponse, ExecuteError>> {
         let (req, receiver) = ExecutionRequest::new(id, req);
         assert!(
@@ -147,72 +147,47 @@ impl KvStoreBackend {
         debug!("Receive Execution Request {:?}", execution_req);
         let (id, req, res_sender) = execution_req.unpack();
         let result = self
-            .handle_kv_requests(&id, req)
+            .handle_kv_requests(&id, &req.request)
             .map(|res| CommandResponse::new(&res));
         assert!(res_sender.send(result).is_ok(), "Failed to send response");
     }
 
-    /// Handle KV requests
+    /// Handle kv requests
     fn handle_kv_requests(
         &self,
         id: &ProposeId,
-        wrapper: RequestWrapper,
+        wrapper: &RequestWrapper,
     ) -> Result<ResponseWrapper, ExecuteError> {
-        if let RequestWrapper::RequestOp(request_op) = wrapper {
-            self.handle_request_op(id, request_op)
-                .map(ResponseWrapper::ResponseOp)
-        } else {
-            unreachable!("RequestWrapper should be RequestOp")
-        }
-    }
-
-    /// Handle `RequestOp`
-    fn handle_request_op(
-        &self,
-        id: &ProposeId,
-        request_op: RequestOp,
-    ) -> Result<ResponseOp, ExecuteError> {
-        let request = request_op
-            .request
-            .unwrap_or_else(|| panic!("Received empty request"));
-        debug!("Receive request {:?}", request);
-        if matches!(request, Request::RequestTxn(_)) {
+        debug!("Receive request {:?}", wrapper);
+        if matches!(*wrapper, RequestWrapper::TxnRequest(_)) {
             let _prev = self.sp_exec_pool.lock().entry(id.clone()).or_insert(vec![]);
         } else {
             let _prev = self
                 .sp_exec_pool
                 .lock()
                 .entry(id.clone())
-                .and_modify(|req| req.push(request.clone()))
-                .or_insert_with(|| vec![request.clone()]);
+                .and_modify(|req| req.push(wrapper.clone()))
+                .or_insert_with(|| vec![wrapper.clone()]);
         }
-        let response = match request {
-            Request::RequestRange(ref req) => {
+        #[allow(clippy::wildcard_enum_match_arm)]
+        let response = match *wrapper {
+            RequestWrapper::RangeRequest(ref req) => {
                 debug!("Receive RangeRequest {:?}", req);
-                ResponseOp {
-                    response: Some(Response::ResponseRange(self.handle_range_request(req))),
-                }
+                self.handle_range_request(req).into()
             }
-            Request::RequestPut(ref req) => {
+            RequestWrapper::PutRequest(ref req) => {
                 debug!("Receive PutRequest {:?}", req);
-                ResponseOp {
-                    response: Some(Response::ResponsePut(self.handle_put_request(req)?)),
-                }
+                self.handle_put_request(req)?.into()
             }
-            Request::RequestDeleteRange(ref req) => {
-                debug!("Receive DeleteRequest {:?}", req);
-                ResponseOp {
-                    response: Some(Response::ResponseDeleteRange(
-                        self.handle_delete_range_request(req),
-                    )),
-                }
+            RequestWrapper::DeleteRangeRequest(ref req) => {
+                debug!("Receive DeleteRangeRequest {:?}", req);
+                self.handle_delete_range_request(req).into()
             }
-            Request::RequestTxn(ref req) => {
+            RequestWrapper::TxnRequest(ref req) => {
                 debug!("Receive TxnRequest {:?}", req);
-                ResponseOp {
-                    response: Some(Response::ResponseTxn(self.handle_txn_request(id, req)?)),
-                }
+                self.handle_txn_request(id, req)?.into()
             }
+            _ => unreachable!("Other request should not be sent to this store"),
         };
         Ok(response)
     }
@@ -458,8 +433,8 @@ impl KvStoreBackend {
         };
         let mut responses = Vec::with_capacity(requests.len());
         for request_op in requests {
-            let response = self.handle_request_op(id, request_op.clone())?;
-            responses.push(response);
+            let response = self.handle_kv_requests(id, &request_op.clone().into())?;
+            responses.push(response.into());
         }
         Ok(TxnResponse {
             header: Some(ResponseHeader {
@@ -496,7 +471,7 @@ impl KvStoreBackend {
     }
 
     /// Sync a vec of requests
-    fn sync_requests(&self, requests: Vec<Request>) -> (i64, Option<Vec<Event>>) {
+    fn sync_requests(&self, requests: Vec<RequestWrapper>) -> (i64, Option<Vec<Event>>) {
         let revision = *self.revision.lock();
         let next_revision = revision.overflow_add(1);
         let mut sub_revision = 0;
@@ -519,23 +494,27 @@ impl KvStoreBackend {
     }
 
     /// Sync one `Request`
-    fn sync_request(&self, req: Request, revision: i64, sub_revision: i64) -> Vec<Event> {
+    fn sync_request(&self, req: RequestWrapper, revision: i64, sub_revision: i64) -> Vec<Event> {
+        #[allow(clippy::wildcard_enum_match_arm)]
         match req {
-            Request::RequestRange(req) => {
+            RequestWrapper::RangeRequest(req) => {
                 debug!("Sync RequestRange {:?}", req);
                 Self::sync_range_request(&req)
             }
-            Request::RequestPut(req) => {
+            RequestWrapper::PutRequest(req) => {
                 debug!("Sync RequestPut {:?}", req);
                 self.sync_put_request(req, revision, sub_revision)
             }
-            Request::RequestDeleteRange(req) => {
+            RequestWrapper::DeleteRangeRequest(req) => {
                 debug!("Sync DeleteRequest {:?}", req);
                 self.sync_delete_range_request(req, revision, sub_revision)
             }
-            Request::RequestTxn(req) => {
+            RequestWrapper::TxnRequest(req) => {
                 debug!("Sync TxnRequest {:?}", req);
                 panic!("Sync for TxnRequest is impossible");
+            }
+            _ => {
+                unreachable!("Other request should not be sent to this store");
             }
         }
     }
