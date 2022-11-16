@@ -139,5 +139,8 @@ mod bg_tasks;
 /// Protobuf generated types that are used in RPC
 mod rpc;
 
+/// Shutdown related
+mod shutdown;
+
 pub use message::LogIndex;
 pub use rpc::ProtocolServer;

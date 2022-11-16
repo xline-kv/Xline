@@ -4,17 +4,17 @@ use std::{sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
 use event_listener::Event;
-use futures::{stream::FuturesUnordered, StreamExt};
 use madsim::rand::{thread_rng, Rng};
 use parking_lot::lock_api::{Mutex, RwLockUpgradableReadGuard};
 use parking_lot::{RawMutex, RwLock};
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::time::Instant;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::cmd::CommandExecutor;
 use crate::rpc::{AppendEntriesRequest, VoteRequest};
 use crate::server::{Protocol, ServerRole, State};
+use crate::shutdown::Shutdown;
 use crate::util::RwLockMap;
 use crate::{
     channel::{key_mpsc::MpscKeyBasedReceiver, key_spmc::SpmcKeyBasedSender, RecvError},
@@ -29,10 +29,11 @@ use crate::{
 pub(crate) async fn run_bg_tasks<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
     state: Arc<RwLock<State<C>>>,
     last_rpc_time: Arc<RwLock<Instant>>,
-    mut sync_chan: MpscKeyBasedReceiver<C::K, SyncMessage<C>>,
+    sync_chan: MpscKeyBasedReceiver<C::K, SyncMessage<C>>,
     comp_chan: SpmcKeyBasedSender<C::K, SyncCompleteMessage<C>>,
     cmd_executor: Arc<CE>,
     spec: Arc<Mutex<RawMutex, VecDeque<C>>>,
+    mut shutdown: Shutdown,
 ) {
     let others = state.read().others.clone();
     // establish connection with other servers
@@ -43,45 +44,33 @@ pub(crate) async fn run_bg_tasks<C: Command + 'static, CE: 'static + CommandExec
     // notify when heartbeat is needed immediately
     let heartbeat_trigger = Arc::new(Event::new());
 
-    // TODO: gracefully stop the background tasks
-    let _background_ae_handle = tokio::spawn(bg_append_entries(
+    let bg_ae_handle = tokio::spawn(bg_append_entries(
         connects.clone(),
         Arc::clone(&state),
         ae_trigger_rx,
     ));
-    let _background_election_handle = tokio::spawn(bg_election(
+    let bg_election_handle = tokio::spawn(bg_election(
         connects.clone(),
         Arc::clone(&state),
         Arc::clone(&last_rpc_time),
         Arc::clone(&heartbeat_trigger),
     ));
-    let _background_apply_handle =
-        tokio::spawn(bg_apply(Arc::clone(&state), cmd_executor, comp_chan, spec));
-    let _background_heartbeat_handle = tokio::spawn(bg_heartbeat(
+    let bg_apply_handle = tokio::spawn(bg_apply(Arc::clone(&state), cmd_executor, comp_chan, spec));
+    let bg_heartbeat_handle = tokio::spawn(bg_heartbeat(
         connects.clone(),
         Arc::clone(&state),
         heartbeat_trigger,
     ));
+    let bg_get_cmds_handle =
+        tokio::spawn(bg_get_sync_cmds(Arc::clone(&state), sync_chan, ae_trigger));
 
-    loop {
-        let (cmds, term) = match fetch_sync_msgs(&mut sync_chan).await {
-            Ok((cmds, term)) => (cmds, term),
-            Err(_) => return,
-        };
-
-        state.map_write(|mut state| {
-            state.log.push(LogEntry::new(term, &cmds));
-            if let Err(e) = ae_trigger.send(state.last_log_index()) {
-                error!("ae_trigger failed: {}", e);
-            }
-
-            debug!(
-                "received new log, index {:?}, contains {} cmds",
-                state.log.len().checked_sub(1),
-                cmds.len()
-            );
-        });
-    }
+    shutdown.recv().await;
+    bg_ae_handle.abort();
+    bg_election_handle.abort();
+    bg_apply_handle.abort();
+    bg_heartbeat_handle.abort();
+    bg_get_cmds_handle.abort();
+    info!("all background task stopped");
 }
 
 /// "sync task complete" message
@@ -141,6 +130,33 @@ where
     }
 }
 
+// Fetch commands need to be synced and add them to the log
+async fn bg_get_sync_cmds<C: Command + 'static>(
+    state: Arc<RwLock<State<C>>>,
+    mut sync_chan: MpscKeyBasedReceiver<<C as Command>::K, SyncMessage<C>>,
+    ae_trigger: UnboundedSender<usize>,
+) {
+    loop {
+        let (cmds, term) = match fetch_sync_msgs(&mut sync_chan).await {
+            Ok((cmds, term)) => (cmds, term),
+            Err(_) => return,
+        };
+
+        state.map_write(|mut state| {
+            state.log.push(LogEntry::new(term, &cmds));
+            if let Err(e) = ae_trigger.send(state.last_log_index()) {
+                error!("ae_trigger failed: {}", e);
+            }
+
+            debug!(
+                "received new log, index {:?}, contains {} cmds",
+                state.log.len().checked_sub(1),
+                cmds.len()
+            );
+        });
+    }
+}
+
 /// Try to receive all the messages in `sync_chan`, preparing for the batch sync.
 /// The term number comes from the command received.
 // TODO: set a maximum value
@@ -188,13 +204,13 @@ async fn bg_append_entries<C: Command + 'static>(
     while let Some(i) = ae_trigger_rx.recv().await {
         if state.read().is_leader() {
             // send append_entries to each server in parallel
-            let rpcs: FuturesUnordered<_> = connects
-                .iter()
-                .map(|connect| send_log_until_succeed(i, Arc::clone(connect), Arc::clone(&state)))
-                .collect();
-            let _drop = tokio::spawn(async move {
-                let _drop: Vec<_> = rpcs.collect().await;
-            });
+            for connect in &connects {
+                let _handle = tokio::spawn(send_log_until_succeed(
+                    i,
+                    Arc::clone(connect),
+                    Arc::clone(&state),
+                ));
+            }
         }
     }
 }
@@ -302,13 +318,9 @@ async fn bg_heartbeat<C: Command + 'static>(
         }
 
         // send append_entries to each server in parallel
-        let rpcs: FuturesUnordered<_> = connects
-            .iter()
-            .map(|connect| send_heartbeat(Arc::clone(connect), Arc::clone(&state)))
-            .collect();
-        let _drop = tokio::spawn(async move {
-            let _drop: Vec<_> = rpcs.collect().await;
-        });
+        for connect in &connects {
+            let _handle = tokio::spawn(send_heartbeat(Arc::clone(connect), Arc::clone(&state)));
+        }
     }
 }
 
