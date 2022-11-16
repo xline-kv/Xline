@@ -1,16 +1,19 @@
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, fmt::Debug, sync::Arc};
 
 use curp::{client::Client, cmd::ProposeId, error::ProposeError};
 use log::debug;
 use tracing::instrument;
 use uuid::Uuid;
 
-use super::command::{Command, CommandResponse, KeyRange, SyncResponse};
+use super::{
+    auth_server::get_token,
+    command::{Command, CommandResponse, KeyRange, SyncResponse},
+};
 use crate::{
     rpc::{
         CompactionRequest, CompactionResponse, DeleteRangeRequest, DeleteRangeResponse, Kv,
-        PutRequest, PutResponse, RangeRequest, RangeResponse, Request, RequestOp, RequestWrapper,
-        Response, ResponseOp, SortOrder, SortTarget, TxnRequest, TxnResponse,
+        PutRequest, PutResponse, RangeRequest, RangeResponse, Request, RequestOp, RequestWithToken,
+        RequestWrapper, Response, ResponseOp, SortOrder, SortTarget, TxnRequest, TxnResponse,
     },
     storage::KvStore,
 };
@@ -49,22 +52,23 @@ impl KvServer {
         }
     }
 
-    /// Generate `Command` proposal from `Request`
-    fn command_from_request(propose_id: ProposeId, request: Request) -> Command {
-        let key_ranges = match request {
-            Request::RequestRange(ref req) => vec![KeyRange {
+    /// Generate `Command` proposal from `RequestWrapper`
+    fn command_from_request_wrapper(propose_id: ProposeId, wrapper: &RequestWithToken) -> Command {
+        #[allow(clippy::wildcard_enum_match_arm)]
+        let key_ranges = match wrapper.request {
+            RequestWrapper::RangeRequest(ref req) => vec![KeyRange {
                 start: req.key.clone(),
                 end: req.range_end.clone(),
             }],
-            Request::RequestPut(ref req) => vec![KeyRange {
+            RequestWrapper::PutRequest(ref req) => vec![KeyRange {
                 start: req.key.clone(),
                 end: vec![],
             }],
-            Request::RequestDeleteRange(ref req) => vec![KeyRange {
+            RequestWrapper::DeleteRangeRequest(ref req) => vec![KeyRange {
                 start: req.key.clone(),
                 end: req.range_end.clone(),
             }],
-            Request::RequestTxn(ref req) => req
+            RequestWrapper::TxnRequest(ref req) => req
                 .compare
                 .iter()
                 .map(|cmp| KeyRange {
@@ -72,34 +76,54 @@ impl KvServer {
                     end: cmp.range_end.clone(),
                 })
                 .collect(),
+            _ => unreachable!("Other request should not be sent to this store"),
         };
-        let request_op = RequestOp {
-            request: Some(request),
-        };
-        let bin_req = bincode::serialize(&RequestWrapper::from(request_op))
+        let bin_req = bincode::serialize(wrapper)
             .unwrap_or_else(|e| panic!("Failed to serialize RequestWrapper, error: {e}"));
         Command::new(key_ranges, bin_req, propose_id)
     }
 
     /// Propose request and get result with slow path
-    async fn propose_slow_path(
+    async fn propose_slow_path<T>(
         &self,
-        propose_id: ProposeId,
-        request: Request,
-    ) -> Result<(CommandResponse, SyncResponse), ProposeError> {
-        let cmd = Self::command_from_request(propose_id, request);
-        self.client.propose_indexed(cmd).await
+        request: tonic::Request<T>,
+    ) -> Result<(CommandResponse, SyncResponse), tonic::Status>
+    where
+        T: Into<RequestWrapper>,
+    {
+        let token = get_token(request.metadata());
+        let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
+        let propose_id = self.generate_propose_id();
+        let cmd = Self::command_from_request_wrapper(propose_id, &wrapper);
+        self.client.propose_indexed(cmd).await.map_err(|err| {
+            if let ProposeError::ExecutionError(e) = err {
+                tonic::Status::invalid_argument(e)
+            } else {
+                panic!("propose err {err:?}")
+            }
+        })
     }
 
     /// Propose request and get result with fast path
     #[instrument(skip(self))]
-    async fn propose_fast_path(
+    async fn propose_fast_path<T>(
         &self,
-        propose_id: ProposeId,
-        request: Request,
-    ) -> Result<CommandResponse, ProposeError> {
-        let cmd = Self::command_from_request(propose_id, request);
-        self.client.propose(cmd).await
+        request: tonic::Request<T>,
+    ) -> Result<CommandResponse, tonic::Status>
+    where
+        T: Into<RequestWrapper> + Debug,
+    {
+        let token = get_token(request.metadata());
+        let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
+        let propose_id = self.generate_propose_id();
+        let cmd = Self::command_from_request_wrapper(propose_id, &wrapper);
+        self.client.propose(cmd).await.map_err(|err| {
+            if let ProposeError::ExecutionError(e) = err {
+                tonic::Status::invalid_argument(e)
+            } else {
+                panic!("propose err {err:?}")
+            }
+        })
     }
 
     /// Update revision of `ResponseHeader`
@@ -319,20 +343,12 @@ impl Kv for KvServer {
     ) -> Result<tonic::Response<RangeResponse>, tonic::Status> {
         debug!("Receive RangeRequest {:?}", request);
         Self::check_range_request(request.get_ref())?;
-        let range_request = request.into_inner();
-        let propose_id = self.generate_propose_id();
         let is_fast_path = true;
         let (res_op, sync_res) = if is_fast_path {
-            let res_op = self
-                .propose_fast_path(propose_id.clone(), Request::RequestRange(range_request))
-                .await
-                .unwrap_or_else(|e| panic!("failed to receive response from kv storage, {e}"));
+            let res_op = self.propose_fast_path(request).await?;
             (res_op, None)
         } else {
-            let (res_op, sync_res) = self
-                .propose_slow_path(propose_id.clone(), Request::RequestRange(range_request))
-                .await
-                .unwrap_or_else(|e| panic!("failed to receive response from kv storage, {e}"));
+            let (res_op, sync_res) = self.propose_slow_path(request).await?;
             (res_op, Some(sync_res))
         };
         let mut res = Self::parse_response_op(res_op.decode().into());
@@ -358,27 +374,12 @@ impl Kv for KvServer {
     ) -> Result<tonic::Response<PutResponse>, tonic::Status> {
         debug!("Receive PutRequest {:?}", request);
         Self::check_put_request(request.get_ref())?;
-        let put_request = request.into_inner();
-        let propose_id = self.generate_propose_id();
         let is_fast_path = true;
         let (res_op, sync_res) = if is_fast_path {
-            let res_op = self
-                .propose_fast_path(propose_id.clone(), Request::RequestPut(put_request))
-                .await
-                .map_err(|err| {
-                    if let ProposeError::ExecutionError(e) = err {
-                        tonic::Status::invalid_argument(e)
-                    } else {
-                        panic!("failed to receive response from kv storage, {err}")
-                    }
-                })?;
-            // .unwrap_or_else(|e| panic!("failed to receive response from kv storage, {e}"));
+            let res_op = self.propose_fast_path(request).await?;
             (res_op, None)
         } else {
-            let (res_op, sync_res) = self
-                .propose_slow_path(propose_id.clone(), Request::RequestPut(put_request))
-                .await
-                .unwrap_or_else(|e| panic!("failed to receive response from kv storage, {e}"));
+            let (res_op, sync_res) = self.propose_slow_path(request).await?;
             (res_op, Some(sync_res))
         };
 
@@ -404,26 +405,12 @@ impl Kv for KvServer {
     ) -> Result<tonic::Response<DeleteRangeResponse>, tonic::Status> {
         debug!("Receive DeleteRangeRequest {:?}", request);
         Self::check_delete_range_request(request.get_ref())?;
-        let delete_range_request = request.into_inner();
-        let propose_id = self.generate_propose_id();
         let is_fast_path = true;
         let (res_op, sync_res) = if is_fast_path {
-            let res_op = self
-                .propose_fast_path(
-                    propose_id.clone(),
-                    Request::RequestDeleteRange(delete_range_request),
-                )
-                .await
-                .unwrap_or_else(|e| panic!("failed to receive response from kv storage, {e}"));
+            let res_op = self.propose_fast_path(request).await?;
             (res_op, None)
         } else {
-            let (res_op, sync_res) = self
-                .propose_slow_path(
-                    propose_id.clone(),
-                    Request::RequestDeleteRange(delete_range_request),
-                )
-                .await
-                .unwrap_or_else(|e| panic!("failed to receive response from kv storage, {e}"));
+            let (res_op, sync_res) = self.propose_slow_path(request).await?;
             (res_op, Some(sync_res))
         };
 
@@ -450,20 +437,12 @@ impl Kv for KvServer {
     ) -> Result<tonic::Response<TxnResponse>, tonic::Status> {
         debug!("Receive TxnRequest {:?}", request);
         Self::check_txn_request(request.get_ref())?;
-        let txn_request = request.into_inner();
-        let propose_id = self.generate_propose_id();
         let is_fast_path = true;
         let (res_op, sync_res) = if is_fast_path {
-            let res_op = self
-                .propose_fast_path(propose_id.clone(), Request::RequestTxn(txn_request))
-                .await
-                .unwrap_or_else(|e| panic!("failed to receive response from kv storage, {e}"));
+            let res_op = self.propose_fast_path(request).await?;
             (res_op, None)
         } else {
-            let (res_op, sync_res) = self
-                .propose_slow_path(propose_id.clone(), Request::RequestTxn(txn_request))
-                .await
-                .unwrap_or_else(|e| panic!("failed to receive response from kv storage, {e}"));
+            let (res_op, sync_res) = self.propose_slow_path(request).await?;
             (res_op, Some(sync_res))
         };
 

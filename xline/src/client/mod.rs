@@ -6,10 +6,7 @@ use etcd_client::Client as EtcdClient;
 use uuid::Uuid;
 
 use crate::{
-    rpc::{
-        DeleteRangeResponse, PutResponse, RangeResponse, Request, RequestOp, RequestWrapper,
-        Response, ResponseOp,
-    },
+    rpc::{self, DeleteRangeResponse, PutResponse, RangeResponse, RequestWithToken},
     server::command::{Command, KeyRange},
 };
 
@@ -89,19 +86,12 @@ impl Client {
                 start: request.key().to_vec(),
                 end: vec![],
             }];
-            let request_op = RequestOp {
-                request: Some(Request::RequestPut(request.into())),
-            };
             let propose_id = self.generate_propose_id();
-            let bin_req = bincode::serialize(&RequestWrapper::RequestOp(request_op))?;
+            let wrapper = RequestWithToken::new(rpc::PutRequest::from(request).into());
+            let bin_req = bincode::serialize(&wrapper)?;
             let cmd = Command::new(key_ranges, bin_req, propose_id);
             let cmd_res = self.curp_client.propose(cmd).await?;
-            let response_op: ResponseOp = cmd_res.decode().into();
-            if let Some(Response::ResponsePut(response)) = response_op.response {
-                Ok(response)
-            } else {
-                unreachable!("ResponsePut is expected");
-            }
+            Ok(cmd_res.decode().into())
         } else {
             let opts = (&request).into();
             let response = self
@@ -124,19 +114,12 @@ impl Client {
                 start: request.key().to_vec(),
                 end: request.range_end().to_vec(),
             }];
-            let request_op = RequestOp {
-                request: Some(Request::RequestRange(request.into())),
-            };
             let propose_id = self.generate_propose_id();
-            let bin_req = bincode::serialize(&RequestWrapper::RequestOp(request_op))?;
+            let wrapper = RequestWithToken::new(rpc::RangeRequest::from(request).into());
+            let bin_req = bincode::serialize(&wrapper)?;
             let cmd = Command::new(key_ranges, bin_req, propose_id);
             let cmd_res = self.curp_client.propose(cmd).await?;
-            let response_op: ResponseOp = cmd_res.decode().into();
-            if let Some(Response::ResponseRange(response)) = response_op.response {
-                Ok(response)
-            } else {
-                unreachable!("ResponseRange is expected");
-            }
+            Ok(cmd_res.decode().into())
         } else {
             let opts = (&request).into();
             let response = self.etcd_client.get(request.key(), Some(opts)).await?;
@@ -159,19 +142,12 @@ impl Client {
                 start: request.key().to_vec(),
                 end: request.range_end().to_vec(),
             }];
-            let request_op = RequestOp {
-                request: Some(Request::RequestDeleteRange(request.into())),
-            };
             let propose_id = self.generate_propose_id();
-            let bin_req = bincode::serialize(&RequestWrapper::RequestOp(request_op))?;
+            let wrapper = RequestWithToken::new(rpc::DeleteRangeRequest::from(request).into());
+            let bin_req = bincode::serialize(&wrapper)?;
             let cmd = Command::new(key_ranges, bin_req, propose_id);
             let cmd_res = self.curp_client.propose(cmd).await?;
-            let response_op: ResponseOp = cmd_res.decode().into();
-            if let Some(Response::ResponseDeleteRange(response)) = response_op.response {
-                Ok(response)
-            } else {
-                unreachable!("ResponseDeleteRange is expected");
-            }
+            Ok(cmd_res.decode().into())
         } else {
             let opts = (&request).into();
             let response = self.etcd_client.delete(request.key(), Some(opts)).await?;
