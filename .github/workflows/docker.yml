@@ -24,8 +24,8 @@ jobs:
           command: build
           args: --release
       - run: |
-          mv ./target/release/xline ./script
-          mv ./target/release/benchmark ./script
+          mv ./target/release/xline ./scripts
+          mv ./target/release/benchmark ./scripts
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v1
       - name: Set up Docker Buildx
@@ -42,7 +42,7 @@ jobs:
         uses: docker/build-push-action@v2
         with:
           push: true
-          context: ./script
+          context: ./scripts
           tags: |
             datenlord/xline:latest
             datenlord/xline:${{ env.APP_VERSION }}
