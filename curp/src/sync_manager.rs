@@ -565,7 +565,7 @@ impl<C: Command + 'static> SyncManager<C> {
 
                     // the majority has granted the vote
                     let min_granted = (state.others.len() + 1) / 2 + 1;
-                    if state.votes_received > min_granted {
+                    if state.votes_received >= min_granted {
                         state.set_role(ServerRole::Leader);
                         debug!("server becomes leader");
 
