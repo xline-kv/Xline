@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 
 // use anyhow::{anyhow, Result};
 use curp::{client::Client as CurpClient, cmd::ProposeId};
-use etcd_client::Client as EtcdClient;
+use etcd_client::{AuthClient, Client as EtcdClient};
 use uuid::Uuid;
 
 use crate::{
@@ -153,5 +153,11 @@ impl Client {
             let response = self.etcd_client.delete(request.key(), Some(opts)).await?;
             Ok(response.into())
         }
+    }
+
+    /// Gets an auth client.
+    #[inline]
+    pub fn auth_client(&mut self) -> AuthClient {
+        self.etcd_client.auth_client()
     }
 }
