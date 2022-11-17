@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{future::Future, net::SocketAddr, sync::Arc};
 
 use anyhow::Result;
 use curp::{client::Client, server::Rpc, ProtocolServer};
@@ -117,7 +117,14 @@ impl XlineServer {
     ///
     /// Will return `Err` when `tonic::Server` serve return an error
     #[inline]
-    pub async fn start_from_listener(&self, xline_listener: TcpListener) -> Result<()> {
+    pub async fn start_from_listener_shoutdown<F>(
+        &self,
+        xline_listener: TcpListener,
+        signal: F,
+    ) -> Result<()>
+    where
+        F: Future<Output = ()>,
+    {
         let (kv_server, lock_server, lease_server, auth_server, watch_server, curp_server) =
             self.init_servers();
         Ok(Server::builder()
@@ -127,7 +134,7 @@ impl XlineServer {
             .add_service(RpcAuthServer::new(auth_server))
             .add_service(RpcWatchServer::new(watch_server))
             .add_service(ProtocolServer::new(curp_server))
-            .serve_with_incoming(TcpListenerStream::new(xline_listener))
+            .serve_with_incoming_shutdown(TcpListenerStream::new(xline_listener), signal)
             .await?)
     }
 

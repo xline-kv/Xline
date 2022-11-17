@@ -1,5 +1,6 @@
 use std::{collections::BTreeMap, net::SocketAddr};
 
+use jsonwebtoken::{DecodingKey, EncodingKey};
 use tokio::{
     net::TcpListener,
     sync::broadcast::{self, Sender},
@@ -56,30 +57,27 @@ impl Cluster {
             let listener = self.listeners.remove(&i).unwrap();
 
             tokio::spawn(async move {
-                let server =
-                    XlineServer::new(name, peers, is_leader, leader_addr, self_addr, None).await;
-
-                tokio::select! {
-                    _ = rx.recv() => {} // tx droped, or tx send ()
-                    result = server.start_from_listener(listener) => {
-                        if let Err(e) = result {
-                            panic!("Server start error: {e}");
-                        }
-                    }
+                let server = XlineServer::new(
+                    name,
+                    peers,
+                    is_leader,
+                    leader_addr,
+                    self_addr,
+                    Self::test_key_pair(),
+                )
+                .await;
+                let signal = async {
+                    let _ = rx.recv().await;
+                };
+                let result = server.start_from_listener_shoutdown(listener, signal).await;
+                if let Err(e) = result {
+                    panic!("Server start error: {e}");
                 }
             });
         }
         self.stop_tx = Some(stop_tx);
         // Sleep 30ms, wait for the server to start
         time::sleep(Duration::from_millis(30)).await;
-    }
-
-    #[allow(dead_code)] // TODO: remove this
-    /// Stop `Cluster`
-    pub(crate) fn stop(&self) {
-        if let Some(stop_tx) = self.stop_tx.as_ref() {
-            stop_tx.send(()).unwrap();
-        }
     }
 
     /// Create or get the client with the specified index
@@ -93,5 +91,18 @@ impl Cluster {
             self.client = Some(client);
         }
         self.client.as_mut().unwrap()
+    }
+
+    #[allow(dead_code)] // used in test but get warning
+    pub fn addrs(&self) -> &[SocketAddr] {
+        &self.addrs
+    }
+
+    fn test_key_pair() -> Option<(EncodingKey, DecodingKey)> {
+        let private_key = include_bytes!("../private.pem");
+        let public_key = include_bytes!("../public.pem");
+        let encoding_key = EncodingKey::from_rsa_pem(private_key).unwrap();
+        let decoding_key = DecodingKey::from_rsa_pem(public_key).unwrap();
+        Some((encoding_key, decoding_key))
     }
 }
