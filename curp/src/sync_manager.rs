@@ -4,7 +4,6 @@ use std::{sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
 use event_listener::Event;
-use futures::{stream::FuturesUnordered, StreamExt};
 use madsim::rand::{thread_rng, Rng};
 use parking_lot::lock_api::{Mutex, RwLockUpgradableReadGuard};
 use parking_lot::{RawMutex, RwLock};
@@ -158,8 +157,8 @@ impl<C: Command + 'static> SyncManager<C> {
     ) {
         // notify when a broadcast of append_entries is needed immediately(a new log is received or committed)
         let (ae_trigger, ae_trigger_rx) = tokio::sync::mpsc::unbounded_channel::<usize>();
-        // notify when heartbeat is needed immediately
-        let heartbeat_trigger = Arc::new(Event::new());
+        // notify when a calibration is needed
+        let calibrate_trigger = Arc::new(Event::new());
         // TODO: gracefully stop the background tasks
         let _background_ae_handle = tokio::spawn(Self::bg_append_entries(
             self.connects(),
@@ -171,7 +170,7 @@ impl<C: Command + 'static> SyncManager<C> {
             self.connects(),
             Arc::clone(&self.state),
             Arc::clone(&self.last_rpc_time),
-            Arc::clone(&heartbeat_trigger),
+            Arc::clone(&calibrate_trigger),
         ));
         let _background_apply_handle = tokio::spawn(Self::bg_apply(
             Arc::clone(&self.state),
@@ -180,10 +179,12 @@ impl<C: Command + 'static> SyncManager<C> {
             commit_trigger_rx,
             spec,
         ));
-        let _background_heartbeat_handle = tokio::spawn(Self::bg_heartbeat(
+        let _background_heartbeat_handle =
+            tokio::spawn(Self::bg_heartbeat(self.connects(), Arc::clone(&self.state)));
+        let _calibrate_handle = tokio::spawn(Self::leader_calibrates_followers(
             self.connects(),
             Arc::clone(&self.state),
-            heartbeat_trigger,
+            calibrate_trigger,
         ));
 
         loop {
@@ -220,22 +221,18 @@ impl<C: Command + 'static> SyncManager<C> {
         mut ae_trigger_rx: UnboundedReceiver<usize>,
     ) {
         while let Some(i) = ae_trigger_rx.recv().await {
-            if state.read().is_leader() {
-                // send append_entries to each server in parallel
-                let rpcs: FuturesUnordered<_> = connects
-                    .iter()
-                    .map(|connect| {
-                        Self::send_log_until_succeed(
-                            i,
-                            Arc::clone(connect),
-                            Arc::clone(&state),
-                            commit_trigger.clone(),
-                        )
-                    })
-                    .collect();
-                let _drop = tokio::spawn(async move {
-                    let _drop: Vec<_> = rpcs.collect().await;
-                });
+            if !state.read().is_leader() {
+                continue;
+            }
+
+            // send append_entries to each server in parallel
+            for connect in &connects {
+                let _handle = tokio::spawn(Self::send_log_until_succeed(
+                    i,
+                    Arc::clone(connect),
+                    Arc::clone(&state),
+                    commit_trigger.clone(),
+                ));
             }
         }
     }
@@ -328,11 +325,7 @@ impl<C: Command + 'static> SyncManager<C> {
     }
 
     /// Background `append_entries`, only works for the leader
-    async fn bg_heartbeat(
-        connects: Vec<Arc<Connect>>,
-        state: Arc<RwLock<State<C>>>,
-        heartbeat_trigger: Arc<Event>,
-    ) {
+    async fn bg_heartbeat(connects: Vec<Arc<Connect>>, state: Arc<RwLock<State<C>>>) {
         let role_trigger = state.read().role_trigger();
         #[allow(clippy::integer_arithmetic)] // tokio internal triggered
         loop {
@@ -341,19 +334,15 @@ impl<C: Command + 'static> SyncManager<C> {
                 role_trigger.listen().await;
             }
 
-            tokio::select! {
-                _ = heartbeat_trigger.listen() => {},
-                _ = tokio::time::sleep(Self::HEARTBEAT_INTERVAL) => {}
-            }
+            tokio::time::sleep(Self::HEARTBEAT_INTERVAL).await;
 
-            // send append_entries to each server in parallel
-            let rpcs: FuturesUnordered<_> = connects
-                .iter()
-                .map(|connect| Self::send_heartbeat(Arc::clone(connect), Arc::clone(&state)))
-                .collect();
-            let _drop = tokio::spawn(async move {
-                let _drop: Vec<_> = rpcs.collect().await;
-            });
+            // send heartbeat to each server in parallel
+            for connect in &connects {
+                let _handle = tokio::spawn(Self::send_heartbeat(
+                    Arc::clone(connect),
+                    Arc::clone(&state),
+                ));
+            }
         }
     }
 
@@ -466,7 +455,7 @@ impl<C: Command + 'static> SyncManager<C> {
         connects: Vec<Arc<Connect>>,
         state: Arc<RwLock<State<C>>>,
         last_rpc_time: Arc<RwLock<Instant>>,
-        heartbeat_trigger: Arc<Event>,
+        calibrate_trigger: Arc<Event>,
     ) {
         let role_trigger = state.read().role_trigger();
         loop {
@@ -535,8 +524,8 @@ impl<C: Command + 'static> SyncManager<C> {
                 let _ignore = tokio::spawn(Self::send_vote(
                     Arc::clone(connect),
                     Arc::clone(&state),
-                    Arc::clone(&heartbeat_trigger),
                     req.clone(),
+                    Arc::clone(&calibrate_trigger),
                 ));
             }
         }
@@ -546,8 +535,8 @@ impl<C: Command + 'static> SyncManager<C> {
     async fn send_vote(
         connect: Arc<Connect>,
         state: Arc<RwLock<State<C>>>,
-        heartbeat_trigger: Arc<Event>,
         req: VoteRequest,
+        calibrate_trigger: Arc<Event>,
     ) {
         let resp = connect.vote(req, Self::RPC_TIMEOUT).await;
         match resp {
@@ -586,10 +575,93 @@ impl<C: Command + 'static> SyncManager<C> {
                             *index = last_log_index + 1; // iter from the end to front is more likely to match the follower
                         }
 
-                        // trigger heartbeat immediately to establish leadership
-                        heartbeat_trigger.notify(1);
+                        // trigger calibrate
+                        calibrate_trigger.notify(1);
                     }
                 }
+            }
+        }
+    }
+
+    /// Leader should first enforce followers to be consistent with it when it comes to power
+    #[allow(clippy::integer_arithmetic, clippy::indexing_slicing)] // log.len() >= 1 because we have a fake log[0], indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
+    async fn leader_calibrates_followers(
+        connects: Vec<Arc<Connect>>,
+        state: Arc<RwLock<State<C>>>,
+        calibrate_trigger: Arc<Event>,
+    ) {
+        loop {
+            calibrate_trigger.listen().await;
+            for connect in connects.iter().cloned() {
+                let state = Arc::clone(&state);
+                let _handle = tokio::spawn(async move {
+                    loop {
+                        // send append entry
+                        #[allow(clippy::shadow_unrelated)] // clippy false positive
+                        let (
+                            term,
+                            prev_log_index,
+                            prev_log_term,
+                            entries,
+                            leader_commit,
+                            last_sent_index,
+                        ) = state.map_read(|state| {
+                            let next_index = state.next_index[&connect.addr];
+                            (
+                                state.term,
+                                next_index - 1,
+                                state.log[next_index - 1].term(),
+                                state.log[next_index..].to_vec(),
+                                state.commit_index,
+                                state.log.len() - 1,
+                            )
+                        });
+                        let req = match AppendEntriesRequest::new(
+                            term,
+                            prev_log_index,
+                            prev_log_term,
+                            entries,
+                            leader_commit,
+                        ) {
+                            Err(e) => {
+                                error!("unable to serialize append entries request: {}", e);
+                                return;
+                            }
+                            Ok(req) => req,
+                        };
+
+                        let resp = connect.append_entries(req, Self::RPC_TIMEOUT).await;
+
+                        #[allow(clippy::unwrap_used)]
+                        // indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
+                        match resp {
+                            Err(e) => warn!("append_entries error: {}", e),
+                            Ok(resp) => {
+                                let resp = resp.into_inner();
+                                // calibrate term
+                                let state = state.upgradable_read();
+                                if resp.term > state.term {
+                                    let mut state = RwLockUpgradableReadGuard::upgrade(state);
+                                    state.update_to_term(resp.term);
+                                    return;
+                                }
+
+                                let mut state = RwLockUpgradableReadGuard::upgrade(state);
+
+                                // successfully calibrate
+                                if resp.success {
+                                    *state.next_index.get_mut(&connect.addr).unwrap() =
+                                        last_sent_index + 1;
+                                    *state.match_index.get_mut(&connect.addr).unwrap() =
+                                        last_sent_index;
+                                    break;
+                                }
+
+                                *state.next_index.get_mut(&connect.addr).unwrap() -= 1;
+                            }
+                        };
+                    }
+                });
             }
         }
     }
