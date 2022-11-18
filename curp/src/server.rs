@@ -819,8 +819,10 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         request: tonic::Request<AppendEntriesRequest>,
     ) -> Result<tonic::Response<AppendEntriesResponse>, tonic::Status> {
         let req = request.into_inner();
-        debug!("append_entries received: term({}), commit({}), prev_log_index({}), prev_log_term({}), {} entries", 
+        if !req.entries.is_empty() {
+            debug!("append_entries received: term({}), commit({}), prev_log_index({}), prev_log_term({}), {} entries", 
             req.term, req.leader_commit, req.prev_log_index, req.prev_log_term, req.entries.len());
+        }
 
         let state = self.state.upgradable_read();
 
@@ -966,50 +968,67 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use tokio::sync::mpsc;
 
-    use crate::{cmd::ConflictCheck, error::ExecuteError, LogIndex};
+    use crate::{client::Client, cmd::ConflictCheck, error::ExecuteError, LogIndex};
     use std::sync::atomic::Ordering;
 
     use super::*;
 
-    #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-    enum CommandType {
-        Get,
-        Put,
+    #[derive(Serialize, Deserialize, Clone, Debug)]
+    enum TestCommand {
+        Get {
+            id: ProposeId,
+            keys: Vec<u32>,
+        },
+        Put {
+            id: ProposeId,
+            keys: Vec<u32>,
+            value: u32,
+        },
     }
 
-    #[derive(Serialize, Deserialize, Clone, Debug)]
-    struct TestCommand {
-        id: ProposeId,
-        t: CommandType,
-        keys: Vec<String>,
-        value: Option<String>,
-    }
+    type TestCommandResult = Vec<u32>;
 
     impl TestCommand {
-        fn new(id: ProposeId, t: CommandType, keys: Vec<String>, value: Option<String>) -> Self {
-            Self { id, t, keys, value }
+        fn new_get(id: u32, keys: Vec<u32>) -> Self {
+            Self::Get {
+                id: ProposeId::new(id.to_string()),
+                keys,
+            }
+        }
+        fn new_put(id: u32, keys: Vec<u32>, value: u32) -> Self {
+            Self::Put {
+                id: ProposeId::new(id.to_string()),
+                keys,
+                value,
+            }
         }
     }
 
-    #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-    enum TestCommandResult {
-        PutResult(String),
-        GetResult(String),
-    }
-
     impl Command for TestCommand {
-        type K = String;
+        type K = u32;
 
         type ER = TestCommandResult;
 
         type ASR = LogIndex;
 
         fn keys(&self) -> &[Self::K] {
-            &self.keys
+            match &self {
+                TestCommand::Get { keys, .. } => keys,
+                TestCommand::Put { keys, .. } => keys,
+            }
         }
 
         fn id(&self) -> &ProposeId {
-            &self.id
+            match &self {
+                TestCommand::Get { id, .. } => id,
+                TestCommand::Put { id, .. } => id,
+            }
+        }
+    }
+
+    impl ConflictCheck for u32 {
+        fn is_conflict(&self, other: &Self) -> bool {
+            self == other
         }
     }
 
@@ -1028,25 +1047,29 @@ mod tests {
 
     #[derive(Debug, Clone)]
     struct TestExecutor {
-        exe_sender: UnboundedSender<(CommandType, String)>,
-        after_sync_sender: UnboundedSender<(CommandType, String)>,
+        store: Arc<Mutex<HashMap<u32, u32>>>,
+        exe_sender: UnboundedSender<(TestCommand, TestCommandResult)>,
+        after_sync_sender: UnboundedSender<(TestCommand, LogIndex)>,
     }
 
     #[async_trait]
     impl CommandExecutor<TestCommand> for TestExecutor {
         async fn execute(&self, cmd: &TestCommand) -> Result<TestCommandResult, ExecuteError> {
+            let mut store = self.store.lock();
+            let result: TestCommandResult = match cmd {
+                TestCommand::Get { keys, .. } => keys
+                    .iter()
+                    .filter_map(|key| store.get(key).cloned())
+                    .collect(),
+                TestCommand::Put { keys, value, .. } => keys
+                    .iter()
+                    .filter_map(|key| store.insert(key.to_owned(), value.to_owned()))
+                    .collect(),
+            };
             self.exe_sender
-                .send((cmd.t.clone(), cmd.keys()[0].clone()))
+                .send((cmd.clone(), result.clone()))
                 .expect("failed to send exe msg");
-            match cmd.t {
-                CommandType::Get => Ok(TestCommandResult::GetResult("".to_owned())),
-                CommandType::Put => Ok(TestCommandResult::PutResult(
-                    cmd.value
-                        .as_ref()
-                        .expect("push command should contain value")
-                        .clone(),
-                )),
-            }
+            Ok(result)
         }
 
         async fn after_sync(
@@ -1055,20 +1078,19 @@ mod tests {
             index: LogIndex,
         ) -> Result<LogIndex, ExecuteError> {
             self.after_sync_sender
-                .send((cmd.t.clone(), cmd.keys()[0].clone()))
+                .send((cmd.clone(), index))
                 .expect("failed to send after sync msg");
-            match cmd.t {
-                CommandType::Get | CommandType::Put => Ok(index),
-            }
+            Ok(index)
         }
     }
 
     impl TestExecutor {
         fn new(
-            exe_sender: UnboundedSender<(CommandType, String)>,
-            after_sync_sender: UnboundedSender<(CommandType, String)>,
+            exe_sender: UnboundedSender<(TestCommand, TestCommandResult)>,
+            after_sync_sender: UnboundedSender<(TestCommand, LogIndex)>,
         ) -> Self {
             Self {
+                store: Arc::new(Mutex::new(HashMap::new())),
                 exe_sender,
                 after_sync_sender,
             }
@@ -1078,8 +1100,8 @@ mod tests {
     struct NodeWrapper {
         id: String,
         addr: String,
-        exe_rx: mpsc::UnboundedReceiver<(CommandType, String)>,
-        as_rx: mpsc::UnboundedReceiver<(CommandType, String)>,
+        exe_rx: mpsc::UnboundedReceiver<(TestCommand, TestCommandResult)>,
+        as_rx: mpsc::UnboundedReceiver<(TestCommand, LogIndex)>,
         state: Arc<RwLock<State<TestCommand>>>,
         switch: Arc<AtomicBool>,
     }
@@ -1228,6 +1250,15 @@ mod tests {
             let node = self.get_node(id);
             node.switch.store(true, Ordering::Relaxed);
         }
+
+        async fn new_client(&self) -> Client<TestCommand> {
+            let addrs = self
+                .nodes
+                .iter()
+                .map(|node| node.addr.parse().unwrap())
+                .collect();
+            Client::<TestCommand>::new(0, addrs).await
+        }
     }
 
     // Initial election
@@ -1301,5 +1332,58 @@ mod tests {
         tokio::time::sleep(Duration::from_secs(1)).await;
         assert!(group.get_leader().is_some());
         assert!(group.get_term_checked() > term3);
+    }
+
+    // Basic propose
+    #[traced_test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    async fn basic_propose() {
+        // watch the log while doing sync, TODO: find a better way
+        let group = CurpGroup::new(3).await;
+        let client = group.new_client().await;
+
+        assert_eq!(
+            client
+                .propose(TestCommand::new_put(0, vec![0], 0))
+                .await
+                .unwrap(),
+            vec![]
+        );
+        assert_eq!(
+            client
+                .propose(TestCommand::new_get(1, vec![0]))
+                .await
+                .unwrap(),
+            vec![0]
+        );
+    }
+
+    // Propose after reelection
+    #[traced_test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    async fn propose_after_reelect() {
+        let group = CurpGroup::new(5).await;
+        let client = group.new_client().await;
+        assert_eq!(
+            client
+                .propose(TestCommand::new_put(0, vec![0], 0))
+                .await
+                .unwrap(),
+            vec![]
+        );
+        // wait for the cmd to be synced
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let leader1 = group.get_leader().expect("There should be one leader");
+        group.disable_node(leader1.as_str());
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert_eq!(
+            client
+                .propose(TestCommand::new_get(1, vec![0]))
+                .await
+                .unwrap(),
+            vec![0]
+        );
     }
 }
