@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::sync::atomic::AtomicBool;
 use std::{fmt::Debug, iter, marker::PhantomData, net::SocketAddr, sync::Arc, time::Duration};
 
 use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
@@ -48,6 +50,8 @@ where
                         }
                     })
                     .collect(),
+                #[cfg(test)]
+                Arc::new(AtomicBool::new(true)),
             )
             .await,
             phatom: PhantomData,

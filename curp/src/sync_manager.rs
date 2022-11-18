@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
 use std::ops::Range;
+#[cfg(test)]
+use std::sync::atomic::AtomicBool;
 use std::{sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
@@ -100,12 +102,17 @@ impl<C: Command + 'static> SyncManager<C> {
         others: Vec<String>,
         state: Arc<RwLock<State<C>>>,
         last_rpc_time: Arc<RwLock<Instant>>,
+        #[cfg(test)] reachable: Arc<AtomicBool>,
     ) -> Self {
         Self {
             sync_chan,
             state,
-            connects: rpc::try_connect(others.into_iter().map(|a| format!("http://{a}")).collect())
-                .await,
+            connects: rpc::try_connect(
+                others.into_iter().map(|a| format!("http://{a}")).collect(),
+                #[cfg(test)]
+                reachable,
+            )
+            .await,
             last_rpc_time,
         }
     }
@@ -279,7 +286,11 @@ impl<C: Command + 'static> SyncManager<C> {
             #[allow(clippy::unwrap_used)]
             // indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
             match resp {
-                Err(e) => warn!("append_entries error: {}", e),
+                Err(e) => {
+                    warn!("append_entries error: {}", e);
+                    // network error, wait some time until next retry
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
                 Ok(resp) => {
                     let resp = resp.into_inner();
                     let state = state.upgradable_read();
@@ -565,9 +576,9 @@ impl<C: Command + 'static> SyncManager<C> {
 
                     // the majority has granted the vote
                     let min_granted = (state.others.len() + 1) / 2 + 1;
-                    if state.votes_received > min_granted {
+                    if state.votes_received >= min_granted {
                         state.set_role(ServerRole::Leader);
-                        debug!("server becomes leader");
+                        debug!("server {} becomes leader", state.id);
 
                         // init next_index
                         let last_log_index = state.last_log_index();
@@ -635,7 +646,11 @@ impl<C: Command + 'static> SyncManager<C> {
                         #[allow(clippy::unwrap_used)]
                         // indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
                         match resp {
-                            Err(e) => warn!("append_entries error: {}", e),
+                            Err(e) => {
+                                warn!("append_entries error: {}", e);
+                                // network error, wait some time until next retry
+                                tokio::time::sleep(Duration::from_secs(1)).await;
+                            }
                             Ok(resp) => {
                                 let resp = resp.into_inner();
                                 // calibrate term

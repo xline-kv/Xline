@@ -1,4 +1,6 @@
 use std::cmp::{min, Ordering};
+#[cfg(test)]
+use std::sync::atomic::AtomicBool;
 use std::{
     collections::{HashMap, VecDeque},
     fmt::Debug,
@@ -97,7 +99,14 @@ where
 impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
     /// New `Rpc`
     #[inline]
-    pub fn new(id: &str, is_leader: bool, term: u64, others: Vec<String>, executor: CE) -> Self {
+    pub fn new(
+        id: &str,
+        is_leader: bool,
+        term: u64,
+        others: Vec<String>,
+        executor: CE,
+        #[cfg(test)] reachable: Arc<AtomicBool>,
+    ) -> Self {
         Self {
             inner: Arc::new(Protocol::new(
                 id,
@@ -106,6 +115,8 @@ impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
                 others,
                 executor,
                 DEFAULT_AFTER_SYNC_CNT,
+                #[cfg(test)]
+                reachable,
             )),
         }
     }
@@ -126,7 +137,15 @@ impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
     ) -> Result<(), ServerError> {
         let port = server_port.unwrap_or(DEFAULT_SERVER_PORT);
         info!("RPC server {id} started, listening on port {port}");
-        let server = Self::new(id, is_leader, term, others, executor);
+        let server = Self::new(
+            id,
+            is_leader,
+            term,
+            others,
+            executor,
+            #[cfg(test)]
+            Arc::new(AtomicBool::new(true)),
+        );
 
         tonic::transport::Server::builder()
             .add_service(ProtocolServer::new(server))
@@ -161,6 +180,8 @@ impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
                 others,
                 executor,
                 DEFAULT_AFTER_SYNC_CNT,
+                #[cfg(test)]
+                Arc::new(AtomicBool::new(true)),
             )),
         };
         tonic::transport::Server::builder()
@@ -505,6 +526,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         others: Vec<String>,
         cmd_executor: CE,
         after_sync_cnt: usize,
+        #[cfg(test)] reachable: Arc<AtomicBool>,
     ) -> Self {
         let (sync_tx, sync_rx) = key_mpsc::channel();
         let (comp_tx, comp_rx) = key_spmc::channel();
@@ -533,7 +555,15 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         let spec_clone = Arc::clone(&spec);
         let last_rpc_time_clone = Arc::clone(&last_rpc_time);
         let sm_handle = tokio::spawn(async move {
-            let mut sm = SyncManager::new(sync_rx, others, state_clone, last_rpc_time_clone).await;
+            let mut sm = SyncManager::new(
+                sync_rx,
+                others,
+                state_clone,
+                last_rpc_time_clone,
+                #[cfg(test)]
+                reachable,
+            )
+            .await;
             sm.run(
                 comp_tx,
                 ce_clone,
@@ -734,8 +764,8 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
 
         loop {
             let fr_or_listener = self.cmd_board.map_lock(|mut board| {
-                let fr_or_listener = match board.get(&id) {
-                    Some(value) => match *value {
+                let fr_or_listener = if let Some(value) = board.get(&id) {
+                    match *value {
                         CmdBoardValue::Wait4Sync(ref event_state) => match event_state.1 {
                             CmdBoardState::FinalResult(_) => FrOrListener::MetFr,
                             CmdBoardState::NeedExecute | CmdBoardState::NoExecute => {
@@ -745,14 +775,12 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                         CmdBoardValue::EarlyArrive(ref event) => {
                             FrOrListener::Listener(event.listen())
                         }
-                    },
-                    None => {
-                        let event = Event::new();
-                        let listener = event.listen();
-                        let _ignore =
-                            board.insert(id.clone(), CmdBoardValue::new_early_arrive(event));
-                        FrOrListener::Listener(listener)
                     }
+                } else {
+                    let event = Event::new();
+                    let listener = event.listen();
+                    let _ignore = board.insert(id.clone(), CmdBoardValue::new_early_arrive(event));
+                    FrOrListener::Listener(listener)
                 };
 
                 if let FrOrListener::MetFr = fr_or_listener {
@@ -804,6 +832,9 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         }
 
         let mut state = RwLockUpgradableReadGuard::upgrade(state);
+        if req.term == state.term && state.role() != ServerRole::Follower {
+            state.set_role(ServerRole::Follower);
+        }
         if req.term > state.term {
             state.update_to_term(req.term);
         }
@@ -903,5 +934,372 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Drop for Protocol<C
         for h in &self.after_sync_handle {
             h.abort();
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::all,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::integer_arithmetic,
+    clippy::str_to_string,
+    clippy::panic,
+    clippy::unwrap_in_result,
+    dead_code,
+    unused_results
+)]
+mod tests {
+    use anyhow::anyhow;
+    use madsim::{
+        rand::{thread_rng, Rng},
+        time::Duration,
+    };
+
+    use std::sync::{atomic::AtomicBool, Arc};
+    use tracing_test::traced_test;
+
+    use async_trait::async_trait;
+    use itertools::Itertools;
+    use parking_lot::RwLock;
+    use serde::{Deserialize, Serialize};
+    use tokio::sync::mpsc;
+
+    use crate::{cmd::ConflictCheck, error::ExecuteError, LogIndex};
+    use std::sync::atomic::Ordering;
+
+    use super::*;
+
+    #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+    enum CommandType {
+        Get,
+        Put,
+    }
+
+    #[derive(Serialize, Deserialize, Clone, Debug)]
+    struct TestCommand {
+        id: ProposeId,
+        t: CommandType,
+        keys: Vec<String>,
+        value: Option<String>,
+    }
+
+    impl TestCommand {
+        fn new(id: ProposeId, t: CommandType, keys: Vec<String>, value: Option<String>) -> Self {
+            Self { id, t, keys, value }
+        }
+    }
+
+    #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+    enum TestCommandResult {
+        PutResult(String),
+        GetResult(String),
+    }
+
+    impl Command for TestCommand {
+        type K = String;
+
+        type ER = TestCommandResult;
+
+        type ASR = LogIndex;
+
+        fn keys(&self) -> &[Self::K] {
+            &self.keys
+        }
+
+        fn id(&self) -> &ProposeId {
+            &self.id
+        }
+    }
+
+    impl ConflictCheck for TestCommand {
+        fn is_conflict(&self, other: &Self) -> bool {
+            let this_keys = self.keys();
+            let other_keys = other.keys();
+
+            this_keys
+                .iter()
+                .cartesian_product(other_keys.iter())
+                .map(|(k1, k2)| k1.is_conflict(k2))
+                .any(|conflict| conflict)
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct TestExecutor {
+        exe_sender: UnboundedSender<(CommandType, String)>,
+        after_sync_sender: UnboundedSender<(CommandType, String)>,
+    }
+
+    #[async_trait]
+    impl CommandExecutor<TestCommand> for TestExecutor {
+        async fn execute(&self, cmd: &TestCommand) -> Result<TestCommandResult, ExecuteError> {
+            self.exe_sender
+                .send((cmd.t.clone(), cmd.keys()[0].clone()))
+                .expect("failed to send exe msg");
+            match cmd.t {
+                CommandType::Get => Ok(TestCommandResult::GetResult("".to_owned())),
+                CommandType::Put => Ok(TestCommandResult::PutResult(
+                    cmd.value
+                        .as_ref()
+                        .expect("push command should contain value")
+                        .clone(),
+                )),
+            }
+        }
+
+        async fn after_sync(
+            &self,
+            cmd: &TestCommand,
+            index: LogIndex,
+        ) -> Result<LogIndex, ExecuteError> {
+            self.after_sync_sender
+                .send((cmd.t.clone(), cmd.keys()[0].clone()))
+                .expect("failed to send after sync msg");
+            match cmd.t {
+                CommandType::Get | CommandType::Put => Ok(index),
+            }
+        }
+    }
+
+    impl TestExecutor {
+        fn new(
+            exe_sender: UnboundedSender<(CommandType, String)>,
+            after_sync_sender: UnboundedSender<(CommandType, String)>,
+        ) -> Self {
+            Self {
+                exe_sender,
+                after_sync_sender,
+            }
+        }
+    }
+
+    struct NodeWrapper {
+        id: String,
+        addr: String,
+        exe_rx: mpsc::UnboundedReceiver<(CommandType, String)>,
+        as_rx: mpsc::UnboundedReceiver<(CommandType, String)>,
+        state: Arc<RwLock<State<TestCommand>>>,
+        switch: Arc<AtomicBool>,
+    }
+
+    struct CurpGroup {
+        nodes: Vec<NodeWrapper>,
+    }
+
+    impl CurpGroup {
+        async fn new(n_nodes: usize) -> Self {
+            assert!(n_nodes <= 100 && n_nodes >= 3);
+            let port_base = thread_rng().gen_range(3..=64);
+            let addrs = (0..n_nodes)
+                .map(|i| format!("127.0.0.1:{port_base}{:03}", i))
+                .take(n_nodes)
+                .collect_vec();
+
+            let nodes = addrs
+                .iter()
+                .enumerate()
+                .map(|(i, addr)| {
+                    let (exe_tx, exe_rx) = mpsc::unbounded_channel();
+                    let (as_tx, as_rx) = mpsc::unbounded_channel();
+
+                    let exe = TestExecutor::new(exe_tx, as_tx);
+
+                    let mut others = addrs.clone();
+                    others.remove(i);
+
+                    let switch = Arc::new(AtomicBool::new(true));
+                    let rpc = Rpc::new(addr, false, 0, others, exe, Arc::clone(&switch));
+                    let state = Arc::clone(&rpc.inner.state);
+                    let id = state.read().id.clone();
+
+                    let switch_clone = Arc::clone(&switch);
+                    let reachable = tower::filter::FilterLayer::new(move |req| {
+                        if switch_clone.load(Ordering::Relaxed) {
+                            Ok(req)
+                        } else {
+                            Err(anyhow!("server unreachable"))
+                        }
+                    });
+
+                    tokio::spawn(
+                        tonic::transport::Server::builder()
+                            .layer(reachable)
+                            .add_service(ProtocolServer::new(rpc))
+                            .serve(
+                                addr.parse()
+                                    .map_err(|e| ServerError::ParsingError(format!("{}", e)))
+                                    .unwrap(),
+                            ),
+                    );
+
+                    NodeWrapper {
+                        id,
+                        switch,
+                        addr: addr.clone(),
+                        exe_rx,
+                        as_rx,
+                        state,
+                    }
+                })
+                .take(n_nodes)
+                .collect_vec();
+
+            // wait until all servers are up
+            tokio::time::sleep(Duration::from_secs(1)).await;
+
+            Self { nodes }
+        }
+
+        fn get_latest_term(&self) -> TermNum {
+            let mut term = 0;
+            for node in &self.nodes {
+                let state = node.state.read();
+                if term < state.term {
+                    term = state.term;
+                }
+            }
+            term
+        }
+
+        fn get_leader(&self) -> Option<String> {
+            let mut leader_id = None;
+            let mut term = 0;
+            for node in &self.nodes {
+                let state = node.state.read();
+                if state.term > term {
+                    term = state.term;
+                    leader_id = None;
+                }
+                if state.is_leader() && state.term >= term {
+                    assert!(
+                        leader_id.is_none(),
+                        "there should be only 1 leader in a term, now there are two: {} {}",
+                        leader_id.unwrap(),
+                        node.id
+                    );
+                    leader_id = Some(node.id.clone());
+                }
+            }
+            leader_id
+        }
+
+        fn get_term_checked(&self) -> TermNum {
+            let mut term = None;
+            for node in &self.nodes {
+                let node_term = node.state.map_read(|state| state.term);
+                if let Some(term) = term {
+                    assert_eq!(term, node_term);
+                } else {
+                    term = Some(node_term);
+                }
+            }
+            term.unwrap()
+        }
+
+        fn get_leader_term(&self) -> TermNum {
+            let mut term = 0;
+            for node in &self.nodes {
+                let state = node.state.read();
+                if state.is_leader() {
+                    if state.term > term {
+                        term = state.term;
+                    }
+                }
+            }
+            assert!(term != 0, "no leader");
+            term
+        }
+
+        fn get_node(&self, id: &str) -> &NodeWrapper {
+            self.nodes
+                .iter()
+                .find(|node| node.id.as_str() == id)
+                .expect("no such node")
+        }
+
+        fn disable_node(&self, id: &str) {
+            let node = self.get_node(id);
+            node.switch.store(false, Ordering::Relaxed);
+        }
+
+        fn enable_node(&self, id: &str) {
+            let node = self.get_node(id);
+            node.switch.store(true, Ordering::Relaxed);
+        }
+    }
+
+    // Initial election
+    #[traced_test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    async fn initial_election() {
+        // watch the log while doing sync, TODO: find a better way
+        let group = CurpGroup::new(3).await;
+
+        // check whether there is exact one leader in the group
+        let leader1 = group.get_leader().expect("There should be one leader");
+        let term1 = group.get_term_checked();
+
+        // check after some time, the term and the leader is still not changed
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let leader2 = group.get_leader().expect("There should be one leader");
+        let term2 = group.get_term_checked();
+
+        assert_eq!(term1, term2);
+        assert_eq!(leader1, leader2);
+    }
+
+    // Reelect after network failure
+    #[traced_test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    async fn reelect() {
+        // watch the log while doing sync, TODO: find a better way
+        let group = CurpGroup::new(5).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        // check whether there is exact one leader in the group
+        let leader1 = group.get_leader().expect("There should be one leader");
+        let term1 = group.get_term_checked();
+
+        ////////// disable leader 1
+        group.disable_node(leader1.as_str());
+
+        // after some time, a new leader should be elected
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let leader2 = group.get_leader().expect("There should be one leader");
+        let term2 = group.get_leader_term();
+
+        assert_ne!(term1, term2);
+        assert_ne!(leader1, leader2);
+
+        ////////// disable leader 2
+        group.disable_node(leader2.as_str());
+
+        // after some time, a new leader should be elected
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let leader3 = group.get_leader().expect("There should be one leader");
+        let term3 = group.get_leader_term();
+
+        assert_ne!(term1, term3);
+        assert_ne!(term2, term3);
+        assert_ne!(leader1, leader3);
+        assert_ne!(leader2, leader3);
+
+        ////////// disable leader 3
+        group.disable_node(leader3.as_str());
+
+        // after some time, no leader should be elected
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert!(group.get_leader().is_none());
+
+        ////////// recover network partition
+        group.enable_node(leader1.as_str());
+        group.enable_node(leader2.as_str());
+        group.enable_node(leader3.as_str());
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert!(group.get_leader().is_some());
+        assert!(group.get_term_checked() > term3);
     }
 }
