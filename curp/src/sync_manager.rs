@@ -222,6 +222,7 @@ impl<C: Command + 'static> SyncManager<C> {
     ) {
         while let Some(i) = ae_trigger_rx.recv().await {
             if !state.read().is_leader() {
+                warn!("Non leader receives sync log[{i}] request");
                 continue;
             }
 
@@ -657,7 +658,8 @@ impl<C: Command + 'static> SyncManager<C> {
                                     break;
                                 }
 
-                                *state.next_index.get_mut(&connect.addr).unwrap() -= 1;
+                                *state.next_index.get_mut(&connect.addr).unwrap() =
+                                    (resp.commit_index + 1).numeric_cast();
                             }
                         };
                     }

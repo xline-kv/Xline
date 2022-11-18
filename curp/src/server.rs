@@ -800,6 +800,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         if req.term < state.term {
             return Ok(tonic::Response::new(AppendEntriesResponse::new_reject(
                 state.term,
+                state.commit_index,
             )));
         }
 
@@ -822,6 +823,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         {
             return Ok(tonic::Response::new(AppendEntriesResponse::new_reject(
                 state.term,
+                state.commit_index,
             )));
         }
 
