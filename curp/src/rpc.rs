@@ -224,10 +224,11 @@ impl AppendEntriesRequest {
 
 impl AppendEntriesResponse {
     /// Create a new rejected response
-    pub(crate) fn new_reject(term: TermNum) -> Self {
+    pub(crate) fn new_reject(term: TermNum, commit_index: usize) -> Self {
         Self {
             term,
             success: false,
+            commit_index: commit_index.numeric_cast(),
         }
     }
 
@@ -236,6 +237,7 @@ impl AppendEntriesResponse {
         Self {
             term,
             success: true,
+            commit_index: 0,
         }
     }
 }
