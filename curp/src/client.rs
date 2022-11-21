@@ -1,18 +1,19 @@
-#[cfg(test)]
-use std::sync::atomic::AtomicBool;
-use std::{fmt::Debug, iter, marker::PhantomData, net::SocketAddr, sync::Arc, time::Duration};
-
-use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
-use opentelemetry::global;
-use tracing::{info_span, instrument, warn, Instrument};
-use tracing_opentelemetry::OpenTelemetrySpanExt;
-
 use crate::{
     cmd::Command,
     error::ProposeError,
-    rpc::{self, Connect, ProposeRequest, WaitSyncedRequest},
-    util::InjectMap,
+    message::TermNum,
+    rpc::{
+        self, Connect, FetchLeaderRequest, ProposeRequest, SyncError, SyncResult, WaitSyncedRequest,
+    },
+    ServerId,
 };
+use event_listener::Event;
+use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
+use parking_lot::RwLock;
+#[cfg(test)]
+use std::sync::atomic::AtomicBool;
+use std::{collections::HashMap, fmt::Debug, iter, marker::PhantomData, sync::Arc, time::Duration};
+use tracing::{debug, instrument, warn};
 
 /// Propose request default timeout
 static PROPOSE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -20,33 +21,69 @@ static PROPOSE_TIMEOUT: Duration = Duration::from_secs(1);
 #[derive(Debug)]
 /// Protocol client
 pub struct Client<C: Command> {
-    /// Leader index in the connections
-    leader: usize,
+    /// Current leader and term
+    state: RwLock<State>,
     /// All servers addresses including leader address
     connects: Vec<Arc<Connect>>,
     /// To keep Command type
     phatom: PhantomData<C>,
 }
 
+/// State of a client
+#[derive(Debug)]
+struct State {
+    /// Current leader
+    leader: Option<ServerId>,
+    /// Current term
+    term: TermNum,
+    /// Leader set event
+    leader_notify: Arc<Event>,
+}
+
+impl State {
+    /// Create a client state
+    fn new() -> Self {
+        Self {
+            leader: None,
+            term: 0,
+            leader_notify: Arc::new(Event::new()),
+        }
+    }
+
+    /// Set the leader and notify a waiter
+    fn set_leader(&mut self, id: ServerId) {
+        debug!("client set leader to {id}");
+        self.leader = Some(id);
+        self.leader_notify.notify(1);
+    }
+}
+
 impl<C> Client<C>
 where
     C: Command + 'static,
 {
+    /// Timeout
+    // TODO: make it configurable
+    const TIMEOUT: Duration = Duration::from_secs(1);
+
+    /// Wait Synced Timeout
+    // TODO: make it configurable
+    const WAIT_SYNCED_TIMEOUT: Duration = Duration::from_secs(2);
+
     /// Create a new protocol client based on the addresses
     #[inline]
-    pub async fn new(leader: usize, addrs: Vec<SocketAddr>) -> Self {
+    pub async fn new(addrs: HashMap<ServerId, String>) -> Self {
         Self {
-            leader,
+            state: RwLock::new(State::new()), // null
             connects: rpc::try_connect(
                 // Addrs must start with "http" to communicate with the server
                 addrs
                     .into_iter()
-                    .map(|addr| {
-                        let addr_str = addr.to_string();
-                        if addr_str.starts_with("http") {
-                            addr_str
+                    .map(|(id, addr)| {
+                        if addr.starts_with("http") {
+                            (id, addr)
                         } else {
-                            format!("http://{addr_str}")
+                            (id, format!("http://{addr}"))
                         }
                     })
                     .collect(),
@@ -66,24 +103,25 @@ where
         cmd_arc: Arc<C>,
     ) -> Result<(Option<<C as Command>::ER>, bool), ProposeError> {
         let max_fault = self.connects.len().wrapping_div(2);
-        let rpcs = self
+        let req = ProposeRequest::new_from_rc(cmd_arc)?;
+        let mut rpcs: FuturesUnordered<_> = self
             .connects
             .iter()
-            .zip(iter::repeat_with(|| Arc::clone(&cmd_arc)))
-            .map(|(connect, cmd_cloned)| async move {
-                connect
-                    .propose(ProposeRequest::new_from_rc(cmd_cloned)?, PROPOSE_TIMEOUT)
-                    .await
-            });
-        let mut rpcs: FuturesUnordered<_> = rpcs.collect();
+            .zip(iter::repeat_with(|| req.clone()))
+            .map(|(connect, req_cloned)| async {
+                (
+                    connect.id.clone(),
+                    connect.propose(req_cloned, PROPOSE_TIMEOUT).await,
+                )
+            })
+            .collect();
 
         let mut ok_cnt: usize = 0;
-        let mut max_term = 0;
         let mut execute_result: Option<C::ER> = None;
         let major_cnt = max_fault
             .wrapping_add(max_fault.wrapping_add(1).wrapping_div(2))
             .wrapping_add(1);
-        while let Some(resp_result) = rpcs.next().await {
+        while let Some((id, resp_result)) = rpcs.next().await {
             let resp = match resp_result {
                 Ok(resp) => resp.into_inner(),
                 Err(e) => {
@@ -91,16 +129,23 @@ where
                     continue;
                 }
             };
-            let term_valid = match resp.term() {
-                t if t > max_term => {
-                    // state reset
-                    ok_cnt = 0;
-                    max_term = resp.term();
-                    execute_result = None;
-                    true
+            let term_valid = {
+                let mut state = self.state.write();
+                let valid = match resp.term() {
+                    t if t > state.term => {
+                        // state reset
+                        ok_cnt = 0;
+                        state.term = resp.term();
+                        execute_result = None;
+                        true
+                    }
+                    t if t < state.term => false,
+                    _ => true,
+                };
+                if resp.is_leader && resp.term == state.term {
+                    state.set_leader(id);
                 }
-                t if t < max_term => false,
-                _ => true,
+                valid
             };
             if term_valid {
                 resp.map_or_else::<C, _, _, _>(
@@ -122,6 +167,7 @@ where
                 )??;
             }
             if (ok_cnt >= major_cnt) && execute_result.is_some() {
+                debug!("fast round succeeded");
                 return Ok((execute_result, true));
             }
         }
@@ -134,35 +180,108 @@ where
         &self,
         cmd_arc: Arc<C>,
     ) -> Result<(<C as Command>::ASR, Option<<C as Command>::ER>), ProposeError> {
-        let mut tr = tonic::Request::new(WaitSyncedRequest::new(cmd_arc.id())?);
-        let rpc_span = info_span!("client wait_synced");
-        global::get_text_map_propagator(|prop| {
-            prop.inject_context(&rpc_span.context(), &mut InjectMap(tr.metadata_mut()));
-        });
-        #[allow(clippy::panic)]
-        match self
-            .connects
-            .get(self.leader)
-            .unwrap_or_else(|| {
-                panic!(
-                    "leader is out of bound, leader index: {}, total connect count: {}",
-                    self.leader,
-                    self.connects.len()
-                )
-            })
-            .get()
-            .await?
-            .wait_synced(tr)
-            .instrument(rpc_span)
-            .await
-        {
-            Ok(resp) => {
-                let resp = resp.into_inner();
-                resp.map_success_error::<C, _, _, _>(Ok, |e| Err(ProposeError::SyncedError(e)))
+        let notify = Arc::clone(&self.state.read().leader_notify);
+
+        loop {
+            let req = WaitSyncedRequest::new(cmd_arc.id())?;
+
+            // fetch leader id
+            let leader_id = loop {
+                if let Some(id) = self.state.read().leader.clone() {
+                    break id;
+                }
+                notify.listen().await;
+            };
+
+            debug!("wait synced request sent to {}", leader_id);
+            let resp = match self
+                .connects
+                .iter()
+                .find(|conn| conn.id == leader_id)
+                .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
+                .wait_synced(req, Self::WAIT_SYNCED_TIMEOUT)
+                .await
+            {
+                Ok(resp) => resp.into_inner(),
+                Err(e) => {
+                    warn!("wait synced rpc error: {e}");
+                    self.fetch_leader().await;
+                    continue;
+                }
+            };
+
+            match resp.into_result::<C>()? {
+                SyncResult::Success { asr, er } => {
+                    debug!("slow round succeeded");
+                    return Ok((asr, er));
+                }
+                SyncResult::Error(SyncError::Redirect(new_leader, term)) => {
+                    if let Some(new_leader_id) = new_leader {
+                        let mut state = self.state.write();
+                        if state.term <= term {
+                            state.leader = Some(new_leader_id);
+                            state.term = term;
+                            continue; // redirect succeeds, try again
+                        }
+                    }
+                    // redirect failed: the client should fetch leader itself
+                    self.fetch_leader().await;
+                }
+                SyncResult::Error(e) => {
+                    return Err(ProposeError::SyncedError(format!("{:?}", e)));
+                }
             }
-            Err(e) => Err(ProposeError::SyncedError(format!(
-                "Sending `WaitSyncedResponse` rpc error: {e}"
-            ))),
+        }
+    }
+
+    /// Send fetch leader requests to all servers until there is a leader
+    /// Note: The fetched leader may still be outdated
+    async fn fetch_leader(&self) {
+        loop {
+            let mut rpcs: FuturesUnordered<_> = self
+                .connects
+                .iter()
+                .map(|connect| async {
+                    (
+                        connect.id.clone(),
+                        connect
+                            .fetch_leader(FetchLeaderRequest::new(), Self::TIMEOUT)
+                            .await,
+                    )
+                })
+                .collect();
+            let mut max_term = 0;
+            let mut leader = None;
+
+            while let Some((id, resp)) = rpcs.next().await {
+                let resp = match resp {
+                    Ok(resp) => resp.into_inner(),
+                    Err(e) => {
+                        warn!("fetch leader from {} failed, {:?}", id, e);
+                        continue;
+                    }
+                };
+                if resp.term > max_term {
+                    max_term = resp.term;
+                    leader = None;
+                }
+                if let Some(leader_id) = resp.leader_id {
+                    if resp.term >= max_term {
+                        leader = Some(leader_id);
+                    }
+                }
+            }
+
+            if let Some(leader) = leader {
+                let mut state = self.state.write();
+                debug!("Fetch leader succeeded, leader set to {}", leader);
+                state.term = max_term;
+                state.set_leader(leader);
+                return;
+            }
+
+            // wait until the election is completed
+            tokio::time::sleep(Duration::from_micros(500)).await;
         }
     }
 

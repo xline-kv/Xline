@@ -216,7 +216,6 @@ async fn main() -> Result<()> {
         server_args.name,
         server_args.cluster_peers,
         server_args.is_leader,
-        server_args.leader_ip_port,
         server_args.self_ip_port,
     )
     .await;

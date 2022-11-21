@@ -22,21 +22,27 @@ use tokio_stream::wrappers::TcpListenerStream;
 use tracing::{debug, error, info, instrument, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-use crate::rpc::{AppendEntriesRequest, AppendEntriesResponse, VoteRequest, VoteResponse};
-use crate::util::RwLockMap;
 use crate::{
     channel::{
         key_mpsc::{self, MpscKeyBasedSender},
-        key_spmc::{self, SpmcKeybasedReceiver},
+        key_spmc::{self, SpmcKeyBasedReceiver},
         SendError,
     },
     cmd::{Command, CommandExecutor, ProposeId},
     error::{ProposeError, ServerError},
     log::LogEntry,
     message::TermNum,
-    rpc::{ProposeRequest, ProposeResponse, ProtocolServer, WaitSyncedRequest, WaitSyncedResponse},
+    rpc::{
+        FetchLeaderRequest, FetchLeaderResponse, ProposeRequest, ProposeResponse, ProtocolServer,
+        WaitSyncedRequest, WaitSyncedResponse,
+    },
     sync_manager::{SyncCompleteMessage, SyncManager, SyncMessage},
     util::{ExtractMap, MutexMap},
+};
+use crate::{rpc::SyncError, util::RwLockMap};
+use crate::{
+    rpc::{AppendEntriesRequest, AppendEntriesResponse, VoteRequest, VoteResponse},
+    ServerId,
 };
 
 /// Default server serving port
@@ -94,16 +100,22 @@ where
     ) -> Result<tonic::Response<VoteResponse>, tonic::Status> {
         self.inner.vote(request)
     }
+
+    async fn fetch_leader(
+        &self,
+        request: tonic::Request<FetchLeaderRequest>,
+    ) -> Result<tonic::Response<FetchLeaderResponse>, tonic::Status> {
+        self.inner.fetch_leader(request)
+    }
 }
 
 impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
     /// New `Rpc`
     #[inline]
     pub fn new(
-        id: &str,
+        id: ServerId,
         is_leader: bool,
-        term: u64,
-        others: Vec<String>,
+        others: HashMap<ServerId, String>,
         executor: CE,
         #[cfg(test)] reachable: Arc<AtomicBool>,
     ) -> Self {
@@ -111,7 +123,6 @@ impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
             inner: Arc::new(Protocol::new(
                 id,
                 is_leader,
-                term,
                 others,
                 executor,
                 DEFAULT_AFTER_SYNC_CNT,
@@ -128,10 +139,9 @@ impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
     ///   `ServerError::RpcError` if any rpc related error met
     #[inline]
     pub async fn run(
-        id: &str,
+        id: ServerId,
         is_leader: bool, // TODO: remove this option
-        term: u64,
-        others: Vec<String>,
+        others: HashMap<ServerId, String>,
         server_port: Option<u16>,
         executor: CE,
     ) -> Result<(), ServerError> {
@@ -140,7 +150,6 @@ impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
         let server = Self::new(
             id,
             is_leader,
-            term,
             others,
             executor,
             #[cfg(test)]
@@ -165,10 +174,9 @@ impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
     ///   `ServerError::RpcError` if any rpc related error met
     #[inline]
     pub async fn run_from_listener(
-        id: &str,
+        id: ServerId,
         is_leader: bool,
-        term: u64,
-        others: Vec<String>,
+        others: HashMap<ServerId, String>,
         listener: TcpListener,
         executor: CE,
     ) -> Result<(), ServerError> {
@@ -176,7 +184,6 @@ impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
             inner: Arc::new(Protocol::new(
                 id,
                 is_leader,
-                term,
                 others,
                 executor,
                 DEFAULT_AFTER_SYNC_CNT,
@@ -253,7 +260,9 @@ pub struct Protocol<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
 /// State of the server
 pub(crate) struct State<C: Command + 'static> {
     /// Id of the server
-    pub(crate) id: String,
+    id: ServerId,
+    /// Leader Id
+    pub(crate) leader_id: Option<ServerId>,
     /// Role of the server
     role: ServerRole,
     /// Current term
@@ -261,7 +270,7 @@ pub(crate) struct State<C: Command + 'static> {
     /// Consensus log
     pub(crate) log: Vec<LogEntry<C>>,
     /// Candidate id that received vote in current term
-    pub(crate) voted_for: Option<String>,
+    pub(crate) voted_for: Option<ServerId>,
     /// Votes received in the election
     pub(crate) votes_received: usize,
     /// Index of highest log entry known to be committed
@@ -270,11 +279,11 @@ pub(crate) struct State<C: Command + 'static> {
     pub(crate) last_applied: usize,
     /// For each server, index of the next log entry to send to that server
     // TODO: this should be indexed by server id and changed into a vec for efficiency
-    pub(crate) next_index: HashMap<String, usize>,
+    pub(crate) next_index: HashMap<ServerId, usize>,
     /// For each server, index of highest log entry known to be replicated on server
-    pub(crate) match_index: HashMap<String, usize>,
-    /// Other server ids
-    pub(crate) others: Vec<String>,
+    pub(crate) match_index: HashMap<ServerId, usize>,
+    /// Other server ids and addresses
+    pub(crate) others: HashMap<ServerId, String>,
     /// Trigger when server role changes
     role_trigger: Arc<Event>,
 }
@@ -282,24 +291,21 @@ pub(crate) struct State<C: Command + 'static> {
 impl<C: Command + 'static> State<C> {
     /// Init server state
     pub(crate) fn new(
-        id: &str,
+        id: ServerId,
         role: ServerRole,
         term: TermNum,
-        others: Vec<String>,
+        others: HashMap<ServerId, String>,
         role_trigger: Arc<Event>,
     ) -> Self {
         let mut next_index = HashMap::new();
         let mut match_index = HashMap::new();
-        let others: Vec<String> = others
-            .into_iter()
-            .map(|other| format!("http://{}", other))
-            .collect();
-        for other in &others {
+        for other in others.keys() {
             assert!(next_index.insert(other.clone(), 1).is_none());
             assert!(match_index.insert(other.clone(), 0).is_none());
         }
         Self {
-            id: format!("http://{}", id),
+            id: id.clone(),
+            leader_id: matches!(role, ServerRole::Leader).then(|| id),
             role,
             term,
             log: vec![LogEntry::new(0, &[])], // a fake log[0] will simplify the boundary check significantly
@@ -343,6 +349,7 @@ impl<C: Command + 'static> State<C> {
         self.set_role(ServerRole::Follower);
         self.voted_for = None;
         self.votes_received = 0;
+        self.leader_id = None;
         debug!("updated to term {term}");
     }
 
@@ -363,6 +370,11 @@ impl<C: Command + 'static> State<C> {
     /// Get Role trigger
     pub(crate) fn role_trigger(&self) -> Arc<Event> {
         Arc::clone(&self.role_trigger)
+    }
+
+    /// Get id
+    pub(crate) fn id(&self) -> ServerId {
+        self.id.clone()
     }
 }
 
@@ -401,7 +413,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
     #[allow(clippy::too_many_lines)] // FIXME: refactor too long function
     fn init_after_sync_tasks(
         cnt: usize,
-        comp_rx: &SpmcKeybasedReceiver<C::K, SyncCompleteMessage<C>>,
+        comp_rx: &SpmcKeyBasedReceiver<C::K, SyncCompleteMessage<C>>,
         spec: &Arc<Mutex<VecDeque<C>>>,
         cmd_board: &Arc<Mutex<HashMap<ProposeId, CmdBoardValue>>>,
         cmd_executor: &Arc<CE>,
@@ -425,10 +437,9 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                             $cmd.after_sync(dispatch_executor.as_ref(), $index)
                                 .map(move |after_sync_result| match after_sync_result {
                                     Ok(asr) => WaitSyncedResponse::new_success::<C>(&asr, &$er),
-                                    Err(e) => WaitSyncedResponse::new_error::<C>(&format!(
-                                        "after_sync execution error: {:?}",
-                                        e
-                                    )),
+                                    Err(e) => WaitSyncedResponse::new_error(
+                                        &SyncError::ExecuteError(e.to_string()),
+                                    ),
                                 })
                                 .await
                         };
@@ -466,17 +477,15 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                             });
                             if let Some((need_execute, miss_entry)) = option {
                                 let after_sync_result = if miss_entry {
-                                    WaitSyncedResponse::new_error::<C>(&format!(
-                                        "cmd {:?} is not to be waited",
-                                        cmd_id
+                                    WaitSyncedResponse::new_error(&SyncError::NoSuchCmd(
+                                        cmd_id.clone(),
                                     ))
                                 } else if need_execute {
                                     match cmd.execute(dispatch_executor.as_ref()).await {
                                         Ok(er) => call_after_sync!(cmd, index, Some(er)),
-                                        Err(e) => WaitSyncedResponse::new_error::<C>(&format!(
-                                            "cmd execution error: {:?}",
-                                            e
-                                        )),
+                                        Err(e) => WaitSyncedResponse::new_error(
+                                            &SyncError::ExecuteError(e.to_string()),
+                                        ),
                                     }
                                 } else {
                                     call_after_sync!(cmd, index, None)
@@ -520,10 +529,9 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
     #[must_use]
     #[inline]
     pub fn new(
-        id: &str,
+        id: ServerId,
         is_leader: bool,
-        term: u64,
-        others: Vec<String>,
+        others: HashMap<ServerId, String>,
         cmd_executor: CE,
         after_sync_cnt: usize,
         #[cfg(test)] reachable: Arc<AtomicBool>,
@@ -544,7 +552,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             } else {
                 ServerRole::Follower
             },
-            term,
+            0,
             others.clone(),
             Arc::clone(&event),
         )));
@@ -763,6 +771,25 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         })?;
 
         loop {
+            // if not leader anymore, should redirect client
+            {
+                let state = self.state.read();
+                if !state.is_leader() {
+                    break WaitSyncedResponse::new_error(&SyncError::Redirect(
+                        state.leader_id.clone(),
+                        state.term,
+                    ))
+                    .map_or_else(
+                        |err| {
+                            Err(tonic::Status::internal(format!(
+                                "encode or decode error, {}",
+                                err
+                            )))
+                        },
+                        |resp| Ok(tonic::Response::new(resp)),
+                    );
+                }
+            }
             let fr_or_listener = self.cmd_board.map_lock(|mut board| {
                 let fr_or_listener = if let Some(value) = board.get(&id) {
                     match *value {
@@ -846,6 +873,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         if req.term > state.term {
             state.update_to_term(req.term);
         }
+        state.leader_id = Some(req.leader_id.clone()); // record leader id, useful for redirecting client
 
         *self.last_rpc_time.write() = Instant::now();
 
@@ -933,6 +961,20 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             Ok(tonic::Response::new(VoteResponse::new_reject(state.term)))
         }
     }
+
+    /// Send `FetchLeaderRequest`
+    #[allow(clippy::unnecessary_wraps, clippy::needless_pass_by_value)] // To match with other handlers
+    fn fetch_leader(
+        &self,
+        _request: tonic::Request<FetchLeaderRequest>,
+    ) -> Result<tonic::Response<FetchLeaderResponse>, tonic::Status> {
+        let state = self.state.read();
+        let leader_id = state.leader_id.clone();
+        let term = state.term;
+        Ok(tonic::Response::new(FetchLeaderResponse::new(
+            leader_id, term,
+        )))
+    }
 }
 
 impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Drop for Protocol<C, CE> {
@@ -955,6 +997,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Drop for Protocol<C
     clippy::str_to_string,
     clippy::panic,
     clippy::unwrap_in_result,
+    clippy::shadow_unrelated,
     dead_code,
     unused_results
 )]
@@ -1115,7 +1158,7 @@ mod tests {
     }
 
     struct NodeWrapper {
-        id: String,
+        id: ServerId,
         addr: String,
         exe_rx: mpsc::UnboundedReceiver<(TestCommand, TestCommandResult)>,
         as_rx: mpsc::UnboundedReceiver<(TestCommand, LogIndex)>,
@@ -1149,7 +1192,16 @@ mod tests {
                     others.remove(i);
 
                     let switch = Arc::new(AtomicBool::new(true));
-                    let rpc = Rpc::new(addr, false, 0, others, exe, Arc::clone(&switch));
+                    let rpc = Rpc::new(
+                        addr.clone(),
+                        false,
+                        others
+                            .into_iter()
+                            .map(|addr| (addr.clone(), addr))
+                            .collect(),
+                        exe,
+                        Arc::clone(&switch),
+                    );
                     let state = Arc::clone(&rpc.inner.state);
                     let id = state.read().id.clone();
 
@@ -1251,19 +1303,19 @@ mod tests {
             term
         }
 
-        fn get_node(&self, id: &str) -> &NodeWrapper {
+        fn get_node(&self, id: &ServerId) -> &NodeWrapper {
             self.nodes
                 .iter()
                 .find(|node| node.id.as_str() == id)
                 .expect("no such node")
         }
 
-        fn disable_node(&self, id: &str) {
+        fn disable_node(&self, id: &ServerId) {
             let node = self.get_node(id);
             node.switch.store(false, Ordering::Relaxed);
         }
 
-        fn enable_node(&self, id: &str) {
+        fn enable_node(&self, id: &ServerId) {
             let node = self.get_node(id);
             node.switch.store(true, Ordering::Relaxed);
         }
@@ -1272,9 +1324,9 @@ mod tests {
             let addrs = self
                 .nodes
                 .iter()
-                .map(|node| node.addr.parse().unwrap())
+                .map(|node| (node.id.clone(), node.addr.clone()))
                 .collect();
-            Client::<TestCommand>::new(0, addrs).await
+            Client::<TestCommand>::new(addrs).await
         }
     }
 
@@ -1311,7 +1363,7 @@ mod tests {
         let term1 = group.get_term_checked();
 
         ////////// disable leader 1
-        group.disable_node(leader1.as_str());
+        group.disable_node(&leader1);
 
         // after some time, a new leader should be elected
         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -1322,7 +1374,7 @@ mod tests {
         assert_ne!(leader1, leader2);
 
         ////////// disable leader 2
-        group.disable_node(leader2.as_str());
+        group.disable_node(&leader2);
 
         // after some time, a new leader should be elected
         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -1335,16 +1387,16 @@ mod tests {
         assert_ne!(leader2, leader3);
 
         ////////// disable leader 3
-        group.disable_node(leader3.as_str());
+        group.disable_node(&leader3);
 
         // after some time, no leader should be elected
         tokio::time::sleep(Duration::from_secs(1)).await;
         assert!(group.get_leader().is_none());
 
         ////////// recover network partition
-        group.enable_node(leader1.as_str());
-        group.enable_node(leader2.as_str());
-        group.enable_node(leader3.as_str());
+        group.enable_node(&leader1);
+        group.enable_node(&leader2);
+        group.enable_node(&leader3);
 
         tokio::time::sleep(Duration::from_secs(1)).await;
         assert!(group.get_leader().is_some());
@@ -1392,7 +1444,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(300)).await;
 
         let leader1 = group.get_leader().expect("There should be one leader");
-        group.disable_node(leader1.as_str());
+        group.disable_node(&leader1);
 
         tokio::time::sleep(Duration::from_secs(1)).await;
         assert_eq!(
@@ -1402,5 +1454,38 @@ mod tests {
                 .unwrap(),
             vec![0]
         );
+    }
+
+    // Propose after reelection, but no fast round because 2 of 5 servers have crashed
+    #[traced_test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    async fn propose_after_reelect_no_fast_round() {
+        let group = CurpGroup::new(5).await;
+        let client = group.new_client().await;
+        assert_eq!(
+            client
+                .propose(TestCommand::new_put(0, vec![0], 0))
+                .await
+                .unwrap(),
+            vec![]
+        );
+        // wait for the cmd to be synced
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let leader1 = group.get_leader().expect("There should be one leader");
+        group.disable_node(&leader1);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let leader2 = group.get_leader().expect("There should be one leader");
+        group.disable_node(&leader2);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        assert_eq!(
+            client
+                .propose(TestCommand::new_get(1, vec![0]))
+                .await
+                .unwrap(),
+            vec![0]
+        );
+        assert!(logs_contain("slow round succeeded"));
     }
 }

@@ -38,6 +38,7 @@ tracing-test = "0.2.3"
 tower = { version = "0.4.13", features = ["filter"] }
 anyhow = "1.0.66"
 tower-http = { version = "0.3.4", features = ["set-header"] }
+once_cell = "1.16.0"
 
 [build-dependencies]
 tonic-build = "0.7.2"

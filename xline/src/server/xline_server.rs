@@ -41,24 +41,17 @@ pub struct XlineServer {
     /// If current node is leader when it starts
     /// TODO: remove this when leader selection is supported
     is_leader: bool,
-    /// Leader index
-    leader_index: usize,
     /// Address of self node
     self_addr: SocketAddr,
 }
 
 impl XlineServer {
     /// New `XlineServer`
-    ///
-    /// # Panics
-    ///
-    /// panic when peers do not contain leader address
     #[inline]
     pub async fn new(
         name: String,
         peers: Vec<SocketAddr>,
         is_leader: bool,
-        leader_addr: SocketAddr,
         self_addr: SocketAddr,
     ) -> Self {
         let storage = Arc::new(KvStore::new());
@@ -66,12 +59,12 @@ impl XlineServer {
         let mut all_members = peers.clone();
         all_members.push(self_addr);
         all_members.sort();
+        let all_members = all_members
+            .into_iter()
+            .map(|addr| (addr.to_string(), addr.to_string()))
+            .collect();
 
-        let leader_index = all_members.binary_search(&leader_addr).unwrap_or_else(|_| {
-            panic!("leader address should be in the collection of peers and self address")
-        });
-
-        let client = Arc::new(Client::<Command>::new(leader_index, all_members).await);
+        let client = Arc::new(Client::<Command>::new(all_members).await);
 
         Self {
             name,
@@ -79,7 +72,6 @@ impl XlineServer {
             storage,
             client,
             is_leader,
-            leader_index,
             self_addr,
         }
     }
@@ -141,10 +133,12 @@ impl XlineServer {
             ),
             WatchServer::new(self.storage.kv_watcher()),
             CurpServer::new(
-                self.self_addr.to_string().as_str(),
+                self.self_addr.to_string(),
                 self.is_leader,
-                0,
-                self.peers.iter().map(ToString::to_string).collect(),
+                self.peers
+                    .iter()
+                    .map(|peer| (peer.to_string(), peer.to_string()))
+                    .collect(),
                 CommandExecutor::new(Arc::clone(&self.storage)),
             ),
         )

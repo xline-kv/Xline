@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::ops::Range;
 #[cfg(test)]
 use std::sync::atomic::AtomicBool;
@@ -17,6 +17,7 @@ use crate::cmd::CommandExecutor;
 use crate::rpc::{AppendEntriesRequest, VoteRequest};
 use crate::server::{Protocol, ServerRole, State};
 use crate::util::RwLockMap;
+use crate::ServerId;
 use crate::{
     channel::{key_mpsc::MpscKeyBasedReceiver, key_spmc::SpmcKeyBasedSender, RecvError},
     cmd::Command,
@@ -99,7 +100,7 @@ impl<C: Command + 'static> SyncManager<C> {
     /// Create a `SyncedManager`
     pub(crate) async fn new(
         sync_chan: MpscKeyBasedReceiver<C::K, SyncMessage<C>>,
-        others: Vec<String>,
+        others: HashMap<ServerId, String>,
         state: Arc<RwLock<State<C>>>,
         last_rpc_time: Arc<RwLock<Instant>>,
         #[cfg(test)] reachable: Arc<AtomicBool>,
@@ -108,7 +109,7 @@ impl<C: Command + 'static> SyncManager<C> {
             sync_chan,
             state,
             connects: rpc::try_connect(
-                others.into_iter().map(|a| format!("http://{a}")).collect(),
+                others,
                 #[cfg(test)]
                 reachable,
             )
@@ -254,10 +255,11 @@ impl<C: Command + 'static> SyncManager<C> {
     ) {
         // prepare append_entries request args
         #[allow(clippy::shadow_unrelated)] // clippy false positive
-        let (term, prev_log_index, prev_log_term, entries, leader_commit) =
+        let (term, id, prev_log_index, prev_log_term, entries, leader_commit) =
             state.map_read(|state| {
                 (
                     state.term,
+                    state.id(),
                     i - 1,
                     state.log[i - 1].term(),
                     vec![state.log[i].clone()],
@@ -266,6 +268,7 @@ impl<C: Command + 'static> SyncManager<C> {
             });
         let req = match AppendEntriesRequest::new(
             term,
+            id,
             prev_log_index,
             prev_log_term,
             entries,
@@ -280,7 +283,7 @@ impl<C: Command + 'static> SyncManager<C> {
 
         // send log[i] until succeed
         loop {
-            debug!("append_entries sent to {}", connect.addr);
+            debug!("append_entries sent to {}", connect.id);
             let resp = connect.append_entries(req.clone(), Self::RPC_TIMEOUT).await;
 
             #[allow(clippy::unwrap_used)]
@@ -305,11 +308,11 @@ impl<C: Command + 'static> SyncManager<C> {
                     if resp.success {
                         let mut state = RwLockUpgradableReadGuard::upgrade(state);
                         // update match_index and next_index
-                        let match_index = state.match_index.get_mut(&connect.addr).unwrap();
+                        let match_index = state.match_index.get_mut(&connect.id).unwrap();
                         if *match_index < i {
                             *match_index = i;
                         }
-                        *state.next_index.get_mut(&connect.addr).unwrap() = *match_index + 1;
+                        *state.next_index.get_mut(&connect.id).unwrap() = *match_index + 1;
 
                         let min_replicated = (state.others.len() + 1) / 2;
                         // If the majority of servers has replicated the log, commit
@@ -317,7 +320,7 @@ impl<C: Command + 'static> SyncManager<C> {
                             && state.log[i].term() == state.term
                             && state
                                 .others
-                                .iter()
+                                .keys()
                                 .filter(|addr| state.match_index[*addr] >= i)
                                 .count()
                                 >= min_replicated
@@ -362,26 +365,34 @@ impl<C: Command + 'static> SyncManager<C> {
     async fn send_heartbeat(connect: Arc<Connect>, state: Arc<RwLock<State<C>>>) {
         // prepare append_entries request args
         #[allow(clippy::shadow_unrelated)] // clippy false positive
-        let (term, prev_log_index, prev_log_term, leader_commit) = state.map_read(|state| {
-            let next_index = state.next_index[&connect.addr];
+        let (term, id, prev_log_index, prev_log_term, leader_commit) = state.map_read(|state| {
+            let next_index = state.next_index[&connect.id];
             (
                 state.term,
+                state.id(),
                 next_index - 1,
                 state.log[next_index - 1].term(),
                 state.commit_index,
             )
         });
-        let req =
-            AppendEntriesRequest::new_heartbeat(term, prev_log_index, prev_log_term, leader_commit);
+        let req = AppendEntriesRequest::new_heartbeat(
+            term,
+            id,
+            prev_log_index,
+            prev_log_term,
+            leader_commit,
+        );
 
         // send append_entries request and receive response
-        // debug!("heartbeat sent to {}", connect.addr);
+        // debug!("heartbeat sent to {}", connect.id);
         let resp = connect.append_entries(req, Self::RPC_TIMEOUT).await;
 
         #[allow(clippy::unwrap_used)]
         // indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
         match resp {
-            Err(e) => warn!("append_entries error: {}", e),
+            Err(_e) => {
+                //  warn!("append_entries error: {}", e)
+            }
             Ok(resp) => {
                 let resp = resp.into_inner();
                 // calibrate term
@@ -393,7 +404,7 @@ impl<C: Command + 'static> SyncManager<C> {
                 }
                 if !resp.success {
                     let mut state = RwLockUpgradableReadGuard::upgrade(state);
-                    *state.next_index.get_mut(&connect.addr).unwrap() -= 1;
+                    *state.next_index.get_mut(&connect.id).unwrap() -= 1;
                 }
             }
         };
@@ -518,11 +529,11 @@ impl<C: Command + 'static> SyncManager<C> {
                 let new_term = state.term + 1;
                 state.update_to_term(new_term);
                 state.set_role(ServerRole::Candidate);
-                state.voted_for = Some(state.id.clone());
+                state.voted_for = Some(state.id());
                 state.votes_received = 1;
                 VoteRequest::new(
                     state.term,
-                    state.id.clone(),
+                    state.id(),
                     state.last_log_index(),
                     state.last_log_term(),
                 )
@@ -570,7 +581,7 @@ impl<C: Command + 'static> SyncManager<C> {
 
                 #[allow(clippy::integer_arithmetic)]
                 if resp.vote_granted {
-                    debug!("vote is granted by server {}", connect.addr);
+                    debug!("vote is granted by server {}", connect.id);
                     let mut state = RwLockUpgradableReadGuard::upgrade(state);
                     state.votes_received += 1;
 
@@ -578,7 +589,8 @@ impl<C: Command + 'static> SyncManager<C> {
                     let min_granted = (state.others.len() + 1) / 2 + 1;
                     if state.votes_received >= min_granted {
                         state.set_role(ServerRole::Leader);
-                        debug!("server {} becomes leader", state.id);
+                        state.leader_id = Some(state.id());
+                        debug!("server {} becomes leader", state.id());
 
                         // init next_index
                         let last_log_index = state.last_log_index();
@@ -611,15 +623,17 @@ impl<C: Command + 'static> SyncManager<C> {
                         #[allow(clippy::shadow_unrelated)] // clippy false positive
                         let (
                             term,
+                            id,
                             prev_log_index,
                             prev_log_term,
                             entries,
                             leader_commit,
                             last_sent_index,
                         ) = state.map_read(|state| {
-                            let next_index = state.next_index[&connect.addr];
+                            let next_index = state.next_index[&connect.id];
                             (
                                 state.term,
+                                state.id(),
                                 next_index - 1,
                                 state.log[next_index - 1].term(),
                                 state.log[next_index..].to_vec(),
@@ -629,6 +643,7 @@ impl<C: Command + 'static> SyncManager<C> {
                         });
                         let req = match AppendEntriesRequest::new(
                             term,
+                            id,
                             prev_log_index,
                             prev_log_term,
                             entries,
@@ -665,14 +680,14 @@ impl<C: Command + 'static> SyncManager<C> {
 
                                 // successfully calibrate
                                 if resp.success {
-                                    *state.next_index.get_mut(&connect.addr).unwrap() =
+                                    *state.next_index.get_mut(&connect.id).unwrap() =
                                         last_sent_index + 1;
-                                    *state.match_index.get_mut(&connect.addr).unwrap() =
+                                    *state.match_index.get_mut(&connect.id).unwrap() =
                                         last_sent_index;
                                     break;
                                 }
 
-                                *state.next_index.get_mut(&connect.addr).unwrap() -= 1;
+                                *state.next_index.get_mut(&connect.id).unwrap() -= 1;
                             }
                         };
                     }

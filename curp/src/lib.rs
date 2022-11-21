@@ -139,5 +139,5 @@ mod sync_manager;
 /// Protobuf generated types that are used in RPC
 mod rpc;
 
-pub use message::LogIndex;
+pub use message::{LogIndex, ServerId};
 pub use rpc::ProtocolServer;
