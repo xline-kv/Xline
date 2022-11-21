@@ -53,7 +53,7 @@ impl KvServer {
     }
 
     /// Generate `Command` proposal from `RequestWrapper`
-    fn command_from_request_wrapper(propose_id: ProposeId, wrapper: &RequestWithToken) -> Command {
+    fn command_from_request_wrapper(propose_id: ProposeId, wrapper: RequestWithToken) -> Command {
         #[allow(clippy::wildcard_enum_match_arm)]
         let key_ranges = match wrapper.request {
             RequestWrapper::RangeRequest(ref req) => vec![KeyRange {
@@ -78,9 +78,7 @@ impl KvServer {
                 .collect(),
             _ => unreachable!("Other request should not be sent to this store"),
         };
-        let bin_req = bincode::serialize(wrapper)
-            .unwrap_or_else(|e| panic!("Failed to serialize RequestWrapper, error: {e}"));
-        Command::new(key_ranges, bin_req, propose_id)
+        Command::new(key_ranges, wrapper, propose_id)
     }
 
     /// Propose request and get result with slow path
@@ -94,7 +92,7 @@ impl KvServer {
         let token = get_token(request.metadata());
         let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
         let propose_id = self.generate_propose_id();
-        let cmd = Self::command_from_request_wrapper(propose_id, &wrapper);
+        let cmd = Self::command_from_request_wrapper(propose_id, wrapper);
         self.client.propose_indexed(cmd).await.map_err(|err| {
             if let ProposeError::ExecutionError(e) = err {
                 tonic::Status::invalid_argument(e)
@@ -116,7 +114,7 @@ impl KvServer {
         let token = get_token(request.metadata());
         let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
         let propose_id = self.generate_propose_id();
-        let cmd = Self::command_from_request_wrapper(propose_id, &wrapper);
+        let cmd = Self::command_from_request_wrapper(propose_id, wrapper);
         self.client.propose(cmd).await.map_err(|err| {
             if let ProposeError::ExecutionError(e) = err {
                 tonic::Status::invalid_argument(e)

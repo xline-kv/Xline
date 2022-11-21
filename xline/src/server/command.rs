@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
 
 use crate::{
-    rpc::{RequestWithToken, RequestWrapper, ResponseWrapper},
+    rpc::{RequestBackend, RequestWithToken, ResponseWrapper},
     storage::{AuthStore, KvStore},
 };
 
@@ -167,16 +167,16 @@ impl RangeBounds<[u8]> for KeyRange {
 #[derive(Debug, Clone)]
 pub(crate) struct CommandExecutor {
     /// Kv Storage
-    storage: Arc<KvStore>,
+    kv_storage: Arc<KvStore>,
     /// Auth Storage
     auth_storage: Arc<AuthStore>,
 }
 
 impl CommandExecutor {
     /// New `CommandExecutor`
-    pub(crate) fn new(storage: Arc<KvStore>, auth_storage: Arc<AuthStore>) -> Self {
+    pub(crate) fn new(kv_storage: Arc<KvStore>, auth_storage: Arc<AuthStore>) -> Self {
         Self {
-            storage,
+            kv_storage,
             auth_storage,
         }
     }
@@ -185,18 +185,11 @@ impl CommandExecutor {
 #[async_trait::async_trait]
 impl CurpCommandExecutor<Command> for CommandExecutor {
     async fn execute(&self, cmd: &Command) -> Result<CommandResponse, ExecuteError> {
-        let (_, request_data, id) = cmd.clone().unpack();
-        let wrapper: RequestWithToken = bincode::deserialize(&request_data)
-            .unwrap_or_else(|e| panic!("Failed to serialize RequestWrapper, error: {e}"));
+        let (_, wrapper, id) = cmd.clone().unpack();
         self.auth_storage.check_permission(&wrapper)?;
-        #[allow(clippy::wildcard_enum_match_arm)]
-        let receiver = match wrapper.request {
-            RequestWrapper::RangeRequest(_)
-            | RequestWrapper::PutRequest(_)
-            | RequestWrapper::DeleteRangeRequest(_)
-            | RequestWrapper::TxnRequest(_)
-            | RequestWrapper::CompactionRequest(_) => self.storage.send_req(id, wrapper).await,
-            _ => self.auth_storage.send_req(id, wrapper).await,
+        let receiver = match wrapper.request.backend() {
+            RequestBackend::Kv => self.kv_storage.send_req(id, wrapper).await,
+            RequestBackend::Auth => self.auth_storage.send_req(id, wrapper).await,
         };
         receiver
             .await
@@ -208,18 +201,11 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
         cmd: &Command,
         _index: LogIndex,
     ) -> Result<SyncResponse, ExecuteError> {
-        let (_, request_data, id) = cmd.clone().unpack();
-        let wrapper: RequestWithToken = bincode::deserialize(&request_data)
-            .unwrap_or_else(|e| panic!("Failed to serialize RequestWrapper, error: {e}"));
+        let (_, wrapper, id) = cmd.clone().unpack();
         self.auth_storage.check_permission(&wrapper)?;
-        #[allow(clippy::wildcard_enum_match_arm)]
-        let receiver = match wrapper.request {
-            RequestWrapper::RangeRequest(_)
-            | RequestWrapper::PutRequest(_)
-            | RequestWrapper::DeleteRangeRequest(_)
-            | RequestWrapper::TxnRequest(_)
-            | RequestWrapper::CompactionRequest(_) => self.storage.send_sync(id).await,
-            _ => self.auth_storage.send_sync(id).await,
+        let receiver = match wrapper.request.backend() {
+            RequestBackend::Kv => self.kv_storage.send_sync(id).await,
+            RequestBackend::Auth => self.auth_storage.send_sync(id).await,
         };
         receiver
             .await
@@ -232,19 +218,30 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
 pub(crate) struct Command {
     /// Keys of request
     keys: Vec<KeyRange>,
-    /// Encoded request data
-    request: Vec<u8>,
+    /// Request data
+    request: RequestWithToken,
     /// Propose id
     id: ProposeId,
 }
 
 impl ConflictCheck for Command {
     fn is_conflict(&self, other: &Self) -> bool {
-        let this_keys = self.keys();
-        let other_keys = other.keys();
-        this_keys
+        let this_req = &self.request.request;
+        let other_req = &other.request.request;
+        if this_req.is_auth_read_request() && other_req.is_auth_read_request()
+            || this_req.is_kv_request() && other_req.is_auth_read_request()
+            || this_req.is_auth_read_request() && other_req.is_kv_request()
+        {
+            return false;
+        }
+        if (this_req.backend() == RequestBackend::Auth)
+            || (other_req.backend() == RequestBackend::Auth)
+        {
+            return true;
+        }
+        self.keys()
             .iter()
-            .cartesian_product(other_keys.iter())
+            .cartesian_product(other.keys().iter())
             .any(|(k1, k2)| k1.is_conflicted(k2))
     }
 }
@@ -257,12 +254,12 @@ impl ConflictCheck for KeyRange {
 
 impl Command {
     /// New `Command`
-    pub(crate) fn new(keys: Vec<KeyRange>, request: Vec<u8>, id: ProposeId) -> Self {
+    pub(crate) fn new(keys: Vec<KeyRange>, request: RequestWithToken, id: ProposeId) -> Self {
         Self { keys, request, id }
     }
 
     /// Consume `Command` and get ownership of each field
-    pub(crate) fn unpack(self) -> (Vec<KeyRange>, Vec<u8>, ProposeId) {
+    pub(crate) fn unpack(self) -> (Vec<KeyRange>, RequestWithToken, ProposeId) {
         let Self { keys, request, id } = self;
         (keys, request, id)
     }
@@ -271,23 +268,19 @@ impl Command {
 /// Command to run consensus protocal
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct CommandResponse {
-    /// Encoded response data
-    response: Vec<u8>,
+    /// Response data
+    response: ResponseWrapper,
 }
 
 impl CommandResponse {
     /// New `ResponseOp` from `CommandResponse`
-    pub(crate) fn new(res: &ResponseWrapper) -> Self {
-        Self {
-            response: bincode::serialize(res)
-                .unwrap_or_else(|e| panic!("Failed to serialize ResponseWrapper, error: {e}")),
-        }
+    pub(crate) fn new(response: ResponseWrapper) -> Self {
+        Self { response }
     }
 
     /// Decode `CommandResponse` and get `ResponseOp`
-    pub(crate) fn decode(&self) -> ResponseWrapper {
-        bincode::deserialize(&self.response)
-            .unwrap_or_else(|e| panic!("Failed to deserialize ResponseWrapper, error: {e}"))
+    pub(crate) fn decode(self) -> ResponseWrapper {
+        self.response
     }
 }
 

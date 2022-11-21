@@ -15,7 +15,6 @@ categories = ["KV"]
 [dependencies]
 anyhow = "1.0.57"
 async-trait = "0.1.53"
-bincode = "1.3.3"
 clap = { version = "3.2.16", features = ["derive"] }
 clippy-utilities = "0.1.0"
 curp = { path = "../curp" }

@@ -339,9 +339,7 @@ impl AuthStoreBackend {
     pub(crate) fn speculative_exec(&self, execution_req: ExecutionRequest) {
         debug!("Receive Execution Request {:?}", execution_req);
         let (id, req, res_sender) = execution_req.unpack();
-        let result = self
-            .handle_auth_req(id, &req)
-            .map(|res| CommandResponse::new(&res));
+        let result = self.handle_auth_req(id, &req).map(CommandResponse::new);
         assert!(res_sender.send(result).is_ok(), "Failed to send response");
     }
 
@@ -825,7 +823,6 @@ impl AuthStoreBackend {
                 debug!("Sync AuthUserDeleteRequest {:?}", req);
                 self.sync_user_delete_request(&req, next_revision)
             }
-
             RequestWrapper::AuthRoleAddRequest(req) => {
                 debug!("Sync AuthRoleAddRequest {:?}", req);
                 self.sync_role_add_request(req, next_revision)

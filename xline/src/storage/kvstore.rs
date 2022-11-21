@@ -148,7 +148,7 @@ impl KvStoreBackend {
         let (id, req, res_sender) = execution_req.unpack();
         let result = self
             .handle_kv_requests(&id, &req.request)
-            .map(|res| CommandResponse::new(&res));
+            .map(CommandResponse::new);
         assert!(res_sender.send(result).is_ok(), "Failed to send response");
     }
 
