@@ -805,7 +805,11 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
 
             match fr_or_listener {
                 FrOrListener::Fr(fr) => break *fr,
-                FrOrListener::Listener(l) => l.await,
+                FrOrListener::Listener(l) => {
+                    debug!("start waiting for cmd {:?}", id);
+                    l.await;
+                    debug!("cmd {:?} sync completed", id);
+                }
                 FrOrListener::MetFr => {
                     unreachable!("EmptyFr is the internal state, should not appear here")
                 }
@@ -819,6 +823,8 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         request: tonic::Request<AppendEntriesRequest>,
     ) -> Result<tonic::Response<AppendEntriesResponse>, tonic::Status> {
         let req = request.into_inner();
+
+        // don't log heartbeat
         if !req.entries.is_empty() {
             debug!("append_entries received: term({}), commit({}), prev_log_index({}), prev_log_term({}), {} entries", 
             req.term, req.leader_commit, req.prev_log_index, req.prev_log_term, req.entries.len());
@@ -954,10 +960,8 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Drop for Protocol<C
 )]
 mod tests {
     use anyhow::anyhow;
-    use madsim::{
-        rand::{thread_rng, Rng},
-        time::Duration,
-    };
+    use madsim::time::Duration;
+    use once_cell::sync::Lazy;
 
     use std::sync::{atomic::AtomicBool, Arc};
     use tracing_test::traced_test;
@@ -972,6 +976,15 @@ mod tests {
     use std::sync::atomic::Ordering;
 
     use super::*;
+
+    static AVAILABLE_PORT_BASE: Lazy<Mutex<u16>> = Lazy::new(|| Mutex::new(2));
+
+    fn get_available_port_base() -> u16 {
+        let mut base = AVAILABLE_PORT_BASE.lock();
+        assert!(*base < 63);
+        *base += 1;
+        return *base;
+    }
 
     #[derive(Serialize, Deserialize, Clone, Debug)]
     enum TestCommand {
@@ -1012,16 +1025,16 @@ mod tests {
         type ASR = LogIndex;
 
         fn keys(&self) -> &[Self::K] {
-            match &self {
-                TestCommand::Get { keys, .. } => keys,
-                TestCommand::Put { keys, .. } => keys,
+            match *self {
+                TestCommand::Get { ref keys, .. } | TestCommand::Put { ref keys, .. } => {
+                    keys.as_slice()
+                }
             }
         }
 
         fn id(&self) -> &ProposeId {
-            match &self {
-                TestCommand::Get { id, .. } => id,
-                TestCommand::Put { id, .. } => id,
+            match *self {
+                TestCommand::Get { ref id, .. } | TestCommand::Put { ref id, .. } => id,
             }
         }
     }
@@ -1056,12 +1069,16 @@ mod tests {
     impl CommandExecutor<TestCommand> for TestExecutor {
         async fn execute(&self, cmd: &TestCommand) -> Result<TestCommandResult, ExecuteError> {
             let mut store = self.store.lock();
-            let result: TestCommandResult = match cmd {
-                TestCommand::Get { keys, .. } => keys
+            let result: TestCommandResult = match *cmd {
+                TestCommand::Get { ref keys, .. } => keys
                     .iter()
-                    .filter_map(|key| store.get(key).cloned())
+                    .filter_map(|key| store.get(key).copied())
                     .collect(),
-                TestCommand::Put { keys, value, .. } => keys
+                TestCommand::Put {
+                    ref keys,
+                    ref value,
+                    ..
+                } => keys
                     .iter()
                     .filter_map(|key| store.insert(key.to_owned(), value.to_owned()))
                     .collect(),
@@ -1113,7 +1130,7 @@ mod tests {
     impl CurpGroup {
         async fn new(n_nodes: usize) -> Self {
             assert!(n_nodes <= 100 && n_nodes >= 3);
-            let port_base = thread_rng().gen_range(3..=64);
+            let port_base = get_available_port_base();
             let addrs = (0..n_nodes)
                 .map(|i| format!("127.0.0.1:{port_base}{:03}", i))
                 .take(n_nodes)

@@ -375,7 +375,7 @@ impl<C: Command + 'static> SyncManager<C> {
             AppendEntriesRequest::new_heartbeat(term, prev_log_index, prev_log_term, leader_commit);
 
         // send append_entries request and receive response
-        debug!("heartbeat sent to {}", connect.addr);
+        // debug!("heartbeat sent to {}", connect.addr);
         let resp = connect.append_entries(req, Self::RPC_TIMEOUT).await;
 
         #[allow(clippy::unwrap_used)]
