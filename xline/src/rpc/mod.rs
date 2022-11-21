@@ -222,6 +222,69 @@ pub(crate) enum ResponseWrapper {
     AuthenticateResponse(AuthenticateResponse),
 }
 
+/// Backend store of request
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum RequestBackend {
+    /// Kv backend
+    Kv,
+    /// Auth backend
+    Auth,
+}
+
+impl RequestWrapper {
+    /// Get the backend of the request
+    pub(crate) fn backend(&self) -> RequestBackend {
+        match *self {
+            RequestWrapper::PutRequest(_)
+            | RequestWrapper::RangeRequest(_)
+            | RequestWrapper::DeleteRangeRequest(_)
+            | RequestWrapper::TxnRequest(_)
+            | RequestWrapper::CompactionRequest(_) => RequestBackend::Kv,
+            RequestWrapper::AuthEnableRequest(_)
+            | RequestWrapper::AuthDisableRequest(_)
+            | RequestWrapper::AuthStatusRequest(_)
+            | RequestWrapper::AuthRoleAddRequest(_)
+            | RequestWrapper::AuthRoleDeleteRequest(_)
+            | RequestWrapper::AuthRoleGetRequest(_)
+            | RequestWrapper::AuthRoleGrantPermissionRequest(_)
+            | RequestWrapper::AuthRoleListRequest(_)
+            | RequestWrapper::AuthRoleRevokePermissionRequest(_)
+            | RequestWrapper::AuthUserAddRequest(_)
+            | RequestWrapper::AuthUserChangePasswordRequest(_)
+            | RequestWrapper::AuthUserDeleteRequest(_)
+            | RequestWrapper::AuthUserGetRequest(_)
+            | RequestWrapper::AuthUserGrantRoleRequest(_)
+            | RequestWrapper::AuthUserListRequest(_)
+            | RequestWrapper::AuthUserRevokeRoleRequest(_)
+            | RequestWrapper::AuthenticateRequest(_) => RequestBackend::Auth,
+        }
+    }
+
+    /// Check if this request is a auth read request
+    pub(crate) fn is_auth_read_request(&self) -> bool {
+        matches!(
+            *self,
+            RequestWrapper::AuthStatusRequest(_)
+                | RequestWrapper::AuthRoleGetRequest(_)
+                | RequestWrapper::AuthRoleListRequest(_)
+                | RequestWrapper::AuthUserGetRequest(_)
+                | RequestWrapper::AuthUserListRequest(_)
+        )
+    }
+
+    /// Check if this request is a kv request
+    pub(crate) fn is_kv_request(&self) -> bool {
+        matches!(
+            *self,
+            RequestWrapper::PutRequest(_)
+                | RequestWrapper::RangeRequest(_)
+                | RequestWrapper::DeleteRangeRequest(_)
+                | RequestWrapper::TxnRequest(_)
+                | RequestWrapper::CompactionRequest(_)
+        )
+    }
+}
+
 /// impl `From` trait for all request types
 macro_rules! impl_from_requests {
     ($($req:ident),*) => {
