@@ -124,7 +124,7 @@ pub(crate) struct RequestWithToken {
 
 /// Internal request
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[allow(clippy::enum_variant_names)]
+#[allow(clippy::enum_variant_names)] // in order to quickly implement trait by macro
 pub(crate) enum RequestWrapper {
     /// `RangeRequest`
     RangeRequest(RangeRequest),
@@ -174,7 +174,7 @@ pub(crate) enum RequestWrapper {
 
 /// Wrapper for responses
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[allow(clippy::enum_variant_names)]
+#[allow(clippy::enum_variant_names)] // in order to quickly implement trait by macro
 pub(crate) enum ResponseWrapper {
     /// `RangeResponse`
     RangeResponse(RangeResponse),

@@ -16,7 +16,7 @@ use tokio::sync::oneshot;
 
 use crate::{
     rpc::{RequestWithToken, RequestWrapper, ResponseWrapper},
-    storage::{authstore::AuthStore, KvStore},
+    storage::{AuthStore, KvStore},
 };
 
 /// Range start and end to get all keys
@@ -57,6 +57,14 @@ pub(crate) struct KeyRange {
 }
 
 impl KeyRange {
+    /// New `KeyRange`
+    pub(crate) fn new(start: impl Into<Vec<u8>>, end: impl Into<Vec<u8>>) -> Self {
+        Self {
+            start: start.into(),
+            end: end.into(),
+        }
+    }
+
     /// Return if `KeyRange` is conflicted with another
     pub(crate) fn is_conflicted(&self, other: &Self) -> bool {
         // s1 < s2 ?

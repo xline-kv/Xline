@@ -110,7 +110,7 @@
     clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
 )]
 
-use std::{fs, net::SocketAddr, path::PathBuf};
+use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::Result;
 use clap::Parser;
@@ -118,6 +118,7 @@ use jsonwebtoken::{DecodingKey, EncodingKey};
 use log::debug;
 use opentelemetry::{global, runtime::Tokio, sdk::propagation::TraceContextPropagator};
 use opentelemetry_contrib::trace::exporter::jaeger_json::JaegerJsonExporter;
+use tokio::fs;
 use tracing::{error, metadata::LevelFilter};
 use tracing_subscriber::prelude::*;
 use xline::server::XlineServer;
@@ -205,11 +206,11 @@ fn init_subscriber(
 }
 
 /// Read key pair from file
-fn read_key_pair(
+async fn read_key_pair(
     private_key_path: Option<PathBuf>,
     public_key_path: Option<PathBuf>,
 ) -> Option<(EncodingKey, DecodingKey)> {
-    let encoding_key = match fs::read(private_key_path?) {
+    let encoding_key = match fs::read(private_key_path?).await {
         Ok(key) => match EncodingKey::from_rsa_pem(&key) {
             Ok(key) => key,
             Err(e) => {
@@ -222,7 +223,7 @@ fn read_key_pair(
             return None;
         }
     };
-    let decoding_key = match fs::read(public_key_path?) {
+    let decoding_key = match fs::read(public_key_path?).await {
         Ok(key) => match DecodingKey::from_rsa_pem(&key) {
             Ok(key) => key,
             Err(e) => {
@@ -252,7 +253,7 @@ async fn main() -> Result<()> {
     debug!("name = {:?}", server_args.name);
     debug!("server_addr = {:?}", server_args.self_ip_port);
     debug!("cluster_peers = {:?}", server_args.cluster_peers);
-    let key_pair = read_key_pair(server_args.auth_private_key, server_args.auth_public_key);
+    let key_pair = read_key_pair(server_args.auth_private_key, server_args.auth_public_key).await;
     let server = XlineServer::new(
         server_args.name,
         server_args.cluster_peers,

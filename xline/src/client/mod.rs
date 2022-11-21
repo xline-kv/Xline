@@ -87,8 +87,9 @@ impl Client {
                 end: vec![],
             }];
             let propose_id = self.generate_propose_id();
-            let wrapper = RequestWithToken::new(rpc::PutRequest::from(request).into());
-            let bin_req = bincode::serialize(&wrapper)?;
+            let bin_req = bincode::serialize(&RequestWithToken::new(
+                rpc::PutRequest::from(request).into(),
+            ))?;
             let cmd = Command::new(key_ranges, bin_req, propose_id);
             let cmd_res = self.curp_client.propose(cmd).await?;
             Ok(cmd_res.decode().into())
@@ -115,8 +116,9 @@ impl Client {
                 end: request.range_end().to_vec(),
             }];
             let propose_id = self.generate_propose_id();
-            let wrapper = RequestWithToken::new(rpc::RangeRequest::from(request).into());
-            let bin_req = bincode::serialize(&wrapper)?;
+            let bin_req = bincode::serialize(&RequestWithToken::new(
+                rpc::RangeRequest::from(request).into(),
+            ))?;
             let cmd = Command::new(key_ranges, bin_req, propose_id);
             let cmd_res = self.curp_client.propose(cmd).await?;
             Ok(cmd_res.decode().into())
@@ -143,8 +145,9 @@ impl Client {
                 end: request.range_end().to_vec(),
             }];
             let propose_id = self.generate_propose_id();
-            let wrapper = RequestWithToken::new(rpc::DeleteRangeRequest::from(request).into());
-            let bin_req = bincode::serialize(&wrapper)?;
+            let bin_req = bincode::serialize(&RequestWithToken::new(
+                rpc::DeleteRangeRequest::from(request).into(),
+            ))?;
             let cmd = Command::new(key_ranges, bin_req, propose_id);
             let cmd_res = self.curp_client.propose(cmd).await?;
             Ok(cmd_res.decode().into())
