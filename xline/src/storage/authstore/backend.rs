@@ -1,70 +1,52 @@
-use std::fmt;
-use std::time::{SystemTime, UNIX_EPOCH};
-use std::{cmp::Ordering, collections::HashMap, sync::Arc};
+use std::{cmp::Ordering, collections::HashMap, fmt};
 
 use anyhow::Result;
 use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{cmd::ProposeId, error::ExecuteError};
-use jsonwebtoken::{
-    errors::Error as JwtError, Algorithm, DecodingKey, EncodingKey, Header, Validation,
-};
+use itertools::Itertools;
+use jsonwebtoken::{DecodingKey, EncodingKey};
 use log::debug;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use pbkdf2::{
     password_hash::{PasswordHash, PasswordVerifier},
     Pbkdf2,
 };
 use prost::Message;
-use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, oneshot};
 
-use super::index::IndexOperate;
-use super::{db::DB, index::Index};
-use crate::rpc::{
-    AuthDisableRequest, AuthDisableResponse, AuthEnableRequest, AuthEnableResponse,
-    AuthRoleAddRequest, AuthRoleAddResponse, AuthRoleDeleteRequest, AuthRoleDeleteResponse,
-    AuthRoleGetRequest, AuthRoleGetResponse, AuthRoleGrantPermissionRequest,
-    AuthRoleGrantPermissionResponse, AuthRoleListRequest, AuthRoleListResponse,
-    AuthRoleRevokePermissionRequest, AuthRoleRevokePermissionResponse, AuthStatusRequest,
-    AuthStatusResponse, AuthUserAddRequest, AuthUserAddResponse, AuthUserChangePasswordRequest,
-    AuthUserChangePasswordResponse, AuthUserDeleteRequest, AuthUserDeleteResponse,
-    AuthUserGetRequest, AuthUserGetResponse, AuthUserGrantRoleRequest, AuthUserGrantRoleResponse,
-    AuthUserListRequest, AuthUserListResponse, AuthUserRevokeRoleRequest,
-    AuthUserRevokeRoleResponse, AuthenticateRequest, AuthenticateResponse, DeleteRangeRequest,
-    KeyValue, Permission, PutRequest, RangeRequest, Request, RequestWithToken, RequestWrapper,
-    ResponseHeader, ResponseWrapper, Role, TxnRequest, Type, User,
-};
 use crate::server::command::{
     CommandResponse, ExecutionRequest, KeyRange, SyncRequest, SyncResponse,
 };
+use crate::storage::{db::DB, index::Index};
+use crate::{
+    rpc::{
+        AuthDisableRequest, AuthDisableResponse, AuthEnableRequest, AuthEnableResponse,
+        AuthRoleAddRequest, AuthRoleAddResponse, AuthRoleDeleteRequest, AuthRoleDeleteResponse,
+        AuthRoleGetRequest, AuthRoleGetResponse, AuthRoleGrantPermissionRequest,
+        AuthRoleGrantPermissionResponse, AuthRoleListRequest, AuthRoleListResponse,
+        AuthRoleRevokePermissionRequest, AuthRoleRevokePermissionResponse, AuthStatusRequest,
+        AuthStatusResponse, AuthUserAddRequest, AuthUserAddResponse, AuthUserChangePasswordRequest,
+        AuthUserChangePasswordResponse, AuthUserDeleteRequest, AuthUserDeleteResponse,
+        AuthUserGetRequest, AuthUserGetResponse, AuthUserGrantRoleRequest,
+        AuthUserGrantRoleResponse, AuthUserListRequest, AuthUserListResponse,
+        AuthUserRevokeRoleRequest, AuthUserRevokeRoleResponse, AuthenticateRequest,
+        AuthenticateResponse, KeyValue, Permission, RequestWithToken, RequestWrapper,
+        ResponseHeader, ResponseWrapper, Role, Type, User,
+    },
+    storage::index::IndexOperate,
+};
 
-/// Default channel size
-const CHANNEL_SIZE: usize = 128;
+use super::perms::{JwtTokenManager, PermissionCache, TokenClaims, TokenOperate, UserPermissions};
+
 /// Key prefix of user
-const USER_PREFIX: &[u8] = b"user/";
+pub(crate) const USER_PREFIX: &[u8] = b"user/";
 /// Key prefix of role
-const ROLE_PREFIX: &[u8] = b"role/";
+pub(crate) const ROLE_PREFIX: &[u8] = b"role/";
 /// Key of `AuthEnable`
-const AUTH_ENABLE_KEY: &[u8] = b"auth_enable";
+pub(crate) const AUTH_ENABLE_KEY: &[u8] = b"auth_enable";
 /// Root user
-const ROOT_USER: &str = "root";
+pub(crate) const ROOT_USER: &str = "root";
 /// Root role
-const ROOT_ROLE: &str = "root";
-/// default tolen ttl
-const DEFAULT_TOKEN_TTL: u64 = 300;
-
-/// Auth store
-#[allow(dead_code)]
-#[derive(Debug)]
-pub(crate) struct AuthStore {
-    /// Auth store Backend
-    inner: Arc<AuthStoreBackend>,
-    // TODO: check if this can be moved into Inner
-    /// Sender to send command
-    exec_tx: mpsc::Sender<ExecutionRequest>,
-    /// Sender to send sync request
-    sync_tx: mpsc::Sender<SyncRequest>,
-}
+pub(crate) const ROOT_ROLE: &str = "root";
 
 /// Auth store inner
 pub(crate) struct AuthStoreBackend {
@@ -79,7 +61,7 @@ pub(crate) struct AuthStoreBackend {
     /// Enabled
     enabled: Mutex<bool>,
     /// Permission cache
-    permission_cache: Mutex<HashMap<String, UserPermissions>>,
+    permission_cache: RwLock<PermissionCache>,
     /// The manager of token
     token_manager: Option<JwtTokenManager>,
 }
@@ -96,249 +78,6 @@ impl fmt::Debug for AuthStoreBackend {
     }
 }
 
-impl AuthStore {
-    /// New `AuthStore`
-    #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
-    pub(crate) fn new(key_pair: Option<(EncodingKey, DecodingKey)>) -> Self {
-        let (exec_tx, mut exec_rx) = mpsc::channel(CHANNEL_SIZE);
-        let (sync_tx, mut sync_rx) = mpsc::channel(CHANNEL_SIZE);
-        let inner = Arc::new(AuthStoreBackend::new(key_pair));
-
-        let inner_clone = Arc::clone(&inner);
-        let _handle = tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    cmd_req = exec_rx.recv() => {
-                        if let Some(req) = cmd_req {
-                            inner.speculative_exec(req);
-                        }
-                    }
-                    sync_req = sync_rx.recv() => {
-                        if let Some(req) = sync_req {
-                            inner.sync_cmd(req).await;
-                        }
-                    }
-                }
-            }
-        });
-
-        Self {
-            inner: inner_clone,
-            exec_tx,
-            sync_tx,
-        }
-    }
-
-    /// Send execution request to Auth store
-    pub(crate) async fn send_req(
-        &self,
-        id: ProposeId,
-        req: RequestWithToken,
-    ) -> oneshot::Receiver<Result<CommandResponse, ExecuteError>> {
-        let (req, receiver) = ExecutionRequest::new(id, req);
-        assert!(
-            self.exec_tx.send(req).await.is_ok(),
-            "Command receiver dropped"
-        );
-        receiver
-    }
-
-    /// Send sync request to Auth store
-    pub(crate) async fn send_sync(&self, propose_id: ProposeId) -> oneshot::Receiver<SyncResponse> {
-        let (req, receiver) = SyncRequest::new(propose_id);
-        assert!(
-            self.sync_tx.send(req).await.is_ok(),
-            "Command receiver dropped"
-        );
-        receiver
-    }
-
-    /// Check password
-    pub(crate) fn check_password(
-        &self,
-        username: &str,
-        password: &str,
-    ) -> Result<i64, ExecuteError> {
-        self.inner.check_password(username, password)
-    }
-
-    /// check if the request is permitted
-    pub(crate) fn check_permission(&self, wrapper: &RequestWithToken) -> Result<(), ExecuteError> {
-        if !self.inner.is_enabled() {
-            return Ok(());
-        }
-        if let RequestWrapper::AuthenticateRequest(_) = wrapper.request {
-            return Ok(());
-        }
-        let claims = match wrapper.token {
-            Some(ref token) => self.inner.verify_token(token)?,
-            None => {
-                return Err(ExecuteError::InvalidCommand(
-                    "token is not provided".to_owned(),
-                ))
-            }
-        };
-        if claims.revision < self.inner.revision() {
-            return Err(ExecuteError::InvalidCommand(
-                "request's revision is older than current revision".to_owned(),
-            ));
-        }
-        let username = claims.username;
-        #[allow(clippy::wildcard_enum_match_arm)]
-        match wrapper.request {
-            RequestWrapper::RangeRequest(ref range_req) => {
-                self.check_range_permission(&username, range_req)?;
-            }
-            RequestWrapper::PutRequest(ref put_req) => {
-                self.check_put_permission(&username, put_req)?;
-            }
-            RequestWrapper::DeleteRangeRequest(ref del_range_req) => {
-                self.check_delete_permission(&username, del_range_req)?;
-            }
-            RequestWrapper::TxnRequest(ref txn_req) => {
-                self.check_txn_permission(&username, txn_req)?;
-            }
-            RequestWrapper::AuthUserGetRequest(ref user_get_req) => {
-                self.check_admin_permission(&username).map_or_else(
-                    |e| {
-                        if user_get_req.name == username {
-                            Ok(())
-                        } else {
-                            Err(e)
-                        }
-                    },
-                    |_| Ok(()),
-                )?;
-            }
-            RequestWrapper::AuthRoleGetRequest(ref role_get_req) => {
-                self.check_admin_permission(&username).map_or_else(
-                    |e| {
-                        let user = self.inner.get_user(&username)?;
-                        if user.has_role(&role_get_req.role) {
-                            Ok(())
-                        } else {
-                            Err(e)
-                        }
-                    },
-                    |_| Ok(()),
-                )?;
-            }
-            _ => {
-                self.check_admin_permission(&username)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    /// check if range request is permitted
-    fn check_range_permission(
-        &self,
-        username: &str,
-        req: &RangeRequest,
-    ) -> Result<(), ExecuteError> {
-        self.check_op_permission(username, &req.key, &req.range_end, Type::Read)
-    }
-
-    /// check if put request is permitted
-    fn check_put_permission(&self, username: &str, req: &PutRequest) -> Result<(), ExecuteError> {
-        if req.prev_kv {
-            self.check_op_permission(username, &req.key, &[], Type::Read)?;
-        }
-        self.check_op_permission(username, &req.key, &[], Type::Write)
-    }
-
-    /// check if delete request is permitted
-    fn check_delete_permission(
-        &self,
-        username: &str,
-        req: &DeleteRangeRequest,
-    ) -> Result<(), ExecuteError> {
-        if req.prev_kv {
-            self.check_op_permission(username, &req.key, &req.range_end, Type::Read)?;
-        }
-        self.check_op_permission(username, &req.key, &req.range_end, Type::Write)
-    }
-
-    /// check if txn request is permitted
-    fn check_txn_permission(&self, username: &str, req: &TxnRequest) -> Result<(), ExecuteError> {
-        for compare in &req.compare {
-            self.check_op_permission(username, &compare.key, &compare.range_end, Type::Read)?;
-        }
-        for op in req.success.iter().chain(req.failure.iter()) {
-            match op.request {
-                Some(Request::RequestRange(ref range_req)) => {
-                    self.check_range_permission(username, range_req)?;
-                }
-                Some(Request::RequestPut(ref put_req)) => {
-                    self.check_put_permission(username, put_req)?;
-                }
-                Some(Request::RequestDeleteRange(ref del_range_req)) => {
-                    self.check_delete_permission(username, del_range_req)?;
-                }
-                Some(Request::RequestTxn(ref txn_req)) => {
-                    self.check_txn_permission(username, txn_req)?;
-                }
-                None => unreachable!("txn operation should have request"),
-            }
-        }
-        Ok(())
-    }
-
-    /// Check if the user has admin permission
-    fn check_admin_permission(&self, username: &str) -> Result<(), ExecuteError> {
-        if !self.inner.is_enabled() {
-            return Ok(());
-        }
-        let user = self.inner.get_user(username)?;
-        if user.has_role(ROOT_ROLE) {
-            return Ok(());
-        }
-        Err(ExecuteError::InvalidCommand("premission denied".to_owned()))
-    }
-
-    /// check permission for a kv operation
-    fn check_op_permission(
-        &self,
-        username: &str,
-        key: &[u8],
-        range_end: &[u8],
-        perm_type: Type,
-    ) -> Result<(), ExecuteError> {
-        let user = self.inner.get_user(username)?;
-        if user.has_role(ROOT_ROLE) {
-            return Ok(());
-        }
-        let user_perms = self.inner.get_user_permissions(username)?;
-        match perm_type {
-            Type::Read => {
-                if user_perms.read.iter().any(|kr| {
-                    kr.contains_range(&KeyRange {
-                        start: key.to_vec(),
-                        end: range_end.to_vec(),
-                    })
-                }) {
-                    return Ok(());
-                }
-            }
-            Type::Write => {
-                if user_perms.write.iter().any(|kr| {
-                    kr.contains_range(&KeyRange {
-                        start: key.to_vec(),
-                        end: range_end.to_vec(),
-                    })
-                }) {
-                    return Ok(());
-                }
-            }
-            Type::Readwrite => {
-                unreachable!("Readwrite is unreachable");
-            }
-        }
-        Err(ExecuteError::InvalidCommand("premission denied".to_owned()))
-    }
-}
-
 impl AuthStoreBackend {
     /// New `AuthStoreBackend`
     pub(crate) fn new(key_pair: Option<(EncodingKey, DecodingKey)>) -> Self {
@@ -351,7 +90,7 @@ impl AuthStoreBackend {
             token_manager: key_pair.map(|(encoding_key, decoding_key)| {
                 JwtTokenManager::new(encoding_key, decoding_key)
             }),
-            permission_cache: Mutex::new(HashMap::new()),
+            permission_cache: RwLock::new(PermissionCache::new()),
         }
     }
 
@@ -361,12 +100,16 @@ impl AuthStoreBackend {
     }
 
     /// Get enabled of Auth store
-    fn is_enabled(&self) -> bool {
+    pub(crate) fn is_enabled(&self) -> bool {
         *self.enabled.lock()
     }
 
     /// Check password
-    fn check_password(&self, username: &str, password: &str) -> Result<i64, ExecuteError> {
+    pub(crate) fn check_password(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<i64, ExecuteError> {
         if !self.is_enabled() {
             return Err(ExecuteError::InvalidCommand(
                 "auth is not enabled".to_owned(),
@@ -403,7 +146,7 @@ impl AuthStoreBackend {
     }
 
     /// verify token
-    fn verify_token(&self, token: &str) -> Result<TokenClaims, ExecuteError> {
+    pub(crate) fn verify_token(&self, token: &str) -> Result<TokenClaims, ExecuteError> {
         match self.token_manager {
             Some(ref token_manager) => token_manager
                 .verify(token)
@@ -414,53 +157,63 @@ impl AuthStoreBackend {
         }
     }
 
-    /// refresh permission cache
-    fn refresh_permission_cache(&self) {
-        let mut permission_cache = HashMap::new();
+    /// create permission cache
+    fn create_permission_cache(&self) {
+        let mut permission_cache = PermissionCache::new();
         for user in self.get_all_users() {
-            let mut user_permisiion = UserPermissions::new();
-            for role_name in user.roles {
-                let role = match self.get_role(&role_name) {
-                    Ok(role) => role,
-                    Err(_) => continue,
-                };
-                for permission in role.key_permission {
-                    let key_range = KeyRange {
-                        start: permission.key,
-                        end: permission.range_end,
-                    };
-                    #[allow(clippy::unwrap_used)] // safe unwrap
-                    match Type::from_i32(permission.perm_type).unwrap() {
-                        Type::Readwrite => {
-                            user_permisiion.read.push(key_range.clone());
-                            user_permisiion.write.push(key_range.clone());
-                        }
-                        Type::Write => {
-                            user_permisiion.write.push(key_range.clone());
-                        }
-                        Type::Read => {
-                            user_permisiion.read.push(key_range.clone());
-                        }
-                    }
-                }
-            }
-            if !user_permisiion.is_empty() {
-                let username = String::from_utf8_lossy(&user.name).to_string();
-                let _ignore = permission_cache.insert(username, user_permisiion);
-            }
+            let user_permisiion = self.get_user_permissions(&user);
+            let username = String::from_utf8_lossy(&user.name).to_string();
+            let _ignore = permission_cache
+                .user_permissions
+                .insert(username, user_permisiion);
         }
-        *self.permission_cache.lock() = permission_cache;
+        self.permission_cache
+            .map_write(|mut cache| *cache = permission_cache);
     }
 
     /// get user permissions
-    fn get_user_permissions(&self, username: &str) -> Result<UserPermissions, ExecuteError> {
-        let permission_cache = self.permission_cache.lock();
-        match permission_cache.get(username) {
-            Some(user_permissions) => Ok(user_permissions.clone()),
-            None => Err(ExecuteError::InvalidCommand(
-                "user permissions not found".to_owned(),
-            )),
+    fn get_user_permissions(&self, user: &User) -> UserPermissions {
+        let mut user_permisiion = UserPermissions::new();
+        for role_name in &user.roles {
+            let role = match self.get_role(role_name) {
+                Ok(role) => role,
+                Err(_) => continue,
+            };
+            for permission in role.key_permission {
+                let key_range = KeyRange {
+                    start: permission.key,
+                    end: permission.range_end,
+                };
+                #[allow(clippy::unwrap_used)] // safe unwrap
+                match Type::from_i32(permission.perm_type).unwrap() {
+                    Type::Readwrite => {
+                        user_permisiion.read.push(key_range.clone());
+                        user_permisiion.write.push(key_range.clone());
+                    }
+                    Type::Write => {
+                        user_permisiion.write.push(key_range.clone());
+                    }
+                    Type::Read => {
+                        user_permisiion.read.push(key_range.clone());
+                    }
+                }
+            }
         }
+        user_permisiion
+    }
+
+    /// get user permissions from cache
+    pub(crate) fn get_user_permissions_from_cache(
+        &self,
+        username: &str,
+    ) -> Result<UserPermissions, ExecuteError> {
+        self.permission_cache
+            .map_read(|cache| match cache.user_permissions.get(username) {
+                Some(user_permissions) => Ok(user_permissions.clone()),
+                None => Err(ExecuteError::InvalidCommand(
+                    "user permissions not found".to_owned(),
+                )),
+            })
     }
 
     /// get `KeyValue` in `AuthStore`
@@ -471,7 +224,7 @@ impl AuthStoreBackend {
     }
 
     /// get user by username
-    fn get_user(&self, username: &str) -> Result<User, ExecuteError> {
+    pub(crate) fn get_user(&self, username: &str) -> Result<User, ExecuteError> {
         let key = [USER_PREFIX, username.as_bytes()].concat();
         match self.get(&key) {
             Some(kv) => Ok(User::decode(kv.value.as_slice()).unwrap_or_else(|e| {
@@ -1006,7 +759,7 @@ impl AuthStoreBackend {
     }
 
     /// Sync a Command to storage and generate revision for Command.
-    async fn sync_cmd(&self, sync_req: SyncRequest) {
+    pub(crate) async fn sync_cmd(&self, sync_req: SyncRequest) {
         debug!("Receive SyncRequest {:?}", sync_req);
         let (propose_id, res_sender) = sync_req.unpack();
         let requests = self
@@ -1062,7 +815,7 @@ impl AuthStoreBackend {
             }
             RequestWrapper::AuthUserRevokeRoleRequest(req) => {
                 debug!("Sync AuthUserRevokeRoleRequest {:?}", req);
-                self.sync_user_revoke_role_request(&req, next_revision)
+                self.sync_user_revoke_role_request(req, next_revision)
             }
             RequestWrapper::AuthUserChangePasswordRequest(req) => {
                 debug!("Sync AuthUserChangePasswordRequest {:?}", req);
@@ -1127,7 +880,7 @@ impl AuthStoreBackend {
         }
         self.put(AUTH_ENABLE_KEY.to_vec(), vec![1], revision, 0);
         *self.enabled.lock() = true;
-        self.refresh_permission_cache();
+        self.create_permission_cache();
         true
     }
 
@@ -1163,7 +916,6 @@ impl AuthStoreBackend {
             roles: Vec::new(),
         };
         self.put_user(&user, revision, 0);
-        self.refresh_permission_cache();
         true
     }
 
@@ -1186,7 +938,14 @@ impl AuthStoreBackend {
             return false;
         }
         self.delete_user(&req.name, next_revision, 0);
-        self.refresh_permission_cache();
+        self.permission_cache.map_write(|mut cache| {
+            let _ignore = cache.user_permissions.remove(&req.name);
+            cache.role_to_users_map.iter_mut().for_each(|(_, users)| {
+                if let Some((idx, _)) = users.iter().find_position(|uname| uname == &&req.name) {
+                    let _old = users.swap_remove(idx);
+                };
+            });
+        });
         true
     }
 
@@ -1206,7 +965,6 @@ impl AuthStoreBackend {
         }
         user.password = req.hashed_password.into_bytes();
         self.put_user(&user, revision, 0);
-        self.refresh_permission_cache();
         true
     }
 
@@ -1216,26 +974,52 @@ impl AuthStoreBackend {
             Ok(user) => user,
             Err(_) => return false,
         };
-        if (req.role != ROOT_ROLE) && self.get_role(&req.role).is_err() {
+        let role = self.get_role(&req.role);
+        if (req.role != ROOT_ROLE) && role.is_err() {
             return false;
         }
         // TODO get index from binary search and inset directly
         if user.roles.binary_search(&req.role).is_ok() {
             return false;
         }
-        user.roles.push(req.role);
+        user.roles.push(req.role.clone());
         user.roles.sort();
         self.put_user(&user, revision, 0);
-        self.refresh_permission_cache();
+        if let Ok(role) = role {
+            let perms = role.key_permission;
+            self.permission_cache.map_write(|mut cache| {
+                let entry = cache
+                    .user_permissions
+                    .entry(req.user.clone())
+                    .or_insert_with(UserPermissions::new);
+                for perm in perms {
+                    let key_range = KeyRange::new(perm.key, perm.range_end);
+                    #[allow(clippy::unwrap_used)] // safe unwrap
+                    match Type::from_i32(perm.perm_type).unwrap() {
+                        Type::Readwrite => {
+                            entry.read.push(key_range.clone());
+                            entry.write.push(key_range);
+                        }
+                        Type::Write => {
+                            entry.write.push(key_range);
+                        }
+                        Type::Read => {
+                            entry.read.push(key_range);
+                        }
+                    }
+                }
+                cache
+                    .role_to_users_map
+                    .entry(req.role)
+                    .or_insert_with(Vec::new)
+                    .push(req.user);
+            });
+        }
         true
     }
 
     /// Sync `AuthUserRevokeRoleRequest` and return whether authstore is changed.
-    fn sync_user_revoke_role_request(
-        &self,
-        req: &AuthUserRevokeRoleRequest,
-        revision: i64,
-    ) -> bool {
+    fn sync_user_revoke_role_request(&self, req: AuthUserRevokeRoleRequest, revision: i64) -> bool {
         if self.is_enabled() && (req.name == ROOT_USER) && (req.role == ROOT_ROLE) {
             return false;
         }
@@ -1249,7 +1033,15 @@ impl AuthStoreBackend {
         };
         let _ignore = user.roles.remove(idx);
         self.put_user(&user, revision, 0);
-        self.refresh_permission_cache();
+        self.permission_cache.map_write(|mut cache| {
+            let user_permissions = self.get_user_permissions(&user);
+            let _entry = cache.role_to_users_map.entry(req.role).and_modify(|users| {
+                if let Some((i, _)) = users.iter().find_position(|uname| uname == &&req.name) {
+                    let _old = users.swap_remove(i);
+                };
+            });
+            let _old = cache.user_permissions.insert(req.name, user_permissions);
+        });
         true
     }
 
@@ -1287,14 +1079,20 @@ impl AuthStoreBackend {
         self.delete_role(&req.role, revision, 0);
         let users = self.get_all_users();
         let mut sub_revision = 1;
+        let mut new_perms = HashMap::new();
         for mut user in users {
             if let Ok(idx) = user.roles.binary_search(&req.role) {
                 let _ignore = user.roles.remove(idx);
                 self.put_user(&user, revision, sub_revision);
                 sub_revision = sub_revision.wrapping_add(1);
+                let perms = self.get_user_permissions(&user);
+                let _old = new_perms.insert(String::from_utf8_lossy(&user.name).to_string(), perms);
             }
         }
-        self.refresh_permission_cache();
+        self.permission_cache.map_write(|mut cache| {
+            cache.user_permissions.extend(new_perms.into_iter());
+            let _ignore = cache.role_to_users_map.remove(&req.role);
+        });
         true
     }
 
@@ -1325,11 +1123,37 @@ impl AuthStoreBackend {
                 role.key_permission[idx].perm_type = permission.perm_type;
             }
             Err(idx) => {
-                role.key_permission.insert(idx, permission);
+                role.key_permission.insert(idx, permission.clone());
             }
         };
         self.put_role(&role, revision, 0);
-        self.refresh_permission_cache();
+        self.permission_cache.map_write(move |mut cache| {
+            let users = cache
+                .role_to_users_map
+                .get(&req.name)
+                .cloned()
+                .unwrap_or_default();
+            let key_range = KeyRange::new(permission.key, permission.range_end);
+            for user in users {
+                let entry = cache
+                    .user_permissions
+                    .entry(user)
+                    .or_insert_with(UserPermissions::new);
+                #[allow(clippy::unwrap_used)] // safe unwrap
+                match Type::from_i32(permission.perm_type).unwrap() {
+                    Type::Readwrite => {
+                        entry.read.push(key_range.clone());
+                        entry.write.push(key_range.clone());
+                    }
+                    Type::Write => {
+                        entry.write.push(key_range.clone());
+                    }
+                    Type::Read => {
+                        entry.read.push(key_range.clone());
+                    }
+                }
+            }
+        });
         true
     }
 
@@ -1355,105 +1179,60 @@ impl AuthStoreBackend {
         };
         let _ignore = role.key_permission.remove(idx);
         self.put_role(&role, next_revision, 0);
-        self.refresh_permission_cache();
+        self.permission_cache.map_write(|mut cache| {
+            let users = cache
+                .role_to_users_map
+                .get(&req.role)
+                .map_or_else(Vec::new, |users| {
+                    users
+                        .iter()
+                        .filter_map(|user| self.get_user(user).ok())
+                        .collect::<Vec<_>>()
+                });
+            for user in users {
+                let perms = self.get_user_permissions(&user);
+                let _old = cache
+                    .user_permissions
+                    .insert(String::from_utf8_lossy(&user.name).to_string(), perms);
+            }
+        });
         true
     }
-}
 
-/// Claims of Token
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct TokenClaims {
-    /// Username
-    username: String,
-    /// Revision
-    revision: i64,
-    /// Expiration
-    exp: u64,
-}
-
-/// Operations of token manager
-trait TokenOperate {
-    /// Claims type
-    type Claims;
-
-    /// Error type
-    type Error;
-
-    /// Assign a token with claims.
-    fn assign(&self, username: &str, revision: i64) -> Result<String, Self::Error>;
-
-    /// Verify token and return claims.
-    fn verify(&self, token: &str) -> Result<Self::Claims, Self::Error>;
-}
-
-/// `TokenManager` of Json Web Token.
-struct JwtTokenManager {
-    /// The key used to sign the token.
-    encoding_key: EncodingKey,
-    /// The key used to verify the token.
-    decoding_key: DecodingKey,
-}
-
-impl JwtTokenManager {
-    /// New `JwtTokenManager`
-    fn new(encoding_key: EncodingKey, decoding_key: DecodingKey) -> Self {
-        Self {
-            encoding_key,
-            decoding_key,
-        }
+    #[cfg(test)]
+    pub(crate) fn permission_cache(&self) -> PermissionCache {
+        self.permission_cache.map_read(|cache| cache.clone())
     }
 }
 
-impl TokenOperate for JwtTokenManager {
-    type Error = JwtError;
+// TODO: move to utils
+/// Apply a closure on a rwlock after getting the guard
+pub(crate) trait RwLockMap<T, R> {
+    /// Map a closure to a read mutex
+    fn map_read<READ>(&self, f: READ) -> R
+    where
+        READ: FnOnce(RwLockReadGuard<'_, T>) -> R;
 
-    type Claims = TokenClaims;
-
-    fn assign(&self, username: &str, revision: i64) -> Result<String, Self::Error> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_else(|e| panic!("SystemTime before UNIX EPOCH! {}", e))
-            .as_secs();
-        let claims = TokenClaims {
-            username: username.to_owned(),
-            revision,
-            exp: now.wrapping_add(DEFAULT_TOKEN_TTL),
-        };
-        let token =
-            jsonwebtoken::encode(&Header::new(Algorithm::RS256), &claims, &self.encoding_key)?;
-        Ok(token)
-    }
-
-    fn verify(&self, token: &str) -> Result<Self::Claims, Self::Error> {
-        jsonwebtoken::decode::<TokenClaims>(
-            token,
-            &self.decoding_key,
-            &Validation::new(Algorithm::RS256),
-        )
-        .map(|d| d.claims)
-    }
+    /// Map a closure to a write mutex
+    fn map_write<WRITE>(&self, f: WRITE) -> R
+    where
+        WRITE: FnOnce(RwLockWriteGuard<'_, T>) -> R;
 }
 
-/// Permissions if a user
-#[derive(Debug, Clone)]
-struct UserPermissions {
-    /// `KeyRange` has read permission
-    read: Vec<KeyRange>,
-    /// `KeyRange` has write permission
-    write: Vec<KeyRange>,
-}
-
-impl UserPermissions {
-    /// New `UserPermissions`
-    fn new() -> Self {
-        Self {
-            read: Vec::new(),
-            write: Vec::new(),
-        }
+impl<T, R> RwLockMap<T, R> for RwLock<T> {
+    fn map_read<READ>(&self, f: READ) -> R
+    where
+        READ: FnOnce(RwLockReadGuard<'_, T>) -> R,
+    {
+        let read_guard = self.read();
+        f(read_guard)
     }
 
-    /// Check if user permissions is empty
-    fn is_empty(&self) -> bool {
-        self.read.is_empty() && self.write.is_empty()
+    fn map_write<WRITE>(&self, f: WRITE) -> R
+    where
+        WRITE: FnOnce(RwLockWriteGuard<'_, T>) -> R,
+    {
+        let write_guard = self.write();
+        f(write_guard)
     }
 }
