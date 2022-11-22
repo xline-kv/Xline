@@ -180,15 +180,13 @@ impl<KM> KeyBasedReceiverInner<KM> {
         let mut listener = None;
         loop {
             channel.flush_queue(&mut self.buf);
-            match self.buf.pop_front() {
-                Some(msg) => return MessageOrListener::Message(msg),
-                None => {
-                    if let Some(l) = listener {
-                        return MessageOrListener::Listen(l);
-                    }
-                    listener = Some(channel.new_msg_event.listen());
-                }
+            if let Some(msg) = self.buf.pop_front() {
+                return MessageOrListener::Message(msg);
             }
+            if let Some(l) = listener {
+                return MessageOrListener::Listen(l);
+            }
+            listener = Some(channel.new_msg_event.listen());
         }
     }
 

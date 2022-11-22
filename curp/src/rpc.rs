@@ -20,7 +20,7 @@ use std::{sync::Arc, time::Duration};
 
 use opentelemetry::global;
 use tokio::sync::RwLock;
-use tracing::{info_span, Instrument};
+use tracing::{debug, info_span, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::log::LogEntry;
@@ -380,6 +380,7 @@ pub(crate) async fn try_connect(addrs: Vec<String>) -> Vec<Arc<Connect>> {
     .into_iter()
     .zip(addrs.into_iter())
     .map(|(conn, addr)| {
+        debug!("successfully establish connection with {addr}");
         Arc::new(Connect {
             rpc_connect: RwLock::new(conn),
             addr,
