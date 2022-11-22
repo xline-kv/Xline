@@ -91,7 +91,7 @@ impl<K: Eq + Hash + Clone + ConflictCheck, M> KeyBasedChannel<SpmcKeysMessage<K,
         }
     }
 
-    /// Append a key and message to this `KeybasedChannel`
+    /// Append a key and message to this `KeyBasedChannel`
     fn append(&mut self, keys: &[K], msg: M) {
         let km = SpmcKeysMessage::new(keys.to_vec(), msg);
         if !self.insert_graph(km.clone()) {
@@ -158,15 +158,15 @@ impl<K: Eq + Hash + Clone + ConflictCheck + Send + 'static, M: Send + 'static>
     }
 }
 
-/// The Receiver for the `KeybasedChannel`
-pub(crate) struct SpmcKeybasedReceiver<K, M> {
+/// The Receiver for the `KeyBasedChannel`
+pub(crate) struct SpmcKeyBasedReceiver<K, M> {
     /// Inner receiver
     inner: Arc<tokio::sync::Mutex<KeyBasedReceiverInner<SpmcKeysMessage<K, M>>>>,
     /// Message done notifier
     done_tx: UnboundedSender<SpmcKeysMessage<K, M>>,
 }
 
-impl<K, M> Clone for SpmcKeybasedReceiver<K, M> {
+impl<K, M> Clone for SpmcKeyBasedReceiver<K, M> {
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
@@ -175,7 +175,7 @@ impl<K, M> Clone for SpmcKeybasedReceiver<K, M> {
     }
 }
 
-impl<K: Eq + Hash + Clone + ConflictCheck, M> SpmcKeybasedReceiver<K, M> {
+impl<K: Eq + Hash + Clone + ConflictCheck, M> SpmcKeyBasedReceiver<K, M> {
     /// Receive a message
     /// Return (message, `msg_complete_sender`)
     pub(crate) async fn recv(
@@ -217,12 +217,12 @@ impl<K: Eq + Hash + Clone + ConflictCheck, M> SpmcKeybasedReceiver<K, M> {
     }
 }
 
-/// Create a `KeybasedQueue`
+/// Create a `KeyBasedQueue`
 /// Return (sender, receiver)
 pub(crate) fn channel<
     K: Clone + Eq + Hash + Send + Sync + ConflictCheck + 'static,
     M: Send + 'static,
->() -> (SpmcKeyBasedSender<K, M>, SpmcKeybasedReceiver<K, M>) {
+>() -> (SpmcKeyBasedSender<K, M>, SpmcKeyBasedReceiver<K, M>) {
     let inner_channel = Arc::new(Mutex::new(KeyBasedChannel {
         inner: VecDeque::new(),
         new_msg_event: Event::new(),
@@ -247,7 +247,7 @@ pub(crate) fn channel<
                 channel: Arc::<_>::clone(&inner_channel),
             },
         },
-        SpmcKeybasedReceiver {
+        SpmcKeyBasedReceiver {
             inner: Arc::new(tokio::sync::Mutex::new(KeyBasedReceiverInner {
                 channel: inner_channel,
                 buf: VecDeque::new(),

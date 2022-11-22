@@ -130,17 +130,20 @@ mod message;
 /// Log
 mod log;
 
-/// The special keybased channels
+/// The special keyBased channels
 mod channel;
 
-/// Sync manager to sync command to all other peers
-mod sync_manager;
+/// Background tasks of Curp protocol
+mod bg_tasks;
 
 /// Protobuf generated types that are used in RPC
 mod rpc;
 
 /// Background garbage collection for Curp server
 mod gc;
+
+/// Shutdown related
+mod shutdown;
 
 pub use message::LogIndex;
 pub use rpc::ProtocolServer;
