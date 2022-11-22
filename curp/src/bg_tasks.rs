@@ -3,7 +3,6 @@ use std::ops::Range;
 use std::{sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
-use event_listener::Event;
 use madsim::rand::{thread_rng, Rng};
 use parking_lot::lock_api::{Mutex, RwLockUpgradableReadGuard};
 use parking_lot::{RawMutex, RwLock};
@@ -39,10 +38,8 @@ pub(crate) async fn run_bg_tasks<C: Command + 'static, CE: 'static + CommandExec
     // establish connection with other servers
     let connects = rpc::try_connect(others.into_iter().collect()).await;
 
-    // notify when a broadcast of append_entries is needed immediately(a new log is received or committed)
+    // notify when a broadcast of append_entries is needed immediately
     let (ae_trigger, ae_trigger_rx) = tokio::sync::mpsc::unbounded_channel::<usize>();
-    // notify when heartbeat is needed immediately
-    let heartbeat_trigger = Arc::new(Event::new());
 
     let bg_ae_handle = tokio::spawn(bg_append_entries(
         connects.clone(),
@@ -53,16 +50,12 @@ pub(crate) async fn run_bg_tasks<C: Command + 'static, CE: 'static + CommandExec
         connects.clone(),
         Arc::clone(&state),
         Arc::clone(&last_rpc_time),
-        Arc::clone(&heartbeat_trigger),
     ));
     let bg_apply_handle = tokio::spawn(bg_apply(Arc::clone(&state), cmd_executor, comp_chan, spec));
-    let bg_heartbeat_handle = tokio::spawn(bg_heartbeat(
-        connects.clone(),
-        Arc::clone(&state),
-        heartbeat_trigger,
-    ));
+    let bg_heartbeat_handle = tokio::spawn(bg_heartbeat(connects.clone(), Arc::clone(&state)));
     let bg_get_cmds_handle =
         tokio::spawn(bg_get_sync_cmds(Arc::clone(&state), sync_chan, ae_trigger));
+    let calibrate_handle = tokio::spawn(leader_calibrates_followers(connects, state));
 
     shutdown.recv().await;
     bg_ae_handle.abort();
@@ -70,6 +63,7 @@ pub(crate) async fn run_bg_tasks<C: Command + 'static, CE: 'static + CommandExec
     bg_apply_handle.abort();
     bg_heartbeat_handle.abort();
     bg_get_cmds_handle.abort();
+    calibrate_handle.abort();
     info!("all background task stopped");
 }
 
@@ -130,7 +124,7 @@ where
     }
 }
 
-// Fetch commands need to be synced and add them to the log
+/// Fetch commands need to be synced and add them to the log
 async fn bg_get_sync_cmds<C: Command + 'static>(
     state: Arc<RwLock<State<C>>>,
     mut sync_chan: MpscKeyBasedReceiver<<C as Command>::K, SyncMessage<C>>,
@@ -142,6 +136,7 @@ async fn bg_get_sync_cmds<C: Command + 'static>(
             Err(_) => return,
         };
 
+        #[allow(clippy::shadow_unrelated)] // clippy false positive
         state.map_write(|mut state| {
             state.log.push(LogEntry::new(term, &cmds));
             if let Err(e) = ae_trigger.send(state.last_log_index()) {
@@ -302,7 +297,6 @@ async fn send_log_until_succeed<C: Command + 'static>(
 async fn bg_heartbeat<C: Command + 'static>(
     connects: Vec<Arc<Connect>>,
     state: Arc<RwLock<State<C>>>,
-    heartbeat_trigger: Arc<Event>,
 ) {
     let role_trigger = state.read().role_trigger();
     #[allow(clippy::integer_arithmetic)] // tokio internal triggered
@@ -312,10 +306,7 @@ async fn bg_heartbeat<C: Command + 'static>(
             role_trigger.listen().await;
         }
 
-        tokio::select! {
-            _ = heartbeat_trigger.listen() => {},
-            _ = tokio::time::sleep(HEARTBEAT_INTERVAL) => {}
-        }
+        tokio::time::sleep(HEARTBEAT_INTERVAL).await;
 
         // send append_entries to each server in parallel
         for connect in &connects {
@@ -376,14 +367,15 @@ async fn bg_apply<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
     let commit_trigger = state.read().commit_trigger();
     loop {
         // wait until there is something to commit
-        while !state.read().need_commit() {
+        let state = loop {
+            {
+                let state = state.upgradable_read();
+                if state.need_commit() {
+                    break state;
+                }
+            }
             commit_trigger.listen().await;
-        }
-
-        let state = state.upgradable_read();
-        if !state.need_commit() {
-            continue;
-        }
+        };
 
         let mut state = RwLockUpgradableReadGuard::upgrade(state);
         #[allow(clippy::integer_arithmetic, clippy::indexing_slicing)]
@@ -437,7 +429,6 @@ async fn bg_election<C: Command + 'static>(
     connects: Vec<Arc<Connect>>,
     state: Arc<RwLock<State<C>>>,
     last_rpc_time: Arc<RwLock<Instant>>,
-    heartbeat_trigger: Arc<Event>,
 ) {
     let role_trigger = state.read().role_trigger();
     loop {
@@ -446,17 +437,38 @@ async fn bg_election<C: Command + 'static>(
             role_trigger.listen().await;
         }
 
-        let timeout = {
-            let mut rng = thread_rng();
-            match state.read().role() {
-                ServerRole::Follower => Duration::from_millis(rng.gen_range(FOLLOWER_TIMEOUT)),
-                ServerRole::Candidate => CANDIDATE_TIMEOUT,
-                ServerRole::Leader => continue, // leader should not vote
+        let current_role = state.read().role();
+        let start_vote = match current_role {
+            ServerRole::Follower => {
+                let timeout = Duration::from_millis(thread_rng().gen_range(FOLLOWER_TIMEOUT));
+                // wait until it needs to vote
+                loop {
+                    let next_check = last_rpc_time.read().to_owned() + timeout;
+                    tokio::time::sleep_until(next_check).await;
+                    if Instant::now() - *last_rpc_time.read() > timeout {
+                        break;
+                    }
+                }
+                true
             }
+            ServerRole::Candidate => loop {
+                let next_check = last_rpc_time.read().to_owned() + CANDIDATE_TIMEOUT;
+                tokio::time::sleep_until(next_check).await;
+                // check election status
+                match state.read().role() {
+                    // election failed, becomes a follower || election succeeded, becomes a leader
+                    ServerRole::Follower | ServerRole::Leader => {
+                        break false;
+                    }
+                    ServerRole::Candidate => {}
+                }
+                if Instant::now() - *last_rpc_time.read() > CANDIDATE_TIMEOUT {
+                    break true;
+                }
+            },
+            ServerRole::Leader => false, // leader should not vote
         };
-        let next_check = last_rpc_time.read().to_owned() + timeout;
-        tokio::time::sleep_until(next_check).await;
-        if Instant::now() - *last_rpc_time.read() < timeout {
+        if !start_vote {
             continue;
         }
 
@@ -482,7 +494,6 @@ async fn bg_election<C: Command + 'static>(
             let _ignore = tokio::spawn(send_vote(
                 Arc::clone(connect),
                 Arc::clone(&state),
-                Arc::clone(&heartbeat_trigger),
                 req.clone(),
             ));
         }
@@ -493,7 +504,6 @@ async fn bg_election<C: Command + 'static>(
 async fn send_vote<C: Command + 'static>(
     connect: Arc<Connect>,
     state: Arc<RwLock<State<C>>>,
-    heartbeat_trigger: Arc<Event>,
     req: VoteRequest,
 ) {
     let resp = connect.vote(req, RPC_TIMEOUT).await;
@@ -522,8 +532,8 @@ async fn send_vote<C: Command + 'static>(
                 state.votes_received += 1;
 
                 // the majority has granted the vote
-                let min_granted = (state.others.len() + 1) / 2;
-                if state.votes_received > min_granted {
+                let min_granted = (state.others.len() + 1) / 2 + 1;
+                if state.votes_received >= min_granted {
                     state.set_role(ServerRole::Leader);
                     debug!("server becomes leader");
 
@@ -534,9 +544,93 @@ async fn send_vote<C: Command + 'static>(
                     }
 
                     // trigger heartbeat immediately to establish leadership
-                    heartbeat_trigger.notify(1);
+                    state.calibrate_trigger.notify(1);
                 }
             }
+        }
+    }
+}
+
+/// Leader should first enforce followers to be consistent with it when it comes to power
+#[allow(clippy::integer_arithmetic, clippy::indexing_slicing)] // log.len() >= 1 because we have a fake log[0], indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
+async fn leader_calibrates_followers<C: Command + 'static>(
+    connects: Vec<Arc<Connect>>,
+    state: Arc<RwLock<State<C>>>,
+) {
+    let calibrate_trigger = Arc::clone(&state.read().calibrate_trigger);
+    loop {
+        calibrate_trigger.listen().await;
+        for connect in connects.iter().cloned() {
+            let state = Arc::clone(&state);
+            let _handle = tokio::spawn(async move {
+                loop {
+                    // send append entry
+                    #[allow(clippy::shadow_unrelated)] // clippy false positive
+                    let (
+                        term,
+                        prev_log_index,
+                        prev_log_term,
+                        entries,
+                        leader_commit,
+                        last_sent_index,
+                    ) = state.map_read(|state| {
+                        let next_index = state.next_index[&connect.addr];
+                        (
+                            state.term,
+                            next_index - 1,
+                            state.log[next_index - 1].term(),
+                            state.log[next_index..].to_vec(),
+                            state.commit_index,
+                            state.log.len() - 1,
+                        )
+                    });
+                    let req = match AppendEntriesRequest::new(
+                        term,
+                        prev_log_index,
+                        prev_log_term,
+                        entries,
+                        leader_commit,
+                    ) {
+                        Err(e) => {
+                            error!("unable to serialize append entries request: {}", e);
+                            return;
+                        }
+                        Ok(req) => req,
+                    };
+
+                    let resp = connect.append_entries(req, RPC_TIMEOUT).await;
+
+                    #[allow(clippy::unwrap_used)]
+                    // indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
+                    match resp {
+                        Err(e) => warn!("append_entries error: {}", e),
+                        Ok(resp) => {
+                            let resp = resp.into_inner();
+                            // calibrate term
+                            let state = state.upgradable_read();
+                            if resp.term > state.term {
+                                let mut state = RwLockUpgradableReadGuard::upgrade(state);
+                                state.update_to_term(resp.term);
+                                return;
+                            }
+
+                            let mut state = RwLockUpgradableReadGuard::upgrade(state);
+
+                            // successfully calibrate
+                            if resp.success {
+                                *state.next_index.get_mut(&connect.addr).unwrap() =
+                                    last_sent_index + 1;
+                                *state.match_index.get_mut(&connect.addr).unwrap() =
+                                    last_sent_index;
+                                break;
+                            }
+
+                            *state.next_index.get_mut(&connect.addr).unwrap() =
+                                (resp.commit_index + 1).numeric_cast();
+                        }
+                    };
+                }
+            });
         }
     }
 }

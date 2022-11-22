@@ -1,10 +1,10 @@
 use tokio::sync::broadcast;
 
+/// Shutdown broadcast wrapper
 #[derive(Debug)]
 pub(crate) struct Shutdown {
     /// `true` if the shutdown signal has been received
     shutdown: bool,
-
     /// The receive half of the channel used to listen for shutdown.
     notify: broadcast::Receiver<()>,
 }
@@ -33,7 +33,7 @@ impl Shutdown {
         }
 
         // Cannot receive a "lag error" as only one value is ever sent.
-        let _ = self.notify.recv().await;
+        let _trigger = self.notify.recv().await;
 
         // Remember that the signal has been received.
         self.shutdown = true;
@@ -49,7 +49,7 @@ impl Shutdown {
         }
 
         // Cannot receive a "lag error" as only one value is ever sent.
-        if let Ok(_) = self.notify.try_recv() {
+        if self.notify.try_recv().is_ok() {
             self.shutdown = true;
             true
         } else {

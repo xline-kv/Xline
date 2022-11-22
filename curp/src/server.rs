@@ -1,4 +1,4 @@
-use std::cmp::min;
+use std::cmp::{min, Ordering};
 use std::{
     collections::{HashMap, VecDeque},
     fmt::Debug,
@@ -28,7 +28,7 @@ use crate::util::RwLockMap;
 use crate::{
     bg_tasks::{run_bg_tasks, SyncCompleteMessage, SyncMessage},
     channel::{
-        key_spmc::{self, SpmcKeybasedReceiver},
+        key_spmc::{self, SpmcKeyBasedReceiver},
         SendError,
     },
     cmd::{Command, CommandExecutor, ProposeId},
@@ -256,6 +256,8 @@ pub(crate) struct State<C: Command + 'static> {
     pub(crate) role_trigger: Arc<Event>,
     /// Trigger when there might be some logs to commit
     pub(crate) commit_trigger: Arc<Event>,
+    /// Trigger when a new leader needs to calibrate its followers
+    pub(crate) calibrate_trigger: Arc<Event>,
 }
 
 impl<C: Command + 'static> State<C> {
@@ -285,6 +287,7 @@ impl<C: Command + 'static> State<C> {
             others,
             role_trigger: Arc::new(Event::new()),
             commit_trigger: Arc::new(Event::new()),
+            calibrate_trigger: Arc::new(Event::new()),
         }
     }
 
@@ -380,11 +383,11 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
     #[allow(clippy::too_many_lines)] // FIXME: refactor too long function
     fn init_after_sync_tasks(
         cnt: usize,
-        comp_rx: &SpmcKeybasedReceiver<C::K, SyncCompleteMessage<C>>,
+        comp_rx: &SpmcKeyBasedReceiver<C::K, SyncCompleteMessage<C>>,
         spec: &Arc<Mutex<VecDeque<C>>>,
         cmd_board: &Arc<Mutex<HashMap<ProposeId, CmdBoardValue>>>,
         cmd_executor: &Arc<CE>,
-        stop_ch: Shutdown,
+        stop_ch: &Shutdown,
     ) {
         iter::repeat((
             comp_rx.clone(),
@@ -395,6 +398,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         ))
         .take(cnt)
         .for_each(
+            #[allow(clippy::shadow_unrelated)] // clippy false positive
             |(rx, spec_clone, cmd_board_clone, dispatch_executor, mut stop_ch)| {
                 let _handle = tokio::spawn(async move {
                     loop {
@@ -503,7 +507,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                     }
                 });
             },
-        )
+        );
     }
 
     /// Create a new server instance
@@ -533,7 +537,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                 ServerRole::Follower
             },
             term,
-            others.clone(),
+            others,
         )));
 
         // run background tasks
@@ -547,13 +551,13 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             Shutdown::new(stop_ch_rx.resubscribe()),
         ));
 
-        let _after_sync_handle = Self::init_after_sync_tasks(
+        Self::init_after_sync_tasks(
             after_sync_cnt,
             &comp_rx,
             &spec,
             &cmd_board,
             &cmd_executor,
-            Shutdown::new(stop_ch_rx.resubscribe()),
+            &Shutdown::new(stop_ch_rx.resubscribe()),
         );
 
         Self {
@@ -638,6 +642,8 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             .map_lock(|mut spec| {
                 let is_conflict = Self::is_spec_conflict(&spec, &cmd);
                 spec.push_back(cmd.clone());
+                debug!("insert cmd {:?} to spec pool", cmd.id());
+
                 match (is_conflict, is_leader) {
                     // conflict and is leader
                     (true, true) => async {
@@ -739,8 +745,8 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
 
         loop {
             let fr_or_listener = self.cmd_board.map_lock(|mut board| {
-                let fr_or_listener = match board.get(&id) {
-                    Some(value) => match *value {
+                let fr_or_listener = if let Some(value) = board.get(&id) {
+                    match *value {
                         CmdBoardValue::Wait4Sync(ref event_state) => match event_state.1 {
                             CmdBoardState::FinalResult(_) => FrOrListener::MetFr,
                             CmdBoardState::NeedExecute | CmdBoardState::NoExecute => {
@@ -750,14 +756,12 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                         CmdBoardValue::EarlyArrive(ref event) => {
                             FrOrListener::Listener(event.listen())
                         }
-                    },
-                    None => {
-                        let event = Event::new();
-                        let listener = event.listen();
-                        let _ignore =
-                            board.insert(id.clone(), CmdBoardValue::new_early_arrive(event));
-                        FrOrListener::Listener(listener)
                     }
+                } else {
+                    let event = Event::new();
+                    let listener = event.listen();
+                    let _ignore = board.insert(id.clone(), CmdBoardValue::new_early_arrive(event));
+                    FrOrListener::Listener(listener)
                 };
 
                 if let FrOrListener::MetFr = fr_or_listener {
@@ -805,6 +809,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         if req.term < state.term {
             return Ok(tonic::Response::new(AppendEntriesResponse::new_reject(
                 state.term,
+                state.commit_index,
             )));
         }
 
@@ -827,6 +832,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         {
             return Ok(tonic::Response::new(AppendEntriesResponse::new_reject(
                 state.term,
+                state.commit_index,
             )));
         }
 
@@ -861,18 +867,29 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             req.term, req.last_log_index, req.last_log_term, req.candidate_id
         );
 
-        let state = self.state.upgradable_read();
-        if req.term < state.term || state.voted_for.is_some() {
-            return Ok(tonic::Response::new(VoteResponse::new_reject(state.term)));
+        // just grab a write lock because it's highly likely that term is updated and a vote is granted
+        let mut state = self.state.write();
+
+        // calibrate term
+        match req.term.cmp(&state.term) {
+            Ordering::Less => {
+                return Ok(tonic::Response::new(VoteResponse::new_reject(state.term)));
+            }
+            Ordering::Equal => {}
+            Ordering::Greater => {
+                state.update_to_term(req.term);
+            }
+        }
+
+        if let Some(id) = state.voted_for.as_ref() {
+            if id != &req.candidate_id {
+                return Ok(tonic::Response::new(VoteResponse::new_reject(state.term)));
+            }
         }
 
         // If a follower receives votes from a candidate, it should update last_rpc_time to prevent itself from starting election
-        *self.last_rpc_time.write() = Instant::now();
-
-        let mut state = RwLockUpgradableReadGuard::upgrade(state);
-        // calibrate term
-        if req.term > state.term {
-            state.update_to_term(req.term);
+        if state.role() == ServerRole::Follower {
+            *self.last_rpc_time.write() = Instant::now();
         }
 
         if req.last_log_term > state.last_log_term()
