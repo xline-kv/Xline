@@ -139,5 +139,8 @@ mod sync_manager;
 /// Protobuf generated types that are used in RPC
 mod rpc;
 
+/// Background garbage collection for Curp server
+mod gc;
+
 pub use message::LogIndex;
 pub use rpc::ProtocolServer;

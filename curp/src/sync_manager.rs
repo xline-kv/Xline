@@ -1,19 +1,18 @@
-use std::collections::VecDeque;
 use std::ops::Range;
 use std::{sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
 use event_listener::Event;
 use madsim::rand::{thread_rng, Rng};
-use parking_lot::lock_api::{Mutex, RwLockUpgradableReadGuard};
-use parking_lot::{RawMutex, RwLock};
+use parking_lot::lock_api::RwLockUpgradableReadGuard;
+use parking_lot::{Mutex, RwLock};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::time::Instant;
 use tracing::{debug, error, info, warn};
 
 use crate::cmd::CommandExecutor;
 use crate::rpc::{AppendEntriesRequest, VoteRequest};
-use crate::server::{Protocol, ServerRole, State};
+use crate::server::{ServerRole, SpeculativePool, State};
 use crate::util::RwLockMap;
 use crate::{
     channel::{key_mpsc::MpscKeyBasedReceiver, key_spmc::SpmcKeyBasedSender, RecvError},
@@ -153,7 +152,7 @@ impl<C: Command + 'static> SyncManager<C> {
         cmd_executor: Arc<CE>,
         commit_trigger: UnboundedSender<()>,
         commit_trigger_rx: UnboundedReceiver<()>,
-        spec: Arc<Mutex<RawMutex, VecDeque<C>>>,
+        spec: Arc<Mutex<SpeculativePool<C>>>,
     ) {
         // notify when a broadcast of append_entries is needed immediately(a new log is received or committed)
         let (ae_trigger, ae_trigger_rx) = tokio::sync::mpsc::unbounded_channel::<usize>();
@@ -395,7 +394,7 @@ impl<C: Command + 'static> SyncManager<C> {
         cmd_executor: Arc<CE>,
         comp_chan: SpmcKeyBasedSender<C::K, SyncCompleteMessage<C>>,
         mut commit_notify: UnboundedReceiver<()>,
-        spec: Arc<Mutex<RawMutex, VecDeque<C>>>,
+        spec: Arc<Mutex<SpeculativePool<C>>>,
     ) {
         while commit_notify.recv().await.is_some() {
             let state = state.upgradable_read();
@@ -433,9 +432,8 @@ impl<C: Command + 'static> SyncManager<C> {
                             let _after_sync_result = cmd
                                 .after_sync(cmd_executor.as_ref(), i.numeric_cast())
                                 .await;
-                            if Protocol::<C, CE>::spec_remove_cmd(&spec, cmd.id()).is_none() {
-                                unreachable!("{:?} should be in the spec pool", cmd.id());
-                            }
+
+                            spec.lock().mark_ready(cmd.id());
                         });
                     }
                 }

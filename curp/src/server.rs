@@ -12,7 +12,7 @@ use event_listener::{Event, EventListener};
 use futures::FutureExt;
 use opentelemetry::global;
 use parking_lot::lock_api::RwLockUpgradableReadGuard;
-use parking_lot::{Mutex, MutexGuard, RwLock};
+use parking_lot::{Mutex, RwLock};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::Instant;
 use tokio::{net::TcpListener, task::JoinHandle};
@@ -20,6 +20,7 @@ use tokio_stream::wrappers::TcpListenerStream;
 use tracing::{debug, error, info, instrument, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
+use crate::gc::run_gc_tasks;
 use crate::rpc::{AppendEntriesRequest, AppendEntriesResponse, VoteRequest, VoteResponse};
 use crate::util::RwLockMap;
 use crate::{
@@ -205,6 +206,61 @@ impl CmdBoardValue {
     }
 }
 
+/// The speculative pool that stores commands that might be executed speculatively
+#[derive(Debug)]
+pub(crate) struct SpeculativePool<C> {
+    /// Store
+    pub(crate) pool: VecDeque<C>,
+    /// Store the ids of commands that have completed backend syncing, but not in the local speculative pool. It'll prevent the late arrived commands.
+    pub(crate) ready: HashMap<ProposeId, Instant>,
+}
+
+impl<C: Command + 'static> SpeculativePool<C> {
+    /// Create a new speculative pool
+    pub(crate) fn new() -> Self {
+        Self {
+            pool: VecDeque::new(),
+            ready: HashMap::new(),
+        }
+    }
+
+    /// Push a new command into spec pool if it has not been marked ready
+    pub(crate) fn push(&mut self, cmd: C) {
+        if self.ready.remove(cmd.id()).is_none() {
+            debug!("insert cmd {:?} to spec pool", cmd.id());
+            self.pool.push_back(cmd);
+        }
+    }
+
+    /// Check whether the command pool has conflict with the new command
+    pub(crate) fn has_conflict_with(&self, cmd: &C) -> bool {
+        self.pool.iter().any(|spec_cmd| spec_cmd.is_conflict(cmd))
+    }
+
+    /// Try to remove the command from spec pool and mark it ready.
+    /// There could be no such command in the following situations:
+    /// * When the proposal arrived, the command conflicted with speculative pool and was not stored in it.
+    /// * The command has committed. But the fast round proposal has not arrived at the client or failed to arrive.
+    /// To prevent the server from returning error in the second situation when the fast proposal finally arrives, we mark the command ready.
+    pub(crate) fn mark_ready(&mut self, cmd_id: &ProposeId) {
+        debug!("remove cmd {:?} from spec pool", cmd_id);
+        if self
+            .pool
+            .iter()
+            .position(|s| s.id() == cmd_id)
+            .and_then(|index| self.pool.swap_remove_back(index))
+            .is_none()
+        {
+            debug!("Cmd {:?} is marked ready", cmd_id);
+            assert!(
+                self.ready.insert(cmd_id.clone(), Instant::now()).is_none(),
+                "Cmd {:?} is already in ready pool",
+                cmd_id
+            );
+        };
+    }
+}
+
 /// The server that handles client request and server consensus protocol
 pub struct Protocol<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
     /// Current state
@@ -213,7 +269,7 @@ pub struct Protocol<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
     /// Last time a rpc is received
     last_rpc_time: Arc<RwLock<Instant>>,
     /// The speculative cmd pool, shared with executor
-    spec: Arc<Mutex<VecDeque<C>>>,
+    spec: Arc<Mutex<SpeculativePool<C>>>,
     /// Command executor
     cmd_executor: Arc<CE>,
     /// The channel to send synced command to sync manager
@@ -381,7 +437,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
     fn init_after_sync_tasks(
         cnt: usize,
         comp_rx: &SpmcKeybasedReceiver<C::K, SyncCompleteMessage<C>>,
-        spec: &Arc<Mutex<VecDeque<C>>>,
+        spec: &Arc<Mutex<SpeculativePool<C>>>,
         cmd_board: &Arc<Mutex<HashMap<ProposeId, CmdBoardValue>>>,
         cmd_executor: &Arc<CE>,
     ) -> Vec<JoinHandle<()>> {
@@ -486,9 +542,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                             }
                         }
                     });
-                    if Self::spec_remove_cmd(&spec_clone, &cmd_id).is_none() {
-                        unreachable!("{:?} should be in the spec pool", cmd_id);
-                    }
+                    spec_clone.lock().mark_ready(&cmd_id);
                 }
             })
         })
@@ -510,7 +564,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         let (comp_tx, comp_rx) = key_spmc::channel();
         let cmd_executor = Arc::new(cmd_executor);
         let cmd_board = Arc::new(Mutex::new(HashMap::new()));
-        let spec = Arc::new(Mutex::new(VecDeque::new()));
+        let spec = Arc::new(Mutex::new(SpeculativePool::new()));
         let (commit_trigger, commit_trigger_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
         let last_rpc_time = Arc::new(RwLock::new(Instant::now()));
         let event = Arc::new(Event::new());
@@ -547,6 +601,8 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         let after_sync_handle =
             Self::init_after_sync_tasks(after_sync_cnt, &comp_rx, &spec, &cmd_board, &cmd_executor);
 
+        run_gc_tasks(Arc::clone(&spec));
+
         Self {
             state,
             last_rpc_time,
@@ -558,28 +614,6 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             after_sync_handle,
             commit_trigger,
         }
-    }
-
-    /// Check if the `cmd` conflicts with any conflicts in the speculative cmd pool
-    fn is_spec_conflict(spec: &MutexGuard<'_, VecDeque<C>>, cmd: &C) -> bool {
-        spec.iter().any(|spec_cmd| spec_cmd.is_conflict(cmd))
-    }
-
-    /// Check if the current server is leader
-    fn is_leader(&self) -> bool {
-        self.state.read().is_leader()
-    }
-
-    /// Remove command from the speculative cmd pool
-    pub(crate) fn spec_remove_cmd(spec: &Arc<Mutex<VecDeque<C>>>, cmd_id: &ProposeId) -> Option<C> {
-        debug!("remove cmd {:?} from spec pool", cmd_id);
-        spec.map_lock(|mut spec_unlocked| {
-            spec_unlocked
-                .iter()
-                .position(|s| s.id() == cmd_id)
-                .map(|index| spec_unlocked.swap_remove_back(index))
-        })
-        .flatten()
     }
 
     /// Send sync event to the `SyncManager`, it's not a blocking function
@@ -617,97 +651,89 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
     }
 
     /// Handle "propose" requests
+    // TODO: dedup proposed commands
     async fn propose(
         &self,
         request: tonic::Request<ProposeRequest>,
     ) -> Result<tonic::Response<ProposeResponse>, tonic::Status> {
-        let is_leader = self.is_leader();
-        let self_term = self.state.read().term;
         let p = request.into_inner();
-        let cmd = p.cmd().map_err(|e| {
+
+        let cmd: C = p.cmd().map_err(|e| {
             tonic::Status::invalid_argument(format!("propose cmd decode failed: {}", e))
         })?;
-        self.spec
-            .map_lock(|mut spec| {
-                let is_conflict = Self::is_spec_conflict(&spec, &cmd);
-                spec.push_back(cmd.clone());
-                debug!("insert cmd {:?} to spec pool", cmd.id());
 
-                match (is_conflict, is_leader) {
-                    // conflict and is leader
-                    (true, true) => async {
-                        // the leader needs to sync cmd
-                        match self.sync_to_others(self_term, &cmd, true) {
-                            Ok(notifier) => {
-                                notifier.notify(1);
-                                ProposeResponse::new_error(
-                                    is_leader,
-                                    self_term,
-                                    &ProposeError::KeyConflict,
-                                )
-                            }
-                            Err(_err) => ProposeResponse::new_error(
-                                is_leader,
-                                self.state.read().term,
-                                &ProposeError::SyncedError("Sync cmd channel closed".to_owned()),
-                            ),
-                        }
-                    }
-                    .left_future()
-                    .left_future(),
-                    // conflict but not leader
-                    (true, false) => async {
-                        ProposeResponse::new_error(is_leader, self_term, &ProposeError::KeyConflict)
-                    }
-                    .left_future()
-                    .right_future(),
-                    // not conflict but is leader
-                    (false, true) => {
-                        let notifier = match self.sync_to_others(self_term, &cmd, false) {
-                            Ok(notifier) => Some(notifier),
-                            Err(_) => None,
-                        };
-                        // only the leader executes the command in speculative pool
-                        cmd.execute(self.cmd_executor.as_ref())
-                            .map(|er| {
-                                if let Some(n) = notifier {
-                                    n.notify(1);
-                                } else {
-                                    return ProposeResponse::new_error(
-                                        is_leader,
-                                        self.state.read().term,
-                                        &ProposeError::SyncedError(
-                                            "Sync cmd channel closed".to_owned(),
-                                        ),
-                                    );
-                                }
-                                er.map_or_else(
-                                    |err| {
-                                        ProposeResponse::new_error(
-                                            is_leader,
-                                            self_term,
-                                            &ProposeError::ExecutionError(err.to_string()),
-                                        )
-                                    },
-                                    |rv| {
-                                        ProposeResponse::new_result::<C>(is_leader, self_term, &rv)
-                                    },
-                                )
-                            })
-                            .right_future()
-                            .left_future()
-                    }
-                    // not conflict and is not leader
-                    (false, false) => {
-                        async { ProposeResponse::new_empty(false, self.state.read().term) }
-                            .right_future()
-                            .right_future()
-                    }
+        (|| async {
+            let (is_leader, term) = self.state.map_read(|state| (state.is_leader(), state.term));
+            let sync_notify = {
+                let mut spec = self.spec.lock();
+
+                // check if the command is ready
+                if spec.ready.contains_key(cmd.id()) {
+                    return ProposeResponse::new_empty(false, term);
                 }
-            })
-            .await
-            .map(tonic::Response::new)
-            .map_err(|err| tonic::Status::internal(format!("encode or decode error, {}", err)))
+
+                let has_conflict = spec.has_conflict_with(&cmd);
+                if !has_conflict {
+                    spec.push(cmd.clone());
+                }
+
+                // non-leader should return immediately
+                if !is_leader {
+                    return if has_conflict {
+                        ProposeResponse::new_error(is_leader, term, &ProposeError::KeyConflict)
+                    } else {
+                        ProposeResponse::new_empty(false, term)
+                    };
+                }
+
+                // the leader will sync the command to others while grabbing the lock so that the order of the command can be preserved
+                let sync_notify = match self.sync_to_others(term, &cmd, true) {
+                    Ok(notify) => notify,
+                    Err(err) => {
+                        return ProposeResponse::new_error(
+                            is_leader,
+                            term,
+                            &ProposeError::SyncedError(format!(
+                                "Sync cmd channel closed, {:?}",
+                                err
+                            )),
+                        );
+                    }
+                };
+
+                // if the command has conflict, sync immediately and return conflict error
+                if has_conflict {
+                    sync_notify.notify(1);
+                    return ProposeResponse::new_error(is_leader, term, &ProposeError::KeyConflict);
+                }
+
+                // finally, the command meets all the conditions for speculative execution, we will release the lock here
+                sync_notify
+            };
+
+            // speculative execution
+            let er = cmd.execute(self.cmd_executor.as_ref()).await;
+
+            sync_notify.notify(1); // the command is ready to be synced
+            match er {
+                Ok(er) => ProposeResponse::new_result::<C>(is_leader, term, &er),
+                Err(err) => ProposeResponse::new_error(
+                    is_leader,
+                    term,
+                    &ProposeError::ExecutionError(err.to_string()),
+                ),
+            }
+        })()
+        .await
+        .map_or_else(
+            |err| {
+                Err(tonic::Status::internal(format!(
+                    "encode or decode error, {}",
+                    err
+                )))
+            },
+            |resp| Ok(tonic::Response::new(resp)),
+        )
     }
 
     /// handle "wait synced" request
