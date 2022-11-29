@@ -95,4 +95,7 @@ where
 
     /// Execute the after_sync callback
     async fn after_sync(&self, cmd: &C, index: LogIndex) -> Result<C::ASR, ExecuteError>;
+
+    /// Reset command executor
+    async fn reset(&self);
 }

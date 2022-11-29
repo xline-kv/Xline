@@ -12,6 +12,7 @@ use std::{
 use clippy_utilities::NumericCast;
 use event_listener::{Event, EventListener};
 use futures::FutureExt;
+use itertools::Itertools;
 use opentelemetry::global;
 use parking_lot::lock_api::RwLockUpgradableReadGuard;
 use parking_lot::{Mutex, MutexGuard, RwLock};
@@ -19,7 +20,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::Instant;
 use tokio::{net::TcpListener, task::JoinHandle};
 use tokio_stream::wrappers::TcpListenerStream;
-use tracing::{debug, error, info, instrument, Span};
+use tracing::{debug, error, info, instrument, warn, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{
@@ -91,7 +92,7 @@ where
         &self,
         request: tonic::Request<AppendEntriesRequest>,
     ) -> Result<tonic::Response<AppendEntriesResponse>, tonic::Status> {
-        self.inner.append_entries(request)
+        self.inner.append_entries(request).await
     }
 
     async fn vote(
@@ -204,7 +205,7 @@ impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
 struct SyncedTaskJoinHandle(JoinHandle<Result<WaitSyncedResponse, bincode::Error>>);
 
 /// The state of a command in cmd watch board
-enum CmdBoardState {
+pub(crate) enum CmdBoardState {
     /// Command need execute
     NeedExecute,
     /// Command need not execute
@@ -214,7 +215,7 @@ enum CmdBoardState {
 }
 
 /// Command board value stored in the command board map
-enum CmdBoardValue {
+pub(crate) enum CmdBoardValue {
     /// There's an wait_sync request waiting
     EarlyArrive(Event),
     /// Wait for the sync procedure complete
@@ -223,12 +224,12 @@ enum CmdBoardValue {
 
 impl CmdBoardValue {
     /// Create an early arrive variat
-    fn new_early_arrive(event: Event) -> Self {
+    pub(crate) fn new_early_arrive(event: Event) -> Self {
         Self::EarlyArrive(event)
     }
 
     /// Create an wait sync variat
-    fn new_wait_sync(event: Event, state: CmdBoardState) -> Self {
+    pub(crate) fn new_wait_sync(event: Event, state: CmdBoardState) -> Self {
         Self::Wait4Sync(Box::new((event, state)))
     }
 }
@@ -237,7 +238,7 @@ impl CmdBoardValue {
 pub struct Protocol<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
     /// Current state
     // TODO: apply fine-grain locking
-    state: Arc<RwLock<State<C>>>,
+    state: Arc<RwLock<State<C, CE>>>,
     /// Last time a rpc is received
     last_rpc_time: Arc<RwLock<Instant>>,
     /// The speculative cmd pool, shared with executor
@@ -258,9 +259,11 @@ pub struct Protocol<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
 }
 
 /// State of the server
-pub(crate) struct State<C: Command + 'static> {
+pub(crate) struct State<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
     /// Id of the server
     id: ServerId,
+    /// Whether the server is in recovery mode
+    pub(crate) recovery: bool,
     /// Leader Id
     pub(crate) leader_id: Option<ServerId>,
     /// Role of the server
@@ -286,9 +289,13 @@ pub(crate) struct State<C: Command + 'static> {
     pub(crate) others: HashMap<ServerId, String>,
     /// Trigger when server role changes
     role_trigger: Arc<Event>,
+    /// A reference to command board
+    pub(crate) cmd_board: Arc<Mutex<HashMap<ProposeId, CmdBoardValue>>>,
+    /// store a reference to the command executor
+    pub(crate) cmd_executor: Arc<CE>,
 }
 
-impl<C: Command + 'static> State<C> {
+impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> State<C, CE> {
     /// Init server state
     pub(crate) fn new(
         id: ServerId,
@@ -296,6 +303,8 @@ impl<C: Command + 'static> State<C> {
         term: TermNum,
         others: HashMap<ServerId, String>,
         role_trigger: Arc<Event>,
+        cmd_board: Arc<Mutex<HashMap<ProposeId, CmdBoardValue>>>,
+        cmd_executor: Arc<CE>,
     ) -> Self {
         let mut next_index = HashMap::new();
         let mut match_index = HashMap::new();
@@ -305,6 +314,7 @@ impl<C: Command + 'static> State<C> {
         }
         Self {
             id: id.clone(),
+            recovery: false,
             leader_id: matches!(role, ServerRole::Leader).then(|| id),
             role,
             term,
@@ -317,6 +327,8 @@ impl<C: Command + 'static> State<C> {
             match_index,
             others,
             role_trigger,
+            cmd_board,
+            cmd_executor,
         }
     }
 
@@ -516,9 +528,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                             }
                         }
                     });
-                    if Self::spec_remove_cmd(&spec_clone, &cmd_id).is_none() {
-                        unreachable!("{:?} should be in the spec pool", cmd_id);
-                    }
+                    let _ig = Self::spec_remove_cmd(&spec_clone, &cmd_id); // TODO: fixed in new commit
                 }
             })
         })
@@ -555,6 +565,8 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             0,
             others.clone(),
             Arc::clone(&event),
+            Arc::clone(&cmd_board),
+            Arc::clone(&cmd_executor),
         )));
 
         let state_clone = Arc::clone(&state);
@@ -659,6 +671,9 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         &self,
         request: tonic::Request<ProposeRequest>,
     ) -> Result<tonic::Response<ProposeResponse>, tonic::Status> {
+        if self.state.read().recovery {
+            return Err(tonic::Status::unavailable("server is in recovery mode"));
+        }
         let is_leader = self.is_leader();
         let self_term = self.state.read().term;
         let p = request.into_inner();
@@ -765,6 +780,10 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             Listener(EventListener),
         }
 
+        if self.state.read().recovery {
+            return Err(tonic::Status::unavailable("server is in recovery mode"));
+        }
+
         let ws = request.into_inner();
         let id = ws.id().map_err(|e| {
             tonic::Status::invalid_argument(format!("wait_synced id decode failed: {}", e))
@@ -845,11 +864,11 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
     }
 
     /// Handle `AppendEntries` requests
-    fn append_entries(
+    async fn append_entries(
         &self,
         request: tonic::Request<AppendEntriesRequest>,
     ) -> Result<tonic::Response<AppendEntriesResponse>, tonic::Status> {
-        let req = request.into_inner();
+        let req: AppendEntriesRequest = request.into_inner();
 
         // don't log heartbeat
         if !req.entries.is_empty() {
@@ -857,23 +876,58 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             req.term, req.leader_commit, req.prev_log_index, req.prev_log_term, req.entries.len());
         }
 
-        let state = self.state.upgradable_read();
+        let should_wipe_spec_executed_cmds = {
+            let state = self.state.upgradable_read();
+            // calibrate term
+            match req.term.cmp(&state.term) {
+                Ordering::Less => {
+                    return Ok(tonic::Response::new(AppendEntriesResponse::new_reject(
+                        state.term,
+                    )));
+                }
+                Ordering::Equal => {
+                    let is_leader = state.is_leader();
+                    if state.role() != ServerRole::Follower {
+                        let mut state = RwLockUpgradableReadGuard::upgrade(state);
+                        state.set_role(ServerRole::Follower);
+                    }
+                    is_leader
+                }
+                Ordering::Greater => {
+                    let is_leader = state.is_leader();
+                    let mut state = RwLockUpgradableReadGuard::upgrade(state);
+                    state.update_to_term(req.term);
+                    is_leader
+                }
+            }
+        };
 
-        // calibrate term
-        if req.term < state.term {
-            return Ok(tonic::Response::new(AppendEntriesResponse::new_reject(
-                state.term,
-            )));
+        // we should wipe speculatively executed cmds before appending new logs if the server is an old leader
+        // currently, we reset the ce, and replay all committed logs
+        if should_wipe_spec_executed_cmds {
+            self.cmd_executor.reset().await;
+            let committed_cmds: Vec<Arc<C>> = self.state.map_read(|state| {
+                state
+                    .log
+                    .iter()
+                    .flat_map(|log| log.cmds().to_vec())
+                    .collect()
+            });
+            // TODO: execute in parallel?
+            for cmd in committed_cmds {
+                // FIXME: there should be no error?
+                let _er = cmd.execute(self.cmd_executor.as_ref()).await;
+            }
         }
 
-        let mut state = RwLockUpgradableReadGuard::upgrade(state);
-        if req.term == state.term && state.role() != ServerRole::Follower {
-            state.set_role(ServerRole::Follower);
+        // FIXME: will grab lock twice cause bug?
+        let mut state = self.state.write();
+        // the follower has a new leader, should throw away spec pool
+        if state.leader_id.is_none() {
+            state.leader_id = Some(req.leader_id.clone()); // record leader id, useful for redirecting client
+            self.spec.lock().clear();
+            state.recovery = false;
         }
-        if req.term > state.term {
-            state.update_to_term(req.term);
-        }
-        state.leader_id = Some(req.leader_id.clone()); // record leader id, useful for redirecting client
 
         *self.last_rpc_time.write() = Instant::now();
 
@@ -950,19 +1004,30 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             *self.last_rpc_time.write() = Instant::now();
         }
 
+        state.recovery = true;
+
         if req.last_log_term > state.last_log_term()
             || (req.last_log_term == state.last_log_term()
                 && req.last_log_index.numeric_cast::<usize>() >= state.last_log_index())
         {
             debug!("vote for server {}", req.candidate_id);
             state.voted_for = Some(req.candidate_id);
-            Ok(tonic::Response::new(VoteResponse::new_accept(state.term)))
+
+            let resp = VoteResponse::new_accept(
+                state.term,
+                self.spec.lock().iter().cloned().collect_vec(),
+            )
+            .map_err(|e| {
+                warn!("can't create vote response, {e}");
+                tonic::Status::internal(format!("can't create vote response, {e}"))
+            })?;
+            Ok(tonic::Response::new(resp))
         } else {
             Ok(tonic::Response::new(VoteResponse::new_reject(state.term)))
         }
     }
 
-    /// Send `FetchLeaderRequest`
+    /// Handle fetch leader requests
     #[allow(clippy::unnecessary_wraps, clippy::needless_pass_by_value)] // To match with other handlers
     fn fetch_leader(
         &self,
@@ -1102,16 +1167,18 @@ mod tests {
     }
 
     #[derive(Debug, Clone)]
-    struct TestExecutor {
+    struct TestCE {
+        server_id: ServerId,
         store: Arc<Mutex<HashMap<u32, u32>>>,
         exe_sender: UnboundedSender<(TestCommand, TestCommandResult)>,
         after_sync_sender: UnboundedSender<(TestCommand, LogIndex)>,
     }
 
     #[async_trait]
-    impl CommandExecutor<TestCommand> for TestExecutor {
+    impl CommandExecutor<TestCommand> for TestCE {
         async fn execute(&self, cmd: &TestCommand) -> Result<TestCommandResult, ExecuteError> {
             let mut store = self.store.lock();
+            debug!("{} execute cmd {:?}", self.server_id, cmd.id());
             let result: TestCommandResult = match *cmd {
                 TestCommand::Get { ref keys, .. } => keys
                     .iter()
@@ -1142,14 +1209,20 @@ mod tests {
                 .expect("failed to send after sync msg");
             Ok(index)
         }
+
+        async fn reset(&self) {
+            self.store.lock().clear();
+        }
     }
 
-    impl TestExecutor {
+    impl TestCE {
         fn new(
+            server_id: ServerId,
             exe_sender: UnboundedSender<(TestCommand, TestCommandResult)>,
             after_sync_sender: UnboundedSender<(TestCommand, LogIndex)>,
         ) -> Self {
             Self {
+                server_id,
                 store: Arc::new(Mutex::new(HashMap::new())),
                 exe_sender,
                 after_sync_sender,
@@ -1162,7 +1235,7 @@ mod tests {
         addr: String,
         exe_rx: mpsc::UnboundedReceiver<(TestCommand, TestCommandResult)>,
         as_rx: mpsc::UnboundedReceiver<(TestCommand, LogIndex)>,
-        state: Arc<RwLock<State<TestCommand>>>,
+        state: Arc<RwLock<State<TestCommand, TestCE>>>,
         switch: Arc<AtomicBool>,
     }
 
@@ -1183,17 +1256,18 @@ mod tests {
                 .iter()
                 .enumerate()
                 .map(|(i, addr)| {
+                    let id = addr.clone();
+
                     let (exe_tx, exe_rx) = mpsc::unbounded_channel();
                     let (as_tx, as_rx) = mpsc::unbounded_channel();
-
-                    let exe = TestExecutor::new(exe_tx, as_tx);
+                    let exe = TestCE::new(id.clone(), exe_tx, as_tx);
 
                     let mut others = addrs.clone();
                     others.remove(i);
 
                     let switch = Arc::new(AtomicBool::new(true));
                     let rpc = Rpc::new(
-                        addr.clone(),
+                        id.clone(),
                         false,
                         others
                             .into_iter()
@@ -1487,5 +1561,48 @@ mod tests {
             vec![0]
         );
         assert!(logs_contain("slow round succeeded"));
+    }
+
+    // force the newly elected leader to do recovery by the following steps:
+    // 1. fast round to 3 followers
+    // 2. kill original leader
+    // 3. the newly elected leader should recover the cmd
+    #[traced_test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    async fn leader_recovery() {
+        let group = CurpGroup::new(5).await;
+        let client = group.new_client().await;
+
+        let leader1 = group.get_leader().unwrap();
+
+        // 1
+        let cmd1 = Arc::new(TestCommand::new_put(0, vec![0], 0));
+        let connects = client.get_connects();
+        let req = ProposeRequest::new_from_rc(cmd1).unwrap();
+        for connect in connects
+            .iter()
+            .filter(|connect| connect.id() != leader1)
+            .take(3)
+        {
+            connect
+                .propose(req.clone(), Duration::from_millis(50))
+                .await
+                .unwrap();
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        // 2
+        group.disable_node(&leader1);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        // 3
+        logs_contain("new leader recovers command ProposeId(\"0\")");
+        assert_eq!(
+            client
+                .propose(TestCommand::new_get(1, vec![0]))
+                .await
+                .unwrap(),
+            vec![0]
+        );
     }
 }

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, VecDeque};
+use std::iter;
 use std::ops::Range;
 #[cfg(test)]
 use std::sync::atomic::AtomicBool;
@@ -6,6 +7,9 @@ use std::{sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
 use event_listener::Event;
+use futures::stream::FuturesUnordered;
+use futures::StreamExt;
+
 use madsim::rand::{thread_rng, Rng};
 use parking_lot::lock_api::{Mutex, RwLockUpgradableReadGuard};
 use parking_lot::{RawMutex, RwLock};
@@ -13,10 +17,10 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::time::Instant;
 use tracing::{debug, error, info, warn};
 
-use crate::cmd::CommandExecutor;
+use crate::cmd::{CommandExecutor, ProposeId};
 use crate::rpc::{AppendEntriesRequest, VoteRequest};
-use crate::server::{Protocol, ServerRole, State};
-use crate::util::RwLockMap;
+use crate::server::{CmdBoardState, CmdBoardValue, Protocol, ServerRole, State};
+use crate::util::{MutexMap, RwLockMap};
 use crate::ServerId;
 use crate::{
     channel::{key_mpsc::MpscKeyBasedReceiver, key_spmc::SpmcKeyBasedSender, RecvError},
@@ -85,9 +89,9 @@ where
 }
 
 /// The manager to sync commands to other follower servers
-pub(crate) struct SyncManager<C: Command + 'static> {
+pub(crate) struct SyncManager<C: Command + 'static, CE: 'static + CommandExecutor<C>> {
     /// Current state
-    state: Arc<RwLock<State<C>>>,
+    state: Arc<RwLock<State<C, CE>>>,
     /// Last time a rpc is received
     last_rpc_time: Arc<RwLock<Instant>>,
     /// Other addrs
@@ -96,12 +100,12 @@ pub(crate) struct SyncManager<C: Command + 'static> {
     sync_chan: MpscKeyBasedReceiver<C::K, SyncMessage<C>>,
 }
 
-impl<C: Command + 'static> SyncManager<C> {
+impl<C: Command + 'static, CE: 'static + CommandExecutor<C>> SyncManager<C, CE> {
     /// Create a `SyncedManager`
     pub(crate) async fn new(
         sync_chan: MpscKeyBasedReceiver<C::K, SyncMessage<C>>,
         others: HashMap<ServerId, String>,
-        state: Arc<RwLock<State<C>>>,
+        state: Arc<RwLock<State<C, CE>>>,
         last_rpc_time: Arc<RwLock<Instant>>,
         #[cfg(test)] reachable: Arc<AtomicBool>,
     ) -> Self {
@@ -155,7 +159,7 @@ impl<C: Command + 'static> SyncManager<C> {
     }
 
     /// Run the `SyncManager`
-    pub(crate) async fn run<CE: 'static + CommandExecutor<C>>(
+    pub(crate) async fn run(
         &mut self,
         comp_chan: SpmcKeyBasedSender<C::K, SyncCompleteMessage<C>>,
         cmd_executor: Arc<CE>,
@@ -179,6 +183,8 @@ impl<C: Command + 'static> SyncManager<C> {
             Arc::clone(&self.state),
             Arc::clone(&self.last_rpc_time),
             Arc::clone(&calibrate_trigger),
+            Arc::clone(&spec),
+            ae_trigger.clone(),
         ));
         let _background_apply_handle = tokio::spawn(Self::bg_apply(
             Arc::clone(&self.state),
@@ -224,7 +230,7 @@ impl<C: Command + 'static> SyncManager<C> {
     /// Background `append_entries`, only works for the leader
     async fn bg_append_entries(
         connects: Vec<Arc<Connect>>,
-        state: Arc<RwLock<State<C>>>,
+        state: Arc<RwLock<State<C, CE>>>,
         commit_trigger: UnboundedSender<()>,
         mut ae_trigger_rx: UnboundedReceiver<usize>,
     ) {
@@ -250,7 +256,7 @@ impl<C: Command + 'static> SyncManager<C> {
     async fn send_log_until_succeed(
         i: usize,
         connect: Arc<Connect>,
-        state: Arc<RwLock<State<C>>>,
+        state: Arc<RwLock<State<C, CE>>>,
         commit_trigger: UnboundedSender<()>,
     ) {
         // prepare append_entries request args
@@ -339,7 +345,7 @@ impl<C: Command + 'static> SyncManager<C> {
     }
 
     /// Background `append_entries`, only works for the leader
-    async fn bg_heartbeat(connects: Vec<Arc<Connect>>, state: Arc<RwLock<State<C>>>) {
+    async fn bg_heartbeat(connects: Vec<Arc<Connect>>, state: Arc<RwLock<State<C, CE>>>) {
         let role_trigger = state.read().role_trigger();
         #[allow(clippy::integer_arithmetic)] // tokio internal triggered
         loop {
@@ -362,7 +368,7 @@ impl<C: Command + 'static> SyncManager<C> {
 
     /// Send `append_entries` to a server
     #[allow(clippy::integer_arithmetic, clippy::indexing_slicing)] // log.len() >= 1 because we have a fake log[0], indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
-    async fn send_heartbeat(connect: Arc<Connect>, state: Arc<RwLock<State<C>>>) {
+    async fn send_heartbeat(connect: Arc<Connect>, state: Arc<RwLock<State<C, CE>>>) {
         // prepare append_entries request args
         #[allow(clippy::shadow_unrelated)] // clippy false positive
         let (term, id, prev_log_index, prev_log_term, leader_commit) = state.map_read(|state| {
@@ -411,8 +417,8 @@ impl<C: Command + 'static> SyncManager<C> {
     }
 
     /// Background apply
-    async fn bg_apply<CE: 'static + CommandExecutor<C>>(
-        state: Arc<RwLock<State<C>>>,
+    async fn bg_apply(
+        state: Arc<RwLock<State<C, CE>>>,
         cmd_executor: Arc<CE>,
         comp_chan: SpmcKeyBasedSender<C::K, SyncCompleteMessage<C>>,
         mut commit_notify: UnboundedReceiver<()>,
@@ -454,9 +460,9 @@ impl<C: Command + 'static> SyncManager<C> {
                             let _after_sync_result = cmd
                                 .after_sync(cmd_executor.as_ref(), i.numeric_cast())
                                 .await;
-                            if Protocol::<C, CE>::spec_remove_cmd(&spec, cmd.id()).is_none() {
-                                unreachable!("{:?} should be in the spec pool", cmd.id());
-                            }
+
+                            // TODO: fixed in new commit
+                            let _ignore = Protocol::<C, CE>::spec_remove_cmd(&spec, cmd.id());
                         });
                     }
                 }
@@ -475,9 +481,11 @@ impl<C: Command + 'static> SyncManager<C> {
     /// Background election
     async fn bg_election(
         connects: Vec<Arc<Connect>>,
-        state: Arc<RwLock<State<C>>>,
+        state: Arc<RwLock<State<C, CE>>>,
         last_rpc_time: Arc<RwLock<Instant>>,
         calibrate_trigger: Arc<Event>,
+        spec: Arc<Mutex<RawMutex, VecDeque<C>>>,
+        ae_trigger: UnboundedSender<usize>,
     ) {
         let role_trigger = state.read().role_trigger();
         loop {
@@ -522,99 +530,199 @@ impl<C: Command + 'static> SyncManager<C> {
                 continue;
             }
 
-            // start election
-            #[allow(clippy::integer_arithmetic)] // TODO: handle possible overflow
-            let req = {
-                let mut state = state.write();
-                let new_term = state.term + 1;
-                state.update_to_term(new_term);
-                state.set_role(ServerRole::Candidate);
-                state.voted_for = Some(state.id());
-                state.votes_received = 1;
-                VoteRequest::new(
-                    state.term,
-                    state.id(),
-                    state.last_log_index(),
-                    state.last_log_term(),
-                )
-            };
-            // reset
             *last_rpc_time.write() = Instant::now();
-            debug!("server {} starts election", req.candidate_id);
+            debug!("server {} starts election", state.read().id());
 
-            for connect in &connects {
-                let _ignore = tokio::spawn(Self::send_vote(
-                    Arc::clone(connect),
-                    Arc::clone(&state),
-                    req.clone(),
-                    Arc::clone(&calibrate_trigger),
-                ));
-            }
+            Self::candidate_sends_vote(
+                connects.clone(),
+                Arc::clone(&state),
+                Arc::clone(&calibrate_trigger),
+                Arc::clone(&spec),
+                ae_trigger.clone(),
+            )
+            .await; // the await here won't block because we have rpc timeout
         }
     }
 
     /// send vote request
-    async fn send_vote(
-        connect: Arc<Connect>,
-        state: Arc<RwLock<State<C>>>,
-        req: VoteRequest,
+    #[allow(clippy::too_many_lines, clippy::shadow_unrelated)] // TODO: split it
+    async fn candidate_sends_vote(
+        connects: Vec<Arc<Connect>>,
+        state: Arc<RwLock<State<C, CE>>>,
         calibrate_trigger: Arc<Event>,
+        spec: Arc<Mutex<RawMutex, VecDeque<C>>>,
+        ae_trigger: UnboundedSender<usize>,
     ) {
-        let resp = connect.vote(req, Self::RPC_TIMEOUT).await;
-        match resp {
-            Err(e) => error!("vote failed, {}", e),
-            Ok(resp) => {
-                let resp = resp.into_inner();
+        // start election
+        #[allow(clippy::integer_arithmetic)] // TODO: handle possible overflow
+        let req = {
+            let mut state = state.write();
+            let new_term = state.term + 1;
+            state.update_to_term(new_term);
+            state.set_role(ServerRole::Candidate);
+            state.recovery = true;
+            state.voted_for = Some(state.id());
+            state.votes_received = 1;
+            VoteRequest::new(
+                state.term,
+                state.id(),
+                state.last_log_index(),
+                state.last_log_term(),
+            )
+        };
 
-                // calibrate term
-                let state = state.upgradable_read();
-                if resp.term > state.term {
-                    let mut state = RwLockUpgradableReadGuard::upgrade(state);
-                    state.update_to_term(resp.term);
-                    return;
-                }
+        let mut rpcs: FuturesUnordered<_> = connects
+            .into_iter()
+            .zip(iter::repeat(req))
+            .map(|(connect, request)| async move {
+                (connect.id(), connect.vote(request, Self::RPC_TIMEOUT).await)
+            })
+            .collect();
 
-                // is still a candidate
-                if !matches!(state.role(), ServerRole::Candidate) {
-                    return;
-                }
+        let mut spec_pools = vec![spec.lock().drain(..).collect()];
+        while let Some((id, resp)) = rpcs.next().await {
+            match resp {
+                Err(e) => error!("vote failed, {}", e),
+                Ok(resp) => {
+                    let resp = resp.into_inner();
 
-                #[allow(clippy::integer_arithmetic)]
-                if resp.vote_granted {
-                    debug!("vote is granted by server {}", connect.id);
-                    let mut state = RwLockUpgradableReadGuard::upgrade(state);
-                    state.votes_received += 1;
+                    // calibrate term
+                    let state_lock = Arc::clone(&state);
+                    let state = state.upgradable_read();
+                    if resp.term > state.term {
+                        let mut state = RwLockUpgradableReadGuard::upgrade(state);
+                        state.update_to_term(resp.term);
+                        return;
+                    }
 
-                    // the majority has granted the vote
-                    let min_granted = (state.others.len() + 1) / 2 + 1;
-                    if state.votes_received >= min_granted {
-                        state.set_role(ServerRole::Leader);
-                        state.leader_id = Some(state.id());
-                        debug!("server {} becomes leader", state.id());
+                    // is still a candidate
+                    if !matches!(state.role(), ServerRole::Candidate) {
+                        return;
+                    }
 
-                        // init next_index
-                        let last_log_index = state.last_log_index();
-                        for index in state.next_index.values_mut() {
-                            *index = last_log_index + 1; // iter from the end to front is more likely to match the follower
+                    #[allow(clippy::integer_arithmetic)]
+                    if resp.vote_granted {
+                        debug!("vote is granted by server {}", id);
+                        let mut state = RwLockUpgradableReadGuard::upgrade(state);
+                        state.votes_received += 1;
+
+                        let follower_spec_pool = match resp.spec_pool() {
+                            Err(e) => {
+                                error!("get vote response spec pool failed, {e}");
+                                return;
+                            }
+                            Ok(spec_pool) => spec_pool,
+                        };
+                        spec_pools.push(follower_spec_pool);
+
+                        // the majority has granted the vote
+                        let min_granted = (state.others.len() + 1) / 2 + 1;
+                        if state.votes_received >= min_granted {
+                            state.set_role(ServerRole::Leader);
+                            state.recovery = false;
+                            state.leader_id = Some(state.id());
+                            debug!("server {} becomes leader", state.id());
+
+                            // init next_index
+                            let last_log_index = state.last_log_index();
+                            for index in state.next_index.values_mut() {
+                                *index = last_log_index + 1; // iter from the end to front is more likely to match the follower
+                            }
+
+                            // recover possibly speculatively executed cmds
+                            let recovered_cmds =
+                                Self::recover_possibly_executed_cmds(spec_pools, min_granted);
+                            if !recovered_cmds.is_empty() {
+                                // recovered command will be treated as speculatively executed commands
+                                // put them in spec pool and cmd_board
+                                state.cmd_board.map_lock(|mut cmd_board| {
+                                    for cmd in &recovered_cmds {
+                                        let old_value = cmd_board.insert(
+                                            cmd.id().clone(),
+                                            CmdBoardValue::new_wait_sync(
+                                                Event::new(),
+                                                CmdBoardState::NeedExecute,
+                                            ),
+                                        );
+
+                                        if let Some(CmdBoardValue::EarlyArrive(event)) = old_value {
+                                            // FIXME: Maybe more than one waiting?
+                                            event.notify(1);
+                                        }
+                                    }
+                                });
+                                spec.map_lock(|mut spec| {
+                                    spec.extend(recovered_cmds.iter().cloned());
+                                });
+
+                                // execute them and sync
+                                let ce = Arc::clone(&state.cmd_executor);
+                                let ae_trigger = ae_trigger.clone();
+                                let _exe = tokio::spawn(async move {
+                                    // TODO: execute in parallel, handle error(though currently, the client has no way to get the execute results of recovered commands)
+                                    for cmd in &recovered_cmds {
+                                        let _er = cmd.execute(ce.as_ref()).await;
+                                    }
+                                    debug!(
+                                        "recovered commands have finished execution, start sync"
+                                    );
+                                    let wrapped: Vec<_> = recovered_cmds
+                                        .into_iter()
+                                        .map(|cmd| Arc::new(cmd))
+                                        .collect();
+                                    let mut state = state_lock.write();
+                                    let term = state.term;
+                                    state.log.push(LogEntry::new(term, &wrapped));
+                                    if let Err(e) = ae_trigger.send(state.last_log_index()) {
+                                        warn!("can't trigger ae, {e}");
+                                    }
+                                });
+                            }
+
+                            // trigger calibrate
+                            calibrate_trigger.notify(1);
+
+                            return; // other servers' response no longer matters
                         }
-
-                        // trigger calibrate
-                        calibrate_trigger.notify(1);
                     }
                 }
             }
         }
     }
 
+    /// Recover possibly speculatively executed cmds from spec pools
+    #[allow(clippy::integer_arithmetic)] // won't overflow here
+    fn recover_possibly_executed_cmds(spec_pools: Vec<Vec<C>>, majority_cnt: usize) -> Vec<C> {
+        let mut cmd_cnt: HashMap<ProposeId, (C, usize)> = HashMap::new();
+        for cmd in spec_pools.into_iter().flatten() {
+            let entry = cmd_cnt.entry(cmd.id().clone()).or_insert((cmd, 0));
+            entry.1 += 1;
+        }
+
+        // get all possibly executed(fast round) commands: the majority of the majority
+        let min_appearances = majority_cnt / 2 + 1;
+        let mut log = vec![];
+        for cmd in cmd_cnt
+            .into_values()
+            .filter_map(|(cmd, cnt)| (cnt >= min_appearances).then(|| cmd))
+        {
+            debug!("new leader recovers command {:?}", cmd.id());
+            log.push(cmd);
+        }
+
+        log
+    }
+
     /// Leader should first enforce followers to be consistent with it when it comes to power
     #[allow(clippy::integer_arithmetic, clippy::indexing_slicing)] // log.len() >= 1 because we have a fake log[0], indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
     async fn leader_calibrates_followers(
         connects: Vec<Arc<Connect>>,
-        state: Arc<RwLock<State<C>>>,
+        state: Arc<RwLock<State<C, CE>>>,
         calibrate_trigger: Arc<Event>,
     ) {
         loop {
             calibrate_trigger.listen().await;
+
             for connect in connects.iter().cloned() {
                 let state = Arc::clone(&state);
                 let _handle = tokio::spawn(async move {
@@ -684,6 +792,7 @@ impl<C: Command + 'static> SyncManager<C> {
                                         last_sent_index + 1;
                                     *state.match_index.get_mut(&connect.id).unwrap() =
                                         last_sent_index;
+                                    debug!("new leader successfully calibrates {:?}", connect.id());
                                     break;
                                 }
 
@@ -695,4 +804,80 @@ impl<C: Command + 'static> SyncManager<C> {
             }
         }
     }
+
+    // /// Leader collects spec pool of followers
+    // #[allow(clippy::integer_arithmetic, clippy::indexing_slicing)]
+    // async fn leader_collects_spec_pool(
+    //     connects: Vec<Arc<Connect>>,
+    //     state: Arc<RwLock<State<C>>>,
+    //     spec: Arc<Mutex<RawMutex, VecDeque<C>>>,
+    // ) {
+    //     let majority_cnt = (connects.len() + 1) / 2 + 1;
+
+    //     // speculative pools of the majority of followers
+    //     let mut spec_pools: Vec<Vec<C>> = connects
+    //         .iter()
+    //         .cloned()
+    //         .zip(std::iter::repeat_with(|| Arc::clone(&state)))
+    //         .map(|(connect, state)| async move {
+    //             let (id, term) = state.map_read(|state| (state.id(), state.term));
+    //             connect
+    //                 .collect_spec_pool(
+    //                     CollectSpecPoolRequest::new(term, id),
+    //                     Duration::from_secs(1),
+    //                 )
+    //                 .await
+    //         })
+    //         .collect::<FuturesUnordered<_>>() // Send concurrently
+    //         .filter_map(|resp| {
+    //             future::ready(match resp {
+    //                 Ok(resp) => {
+    //                     let resp = resp.into_inner();
+    //                     if resp.succeed {
+    //                         resp.cmds().map_or_else(
+    //                             |e| {
+    //                                 warn!("cmds deserialize failed, {e}");
+    //                                 None
+    //                             },
+    //                             |cmds| Some(cmds),
+    //                         )
+    //                     } else {
+    //                         None
+    //                     }
+    //                 }
+    //                 Err(e) => {
+    //                     warn!("collect spec pool failed, {e}");
+    //                     None
+    //                 }
+    //             })
+    //         }) // filter out failed requests
+    //         .take((connects.len() + 1) / 2) // majority
+    //         .collect()
+    //         .await;
+    //     spec_pools.push(spec.map_lock(|mut spec| spec.drain(..).collect_vec())); // add self spec pool
+    //     if spec_pools.len() < majority_cnt {
+    //         return;
+    //     }
+
+    //     // count the number of each command's appearances in spec pools
+    //     let mut cmd_cnt: HashMap<ProposeId, (C, usize)> = HashMap::new();
+    //     for cmd in spec_pools.into_iter().flatten() {
+    //         let entry = cmd_cnt.entry(cmd.id().to_owned()).or_insert((cmd, 0));
+    //         entry.1 += 1;
+    //     }
+
+    //     // get all possibly executed(fast round) commands: the majority of the majority
+    //     let min_appearances = majority_cnt / 2 + 1;
+    //     let mut log = vec![];
+    //     for cmd in cmd_cnt
+    //         .into_iter()
+    //         .filter_map(|(id, (cmd, cnt))| (cnt >= min_appearances).then(|| cmd))
+    //     {
+    //         log.push(Arc::new(cmd));
+    //     }
+
+    //     let mut state = state.write();
+    //     let term = state.term;
+    //     state.log.push(LogEntry::new(term, &log));
+    // }
 }

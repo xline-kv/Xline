@@ -70,6 +70,12 @@ where
     // TODO: make it configurable
     const WAIT_SYNCED_TIMEOUT: Duration = Duration::from_secs(2);
 
+    /// Get connects in tests
+    #[cfg(test)]
+    pub(crate) fn get_connects(&self) -> Vec<Arc<Connect>> {
+        self.connects.clone()
+    }
+
     /// Create a new protocol client based on the addresses
     #[inline]
     pub async fn new(addrs: HashMap<ServerId, String>) -> Self {

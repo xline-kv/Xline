@@ -154,6 +154,9 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
             .await
             .or_else(|_| panic!("Failed to receive response from storage"))
     }
+
+    // TODO: implement it
+    async fn reset(&self) {}
 }
 
 /// Command to run consensus protocal
