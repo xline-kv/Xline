@@ -22,7 +22,7 @@ use crate::{
 };
 
 /// Rpc Server of curp protocol
-type CurpServer = Rpc<Command, CommandExecutor>;
+type CurpServer = Rpc<Command>;
 
 /// Xline server
 #[allow(dead_code)] // Remove this after feature is completed

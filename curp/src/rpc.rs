@@ -149,7 +149,7 @@ impl WaitSyncedResponse {
     }
 
     /// Create an error response
-    pub(crate) fn new_error<C: Command>(err: &str) -> bincode::Result<Self> {
+    pub(crate) fn new_error(err: &str) -> bincode::Result<Self> {
         Ok(Self {
             sync_result: Some(SyncResult::Error(bincode::serialize(err)?)),
         })

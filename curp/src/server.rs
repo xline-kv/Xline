@@ -18,11 +18,13 @@ use tracing::{debug, error, info, instrument, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{
-    bg_tasks::{run_bg_tasks, SyncCompleteMessage, SyncMessage},
+    bg_tasks::{
+        cmd_execute_channel, run_bg_tasks, CmdExecuteSender, SyncCompleteMessage, SyncMessage,
+    },
     channel::{
         key_mpsc::{self, MpscKeyBasedSender},
         key_spmc::{self, SpmcKeyBasedReceiver},
-        RecvError, SendError,
+        RecvError,
     },
     cmd::{Command, CommandExecutor, ProposeId},
     error::{ProposeError, ServerError},
@@ -46,17 +48,13 @@ pub static DEFAULT_AFTER_SYNC_CNT: usize = 10;
 /// The Rpc Server to handle rpc requests
 /// This Wrapper is introduced due to the `MadSim` rpc lib
 #[derive(Clone, Debug)]
-pub struct Rpc<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
+pub struct Rpc<C: Command + 'static> {
     /// The inner server is wrapped in an Arc so that its state can be shared while cloning the rpc wrapper
-    inner: Arc<Protocol<C, CE>>,
+    inner: Arc<Protocol<C>>,
 }
 
 #[tonic::async_trait]
-impl<C, CE> crate::rpc::Protocol for Rpc<C, CE>
-where
-    C: 'static + Command,
-    CE: 'static + CommandExecutor<C>,
-{
+impl<C: 'static + Command> crate::rpc::Protocol for Rpc<C> {
     #[instrument(skip(self), name = "server propose")]
     async fn propose(
         &self,
@@ -94,10 +92,16 @@ where
     }
 }
 
-impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
+impl<C: Command + 'static> Rpc<C> {
     /// New `Rpc`
     #[inline]
-    pub fn new(id: &str, is_leader: bool, term: u64, others: Vec<String>, executor: CE) -> Self {
+    pub fn new<CE: CommandExecutor<C> + 'static>(
+        id: &str,
+        is_leader: bool,
+        term: u64,
+        others: Vec<String>,
+        executor: CE,
+    ) -> Self {
         Self {
             inner: Arc::new(Protocol::new(
                 id,
@@ -116,7 +120,7 @@ impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
     ///   `ServerError::ParsingError` if parsing failed for the local server address
     ///   `ServerError::RpcError` if any rpc related error met
     #[inline]
-    pub async fn run(
+    pub async fn run<CE: CommandExecutor<C> + 'static>(
         id: &str,
         is_leader: bool, // TODO: remove this option
         term: u64,
@@ -145,7 +149,7 @@ impl<C: Command + 'static, CE: CommandExecutor<C> + 'static> Rpc<C, CE> {
     ///   `ServerError::ParsingError` if parsing failed for the local server address
     ///   `ServerError::RpcError` if any rpc related error met
     #[inline]
-    pub async fn run_from_listener(
+    pub async fn run_from_listener<CE: CommandExecutor<C> + 'static>(
         id: &str,
         is_leader: bool,
         term: u64,
@@ -261,7 +265,7 @@ impl<C: Command + 'static> SpeculativePool<C> {
 }
 
 /// The server that handles client request and server consensus protocol
-pub struct Protocol<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
+pub struct Protocol<C: Command + 'static> {
     /// Current state
     // TODO: apply fine-grain locking
     state: Arc<RwLock<State<C>>>,
@@ -269,8 +273,6 @@ pub struct Protocol<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
     last_rpc_time: Arc<RwLock<Instant>>,
     /// The speculative cmd pool, shared with executor
     spec: Arc<Mutex<SpeculativePool<C>>>,
-    /// Command executor
-    cmd_executor: Arc<CE>,
     /// The channel to send synced command to background sync task
     sync_chan: MpscKeyBasedSender<C::K, SyncMessage<C>>,
     // TODO: clean up the board when the size is too large
@@ -278,6 +280,8 @@ pub struct Protocol<C: Command + 'static, CE: CommandExecutor<C> + 'static> {
     cmd_board: Arc<Mutex<HashMap<ProposeId, CmdBoardValue>>>,
     /// Stop channel sender
     stop_ch_tx: broadcast::Sender<()>,
+    /// The channel to send cmds to background exe tasks
+    cmd_exe_tx: CmdExecuteSender<C>,
 }
 
 /// State of the server
@@ -401,11 +405,7 @@ impl<C: Command + 'static> State<C> {
     }
 }
 
-impl<C, CE> Debug for Protocol<C, CE>
-where
-    C: Command,
-    CE: CommandExecutor<C>,
-{
+impl<C: Command> Debug for Protocol<C> {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.state.map_read(|state| {
@@ -413,7 +413,6 @@ where
                 .field("role", &state.role)
                 .field("term", &state.term)
                 .field("spec", &self.spec)
-                .field("cmd_executor", &self.cmd_executor)
                 .field("log", &state.log)
                 .finish()
         })
@@ -431,28 +430,30 @@ pub(crate) enum ServerRole {
     Leader,
 }
 
-impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
+impl<C: 'static + Command> Protocol<C> {
     /// Init `after_sync` tasks
     #[allow(clippy::too_many_lines)] // FIXME: refactor too long function
-    fn init_after_sync_tasks(
+    fn init_after_sync_tasks<CE: CommandExecutor<C> + 'static>(
         cnt: usize,
         comp_rx: &SpmcKeyBasedReceiver<C::K, SyncCompleteMessage<C>>,
         spec: &Arc<Mutex<SpeculativePool<C>>>,
         cmd_board: &Arc<Mutex<HashMap<ProposeId, CmdBoardValue>>>,
-        cmd_executor: &Arc<CE>,
+        ce: Arc<CE>,
+        cmd_exe_tx: CmdExecuteSender<C>,
         stop_ch: &Shutdown,
     ) {
         iter::repeat((
             comp_rx.clone(),
             Arc::clone(spec),
             Arc::clone(cmd_board),
-            Arc::clone(cmd_executor),
+            cmd_exe_tx,
+            ce,
             stop_ch.clone(),
         ))
         .take(cnt)
         .for_each(
             #[allow(clippy::shadow_unrelated)] // clippy false positive
-            |(rx, spec_clone, cmd_board_clone, dispatch_executor, mut stop_ch)| {
+            |(rx, spec_clone, cmd_board_clone, cmd_exe_tx, ce, mut stop_ch)| {
                 let _handle = tokio::spawn(async move {
                     loop {
                         let sync_compl_result = rx.recv().await;
@@ -461,10 +462,10 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                         /// use macro here.
                         macro_rules! call_after_sync {
                             ($cmd: ident, $index: ident, $er: expr) => {
-                                $cmd.after_sync(dispatch_executor.as_ref(), $index)
+                                $cmd.after_sync(ce.as_ref(), $index)
                                     .map(move |after_sync_result| match after_sync_result {
                                         Ok(asr) => WaitSyncedResponse::new_success::<C>(&asr, &$er),
-                                        Err(e) => WaitSyncedResponse::new_error::<C>(&format!(
+                                        Err(e) => WaitSyncedResponse::new_error(&format!(
                                             "after_sync execution error: {:?}",
                                             e
                                         )),
@@ -505,16 +506,19 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                             });
                                 if let Some((need_execute, miss_entry)) = option {
                                     let after_sync_result = if miss_entry {
-                                        WaitSyncedResponse::new_error::<C>(&format!(
+                                        WaitSyncedResponse::new_error(&format!(
                                             "cmd {:?} is not to be waited",
                                             cmd_id
                                         ))
                                     } else if need_execute {
-                                        match cmd.execute(dispatch_executor.as_ref()).await {
-                                            Ok(er) => call_after_sync!(cmd, index, Some(er)),
-                                            Err(e) => WaitSyncedResponse::new_error::<C>(&format!(
+                                        match cmd_exe_tx.send(Arc::clone(&cmd)).await {
+                                            Ok(Ok(er)) => call_after_sync!(cmd, index, Some(er)),
+                                            Ok(Err(e)) => WaitSyncedResponse::new_error(&format!(
                                                 "cmd execution error: {:?}",
                                                 e
+                                            )),
+                                            Err(e) => WaitSyncedResponse::new_error(&format!(
+                                                "failed to get execution result, {e}"
                                             )),
                                         }
                                     } else {
@@ -564,7 +568,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
     /// Create a new server instance
     #[must_use]
     #[inline]
-    pub fn new(
+    pub fn new<CE: CommandExecutor<C> + 'static>(
         id: &str,
         is_leader: bool,
         term: u64,
@@ -579,6 +583,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         let spec = Arc::new(Mutex::new(SpeculativePool::new()));
         let last_rpc_time = Arc::new(RwLock::new(Instant::now()));
         let (stop_ch_tx, stop_ch_rx) = broadcast::channel(1);
+        let (cmd_exe_tx, cmd_exe_rx) = cmd_execute_channel();
 
         let state = Arc::new(RwLock::new(State::new(
             id,
@@ -599,6 +604,8 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             comp_tx,
             Arc::clone(&cmd_executor),
             Arc::clone(&spec),
+            cmd_exe_tx.clone(),
+            cmd_exe_rx,
             Shutdown::new(stop_ch_rx.resubscribe()),
         ));
 
@@ -607,7 +614,8 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             &comp_rx,
             &spec,
             &cmd_board,
-            &cmd_executor,
+            cmd_executor,
+            cmd_exe_tx.clone(),
             &Shutdown::new(stop_ch_rx.resubscribe()),
         );
 
@@ -617,21 +625,16 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
             state,
             last_rpc_time,
             spec,
-            cmd_executor,
             sync_chan: sync_tx,
             cmd_board,
             stop_ch_tx,
+            cmd_exe_tx,
         }
     }
 
     /// Send sync event to the background sync task, it's not a blocking function
     #[instrument(skip(self))]
-    fn sync_to_others(
-        &self,
-        term: TermNum,
-        cmd: &C,
-        need_execute: bool,
-    ) -> Result<Event, SendError> {
+    fn sync_to_others(&self, term: TermNum, cmd: &C, need_execute: bool) {
         self.cmd_board.map_lock(|mut board| {
             let old_value = board.remove(cmd.id());
             let _ignore = board.insert(
@@ -653,9 +656,11 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
         });
         let ready_notify = self
             .sync_chan
-            .send(cmd.keys(), SyncMessage::new(term, Arc::new(cmd.clone())))?;
-
-        Ok(ready_notify)
+            .send(cmd.keys(), SyncMessage::new(term, Arc::new(cmd.clone())));
+        match ready_notify {
+            Err(e) => error!("sync channel has closed, {}", e),
+            Ok(notify) => notify.notify(1),
+        }
     }
 
     /// Handle "propose" requests
@@ -672,7 +677,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
 
         (|| async {
             let (is_leader, term) = self.state.map_read(|state| (state.is_leader(), state.term));
-            let sync_notify = {
+            let er_rx = {
                 let mut spec = self.spec.lock();
 
                 // check if the command is ready
@@ -694,41 +699,37 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                     };
                 }
 
-                // the leader will sync the command to others while grabbing the lock so that the order of the command can be preserved
-                let sync_notify = match self.sync_to_others(term, &cmd, has_conflict) {
-                    Ok(notify) => notify,
-                    Err(err) => {
-                        return ProposeResponse::new_error(
-                            is_leader,
-                            term,
-                            &ProposeError::SyncedError(format!(
-                                "Sync cmd channel closed, {:?}",
-                                err
-                            )),
-                        );
-                    }
-                };
+                // leader should sync the cmd to others
+                let cmd = Arc::new(cmd);
 
-                // if the command has conflict, sync immediately and return conflict error
                 if has_conflict {
-                    sync_notify.notify(1);
+                    // no spec execute, just sync
+                    self.sync_to_others(term, cmd.as_ref(), true);
                     return ProposeResponse::new_error(is_leader, term, &ProposeError::KeyConflict);
                 }
 
-                // finally, the command meets all the conditions for speculative execution, we will release the lock here
-                sync_notify
+                // spec execute and sync
+                // execute the command before sync so that the order of cmd is preserved
+                let er_rx = self.cmd_exe_tx.send(Arc::clone(&cmd));
+                self.sync_to_others(term, cmd.as_ref(), false);
+
+                // now we can release the lock and wait for the execution result
+                er_rx
             };
 
-            // speculative execution
-            let er = cmd.execute(self.cmd_executor.as_ref()).await;
-
-            sync_notify.notify(1); // the command is ready to be synced
+            // wait for the speculative execution
+            let er = er_rx.await;
             match er {
-                Ok(er) => ProposeResponse::new_result::<C>(is_leader, term, &er),
-                Err(err) => ProposeResponse::new_error(
+                Ok(Ok(er)) => ProposeResponse::new_result::<C>(is_leader, term, &er),
+                Ok(Err(err)) => ProposeResponse::new_error(
                     is_leader,
                     term,
                     &ProposeError::ExecutionError(err.to_string()),
+                ),
+                Err(err) => ProposeResponse::new_error(
+                    is_leader,
+                    term,
+                    &ProposeError::ProtocolError(err.to_string()),
                 ),
             }
         })()
@@ -928,7 +929,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
     }
 }
 
-impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Drop for Protocol<C, CE> {
+impl<C: 'static + Command> Drop for Protocol<C> {
     #[inline]
     fn drop(&mut self) {
         // TODO: async drop is still not supported by Rust(should wait for bg tasks to be stopped?), or we should create an async `stop` function for Protocol

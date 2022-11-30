@@ -1,17 +1,23 @@
-use std::{ops::Range, sync::Arc, time::Duration};
+use std::{iter, ops::Range, sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
+use futures::channel::oneshot;
 use madsim::rand::{thread_rng, Rng};
 use parking_lot::{lock_api::RwLockUpgradableReadGuard, Mutex, RwLock};
 use tokio::{
-    sync::mpsc::{UnboundedReceiver, UnboundedSender},
+    sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
     time::Instant,
 };
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    channel::{key_mpsc::MpscKeyBasedReceiver, key_spmc::SpmcKeyBasedSender, RecvError},
+    channel::{
+        key_mpsc::MpscKeyBasedReceiver,
+        key_spmc::{self, SpmcKeyBasedReceiver, SpmcKeyBasedSender},
+        RecvError,
+    },
     cmd::{Command, CommandExecutor},
+    error::ExecuteError,
     log::LogEntry,
     message::TermNum,
     rpc::{self, AppendEntriesRequest, Connect, VoteRequest},
@@ -22,6 +28,7 @@ use crate::{
 };
 
 /// Run background tasks
+#[allow(clippy::too_many_arguments)] // we can this function once, it's ok
 pub(crate) async fn run_bg_tasks<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
     state: Arc<RwLock<State<C>>>,
     last_rpc_time: Arc<RwLock<Instant>>,
@@ -29,6 +36,8 @@ pub(crate) async fn run_bg_tasks<C: Command + 'static, CE: 'static + CommandExec
     comp_chan: SpmcKeyBasedSender<C::K, SyncCompleteMessage<C>>,
     cmd_executor: Arc<CE>,
     spec: Arc<Mutex<SpeculativePool<C>>>,
+    cmd_exe_tx: CmdExecuteSender<C>,
+    cmd_exe_rx: UnboundedReceiver<ExecuteMessage<C>>,
     mut shutdown: Shutdown,
 ) {
     let others = state.read().others.clone();
@@ -48,11 +57,18 @@ pub(crate) async fn run_bg_tasks<C: Command + 'static, CE: 'static + CommandExec
         Arc::clone(&state),
         Arc::clone(&last_rpc_time),
     ));
-    let bg_apply_handle = tokio::spawn(bg_apply(Arc::clone(&state), cmd_executor, comp_chan, spec));
+    let bg_apply_handle = tokio::spawn(bg_apply(
+        Arc::clone(&state),
+        cmd_exe_tx,
+        Arc::clone(&cmd_executor),
+        comp_chan,
+        spec,
+    ));
     let bg_heartbeat_handle = tokio::spawn(bg_heartbeat(connects.clone(), Arc::clone(&state)));
     let bg_get_sync_cmds_handle =
         tokio::spawn(bg_get_sync_cmds(Arc::clone(&state), sync_chan, ae_trigger));
     let calibrate_handle = tokio::spawn(leader_calibrates_followers(connects, state));
+    let bg_cmd_exe_handle = tokio::spawn(bg_execute_cmd(cmd_executor, cmd_exe_rx));
 
     shutdown.recv().await;
     bg_ae_handle.abort();
@@ -61,6 +77,7 @@ pub(crate) async fn run_bg_tasks<C: Command + 'static, CE: 'static + CommandExec
     bg_heartbeat_handle.abort();
     bg_get_sync_cmds_handle.abort();
     calibrate_handle.abort();
+    bg_cmd_exe_handle.abort();
     info!("all background task stopped");
 }
 
@@ -356,7 +373,8 @@ async fn send_heartbeat<C: Command + 'static>(connect: Arc<Connect>, state: Arc<
 /// Background apply
 async fn bg_apply<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
     state: Arc<RwLock<State<C>>>,
-    cmd_executor: Arc<CE>,
+    cmd_exe_tx: CmdExecuteSender<C>,
+    ce: Arc<CE>,
     comp_chan: SpmcKeyBasedSender<C::K, SyncCompleteMessage<C>>,
     spec: Arc<Mutex<SpeculativePool<C>>>,
 ) {
@@ -378,7 +396,6 @@ async fn bg_apply<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
         // TODO: overflow of log index should be prevented
         for i in (state.last_applied + 1)..=state.commit_index {
             for cmd in state.log[i].cmds().iter() {
-                // TODO: execution of leaders and followers should be merged
                 // leader commits a log by sending it through compl_chan
                 if state.is_leader() {
                     if comp_chan
@@ -393,19 +410,15 @@ async fn bg_apply<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
                     }
                 } else {
                     // followers execute commands directly
-                    let cmd_executor = Arc::clone(&cmd_executor);
-                    let cmd = Arc::clone(cmd);
-                    let spec = Arc::clone(&spec);
-                    let _handle = tokio::spawn(async move {
-                        // TODO: execute command in parallel
-                        // TODO: handle execution error
-                        let _execute_result = cmd.execute(cmd_executor.as_ref()).await;
-                        let _after_sync_result = cmd
-                            .after_sync(cmd_executor.as_ref(), i.numeric_cast())
-                            .await;
-
-                        spec.lock().mark_ready(cmd.id());
+                    // FIXME: should follower store er and asr?
+                    let er = cmd_exe_tx.send(Arc::clone(cmd));
+                    let cmd_cloned = Arc::clone(cmd);
+                    let ce = Arc::clone(&ce);
+                    let _asr_ignored = tokio::spawn(async move {
+                        let _et_ignored = er.await;
+                        cmd_cloned.after_sync(ce.as_ref(), i.numeric_cast()).await
                     });
+                    spec.lock().mark_ready(cmd.id());
                 }
             }
             state.last_applied = i;
@@ -630,4 +643,93 @@ async fn leader_calibrates_followers<C: Command + 'static>(
             });
         }
     }
+}
+
+/// Messages sent to the background cmd execution task
+pub(crate) struct ExecuteMessage<C: Command + 'static> {
+    /// The cmd to be executed
+    cmd: Arc<C>,
+    /// Send execution result
+    er_tx: oneshot::Sender<Result<C::ER, ExecuteError>>,
+}
+
+/// Number of execute workers
+const N_EXECUTE_WORKERS: usize = 8;
+
+/// Worker that execute commands
+async fn execute_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
+    dispatch_rx: SpmcKeyBasedReceiver<C::K, Option<ExecuteMessage<C>>>,
+    ce: Arc<CE>,
+) {
+    while let Ok((msg_wrapped, done)) = dispatch_rx.recv().await {
+        #[allow(clippy::unwrap_used)]
+        // it's a hack to bypass the map_msg(you can't do await in map_msg)
+        // TODO: is there a better way to mark a spmc msg done instead of sending the msg back
+        let msg = msg_wrapped.map_msg(Option::take).unwrap();
+
+        let er = msg.cmd.execute(ce.as_ref()).await;
+        debug!("cmd {:?} is executed", msg.cmd.id());
+
+        // send er back
+        let _ignore = msg.er_tx.send(er); // it's ok to ignore the result here because sometimes er is not needed
+
+        if let Err(e) = done.send(msg_wrapped) {
+            warn!("{e}");
+        }
+    }
+}
+
+/// The only place where cmds get executed
+async fn bg_execute_cmd<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
+    cmd_executor: Arc<CE>,
+    mut cmd_rx: UnboundedReceiver<ExecuteMessage<C>>,
+) {
+    // TODO: use KeyBasedMpsc to dispatch cmds to execute in parallel
+    let (dispatch_tx, dispatch_rx) = key_spmc::channel();
+
+    // spawn cmd executor worker
+    iter::repeat((dispatch_rx, cmd_executor))
+        .take(N_EXECUTE_WORKERS)
+        .for_each(|(rx, ce)| {
+            let _worker_handle = tokio::spawn(execute_worker(rx, ce));
+        });
+
+    // TODO: avoid re-dispatch by using a mpmc channel
+    while let Some(msg) = cmd_rx.recv().await {
+        let cmd = Arc::clone(&msg.cmd);
+        if let Err(e) = dispatch_tx.send(cmd.keys(), Some(msg)) {
+            warn!("failed to send cmd to execute worker, {e}");
+        }
+    }
+    error!("bg execute cmd stopped unexpectedly");
+}
+
+/// Send cmd to background execute cmd
+pub(crate) struct CmdExecuteSender<C: Command + 'static>(UnboundedSender<ExecuteMessage<C>>);
+
+impl<C: Command + 'static> Clone for CmdExecuteSender<C> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<C: Command + 'static> CmdExecuteSender<C> {
+    /// Send cmd to background cmd executor and return a oneshot receiver for the execution result
+    pub(crate) fn send(
+        &self,
+        cmd: Arc<C>,
+    ) -> oneshot::Receiver<Result<<C as Command>::ER, ExecuteError>> {
+        let (er_tx, er_rx) = oneshot::channel();
+        if let Err(e) = self.0.send(ExecuteMessage { cmd, er_tx }) {
+            warn!("failed to send cmd to background execute cmd, {e}");
+        }
+        er_rx
+    }
+}
+
+/// Create a channel to send cmds to background cmd execute tasks
+pub(crate) fn cmd_execute_channel<C: Command + 'static>(
+) -> (CmdExecuteSender<C>, UnboundedReceiver<ExecuteMessage<C>>) {
+    let (tx, rx) = mpsc::unbounded_channel();
+    (CmdExecuteSender(tx), rx)
 }
