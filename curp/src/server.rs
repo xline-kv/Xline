@@ -687,7 +687,7 @@ impl<C: 'static + Command, CE: 'static + CommandExecutor<C>> Protocol<C, CE> {
                 }
 
                 // the leader will sync the command to others while grabbing the lock so that the order of the command can be preserved
-                let sync_notify = match self.sync_to_others(term, &cmd, true) {
+                let sync_notify = match self.sync_to_others(term, &cmd, has_conflict) {
                     Ok(notify) => notify,
                     Err(err) => {
                         return ProposeResponse::new_error(
