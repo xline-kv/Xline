@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::common::{create_servers_client, TestCommand, TestCommandResult, TestCommandType};
 use curp::cmd::ProposeId;
 
@@ -21,13 +23,25 @@ async fn speculative_execute() {
 
     for _ in 0..3 {
         let (t, key) = exe_rx.recv().await.unwrap();
+
         assert_eq!(t, TestCommandType::Get);
         assert_eq!(key, "A".to_owned());
     }
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), exe_rx.recv())
+            .await
+            .is_err()
+    );
 
     for _ in 0..3 {
         let (t, key) = after_sync_rx.recv().await.unwrap();
+
         assert_eq!(t, TestCommandType::Get);
         assert_eq!(key, "A".to_owned());
     }
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), after_sync_rx.recv())
+            .await
+            .is_err()
+    );
 }
