@@ -427,3 +427,163 @@ impl From<DeleteRangeRequest> for crate::rpc::DeleteRangeRequest {
         req.inner
     }
 }
+
+/// Request for `LeaseGrant`
+#[derive(Debug)]
+pub struct LeaseGrantRequest {
+    /// Inner request
+    inner: crate::rpc::LeaseGrantRequest,
+}
+
+impl LeaseGrantRequest {
+    /// New `LeaseGrantRequest`
+    #[inline]
+    #[must_use]
+    pub fn new(ttl: i64) -> Self {
+        Self {
+            inner: crate::rpc::LeaseGrantRequest {
+                ttl,
+                ..Default::default()
+            },
+        }
+    }
+
+    /// Set `id`
+    #[inline]
+    #[must_use]
+    pub fn with_id(mut self, id: i64) -> Self {
+        self.inner.id = id;
+        self
+    }
+
+    /// Get `id`
+    #[inline]
+    #[must_use]
+    pub fn id(&self) -> i64 {
+        self.inner.id
+    }
+
+    /// Get `ttl`
+    #[inline]
+    #[must_use]
+    pub fn ttl(&self) -> i64 {
+        self.inner.ttl
+    }
+}
+
+impl From<LeaseGrantRequest> for crate::rpc::LeaseGrantRequest {
+    fn from(req: LeaseGrantRequest) -> Self {
+        req.inner
+    }
+}
+
+/// Request for `LeaseRevoke`
+#[derive(Debug)]
+pub struct LeaseRevokeRequest {
+    /// Inner request
+    inner: crate::rpc::LeaseRevokeRequest,
+}
+
+impl LeaseRevokeRequest {
+    /// New `LeaseRevokeRequest`
+    #[inline]
+    #[must_use]
+    pub fn new(id: i64) -> Self {
+        Self {
+            inner: crate::rpc::LeaseRevokeRequest { id },
+        }
+    }
+
+    /// Get `id`
+    #[inline]
+    #[must_use]
+    pub fn id(&self) -> i64 {
+        self.inner.id
+    }
+}
+
+impl From<LeaseRevokeRequest> for crate::rpc::LeaseRevokeRequest {
+    fn from(req: LeaseRevokeRequest) -> Self {
+        req.inner
+    }
+}
+
+/// Request for `LeaseKeepAlive`
+#[derive(Debug)]
+pub struct LeaseKeepAliveRequest {
+    /// Inner request
+    inner: crate::rpc::LeaseKeepAliveRequest,
+}
+
+impl LeaseKeepAliveRequest {
+    /// New `LeaseKeepAliveRequest`
+    #[inline]
+    #[must_use]
+    pub fn new(id: i64) -> Self {
+        Self {
+            inner: crate::rpc::LeaseKeepAliveRequest { id },
+        }
+    }
+
+    /// Get `id`
+    #[inline]
+    #[must_use]
+    pub fn id(&self) -> i64 {
+        self.inner.id
+    }
+}
+
+impl From<LeaseKeepAliveRequest> for crate::rpc::LeaseKeepAliveRequest {
+    fn from(req: LeaseKeepAliveRequest) -> Self {
+        req.inner
+    }
+}
+
+/// Request for `LeaseTimeToLive`
+#[derive(Debug)]
+pub struct LeaseTimeToLiveRequest {
+    /// Inner request
+    inner: crate::rpc::LeaseTimeToLiveRequest,
+}
+
+impl LeaseTimeToLiveRequest {
+    /// New `LeaseTimeToLiveRequest`
+    #[inline]
+    #[must_use]
+    pub fn new(id: i64) -> Self {
+        Self {
+            inner: crate::rpc::LeaseTimeToLiveRequest {
+                id,
+                ..Default::default()
+            },
+        }
+    }
+
+    /// Set `keys`
+    #[inline]
+    #[must_use]
+    pub fn with_keys(mut self, keys: bool) -> Self {
+        self.inner.keys = keys;
+        self
+    }
+
+    /// Get `id`
+    #[inline]
+    #[must_use]
+    pub fn id(&self) -> i64 {
+        self.inner.id
+    }
+
+    /// Get `keys`
+    #[inline]
+    #[must_use]
+    pub fn keys(&self) -> bool {
+        self.inner.keys
+    }
+}
+
+impl From<LeaseTimeToLiveRequest> for crate::rpc::LeaseTimeToLiveRequest {
+    fn from(req: LeaseTimeToLiveRequest) -> Self {
+        req.inner
+    }
+}

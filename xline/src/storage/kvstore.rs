@@ -83,8 +83,6 @@ impl KvStore {
         while let Some(msg) = del_rx.recv().await {
             let (keys, tx) = msg.unpack();
             debug!("Delete keys: {:?} by lease revoked", keys);
-            println!("Delete keys: {:?} by lease revoked", keys);
-
             let id = ProposeId::new(Uuid::new_v4().to_string());
             let del_reqs = keys
                 .into_iter()
