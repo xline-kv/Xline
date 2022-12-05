@@ -2,7 +2,6 @@ use std::{sync::Arc, time::Duration};
 
 use clippy_utilities::Cast;
 use curp::{client::Client, cmd::ProposeId, error::ProposeError};
-use parking_lot::RwLock;
 use tokio::{sync::mpsc, time};
 use tokio_stream::{wrappers::ReceiverStream, StreamExt};
 use tracing::{debug, info, warn};
@@ -40,7 +39,7 @@ pub(crate) struct LeaseServer {
     /// Server name
     name: String,
     /// Current node is leader or not
-    state: Arc<RwLock<State>>,
+    state: Arc<State>,
     /// Id generator
     id_gen: Arc<IdGenerator>,
 }
@@ -52,7 +51,7 @@ impl LeaseServer {
         auth_storage: Arc<AuthStore>,
         client: Arc<Client<Command>>,
         name: String,
-        state: Arc<RwLock<State>>,
+        state: Arc<State>,
         id_gen: Arc<IdGenerator>,
     ) -> Arc<Self> {
         let lease_server = Arc::new(Self {
@@ -69,7 +68,7 @@ impl LeaseServer {
             async move {
                 loop {
                     // only leader will check expired lease
-                    if server.is_leader() {
+                    if server.state.is_leader() {
                         for id in server.find_expired_leases() {
                             let _handle = tokio::spawn({
                                 let s = Arc::clone(&server);
@@ -90,6 +89,9 @@ impl LeaseServer {
                                 }
                             });
                         }
+                    } else {
+                        let listener = server.state.leader_listener();
+                        listener.await;
                     }
 
                     time::sleep(Duration::from_millis(500)).await;
@@ -125,25 +127,7 @@ impl LeaseServer {
 
     /// Check if the node is leader
     fn is_leader(&self) -> bool {
-        self.state.read().is_leader()
-    }
-
-    /// Wait leader until current node has a leader
-    async fn wait_leader(&self) -> Result<String, tonic::Status> {
-        let listener = {
-            let state = self.state.read();
-            if let Some(leader_addr) = state.leader_address() {
-                return Ok(leader_addr.to_owned());
-            }
-            state.leader_listener()
-        };
-
-        listener.await;
-        self.state
-            .read()
-            .leader_address()
-            .map(str::to_owned)
-            .ok_or_else(|| tonic::Status::internal("Get leader address error"))
+        self.state.is_leader()
     }
 
     /// Propose request and get result with fast/slow path
@@ -230,12 +214,12 @@ impl LeaseServer {
         mut request_stream: tonic::Streaming<LeaseKeepAliveRequest>,
     ) -> Result<ReceiverStream<Result<LeaseKeepAliveResponse, tonic::Status>>, tonic::Status> {
         // TODO: refactor stream forward in a easy way
-        let leader_addr = self.wait_leader().await?;
+        let leader_addr = self.state.wait_leader().await?;
         let mut lease_client = LeaseClient::connect(format!("http://{leader_addr}"))
             .await
             .map_err(|_e| tonic::Status::internal("Connect to leader error: {e}"))?;
 
-        let (request_tx, requset_rx) = mpsc::channel(CHANNEL_SIZE);
+        let (request_tx, request_rx) = mpsc::channel(CHANNEL_SIZE);
         let (response_tx, response_rx) = mpsc::channel(CHANNEL_SIZE);
 
         let _req_handle = tokio::spawn(async move {
@@ -247,7 +231,7 @@ impl LeaseServer {
 
         let _client_handle = tokio::spawn(async move {
             let mut stream = lease_client
-                .lease_keep_alive(ReceiverStream::new(requset_rx))
+                .lease_keep_alive(ReceiverStream::new(request_rx))
                 .await
                 .unwrap_or_else(|e| panic!("Stream redirect to leader failed: {e:?}"))
                 .into_inner();
@@ -356,7 +340,7 @@ impl LeaseTrait for LeaseServer {
             };
             Ok(tonic::Response::new(res))
         } else {
-            let leader_addr = self.wait_leader().await?;
+            let leader_addr = self.state.wait_leader().await?;
             let mut lease_client = LeaseClient::connect(format!("http://{leader_addr}"))
                 .await
                 .map_err(|e| tonic::Status::internal(format!("Connect to leader error: {e}")))?;

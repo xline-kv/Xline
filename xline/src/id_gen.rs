@@ -23,13 +23,13 @@ impl IdGenerator {
     /// New `IdGenerator`
     pub(crate) fn new(member_id: u64) -> Self {
         let prefix = member_id.overflowing_shl(48).0;
-        let mut tmp = SystemTime::now()
+        let mut ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_else(|e| panic!("SystemTime before UNIX EPOCH! {}", e))
             .as_millis();
-        tmp &= (u128::MAX.overflowing_shr(128.overflow_sub(40)).0); // lower 40 bits
-        tmp = tmp.overflowing_shl(8).0; // shift left 8 bits
-        let suffix = AtomicU64::new(tmp.cast());
+        ts &= (u128::MAX.overflowing_shr(88).0); // lower 40 bits (128 - 40)
+        ts = ts.overflowing_shl(8).0; // shift left 8 bits
+        let suffix = AtomicU64::new(ts.cast());
         Self { prefix, suffix }
     }
 

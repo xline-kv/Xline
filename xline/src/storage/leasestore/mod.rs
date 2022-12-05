@@ -10,7 +10,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use clippy_utilities::Cast;
 use curp::{cmd::ProposeId, error::ExecuteError};
 use log::debug;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use utils::parking_lot_lock::MutexMap;
 
@@ -58,7 +58,7 @@ pub(crate) struct LeaseStoreBackend {
     /// Speculative execution pool. Mapping from propose id to request
     sp_exec_pool: Mutex<HashMap<ProposeId, RequestCtx>>,
     /// Current node is leader or not
-    state: Arc<RwLock<State>>,
+    state: Arc<State>,
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
 }
@@ -69,7 +69,7 @@ impl LeaseStore {
     pub(crate) fn new(
         del_tx: mpsc::Sender<DeleteMessage>,
         mut lease_cmd_rx: mpsc::Receiver<LeaseMessage>,
-        state: Arc<RwLock<State>>,
+        state: Arc<State>,
         header_gen: Arc<HeaderGenerator>,
     ) -> Self {
         let inner = Arc::new(LeaseStoreBackend::new(del_tx, state, header_gen));
@@ -216,7 +216,7 @@ impl LeaseStoreBackend {
     /// New `KvStoreBackend`
     pub(crate) fn new(
         del_tx: mpsc::Sender<DeleteMessage>,
-        state: Arc<RwLock<State>>,
+        state: Arc<State>,
         header_gen: Arc<HeaderGenerator>,
     ) -> Self {
         Self {
@@ -232,7 +232,7 @@ impl LeaseStoreBackend {
 
     /// Check if the node is leader
     fn is_leader(&self) -> bool {
-        self.state.read().is_leader()
+        self.state.is_leader()
     }
 
     /// Attach key to lease
@@ -462,7 +462,7 @@ mod test {
     async fn test_lease_storage() -> Result<(), Box<dyn Error>> {
         let (del_tx, mut del_rx) = mpsc::channel(128);
         let (_, lease_cmd_rx) = mpsc::channel(128);
-        let state = Arc::new(RwLock::new(State::default()));
+        let state = Arc::new(State::default());
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let lease_store = LeaseStore::new(del_tx, lease_cmd_rx, state, header_gen);
         let _handle = tokio::spawn(async move {
