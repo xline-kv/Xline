@@ -8,7 +8,7 @@ use xline::client::kv_types::{
 
 use crate::common::Cluster;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 async fn test_kv_put() -> Result<(), Box<dyn Error>> {
     struct TestCase {
         req: PutRequest,
@@ -42,7 +42,7 @@ async fn test_kv_put() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 async fn test_kv_get() -> Result<(), Box<dyn Error>> {
     struct TestCase<'a> {
         req: RangeRequest,
@@ -158,7 +158,7 @@ async fn test_kv_get() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 async fn test_kv_delete() -> Result<(), Box<dyn Error>> {
     struct TestCase<'a> {
         req: DeleteRangeRequest,

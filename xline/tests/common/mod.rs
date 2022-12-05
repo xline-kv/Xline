@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, net::SocketAddr, thread};
+use std::{collections::BTreeMap, net::SocketAddr};
 
 use tokio::{
     net::TcpListener,
@@ -55,22 +55,17 @@ impl Cluster {
             let mut rx = stop_tx.subscribe();
             let listener = self.listeners.remove(&i).unwrap();
 
-            thread::spawn(move || {
-                tokio::runtime::Runtime::new()
-                    .unwrap_or_else(|e| panic!("Create runtime error: {}", e))
-                    .block_on(async move {
-                        let server =
-                            XlineServer::new(name, peers, is_leader, leader_addr, self_addr).await;
+            tokio::spawn(async move {
+                let server = XlineServer::new(name, peers, is_leader, leader_addr, self_addr).await;
 
-                        tokio::select! {
-                            _ = rx.recv() => {} // tx droped, or tx send ()
-                            result = server.start_from_listener(listener) => {
-                                if let Err(e) = result {
-                                    panic!("Server start error: {e}");
-                                }
-                            }
+                tokio::select! {
+                    _ = rx.recv() => {} // tx droped, or tx send ()
+                    result = server.start_from_listener(listener) => {
+                        if let Err(e) = result {
+                            panic!("Server start error: {e}");
                         }
-                    });
+                    }
+                }
             });
         }
         self.stop_tx = Some(stop_tx);

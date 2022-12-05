@@ -190,7 +190,8 @@ impl<K: Eq + Hash + Clone + ConflictCheck, M> SpmcKeybasedReceiver<K, M> {
         self.inner
             .lock()
             .await
-            .recv()
+            .async_recv()
+            .await
             .map(|msg| (msg, self.done_tx.clone()))
     }
 
@@ -291,5 +292,19 @@ mod test {
         second.map_msg(|msg| {
             assert_eq!(*msg, "B");
         });
+    }
+
+    // Test the receiver should not block the thread. A bug was found that the receiver might block the whole tokio worker thread when recv().await is called. This test verifies that it was fixed.
+    // The test will be blocked should the async_recv() in SpmcKeyBasedReceiver::recv() is changed to recv().
+    // The lesson here is that l.wait() should only be called in non-async code. If it is called in async code, it will not hand the control flow back to tokio runtime like l.await and, therefore, block the tokio worker thread.
+    #[tokio::test]
+    async fn recv_no_blocking() {
+        let (tx, rx) = channel::<String, String>();
+        let _ignored_handle = tokio::spawn(async move {
+            let _ignore = rx.recv().await; // should not block
+        });
+        tokio::time::sleep(Duration::from_millis(500)).await; // make sure the rx.recv is called
+        let _ignore = tx.send(&["hello".to_owned()], "world".to_owned());
+        tokio::time::sleep(Duration::from_millis(500)).await;
     }
 }
