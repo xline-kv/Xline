@@ -17,3 +17,6 @@ scripts/*
 !scripts/Dockerfile
 !scripts/benchmark.sh
 !scripts/quick_start.sh
+
+.vscode
+.idea
