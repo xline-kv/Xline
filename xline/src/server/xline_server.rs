@@ -3,7 +3,6 @@ use std::{collections::HashMap, future::Future, net::SocketAddr, sync::Arc, time
 use anyhow::Result;
 use curp::{client::Client, server::Rpc, ProtocolServer};
 use jsonwebtoken::{DecodingKey, EncodingKey};
-use parking_lot::RwLock;
 use tokio::{
     net::TcpListener,
     sync::{broadcast, mpsc},
@@ -11,10 +10,7 @@ use tokio::{
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
 use tracing::info;
-use utils::{
-    config::{ClientTimeout, ServerTimeout},
-    parking_lot_lock::RwLockMap,
-};
+use utils::config::{ClientTimeout, ServerTimeout};
 
 use super::{
     auth_server::AuthServer,
@@ -46,7 +42,7 @@ type CurpServer = Rpc<Command>;
 #[derive(Debug)]
 pub struct XlineServer {
     /// State of current node
-    state: Arc<RwLock<State>>,
+    state: Arc<State>,
     /// Kv storage
     kv_storage: Arc<KvStore>,
     /// Auth storage
@@ -82,11 +78,7 @@ impl XlineServer {
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let id_gen = Arc::new(IdGenerator::new(0));
         let leader_id = is_leader.then(|| name.clone());
-        let state = Arc::new(RwLock::new(State::new(
-            name,
-            leader_id,
-            all_members.clone(),
-        )));
+        let state = Arc::new(State::new(name, leader_id, all_members.clone()));
         let server_timeout = Arc::new(server_timeout);
         let (del_tx, del_rx) = mpsc::channel(CHANNEL_SIZE);
         let (lease_cmd_tx, lease_cmd_rx) = mpsc::channel(CHANNEL_SIZE);
@@ -122,12 +114,12 @@ impl XlineServer {
 
     /// Server id
     fn id(&self) -> String {
-        self.state.read().id().to_owned()
+        self.state.id().to_owned()
     }
 
     /// Check if current node is leader
     fn is_leader(&self) -> bool {
-        self.state.read().is_leader()
+        self.state.is_leader()
     }
 
     /// Start `XlineServer`
@@ -180,20 +172,16 @@ impl XlineServer {
     /// Leader change task
     async fn leader_change_task(
         mut rx: broadcast::Receiver<Option<String>>,
-        state: Arc<RwLock<State>>,
+        state: Arc<State>,
         lease_storage: Arc<LeaseStore>,
     ) {
         while let Ok(leader_id) = rx.recv().await {
             info!("receive new leader_id: {leader_id:?}");
-            let (leader_state_changed, is_leader) = state.map_write(|mut s| {
-                let is_leader_before = s.is_leader();
-                s.set_leader_id(leader_id);
-                let is_leader_after = s.is_leader();
-                (is_leader_before ^ is_leader_after, is_leader_after)
-            });
+            let leader_state_changed = state.set_leader_id(leader_id);
+            let is_leader = state.is_leader();
             if leader_state_changed {
                 if is_leader {
-                    lease_storage.promote(Duration::from_secs(1)); // TODO: extend shoud be election timeout
+                    lease_storage.promote(Duration::from_secs(1)); // TODO: extend should be election timeout
                 } else {
                     lease_storage.demote();
                 }
@@ -216,7 +204,7 @@ impl XlineServer {
         let curp_server = CurpServer::new(
             self.id(),
             self.is_leader(),
-            self.state.read().others(),
+            self.state.others(),
             CommandExecutor::new(
                 Arc::clone(&self.kv_storage),
                 Arc::clone(&self.auth_storage),

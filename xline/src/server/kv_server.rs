@@ -1,7 +1,6 @@
 use std::{collections::HashSet, fmt::Debug, sync::Arc};
 
 use curp::{client::Client, cmd::ProposeId, error::ProposeError};
-use parking_lot::RwLock;
 use tracing::{debug, instrument};
 use uuid::Uuid;
 
@@ -36,7 +35,7 @@ pub(crate) struct KvServer {
     /// Server name
     name: String,
     /// State of current node
-    state: Arc<RwLock<State>>,
+    state: Arc<State>,
 }
 
 impl KvServer {
@@ -44,7 +43,7 @@ impl KvServer {
     pub(crate) fn new(
         kv_storage: Arc<KvStore>,
         auth_storage: Arc<AuthStore>,
-        state: Arc<RwLock<State>>,
+        state: Arc<State>,
         client: Arc<Client<Command>>,
         name: String,
     ) -> Self {
@@ -345,25 +344,7 @@ impl KvServer {
 
     /// Check if the current node is leader
     fn is_leader(&self) -> bool {
-        self.state.read().is_leader()
-    }
-
-    /// Wait leader until current node has a leader
-    async fn wait_leader(&self) -> Result<String, tonic::Status> {
-        let listener = {
-            let state = self.state.read();
-            if let Some(leader_addr) = state.leader_address() {
-                return Ok(leader_addr.to_owned());
-            }
-            state.leader_listener()
-        };
-
-        listener.await;
-        self.state
-            .read()
-            .leader_address()
-            .map(str::to_owned)
-            .ok_or_else(|| tonic::Status::internal("Get leader address error"))
+        self.state.is_leader()
     }
 }
 
@@ -381,7 +362,7 @@ impl Kv for KvServer {
         if range_req.serializable || self.is_leader() {
             self.serializable_range(request).await
         } else {
-            let leader_addr = self.wait_leader().await?;
+            let leader_addr = self.state.wait_leader().await?;
             let mut kv_client = KvClient::connect(format!("http://{leader_addr}"))
                 .await
                 .map_err(|e| tonic::Status::internal(format!("Connect to leader error: {e}")))?;
