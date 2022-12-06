@@ -23,6 +23,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info_span, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
+use crate::error::ExecuteError;
 use crate::log::LogEntry;
 use crate::message::TermNum;
 use crate::{
@@ -153,6 +154,35 @@ impl WaitSyncedResponse {
         Ok(Self {
             sync_result: Some(SyncResult::Error(bincode::serialize(err)?)),
         })
+    }
+
+    /// Create a new response from execution result and `after_sync` result
+    pub(crate) fn new_from_result<C: Command>(
+        er: Option<Result<C::ER, ExecuteError>>,
+        asr: Option<Result<C::ASR, ExecuteError>>,
+    ) -> bincode::Result<Self> {
+        match (er, asr) {
+            (None, Some(Err(err))) => {
+                WaitSyncedResponse::new_error(&format!("after sync error: {:?}", err))
+            }
+            (None, Some(Ok(asr))) => WaitSyncedResponse::new_success::<C>(&asr, &None),
+            (None, None) => WaitSyncedResponse::new_error("after sync error: no asr result"), // this is highly unlikely to happen,
+            (Some(Err(_)), Some(_)) => {
+                unreachable!("should not call after_sync when exe failed")
+            }
+            (Some(Err(err)), None) => {
+                WaitSyncedResponse::new_error(&format!("execution error: {:?}", err))
+            }
+            (Some(Ok(_er)), Some(Err(err))) => {
+                // FIXME: should er be returned?
+                WaitSyncedResponse::new_error(&format!("after sync error: {:?}", err))
+            }
+            (Some(Ok(er)), Some(Ok(asr))) => WaitSyncedResponse::new_success::<C>(&asr, &Some(er)),
+            (Some(Ok(_er)), None) => {
+                // FIXME: should er be returned?
+                WaitSyncedResponse::new_error("after sync error: no asr result")
+            }
+        }
     }
 
     /// Handle response based on the closures
