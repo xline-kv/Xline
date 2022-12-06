@@ -136,6 +136,12 @@ mod channel;
 /// Background tasks of Curp protocol
 mod bg_tasks;
 
+/// Command board is the buffer to store command execution result
+mod cmd_board;
+
+/// Command execute worker
+mod cmd_execute_worker;
+
 /// Protobuf generated types that are used in RPC
 mod rpc;
 
