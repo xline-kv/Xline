@@ -9,11 +9,11 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::index::IndexOperate;
 use super::{db::DB, index::Index, kvwatcher::KvWatcher};
+use crate::header_gen::HeaderGenerator;
 use crate::rpc::{
     Compare, CompareResult, CompareTarget, DeleteRangeRequest, DeleteRangeResponse, Event,
     EventType, KeyValue, PutRequest, PutResponse, RangeRequest, RangeResponse, RequestWithToken,
-    RequestWrapper, ResponseHeader, ResponseWrapper, SortOrder, SortTarget, TargetUnion,
-    TxnRequest, TxnResponse,
+    RequestWrapper, ResponseWrapper, SortOrder, SortTarget, TargetUnion, TxnRequest, TxnResponse,
 };
 use crate::server::command::{
     CommandResponse, ExecutionRequest, KeyRange, SyncRequest, SyncResponse,
@@ -45,7 +45,9 @@ pub(crate) struct KvStoreBackend {
     /// DB to store key value
     db: DB,
     /// Revision
-    revision: Mutex<i64>,
+    revision: Arc<Mutex<i64>>,
+    /// Header generator
+    header_gen: Arc<HeaderGenerator>,
     /// Speculative execution pool. Mapping from propose id to request
     sp_exec_pool: Mutex<HashMap<ProposeId, Vec<RequestWrapper>>>,
     /// KV update sender
@@ -55,24 +57,27 @@ pub(crate) struct KvStoreBackend {
 impl KvStore {
     /// New `KvStore`
     #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(header_gen: Arc<HeaderGenerator>) -> Self {
         let (exec_tx, mut exec_rx) = mpsc::channel(CHANNEL_SIZE);
         let (sync_tx, mut sync_rx) = mpsc::channel(CHANNEL_SIZE);
         let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
-        let inner = Arc::new(KvStoreBackend::new(kv_update_tx));
+        let inner = Arc::new(KvStoreBackend::new(kv_update_tx, header_gen));
         let kv_watcher = Arc::new(KvWatcher::new(Arc::clone(&inner), kv_update_rx));
-        let inner_clone = Arc::clone(&inner);
-        let _handle = tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    cmd_req = exec_rx.recv() => {
-                        if let Some(req) = cmd_req {
-                            inner.speculative_exec(req);
+
+        let _handle = tokio::spawn({
+            let inner = Arc::clone(&inner);
+            async move {
+                loop {
+                    tokio::select! {
+                        cmd_req = exec_rx.recv() => {
+                            if let Some(req) = cmd_req {
+                                inner.speculative_exec(req);
+                            }
                         }
-                    }
-                    sync_req = sync_rx.recv() => {
-                        if let Some(req) = sync_req {
-                            inner.sync_cmd(req).await;
+                        sync_req = sync_rx.recv() => {
+                            if let Some(req) = sync_req {
+                                inner.sync_cmd(req).await;
+                            }
                         }
                     }
                 }
@@ -80,7 +85,7 @@ impl KvStore {
         });
 
         Self {
-            inner: inner_clone,
+            inner,
             exec_tx,
             sync_tx,
             kv_watcher,
@@ -119,11 +124,15 @@ impl KvStore {
 
 impl KvStoreBackend {
     /// New `KvStoreBackend`
-    pub(crate) fn new(kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>) -> Self {
+    pub(crate) fn new(
+        kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
+        header_gen: Arc<HeaderGenerator>,
+    ) -> Self {
         Self {
             index: Index::new(),
             db: DB::new(),
-            revision: Mutex::new(1),
+            revision: header_gen.revision_arc(),
+            header_gen,
             sp_exec_pool: Mutex::new(HashMap::new()),
             kv_update_tx,
         }
@@ -232,10 +241,7 @@ impl KvStoreBackend {
         let mut kvs = self.get_range(key, range_end, req.revision);
         debug!("handle_range_request kvs {:?}", kvs);
         let mut response = RangeResponse {
-            header: Some(ResponseHeader {
-                revision: -1,
-                ..ResponseHeader::default()
-            }),
+            header: Some(self.header_gen.gen_header_without_revision()),
             count: kvs.len().cast(),
             ..RangeResponse::default()
         };
@@ -302,10 +308,7 @@ impl KvStoreBackend {
             ));
         }
         let mut response = PutResponse {
-            header: Some(ResponseHeader {
-                revision: -1,
-                ..ResponseHeader::default()
-            }),
+            header: Some(self.header_gen.gen_header_without_revision()),
             ..PutResponse::default()
         };
         if req.prev_kv {
@@ -316,17 +319,16 @@ impl KvStoreBackend {
 
     /// Handle `DeleteRangeRequest`
     fn handle_delete_range_request(&self, req: &DeleteRangeRequest) -> DeleteRangeResponse {
-        let mut response = DeleteRangeResponse::default();
         let prev_kvs = self.get_range(&req.key, &req.range_end, 0);
         debug!("handle_delete_range_request prev_kvs {:?}", prev_kvs);
+        let mut response = DeleteRangeResponse {
+            header: Some(self.header_gen.gen_header_without_revision()),
+            ..DeleteRangeResponse::default()
+        };
         response.deleted = prev_kvs.len().cast();
         if req.prev_kv {
             response.prev_kvs = prev_kvs;
         }
-        response.header = Some(ResponseHeader {
-            revision: -1,
-            ..ResponseHeader::default()
-        });
         response
     }
 
@@ -437,10 +439,7 @@ impl KvStoreBackend {
             responses.push(response.into());
         }
         Ok(TxnResponse {
-            header: Some(ResponseHeader {
-                revision: -1,
-                ..ResponseHeader::default()
-            }),
+            header: Some(self.header_gen.gen_header_without_revision()),
             succeeded: success,
             responses,
         })
@@ -472,7 +471,7 @@ impl KvStoreBackend {
 
     /// Sync a vec of requests
     fn sync_requests(&self, requests: Vec<RequestWrapper>) -> (i64, Option<Vec<Event>>) {
-        let revision = *self.revision.lock();
+        let revision = self.revision();
         let next_revision = revision.overflow_add(1);
         let mut sub_revision = 0;
         let mut modify = false;

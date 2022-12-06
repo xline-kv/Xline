@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, collections::HashMap, fmt};
+use std::{cmp::Ordering, collections::HashMap, fmt, sync::Arc};
 
 use anyhow::Result;
 use clippy_utilities::{Cast, OverflowArithmetic};
@@ -13,7 +13,10 @@ use pbkdf2::{
 };
 use prost::Message;
 
-use crate::storage::{db::DB, index::Index};
+use crate::{
+    header_gen::HeaderGenerator,
+    storage::{db::DB, index::Index},
+};
 use crate::{
     rpc::{
         AuthDisableRequest, AuthDisableResponse, AuthEnableRequest, AuthEnableResponse,
@@ -27,7 +30,7 @@ use crate::{
         AuthUserGrantRoleResponse, AuthUserListRequest, AuthUserListResponse,
         AuthUserRevokeRoleRequest, AuthUserRevokeRoleResponse, AuthenticateRequest,
         AuthenticateResponse, KeyValue, Permission, RequestWithToken, RequestWrapper,
-        ResponseHeader, ResponseWrapper, Role, Type, User,
+        ResponseWrapper, Role, Type, User,
     },
     storage::index::IndexOperate,
 };
@@ -65,6 +68,8 @@ pub(crate) struct AuthStoreBackend {
     permission_cache: RwLock<PermissionCache>,
     /// The manager of token
     token_manager: Option<JwtTokenManager>,
+    /// Header generator
+    header_gen: Arc<HeaderGenerator>,
 }
 
 impl fmt::Debug for AuthStoreBackend {
@@ -81,7 +86,10 @@ impl fmt::Debug for AuthStoreBackend {
 
 impl AuthStoreBackend {
     /// New `AuthStoreBackend`
-    pub(crate) fn new(key_pair: Option<(EncodingKey, DecodingKey)>) -> Self {
+    pub(crate) fn new(
+        key_pair: Option<(EncodingKey, DecodingKey)>,
+        header_gen: Arc<HeaderGenerator>,
+    ) -> Self {
         Self {
             index: Index::new(),
             db: DB::new(),
@@ -92,6 +100,7 @@ impl AuthStoreBackend {
                 JwtTokenManager::new(encoding_key, decoding_key)
             }),
             permission_cache: RwLock::new(PermissionCache::new()),
+            header_gen,
         }
     }
 
@@ -429,10 +438,7 @@ impl AuthStoreBackend {
     ) -> Result<AuthEnableResponse, ExecuteError> {
         debug!("handle_auth_enable");
         let res = Ok(AuthEnableResponse {
-            header: Some(ResponseHeader {
-                revision: -1,
-                ..ResponseHeader::default()
-            }),
+            header: Some(self.header_gen.gen_header_without_revision()),
         });
         if self.is_enabled() {
             debug!("auth is already enabled");
@@ -456,10 +462,7 @@ impl AuthStoreBackend {
             debug!("auth is already disabled");
         }
         AuthDisableResponse {
-            header: Some(ResponseHeader {
-                revision: -1,
-                ..ResponseHeader::default()
-            }),
+            header: Some(self.header_gen.gen_header_without_revision()),
         }
     }
 
@@ -467,10 +470,7 @@ impl AuthStoreBackend {
     fn handle_auth_status_request(&self, _req: &AuthStatusRequest) -> AuthStatusResponse {
         debug!("handle_auth_status");
         AuthStatusResponse {
-            header: Some(ResponseHeader {
-                revision: -1,
-                ..ResponseHeader::default()
-            }),
+            header: Some(self.header_gen.gen_header_without_revision()),
             auth_revision: self.revision().cast(),
             enabled: self.is_enabled(),
         }
@@ -489,10 +489,7 @@ impl AuthStoreBackend {
         }
         let token = self.assign(&req.name)?;
         Ok(AuthenticateResponse {
-            header: Some(ResponseHeader {
-                revision: -1,
-                ..ResponseHeader::default()
-            }),
+            header: Some(self.header_gen.gen_header_without_revision()),
             token,
         })
     }
@@ -509,10 +506,7 @@ impl AuthStoreBackend {
             ));
         }
         Ok(AuthUserAddResponse {
-            header: Some(ResponseHeader {
-                revision: -1,
-                ..ResponseHeader::default()
-            }),
+            header: Some(self.header_gen.gen_header_without_revision()),
         })
     }
 
@@ -524,10 +518,7 @@ impl AuthStoreBackend {
         debug!("handle_user_add_request");
         let user = self.get_user(&req.name)?;
         Ok(AuthUserGetResponse {
-            header: Some(ResponseHeader {
-                revision: -1,
-                ..ResponseHeader::default()
-            }),
+            header: Some(self.header_gen.gen_header_without_revision()),
             roles: user.roles,
         })
     }
@@ -541,10 +532,7 @@ impl AuthStoreBackend {
             .map(|u| String::from_utf8_lossy(&u.name).to_string())
             .collect();
         AuthUserListResponse {
-            header: Some(ResponseHeader {
-                revision: -1,
-                ..ResponseHeader::default()
-            }),
+            header: Some(self.header_gen.gen_header_without_revision()),
             users,
         }
     }
@@ -562,10 +550,7 @@ impl AuthStoreBackend {
         }
         let _user = self.get_user(&req.name)?;
         Ok(AuthUserDeleteResponse {
-            header: Some(ResponseHeader {
-                revision: -1,
-                ..ResponseHeader::default()
-            }),
+            header: Some(self.header_gen.gen_header_without_revision()),
         })
     }
 
@@ -583,10 +568,7 @@ impl AuthStoreBackend {
             ));
         }
         Ok(AuthUserChangePasswordResponse {
-            header: Some(ResponseHeader {
-                revision: -1,
-                ..ResponseHeader::default()
-            }),
+            header: Some(self.header_gen.gen_header_without_revision()),
         })
     }
 
@@ -601,10 +583,7 @@ impl AuthStoreBackend {
             let _role = self.get_role(&req.role)?;
         }
         Ok(AuthUserGrantRoleResponse {
-            header: Some(ResponseHeader {
-                revision: -1,
-                ..ResponseHeader::default()
-            }),
+            header: Some(self.header_gen.gen_header_without_revision()),
         })
     }
 
@@ -626,10 +605,7 @@ impl AuthStoreBackend {
             ));
         }
         Ok(AuthUserRevokeRoleResponse {
-            header: Some(ResponseHeader {
-                revision: -1,
-                ..ResponseHeader::default()
-            }),
+            header: Some(self.header_gen.gen_header_without_revision()),
         })
     }
 
@@ -645,10 +621,7 @@ impl AuthStoreBackend {
             ));
         }
         Ok(AuthRoleAddResponse {
-            header: Some(ResponseHeader {
-                revision: -1,
-                ..ResponseHeader::default()
-            }),
+            header: Some(self.header_gen.gen_header_without_revision()),
         })
     }
 
@@ -670,10 +643,7 @@ impl AuthStoreBackend {
             role.key_permission
         };
         Ok(AuthRoleGetResponse {
-            header: Some(ResponseHeader {
-                revision: -1,
-                ..ResponseHeader::default()
-            }),
+            header: Some(self.header_gen.gen_header_without_revision()),
             perm,
         })
     }
@@ -687,10 +657,7 @@ impl AuthStoreBackend {
             .map(|r| String::from_utf8_lossy(&r.name).to_string())
             .collect();
         AuthRoleListResponse {
-            header: Some(ResponseHeader {
-                revision: -1,
-                ..ResponseHeader::default()
-            }),
+            header: Some(self.header_gen.gen_header_without_revision()),
             roles,
         }
     }
@@ -708,10 +675,7 @@ impl AuthStoreBackend {
         }
         let _role = self.get_role(&req.role)?;
         Ok(AuthRoleDeleteResponse {
-            header: Some(ResponseHeader {
-                revision: -1,
-                ..ResponseHeader::default()
-            }),
+            header: Some(self.header_gen.gen_header_without_revision()),
         })
     }
 
@@ -723,10 +687,7 @@ impl AuthStoreBackend {
         debug!("handle_role_grant_permission_request");
         let _role = self.get_role(&req.name)?;
         Ok(AuthRoleGrantPermissionResponse {
-            header: Some(ResponseHeader {
-                revision: -1,
-                ..ResponseHeader::default()
-            }),
+            header: Some(self.header_gen.gen_header_without_revision()),
         })
     }
 
@@ -751,10 +712,7 @@ impl AuthStoreBackend {
             ));
         }
         Ok(AuthRoleRevokePermissionResponse {
-            header: Some(ResponseHeader {
-                revision: -1,
-                ..ResponseHeader::default()
-            }),
+            header: Some(self.header_gen.gen_header_without_revision()),
         })
     }
 
@@ -772,15 +730,16 @@ impl AuthStoreBackend {
                     propose_id
                 );
             });
-        let revision = self.sync_request(requests);
+        self.sync_request(requests);
+        let kv_revision = self.header_gen.revision();
         assert!(
-            res_sender.send(SyncResponse::new(revision)).is_ok(),
+            res_sender.send(SyncResponse::new(kv_revision)).is_ok(),
             "Failed to send response"
         );
     }
 
     /// Sync `RequestWrapper`
-    fn sync_request(&self, wrapper: RequestWithToken) -> i64 {
+    fn sync_request(&self, wrapper: RequestWithToken) {
         let revision = *self.revision.lock();
         let next_revision = revision.overflow_add(1);
         #[allow(clippy::wildcard_enum_match_arm)]
@@ -859,9 +818,6 @@ impl AuthStoreBackend {
         };
         if modify {
             *self.revision.lock() = next_revision;
-            next_revision
-        } else {
-            revision
         }
     }
 
