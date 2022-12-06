@@ -183,10 +183,10 @@ impl Auth for AuthServer {
                 .propose(tonic::Request::new(authenticate_req), false)
                 .await?;
 
-            if let Some(sync_res) = sync_res {
-                let revision = sync_res.revision();
-                debug!("Get revision {:?} for AuthDisableResponse", revision);
-                if revision == checked_revision {
+            if checked_revision == self.storage.revision() {
+                if let Some(sync_res) = sync_res {
+                    let revision = sync_res.revision();
+                    debug!("Get revision {:?} for AuthDisableResponse", revision);
                     let mut res: AuthenticateResponse = res.decode().into();
                     if let Some(mut header) = res.header.as_mut() {
                         header.revision = revision;

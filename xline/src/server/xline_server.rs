@@ -16,6 +16,7 @@ use super::{
     watch_server::WatchServer,
 };
 use crate::{
+    header_gen::HeaderGenerator,
     rpc::{
         AuthServer as RpcAuthServer, KvServer as RpcKvServer, LeaseServer as RpcLeaseServer,
         LockServer as RpcLockServer, WatchServer as RpcWatchServer,
@@ -49,6 +50,8 @@ pub struct XlineServer {
     leader_index: usize,
     /// Address of self node
     self_addr: SocketAddr,
+    /// Header generator
+    header_gen: Arc<HeaderGenerator>,
 }
 
 impl XlineServer {
@@ -66,8 +69,9 @@ impl XlineServer {
         self_addr: SocketAddr,
         key_pair: Option<(EncodingKey, DecodingKey)>,
     ) -> Self {
-        let kv_storage = Arc::new(KvStore::new());
-        let auth_storage = Arc::new(AuthStore::new(key_pair));
+        let header_gen = Arc::new(HeaderGenerator::new(0, 0));
+        let kv_storage = Arc::new(KvStore::new(Arc::clone(&header_gen)));
+        let auth_storage = Arc::new(AuthStore::new(key_pair, Arc::clone(&header_gen)));
 
         let mut all_members = peers.clone();
         all_members.push(self_addr);
@@ -88,6 +92,7 @@ impl XlineServer {
             is_leader,
             leader_index,
             self_addr,
+            header_gen,
         }
     }
 

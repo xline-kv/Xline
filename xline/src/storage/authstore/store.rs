@@ -5,6 +5,7 @@ use curp::{cmd::ProposeId, error::ExecuteError};
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use tokio::sync::{mpsc, oneshot};
 
+use crate::header_gen::HeaderGenerator;
 use crate::rpc::{
     DeleteRangeRequest, PutRequest, RangeRequest, Request, RequestWithToken, RequestWrapper,
     TxnRequest, Type,
@@ -35,10 +36,13 @@ pub(crate) struct AuthStore {
 impl AuthStore {
     /// New `AuthStore`
     #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
-    pub(crate) fn new(key_pair: Option<(EncodingKey, DecodingKey)>) -> Self {
+    pub(crate) fn new(
+        key_pair: Option<(EncodingKey, DecodingKey)>,
+        header_gen: Arc<HeaderGenerator>,
+    ) -> Self {
         let (exec_tx, mut exec_rx) = mpsc::channel(CHANNEL_SIZE);
         let (sync_tx, mut sync_rx) = mpsc::channel(CHANNEL_SIZE);
-        let inner = Arc::new(AuthStoreBackend::new(key_pair));
+        let inner = Arc::new(AuthStoreBackend::new(key_pair, header_gen));
 
         let inner_clone = Arc::clone(&inner);
         let _handle = tokio::spawn(async move {
@@ -89,6 +93,11 @@ impl AuthStore {
         receiver
     }
 
+    /// Auth revision
+    pub(crate) fn revision(&self) -> i64 {
+        self.inner.revision()
+    }
+
     /// Check password
     pub(crate) fn check_password(
         &self,
@@ -114,7 +123,7 @@ impl AuthStore {
                 ))
             }
         };
-        if claims.revision < self.inner.revision() {
+        if claims.revision < self.revision() {
             return Err(ExecuteError::InvalidCommand(
                 "request's revision is older than current revision".to_owned(),
             ));
@@ -293,7 +302,8 @@ mod test {
     #[tokio::test]
     async fn test_permisiion_cache() -> Result<(), Box<dyn Error>> {
         let key_pair = test_key_pair();
-        let store = AuthStore::new(key_pair);
+        let header_gen = Arc::new(HeaderGenerator::new(0, 0));
+        let store = AuthStore::new(key_pair, header_gen);
 
         for test in testcases() {
             let (_, _) = send_req(&store, test.0).await?;

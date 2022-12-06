@@ -113,12 +113,13 @@
 
 /// Xline client
 pub mod client;
+/// Header generator
+mod header_gen;
 /// rpc definition module
 mod rpc;
 /// Xline server
 pub mod server;
 /// Storage module
 mod storage;
-
 /// The util lib
 mod utils;
