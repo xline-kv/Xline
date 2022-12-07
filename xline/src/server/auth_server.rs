@@ -21,10 +21,9 @@ use crate::{
         AuthUserGetRequest, AuthUserGetResponse, AuthUserGrantRoleRequest,
         AuthUserGrantRoleResponse, AuthUserListRequest, AuthUserListResponse,
         AuthUserRevokeRoleRequest, AuthUserRevokeRoleResponse, AuthenticateRequest,
-        AuthenticateResponse, RequestWithToken, RequestWrapper,
+        AuthenticateResponse, RequestWithToken, RequestWrapper, ResponseWrapper,
     },
     storage::AuthStore,
-    update_revision,
 };
 
 use super::command::{Command, CommandResponse, SyncResponse};
@@ -124,6 +123,24 @@ impl AuthServer {
             .check_password(username, password)
             .map_err(|e| tonic::Status::invalid_argument(format!("Auth failed, error: {e}")))
     }
+
+    /// Propose request and make a response
+    async fn handle_req<Req, Res>(
+        &self,
+        request: tonic::Request<Req>,
+        use_fast_path: bool,
+    ) -> Result<tonic::Response<Res>, tonic::Status>
+    where
+        Req: Into<RequestWrapper>,
+        Res: From<ResponseWrapper>,
+    {
+        let (cmd_res, sync_res) = self.propose(request, use_fast_path).await?;
+        let mut res_wrapper = cmd_res.decode();
+        if let Some(sync_res) = sync_res {
+            res_wrapper.update_revision(sync_res.revision());
+        }
+        Ok(tonic::Response::new(res_wrapper.into()))
+    }
 }
 
 #[tonic::async_trait]
@@ -133,12 +150,7 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthEnableRequest>,
     ) -> Result<tonic::Response<AuthEnableResponse>, tonic::Status> {
         debug!("Receive AuthEnableRequest {:?}", request);
-
-        let (res, sync_res) = self.propose(request, false).await?;
-
-        let mut res: AuthEnableResponse = res.decode().into();
-        update_revision!(res, sync_res);
-        Ok(tonic::Response::new(res))
+        self.handle_req(request, false).await
     }
 
     async fn auth_disable(
@@ -146,12 +158,7 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthDisableRequest>,
     ) -> Result<tonic::Response<AuthDisableResponse>, tonic::Status> {
         debug!("Receive AuthDisableRequest {:?}", request);
-
-        let (res, sync_res) = self.propose(request, false).await?;
-
-        let mut res: AuthDisableResponse = res.decode().into();
-        update_revision!(res, sync_res);
-        Ok(tonic::Response::new(res))
+        self.handle_req(request, false).await
     }
 
     async fn auth_status(
@@ -159,13 +166,8 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthStatusRequest>,
     ) -> Result<tonic::Response<AuthStatusResponse>, tonic::Status> {
         debug!("Receive AuthStatusRequest {:?}", request);
-
         let is_fast_path = true;
-        let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
-
-        let mut res: AuthStatusResponse = cmd_res.decode().into();
-        update_revision!(res, sync_res);
-        Ok(tonic::Response::new(res))
+        self.handle_req(request, is_fast_path).await
     }
 
     async fn authenticate(
@@ -218,12 +220,7 @@ impl Auth for AuthServer {
         let hashed_password = Self::hash_password(user_add_req.password.as_bytes());
         user_add_req.hashed_password = hashed_password;
         user_add_req.password = "".to_owned();
-
-        let (res, sync_res) = self.propose(request, false).await?;
-
-        let mut res: AuthUserAddResponse = res.decode().into();
-        update_revision!(res, sync_res);
-        Ok(tonic::Response::new(res))
+        self.handle_req(request, false).await
     }
 
     async fn user_get(
@@ -231,13 +228,8 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthUserGetRequest>,
     ) -> Result<tonic::Response<AuthUserGetResponse>, tonic::Status> {
         debug!("Receive AuthUserGetRequest {:?}", request);
-
         let is_fast_path = true;
-        let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
-
-        let mut res: AuthUserGetResponse = cmd_res.decode().into();
-        update_revision!(res, sync_res);
-        Ok(tonic::Response::new(res))
+        self.handle_req(request, is_fast_path).await
     }
 
     async fn user_list(
@@ -245,13 +237,8 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthUserListRequest>,
     ) -> Result<tonic::Response<AuthUserListResponse>, tonic::Status> {
         debug!("Receive AuthUserListRequest {:?}", request);
-
         let is_fast_path = true;
-        let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
-
-        let mut res: AuthUserListResponse = cmd_res.decode().into();
-        update_revision!(res, sync_res);
-        Ok(tonic::Response::new(res))
+        self.handle_req(request, is_fast_path).await
     }
 
     async fn user_delete(
@@ -259,12 +246,7 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthUserDeleteRequest>,
     ) -> Result<tonic::Response<AuthUserDeleteResponse>, tonic::Status> {
         debug!("Receive AuthUserDeleteRequest {:?}", request);
-
-        let (res, sync_res) = self.propose(request, false).await?;
-
-        let mut res: AuthUserDeleteResponse = res.decode().into();
-        update_revision!(res, sync_res);
-        Ok(tonic::Response::new(res))
+        self.handle_req(request, false).await
     }
 
     async fn user_change_password(
@@ -276,12 +258,7 @@ impl Auth for AuthServer {
         let hashed_password = Self::hash_password(user_change_password_req.password.as_bytes());
         user_change_password_req.hashed_password = hashed_password;
         user_change_password_req.password = "".to_owned();
-
-        let (res, sync_res) = self.propose(request, false).await?;
-
-        let mut res: AuthUserChangePasswordResponse = res.decode().into();
-        update_revision!(res, sync_res);
-        Ok(tonic::Response::new(res))
+        self.handle_req(request, false).await
     }
 
     async fn user_grant_role(
@@ -289,12 +266,7 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthUserGrantRoleRequest>,
     ) -> Result<tonic::Response<AuthUserGrantRoleResponse>, tonic::Status> {
         debug!("Receive AuthUserGrantRoleRequest {:?}", request);
-
-        let (res, sync_res) = self.propose(request, false).await?;
-
-        let mut res: AuthUserGrantRoleResponse = res.decode().into();
-        update_revision!(res, sync_res);
-        Ok(tonic::Response::new(res))
+        self.handle_req(request, false).await
     }
 
     async fn user_revoke_role(
@@ -302,12 +274,7 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthUserRevokeRoleRequest>,
     ) -> Result<tonic::Response<AuthUserRevokeRoleResponse>, tonic::Status> {
         debug!("Receive AuthUserRevokeRoleRequest {:?}", request);
-
-        let (res, sync_res) = self.propose(request, false).await?;
-
-        let mut res: AuthUserRevokeRoleResponse = res.decode().into();
-        update_revision!(res, sync_res);
-        Ok(tonic::Response::new(res))
+        self.handle_req(request, false).await
     }
 
     async fn role_add(
@@ -318,12 +285,7 @@ impl Auth for AuthServer {
         if request.get_ref().name.is_empty() {
             return Err(tonic::Status::invalid_argument("Role name is empty"));
         }
-
-        let (res, sync_res) = self.propose(request, false).await?;
-
-        let mut res: AuthRoleAddResponse = res.decode().into();
-        update_revision!(res, sync_res);
-        Ok(tonic::Response::new(res))
+        self.handle_req(request, false).await
     }
 
     async fn role_get(
@@ -331,13 +293,8 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthRoleGetRequest>,
     ) -> Result<tonic::Response<AuthRoleGetResponse>, tonic::Status> {
         debug!("Receive AuthRoleGetRequest {:?}", request);
-
         let is_fast_path = true;
-        let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
-
-        let mut res: AuthRoleGetResponse = cmd_res.decode().into();
-        update_revision!(res, sync_res);
-        Ok(tonic::Response::new(res))
+        self.handle_req(request, is_fast_path).await
     }
 
     async fn role_list(
@@ -345,13 +302,8 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthRoleListRequest>,
     ) -> Result<tonic::Response<AuthRoleListResponse>, tonic::Status> {
         debug!("Receive AuthRoleListRequest {:?}", request);
-
         let is_fast_path = true;
-        let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
-
-        let mut res: AuthRoleListResponse = cmd_res.decode().into();
-        update_revision!(res, sync_res);
-        Ok(tonic::Response::new(res))
+        self.handle_req(request, is_fast_path).await
     }
 
     async fn role_delete(
@@ -359,12 +311,7 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthRoleDeleteRequest>,
     ) -> Result<tonic::Response<AuthRoleDeleteResponse>, tonic::Status> {
         debug!("Receive AuthRoleDeleteRequest {:?}", request);
-
-        let (res, sync_res) = self.propose(request, false).await?;
-
-        let mut res: AuthRoleDeleteResponse = res.decode().into();
-        update_revision!(res, sync_res);
-        Ok(tonic::Response::new(res))
+        self.handle_req(request, false).await
     }
 
     async fn role_grant_permission(
@@ -375,12 +322,7 @@ impl Auth for AuthServer {
         if request.get_ref().perm.is_none() {
             return Err(tonic::Status::invalid_argument("Permission not given"));
         }
-
-        let (res, sync_res) = self.propose(request, false).await?;
-
-        let mut res: AuthRoleGrantPermissionResponse = res.decode().into();
-        update_revision!(res, sync_res);
-        Ok(tonic::Response::new(res))
+        self.handle_req(request, false).await
     }
 
     async fn role_revoke_permission(
@@ -388,11 +330,6 @@ impl Auth for AuthServer {
         request: tonic::Request<AuthRoleRevokePermissionRequest>,
     ) -> Result<tonic::Response<AuthRoleRevokePermissionResponse>, tonic::Status> {
         debug!("Receive AuthRoleRevokePermissionRequest {:?}", request);
-
-        let (res, sync_res) = self.propose(request, false).await?;
-
-        let mut res: AuthRoleRevokePermissionResponse = res.decode().into();
-        update_revision!(res, sync_res);
-        Ok(tonic::Response::new(res))
+        self.handle_req(request, false).await
     }
 }

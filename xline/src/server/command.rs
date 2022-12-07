@@ -132,6 +132,7 @@ impl KeyRange {
     }
 
     /// Get end of range with prefix
+    /// User will provide a start key when prefix is true, we need calculate the end key of `KeyRange`
     #[allow(clippy::indexing_slicing)] // end[i] is always valid
     pub(crate) fn get_prefix(key: &[u8]) -> Vec<u8> {
         let mut end = key.to_vec();
@@ -228,12 +229,15 @@ impl ConflictCheck for Command {
     fn is_conflict(&self, other: &Self) -> bool {
         let this_req = &self.request.request;
         let other_req = &other.request.request;
+        // auth read request will not conflict with any request except the auth write request
         if (this_req.is_auth_read_request() && other_req.is_auth_read_request())
             || (this_req.is_kv_request() && other_req.is_auth_read_request())
             || (this_req.is_auth_read_request() && other_req.is_kv_request())
         {
             return false;
         }
+        // any two requests that don't meet the above conditions will conflict with each other
+        // because the auth write request will make all previous token invalid
         if (this_req.backend() == RequestBackend::Auth)
             || (other_req.backend() == RequestBackend::Auth)
         {

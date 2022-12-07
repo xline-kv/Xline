@@ -126,7 +126,7 @@ async fn test_kv_authorization() -> Result<(), Box<dyn Error>> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
-async fn test_rold_delete() -> Result<(), Box<dyn Error>> {
+async fn test_role_delete() -> Result<(), Box<dyn Error>> {
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;
     let client = cluster.client().await;

@@ -222,6 +222,39 @@ pub(crate) enum ResponseWrapper {
     AuthenticateResponse(AuthenticateResponse),
 }
 
+impl ResponseWrapper {
+    /// Update response revision
+    pub(crate) fn update_revision(&mut self, revision: i64) {
+        let header = match *self {
+            ResponseWrapper::RangeResponse(ref mut resp) => &mut resp.header,
+            ResponseWrapper::PutResponse(ref mut resp) => &mut resp.header,
+            ResponseWrapper::DeleteRangeResponse(ref mut resp) => &mut resp.header,
+            ResponseWrapper::TxnResponse(ref mut resp) => &mut resp.header,
+            ResponseWrapper::CompactionResponse(ref mut resp) => &mut resp.header,
+            ResponseWrapper::AuthEnableResponse(ref mut resp) => &mut resp.header,
+            ResponseWrapper::AuthDisableResponse(ref mut resp) => &mut resp.header,
+            ResponseWrapper::AuthStatusResponse(ref mut resp) => &mut resp.header,
+            ResponseWrapper::AuthRoleAddResponse(ref mut resp) => &mut resp.header,
+            ResponseWrapper::AuthRoleDeleteResponse(ref mut resp) => &mut resp.header,
+            ResponseWrapper::AuthRoleGetResponse(ref mut resp) => &mut resp.header,
+            ResponseWrapper::AuthRoleGrantPermissionResponse(ref mut resp) => &mut resp.header,
+            ResponseWrapper::AuthRoleListResponse(ref mut resp) => &mut resp.header,
+            ResponseWrapper::AuthRoleRevokePermissionResponse(ref mut resp) => &mut resp.header,
+            ResponseWrapper::AuthUserAddResponse(ref mut resp) => &mut resp.header,
+            ResponseWrapper::AuthUserChangePasswordResponse(ref mut resp) => &mut resp.header,
+            ResponseWrapper::AuthUserDeleteResponse(ref mut resp) => &mut resp.header,
+            ResponseWrapper::AuthUserGetResponse(ref mut resp) => &mut resp.header,
+            ResponseWrapper::AuthUserGrantRoleResponse(ref mut resp) => &mut resp.header,
+            ResponseWrapper::AuthUserListResponse(ref mut resp) => &mut resp.header,
+            ResponseWrapper::AuthUserRevokeRoleResponse(ref mut resp) => &mut resp.header,
+            ResponseWrapper::AuthenticateResponse(ref mut resp) => &mut resp.header,
+        };
+        if let Some(ref mut header) = *header {
+            header.revision = revision;
+        }
+    }
+}
+
 /// Backend store of request
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum RequestBackend {
