@@ -3,7 +3,8 @@ use std::{collections::HashMap, future::Future, net::SocketAddr, sync::Arc};
 use anyhow::Result;
 use curp::{client::Client, server::Rpc, ProtocolServer};
 use jsonwebtoken::{DecodingKey, EncodingKey};
-use tokio::net::TcpListener;
+use parking_lot::Mutex;
+use tokio::{net::TcpListener, sync::mpsc};
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
 
@@ -21,8 +22,11 @@ use crate::{
         AuthServer as RpcAuthServer, KvServer as RpcKvServer, LeaseServer as RpcLeaseServer,
         LockServer as RpcLockServer, WatchServer as RpcWatchServer,
     },
-    storage::{authstore::AuthStore, KvStore},
+    storage::{AuthStore, KvStore, LeaseStore},
 };
+
+/// Default channel size
+const CHANNEL_SIZE: usize = 128;
 
 /// Rpc Server of curp protocol
 type CurpServer = Rpc<Command>;
@@ -39,13 +43,15 @@ pub struct XlineServer {
     kv_storage: Arc<KvStore>,
     /// Auth storage
     auth_storage: Arc<AuthStore>,
+    /// Lease storage
+    lease_storage: Arc<LeaseStore>,
     /// Consensus Server
     //node: Arc<DefaultServer<Command, CommandExecutor>>,
     /// Consensus client
     client: Arc<Client<Command>>,
     /// If current node is leader when it starts
     /// TODO: remove this when leader selection is supported
-    is_leader: bool,
+    is_leader: Arc<Mutex<bool>>,
     /// Address of self node
     self_addr: SocketAddr,
     /// Header generator
@@ -66,9 +72,26 @@ impl XlineServer {
         self_addr: SocketAddr,
         key_pair: Option<(EncodingKey, DecodingKey)>,
     ) -> Self {
+        // TODO: temporary solution, need real cluster id and member id
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
-        let kv_storage = Arc::new(KvStore::new(Arc::clone(&header_gen)));
-        let auth_storage = Arc::new(AuthStore::new(key_pair, Arc::clone(&header_gen)));
+        // TODO: need to change by curp
+        let is_leader = Arc::new(Mutex::new(is_leader));
+        let (del_tx, del_rx) = mpsc::channel(CHANNEL_SIZE);
+        let lease_storage = Arc::new(LeaseStore::new(
+            del_tx,
+            Arc::clone(&is_leader),
+            Arc::clone(&header_gen),
+        ));
+        let kv_storage = Arc::new(KvStore::new(
+            Arc::clone(&lease_storage),
+            del_rx,
+            Arc::clone(&header_gen),
+        ));
+        let auth_storage = Arc::new(AuthStore::new(
+            Arc::clone(&lease_storage),
+            key_pair,
+            Arc::clone(&header_gen),
+        ));
 
         let mut all_members: HashMap<_, _> = peers
             .iter()
@@ -83,6 +106,7 @@ impl XlineServer {
             peers,
             kv_storage,
             auth_storage,
+            lease_storage,
             client,
             is_leader,
             self_addr,
@@ -102,7 +126,7 @@ impl XlineServer {
         Ok(Server::builder()
             .add_service(RpcLockServer::new(lock_server))
             .add_service(RpcKvServer::new(kv_server))
-            .add_service(RpcLeaseServer::new(lease_server))
+            .add_service(RpcLeaseServer::from_arc(lease_server))
             .add_service(RpcAuthServer::new(auth_server))
             .add_service(RpcWatchServer::new(watch_server))
             .add_service(ProtocolServer::new(curp_server))
@@ -129,7 +153,7 @@ impl XlineServer {
         Ok(Server::builder()
             .add_service(RpcLockServer::new(lock_server))
             .add_service(RpcKvServer::new(kv_server))
-            .add_service(RpcLeaseServer::new(lease_server))
+            .add_service(RpcLeaseServer::from_arc(lease_server))
             .add_service(RpcAuthServer::new(auth_server))
             .add_service(RpcWatchServer::new(watch_server))
             .add_service(ProtocolServer::new(curp_server))
@@ -144,7 +168,7 @@ impl XlineServer {
     ) -> (
         KvServer,
         LockServer,
-        LeaseServer,
+        Arc<LeaseServer>,
         AuthServer,
         WatchServer,
         CurpServer,
@@ -161,9 +185,10 @@ impl XlineServer {
                 self.name.clone(),
             ),
             LeaseServer::new(
-                Arc::clone(&self.kv_storage),
+                Arc::clone(&self.lease_storage),
                 Arc::clone(&self.client),
                 self.name.clone(),
+                Arc::clone(&self.is_leader),
             ),
             AuthServer::new(
                 Arc::clone(&self.auth_storage),
@@ -173,12 +198,16 @@ impl XlineServer {
             WatchServer::new(self.kv_storage.kv_watcher()),
             CurpServer::new(
                 self.self_addr.to_string(),
-                self.is_leader,
+                *self.is_leader.lock(),
                 self.peers
                     .iter()
                     .map(|peer| (peer.to_string(), peer.to_string()))
                     .collect(),
-                CommandExecutor::new(Arc::clone(&self.kv_storage), Arc::clone(&self.auth_storage)),
+                CommandExecutor::new(
+                    Arc::clone(&self.kv_storage),
+                    Arc::clone(&self.auth_storage),
+                    Arc::clone(&self.lease_storage),
+                ),
             ),
         )
     }

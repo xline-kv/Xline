@@ -186,10 +186,6 @@ impl KvServer {
 
     /// Validate put request before handle
     fn check_put_request(req: &PutRequest) -> Result<(), tonic::Status> {
-        if req.lease != 0 {
-            return Err(tonic::Status::unimplemented("lease is unimplemented"));
-        }
-        // TODO: Remove the above errors after implementation
         if req.key.is_empty() {
             return Err(tonic::Status::invalid_argument("key is not provided"));
         }

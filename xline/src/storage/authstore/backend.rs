@@ -17,7 +17,7 @@ use prost::Message;
 use crate::{
     header_gen::HeaderGenerator,
     server::command::KeyRange,
-    storage::{db::DB, index::Index, req_ctx::RequestCtx},
+    storage::{db::DB, index::Index, leasestore::Lease, req_ctx::RequestCtx, LeaseStore},
 };
 use crate::{
     rpc::{
@@ -66,6 +66,8 @@ pub(crate) struct AuthStoreBackend {
     permission_cache: RwLock<PermissionCache>,
     /// The manager of token
     token_manager: Option<JwtTokenManager>,
+    /// Lease store
+    lease_storage: Arc<LeaseStore>,
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
 }
@@ -78,6 +80,9 @@ impl fmt::Debug for AuthStoreBackend {
             .field("revision", &self.revision)
             .field("sp_exec_pool", &self.sp_exec_pool)
             .field("enabled", &self.enabled)
+            .field("permission_cache", &self.permission_cache)
+            .field("lease_storage", &self.lease_storage)
+            .field("header_gen", &self.header_gen)
             .finish()
     }
 }
@@ -85,6 +90,7 @@ impl fmt::Debug for AuthStoreBackend {
 impl AuthStoreBackend {
     /// New `AuthStoreBackend`
     pub(crate) fn new(
+        lease_storage: Arc<LeaseStore>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
         header_gen: Arc<HeaderGenerator>,
     ) -> Self {
@@ -98,8 +104,14 @@ impl AuthStoreBackend {
                 JwtTokenManager::new(encoding_key, decoding_key)
             }),
             permission_cache: RwLock::new(PermissionCache::new()),
+            lease_storage,
             header_gen,
         }
+    }
+
+    /// Get Lease by lease id
+    pub(crate) fn get_lease(&self, lease_id: i64) -> Option<Lease> {
+        self.lease_storage.look_up(lease_id)
     }
 
     /// Get revision of Auth store

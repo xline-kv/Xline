@@ -8,11 +8,11 @@ use super::backend::ROOT_ROLE;
 use crate::{
     header_gen::HeaderGenerator,
     rpc::{
-        DeleteRangeRequest, PutRequest, RangeRequest, Request, RequestWithToken, RequestWrapper,
-        TxnRequest, Type,
+        DeleteRangeRequest, LeaseRevokeRequest, PutRequest, RangeRequest, Request,
+        RequestWithToken, RequestWrapper, TxnRequest, Type,
     },
     server::command::{CommandResponse, KeyRange, SyncResponse},
-    storage::authstore::backend::AuthStoreBackend,
+    storage::{authstore::backend::AuthStoreBackend, LeaseStore},
 };
 
 /// Auth store
@@ -27,11 +27,12 @@ impl AuthStore {
     /// New `AuthStore`
     #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
     pub(crate) fn new(
+        lease_storage: Arc<LeaseStore>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
         header_gen: Arc<HeaderGenerator>,
     ) -> Self {
         Self {
-            inner: Arc::new(AuthStoreBackend::new(key_pair, header_gen)),
+            inner: Arc::new(AuthStoreBackend::new(lease_storage, key_pair, header_gen)),
         }
     }
 
@@ -50,6 +51,7 @@ impl AuthStore {
     pub(crate) fn after_sync(&self, id: &ProposeId) -> SyncResponse {
         SyncResponse::new(self.inner.sync_request(id))
     }
+
     /// Auth revision
     pub(crate) fn revision(&self) -> i64 {
         self.inner.revision()
@@ -75,9 +77,10 @@ impl AuthStore {
         let claims = match wrapper.token {
             Some(ref token) => self.inner.verify_token(token)?,
             None => {
+                // TODO: some requests are allowed without token when auth is enabled
                 return Err(ExecuteError::InvalidCommand(
                     "token is not provided".to_owned(),
-                ))
+                ));
             }
         };
         if claims.revision < self.revision() {
@@ -99,6 +102,9 @@ impl AuthStore {
             }
             RequestWrapper::TxnRequest(ref txn_req) => {
                 self.check_txn_permission(&username, txn_req)?;
+            }
+            RequestWrapper::LeaseRevokeRequest(ref lease_revoke_req) => {
+                self.check_lease_revoke_permission(&username, lease_revoke_req)?;
             }
             RequestWrapper::AuthUserGetRequest(ref user_get_req) => {
                 self.check_admin_permission(&username).map_or_else(
@@ -147,6 +153,7 @@ impl AuthStore {
         if req.prev_kv {
             self.check_op_permission(username, &req.key, &[], Type::Read)?;
         }
+        self.check_lease(username, req.lease)?;
         self.check_op_permission(username, &req.key, &[], Type::Write)
     }
 
@@ -182,6 +189,27 @@ impl AuthStore {
                     self.check_txn_permission(username, txn_req)?;
                 }
                 None => unreachable!("txn operation should have request"),
+            }
+        }
+        Ok(())
+    }
+
+    /// check if lease revoke request is permitted
+    fn check_lease_revoke_permission(
+        &self,
+        username: &str,
+        req: &LeaseRevokeRequest,
+    ) -> Result<(), ExecuteError> {
+        self.check_lease(username, req.id)
+    }
+
+    /// check if user can revoke lease
+    fn check_lease(&self, username: &str, lease_id: i64) -> Result<(), ExecuteError> {
+        let lease = self.inner.get_lease(lease_id);
+        if let Some(lease) = lease {
+            let keys = lease.keys();
+            for key in keys {
+                self.check_op_permission(username, &key, &[], Type::Write)?;
             }
         }
         Ok(())
@@ -244,6 +272,8 @@ impl AuthStore {
 #[cfg(test)]
 mod test {
     use std::{collections::HashMap, error::Error};
+
+    use parking_lot::Mutex;
 
     use super::*;
     use crate::{
@@ -348,7 +378,10 @@ mod test {
     fn init_auth_store() -> AuthStore {
         let key_pair = test_key_pair();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
-        let store = AuthStore::new(key_pair, header_gen);
+        let (tx, _) = tokio::sync::mpsc::channel(1);
+        let is_leader = Arc::new(Mutex::new(true));
+        let ls = Arc::new(LeaseStore::new(tx, is_leader, Arc::clone(&header_gen)));
+        let store = AuthStore::new(ls, key_pair, header_gen);
 
         let req1 = RequestWithToken::new(
             AuthRoleAddRequest {

@@ -29,7 +29,6 @@ impl HeaderGenerator {
     }
 
     /// Generate `ResponseHeader`
-    #[allow(dead_code)] // Will be used in the future
     pub(crate) fn gen_header(&self) -> ResponseHeader {
         ResponseHeader {
             cluster_id: self.cluster_id,
