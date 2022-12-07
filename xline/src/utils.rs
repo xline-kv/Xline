@@ -30,16 +30,3 @@ impl<T, R> RwLockMap<T, R> for RwLock<T> {
         f(write_guard)
     }
 }
-
-/// update revision of response
-#[macro_export]
-macro_rules! update_revision {
-    ($res:expr, $sync_res:expr) => {
-        if let Some(sync_res) = $sync_res {
-            let revision = sync_res.revision();
-            if let Some(mut header) = $res.header.as_mut() {
-                header.revision = revision;
-            }
-        }
-    };
-}

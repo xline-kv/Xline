@@ -300,146 +300,156 @@ mod test {
     use super::*;
 
     #[tokio::test]
-    async fn test_permisiion_cache() -> Result<(), Box<dyn Error>> {
+    async fn test_role_grant_permission() -> Result<(), Box<dyn Error>> {
+        let store = init_auth_store().await;
+        let req = RequestWithToken::new(
+            AuthRoleGrantPermissionRequest {
+                name: "r".to_owned(),
+                perm: Some(Permission {
+                    #[allow(clippy::as_conversions)] // This cast is always valid
+                    perm_type: Type::Write as i32,
+                    key: "fop".into(),
+                    range_end: "foz".into(),
+                }),
+            }
+            .into(),
+        );
+        assert!(send_req(&store, req).await.is_ok());
+        assert_eq!(
+            store.inner.permission_cache(),
+            PermissionCache {
+                user_permissions: HashMap::from([(
+                    "u".to_owned(),
+                    UserPermissions {
+                        read: vec![KeyRange::new("foo", "")],
+                        write: vec![KeyRange::new("foo", ""), KeyRange::new("fop", "foz")],
+                    },
+                )]),
+                role_to_users_map: HashMap::from([("r".to_owned(), vec!["u".to_owned()])]),
+            },
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_role_revoke_permission() -> Result<(), Box<dyn Error>> {
+        let store = init_auth_store().await;
+        let req = RequestWithToken::new(
+            AuthRoleRevokePermissionRequest {
+                role: "r".to_owned(),
+                key: "foo".into(),
+                range_end: "".into(),
+            }
+            .into(),
+        );
+        assert!(send_req(&store, req).await.is_ok());
+        assert_eq!(
+            store.inner.permission_cache(),
+            PermissionCache {
+                user_permissions: HashMap::from([("u".to_owned(), UserPermissions::new())]),
+                role_to_users_map: HashMap::from([("r".to_owned(), vec!["u".to_owned()])]),
+            },
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_role_delete() -> Result<(), Box<dyn Error>> {
+        let store = init_auth_store().await;
+        let req = RequestWithToken::new(
+            AuthRoleDeleteRequest {
+                role: "r".to_owned(),
+            }
+            .into(),
+        );
+        assert!(send_req(&store, req).await.is_ok());
+        assert_eq!(
+            store.inner.permission_cache(),
+            PermissionCache {
+                user_permissions: HashMap::from([("u".to_owned(), UserPermissions::new(),)]),
+                role_to_users_map: HashMap::new(),
+            },
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_user_delete() -> Result<(), Box<dyn Error>> {
+        let store = init_auth_store().await;
+        let req = RequestWithToken::new(
+            AuthUserDeleteRequest {
+                name: "u".to_owned(),
+            }
+            .into(),
+        );
+        assert!(send_req(&store, req).await.is_ok());
+        assert_eq!(
+            store.inner.permission_cache(),
+            PermissionCache {
+                user_permissions: HashMap::new(),
+                role_to_users_map: HashMap::from([("r".to_owned(), vec![])]),
+            },
+        );
+        Ok(())
+    }
+
+    async fn init_auth_store() -> AuthStore {
         let key_pair = test_key_pair();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let store = AuthStore::new(key_pair, header_gen);
 
-        for test in testcases() {
-            let (_, _) = send_req(&store, test.0).await?;
-            assert_eq!(store.inner.permission_cache(), test.1);
-        }
-
-        Ok(())
-    }
-
-    #[allow(clippy::too_many_lines)]
-    fn testcases() -> Vec<(RequestWithToken, PermissionCache)> {
-        vec![
-            (
-                RequestWithToken::new(
-                    AuthRoleAddRequest {
-                        name: "r".to_owned(),
-                    }
-                    .into(),
-                ),
-                PermissionCache::new(),
-            ),
-            (
-                RequestWithToken::new(
-                    AuthRoleGrantPermissionRequest {
-                        name: "r".to_owned(),
-                        perm: Some(Permission {
-                            #[allow(clippy::as_conversions)] // This cast is always valid
-                            perm_type: Type::Read as i32,
-                            key: b"foo".to_vec(),
-                            range_end: vec![],
-                        }),
-                    }
-                    .into(),
-                ),
-                PermissionCache::new(),
-            ),
-            (
-                RequestWithToken::new(
-                    AuthUserAddRequest {
-                        name: "u".to_owned(),
-                        password: "".to_owned(),
-                        hashed_password: "123".to_owned(),
-                        options: None,
-                    }
-                    .into(),
-                ),
-                PermissionCache::new(),
-            ),
-            (
-                RequestWithToken::new(
-                    AuthUserGrantRoleRequest {
-                        user: "u".to_owned(),
-                        role: "r".to_owned(),
-                    }
-                    .into(),
-                ),
-                PermissionCache {
-                    user_permissions: HashMap::from([(
-                        "u".to_owned(),
-                        UserPermissions {
-                            read: vec![KeyRange::new("foo", "")],
-                            write: vec![],
-                        },
-                    )]),
-                    role_to_users_map: HashMap::from([("r".to_owned(), vec!["u".to_owned()])]),
-                },
-            ),
-            (
-                RequestWithToken::new(
-                    AuthRoleGrantPermissionRequest {
-                        name: "r".to_owned(),
-                        perm: Some(Permission {
-                            #[allow(clippy::as_conversions)] // This cast is always valid
-                            perm_type: Type::Readwrite as i32,
-                            key: b"fop".to_vec(),
-                            range_end: b"foz".to_vec(),
-                        }),
-                    }
-                    .into(),
-                ),
-                PermissionCache {
-                    user_permissions: HashMap::from([(
-                        "u".to_owned(),
-                        UserPermissions {
-                            read: vec![KeyRange::new("foo", ""), KeyRange::new("fop", "foz")],
-                            write: vec![KeyRange::new("fop", "foz")],
-                        },
-                    )]),
-                    role_to_users_map: HashMap::from([("r".to_owned(), vec!["u".to_owned()])]),
-                },
-            ),
-            (
-                RequestWithToken::new(
-                    AuthRoleRevokePermissionRequest {
-                        role: "r".to_owned(),
-                        key: b"foo".to_vec(),
-                        range_end: vec![],
-                    }
-                    .into(),
-                ),
-                PermissionCache {
-                    user_permissions: HashMap::from([(
-                        "u".to_owned(),
-                        UserPermissions {
-                            read: vec![KeyRange::new("fop", "foz")],
-                            write: vec![KeyRange::new("fop", "foz")],
-                        },
-                    )]),
-                    role_to_users_map: HashMap::from([("r".to_owned(), vec!["u".to_owned()])]),
-                },
-            ),
-            (
-                RequestWithToken::new(
-                    AuthRoleDeleteRequest {
-                        role: "r".to_owned(),
-                    }
-                    .into(),
-                ),
-                PermissionCache {
-                    user_permissions: HashMap::from([("u".to_owned(), UserPermissions::new())]),
-                    role_to_users_map: HashMap::new(),
-                },
-            ),
-            (
-                RequestWithToken::new(
-                    AuthUserDeleteRequest {
-                        name: "u".to_owned(),
-                    }
-                    .into(),
-                ),
-                PermissionCache {
-                    user_permissions: HashMap::new(),
-                    role_to_users_map: HashMap::new(),
-                },
-            ),
-        ]
+        let req1 = RequestWithToken::new(
+            AuthRoleAddRequest {
+                name: "r".to_owned(),
+            }
+            .into(),
+        );
+        assert!(send_req(&store, req1).await.is_ok());
+        let req2 = RequestWithToken::new(
+            AuthUserAddRequest {
+                name: "u".to_owned(),
+                password: "".to_owned(),
+                hashed_password: "123".to_owned(),
+                options: None,
+            }
+            .into(),
+        );
+        assert!(send_req(&store, req2).await.is_ok());
+        let req3 = RequestWithToken::new(
+            AuthUserGrantRoleRequest {
+                user: "u".to_owned(),
+                role: "r".to_owned(),
+            }
+            .into(),
+        );
+        assert!(send_req(&store, req3).await.is_ok());
+        let req4 = RequestWithToken::new(
+            AuthRoleGrantPermissionRequest {
+                name: "r".to_owned(),
+                perm: Some(Permission {
+                    #[allow(clippy::as_conversions)] // This cast is always valid
+                    perm_type: Type::Readwrite as i32,
+                    key: b"foo".to_vec(),
+                    range_end: vec![],
+                }),
+            }
+            .into(),
+        );
+        assert!(send_req(&store, req4).await.is_ok());
+        assert_eq!(
+            store.inner.permission_cache(),
+            PermissionCache {
+                user_permissions: HashMap::from([(
+                    "u".to_owned(),
+                    UserPermissions {
+                        read: vec![KeyRange::new("foo", "")],
+                        write: vec![KeyRange::new("foo", "")],
+                    },
+                )]),
+                role_to_users_map: HashMap::from([("r".to_owned(), vec!["u".to_owned()])]),
+            },
+        );
+        store
     }
 
     async fn send_req(
