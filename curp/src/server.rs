@@ -8,6 +8,7 @@ use std::{
 
 use clippy_utilities::NumericCast;
 use event_listener::Event;
+use lock_utils::RwLockMap;
 use opentelemetry::global;
 use parking_lot::{lock_api::RwLockUpgradableReadGuard, Mutex, RwLock};
 use tokio::{net::TcpListener, sync::broadcast, time::Instant};
@@ -30,7 +31,7 @@ use crate::{
         ProtocolServer, VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
     shutdown::Shutdown,
-    util::{ExtractMap, RwLockMap},
+    util::ExtractMap,
 };
 
 /// Default server serving port

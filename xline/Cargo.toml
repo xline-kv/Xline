@@ -22,6 +22,7 @@ env_logger = "0.9.3"
 etcd-client = "0.10.1"
 jsonwebtoken = "8.1.1"
 itertools = "0.10.3"
+lock_utils = { path = "../lock_utils" }
 log = "0.4.17"
 opentelemetry = { version = "0.18.0", features = ["rt-tokio"] }
 opentelemetry-contrib = { version = "0.10.0", features = [

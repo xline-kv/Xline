@@ -5,6 +5,7 @@ use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{cmd::ProposeId, error::ExecuteError};
 use itertools::Itertools;
 use jsonwebtoken::{DecodingKey, EncodingKey};
+use lock_utils::RwLockMap;
 use log::debug;
 use parking_lot::{Mutex, RwLock};
 use pbkdf2::{
@@ -13,6 +14,9 @@ use pbkdf2::{
 };
 use prost::Message;
 
+use crate::server::command::{
+    CommandResponse, ExecutionRequest, KeyRange, SyncRequest, SyncResponse,
+};
 use crate::{
     header_gen::HeaderGenerator,
     storage::{db::DB, index::Index},
@@ -33,10 +37,6 @@ use crate::{
         ResponseWrapper, Role, Type, User,
     },
     storage::index::IndexOperate,
-};
-use crate::{
-    server::command::{CommandResponse, ExecutionRequest, KeyRange, SyncRequest, SyncResponse},
-    utils::RwLockMap,
 };
 
 use super::perms::{JwtTokenManager, PermissionCache, TokenClaims, TokenOperate, UserPermissions};

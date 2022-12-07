@@ -1,7 +1,25 @@
-use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use parking_lot::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
+
+/// Apply a closure on a mutex after getting the guard
+pub trait MutexMap<T, R> {
+    /// Map a closure to a mutex
+    fn map_lock<F>(&self, f: F) -> R
+    where
+        F: FnOnce(MutexGuard<'_, T>) -> R;
+}
+
+impl<T, R> MutexMap<T, R> for Mutex<T> {
+    fn map_lock<F>(&self, f: F) -> R
+    where
+        F: FnOnce(MutexGuard<'_, T>) -> R,
+    {
+        let lock = self.lock();
+        f(lock)
+    }
+}
 
 /// Apply a closure on a rwlock after getting the guard
-pub(crate) trait RwLockMap<T, R> {
+pub trait RwLockMap<T, R> {
     /// Map a closure to a read mutex
     fn map_read<READ>(&self, f: READ) -> R
     where

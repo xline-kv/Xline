@@ -121,5 +121,3 @@ mod rpc;
 pub mod server;
 /// Storage module
 mod storage;
-/// The util lib
-mod utils;

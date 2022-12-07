@@ -2,6 +2,7 @@ use std::{iter, ops::Range, sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
 use futures::future::Either;
+use lock_utils::RwLockMap;
 use madsim::rand::{thread_rng, Rng};
 use parking_lot::{lock_api::RwLockUpgradableReadGuard, Mutex, RwLock};
 use tokio::{sync::mpsc, time::Instant};
@@ -17,7 +18,6 @@ use crate::{
     rpc::{self, AppendEntriesRequest, Connect, VoteRequest, WaitSyncedResponse},
     server::{ServerRole, SpeculativePool, State},
     shutdown::Shutdown,
-    util::RwLockMap,
     LogIndex,
 };
 
