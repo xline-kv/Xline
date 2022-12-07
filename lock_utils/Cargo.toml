@@ -1,0 +1,16 @@
+[package]
+name = "lock_utils"
+version = "0.1.0"
+authors = ["DatenLord Developers <dev@datenlord.io>"]
+edition = "2021"
+description = "Utilities funtions for parking_lot"
+repository = "https://github.com/datenlord/Xline/lock_utils"
+readme = "README.md"
+license = "MIT"
+keywords = ["utilities"]
+categories = ["utilities"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+parking_lot = "0.12.1"
