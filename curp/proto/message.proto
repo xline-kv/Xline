@@ -7,7 +7,7 @@ message ProposeRequest {
     // The serialized command
     // Original type is Command trait
     bytes command = 1;
-};
+}
 
 message ProposeResponse {
     bool is_leader = 1;
@@ -18,7 +18,15 @@ message ProposeResponse {
         // The original type is ProposeError
         bytes error = 4;
     }
-};
+}
+
+message FetchLeaderRequest {
+}
+
+message FetchLeaderResponse {
+    optional string leader_id = 1;
+    uint64 term = 2;
+}
 
 message WaitSyncedRequest {
     bytes id = 1;
@@ -37,6 +45,7 @@ message WaitSyncedResponse {
 
 message AppendEntriesRequest {
     uint64 term = 1;
+    string leader_id = 2;
     uint64 prev_log_index = 3;
     uint64 prev_log_term = 4;
     repeated bytes entries = 5;
@@ -66,4 +75,5 @@ service Protocol {
     rpc WaitSynced (WaitSyncedRequest) returns (WaitSyncedResponse);
     rpc AppendEntries (AppendEntriesRequest) returns (AppendEntriesResponse);
     rpc Vote (VoteRequest) returns (VoteResponse);
+    rpc FetchLeader (FetchLeaderRequest) returns (FetchLeaderResponse);
 }

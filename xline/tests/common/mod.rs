@@ -51,21 +51,14 @@ impl Cluster {
             peers.remove(i);
             let name = format!("server{}", i);
             let is_leader = i == 0;
-            let leader_addr = self.addrs[0];
             let self_addr = self.addrs[i];
             let mut rx = stop_tx.subscribe();
             let listener = self.listeners.remove(&i).unwrap();
 
             tokio::spawn(async move {
-                let server = XlineServer::new(
-                    name,
-                    peers,
-                    is_leader,
-                    leader_addr,
-                    self_addr,
-                    Self::test_key_pair(),
-                )
-                .await;
+                let server =
+                    XlineServer::new(name, peers, is_leader, self_addr, Self::test_key_pair())
+                        .await;
                 let signal = async {
                     let _ = rx.recv().await;
                 };
@@ -83,7 +76,7 @@ impl Cluster {
     /// Create or get the client with the specified index
     pub(crate) async fn client(&mut self) -> &mut Client {
         if self.client.is_none() {
-            let client = Client::new(0, self.addrs.clone(), true)
+            let client = Client::new(self.addrs.clone(), true)
                 .await
                 .unwrap_or_else(|e| {
                     panic!("Client connect error: {:?}", e);

@@ -21,6 +21,13 @@ impl CommandBoard {
             cmd_states: HashMap::new(),
         }
     }
+
+    /// Release notifiers
+    pub(crate) fn release_notifiers(&mut self) {
+        self.notifiers
+            .drain()
+            .for_each(|(_, event)| event.notify(usize::MAX));
+    }
 }
 
 /// The state of a command in cmd watch board

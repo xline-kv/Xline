@@ -24,18 +24,16 @@ use crate::{
 #[allow(clippy::too_many_arguments)] // we call this function once, it's ok
 pub(crate) async fn run_bg_tasks<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
     state: Arc<RwLock<State<C>>>,
-    last_rpc_time: Arc<RwLock<Instant>>,
     sync_chan: flume::Receiver<SyncMessage<C>>,
     cmd_executor: CE,
     spec: Arc<Mutex<SpeculativePool<C>>>,
     cmd_exe_tx: CmdExeSender<C>,
     cmd_exe_rx: CmdExeReceiver<C>,
-    cmd_board: Arc<Mutex<CommandBoard>>,
     mut shutdown: Shutdown,
 ) {
-    let others = state.read().others.clone();
     // establish connection with other servers
-    let connects = rpc::try_connect(others.into_iter().collect()).await;
+    let others = state.read().others.clone();
+    let connects = rpc::try_connect(others).await;
 
     // notify when a broadcast of append_entries is needed immediately
     let (ae_trigger, ae_trigger_rx) = mpsc::unbounded_channel::<usize>();
@@ -45,12 +43,8 @@ pub(crate) async fn run_bg_tasks<C: Command + 'static, CE: 'static + CommandExec
         Arc::clone(&state),
         ae_trigger_rx,
     ));
-    let bg_election_handle = tokio::spawn(bg_election(
-        connects.clone(),
-        Arc::clone(&state),
-        Arc::clone(&last_rpc_time),
-    ));
-    let bg_apply_handle = tokio::spawn(bg_apply(Arc::clone(&state), cmd_exe_tx, spec, cmd_board));
+    let bg_election_handle = tokio::spawn(bg_election(connects.clone(), Arc::clone(&state)));
+    let bg_apply_handle = tokio::spawn(bg_apply(Arc::clone(&state), cmd_exe_tx, spec));
     let bg_heartbeat_handle = tokio::spawn(bg_heartbeat(connects.clone(), Arc::clone(&state)));
     let bg_get_sync_cmds_handle =
         tokio::spawn(bg_get_sync_cmds(Arc::clone(&state), sync_chan, ae_trigger));
@@ -154,6 +148,7 @@ async fn bg_append_entries<C: Command + 'static>(
             #[allow(clippy::integer_arithmetic, clippy::indexing_slicing)]
             match AppendEntriesRequest::new(
                 state.term,
+                state.id().clone(),
                 i - 1,
                 state.log[i - 1].term(),
                 vec![state.log[i].clone()],
@@ -189,7 +184,7 @@ async fn send_log_until_succeed<C: Command + 'static>(
 ) {
     // send log[i] until succeed
     loop {
-        debug!("append_entries sent to {}", connect.addr);
+        debug!("append_entries sent to {}", connect.id());
         let resp = connect.append_entries(req.clone(), RPC_TIMEOUT).await;
 
         #[allow(clippy::unwrap_used)]
@@ -210,11 +205,11 @@ async fn send_log_until_succeed<C: Command + 'static>(
                 if resp.success {
                     let mut state = RwLockUpgradableReadGuard::upgrade(state);
                     // update match_index and next_index
-                    let match_index = state.match_index.get_mut(&connect.addr).unwrap();
+                    let match_index = state.match_index.get_mut(connect.id()).unwrap();
                     if *match_index < i {
                         *match_index = i;
                     }
-                    *state.next_index.get_mut(&connect.addr).unwrap() = *match_index + 1;
+                    *state.next_index.get_mut(connect.id()).unwrap() = *match_index + 1;
 
                     let min_replicated = (state.others.len() + 1) / 2;
                     // If the majority of servers has replicated the log, commit
@@ -223,7 +218,7 @@ async fn send_log_until_succeed<C: Command + 'static>(
                         && state
                             .others
                             .iter()
-                            .filter(|addr| state.match_index[*addr] >= i)
+                            .filter(|&(id, _)| state.match_index[id] >= i)
                             .count()
                             >= min_replicated
                     {
@@ -265,20 +260,19 @@ async fn bg_heartbeat<C: Command + 'static>(
 async fn send_heartbeat<C: Command + 'static>(connect: Arc<Connect>, state: Arc<RwLock<State<C>>>) {
     // prepare append_entries request args
     #[allow(clippy::shadow_unrelated)] // clippy false positive
-    let (term, prev_log_index, prev_log_term, leader_commit) = state.map_read(|state| {
-        let next_index = state.next_index[&connect.addr];
-        (
+    let req = state.map_read(|state| {
+        let next_index = state.next_index[connect.id()];
+        AppendEntriesRequest::new_heartbeat(
             state.term,
+            state.id().clone(),
             next_index - 1,
             state.log[next_index - 1].term(),
             state.commit_index,
         )
     });
-    let req =
-        AppendEntriesRequest::new_heartbeat(term, prev_log_index, prev_log_term, leader_commit);
 
     // send append_entries request and receive response
-    debug!("heartbeat sent to {}", connect.addr);
+    debug!("heartbeat sent to {}", connect.id());
     let resp = connect.append_entries(req, RPC_TIMEOUT).await;
 
     #[allow(clippy::unwrap_used)]
@@ -296,7 +290,7 @@ async fn send_heartbeat<C: Command + 'static>(connect: Arc<Connect>, state: Arc<
             }
             if !resp.success {
                 let mut state = RwLockUpgradableReadGuard::upgrade(state);
-                *state.next_index.get_mut(&connect.addr).unwrap() -= 1;
+                *state.next_index.get_mut(connect.id()).unwrap() -= 1;
             }
         }
     };
@@ -307,9 +301,10 @@ async fn bg_apply<C: Command + 'static>(
     state: Arc<RwLock<State<C>>>,
     exe_tx: CmdExeSender<C>,
     spec: Arc<Mutex<SpeculativePool<C>>>,
-    cmd_board: Arc<Mutex<CommandBoard>>,
 ) {
-    let commit_trigger = state.read().commit_trigger();
+    #[allow(clippy::shadow_unrelated)]
+    let (commit_trigger, cmd_board) =
+        state.map_read(|state| (state.commit_trigger(), state.cmd_board()));
     loop {
         // wait until there is something to commit
         let state = loop {
@@ -379,9 +374,8 @@ fn handle_after_sync_leader<C: Command + 'static>(
         Either::Left(async move {
             result.await.map_or_else(
                 |e| {
-                    WaitSyncedResponse::new_error(&format!(
-                        "can't get execution and after sync result, {e}"
-                    ))
+                    error!("can't receive exe result from exe worker, {e}");
+                    WaitSyncedResponse::new_from_result::<C>(None, None)
                 },
                 |(er, asr)| WaitSyncedResponse::new_from_result::<C>(Some(er), asr),
             )
@@ -390,7 +384,10 @@ fn handle_after_sync_leader<C: Command + 'static>(
         let result = exe_tx.send_after_sync(cmd, index);
         Either::Right(async move {
             result.await.map_or_else(
-                |e| WaitSyncedResponse::new_error(&format!("can't get after sync result, {e}")),
+                |e| {
+                    error!("can't receive exe result from exe worker, {e}");
+                    WaitSyncedResponse::new_from_result::<C>(None, None)
+                },
                 |asr| WaitSyncedResponse::new_from_result::<C>(None, Some(asr)),
             )
         })
@@ -435,9 +432,10 @@ const FOLLOWER_TIMEOUT: Range<u64> = 1000..2000;
 async fn bg_election<C: Command + 'static>(
     connects: Vec<Arc<Connect>>,
     state: Arc<RwLock<State<C>>>,
-    last_rpc_time: Arc<RwLock<Instant>>,
 ) {
-    let role_trigger = state.read().role_trigger();
+    #[allow(clippy::shadow_unrelated)]
+    let (role_trigger, last_rpc_time) =
+        state.map_read(|state| (state.role_trigger(), state.last_rpc_time()));
     loop {
         // only follower or candidate should run this task
         while state.read().is_leader() {
@@ -486,11 +484,11 @@ async fn bg_election<C: Command + 'static>(
             let new_term = state.term + 1;
             state.update_to_term(new_term);
             state.set_role(ServerRole::Candidate);
-            state.voted_for = Some(state.id.clone());
+            state.voted_for = Some(state.id().clone());
             state.votes_received = 1;
             VoteRequest::new(
                 state.term,
-                state.id.clone(),
+                state.id().clone(),
                 state.last_log_index(),
                 state.last_log_term(),
             )
@@ -536,7 +534,7 @@ async fn send_vote<C: Command + 'static>(
 
             #[allow(clippy::integer_arithmetic)]
             if resp.vote_granted {
-                debug!("vote is granted by server {}", connect.addr);
+                debug!("vote is granted by server {}", connect.id());
                 let mut state = RwLockUpgradableReadGuard::upgrade(state);
                 state.votes_received += 1;
 
@@ -554,6 +552,9 @@ async fn send_vote<C: Command + 'static>(
 
                     // trigger heartbeat immediately to establish leadership
                     state.calibrate_trigger.notify(1);
+
+                    // release all wait_synced requests
+                    state.cmd_board.lock().release_notifiers();
                 }
             }
         }
@@ -569,42 +570,29 @@ async fn leader_calibrates_followers<C: Command + 'static>(
     let calibrate_trigger = Arc::clone(&state.read().calibrate_trigger);
     loop {
         calibrate_trigger.listen().await;
-        for connect in connects.iter().cloned() {
+        for connect in connects.clone() {
             let state = Arc::clone(&state);
             let _handle = tokio::spawn(async move {
                 loop {
                     // send append entry
                     #[allow(clippy::shadow_unrelated)] // clippy false positive
-                    let (
-                        term,
-                        prev_log_index,
-                        prev_log_term,
-                        entries,
-                        leader_commit,
-                        last_sent_index,
-                    ) = state.map_read(|state| {
-                        let next_index = state.next_index[&connect.addr];
-                        (
+                    let (req, last_sent_index) = {
+                        let state = state.read();
+                        let next_index = state.next_index[connect.id()];
+                        match AppendEntriesRequest::new(
                             state.term,
+                            state.id().clone(),
                             next_index - 1,
                             state.log[next_index - 1].term(),
                             state.log[next_index..].to_vec(),
                             state.commit_index,
-                            state.log.len() - 1,
-                        )
-                    });
-                    let req = match AppendEntriesRequest::new(
-                        term,
-                        prev_log_index,
-                        prev_log_term,
-                        entries,
-                        leader_commit,
-                    ) {
-                        Err(e) => {
-                            error!("unable to serialize append entries request: {}", e);
-                            return;
+                        ) {
+                            Err(e) => {
+                                error!("unable to serialize append entries request: {}", e);
+                                return;
+                            }
+                            Ok(req) => (req, state.log.len() - 1),
                         }
-                        Ok(req) => req,
                     };
 
                     let resp = connect.append_entries(req, RPC_TIMEOUT).await;
@@ -627,14 +615,13 @@ async fn leader_calibrates_followers<C: Command + 'static>(
 
                             // successfully calibrate
                             if resp.success {
-                                *state.next_index.get_mut(&connect.addr).unwrap() =
+                                *state.next_index.get_mut(connect.id()).unwrap() =
                                     last_sent_index + 1;
-                                *state.match_index.get_mut(&connect.addr).unwrap() =
-                                    last_sent_index;
+                                *state.match_index.get_mut(connect.id()).unwrap() = last_sent_index;
                                 break;
                             }
 
-                            *state.next_index.get_mut(&connect.addr).unwrap() =
+                            *state.next_index.get_mut(connect.id()).unwrap() =
                                 (resp.commit_index + 1).numeric_cast();
                         }
                     };

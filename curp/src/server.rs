@@ -24,10 +24,11 @@ use crate::{
     error::{ProposeError, ServerError},
     gc::run_gc_tasks,
     log::LogEntry,
-    message::TermNum,
+    message::{ServerId, TermNum},
     rpc::{
-        AppendEntriesRequest, AppendEntriesResponse, ProposeRequest, ProposeResponse,
-        ProtocolServer, VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest, FetchLeaderResponse,
+        ProposeRequest, ProposeResponse, ProtocolServer, SyncError, VoteRequest, VoteResponse,
+        WaitSyncedRequest, WaitSyncedResponse,
     },
     shutdown::Shutdown,
     util::ExtractMap,
@@ -81,20 +82,26 @@ impl<C: 'static + Command> crate::rpc::Protocol for Rpc<C> {
     ) -> Result<tonic::Response<VoteResponse>, tonic::Status> {
         self.inner.vote(request)
     }
+
+    async fn fetch_leader(
+        &self,
+        request: tonic::Request<FetchLeaderRequest>,
+    ) -> Result<tonic::Response<FetchLeaderResponse>, tonic::Status> {
+        self.inner.fetch_leader(request)
+    }
 }
 
 impl<C: Command + 'static> Rpc<C> {
     /// New `Rpc`
     #[inline]
     pub fn new<CE: CommandExecutor<C> + 'static>(
-        id: &str,
+        id: ServerId,
         is_leader: bool,
-        term: u64,
-        others: Vec<String>,
+        others: HashMap<ServerId, String>,
         executor: CE,
     ) -> Self {
         Self {
-            inner: Arc::new(Protocol::new(id, is_leader, term, others, executor)),
+            inner: Arc::new(Protocol::new(id, is_leader, others, executor)),
         }
     }
 
@@ -105,16 +112,15 @@ impl<C: Command + 'static> Rpc<C> {
     ///   `ServerError::RpcError` if any rpc related error met
     #[inline]
     pub async fn run<CE: CommandExecutor<C> + 'static>(
-        id: &str,
+        id: ServerId,
         is_leader: bool, // TODO: remove this option
-        term: u64,
-        others: Vec<String>,
+        others: HashMap<ServerId, String>,
         server_port: Option<u16>,
         executor: CE,
     ) -> Result<(), ServerError> {
         let port = server_port.unwrap_or(DEFAULT_SERVER_PORT);
         info!("RPC server {id} started, listening on port {port}");
-        let server = Self::new(id, is_leader, term, others, executor);
+        let server = Self::new(id, is_leader, others, executor);
 
         tonic::transport::Server::builder()
             .add_service(ProtocolServer::new(server))
@@ -134,15 +140,14 @@ impl<C: Command + 'static> Rpc<C> {
     ///   `ServerError::RpcError` if any rpc related error met
     #[inline]
     pub async fn run_from_listener<CE: CommandExecutor<C> + 'static>(
-        id: &str,
+        id: ServerId,
         is_leader: bool,
-        term: u64,
-        others: Vec<String>,
+        others: HashMap<ServerId, String>,
         listener: TcpListener,
         executor: CE,
     ) -> Result<(), ServerError> {
         let server = Self {
-            inner: Arc::new(Protocol::new(id, is_leader, term, others, executor)),
+            inner: Arc::new(Protocol::new(id, is_leader, others, executor)),
         };
         tonic::transport::Server::builder()
             .add_service(ProtocolServer::new(server))
@@ -230,7 +235,9 @@ pub struct Protocol<C: Command + 'static> {
 /// State of the server
 pub(crate) struct State<C: Command + 'static> {
     /// Id of the server
-    pub(crate) id: String,
+    id: ServerId,
+    /// Id of the leader. None if in election state.
+    pub(crate) leader_id: Option<ServerId>,
     /// Role of the server
     role: ServerRole,
     /// Current term
@@ -247,47 +254,57 @@ pub(crate) struct State<C: Command + 'static> {
     pub(crate) last_applied: usize,
     /// For each server, index of the next log entry to send to that server
     // TODO: this should be indexed by server id and changed into a vec for efficiency
-    pub(crate) next_index: HashMap<String, usize>,
+    pub(crate) next_index: HashMap<ServerId, usize>,
     /// For each server, index of highest log entry known to be replicated on server
-    pub(crate) match_index: HashMap<String, usize>,
-    /// Other server ids
-    pub(crate) others: Vec<String>,
+    pub(crate) match_index: HashMap<ServerId, usize>,
+    /// Other server ids and addresses
+    pub(crate) others: HashMap<ServerId, String>,
     /// Trigger when server role changes
     pub(crate) role_trigger: Arc<Event>,
     /// Trigger when there might be some logs to commit
     pub(crate) commit_trigger: Arc<Event>,
     /// Trigger when a new leader needs to calibrate its followers
     pub(crate) calibrate_trigger: Arc<Event>,
+    // TODO: clean up the board when the size is too large
+    /// Cmd watch board for tracking the cmd sync results
+    pub(crate) cmd_board: Arc<Mutex<CommandBoard>>,
+    /// Last time a rpc is received.
+    pub(crate) last_rpc_time: Arc<RwLock<Instant>>,
 }
 
 impl<C: Command + 'static> State<C> {
     /// Init server state
-    pub(crate) fn new(id: &str, role: ServerRole, term: TermNum, others: Vec<String>) -> Self {
+    pub(crate) fn new(
+        id: ServerId,
+        role: ServerRole,
+        others: HashMap<ServerId, String>,
+        cmd_board: Arc<Mutex<CommandBoard>>,
+        last_rpc_time: Arc<RwLock<Instant>>,
+    ) -> Self {
         let mut next_index = HashMap::new();
         let mut match_index = HashMap::new();
-        let others: Vec<String> = others
-            .into_iter()
-            .map(|other| format!("http://{}", other))
-            .collect();
-        for other in &others {
+        for other in others.keys() {
             assert!(next_index.insert(other.clone(), 1).is_none());
             assert!(match_index.insert(other.clone(), 0).is_none());
         }
         Self {
-            id: format!("http://{}", id),
+            id,
+            leader_id: None,
             role,
-            term,
+            term: 0,
             log: vec![LogEntry::new(0, &[])], // a fake log[0] will simplify the boundary check significantly
             voted_for: None,
             votes_received: 0,
             commit_index: 0,
             last_applied: 0,
-            next_index, // TODO: next_index should be initialized upon becoming a leader
+            next_index,
             match_index,
             others,
             role_trigger: Arc::new(Event::new()),
             commit_trigger: Arc::new(Event::new()),
             calibrate_trigger: Arc::new(Event::new()),
+            cmd_board,
+            last_rpc_time,
         }
     }
 
@@ -320,6 +337,7 @@ impl<C: Command + 'static> State<C> {
         self.set_role(ServerRole::Follower);
         self.voted_for = None;
         self.votes_received = 0;
+        self.leader_id = None;
         debug!("updated to term {term}");
     }
 
@@ -345,6 +363,21 @@ impl<C: Command + 'static> State<C> {
     /// Get commit trigger
     pub(crate) fn commit_trigger(&self) -> Arc<Event> {
         Arc::clone(&self.commit_trigger)
+    }
+
+    /// Get id
+    pub(crate) fn id(&self) -> &ServerId {
+        &self.id
+    }
+
+    /// Get `last_rpc_time`
+    pub(crate) fn last_rpc_time(&self) -> Arc<RwLock<Instant>> {
+        Arc::clone(&self.last_rpc_time)
+    }
+
+    /// Get `cmd_board`
+    pub(crate) fn cmd_board(&self) -> Arc<Mutex<CommandBoard>> {
+        Arc::clone(&self.cmd_board)
     }
 }
 
@@ -378,10 +411,9 @@ impl<C: 'static + Command> Protocol<C> {
     #[must_use]
     #[inline]
     pub fn new<CE: CommandExecutor<C> + 'static>(
-        id: &str,
+        id: ServerId,
         is_leader: bool,
-        term: u64,
-        others: Vec<String>,
+        others: HashMap<ServerId, String>,
         cmd_executor: CE,
     ) -> Self {
         let (sync_tx, sync_rx) = flume::unbounded();
@@ -398,20 +430,19 @@ impl<C: 'static + Command> Protocol<C> {
             } else {
                 ServerRole::Follower
             },
-            term,
             others,
+            Arc::clone(&cmd_board),
+            Arc::clone(&last_rpc_time),
         )));
 
         // run background tasks
         let _bg_handle = tokio::spawn(run_bg_tasks(
             Arc::clone(&state),
-            Arc::clone(&last_rpc_time),
             sync_rx,
             cmd_executor,
             Arc::clone(&spec),
             exe_tx.clone(),
             exe_rx,
-            Arc::clone(&cmd_board),
             Shutdown::new(stop_ch_rx.resubscribe()),
         ));
 
@@ -537,6 +568,25 @@ impl<C: 'static + Command> Protocol<C> {
 
         loop {
             let listener = {
+                // check if the server is still leader
+                let state = self.state.read();
+                if !state.is_leader() {
+                    return WaitSyncedResponse::new_error(&SyncError::Redirect(
+                        state.leader_id.clone(),
+                        state.term,
+                    ))
+                    .map_or_else(
+                        |err| {
+                            Err(tonic::Status::internal(format!(
+                                "encode or decode error, {}",
+                                err
+                            )))
+                        },
+                        |resp| Ok(tonic::Response::new(resp)),
+                    );
+                }
+
+                // check if the cmd board already has response
                 let mut cmd_board = self.cmd_board.lock();
                 let entry = cmd_board
                     .cmd_states
@@ -554,6 +604,8 @@ impl<C: 'static + Command> Protocol<C> {
                         |resp| Ok(tonic::Response::new(resp.clone())),
                     );
                 }
+
+                // generate wait_synced event listener
                 cmd_board
                     .notifiers
                     .entry(id.clone())
@@ -586,6 +638,9 @@ impl<C: 'static + Command> Protocol<C> {
         let mut state = RwLockUpgradableReadGuard::upgrade(state);
         if req.term > state.term {
             state.update_to_term(req.term);
+        }
+        if state.leader_id.is_none() {
+            state.leader_id = Some(req.leader_id.clone());
         }
 
         *self.last_rpc_time.write() = Instant::now();
@@ -672,6 +727,20 @@ impl<C: 'static + Command> Protocol<C> {
         } else {
             Ok(tonic::Response::new(VoteResponse::new_reject(state.term)))
         }
+    }
+
+    /// Handle fetch leader requests
+    #[allow(clippy::unnecessary_wraps, clippy::needless_pass_by_value)] // To keep type consistent with other request handlers
+    fn fetch_leader(
+        &self,
+        _request: tonic::Request<FetchLeaderRequest>,
+    ) -> Result<tonic::Response<FetchLeaderResponse>, tonic::Status> {
+        let state = self.state.read();
+        let leader_id = state.leader_id.clone();
+        let term = state.term;
+        Ok(tonic::Response::new(FetchLeaderResponse::new(
+            leader_id, term,
+        )))
     }
 }
 

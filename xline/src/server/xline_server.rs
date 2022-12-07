@@ -1,4 +1,4 @@
-use std::{future::Future, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, future::Future, net::SocketAddr, sync::Arc};
 
 use anyhow::Result;
 use curp::{client::Client, server::Rpc, ProtocolServer};
@@ -46,8 +46,6 @@ pub struct XlineServer {
     /// If current node is leader when it starts
     /// TODO: remove this when leader selection is supported
     is_leader: bool,
-    /// Leader index
-    leader_index: usize,
     /// Address of self node
     self_addr: SocketAddr,
     /// Header generator
@@ -65,7 +63,6 @@ impl XlineServer {
         name: String,
         peers: Vec<SocketAddr>,
         is_leader: bool,
-        leader_addr: SocketAddr,
         self_addr: SocketAddr,
         key_pair: Option<(EncodingKey, DecodingKey)>,
     ) -> Self {
@@ -73,15 +70,13 @@ impl XlineServer {
         let kv_storage = Arc::new(KvStore::new(Arc::clone(&header_gen)));
         let auth_storage = Arc::new(AuthStore::new(key_pair, Arc::clone(&header_gen)));
 
-        let mut all_members = peers.clone();
-        all_members.push(self_addr);
-        all_members.sort();
+        let mut all_members: HashMap<_, _> = peers
+            .iter()
+            .map(|addr| (addr.to_string(), addr.to_string()))
+            .collect();
+        let _ignore = all_members.insert(self_addr.to_string(), self_addr.to_string());
 
-        let leader_index = all_members.binary_search(&leader_addr).unwrap_or_else(|_| {
-            panic!("leader address should be in the collection of peers and self address")
-        });
-
-        let client = Arc::new(Client::<Command>::new(leader_index, all_members).await);
+        let client = Arc::new(Client::<Command>::new(all_members).await);
 
         Self {
             name,
@@ -90,7 +85,6 @@ impl XlineServer {
             auth_storage,
             client,
             is_leader,
-            leader_index,
             self_addr,
             header_gen,
         }
@@ -178,10 +172,12 @@ impl XlineServer {
             ),
             WatchServer::new(self.kv_storage.kv_watcher()),
             CurpServer::new(
-                self.self_addr.to_string().as_str(),
+                self.self_addr.to_string(),
                 self.is_leader,
-                0,
-                self.peers.iter().map(ToString::to_string).collect(),
+                self.peers
+                    .iter()
+                    .map(|peer| (peer.to_string(), peer.to_string()))
+                    .collect(),
                 CommandExecutor::new(Arc::clone(&self.kv_storage), Arc::clone(&self.auth_storage)),
             ),
         )

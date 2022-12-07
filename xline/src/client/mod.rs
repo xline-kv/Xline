@@ -42,7 +42,6 @@ impl Client {
     /// If `EtcdClient::connect` fails.
     #[inline]
     pub async fn new(
-        leader_index: usize,
         all_members: Vec<SocketAddr>,
         use_curp_client: bool,
     ) -> Result<Self, ClientError> {
@@ -54,7 +53,11 @@ impl Client {
             None,
         )
         .await?;
-        let curp_client = CurpClient::new(leader_index, all_members).await;
+        let all_members = all_members
+            .into_iter()
+            .map(|addr| (addr.to_string(), addr.to_string()))
+            .collect();
+        let curp_client = CurpClient::new(all_members).await;
         Ok(Self {
             name: String::from("client"),
             curp_client,
