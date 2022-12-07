@@ -1,9 +1,11 @@
-use crate::cmd::Command;
-use crate::server::SpeculativePool;
+use std::{sync::Arc, time::Duration};
+
 use parking_lot::Mutex;
-use std::sync::Arc;
-use std::time::Duration;
 use tokio::time::Instant;
+
+use crate::cmd::Command;
+
+use super::spec_pool::SpeculativePool;
 
 /// How often spec should GC
 const SPEC_GC_INTERVAL: Duration = Duration::from_secs(10);

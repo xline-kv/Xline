@@ -8,14 +8,18 @@ use parking_lot::{lock_api::RwLockUpgradableReadGuard, Mutex, RwLock};
 use tokio::{sync::mpsc, task::JoinHandle, time::Instant};
 use tracing::{debug, error, info, warn};
 
+use super::{
+    cmd_board::{CmdState, CommandBoard},
+    SyncMessage,
+};
 use crate::{
     cmd::{Command, CommandExecutor},
-    cmd_board::{CmdState, CommandBoard},
-    cmd_execute_worker::{execute_worker, CmdExeReceiver, CmdExeSender, N_EXECUTE_WORKERS},
     log::LogEntry,
-    message::TermNum,
     rpc::{self, AppendEntriesRequest, Connect, VoteRequest, WaitSyncedResponse},
-    server::{ServerRole, SpeculativePool, State},
+    server::{
+        cmd_execute_worker::{execute_worker, CmdExeReceiver, CmdExeSender, N_EXECUTE_WORKERS},
+        ServerRole, SpeculativePool, State,
+    },
     shutdown::Shutdown,
     LogIndex,
 };
@@ -68,32 +72,6 @@ pub(crate) async fn run_bg_tasks<C: Command + 'static, CE: 'static + CommandExec
         handle.abort();
     }
     info!("all background task stopped");
-}
-
-/// The message sent to the background sync task
-pub(crate) struct SyncMessage<C>
-where
-    C: Command,
-{
-    /// Term number
-    term: TermNum,
-    /// Command
-    cmd: Arc<C>,
-}
-
-impl<C> SyncMessage<C>
-where
-    C: Command,
-{
-    /// Create a new `SyncMessage`
-    pub(crate) fn new(term: TermNum, cmd: Arc<C>) -> Self {
-        Self { term, cmd }
-    }
-
-    /// Get all values from the message
-    fn inner(self) -> (TermNum, Arc<C>) {
-        (self.term, self.cmd)
-    }
 }
 
 /// Fetch commands need to be synced and add them to the log

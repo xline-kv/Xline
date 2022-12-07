@@ -109,6 +109,9 @@
     clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
 )]
 
+pub use message::LogIndex;
+pub use rpc::ProtocolServer;
+
 /// Client side, sending requests and determining requests' state
 pub mod client;
 
@@ -133,23 +136,8 @@ mod log;
 /// The special conflict checked mpmc
 pub(crate) mod conflict_checked_mpmc;
 
-/// Background tasks of Curp protocol
-mod bg_tasks;
-
-/// Command board is the buffer to store command execution result
-mod cmd_board;
-
-/// Command execute worker
-mod cmd_execute_worker;
-
 /// Protobuf generated types that are used in RPC
 mod rpc;
 
-/// Background garbage collection for Curp server
-mod gc;
-
 /// Shutdown related
 mod shutdown;
-
-pub use message::LogIndex;
-pub use rpc::ProtocolServer;
