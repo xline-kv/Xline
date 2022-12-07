@@ -1,3 +1,30 @@
+use std::{collections::HashMap, sync::Arc, time::Duration};
+
+use clippy_utilities::NumericCast;
+use opentelemetry::global;
+use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
+use tracing::{debug, info_span, Instrument};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
+
+pub use self::proto::protocol_server::ProtocolServer;
+pub(crate) use self::proto::{
+    propose_response::ExeResult,
+    protocol_client::ProtocolClient,
+    protocol_server::Protocol,
+    wait_synced_response::{Success, SyncResult as SyncResultRaw},
+    AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest, FetchLeaderResponse,
+    ProposeRequest, ProposeResponse, VoteRequest, VoteResponse, WaitSyncedRequest,
+    WaitSyncedResponse,
+};
+use crate::{
+    cmd::{Command, ProposeId},
+    error::{ExecuteError, ProposeError},
+    log::LogEntry,
+    message::{ServerId, TermNum},
+    util::InjectMap,
+};
+
 // Skip for generated code
 #[allow(
     clippy::all,
@@ -13,37 +40,6 @@
 mod proto {
     tonic::include_proto!("messagepb");
 }
-
-use clippy_utilities::NumericCast;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::{sync::Arc, time::Duration};
-
-use opentelemetry::global;
-use tokio::sync::RwLock;
-use tracing::{debug, info_span, Instrument};
-use tracing_opentelemetry::OpenTelemetrySpanExt;
-
-use crate::error::ExecuteError;
-use crate::log::LogEntry;
-use crate::message::{ServerId, TermNum};
-use crate::{
-    cmd::{Command, ProposeId},
-    error::ProposeError,
-    util::InjectMap,
-};
-
-pub(crate) use self::proto::{
-    propose_response::ExeResult,
-    protocol_client::ProtocolClient,
-    protocol_server::Protocol,
-    wait_synced_response::{Success, SyncResult as SyncResultRaw},
-    AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest, FetchLeaderResponse,
-    ProposeRequest, ProposeResponse, VoteRequest, VoteResponse, WaitSyncedRequest,
-    WaitSyncedResponse,
-};
-
-pub use self::proto::protocol_server::ProtocolServer;
 
 impl FetchLeaderRequest {
     /// Create a new `FetchLeaderRequest`

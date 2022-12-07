@@ -1,9 +1,8 @@
 use std::{
     cmp::{min, Ordering},
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     fmt::Debug,
     sync::Arc,
-    vec,
 };
 
 use clippy_utilities::NumericCast;
@@ -16,23 +15,43 @@ use tokio_stream::wrappers::TcpListenerStream;
 use tracing::{debug, error, info, instrument, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-use crate::{
-    bg_tasks::{run_bg_tasks, SyncMessage},
-    cmd::{Command, CommandExecutor, ProposeId},
+use self::{
     cmd_board::{CmdState, CommandBoard},
-    cmd_execute_worker::{cmd_exe_channel, CmdExeSender},
-    error::{ProposeError, ServerError},
     gc::run_gc_tasks,
-    log::LogEntry,
+    spec_pool::SpeculativePool,
+    state::State,
+};
+use crate::{
+    cmd::{Command, CommandExecutor},
+    error::{ProposeError, ServerError},
     message::{ServerId, TermNum},
     rpc::{
         AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest, FetchLeaderResponse,
         ProposeRequest, ProposeResponse, ProtocolServer, SyncError, VoteRequest, VoteResponse,
         WaitSyncedRequest, WaitSyncedResponse,
     },
+    server::cmd_execute_worker::{cmd_exe_channel, CmdExeSender},
     shutdown::Shutdown,
     util::ExtractMap,
 };
+
+/// Background tasks of Curp protocol
+mod bg_tasks;
+
+/// Command execute worker
+mod cmd_execute_worker;
+
+/// Server state
+mod state;
+
+/// Command board is the buffer to store command execution result
+mod cmd_board;
+
+/// Speculative pool
+mod spec_pool;
+
+/// Background garbage collection for Curp server
+mod gc;
 
 /// Default server serving port
 pub(crate) static DEFAULT_SERVER_PORT: u16 = 12345;
@@ -157,61 +176,6 @@ impl<C: Command + 'static> Rpc<C> {
     }
 }
 
-/// The speculative pool that stores commands that might be executed speculatively
-#[derive(Debug)]
-pub(crate) struct SpeculativePool<C> {
-    /// Store
-    pub(crate) pool: VecDeque<C>,
-    /// Store the ids of commands that have completed backend syncing, but not in the local speculative pool. It'll prevent the late arrived commands.
-    pub(crate) ready: HashMap<ProposeId, Instant>,
-}
-
-impl<C: Command + 'static> SpeculativePool<C> {
-    /// Create a new speculative pool
-    pub(crate) fn new() -> Self {
-        Self {
-            pool: VecDeque::new(),
-            ready: HashMap::new(),
-        }
-    }
-
-    /// Push a new command into spec pool if it has not been marked ready
-    pub(crate) fn push(&mut self, cmd: C) {
-        if self.ready.remove(cmd.id()).is_none() {
-            debug!("insert cmd {:?} to spec pool", cmd.id());
-            self.pool.push_back(cmd);
-        }
-    }
-
-    /// Check whether the command pool has conflict with the new command
-    pub(crate) fn has_conflict_with(&self, cmd: &C) -> bool {
-        self.pool.iter().any(|spec_cmd| spec_cmd.is_conflict(cmd))
-    }
-
-    /// Try to remove the command from spec pool and mark it ready.
-    /// There could be no such command in the following situations:
-    /// * When the proposal arrived, the command conflicted with speculative pool and was not stored in it.
-    /// * The command has committed. But the fast round proposal has not arrived at the client or failed to arrive.
-    /// To prevent the server from returning error in the second situation when the fast proposal finally arrives, we mark the command ready.
-    pub(crate) fn mark_ready(&mut self, cmd_id: &ProposeId) {
-        debug!("remove cmd {:?} from spec pool", cmd_id);
-        if self
-            .pool
-            .iter()
-            .position(|s| s.id() == cmd_id)
-            .and_then(|index| self.pool.swap_remove_back(index))
-            .is_none()
-        {
-            debug!("Cmd {:?} is marked ready", cmd_id);
-            assert!(
-                self.ready.insert(cmd_id.clone(), Instant::now()).is_none(),
-                "Cmd {:?} is already in ready pool",
-                cmd_id
-            );
-        };
-    }
-}
-
 /// The server that handles client request and server consensus protocol
 pub struct Protocol<C: Command + 'static> {
     /// Current state
@@ -232,152 +196,29 @@ pub struct Protocol<C: Command + 'static> {
     cmd_exe_tx: CmdExeSender<C>,
 }
 
-/// State of the server
-pub(crate) struct State<C: Command + 'static> {
-    /// Id of the server
-    id: ServerId,
-    /// Id of the leader. None if in election state.
-    pub(crate) leader_id: Option<ServerId>,
-    /// Role of the server
-    role: ServerRole,
-    /// Current term
-    pub(crate) term: TermNum,
-    /// Consensus log
-    pub(crate) log: Vec<LogEntry<C>>,
-    /// Candidate id that received vote in current term
-    pub(crate) voted_for: Option<String>,
-    /// Votes received in the election
-    pub(crate) votes_received: usize,
-    /// Index of highest log entry known to be committed
-    pub(crate) commit_index: usize,
-    /// Index of highest log entry applied to state machine
-    pub(crate) last_applied: usize,
-    /// For each server, index of the next log entry to send to that server
-    // TODO: this should be indexed by server id and changed into a vec for efficiency
-    pub(crate) next_index: HashMap<ServerId, usize>,
-    /// For each server, index of highest log entry known to be replicated on server
-    pub(crate) match_index: HashMap<ServerId, usize>,
-    /// Other server ids and addresses
-    pub(crate) others: HashMap<ServerId, String>,
-    /// Trigger when server role changes
-    pub(crate) role_trigger: Arc<Event>,
-    /// Trigger when there might be some logs to commit
-    pub(crate) commit_trigger: Arc<Event>,
-    /// Trigger when a new leader needs to calibrate its followers
-    pub(crate) calibrate_trigger: Arc<Event>,
-    // TODO: clean up the board when the size is too large
-    /// Cmd watch board for tracking the cmd sync results
-    pub(crate) cmd_board: Arc<Mutex<CommandBoard>>,
-    /// Last time a rpc is received.
-    pub(crate) last_rpc_time: Arc<RwLock<Instant>>,
+/// The message sent to the background sync task
+pub(crate) struct SyncMessage<C>
+where
+    C: Command,
+{
+    /// Term number
+    term: TermNum,
+    /// Command
+    cmd: Arc<C>,
 }
 
-impl<C: Command + 'static> State<C> {
-    /// Init server state
-    pub(crate) fn new(
-        id: ServerId,
-        role: ServerRole,
-        others: HashMap<ServerId, String>,
-        cmd_board: Arc<Mutex<CommandBoard>>,
-        last_rpc_time: Arc<RwLock<Instant>>,
-    ) -> Self {
-        let mut next_index = HashMap::new();
-        let mut match_index = HashMap::new();
-        for other in others.keys() {
-            assert!(next_index.insert(other.clone(), 1).is_none());
-            assert!(match_index.insert(other.clone(), 0).is_none());
-        }
-        Self {
-            id,
-            leader_id: None,
-            role,
-            term: 0,
-            log: vec![LogEntry::new(0, &[])], // a fake log[0] will simplify the boundary check significantly
-            voted_for: None,
-            votes_received: 0,
-            commit_index: 0,
-            last_applied: 0,
-            next_index,
-            match_index,
-            others,
-            role_trigger: Arc::new(Event::new()),
-            commit_trigger: Arc::new(Event::new()),
-            calibrate_trigger: Arc::new(Event::new()),
-            cmd_board,
-            last_rpc_time,
-        }
+impl<C> SyncMessage<C>
+where
+    C: Command,
+{
+    /// Create a new `SyncMessage`
+    pub(crate) fn new(term: TermNum, cmd: Arc<C>) -> Self {
+        Self { term, cmd }
     }
 
-    /// Is leader?
-    pub(crate) fn is_leader(&self) -> bool {
-        matches!(self.role, ServerRole::Leader)
-    }
-
-    /// Last log index
-    #[allow(clippy::integer_arithmetic)] // log.len() >= 1 because we have a fake log[0]
-    pub(crate) fn last_log_index(&self) -> usize {
-        self.log.len() - 1
-    }
-
-    /// Last log term
-    #[allow(dead_code, clippy::integer_arithmetic, clippy::indexing_slicing)] // log.len() >= 1 because we have a fake log[0]
-    pub(crate) fn last_log_term(&self) -> TermNum {
-        self.log[self.log.len() - 1].term()
-    }
-
-    /// Need to commit
-    pub(crate) fn need_commit(&self) -> bool {
-        self.last_applied < self.commit_index
-    }
-
-    /// Update to `term`
-    pub(crate) fn update_to_term(&mut self, term: TermNum) {
-        debug_assert!(self.term <= term);
-        self.term = term;
-        self.set_role(ServerRole::Follower);
-        self.voted_for = None;
-        self.votes_received = 0;
-        self.leader_id = None;
-        debug!("updated to term {term}");
-    }
-
-    /// Set server role
-    pub(crate) fn set_role(&mut self, role: ServerRole) {
-        let prev_role = self.role;
-        self.role = role;
-        if prev_role != role {
-            self.role_trigger.notify(usize::MAX);
-        }
-    }
-
-    /// Get server role
-    pub(crate) fn role(&self) -> ServerRole {
-        self.role
-    }
-
-    /// Get role trigger
-    pub(crate) fn role_trigger(&self) -> Arc<Event> {
-        Arc::clone(&self.role_trigger)
-    }
-
-    /// Get commit trigger
-    pub(crate) fn commit_trigger(&self) -> Arc<Event> {
-        Arc::clone(&self.commit_trigger)
-    }
-
-    /// Get id
-    pub(crate) fn id(&self) -> &ServerId {
-        &self.id
-    }
-
-    /// Get `last_rpc_time`
-    pub(crate) fn last_rpc_time(&self) -> Arc<RwLock<Instant>> {
-        Arc::clone(&self.last_rpc_time)
-    }
-
-    /// Get `cmd_board`
-    pub(crate) fn cmd_board(&self) -> Arc<Mutex<CommandBoard>> {
-        Arc::clone(&self.cmd_board)
+    /// Get all values from the message
+    fn inner(&self) -> (TermNum, Arc<C>) {
+        (self.term, Arc::clone(&self.cmd))
     }
 }
 
@@ -386,7 +227,7 @@ impl<C: Command> Debug for Protocol<C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.state.map_read(|state| {
             f.debug_struct("Server")
-                .field("role", &state.role)
+                .field("role", &state.role())
                 .field("term", &state.term)
                 .field("spec", &self.spec)
                 .field("log", &state.log)
@@ -436,7 +277,7 @@ impl<C: 'static + Command> Protocol<C> {
         )));
 
         // run background tasks
-        let _bg_handle = tokio::spawn(run_bg_tasks(
+        let _bg_handle = tokio::spawn(bg_tasks::run_bg_tasks(
             Arc::clone(&state),
             sync_rx,
             cmd_executor,
