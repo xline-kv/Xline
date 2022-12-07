@@ -23,20 +23,21 @@ jobs:
     name: Audit
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
-      with:
-        crate: cargo-audit
-        use-tool-cache: true
-    - uses: actions-rs/audit-check@v1.2.0
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/checkout@v2
+        with:
+          crate: cargo-audit
+          use-tool-cache: true
+      - uses: actions-rs/audit-check@v1.2.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
   check:
     name: Check
     runs-on: ubuntu-latest
     steps:
-      - run: sudo apt install -y libprotobuf-dev protobuf-compiler
       - uses: actions/checkout@v2
+      - run: sudo apt install -y cmake g++
+      - run: wget https://github.com/protocolbuffers/protobuf/releases/download/v21.10/protoc-21.10-linux-x86_64.zip && unzip protoc-21.10-linux-x86_64.zip -d .local && echo "$(pwd)/.local/bin" >> $GITHUB_PATH
       - uses: actions-rs/toolchain@v1
         with:
           profile: default
@@ -45,7 +46,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: check
-  
+
   fmt:
     name: Format
     runs-on: ubuntu-latest
@@ -60,13 +61,14 @@ jobs:
         with:
           command: fmt
           args: --all -- --check
-  
+
   test:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - run: sudo apt install -y cmake g++ libprotobuf-dev protobuf-compiler
       - uses: actions/checkout@v2
+      - run: sudo apt install -y cmake g++
+      - run: wget https://github.com/protocolbuffers/protobuf/releases/download/v21.10/protoc-21.10-linux-x86_64.zip && unzip protoc-21.10-linux-x86_64.zip -d .local && echo "$(pwd)/.local/bin" >> $GITHUB_PATH
       - uses: actions-rs/toolchain@v1
         with:
           profile: default
@@ -80,8 +82,9 @@ jobs:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - run: sudo apt install -y cmake g++ libprotobuf-dev protobuf-compiler
       - uses: actions/checkout@v2
+      - run: sudo apt install -y cmake g++
+      - run: wget https://github.com/protocolbuffers/protobuf/releases/download/v21.10/protoc-21.10-linux-x86_64.zip && unzip protoc-21.10-linux-x86_64.zip -d .local && echo "$(pwd)/.local/bin" >> $GITHUB_PATH
       - uses: actions-rs/toolchain@v1
         with:
           profile: default

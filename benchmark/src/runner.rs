@@ -166,12 +166,7 @@ impl CommandRunner {
     async fn crate_clients(&self) -> Result<Vec<Client>> {
         let mut clients = Vec::with_capacity(self.args.clients);
         for _ in 0..self.args.clients {
-            let client = Client::new(
-                self.args.leader_index,
-                self.args.endpoints.clone(),
-                self.args.use_curp,
-            )
-            .await?;
+            let client = Client::new(self.args.endpoints.clone(), self.args.use_curp).await?;
             clients.push(client);
         }
         Ok(clients)

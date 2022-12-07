@@ -15,7 +15,8 @@ mod proto {
 }
 
 use clippy_utilities::NumericCast;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::{sync::Arc, time::Duration};
 
 use opentelemetry::global;
@@ -25,7 +26,7 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::error::ExecuteError;
 use crate::log::LogEntry;
-use crate::message::TermNum;
+use crate::message::{ServerId, TermNum};
 use crate::{
     cmd::{Command, ProposeId},
     error::ProposeError,
@@ -36,12 +37,27 @@ pub(crate) use self::proto::{
     propose_response::ExeResult,
     protocol_client::ProtocolClient,
     protocol_server::Protocol,
-    wait_synced_response::{Success, SyncResult},
-    AppendEntriesRequest, AppendEntriesResponse, ProposeRequest, ProposeResponse, VoteRequest,
-    VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+    wait_synced_response::{Success, SyncResult as SyncResultRaw},
+    AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest, FetchLeaderResponse,
+    ProposeRequest, ProposeResponse, VoteRequest, VoteResponse, WaitSyncedRequest,
+    WaitSyncedResponse,
 };
 
 pub use self::proto::protocol_server::ProtocolServer;
+
+impl FetchLeaderRequest {
+    /// Create a new `FetchLeaderRequest`
+    pub(crate) fn new() -> Self {
+        Self {}
+    }
+}
+
+impl FetchLeaderResponse {
+    /// Create a new `FetchLeaderResponse`
+    pub(crate) fn new(leader_id: Option<ServerId>, term: TermNum) -> Self {
+        Self { leader_id, term }
+    }
+}
 
 impl ProposeRequest {
     /// Create a new `Propose` request
@@ -142,7 +158,7 @@ impl WaitSyncedResponse {
         er: &Option<C::ER>,
     ) -> bincode::Result<Self> {
         Ok(Self {
-            sync_result: Some(SyncResult::Success(Success {
+            sync_result: Some(SyncResultRaw::Success(Success {
                 after_sync_result: bincode::serialize(&asr)?,
                 exe_result: bincode::serialize(&er)?,
             })),
@@ -150,9 +166,9 @@ impl WaitSyncedResponse {
     }
 
     /// Create an error response
-    pub(crate) fn new_error(err: &str) -> bincode::Result<Self> {
+    pub(crate) fn new_error(err: &SyncError) -> bincode::Result<Self> {
         Ok(Self {
-            sync_result: Some(SyncResult::Error(bincode::serialize(err)?)),
+            sync_result: Some(SyncResultRaw::Error(bincode::serialize(&err)?)),
         })
     }
 
@@ -163,53 +179,77 @@ impl WaitSyncedResponse {
     ) -> bincode::Result<Self> {
         match (er, asr) {
             (None, Some(Err(err))) => {
-                WaitSyncedResponse::new_error(&format!("after sync error: {:?}", err))
+                WaitSyncedResponse::new_error(&SyncError::AfterSyncError(err.to_string()))
             }
             (None, Some(Ok(asr))) => WaitSyncedResponse::new_success::<C>(&asr, &None),
-            (None, None) => WaitSyncedResponse::new_error("after sync error: no asr result"), // this is highly unlikely to happen,
+            (None, None) => WaitSyncedResponse::new_error(&SyncError::AfterSyncError(
+                "can't get asr result".to_owned(),
+            )), // this is highly unlikely to happen,
             (Some(Err(_)), Some(_)) => {
                 unreachable!("should not call after_sync when exe failed")
             }
             (Some(Err(err)), None) => {
-                WaitSyncedResponse::new_error(&format!("execution error: {:?}", err))
+                WaitSyncedResponse::new_error(&SyncError::ExecuteError(err.to_string()))
             }
             (Some(Ok(_er)), Some(Err(err))) => {
                 // FIXME: should er be returned?
-                WaitSyncedResponse::new_error(&format!("after sync error: {:?}", err))
+                WaitSyncedResponse::new_error(&SyncError::AfterSyncError(err.to_string()))
             }
             (Some(Ok(er)), Some(Ok(asr))) => WaitSyncedResponse::new_success::<C>(&asr, &Some(er)),
             (Some(Ok(_er)), None) => {
                 // FIXME: should er be returned?
-                WaitSyncedResponse::new_error("after sync error: no asr result")
+                WaitSyncedResponse::new_error(&SyncError::AfterSyncError(
+                    "can't get after sync result".to_owned(),
+                )) // this is highly unlikely to happen,
             }
         }
     }
 
-    /// Handle response based on the closures
-    pub(crate) fn map_success_error<C: Command, SF, SFR, FF>(
-        self,
-        sf: SF,
-        ff: FF,
-    ) -> Result<SFR, ProposeError>
-    where
-        SF: FnOnce((C::ASR, Option<C::ER>)) -> Result<SFR, ProposeError>,
-        FF: FnOnce(String) -> Result<SFR, ProposeError>,
-    {
-        match self.sync_result {
+    /// Into deserialized result
+    pub(crate) fn into<C: Command>(self) -> bincode::Result<SyncResult<C>> {
+        let res = match self.sync_result {
             None => unreachable!("WaitSyncedResponse should contain valid sync_result"),
-            Some(SyncResult::Success(success)) => sf((
-                bincode::deserialize(&success.after_sync_result)?,
-                bincode::deserialize(&success.exe_result)?,
-            )),
-            Some(SyncResult::Error(err)) => ff(bincode::deserialize(&err)?),
-        }
+            Some(SyncResultRaw::Success(success)) => SyncResult::Success {
+                asr: bincode::deserialize(&success.after_sync_result)?,
+                er: bincode::deserialize(&success.exe_result)?,
+            },
+            Some(SyncResultRaw::Error(err)) => SyncResult::Error(bincode::deserialize(&err)?),
+        };
+        Ok(res)
     }
+}
+
+/// Sync Result
+pub(crate) enum SyncResult<C: Command> {
+    /// If sync succeeds, return asr and er
+    Success {
+        /// After Sync Result
+        asr: C::ASR,
+        /// Execution Result
+        er: Option<C::ER>,
+    },
+    /// If sync fails, return `SyncError`
+    Error(SyncError),
+}
+
+/// Wait Synced error
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub(crate) enum SyncError {
+    /// If client sent a wait synced request to a non-leader
+    Redirect(Option<ServerId>, TermNum),
+    /// If the execution of the cmd went wrong
+    ExecuteError(String),
+    /// If after sync of the cmd went wrong
+    AfterSyncError(String),
+    /// If there is no such cmd to be waited
+    NoSuchCmd(ProposeId),
 }
 
 impl AppendEntriesRequest {
     /// Create a new `append_entries` request
     pub(crate) fn new<C: Command + Serialize>(
         term: TermNum,
+        leader_id: ServerId,
         prev_log_index: usize,
         prev_log_term: TermNum,
         entries: Vec<LogEntry<C>>,
@@ -217,6 +257,7 @@ impl AppendEntriesRequest {
     ) -> bincode::Result<Self> {
         Ok(Self {
             term,
+            leader_id,
             prev_log_index: prev_log_index.numeric_cast(),
             prev_log_term: prev_log_term.numeric_cast(),
             entries: entries
@@ -230,12 +271,14 @@ impl AppendEntriesRequest {
     /// Create a new `append_entries` heartbeat request
     pub(crate) fn new_heartbeat(
         term: TermNum,
+        leader_id: ServerId,
         prev_log_index: usize,
         prev_log_term: TermNum,
         leader_commit: usize,
     ) -> Self {
         Self {
             term,
+            leader_id,
             prev_log_index: prev_log_index.numeric_cast(),
             prev_log_term: prev_log_term.numeric_cast(),
             entries: vec![],
@@ -305,6 +348,8 @@ impl VoteResponse {
 /// retries the next time
 #[derive(Debug)]
 pub(crate) struct Connect {
+    /// Server id
+    id: ServerId,
     /// The rpc connection, if it fails it contains a error, otherwise the rpc client is there
     rpc_connect: RwLock<Result<ProtocolClient<tonic::transport::Channel>, tonic::transport::Error>>,
     /// The addr used to connect if failing met
@@ -312,6 +357,11 @@ pub(crate) struct Connect {
 }
 
 impl Connect {
+    /// Get server id
+    pub(crate) fn id(&self) -> &ServerId {
+        &self.id
+    }
+
     /// Get the internal rpc connection/client
     pub(crate) async fn get(
         &self,
@@ -359,11 +409,14 @@ impl Connect {
     #[allow(dead_code)] // false positive report
     pub(crate) async fn wait_synced(
         &self,
-        request: WaitSyncedRequest,
+        req: WaitSyncedRequest,
+        timeout: Duration,
     ) -> Result<tonic::Response<WaitSyncedResponse>, ProposeError> {
         let option_client = self.get().await;
+        let mut req = tonic::Request::new(req);
+        req.set_timeout(timeout);
         match option_client {
-            Ok(mut client) => Ok(client.wait_synced(tonic::Request::new(request)).await?),
+            Ok(mut client) => Ok(client.wait_synced(req).await?),
             Err(e) => Err(e.into()),
         }
     }
@@ -397,21 +450,42 @@ impl Connect {
             Err(e) => Err(e.into()),
         }
     }
+
+    /// Send `FetchLeaderRequest`
+    pub(crate) async fn fetch_leader(
+        &self,
+        request: FetchLeaderRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<FetchLeaderResponse>, ProposeError> {
+        let option_client = self.get().await;
+        let mut req = tonic::Request::new(request);
+        req.set_timeout(timeout);
+        match option_client {
+            Ok(mut client) => Ok(client.fetch_leader(req).await?),
+            Err(e) => Err(e.into()),
+        }
+    }
 }
 
 /// Convert a vec of addr string to a vec of `Connect`
-pub(crate) async fn try_connect(addrs: Vec<String>) -> Vec<Arc<Connect>> {
-    futures::future::join_all(
-        addrs
-            .iter()
-            .map(|addr| ProtocolClient::<_>::connect(addr.clone())),
-    )
+pub(crate) async fn try_connect(addrs: HashMap<ServerId, String>) -> Vec<Arc<Connect>> {
+    futures::future::join_all(addrs.into_iter().map(|(id, mut addr)| async move {
+        // Addrs must start with "http" to communicate with the server
+        if !addr.starts_with("http") {
+            addr.insert_str(0, "http://");
+        }
+        (
+            id,
+            addr.clone(),
+            ProtocolClient::<_>::connect(addr.clone()).await,
+        )
+    }))
     .await
     .into_iter()
-    .zip(addrs.into_iter())
-    .map(|(conn, addr)| {
+    .map(|(id, addr, conn)| {
         debug!("successfully establish connection with {addr}");
         Arc::new(Connect {
+            id,
             rpc_connect: RwLock::new(conn),
             addr,
         })
