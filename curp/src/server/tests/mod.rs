@@ -15,12 +15,15 @@
 mod curp_group;
 mod test_cmd;
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use tracing::debug;
 use tracing_test::traced_test;
 
-use crate::server::tests::{curp_group::CurpGroup, test_cmd::TestCommand};
+use crate::{
+    rpc::ProposeRequest,
+    server::tests::{curp_group::CurpGroup, test_cmd::TestCommand},
+};
 
 // Initial election
 #[traced_test]
@@ -205,4 +208,48 @@ async fn exe_exact_n_times() {
         assert_eq!(cmd1, cmd);
         assert_eq!(index, 1);
     }
+}
+
+// To verify PR #86 is fixed
+#[traced_test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+async fn fast_round_is_slower_than_slow_round() {
+    let group = CurpGroup::new(3).await;
+    let client = group.new_client().await;
+    let cmd = Arc::new(TestCommand::new_get(0, vec![0]));
+
+    let leader = group.get_leader().expect("There should be one leader");
+
+    let connects = client.get_connects();
+    let leader_connect = connects
+        .iter()
+        .find(|connect| connect.id() == &leader)
+        .unwrap();
+    leader_connect
+        .propose(
+            ProposeRequest::new_from_rc(Arc::clone(&cmd)).unwrap(),
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+
+    // wait for the command to be synced to others
+    // because followers never get the cmd from the client, it will mark the cmd done in spec pool instead of removing the cmd from it
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    let follower_connect = connects
+        .iter()
+        .find(|connect| connect.id() != &leader)
+        .unwrap();
+
+    // the follower should response empty immediately
+    let resp = follower_connect
+        .propose(
+            ProposeRequest::new_from_rc(cmd).unwrap(),
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(resp.exe_result.is_none());
 }

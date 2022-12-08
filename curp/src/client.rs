@@ -390,4 +390,9 @@ where
             Err(e) => Err(e),
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn get_connects(&self) -> &[Arc<Connect>] {
+        self.connects.as_slice()
+    }
 }
