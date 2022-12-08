@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::sync::atomic::AtomicBool;
 use std::{
     cmp::{min, Ordering},
     collections::HashMap,
@@ -52,6 +54,9 @@ mod spec_pool;
 
 /// Background garbage collection for Curp server
 mod gc;
+
+#[cfg(test)]
+mod tests;
 
 /// Default server serving port
 pub(crate) static DEFAULT_SERVER_PORT: u16 = 12345;
@@ -285,6 +290,60 @@ impl<C: 'static + Command> Protocol<C> {
             exe_tx.clone(),
             exe_rx,
             Shutdown::new(stop_ch_rx.resubscribe()),
+            #[cfg(test)]
+            Arc::new(AtomicBool::new(true)),
+        ));
+
+        run_gc_tasks(Arc::clone(&spec));
+
+        Self {
+            state,
+            last_rpc_time,
+            spec,
+            sync_chan: sync_tx,
+            cmd_board,
+            stop_ch_tx,
+            cmd_exe_tx: exe_tx,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn new_test<CE: CommandExecutor<C> + 'static>(
+        id: ServerId,
+        is_leader: bool,
+        others: HashMap<ServerId, String>,
+        cmd_executor: CE,
+        reachable: Arc<AtomicBool>,
+    ) -> Self {
+        let (sync_tx, sync_rx) = key_mpsc::channel();
+        let cmd_board = Arc::new(Mutex::new(CommandBoard::new()));
+        let spec = Arc::new(Mutex::new(SpeculativePool::new()));
+        let last_rpc_time = Arc::new(RwLock::new(Instant::now()));
+        let (stop_ch_tx, stop_ch_rx) = broadcast::channel(1);
+        let (exe_tx, exe_rx) = cmd_execute_channel();
+
+        let state = Arc::new(RwLock::new(State::new(
+            id,
+            if is_leader {
+                ServerRole::Leader
+            } else {
+                ServerRole::Follower
+            },
+            others,
+            Arc::clone(&cmd_board),
+            Arc::clone(&last_rpc_time),
+        )));
+
+        // run background tasks
+        let _bg_handle = tokio::spawn(bg_tasks::run_bg_tasks(
+            Arc::clone(&state),
+            sync_rx,
+            cmd_executor,
+            Arc::clone(&spec),
+            exe_tx.clone(),
+            exe_rx,
+            Shutdown::new(stop_ch_rx.resubscribe()),
+            reachable,
         ));
 
         run_gc_tasks(Arc::clone(&spec));

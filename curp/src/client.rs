@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::sync::atomic::AtomicBool;
 use std::{collections::HashMap, fmt::Debug, iter, marker::PhantomData, sync::Arc, time::Duration};
 
 use event_listener::Event;
@@ -84,7 +86,12 @@ where
     pub async fn new(addrs: HashMap<ServerId, String>) -> Self {
         Self {
             state: RwLock::new(State::new()),
-            connects: rpc::try_connect(addrs).await,
+            connects: rpc::try_connect(
+                addrs,
+                #[cfg(test)]
+                Arc::new(AtomicBool::new(true)),
+            )
+            .await,
             phatom: PhantomData,
         }
     }

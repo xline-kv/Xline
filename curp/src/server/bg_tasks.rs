@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::sync::atomic::AtomicBool;
 use std::{iter, ops::Range, sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
@@ -24,6 +26,10 @@ use crate::{
     LogIndex,
 };
 
+/// Wait for sometime before next retry
+// TODO: make it configurable
+const RETRY_TIMEOUT: Duration = Duration::from_millis(800);
+
 /// Run background tasks
 #[allow(clippy::too_many_arguments)] // we call this function once, it's ok
 pub(crate) async fn run_bg_tasks<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
@@ -34,10 +40,16 @@ pub(crate) async fn run_bg_tasks<C: Command + 'static, CE: 'static + CommandExec
     cmd_exe_tx: CmdExeSender<C>,
     cmd_exe_rx: CmdExeReceiver<C>,
     mut shutdown: Shutdown,
+    #[cfg(test)] reachable: Arc<AtomicBool>,
 ) {
     // establish connection with other servers
     let others = state.read().others.clone();
-    let connects = rpc::try_connect(others).await;
+    let connects = rpc::try_connect(
+        others,
+        #[cfg(test)]
+        reachable,
+    )
+    .await;
 
     // notify when a broadcast of append_entries is needed immediately
     let (ae_trigger, ae_trigger_rx) = mpsc::unbounded_channel::<usize>();
@@ -168,7 +180,11 @@ async fn send_log_until_succeed<C: Command + 'static>(
         #[allow(clippy::unwrap_used)]
         // indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
         match resp {
-            Err(e) => warn!("append_entries error: {}", e),
+            Err(e) => {
+                warn!("append_entries error: {e}");
+                // wait for some time until next retry
+                tokio::time::sleep(RETRY_TIMEOUT).await;
+            }
             Ok(resp) => {
                 let resp = resp.into_inner();
                 let state = state.upgradable_read();
@@ -520,7 +536,7 @@ async fn send_vote<C: Command + 'static>(
                 let min_granted = (state.others.len() + 1) / 2 + 1;
                 if state.votes_received >= min_granted {
                     state.set_role(ServerRole::Leader);
-                    debug!("server becomes leader");
+                    debug!("server {} becomes leader", state.id());
 
                     // init next_index
                     let last_log_index = state.last_log_index();
@@ -578,7 +594,10 @@ async fn leader_calibrates_followers<C: Command + 'static>(
                     #[allow(clippy::unwrap_used)]
                     // indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
                     match resp {
-                        Err(e) => warn!("append_entries error: {}", e),
+                        Err(e) => {
+                            warn!("append_entries error: {}", e);
+                            tokio::time::sleep(RETRY_TIMEOUT).await;
+                        }
                         Ok(resp) => {
                             let resp = resp.into_inner();
                             // calibrate term

@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
@@ -350,6 +352,9 @@ pub(crate) struct Connect {
     rpc_connect: RwLock<Result<ProtocolClient<tonic::transport::Channel>, tonic::transport::Error>>,
     /// The addr used to connect if failing met
     pub(crate) addr: String,
+    /// Whether the client can reach others, useful for testings
+    #[cfg(test)]
+    reachable: Arc<AtomicBool>,
 }
 
 impl Connect {
@@ -385,6 +390,11 @@ impl Connect {
         request: ProposeRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<ProposeResponse>, ProposeError> {
+        #[cfg(test)]
+        if !self.reachable.load(Ordering::Relaxed) {
+            return Err(ProposeError::RpcError("unreachable".to_owned()));
+        }
+
         let mut client = self.get().await?;
         let mut tr = tonic::Request::new(request);
         tr.set_timeout(timeout);
@@ -408,6 +418,11 @@ impl Connect {
         req: WaitSyncedRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<WaitSyncedResponse>, ProposeError> {
+        #[cfg(test)]
+        if !self.reachable.load(Ordering::Relaxed) {
+            return Err(ProposeError::RpcError("unreachable".to_owned()));
+        }
+
         let option_client = self.get().await;
         let mut req = tonic::Request::new(req);
         req.set_timeout(timeout);
@@ -423,6 +438,11 @@ impl Connect {
         request: AppendEntriesRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<AppendEntriesResponse>, ProposeError> {
+        #[cfg(test)]
+        if !self.reachable.load(Ordering::Relaxed) {
+            return Err(ProposeError::RpcError("unreachable".to_owned()));
+        }
+
         let option_client = self.get().await;
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
@@ -438,6 +458,11 @@ impl Connect {
         request: VoteRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<VoteResponse>, ProposeError> {
+        #[cfg(test)]
+        if !self.reachable.load(Ordering::Relaxed) {
+            return Err(ProposeError::RpcError("unreachable".to_owned()));
+        }
+
         let option_client = self.get().await;
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
@@ -453,6 +478,11 @@ impl Connect {
         request: FetchLeaderRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<FetchLeaderResponse>, ProposeError> {
+        #[cfg(test)]
+        if !self.reachable.load(Ordering::Relaxed) {
+            return Err(ProposeError::RpcError("unreachable".to_owned()));
+        }
+
         let option_client = self.get().await;
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
@@ -464,7 +494,10 @@ impl Connect {
 }
 
 /// Convert a vec of addr string to a vec of `Connect`
-pub(crate) async fn try_connect(addrs: HashMap<ServerId, String>) -> Vec<Arc<Connect>> {
+pub(crate) async fn try_connect(
+    addrs: HashMap<ServerId, String>,
+    #[cfg(test)] reachable: Arc<AtomicBool>,
+) -> Vec<Arc<Connect>> {
     futures::future::join_all(addrs.into_iter().map(|(id, mut addr)| async move {
         // Addrs must start with "http" to communicate with the server
         if !addr.starts_with("http") {
@@ -484,6 +517,8 @@ pub(crate) async fn try_connect(addrs: HashMap<ServerId, String>) -> Vec<Arc<Con
             id,
             rpc_connect: RwLock::new(conn),
             addr,
+            #[cfg(test)]
+            reachable: Arc::clone(&reachable),
         })
     })
     .collect()
