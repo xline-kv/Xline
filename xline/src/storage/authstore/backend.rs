@@ -14,12 +14,10 @@ use pbkdf2::{
 };
 use prost::Message;
 
-use crate::server::command::{
-    CommandResponse, ExecutionRequest, KeyRange, SyncRequest, SyncResponse,
-};
 use crate::{
     header_gen::HeaderGenerator,
-    storage::{db::DB, index::Index},
+    server::command::KeyRange,
+    storage::{db::DB, index::Index, req_ctx::RequestCtx},
 };
 use crate::{
     rpc::{
@@ -33,8 +31,8 @@ use crate::{
         AuthUserGetRequest, AuthUserGetResponse, AuthUserGrantRoleRequest,
         AuthUserGrantRoleResponse, AuthUserListRequest, AuthUserListResponse,
         AuthUserRevokeRoleRequest, AuthUserRevokeRoleResponse, AuthenticateRequest,
-        AuthenticateResponse, KeyValue, Permission, RequestWithToken, RequestWrapper,
-        ResponseWrapper, Role, Type, User,
+        AuthenticateResponse, KeyValue, Permission, RequestWrapper, ResponseWrapper, Role, Type,
+        User,
     },
     storage::index::IndexOperate,
 };
@@ -61,7 +59,7 @@ pub(crate) struct AuthStoreBackend {
     /// Revision
     revision: Mutex<i64>,
     /// Speculative execution pool. Mapping from propose id to request
-    sp_exec_pool: Mutex<HashMap<ProposeId, RequestWithToken>>,
+    sp_exec_pool: Mutex<HashMap<ProposeId, RequestCtx>>,
     /// Enabled
     enabled: Mutex<bool>,
     /// Permission cache
@@ -345,90 +343,73 @@ impl AuthStoreBackend {
             .collect()
     }
 
-    /// speculative execute command
-    pub(crate) fn speculative_exec(&self, execution_req: ExecutionRequest) {
-        debug!("Receive Execution Request {:?}", execution_req);
-        let (id, req, res_sender) = execution_req.unpack();
-        let result = self.handle_auth_req(id, &req).map(CommandResponse::new);
-        assert!(res_sender.send(result).is_ok(), "Failed to send response");
-    }
-
     /// Handle `InternalRequest`
-    fn handle_auth_req(
+    pub(crate) fn handle_auth_req(
         &self,
         id: ProposeId,
-        wrapper: &RequestWithToken,
+        wrapper: RequestWrapper,
     ) -> Result<ResponseWrapper, ExecuteError> {
-        let _prev = self.sp_exec_pool.lock().insert(id, wrapper.clone());
         // routed when call execute, other request will be routed to other backend
         #[allow(clippy::wildcard_enum_match_arm)]
-        let response = match wrapper.request {
+        let res = match wrapper {
             RequestWrapper::AuthEnableRequest(ref req) => {
-                ResponseWrapper::AuthEnableResponse(self.handle_auth_enable_request(req)?)
+                self.handle_auth_enable_request(req).map(Into::into)
             }
             RequestWrapper::AuthDisableRequest(ref req) => {
-                ResponseWrapper::AuthDisableResponse(self.handle_auth_disable_request(req))
+                Ok(self.handle_auth_disable_request(req).into())
             }
             RequestWrapper::AuthStatusRequest(ref req) => {
-                ResponseWrapper::AuthStatusResponse(self.handle_auth_status_request(req))
+                Ok(self.handle_auth_status_request(req).into())
             }
             RequestWrapper::AuthUserAddRequest(ref req) => {
-                ResponseWrapper::AuthUserAddResponse(self.handle_user_add_request(req)?)
+                self.handle_user_add_request(req).map(Into::into)
             }
             RequestWrapper::AuthUserGetRequest(ref req) => {
-                ResponseWrapper::AuthUserGetResponse(self.handle_user_get_request(req)?)
+                self.handle_user_get_request(req).map(Into::into)
             }
             RequestWrapper::AuthUserListRequest(ref req) => {
-                ResponseWrapper::AuthUserListResponse(self.handle_user_list_request(req))
+                Ok(self.handle_user_list_request(req).into())
             }
             RequestWrapper::AuthUserGrantRoleRequest(ref req) => {
-                ResponseWrapper::AuthUserGrantRoleResponse(
-                    self.handle_user_grant_role_request(req)?,
-                )
+                self.handle_user_grant_role_request(req).map(Into::into)
             }
             RequestWrapper::AuthUserRevokeRoleRequest(ref req) => {
-                ResponseWrapper::AuthUserRevokeRoleResponse(
-                    self.handle_user_revoke_role_request(req)?,
-                )
+                self.handle_user_revoke_role_request(req).map(Into::into)
             }
-            RequestWrapper::AuthUserChangePasswordRequest(ref req) => {
-                ResponseWrapper::AuthUserChangePasswordResponse(
-                    self.handle_user_change_password_request(req)?,
-                )
-            }
+            RequestWrapper::AuthUserChangePasswordRequest(ref req) => self
+                .handle_user_change_password_request(req)
+                .map(Into::into),
             RequestWrapper::AuthUserDeleteRequest(ref req) => {
-                ResponseWrapper::AuthUserDeleteResponse(self.handle_user_delete_request(req)?)
+                self.handle_user_delete_request(req).map(Into::into)
             }
             RequestWrapper::AuthRoleAddRequest(ref req) => {
-                ResponseWrapper::AuthRoleAddResponse(self.handle_role_add_request(req)?)
+                self.handle_role_add_request(req).map(Into::into)
             }
             RequestWrapper::AuthRoleGetRequest(ref req) => {
-                ResponseWrapper::AuthRoleGetResponse(self.handle_role_get_request(req)?)
+                self.handle_role_get_request(req).map(Into::into)
             }
-            RequestWrapper::AuthRoleGrantPermissionRequest(ref req) => {
-                ResponseWrapper::AuthRoleGrantPermissionResponse(
-                    self.handle_role_grant_permission_request(req)?,
-                )
-            }
-            RequestWrapper::AuthRoleRevokePermissionRequest(ref req) => {
-                ResponseWrapper::AuthRoleRevokePermissionResponse(
-                    self.handle_role_revoke_permission_request(req)?,
-                )
-            }
+            RequestWrapper::AuthRoleGrantPermissionRequest(ref req) => self
+                .handle_role_grant_permission_request(req)
+                .map(Into::into),
+            RequestWrapper::AuthRoleRevokePermissionRequest(ref req) => self
+                .handle_role_revoke_permission_request(req)
+                .map(Into::into),
             RequestWrapper::AuthRoleDeleteRequest(ref req) => {
-                ResponseWrapper::AuthRoleDeleteResponse(self.handle_role_delete_request(req)?)
+                self.handle_role_delete_request(req).map(Into::into)
             }
             RequestWrapper::AuthRoleListRequest(ref req) => {
-                ResponseWrapper::AuthRoleListResponse(self.handle_role_list_request(req))
+                Ok(self.handle_role_list_request(req).into())
             }
             RequestWrapper::AuthenticateRequest(ref req) => {
-                ResponseWrapper::AuthenticateResponse(self.handle_authenticate_request(req)?)
+                self.handle_authenticate_request(req).map(Into::into)
             }
             _ => {
                 unreachable!("Other request should not be sent to this store");
             }
         };
-        Ok(response)
+        let ctx = RequestCtx::new(wrapper, res.is_err());
+        let _prev = self.sp_exec_pool.lock().insert(id, ctx);
+        res
     }
 
     /// Handle `AuthEnableRequest`
@@ -716,34 +697,19 @@ impl AuthStoreBackend {
         })
     }
 
-    /// Sync a Command to storage and generate revision for Command.
-    pub(crate) async fn sync_cmd(&self, sync_req: SyncRequest) {
-        debug!("Receive SyncRequest {:?}", sync_req);
-        let (propose_id, res_sender) = sync_req.unpack();
-        let requests = self
-            .sp_exec_pool
-            .lock()
-            .remove(&propose_id)
-            .unwrap_or_else(|| {
-                panic!(
-                    "Failed to get speculative execution propose id {:?}",
-                    propose_id
-                );
-            });
-        self.sync_request(requests);
-        let kv_revision = self.header_gen.revision();
-        assert!(
-            res_sender.send(SyncResponse::new(kv_revision)).is_ok(),
-            "Failed to send response"
-        );
-    }
-
     /// Sync `RequestWrapper`
-    fn sync_request(&self, wrapper: RequestWithToken) {
+    pub(crate) fn sync_request(&self, id: &ProposeId) -> i64 {
+        let ctx = self.sp_exec_pool.lock().remove(id).unwrap_or_else(|| {
+            panic!("Failed to get speculative execution propose id {:?}", id);
+        });
+        if ctx.met_err() {
+            return self.header_gen.revision();
+        }
+        let wrapper = ctx.req();
         let revision = *self.revision.lock();
         let next_revision = revision.overflow_add(1);
         #[allow(clippy::wildcard_enum_match_arm)]
-        let modify = match wrapper.request {
+        let modify = match wrapper {
             RequestWrapper::AuthEnableRequest(req) => {
                 debug!("Sync AuthEnableRequest {:?}", req);
                 self.sync_auth_enable_request(&req, next_revision)
@@ -819,18 +785,12 @@ impl AuthStoreBackend {
         if modify {
             *self.revision.lock() = next_revision;
         }
+        self.header_gen.revision()
     }
 
     /// Sync `AuthEnableRequest` and return whether authstore is changed.
     fn sync_auth_enable_request(&self, _req: &AuthEnableRequest, revision: i64) -> bool {
         if self.is_enabled() {
-            return false;
-        }
-        let user = match self.get_user(ROOT_USER) {
-            Ok(user) => user,
-            Err(_) => return false,
-        };
-        if user.roles.binary_search(&ROOT_ROLE.to_owned()).is_err() {
             return false;
         }
         self.put(AUTH_ENABLE_KEY.to_vec(), vec![1], revision, 0);
@@ -861,9 +821,6 @@ impl AuthStoreBackend {
 
     /// Sync `AuthUserAddRequest` and return whether authstore is changed.
     fn sync_user_add_request(&self, req: AuthUserAddRequest, revision: i64) -> bool {
-        if self.get_user(&req.name).is_ok() {
-            return false;
-        }
         let user = User {
             name: req.name.into_bytes(),
             password: req.hashed_password.into_bytes(),
@@ -886,12 +843,6 @@ impl AuthStoreBackend {
 
     /// Sync `AuthUserDeleteRequest` and return whether authstore is changed.
     fn sync_user_delete_request(&self, req: &AuthUserDeleteRequest, next_revision: i64) -> bool {
-        if self.is_enabled() && req.name == ROOT_USER {
-            return false;
-        }
-        if self.get_user(&req.name).is_err() {
-            return false;
-        }
         self.delete_user(&req.name, next_revision, 0);
         self.permission_cache.map_write(|mut cache| {
             let _ignore = cache.user_permissions.remove(&req.name);
@@ -914,10 +865,6 @@ impl AuthStoreBackend {
             Ok(user) => user,
             Err(_) => return false,
         };
-        let need_password = user.options.as_ref().map_or(true, |o| !o.no_password);
-        if need_password && req.hashed_password.is_empty() {
-            return false;
-        }
         user.password = req.hashed_password.into_bytes();
         self.put_user(&user, revision, 0);
         true
@@ -975,9 +922,6 @@ impl AuthStoreBackend {
 
     /// Sync `AuthUserRevokeRoleRequest` and return whether authstore is changed.
     fn sync_user_revoke_role_request(&self, req: AuthUserRevokeRoleRequest, revision: i64) -> bool {
-        if self.is_enabled() && (req.name == ROOT_USER) && (req.role == ROOT_ROLE) {
-            return false;
-        }
         let mut user = match self.get_user(&req.name) {
             Ok(user) => user,
             Err(_) => return false,
@@ -1002,9 +946,6 @@ impl AuthStoreBackend {
 
     /// Sync `AuthRoleAddRequest` and return whether authstore is changed.
     fn sync_role_add_request(&self, req: AuthRoleAddRequest, revision: i64) -> bool {
-        if self.get_role(&req.name).is_ok() {
-            return false;
-        }
         let role = Role {
             name: req.name.into_bytes(),
             key_permission: Vec::new(),
@@ -1025,12 +966,6 @@ impl AuthStoreBackend {
 
     /// Sync `AuthRoleDeleteRequest` and return whether authstore is changed.
     fn sync_role_delete_request(&self, req: &AuthRoleDeleteRequest, revision: i64) -> bool {
-        if self.is_enabled() && req.role == ROOT_ROLE {
-            return false;
-        }
-        if self.get_role(&req.role).is_err() {
-            return false;
-        }
         self.delete_role(&req.role, revision, 0);
         let users = self.get_all_users();
         let mut sub_revision = 1;

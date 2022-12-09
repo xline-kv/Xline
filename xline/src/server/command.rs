@@ -12,7 +12,6 @@ use curp::{
 };
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use tokio::sync::oneshot;
 
 use crate::{
     rpc::{RequestBackend, RequestWithToken, ResponseWrapper},
@@ -188,13 +187,10 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
     async fn execute(&self, cmd: &Command) -> Result<CommandResponse, ExecuteError> {
         let (_, wrapper, id) = cmd.clone().unpack();
         self.auth_storage.check_permission(&wrapper)?;
-        let receiver = match wrapper.request.backend() {
-            RequestBackend::Kv => self.kv_storage.send_req(id, wrapper).await,
-            RequestBackend::Auth => self.auth_storage.send_req(id, wrapper).await,
-        };
-        receiver
-            .await
-            .unwrap_or_else(|_| panic!("Failed to receive response from storage"))
+        match wrapper.request.backend() {
+            RequestBackend::Kv => self.kv_storage.execute(id, wrapper),
+            RequestBackend::Auth => self.auth_storage.execute(id, wrapper),
+        }
     }
 
     async fn after_sync(
@@ -204,13 +200,10 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
     ) -> Result<SyncResponse, ExecuteError> {
         let (_, wrapper, id) = cmd.clone().unpack();
         self.auth_storage.check_permission(&wrapper)?;
-        let receiver = match wrapper.request.backend() {
-            RequestBackend::Kv => self.kv_storage.send_sync(id).await,
-            RequestBackend::Auth => self.auth_storage.send_sync(id).await,
-        };
-        receiver
-            .await
-            .or_else(|_| panic!("Failed to receive response from storage"))
+        match wrapper.request.backend() {
+            RequestBackend::Kv => Ok(self.kv_storage.after_sync(id).await),
+            RequestBackend::Auth => Ok(self.auth_storage.after_sync(&id)),
+        }
     }
 }
 
@@ -288,37 +281,6 @@ impl CommandResponse {
     }
 }
 
-/// Sync Request
-#[derive(Debug)]
-pub(crate) struct SyncRequest {
-    /// Propose id to sync
-    propose_id: ProposeId,
-    /// Command response sender
-    res_sender: oneshot::Sender<SyncResponse>,
-}
-
-impl SyncRequest {
-    /// New `SyncRequest`
-    pub(crate) fn new(propose_id: ProposeId) -> (Self, oneshot::Receiver<SyncResponse>) {
-        let (tx, rx) = oneshot::channel();
-        (
-            Self {
-                propose_id,
-                res_sender: tx,
-            },
-            rx,
-        )
-    }
-
-    /// Consume `ExecutionRequest` and get ownership of each field
-    pub(crate) fn unpack(self) -> (ProposeId, oneshot::Sender<SyncResponse>) {
-        let Self {
-            propose_id,
-            res_sender,
-        } = self;
-        (propose_id, res_sender)
-    }
-}
 /// Sync Response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SyncResponse {
@@ -334,54 +296,6 @@ impl SyncResponse {
     /// Get revision field
     pub(crate) fn revision(&self) -> i64 {
         self.revision
-    }
-}
-
-/// Execution Request
-#[derive(Debug)]
-pub(crate) struct ExecutionRequest {
-    /// Propose Id
-    id: ProposeId,
-    /// Request to execute
-    req: RequestWithToken,
-    /// Command response sender
-    res_sender: oneshot::Sender<Result<CommandResponse, ExecuteError>>,
-}
-
-impl ExecutionRequest {
-    /// New `ExectionRequest`
-    pub(crate) fn new(
-        id: ProposeId,
-        req: RequestWithToken,
-    ) -> (
-        Self,
-        oneshot::Receiver<Result<CommandResponse, ExecuteError>>,
-    ) {
-        let (tx, rx) = oneshot::channel();
-        (
-            Self {
-                id,
-                req,
-                res_sender: tx,
-            },
-            rx,
-        )
-    }
-
-    /// Consume `ExecutionRequest` and get ownership of each field
-    pub(crate) fn unpack(
-        self,
-    ) -> (
-        ProposeId,
-        RequestWithToken,
-        oneshot::Sender<Result<CommandResponse, ExecuteError>>,
-    ) {
-        let Self {
-            id,
-            req,
-            res_sender,
-        } = self;
-        (id, req, res_sender)
     }
 }
 
