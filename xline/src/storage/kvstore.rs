@@ -5,7 +5,7 @@ use curp::cmd::ProposeId;
 use curp::error::ExecuteError;
 use log::debug;
 use parking_lot::Mutex;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 
 use super::index::IndexOperate;
 use super::{db::DB, index::Index, kvwatcher::KvWatcher};
@@ -15,9 +15,8 @@ use crate::rpc::{
     EventType, KeyValue, PutRequest, PutResponse, RangeRequest, RangeResponse, RequestWithToken,
     RequestWrapper, ResponseWrapper, SortOrder, SortTarget, TargetUnion, TxnRequest, TxnResponse,
 };
-use crate::server::command::{
-    CommandResponse, ExecutionRequest, KeyRange, SyncRequest, SyncResponse,
-};
+use crate::server::command::{CommandResponse, KeyRange, SyncResponse};
+use crate::storage::req_ctx::RequestCtx;
 
 /// Default channel size
 const CHANNEL_SIZE: usize = 128;
@@ -28,11 +27,6 @@ const CHANNEL_SIZE: usize = 128;
 pub(crate) struct KvStore {
     /// KV store Backend
     inner: Arc<KvStoreBackend>,
-    /// TODO: check if this can be moved into Inner
-    /// Sender to send command
-    exec_tx: mpsc::Sender<ExecutionRequest>,
-    /// Sender to send sync request
-    sync_tx: mpsc::Sender<SyncRequest>,
     /// KV watcher
     kv_watcher: Arc<KvWatcher>,
 }
@@ -49,7 +43,7 @@ pub(crate) struct KvStoreBackend {
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
     /// Speculative execution pool. Mapping from propose id to request
-    sp_exec_pool: Mutex<HashMap<ProposeId, Vec<RequestWrapper>>>,
+    sp_exec_pool: Mutex<HashMap<ProposeId, Vec<RequestCtx>>>,
     /// KV update sender
     kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
 }
@@ -58,62 +52,26 @@ impl KvStore {
     /// New `KvStore`
     #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
     pub(crate) fn new(header_gen: Arc<HeaderGenerator>) -> Self {
-        let (exec_tx, mut exec_rx) = mpsc::channel(CHANNEL_SIZE);
-        let (sync_tx, mut sync_rx) = mpsc::channel(CHANNEL_SIZE);
         let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
         let inner = Arc::new(KvStoreBackend::new(kv_update_tx, header_gen));
         let kv_watcher = Arc::new(KvWatcher::new(Arc::clone(&inner), kv_update_rx));
-
-        let _handle = tokio::spawn({
-            let inner = Arc::clone(&inner);
-            async move {
-                loop {
-                    tokio::select! {
-                        cmd_req = exec_rx.recv() => {
-                            if let Some(req) = cmd_req {
-                                inner.speculative_exec(req);
-                            }
-                        }
-                        sync_req = sync_rx.recv() => {
-                            if let Some(req) = sync_req {
-                                inner.sync_cmd(req).await;
-                            }
-                        }
-                    }
-                }
-            }
-        });
-
-        Self {
-            inner,
-            exec_tx,
-            sync_tx,
-            kv_watcher,
-        }
+        Self { inner, kv_watcher }
     }
 
-    /// Send execution request to KV store
-    pub(crate) async fn send_req(
+    /// execute a kv request
+    pub(crate) fn execute(
         &self,
         id: ProposeId,
-        req: RequestWithToken,
-    ) -> oneshot::Receiver<Result<CommandResponse, ExecuteError>> {
-        let (req, receiver) = ExecutionRequest::new(id, req);
-        assert!(
-            self.exec_tx.send(req).await.is_ok(),
-            "Command receiver dropped"
-        );
-        receiver
+        request: RequestWithToken,
+    ) -> Result<CommandResponse, ExecuteError> {
+        self.inner
+            .handle_kv_requests(id, request.request)
+            .map(CommandResponse::new)
     }
 
-    /// Send sync request to KV store
-    pub(crate) async fn send_sync(&self, propose_id: ProposeId) -> oneshot::Receiver<SyncResponse> {
-        let (req, receiver) = SyncRequest::new(propose_id);
-        assert!(
-            self.sync_tx.send(req).await.is_ok(),
-            "Command receiver dropped"
-        );
-        receiver
+    /// sync a kv request
+    pub(crate) async fn after_sync(&self, id: ProposeId) -> SyncResponse {
+        SyncResponse::new(self.inner.sync_requests(&id).await)
     }
 
     /// Get KV watcher
@@ -151,54 +109,42 @@ impl KvStoreBackend {
         );
     }
 
-    /// speculative execute command
-    pub(crate) fn speculative_exec(&self, execution_req: ExecutionRequest) {
-        debug!("Receive Execution Request {:?}", execution_req);
-        let (id, req, res_sender) = execution_req.unpack();
-        let result = self
-            .handle_kv_requests(&id, &req.request)
-            .map(CommandResponse::new);
-        assert!(res_sender.send(result).is_ok(), "Failed to send response");
-    }
-
     /// Handle kv requests
     fn handle_kv_requests(
         &self,
-        id: &ProposeId,
-        wrapper: &RequestWrapper,
+        id: ProposeId,
+        wrapper: RequestWrapper,
     ) -> Result<ResponseWrapper, ExecuteError> {
         debug!("Receive request {:?}", wrapper);
-        if matches!(*wrapper, RequestWrapper::TxnRequest(_)) {
-            let _prev = self.sp_exec_pool.lock().entry(id.clone()).or_insert(vec![]);
-        } else {
-            let _prev = self
-                .sp_exec_pool
-                .lock()
-                .entry(id.clone())
-                .and_modify(|req| req.push(wrapper.clone()))
-                .or_insert_with(|| vec![wrapper.clone()]);
-        }
         #[allow(clippy::wildcard_enum_match_arm)]
-        let response = match *wrapper {
+        let res = match wrapper {
             RequestWrapper::RangeRequest(ref req) => {
                 debug!("Receive RangeRequest {:?}", req);
-                self.handle_range_request(req).into()
+                Ok(self.handle_range_request(req).into())
             }
             RequestWrapper::PutRequest(ref req) => {
                 debug!("Receive PutRequest {:?}", req);
-                self.handle_put_request(req)?.into()
+                self.handle_put_request(req).map(Into::into)
             }
             RequestWrapper::DeleteRangeRequest(ref req) => {
                 debug!("Receive DeleteRangeRequest {:?}", req);
-                self.handle_delete_range_request(req).into()
+                Ok(self.handle_delete_range_request(req).into())
             }
             RequestWrapper::TxnRequest(ref req) => {
                 debug!("Receive TxnRequest {:?}", req);
-                self.handle_txn_request(id, req)?.into()
+                self.handle_txn_request(&id, req).map(Into::into)
             }
             _ => unreachable!("Other request should not be sent to this store"),
         };
-        Ok(response)
+        if !matches!(wrapper, RequestWrapper::TxnRequest(_)) {
+            let ctx = RequestCtx::new(wrapper, res.is_err());
+            self.sp_exec_pool
+                .lock()
+                .entry(id)
+                .or_insert_with(Vec::new)
+                .push(ctx);
+        }
+        res
     }
 
     /// Get `KeyValue` of a range
@@ -290,18 +236,8 @@ impl KvStoreBackend {
 
     /// Handle `PutRequest`
     fn handle_put_request(&self, req: &PutRequest) -> Result<PutResponse, ExecuteError> {
-        let mut prev_kvs = self.get_range(&req.key, &[], 0);
-        debug!("handle_put_request prev_kvs {:?}", prev_kvs);
-        let prev = if prev_kvs.len() == 1 {
-            Some(prev_kvs.swap_remove(0))
-        } else if prev_kvs.is_empty() {
-            None
-        } else {
-            panic!(
-                "Get more than one KeyValue {:?} for req {:?}",
-                prev_kvs, req
-            );
-        };
+        debug!("handle_put_request");
+        let prev = self.get_range(&req.key, &[], 0).pop();
         if prev.is_none() && (req.ignore_lease || req.ignore_value) {
             return Err(ExecuteError::InvalidCommand(
                 "ignore_lease or ignore_value is set but there is no previous value".to_owned(),
@@ -435,7 +371,7 @@ impl KvStoreBackend {
         };
         let mut responses = Vec::with_capacity(requests.len());
         for request_op in requests {
-            let response = self.handle_kv_requests(id, &request_op.clone().into())?;
+            let response = self.handle_kv_requests(id.clone(), request_op.clone().into())?;
             responses.push(response.into());
         }
         Ok(TxnResponse {
@@ -445,50 +381,30 @@ impl KvStoreBackend {
         })
     }
 
-    /// Sync a Command to storage and generate revision for Command.
-    async fn sync_cmd(&self, sync_req: SyncRequest) {
-        debug!("Receive SyncRequest {:?}", sync_req);
-        let (propose_id, res_sender) = sync_req.unpack();
-        let requests = self
-            .sp_exec_pool
-            .lock()
-            .remove(&propose_id)
-            .unwrap_or_else(|| {
-                panic!(
-                    "Failed to get speculative execution propose id {:?}",
-                    propose_id
-                );
-            });
-        let (revision, events) = self.sync_requests(requests.clone());
-        assert!(
-            res_sender.send(SyncResponse::new(revision)).is_ok(),
-            "Failed to send response"
-        );
-        if let Some(events) = events {
-            self.notify_updates(revision, events).await;
-        }
-    }
-
     /// Sync a vec of requests
-    fn sync_requests(&self, requests: Vec<RequestWrapper>) -> (i64, Option<Vec<Event>>) {
+    async fn sync_requests(&self, id: &ProposeId) -> i64 {
+        let ctxes = self.sp_exec_pool.lock().remove(id).unwrap_or_else(|| {
+            panic!("Failed to get speculative execution propose id {:?}", id);
+        });
+        if ctxes.iter().any(RequestCtx::met_err) {
+            return self.revision();
+        };
+        let requests: Vec<RequestWrapper> = ctxes.into_iter().map(RequestCtx::req).collect();
         let revision = self.revision();
         let next_revision = revision.overflow_add(1);
         let mut sub_revision = 0;
-        let mut modify = false;
         let mut all_events = vec![];
-
         for request in requests {
             let mut events = self.sync_request(request, next_revision, sub_revision);
-            modify = modify || !events.is_empty();
             sub_revision = sub_revision.overflow_add(events.len().cast());
             all_events.append(&mut events);
         }
-
-        if modify {
-            *self.revision.lock() = next_revision;
-            (next_revision, Some(all_events))
+        if all_events.is_empty() {
+            revision
         } else {
-            (revision, None)
+            self.notify_updates(next_revision, all_events).await;
+            *self.revision.lock() = next_revision;
+            next_revision
         }
     }
 
@@ -525,10 +441,7 @@ impl KvStoreBackend {
 
     /// Sync `PutRequest` and return if kvstore is changed
     fn sync_put_request(&self, req: PutRequest, revision: i64, sub_revision: i64) -> Vec<Event> {
-        let prev_kv = self.get_range(&req.key, &[], 0).first().cloned();
-        if prev_kv.is_none() && (req.ignore_lease || req.ignore_value) {
-            return vec![];
-        }
+        let prev_kv = self.get_range(&req.key, &[], 0).pop();
         let new_rev = self
             .index
             .insert_or_update_revision(&req.key, revision, sub_revision);
@@ -596,11 +509,4 @@ impl KvStoreBackend {
         let prev_kv = self.db.mark_deletions(&revisions);
         Self::new_deletion_events(revision, prev_kv)
     }
-}
-
-#[cfg(test)]
-mod test {
-    #[tokio::test(flavor = "multi_thread")]
-    //#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_all() {}
 }

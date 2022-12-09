@@ -16,5 +16,8 @@ pub(crate) mod index;
 /// KV watcher module
 pub(crate) mod kvwatcher;
 
+/// Request context module
+pub(crate) mod req_ctx;
+
 pub(crate) use self::authstore::AuthStore;
 pub(crate) use self::kvstore::KvStore;

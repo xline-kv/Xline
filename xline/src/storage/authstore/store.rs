@@ -3,22 +3,16 @@ use std::sync::Arc;
 use anyhow::Result;
 use curp::{cmd::ProposeId, error::ExecuteError};
 use jsonwebtoken::{DecodingKey, EncodingKey};
-use tokio::sync::{mpsc, oneshot};
 
 use crate::header_gen::HeaderGenerator;
 use crate::rpc::{
     DeleteRangeRequest, PutRequest, RangeRequest, Request, RequestWithToken, RequestWrapper,
     TxnRequest, Type,
 };
-use crate::server::command::{
-    CommandResponse, ExecutionRequest, KeyRange, SyncRequest, SyncResponse,
-};
+use crate::server::command::{CommandResponse, KeyRange, SyncResponse};
 use crate::storage::authstore::backend::AuthStoreBackend;
 
 use super::backend::ROOT_ROLE;
-
-/// Default channel size
-const CHANNEL_SIZE: usize = 128;
 
 /// Auth store
 #[allow(dead_code)]
@@ -26,11 +20,6 @@ const CHANNEL_SIZE: usize = 128;
 pub(crate) struct AuthStore {
     /// Auth store Backend
     inner: Arc<AuthStoreBackend>,
-    // TODO: check if this can be moved into Inner
-    /// Sender to send command
-    exec_tx: mpsc::Sender<ExecutionRequest>,
-    /// Sender to send sync request
-    sync_tx: mpsc::Sender<SyncRequest>,
 }
 
 impl AuthStore {
@@ -40,59 +29,26 @@ impl AuthStore {
         key_pair: Option<(EncodingKey, DecodingKey)>,
         header_gen: Arc<HeaderGenerator>,
     ) -> Self {
-        let (exec_tx, mut exec_rx) = mpsc::channel(CHANNEL_SIZE);
-        let (sync_tx, mut sync_rx) = mpsc::channel(CHANNEL_SIZE);
-        let inner = Arc::new(AuthStoreBackend::new(key_pair, header_gen));
-
-        let inner_clone = Arc::clone(&inner);
-        let _handle = tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    cmd_req = exec_rx.recv() => {
-                        if let Some(req) = cmd_req {
-                            inner.speculative_exec(req);
-                        }
-                    }
-                    sync_req = sync_rx.recv() => {
-                        if let Some(req) = sync_req {
-                            inner.sync_cmd(req).await;
-                        }
-                    }
-                }
-            }
-        });
-
         Self {
-            inner: inner_clone,
-            exec_tx,
-            sync_tx,
+            inner: Arc::new(AuthStoreBackend::new(key_pair, header_gen)),
         }
     }
 
-    /// Send execution request to Auth store
-    pub(crate) async fn send_req(
+    /// execute a auth request
+    pub(crate) fn execute(
         &self,
         id: ProposeId,
-        req: RequestWithToken,
-    ) -> oneshot::Receiver<Result<CommandResponse, ExecuteError>> {
-        let (req, receiver) = ExecutionRequest::new(id, req);
-        assert!(
-            self.exec_tx.send(req).await.is_ok(),
-            "Command receiver dropped"
-        );
-        receiver
+        request: RequestWithToken,
+    ) -> Result<CommandResponse, ExecuteError> {
+        self.inner
+            .handle_auth_req(id, request.request)
+            .map(CommandResponse::new)
     }
 
-    /// Send sync request to Auth store
-    pub(crate) async fn send_sync(&self, propose_id: ProposeId) -> oneshot::Receiver<SyncResponse> {
-        let (req, receiver) = SyncRequest::new(propose_id);
-        assert!(
-            self.sync_tx.send(req).await.is_ok(),
-            "Command receiver dropped"
-        );
-        receiver
+    /// sync a auth request
+    pub(crate) fn after_sync(&self, id: &ProposeId) -> SyncResponse {
+        SyncResponse::new(self.inner.sync_request(id))
     }
-
     /// Auth revision
     pub(crate) fn revision(&self) -> i64 {
         self.inner.revision()
@@ -299,9 +255,9 @@ mod test {
 
     use super::*;
 
-    #[tokio::test]
-    async fn test_role_grant_permission() -> Result<(), Box<dyn Error>> {
-        let store = init_auth_store().await;
+    #[test]
+    fn test_role_grant_permission() {
+        let store = init_auth_store();
         let req = RequestWithToken::new(
             AuthRoleGrantPermissionRequest {
                 name: "r".to_owned(),
@@ -314,7 +270,7 @@ mod test {
             }
             .into(),
         );
-        assert!(send_req(&store, req).await.is_ok());
+        assert!(exe_and_sync(&store, req).is_ok());
         assert_eq!(
             store.inner.permission_cache(),
             PermissionCache {
@@ -328,12 +284,11 @@ mod test {
                 role_to_users_map: HashMap::from([("r".to_owned(), vec!["u".to_owned()])]),
             },
         );
-        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_role_revoke_permission() -> Result<(), Box<dyn Error>> {
-        let store = init_auth_store().await;
+    #[test]
+    fn test_role_revoke_permission() {
+        let store = init_auth_store();
         let req = RequestWithToken::new(
             AuthRoleRevokePermissionRequest {
                 role: "r".to_owned(),
@@ -342,7 +297,7 @@ mod test {
             }
             .into(),
         );
-        assert!(send_req(&store, req).await.is_ok());
+        assert!(exe_and_sync(&store, req).is_ok());
         assert_eq!(
             store.inner.permission_cache(),
             PermissionCache {
@@ -350,19 +305,18 @@ mod test {
                 role_to_users_map: HashMap::from([("r".to_owned(), vec!["u".to_owned()])]),
             },
         );
-        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_role_delete() -> Result<(), Box<dyn Error>> {
-        let store = init_auth_store().await;
+    #[test]
+    fn test_role_delete() {
+        let store = init_auth_store();
         let req = RequestWithToken::new(
             AuthRoleDeleteRequest {
                 role: "r".to_owned(),
             }
             .into(),
         );
-        assert!(send_req(&store, req).await.is_ok());
+        assert!(exe_and_sync(&store, req).is_ok());
         assert_eq!(
             store.inner.permission_cache(),
             PermissionCache {
@@ -370,19 +324,18 @@ mod test {
                 role_to_users_map: HashMap::new(),
             },
         );
-        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_user_delete() -> Result<(), Box<dyn Error>> {
-        let store = init_auth_store().await;
+    #[test]
+    fn test_user_delete() {
+        let store = init_auth_store();
         let req = RequestWithToken::new(
             AuthUserDeleteRequest {
                 name: "u".to_owned(),
             }
             .into(),
         );
-        assert!(send_req(&store, req).await.is_ok());
+        assert!(exe_and_sync(&store, req).is_ok());
         assert_eq!(
             store.inner.permission_cache(),
             PermissionCache {
@@ -390,10 +343,9 @@ mod test {
                 role_to_users_map: HashMap::from([("r".to_owned(), vec![])]),
             },
         );
-        Ok(())
     }
 
-    async fn init_auth_store() -> AuthStore {
+    fn init_auth_store() -> AuthStore {
         let key_pair = test_key_pair();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let store = AuthStore::new(key_pair, header_gen);
@@ -404,7 +356,7 @@ mod test {
             }
             .into(),
         );
-        assert!(send_req(&store, req1).await.is_ok());
+        assert!(exe_and_sync(&store, req1).is_ok());
         let req2 = RequestWithToken::new(
             AuthUserAddRequest {
                 name: "u".to_owned(),
@@ -414,7 +366,7 @@ mod test {
             }
             .into(),
         );
-        assert!(send_req(&store, req2).await.is_ok());
+        assert!(exe_and_sync(&store, req2).is_ok());
         let req3 = RequestWithToken::new(
             AuthUserGrantRoleRequest {
                 user: "u".to_owned(),
@@ -422,7 +374,7 @@ mod test {
             }
             .into(),
         );
-        assert!(send_req(&store, req3).await.is_ok());
+        assert!(exe_and_sync(&store, req3).is_ok());
         let req4 = RequestWithToken::new(
             AuthRoleGrantPermissionRequest {
                 name: "r".to_owned(),
@@ -435,7 +387,7 @@ mod test {
             }
             .into(),
         );
-        assert!(send_req(&store, req4).await.is_ok());
+        assert!(exe_and_sync(&store, req4).is_ok());
         assert_eq!(
             store.inner.permission_cache(),
             PermissionCache {
@@ -452,15 +404,13 @@ mod test {
         store
     }
 
-    async fn send_req(
+    fn exe_and_sync(
         store: &AuthStore,
         req: RequestWithToken,
     ) -> Result<(CommandResponse, SyncResponse), Box<dyn Error>> {
         let id = ProposeId::new("test-id".to_owned());
-        let exe_receiver = store.send_req(id.clone(), req).await;
-        let cmd_res = exe_receiver.await??;
-        let sync_receiver = store.send_sync(id).await;
-        let sync_res = sync_receiver.await?;
+        let cmd_res = store.execute(id.clone(), req)?;
+        let sync_res = store.after_sync(&id);
         Ok((cmd_res, sync_res))
     }
 
