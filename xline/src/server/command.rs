@@ -228,9 +228,9 @@ impl ConflictCheck for Command {
     fn is_conflict(&self, other: &Self) -> bool {
         let this_req = &self.request.request;
         let other_req = &other.request.request;
-        if this_req.is_auth_read_request() && other_req.is_auth_read_request()
-            || this_req.is_kv_request() && other_req.is_auth_read_request()
-            || this_req.is_auth_read_request() && other_req.is_kv_request()
+        if (this_req.is_auth_read_request() && other_req.is_auth_read_request())
+            || (this_req.is_kv_request() && other_req.is_auth_read_request())
+            || (this_req.is_auth_read_request() && other_req.is_kv_request())
         {
             return false;
         }

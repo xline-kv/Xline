@@ -50,7 +50,7 @@ pub async fn create_raft_group() -> (
         let _ = Rpc::<TestCommand>::run(addr2.as_str(), false, 0, addr3, Some(8767), exe).await;
     });
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    tokio::time::sleep(Duration::from_secs(3)).await;
 
     let client = Client::<TestCommand>::new(
         0,

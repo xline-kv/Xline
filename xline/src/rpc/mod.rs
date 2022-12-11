@@ -422,7 +422,10 @@ impl RequestWithToken {
     }
 
     /// New `RequestWithToken` with token
-    pub(crate) fn new_with_token(request: RequestWrapper, token: Option<String>) -> Self {
-        RequestWithToken { token, request }
+    pub(crate) fn new_with_token(request: RequestWrapper, token: String) -> Self {
+        RequestWithToken {
+            token: Some(token),
+            request,
+        }
     }
 }

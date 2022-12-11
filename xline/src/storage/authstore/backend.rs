@@ -6,16 +6,13 @@ use curp::{cmd::ProposeId, error::ExecuteError};
 use itertools::Itertools;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use log::debug;
-use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use parking_lot::{Mutex, RwLock};
 use pbkdf2::{
     password_hash::{PasswordHash, PasswordVerifier},
     Pbkdf2,
 };
 use prost::Message;
 
-use crate::server::command::{
-    CommandResponse, ExecutionRequest, KeyRange, SyncRequest, SyncResponse,
-};
 use crate::storage::{db::DB, index::Index};
 use crate::{
     rpc::{
@@ -33,6 +30,10 @@ use crate::{
         ResponseHeader, ResponseWrapper, Role, Type, User,
     },
     storage::index::IndexOperate,
+};
+use crate::{
+    server::command::{CommandResponse, ExecutionRequest, KeyRange, SyncRequest, SyncResponse},
+    utils::RwLockMap,
 };
 
 use super::perms::{JwtTokenManager, PermissionCache, TokenClaims, TokenOperate, UserPermissions};
@@ -350,6 +351,7 @@ impl AuthStoreBackend {
         wrapper: &RequestWithToken,
     ) -> Result<ResponseWrapper, ExecuteError> {
         let _prev = self.sp_exec_pool.lock().insert(id, wrapper.clone());
+        // routed when call execute, other request will be routed to other backend
         #[allow(clippy::wildcard_enum_match_arm)]
         let response = match wrapper.request {
             RequestWrapper::AuthEnableRequest(ref req) => {
@@ -1199,37 +1201,5 @@ impl AuthStoreBackend {
     #[cfg(test)]
     pub(crate) fn permission_cache(&self) -> PermissionCache {
         self.permission_cache.map_read(|cache| cache.clone())
-    }
-}
-
-// TODO: move to utils
-/// Apply a closure on a rwlock after getting the guard
-pub(crate) trait RwLockMap<T, R> {
-    /// Map a closure to a read mutex
-    fn map_read<READ>(&self, f: READ) -> R
-    where
-        READ: FnOnce(RwLockReadGuard<'_, T>) -> R;
-
-    /// Map a closure to a write mutex
-    fn map_write<WRITE>(&self, f: WRITE) -> R
-    where
-        WRITE: FnOnce(RwLockWriteGuard<'_, T>) -> R;
-}
-
-impl<T, R> RwLockMap<T, R> for RwLock<T> {
-    fn map_read<READ>(&self, f: READ) -> R
-    where
-        READ: FnOnce(RwLockReadGuard<'_, T>) -> R,
-    {
-        let read_guard = self.read();
-        f(read_guard)
-    }
-
-    fn map_write<WRITE>(&self, f: WRITE) -> R
-    where
-        WRITE: FnOnce(RwLockWriteGuard<'_, T>) -> R,
-    {
-        let write_guard = self.write();
-        f(write_guard)
     }
 }

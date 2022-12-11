@@ -81,47 +81,41 @@ impl KvServer {
         Command::new(key_ranges, wrapper, propose_id)
     }
 
-    /// Propose request and get result with slow path
-    async fn propose_slow_path<T>(
-        &self,
-        request: tonic::Request<T>,
-    ) -> Result<(CommandResponse, SyncResponse), tonic::Status>
-    where
-        T: Into<RequestWrapper>,
-    {
-        let token = get_token(request.metadata());
-        let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
-        let propose_id = self.generate_propose_id();
-        let cmd = Self::command_from_request_wrapper(propose_id, wrapper);
-        self.client.propose_indexed(cmd).await.map_err(|err| {
-            if let ProposeError::ExecutionError(e) = err {
-                tonic::Status::invalid_argument(e)
-            } else {
-                panic!("propose err {err:?}")
-            }
-        })
-    }
-
-    /// Propose request and get result with fast path
+    /// Propose request and get result with fast/slow path
     #[instrument(skip(self))]
-    async fn propose_fast_path<T>(
+    async fn propose<T>(
         &self,
         request: tonic::Request<T>,
-    ) -> Result<CommandResponse, tonic::Status>
+        use_fast_path: bool,
+    ) -> Result<(CommandResponse, Option<SyncResponse>), tonic::Status>
     where
         T: Into<RequestWrapper> + Debug,
     {
-        let token = get_token(request.metadata());
-        let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
+        let wrapper = match get_token(request.metadata()) {
+            Some(token) => RequestWithToken::new_with_token(request.into_inner().into(), token),
+            None => RequestWithToken::new(request.into_inner().into()),
+        };
         let propose_id = self.generate_propose_id();
         let cmd = Self::command_from_request_wrapper(propose_id, wrapper);
-        self.client.propose(cmd).await.map_err(|err| {
-            if let ProposeError::ExecutionError(e) = err {
-                tonic::Status::invalid_argument(e)
-            } else {
-                panic!("propose err {err:?}")
-            }
-        })
+        if use_fast_path {
+            let cmd_res = self.client.propose(cmd).await.map_err(|err| {
+                if let ProposeError::ExecutionError(e) = err {
+                    tonic::Status::invalid_argument(e)
+                } else {
+                    panic!("propose err {err:?}")
+                }
+            })?;
+            Ok((cmd_res, None))
+        } else {
+            let (cmd_res, sync_res) = self.client.propose_indexed(cmd).await.map_err(|err| {
+                if let ProposeError::ExecutionError(e) = err {
+                    tonic::Status::invalid_argument(e)
+                } else {
+                    panic!("propose err {err:?}")
+                }
+            })?;
+            Ok((cmd_res, Some(sync_res)))
+        }
     }
 
     /// Update revision of `ResponseHeader`
@@ -342,14 +336,9 @@ impl Kv for KvServer {
         debug!("Receive RangeRequest {:?}", request);
         Self::check_range_request(request.get_ref())?;
         let is_fast_path = true;
-        let (res_op, sync_res) = if is_fast_path {
-            let res_op = self.propose_fast_path(request).await?;
-            (res_op, None)
-        } else {
-            let (res_op, sync_res) = self.propose_slow_path(request).await?;
-            (res_op, Some(sync_res))
-        };
-        let mut res = Self::parse_response_op(res_op.decode().into());
+        let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
+
+        let mut res = Self::parse_response_op(cmd_res.decode().into());
         if let Some(sync_res) = sync_res {
             let revision = sync_res.revision();
             debug!("Get revision {:?} for RangeRequest", revision);
@@ -373,15 +362,9 @@ impl Kv for KvServer {
         debug!("Receive PutRequest {:?}", request);
         Self::check_put_request(request.get_ref())?;
         let is_fast_path = true;
-        let (res_op, sync_res) = if is_fast_path {
-            let res_op = self.propose_fast_path(request).await?;
-            (res_op, None)
-        } else {
-            let (res_op, sync_res) = self.propose_slow_path(request).await?;
-            (res_op, Some(sync_res))
-        };
+        let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
 
-        let mut res = Self::parse_response_op(res_op.decode().into());
+        let mut res = Self::parse_response_op(cmd_res.decode().into());
         if let Some(sync_res) = sync_res {
             let revision = sync_res.revision();
             debug!("Get revision {:?} for PutRequest", revision);
@@ -404,15 +387,9 @@ impl Kv for KvServer {
         debug!("Receive DeleteRangeRequest {:?}", request);
         Self::check_delete_range_request(request.get_ref())?;
         let is_fast_path = true;
-        let (res_op, sync_res) = if is_fast_path {
-            let res_op = self.propose_fast_path(request).await?;
-            (res_op, None)
-        } else {
-            let (res_op, sync_res) = self.propose_slow_path(request).await?;
-            (res_op, Some(sync_res))
-        };
+        let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
 
-        let mut res = Self::parse_response_op(res_op.decode().into());
+        let mut res = Self::parse_response_op(cmd_res.decode().into());
         if let Some(sync_res) = sync_res {
             let revision = sync_res.revision();
             debug!("Get revision {:?} for DeleteRangeRequest", revision);
@@ -436,15 +413,9 @@ impl Kv for KvServer {
         debug!("Receive TxnRequest {:?}", request);
         Self::check_txn_request(request.get_ref())?;
         let is_fast_path = true;
-        let (res_op, sync_res) = if is_fast_path {
-            let res_op = self.propose_fast_path(request).await?;
-            (res_op, None)
-        } else {
-            let (res_op, sync_res) = self.propose_slow_path(request).await?;
-            (res_op, Some(sync_res))
-        };
+        let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
 
-        let mut res = Self::parse_response_op(res_op.decode().into());
+        let mut res = Self::parse_response_op(cmd_res.decode().into());
         if let Some(sync_res) = sync_res {
             let revision = sync_res.revision();
             debug!("Get revision {:?} for TxnRequest", revision);
