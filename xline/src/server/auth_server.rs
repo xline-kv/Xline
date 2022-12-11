@@ -24,6 +24,7 @@ use crate::{
         AuthenticateResponse, RequestWithToken, RequestWrapper,
     },
     storage::AuthStore,
+    update_revision,
 };
 
 use super::command::{Command, CommandResponse, SyncResponse};
@@ -68,46 +69,40 @@ impl AuthServer {
         Command::new(vec![], wrapper, propose_id)
     }
 
-    /// Propose request and get result with fast path
-    async fn propose_fast_path<T>(
+    /// Propose request and get result with fast/slow path
+    async fn propose<T>(
         &self,
         request: tonic::Request<T>,
-    ) -> Result<CommandResponse, tonic::Status>
+        use_fast_path: bool,
+    ) -> Result<(CommandResponse, Option<SyncResponse>), tonic::Status>
     where
         T: Into<RequestWrapper>,
     {
-        let token = get_token(request.metadata());
-        let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
+        let wrapper = match get_token(request.metadata()) {
+            Some(token) => RequestWithToken::new_with_token(request.into_inner().into(), token),
+            None => RequestWithToken::new(request.into_inner().into()),
+        };
         let propose_id = self.generate_propose_id();
         let cmd = Self::command_from_request_wrapper(propose_id, wrapper);
-        self.client.propose(cmd).await.map_err(|err| {
-            if let ProposeError::ExecutionError(e) = err {
-                tonic::Status::invalid_argument(e)
-            } else {
-                panic!("propose err {err:?}")
-            }
-        })
-    }
-
-    /// Propose request and get result with slow path
-    async fn propose_slow_path<T>(
-        &self,
-        request: tonic::Request<T>,
-    ) -> Result<(CommandResponse, SyncResponse), tonic::Status>
-    where
-        T: Into<RequestWrapper>,
-    {
-        let token = get_token(request.metadata());
-        let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
-        let propose_id = self.generate_propose_id();
-        let cmd = Self::command_from_request_wrapper(propose_id, wrapper);
-        self.client.propose_indexed(cmd).await.map_err(|err| {
-            if let ProposeError::ExecutionError(e) = err {
-                tonic::Status::invalid_argument(e)
-            } else {
-                panic!("propose err {err:?}")
-            }
-        })
+        if use_fast_path {
+            let cmd_res = self.client.propose(cmd).await.map_err(|err| {
+                if let ProposeError::ExecutionError(e) = err {
+                    tonic::Status::invalid_argument(e)
+                } else {
+                    panic!("propose err {err:?}")
+                }
+            })?;
+            Ok((cmd_res, None))
+        } else {
+            let (cmd_res, sync_res) = self.client.propose_indexed(cmd).await.map_err(|err| {
+                if let ProposeError::ExecutionError(e) = err {
+                    tonic::Status::invalid_argument(e)
+                } else {
+                    panic!("propose err {err:?}")
+                }
+            })?;
+            Ok((cmd_res, Some(sync_res)))
+        }
     }
 
     /// Hash password
@@ -139,14 +134,10 @@ impl Auth for AuthServer {
     ) -> Result<tonic::Response<AuthEnableResponse>, tonic::Status> {
         debug!("Receive AuthEnableRequest {:?}", request);
 
-        let (res, sync_res) = self.propose_slow_path(request).await?;
+        let (res, sync_res) = self.propose(request, false).await?;
 
         let mut res: AuthEnableResponse = res.decode().into();
-        let revision = sync_res.revision();
-        debug!("Get revision {:?} for AuthEnableResponse", revision);
-        if let Some(mut header) = res.header.as_mut() {
-            header.revision = revision;
-        }
+        update_revision!(res, sync_res);
         Ok(tonic::Response::new(res))
     }
 
@@ -156,14 +147,10 @@ impl Auth for AuthServer {
     ) -> Result<tonic::Response<AuthDisableResponse>, tonic::Status> {
         debug!("Receive AuthDisableRequest {:?}", request);
 
-        let (res, sync_res) = self.propose_slow_path(request).await?;
+        let (res, sync_res) = self.propose(request, false).await?;
 
         let mut res: AuthDisableResponse = res.decode().into();
-        let revision = sync_res.revision();
-        debug!("Get revision {:?} for AuthDisableResponse", revision);
-        if let Some(mut header) = res.header.as_mut() {
-            header.revision = revision;
-        }
+        update_revision!(res, sync_res);
         Ok(tonic::Response::new(res))
     }
 
@@ -174,22 +161,10 @@ impl Auth for AuthServer {
         debug!("Receive AuthStatusRequest {:?}", request);
 
         let is_fast_path = true;
-        let (cmd_res, sync_res) = if is_fast_path {
-            let cmd_res = self.propose_fast_path(request).await?;
-            (cmd_res, None)
-        } else {
-            let (cmd_res, sync_res) = self.propose_slow_path(request).await?;
-            (cmd_res, Some(sync_res))
-        };
+        let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
 
         let mut res: AuthStatusResponse = cmd_res.decode().into();
-        if let Some(sync_res) = sync_res {
-            let revision = sync_res.revision();
-            debug!("Get revision {:?} for AuthStatusResponse", revision);
-            if let Some(mut header) = res.header.as_mut() {
-                header.revision = revision;
-            }
-        }
+        update_revision!(res, sync_res);
         Ok(tonic::Response::new(res))
     }
 
@@ -205,17 +180,19 @@ impl Auth for AuthServer {
             authenticate_req.password = "".to_owned();
 
             let (res, sync_res) = self
-                .propose_slow_path(tonic::Request::new(authenticate_req))
+                .propose(tonic::Request::new(authenticate_req), false)
                 .await?;
 
-            let revision = sync_res.revision();
-            debug!("Get revision {:?} for AuthenticateResponse", revision);
-            if revision == checked_revision {
-                let mut res: AuthenticateResponse = res.decode().into();
-                if let Some(mut header) = res.header.as_mut() {
-                    header.revision = revision;
+            if let Some(sync_res) = sync_res {
+                let revision = sync_res.revision();
+                debug!("Get revision {:?} for AuthDisableResponse", revision);
+                if revision == checked_revision {
+                    let mut res: AuthenticateResponse = res.decode().into();
+                    if let Some(mut header) = res.header.as_mut() {
+                        header.revision = revision;
+                    }
+                    return Ok(tonic::Response::new(res));
                 }
-                return Ok(tonic::Response::new(res));
             }
         }
     }
@@ -242,14 +219,10 @@ impl Auth for AuthServer {
         user_add_req.hashed_password = hashed_password;
         user_add_req.password = "".to_owned();
 
-        let (res, sync_res) = self.propose_slow_path(request).await?;
+        let (res, sync_res) = self.propose(request, false).await?;
 
         let mut res: AuthUserAddResponse = res.decode().into();
-        let revision = sync_res.revision();
-        debug!("Get revision {:?} for AuthUserAddRequest", revision);
-        if let Some(mut header) = res.header.as_mut() {
-            header.revision = revision;
-        }
+        update_revision!(res, sync_res);
         Ok(tonic::Response::new(res))
     }
 
@@ -260,22 +233,10 @@ impl Auth for AuthServer {
         debug!("Receive AuthUserGetRequest {:?}", request);
 
         let is_fast_path = true;
-        let (cmd_res, sync_res) = if is_fast_path {
-            let cmd_res = self.propose_fast_path(request).await?;
-            (cmd_res, None)
-        } else {
-            let (cmd_res, sync_res) = self.propose_slow_path(request).await?;
-            (cmd_res, Some(sync_res))
-        };
+        let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
 
         let mut res: AuthUserGetResponse = cmd_res.decode().into();
-        if let Some(sync_res) = sync_res {
-            let revision = sync_res.revision();
-            debug!("Get revision {:?} for AuthUserGetResponse", revision);
-            if let Some(mut header) = res.header.as_mut() {
-                header.revision = revision;
-            }
-        }
+        update_revision!(res, sync_res);
         Ok(tonic::Response::new(res))
     }
 
@@ -286,22 +247,10 @@ impl Auth for AuthServer {
         debug!("Receive AuthUserListRequest {:?}", request);
 
         let is_fast_path = true;
-        let (cmd_res, sync_res) = if is_fast_path {
-            let cmd_res = self.propose_fast_path(request).await?;
-            (cmd_res, None)
-        } else {
-            let (cmd_res, sync_res) = self.propose_slow_path(request).await?;
-            (cmd_res, Some(sync_res))
-        };
+        let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
 
         let mut res: AuthUserListResponse = cmd_res.decode().into();
-        if let Some(sync_res) = sync_res {
-            let revision = sync_res.revision();
-            debug!("Get revision {:?} for AuthUserListResponse", revision);
-            if let Some(mut header) = res.header.as_mut() {
-                header.revision = revision;
-            }
-        }
+        update_revision!(res, sync_res);
         Ok(tonic::Response::new(res))
     }
 
@@ -311,12 +260,10 @@ impl Auth for AuthServer {
     ) -> Result<tonic::Response<AuthUserDeleteResponse>, tonic::Status> {
         debug!("Receive AuthUserDeleteRequest {:?}", request);
 
-        let (res, sync_res) = self.propose_slow_path(request).await?;
+        let (res, sync_res) = self.propose(request, false).await?;
 
         let mut res: AuthUserDeleteResponse = res.decode().into();
-        if let Some(mut header) = res.header.as_mut() {
-            header.revision = sync_res.revision();
-        }
+        update_revision!(res, sync_res);
         Ok(tonic::Response::new(res))
     }
 
@@ -330,17 +277,10 @@ impl Auth for AuthServer {
         user_change_password_req.hashed_password = hashed_password;
         user_change_password_req.password = "".to_owned();
 
-        let (res, sync_res) = self.propose_slow_path(request).await?;
+        let (res, sync_res) = self.propose(request, false).await?;
 
         let mut res: AuthUserChangePasswordResponse = res.decode().into();
-        let revision = sync_res.revision();
-        debug!(
-            "Get revision {:?} for AuthUserChangePasswordRequest",
-            revision
-        );
-        if let Some(mut header) = res.header.as_mut() {
-            header.revision = revision;
-        }
+        update_revision!(res, sync_res);
         Ok(tonic::Response::new(res))
     }
 
@@ -350,14 +290,10 @@ impl Auth for AuthServer {
     ) -> Result<tonic::Response<AuthUserGrantRoleResponse>, tonic::Status> {
         debug!("Receive AuthUserGrantRoleRequest {:?}", request);
 
-        let (res, sync_res) = self.propose_slow_path(request).await?;
+        let (res, sync_res) = self.propose(request, false).await?;
 
         let mut res: AuthUserGrantRoleResponse = res.decode().into();
-        let revision = sync_res.revision();
-        debug!("Get revision {:?} for AuthUserGrantRoleRequest", revision);
-        if let Some(mut header) = res.header.as_mut() {
-            header.revision = revision;
-        }
+        update_revision!(res, sync_res);
         Ok(tonic::Response::new(res))
     }
 
@@ -367,14 +303,10 @@ impl Auth for AuthServer {
     ) -> Result<tonic::Response<AuthUserRevokeRoleResponse>, tonic::Status> {
         debug!("Receive AuthUserRevokeRoleRequest {:?}", request);
 
-        let (res, sync_res) = self.propose_slow_path(request).await?;
+        let (res, sync_res) = self.propose(request, false).await?;
 
         let mut res: AuthUserRevokeRoleResponse = res.decode().into();
-        let revision = sync_res.revision();
-        debug!("Get revision {:?} for AuthUserRevokeRoleRequest", revision);
-        if let Some(mut header) = res.header.as_mut() {
-            header.revision = revision;
-        }
+        update_revision!(res, sync_res);
         Ok(tonic::Response::new(res))
     }
 
@@ -387,14 +319,10 @@ impl Auth for AuthServer {
             return Err(tonic::Status::invalid_argument("Role name is empty"));
         }
 
-        let (res, sync_res) = self.propose_slow_path(request).await?;
+        let (res, sync_res) = self.propose(request, false).await?;
 
         let mut res: AuthRoleAddResponse = res.decode().into();
-        let revision = sync_res.revision();
-        debug!("Get revision {:?} for AuthRoleAddResponse", revision);
-        if let Some(mut header) = res.header.as_mut() {
-            header.revision = revision;
-        }
+        update_revision!(res, sync_res);
         Ok(tonic::Response::new(res))
     }
 
@@ -405,22 +333,10 @@ impl Auth for AuthServer {
         debug!("Receive AuthRoleGetRequest {:?}", request);
 
         let is_fast_path = true;
-        let (cmd_res, sync_res) = if is_fast_path {
-            let cmd_res = self.propose_fast_path(request).await?;
-            (cmd_res, None)
-        } else {
-            let (cmd_res, sync_res) = self.propose_slow_path(request).await?;
-            (cmd_res, Some(sync_res))
-        };
+        let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
 
         let mut res: AuthRoleGetResponse = cmd_res.decode().into();
-        if let Some(sync_res) = sync_res {
-            let revision = sync_res.revision();
-            debug!("Get revision {:?} for AuthRoleGetResponse", revision);
-            if let Some(mut header) = res.header.as_mut() {
-                header.revision = revision;
-            }
-        }
+        update_revision!(res, sync_res);
         Ok(tonic::Response::new(res))
     }
 
@@ -431,22 +347,10 @@ impl Auth for AuthServer {
         debug!("Receive AuthRoleListRequest {:?}", request);
 
         let is_fast_path = true;
-        let (cmd_res, sync_res) = if is_fast_path {
-            let cmd_res = self.propose_fast_path(request).await?;
-            (cmd_res, None)
-        } else {
-            let (cmd_res, sync_res) = self.propose_slow_path(request).await?;
-            (cmd_res, Some(sync_res))
-        };
+        let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
 
         let mut res: AuthRoleListResponse = cmd_res.decode().into();
-        if let Some(sync_res) = sync_res {
-            let revision = sync_res.revision();
-            debug!("Get revision {:?} for AuthRoleListResponse", revision);
-            if let Some(mut header) = res.header.as_mut() {
-                header.revision = revision;
-            }
-        }
+        update_revision!(res, sync_res);
         Ok(tonic::Response::new(res))
     }
 
@@ -456,14 +360,10 @@ impl Auth for AuthServer {
     ) -> Result<tonic::Response<AuthRoleDeleteResponse>, tonic::Status> {
         debug!("Receive AuthRoleDeleteRequest {:?}", request);
 
-        let (res, sync_res) = self.propose_slow_path(request).await?;
+        let (res, sync_res) = self.propose(request, false).await?;
 
         let mut res: AuthRoleDeleteResponse = res.decode().into();
-        let revision = sync_res.revision();
-        debug!("Get revision {:?} for AuthRoleDeleteResponse", revision);
-        if let Some(mut header) = res.header.as_mut() {
-            header.revision = revision;
-        }
+        update_revision!(res, sync_res);
         Ok(tonic::Response::new(res))
     }
 
@@ -476,17 +376,10 @@ impl Auth for AuthServer {
             return Err(tonic::Status::invalid_argument("Permission not given"));
         }
 
-        let (res, sync_res) = self.propose_slow_path(request).await?;
+        let (res, sync_res) = self.propose(request, false).await?;
 
         let mut res: AuthRoleGrantPermissionResponse = res.decode().into();
-        let revision = sync_res.revision();
-        debug!(
-            "Get revision {:?} for AuthRoleGrantPermissionResponse",
-            revision
-        );
-        if let Some(mut header) = res.header.as_mut() {
-            header.revision = revision;
-        }
+        update_revision!(res, sync_res);
         Ok(tonic::Response::new(res))
     }
 
@@ -496,17 +389,10 @@ impl Auth for AuthServer {
     ) -> Result<tonic::Response<AuthRoleRevokePermissionResponse>, tonic::Status> {
         debug!("Receive AuthRoleRevokePermissionRequest {:?}", request);
 
-        let (res, sync_res) = self.propose_slow_path(request).await?;
+        let (res, sync_res) = self.propose(request, false).await?;
 
         let mut res: AuthRoleRevokePermissionResponse = res.decode().into();
-        let revision = sync_res.revision();
-        debug!(
-            "Get revision {:?} for AuthRoleRevokePermissionResponse",
-            revision
-        );
-        if let Some(mut header) = res.header.as_mut() {
-            header.revision = revision;
-        }
+        update_revision!(res, sync_res);
         Ok(tonic::Response::new(res))
     }
 }

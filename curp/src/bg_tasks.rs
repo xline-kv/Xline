@@ -454,7 +454,7 @@ fn handle_after_sync_follower<C: Command + 'static>(
 /// How long a candidate should wait before it starts another round of election
 const CANDIDATE_TIMEOUT: Duration = Duration::from_secs(1);
 /// How long a follower should wait before it starts a round of election (in millis)
-const FOLLOWER_TIMEOUT: Range<u64> = 300..500;
+const FOLLOWER_TIMEOUT: Range<u64> = 1000..2000;
 
 /// Background election
 async fn bg_election<C: Command + 'static>(
