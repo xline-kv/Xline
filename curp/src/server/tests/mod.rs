@@ -60,7 +60,7 @@ async fn reelect() {
     debug!("disable leader {leader1}");
 
     // after some time, a new leader should be elected
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
     let leader2 = group.get_leader().expect("There should be one leader");
     let term2 = group.get_leader_term();
 
@@ -72,7 +72,7 @@ async fn reelect() {
     debug!("disable leader {leader2}");
 
     // after some time, a new leader should be elected
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
     let leader3 = group.get_leader().expect("There should be one leader");
     let term3 = group.get_leader_term();
 
@@ -86,7 +86,7 @@ async fn reelect() {
     debug!("disable leader {leader3}");
 
     // after some time, no leader should be elected
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
     assert!(group.get_leader().is_none());
 
     ////////// recover network partition
@@ -94,7 +94,7 @@ async fn reelect() {
     group.enable_node(&leader2);
     group.enable_node(&leader3);
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
     assert!(group.get_leader().is_some());
     assert!(group.get_term_checked() > term3);
 }
@@ -142,7 +142,7 @@ async fn propose_after_reelect() {
     let leader1 = group.get_leader().expect("There should be one leader");
     group.disable_node(&leader1);
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
     assert_eq!(
         client
             .propose(TestCommand::new_get(1, vec![0]))

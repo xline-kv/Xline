@@ -7,16 +7,16 @@ use crate::cmd::{Command, ProposeId};
 
 /// The speculative pool that stores commands that might be executed speculatively
 #[derive(Debug)]
-pub(crate) struct SpeculativePool<C> {
+pub(super) struct SpeculativePool<C> {
     /// Store
-    pub(crate) pool: VecDeque<C>,
+    pub(super) pool: VecDeque<C>,
     /// Store the ids of commands that have completed backend syncing, but not in the local speculative pool. It'll prevent the late arrived commands.
-    pub(crate) ready: HashMap<ProposeId, Instant>,
+    pub(super) ready: HashMap<ProposeId, Instant>,
 }
 
 impl<C: Command + 'static> SpeculativePool<C> {
     /// Create a new speculative pool
-    pub(crate) fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             pool: VecDeque::new(),
             ready: HashMap::new(),
@@ -24,7 +24,7 @@ impl<C: Command + 'static> SpeculativePool<C> {
     }
 
     /// Push a new command into spec pool if it has not been marked ready
-    pub(crate) fn push(&mut self, cmd: C) {
+    pub(super) fn push(&mut self, cmd: C) {
         if self.ready.remove(cmd.id()).is_none() {
             debug!("insert cmd {:?} to spec pool", cmd.id());
             self.pool.push_back(cmd);
@@ -32,7 +32,7 @@ impl<C: Command + 'static> SpeculativePool<C> {
     }
 
     /// Check whether the command pool has conflict with the new command
-    pub(crate) fn has_conflict_with(&self, cmd: &C) -> bool {
+    pub(super) fn has_conflict_with(&self, cmd: &C) -> bool {
         self.pool.iter().any(|spec_cmd| spec_cmd.is_conflict(cmd))
     }
 
@@ -41,7 +41,7 @@ impl<C: Command + 'static> SpeculativePool<C> {
     /// * When the proposal arrived, the command conflicted with speculative pool and was not stored in it.
     /// * The command has committed. But the fast round proposal has not arrived at the client or failed to arrive.
     /// To prevent the server from returning error in the second situation when the fast proposal finally arrives, we mark the command ready.
-    pub(crate) fn mark_ready(&mut self, cmd_id: &ProposeId) {
+    pub(super) fn mark_ready(&mut self, cmd_id: &ProposeId) {
         debug!("remove cmd {:?} from spec pool", cmd_id);
         if self
             .pool

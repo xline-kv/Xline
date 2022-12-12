@@ -13,7 +13,7 @@ use crate::{
 };
 
 /// Number of execute workers
-pub(crate) const N_EXECUTE_WORKERS: usize = 8;
+pub(super) const N_EXECUTE_WORKERS: usize = 8;
 
 /// Worker that execute commands
 #[allow(clippy::type_complexity)]
@@ -105,8 +105,8 @@ pub(crate) struct CmdExeReceiver<C: Command + 'static>(
 );
 
 impl<C: Command + 'static> CmdExeSender<C> {
-    /// Send cmd to background cmd executor and return a oneshot receiver for the execution result/
-    pub(crate) fn send_exe(&self, cmd: Arc<C>) -> oneshot::Receiver<Result<C::ER, ExecuteError>> {
+    /// Send cmd to background cmd executor and return a oneshot receiver for the execution result
+    pub(super) fn send_exe(&self, cmd: Arc<C>) -> oneshot::Receiver<Result<C::ER, ExecuteError>> {
         let (tx, rx) = oneshot::channel();
         let msg = ExecuteMessage::new(cmd, ExeResultSender::Execute(tx));
         if let Err(e) = self.0.send(msg) {
@@ -116,7 +116,7 @@ impl<C: Command + 'static> CmdExeSender<C> {
     }
 
     /// Send cmd to background cmd executor and return a oneshot receiver for the execution result
-    pub(crate) fn send_after_sync(
+    pub(super) fn send_after_sync(
         &self,
         cmd: Arc<C>,
         index: LogIndex,
@@ -131,7 +131,7 @@ impl<C: Command + 'static> CmdExeSender<C> {
 
     /// Send cmd to background cmd executor and return a oneshot receiver for the execution result
     #[allow(clippy::type_complexity)] // though complex, it's quite clear
-    pub(crate) fn send_exe_and_after_sync(
+    pub(super) fn send_exe_and_after_sync(
         &self,
         cmd: Arc<C>,
         index: LogIndex,
