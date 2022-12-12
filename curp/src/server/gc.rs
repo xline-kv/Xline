@@ -11,7 +11,7 @@ use super::spec_pool::SpeculativePool;
 const SPEC_GC_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Run background GC tasks for Curp server
-pub(crate) fn run_gc_tasks<C: Command + 'static>(spec: Arc<Mutex<SpeculativePool<C>>>) {
+pub(super) fn run_gc_tasks<C: Command + 'static>(spec: Arc<Mutex<SpeculativePool<C>>>) {
     let _spec_gc_handle = tokio::spawn(async move {
         loop {
             tokio::time::sleep(SPEC_GC_INTERVAL).await;
@@ -22,7 +22,7 @@ pub(crate) fn run_gc_tasks<C: Command + 'static>(spec: Arc<Mutex<SpeculativePool
 
 impl<C: Command + 'static> SpeculativePool<C> {
     /// Speculative pool GC
-    pub(crate) fn gc(&mut self) {
+    pub(super) fn gc(&mut self) {
         let now = Instant::now();
         self.ready.retain(|_, time| now - *time >= SPEC_GC_INTERVAL);
     }

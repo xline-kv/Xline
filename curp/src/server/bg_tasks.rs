@@ -32,7 +32,7 @@ const RETRY_TIMEOUT: Duration = Duration::from_millis(800);
 
 /// Run background tasks
 #[allow(clippy::too_many_arguments)] // we call this function once, it's ok
-pub(crate) async fn run_bg_tasks<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
+pub(super) async fn run_bg_tasks<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
     state: Arc<RwLock<State<C>>>,
     sync_chan: flume::Receiver<SyncMessage<C>>,
     cmd_executor: CE,
