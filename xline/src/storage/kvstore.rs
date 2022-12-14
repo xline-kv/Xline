@@ -148,6 +148,8 @@ impl KvStoreBackend {
     }
 
     /// Get `KeyValue` of a range
+    ///
+    /// If `range_end` is `&[]`, this function will return one or zero `KeyValue`.
     fn get_range(&self, key: &[u8], range_end: &[u8], revision: i64) -> Vec<KeyValue> {
         let revisions = self.index.get(key, range_end, revision);
         self.db.get_values(&revisions)
@@ -182,9 +184,7 @@ impl KvStoreBackend {
 
     /// Handle `RangeRequest`
     fn handle_range_request(&self, req: &RangeRequest) -> RangeResponse {
-        let key = &req.key;
-        let range_end = &req.range_end;
-        let mut kvs = self.get_range(key, range_end, req.revision);
+        let mut kvs = self.get_range(&req.key, &req.range_end, req.revision);
         debug!("handle_range_request kvs {:?}", kvs);
         let mut response = RangeResponse {
             header: Some(self.header_gen.gen_header_without_revision()),
@@ -236,20 +236,22 @@ impl KvStoreBackend {
 
     /// Handle `PutRequest`
     fn handle_put_request(&self, req: &PutRequest) -> Result<PutResponse, ExecuteError> {
-        debug!("handle_put_request");
-        let prev = self.get_range(&req.key, &[], 0).pop();
-        if prev.is_none() && (req.ignore_lease || req.ignore_value) {
-            return Err(ExecuteError::InvalidCommand(
-                "ignore_lease or ignore_value is set but there is no previous value".to_owned(),
-            ));
-        }
+        debug!("handle_put_request prev_kvs");
         let mut response = PutResponse {
             header: Some(self.header_gen.gen_header_without_revision()),
-            ..PutResponse::default()
+            ..Default::default()
         };
-        if req.prev_kv {
-            response.prev_kv = prev;
-        }
+        if req.prev_kv || req.ignore_lease || req.ignore_value {
+            let prev_kv = self.get_range(&req.key, &[], 0).pop();
+            if prev_kv.is_none() && (req.ignore_lease || req.ignore_value) {
+                return Err(ExecuteError::InvalidCommand(
+                    "ignore_lease or ignore_value is set but there is no previous value".to_owned(),
+                ));
+            }
+            if req.prev_kv {
+                response.prev_kv = prev_kv;
+            }
+        };
         Ok(response)
     }
 
