@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use curp::{client::Client as CurpClient, cmd::ProposeId};
-use etcd_client::{AuthClient, Client as EtcdClient};
+use etcd_client::{AuthClient, Client as EtcdClient, WatchClient};
 use uuid::Uuid;
 
 use crate::{
@@ -154,5 +154,11 @@ impl Client {
     #[inline]
     pub fn auth_client(&mut self) -> AuthClient {
         self.etcd_client.auth_client()
+    }
+
+    /// Gets an watch client.
+    #[inline]
+    pub fn watch_client(&mut self) -> WatchClient {
+        self.etcd_client.watch_client()
     }
 }

@@ -182,9 +182,31 @@ impl KvWatcher {
         });
         Self { inner }
     }
+}
 
+/// Operations of KV watcher
+#[allow(clippy::integer_arithmetic, clippy::indexing_slicing)] // Introduced by mockall::automock
+#[cfg_attr(test, mockall::automock)]
+#[async_trait::async_trait]
+pub(crate) trait KvWatcherOps {
     /// Create a watch to KV store
-    pub(crate) async fn watch(
+    async fn watch(
+        &self,
+        id: WatchId,
+        key_range: KeyRange,
+        start_rev: i64,
+        filters: Vec<i32>,
+        event_tx: mpsc::Sender<WatchEvent>,
+    ) -> (Watcher, Vec<Event>, i64);
+
+    /// Cancel a watch from KV store
+    fn cancel(&self, watcher: &Watcher) -> i64;
+}
+
+#[async_trait::async_trait]
+impl KvWatcherOps for KvWatcher {
+    /// Create a watch to KV store
+    async fn watch(
         &self,
         id: WatchId,
         key_range: KeyRange,
@@ -198,7 +220,7 @@ impl KvWatcher {
     }
 
     /// Cancel a watch from KV store
-    pub(crate) fn cancel(&self, watcher: &Watcher) -> i64 {
+    fn cancel(&self, watcher: &Watcher) -> i64 {
         self.inner.cancel(watcher)
     }
 }
@@ -235,14 +257,8 @@ impl KvWatcherInner {
             .watcher_map
             .lock()
             .entry(key_range)
-            .and_modify(|set| {
-                let _ = set.insert(watcher.clone());
-            })
-            .or_insert_with(|| {
-                let mut set = HashSet::new();
-                let _ = set.insert(watcher.clone());
-                set
-            });
+            .or_insert_with(HashSet::new)
+            .insert(watcher.clone());
         (watcher, events, revision)
     }
 
