@@ -1,5 +1,7 @@
 # Xline
 
+[![Join the chat at https://gitter.im/datenlord/Xline](https://badges.gitter.im/datenlord/Xline.svg)](https://gitter.im/datenlord/Xline?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
+
 [![Apache 2.0 licensed][apache-badge]][apache-url]
 [![Build Status][actions-badge]][actions-url]
 
