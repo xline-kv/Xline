@@ -23,7 +23,7 @@ use crate::{
         LockServer as RpcLockServer, WatchServer as RpcWatchServer,
     },
     state::State,
-    storage::{authstore::AuthStore, KvStore},
+    storage::{AuthStore, KvStore},
 };
 
 /// Rpc Server of curp protocol
