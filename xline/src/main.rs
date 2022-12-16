@@ -115,11 +115,10 @@ use std::{net::SocketAddr, path::PathBuf};
 use anyhow::Result;
 use clap::Parser;
 use jsonwebtoken::{DecodingKey, EncodingKey};
-use log::debug;
 use opentelemetry::{global, runtime::Tokio, sdk::propagation::TraceContextPropagator};
 use opentelemetry_contrib::trace::exporter::jaeger_json::JaegerJsonExporter;
 use tokio::fs;
-use tracing::{error, metadata::LevelFilter};
+use tracing::{debug, error, metadata::LevelFilter};
 use tracing_subscriber::prelude::*;
 use xline::server::XlineServer;
 

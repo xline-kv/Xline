@@ -8,11 +8,9 @@ use std::{
 use event_listener::Event;
 use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
 use lock_utils::parking_lot_lock::RwLockMap;
-use opentelemetry::global;
 use parking_lot::RwLock;
 use tokio::time::timeout;
-use tracing::{debug, info_span, instrument, warn, Instrument};
-use tracing_opentelemetry::OpenTelemetrySpanExt;
+use tracing::{debug, instrument, warn};
 
 use crate::{
     cmd::Command,
@@ -21,7 +19,6 @@ use crate::{
     rpc::{
         self, Connect, FetchLeaderRequest, ProposeRequest, SyncError, SyncResult, WaitSyncedRequest,
     },
-    util::InjectMap,
 };
 
 /// Propose request default timeout
@@ -191,14 +188,6 @@ where
         let notify = Arc::clone(&self.state.read().leader_notify);
 
         loop {
-            let mut req = tonic::Request::new(WaitSyncedRequest::new(cmd.id())?);
-            req.set_timeout(Self::WAIT_SYNCED_TIMEOUT);
-
-            let rpc_span = info_span!("client wait_synced");
-            global::get_text_map_propagator(|prop| {
-                prop.inject_context(&rpc_span.context(), &mut InjectMap(req.metadata_mut()));
-            });
-
             // fetch leader id
             let leader_id = loop {
                 if let Some(id) = self.state.read().leader.clone() {
@@ -216,10 +205,7 @@ where
                 .iter()
                 .find(|conn| conn.id() == &leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
-                .get()
-                .await?
-                .wait_synced(req)
-                .instrument(rpc_span)
+                .wait_synced(WaitSyncedRequest::new(cmd.id())?, Self::WAIT_SYNCED_TIMEOUT)
                 .await
             {
                 Ok(resp) => resp.into_inner(),

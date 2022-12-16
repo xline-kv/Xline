@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use curp::{client::Client, cmd::ProposeId, error::ProposeError};
-use log::debug;
 use pbkdf2::{
     password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
     Pbkdf2,
 };
 use tonic::metadata::MetadataMap;
+use tracing::debug;
 use uuid::Uuid;
 
 use crate::{

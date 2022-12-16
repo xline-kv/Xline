@@ -11,12 +11,10 @@ use std::{
 use clippy_utilities::NumericCast;
 use event_listener::Event;
 use lock_utils::parking_lot_lock::RwLockMap;
-use opentelemetry::global;
 use parking_lot::{lock_api::RwLockUpgradableReadGuard, Mutex, RwLock};
 use tokio::{net::TcpListener, sync::broadcast, time::Instant};
 use tokio_stream::wrappers::TcpListenerStream;
-use tracing::{debug, error, info, instrument, Span};
-use tracing_opentelemetry::OpenTelemetrySpanExt;
+use tracing::{debug, error, info, instrument};
 
 use self::{
     cmd_board::{CmdState, CommandBoard},
@@ -35,7 +33,7 @@ use crate::{
     },
     server::cmd_execute_worker::{cmd_exe_channel, CmdExeSender},
     shutdown::Shutdown,
-    util::ExtractMap,
+    util::Extract,
 };
 
 /// Background tasks of Curp protocol
@@ -74,9 +72,7 @@ impl<C: 'static + Command> crate::rpc::Protocol for Rpc<C> {
         &self,
         request: tonic::Request<ProposeRequest>,
     ) -> Result<tonic::Response<ProposeResponse>, tonic::Status> {
-        Span::current().set_parent(global::get_text_map_propagator(|prop| {
-            prop.extract(&ExtractMap(request.metadata()))
-        }));
+        request.metadata().extract_span();
         self.inner.propose(request).await
     }
 
@@ -85,9 +81,7 @@ impl<C: 'static + Command> crate::rpc::Protocol for Rpc<C> {
         &self,
         request: tonic::Request<WaitSyncedRequest>,
     ) -> Result<tonic::Response<WaitSyncedResponse>, tonic::Status> {
-        Span::current().set_parent(global::get_text_map_propagator(|prop| {
-            prop.extract(&ExtractMap(request.metadata()))
-        }));
+        request.metadata().extract_span();
         self.inner.wait_synced(request).await
     }
 
