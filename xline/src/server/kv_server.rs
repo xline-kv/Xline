@@ -1,8 +1,7 @@
 use std::{collections::HashSet, fmt::Debug, sync::Arc};
 
 use curp::{client::Client, cmd::ProposeId, error::ProposeError};
-use log::debug;
-use tracing::instrument;
+use tracing::{debug, instrument};
 use uuid::Uuid;
 
 use super::{
@@ -329,6 +328,7 @@ impl KvServer {
 #[tonic::async_trait]
 impl Kv for KvServer {
     /// Range gets the keys in the range from the key-value store.
+    #[instrument(skip(self))]
     async fn range(
         &self,
         request: tonic::Request<RangeRequest>,
@@ -380,6 +380,7 @@ impl Kv for KvServer {
     /// DeleteRange deletes the given range from the key-value store.
     /// A delete request increments the revision of the key-value store
     /// and generates a delete event in the event history for every deleted key.
+    #[instrument(skip(self))]
     async fn delete_range(
         &self,
         request: tonic::Request<DeleteRangeRequest>,
@@ -406,6 +407,7 @@ impl Kv for KvServer {
     /// A txn request increments the revision of the key-value store
     /// and generates events with the same revision for every completed request.
     /// It is not allowed to modify the same key several times within one txn.
+    #[instrument(skip(self))]
     async fn txn(
         &self,
         request: tonic::Request<TxnRequest>,
@@ -431,6 +433,7 @@ impl Kv for KvServer {
     /// Compact compacts the event history in the etcd key-value store. The key-value
     /// store should be periodically compacted or the event history will continue to grow
     /// indefinitely.
+    #[instrument(skip(self))]
     async fn compact(
         &self,
         request: tonic::Request<CompactionRequest>,

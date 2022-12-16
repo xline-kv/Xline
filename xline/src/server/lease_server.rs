@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use curp::client::Client;
-use log::{debug, warn};
 use tokio::sync::mpsc;
 use tokio_stream::{wrappers::ReceiverStream, StreamExt};
+use tracing::{debug, warn};
 
 use super::command::Command;
 use crate::{

@@ -18,18 +18,16 @@ use clippy_utilities::NumericCast;
 use serde::Serialize;
 use std::{sync::Arc, time::Duration};
 
-use opentelemetry::global;
 use tokio::sync::RwLock;
-use tracing::{debug, info_span, Instrument};
-use tracing_opentelemetry::OpenTelemetrySpanExt;
+use tracing::{debug, instrument};
 
-use crate::error::ExecuteError;
-use crate::log::LogEntry;
-use crate::message::TermNum;
 use crate::{
     cmd::{Command, ProposeId},
+    error::ExecuteError,
     error::ProposeError,
-    util::InjectMap,
+    log::LogEntry,
+    message::TermNum,
+    util::Inject,
 };
 
 pub(crate) use self::proto::{
@@ -334,6 +332,7 @@ impl Connect {
     }
 
     /// send "propose" request
+    #[instrument(skip(self), name = "client propose")]
     pub(crate) async fn propose(
         &self,
         request: ProposeRequest,
@@ -342,30 +341,20 @@ impl Connect {
         let mut client = self.get().await?;
         let mut tr = tonic::Request::new(request);
         tr.set_timeout(timeout);
-
-        let rpc_span = info_span!("client propose");
-        global::get_text_map_propagator(|prop| {
-            prop.inject_context(&rpc_span.context(), &mut InjectMap(tr.metadata_mut()));
-        });
-
-        client
-            .propose(tr)
-            .instrument(rpc_span)
-            .await
-            .map_err(Into::into)
+        tr.metadata_mut().inject_current();
+        client.propose(tr).await.map_err(Into::into)
     }
 
     /// send "wait synced" request
-    #[allow(dead_code)] // false positive report
+    #[instrument(skip(self), name = "client wait_synced")]
     pub(crate) async fn wait_synced(
         &self,
         request: WaitSyncedRequest,
     ) -> Result<tonic::Response<WaitSyncedResponse>, ProposeError> {
-        let option_client = self.get().await;
-        match option_client {
-            Ok(mut client) => Ok(client.wait_synced(tonic::Request::new(request)).await?),
-            Err(e) => Err(e.into()),
-        }
+        let mut client = self.get().await?;
+        let mut tr = tonic::Request::new(request);
+        tr.metadata_mut().inject_current();
+        client.wait_synced(tr).await.map_err(Into::into)
     }
 
     /// Send `AppendEntries` request
@@ -374,13 +363,10 @@ impl Connect {
         request: AppendEntriesRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<AppendEntriesResponse>, ProposeError> {
-        let option_client = self.get().await;
-        let mut req = tonic::Request::new(request);
-        req.set_timeout(timeout);
-        match option_client {
-            Ok(mut client) => Ok(client.append_entries(req).await?),
-            Err(e) => Err(e.into()),
-        }
+        let mut client = self.get().await?;
+        let mut tr = tonic::Request::new(request);
+        tr.set_timeout(timeout);
+        client.append_entries(tr).await.map_err(Into::into)
     }
 
     /// Send `Vote` request
@@ -389,13 +375,10 @@ impl Connect {
         request: VoteRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<VoteResponse>, ProposeError> {
-        let option_client = self.get().await;
-        let mut req = tonic::Request::new(request);
-        req.set_timeout(timeout);
-        match option_client {
-            Ok(mut client) => Ok(client.vote(req).await?),
-            Err(e) => Err(e.into()),
-        }
+        let mut client = self.get().await?;
+        let mut tr = tonic::Request::new(request);
+        tr.set_timeout(timeout);
+        client.vote(tr).await.map_err(Into::into)
     }
 }
 

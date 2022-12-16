@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use curp::{client::Client, cmd::ProposeId, error::ProposeError};
-use log::debug;
 use tokio::time::Duration;
+use tracing::debug;
 use uuid::Uuid;
 
 use super::{

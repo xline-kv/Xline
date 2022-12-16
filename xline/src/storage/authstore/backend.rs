@@ -5,19 +5,16 @@ use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{cmd::ProposeId, error::ExecuteError};
 use itertools::Itertools;
 use jsonwebtoken::{DecodingKey, EncodingKey};
-use log::debug;
 use parking_lot::{Mutex, RwLock};
 use pbkdf2::{
     password_hash::{PasswordHash, PasswordVerifier},
     Pbkdf2,
 };
 use prost::Message;
+use tracing::debug;
 
 use crate::{
     header_gen::HeaderGenerator,
-    storage::{db::DB, index::Index},
-};
-use crate::{
     rpc::{
         AuthDisableRequest, AuthDisableResponse, AuthEnableRequest, AuthEnableResponse,
         AuthRoleAddRequest, AuthRoleAddResponse, AuthRoleDeleteRequest, AuthRoleDeleteResponse,
@@ -32,10 +29,11 @@ use crate::{
         AuthenticateResponse, KeyValue, Permission, RequestWithToken, RequestWrapper,
         ResponseWrapper, Role, Type, User,
     },
-    storage::index::IndexOperate,
-};
-use crate::{
     server::command::{CommandResponse, ExecutionRequest, KeyRange, SyncRequest, SyncResponse},
+    storage::{
+        db::DB,
+        index::{Index, IndexOperate},
+    },
     utils::RwLockMap,
 };
 

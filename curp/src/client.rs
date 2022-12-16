@@ -1,15 +1,12 @@
 use std::{fmt::Debug, iter, marker::PhantomData, net::SocketAddr, sync::Arc, time::Duration};
 
 use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
-use opentelemetry::global;
-use tracing::{info_span, instrument, warn, Instrument};
-use tracing_opentelemetry::OpenTelemetrySpanExt;
+use tracing::{instrument, warn};
 
 use crate::{
     cmd::Command,
     error::ProposeError,
     rpc::{self, Connect, ProposeRequest, WaitSyncedRequest},
-    util::InjectMap,
 };
 
 /// Propose request default timeout
@@ -130,11 +127,6 @@ where
         &self,
         cmd_arc: Arc<C>,
     ) -> Result<(<C as Command>::ASR, Option<<C as Command>::ER>), ProposeError> {
-        let mut tr = tonic::Request::new(WaitSyncedRequest::new(cmd_arc.id())?);
-        let rpc_span = info_span!("client wait_synced");
-        global::get_text_map_propagator(|prop| {
-            prop.inject_context(&rpc_span.context(), &mut InjectMap(tr.metadata_mut()));
-        });
         #[allow(clippy::panic)]
         match self
             .connects
@@ -146,10 +138,7 @@ where
                     self.connects.len()
                 )
             })
-            .get()
-            .await?
-            .wait_synced(tr)
-            .instrument(rpc_span)
+            .wait_synced(WaitSyncedRequest::new(cmd_arc.id())?)
             .await
         {
             Ok(resp) => {

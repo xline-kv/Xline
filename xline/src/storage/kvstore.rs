@@ -1,11 +1,10 @@
 use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 
 use clippy_utilities::{Cast, OverflowArithmetic};
-use curp::cmd::ProposeId;
-use curp::error::ExecuteError;
-use log::debug;
+use curp::{cmd::ProposeId, error::ExecuteError};
 use parking_lot::Mutex;
 use tokio::sync::{mpsc, oneshot};
+use tracing::debug;
 
 use super::index::IndexOperate;
 use super::{db::DB, index::Index, kvwatcher::KvWatcher};
