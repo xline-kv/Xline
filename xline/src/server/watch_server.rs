@@ -1,9 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
 
 use clippy_utilities::OverflowArithmetic;
-use log::debug;
 use tokio::sync::mpsc;
 use tokio_stream::{wrappers::ReceiverStream, StreamExt};
+use tracing::debug;
 
 use super::command::KeyRange;
 use crate::{

@@ -3,11 +3,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
-use opentelemetry::global;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
-use tracing::{debug, info_span, Instrument};
-use tracing_opentelemetry::OpenTelemetrySpanExt;
+use tracing::{debug, instrument};
 
 pub use self::proto::protocol_server::ProtocolServer;
 pub(crate) use self::proto::{
@@ -24,7 +22,7 @@ use crate::{
     error::{ExecuteError, ProposeError},
     log::LogEntry,
     message::{ServerId, TermNum},
-    util::InjectMap,
+    util::Inject,
 };
 
 // Skip for generated code
@@ -387,6 +385,7 @@ impl Connect {
     }
 
     /// send "propose" request
+    #[instrument(skip(self), name = "client propose")]
     pub(crate) async fn propose(
         &self,
         request: ProposeRequest,
@@ -398,26 +397,17 @@ impl Connect {
         }
 
         let mut client = self.get().await?;
-        let mut tr = tonic::Request::new(request);
-        tr.set_timeout(timeout);
-
-        let rpc_span = info_span!("client propose");
-        global::get_text_map_propagator(|prop| {
-            prop.inject_context(&rpc_span.context(), &mut InjectMap(tr.metadata_mut()));
-        });
-
-        client
-            .propose(tr)
-            .instrument(rpc_span)
-            .await
-            .map_err(Into::into)
+        let mut req = tonic::Request::new(request);
+        req.set_timeout(timeout);
+        req.metadata_mut().inject_current();
+        client.propose(req).await.map_err(Into::into)
     }
 
     /// send "wait synced" request
-    #[allow(dead_code)] // false positive report
+    #[instrument(skip(self), name = "client wait_synced")]
     pub(crate) async fn wait_synced(
         &self,
-        req: WaitSyncedRequest,
+        request: WaitSyncedRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<WaitSyncedResponse>, ProposeError> {
         #[cfg(test)]
@@ -425,13 +415,11 @@ impl Connect {
             return Err(ProposeError::RpcError("unreachable".to_owned()));
         }
 
-        let option_client = self.get().await;
-        let mut req = tonic::Request::new(req);
+        let mut client = self.get().await?;
+        let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
-        match option_client {
-            Ok(mut client) => Ok(client.wait_synced(req).await?),
-            Err(e) => Err(e.into()),
-        }
+        req.metadata_mut().inject_current();
+        client.wait_synced(req).await.map_err(Into::into)
     }
 
     /// Send `AppendEntries` request
@@ -445,13 +433,10 @@ impl Connect {
             return Err(ProposeError::RpcError("unreachable".to_owned()));
         }
 
-        let option_client = self.get().await;
+        let mut client = self.get().await?;
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
-        match option_client {
-            Ok(mut client) => Ok(client.append_entries(req).await?),
-            Err(e) => Err(e.into()),
-        }
+        client.append_entries(req).await.map_err(Into::into)
     }
 
     /// Send `Vote` request
@@ -465,13 +450,10 @@ impl Connect {
             return Err(ProposeError::RpcError("unreachable".to_owned()));
         }
 
-        let option_client = self.get().await;
+        let mut client = self.get().await?;
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
-        match option_client {
-            Ok(mut client) => Ok(client.vote(req).await?),
-            Err(e) => Err(e.into()),
-        }
+        client.vote(req).await.map_err(Into::into)
     }
 
     /// Send `FetchLeaderRequest`
@@ -485,13 +467,10 @@ impl Connect {
             return Err(ProposeError::RpcError("unreachable".to_owned()));
         }
 
-        let option_client = self.get().await;
+        let mut client = self.get().await?;
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
-        match option_client {
-            Ok(mut client) => Ok(client.fetch_leader(req).await?),
-            Err(e) => Err(e.into()),
-        }
+        client.fetch_leader(req).await.map_err(Into::into)
     }
 }
 
