@@ -9,7 +9,7 @@ use tokio::{sync::mpsc, time::Instant};
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    channel::{key_mpsc::MpscKeyBasedReceiver, key_spmc, RecvError},
+    channel::key_spmc,
     cmd::{Command, CommandExecutor},
     cmd_board::{CmdState, CommandBoard},
     cmd_execute_worker::{execute_worker, CmdExecuteSender, ExecuteMessage, N_EXECUTE_WORKERS},
@@ -26,7 +26,7 @@ use crate::{
 pub(crate) async fn run_bg_tasks<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
     state: Arc<RwLock<State<C>>>,
     last_rpc_time: Arc<RwLock<Instant>>,
-    sync_chan: MpscKeyBasedReceiver<C::K, SyncMessage<C>>,
+    sync_chan: flume::Receiver<SyncMessage<C>>,
     cmd_executor: CE,
     spec: Arc<Mutex<SpeculativePool<C>>>,
     cmd_exe_tx: CmdExecuteSender<C>,
@@ -39,7 +39,7 @@ pub(crate) async fn run_bg_tasks<C: Command + 'static, CE: 'static + CommandExec
     let connects = rpc::try_connect(others.into_iter().collect()).await;
 
     // notify when a broadcast of append_entries is needed immediately
-    let (ae_trigger, ae_trigger_rx) = tokio::sync::mpsc::unbounded_channel::<usize>();
+    let (ae_trigger, ae_trigger_rx) = mpsc::unbounded_channel::<usize>();
 
     let bg_ae_handle = tokio::spawn(bg_append_entries(
         connects.clone(),
@@ -90,70 +90,39 @@ where
     }
 
     /// Get all values from the message
-    fn inner(&mut self) -> (TermNum, Arc<C>) {
-        (self.term, Arc::clone(&self.cmd))
+    fn inner(self) -> (TermNum, Arc<C>) {
+        (self.term, self.cmd)
     }
 }
 
 /// Fetch commands need to be synced and add them to the log
 async fn bg_get_sync_cmds<C: Command + 'static>(
     state: Arc<RwLock<State<C>>>,
-    mut sync_chan: MpscKeyBasedReceiver<C::K, SyncMessage<C>>,
+    sync_chan: flume::Receiver<SyncMessage<C>>,
     ae_trigger: mpsc::UnboundedSender<usize>,
 ) {
     loop {
-        let (cmds, term) = match fetch_sync_msgs(&mut sync_chan).await {
-            Ok((cmds, term)) => (cmds, term),
-            Err(_) => return,
+        let (term, cmd) = match sync_chan.recv_async().await {
+            Ok(msg) => msg.inner(),
+            Err(e) => {
+                error!("sync channel error, {e}");
+                return;
+            }
         };
 
         #[allow(clippy::shadow_unrelated)] // clippy false positive
         state.map_write(|mut state| {
-            state.log.push(LogEntry::new(term, &cmds));
+            state.log.push(LogEntry::new(term, &[cmd]));
             if let Err(e) = ae_trigger.send(state.last_log_index()) {
                 error!("ae_trigger failed: {}", e);
             }
 
             debug!(
-                "received new log, index {:?}, contains {} cmds",
+                "received new log, index {:?}",
                 state.log.len().checked_sub(1),
-                cmds.len()
             );
         });
     }
-}
-
-/// Try to receive all the messages in `sync_chan`, preparing for the batch sync.
-/// The term number comes from the command received.
-// TODO: set a maximum value
-async fn fetch_sync_msgs<C: Command + 'static>(
-    sync_chan: &mut MpscKeyBasedReceiver<C::K, SyncMessage<C>>,
-) -> Result<(Vec<Arc<C>>, u64), ()> {
-    let mut term = 0;
-    let mut met_msg = false;
-    let mut cmds = vec![];
-    loop {
-        let sync_msg = match sync_chan.try_recv() {
-            Ok(sync_msg) => sync_msg,
-            Err(RecvError::ChannelStop) => return Err(()),
-            Err(RecvError::NoAvailable) => {
-                if met_msg {
-                    break;
-                }
-
-                match sync_chan.async_recv().await {
-                    Ok(msg) => msg,
-                    Err(_) => return Err(()),
-                }
-            }
-            Err(RecvError::Timeout) => unreachable!("try_recv won't return timeout error"),
-        };
-        met_msg = true;
-        let (t, cmd) = sync_msg.map_msg(SyncMessage::inner);
-        term = t;
-        cmds.push(cmd);
-    }
-    Ok((cmds, term))
 }
 
 /// Interval between sending heartbeats
