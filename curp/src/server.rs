@@ -18,7 +18,6 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{
     bg_tasks::{run_bg_tasks, SyncMessage},
-    channel::key_mpsc::{self, MpscKeyBasedSender},
     cmd::{Command, CommandExecutor, ProposeId},
     cmd_board::{CmdState, CommandBoard},
     cmd_execute_worker::{cmd_execute_channel, CmdExecuteSender},
@@ -218,7 +217,7 @@ pub struct Protocol<C: Command + 'static> {
     /// The speculative cmd pool, shared with executor
     spec: Arc<Mutex<SpeculativePool<C>>>,
     /// The channel to send synced command to background sync task
-    sync_chan: MpscKeyBasedSender<C::K, SyncMessage<C>>,
+    sync_chan: flume::Sender<SyncMessage<C>>,
     // TODO: clean up the board when the size is too large
     /// Cmd watch board for tracking the cmd sync results
     cmd_board: Arc<Mutex<CommandBoard>>,
@@ -385,7 +384,7 @@ impl<C: 'static + Command> Protocol<C> {
         others: Vec<String>,
         cmd_executor: CE,
     ) -> Self {
-        let (sync_tx, sync_rx) = key_mpsc::channel();
+        let (sync_tx, sync_rx) = flume::unbounded();
         let cmd_board = Arc::new(Mutex::new(CommandBoard::new()));
         let spec = Arc::new(Mutex::new(SpeculativePool::new()));
         let last_rpc_time = Arc::new(RwLock::new(Instant::now()));
@@ -441,12 +440,11 @@ impl<C: 'static + Command> Protocol<C> {
                 CmdState::AfterSync
             },
         );
-        let ready_notify = self
+        if let Err(e) = self
             .sync_chan
-            .send(cmd.keys(), SyncMessage::new(term, Arc::new(cmd.clone())));
-        match ready_notify {
-            Err(e) => error!("sync channel has closed, {}", e),
-            Ok(notify) => notify.notify(1), // TODO: shall we remove this mechanism to hold msgs since it's no longer needed?
+            .send(SyncMessage::new(term, Arc::new(cmd.clone())))
+        {
+            error!("send channel error, {e}");
         }
     }
 

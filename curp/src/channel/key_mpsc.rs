@@ -5,6 +5,8 @@
 //! 2. Any message send to the channel is control by a ready token returned by the sender API.
 //! 3. Unready message is not received by the receiver and it blocks all the following conflict messages
 
+#![allow(unused)]
+
 use std::{
     cmp::Eq,
     collections::{HashMap, HashSet, VecDeque},
@@ -17,12 +19,11 @@ use clippy_utilities::{NumericCast, OverflowArithmetic};
 use event_listener::Event;
 use parking_lot::Mutex;
 
-use crate::cmd::ConflictCheck;
-
 use super::{
     hash_eq, KeyBasedChannel, KeyBasedReceiverInner, KeyBasedSenderInner, KeysMessageInner,
     RecvError, SendError,
 };
+use crate::cmd::ConflictCheck;
 
 /// Keys and Messages combined structure
 pub(crate) struct MpscKeysMessage<K, M> {
@@ -251,8 +252,10 @@ pub(crate) fn channel<
 mod test {
     use std::{thread::sleep, time::Duration};
 
-    use super::super::{RecvError, SendError};
-    use super::channel;
+    use super::{
+        super::{RecvError, SendError},
+        channel,
+    };
 
     #[allow(clippy::expect_used, unused_results)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
