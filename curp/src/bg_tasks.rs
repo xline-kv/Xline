@@ -5,14 +5,13 @@ use futures::future::Either;
 use lock_utils::parking_lot_lock::RwLockMap;
 use madsim::rand::{thread_rng, Rng};
 use parking_lot::{lock_api::RwLockUpgradableReadGuard, Mutex, RwLock};
-use tokio::{sync::mpsc, time::Instant};
+use tokio::{sync::mpsc, task::JoinHandle, time::Instant};
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    channel::key_spmc,
     cmd::{Command, CommandExecutor},
     cmd_board::{CmdState, CommandBoard},
-    cmd_execute_worker::{execute_worker, CmdExecuteSender, ExecuteMessage, N_EXECUTE_WORKERS},
+    cmd_execute_worker::{execute_worker, CmdExeReceiver, CmdExeSender, N_EXECUTE_WORKERS},
     log::LogEntry,
     message::TermNum,
     rpc::{self, AppendEntriesRequest, Connect, VoteRequest, WaitSyncedResponse},
@@ -29,8 +28,8 @@ pub(crate) async fn run_bg_tasks<C: Command + 'static, CE: 'static + CommandExec
     sync_chan: flume::Receiver<SyncMessage<C>>,
     cmd_executor: CE,
     spec: Arc<Mutex<SpeculativePool<C>>>,
-    cmd_exe_tx: CmdExecuteSender<C>,
-    cmd_exe_rx: mpsc::UnboundedReceiver<ExecuteMessage<C>>,
+    cmd_exe_tx: CmdExeSender<C>,
+    cmd_exe_rx: CmdExeReceiver<C>,
     cmd_board: Arc<Mutex<CommandBoard>>,
     mut shutdown: Shutdown,
 ) {
@@ -56,7 +55,13 @@ pub(crate) async fn run_bg_tasks<C: Command + 'static, CE: 'static + CommandExec
     let bg_get_sync_cmds_handle =
         tokio::spawn(bg_get_sync_cmds(Arc::clone(&state), sync_chan, ae_trigger));
     let calibrate_handle = tokio::spawn(leader_calibrates_followers(connects, state));
-    let bg_cmd_exe_handle = tokio::spawn(bg_execute_cmd(cmd_executor, cmd_exe_rx));
+
+    // spawn cmd execute worker
+    let bg_exe_worker_handles: Vec<JoinHandle<_>> =
+        iter::repeat((cmd_exe_rx, Arc::new(cmd_executor)))
+            .take(N_EXECUTE_WORKERS)
+            .map(|(rx, ce)| tokio::spawn(execute_worker(rx, ce)))
+            .collect();
 
     shutdown.recv().await;
     bg_ae_handle.abort();
@@ -65,7 +70,9 @@ pub(crate) async fn run_bg_tasks<C: Command + 'static, CE: 'static + CommandExec
     bg_heartbeat_handle.abort();
     bg_get_sync_cmds_handle.abort();
     calibrate_handle.abort();
-    bg_cmd_exe_handle.abort();
+    for handle in bg_exe_worker_handles {
+        handle.abort();
+    }
     info!("all background task stopped");
 }
 
@@ -104,8 +111,7 @@ async fn bg_get_sync_cmds<C: Command + 'static>(
     loop {
         let (term, cmd) = match sync_chan.recv_async().await {
             Ok(msg) => msg.inner(),
-            Err(e) => {
-                error!("sync channel error, {e}");
+            Err(_) => {
                 return;
             }
         };
@@ -299,7 +305,7 @@ async fn send_heartbeat<C: Command + 'static>(connect: Arc<Connect>, state: Arc<
 /// Background apply
 async fn bg_apply<C: Command + 'static>(
     state: Arc<RwLock<State<C>>>,
-    exe_tx: CmdExecuteSender<C>,
+    exe_tx: CmdExeSender<C>,
     spec: Arc<Mutex<SpeculativePool<C>>>,
     cmd_board: Arc<Mutex<CommandBoard>>,
 ) {
@@ -345,7 +351,7 @@ fn handle_after_sync_leader<C: Command + 'static>(
     cmd_board: Arc<Mutex<CommandBoard>>,
     cmd: Arc<C>,
     index: LogIndex,
-    exe_tx: &CmdExecuteSender<C>,
+    exe_tx: &CmdExeSender<C>,
 ) {
     let cmd_id = cmd.id().clone();
 
@@ -412,7 +418,7 @@ fn handle_after_sync_leader<C: Command + 'static>(
 
 /// The follower handles after sync
 fn handle_after_sync_follower<C: Command + 'static>(
-    exe_tx: &CmdExecuteSender<C>,
+    exe_tx: &CmdExeSender<C>,
     cmd: Arc<C>,
     index: LogIndex,
 ) {
@@ -636,30 +642,4 @@ async fn leader_calibrates_followers<C: Command + 'static>(
             });
         }
     }
-}
-
-/// The only place where cmds get executed and call `after_sync`
-async fn bg_execute_cmd<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
-    ce: CE,
-    mut cmd_rx: mpsc::UnboundedReceiver<ExecuteMessage<C>>,
-) {
-    // TODO: use KeyBasedMpsc to dispatch cmds to execute in parallel
-    let (dispatch_tx, dispatch_rx) = key_spmc::channel();
-
-    #[allow(clippy::shadow_unrelated)] // clippy false positive
-    // spawn cmd executor worker
-    iter::repeat((dispatch_rx, Arc::new(ce)))
-        .take(N_EXECUTE_WORKERS)
-        .for_each(|(rx, ce)| {
-            let _worker_handle = tokio::spawn(execute_worker(rx, ce));
-        });
-
-    // TODO: avoid re-dispatch by using a mpmc channel
-    while let Some(msg) = cmd_rx.recv().await {
-        let cmd = Arc::clone(&msg.cmd);
-        if let Err(e) = dispatch_tx.send(cmd.keys(), Some(msg)) {
-            warn!("failed to send cmd to execute worker, {e}");
-        }
-    }
-    error!("bg execute cmd stopped unexpectedly");
 }

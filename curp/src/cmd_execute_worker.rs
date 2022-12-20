@@ -1,11 +1,13 @@
 use std::sync::Arc;
 
-use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, warn};
+use futures::future::OptionFuture;
+use tokio::sync::oneshot;
+use tracing::{debug, error, warn};
 
 use crate::{
-    channel::key_spmc::SpmcKeyBasedReceiver,
     cmd::{Command, CommandExecutor},
+    conflict_checked_mpmc,
+    conflict_checked_mpmc::{ConflictCheckedMsg, DoneNotifier},
     error::ExecuteError,
     LogIndex,
 };
@@ -14,56 +16,69 @@ use crate::{
 pub(crate) const N_EXECUTE_WORKERS: usize = 8;
 
 /// Worker that execute commands
+#[allow(clippy::type_complexity)]
 pub(crate) async fn execute_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
-    dispatch_rx: SpmcKeyBasedReceiver<C::K, Option<ExecuteMessage<C>>>,
+    dispatch_rx: CmdExeReceiver<C>,
     ce: Arc<CE>,
 ) {
-    while let Ok((msg_wrapped, done)) = dispatch_rx.recv().await {
-        #[allow(clippy::unwrap_used)]
-        // it's a hack to bypass the map_msg(you can't do await in map_msg)
-        // TODO: is there a better way to mark a spmc msg done instead of sending the msg back
-        let ExecuteMessage { cmd, er_tx } = msg_wrapped.map_msg(Option::take).unwrap();
-
+    while let Ok((ExecuteMessage { cmd, er_tx }, done)) = dispatch_rx.0.recv_async().await {
         match er_tx {
-            ExecuteResultSender::Execute(tx) => {
+            ExeResultSender::Execute(tx) => {
                 let er = cmd.execute(ce.as_ref()).await;
                 debug!("cmd {:?} is executed", cmd.id());
                 let _ignore = tx.send(er); // it's ok to ignore the result here because sometimes the result is not needed
             }
-            ExecuteResultSender::AfterSync(tx, index) => {
+            ExeResultSender::AfterSync(tx, index) => {
                 let asr = cmd.after_sync(ce.as_ref(), index).await;
                 debug!("cmd {:?} after sync is called", cmd.id());
                 let _ignore = tx.send(asr); // it's ok to ignore the result here because sometimes the result is not needed
             }
-            ExecuteResultSender::ExecuteAndAfterSync(tx, index) => {
+            ExeResultSender::ExecuteAndAfterSync(tx, index) => {
                 let er = cmd.execute(ce.as_ref()).await;
                 debug!("cmd {:?} is executed", cmd.id());
-                #[allow(clippy::if_then_some_else_none)] // you can't do await in closure
-                let asr = if er.is_ok() {
-                    Some(cmd.after_sync(ce.as_ref(), index).await)
-                } else {
-                    None
-                };
-                let _ignore = tx.send((er, asr)); // it's ok to ignore the result here because sometimes the result is not needed
+                let asr: OptionFuture<_> = er
+                    .is_ok()
+                    .then(|| async {
+                        let asr = cmd.after_sync(ce.as_ref(), index).await;
+                        debug!("cmd {:?} call after sync", cmd.id());
+                        asr
+                    })
+                    .into();
+                let _ignore = tx.send((er, asr.await)); // it's ok to ignore the result here because sometimes the result is not needed
             }
         }
-
-        if let Err(e) = done.send(msg_wrapped) {
+        if let Err(e) = done.notify() {
             warn!("{e}");
         }
     }
+    error!("execute worker stopped unexpectedly");
 }
 
 /// Messages sent to the background cmd execution task
-pub(crate) struct ExecuteMessage<C: Command + 'static> {
+struct ExecuteMessage<C: Command + 'static> {
     /// The cmd to be executed
-    pub(crate) cmd: Arc<C>,
+    cmd: Arc<C>,
     /// Send execution result
-    er_tx: ExecuteResultSender<C>,
+    er_tx: ExeResultSender<C>,
+}
+
+impl<C: Command + 'static> ConflictCheckedMsg for ExecuteMessage<C> {
+    type Token = C;
+
+    fn token(&self) -> Arc<Self::Token> {
+        Arc::clone(&self.cmd)
+    }
+}
+
+impl<C: Command + 'static> ExecuteMessage<C> {
+    /// Create a new exe msg
+    fn new(cmd: Arc<C>, er_tx: ExeResultSender<C>) -> Self {
+        Self { cmd, er_tx }
+    }
 }
 
 /// Channel for transferring execution results
-pub(crate) enum ExecuteResultSender<C: Command + 'static> {
+enum ExeResultSender<C: Command + 'static> {
     /// Only call `execute`
     Execute(oneshot::Sender<Result<C::ER, ExecuteError>>),
     /// Only call `after_sync`
@@ -73,29 +88,28 @@ pub(crate) enum ExecuteResultSender<C: Command + 'static> {
     ExecuteAndAfterSync(
         oneshot::Sender<(
             Result<C::ER, ExecuteError>,
-            Option<Result<C::ASR, ExecuteError>>,
+            Option<Result<C::ASR, ExecuteError>>, // why option: if execution fails, after sync will not be called
         )>,
         LogIndex,
     ),
 }
 
 /// Send cmd to background execute cmd task
-pub(crate) struct CmdExecuteSender<C: Command + 'static>(mpsc::UnboundedSender<ExecuteMessage<C>>);
+#[derive(Clone)]
+pub(crate) struct CmdExeSender<C: Command + 'static>(flume::Sender<ExecuteMessage<C>>);
 
-impl<C: Command + 'static> Clone for CmdExecuteSender<C> {
-    fn clone(&self) -> Self {
-        Self(self.0.clone())
-    }
-}
+/// Recv cmds that need to be executed or after synced
+#[derive(Clone)]
+pub(crate) struct CmdExeReceiver<C: Command + 'static>(
+    flume::Receiver<(ExecuteMessage<C>, DoneNotifier)>,
+);
 
-impl<C: Command + 'static> CmdExecuteSender<C> {
-    /// Send cmd to background cmd executor and return a oneshot receiver for the execution result
+impl<C: Command + 'static> CmdExeSender<C> {
+    /// Send cmd to background cmd executor and return a oneshot receiver for the execution result/
     pub(crate) fn send_exe(&self, cmd: Arc<C>) -> oneshot::Receiver<Result<C::ER, ExecuteError>> {
         let (tx, rx) = oneshot::channel();
-        if let Err(e) = self.0.send(ExecuteMessage {
-            cmd,
-            er_tx: ExecuteResultSender::Execute(tx),
-        }) {
+        let msg = ExecuteMessage::new(cmd, ExeResultSender::Execute(tx));
+        if let Err(e) = self.0.send(msg) {
             warn!("failed to send cmd to background execute cmd task, {e}");
         }
         rx
@@ -108,10 +122,8 @@ impl<C: Command + 'static> CmdExecuteSender<C> {
         index: LogIndex,
     ) -> oneshot::Receiver<Result<C::ASR, ExecuteError>> {
         let (tx, rx) = oneshot::channel();
-        if let Err(e) = self.0.send(ExecuteMessage {
-            cmd,
-            er_tx: ExecuteResultSender::AfterSync(tx, index),
-        }) {
+        let msg = ExecuteMessage::new(cmd, ExeResultSender::AfterSync(tx, index));
+        if let Err(e) = self.0.send(msg) {
             warn!("failed to send cmd to background execute cmd task, {e}");
         }
         rx
@@ -128,21 +140,16 @@ impl<C: Command + 'static> CmdExecuteSender<C> {
         Option<Result<C::ASR, ExecuteError>>,
     )> {
         let (tx, rx) = oneshot::channel();
-        if let Err(e) = self.0.send(ExecuteMessage {
-            cmd,
-            er_tx: ExecuteResultSender::ExecuteAndAfterSync(tx, index),
-        }) {
+        let msg = ExecuteMessage::new(cmd, ExeResultSender::ExecuteAndAfterSync(tx, index));
+        if let Err(e) = self.0.send(msg) {
             warn!("failed to send cmd to background execute cmd task, {e}");
         }
         rx
     }
 }
 
-/// Create a channel to send cmds to background cmd execute workers
-pub(crate) fn cmd_execute_channel<C: Command + 'static>() -> (
-    CmdExecuteSender<C>,
-    mpsc::UnboundedReceiver<ExecuteMessage<C>>,
-) {
-    let (tx, rx) = mpsc::unbounded_channel();
-    (CmdExecuteSender(tx), rx)
+/// Create a channel to send cmds to background cmd execute workers. The channel guarantees the execution order and that after sync is called after execution completes
+pub(crate) fn cmd_exe_channel<C: Command + 'static>() -> (CmdExeSender<C>, CmdExeReceiver<C>) {
+    let (tx, rx) = conflict_checked_mpmc::channel();
+    (CmdExeSender(tx), CmdExeReceiver(rx))
 }
