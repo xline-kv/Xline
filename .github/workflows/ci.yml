@@ -36,8 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      - run: sudo apt install -y cmake g++
-      - run: wget https://github.com/protocolbuffers/protobuf/releases/download/v21.10/protoc-21.10-linux-x86_64.zip && unzip protoc-21.10-linux-x86_64.zip -d .local && echo "$(pwd)/.local/bin" >> $GITHUB_PATH
+      - run: sudo bash ./.github/scripts/install_deps.sh
       - uses: actions-rs/toolchain@v1
         with:
           profile: default
@@ -67,8 +66,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      - run: sudo apt install -y cmake g++
-      - run: wget https://github.com/protocolbuffers/protobuf/releases/download/v21.10/protoc-21.10-linux-x86_64.zip && unzip protoc-21.10-linux-x86_64.zip -d .local && echo "$(pwd)/.local/bin" >> $GITHUB_PATH
+      - run: sudo bash ./.github/scripts/install_deps.sh
       - uses: actions-rs/toolchain@v1
         with:
           profile: default
@@ -83,8 +81,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      - run: sudo apt install -y cmake g++
-      - run: wget https://github.com/protocolbuffers/protobuf/releases/download/v21.10/protoc-21.10-linux-x86_64.zip && unzip protoc-21.10-linux-x86_64.zip -d .local && echo "$(pwd)/.local/bin" >> $GITHUB_PATH
+      - run: sudo bash ./.github/scripts/install_deps.sh
       - uses: actions-rs/toolchain@v1
         with:
           profile: default

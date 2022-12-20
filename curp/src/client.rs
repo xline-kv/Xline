@@ -1,11 +1,15 @@
 #[cfg(test)]
 use std::sync::atomic::AtomicBool;
-use std::{collections::HashMap, fmt::Debug, iter, marker::PhantomData, sync::Arc, time::Duration};
+use std::{
+    cmp::Ordering, collections::HashMap, fmt::Debug, iter, marker::PhantomData, sync::Arc,
+    time::Duration,
+};
 
 use event_listener::Event;
 use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
 use opentelemetry::global;
 use parking_lot::RwLock;
+use tokio::time::timeout;
 use tracing::{debug, info_span, instrument, warn, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
@@ -109,12 +113,7 @@ where
             .connects
             .iter()
             .zip(iter::repeat(req))
-            .map(|(connect, req_cloned)| async {
-                (
-                    connect.id().clone(),
-                    connect.propose(req_cloned, PROPOSE_TIMEOUT).await,
-                )
-            })
+            .map(|(connect, req_cloned)| connect.propose(req_cloned, PROPOSE_TIMEOUT))
             .collect();
 
         let mut ok_cnt: usize = 0;
@@ -122,7 +121,7 @@ where
         let major_cnt = max_fault
             .wrapping_add(max_fault.wrapping_add(1).wrapping_div(2))
             .wrapping_add(1);
-        while let Some((id, resp_result)) = rpcs.next().await {
+        while let Some(resp_result) = rpcs.next().await {
             let resp = match resp_result {
                 Ok(resp) => resp.into_inner(),
                 Err(e) => {
@@ -132,21 +131,34 @@ where
             };
             let term_valid = {
                 let mut state = self.state.write();
-                let valid = match resp.term() {
-                    t if t > state.term => {
-                        // state reset
-                        ok_cnt = 0;
-                        state.update_to_term(resp.term());
-                        execute_result = None;
+                match state.term.cmp(&resp.term()) {
+                    Ordering::Less => {
+                        // reset term only when the resp has leader id to prevent:
+                        // If a server loses contact with its leader, it will update its term for election. Since other servers are all right, the election will not succeed.
+                        // But if the client learns about the new term and updates its term to it, it will never get the true leader.
+                        if let Some(ref leader_id) = resp.leader_id {
+                            ok_cnt = 0;
+                            state.update_to_term(resp.term());
+                            state.set_leader(leader_id.clone());
+                            execute_result = None;
+                        }
                         true
                     }
-                    t if t < state.term => false,
-                    _ => true,
-                };
-                if resp.is_leader && resp.term == state.term {
-                    state.set_leader(id);
+                    Ordering::Equal => {
+                        if let Some(ref leader_id) = resp.leader_id {
+                            if state.leader.is_none() {
+                                state.set_leader(leader_id.clone());
+                            }
+                            assert_eq!(
+                                state.leader.as_ref(),
+                                Some(leader_id),
+                                "there should never be two leader in one term"
+                            );
+                        }
+                        true
+                    }
+                    Ordering::Greater => false,
                 }
-                valid
             };
             if term_valid {
                 resp.map_or_else::<C, _, _, _>(
@@ -196,7 +208,10 @@ where
                 if let Some(id) = self.state.read().leader.clone() {
                     break id;
                 }
-                notify.listen().await;
+                if timeout(Self::TIMEOUT, notify.listen()).await.is_err() {
+                    // maybe the fast path fails to set the leader, need to fetch leader proactively
+                    self.fetch_leader().await;
+                }
             };
 
             debug!("wait synced request sent to {}", leader_id);
@@ -263,6 +278,9 @@ where
             let mut max_term = 0;
             let mut leader = None;
 
+            let mut ok_cnt = 0;
+            #[allow(clippy::integer_arithmetic)]
+            let majority_cnt = self.connects.len() / 2 + 1;
             while let Some((id, resp)) = rpcs.next().await {
                 let resp = match resp {
                     Ok(resp) => resp.into_inner(),
@@ -272,13 +290,22 @@ where
                     }
                 };
                 if let Some(leader_id) = resp.leader_id {
-                    if resp.term >= max_term {
-                        max_term = resp.term;
-                        leader = Some(leader_id);
+                    #[allow(clippy::integer_arithmetic)]
+                    match max_term.cmp(&resp.term) {
+                        Ordering::Less => {
+                            max_term = resp.term;
+                            leader = Some(leader_id);
+                            ok_cnt = 1;
+                        }
+                        Ordering::Equal => {
+                            leader = Some(leader_id);
+                            ok_cnt += 1;
+                        }
+                        Ordering::Greater => {}
                     }
                 }
-                if resp.term > max_term {
-                    max_term = resp.term;
+                if ok_cnt >= majority_cnt {
+                    break;
                 }
             }
 
@@ -292,9 +319,12 @@ where
 
             // wait until the election is completed
             // TODO: let user configure it according to average leader election cost
-            tokio::time::sleep(Duration::from_micros(500)).await;
+            tokio::time::sleep(Self::RETRY_INTERVAL).await;
         }
     }
+
+    /// Retry interval
+    const RETRY_INTERVAL: Duration = Duration::from_micros(500);
 
     /// Propose the request to servers
     /// # Errors

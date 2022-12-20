@@ -389,14 +389,16 @@ impl<C: 'static + Command> Protocol<C> {
         })?;
 
         (|| async {
-            let (is_leader, term) = self.state.map_read(|state| (state.is_leader(), state.term));
+            let (is_leader, leader_id, term) = self
+                .state
+                .map_read(|state| (state.is_leader(), state.leader_id.clone(), state.term));
             let cmd = Arc::new(cmd);
             let er_rx = {
                 let mut spec = self.spec.lock();
 
                 // check if the command is ready
                 if spec.ready.contains_key(cmd.id()) {
-                    return ProposeResponse::new_empty(false, term);
+                    return ProposeResponse::new_empty(leader_id, term);
                 }
 
                 let has_conflict = spec.has_conflict_with(&cmd);
@@ -407,16 +409,16 @@ impl<C: 'static + Command> Protocol<C> {
                 // non-leader should return immediately
                 if !is_leader {
                     return if has_conflict {
-                        ProposeResponse::new_error(is_leader, term, &ProposeError::KeyConflict)
+                        ProposeResponse::new_error(leader_id, term, &ProposeError::KeyConflict)
                     } else {
-                        ProposeResponse::new_empty(false, term)
+                        ProposeResponse::new_empty(leader_id, term)
                     };
                 }
                 // leader should sync the cmd to others
                 if has_conflict {
                     // no spec execute, just sync
                     self.sync_to_others(term, Arc::clone(&cmd), true);
-                    return ProposeResponse::new_error(is_leader, term, &ProposeError::KeyConflict);
+                    return ProposeResponse::new_error(leader_id, term, &ProposeError::KeyConflict);
                 }
 
                 // spec execute and sync
@@ -431,14 +433,14 @@ impl<C: 'static + Command> Protocol<C> {
             // wait for the speculative execution
             let er = er_rx.await;
             match er {
-                Ok(Ok(er)) => ProposeResponse::new_result::<C>(is_leader, term, &er),
+                Ok(Ok(er)) => ProposeResponse::new_result::<C>(leader_id, term, &er),
                 Ok(Err(err)) => ProposeResponse::new_error(
-                    is_leader,
+                    leader_id,
                     term,
                     &ProposeError::ExecutionError(err.to_string()),
                 ),
                 Err(err) => ProposeResponse::new_error(
-                    is_leader,
+                    leader_id,
                     term,
                     &ProposeError::ProtocolError(err.to_string()),
                 ),

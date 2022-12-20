@@ -110,7 +110,7 @@ impl CurpGroup {
             })
             .collect();
 
-        tokio::time::sleep(Duration::from_millis(2000)).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
         Self { nodes }
     }
 

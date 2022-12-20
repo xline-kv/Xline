@@ -536,6 +536,7 @@ async fn send_vote<C: Command + 'static>(
                 let min_granted = (state.others.len() + 1) / 2 + 1;
                 if state.votes_received >= min_granted {
                     state.set_role(ServerRole::Leader);
+                    state.leader_id = Some(state.id().clone());
                     debug!("server {} becomes leader", state.id());
 
                     // init next_index
