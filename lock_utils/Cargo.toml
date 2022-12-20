@@ -3,7 +3,7 @@ name = "lock_utils"
 version = "0.1.0"
 authors = ["DatenLord Developers <dev@datenlord.io>"]
 edition = "2021"
-description = "Utilities funtions for parking_lot"
+description = "Utilities funtions for lock"
 repository = "https://github.com/datenlord/Xline/lock_utils"
 readme = "README.md"
 license = "MIT"
@@ -12,5 +12,17 @@ categories = ["utilities"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+full = ["std", "tokio", "parking_lot"]
+std = []
+tokio = ["dep:tokio", "dep:async-trait"]
+parking_lot = ["dep:parking_lot"]
+
 [dependencies]
-parking_lot = "0.12.1"
+parking_lot = { version = "0.12.1", optional = true }
+tokio = { version = "1.23.0", features = [
+    "sync",
+    "macros",
+    "rt-multi-thread",
+], optional = true }
+async-trait = { version = "0.1.60", optional = true }

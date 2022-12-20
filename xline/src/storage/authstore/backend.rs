@@ -5,7 +5,7 @@ use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{cmd::ProposeId, error::ExecuteError};
 use itertools::Itertools;
 use jsonwebtoken::{DecodingKey, EncodingKey};
-use lock_utils::RwLockMap;
+use lock_utils::parking_lot_lock::RwLockMap;
 use log::debug;
 use parking_lot::{Mutex, RwLock};
 use pbkdf2::{

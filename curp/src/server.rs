@@ -8,7 +8,7 @@ use std::{
 
 use clippy_utilities::NumericCast;
 use event_listener::Event;
-use lock_utils::RwLockMap;
+use lock_utils::parking_lot_lock::RwLockMap;
 use opentelemetry::global;
 use parking_lot::{lock_api::RwLockUpgradableReadGuard, Mutex, RwLock};
 use tokio::{net::TcpListener, sync::broadcast, time::Instant};
