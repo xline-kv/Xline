@@ -20,7 +20,7 @@ use crate::{
     bg_tasks::{run_bg_tasks, SyncMessage},
     cmd::{Command, CommandExecutor, ProposeId},
     cmd_board::{CmdState, CommandBoard},
-    cmd_execute_worker::{cmd_execute_channel, CmdExecuteSender},
+    cmd_execute_worker::{cmd_exe_channel, CmdExeSender},
     error::{ProposeError, ServerError},
     gc::run_gc_tasks,
     log::LogEntry,
@@ -224,7 +224,7 @@ pub struct Protocol<C: Command + 'static> {
     /// Stop channel sender
     stop_ch_tx: broadcast::Sender<()>,
     /// The channel to send cmds to background exe tasks
-    cmd_exe_tx: CmdExecuteSender<C>,
+    cmd_exe_tx: CmdExeSender<C>,
 }
 
 /// State of the server
@@ -389,7 +389,7 @@ impl<C: 'static + Command> Protocol<C> {
         let spec = Arc::new(Mutex::new(SpeculativePool::new()));
         let last_rpc_time = Arc::new(RwLock::new(Instant::now()));
         let (stop_ch_tx, stop_ch_rx) = broadcast::channel(1);
-        let (exe_tx, exe_rx) = cmd_execute_channel();
+        let (exe_tx, exe_rx) = cmd_exe_channel();
 
         let state = Arc::new(RwLock::new(State::new(
             id,
@@ -430,7 +430,7 @@ impl<C: 'static + Command> Protocol<C> {
 
     /// Send sync event to the background sync task, it's not a blocking function
     #[instrument(skip(self))]
-    fn sync_to_others(&self, term: TermNum, cmd: &C, need_execute: bool) {
+    fn sync_to_others(&self, term: TermNum, cmd: Arc<C>, need_execute: bool) {
         let mut cmd_board = self.cmd_board.lock();
         let _ignore = cmd_board.cmd_states.insert(
             cmd.id().clone(),
@@ -440,10 +440,7 @@ impl<C: 'static + Command> Protocol<C> {
                 CmdState::AfterSync
             },
         );
-        if let Err(e) = self
-            .sync_chan
-            .send(SyncMessage::new(term, Arc::new(cmd.clone())))
-        {
+        if let Err(e) = self.sync_chan.send(SyncMessage::new(term, cmd)) {
             error!("send channel error, {e}");
         }
     }
@@ -462,6 +459,7 @@ impl<C: 'static + Command> Protocol<C> {
 
         (|| async {
             let (is_leader, term) = self.state.map_read(|state| (state.is_leader(), state.term));
+            let cmd = Arc::new(cmd);
             let er_rx = {
                 let mut spec = self.spec.lock();
 
@@ -472,7 +470,7 @@ impl<C: 'static + Command> Protocol<C> {
 
                 let has_conflict = spec.has_conflict_with(&cmd);
                 if !has_conflict {
-                    spec.push(cmd.clone());
+                    spec.push(cmd.as_ref().clone());
                 }
 
                 // non-leader should return immediately
@@ -483,20 +481,17 @@ impl<C: 'static + Command> Protocol<C> {
                         ProposeResponse::new_empty(false, term)
                     };
                 }
-
                 // leader should sync the cmd to others
-                let cmd = Arc::new(cmd);
-
                 if has_conflict {
                     // no spec execute, just sync
-                    self.sync_to_others(term, cmd.as_ref(), true);
+                    self.sync_to_others(term, Arc::clone(&cmd), true);
                     return ProposeResponse::new_error(is_leader, term, &ProposeError::KeyConflict);
                 }
 
                 // spec execute and sync
                 // execute the command before sync so that the order of cmd is preserved
                 let er_rx = self.cmd_exe_tx.send_exe(Arc::clone(&cmd));
-                self.sync_to_others(term, cmd.as_ref(), false);
+                self.sync_to_others(term, Arc::clone(&cmd), false);
 
                 // now we can release the lock and wait for the execution result
                 er_rx

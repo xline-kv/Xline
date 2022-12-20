@@ -130,8 +130,8 @@ mod message;
 /// Log
 mod log;
 
-/// The special keyBased channels
-mod channel;
+/// The special conflict checked mpmc
+pub(crate) mod conflict_checked_mpmc;
 
 /// Background tasks of Curp protocol
 mod bg_tasks;
