@@ -10,7 +10,7 @@ message ProposeRequest {
 }
 
 message ProposeResponse {
-    bool is_leader = 1;
+    optional string leader_id = 1;
     uint64 term = 2;
     oneof exe_result {
         // The original type is Command::ER

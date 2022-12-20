@@ -78,12 +78,12 @@ impl ProposeRequest {
 impl ProposeResponse {
     /// Create an ok propose response
     pub(crate) fn new_result<C: Command>(
-        is_leader: bool,
+        leader_id: Option<ServerId>,
         term: u64,
         result: &C::ER,
     ) -> bincode::Result<Self> {
         Ok(Self {
-            is_leader,
+            leader_id,
             term,
             exe_result: Some(ExeResult::Result(bincode::serialize(result)?)),
         })
@@ -91,9 +91,9 @@ impl ProposeResponse {
 
     /// Create an empty propose response
     #[allow(clippy::unnecessary_wraps)] // To keep the new functions return the same type
-    pub(crate) fn new_empty(is_leader: bool, term: u64) -> bincode::Result<Self> {
+    pub(crate) fn new_empty(leader_id: Option<ServerId>, term: u64) -> bincode::Result<Self> {
         Ok(Self {
-            is_leader,
+            leader_id,
             term,
             exe_result: None,
         })
@@ -101,12 +101,12 @@ impl ProposeResponse {
 
     /// Create an error propose response
     pub(crate) fn new_error(
-        is_leader: bool,
+        leader_id: Option<ServerId>,
         term: u64,
         error: &ProposeError,
     ) -> bincode::Result<Self> {
         Ok(Self {
-            is_leader,
+            leader_id,
             term,
             exe_result: Some(ExeResult::Error(bincode::serialize(error)?)),
         })
