@@ -2,7 +2,7 @@ use std::{iter, ops::Range, sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
 use futures::future::Either;
-use lock_utils::RwLockMap;
+use lock_utils::parking_lot_lock::RwLockMap;
 use madsim::rand::{thread_rng, Rng};
 use parking_lot::{lock_api::RwLockUpgradableReadGuard, Mutex, RwLock};
 use tokio::{sync::mpsc, time::Instant};
