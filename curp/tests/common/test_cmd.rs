@@ -1,43 +1,41 @@
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
+use curp::{
+    cmd::{Command, CommandExecutor, ConflictCheck, ProposeId},
+    error::ExecuteError,
+    LogIndex,
+};
 use itertools::Itertools;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::debug;
 
-use crate::{
-    cmd::{Command, CommandExecutor, ConflictCheck, ProposeId},
-    error::ExecuteError,
-    message::ServerId,
-    LogIndex,
-};
-
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub(super) struct TestCommand {
+pub struct TestCommand {
     id: ProposeId,
     keys: Vec<u32>,
     cmd_type: TestCommandType,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub(super) enum TestCommandType {
+pub enum TestCommandType {
     Get,
     Put(u32),
 }
 
-pub(super) type TestCommandResult = Vec<u32>;
+pub type TestCommandResult = Vec<u32>;
 
 impl TestCommand {
-    pub(super) fn new_get(id: u32, keys: Vec<u32>) -> Self {
+    pub fn new_get(id: u32, keys: Vec<u32>) -> Self {
         Self {
             id: ProposeId::new(id.to_string()),
             keys,
             cmd_type: TestCommandType::Get,
         }
     }
-    pub(super) fn new_put(id: u32, keys: Vec<u32>, value: u32) -> Self {
+    pub fn new_put(id: u32, keys: Vec<u32>, value: u32) -> Self {
         Self {
             id: ProposeId::new(id.to_string()),
             keys,
@@ -62,12 +60,6 @@ impl Command for TestCommand {
     }
 }
 
-impl ConflictCheck for u32 {
-    fn is_conflict(&self, other: &Self) -> bool {
-        self == other
-    }
-}
-
 impl ConflictCheck for TestCommand {
     fn is_conflict(&self, other: &Self) -> bool {
         let this_keys = self.keys();
@@ -82,8 +74,8 @@ impl ConflictCheck for TestCommand {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct TestCE {
-    server_id: ServerId,
+pub struct TestCE {
+    server_id: String,
     store: Arc<Mutex<HashMap<u32, u32>>>,
     exe_sender: mpsc::UnboundedSender<(TestCommand, TestCommandResult)>,
     after_sync_sender: mpsc::UnboundedSender<(TestCommand, LogIndex)>,
@@ -127,8 +119,8 @@ impl CommandExecutor<TestCommand> for TestCE {
 }
 
 impl TestCE {
-    pub(super) fn new(
-        server_id: ServerId,
+    pub fn new(
+        server_id: String,
         exe_sender: mpsc::UnboundedSender<(TestCommand, TestCommandResult)>,
         after_sync_sender: mpsc::UnboundedSender<(TestCommand, LogIndex)>,
     ) -> Self {

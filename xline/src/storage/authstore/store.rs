@@ -4,15 +4,16 @@ use anyhow::Result;
 use curp::{cmd::ProposeId, error::ExecuteError};
 use jsonwebtoken::{DecodingKey, EncodingKey};
 
-use crate::header_gen::HeaderGenerator;
-use crate::rpc::{
-    DeleteRangeRequest, PutRequest, RangeRequest, Request, RequestWithToken, RequestWrapper,
-    TxnRequest, Type,
-};
-use crate::server::command::{CommandResponse, KeyRange, SyncResponse};
-use crate::storage::authstore::backend::AuthStoreBackend;
-
 use super::backend::ROOT_ROLE;
+use crate::{
+    header_gen::HeaderGenerator,
+    rpc::{
+        DeleteRangeRequest, PutRequest, RangeRequest, Request, RequestWithToken, RequestWrapper,
+        TxnRequest, Type,
+    },
+    server::command::{CommandResponse, KeyRange, SyncResponse},
+    storage::authstore::backend::AuthStoreBackend,
+};
 
 /// Auth store
 #[allow(dead_code)]
@@ -244,6 +245,7 @@ impl AuthStore {
 mod test {
     use std::{collections::HashMap, error::Error};
 
+    use super::*;
     use crate::{
         rpc::{
             AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGrantPermissionRequest,
@@ -252,8 +254,6 @@ mod test {
         },
         storage::authstore::perms::{PermissionCache, UserPermissions},
     };
-
-    use super::*;
 
     #[test]
     fn test_role_grant_permission() {

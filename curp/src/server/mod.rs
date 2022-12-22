@@ -55,9 +55,6 @@ mod spec_pool;
 /// Background garbage collection for Curp server
 mod gc;
 
-#[cfg(test)]
-mod tests;
-
 /// Default server serving port
 static DEFAULT_SERVER_PORT: u16 = 12345;
 
@@ -129,6 +126,24 @@ impl<C: Command + 'static> Rpc<C> {
         }
     }
 
+    #[cfg(test)]
+    pub fn new_test<CE: CommandExecutor<C> + 'static>(
+        id: ServerId,
+        others: HashMap<ServerId, String>,
+        ce: CE,
+        switch: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            inner: Arc::new(Protocol::new_test(
+                id,
+                false,
+                others.into_iter().collect(),
+                ce,
+                switch,
+            )),
+        }
+    }
+
     /// Run a new rpc server
     ///
     /// # Errors
@@ -157,7 +172,7 @@ impl<C: Command + 'static> Rpc<C> {
         Ok(())
     }
 
-    /// Run a new rpc server from a listener, designed to be used in the test
+    /// Run a new rpc server from a listener, designed to be used in the tests
     ///
     /// # Errors
     ///   `ServerError::ParsingError` if parsing failed for the local server address
@@ -653,3 +668,6 @@ impl<C: 'static + Command> Drop for Protocol<C> {
         let _ = self.stop_ch_tx.send(()).ok();
     }
 }
+
+#[cfg(test)]
+mod tests;

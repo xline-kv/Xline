@@ -1,8 +1,9 @@
+use std::hash::Hash;
+
 use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::{error::ExecuteError, message::LogIndex};
-use std::hash::Hash;
 
 /// Command to execute on the server side
 #[async_trait]
@@ -77,6 +78,13 @@ pub trait ConflictCheck {
 }
 
 impl ConflictCheck for String {
+    #[inline]
+    fn is_conflict(&self, other: &Self) -> bool {
+        self == other
+    }
+}
+
+impl ConflictCheck for u32 {
     #[inline]
     fn is_conflict(&self, other: &Self) -> bool {
         self == other
