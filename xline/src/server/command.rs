@@ -220,6 +220,9 @@ pub(crate) struct Command {
 
 impl ConflictCheck for Command {
     fn is_conflict(&self, other: &Self) -> bool {
+        if self.id == other.id {
+            return true;
+        }
         let this_req = &self.request.request;
         let other_req = &other.request.request;
         // auth read request will not conflict with any request except the auth write request
