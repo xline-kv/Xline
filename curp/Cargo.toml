@@ -40,7 +40,6 @@ itertools = "0.10.3"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 tracing-test = "0.2.3"
 tower = { version = "0.4.13", features = ["filter"] }
-anyhow = "1.0.66"
 
 [build-dependencies]
 tonic-build = "0.7.2"

@@ -141,3 +141,6 @@ mod rpc;
 
 /// Shutdown related
 mod shutdown;
+
+#[cfg(test)]
+pub(crate) mod test_utils;

@@ -86,7 +86,7 @@ impl Cluster {
         self.client.as_mut().unwrap()
     }
 
-    #[allow(dead_code)] // used in test but get warning
+    #[allow(dead_code)] // used in tests but get warning
     pub fn addrs(&self) -> &[SocketAddr] {
         &self.addrs
     }
