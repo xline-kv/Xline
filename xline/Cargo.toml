@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["DatenLord <dev@datenlord.io>"]
 description = "Distributed KV storage for metadata"
 repository = "https://github.com/datenlord/Xline"
-readme = "README.md"
+readme = "../README.md"
 license = "Apache-2.0"
 keywords = ["KV", "consistency", "metadata"]
 categories = ["KV"]
@@ -17,14 +17,14 @@ anyhow = "1.0.57"
 async-trait = "0.1.53"
 clap = { version = "3.2.16", features = ["derive"] }
 clippy-utilities = "0.1.0"
-curp = { path = "../curp" }
+curp = { path = "../curp", version = "0.1.0" }
 env_logger = "0.9.3"
 etcd-client = "0.10.1"
 jsonwebtoken = "8.1.1"
 itertools = "0.10.3"
-lock_utils = { path = "../lock_utils", features = [
+lock_utils = { path = "../lock_utils", version = "0.1.0", features = [
     "parking_lot",
-], default-features = false }
+] }
 log = "0.4.17"
 opentelemetry = { version = "0.18.0", features = ["rt-tokio"] }
 opentelemetry-contrib = { version = "0.10.0", features = [

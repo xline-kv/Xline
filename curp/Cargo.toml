@@ -7,7 +7,7 @@ keywords = ["consensus", "distributed"]
 license = "Apache-2.0"
 name = "curp"
 readme = "README.md"
-repository = "https://github.com/datenlord/Xline/curp"
+repository = "https://github.com/datenlord/Xline/tree/master/curp"
 version = "0.1.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -19,9 +19,9 @@ clippy-utilities = "0.2.0"
 event-listener = "2.5.2"
 futures = "0.3.21"
 itertools = "0.10.3"
-lock_utils = { path = "../lock_utils", features = [
+lock_utils = { path = "../lock_utils", version = "0.1.0", features = [
     "parking_lot",
-], default-features = false }
+] }
 madsim = { version = "0.2.0-alpha.3", features = ["rpc", "logger", "macros"] }
 opentelemetry = "0.18.0"
 parking_lot = "0.12.1"
