@@ -7,6 +7,7 @@ use std::{
 
 use event_listener::Event;
 use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
+use lock_utils::parking_lot_lock::RwLockMap;
 use opentelemetry::global;
 use parking_lot::RwLock;
 use tokio::time::timeout;
@@ -129,20 +130,17 @@ where
                     continue;
                 }
             };
-            let term_valid = {
-                let mut state = self.state.write();
+            self.state.map_write(|mut state| {
                 match state.term.cmp(&resp.term()) {
                     Ordering::Less => {
                         // reset term only when the resp has leader id to prevent:
                         // If a server loses contact with its leader, it will update its term for election. Since other servers are all right, the election will not succeed.
                         // But if the client learns about the new term and updates its term to it, it will never get the true leader.
                         if let Some(ref leader_id) = resp.leader_id {
-                            ok_cnt = 0;
                             state.update_to_term(resp.term());
                             state.set_leader(leader_id.clone());
                             execute_result = None;
                         }
-                        true
                     }
                     Ordering::Equal => {
                         if let Some(ref leader_id) = resp.leader_id {
@@ -155,30 +153,28 @@ where
                                 "there should never be two leader in one term"
                             );
                         }
-                        true
                     }
-                    Ordering::Greater => false,
+                    Ordering::Greater => {}
                 }
-            };
-            if term_valid {
-                resp.map_or_else::<C, _, _, _>(
-                    |er| {
-                        if let Some(er) = er {
-                            execute_result = Some(er);
-                        }
-                        ok_cnt = ok_cnt.wrapping_add(1);
-                        Ok(())
-                    },
-                    |err| {
-                        if let ProposeError::ExecutionError(_) = err {
-                            // Only `ProposeError::ExecutionError` will be reported to upper function
-                            return Err(err);
-                        }
-                        warn!("Propose error: {}", err);
-                        Ok(())
-                    },
-                )??;
-            }
+            });
+            resp.map_or_else::<C, _, _, _>(
+                |er| {
+                    if let Some(er) = er {
+                        assert!(execute_result.is_none(), "should not set exe result twice");
+                        execute_result = Some(er);
+                    }
+                    ok_cnt = ok_cnt.wrapping_add(1);
+                    Ok(())
+                },
+                |err| {
+                    if let ProposeError::ExecutionError(_) = err {
+                        // Only `ProposeError::ExecutionError` will be reported to upper function
+                        return Err(err);
+                    }
+                    warn!("Propose error: {}", err);
+                    Ok(())
+                },
+            )??;
             if (ok_cnt >= major_cnt) && execute_result.is_some() {
                 return Ok((execute_result, true));
             }
