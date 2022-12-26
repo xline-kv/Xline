@@ -100,16 +100,15 @@ async fn bg_get_sync_cmds<C: Command + 'static>(
             }
         };
 
-        #[allow(clippy::shadow_unrelated)] // clippy false positive
-        state.map_write(|mut state| {
-            state.log.push(LogEntry::new(term, &[cmd]));
-            if let Err(e) = ae_trigger.send(state.last_log_index()) {
+        state.map_write(|mut state_w| {
+            state_w.log.push(LogEntry::new(term, &[cmd]));
+            if let Err(e) = ae_trigger.send(state_w.last_log_index()) {
                 error!("ae_trigger failed: {}", e);
             }
 
             debug!(
                 "received new log, index {:?}",
-                state.log.len().checked_sub(1),
+                state_w.log.len().checked_sub(1),
             );
         });
     }
@@ -262,15 +261,14 @@ async fn bg_heartbeat<C: Command + 'static>(
 #[allow(clippy::integer_arithmetic, clippy::indexing_slicing)] // log.len() >= 1 because we have a fake log[0], indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
 async fn send_heartbeat<C: Command + 'static>(connect: Arc<Connect>, state: Arc<RwLock<State<C>>>) {
     // prepare append_entries request args
-    #[allow(clippy::shadow_unrelated)] // clippy false positive
-    let req = state.map_read(|state| {
-        let next_index = state.next_index[connect.id()];
+    let req = state.map_read(|state_r| {
+        let next_index = state_r.next_index[connect.id()];
         AppendEntriesRequest::new_heartbeat(
-            state.term,
-            state.id().clone(),
+            state_r.term,
+            state_r.id().clone(),
             next_index - 1,
-            state.log[next_index - 1].term(),
-            state.commit_index,
+            state_r.log[next_index - 1].term(),
+            state_r.commit_index,
         )
     });
 
@@ -305,9 +303,8 @@ async fn bg_apply<C: Command + 'static>(
     exe_tx: CmdExeSender<C>,
     spec: Arc<Mutex<SpeculativePool<C>>>,
 ) {
-    #[allow(clippy::shadow_unrelated)]
     let (commit_trigger, cmd_board) =
-        state.map_read(|state| (state.commit_trigger(), state.cmd_board()));
+        state.map_read(|state_r| (state_r.commit_trigger(), state_r.cmd_board()));
     loop {
         // wait until there is something to commit
         let state = loop {
@@ -436,9 +433,8 @@ async fn bg_election<C: Command + 'static>(
     connects: Vec<Arc<Connect>>,
     state: Arc<RwLock<State<C>>>,
 ) {
-    #[allow(clippy::shadow_unrelated)]
     let (role_trigger, last_rpc_time) =
-        state.map_read(|state| (state.role_trigger(), state.last_rpc_time()));
+        state.map_read(|state_r| (state_r.role_trigger(), state_r.last_rpc_time()));
     loop {
         // only follower or candidate should run this task
         while state.read().is_leader() {
@@ -577,23 +573,22 @@ async fn leader_calibrates_followers<C: Command + 'static>(
             let _handle = tokio::spawn(async move {
                 loop {
                     // send append entry
-                    #[allow(clippy::shadow_unrelated)] // clippy false positive
                     let (req, last_sent_index) = {
-                        let state = state.read();
-                        let next_index = state.next_index[connect.id()];
+                        let state_r = state.read();
+                        let next_index = state_r.next_index[connect.id()];
                         match AppendEntriesRequest::new(
-                            state.term,
-                            state.id().clone(),
+                            state_r.term,
+                            state_r.id().clone(),
                             next_index - 1,
-                            state.log[next_index - 1].term(),
-                            state.log[next_index..].to_vec(),
-                            state.commit_index,
+                            state_r.log[next_index - 1].term(),
+                            state_r.log[next_index..].to_vec(),
+                            state_r.commit_index,
                         ) {
                             Err(e) => {
                                 error!("unable to serialize append entries request: {}", e);
                                 return;
                             }
-                            Ok(req) => (req, state.log.len() - 1),
+                            Ok(req) => (req, state_r.log.len() - 1),
                         }
                     };
 
