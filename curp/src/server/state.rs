@@ -198,9 +198,8 @@ impl<C: Command + 'static> State<C> {
 #[cfg_attr(test, allow(clippy::unwrap_used))]
 #[cfg(test)]
 mod tests {
-    use crate::{server::cmd_board::CommandBoard, test_utils::test_cmd::TestCommand};
-
     use super::*;
+    use crate::{server::cmd_board::CommandBoard, test_utils::test_cmd::TestCommand};
 
     #[tokio::test]
     async fn leader_broadcast() {
