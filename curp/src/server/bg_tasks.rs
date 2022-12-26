@@ -126,6 +126,7 @@ async fn bg_append_entries<C: Command + 'static>(
     state: Arc<RwLock<State<C>>>,
     mut ae_trigger_rx: mpsc::UnboundedReceiver<usize>,
 ) {
+    let hb_reset_trigger = state.read().heartbeat_reset_trigger();
     while let Some(i) = ae_trigger_rx.recv().await {
         let req = {
             let state = state.read();
@@ -161,6 +162,8 @@ async fn bg_append_entries<C: Command + 'static>(
                 Arc::clone(&state),
             ));
         }
+
+        hb_reset_trigger.notify(1);
     }
 }
 
@@ -232,15 +235,21 @@ async fn bg_heartbeat<C: Command + 'static>(
     connects: Vec<Arc<Connect>>,
     state: Arc<RwLock<State<C>>>,
 ) {
-    let role_trigger = state.read().role_trigger();
+    let (role_trigger, hb_reset_trigger) =
+        state.map_read(|state_r| (state_r.role_trigger(), state_r.heartbeat_reset_trigger()));
     #[allow(clippy::integer_arithmetic)] // tokio internal triggered
     loop {
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep(HEARTBEAT_INTERVAL) => break,
+                _ = hb_reset_trigger.listen() => {}
+            }
+        }
+
         // only leader should run this task
         while !state.read().is_leader() {
             role_trigger.listen().await;
         }
-
-        tokio::time::sleep(HEARTBEAT_INTERVAL).await;
 
         // send append_entries to each server in parallel
         for connect in &connects {
