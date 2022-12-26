@@ -483,24 +483,18 @@ impl<C: 'static + Command> Protocol<C> {
             tonic::Status::invalid_argument(format!("wait_synced id decode failed: {}", e))
         })?;
 
-        loop {
+        let resp = loop {
             let listener = {
                 // check if the server is still leader
                 let state = self.state.read();
                 if !state.is_leader() {
-                    return WaitSyncedResponse::new_error(&SyncError::Redirect(
+                    break WaitSyncedResponse::new_error(&SyncError::Redirect(
                         state.leader_id.clone(),
                         state.term,
                     ))
-                    .map_or_else(
-                        |err| {
-                            Err(tonic::Status::internal(format!(
-                                "encode or decode error, {}",
-                                err
-                            )))
-                        },
-                        |resp| Ok(tonic::Response::new(resp)),
-                    );
+                    .map_err(|err| {
+                        tonic::Status::internal(format!("encode or decode error, {}", err))
+                    });
                 }
 
                 // check if the cmd board already has response
@@ -510,15 +504,14 @@ impl<C: 'static + Command> Protocol<C> {
                     .entry(id.clone())
                     .or_insert(CmdState::EarlyArrive);
                 if let CmdState::FinalResponse(ref resp) = *entry {
-                    #[allow(clippy::shadow_unrelated)] // clippy false positive
-                    return resp.as_ref().map_or_else(
+                    break resp.as_ref().map_or_else(
                         |err| {
                             Err(tonic::Status::internal(format!(
                                 "encode or decode error, {}",
                                 err
                             )))
                         },
-                        |resp| Ok(tonic::Response::new(resp.clone())),
+                        |r| Ok(r.clone()),
                     );
                 }
 
@@ -530,7 +523,9 @@ impl<C: 'static + Command> Protocol<C> {
                     .listen()
             };
             listener.await;
-        }
+        };
+
+        resp.map(tonic::Response::new)
     }
 
     /// Handle `AppendEntries` requests

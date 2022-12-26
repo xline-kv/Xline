@@ -5,13 +5,12 @@ use parking_lot::{Mutex, RwLock};
 use tokio::time::Instant;
 use tracing::debug;
 
+use super::{cmd_board::CommandBoard, ServerRole};
 use crate::{
     cmd::Command,
     log::LogEntry,
     message::{ServerId, TermNum},
 };
-
-use super::{cmd_board::CommandBoard, ServerRole};
 
 /// State of the server
 pub(super) struct State<C: Command + 'static> {
@@ -128,6 +127,11 @@ impl<C: Command + 'static> State<C> {
         self.role = role;
         if prev_role != role {
             self.role_trigger.notify(usize::MAX);
+
+            // from leader to follower
+            if prev_role == ServerRole::Leader {
+                self.cmd_board.lock().release_notifiers();
+            }
         }
     }
 
