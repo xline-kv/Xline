@@ -1,3 +1,6 @@
 [workspace]
 
 members = ["xline", "curp", "benchmark", "lock_utils"]
+
+[patch.crates-io]
+tracing-test = { git = 'https://github.com/markcty/tracing-test' }
