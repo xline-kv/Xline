@@ -45,6 +45,8 @@ pub(super) struct State<C: Command + 'static> {
     pub(super) commit_trigger: Arc<Event>,
     /// Trigger when a new leader needs to calibrate its followers
     pub(super) calibrate_trigger: Arc<Event>,
+    /// Trigger when append_entires are sent and no heartbeat is needed for a while
+    pub(super) heartbeat_reset_trigger: Arc<Event>,
     // TODO: clean up the board when the size is too large
     /// Cmd watch board for tracking the cmd sync results
     pub(super) cmd_board: Arc<Mutex<CommandBoard>>,
@@ -86,6 +88,7 @@ impl<C: Command + 'static> State<C> {
             role_trigger: Arc::new(Event::new()),
             commit_trigger: Arc::new(Event::new()),
             calibrate_trigger: Arc::new(Event::new()),
+            heartbeat_reset_trigger: Arc::new(Event::new()),
             cmd_board,
             last_rpc_time,
             leader_tx: tx,
@@ -183,6 +186,11 @@ impl<C: Command + 'static> State<C> {
     /// Get channel for leader changes
     pub(super) fn leader_rx(&self) -> broadcast::Receiver<Option<ServerId>> {
         self.leader_tx.subscribe()
+    }
+
+    /// Get heartbeat reset trigger
+    pub(super) fn heartbeat_reset_trigger(&self) -> Arc<Event> {
+        Arc::clone(&self.heartbeat_reset_trigger)
     }
 }
 
