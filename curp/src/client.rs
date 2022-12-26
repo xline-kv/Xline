@@ -248,6 +248,9 @@ where
                     // redirect failed: the client should fetch leader itself
                     self.fetch_leader().await;
                 }
+                SyncResult::Error(SyncError::Timeout) => {
+                    return Err(ProposeError::SyncedError("wait sync timeout".to_owned()));
+                }
                 SyncResult::Error(e) => {
                     return Err(ProposeError::SyncedError(format!("{:?}", e)));
                 }

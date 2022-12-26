@@ -5,6 +5,7 @@ use std::{
     collections::HashMap,
     fmt::Debug,
     sync::Arc,
+    time::Duration,
 };
 
 use clippy_utilities::NumericCast;
@@ -473,6 +474,9 @@ impl<C: 'static + Command> Protocol<C> {
         )
     }
 
+    /// Wait synced request timeout
+    const WAIT_SYNCED_TIMEOUT: Duration = Duration::from_secs(5);
+
     /// handle "wait synced" request
     async fn wait_synced(
         &self,
@@ -522,7 +526,15 @@ impl<C: 'static + Command> Protocol<C> {
                     .or_insert_with(Event::new)
                     .listen()
             };
-            listener.await;
+            if tokio::time::timeout(Self::WAIT_SYNCED_TIMEOUT, listener)
+                .await
+                .is_err()
+            {
+                let _ignored = self.cmd_board.lock().notifiers.remove(&id);
+                break WaitSyncedResponse::new_error(&SyncError::Timeout).map_err(|err| {
+                    tonic::Status::internal(format!("encode or decode error, {}", err))
+                });
+            }
         };
 
         resp.map(tonic::Response::new)

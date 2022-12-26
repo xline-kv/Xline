@@ -241,6 +241,8 @@ pub(crate) enum SyncError {
     AfterSyncError(String),
     /// If there is no such cmd to be waited
     NoSuchCmd(ProposeId),
+    /// Wait timeout
+    Timeout,
 }
 
 impl AppendEntriesRequest {
