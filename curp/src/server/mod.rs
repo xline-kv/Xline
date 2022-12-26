@@ -510,7 +510,6 @@ impl<C: 'static + Command> Protocol<C> {
                     .entry(id.clone())
                     .or_insert(CmdState::EarlyArrive);
                 if let CmdState::FinalResponse(ref resp) = *entry {
-                    #[allow(clippy::shadow_unrelated)] // clippy false positive
                     return resp.as_ref().map_or_else(
                         |err| {
                             Err(tonic::Status::internal(format!(
@@ -518,7 +517,7 @@ impl<C: 'static + Command> Protocol<C> {
                                 err
                             )))
                         },
-                        |resp| Ok(tonic::Response::new(resp.clone())),
+                        |r| Ok(tonic::Response::new(r.clone())),
                     );
                 }
 
