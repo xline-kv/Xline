@@ -547,9 +547,6 @@ async fn send_vote<C: Command + 'static>(
 
                     // trigger heartbeat immediately to establish leadership
                     state.calibrate_trigger.notify(1);
-
-                    // release all wait_synced requests
-                    state.cmd_board.lock().release_notifiers();
                 }
             }
         }
