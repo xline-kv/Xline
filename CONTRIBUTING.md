@@ -8,8 +8,14 @@ Contribution Guide
 ```bash
 # Assume that rust compile environment installed, such as cargo, etc.
 
-# install dependency
-sudo apt install -y libprotobuf-dev protobuf-compiler
+# install dependency, requires protobuf-compiler >= 3.15
+git clone --branch v3.21.12  --recurse-submodules https://github.com/protocolbuffers/protobuf
+cd protobuf
+./autogen.sh
+./configure
+make -j
+sudo make install 
+
 
 # clone source code
 git clone https://github.com/datenlord/Xline
