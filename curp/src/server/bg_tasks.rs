@@ -148,7 +148,7 @@ async fn bg_append_entries<C: Command + 'static>(
                     error!("unable to serialize append entries request: {}", e);
                     continue;
                 }
-                Ok(req) => (req),
+                Ok(req) => req,
             }
         };
 
