@@ -3,13 +3,23 @@ Contribution Guide
 
 # Quick Start
 
+## Install dependencies
+```bash
+sudo apt-get install -y autoconf autogen libtool
+
+# requires protobuf-compiler >= 3.15
+git clone --branch v3.21.12  --recurse-submodules https://github.com/protocolbuffers/protobuf
+cd protobuf
+./autogen.sh
+./configure
+make -j
+sudo make install 
+```
+
 ## Build an Xline docker image
 
 ```bash
 # Assume that rust compile environment installed, such as cargo, etc.
-
-# install dependency
-sudo apt install -y libprotobuf-dev protobuf-compiler
 
 # clone source code
 git clone https://github.com/datenlord/Xline
@@ -42,6 +52,13 @@ docker exec node4 /bin/sh -c "/usr/local/bin/etcdctl --endpoints=\"http://172.20
 
 # Get Key A's value
  docker exec node4 /bin/sh -c "/usr/local/bin/etcdctl --endpoints=\"http://172.20.0.3:2379\" get A"
+```
+
+## Benchmark
+
+**Note: this script will stop all the running docker containers**
+```bash
+./scripts/benchmark.sh
 ```
 
 # Directory Structure
