@@ -44,7 +44,7 @@ protocol, which is quite popular in recently developed systems.
 Although Raft is stable and easy to implement, it takes 2 RTTs to complete a
 consensus request from the view of a client. One RTT takes place between the
 client and the leader server, and the leader server takes another RTT to
-broadcast the message to the follower leaders. In a geo-distributed environment,
+broadcast the message to the follower servers. In a geo-distributed environment,
 an RTT is quite long, varying from tens of milliseconds to hundreds of
 milliseconds, so 2 RTTs are too long in such cases.
 
