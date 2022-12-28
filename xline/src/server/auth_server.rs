@@ -9,6 +9,7 @@ use tonic::metadata::MetadataMap;
 use tracing::debug;
 use uuid::Uuid;
 
+use super::command::{Command, CommandResponse, SyncResponse};
 use crate::{
     rpc::{
         Auth, AuthDisableRequest, AuthDisableResponse, AuthEnableRequest, AuthEnableResponse,
@@ -25,8 +26,6 @@ use crate::{
     },
     storage::AuthStore,
 };
-
-use super::command::{Command, CommandResponse, SyncResponse};
 
 /// Auth Server
 #[derive(Debug)]

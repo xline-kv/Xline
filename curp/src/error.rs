@@ -1,5 +1,6 @@
-use serde::{Deserialize, Serialize};
 use std::io;
+
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Error met when executing commands

@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use futures::future::OptionFuture;
+#[cfg(test)]
+use mockall::automock;
 use tokio::sync::oneshot;
 use tracing::{debug, error, warn};
 
@@ -16,12 +19,11 @@ use crate::{
 pub(super) const N_EXECUTE_WORKERS: usize = 8;
 
 /// Worker that execute commands
-#[allow(clippy::type_complexity)]
-pub(crate) async fn execute_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
+pub(super) async fn execute_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
     dispatch_rx: CmdExeReceiver<C>,
     ce: Arc<CE>,
 ) {
-    while let Ok((ExecuteMessage { cmd, er_tx }, done)) = dispatch_rx.0.recv_async().await {
+    while let Ok((ExecuteMessage { cmd, er_tx }, done)) = dispatch_rx.recv().await {
         match er_tx {
             ExeResultSender::Execute(tx) => {
                 let er = cmd.execute(ce.as_ref()).await;
@@ -40,7 +42,7 @@ pub(crate) async fn execute_worker<C: Command + 'static, CE: 'static + CommandEx
                     .is_ok()
                     .then(|| async {
                         let asr = cmd.after_sync(ce.as_ref(), index).await;
-                        debug!("cmd {:?} call after sync", cmd.id());
+                        debug!("cmd {:?} after sync is called", cmd.id());
                         asr
                     })
                     .into();
@@ -96,17 +98,42 @@ enum ExeResultSender<C: Command + 'static> {
 
 /// Send cmd to background execute cmd task
 #[derive(Clone)]
-pub(crate) struct CmdExeSender<C: Command + 'static>(flume::Sender<ExecuteMessage<C>>);
+pub(super) struct CmdExeSender<C: Command + 'static>(flume::Sender<ExecuteMessage<C>>);
 
 /// Recv cmds that need to be executed or after synced
 #[derive(Clone)]
-pub(crate) struct CmdExeReceiver<C: Command + 'static>(
+pub(super) struct CmdExeReceiver<C: Command + 'static>(
     flume::Receiver<(ExecuteMessage<C>, DoneNotifier)>,
 );
 
-impl<C: Command + 'static> CmdExeSender<C> {
+/// Send cmd to background execution worker
+#[cfg_attr(test, automock)]
+pub(super) trait CmdExeSenderInterface<C: Command> {
     /// Send cmd to background cmd executor and return a oneshot receiver for the execution result
-    pub(super) fn send_exe(&self, cmd: Arc<C>) -> oneshot::Receiver<Result<C::ER, ExecuteError>> {
+    fn send_exe(&self, cmd: Arc<C>) -> oneshot::Receiver<Result<C::ER, ExecuteError>>;
+
+    /// Send cmd to background cmd executor and return a oneshot receiver for the execution result
+    fn send_after_sync(
+        &self,
+        cmd: Arc<C>,
+        index: LogIndex,
+    ) -> oneshot::Receiver<Result<C::ASR, ExecuteError>>;
+
+    /// Send cmd to background cmd executor and return a oneshot receiver for the execution result
+    #[allow(clippy::type_complexity)] // though complex, it's quite clear
+    fn send_exe_and_after_sync(
+        &self,
+        cmd: Arc<C>,
+        index: LogIndex,
+    ) -> oneshot::Receiver<(
+        Result<C::ER, ExecuteError>,
+        Option<Result<C::ASR, ExecuteError>>,
+    )>;
+}
+
+impl<C: Command + 'static> CmdExeSenderInterface<C> for CmdExeSender<C> {
+    /// Send cmd to background cmd executor and return a oneshot receiver for the execution result
+    fn send_exe(&self, cmd: Arc<C>) -> oneshot::Receiver<Result<C::ER, ExecuteError>> {
         let (tx, rx) = oneshot::channel();
         let msg = ExecuteMessage::new(cmd, ExeResultSender::Execute(tx));
         if let Err(e) = self.0.send(msg) {
@@ -116,7 +143,7 @@ impl<C: Command + 'static> CmdExeSender<C> {
     }
 
     /// Send cmd to background cmd executor and return a oneshot receiver for the execution result
-    pub(super) fn send_after_sync(
+    fn send_after_sync(
         &self,
         cmd: Arc<C>,
         index: LogIndex,
@@ -131,7 +158,7 @@ impl<C: Command + 'static> CmdExeSender<C> {
 
     /// Send cmd to background cmd executor and return a oneshot receiver for the execution result
     #[allow(clippy::type_complexity)] // though complex, it's quite clear
-    pub(super) fn send_exe_and_after_sync(
+    fn send_exe_and_after_sync(
         &self,
         cmd: Arc<C>,
         index: LogIndex,
@@ -148,8 +175,24 @@ impl<C: Command + 'static> CmdExeSender<C> {
     }
 }
 
+/// Recv
+#[cfg_attr(test, automock)]
+#[async_trait]
+trait CmdExeReceiverInterface<C: Command + 'static> {
+    /// Recv execute msg and done notifier
+    async fn recv(&self) -> Result<(ExecuteMessage<C>, DoneNotifier), flume::RecvError>;
+}
+
+#[async_trait]
+impl<C: Command + 'static> CmdExeReceiverInterface<C> for CmdExeReceiver<C> {
+    /// Recv execute msg and done notifier
+    async fn recv(&self) -> Result<(ExecuteMessage<C>, DoneNotifier), flume::RecvError> {
+        self.0.recv_async().await
+    }
+}
+
 /// Create a channel to send cmds to background cmd execute workers. The channel guarantees the execution order and that after sync is called after execution completes
-pub(crate) fn cmd_exe_channel<C: Command + 'static>() -> (CmdExeSender<C>, CmdExeReceiver<C>) {
+pub(super) fn cmd_exe_channel<C: Command + 'static>() -> (CmdExeSender<C>, CmdExeReceiver<C>) {
     let (tx, rx) = conflict_checked_mpmc::channel();
     (CmdExeSender(tx), CmdExeReceiver(rx))
 }
