@@ -18,6 +18,7 @@ use tracing::{debug, error, info, instrument};
 
 use self::{
     cmd_board::{CmdState, CommandBoard},
+    cmd_execute_worker::CmdExeSenderInterface,
     gc::run_gc_tasks,
     spec_pool::SpeculativePool,
     state::State,
@@ -27,9 +28,9 @@ use crate::{
     error::{ProposeError, ServerError},
     message::{ServerId, TermNum},
     rpc::{
-        AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest, FetchLeaderResponse,
-        ProposeRequest, ProposeResponse, ProtocolServer, SyncError, VoteRequest, VoteResponse,
-        WaitSyncedRequest, WaitSyncedResponse,
+        connect::Connect, AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest,
+        FetchLeaderResponse, ProposeRequest, ProposeResponse, ProtocolServer, SyncError,
+        VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
     server::cmd_execute_worker::{cmd_exe_channel, CmdExeSender},
     shutdown::Shutdown,
@@ -292,7 +293,7 @@ impl<C: 'static + Command> Protocol<C> {
         )));
 
         // run background tasks
-        let _bg_handle = tokio::spawn(bg_tasks::run_bg_tasks(
+        let _bg_handle = tokio::spawn(bg_tasks::run_bg_tasks::<_, _, Connect>(
             Arc::clone(&state),
             sync_rx,
             cmd_executor,
@@ -345,7 +346,7 @@ impl<C: 'static + Command> Protocol<C> {
         )));
 
         // run background tasks
-        let _bg_handle = tokio::spawn(bg_tasks::run_bg_tasks(
+        let _bg_handle = tokio::spawn(bg_tasks::run_bg_tasks::<_, _, Connect>(
             Arc::clone(&state),
             sync_rx,
             cmd_executor,

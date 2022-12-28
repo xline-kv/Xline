@@ -108,6 +108,21 @@
 #![allow(
     clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
 )]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::integer_arithmetic,
+        clippy::indexing_slicing,
+        unused_results,
+        clippy::unwrap_used,
+        clippy::str_to_string,
+        clippy::panic,
+        clippy::wildcard_enum_match_arm,
+        clippy::match_wildcard_for_single_variants,
+        clippy::all,
+        dead_code
+    )
+)]
 
 pub use message::LogIndex;
 pub use rpc::ProtocolServer;

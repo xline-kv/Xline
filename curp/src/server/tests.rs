@@ -33,7 +33,7 @@ use tracing_test::traced_test;
 
 use crate::{
     message::{ServerId, TermNum},
-    rpc::ProposeRequest,
+    rpc::{connect::ConnectInterface, ProposeRequest},
     server::{state::State, Rpc},
     test_utils::{
         curp_group::{CurpGroup, CurpNode},
@@ -321,7 +321,7 @@ async fn propose_after_reelect() {
     let client = group.new_client().await;
     assert_eq!(
         client
-            .propose(TestCommand::new_put(0, vec![0], 0))
+            .propose(TestCommand::new_put(vec![0], 0))
             .await
             .unwrap(),
         vec![]
@@ -334,10 +334,7 @@ async fn propose_after_reelect() {
 
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert_eq!(
-        client
-            .propose(TestCommand::new_get(1, vec![0]))
-            .await
-            .unwrap(),
+        client.propose(TestCommand::new_get(vec![0])).await.unwrap(),
         vec![0]
     );
 }
@@ -348,7 +345,7 @@ async fn propose_after_reelect() {
 async fn fast_round_is_slower_than_slow_round() {
     let group = CurpGroup::new(3).await;
     let client = group.new_client().await;
-    let cmd = Arc::new(TestCommand::new_get(0, vec![0]));
+    let cmd = Arc::new(TestCommand::new_get(vec![0]));
 
     let leader = group.get_leader().await;
 

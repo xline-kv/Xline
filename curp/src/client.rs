@@ -1,5 +1,3 @@
-#[cfg(test)]
-use std::sync::atomic::AtomicBool;
 use std::{
     cmp::Ordering, collections::HashMap, fmt::Debug, iter, marker::PhantomData, sync::Arc,
     time::Duration,
@@ -17,7 +15,8 @@ use crate::{
     error::ProposeError,
     message::{ServerId, TermNum},
     rpc::{
-        self, Connect, FetchLeaderRequest, ProposeRequest, SyncError, SyncResult, WaitSyncedRequest,
+        connect::{Connect, ConnectInterface},
+        FetchLeaderRequest, ProposeRequest, SyncError, SyncResult, WaitSyncedRequest,
     },
 };
 
@@ -88,12 +87,7 @@ where
     pub async fn new(addrs: HashMap<ServerId, String>) -> Self {
         Self {
             state: RwLock::new(State::new()),
-            connects: rpc::try_connect(
-                addrs,
-                #[cfg(test)]
-                Arc::new(AtomicBool::new(true)),
-            )
-            .await,
+            connects: Connect::try_connect(addrs).await,
             phatom: PhantomData,
         }
     }

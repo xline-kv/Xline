@@ -1,5 +1,6 @@
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
 
 use crate::{cmd::Command, message::TermNum};
 
