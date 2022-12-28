@@ -6,16 +6,22 @@ use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tracing::debug;
 
-use super::index::IndexOperate;
-use super::{db::DB, index::Index, kvwatcher::KvWatcher};
-use crate::header_gen::HeaderGenerator;
-use crate::rpc::{
-    Compare, CompareResult, CompareTarget, DeleteRangeRequest, DeleteRangeResponse, Event,
-    EventType, KeyValue, PutRequest, PutResponse, RangeRequest, RangeResponse, RequestWithToken,
-    RequestWrapper, ResponseWrapper, SortOrder, SortTarget, TargetUnion, TxnRequest, TxnResponse,
+use super::{
+    db::DB,
+    index::{Index, IndexOperate},
+    kvwatcher::KvWatcher,
 };
-use crate::server::command::{CommandResponse, KeyRange, SyncResponse};
-use crate::storage::req_ctx::RequestCtx;
+use crate::{
+    header_gen::HeaderGenerator,
+    rpc::{
+        Compare, CompareResult, CompareTarget, DeleteRangeRequest, DeleteRangeResponse, Event,
+        EventType, KeyValue, PutRequest, PutResponse, RangeRequest, RangeResponse,
+        RequestWithToken, RequestWrapper, ResponseWrapper, SortOrder, SortTarget, TargetUnion,
+        TxnRequest, TxnResponse,
+    },
+    server::command::{CommandResponse, KeyRange, SyncResponse},
+    storage::req_ctx::RequestCtx,
+};
 
 /// Default channel size
 const CHANNEL_SIZE: usize = 128;

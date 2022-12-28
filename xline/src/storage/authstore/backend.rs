@@ -22,12 +22,9 @@ use pbkdf2::{
 use prost::Message;
 use utils::parking_lot_lock::RwLockMap;
 
+use super::perms::{JwtTokenManager, PermissionCache, TokenClaims, TokenOperate, UserPermissions};
 use crate::{
     header_gen::HeaderGenerator,
-    server::command::KeyRange,
-    storage::{db::DB, index::Index, req_ctx::RequestCtx},
-};
-use crate::{
     rpc::{
         AuthDisableRequest, AuthDisableResponse, AuthEnableRequest, AuthEnableResponse,
         AuthRoleAddRequest, AuthRoleAddResponse, AuthRoleDeleteRequest, AuthRoleDeleteResponse,
@@ -42,10 +39,13 @@ use crate::{
         AuthenticateResponse, KeyValue, Permission, RequestWrapper, ResponseWrapper, Role, Type,
         User,
     },
-    storage::index::IndexOperate,
+    server::command::KeyRange,
+    storage::{
+        db::DB,
+        index::{Index, IndexOperate},
+        req_ctx::RequestCtx,
+    },
 };
-
-use super::perms::{JwtTokenManager, PermissionCache, TokenClaims, TokenOperate, UserPermissions};
 
 /// Key prefix of user
 pub(crate) const USER_PREFIX: &[u8] = b"user/";

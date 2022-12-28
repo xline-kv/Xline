@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use itertools::Itertools;
+use madsim::rand::{distributions::Alphanumeric, thread_rng, Rng};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -21,6 +22,16 @@ pub(crate) struct TestCommand {
     cmd_type: TestCommandType,
 }
 
+impl Default for TestCommand {
+    fn default() -> Self {
+        Self {
+            id: random_id(),
+            keys: vec![1],
+            cmd_type: TestCommandType::Get,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub(crate) enum TestCommandType {
     Get,
@@ -30,16 +41,16 @@ pub(crate) enum TestCommandType {
 pub(crate) type TestCommandResult = Vec<u32>;
 
 impl TestCommand {
-    pub(crate) fn new_get(id: u32, keys: Vec<u32>) -> Self {
+    pub(crate) fn new_get(keys: Vec<u32>) -> Self {
         Self {
-            id: ProposeId::new(id.to_string()),
+            id: random_id(),
             keys,
             cmd_type: TestCommandType::Get,
         }
     }
-    pub(crate) fn new_put(id: u32, keys: Vec<u32>, value: u32) -> Self {
+    pub(crate) fn new_put(keys: Vec<u32>, value: u32) -> Self {
         Self {
-            id: ProposeId::new(id.to_string()),
+            id: random_id(),
             keys,
             cmd_type: TestCommandType::Put(value),
         }
@@ -133,4 +144,60 @@ impl TestCE {
             after_sync_sender,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct TestCESimple {
+    server_id: ServerId,
+    store: Arc<Mutex<HashMap<u32, u32>>>,
+}
+
+#[async_trait]
+impl CommandExecutor<TestCommand> for TestCESimple {
+    async fn execute(&self, cmd: &TestCommand) -> Result<TestCommandResult, ExecuteError> {
+        let mut store = self.store.lock();
+        debug!("{} execute cmd {:?}", self.server_id, cmd.id());
+
+        let result: TestCommandResult = match cmd.cmd_type {
+            TestCommandType::Get => cmd
+                .keys
+                .iter()
+                .filter_map(|key| store.get(key).copied())
+                .collect(),
+            TestCommandType::Put(v) => cmd
+                .keys
+                .iter()
+                .filter_map(|key| store.insert(key.to_owned(), v))
+                .collect(),
+        };
+        Ok(result)
+    }
+
+    async fn after_sync(
+        &self,
+        cmd: &TestCommand,
+        index: LogIndex,
+    ) -> Result<LogIndex, ExecuteError> {
+        debug!("{} call cmd {:?} after sync", self.server_id, cmd.id());
+        Ok(index)
+    }
+}
+
+impl TestCESimple {
+    pub(crate) fn new(server_id: ServerId) -> Self {
+        Self {
+            server_id,
+            store: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+pub(crate) fn random_id() -> ProposeId {
+    ProposeId::new(
+        thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(4)
+            .map(char::from)
+            .collect(),
+    )
 }
