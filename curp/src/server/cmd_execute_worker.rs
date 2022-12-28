@@ -155,7 +155,7 @@ impl<C: Command + 'static> CmdExeSenderInterface<C> for CmdExeSender<C> {
     }
 }
 
-/// Recv
+/// Cmd exe recv interface
 #[cfg_attr(test, automock)]
 #[async_trait]
 trait CmdExeReceiverInterface<C: Command + 'static> {
