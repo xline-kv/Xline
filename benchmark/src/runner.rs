@@ -270,6 +270,14 @@ impl CommandRunner {
             bar.inc(1);
             stats.latencies.push(result.elapsed);
         }
+        assert!(
+            !stats.latencies.is_empty(),
+            "All requests failed! {:?}",
+            self.errors
+                .iter()
+                .max_by(|x, y| x.1.cmp(y.1))
+                .map(|(err, _)| err)
+        );
         stats.total = start.elapsed();
         stats.qps = stats.latencies.len() as f64 / stats.total.as_secs_f64();
         stats.avg =
