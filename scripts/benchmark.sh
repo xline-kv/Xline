@@ -86,6 +86,7 @@ run_cluster() {
         run_xline 1 &
         run_xline 2 &
         run_xline 3 &
+        sleep 0.2
         ;;
     etcd)
         run_etcd 1
