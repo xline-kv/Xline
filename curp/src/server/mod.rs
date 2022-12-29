@@ -12,15 +12,12 @@ use event_listener::Event;
 use parking_lot::{lock_api::RwLockUpgradableReadGuard, Mutex, RwLock};
 use tokio::{net::TcpListener, sync::broadcast, time::Instant};
 use tokio_stream::wrappers::TcpListenerStream;
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info, instrument, warn};
 use utils::{config::ServerTimeout, parking_lot_lock::RwLockMap, tracing::Extract};
 
 use self::{
-    cmd_board::{CmdState, CommandBoard},
-    cmd_execute_worker::CmdExeSenderInterface,
-    gc::run_gc_tasks,
-    spec_pool::SpeculativePool,
-    state::State,
+    cmd_board::CommandBoard, cmd_execute_worker::CmdExeSenderInterface, gc::run_gc_tasks,
+    spec_pool::SpeculativePool, state::State,
 };
 use crate::{
     cmd::{Command, CommandExecutor},
@@ -31,7 +28,10 @@ use crate::{
         FetchLeaderResponse, ProposeRequest, ProposeResponse, ProtocolServer, SyncError,
         VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
-    server::cmd_execute_worker::{cmd_exe_channel, CmdExeSender},
+    server::{
+        cmd_board::CmdBoardRef,
+        cmd_execute_worker::{cmd_exe_channel, CmdExeSender},
+    },
     shutdown::Shutdown,
 };
 
@@ -214,7 +214,7 @@ pub struct Protocol<C: Command + 'static> {
     sync_chan: flume::Sender<SyncMessage<C>>,
     // TODO: clean up the board when the size is too large
     /// Cmd watch board for tracking the cmd sync results
-    cmd_board: Arc<Mutex<CommandBoard>>,
+    cmd_board: CmdBoardRef<C>,
     /// Stop channel sender
     stop_ch_tx: broadcast::Sender<()>,
     /// The channel to send cmds to background exe tasks
@@ -286,7 +286,7 @@ impl<C: 'static + Command> Protocol<C> {
         timeout: Arc<ServerTimeout>,
     ) -> Self {
         let (sync_tx, sync_rx) = flume::unbounded();
-        let cmd_board = Arc::new(Mutex::new(CommandBoard::new()));
+        let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec = Arc::new(Mutex::new(SpeculativePool::new()));
         let last_rpc_time = Arc::new(RwLock::new(Instant::now()));
         let (stop_ch_tx, stop_ch_rx) = broadcast::channel(1);
@@ -342,7 +342,7 @@ impl<C: 'static + Command> Protocol<C> {
         reachable: Arc<AtomicBool>,
     ) -> Self {
         let (sync_tx, sync_rx) = flume::unbounded();
-        let cmd_board = Arc::new(Mutex::new(CommandBoard::new()));
+        let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec = Arc::new(Mutex::new(SpeculativePool::new()));
         let last_rpc_time = Arc::new(RwLock::new(Instant::now()));
         let (stop_ch_tx, stop_ch_rx) = broadcast::channel(1);
@@ -389,16 +389,13 @@ impl<C: 'static + Command> Protocol<C> {
 
     /// Send sync event to the background sync task, it's not a blocking function
     #[instrument(skip(self))]
-    fn sync_to_others(&self, term: TermNum, cmd: Arc<C>, need_execute: bool) {
-        let mut cmd_board = self.cmd_board.lock();
-        let _ignore = cmd_board.cmd_states.insert(
-            cmd.id().clone(),
-            if need_execute {
-                CmdState::Execute
-            } else {
-                CmdState::AfterSync
-            },
-        );
+    fn sync_to_others(&self, term: TermNum, cmd: Arc<C>, needs_exe: bool) {
+        if needs_exe {
+            assert!(
+                self.cmd_board.write().needs_exe.insert(cmd.id().clone()),
+                "shouldn't insert needs_exe twice"
+            );
+        }
         if let Err(e) = self.sync_chan.send(SyncMessage::new(term, cmd)) {
             error!("send channel error, {e}");
         }
@@ -416,7 +413,7 @@ impl<C: 'static + Command> Protocol<C> {
             tonic::Status::invalid_argument(format!("propose cmd decode failed: {}", e))
         })?;
 
-        (|| async {
+        async {
             let (is_leader, leader_id, term) = self
                 .state
                 .map_read(|state| (state.is_leader(), state.leader_id.clone(), state.term));
@@ -425,17 +422,21 @@ impl<C: 'static + Command> Protocol<C> {
                 let mut spec = self.spec.lock();
 
                 // check if the command is ready
-                if spec.ready.contains_key(cmd.id()) {
+                if spec.ready.contains(cmd.id()) {
                     return ProposeResponse::new_empty(leader_id, term);
                 }
 
                 let has_conflict = spec.has_conflict_with(&cmd);
                 if !has_conflict {
-                    spec.push(cmd.as_ref().clone());
+                    spec.insert(Arc::clone(&cmd));
                 }
 
                 // non-leader should return immediately
                 if !is_leader {
+                    assert!(
+                        self.cmd_board.write().needs_exe.insert(cmd.id().clone()),
+                        "shouldn't insert needs_exe twice"
+                    );
                     return if has_conflict {
                         ProposeResponse::new_error(leader_id, term, &ProposeError::KeyConflict)
                     } else {
@@ -473,7 +474,7 @@ impl<C: 'static + Command> Protocol<C> {
                     &ProposeError::ProtocolError(err.to_string()),
                 ),
             }
-        })()
+        }
         .await
         .map_or_else(
             |err| {
@@ -496,61 +497,57 @@ impl<C: 'static + Command> Protocol<C> {
             tonic::Status::invalid_argument(format!("wait_synced id decode failed: {}", e))
         })?;
 
+        debug!("get wait synced request for {id:?}");
         let resp = loop {
-            let (wait_synced_timeout, listener) = {
+            let listener = {
                 // check if the server is still leader
                 let state = self.state.read();
                 if !state.is_leader() {
                     break WaitSyncedResponse::new_error(&SyncError::Redirect(
                         state.leader_id.clone(),
                         state.term,
-                    ))
-                    .map_err(|err| {
-                        tonic::Status::internal(format!("encode or decode error, {}", err))
-                    });
+                    ));
                 }
 
                 // check if the cmd board already has response
-                let mut cmd_board = self.cmd_board.lock();
-                let entry = cmd_board
-                    .cmd_states
-                    .entry(id.clone())
-                    .or_insert(CmdState::EarlyArrive);
-                if let CmdState::FinalResponse(ref resp) = *entry {
-                    break resp.as_ref().map_or_else(
-                        |err| {
-                            Err(tonic::Status::internal(format!(
-                                "encode or decode error, {}",
-                                err
-                            )))
-                        },
-                        |r| Ok(r.clone()),
-                    );
+                let board_r = self.cmd_board.upgradable_read();
+                #[allow(clippy::pattern_type_mismatch)] // can't get away with this
+                match (board_r.er_buffer.get(&id), board_r.asr_buffer.get(&id)) {
+                    (Some(Err(err)), _) => {
+                        break WaitSyncedResponse::new_error(&SyncError::ExecuteError(
+                            err.to_string(),
+                        ));
+                    }
+                    (Some(er), Some(asr)) => {
+                        break WaitSyncedResponse::new_from_result::<C>(
+                            Some(er.clone()),
+                            Some(asr.clone()),
+                        );
+                    }
+                    _ => {}
                 }
 
-                let wait_synced_timeout = *self.timeout.wait_synced_timeout();
+                let mut board_w = RwLockUpgradableReadGuard::upgrade(board_r);
                 // generate wait_synced event listener
-                (
-                    wait_synced_timeout,
-                    cmd_board
-                        .notifiers
-                        .entry(id.clone())
-                        .or_insert_with(Event::new)
-                        .listen(),
-                )
+                board_w
+                    .notifiers
+                    .entry(id.clone())
+                    .or_insert_with(Event::new)
+                    .listen()
             };
+            let wait_synced_timeout = *self.timeout.wait_synced_timeout();
             if tokio::time::timeout(wait_synced_timeout, listener)
                 .await
                 .is_err()
             {
-                let _ignored = self.cmd_board.lock().notifiers.remove(&id);
-                break WaitSyncedResponse::new_error(&SyncError::Timeout).map_err(|err| {
-                    tonic::Status::internal(format!("encode or decode error, {}", err))
-                });
+                let _ignored = self.cmd_board.write().notifiers.remove(&id);
+                warn!("wait synced timeout for {id:?}");
+                break WaitSyncedResponse::new_error(&SyncError::Timeout);
             }
         };
-
+        debug!("wait synced for {id:?} finishes");
         resp.map(tonic::Response::new)
+            .map_err(|err| tonic::Status::internal(format!("encode or decode error, {}", err)))
     }
 
     /// Handle `AppendEntries` requests
