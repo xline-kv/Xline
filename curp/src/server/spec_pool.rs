@@ -1,6 +1,6 @@
-use std::collections::{HashMap, VecDeque};
+use std::{collections::HashMap, sync::Arc};
 
-use tokio::time::Instant;
+use indexmap::IndexSet;
 use tracing::debug;
 
 use crate::cmd::{Command, ProposeId};
@@ -9,31 +9,31 @@ use crate::cmd::{Command, ProposeId};
 #[derive(Debug)]
 pub(super) struct SpeculativePool<C> {
     /// Store
-    pub(super) pool: VecDeque<C>,
+    pub(super) pool: HashMap<ProposeId, Arc<C>>,
     /// Store the ids of commands that have completed backend syncing, but not in the local speculative pool. It'll prevent the late arrived commands.
-    pub(super) ready: HashMap<ProposeId, Instant>,
+    pub(super) ready: IndexSet<ProposeId>,
 }
 
 impl<C: Command + 'static> SpeculativePool<C> {
     /// Create a new speculative pool
     pub(super) fn new() -> Self {
         Self {
-            pool: VecDeque::new(),
-            ready: HashMap::new(),
+            pool: HashMap::new(),
+            ready: IndexSet::new(),
         }
     }
 
     /// Push a new command into spec pool if it has not been marked ready
-    pub(super) fn push(&mut self, cmd: C) {
-        if self.ready.remove(cmd.id()).is_none() {
+    pub(super) fn insert(&mut self, cmd: Arc<C>) {
+        if !self.ready.contains(cmd.id()) {
             debug!("insert cmd {:?} to spec pool", cmd.id());
-            self.pool.push_back(cmd);
+            let _ignored = self.pool.insert(cmd.id().clone(), cmd).is_none();
         }
     }
 
     /// Check whether the command pool has conflict with the new command
     pub(super) fn has_conflict_with(&self, cmd: &C) -> bool {
-        self.pool.iter().any(|spec_cmd| spec_cmd.is_conflict(cmd))
+        self.pool.values().any(|spec_cmd| spec_cmd.is_conflict(cmd))
     }
 
     /// Try to remove the command from spec pool and mark it ready.
@@ -43,16 +43,10 @@ impl<C: Command + 'static> SpeculativePool<C> {
     /// To prevent the server from returning error in the second situation when the fast proposal finally arrives, we mark the command ready.
     pub(super) fn mark_ready(&mut self, cmd_id: &ProposeId) {
         debug!("remove cmd {:?} from spec pool", cmd_id);
-        if self
-            .pool
-            .iter()
-            .position(|s| s.id() == cmd_id)
-            .and_then(|index| self.pool.swap_remove_back(index))
-            .is_none()
-        {
+        if self.pool.remove(cmd_id).is_none() {
             debug!("Cmd {:?} is marked ready", cmd_id);
             assert!(
-                self.ready.insert(cmd_id.clone(), Instant::now()).is_none(),
+                self.ready.insert(cmd_id.clone()),
                 "Cmd {:?} is already in ready pool",
                 cmd_id
             );

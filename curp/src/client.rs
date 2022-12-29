@@ -167,6 +167,7 @@ where
                 },
             )??;
             if (ok_cnt >= major_cnt) && execute_result.is_some() {
+                debug!("fast round succeeds");
                 return Ok((execute_result, true));
             }
         }
@@ -178,7 +179,7 @@ where
     async fn slow_round(
         &self,
         cmd: Arc<C>,
-    ) -> Result<(<C as Command>::ASR, Option<<C as Command>::ER>), ProposeError> {
+    ) -> Result<(<C as Command>::ASR, <C as Command>::ER), ProposeError> {
         let notify = Arc::clone(&self.state.read().leader_notify);
 
         loop {
@@ -330,31 +331,12 @@ where
                     // when success is true fast_er must be Some
                     Ok(fast_er.unwrap())
                 } else {
-                    let slow_result = slow_round.await?;
-                    if let (_, Some(slow_er)) = slow_result {
-                        return Ok(slow_er);
-                    }
-                    if let Some(er) = fast_er {
-                        return Ok(er);
-                    }
-                    Err(ProposeError::ProtocolError(
-                        "There's no execution result from both fast and slow round".to_owned(),
-                    ))
+                    let (_asr, er) = slow_round.await?;
+                    Ok(er)
                 }
             }
             futures::future::Either::Right((slow_result, fast_round)) => match slow_result {
-                Ok(slow_er_option) => {
-                    if let (_, Some(slow_er)) = slow_er_option {
-                        return Ok(slow_er);
-                    }
-                    if let (Some(er), _) = fast_round.await? {
-                        Ok(er)
-                    } else {
-                        Err(ProposeError::ProtocolError(
-                            "There's no execution result from both fast and slow round".to_owned(),
-                        ))
-                    }
-                }
+                Ok((_asr, er)) => Ok(er),
                 Err(e) => {
                     if let Ok((Some(er), true)) = fast_round.await {
                         return Ok(er);
@@ -381,21 +363,10 @@ where
         let slow_round = self.slow_round(cmd_arc);
 
         #[allow(clippy::integer_arithmetic)] // tokio framework triggers
-        let (fast_result, slow_result) = tokio::join!(fast_round, slow_round);
-
-        let fast_result_option = fast_result?.0;
+        let (_fast_result, slow_result) = tokio::join!(fast_round, slow_round);
 
         match slow_result {
-            Ok((asr, er_option)) => {
-                if let Some(er) = er_option {
-                    return Ok((er, asr));
-                } else if let Some(er) = fast_result_option {
-                    return Ok((er, asr));
-                }
-                Err(ProposeError::ProtocolError(
-                    "There's no execution result from both fast and slow round".to_owned(),
-                ))
-            }
+            Ok((asr, er)) => Ok((er, asr)),
             Err(e) => Err(e),
         }
     }

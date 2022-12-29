@@ -6,14 +6,21 @@ use thiserror::Error;
 /// Error met when executing commands
 #[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
 #[non_exhaustive]
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum ExecuteError {
     /// Command is invalid
     #[error("invalid command {0} ")]
     InvalidCommand(String),
     /// Met I/O error while executing
     #[error("meet io related error")]
-    IoError(#[from] io::Error),
+    IoError(String),
+}
+
+impl From<io::Error> for ExecuteError {
+    #[inline]
+    fn from(err: io::Error) -> Self {
+        Self::IoError(err.to_string())
+    }
 }
 
 /// Rpc Error

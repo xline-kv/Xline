@@ -1,10 +1,9 @@
 use std::{sync::Arc, time::Duration};
 
 use parking_lot::Mutex;
-use tokio::time::Instant;
 
 use super::spec_pool::SpeculativePool;
-use crate::{cmd::Command, server::cmd_board::CommandBoard};
+use crate::{cmd::Command, server::cmd_board::CmdBoardRef};
 
 /// How often spec should GC
 const SPEC_GC_INTERVAL: Duration = Duration::from_secs(10);
@@ -15,35 +14,41 @@ const CMD_BOARD_GC_INTERVAL: Duration = Duration::from_secs(20);
 /// Run background GC tasks for Curp server
 pub(super) fn run_gc_tasks<C: Command + 'static>(
     spec: Arc<Mutex<SpeculativePool<C>>>,
-    cmd_board: Arc<Mutex<CommandBoard>>,
+    cmd_board: CmdBoardRef<C>,
 ) {
-    let _spec_gc_handle = tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(SPEC_GC_INTERVAL).await;
-            spec.lock().gc();
-        }
-    });
-
+    let _spec_gc_handle = tokio::spawn(gc_spec_pool(spec, SPEC_GC_INTERVAL));
     let _cmd_board_gc = tokio::spawn(gc_cmd_board(cmd_board, CMD_BOARD_GC_INTERVAL));
 }
 
-impl<C: Command + 'static> SpeculativePool<C> {
-    /// Speculative pool GC
-    pub(super) fn gc(&mut self) {
-        let now = Instant::now();
-        self.ready.retain(|_, time| now - *time >= SPEC_GC_INTERVAL);
+/// Clean up spec pool
+async fn gc_spec_pool<C: Command + 'static>(
+    spec: Arc<Mutex<SpeculativePool<C>>>,
+    interval: Duration,
+) {
+    let mut last_check_len = 0;
+    loop {
+        tokio::time::sleep(interval).await;
+        let mut spec = spec.lock();
+        spec.ready = spec.ready.split_off(last_check_len);
+        last_check_len = spec.ready.len();
     }
 }
 
 /// Cleanup cmd board
-async fn gc_cmd_board(cmd_board: Arc<Mutex<CommandBoard>>, interval: Duration) {
-    let mut last_check_len = 0;
+async fn gc_cmd_board<C: Command + 'static>(cmd_board: CmdBoardRef<C>, interval: Duration) {
+    let mut last_check_len_er = 0;
+    let mut last_check_len_asr = 0;
     loop {
         tokio::time::sleep(interval).await;
-        let mut board = cmd_board.lock();
-        let new_board = board.cmd_states.split_off(last_check_len);
-        board.cmd_states = new_board;
-        last_check_len = board.cmd_states.len();
+        let mut board = cmd_board.write();
+
+        let new_er_buffer = board.er_buffer.split_off(last_check_len_er);
+        board.er_buffer = new_er_buffer;
+        last_check_len_er = board.er_buffer.len();
+
+        let new_asr_buffer = board.asr_buffer.split_off(last_check_len_asr);
+        board.asr_buffer = new_asr_buffer;
+        last_check_len_asr = board.asr_buffer.len();
     }
 }
 
@@ -51,46 +56,65 @@ async fn gc_cmd_board(cmd_board: Arc<Mutex<CommandBoard>>, interval: Duration) {
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use parking_lot::Mutex;
+    use parking_lot::RwLock;
 
     use crate::{
         cmd::ProposeId,
         server::{
-            cmd_board::{CmdState, CommandBoard},
+            cmd_board::{CmdBoardRef, CommandBoard},
             gc::gc_cmd_board,
         },
+        test_utils::test_cmd::TestCommand,
     };
 
     #[allow(unused_results, clippy::unwrap_used)]
     #[tokio::test]
     async fn cmd_board_gc_test() {
-        let board = Arc::new(Mutex::new(CommandBoard::new()));
+        let board: CmdBoardRef<TestCommand> = Arc::new(RwLock::new(CommandBoard::new()));
         tokio::spawn(gc_cmd_board(Arc::clone(&board), Duration::from_millis(500)));
 
         tokio::time::sleep(Duration::from_millis(100)).await;
         board
-            .lock()
-            .cmd_states
-            .insert(ProposeId::new("1".to_owned()), CmdState::EarlyArrive);
+            .write()
+            .er_buffer
+            .insert(ProposeId::new("1".to_owned()), Ok(vec![]));
         tokio::time::sleep(Duration::from_millis(100)).await;
         board
-            .lock()
-            .cmd_states
-            .insert(ProposeId::new("2".to_owned()), CmdState::EarlyArrive);
+            .write()
+            .er_buffer
+            .insert(ProposeId::new("2".to_owned()), Ok(vec![]));
+        board
+            .write()
+            .asr_buffer
+            .insert(ProposeId::new("1".to_owned()), Ok(0));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        board
+            .write()
+            .asr_buffer
+            .insert(ProposeId::new("2".to_owned()), Ok(0));
 
         // at 600ms
         tokio::time::sleep(Duration::from_millis(400)).await;
         board
-            .lock()
-            .cmd_states
-            .insert(ProposeId::new("3".to_owned()), CmdState::EarlyArrive);
+            .write()
+            .er_buffer
+            .insert(ProposeId::new("3".to_owned()), Ok(vec![]));
+        board
+            .write()
+            .asr_buffer
+            .insert(ProposeId::new("3".to_owned()), Ok(0));
 
         // at 1100ms, the first two kv should be removed
         tokio::time::sleep(Duration::from_millis(500)).await;
-        let board = board.lock();
-        assert_eq!(board.cmd_states.len(), 1);
+        let board = board.write();
+        assert_eq!(board.er_buffer.len(), 1);
         assert_eq!(
-            board.cmd_states.get_index(0).unwrap().0,
+            board.er_buffer.get_index(0).unwrap().0,
+            &ProposeId::new("3".to_owned())
+        );
+        assert_eq!(board.asr_buffer.len(), 1);
+        assert_eq!(
+            board.asr_buffer.get_index(0).unwrap().0,
             &ProposeId::new("3".to_owned())
         );
     }
