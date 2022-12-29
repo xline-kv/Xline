@@ -7,9 +7,8 @@
 
 [apache-badge]: https://img.shields.io/badge/license-Apache--2.0-brightgreen
 [apache-url]: https://github.com/datenlord/Xline/blob/master/LICENSE
-[actions-badge]: https://github.com/datenlord/xline/actions/workflows/ci.yml/badge.svg
+[actions-badge]: https://github.com/datenlord/xline/actions/workflows/ci.yml/badge.svg?branch=master
 [actions-url]: https://github.com/datenlord/xline/actions
-
 
 `Xline` is a geo-distributed KV store for metadata management. It provides the
 following features:
@@ -82,12 +81,12 @@ Please refer to the Contribute Guide for the quick start guide.
 ## Roadmap
 
 - v0.1 ~ v0.2
-    - Support all major ETCD APIs
-    - Pass validation tests
+  - Support all major ETCD APIs
+  - Pass validation tests
 - v0.3 ~ v0.5
-    - Enable persistent storage
-    - Enable snapshot
-    - Enable cluster membership change
+  - Enable persistent storage
+  - Enable snapshot
+  - Enable cluster membership change
 - v1.0 ~
-    - Enable chaos engineering to validate the system's stability
-    - Integration with other CNCF components
+  - Enable chaos engineering to validate the system's stability
+  - Integration with other CNCF components
