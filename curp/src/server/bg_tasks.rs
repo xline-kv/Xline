@@ -3,21 +3,17 @@ use std::sync::atomic::AtomicBool;
 use std::{iter, sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
-use futures::future::Either;
 use madsim::rand::{thread_rng, Rng};
 use parking_lot::{lock_api::RwLockUpgradableReadGuard, Mutex, RwLock};
 use tokio::{sync::mpsc, task::JoinHandle, time::Instant};
 use tracing::{debug, error, info, warn};
 use utils::{config::ServerTimeout, parking_lot_lock::RwLockMap};
 
-use super::{
-    cmd_board::{CmdState, CommandBoard},
-    SyncMessage,
-};
+use super::SyncMessage;
 use crate::{
     cmd::{Command, CommandExecutor},
     log::LogEntry,
-    rpc::{connect::ConnectInterface, AppendEntriesRequest, VoteRequest, WaitSyncedResponse},
+    rpc::{connect::ConnectInterface, AppendEntriesRequest, VoteRequest},
     server::{
         cmd_execute_worker::{
             execute_worker, CmdExeReceiver, CmdExeSender, CmdExeSenderInterface, N_EXECUTE_WORKERS,
@@ -25,7 +21,6 @@ use crate::{
         ServerRole, SpeculativePool, State,
     },
     shutdown::Shutdown,
-    LogIndex,
 };
 
 /// Run background tasks
@@ -77,15 +72,15 @@ pub(super) async fn run_bg_tasks<
         tokio::spawn(bg_get_sync_cmds(Arc::clone(&state), sync_chan, ae_trigger));
     let calibrate_handle = tokio::spawn(bg_leader_calibrates_followers(
         connects,
-        state,
+        Arc::clone(&state),
         Arc::clone(&timeout),
     ));
 
     // spawn cmd execute worker
     let bg_exe_worker_handles: Vec<JoinHandle<_>> =
-        iter::repeat((cmd_exe_rx, Arc::new(cmd_executor)))
+        iter::repeat((cmd_exe_rx, state.read().cmd_board(), Arc::new(cmd_executor)))
             .take(N_EXECUTE_WORKERS)
-            .map(|(rx, ce)| tokio::spawn(execute_worker(rx, ce)))
+            .map(|(rx, cmd_board, ce)| tokio::spawn(execute_worker(rx, cmd_board, ce)))
             .collect();
 
     shutdown.recv().await;
@@ -328,8 +323,7 @@ async fn bg_apply<C: Command + 'static, Tx: CmdExeSenderInterface<C>>(
     exe_tx: Tx,
     spec: Arc<Mutex<SpeculativePool<C>>>,
 ) {
-    let (commit_trigger, cmd_board) =
-        state.map_read(|state_r| (state_r.commit_trigger(), state_r.cmd_board()));
+    let commit_trigger = state.map_read(|state_r| state_r.commit_trigger());
     loop {
         // wait until there is something to commit
         let state = loop {
@@ -346,106 +340,15 @@ async fn bg_apply<C: Command + 'static, Tx: CmdExeSenderInterface<C>>(
         #[allow(clippy::integer_arithmetic, clippy::indexing_slicing)]
         // TODO: overflow of log index should be prevented
         for i in (state.last_applied + 1)..=state.commit_index {
-            for cmd in state.log[i].cmds().iter() {
-                let cmd_id = cmd.id();
-                if state.is_leader() {
-                    handle_after_sync_leader(
-                        Arc::clone(&cmd_board),
-                        Arc::clone(cmd),
-                        i.numeric_cast(),
-                        &exe_tx,
-                    );
-                } else {
-                    handle_after_sync_follower(&exe_tx, Arc::clone(cmd), i.numeric_cast());
-                }
-                spec.lock().mark_ready(cmd_id);
-            }
+            state.log[i].cmds().iter().cloned().for_each(|cmd| {
+                // clean up spec pool
+                spec.lock().mark_ready(cmd.id());
+                exe_tx.send_after_sync(cmd, i.numeric_cast());
+            });
             state.last_applied = i;
             debug!("log[{i}] committed, last_applied updated to {}", i);
         }
     }
-}
-
-/// The leader handles after sync
-fn handle_after_sync_leader<C: Command + 'static, Tx: CmdExeSenderInterface<C>>(
-    cmd_board: Arc<Mutex<CommandBoard>>,
-    cmd: Arc<C>,
-    index: LogIndex,
-    exe_tx: &Tx,
-) {
-    let cmd_id = cmd.id().clone();
-
-    let needs_execute = {
-        // the leader will see if the command needs execution from cmd board
-        let cmd_board = cmd_board.lock();
-        let cmd_state = if let Some(cmd_state) = cmd_board.cmd_states.get(cmd.id()) {
-            cmd_state
-        } else {
-            error!("No cmd {:?} in command board", cmd.id());
-            return;
-        };
-        match *cmd_state {
-            CmdState::Execute => true,
-            CmdState::AfterSync => false,
-            CmdState::EarlyArrive | CmdState::FinalResponse(_) => {
-                error!("should not get state {:?} before after sync", cmd_state);
-                return;
-            }
-        }
-    };
-
-    let resp = if needs_execute {
-        let result = exe_tx.send_exe_and_after_sync(cmd, index);
-        Either::Left(async move {
-            result.await.map_or_else(
-                |e| {
-                    error!("can't receive exe result from exe worker, {e}");
-                    WaitSyncedResponse::new_from_result::<C>(None, None)
-                },
-                |(er, asr)| WaitSyncedResponse::new_from_result::<C>(Some(er), asr),
-            )
-        })
-    } else {
-        let result = exe_tx.send_after_sync(cmd, index);
-        Either::Right(async move {
-            result.await.map_or_else(
-                |e| {
-                    error!("can't receive exe result from exe worker, {e}");
-                    WaitSyncedResponse::new_from_result::<C>(None, None)
-                },
-                |asr| WaitSyncedResponse::new_from_result::<C>(None, Some(asr)),
-            )
-        })
-    };
-
-    // update the cmd_board after execution and after_sync is completed
-    let _ignored = tokio::spawn(async move {
-        let resp = resp.await;
-
-        let mut cmd_board = cmd_board.lock();
-        let cmd_state = if let Some(cmd_state) = cmd_board.cmd_states.get_mut(&cmd_id) {
-            cmd_state
-        } else {
-            error!("No cmd {:?} in command board", cmd_id);
-            return;
-        };
-        *cmd_state = CmdState::FinalResponse(resp);
-
-        // now we can notify the waiting request
-        if let Some(notify) = cmd_board.notifiers.get(&cmd_id) {
-            notify.notify(usize::MAX);
-        }
-    });
-}
-
-/// The follower handles after sync
-fn handle_after_sync_follower<C: Command + 'static, Tx: CmdExeSenderInterface<C>>(
-    exe_tx: &Tx,
-    cmd: Arc<C>,
-    index: LogIndex,
-) {
-    // FIXME: should follower store er and asr in case it becomes leader later?
-    let _ignore = exe_tx.send_exe_and_after_sync(cmd, index);
 }
 
 /// Background election
@@ -680,7 +583,7 @@ mod test {
     use std::{collections::HashMap, sync::Arc};
 
     use parking_lot::{Mutex, RwLock};
-    use tokio::{sync::oneshot, time::Instant};
+    use tokio::time::Instant;
     use tracing_test::traced_test;
     use utils::config::ServerTimeout;
 
@@ -690,7 +593,7 @@ mod test {
         error::ProposeError,
         log::LogEntry,
         rpc::{
-            connect::MockConnectInterface, AppendEntriesRequest, AppendEntriesResponse, SyncResult,
+            connect::MockConnectInterface, AppendEntriesRequest, AppendEntriesResponse,
             VoteRequest, VoteResponse,
         },
         server::{
@@ -713,7 +616,7 @@ mod test {
             LEADER_ID.to_owned(),
             ServerRole::Leader,
             others,
-            Arc::new(Mutex::new(CommandBoard::new())),
+            Arc::new(RwLock::new(CommandBoard::new())),
             Arc::new(RwLock::new(Instant::now())),
         )))
     }
@@ -939,53 +842,29 @@ mod test {
     async fn leader_will_apply_logs_after_commit() {
         let state = new_test_state();
         let mut spec = SpeculativePool::new();
-        let (id1, id2) = {
+        {
             let mut state = state.write();
             let cmd_board = state.cmd_board();
-            let mut cmd_board = cmd_board.lock();
+            let mut cmd_board = cmd_board.write();
 
-            let cmd1 = TestCommand::new_get(vec![1]);
-            let id1 = cmd1.id().clone();
-            spec.push(cmd1.clone());
-            cmd_board
-                .cmd_states
-                .insert(cmd1.id().clone(), CmdState::Execute);
-            state.log.push(LogEntry::new(0, &[Arc::new(cmd1)]));
+            let cmd1 = Arc::new(TestCommand::new_get(vec![1]));
+            spec.insert(Arc::clone(&cmd1));
+            cmd_board.needs_exe.insert(cmd1.id().clone());
+            state.log.push(LogEntry::new(0, &[cmd1]));
 
-            let cmd2 = TestCommand::default();
-            let id2 = cmd2.id().clone();
-            spec.push(cmd2.clone());
-            cmd_board
-                .cmd_states
-                .insert(cmd2.id().clone(), CmdState::AfterSync);
-            state.log.push(LogEntry::new(0, &[Arc::new(cmd2)]));
+            let cmd2 = Arc::new(TestCommand::default());
+            spec.insert(Arc::clone(&cmd2));
+            state.log.push(LogEntry::new(0, &[cmd2]));
 
             state.commit_index = 2;
-            (id1, id2)
-        };
+        }
         let spec = Arc::new(Mutex::new(spec));
 
         let mut exe_tx = MockCmdExeSenderInterface::default();
-        let id1_c = id1.clone();
-        exe_tx
-            .expect_send_exe_and_after_sync()
-            .return_once(move |cmd: Arc<TestCommand>, index| {
-                assert_eq!(cmd.id(), &id1_c);
-                assert_eq!(index, 1);
-                let (tx, rx) = oneshot::channel();
-                tx.send((Ok(vec![]), Some(Ok(1)))).unwrap();
-                rx
-            });
-        let id2_c = id2.clone();
         exe_tx
             .expect_send_after_sync()
-            .return_once(move |cmd: Arc<TestCommand>, index| {
-                assert_eq!(cmd.id(), &id2_c);
-                assert_eq!(index, 2);
-                let (tx, rx) = oneshot::channel();
-                tx.send(Ok(2)).unwrap();
-                rx
-            });
+            .times(2)
+            .returning(move |_cmd: Arc<TestCommand>, _index| {});
 
         let (state_c, spec_c) = (Arc::clone(&state), Arc::clone(&spec));
         let handle = tokio::spawn(async move {
@@ -994,41 +873,8 @@ mod test {
 
         sleep_millis(500).await;
 
-        // check
-        let state = state.read();
-        let cmd_board = state.cmd_board();
-        let mut cmd_board = cmd_board.lock();
-        let spec = spec.lock();
-
-        let resp1 = cmd_board.cmd_states.remove(&id1).unwrap();
-        let resp1: SyncResult<TestCommand> = match resp1 {
-            CmdState::FinalResponse(resp1) => resp1.unwrap().into().unwrap(),
-            _ => panic!(),
-        };
-        match resp1 {
-            SyncResult::Success { er, asr } => {
-                assert!(er.is_some());
-                assert_eq!(asr, 1);
-            }
-            _ => panic!(),
-        }
-
-        let resp2 = cmd_board.cmd_states.remove(&id2).unwrap();
-        let resp2: SyncResult<TestCommand> = match resp2 {
-            CmdState::FinalResponse(resp2) => resp2.unwrap().into().unwrap(),
-            _ => panic!(),
-        };
-        match resp2 {
-            SyncResult::Success { er, asr } => {
-                assert!(er.is_none());
-                assert_eq!(asr, 2);
-            }
-            _ => panic!(),
-        }
-
-        assert!(spec.pool.is_empty());
-        assert!(spec.ready.is_empty());
-        assert_eq!(state.last_applied, 2);
+        assert!(spec.lock().pool.is_empty());
+        assert_eq!(state.read().last_applied, 2);
 
         handle.abort();
     }

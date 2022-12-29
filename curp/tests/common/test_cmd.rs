@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use curp::{
@@ -9,13 +9,17 @@ use curp::{
 use itertools::Itertools;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, time::sleep};
 use tracing::debug;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct TestCommand {
     id: ProposeId,
     keys: Vec<u32>,
+    exe_dur: Duration,
+    as_dur: Duration,
+    exe_should_fail: bool,
+    as_should_fail: bool,
     cmd_type: TestCommandType,
 }
 
@@ -32,6 +36,10 @@ impl TestCommand {
         Self {
             id: ProposeId::new(id.to_string()),
             keys,
+            exe_dur: Duration::ZERO,
+            as_dur: Duration::ZERO,
+            exe_should_fail: false,
+            as_should_fail: false,
             cmd_type: TestCommandType::Get,
         }
     }
@@ -39,8 +47,28 @@ impl TestCommand {
         Self {
             id: ProposeId::new(id.to_string()),
             keys,
+            exe_dur: Duration::ZERO,
+            as_dur: Duration::ZERO,
+            exe_should_fail: false,
+            as_should_fail: false,
             cmd_type: TestCommandType::Put(value),
         }
+    }
+    pub fn set_exe_dur(mut self, dur: Duration) -> Self {
+        self.exe_dur = dur;
+        self
+    }
+    pub fn set_as_dur(mut self, dur: Duration) -> Self {
+        self.as_dur = dur;
+        self
+    }
+    pub fn set_exe_should_fail(mut self) -> Self {
+        self.exe_should_fail = true;
+        self
+    }
+    pub fn set_asr_should_fail(mut self) -> Self {
+        self.as_should_fail = true;
+        self
     }
 }
 
@@ -84,6 +112,11 @@ pub struct TestCE {
 #[async_trait]
 impl CommandExecutor<TestCommand> for TestCE {
     async fn execute(&self, cmd: &TestCommand) -> Result<TestCommandResult, ExecuteError> {
+        sleep(cmd.exe_dur).await;
+        if cmd.exe_should_fail {
+            return Err(ExecuteError::InvalidCommand("fail".to_owned()));
+        }
+
         let mut store = self.store.lock();
         debug!("{} execute cmd {:?}", self.server_id, cmd.id());
 
@@ -111,6 +144,11 @@ impl CommandExecutor<TestCommand> for TestCE {
         cmd: &TestCommand,
         index: LogIndex,
     ) -> Result<LogIndex, ExecuteError> {
+        sleep(cmd.as_dur).await;
+        if cmd.as_should_fail {
+            return Err(ExecuteError::InvalidCommand("fail".to_owned()));
+        }
+
         self.after_sync_sender
             .send((cmd.clone(), index))
             .expect("failed to send after sync msg");
