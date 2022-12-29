@@ -1,25 +1,40 @@
-use std::collections::HashMap;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use event_listener::Event;
 use indexmap::IndexMap;
+use parking_lot::RwLock;
 
-use crate::{cmd::ProposeId, rpc::WaitSyncedResponse};
+use crate::{
+    cmd::{Command, ProposeId},
+    error::ExecuteError,
+};
 
-/// Command board is a buffer to store command execution result for `wait_synced` requests
-// TODO: GC
-pub(super) struct CommandBoard {
-    /// Stores all notifiers for wait_synced requests
+/// Ref to the cmd board
+pub(super) type CmdBoardRef<C> = Arc<RwLock<CommandBoard<C>>>;
+
+/// Command board is a buffer to track cmd states and store notifiers for requests that need to wait for a cmd
+pub(super) struct CommandBoard<C: Command> {
+    /// Store all notifiers for wait_synced requests
     pub(super) notifiers: HashMap<ProposeId, Event>,
-    /// Stores all command states
-    pub(super) cmd_states: IndexMap<ProposeId, CmdState>,
+    /// Whether the cmd needs execution when after sync
+    pub(super) needs_exe: HashSet<ProposeId>,
+    /// Store all execution results
+    pub(super) er_buffer: IndexMap<ProposeId, Result<C::ER, ExecuteError>>,
+    /// Store all after sync results
+    pub(super) asr_buffer: IndexMap<ProposeId, Result<C::ASR, ExecuteError>>,
 }
 
-impl CommandBoard {
+impl<C: Command> CommandBoard<C> {
     /// Create an empty command board
     pub(super) fn new() -> Self {
         Self {
             notifiers: HashMap::new(),
-            cmd_states: IndexMap::new(),
+            needs_exe: HashSet::new(),
+            er_buffer: IndexMap::new(),
+            asr_buffer: IndexMap::new(),
         }
     }
 
@@ -29,19 +44,35 @@ impl CommandBoard {
             .drain()
             .for_each(|(_, event)| event.notify(usize::MAX));
     }
-}
 
-/// The state of a command in cmd watch board
-/// (`EarlyArrive` -> ) `Execute` -> `AfterSync` -> `FinalResponse`
-// TODO: this struct might be removed. We don't need to store whether the command needs execution after sync in one place. We can attach it to SyncMessage.
-#[derive(Debug)]
-pub(super) enum CmdState {
-    /// Request for cmd sync result arrives earlier than the cmd itself
-    EarlyArrive,
-    /// Command still needs execute
-    Execute,
-    /// Command still needs not execute
-    AfterSync,
-    /// Command gotten the final result
-    FinalResponse(Result<WaitSyncedResponse, bincode::Error>),
+    /// Insert er to internal buffer
+    pub(super) fn insert_er(&mut self, id: &ProposeId, er: Result<C::ER, ExecuteError>) {
+        let er_ok = er.is_ok();
+        assert!(
+            self.er_buffer.insert(id.clone(), er).is_none(),
+            "er should not be inserted twice"
+        );
+
+        // wait_synced response is also ready when execution fails
+        if !er_ok {
+            self.notify(id);
+        }
+    }
+
+    /// Insert er to internal buffer
+    pub(super) fn insert_asr(&mut self, id: &ProposeId, asr: Result<C::ASR, ExecuteError>) {
+        assert!(
+            self.asr_buffer.insert(id.clone(), asr).is_none(),
+            "er should not be inserted twice"
+        );
+
+        self.notify(id);
+    }
+
+    /// Notify `wait_synced` requests
+    pub(super) fn notify(&self, id: &ProposeId) {
+        if let Some(notifier) = self.notifiers.get(id) {
+            notifier.notify(usize::MAX);
+        }
+    }
 }

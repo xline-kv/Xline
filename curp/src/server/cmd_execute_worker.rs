@@ -1,17 +1,18 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use futures::future::OptionFuture;
 #[cfg(test)]
 use mockall::automock;
 use tokio::sync::oneshot;
 use tracing::{debug, error, warn};
+use utils::parking_lot_lock::RwLockMap;
 
 use crate::{
     cmd::{Command, CommandExecutor},
     conflict_checked_mpmc,
     conflict_checked_mpmc::{ConflictCheckedMsg, DoneNotifier},
     error::ExecuteError,
+    server::cmd_board::CmdBoardRef,
     LogIndex,
 };
 
@@ -21,32 +22,61 @@ pub(super) const N_EXECUTE_WORKERS: usize = 8;
 /// Worker that execute commands
 pub(super) async fn execute_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
     dispatch_rx: CmdExeReceiver<C>,
+    cmd_board: CmdBoardRef<C>,
     ce: Arc<CE>,
 ) {
     while let Ok((ExecuteMessage { cmd, er_tx }, done)) = dispatch_rx.recv().await {
         match er_tx {
-            ExeResultSender::Execute(tx) => {
-                let er = cmd.execute(ce.as_ref()).await;
+            ExecuteMessageType::Execute(tx) => {
+                let er = ce.execute(cmd.as_ref()).await;
                 debug!("cmd {:?} is executed", cmd.id());
+                cmd_board.write().insert_er(cmd.id(), er.clone()); // insert er
                 let _ignore = tx.send(er); // it's ok to ignore the result here because sometimes the result is not needed
             }
-            ExeResultSender::AfterSync(tx, index) => {
-                let asr = cmd.after_sync(ce.as_ref(), index).await;
-                debug!("cmd {:?} after sync is called", cmd.id());
-                let _ignore = tx.send(asr); // it's ok to ignore the result here because sometimes the result is not needed
-            }
-            ExeResultSender::ExecuteAndAfterSync(tx, index) => {
-                let er = cmd.execute(ce.as_ref()).await;
-                debug!("cmd {:?} is executed", cmd.id());
-                let asr: OptionFuture<_> = er
-                    .is_ok()
-                    .then(|| async {
-                        let asr = cmd.after_sync(ce.as_ref(), index).await;
+            ExecuteMessageType::AfterSync(index) => {
+                /// Different conditions in after sync
+                enum Condition {
+                    /// Call both exe and after sync
+                    ExeAndAfterSync,
+                    /// Call after sync only
+                    AfterSync,
+                    /// Do nothing
+                    Nothing,
+                }
+                let condition = cmd_board.map_write(|mut board_w| {
+                    #[allow(clippy::unwrap_used)]
+                    // We can unwrap here because ExecuteMessage::AfterSync must arrive later than ExecuteMessage::Execute because a cmd conflicts itself
+                    if board_w.needs_exe.remove(cmd.id()) {
+                        // The cmd needs both execution and after sync
+                        Condition::ExeAndAfterSync
+                    } else if board_w.er_buffer.get(cmd.id()).unwrap().is_ok() {
+                        // execution succeeded, we can do call after sync now
+                        Condition::AfterSync
+                    } else {
+                        Condition::Nothing
+                    }
+                });
+
+                match condition {
+                    Condition::ExeAndAfterSync => {
+                        let er = ce.execute(cmd.as_ref()).await;
+                        let er_ok = er.is_ok();
+                        cmd_board.write().insert_er(cmd.id(), er);
+                        debug!("cmd {:?} is executed", cmd.id());
+
+                        if er_ok {
+                            let asr = ce.after_sync(cmd.as_ref(), index).await;
+                            cmd_board.write().insert_asr(cmd.id(), asr);
+                            debug!("cmd {:?} after sync is called", cmd.id());
+                        }
+                    }
+                    Condition::AfterSync => {
+                        let asr = ce.after_sync(cmd.as_ref(), index).await;
+                        cmd_board.write().insert_asr(cmd.id(), asr);
                         debug!("cmd {:?} after sync is called", cmd.id());
-                        asr
-                    })
-                    .into();
-                let _ignore = tx.send((er, asr.await)); // it's ok to ignore the result here because sometimes the result is not needed
+                    }
+                    Condition::Nothing => {}
+                }
             }
         }
         if let Err(e) = done.notify() {
@@ -61,7 +91,7 @@ struct ExecuteMessage<C: Command + 'static> {
     /// The cmd to be executed
     cmd: Arc<C>,
     /// Send execution result
-    er_tx: ExeResultSender<C>,
+    er_tx: ExecuteMessageType<C>,
 }
 
 impl<C: Command + 'static> ConflictCheckedMsg for ExecuteMessage<C> {
@@ -74,26 +104,17 @@ impl<C: Command + 'static> ConflictCheckedMsg for ExecuteMessage<C> {
 
 impl<C: Command + 'static> ExecuteMessage<C> {
     /// Create a new exe msg
-    fn new(cmd: Arc<C>, er_tx: ExeResultSender<C>) -> Self {
+    fn new(cmd: Arc<C>, er_tx: ExecuteMessageType<C>) -> Self {
         Self { cmd, er_tx }
     }
 }
 
-/// Channel for transferring execution results
-enum ExeResultSender<C: Command + 'static> {
+/// Type of execute message
+enum ExecuteMessageType<C: Command + 'static> {
     /// Only call `execute`
     Execute(oneshot::Sender<Result<C::ER, ExecuteError>>),
-    /// Only call `after_sync`
-    AfterSync(oneshot::Sender<Result<C::ASR, ExecuteError>>, LogIndex),
-    /// Call both `execute` and `after_sync`
-    #[allow(clippy::type_complexity)] // though complex, it's quite clear
-    ExecuteAndAfterSync(
-        oneshot::Sender<(
-            Result<C::ER, ExecuteError>,
-            Option<Result<C::ASR, ExecuteError>>, // why option: if execution fails, after sync will not be called
-        )>,
-        LogIndex,
-    ),
+    /// After sync is ready to be called
+    AfterSync(LogIndex),
 }
 
 /// Send cmd to background execute cmd task
@@ -112,66 +133,25 @@ pub(super) trait CmdExeSenderInterface<C: Command> {
     /// Send cmd to background cmd executor and return a oneshot receiver for the execution result
     fn send_exe(&self, cmd: Arc<C>) -> oneshot::Receiver<Result<C::ER, ExecuteError>>;
 
-    /// Send cmd to background cmd executor and return a oneshot receiver for the execution result
-    fn send_after_sync(
-        &self,
-        cmd: Arc<C>,
-        index: LogIndex,
-    ) -> oneshot::Receiver<Result<C::ASR, ExecuteError>>;
-
-    /// Send cmd to background cmd executor and return a oneshot receiver for the execution result
-    #[allow(clippy::type_complexity)] // though complex, it's quite clear
-    fn send_exe_and_after_sync(
-        &self,
-        cmd: Arc<C>,
-        index: LogIndex,
-    ) -> oneshot::Receiver<(
-        Result<C::ER, ExecuteError>,
-        Option<Result<C::ASR, ExecuteError>>,
-    )>;
+    /// Send after sync event to the background cmd executor so that after sync can be called
+    fn send_after_sync(&self, cmd: Arc<C>, index: LogIndex);
 }
 
 impl<C: Command + 'static> CmdExeSenderInterface<C> for CmdExeSender<C> {
-    /// Send cmd to background cmd executor and return a oneshot receiver for the execution result
     fn send_exe(&self, cmd: Arc<C>) -> oneshot::Receiver<Result<C::ER, ExecuteError>> {
         let (tx, rx) = oneshot::channel();
-        let msg = ExecuteMessage::new(cmd, ExeResultSender::Execute(tx));
+        let msg = ExecuteMessage::new(cmd, ExecuteMessageType::Execute(tx));
         if let Err(e) = self.0.send(msg) {
             warn!("failed to send cmd to background execute cmd task, {e}");
         }
         rx
     }
 
-    /// Send cmd to background cmd executor and return a oneshot receiver for the execution result
-    fn send_after_sync(
-        &self,
-        cmd: Arc<C>,
-        index: LogIndex,
-    ) -> oneshot::Receiver<Result<C::ASR, ExecuteError>> {
-        let (tx, rx) = oneshot::channel();
-        let msg = ExecuteMessage::new(cmd, ExeResultSender::AfterSync(tx, index));
+    fn send_after_sync(&self, cmd: Arc<C>, index: LogIndex) {
+        let msg = ExecuteMessage::new(cmd, ExecuteMessageType::AfterSync(index));
         if let Err(e) = self.0.send(msg) {
             warn!("failed to send cmd to background execute cmd task, {e}");
         }
-        rx
-    }
-
-    /// Send cmd to background cmd executor and return a oneshot receiver for the execution result
-    #[allow(clippy::type_complexity)] // though complex, it's quite clear
-    fn send_exe_and_after_sync(
-        &self,
-        cmd: Arc<C>,
-        index: LogIndex,
-    ) -> oneshot::Receiver<(
-        Result<C::ER, ExecuteError>,
-        Option<Result<C::ASR, ExecuteError>>,
-    )> {
-        let (tx, rx) = oneshot::channel();
-        let msg = ExecuteMessage::new(cmd, ExeResultSender::ExecuteAndAfterSync(tx, index));
-        if let Err(e) = self.0.send(msg) {
-            warn!("failed to send cmd to background execute cmd task, {e}");
-        }
-        rx
     }
 }
 
@@ -195,4 +175,147 @@ impl<C: Command + 'static> CmdExeReceiverInterface<C> for CmdExeReceiver<C> {
 pub(super) fn cmd_exe_channel<C: Command + 'static>() -> (CmdExeSender<C>, CmdExeReceiver<C>) {
     let (tx, rx) = conflict_checked_mpmc::channel();
     (CmdExeSender(tx), CmdExeReceiver(rx))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use parking_lot::RwLock;
+    use tokio::{sync::mpsc, time::Instant};
+    use tracing_test::traced_test;
+
+    use super::*;
+    use crate::{
+        server::cmd_board::CommandBoard,
+        test_utils::{
+            sleep_millis, sleep_secs,
+            test_cmd::{TestCE, TestCommand},
+        },
+    };
+
+    // This should happen in fast path in most cases
+    #[traced_test]
+    #[tokio::test]
+    async fn fast_path_normal() {
+        let (er_tx, mut er_rx) = mpsc::unbounded_channel();
+        let (as_tx, mut as_rx) = mpsc::unbounded_channel();
+        let ce = TestCE::new("S1".to_owned(), er_tx, as_tx);
+        let (exe_tx, exe_rx) = cmd_exe_channel::<TestCommand>();
+        let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
+        tokio::spawn(execute_worker(exe_rx, Arc::clone(&cmd_board), Arc::new(ce)));
+
+        let cmd = Arc::new(TestCommand::default());
+        exe_tx.send_exe(Arc::clone(&cmd));
+        assert_eq!(er_rx.recv().await.unwrap().1, vec![]);
+
+        exe_tx.send_after_sync(Arc::clone(&cmd), 1);
+        assert_eq!(as_rx.recv().await.unwrap().1, 1);
+    }
+
+    // When the execution takes more time than sync, as should be called after exe has finished
+    #[traced_test]
+    #[tokio::test]
+    async fn fast_path_cond1() {
+        let (er_tx, mut er_rx) = mpsc::unbounded_channel();
+        let (as_tx, mut as_rx) = mpsc::unbounded_channel();
+        let ce = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
+        let (exe_tx, exe_rx) = cmd_exe_channel::<TestCommand>();
+        let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
+        tokio::spawn(execute_worker(
+            exe_rx.clone(),
+            Arc::clone(&cmd_board),
+            Arc::clone(&ce),
+        ));
+
+        let begin = Instant::now();
+        let cmd = Arc::new(TestCommand::default().set_exe_dur(Duration::from_secs(1)));
+        exe_tx.send_exe(Arc::clone(&cmd));
+
+        // at 500ms, sync has completed, call after sync, this will be dispatched to the second exe_worker
+        sleep_millis(500).await;
+        exe_tx.send_after_sync(Arc::clone(&cmd), 1);
+
+        assert_eq!(er_rx.recv().await.unwrap().1, vec![]);
+        assert_eq!(as_rx.recv().await.unwrap().1, 1);
+
+        assert!((Instant::now() - begin) >= Duration::from_secs(1));
+    }
+
+    // When the execution takes more time than sync and fails, as should not be called
+    #[traced_test]
+    #[tokio::test]
+    async fn fast_path_cond2() {
+        let (er_tx, mut er_rx) = mpsc::unbounded_channel();
+        let (as_tx, mut as_rx) = mpsc::unbounded_channel();
+        let ce = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
+        let (exe_tx, exe_rx) = cmd_exe_channel::<TestCommand>();
+        let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
+        tokio::spawn(execute_worker(
+            exe_rx.clone(),
+            Arc::clone(&cmd_board),
+            Arc::clone(&ce),
+        ));
+
+        let cmd = Arc::new(
+            TestCommand::default()
+                .set_exe_dur(Duration::from_secs(1))
+                .set_exe_should_fail(),
+        );
+        exe_tx.send_exe(Arc::clone(&cmd));
+
+        // at 500ms, sync has completed
+        sleep_millis(500).await;
+        exe_tx.send_after_sync(Arc::clone(&cmd), 1);
+
+        // at 1500ms, as should not be called
+        sleep_secs(1).await;
+        assert!(er_rx.try_recv().is_err());
+        assert!(as_rx.try_recv().is_err());
+    }
+
+    // This should happen in slow path in most cases
+    #[traced_test]
+    #[tokio::test]
+    async fn slow_path_normal() {
+        let (er_tx, mut er_rx) = mpsc::unbounded_channel();
+        let (as_tx, mut as_rx) = mpsc::unbounded_channel();
+        let ce = TestCE::new("S1".to_owned(), er_tx, as_tx);
+        let (exe_tx, exe_rx) = cmd_exe_channel::<TestCommand>();
+        let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
+        tokio::spawn(execute_worker(exe_rx, Arc::clone(&cmd_board), Arc::new(ce)));
+
+        let cmd = Arc::new(TestCommand::default());
+        {
+            cmd_board.write().needs_exe.insert(cmd.id().clone());
+        }
+
+        exe_tx.send_after_sync(Arc::clone(&cmd), 1);
+
+        assert_eq!(er_rx.recv().await.unwrap().1, vec![]);
+        assert_eq!(as_rx.recv().await.unwrap().1, 1);
+    }
+
+    // When exe fails
+    #[traced_test]
+    #[tokio::test]
+    async fn slow_path_exe_fails() {
+        let (er_tx, mut er_rx) = mpsc::unbounded_channel();
+        let (as_tx, mut as_rx) = mpsc::unbounded_channel();
+        let ce = TestCE::new("S1".to_owned(), er_tx, as_tx);
+        let (exe_tx, exe_rx) = cmd_exe_channel::<TestCommand>();
+        let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
+        tokio::spawn(execute_worker(exe_rx, Arc::clone(&cmd_board), Arc::new(ce)));
+
+        let cmd = Arc::new(TestCommand::default().set_exe_should_fail());
+        {
+            cmd_board.write().needs_exe.insert(cmd.id().clone());
+        }
+
+        exe_tx.send_after_sync(Arc::clone(&cmd), 1);
+
+        sleep_millis(100).await;
+        assert!(er_rx.try_recv().is_err());
+        assert!(as_rx.try_recv().is_err());
+    }
 }
