@@ -9,6 +9,7 @@
 [apache-url]: https://github.com/datenlord/Xline/blob/master/LICENSE
 [actions-badge]: https://github.com/datenlord/xline/actions/workflows/ci.yml/badge.svg?branch=master
 [actions-url]: https://github.com/datenlord/xline/actions
+[![codecov](https://codecov.io/gh/datenlord/xline/branch/master/graph/badge.svg)](https://codecov.io/gh/datenlord/xline)
 
 `Xline` is a geo-distributed KV store for metadata management. It provides the
 following features:

@@ -195,7 +195,7 @@ impl CurpGroup<Node> {
             if let Some(leader) = self.try_get_leader() {
                 return leader;
             }
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(2)).await;
         }
         panic!("can't get leader");
     }

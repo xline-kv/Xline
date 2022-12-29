@@ -17,6 +17,10 @@ scripts/*
 !scripts/Dockerfile
 !scripts/benchmark.sh
 !scripts/quick_start.sh
+!scripts/coverage.sh
+
+coverage
+*.profraw
 
 .vscode
 .idea
