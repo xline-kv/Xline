@@ -1,0 +1,24 @@
+on:
+  pull_request:
+    types:
+      - closed
+
+jobs:
+  coverage:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - run: sudo bash ./.github/scripts/install_deps.sh
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: default
+          toolchain: ${{ env.CI_RUST_TOOLCHAIN }}
+          override: true
+          components: llvm-tools-preview
+      - run: cargo install grcov
+      - run: CI=yes ./scripts/coverage.sh
+      - name: Upload coverage report
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage/xline_cov.xml,./coverage/curp_cov.xml,./coverage/lock_utils_cov.xml
