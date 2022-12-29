@@ -144,10 +144,7 @@ impl WaitSyncedRequest {
 
 impl WaitSyncedResponse {
     /// Create a success response
-    pub(crate) fn new_success<C: Command>(
-        asr: &C::ASR,
-        er: &Option<C::ER>,
-    ) -> bincode::Result<Self> {
+    pub(crate) fn new_success<C: Command>(asr: &C::ASR, er: &C::ER) -> bincode::Result<Self> {
         Ok(Self {
             sync_result: Some(SyncResultRaw::Success(Success {
                 after_sync_result: bincode::serialize(&asr)?,
@@ -169,12 +166,11 @@ impl WaitSyncedResponse {
         asr: Option<Result<C::ASR, ExecuteError>>,
     ) -> bincode::Result<Self> {
         match (er, asr) {
-            (None, Some(Err(err))) => {
-                WaitSyncedResponse::new_error(&SyncError::AfterSyncError(err.to_string()))
+            (None, Some(_)) => {
+                unreachable!("should not call after sync if execution fails")
             }
-            (None, Some(Ok(asr))) => WaitSyncedResponse::new_success::<C>(&asr, &None),
             (None, None) => WaitSyncedResponse::new_error(&SyncError::AfterSyncError(
-                "can't get asr result".to_owned(),
+                "can't get er result".to_owned(),
             )), // this is highly unlikely to happen,
             (Some(Err(_)), Some(_)) => {
                 unreachable!("should not call after_sync when exe failed")
@@ -186,7 +182,7 @@ impl WaitSyncedResponse {
                 // FIXME: should er be returned?
                 WaitSyncedResponse::new_error(&SyncError::AfterSyncError(err.to_string()))
             }
-            (Some(Ok(er)), Some(Ok(asr))) => WaitSyncedResponse::new_success::<C>(&asr, &Some(er)),
+            (Some(Ok(er)), Some(Ok(asr))) => WaitSyncedResponse::new_success::<C>(&asr, &er),
             (Some(Ok(_er)), None) => {
                 // FIXME: should er be returned?
                 WaitSyncedResponse::new_error(&SyncError::AfterSyncError(
@@ -217,7 +213,7 @@ pub(crate) enum SyncResult<C: Command> {
         /// After Sync Result
         asr: C::ASR,
         /// Execution Result
-        er: Option<C::ER>,
+        er: C::ER,
     },
     /// If sync fails, return `SyncError`
     Error(SyncError),

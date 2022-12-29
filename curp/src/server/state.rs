@@ -1,15 +1,16 @@
 use std::{collections::HashMap, sync::Arc};
 
 use event_listener::Event;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use tokio::{sync::broadcast, time::Instant};
 use tracing::debug;
 
-use super::{cmd_board::CommandBoard, ServerRole};
+use super::ServerRole;
 use crate::{
     cmd::Command,
     log::LogEntry,
     message::{ServerId, TermNum},
+    server::cmd_board::CmdBoardRef,
 };
 
 /// State of the server
@@ -49,7 +50,7 @@ pub(super) struct State<C: Command + 'static> {
     pub(super) heartbeat_reset_trigger: Arc<Event>,
     // TODO: clean up the board when the size is too large
     /// Cmd watch board for tracking the cmd sync results
-    pub(super) cmd_board: Arc<Mutex<CommandBoard>>,
+    pub(super) cmd_board: CmdBoardRef<C>,
     /// Last time a rpc is received.
     pub(super) last_rpc_time: Arc<RwLock<Instant>>,
     /// Leader changes tx
@@ -62,7 +63,7 @@ impl<C: Command + 'static> State<C> {
         id: ServerId,
         role: ServerRole,
         others: HashMap<ServerId, String>,
-        cmd_board: Arc<Mutex<CommandBoard>>,
+        cmd_board: CmdBoardRef<C>,
         last_rpc_time: Arc<RwLock<Instant>>,
     ) -> Self {
         let mut next_index = HashMap::new();
@@ -140,7 +141,7 @@ impl<C: Command + 'static> State<C> {
 
             // from leader to follower
             if prev_role == ServerRole::Leader {
-                self.cmd_board.lock().release_notifiers();
+                self.cmd_board.write().release_notifiers();
             }
         }
     }
@@ -179,7 +180,7 @@ impl<C: Command + 'static> State<C> {
     }
 
     /// Get `cmd_board`
-    pub(super) fn cmd_board(&self) -> Arc<Mutex<CommandBoard>> {
+    pub(super) fn cmd_board(&self) -> CmdBoardRef<C> {
         Arc::clone(&self.cmd_board)
     }
 
@@ -197,7 +198,7 @@ impl<C: Command + 'static> State<C> {
 #[cfg_attr(test, allow(clippy::unwrap_used))]
 #[cfg(test)]
 mod tests {
-    use crate::test_utils::test_cmd::TestCommand;
+    use crate::{server::cmd_board::CommandBoard, test_utils::test_cmd::TestCommand};
 
     use super::*;
 
@@ -207,7 +208,7 @@ mod tests {
             "Foo".to_owned(),
             ServerRole::Leader,
             HashMap::new(),
-            Arc::new(Mutex::new(CommandBoard::new())),
+            Arc::new(RwLock::new(CommandBoard::new())),
             Arc::new(RwLock::new(Instant::now())),
         );
         let mut rx = state.leader_tx.subscribe();
