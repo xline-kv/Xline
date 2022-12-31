@@ -3,19 +3,23 @@ Contribution Guide
 
 # Quick Start
 
-## Build an Xline docker image
-
+## Install dependencies
 ```bash
-# Assume that rust compile environment installed, such as cargo, etc.
+sudo apt-get install -y autoconf autogen libtool
 
-# install dependency, requires protobuf-compiler >= 3.15
+# requires protobuf-compiler >= 3.15
 git clone --branch v3.21.12  --recurse-submodules https://github.com/protocolbuffers/protobuf
 cd protobuf
 ./autogen.sh
 ./configure
 make -j
 sudo make install 
+```
 
+## Build an Xline docker image
+
+```bash
+# Assume that rust compile environment installed, such as cargo, etc.
 
 # clone source code
 git clone https://github.com/datenlord/Xline
