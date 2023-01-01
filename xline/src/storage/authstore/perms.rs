@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::server::command::KeyRange;
 
-/// default tolen ttl
+/// default token ttl
 const DEFAULT_TOKEN_TTL: u64 = 300;
 
 /// Claims of Token
