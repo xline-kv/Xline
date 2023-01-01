@@ -83,12 +83,18 @@ Please refer to the Contribute Guide for the quick start guide.
 ## Roadmap
 
 - v0.1 ~ v0.2
-  - Support all major ETCD APIs
-  - Pass validation tests
+    - Support all major ETCD APIs
+    - Support configuration file
+    - Pass validation tests
 - v0.3 ~ v0.5
-  - Enable persistent storage
-  - Enable snapshot
-  - Enable cluster membership change
+    - Enable persistent storage
+    - Enable snapshot
+    - Enable cluster membership change
+    - Implement a k8s operator basically
+- v0.6 ~ v0.8
+    - Enable to export metrics to some monitoring and alerting systems
+    - Enable SSL/TLS certificates
+    - Provide clients implementing in different languages, like go, python
 - v1.0 ~
   - Enable chaos engineering to validate the system's stability
   - Integration with other CNCF components

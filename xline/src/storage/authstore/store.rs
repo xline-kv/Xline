@@ -196,7 +196,7 @@ impl AuthStore {
         if user.has_role(ROOT_ROLE) {
             return Ok(());
         }
-        Err(ExecuteError::InvalidCommand("premission denied".to_owned()))
+        Err(ExecuteError::InvalidCommand("permission denied".to_owned()))
     }
 
     /// check permission for a kv operation

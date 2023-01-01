@@ -33,7 +33,7 @@ impl CommandBoard {
 
 /// The state of a command in cmd watch board
 /// (`EarlyArrive` -> ) `Execute` -> `AfterSync` -> `FinalResponse`
-// TODO: this struct might me removed. We don't need to store whether the command needs execution after sync in one place. We can attach it to SyncMessage.
+// TODO: this struct might be removed. We don't need to store whether the command needs execution after sync in one place. We can attach it to SyncMessage.
 #[derive(Debug)]
 pub(super) enum CmdState {
     /// Request for cmd sync result arrives earlier than the cmd itself
