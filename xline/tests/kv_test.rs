@@ -2,6 +2,7 @@ mod common;
 
 use std::error::Error;
 
+use etcd_client::Client;
 use xline::client::kv_types::{
     DeleteRangeRequest, PutRequest, RangeRequest, SortOrder, SortTarget,
 };
@@ -63,10 +64,10 @@ async fn test_kv_get() -> Result<(), Box<dyn Error>> {
             req: RangeRequest::new("a"),
             want_kvs: &want_kvs[..1],
         },
-        // TestCase {
-        //     req: RangeRequest::new("a").with_serializable(true),
-        //     want_kvs: &want_kvs[..1],
-        // },
+        TestCase {
+            req: RangeRequest::new("a").with_serializable(true),
+            want_kvs: &want_kvs[..1],
+        },
         TestCase {
             req: RangeRequest::new("a").with_range_end("c"),
             want_kvs: &want_kvs[..2],
@@ -154,6 +155,13 @@ async fn test_kv_get() -> Result<(), Box<dyn Error>> {
             .all(|(kv, want)| kv.key == want.as_bytes());
         assert!(is_identical);
     }
+
+    // test range redirect
+    let addr = cluster.addrs()["server1"].clone();
+    let mut kv_client = Client::connect([addr], None).await?.kv_client();
+    let res = kv_client.get("a", None).await?;
+    assert_eq!(res.kvs().len(), 1);
+    assert_eq!(res.kvs()[0].value(), b"bar");
 
     Ok(())
 }

@@ -77,6 +77,7 @@ pub(crate) use self::{
     etcdserverpb::{
         auth_server::{Auth, AuthServer},
         compare::{CompareResult, CompareTarget, TargetUnion},
+        kv_client::KvClient,
         kv_server::{Kv, KvServer},
         lease_server::{Lease, LeaseServer},
         request_op::Request,
