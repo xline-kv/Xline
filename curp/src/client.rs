@@ -9,7 +9,7 @@ use event_listener::Event;
 use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
 use lock_utils::parking_lot_lock::RwLockMap;
 use parking_lot::RwLock;
-use tokio::time::timeout;
+use tokio::{sync::broadcast, time::timeout};
 use tracing::{debug, instrument, warn};
 
 use crate::{
@@ -44,21 +44,28 @@ struct State {
     term: TermNum,
     /// When a new leader is set, notify
     leader_notify: Arc<Event>,
+    /// Send leader changes
+    leader_tx: broadcast::Sender<ServerId>,
 }
 
 impl State {
     /// Create the initial client state
     fn new() -> Self {
+        let (leader_tx, _) = broadcast::channel(1);
         Self {
             leader: None,
             term: 0,
             leader_notify: Arc::new(Event::new()),
+            leader_tx,
         }
     }
 
     /// Set the leader and notify a waiter
     fn set_leader(&mut self, id: ServerId) {
         debug!("client update its leader to {id}");
+        if self.leader.as_ref().map_or(true, |prev_id| prev_id != &id) {
+            let _ignored = self.leader_tx.send(id.clone()).ok(); // it's ok to have no receiver
+        }
         self.leader = Some(id);
         self.leader_notify.notify(1);
     }
@@ -406,8 +413,40 @@ where
         }
     }
 
+    /// Get the current leader.
+    #[inline]
+    pub fn leader(&self) -> Option<ServerId> {
+        self.state.read().leader.clone()
+    }
+
+    /// Get the receiver for leader changes
+    #[inline]
+    pub fn leader_rx(&self) -> broadcast::Receiver<ServerId> {
+        self.state.read().leader_tx.subscribe()
+    }
+
     #[cfg(test)]
     pub(crate) fn get_connects(&self) -> &[Arc<Connect>] {
         self.connects.as_slice()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[allow(clippy::unwrap_used)]
+    #[tokio::test]
+    async fn will_get_notify_on_leader_changes() {
+        let mut state = State::new();
+        let mut rx = state.leader_tx.subscribe();
+
+        state.set_leader("S1".to_owned());
+        assert_eq!(rx.recv().await.unwrap().as_str(), "S1");
+
+        state.set_leader("S2".to_owned());
+        state.set_leader("S3".to_owned());
+        assert!(rx.recv().await.is_err());
+        assert_eq!(rx.recv().await.unwrap().as_str(), "S3");
     }
 }
