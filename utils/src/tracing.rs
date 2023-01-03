@@ -27,12 +27,13 @@ impl Extractor for ExtractMap<'_> {
 }
 
 /// Function for extract data from some struct
-pub(crate) trait Extract {
+pub trait Extract {
     /// extract span context from self and set as parent context
     fn extract_span(&self);
 }
 
 impl Extract for tonic::metadata::MetadataMap {
+    #[inline]
     fn extract_span(&self) {
         let parent_ctx = global::get_text_map_propagator(|prop| prop.extract(&ExtractMap(self)));
         let span = Span::current();
@@ -55,11 +56,12 @@ impl Injector for InjectMap<'_> {
 }
 
 /// Function for inject data to some struct
-pub(crate) trait Inject {
+pub trait Inject {
     /// Inject span context into self
     fn inject_span(&mut self, span: &Span);
-    /// Inject span context into self
 
+    /// Inject span context into self
+    #[inline]
     fn inject_current(&mut self) {
         let curr_span = Span::current();
         self.inject_span(&curr_span);
@@ -67,6 +69,7 @@ pub(crate) trait Inject {
 }
 
 impl Inject for tonic::metadata::MetadataMap {
+    #[inline]
     fn inject_span(&mut self, span: &Span) {
         let ctx = span.context();
         global::get_text_map_propagator(|prop| {

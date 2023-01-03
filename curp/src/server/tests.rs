@@ -24,12 +24,12 @@ use std::{
 };
 
 use futures::future::join_all;
-use lock_utils::parking_lot_lock::RwLockMap;
 use parking_lot::RwLock;
 use tokio::{net::TcpListener, sync::mpsc};
 use tokio_stream::wrappers::TcpListenerStream;
 use tracing::debug;
 use tracing_test::traced_test;
+use utils::parking_lot_lock::RwLockMap;
 
 use crate::{
     message::{ServerId, TermNum},

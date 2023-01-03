@@ -1,6 +1,7 @@
-use std::net::SocketAddr;
+use std::collections::HashMap;
 
 use clap::{Parser, Subcommand};
+use utils::parse_members;
 
 #[derive(Parser, Debug)]
 #[non_exhaustive]
@@ -8,8 +9,8 @@ use clap::{Parser, Subcommand};
 /// Args of Benchmark
 pub struct Benchmark {
     /// The address of the server
-    #[clap(long, required = true, multiple = true)]
-    pub endpoints: Vec<SocketAddr>,
+    #[clap(long, value_parser = parse_members)]
+    pub endpoints: HashMap<String, String>,
     /// Index of leader serer
     #[clap(long, required = true)]
     pub leader_index: usize,

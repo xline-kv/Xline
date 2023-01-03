@@ -13,7 +13,6 @@ use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{cmd::ProposeId, error::ExecuteError};
 use itertools::Itertools;
 use jsonwebtoken::{DecodingKey, EncodingKey};
-use lock_utils::parking_lot_lock::RwLockMap;
 use log::debug;
 use parking_lot::{Mutex, RwLock};
 use pbkdf2::{
@@ -21,6 +20,7 @@ use pbkdf2::{
     Pbkdf2,
 };
 use prost::Message;
+use utils::parking_lot_lock::RwLockMap;
 
 use crate::{
     header_gen::HeaderGenerator,

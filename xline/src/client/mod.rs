@@ -1,13 +1,14 @@
-use std::net::SocketAddr;
+use std::collections::HashMap;
 
-// use anyhow::{anyhow, Result};
 use curp::{client::Client as CurpClient, cmd::ProposeId};
 use etcd_client::{AuthClient, Client as EtcdClient};
-use kv_types::{PutRequest, RangeRequest};
 use uuid::Uuid;
 
-use self::{errors::ClientError, kv_types::DeleteRangeRequest};
 use crate::{
+    client::{
+        errors::ClientError,
+        kv_types::{DeleteRangeRequest, PutRequest, RangeRequest},
+    },
     rpc::{self, DeleteRangeResponse, PutResponse, RangeResponse, RequestWithToken},
     server::command::{Command, KeyRange},
 };
@@ -40,21 +41,17 @@ impl Client {
     /// If `EtcdClient::connect` fails.
     #[inline]
     pub async fn new(
-        all_members: Vec<SocketAddr>,
+        all_members: HashMap<String, String>,
         use_curp_client: bool,
     ) -> Result<Self, ClientError> {
         let etcd_client = EtcdClient::connect(
             all_members
                 .iter()
-                .map(ToString::to_string)
+                .map(|(_, addr)| addr.clone())
                 .collect::<Vec<_>>(),
             None,
         )
         .await?;
-        let all_members = all_members
-            .into_iter()
-            .map(|addr| (addr.to_string(), addr.to_string()))
-            .collect();
         let curp_client = CurpClient::new(all_members).await;
         Ok(Self {
             name: String::from("client"),

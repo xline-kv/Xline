@@ -1,4 +1,4 @@
-//! `lock_utils`
+//! `utils`
 #![deny(
     // The following are allowed by default lints according to
     // https://doc.rust-lang.org/rustc/lints/listing/allowed-by-default.html
@@ -110,6 +110,8 @@
 )]
 // When we use rust version 1.65 or later, refactor this with GAT
 
+use std::collections::HashMap;
+
 /// utils of `parking_lot` lock
 #[cfg(feature = "parking_lot")]
 pub mod parking_lot_lock;
@@ -119,3 +121,48 @@ pub mod std_lock;
 /// utils of `tokio` lock
 #[cfg(feature = "tokio")]
 pub mod tokio_lock;
+/// utils for pass span context
+pub mod tracing;
+
+/// parse members from string
+/// # Errors
+/// Return error when pass wrong args
+#[inline]
+pub fn parse_members(s: &str) -> Result<HashMap<String, String>, String> {
+    let mut map = HashMap::new();
+    for pair in s.split(',') {
+        if let Some((id, addr)) = pair.split_once('=') {
+            let _ignore = map.insert(id.to_owned(), addr.to_owned());
+        } else {
+            return Err("parse members error".to_owned());
+        }
+    }
+    Ok(map)
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    #[test]
+    fn test_parse_members() -> Result<(), String> {
+        let s1 = "";
+        assert!(parse_members(s1).is_err());
+
+        let s2 = "a=1";
+        let m2 = HashMap::from_iter(vec![("a".to_owned(), "1".to_owned())]);
+        assert_eq!(parse_members(s2)?, m2);
+
+        let s3 = "a=1,b=2,c=3";
+        let m3 = HashMap::from_iter(vec![
+            ("a".to_owned(), "1".to_owned()),
+            ("b".to_owned(), "2".to_owned()),
+            ("c".to_owned(), "3".to_owned()),
+        ]);
+        assert_eq!(parse_members(s3)?, m3);
+
+        let s4 = "abcde";
+        assert!(parse_members(s4).is_err());
+
+        Ok(())
+    }
+}
