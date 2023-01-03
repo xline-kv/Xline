@@ -1,10 +1,10 @@
 [package]
-name = "lock_utils"
+name = "utils"
 version = "0.1.0"
 authors = ["DatenLord Developers <dev@datenlord.io>"]
 edition = "2021"
-description = "Utilities funtions for lock"
-repository = "https://github.com/datenlord/Xline/tree/master/lock_utils"
+description = "Utilities funtions for Xline"
+repository = "https://github.com/datenlord/Xline/tree/master/utils"
 readme = "README.md"
 license = "MIT"
 keywords = ["utilities"]
@@ -26,3 +26,7 @@ tokio = { version = "1.23.0", features = [
     "rt-multi-thread",
 ], optional = true }
 async-trait = { version = "0.1.60", optional = true }
+tonic = "0.7.2"
+opentelemetry = "0.18.0"
+tracing = "0.1.37"
+tracing-opentelemetry = "0.18.0"

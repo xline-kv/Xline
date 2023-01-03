@@ -10,11 +10,11 @@ use std::{
 
 use clippy_utilities::NumericCast;
 use event_listener::Event;
-use lock_utils::parking_lot_lock::RwLockMap;
 use parking_lot::{lock_api::RwLockUpgradableReadGuard, Mutex, RwLock};
 use tokio::{net::TcpListener, sync::broadcast, time::Instant};
 use tokio_stream::wrappers::TcpListenerStream;
 use tracing::{debug, error, info, instrument};
+use utils::{parking_lot_lock::RwLockMap, tracing::Extract};
 
 use self::{
     cmd_board::{CmdState, CommandBoard},
@@ -33,7 +33,6 @@ use crate::{
     },
     server::cmd_execute_worker::{cmd_exe_channel, CmdExeSender},
     shutdown::Shutdown,
-    util::Extract,
 };
 
 /// Background tasks of Curp protocol

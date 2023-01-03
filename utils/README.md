@@ -1,4 +1,4 @@
-# lock_utils
+# utils
 
 This crate provides a set of utilities for locks.
 
@@ -7,12 +7,12 @@ This crate provides a set of utilities for locks.
 Add this to your Cargo.toml :
 ```Toml
 [dependencies]
-lock_utils = { path = "../lock_utils", features = ["std"] }
+utils = { path = "../utils", features = ["std"] }
 ```
 
 Write your code like this:
 ```Rust
-use lock_utils::std_lock::{MutexMap, RwLockMap};
+use utils::std_lock::{MutexMap, RwLockMap};
 use std::sync::{Mutex, RwLock};
 
 let mu = Mutex::new(1);

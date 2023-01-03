@@ -7,10 +7,10 @@ use std::{
 
 use event_listener::Event;
 use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
-use lock_utils::parking_lot_lock::RwLockMap;
 use parking_lot::RwLock;
 use tokio::time::timeout;
 use tracing::{debug, instrument, warn};
+use utils::parking_lot_lock::RwLockMap;
 
 use crate::{
     cmd::Command,

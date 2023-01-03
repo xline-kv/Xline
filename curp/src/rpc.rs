@@ -6,6 +6,7 @@ use clippy_utilities::NumericCast;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, instrument};
+use utils::tracing::Inject;
 
 pub use self::proto::protocol_server::ProtocolServer;
 pub(crate) use self::proto::{
@@ -22,7 +23,6 @@ use crate::{
     error::{ExecuteError, ProposeError},
     log::LogEntry,
     message::{ServerId, TermNum},
-    util::Inject,
 };
 
 // Skip for generated code

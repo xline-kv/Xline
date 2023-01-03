@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, net::SocketAddr};
+use std::collections::{BTreeMap, HashMap};
 
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use tokio::{
@@ -13,7 +13,7 @@ pub struct Cluster {
     /// listeners of members
     listeners: BTreeMap<usize, TcpListener>,
     /// address of members
-    addrs: Vec<SocketAddr>,
+    all_members: HashMap<String, String>,
     /// Client of cluster
     client: Option<Client>,
     /// Stop sender
@@ -29,14 +29,14 @@ impl Cluster {
         for i in 0..size {
             listeners.insert(i, TcpListener::bind("0.0.0.0:0").await.unwrap());
         }
-        let addrs = listeners
+        let all_members: HashMap<String, String> = listeners
             .iter()
-            .map(|l| l.1.local_addr().unwrap())
+            .map(|(i, l)| (format!("server{}", i), l.local_addr().unwrap().to_string()))
             .collect();
 
         Self {
             listeners,
-            addrs,
+            all_members,
             client: None,
             stop_tx: None,
             size,
@@ -46,19 +46,16 @@ impl Cluster {
     /// Start `Cluster`
     pub(crate) async fn start(&mut self) {
         let (stop_tx, _) = broadcast::channel(1);
+
         for i in 0..self.size {
-            let mut peers = self.addrs.clone();
-            peers.remove(i);
             let name = format!("server{}", i);
             let is_leader = i == 0;
-            let self_addr = self.addrs[i];
             let mut rx = stop_tx.subscribe();
             let listener = self.listeners.remove(&i).unwrap();
-
+            let all_members = self.all_members.clone();
             tokio::spawn(async move {
                 let server =
-                    XlineServer::new(name, peers, is_leader, self_addr, Self::test_key_pair())
-                        .await;
+                    XlineServer::new(name, all_members, is_leader, Self::test_key_pair()).await;
                 let signal = async {
                     let _ = rx.recv().await;
                 };
@@ -76,7 +73,7 @@ impl Cluster {
     /// Create or get the client with the specified index
     pub(crate) async fn client(&mut self) -> &mut Client {
         if self.client.is_none() {
-            let client = Client::new(self.addrs.clone(), true)
+            let client = Client::new(self.all_members.clone(), true)
                 .await
                 .unwrap_or_else(|e| {
                     panic!("Client connect error: {:?}", e);
@@ -87,8 +84,8 @@ impl Cluster {
     }
 
     #[allow(dead_code)] // used in tests but get warning
-    pub fn addrs(&self) -> &[SocketAddr] {
-        &self.addrs
+    pub fn addrs(&self) -> &HashMap<String, String> {
+        &self.all_members
     }
 
     fn test_key_pair() -> Option<(EncodingKey, DecodingKey)> {

@@ -110,7 +110,7 @@
     clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
 )]
 
-use std::{net::SocketAddr, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf};
 
 use anyhow::Result;
 use clap::Parser;
@@ -120,6 +120,7 @@ use opentelemetry_contrib::trace::exporter::jaeger_json::JaegerJsonExporter;
 use tokio::fs;
 use tracing::{debug, error, metadata::LevelFilter};
 use tracing_subscriber::prelude::*;
+use utils::parse_members;
 use xline::server::XlineServer;
 
 /// Command line arguments
@@ -130,17 +131,11 @@ struct ServerArgs {
     #[clap(long)]
     name: String,
     /// Cluster peers. eg: 192.168.x.x:8080 192.168.x.x:8080
-    #[clap(long, multiple = true, required = true)]
-    cluster_peers: Vec<SocketAddr>,
+    #[clap(long,value_parser = parse_members)]
+    members: HashMap<String, String>,
     /// If node is leader
     #[clap(long)]
     is_leader: bool,
-    /// Leader's ip and port. eg: 192.168.x.x:8080
-    #[clap(long)]
-    leader_ip_port: SocketAddr,
-    /// Current node ip and port. eg: 192.168.x.x:8080
-    #[clap(long)]
-    self_ip_port: SocketAddr,
     /// Private key uesd to sign the token
     #[clap(long)]
     auth_private_key: Option<PathBuf>,
@@ -250,19 +245,21 @@ async fn main() -> Result<()> {
         server_args.jaeger_level,
     )?;
     debug!("name = {:?}", server_args.name);
-    debug!("server_addr = {:?}", server_args.self_ip_port);
-    debug!("cluster_peers = {:?}", server_args.cluster_peers);
+    let self_addr = server_args
+        .members
+        .get(&server_args.name)
+        .unwrap_or_else(|| panic!("node name {} not found in cluster peers", server_args.name))
+        .parse()?;
     let key_pair = read_key_pair(server_args.auth_private_key, server_args.auth_public_key).await;
     let server = XlineServer::new(
         server_args.name,
-        server_args.cluster_peers,
+        server_args.members,
         server_args.is_leader,
-        server_args.self_ip_port,
         key_pair,
     )
     .await;
     debug!("{:?}", server);
-    server.start(server_args.self_ip_port).await?;
+    server.start(self_addr).await?;
     global::shutdown_tracer_provider();
     Ok(())
 }

@@ -119,5 +119,7 @@ mod header_gen;
 mod rpc;
 /// Xline server
 pub mod server;
+/// State of current node
+mod state;
 /// Storage module
 mod storage;

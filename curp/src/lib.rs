@@ -124,9 +124,6 @@ pub mod error;
 /// The command to be executed
 pub mod cmd;
 
-/// The util lib
-mod util;
-
 /// Message sent between servers and clients
 mod message;
 

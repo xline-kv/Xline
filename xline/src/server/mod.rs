@@ -11,6 +11,6 @@ mod lock_server;
 /// Xline watch server
 mod watch_server;
 /// Xline server
-pub(crate) mod xline_server;
+mod xline_server;
 
 pub use self::xline_server::XlineServer;
