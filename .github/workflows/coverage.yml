@@ -1,11 +1,15 @@
 on:
+  push:
+    branches:
+      - master
   pull_request:
-    types:
-      - closed
+    branches: [ master ]
+
+env:
+  CI_RUST_TOOLCHAIN: 1.61.0
 
 jobs:
   coverage:
-    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2

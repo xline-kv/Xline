@@ -1,15 +1,16 @@
 # Xline
 
-[![Join the chat at https://gitter.im/datenlord/Xline](https://badges.gitter.im/datenlord/Xline.svg)](https://gitter.im/datenlord/Xline?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
-
+[![Join the chat at https://gitter.im/datenlord/Xline](https://badges.gitter.im/datenlord/Xline.svg)][gitter-url]
 [![Apache 2.0 licensed][apache-badge]][apache-url]
 [![Build Status][actions-badge]][actions-url]
+[![codecov](https://codecov.io/gh/datenlord/xline/branch/master/graph/badge.svg)][cov-url]
 
+[gitter-url]: https://gitter.im/datenlord/Xline?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge
 [apache-badge]: https://img.shields.io/badge/license-Apache--2.0-brightgreen
 [apache-url]: https://github.com/datenlord/Xline/blob/master/LICENSE
 [actions-badge]: https://github.com/datenlord/xline/actions/workflows/ci.yml/badge.svg?branch=master
 [actions-url]: https://github.com/datenlord/xline/actions
-[![codecov](https://codecov.io/gh/datenlord/xline/branch/master/graph/badge.svg)](https://codecov.io/gh/datenlord/xline)
+[cov-url]: https://codecov.io/gh/datenlord/xline
 
 `Xline` is a geo-distributed KV store for metadata management. It provides the
 following features:
