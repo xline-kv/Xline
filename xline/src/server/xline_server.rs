@@ -3,6 +3,7 @@ use std::{collections::HashMap, future::Future, net::SocketAddr, sync::Arc};
 use anyhow::Result;
 use curp::{client::Client, server::Rpc, ProtocolServer};
 use jsonwebtoken::{DecodingKey, EncodingKey};
+use parking_lot::RwLock;
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
@@ -21,6 +22,7 @@ use crate::{
         AuthServer as RpcAuthServer, KvServer as RpcKvServer, LeaseServer as RpcLeaseServer,
         LockServer as RpcLockServer, WatchServer as RpcWatchServer,
     },
+    state::State,
     storage::{authstore::AuthStore, KvStore},
 };
 
@@ -31,23 +33,14 @@ type CurpServer = Rpc<Command>;
 #[allow(dead_code)] // Remove this after feature is completed
 #[derive(Debug)]
 pub struct XlineServer {
-    /// Server name
-    name: String,
-    /// Address of peers
-    peers: Vec<SocketAddr>,
+    /// State of current node
+    state: Arc<RwLock<State>>,
     /// Kv storage
     kv_storage: Arc<KvStore>,
     /// Auth storage
     auth_storage: Arc<AuthStore>,
-    /// Consensus Server
-    //node: Arc<DefaultServer<Command, CommandExecutor>>,
     /// Consensus client
     client: Arc<Client<Command>>,
-    /// If current node is leader when it starts
-    /// TODO: remove this when leader selection is supported
-    is_leader: bool,
-    /// Address of self node
-    self_addr: SocketAddr,
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
 }
@@ -61,33 +54,33 @@ impl XlineServer {
     #[inline]
     pub async fn new(
         name: String,
-        peers: Vec<SocketAddr>,
+        all_members: HashMap<String, String>,
         is_leader: bool,
-        self_addr: SocketAddr,
         key_pair: Option<(EncodingKey, DecodingKey)>,
     ) -> Self {
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let kv_storage = Arc::new(KvStore::new(Arc::clone(&header_gen)));
         let auth_storage = Arc::new(AuthStore::new(key_pair, Arc::clone(&header_gen)));
-
-        let mut all_members: HashMap<_, _> = peers
-            .iter()
-            .map(|addr| (addr.to_string(), addr.to_string()))
-            .collect();
-        let _ignore = all_members.insert(self_addr.to_string(), self_addr.to_string());
-
-        let client = Arc::new(Client::<Command>::new(all_members).await);
-
+        let client = Arc::new(Client::<Command>::new(all_members.clone()).await);
+        let leader_id = is_leader.then(|| name.clone());
+        let state = Arc::new(RwLock::new(State::new(name, leader_id, all_members)));
         Self {
-            name,
-            peers,
+            state,
             kv_storage,
             auth_storage,
             client,
-            is_leader,
-            self_addr,
             header_gen,
         }
+    }
+
+    /// Server id
+    fn id(&self) -> String {
+        self.state.read().id().to_owned()
+    }
+
+    /// Check if current node is leader
+    fn is_leader(&self) -> bool {
+        self.state.read().is_leader()
     }
 
     /// Start `XlineServer`
@@ -153,31 +146,28 @@ impl XlineServer {
             KvServer::new(
                 Arc::clone(&self.kv_storage),
                 Arc::clone(&self.client),
-                self.name.clone(),
+                self.id(),
             ),
             LockServer::new(
                 Arc::clone(&self.kv_storage),
                 Arc::clone(&self.client),
-                self.name.clone(),
+                self.id(),
             ),
             LeaseServer::new(
                 Arc::clone(&self.kv_storage),
                 Arc::clone(&self.client),
-                self.name.clone(),
+                self.id(),
             ),
             AuthServer::new(
                 Arc::clone(&self.auth_storage),
                 Arc::clone(&self.client),
-                self.name.clone(),
+                self.id(),
             ),
             WatchServer::new(self.kv_storage.kv_watcher()),
             CurpServer::new(
-                self.self_addr.to_string(),
-                self.is_leader,
-                self.peers
-                    .iter()
-                    .map(|peer| (peer.to_string(), peer.to_string()))
-                    .collect(),
+                self.id(),
+                self.is_leader(),
+                self.state.read().others(),
                 CommandExecutor::new(Arc::clone(&self.kv_storage), Arc::clone(&self.auth_storage)),
             ),
         )

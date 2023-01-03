@@ -110,7 +110,7 @@
     clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
 )]
 
-use std::{net::SocketAddr, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf};
 
 use anyhow::Result;
 use clap::Parser;
@@ -131,17 +131,11 @@ struct ServerArgs {
     #[clap(long)]
     name: String,
     /// Cluster peers. eg: 192.168.x.x:8080 192.168.x.x:8080
-    #[clap(long, multiple = true, required = true)]
-    cluster_peers: Vec<SocketAddr>,
+    #[clap(long,value_parser = parse_members)]
+    members: HashMap<String, String>,
     /// If node is leader
     #[clap(long)]
     is_leader: bool,
-    /// Leader's ip and port. eg: 192.168.x.x:8080
-    #[clap(long)]
-    leader_ip_port: SocketAddr,
-    /// Current node ip and port. eg: 192.168.x.x:8080
-    #[clap(long)]
-    self_ip_port: SocketAddr,
     /// Private key uesd to sign the token
     #[clap(long)]
     auth_private_key: Option<PathBuf>,
@@ -160,6 +154,19 @@ struct ServerArgs {
     /// Trace level of jaeger
     #[clap(long)]
     jaeger_level: Option<LevelFilter>,
+}
+
+/// parse members from string
+fn parse_members(s: &str) -> Result<HashMap<String, String>, String> {
+    let mut map = HashMap::new();
+    for pair in s.split(',') {
+        if let Some((id, addr)) = pair.split_once('=') {
+            let _ignore = map.insert(id.to_owned(), addr.to_owned());
+        } else {
+            return Err("parse members error".to_owned());
+        }
+    }
+    Ok(map)
 }
 
 /// init tracing subscriber
@@ -251,19 +258,48 @@ async fn main() -> Result<()> {
         server_args.jaeger_level,
     )?;
     debug!("name = {:?}", server_args.name);
-    debug!("server_addr = {:?}", server_args.self_ip_port);
-    debug!("cluster_peers = {:?}", server_args.cluster_peers);
+    let self_addr = server_args
+        .members
+        .get(&server_args.name)
+        .unwrap_or_else(|| panic!("node name {} not found in cluster peers", server_args.name))
+        .parse()?;
     let key_pair = read_key_pair(server_args.auth_private_key, server_args.auth_public_key).await;
     let server = XlineServer::new(
         server_args.name,
-        server_args.cluster_peers,
+        server_args.members,
         server_args.is_leader,
-        server_args.self_ip_port,
         key_pair,
     )
     .await;
     debug!("{:?}", server);
-    server.start(server_args.self_ip_port).await?;
+    server.start(self_addr).await?;
     global::shutdown_tracer_provider();
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    #[test]
+    fn test_parse_members() -> Result<(), String> {
+        let s1 = "";
+        assert!(parse_members(s1).is_err());
+
+        let s2 = "a=1";
+        let m2 = HashMap::from_iter(vec![("a".to_owned(), "1".to_owned())]);
+        assert_eq!(parse_members(s2)?, m2);
+
+        let s3 = "a=1,b=2,c=3";
+        let m3 = HashMap::from_iter(vec![
+            ("a".to_owned(), "1".to_owned()),
+            ("b".to_owned(), "2".to_owned()),
+            ("c".to_owned(), "3".to_owned()),
+        ]);
+        assert_eq!(parse_members(s3)?, m3);
+
+        let s4 = "abcde";
+        assert!(parse_members(s4).is_err());
+
+        Ok(())
+    }
 }

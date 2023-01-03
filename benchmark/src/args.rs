@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::collections::HashMap;
 
 use clap::{Parser, Subcommand};
 
@@ -8,8 +8,8 @@ use clap::{Parser, Subcommand};
 /// Args of Benchmark
 pub struct Benchmark {
     /// The address of the server
-    #[clap(long, required = true, multiple = true)]
-    pub endpoints: Vec<SocketAddr>,
+    #[clap(long, value_parser = parse_members)]
+    pub endpoints: HashMap<String, String>,
     /// Index of leader serer
     #[clap(long, required = true)]
     pub leader_index: usize,
@@ -48,4 +48,17 @@ pub enum Commands {
         #[clap(long, default_value_t = false)]
         sequential_keys: bool,
     },
+}
+
+/// parse members from string
+fn parse_members(s: &str) -> Result<HashMap<String, String>, String> {
+    let mut map = HashMap::new();
+    for pair in s.split(',') {
+        if let Some((id, addr)) = pair.split_once('=') {
+            let _ignore = map.insert(id.to_owned(), addr.to_owned());
+        } else {
+            return Err("parse members error".to_owned());
+        }
+    }
+    Ok(map)
 }
