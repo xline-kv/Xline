@@ -3,8 +3,9 @@ use std::{collections::HashMap, future::Future, net::SocketAddr, sync::Arc};
 use anyhow::Result;
 use curp::{client::Client, server::Rpc, ProtocolServer};
 use jsonwebtoken::{DecodingKey, EncodingKey};
+use lock_utils::parking_lot_lock::RwLockMap;
 use parking_lot::RwLock;
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, sync::broadcast};
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
 
@@ -142,9 +143,20 @@ impl XlineServer {
         WatchServer,
         CurpServer,
     ) {
+        let (_tx, mut rx) = broadcast::channel(1);
+        let _handle = tokio::spawn({
+            let state_clone = Arc::clone(&self.state);
+            async move {
+                while let Ok(leader_id) = rx.recv().await {
+                    state_clone.map_write(|mut state| state.set_leader_id(leader_id));
+                }
+            }
+        });
         (
             KvServer::new(
                 Arc::clone(&self.kv_storage),
+                Arc::clone(&self.auth_storage),
+                Arc::clone(&self.state),
                 Arc::clone(&self.client),
                 self.id(),
             ),

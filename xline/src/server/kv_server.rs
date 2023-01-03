@@ -1,7 +1,9 @@
 use std::{collections::HashSet, fmt::Debug, sync::Arc};
 
 use curp::{client::Client, cmd::ProposeId, error::ProposeError};
+use lock_utils::parking_lot_lock::RwLockMap;
 use log::debug;
+use parking_lot::RwLock;
 use tracing::instrument;
 use uuid::Uuid;
 
@@ -12,10 +14,12 @@ use super::{
 use crate::{
     rpc::{
         CompactionRequest, CompactionResponse, DeleteRangeRequest, DeleteRangeResponse, Kv,
-        PutRequest, PutResponse, RangeRequest, RangeResponse, Request, RequestOp, RequestWithToken,
-        RequestWrapper, Response, ResponseOp, SortOrder, SortTarget, TxnRequest, TxnResponse,
+        KvClient, PutRequest, PutResponse, RangeRequest, RangeResponse, Request, RequestOp,
+        RequestWithToken, RequestWrapper, Response, ResponseOp, SortOrder, SortTarget, TxnRequest,
+        TxnResponse,
     },
-    storage::KvStore,
+    state::State,
+    storage::{AuthStore, KvStore},
 };
 
 /// Default max txn ops
@@ -26,20 +30,32 @@ const DEFAULT_MAX_TXN_OPS: usize = 128;
 #[allow(dead_code)] // Remove this after feature is completed
 pub(crate) struct KvServer {
     /// KV storage
-    storage: Arc<KvStore>,
+    kv_storage: Arc<KvStore>,
+    /// KV storage
+    auth_storage: Arc<AuthStore>,
     /// Consensus client
     client: Arc<Client<Command>>,
     /// Server name
     name: String,
+    /// State of current node
+    state: Arc<RwLock<State>>,
 }
 
 impl KvServer {
     /// New `KvServer`
-    pub(crate) fn new(storage: Arc<KvStore>, client: Arc<Client<Command>>, name: String) -> Self {
+    pub(crate) fn new(
+        kv_storage: Arc<KvStore>,
+        auth_storage: Arc<AuthStore>,
+        state: Arc<RwLock<State>>,
+        client: Arc<Client<Command>>,
+        name: String,
+    ) -> Self {
         Self {
-            storage,
+            kv_storage,
+            auth_storage,
             client,
             name,
+            state,
         }
     }
 
@@ -79,6 +95,32 @@ impl KvServer {
             _ => unreachable!("Other request should not be sent to this store"),
         };
         Command::new(key_ranges, wrapper, propose_id)
+    }
+
+    /// Execute `RangeRequest` in current node
+    fn serializable_range(
+        &self,
+        request: tonic::Request<RangeRequest>,
+    ) -> Result<tonic::Response<RangeResponse>, tonic::Status> {
+        let wrapper = match get_token(request.metadata()) {
+            Some(token) => RequestWithToken::new_with_token(request.into_inner().into(), token),
+            None => RequestWithToken::new(request.into_inner().into()),
+        };
+        self.auth_storage
+            .check_permission(&wrapper)
+            .map_err(|err| tonic::Status::invalid_argument(err.to_string()))?;
+        let id = self.generate_propose_id();
+        let cmd_res = self
+            .kv_storage
+            .execute(id, wrapper)
+            .map_err(|e| tonic::Status::internal(&format!("Execute failed: {:?}", e)))?;
+        let mut res = Self::parse_response_op(cmd_res.decode().into());
+        Self::update_header_revision(&mut res, self.kv_storage.revision());
+        if let Response::ResponseRange(response) = res {
+            Ok(tonic::Response::new(response))
+        } else {
+            panic!("Receive wrong response {:?} for RangeRequest", res);
+        }
     }
 
     /// Propose request and get result with fast/slow path
@@ -156,11 +198,6 @@ impl KvServer {
 
     /// Validate range request before handle
     fn check_range_request(req: &RangeRequest) -> Result<(), tonic::Status> {
-        if req.serializable {
-            return Err(tonic::Status::unimplemented(
-                "serializable is unimplemented",
-            ));
-        }
         if req.keys_only {
             return Err(tonic::Status::unimplemented("keys_only is unimplemented"));
         }
@@ -324,6 +361,11 @@ impl KvServer {
         }
         Ok((puts, dels))
     }
+
+    /// Check if the current node is leader
+    fn is_leader(&self) -> bool {
+        self.state.read().is_leader()
+    }
 }
 
 #[tonic::async_trait]
@@ -334,20 +376,20 @@ impl Kv for KvServer {
         request: tonic::Request<RangeRequest>,
     ) -> Result<tonic::Response<RangeResponse>, tonic::Status> {
         debug!("Receive RangeRequest {:?}", request);
-        Self::check_range_request(request.get_ref())?;
-        let is_fast_path = true;
-        let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
-
-        let mut res = Self::parse_response_op(cmd_res.decode().into());
-        if let Some(sync_res) = sync_res {
-            let revision = sync_res.revision();
-            debug!("Get revision {:?} for RangeRequest", revision);
-            Self::update_header_revision(&mut res, revision);
-        }
-        if let Response::ResponseRange(response) = res {
-            Ok(tonic::Response::new(response))
+        let range_req = request.get_ref();
+        Self::check_range_request(range_req)?;
+        if range_req.serializable || self.is_leader() {
+            self.serializable_range(request)
         } else {
-            panic!("Receive wrong response {:?} for RangeRequest", res);
+            let leader_addr = self.state.map_read(|s| {
+                s.leader_address()
+                    .ok_or_else(|| tonic::Status::internal("Get leader address error"))
+                    .map(str::to_owned)
+            })?;
+            let mut kv_client = KvClient::connect(leader_addr)
+                .await
+                .map_err(|_e| tonic::Status::internal("Connect to leader error: {e}"))?;
+            kv_client.range(request).await
         }
     }
 

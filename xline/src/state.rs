@@ -30,6 +30,18 @@ impl State {
         &self.id
     }
 
+    /// Get leader address
+    pub(crate) fn leader_address(&self) -> Option<&str> {
+        self.leader_id
+            .as_ref()
+            .and_then(|id| self.members.get(id).map(String::as_str))
+    }
+
+    /// Set leader id
+    pub(crate) fn set_leader_id(&mut self, leader_id: String) {
+        self.leader_id = Some(leader_id);
+    }
+
     /// Check if current node is leader
     pub(crate) fn is_leader(&self) -> bool {
         if let Some(ref leader_id) = self.leader_id {

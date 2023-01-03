@@ -78,6 +78,11 @@ impl KvStore {
     pub(crate) fn kv_watcher(&self) -> Arc<KvWatcher> {
         Arc::clone(&self.kv_watcher)
     }
+
+    /// Get revision
+    pub(crate) fn revision(&self) -> i64 {
+        self.inner.revision()
+    }
 }
 
 impl KvStoreBackend {

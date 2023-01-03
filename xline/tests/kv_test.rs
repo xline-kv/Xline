@@ -63,10 +63,10 @@ async fn test_kv_get() -> Result<(), Box<dyn Error>> {
             req: RangeRequest::new("a"),
             want_kvs: &want_kvs[..1],
         },
-        // TestCase {
-        //     req: RangeRequest::new("a").with_serializable(true),
-        //     want_kvs: &want_kvs[..1],
-        // },
+        TestCase {
+            req: RangeRequest::new("a").with_serializable(true),
+            want_kvs: &want_kvs[..1],
+        },
         TestCase {
             req: RangeRequest::new("a").with_range_end("c"),
             want_kvs: &want_kvs[..2],
