@@ -113,8 +113,7 @@ impl KvServer {
             .kv_storage
             .execute(id, wrapper)
             .map_err(|e| tonic::Status::internal(&format!("Execute failed: {:?}", e)))?;
-        let mut res = Self::parse_response_op(cmd_res.decode().into());
-        Self::update_header_revision(&mut res, self.kv_storage.revision());
+        let res = Self::parse_response_op(cmd_res.decode().into());
         if let Response::ResponseRange(response) = res {
             Ok(tonic::Response::new(response))
         } else {
@@ -197,20 +196,6 @@ impl KvServer {
 
     /// Validate range request before handle
     fn check_range_request(req: &RangeRequest) -> Result<(), tonic::Status> {
-        if req.keys_only {
-            return Err(tonic::Status::unimplemented("keys_only is unimplemented"));
-        }
-        if req.min_mod_revision != 0
-            || req.max_mod_revision != 0
-            || req.min_create_revision != 0
-            || req.max_create_revision != 0
-        {
-            return Err(tonic::Status::unimplemented(
-                "min/max mod/create revision is unimplemented",
-            ));
-        }
-        // TODO: Remove the above errors after implementation
-
         if req.key.is_empty() {
             return Err(tonic::Status::invalid_argument("key is not provided"));
         }
@@ -284,6 +269,7 @@ impl KvServer {
 
         Ok(())
     }
+
     /// Check if puts and deletes overlap
     fn check_intervals(
         ops: &[RequestOp],
@@ -386,7 +372,7 @@ impl Kv for KvServer {
                     .ok_or_else(|| tonic::Status::internal("Get leader address error"))
                     .map(str::to_owned)
             })?;
-            let mut kv_client = KvClient::connect(format!{"http://{leader_addr}"})
+            let mut kv_client = KvClient::connect(format!("http://{leader_addr}"))
                 .await
                 .map_err(|_e| tonic::Status::internal("Connect to leader error: {e}"))?;
             kv_client.range(request).await
