@@ -156,10 +156,18 @@ async fn test_kv_get() -> Result<(), Box<dyn Error>> {
         assert!(is_identical);
     }
 
-    // test range redirect
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+async fn test_range_redirect() -> Result<(), Box<dyn Error>> {
+    let mut cluster = Cluster::new(3).await;
+    cluster.start().await;
+
     let addr = cluster.addrs()["server1"].clone();
     let mut kv_client = Client::connect([addr], None).await?.kv_client();
-    let res = kv_client.get("a", None).await?;
+    let _ignore = kv_client.put("foo", "bar", None).await?;
+    let res = kv_client.get("foo", None).await?;
     assert_eq!(res.kvs().len(), 1);
     assert_eq!(res.kvs()[0].value(), b"bar");
 
