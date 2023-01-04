@@ -1,8 +1,6 @@
 on:
-  push:
-    branches:
-      - master
   pull_request:
+    types: [ closed ]
     branches: [ master ]
 
 env:
@@ -10,6 +8,7 @@ env:
 
 jobs:
   coverage:
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
