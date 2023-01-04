@@ -1,4 +1,12 @@
-use std::{cmp::Ordering, collections::HashMap, fmt, sync::Arc};
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+    fmt,
+    sync::{
+        atomic::{AtomicBool, Ordering as AtomicOrdering},
+        Arc,
+    },
+};
 
 use anyhow::Result;
 use clippy_utilities::{Cast, OverflowArithmetic};
@@ -61,7 +69,7 @@ pub(crate) struct AuthStoreBackend {
     /// Speculative execution pool. Mapping from propose id to request
     sp_exec_pool: Mutex<HashMap<ProposeId, RequestCtx>>,
     /// Enabled
-    enabled: Mutex<bool>,
+    enabled: AtomicBool,
     /// Permission cache
     permission_cache: RwLock<PermissionCache>,
     /// The manager of token
@@ -93,7 +101,7 @@ impl AuthStoreBackend {
             db: DB::new(),
             revision: Mutex::new(1),
             sp_exec_pool: Mutex::new(HashMap::new()),
-            enabled: Mutex::new(false),
+            enabled: AtomicBool::new(false),
             token_manager: key_pair.map(|(encoding_key, decoding_key)| {
                 JwtTokenManager::new(encoding_key, decoding_key)
             }),
@@ -109,7 +117,7 @@ impl AuthStoreBackend {
 
     /// Get enabled of Auth store
     pub(crate) fn is_enabled(&self) -> bool {
-        *self.enabled.lock()
+        self.enabled.load(AtomicOrdering::Acquire)
     }
 
     /// Check password
@@ -794,7 +802,7 @@ impl AuthStoreBackend {
             return false;
         }
         self.put(AUTH_ENABLE_KEY.to_vec(), vec![1], revision, 0);
-        *self.enabled.lock() = true;
+        self.enabled.store(true, AtomicOrdering::Release);
         self.create_permission_cache();
         true
     }
@@ -805,7 +813,7 @@ impl AuthStoreBackend {
             return false;
         }
         self.put(AUTH_ENABLE_KEY.to_vec(), vec![0], revision, 0);
-        *self.enabled.lock() = false;
+        self.enabled.store(false, AtomicOrdering::Release);
         true
     }
 
