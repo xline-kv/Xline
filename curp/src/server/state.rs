@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use event_listener::Event;
 use parking_lot::{Mutex, RwLock};
-use tokio::time::Instant;
+use tokio::{sync::broadcast, time::Instant};
 use tracing::debug;
 
 use super::{cmd_board::CommandBoard, ServerRole};
@@ -50,6 +50,8 @@ pub(super) struct State<C: Command + 'static> {
     pub(super) cmd_board: Arc<Mutex<CommandBoard>>,
     /// Last time a rpc is received.
     pub(super) last_rpc_time: Arc<RwLock<Instant>>,
+    /// Leader changes tx
+    leader_tx: broadcast::Sender<Option<ServerId>>,
 }
 
 impl<C: Command + 'static> State<C> {
@@ -67,9 +69,10 @@ impl<C: Command + 'static> State<C> {
             assert!(next_index.insert(other.clone(), 1).is_none());
             assert!(match_index.insert(other.clone(), 0).is_none());
         }
+        let (tx, _) = broadcast::channel(1);
         Self {
+            leader_id: matches!(role, ServerRole::Leader).then(|| id.clone()),
             id,
-            leader_id: None,
             role,
             term: 0,
             log: vec![LogEntry::new(0, &[])], // a fake log[0] will simplify the boundary check significantly
@@ -85,6 +88,7 @@ impl<C: Command + 'static> State<C> {
             calibrate_trigger: Arc::new(Event::new()),
             cmd_board,
             last_rpc_time,
+            leader_tx: tx,
         }
     }
 
@@ -117,7 +121,10 @@ impl<C: Command + 'static> State<C> {
         self.set_role(ServerRole::Follower);
         self.voted_for = None;
         self.votes_received = 0;
-        self.leader_id = None;
+        if self.leader_id.is_some() {
+            self.leader_id = None;
+            let _ig = self.leader_tx.send(None).ok();
+        }
         debug!("updated to term {term}");
     }
 
@@ -132,6 +139,14 @@ impl<C: Command + 'static> State<C> {
             if prev_role == ServerRole::Leader {
                 self.cmd_board.lock().release_notifiers();
             }
+        }
+    }
+
+    /// Set leader
+    pub(super) fn set_leader(&mut self, leader_id: ServerId) {
+        if self.leader_id.is_none() {
+            self.leader_id = Some(leader_id.clone());
+            let _ig = self.leader_tx.send(Some(leader_id)).ok();
         }
     }
 
@@ -163,5 +178,41 @@ impl<C: Command + 'static> State<C> {
     /// Get `cmd_board`
     pub(super) fn cmd_board(&self) -> Arc<Mutex<CommandBoard>> {
         Arc::clone(&self.cmd_board)
+    }
+
+    /// Get channel for leader changes
+    pub(super) fn leader_rx(&self) -> broadcast::Receiver<Option<ServerId>> {
+        self.leader_tx.subscribe()
+    }
+}
+
+#[cfg_attr(test, allow(clippy::unwrap_used))]
+#[cfg(test)]
+mod tests {
+    use crate::test_utils::test_cmd::TestCommand;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn leader_broadcast() {
+        let mut state: State<TestCommand> = State::new(
+            "Foo".to_owned(),
+            ServerRole::Leader,
+            HashMap::new(),
+            Arc::new(Mutex::new(CommandBoard::new())),
+            Arc::new(RwLock::new(Instant::now())),
+        );
+        let mut rx = state.leader_tx.subscribe();
+
+        state.update_to_term(1);
+        assert!(rx.recv().await.unwrap().is_none());
+        state.set_leader("S1".to_owned());
+        assert_eq!(rx.recv().await.unwrap().unwrap().as_str(), "S1");
+
+        // the subscriber will only receive the newest changes, otherwise it will return delay, and we can receive again
+        state.update_to_term(2);
+        state.set_leader("S2".to_owned());
+        assert!(rx.recv().await.is_err());
+        assert_eq!(rx.recv().await.unwrap().unwrap().as_str(), "S2");
     }
 }

@@ -189,6 +189,13 @@ impl<C: Command + 'static> Rpc<C> {
             .await?;
         Ok(())
     }
+
+    /// Get a subscriber for leader changes
+    #[inline]
+    #[must_use]
+    pub fn leader_rx(&self) -> broadcast::Receiver<Option<ServerId>> {
+        self.inner.state.read().leader_rx()
+    }
 }
 
 /// The server that handles client request and server consensus protocol
@@ -557,9 +564,7 @@ impl<C: 'static + Command> Protocol<C> {
         if req.term > state.term {
             state.update_to_term(req.term);
         }
-        if state.leader_id.is_none() {
-            state.leader_id = Some(req.leader_id.clone());
-        }
+        state.set_leader(req.leader_id.clone());
 
         *self.last_rpc_time.write() = Instant::now();
 
