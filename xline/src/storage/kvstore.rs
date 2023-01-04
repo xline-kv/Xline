@@ -1,22 +1,27 @@
 use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 
 use clippy_utilities::{Cast, OverflowArithmetic};
-use curp::cmd::ProposeId;
-use curp::error::ExecuteError;
+use curp::{cmd::ProposeId, error::ExecuteError};
 use log::debug;
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
 
-use super::index::IndexOperate;
-use super::{db::DB, index::Index, kvwatcher::KvWatcher};
-use crate::header_gen::HeaderGenerator;
-use crate::rpc::{
-    Compare, CompareResult, CompareTarget, DeleteRangeRequest, DeleteRangeResponse, Event,
-    EventType, KeyValue, PutRequest, PutResponse, RangeRequest, RangeResponse, RequestWithToken,
-    RequestWrapper, ResponseWrapper, SortOrder, SortTarget, TargetUnion, TxnRequest, TxnResponse,
+use super::{
+    db::DB,
+    index::{Index, IndexOperate},
+    kvwatcher::KvWatcher,
+    req_ctx::RequestCtx,
 };
-use crate::server::command::{CommandResponse, KeyRange, SyncResponse};
-use crate::storage::req_ctx::RequestCtx;
+use crate::{
+    header_gen::HeaderGenerator,
+    rpc::{
+        Compare, CompareResult, CompareTarget, DeleteRangeRequest, DeleteRangeResponse, Event,
+        EventType, KeyValue, PutRequest, PutResponse, RangeRequest, RangeResponse,
+        RequestWithToken, RequestWrapper, ResponseWrapper, SortOrder, SortTarget, TargetUnion,
+        TxnRequest, TxnResponse,
+    },
+    server::command::{CommandResponse, KeyRange, SyncResponse},
+};
 
 /// Default channel size
 const CHANNEL_SIZE: usize = 128;
@@ -77,11 +82,6 @@ impl KvStore {
     /// Get KV watcher
     pub(crate) fn kv_watcher(&self) -> Arc<KvWatcher> {
         Arc::clone(&self.kv_watcher)
-    }
-
-    /// Get revision
-    pub(crate) fn revision(&self) -> i64 {
-        self.inner.revision()
     }
 }
 
@@ -160,6 +160,27 @@ impl KvStoreBackend {
         self.db.get_values(&revisions)
     }
 
+    /// Get `KeyValue` of a range with limit and count only, return kvs and total count
+    fn get_range_with_opts(
+        &self,
+        key: &[u8],
+        range_end: &[u8],
+        revision: i64,
+        limit: usize,
+        count_only: bool,
+    ) -> (Vec<KeyValue>, usize) {
+        let mut revisions = self.index.get(key, range_end, revision);
+        let total = revisions.len();
+        if count_only {
+            return (vec![], total);
+        }
+        if limit != 0 {
+            revisions.truncate(limit);
+        }
+        let kvs = self.db.get_values(&revisions);
+        (kvs, total)
+    }
+
     /// Get `KeyValue` start from a revision and convert to `Event`
     pub(crate) fn get_event_from_revision(&self, key_range: KeyRange, revision: i64) -> Vec<Event> {
         let key = key_range.start.as_slice();
@@ -187,55 +208,112 @@ impl KvStoreBackend {
             .collect()
     }
 
+    /// Sort kvs by sort target and order
+    fn sort_kvs(kvs: &mut [KeyValue], sort_order: SortOrder, sort_target: SortTarget) {
+        match (sort_target, sort_order) {
+            (SortTarget::Key, SortOrder::None) => {}
+            (SortTarget::Key, SortOrder::Ascend) => {
+                kvs.sort_by(|a, b| a.key.cmp(&b.key));
+            }
+            (SortTarget::Key, SortOrder::Descend) => {
+                kvs.sort_by(|a, b| b.key.cmp(&a.key));
+            }
+            (SortTarget::Version, SortOrder::Ascend | SortOrder::None) => {
+                kvs.sort_by(|a, b| a.version.cmp(&b.version));
+            }
+            (SortTarget::Version, SortOrder::Descend) => {
+                kvs.sort_by(|a, b| b.version.cmp(&a.version));
+            }
+            (SortTarget::Create, SortOrder::Ascend | SortOrder::None) => {
+                kvs.sort_by(|a, b| a.create_revision.cmp(&b.create_revision));
+            }
+            (SortTarget::Create, SortOrder::Descend) => {
+                kvs.sort_by(|a, b| b.create_revision.cmp(&a.create_revision));
+            }
+            (SortTarget::Mod, SortOrder::Ascend | SortOrder::None) => {
+                kvs.sort_by(|a, b| a.mod_revision.cmp(&b.mod_revision));
+            }
+            (SortTarget::Mod, SortOrder::Descend) => {
+                kvs.sort_by(|a, b| b.mod_revision.cmp(&a.mod_revision));
+            }
+            (SortTarget::Value, SortOrder::Ascend | SortOrder::None) => {
+                kvs.sort_by(|a, b| a.value.cmp(&b.value));
+            }
+            (SortTarget::Value, SortOrder::Descend) => {
+                kvs.sort_by(|a, b| b.value.cmp(&a.value));
+            }
+        };
+    }
+
+    /// fitler kvs by `{max,min}_{mod,create}_revision`
+    fn filter_kvs(
+        kvs: &mut Vec<KeyValue>,
+        max_mod_revision: i64,
+        min_mod_revision: i64,
+        max_create_revision: i64,
+        min_create_revision: i64,
+    ) {
+        if max_mod_revision > 0 {
+            kvs.retain(|kv| kv.mod_revision <= max_mod_revision);
+        }
+        if min_mod_revision > 0 {
+            kvs.retain(|kv| kv.mod_revision >= min_mod_revision);
+        }
+        if max_create_revision > 0 {
+            kvs.retain(|kv| kv.create_revision <= max_create_revision);
+        }
+        if min_create_revision > 0 {
+            kvs.retain(|kv| kv.create_revision >= min_create_revision);
+        }
+    }
+
     /// Handle `RangeRequest`
     fn handle_range_request(&self, req: &RangeRequest) -> RangeResponse {
-        let mut kvs = self.get_range(&req.key, &req.range_end, req.revision);
-        debug!("handle_range_request kvs {:?}", kvs);
+        debug!("handle_range_request kvs");
+        let limit = if (req.sort_order() != SortOrder::None)
+            || (req.max_mod_revision != 0)
+            || (req.min_mod_revision != 0)
+            || (req.max_create_revision != 0)
+            || (req.min_create_revision != 0)
+            || (req.limit == 0)
+        {
+            0 // get all from storage then sort and filter
+        } else {
+            req.limit.overflow_add(1) // get one extra for more flag
+        };
+        let (mut kvs, total) = self.get_range_with_opts(
+            &req.key,
+            &req.range_end,
+            req.revision,
+            limit.cast(),
+            req.count_only,
+        );
         let mut response = RangeResponse {
-            header: Some(self.header_gen.gen_header_without_revision()),
-            count: kvs.len().cast(),
+            header: Some(self.header_gen.gen_header()),
+            count: total.cast(),
             ..RangeResponse::default()
         };
-        if !req.count_only {
-            match (req.sort_target(), req.sort_order()) {
-                (SortTarget::Key, SortOrder::None) => {}
-                (SortTarget::Key, SortOrder::Ascend) => {
-                    kvs.sort_by(|a, b| a.key.cmp(&b.key));
-                }
-                (SortTarget::Key, SortOrder::Descend) => {
-                    kvs.sort_by(|a, b| b.key.cmp(&a.key));
-                }
-                (SortTarget::Version, SortOrder::Ascend | SortOrder::None) => {
-                    kvs.sort_by(|a, b| a.version.cmp(&b.version));
-                }
-                (SortTarget::Version, SortOrder::Descend) => {
-                    kvs.sort_by(|a, b| b.version.cmp(&a.version));
-                }
-                (SortTarget::Create, SortOrder::Ascend | SortOrder::None) => {
-                    kvs.sort_by(|a, b| a.create_revision.cmp(&b.create_revision));
-                }
-                (SortTarget::Create, SortOrder::Descend) => {
-                    kvs.sort_by(|a, b| b.create_revision.cmp(&a.create_revision));
-                }
-                (SortTarget::Mod, SortOrder::Ascend | SortOrder::None) => {
-                    kvs.sort_by(|a, b| a.mod_revision.cmp(&b.mod_revision));
-                }
-                (SortTarget::Mod, SortOrder::Descend) => {
-                    kvs.sort_by(|a, b| b.mod_revision.cmp(&a.mod_revision));
-                }
-                (SortTarget::Value, SortOrder::Ascend | SortOrder::None) => {
-                    kvs.sort_by(|a, b| a.value.cmp(&b.value));
-                }
-                (SortTarget::Value, SortOrder::Descend) => {
-                    kvs.sort_by(|a, b| b.value.cmp(&a.value));
-                }
-            }
-            if (req.limit > 0) && (kvs.len() > req.limit.cast()) {
-                response.more = true;
-                kvs.truncate(req.limit.cast());
-            }
-            response.kvs = kvs;
+        if kvs.is_empty() {
+            return response;
         }
+
+        Self::filter_kvs(
+            &mut kvs,
+            req.max_mod_revision,
+            req.min_mod_revision,
+            req.max_create_revision,
+            req.min_create_revision,
+        );
+        Self::sort_kvs(&mut kvs, req.sort_order(), req.sort_target());
+
+        if (req.limit > 0) && (kvs.len() > req.limit.cast()) {
+            response.more = true;
+            kvs.truncate(req.limit.cast());
+        }
+        if req.keys_only {
+            kvs.iter_mut().for_each(|kv| kv.value.clear());
+        }
+        response.kvs = kvs;
         response
     }
 
@@ -515,5 +593,89 @@ impl KvStoreBackend {
         debug!("sync_delete_range_request: revisions {:?}", revisions);
         let prev_kv = self.db.mark_deletions(&revisions);
         Self::new_deletion_events(revision, prev_kv)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::error::Error;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_keys_only() -> Result<(), Box<dyn Error>> {
+        let store = init_store().await?;
+
+        let request = RangeRequest {
+            key: vec![0],
+            range_end: vec![0],
+            keys_only: true,
+            ..Default::default()
+        };
+        let response = store.inner.handle_range_request(&request);
+        assert_eq!(response.kvs.len(), 5);
+        for kv in response.kvs {
+            assert!(kv.value.is_empty());
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_range_empty() -> Result<(), Box<dyn Error>> {
+        let store = init_store().await?;
+
+        let request = RangeRequest {
+            key: "x".into(),
+            range_end: "y".into(),
+            keys_only: true,
+            ..Default::default()
+        };
+        let response = store.inner.handle_range_request(&request);
+        assert_eq!(response.kvs.len(), 0);
+        assert_eq!(response.count, 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(clippy::indexing_slicing)] // Checked before use index
+    async fn test_range_filter() -> Result<(), Box<dyn Error>> {
+        let store = init_store().await?;
+
+        let request = RangeRequest {
+            key: vec![0],
+            range_end: vec![0],
+            max_create_revision: 3,
+            ..Default::default()
+        };
+        let response = store.inner.handle_range_request(&request);
+        assert_eq!(response.count, 5);
+        assert_eq!(response.kvs.len(), 2);
+        assert_eq!(response.kvs[0].create_revision, 2);
+        assert_eq!(response.kvs[1].create_revision, 3);
+
+        Ok(())
+    }
+
+    async fn init_store() -> Result<KvStore, Box<dyn Error>> {
+        let header_gen = Arc::new(HeaderGenerator::new(0, 0));
+        let store = KvStore::new(header_gen);
+
+        let keys = vec!["a", "b", "c", "d", "e"];
+        for key in keys {
+            let req = RequestWithToken::new(
+                PutRequest {
+                    key: key.into(),
+                    value: "val".into(),
+                    ..Default::default()
+                }
+                .into(),
+            );
+            let id = ProposeId::new("test-id".to_owned());
+            let _cmd_res = store.execute(id.clone(), req)?;
+            let _sync_res = store.after_sync(id).await;
+        }
+        Ok(store)
     }
 }
