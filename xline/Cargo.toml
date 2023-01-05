@@ -18,7 +18,6 @@ async-trait = "0.1.53"
 clap = { version = "3.2.16", features = ["derive"] }
 clippy-utilities = "0.1.0"
 curp = { path = "../curp", version = "0.1.0" }
-env_logger = "0.9.3"
 etcd-client = "0.10.1"
 jsonwebtoken = "8.1.1"
 itertools = "0.10.3"
@@ -49,6 +48,9 @@ tracing-opentelemetry = "0.18.0"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 uuid = { version = "1.1.2", features = ["v4"] }
 flume = "0.10.14"
+getset = "0.1"
+toml = "0.5"
+tracing-appender = "0.2"
 
 [build-dependencies]
 tonic-build = "0.7.2"

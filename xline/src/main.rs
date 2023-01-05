@@ -110,18 +110,24 @@
     clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
 )]
 
-use std::{collections::HashMap, path::PathBuf};
-
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::Parser;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use opentelemetry::{global, runtime::Tokio, sdk::propagation::TraceContextPropagator};
 use opentelemetry_contrib::trace::exporter::jaeger_json::JaegerJsonExporter;
+use std::{collections::HashMap, env, path::PathBuf};
 use tokio::fs;
 use tracing::{debug, error, metadata::LevelFilter};
-use tracing_subscriber::prelude::*;
+use tracing_appender::rolling::RollingFileAppender;
+use tracing_subscriber::{fmt::format, prelude::*};
 use utils::parse_members;
-use xline::server::XlineServer;
+use xline::{
+    config::{
+        AuthConfig, ClusterConfig, LevelConfig, LogConfig, RotationConfig, TraceConfig,
+        XlineServerConfig,
+    },
+    server::XlineServer,
+};
 
 /// Command line arguments
 #[derive(Parser)]
@@ -153,50 +159,36 @@ struct ServerArgs {
     jaeger_online: bool,
     /// Trace level of jaeger
     #[clap(long)]
-    jaeger_level: Option<LevelFilter>,
+    jaeger_level: Option<LevelConfig>,
+    /// Log file path
+    #[clap(long)]
+    log_file: Option<PathBuf>,
+    /// Log rotate strategy, eg: never, hourly, daily(default)
+    #[clap(long)]
+    log_rotate: Option<RotationConfig>,
+    /// Log verbosity level
+    #[clap(long)]
+    log_level: Option<LevelConfig>,
 }
 
-/// init tracing subscriber
-fn init_subscriber(
-    jaeger_online: bool,
-    jaeger_offline: bool,
-    jaeger_output_dir: Option<PathBuf>,
-    name: &str,
-    level: Option<LevelFilter>,
-) -> Result<()> {
-    let jaeger_online_layer = jaeger_online
-        .then(|| {
-            opentelemetry_jaeger::new_agent_pipeline()
-                .with_service_name(name)
-                .install_batch(Tokio)
-                .ok()
-        })
-        .flatten()
-        .map(|tracer| {
-            tracing_opentelemetry::layer()
-                .with_tracer(tracer)
-                .with_filter(level.unwrap_or(LevelFilter::INFO))
-        });
-    let jaeger_offline_layer = jaeger_offline.then(|| {
-        tracing_opentelemetry::layer().with_tracer(
-            JaegerJsonExporter::new(
-                jaeger_output_dir.unwrap_or_else(|| PathBuf::from("./jaeger_jsons")),
-                name.to_owned(),
-                name.to_owned(),
-                Tokio,
-            )
-            .install_batch(),
-        )
-    });
-    let fmt_layer = tracing_subscriber::fmt::layer()
-        .with_filter(tracing_subscriber::EnvFilter::from_default_env());
-    tracing_subscriber::registry()
-        .with(fmt_layer)
-        .with(jaeger_online_layer)
-        .with(jaeger_offline_layer)
-        .try_init()?;
-
-    Ok(())
+impl From<ServerArgs> for XlineServerConfig {
+    fn from(args: ServerArgs) -> Self {
+        let cluster = ClusterConfig::new(args.name, args.members, args.is_leader);
+        let log = LogConfig::new(
+            args.log_file.unwrap_or_else(|| PathBuf::from("/tmp/xline")),
+            args.log_rotate.unwrap_or(RotationConfig::Daily),
+            args.log_level.unwrap_or(LevelConfig::Info),
+        );
+        let trace = TraceConfig::new(
+            args.jaeger_online,
+            args.jaeger_offline,
+            args.jaeger_output_dir
+                .unwrap_or_else(|| PathBuf::from("./jaeger_jsons")),
+            args.jaeger_level.unwrap_or(LevelConfig::Info),
+        );
+        let auth = AuthConfig::new(args.auth_public_key, args.auth_private_key);
+        XlineServerConfig::new(cluster, log, trace, auth)
+    }
 }
 
 /// Read key pair from file
@@ -233,28 +225,135 @@ async fn read_key_pair(
     Some((encoding_key, decoding_key))
 }
 
+/// Generate a `LevelFilter`
+fn match_level(level: LevelConfig) -> Result<LevelFilter> {
+    match level {
+        LevelConfig::Trace => Ok(LevelFilter::TRACE),
+        LevelConfig::Debug => Ok(LevelFilter::DEBUG),
+        LevelConfig::Info => Ok(LevelFilter::INFO),
+        LevelConfig::Warn => Ok(LevelFilter::WARN),
+        LevelConfig::Error => Ok(LevelFilter::ERROR),
+        _ => Err(anyhow!(format!("Invalid verbosity level: {level:?}"))),
+    }
+}
+
+/// Generates a `RollingFileAppender`
+fn file_appender(
+    rotation: RotationConfig,
+    file_path: &PathBuf,
+    name: &str,
+) -> Result<RollingFileAppender> {
+    match rotation {
+        RotationConfig::Hourly => Ok(tracing_appender::rolling::hourly(
+            file_path,
+            format!("xline_{name}.log"),
+        )),
+        RotationConfig::Daily => Ok(tracing_appender::rolling::daily(
+            file_path,
+            format!("xline_{name}.log"),
+        )),
+        RotationConfig::Never => Ok(tracing_appender::rolling::never(
+            file_path,
+            format!("xline_{name}.log"),
+        )),
+        _ => Err(anyhow!(format!("Invalid rotation config: {rotation:?}"))),
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     global::set_text_map_propagator(TraceContextPropagator::new());
-    let server_args: ServerArgs = ServerArgs::parse();
-    init_subscriber(
-        server_args.jaeger_online,
-        server_args.jaeger_offline,
-        server_args.jaeger_output_dir,
-        &server_args.name,
-        server_args.jaeger_level,
+    let config: XlineServerConfig = if env::args_os().len() == 1 {
+        let config_file = if let Ok(path) = env::var("XLINE_SERVER_CONFIG") {
+            fs::read_to_string(&path).await?
+        } else {
+            include_str!("../config/xline_server.conf").to_owned()
+        };
+        toml::from_str(&config_file)?
+    } else {
+        let server_args: ServerArgs = ServerArgs::parse();
+        server_args.into()
+    };
+
+    let log_config = config.log();
+    let trace_config = config.trace();
+    let cluster_config = config.cluster();
+    let auth_config = config.auth();
+
+    let file_appender = file_appender(
+        *log_config.rotation(),
+        log_config.path(),
+        cluster_config.name(),
     )?;
-    debug!("name = {:?}", server_args.name);
-    let self_addr = server_args
-        .members
-        .get(&server_args.name)
-        .unwrap_or_else(|| panic!("node name {} not found in cluster peers", server_args.name))
+
+    let (non_blocking, _guard1) = tracing_appender::non_blocking(file_appender);
+    let log_file_layer = tracing_subscriber::fmt::layer()
+        .event_format(format().compact())
+        .with_writer(non_blocking)
+        .with_filter(match_level(*log_config.level())?);
+
+    let jaeger_level = match_level(*trace_config.jaeger_level())?;
+    let jaeger_online_layer = trace_config
+        .jaeger_online()
+        .then(|| {
+            opentelemetry_jaeger::new_agent_pipeline()
+                .with_service_name(cluster_config.name())
+                .install_batch(Tokio)
+                .ok()
+        })
+        .flatten()
+        .map(|tracer| {
+            tracing_opentelemetry::layer()
+                .with_tracer(tracer)
+                .with_filter(jaeger_level)
+        });
+    let jaeger_offline_layer = trace_config.jaeger_offline().then(|| {
+        tracing_opentelemetry::layer().with_tracer(
+            JaegerJsonExporter::new(
+                trace_config.jaeger_output_dir().clone(),
+                cluster_config.name().clone(),
+                cluster_config.name().clone(),
+                Tokio,
+            )
+            .install_batch(),
+        )
+    });
+
+    let jaeger_fmt_layer = tracing_subscriber::fmt::layer()
+        .with_filter(tracing_subscriber::EnvFilter::from_default_env());
+
+    tracing_subscriber::registry()
+        .with(log_file_layer)
+        .with(jaeger_fmt_layer)
+        .with(jaeger_online_layer)
+        .with(jaeger_offline_layer)
+        .try_init()?;
+
+    let key_pair = read_key_pair(
+        auth_config.auth_private_key().clone(),
+        auth_config.auth_public_key().clone(),
+    )
+    .await;
+
+    let self_addr = cluster_config
+        .members()
+        .get(cluster_config.name())
+        .unwrap_or_else(|| {
+            panic!(
+                "node name {} not found in cluster peers",
+                cluster_config.name()
+            )
+        })
         .parse()?;
-    let key_pair = read_key_pair(server_args.auth_private_key, server_args.auth_public_key).await;
+
+    let is_leader = cluster_config.is_leader();
+    debug!("name = {:?}", cluster_config.name());
+    debug!("server_addr = {:?}", self_addr);
+    debug!("cluster_peers = {:?}", cluster_config.members());
     let server = XlineServer::new(
-        server_args.name,
-        server_args.members,
-        server_args.is_leader,
+        cluster_config.name().clone(),
+        cluster_config.members().clone(),
+        *is_leader,
         key_pair,
     )
     .await;
