@@ -14,8 +14,8 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    rpc::{RequestBackend, RequestWithToken, ResponseWrapper},
-    storage::{AuthStore, KvStore},
+    rpc::{RequestBackend, RequestWithToken, RequestWrapper, ResponseWrapper},
+    storage::{AuthStore, KvStore, LeaseStore},
 };
 
 /// Range start and end to get all keys
@@ -170,14 +170,21 @@ pub(crate) struct CommandExecutor {
     kv_storage: Arc<KvStore>,
     /// Auth Storage
     auth_storage: Arc<AuthStore>,
+    /// Lease Storage
+    lease_storage: Arc<LeaseStore>,
 }
 
 impl CommandExecutor {
     /// New `CommandExecutor`
-    pub(crate) fn new(kv_storage: Arc<KvStore>, auth_storage: Arc<AuthStore>) -> Self {
+    pub(crate) fn new(
+        kv_storage: Arc<KvStore>,
+        auth_storage: Arc<AuthStore>,
+        lease_storage: Arc<LeaseStore>,
+    ) -> Self {
         Self {
             kv_storage,
             auth_storage,
+            lease_storage,
         }
     }
 }
@@ -186,10 +193,11 @@ impl CommandExecutor {
 impl CurpCommandExecutor<Command> for CommandExecutor {
     async fn execute(&self, cmd: &Command) -> Result<CommandResponse, ExecuteError> {
         let (_, wrapper, id) = cmd.clone().unpack();
-        self.auth_storage.check_permission(&wrapper)?;
+        self.auth_storage.check_permission(&wrapper).await?;
         match wrapper.request.backend() {
             RequestBackend::Kv => self.kv_storage.execute(id, wrapper),
             RequestBackend::Auth => self.auth_storage.execute(id, wrapper),
+            RequestBackend::Lease => self.lease_storage.execute(id, wrapper),
         }
     }
 
@@ -199,10 +207,11 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
         _index: LogIndex,
     ) -> Result<SyncResponse, ExecuteError> {
         let (_, wrapper, id) = cmd.clone().unpack();
-        self.auth_storage.check_permission(&wrapper)?;
+        self.auth_storage.check_permission(&wrapper).await?;
         match wrapper.request.backend() {
             RequestBackend::Kv => Ok(self.kv_storage.after_sync(id).await),
             RequestBackend::Auth => Ok(self.auth_storage.after_sync(&id)),
+            RequestBackend::Lease => Ok(self.lease_storage.after_sync(&id).await),
         }
     }
 }
@@ -234,11 +243,28 @@ impl ConflictCheck for Command {
         }
         // any two requests that don't meet the above conditions will conflict with each other
         // because the auth write request will make all previous token invalid
-        if (this_req.backend() == RequestBackend::Auth)
-            || (other_req.backend() == RequestBackend::Auth)
-        {
+        if (this_req.is_auth_request()) || (other_req.is_auth_request()) {
             return true;
         }
+
+        if (this_req.is_lease_request()) && (other_req.is_lease_request()) {
+            #[allow(clippy::wildcard_enum_match_arm)]
+            let lease_id1 = match *this_req {
+                RequestWrapper::LeaseGrantRequest(ref req) => req.id,
+                RequestWrapper::LeaseRevokeRequest(ref req) => req.id,
+                _ => unreachable!("other request can not in this match"),
+            };
+            #[allow(clippy::wildcard_enum_match_arm)]
+            let lease_id2 = match *other_req {
+                RequestWrapper::LeaseGrantRequest(ref req) => req.id,
+                RequestWrapper::LeaseRevokeRequest(ref req) => req.id,
+                _ => unreachable!("other request can not in this match"),
+            };
+            if lease_id1 == lease_id2 {
+                return true;
+            }
+        }
+
         self.keys()
             .iter()
             .cartesian_product(other.keys().iter())

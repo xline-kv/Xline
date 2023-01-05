@@ -20,11 +20,21 @@ use pbkdf2::{
     Pbkdf2,
 };
 use prost::Message;
+use tokio::sync::mpsc;
 use utils::parking_lot_lock::RwLockMap;
 
 use super::perms::{JwtTokenManager, PermissionCache, TokenClaims, TokenOperate, UserPermissions};
 use crate::{
     header_gen::HeaderGenerator,
+    server::command::KeyRange,
+    storage::{
+        db::DB,
+        index::Index,
+        leasestore::{Lease, LeaseMessage},
+        req_ctx::RequestCtx,
+    },
+};
+use crate::{
     rpc::{
         AuthDisableRequest, AuthDisableResponse, AuthEnableRequest, AuthEnableResponse,
         AuthRoleAddRequest, AuthRoleAddResponse, AuthRoleDeleteRequest, AuthRoleDeleteResponse,
@@ -39,12 +49,7 @@ use crate::{
         AuthenticateResponse, KeyValue, Permission, RequestWrapper, ResponseWrapper, Role, Type,
         User,
     },
-    server::command::KeyRange,
-    storage::{
-        db::DB,
-        index::{Index, IndexOperate},
-        req_ctx::RequestCtx,
-    },
+    storage::index::IndexOperate,
 };
 
 /// Key prefix of user
@@ -74,6 +79,8 @@ pub(crate) struct AuthStoreBackend {
     permission_cache: RwLock<PermissionCache>,
     /// The manager of token
     token_manager: Option<JwtTokenManager>,
+    /// Lease command sender
+    lease_cmd_tx: mpsc::Sender<LeaseMessage>,
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
 }
@@ -86,6 +93,9 @@ impl fmt::Debug for AuthStoreBackend {
             .field("revision", &self.revision)
             .field("sp_exec_pool", &self.sp_exec_pool)
             .field("enabled", &self.enabled)
+            .field("permission_cache", &self.permission_cache)
+            .field("lease_cmd_tx", &self.lease_cmd_tx)
+            .field("header_gen", &self.header_gen)
             .finish()
     }
 }
@@ -93,6 +103,7 @@ impl fmt::Debug for AuthStoreBackend {
 impl AuthStoreBackend {
     /// New `AuthStoreBackend`
     pub(crate) fn new(
+        lease_cmd_tx: mpsc::Sender<LeaseMessage>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
         header_gen: Arc<HeaderGenerator>,
     ) -> Self {
@@ -106,8 +117,19 @@ impl AuthStoreBackend {
                 JwtTokenManager::new(encoding_key, decoding_key)
             }),
             permission_cache: RwLock::new(PermissionCache::new()),
+            lease_cmd_tx,
             header_gen,
         }
+    }
+
+    /// Get Lease by lease id
+    pub(crate) async fn get_lease(&self, lease_id: i64) -> Option<Lease> {
+        let (detach, rx) = LeaseMessage::look_up(lease_id);
+        assert!(
+            self.lease_cmd_tx.send(detach).await.is_ok(),
+            "lease_cmd_tx is closed"
+        );
+        rx.await.unwrap_or_else(|_e| panic!("res sender is closed"))
     }
 
     /// Get revision of Auth store
@@ -150,7 +172,7 @@ impl AuthStoreBackend {
     }
 
     /// Assign token
-    fn assign(&self, username: &str) -> Result<String, ExecuteError> {
+    pub(crate) fn assign(&self, username: &str) -> Result<String, ExecuteError> {
         match self.token_manager {
             Some(ref token_manager) => token_manager
                 .assign(username, self.revision())

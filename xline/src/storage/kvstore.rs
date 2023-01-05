@@ -2,27 +2,28 @@ use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 
 use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{cmd::ProposeId, error::ExecuteError};
-use itertools::Itertools;
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
-use tracing::debug;
+use tracing::{debug, warn};
 use utils::parking_lot_lock::MutexMap;
+use uuid::Uuid;
 
 use super::{
     db::DB,
     index::{Index, IndexOperate},
     kvwatcher::KvWatcher,
-    req_ctx::RequestCtx,
+    leasestore::{DeleteMessage, LeaseMessage},
 };
 use crate::{
     header_gen::HeaderGenerator,
     rpc::{
         Compare, CompareResult, CompareTarget, DeleteRangeRequest, DeleteRangeResponse, Event,
-        EventType, KeyValue, PutRequest, PutResponse, RangeRequest, RangeResponse,
-        RequestWithToken, RequestWrapper, ResponseWrapper, SortOrder, SortTarget, TargetUnion,
-        TxnRequest, TxnResponse,
+        EventType, KeyValue, PutRequest, PutResponse, RangeRequest, RangeResponse, Request,
+        RequestOp, RequestWithToken, RequestWrapper, ResponseWrapper, SortOrder, SortTarget,
+        TargetUnion, TxnRequest, TxnResponse,
     },
     server::command::{CommandResponse, KeyRange, SyncResponse},
+    storage::req_ctx::RequestCtx,
 };
 
 /// Default channel size
@@ -53,16 +54,59 @@ pub(crate) struct KvStoreBackend {
     sp_exec_pool: Mutex<HashMap<ProposeId, Vec<RequestCtx>>>,
     /// KV update sender
     kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
+    /// Lease command sender
+    lease_cmd_tx: mpsc::Sender<LeaseMessage>,
 }
 
 impl KvStore {
     /// New `KvStore`
     #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
-    pub(crate) fn new(header_gen: Arc<HeaderGenerator>) -> Self {
+    pub(crate) fn new(
+        lease_cmd_tx: mpsc::Sender<LeaseMessage>,
+        del_rx: mpsc::Receiver<DeleteMessage>,
+        header_gen: Arc<HeaderGenerator>,
+    ) -> Self {
         let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
-        let inner = Arc::new(KvStoreBackend::new(kv_update_tx, header_gen));
+        let inner = Arc::new(KvStoreBackend::new(kv_update_tx, lease_cmd_tx, header_gen));
         let kv_watcher = Arc::new(KvWatcher::new(Arc::clone(&inner), kv_update_rx));
+        let _del_task = tokio::spawn({
+            let inner = Arc::clone(&inner);
+            Self::del_task(del_rx, inner)
+        });
+
         Self { inner, kv_watcher }
+    }
+
+    /// Receive keys from lease storage and delete them
+    async fn del_task(mut del_rx: mpsc::Receiver<DeleteMessage>, inner: Arc<KvStoreBackend>) {
+        while let Some(msg) = del_rx.recv().await {
+            let (keys, tx) = msg.unpack();
+            debug!("Delete keys: {:?} by lease revoked", keys);
+            let id = ProposeId::new(Uuid::new_v4().to_string());
+            let del_reqs = keys
+                .into_iter()
+                .map(|key| RequestOp {
+                    request: Some(Request::RequestDeleteRange(DeleteRangeRequest {
+                        key,
+                        range_end: vec![],
+                        prev_kv: false,
+                    })),
+                })
+                .collect();
+            let txn_req = TxnRequest {
+                compare: vec![],
+                success: del_reqs,
+                failure: vec![],
+            };
+            if let Err(e) = inner.handle_kv_requests(id.clone(), txn_req.into()) {
+                warn!("Delete keys by lease revoked failed: {:?}", e);
+            }
+            let _revision = inner.sync_requests(&id).await;
+
+            if tx.send(()).is_err() {
+                warn!("receiver dropped");
+            }
+        }
     }
 
     /// execute a kv request
@@ -91,6 +135,7 @@ impl KvStoreBackend {
     /// New `KvStoreBackend`
     pub(crate) fn new(
         kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
+        lease_cmd_tx: mpsc::Sender<LeaseMessage>,
         header_gen: Arc<HeaderGenerator>,
     ) -> Self {
         Self {
@@ -100,6 +145,7 @@ impl KvStoreBackend {
             header_gen,
             sp_exec_pool: Mutex::new(HashMap::new()),
             kv_update_tx,
+            lease_cmd_tx,
         }
     }
 
@@ -321,7 +367,7 @@ impl KvStoreBackend {
 
     /// Handle `PutRequest`
     fn handle_put_request(&self, req: &PutRequest) -> Result<PutResponse, ExecuteError> {
-        debug!("handle_put_request prev_kvs");
+        debug!("handle_put_request");
         let mut response = PutResponse {
             header: Some(self.header_gen.gen_header_without_revision()),
             ..Default::default()
@@ -486,21 +532,26 @@ impl KvStoreBackend {
                 *r
             });
             let mut sub_revision = 0;
-            let all_events = requests
-                .into_iter()
-                .flat_map(|request| {
-                    let events = self.sync_request(request, next_revision, sub_revision);
-                    sub_revision = sub_revision.overflow_add(events.len().cast());
-                    events
-                })
-                .collect_vec();
+            let mut all_events = Vec::new();
+            for request in requests {
+                let mut events = self
+                    .sync_request(request, next_revision, sub_revision)
+                    .await;
+                sub_revision = sub_revision.overflow_add(events.len().cast());
+                all_events.append(&mut events);
+            }
             self.notify_updates(next_revision, all_events).await;
             next_revision
         }
     }
 
     /// Sync one `Request`
-    fn sync_request(&self, req: RequestWrapper, revision: i64, sub_revision: i64) -> Vec<Event> {
+    async fn sync_request(
+        &self,
+        req: RequestWrapper,
+        revision: i64,
+        sub_revision: i64,
+    ) -> Vec<Event> {
         #[allow(clippy::wildcard_enum_match_arm)]
         match req {
             RequestWrapper::RangeRequest(req) => {
@@ -509,11 +560,12 @@ impl KvStoreBackend {
             }
             RequestWrapper::PutRequest(req) => {
                 debug!("Sync RequestPut {:?}", req);
-                self.sync_put_request(req, revision, sub_revision)
+                self.sync_put_request(req, revision, sub_revision).await
             }
             RequestWrapper::DeleteRangeRequest(req) => {
                 debug!("Sync DeleteRequest {:?}", req);
                 self.sync_delete_range_request(req, revision, sub_revision)
+                    .await
             }
             RequestWrapper::TxnRequest(req) => {
                 debug!("Sync TxnRequest {:?}", req);
@@ -531,7 +583,12 @@ impl KvStoreBackend {
     }
 
     /// Sync `PutRequest` and return if kvstore is changed
-    fn sync_put_request(&self, req: PutRequest, revision: i64, sub_revision: i64) -> Vec<Event> {
+    async fn sync_put_request(
+        &self,
+        req: PutRequest,
+        revision: i64,
+        sub_revision: i64,
+    ) -> Vec<Event> {
         let prev_kv = self.get_range(&req.key, &[], 0).pop();
         let new_rev = self
             .index
@@ -557,6 +614,17 @@ impl KvStoreBackend {
         }
 
         let _prev = self.db.insert(new_rev.as_revision(), kv.clone());
+        let old_lease = self.get_lease(&kv.key).await;
+        if old_lease != 0 {
+            self.detach(old_lease, kv.key.as_slice())
+                .await
+                .unwrap_or_else(|e| warn!("Failed to detach lease from a key, error: {:?}", e));
+        }
+        if req.lease != 0 {
+            self.attach(req.lease, kv.key.as_slice())
+                .await // already checked, lease is not 0
+                .unwrap_or_else(|e| panic!("unexpected error from lease Attach: {}", e));
+        }
         let event = Event {
             #[allow(clippy::as_conversions)] // This cast is always valid
             r#type: EventType::Put as i32,
@@ -587,7 +655,7 @@ impl KvStoreBackend {
     }
 
     /// Sync `DeleteRangeRequest` and return if kvstore is changed
-    fn sync_delete_range_request(
+    async fn sync_delete_range_request(
         &self,
         req: DeleteRangeRequest,
         revision: i64,
@@ -598,7 +666,43 @@ impl KvStoreBackend {
         let revisions = self.index.delete(&key, &range_end, revision, sub_revision);
         debug!("sync_delete_range_request: revisions {:?}", revisions);
         let prev_kv = self.db.mark_deletions(&revisions);
+        for kv in &prev_kv {
+            let lease_id = self.get_lease(&kv.key).await;
+            self.detach(lease_id, kv.key.as_slice())
+                .await
+                .unwrap_or_else(|e| warn!("Failed to detach lease from a key, error: {:?}", e));
+        }
         Self::new_deletion_events(revision, prev_kv)
+    }
+
+    /// Send get lease to lease store
+    async fn get_lease(&self, key: &[u8]) -> i64 {
+        let (get_lease, rx) = LeaseMessage::get_lease(key);
+        assert!(
+            self.lease_cmd_tx.send(get_lease).await.is_ok(),
+            "lease_cmd_rx is closed"
+        );
+        rx.await.unwrap_or_else(|_e| panic!("res sender is closed"))
+    }
+
+    /// Send detach to lease store
+    async fn detach(&self, lease_id: i64, key: impl Into<Vec<u8>>) -> Result<(), ExecuteError> {
+        let (detach, rx) = LeaseMessage::detach(lease_id, key);
+        assert!(
+            self.lease_cmd_tx.send(detach).await.is_ok(),
+            "lease_cmd_rx is closed"
+        );
+        rx.await.unwrap_or_else(|_e| panic!("res sender is closed"))
+    }
+
+    /// Send attach to lease store
+    async fn attach(&self, lease_id: i64, key: impl Into<Vec<u8>>) -> Result<(), ExecuteError> {
+        let (attach, rx) = LeaseMessage::attach(lease_id, key);
+        assert!(
+            self.lease_cmd_tx.send(attach).await.is_ok(),
+            "lease_cmd_rx is closed"
+        );
+        rx.await.unwrap_or_else(|_e| panic!("res sender is closed"))
     }
 }
 
@@ -724,8 +828,14 @@ mod test {
 
     async fn init_store() -> Result<KvStore, Box<dyn Error>> {
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
-        let store = KvStore::new(header_gen);
-
+        let (_, del_rx) = mpsc::channel(128);
+        let (lease_cmd_tx, mut lease_cmd_rx) = mpsc::channel(128);
+        let _handle = tokio::spawn(async move {
+            while let Some(LeaseMessage::GetLease(tx, _)) = lease_cmd_rx.recv().await {
+                assert!(tx.send(0).is_ok());
+            }
+        });
+        let store = KvStore::new(lease_cmd_tx, del_rx, header_gen);
         let keys = vec!["a", "b", "c", "d", "e"];
         let vals = vec!["a", "b", "c", "d", "e"];
         for (key, val) in keys.into_iter().zip(vals.into_iter()) {

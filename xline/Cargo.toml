@@ -19,6 +19,7 @@ clap = { version = "3.2.16", features = ["derive"] }
 clippy-utilities = "0.1.0"
 curp = { path = "../curp", version = "0.1.0" }
 etcd-client = "0.10.1"
+event-listener = "2.5.2"
 jsonwebtoken = "8.1.1"
 itertools = "0.10.3"
 utils = { path = "../utils", version = "0.1.0", features = ["parking_lot"] }

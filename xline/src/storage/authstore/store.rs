@@ -1,18 +1,19 @@
-use std::sync::Arc;
+use std::{collections::VecDeque, sync::Arc};
 
 use anyhow::Result;
 use curp::{cmd::ProposeId, error::ExecuteError};
 use jsonwebtoken::{DecodingKey, EncodingKey};
+use tokio::sync::mpsc;
 
-use super::backend::ROOT_ROLE;
+use super::backend::{ROOT_ROLE, ROOT_USER};
 use crate::{
     header_gen::HeaderGenerator,
     rpc::{
-        DeleteRangeRequest, PutRequest, RangeRequest, Request, RequestWithToken, RequestWrapper,
-        TxnRequest, Type,
+        DeleteRangeRequest, LeaseRevokeRequest, PutRequest, RangeRequest, Request, RequestOp,
+        RequestWithToken, RequestWrapper, TxnRequest, Type,
     },
     server::command::{CommandResponse, KeyRange, SyncResponse},
-    storage::authstore::backend::AuthStoreBackend,
+    storage::{authstore::backend::AuthStoreBackend, leasestore::LeaseMessage},
 };
 
 /// Auth store
@@ -27,11 +28,12 @@ impl AuthStore {
     /// New `AuthStore`
     #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
     pub(crate) fn new(
+        lease_cmd_tx: mpsc::Sender<LeaseMessage>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
         header_gen: Arc<HeaderGenerator>,
     ) -> Self {
         Self {
-            inner: Arc::new(AuthStoreBackend::new(key_pair, header_gen)),
+            inner: Arc::new(AuthStoreBackend::new(lease_cmd_tx, key_pair, header_gen)),
         }
     }
 
@@ -50,6 +52,7 @@ impl AuthStore {
     pub(crate) fn after_sync(&self, id: &ProposeId) -> SyncResponse {
         SyncResponse::new(self.inner.sync_request(id))
     }
+
     /// Auth revision
     pub(crate) fn revision(&self) -> i64 {
         self.inner.revision()
@@ -65,7 +68,10 @@ impl AuthStore {
     }
 
     /// check if the request is permitted
-    pub(crate) fn check_permission(&self, wrapper: &RequestWithToken) -> Result<(), ExecuteError> {
+    pub(crate) async fn check_permission(
+        &self,
+        wrapper: &RequestWithToken,
+    ) -> Result<(), ExecuteError> {
         if !self.inner.is_enabled() {
             return Ok(());
         }
@@ -75,9 +81,10 @@ impl AuthStore {
         let claims = match wrapper.token {
             Some(ref token) => self.inner.verify_token(token)?,
             None => {
+                // TODO: some requests are allowed without token when auth is enabled
                 return Err(ExecuteError::InvalidCommand(
                     "token is not provided".to_owned(),
-                ))
+                ));
             }
         };
         if claims.revision < self.revision() {
@@ -92,13 +99,17 @@ impl AuthStore {
                 self.check_range_permission(&username, range_req)?;
             }
             RequestWrapper::PutRequest(ref put_req) => {
-                self.check_put_permission(&username, put_req)?;
+                self.check_put_permission(&username, put_req).await?;
             }
             RequestWrapper::DeleteRangeRequest(ref del_range_req) => {
                 self.check_delete_permission(&username, del_range_req)?;
             }
             RequestWrapper::TxnRequest(ref txn_req) => {
-                self.check_txn_permission(&username, txn_req)?;
+                self.check_txn_permission(&username, txn_req).await?;
+            }
+            RequestWrapper::LeaseRevokeRequest(ref lease_revoke_req) => {
+                self.check_lease_revoke_permission(&username, lease_revoke_req)
+                    .await?;
             }
             RequestWrapper::AuthUserGetRequest(ref user_get_req) => {
                 self.check_admin_permission(&username).map_or_else(
@@ -143,10 +154,15 @@ impl AuthStore {
     }
 
     /// check if put request is permitted
-    fn check_put_permission(&self, username: &str, req: &PutRequest) -> Result<(), ExecuteError> {
+    async fn check_put_permission(
+        &self,
+        username: &str,
+        req: &PutRequest,
+    ) -> Result<(), ExecuteError> {
         if req.prev_kv {
             self.check_op_permission(username, &req.key, &[], Type::Read)?;
         }
+        self.check_lease(username, req.lease).await?;
         self.check_op_permission(username, &req.key, &[], Type::Write)
     }
 
@@ -163,25 +179,62 @@ impl AuthStore {
     }
 
     /// check if txn request is permitted
-    fn check_txn_permission(&self, username: &str, req: &TxnRequest) -> Result<(), ExecuteError> {
-        for compare in &req.compare {
-            self.check_op_permission(username, &compare.key, &compare.range_end, Type::Read)?;
-        }
-        for op in req.success.iter().chain(req.failure.iter()) {
-            match op.request {
+    async fn check_txn_permission(
+        &self,
+        username: &str,
+        req: &TxnRequest,
+    ) -> Result<(), ExecuteError> {
+        let mut check_queque = VecDeque::new();
+        let req = RequestOp {
+            request: Some(Request::RequestTxn(req.clone())),
+        };
+        check_queque.push_back(&req);
+        while let Some(req_op) = check_queque.pop_front() {
+            match req_op.request {
                 Some(Request::RequestRange(ref range_req)) => {
                     self.check_range_permission(username, range_req)?;
                 }
                 Some(Request::RequestPut(ref put_req)) => {
-                    self.check_put_permission(username, put_req)?;
+                    self.check_put_permission(username, put_req).await?;
                 }
                 Some(Request::RequestDeleteRange(ref del_range_req)) => {
                     self.check_delete_permission(username, del_range_req)?;
                 }
                 Some(Request::RequestTxn(ref txn_req)) => {
-                    self.check_txn_permission(username, txn_req)?;
+                    for compare in &txn_req.compare {
+                        self.check_op_permission(
+                            username,
+                            &compare.key,
+                            &compare.range_end,
+                            Type::Read,
+                        )?;
+                    }
+                    for op in txn_req.success.iter().chain(txn_req.failure.iter()) {
+                        check_queque.push_back(op);
+                    }
                 }
                 None => unreachable!("txn operation should have request"),
+            }
+        }
+        Ok(())
+    }
+
+    /// check if lease revoke request is permitted
+    async fn check_lease_revoke_permission(
+        &self,
+        username: &str,
+        req: &LeaseRevokeRequest,
+    ) -> Result<(), ExecuteError> {
+        self.check_lease(username, req.id).await
+    }
+
+    /// check if user can revoke lease
+    async fn check_lease(&self, username: &str, lease_id: i64) -> Result<(), ExecuteError> {
+        let lease = self.inner.get_lease(lease_id).await;
+        if let Some(lease) = lease {
+            let keys = lease.keys();
+            for key in keys {
+                self.check_op_permission(username, &key, &[], Type::Write)?;
             }
         }
         Ok(())
@@ -238,6 +291,11 @@ impl AuthStore {
             }
         }
         Err(ExecuteError::InvalidCommand("premission denied".to_owned()))
+    }
+
+    /// Assign root token
+    pub(crate) fn root_token(&self) -> Result<String, ExecuteError> {
+        self.inner.assign(ROOT_USER)
     }
 }
 
@@ -348,7 +406,8 @@ mod test {
     fn init_auth_store() -> AuthStore {
         let key_pair = test_key_pair();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
-        let store = AuthStore::new(key_pair, header_gen);
+        let (lease_cmd_tx, _) = mpsc::channel(1);
+        let store = AuthStore::new(lease_cmd_tx, key_pair, header_gen);
 
         let req1 = RequestWithToken::new(
             AuthRoleAddRequest {
