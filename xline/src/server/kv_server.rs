@@ -3,7 +3,6 @@ use std::{collections::HashSet, fmt::Debug, sync::Arc};
 use curp::{client::Client, cmd::ProposeId, error::ProposeError};
 use parking_lot::RwLock;
 use tracing::{debug, instrument};
-use utils::parking_lot_lock::RwLockMap;
 use uuid::Uuid;
 
 use super::{
@@ -97,7 +96,7 @@ impl KvServer {
     }
 
     /// Execute `RangeRequest` in current node
-    fn serializable_range(
+    async fn serializable_range(
         &self,
         request: tonic::Request<RangeRequest>,
     ) -> Result<tonic::Response<RangeResponse>, tonic::Status> {
@@ -107,6 +106,7 @@ impl KvServer {
         };
         self.auth_storage
             .check_permission(&wrapper)
+            .await
             .map_err(|err| tonic::Status::invalid_argument(err.to_string()))?;
         let id = self.generate_propose_id();
         let cmd_res = self
@@ -208,10 +208,6 @@ impl KvServer {
 
     /// Validate put request before handle
     fn check_put_request(req: &PutRequest) -> Result<(), tonic::Status> {
-        if req.lease != 0 {
-            return Err(tonic::Status::unimplemented("lease is unimplemented"));
-        }
-        // TODO: Remove the above errors after implementation
         if req.key.is_empty() {
             return Err(tonic::Status::invalid_argument("key is not provided"));
         }
@@ -351,6 +347,24 @@ impl KvServer {
     fn is_leader(&self) -> bool {
         self.state.read().is_leader()
     }
+
+    /// Wait leader until current node has a leader
+    async fn wait_leader(&self) -> Result<String, tonic::Status> {
+        let listener = {
+            let state = self.state.read();
+            if let Some(leader_addr) = state.leader_address() {
+                return Ok(leader_addr.to_owned());
+            }
+            state.leader_listener()
+        };
+
+        listener.await;
+        self.state
+            .read()
+            .leader_address()
+            .map(str::to_owned)
+            .ok_or_else(|| tonic::Status::internal("Get leader address error"))
+    }
 }
 
 #[tonic::async_trait]
@@ -365,16 +379,12 @@ impl Kv for KvServer {
         let range_req = request.get_ref();
         Self::check_range_request(range_req)?;
         if range_req.serializable || self.is_leader() {
-            self.serializable_range(request)
+            self.serializable_range(request).await
         } else {
-            let leader_addr = self.state.map_read(|s| {
-                s.leader_address()
-                    .ok_or_else(|| tonic::Status::internal("Get leader address error"))
-                    .map(str::to_owned)
-            })?;
+            let leader_addr = self.wait_leader().await?;
             let mut kv_client = KvClient::connect(format!("http://{leader_addr}"))
                 .await
-                .map_err(|_e| tonic::Status::internal("Connect to leader error: {e}"))?;
+                .map_err(|e| tonic::Status::internal(format!("Connect to leader error: {e}")))?;
             kv_client.range(request).await
         }
     }
@@ -477,6 +487,7 @@ impl Kv for KvServer {
 #[cfg(test)]
 mod test {
     use super::*;
+
     #[test]
     fn txn_check() {
         let txn_req = TxnRequest {

@@ -19,4 +19,7 @@ pub(crate) mod kvwatcher;
 /// Request context module
 pub(crate) mod req_ctx;
 
-pub(crate) use self::{authstore::AuthStore, kvstore::KvStore};
+/// Storage for lease
+pub(crate) mod leasestore;
+
+pub(crate) use self::{authstore::AuthStore, kvstore::KvStore, leasestore::LeaseStore};

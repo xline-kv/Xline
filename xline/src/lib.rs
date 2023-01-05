@@ -115,6 +115,8 @@
 pub mod client;
 /// Header generator
 mod header_gen;
+/// Unique id generator
+mod id_gen;
 /// rpc definition module
 mod rpc;
 /// Xline server

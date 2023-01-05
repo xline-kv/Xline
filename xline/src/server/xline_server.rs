@@ -1,12 +1,16 @@
-use std::{collections::HashMap, future::Future, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, future::Future, net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use curp::{client::Client, server::Rpc, ProtocolServer};
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use parking_lot::RwLock;
-use tokio::net::TcpListener;
+use tokio::{
+    net::TcpListener,
+    sync::{broadcast, mpsc},
+};
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
+use tracing::info;
 use utils::{
     config::{ClientTimeout, ServerTimeout},
     parking_lot_lock::RwLockMap,
@@ -22,13 +26,17 @@ use super::{
 };
 use crate::{
     header_gen::HeaderGenerator,
+    id_gen::IdGenerator,
     rpc::{
         AuthServer as RpcAuthServer, KvServer as RpcKvServer, LeaseServer as RpcLeaseServer,
         LockServer as RpcLockServer, WatchServer as RpcWatchServer,
     },
     state::State,
-    storage::{AuthStore, KvStore},
+    storage::{AuthStore, KvStore, LeaseStore},
 };
+
+/// Default channel size
+const CHANNEL_SIZE: usize = 128;
 
 /// Rpc Server of curp protocol
 type CurpServer = Rpc<Command>;
@@ -43,12 +51,16 @@ pub struct XlineServer {
     kv_storage: Arc<KvStore>,
     /// Auth storage
     auth_storage: Arc<AuthStore>,
+    /// Lease storage
+    lease_storage: Arc<LeaseStore>,
     /// Consensus client
     client: Arc<Client<Command>>,
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
     /// Curp server timeout
     server_timeout: Arc<ServerTimeout>,
+    /// Id generator
+    id_gen: Arc<IdGenerator>,
 }
 
 impl XlineServer {
@@ -66,20 +78,45 @@ impl XlineServer {
         server_timeout: ServerTimeout,
         client_timeout: ClientTimeout,
     ) -> Self {
+        // TODO: temporary solution, need real cluster id and member id
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
-        let kv_storage = Arc::new(KvStore::new(Arc::clone(&header_gen)));
-        let auth_storage = Arc::new(AuthStore::new(key_pair, Arc::clone(&header_gen)));
-        let client = Arc::new(Client::<Command>::new(all_members.clone(), client_timeout).await);
+        let id_gen = Arc::new(IdGenerator::new(0));
         let leader_id = is_leader.then(|| name.clone());
-        let state = Arc::new(RwLock::new(State::new(name, leader_id, all_members)));
+        let state = Arc::new(RwLock::new(State::new(
+            name,
+            leader_id,
+            all_members.clone(),
+        )));
         let server_timeout = Arc::new(server_timeout);
+        let (del_tx, del_rx) = mpsc::channel(CHANNEL_SIZE);
+        let (lease_cmd_tx, lease_cmd_rx) = mpsc::channel(CHANNEL_SIZE);
+        let lease_storage = Arc::new(LeaseStore::new(
+            del_tx,
+            lease_cmd_rx,
+            Arc::clone(&state),
+            Arc::clone(&header_gen),
+        ));
+        let kv_storage = Arc::new(KvStore::new(
+            lease_cmd_tx.clone(),
+            del_rx,
+            Arc::clone(&header_gen),
+        ));
+        let auth_storage = Arc::new(AuthStore::new(
+            lease_cmd_tx,
+            key_pair,
+            Arc::clone(&header_gen),
+        ));
+        let client = Arc::new(Client::<Command>::new(all_members.clone(), client_timeout).await);
+
         Self {
             state,
             kv_storage,
             auth_storage,
+            lease_storage,
             client,
             header_gen,
             server_timeout,
+            id_gen,
         }
     }
 
@@ -105,7 +142,7 @@ impl XlineServer {
         Ok(Server::builder()
             .add_service(RpcLockServer::new(lock_server))
             .add_service(RpcKvServer::new(kv_server))
-            .add_service(RpcLeaseServer::new(lease_server))
+            .add_service(RpcLeaseServer::from_arc(lease_server))
             .add_service(RpcAuthServer::new(auth_server))
             .add_service(RpcWatchServer::new(watch_server))
             .add_service(ProtocolServer::new(curp_server))
@@ -132,12 +169,36 @@ impl XlineServer {
         Ok(Server::builder()
             .add_service(RpcLockServer::new(lock_server))
             .add_service(RpcKvServer::new(kv_server))
-            .add_service(RpcLeaseServer::new(lease_server))
+            .add_service(RpcLeaseServer::from_arc(lease_server))
             .add_service(RpcAuthServer::new(auth_server))
             .add_service(RpcWatchServer::new(watch_server))
             .add_service(ProtocolServer::new(curp_server))
             .serve_with_incoming_shutdown(TcpListenerStream::new(xline_listener), signal)
             .await?)
+    }
+
+    /// Leader change task
+    async fn leader_change_task(
+        mut rx: broadcast::Receiver<Option<String>>,
+        state: Arc<RwLock<State>>,
+        lease_storage: Arc<LeaseStore>,
+    ) {
+        while let Ok(leader_id) = rx.recv().await {
+            info!("receive new leader_id: {leader_id:?}");
+            let (leader_state_changed, is_leader) = state.map_write(|mut s| {
+                let is_leader_before = s.is_leader();
+                s.set_leader_id(leader_id);
+                let is_leader_after = s.is_leader();
+                (is_leader_before ^ is_leader_after, is_leader_after)
+            });
+            if leader_state_changed {
+                if is_leader {
+                    lease_storage.promote(Duration::from_secs(1)); // TODO: extend shoud be election timeout
+                } else {
+                    lease_storage.demote();
+                }
+            }
+        }
     }
 
     /// Init `KvServer`, `LockServer`, `LeaseServer`, `WatchServer` and `CurpServer`
@@ -147,7 +208,7 @@ impl XlineServer {
     ) -> (
         KvServer,
         LockServer,
-        LeaseServer,
+        Arc<LeaseServer>,
         AuthServer,
         WatchServer,
         CurpServer,
@@ -156,17 +217,18 @@ impl XlineServer {
             self.id(),
             self.is_leader(),
             self.state.read().others(),
-            CommandExecutor::new(Arc::clone(&self.kv_storage), Arc::clone(&self.auth_storage)),
+            CommandExecutor::new(
+                Arc::clone(&self.kv_storage),
+                Arc::clone(&self.auth_storage),
+                Arc::clone(&self.lease_storage),
+            ),
             Arc::clone(&self.server_timeout),
         );
-        let mut rx = curp_server.leader_rx();
         let _handle = tokio::spawn({
-            let state_clone = Arc::clone(&self.state);
-            async move {
-                while let Ok(leader_id) = rx.recv().await {
-                    state_clone.map_write(|mut state| state.set_leader_id(leader_id));
-                }
-            }
+            let state = Arc::clone(&self.state);
+            let lease_storage = Arc::clone(&self.lease_storage);
+            let rx = curp_server.leader_rx();
+            Self::leader_change_task(rx, state, lease_storage)
         });
         (
             KvServer::new(
@@ -182,9 +244,12 @@ impl XlineServer {
                 self.id(),
             ),
             LeaseServer::new(
-                Arc::clone(&self.kv_storage),
+                Arc::clone(&self.lease_storage),
+                Arc::clone(&self.auth_storage),
                 Arc::clone(&self.client),
                 self.id(),
+                Arc::clone(&self.state),
+                Arc::clone(&self.id_gen),
             ),
             AuthServer::new(
                 Arc::clone(&self.auth_storage),

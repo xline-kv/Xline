@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
+use event_listener::{Event, EventListener};
+
 /// State of current node
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(crate) struct State {
     /// Server id
     id: String,
@@ -9,6 +11,8 @@ pub(crate) struct State {
     leader_id: Option<String>,
     /// Address of all members
     members: HashMap<String, String>,
+    /// leader change event, notify when get new leader_id
+    event: Event,
 }
 
 impl State {
@@ -22,6 +26,7 @@ impl State {
             id,
             leader_id,
             members,
+            event: Event::new(),
         }
     }
 
@@ -37,9 +42,17 @@ impl State {
             .and_then(|id| self.members.get(id).map(String::as_str))
     }
 
+    /// listener of leader change
+    pub(crate) fn leader_listener(&self) -> EventListener {
+        self.event.listen()
+    }
+
     /// Set leader id
     pub(crate) fn set_leader_id(&mut self, leader_id: Option<String>) {
         self.leader_id = leader_id;
+        if self.leader_id.is_some() {
+            self.event.notify(usize::MAX);
+        }
     }
 
     /// Check if current node is leader

@@ -79,7 +79,8 @@ pub(crate) use self::{
         compare::{CompareResult, CompareTarget, TargetUnion},
         kv_client::KvClient,
         kv_server::{Kv, KvServer},
-        lease_server::{Lease, LeaseServer},
+        lease_client::LeaseClient,
+        lease_server::{Lease as LeaseTrait, LeaseServer},
         request_op::Request,
         response_op::Response,
         watch_request::RequestUnion,
@@ -97,9 +98,9 @@ pub(crate) use self::{
         AuthenticateResponse, CompactionRequest, CompactionResponse, Compare, DeleteRangeRequest,
         DeleteRangeResponse, LeaseGrantRequest, LeaseGrantResponse, LeaseKeepAliveRequest,
         LeaseKeepAliveResponse, LeaseLeasesRequest, LeaseLeasesResponse, LeaseRevokeRequest,
-        LeaseRevokeResponse, LeaseTimeToLiveRequest, LeaseTimeToLiveResponse, PutRequest,
-        PutResponse, RangeRequest, RangeResponse, RequestOp, ResponseHeader, ResponseOp,
-        TxnRequest, TxnResponse, WatchCancelRequest, WatchCreateRequest, WatchRequest,
+        LeaseRevokeResponse, LeaseStatus, LeaseTimeToLiveRequest, LeaseTimeToLiveResponse,
+        PutRequest, PutResponse, RangeRequest, RangeResponse, RequestOp, ResponseHeader,
+        ResponseOp, TxnRequest, TxnResponse, WatchCancelRequest, WatchCreateRequest, WatchRequest,
         WatchResponse,
     },
     mvccpb::{event::EventType, Event, KeyValue},
@@ -173,6 +174,10 @@ pub(crate) enum RequestWrapper {
     AuthUserRevokeRoleRequest(AuthUserRevokeRoleRequest),
     /// `AuthenticateRequest`
     AuthenticateRequest(AuthenticateRequest),
+    /// `LeaseGrantRequest`
+    LeaseGrantRequest(LeaseGrantRequest),
+    /// `LeaseRevokeRequest`
+    LeaseRevokeRequest(LeaseRevokeRequest),
 }
 
 /// Wrapper for responses
@@ -223,6 +228,10 @@ pub(crate) enum ResponseWrapper {
     AuthUserRevokeRoleResponse(AuthUserRevokeRoleResponse),
     /// `AuthenticateResponse`
     AuthenticateResponse(AuthenticateResponse),
+    /// `LeaseGrantResponse`
+    LeaseGrantResponse(LeaseGrantResponse),
+    /// `LeaseRevokeResponse`
+    LeaseRevokeResponse(LeaseRevokeResponse),
 }
 
 impl ResponseWrapper {
@@ -251,6 +260,8 @@ impl ResponseWrapper {
             ResponseWrapper::AuthUserListResponse(ref mut resp) => &mut resp.header,
             ResponseWrapper::AuthUserRevokeRoleResponse(ref mut resp) => &mut resp.header,
             ResponseWrapper::AuthenticateResponse(ref mut resp) => &mut resp.header,
+            ResponseWrapper::LeaseGrantResponse(ref mut resp) => &mut resp.header,
+            ResponseWrapper::LeaseRevokeResponse(ref mut resp) => &mut resp.header,
         };
         if let Some(ref mut header) = *header {
             header.revision = revision;
@@ -265,6 +276,8 @@ pub(crate) enum RequestBackend {
     Kv,
     /// Auth backend
     Auth,
+    /// Lease backend
+    Lease,
 }
 
 impl RequestWrapper {
@@ -293,6 +306,9 @@ impl RequestWrapper {
             | RequestWrapper::AuthUserListRequest(_)
             | RequestWrapper::AuthUserRevokeRoleRequest(_)
             | RequestWrapper::AuthenticateRequest(_) => RequestBackend::Auth,
+            RequestWrapper::LeaseGrantRequest(_) | RequestWrapper::LeaseRevokeRequest(_) => {
+                RequestBackend::Lease
+            }
         }
     }
 
@@ -308,16 +324,19 @@ impl RequestWrapper {
         )
     }
 
+    /// Check if this request is a auth request
+    pub(crate) fn is_auth_request(&self) -> bool {
+        self.backend() == RequestBackend::Auth
+    }
+
     /// Check if this request is a kv request
     pub(crate) fn is_kv_request(&self) -> bool {
-        matches!(
-            *self,
-            RequestWrapper::PutRequest(_)
-                | RequestWrapper::RangeRequest(_)
-                | RequestWrapper::DeleteRangeRequest(_)
-                | RequestWrapper::TxnRequest(_)
-                | RequestWrapper::CompactionRequest(_)
-        )
+        self.backend() == RequestBackend::Kv
+    }
+
+    /// Check if this reqeust is a lease request
+    pub(crate) fn is_lease_request(&self) -> bool {
+        self.backend() == RequestBackend::Lease
     }
 }
 
@@ -387,7 +406,9 @@ impl_from_requests!(
     AuthUserGrantRoleRequest,
     AuthUserListRequest,
     AuthUserRevokeRoleRequest,
-    AuthenticateRequest
+    AuthenticateRequest,
+    LeaseGrantRequest,
+    LeaseRevokeRequest
 );
 
 impl_from_responses!(
@@ -412,7 +433,9 @@ impl_from_responses!(
     AuthUserGrantRoleResponse,
     AuthUserListResponse,
     AuthUserRevokeRoleResponse,
-    AuthenticateResponse
+    AuthenticateResponse,
+    LeaseGrantResponse,
+    LeaseRevokeResponse
 );
 
 impl From<RequestOp> for RequestWrapper {
