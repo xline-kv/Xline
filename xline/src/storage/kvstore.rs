@@ -2,6 +2,8 @@ use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 
 use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{cmd::ProposeId, error::ExecuteError};
+use itertools::Itertools;
+use lock_utils::parking_lot_lock::MutexMap;
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tracing::debug;
@@ -397,20 +399,24 @@ impl KvStoreBackend {
             return self.revision();
         };
         let requests: Vec<RequestWrapper> = ctxes.into_iter().map(RequestCtx::req).collect();
-        let revision = self.revision();
-        let next_revision = revision.overflow_add(1);
-        let mut sub_revision = 0;
-        let mut all_events = vec![];
-        for request in requests {
-            let mut events = self.sync_request(request, next_revision, sub_revision);
-            sub_revision = sub_revision.overflow_add(events.len().cast());
-            all_events.append(&mut events);
-        }
-        if all_events.is_empty() {
-            revision
+        if requests.is_empty() {
+            self.revision()
         } else {
+            // TODO: use AtomicI64 for better efficiency
+            let next_revision = self.revision.map_lock(|mut r| {
+                *r = r.overflow_add(1);
+                *r
+            });
+            let mut sub_revision = 0;
+            let all_events = requests
+                .into_iter()
+                .flat_map(|request| {
+                    let events = self.sync_request(request, next_revision, sub_revision);
+                    sub_revision = sub_revision.overflow_add(events.len().cast());
+                    events
+                })
+                .collect_vec();
             self.notify_updates(next_revision, all_events).await;
-            *self.revision.lock() = next_revision;
             next_revision
         }
     }
