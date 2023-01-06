@@ -3,10 +3,10 @@ use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{cmd::ProposeId, error::ExecuteError};
 use itertools::Itertools;
-use lock_utils::parking_lot_lock::MutexMap;
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tracing::debug;
+use utils::parking_lot_lock::MutexMap;
 
 use super::{
     db::DB,
