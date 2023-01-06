@@ -568,9 +568,16 @@ impl<C: 'static + Command> Protocol<C> {
 
         *self.last_rpc_time.write() = Instant::now();
 
-        // remove inconsistencies
-        #[allow(clippy::integer_arithmetic)] // TODO: overflow of log index should be prevented
-        state.log.truncate((req.prev_log_index + 1).numeric_cast());
+        let mut entries = req
+            .entries()
+            .map_err(|e| tonic::Status::internal(format!("encode or decode error, {}", e)))?;
+
+        // if the request is a heartbeat(heartbeat requests' entries are always empty), don't modify local logs
+        if !entries.is_empty() {
+            // remove inconsistencies
+            #[allow(clippy::integer_arithmetic)] // TODO: overflow of log index should be prevented
+            state.log.truncate((req.prev_log_index + 1).numeric_cast());
+        }
 
         // check if previous log index match leader's one
         if state
@@ -583,12 +590,8 @@ impl<C: 'static + Command> Protocol<C> {
                 state.commit_index,
             )));
         }
-
         // append new logs
-        let entries = req
-            .entries()
-            .map_err(|e| tonic::Status::internal(format!("encode or decode error, {}", e)))?;
-        state.log.extend(entries.into_iter());
+        state.log.append(&mut entries);
 
         // update commit index
         let prev_commit_index = state.commit_index;
