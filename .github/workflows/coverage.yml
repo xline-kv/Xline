@@ -3,7 +3,7 @@ on:
     branches:
       - master
   pull_request:
-    branches: [ master ]
+    branches: [master]
 
 env:
   CI_RUST_TOOLCHAIN: 1.61.0
@@ -24,4 +24,4 @@ jobs:
       - name: Upload coverage report
         uses: codecov/codecov-action@v3
         with:
-          files: ./coverage/xline_cov.xml,./coverage/curp_cov.xml,./coverage/utils_cov.xml
+          files: ./coverage/xline_cov.lcovrc,./coverage/curp_cov.lcovrc,./coverage/utils_cov.lcovrc
