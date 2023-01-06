@@ -17,6 +17,7 @@ fi
 CARGO_INCREMENTAL=0 RUSTFLAGS='-Cinstrument-coverage' LLVM_PROFILE_FILE='coverage-%p-%m.profraw' cargo test
 
 # generate report
+echo "generating xline coverage"
 grcov . \
 --binary-path ./target/debug/ \
 --source-dir ./xline/src \
@@ -25,6 +26,7 @@ grcov . \
 --ignore-not-existing \
 -o $OUTPUT_XLINE
 
+echo "generating curp coverage"
 grcov . \
 --binary-path ./target/debug/ \
 --source-dir ./curp/src \
@@ -33,6 +35,7 @@ grcov . \
 --ignore-not-existing \
 -o $OUTPUT_CURP
 
+echo "generating lock_utils coverage"
 grcov . \
 --binary-path ./target/debug/ \
 --source-dir ./lock_utils/src \
@@ -42,4 +45,5 @@ grcov . \
 -o $OUTPUT_LOCK_UTILS
 
 # cleanup
+echo "cleaning up..."
 find . -type f -name '*.profraw' -delete

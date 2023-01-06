@@ -20,7 +20,6 @@ jobs:
           toolchain: ${{ env.CI_RUST_TOOLCHAIN }}
           override: true
           components: llvm-tools-preview
-      - run: cargo install grcov
       - run: CI=yes ./scripts/coverage.sh
       - name: Upload coverage report
         uses: codecov/codecov-action@v3
