@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
+use clippy_utilities::NumericCast;
 use event_listener::Event;
 use parking_lot::RwLock;
 use tokio::{sync::broadcast, time::Instant};
@@ -10,11 +11,13 @@ use crate::{
     cmd::Command,
     log::LogEntry,
     message::{ServerId, TermNum},
-    server::cmd_board::CmdBoardRef,
+    server::{
+        cmd_board::CmdBoardRef, cmd_execute_worker::CmdExeSenderInterface, spec_pool::SpecPoolRef,
+    },
 };
 
 /// State of the server
-pub(super) struct State<C: Command + 'static> {
+pub(super) struct State<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>> {
     /// Id of the server
     id: ServerId,
     /// Id of the leader. None if in election state.
@@ -44,27 +47,30 @@ pub(super) struct State<C: Command + 'static> {
     pub(super) role_trigger: Arc<Event>,
     /// Trigger when there might be some logs to commit
     pub(super) commit_trigger: Arc<Event>,
-    /// Trigger when a new leader needs to calibrate its followers
-    pub(super) calibrate_trigger: Arc<Event>,
-    /// Trigger when append_entires are sent and no heartbeat is needed for a while
+    /// Trigger when append_entries are sent and no heartbeat is needed for a while
     pub(super) heartbeat_reset_trigger: Arc<Event>,
-    // TODO: clean up the board when the size is too large
     /// Cmd watch board for tracking the cmd sync results
     pub(super) cmd_board: CmdBoardRef<C>,
+    /// Speculative pool
+    pub(super) spec: SpecPoolRef<C>,
     /// Last time a rpc is received.
     pub(super) last_rpc_time: Arc<RwLock<Instant>>,
     /// Leader changes tx
     leader_tx: broadcast::Sender<Option<ServerId>>,
+    /// Cmd exe sender
+    pub(super) cmd_exe_tx: ExeTx,
 }
 
-impl<C: Command + 'static> State<C> {
+impl<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>> State<C, ExeTx> {
     /// Init server state
     pub(super) fn new(
         id: ServerId,
         role: ServerRole,
         others: HashMap<ServerId, String>,
         cmd_board: CmdBoardRef<C>,
+        spec: SpecPoolRef<C>,
         last_rpc_time: Arc<RwLock<Instant>>,
+        cmd_exe_tx: ExeTx,
     ) -> Self {
         let mut next_index = HashMap::new();
         let mut match_index = HashMap::new();
@@ -88,11 +94,12 @@ impl<C: Command + 'static> State<C> {
             others,
             role_trigger: Arc::new(Event::new()),
             commit_trigger: Arc::new(Event::new()),
-            calibrate_trigger: Arc::new(Event::new()),
             heartbeat_reset_trigger: Arc::new(Event::new()),
             cmd_board,
+            spec,
             last_rpc_time,
             leader_tx: tx,
+            cmd_exe_tx,
         }
     }
 
@@ -118,9 +125,37 @@ impl<C: Command + 'static> State<C> {
         self.last_applied < self.commit_index
     }
 
+    /// Do cleanup and redo logs when the leader retires
+    #[allow(clippy::indexing_slicing)] // log.len() >= 1 because we have a fake log[0], indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
+    fn leader_retires(&mut self) {
+        // when a leader retires, it should wipe up speculatively executed cmds by resetting and re-executing
+        self.cmd_exe_tx.send_reset();
+
+        let mut board_w = self.cmd_board.write();
+        board_w.clear();
+
+        for i in 0..=self.commit_index {
+            let log = &self.log[i];
+            for cmd in log.cmds() {
+                assert!(
+                    board_w.needs_exe.insert(cmd.id().clone()),
+                    "shouldn't insert needs_exe twice"
+                );
+                // FIXME: do we need to call after sync or that execution is enough?
+                self.cmd_exe_tx
+                    .send_after_sync(Arc::clone(cmd), i.numeric_cast());
+            }
+        }
+        // old leader will reset time to prevent itself from starting election immediately
+        *self.last_rpc_time.write() = Instant::now();
+    }
+
     /// Update to `term`
     pub(super) fn update_to_term(&mut self, term: TermNum) {
         debug_assert!(self.term <= term);
+        if self.is_leader() {
+            self.leader_retires();
+        }
         self.term = term;
         self.set_role(ServerRole::Follower);
         self.voted_for = None;
@@ -129,7 +164,7 @@ impl<C: Command + 'static> State<C> {
             self.leader_id = None;
             let _ig = self.leader_tx.send(None).ok();
         }
-        debug!("updated to term {term}");
+        debug!("{} updated to term {term}", self.id);
     }
 
     /// Set server role
@@ -138,11 +173,6 @@ impl<C: Command + 'static> State<C> {
         self.role = role;
         if prev_role != role {
             self.role_trigger.notify(usize::MAX);
-
-            // from leader to follower
-            if prev_role == ServerRole::Leader {
-                self.cmd_board.write().release_notifiers();
-            }
         }
     }
 
@@ -193,22 +223,39 @@ impl<C: Command + 'static> State<C> {
     pub(super) fn heartbeat_reset_trigger(&self) -> Arc<Event> {
         Arc::clone(&self.heartbeat_reset_trigger)
     }
+
+    /// Get a reference to speculative pool
+    pub(super) fn spec(&self) -> SpecPoolRef<C> {
+        Arc::clone(&self.spec)
+    }
 }
 
 #[cfg_attr(test, allow(clippy::unwrap_used))]
 #[cfg(test)]
 mod tests {
+    use parking_lot::Mutex;
+
     use super::*;
-    use crate::{server::cmd_board::CommandBoard, test_utils::test_cmd::TestCommand};
+    use crate::{
+        server::{
+            cmd_board::CommandBoard, cmd_execute_worker::MockCmdExeSenderInterface,
+            spec_pool::SpeculativePool,
+        },
+        test_utils::test_cmd::TestCommand,
+    };
 
     #[tokio::test]
     async fn leader_broadcast() {
-        let mut state: State<TestCommand> = State::new(
+        let mut exe_tx = MockCmdExeSenderInterface::default();
+        exe_tx.expect_send_reset().returning(|| ());
+        let mut state: State<TestCommand, _> = State::new(
             "Foo".to_owned(),
             ServerRole::Leader,
             HashMap::new(),
             Arc::new(RwLock::new(CommandBoard::new())),
+            Arc::new(Mutex::new(SpeculativePool::new())),
             Arc::new(RwLock::new(Instant::now())),
+            exe_tx,
         );
         let mut rx = state.leader_tx.subscribe();
 

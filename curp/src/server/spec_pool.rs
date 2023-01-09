@@ -1,9 +1,13 @@
 use std::{collections::HashMap, sync::Arc};
 
 use indexmap::IndexSet;
+use parking_lot::Mutex;
 use tracing::debug;
 
 use crate::cmd::{Command, ProposeId};
+
+/// A reference to the speculative pool
+pub(super) type SpecPoolRef<C> = Arc<Mutex<SpeculativePool<C>>>;
 
 /// The speculative pool that stores commands that might be executed speculatively
 #[derive(Debug)]

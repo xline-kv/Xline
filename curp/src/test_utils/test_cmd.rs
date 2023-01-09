@@ -125,7 +125,7 @@ impl ConflictCheck for TestCommand {
 #[derive(Debug, Clone)]
 pub(crate) struct TestCE {
     server_id: ServerId,
-    store: Arc<Mutex<HashMap<u32, u32>>>,
+    pub(crate) store: Arc<Mutex<HashMap<u32, u32>>>,
     exe_sender: mpsc::UnboundedSender<(TestCommand, TestCommandResult)>,
     after_sync_sender: mpsc::UnboundedSender<(TestCommand, LogIndex)>,
 }
@@ -174,6 +174,10 @@ impl CommandExecutor<TestCommand> for TestCE {
             .send((cmd.clone(), index))
             .expect("failed to send after sync msg");
         Ok(index)
+    }
+
+    async fn reset(&self) {
+        self.store.lock().clear();
     }
 }
 
@@ -236,6 +240,10 @@ impl CommandExecutor<TestCommand> for TestCESimple {
 
         debug!("{} call cmd {:?} after sync", self.server_id, cmd.id());
         Ok(index)
+    }
+
+    async fn reset(&self) {
+        self.store.lock().clear();
     }
 }
 

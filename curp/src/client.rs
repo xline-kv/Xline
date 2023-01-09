@@ -99,7 +99,7 @@ where
         cmd_arc: Arc<C>,
     ) -> Result<(Option<<C as Command>::ER>, bool), ProposeError> {
         let max_fault = self.connects.len().wrapping_div(2);
-        let req = ProposeRequest::new_from_rc(cmd_arc)?;
+        let req = ProposeRequest::new(cmd_arc.as_ref())?;
         let mut rpcs: FuturesUnordered<_> = self
             .connects
             .iter()
@@ -182,19 +182,16 @@ where
         cmd: Arc<C>,
     ) -> Result<(<C as Command>::ASR, <C as Command>::ER), ProposeError> {
         let notify = Arc::clone(&self.state.read().leader_notify);
-
+        let wait_timeout = *self.timeout.timeout();
         loop {
             // fetch leader id
             let leader_id = loop {
                 if let Some(id) = self.state.read().leader.clone() {
                     break id;
                 }
-                if timeout(*self.timeout.timeout(), notify.listen())
-                    .await
-                    .is_err()
-                {
+                if timeout(wait_timeout, notify.listen()).await.is_err() {
                     // maybe the fast path fails to set the leader, need to fetch leader proactively
-                    self.fetch_leader().await;
+                    break self.fetch_leader().await;
                 }
             };
 
@@ -213,8 +210,9 @@ where
                 Ok(resp) => resp.into_inner(),
                 Err(e) => {
                     warn!("wait synced rpc error: {e}");
-                    // maybe fail due to timeout, then we don't know who is the leader
-                    self.fetch_leader().await;
+                    // it's quite likely that the leader has crashed, then we should wait for some time and fetch the leader again
+                    tokio::time::sleep(wait_timeout).await;
+                    self.resend_propose(Arc::clone(&cmd), None).await?;
                     continue;
                 }
             };
@@ -225,16 +223,15 @@ where
                     return Ok((asr, er));
                 }
                 SyncResult::Error(SyncError::Redirect(new_leader, term)) => {
-                    if let Some(new_leader_id) = new_leader {
+                    let new_leader = new_leader.and_then(|id| {
                         let mut state = self.state.write();
-                        if state.term <= term {
-                            state.leader = Some(new_leader_id);
+                        (state.term <= term).then(|| {
+                            state.leader = Some(id.clone());
                             state.term = term;
-                            continue; // redirect succeeds, try again
-                        }
-                    }
-                    // redirect failed: the client should fetch leader itself
-                    self.fetch_leader().await;
+                            id
+                        })
+                    });
+                    self.resend_propose(Arc::clone(&cmd), new_leader).await?; // resend the propose to the new leader
                 }
                 SyncResult::Error(SyncError::Timeout) => {
                     return Err(ProposeError::SyncedError("wait sync timeout".to_owned()));
@@ -246,9 +243,80 @@ where
         }
     }
 
+    /// Resend the propose only to the leader. This is used when leader changes and we need to ensure that the propose is received by the new leader.
+    async fn resend_propose(
+        &self,
+        cmd: Arc<C>,
+        mut new_leader: Option<ServerId>,
+    ) -> Result<(), ProposeError> {
+        loop {
+            let leader_id = if let Some(id) = new_leader.take() {
+                id
+            } else {
+                self.fetch_leader().await
+            };
+            debug!("resend propose to {leader_id}");
+
+            let resp = self
+                .connects
+                .iter()
+                .find(|conn| conn.id() == &leader_id)
+                .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
+                .propose(
+                    ProposeRequest::new(cmd.as_ref())?,
+                    *self.timeout.propose_timeout(),
+                )
+                .await;
+
+            let resp = match resp {
+                Ok(resp) => resp.into_inner(),
+                Err(e) => {
+                    // if the propose fails again, need to fetch the leader and try again
+                    warn!("failed to resend propose, {e}");
+                    continue;
+                }
+            };
+
+            let mut state_w = self.state.write();
+
+            let resp_term = resp.term();
+            match state_w.term.cmp(&resp_term) {
+                Ordering::Less => {
+                    // reset term only when the resp has leader id to prevent:
+                    // If a server loses contact with its leader, it will update its term for election. Since other servers are all right, the election will not succeed.
+                    // But if the client learns about the new term and updates its term to it, it will never get the true leader.
+                    if let Some(id) = resp.leader_id {
+                        state_w.update_to_term(resp_term);
+                        let done = id == leader_id;
+                        state_w.set_leader(leader_id);
+                        if done {
+                            return Ok(());
+                        }
+                    }
+                }
+                Ordering::Equal => {
+                    if let Some(id) = resp.leader_id {
+                        let done = id == leader_id;
+                        debug_assert!(
+                            state_w.leader.as_ref().map_or(true, |leader| leader == &id),
+                            "there should never be two leader in one term"
+                        );
+                        if state_w.leader.is_none() {
+                            state_w.set_leader(id);
+                        }
+                        if done {
+                            return Ok(());
+                        }
+                    }
+                }
+                Ordering::Greater => {}
+            }
+        }
+    }
+
     /// Send fetch leader requests to all servers until there is a leader
     /// Note: The fetched leader may still be outdated
-    async fn fetch_leader(&self) {
+    async fn fetch_leader(&self) -> ServerId {
         loop {
             let mut rpcs: FuturesUnordered<_> = self
                 .connects
@@ -300,8 +368,8 @@ where
                 let mut state = self.state.write();
                 debug!("Fetch leader succeeded, leader set to {}", leader);
                 state.term = max_term;
-                state.set_leader(leader);
-                return;
+                state.set_leader(leader.clone());
+                return leader;
             }
 
             // wait until the election is completed
