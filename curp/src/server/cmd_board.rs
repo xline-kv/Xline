@@ -45,6 +45,14 @@ impl<C: Command> CommandBoard<C> {
             .for_each(|(_, event)| event.notify(usize::MAX));
     }
 
+    /// Clear
+    pub(super) fn clear(&mut self) {
+        self.needs_exe.clear();
+        self.er_buffer.clear();
+        self.asr_buffer.clear();
+        self.release_notifiers();
+    }
+
     /// Insert er to internal buffer
     pub(super) fn insert_er(&mut self, id: &ProposeId, er: Result<C::ER, ExecuteError>) {
         let er_ok = er.is_ok();

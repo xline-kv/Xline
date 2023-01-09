@@ -1,24 +1,36 @@
 #[cfg(test)]
 use std::sync::atomic::AtomicBool;
-use std::{iter, ops::Range, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    iter,
+    ops::Range,
+    sync::Arc,
+    time::Duration,
+};
 
 use clippy_utilities::NumericCast;
-use lock_utils::parking_lot_lock::RwLockMap;
+use futures::{pin_mut, stream::FuturesUnordered, Stream, StreamExt};
+use itertools::Itertools;
+use lock_utils::parking_lot_lock::{MutexMap, RwLockMap};
 use madsim::rand::{thread_rng, Rng};
-use parking_lot::{lock_api::RwLockUpgradableReadGuard, Mutex, RwLock};
+use parking_lot::{
+    lock_api::{RwLockUpgradableReadGuard, RwLockWriteGuard},
+    RawRwLock, RwLock,
+};
 use tokio::{sync::mpsc, task::JoinHandle, time::Instant};
 use tracing::{debug, error, info, warn};
 
 use super::SyncMessage;
 use crate::{
-    cmd::{Command, CommandExecutor},
+    cmd::{Command, CommandExecutor, ProposeId},
     log::LogEntry,
-    rpc::{connect::ConnectInterface, AppendEntriesRequest, VoteRequest},
+    message::ServerId,
+    rpc::{connect::ConnectInterface, AppendEntriesRequest, VoteRequest, VoteResponse},
     server::{
         cmd_execute_worker::{
             execute_worker, CmdExeReceiver, CmdExeSender, CmdExeSenderInterface, N_EXECUTE_WORKERS,
         },
-        ServerRole, SpeculativePool, State,
+        ServerRole, State,
     },
     shutdown::Shutdown,
 };
@@ -37,7 +49,6 @@ pub(super) async fn run_bg_tasks<
     state: Arc<RwLock<State<C>>>,
     sync_chan: flume::Receiver<SyncMessage<C>>,
     cmd_executor: CE,
-    spec: Arc<Mutex<SpeculativePool<C>>>,
     cmd_exe_tx: CmdExeSender<C>,
     cmd_exe_rx: CmdExeReceiver<C>,
     mut shutdown: Shutdown,
@@ -60,7 +71,7 @@ pub(super) async fn run_bg_tasks<
         ae_trigger_rx,
     ));
     let bg_election_handle = tokio::spawn(bg_election(connects.clone(), Arc::clone(&state)));
-    let bg_apply_handle = tokio::spawn(bg_apply(Arc::clone(&state), cmd_exe_tx, spec));
+    let bg_apply_handle = tokio::spawn(bg_apply(Arc::clone(&state), cmd_exe_tx));
     let bg_heartbeat_handle = tokio::spawn(bg_heartbeat(connects.clone(), Arc::clone(&state)));
     let bg_get_sync_cmds_handle =
         tokio::spawn(bg_get_sync_cmds(Arc::clone(&state), sync_chan, ae_trigger));
@@ -118,7 +129,7 @@ async fn bg_get_sync_cmds<C: Command + 'static>(
 /// Interval between sending heartbeats
 const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(150);
 /// Rpc request timeout
-const RPC_TIMEOUT: Duration = Duration::from_millis(50);
+const RPC_TIMEOUT: Duration = Duration::from_millis(1000);
 
 /// Background `append_entries`, only works for the leader
 async fn bg_append_entries<C: Command + 'static, Conn: ConnectInterface>(
@@ -306,9 +317,9 @@ async fn send_heartbeat<C: Command + 'static, Conn: ConnectInterface>(
 async fn bg_apply<C: Command + 'static, Tx: CmdExeSenderInterface<C>>(
     state: Arc<RwLock<State<C>>>,
     exe_tx: Tx,
-    spec: Arc<Mutex<SpeculativePool<C>>>,
 ) {
-    let commit_trigger = state.map_read(|state_r| state_r.commit_trigger());
+    let (commit_trigger, spec) =
+        state.map_read(|state_r| (state_r.commit_trigger(), state_r.spec()));
     loop {
         // wait until there is something to commit
         let state = loop {
@@ -341,6 +352,54 @@ const CANDIDATE_TIMEOUT: Duration = Duration::from_secs(3);
 /// How long a follower should wait before it starts a round of election (in millis)
 const FOLLOWER_TIMEOUT: Range<u64> = 1000..2000;
 
+/// Recover possibly speculatively executed cmds from spec pools
+fn recover_from_spec_pools<C: Command>(
+    state_w: &mut RwLockWriteGuard<'_, RawRwLock, State<C>>,
+    spec_pools: Vec<Vec<Arc<C>>>,
+    superquorum_cnt: usize,
+) {
+    let mut cmd_cnt: HashMap<ProposeId, (Arc<C>, usize)> = HashMap::new();
+    #[allow(clippy::integer_arithmetic)] // should not overflow here
+    for cmd in spec_pools.into_iter().flatten() {
+        let entry = cmd_cnt.entry(cmd.id().clone()).or_insert((cmd, 0));
+        entry.1 += 1;
+    }
+
+    // get all possibly executed(fast path) commands
+    let existing_log_ids: HashSet<ProposeId> = state_w
+        .log
+        .iter()
+        .flat_map(|log| log.cmds().iter().map(|cmd| cmd.id()).cloned())
+        .collect();
+    let recovered_cmds = cmd_cnt
+        .into_values()
+        // only cmds whose cnt >= 3/4 can be recovered
+        .filter_map(|(cmd, cnt)| (cnt >= superquorum_cnt).then(|| cmd))
+        // dedup in current logs
+        .filter(|cmd| {
+            // TODO: better dedup mechanism
+            !existing_log_ids.contains(cmd.id())
+        })
+        .collect_vec();
+
+    let cmd_board = state_w.cmd_board();
+    let mut board_w = cmd_board.write();
+    let term = state_w.term;
+    for cmd in recovered_cmds {
+        debug!(
+            "recover new speculatively executed cmd {:?} in log[{}]",
+            cmd.id(),
+            state_w.log.len(),
+        );
+
+        assert!(
+            board_w.needs_exe.insert(cmd.id().clone()),
+            "shouldn't insert needs_exe twice"
+        );
+        state_w.log.push(LogEntry::new(term, &[cmd]));
+    }
+}
+
 /// Background election
 async fn bg_election<C: Command + 'static, Conn: ConnectInterface>(
     connects: Vec<Arc<Conn>>,
@@ -370,12 +429,98 @@ async fn bg_election<C: Command + 'static, Conn: ConnectInterface>(
         *last_rpc_time.write() = Instant::now();
         debug!("server {} starts election", req.candidate_id);
 
-        for connect in &connects {
-            let _ignore = tokio::spawn(send_vote(
-                Arc::clone(connect),
-                Arc::clone(&state),
-                req.clone(),
-            ));
+        let rpcs = connects
+            .iter()
+            .cloned()
+            .zip(iter::repeat(req))
+            .map(|(connect, request)| async move {
+                (
+                    connect.id().clone(),
+                    connect.vote(request, CANDIDATE_TIMEOUT).await,
+                )
+            })
+            .collect::<FuturesUnordered<_>>()
+            .filter_map(|(id, resp)| async move {
+                match resp {
+                    Err(e) => {
+                        error!("vote failed, {}", e);
+                        None
+                    }
+                    Ok(resp) => Some((id, resp.into_inner())),
+                }
+            });
+
+        handle_vote_responses(rpcs, Arc::clone(&state)).await;
+    }
+}
+
+/// Candidate handles vote responses
+#[allow(clippy::integer_arithmetic)] // vote cnt won't overflow
+async fn handle_vote_responses<C, S>(rpcs: S, state: Arc<RwLock<State<C>>>)
+where
+    C: Command + 'static,
+    S: Stream<Item = (ServerId, VoteResponse)>,
+{
+    let mut spec_pools: Vec<Vec<Arc<C>>> = vec![];
+    pin_mut!(rpcs);
+    while let Some((id, resp)) = rpcs.next().await {
+        // calibrate term
+        let state = state.upgradable_read();
+        if resp.term > state.term {
+            let mut state = RwLockUpgradableReadGuard::upgrade(state);
+            state.update_to_term(resp.term);
+            break;
+        }
+
+        // is still a candidate
+        if !matches!(state.role(), ServerRole::Candidate) {
+            break;
+        }
+
+        // skip if not granted
+        if !resp.vote_granted {
+            continue;
+        }
+        debug!("vote is granted by server {}", id);
+
+        // collect follower spec pool
+        let follower_spec_pool = match resp.spec_pool() {
+            Err(e) => {
+                error!("get vote response spec pool failed, {e}");
+                continue;
+            }
+            Ok(spec_pool) => spec_pool.into_iter().map(|cmd| Arc::new(cmd)).collect(),
+        };
+        spec_pools.push(follower_spec_pool);
+
+        // update state
+        let mut state_w = RwLockUpgradableReadGuard::upgrade(state);
+        state_w.votes_received += 1;
+
+        // the majority has granted the vote
+        let min_granted = (state_w.others.len() + 1) / 2 + 1;
+        if state_w.votes_received >= min_granted {
+            // recover possibly speculatively executed cmds
+            let self_spec = state_w
+                .spec
+                .map_lock(|spec_l| spec_l.pool.iter().map(|kv| kv.1).cloned().collect());
+            spec_pools.push(self_spec);
+            recover_from_spec_pools(&mut state_w, spec_pools, min_granted / 2 + 1);
+
+            // set self to leader
+            state_w.set_role(ServerRole::Leader);
+            state_w.leader_id = Some(state_w.id().clone());
+            debug!("server {} becomes leader", state_w.id());
+
+            // init next_index
+            let last_log_index = state_w.last_log_index();
+            for index in state_w.next_index.values_mut() {
+                *index = last_log_index + 1; // iter from the end to front is more likely to match the follower
+            }
+
+            state_w.calibrate_trigger.notify(1); // trigger calibration
+
+            break; // other servers' response no longer matters
         }
     }
 }
@@ -420,58 +565,6 @@ async fn wait_for_election<C: Command + 'static>(state: Arc<RwLock<State<C>>>) {
                 role_trigger.listen().await;
             }
         };
-    }
-}
-
-/// send vote request
-async fn send_vote<C: Command + 'static, Conn: ConnectInterface>(
-    connect: Arc<Conn>,
-    state: Arc<RwLock<State<C>>>,
-    req: VoteRequest,
-) {
-    let resp = connect.vote(req, RPC_TIMEOUT).await;
-    match resp {
-        Err(e) => error!("vote failed, {}", e),
-        Ok(resp) => {
-            let resp = resp.into_inner();
-
-            // calibrate term
-            let state = state.upgradable_read();
-            if resp.term > state.term {
-                let mut state = RwLockUpgradableReadGuard::upgrade(state);
-                state.update_to_term(resp.term);
-                return;
-            }
-
-            // is still a candidate
-            if !matches!(state.role(), ServerRole::Candidate) {
-                return;
-            }
-
-            #[allow(clippy::integer_arithmetic)]
-            if resp.vote_granted {
-                debug!("vote is granted by server {}", connect.id());
-                let mut state = RwLockUpgradableReadGuard::upgrade(state);
-                state.votes_received += 1;
-
-                // the majority has granted the vote
-                let min_granted = (state.others.len() + 1) / 2 + 1;
-                if state.votes_received >= min_granted {
-                    state.set_role(ServerRole::Leader);
-                    state.leader_id = Some(state.id().clone());
-                    debug!("server {} becomes leader", state.id());
-
-                    // init next_index
-                    let last_log_index = state.last_log_index();
-                    for index in state.next_index.values_mut() {
-                        *index = last_log_index + 1; // iter from the end to front is more likely to match the follower
-                    }
-
-                    // trigger heartbeat immediately to establish leadership
-                    state.calibrate_trigger.notify(1);
-                }
-            }
-        }
     }
 }
 
@@ -556,6 +649,7 @@ async fn leader_calibrates_follower<C: Command + 'static, Conn: ConnectInterface
 mod test {
     use std::{collections::HashMap, sync::Arc};
 
+    use futures::stream;
     use parking_lot::{Mutex, RwLock};
     use tokio::time::Instant;
     use tracing_test::traced_test;
@@ -567,11 +661,12 @@ mod test {
         log::LogEntry,
         rpc::{
             connect::MockConnectInterface, AppendEntriesRequest, AppendEntriesResponse,
-            VoteRequest, VoteResponse,
+            VoteResponse,
         },
         server::{
             bg_tasks::send_log_until_succeed, cmd_board::CommandBoard,
-            cmd_execute_worker::MockCmdExeSenderInterface, state::State, ServerRole,
+            cmd_execute_worker::MockCmdExeSenderInterface, spec_pool::SpeculativePool,
+            state::State, ServerRole,
         },
         test_utils::{sleep_millis, sleep_secs, test_cmd::TestCommand},
     };
@@ -590,6 +685,7 @@ mod test {
             ServerRole::Leader,
             others,
             Arc::new(RwLock::new(CommandBoard::new())),
+            Arc::new(Mutex::new(SpeculativePool::new())),
             Arc::new(RwLock::new(Instant::now())),
         )))
     }
@@ -783,9 +879,10 @@ mod test {
     // this test will apply 2 log: one needs execution, the other doesn't
     async fn leader_will_apply_logs_after_commit() {
         let state = new_test_state();
-        let mut spec = SpeculativePool::new();
         {
             let mut state = state.write();
+            let spec = state.spec();
+            let mut spec = spec.lock();
             let cmd_board = state.cmd_board();
             let mut cmd_board = cmd_board.write();
 
@@ -800,7 +897,6 @@ mod test {
 
             state.commit_index = 2;
         }
-        let spec = Arc::new(Mutex::new(spec));
 
         let mut exe_tx = MockCmdExeSenderInterface::default();
         exe_tx
@@ -808,14 +904,14 @@ mod test {
             .times(2)
             .returning(move |_cmd: Arc<TestCommand>, _index| {});
 
-        let (state_c, spec_c) = (Arc::clone(&state), Arc::clone(&spec));
+        let state_c = Arc::clone(&state);
         let handle = tokio::spawn(async move {
-            bg_apply(state_c, exe_tx, spec_c).await;
+            bg_apply(state_c, exe_tx).await;
         });
 
         sleep_millis(500).await;
 
-        assert!(spec.lock().pool.is_empty());
+        assert!(state.read().spec().lock().pool.is_empty());
         assert_eq!(state.read().last_applied, 2);
 
         handle.abort();
@@ -946,8 +1042,12 @@ mod test {
             .expect_id()
             .return_const(FOLLOWER_ID1.to_owned());
 
-        let req = VoteRequest::new(2, FOLLOWER_ID1.to_owned(), 0, 0);
-        send_vote(Arc::new(mock_connect), Arc::clone(&state), req).await;
+        let rpcs = stream::iter(vec![(
+            "NewLeaderID".to_owned(),
+            VoteResponse::new_reject(2),
+        )]);
+
+        handle_vote_responses(rpcs, Arc::clone(&state)).await;
 
         let state = state.read();
         assert_eq!(state.term, 2);
@@ -967,32 +1067,18 @@ mod test {
             state.votes_received = 1;
         }
 
-        let mut mock_connect1 = MockConnectInterface::default();
-        mock_connect1
-            .expect_vote()
-            .returning(|_, _| Ok(tonic::Response::new(VoteResponse::new_accept(1))));
-        mock_connect1
-            .expect_id()
-            .return_const(FOLLOWER_ID1.to_owned());
+        let rpcs = stream::iter(vec![
+            (
+                FOLLOWER_ID1.to_owned(),
+                VoteResponse::new_accept::<TestCommand>(1, vec![]).unwrap(),
+            ),
+            (
+                FOLLOWER_ID2.to_owned(),
+                VoteResponse::new_accept::<TestCommand>(1, vec![]).unwrap(),
+            ),
+        ]);
 
-        let mut mock_connect2 = MockConnectInterface::default();
-        mock_connect2
-            .expect_vote()
-            .returning(|_, _| Ok(tonic::Response::new(VoteResponse::new_accept(1))));
-        mock_connect2
-            .expect_id()
-            .return_const(FOLLOWER_ID2.to_owned());
-
-        let req = VoteRequest::new(2, FOLLOWER_ID1.to_owned(), 0, 0);
-
-        send_vote(Arc::new(mock_connect1), Arc::clone(&state), req.clone()).await;
-        {
-            let state = state.read();
-            assert_eq!(state.term, 1);
-            assert_eq!(state.role(), ServerRole::Leader);
-        }
-
-        send_vote(Arc::new(mock_connect2), Arc::clone(&state), req.clone()).await;
+        handle_vote_responses(rpcs, Arc::clone(&state)).await;
 
         let state = state.read();
         assert_eq!(state.term, 1);
@@ -1058,5 +1144,49 @@ mod test {
         let state = state.read();
         assert_eq!(state.term, 1);
         assert_eq!(state.role(), ServerRole::Follower);
+    }
+
+    #[traced_test]
+    #[test]
+    fn recover_from_spec_pools_will_pick_the_correct_cmds() {
+        let others = HashMap::from([
+            ("S1".to_owned(), "127.0.0.1:8001".to_owned()),
+            ("S2".to_owned(), "127.0.0.1:8002".to_owned()),
+            ("S3".to_owned(), "127.0.0.1:8002".to_owned()),
+            ("S4".to_owned(), "127.0.0.1:8002".to_owned()),
+        ]);
+        let state = Arc::new(RwLock::new(State::new(
+            LEADER_ID.to_owned(),
+            ServerRole::Leader,
+            others,
+            Arc::new(RwLock::new(CommandBoard::new())),
+            Arc::new(Mutex::new(SpeculativePool::new())),
+            Arc::new(RwLock::new(Instant::now())),
+        )));
+        // cmd1 has already been committed
+        let cmd1 = Arc::new(TestCommand::new_put(vec![1], 1));
+        // cmd2 has been speculatively successfully but not committed yet
+        let cmd2 = Arc::new(TestCommand::new_put(vec![2], 1));
+        // cmd3 has been speculatively successfully by the leader but not stored by the superquorum of the followers
+        let cmd3 = Arc::new(TestCommand::new_put(vec![3], 1));
+        {
+            let mut state = state.write();
+            state.log.push(LogEntry::new(0, &[Arc::clone(&cmd1)]));
+        }
+
+        let spec_pools = vec![
+            vec![Arc::clone(&cmd2), Arc::clone(&cmd3)],
+            vec![Arc::clone(&cmd2), Arc::clone(&cmd3)],
+            vec![Arc::clone(&cmd2), Arc::clone(&cmd3)],
+            vec![Arc::clone(&cmd2)],
+            vec![],
+        ];
+
+        let mut state_w = state.write();
+        recover_from_spec_pools(&mut state_w, spec_pools, 4);
+
+        assert_eq!(state_w.log[1].cmds()[0].id(), cmd1.id());
+        assert_eq!(state_w.log[2].cmds()[0].id(), cmd2.id());
+        assert_eq!(state_w.log.len(), 3);
     }
 }

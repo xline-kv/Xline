@@ -10,7 +10,7 @@ use crate::{
     cmd::Command,
     log::LogEntry,
     message::{ServerId, TermNum},
-    server::cmd_board::CmdBoardRef,
+    server::{cmd_board::CmdBoardRef, spec_pool::SpecPoolRef},
 };
 
 /// State of the server
@@ -46,11 +46,12 @@ pub(super) struct State<C: Command + 'static> {
     pub(super) commit_trigger: Arc<Event>,
     /// Trigger when a new leader needs to calibrate its followers
     pub(super) calibrate_trigger: Arc<Event>,
-    /// Trigger when append_entires are sent and no heartbeat is needed for a while
+    /// Trigger when append_entries are sent and no heartbeat is needed for a while
     pub(super) heartbeat_reset_trigger: Arc<Event>,
-    // TODO: clean up the board when the size is too large
     /// Cmd watch board for tracking the cmd sync results
     pub(super) cmd_board: CmdBoardRef<C>,
+    /// Speculative pool
+    pub(super) spec: SpecPoolRef<C>,
     /// Last time a rpc is received.
     pub(super) last_rpc_time: Arc<RwLock<Instant>>,
 }
@@ -62,6 +63,7 @@ impl<C: Command + 'static> State<C> {
         role: ServerRole,
         others: HashMap<ServerId, String>,
         cmd_board: CmdBoardRef<C>,
+        spec: SpecPoolRef<C>,
         last_rpc_time: Arc<RwLock<Instant>>,
     ) -> Self {
         let mut next_index = HashMap::new();
@@ -88,6 +90,7 @@ impl<C: Command + 'static> State<C> {
             calibrate_trigger: Arc::new(Event::new()),
             heartbeat_reset_trigger: Arc::new(Event::new()),
             cmd_board,
+            spec,
             last_rpc_time,
         }
     }
@@ -131,11 +134,6 @@ impl<C: Command + 'static> State<C> {
         self.role = role;
         if prev_role != role {
             self.role_trigger.notify(usize::MAX);
-
-            // from leader to follower
-            if prev_role == ServerRole::Leader {
-                self.cmd_board.write().release_notifiers();
-            }
         }
     }
 
@@ -172,5 +170,10 @@ impl<C: Command + 'static> State<C> {
     /// Get heartbeat reset trigger
     pub(super) fn heartbeat_reset_trigger(&self) -> Arc<Event> {
         Arc::clone(&self.heartbeat_reset_trigger)
+    }
+
+    /// Get a reference to speculative pool
+    pub(super) fn spec(&self) -> SpecPoolRef<C> {
+        Arc::clone(&self.spec)
     }
 }

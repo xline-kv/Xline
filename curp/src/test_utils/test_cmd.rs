@@ -175,6 +175,10 @@ impl CommandExecutor<TestCommand> for TestCE {
             .expect("failed to send after sync msg");
         Ok(index)
     }
+
+    async fn reset(&self) {
+        self.store.lock().clear();
+    }
 }
 
 impl TestCE {
@@ -236,6 +240,10 @@ impl CommandExecutor<TestCommand> for TestCESimple {
 
         debug!("{} call cmd {:?} after sync", self.server_id, cmd.id());
         Ok(index)
+    }
+
+    async fn reset(&self) {
+        self.store.lock().clear();
     }
 }
 

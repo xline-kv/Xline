@@ -10,8 +10,12 @@ use std::{
 
 use clippy_utilities::NumericCast;
 use event_listener::Event;
+use itertools::Itertools;
 use lock_utils::parking_lot_lock::RwLockMap;
-use parking_lot::{lock_api::RwLockUpgradableReadGuard, Mutex, RwLock};
+use parking_lot::{
+    lock_api::{RwLockUpgradableReadGuard, RwLockWriteGuard},
+    Mutex, RawRwLock, RwLock,
+};
 use tokio::{net::TcpListener, sync::broadcast, time::Instant};
 use tokio_stream::wrappers::TcpListenerStream;
 use tracing::{debug, error, info, instrument, warn};
@@ -32,6 +36,7 @@ use crate::{
     server::{
         cmd_board::CmdBoardRef,
         cmd_execute_worker::{cmd_exe_channel, CmdExeSender},
+        spec_pool::SpecPoolRef,
     },
     shutdown::Shutdown,
     util::Extract,
@@ -200,7 +205,7 @@ pub struct Protocol<C: Command + 'static> {
     /// Last time a rpc is received
     last_rpc_time: Arc<RwLock<Instant>>,
     /// The speculative cmd pool, shared with executor
-    spec: Arc<Mutex<SpeculativePool<C>>>,
+    spec: SpecPoolRef<C>,
     /// The channel to send synced command to background sync task
     sync_chan: flume::Sender<SyncMessage<C>>,
     // TODO: clean up the board when the size is too large
@@ -289,6 +294,7 @@ impl<C: 'static + Command> Protocol<C> {
             },
             others,
             Arc::clone(&cmd_board),
+            Arc::clone(&spec),
             Arc::clone(&last_rpc_time),
         )));
 
@@ -297,7 +303,6 @@ impl<C: 'static + Command> Protocol<C> {
             Arc::clone(&state),
             sync_rx,
             cmd_executor,
-            Arc::clone(&spec),
             exe_tx.clone(),
             exe_rx,
             Shutdown::new(stop_ch_rx.resubscribe()),
@@ -342,6 +347,7 @@ impl<C: 'static + Command> Protocol<C> {
             },
             others,
             Arc::clone(&cmd_board),
+            Arc::clone(&spec),
             Arc::clone(&last_rpc_time),
         )));
 
@@ -350,7 +356,6 @@ impl<C: 'static + Command> Protocol<C> {
             Arc::clone(&state),
             sync_rx,
             cmd_executor,
-            Arc::clone(&spec),
             exe_tx.clone(),
             exe_rx,
             Shutdown::new(stop_ch_rx.resubscribe()),
@@ -538,6 +543,29 @@ impl<C: 'static + Command> Protocol<C> {
             .map_err(|err| tonic::Status::internal(format!("encode or decode error, {}", err)))
     }
 
+    /// Do cleanup and redo logs when the leader retires
+    #[allow(clippy::indexing_slicing)] // log.len() >= 1 because we have a fake log[0], indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
+    fn leader_retires(&self, state_w: &mut RwLockWriteGuard<'_, RawRwLock, State<C>>) {
+        // when a leader retires, it should wipe up speculatively executed cmds by resetting and re-executing
+        self.cmd_exe_tx.send_reset();
+
+        let mut board_w = self.cmd_board.write();
+        board_w.clear();
+
+        for i in 0..=state_w.commit_index {
+            let log = &state_w.log[i];
+            for cmd in log.cmds() {
+                assert!(
+                    self.cmd_board.write().needs_exe.insert(cmd.id().clone()),
+                    "shouldn't insert needs_exe twice"
+                );
+                // FIXME: do we need to call after sync or that execution is enough?
+                self.cmd_exe_tx
+                    .send_after_sync(Arc::clone(cmd), i.numeric_cast());
+            }
+        }
+    }
+
     /// Handle `AppendEntries` requests
     fn append_entries(
         &self,
@@ -559,6 +587,9 @@ impl<C: 'static + Command> Protocol<C> {
 
         let mut state = RwLockUpgradableReadGuard::upgrade(state);
         if req.term > state.term {
+            if state.is_leader() {
+                self.leader_retires(&mut state);
+            }
             state.update_to_term(req.term);
         }
         if state.leader_id.is_none() {
@@ -645,7 +676,21 @@ impl<C: 'static + Command> Protocol<C> {
         {
             debug!("vote for server {}", req.candidate_id);
             state.voted_for = Some(req.candidate_id);
-            Ok(tonic::Response::new(VoteResponse::new_accept(state.term)))
+
+            let resp = VoteResponse::new_accept(
+                state.term,
+                self.spec
+                    .lock()
+                    .pool
+                    .values()
+                    .map(|cmd| cmd.as_ref().clone())
+                    .collect_vec(),
+            )
+            .map_err(|e| {
+                warn!("can't create vote response, {e}");
+                tonic::Status::internal(format!("can't create vote response, {e}"))
+            })?;
+            Ok(tonic::Response::new(resp))
         } else {
             Ok(tonic::Response::new(VoteResponse::new_reject(state.term)))
         }
