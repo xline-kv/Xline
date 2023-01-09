@@ -13,6 +13,7 @@
 )]
 
 use std::{
+    collections::HashMap,
     error::Error,
     fmt::Display,
     iter,
@@ -24,19 +25,24 @@ use std::{
 };
 
 use futures::future::join_all;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use tokio::{net::TcpListener, sync::mpsc};
 use tokio_stream::wrappers::TcpListenerStream;
 use tracing::debug;
 use tracing_test::traced_test;
-use utils::{config::ClientTimeout, parking_lot_lock::RwLockMap};
+use utils::{
+    config::ClientTimeout,
+    parking_lot_lock::{MutexMap, RwLockMap},
+};
 
+use super::cmd_execute_worker::CmdExeSender;
 use crate::{
     message::{ServerId, TermNum},
     rpc::{connect::ConnectInterface, ProposeRequest},
     server::{state::State, Rpc},
     test_utils::{
         curp_group::{CurpGroup, CurpNode},
+        sleep_millis, sleep_secs,
         test_cmd::{TestCE, TestCommand, TestCommandResult},
     },
     LogIndex, ProtocolServer,
@@ -47,7 +53,8 @@ struct Node {
     addr: String,
     exe_rx: mpsc::UnboundedReceiver<(TestCommand, TestCommandResult)>,
     as_rx: mpsc::UnboundedReceiver<(TestCommand, LogIndex)>,
-    state: Arc<RwLock<State<TestCommand>>>,
+    state: Arc<RwLock<State<TestCommand, CmdExeSender<TestCommand>>>>,
+    store: Arc<Mutex<HashMap<u32, u32>>>,
     switch: Arc<AtomicBool>,
 }
 
@@ -108,6 +115,7 @@ impl CurpGroup<Node> {
                 let (exe_tx, exe_rx) = mpsc::unbounded_channel();
                 let (as_tx, as_rx) = mpsc::unbounded_channel();
                 let ce = TestCE::new(id.clone(), exe_tx, as_tx);
+                let store = Arc::clone(&ce.store);
 
                 let mut others = all.clone();
                 others.remove(i);
@@ -146,6 +154,7 @@ impl CurpGroup<Node> {
                         exe_rx,
                         as_rx,
                         state,
+                        store,
                         switch,
                     },
                 )
@@ -356,7 +365,7 @@ async fn fast_round_is_slower_than_slow_round() {
         .unwrap();
     leader_connect
         .propose(
-            ProposeRequest::new_from_rc(Arc::clone(&cmd)).unwrap(),
+            ProposeRequest::new(cmd.as_ref()).unwrap(),
             Duration::from_secs(1),
         )
         .await
@@ -374,11 +383,122 @@ async fn fast_round_is_slower_than_slow_round() {
     // the follower should response empty immediately
     let resp = follower_connect
         .propose(
-            ProposeRequest::new_from_rc(cmd).unwrap(),
+            ProposeRequest::new(cmd.as_ref()).unwrap(),
             Duration::from_secs(1),
         )
         .await
         .unwrap()
         .into_inner();
     assert!(resp.exe_result.is_none());
+}
+
+// Leader should recover speculatively executed commands
+#[traced_test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+async fn new_leader_will_recover_spec_cmds() {
+    let mut group = CurpGroup::new(5).await;
+    let client = group.new_client(ClientTimeout::default()).await;
+
+    let leader1 = group.get_leader().await;
+
+    // 1
+    let cmd1 = Arc::new(TestCommand::new_put(vec![0], 0));
+    let connects = client.get_connects();
+    let req = ProposeRequest::new(cmd1.as_ref()).unwrap();
+    for connect in connects
+        .iter()
+        .filter(|connect| connect.id() != &leader1)
+        .take(4)
+    {
+        connect
+            .propose(req.clone(), Duration::from_millis(50))
+            .await
+            .unwrap();
+    }
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    // 2
+    group.disable_node(&leader1);
+
+    // 3: the client should automatically find the new leader and get the response
+    assert_eq!(
+        client.propose(TestCommand::new_get(vec![0])).await.unwrap(),
+        vec![0]
+    );
+
+    // old leader should recover from the new leader
+    group.enable_node(&leader1);
+
+    // every cmd should be executed and after synced on every node
+    for rx in group.exe_rxs() {
+        rx.recv().await;
+        rx.recv().await;
+    }
+    for rx in group.as_rxs() {
+        rx.recv().await;
+        rx.recv().await;
+    }
+}
+
+// Old Leader should discard spec states
+#[traced_test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+async fn old_leader_will_discard_spec_exe_cmds() {
+    let group = CurpGroup::new(5).await;
+    let client = group.new_client(ClientTimeout::default()).await;
+
+    // 0: let's first propose an initial cmd0
+    let cmd0 = TestCommand::new_put(vec![0], 0);
+    let (er, index) = client.propose_indexed(cmd0).await.unwrap();
+    assert_eq!(er, vec![]);
+    assert_eq!(index, 1);
+    sleep_secs(1).await;
+
+    // 1: disable all others to prevent the cmd1 to be synced
+    let leader1 = group.get_leader().await;
+    for node in group.nodes.values().filter(|node| &node.id != &leader1) {
+        group.disable_node(&node.id);
+    }
+
+    // 2: send the cmd1 to the leader, it should be speculatively executed
+    let cmd1 = Arc::new(TestCommand::new_put(vec![0], 1));
+    let connects = client.get_connects();
+    let leader1_connect = connects
+        .iter()
+        .find(|connect| connect.id() == &leader1)
+        .unwrap();
+    leader1_connect
+        .propose(
+            ProposeRequest::new(cmd1.as_ref()).unwrap(),
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+    sleep_millis(100).await;
+    let leader1_store = Arc::clone(&group.get_node(&leader1).store);
+    leader1_store.map_lock(|store_l| {
+        assert_eq!(*store_l, HashMap::from_iter([(0, 1)]));
+    });
+
+    // 3: recover all others and disable leader, a new leader will be elected
+    group.disable_node(&leader1);
+    for node in group.nodes.values().filter(|node| &node.id != &leader1) {
+        group.enable_node(&node.id);
+    }
+    sleep_secs(3).await;
+    let leader2 = group.get_leader().await;
+    assert_ne!(leader2, leader1);
+
+    // 4: recover the old leader, its state should be reverted to the original state
+    group.enable_node(&leader1);
+    sleep_secs(1).await;
+    leader1_store.map_lock(|store_l| {
+        assert_eq!(*store_l, HashMap::from_iter([(0, 0)]));
+    });
+
+    // 5: the client should also get the original state
+    assert_eq!(
+        client.propose(TestCommand::new_get(vec![0])).await.unwrap(),
+        vec![0]
+    );
 }

@@ -258,7 +258,7 @@ pub struct ClientTimeout {
     #[serde(with = "duration_format", default = "default_client_timeout")]
     timeout: Duration,
 
-    /// Curp cliet wait sync timeout
+    /// Curp client wait sync timeout
     #[getset(get = "pub")]
     #[serde(
         with = "duration_format",

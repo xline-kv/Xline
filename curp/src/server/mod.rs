@@ -9,6 +9,7 @@ use std::{
 
 use clippy_utilities::NumericCast;
 use event_listener::Event;
+use itertools::Itertools;
 use parking_lot::{lock_api::RwLockUpgradableReadGuard, Mutex, RwLock};
 use tokio::{net::TcpListener, sync::broadcast, time::Instant};
 use tokio_stream::wrappers::TcpListenerStream;
@@ -31,6 +32,7 @@ use crate::{
     server::{
         cmd_board::CmdBoardRef,
         cmd_execute_worker::{cmd_exe_channel, CmdExeSender},
+        spec_pool::SpecPoolRef,
     },
     shutdown::Shutdown,
 };
@@ -205,11 +207,11 @@ impl<C: Command + 'static> Rpc<C> {
 pub struct Protocol<C: Command + 'static> {
     /// Current state
     // TODO: apply fine-grain locking
-    state: Arc<RwLock<State<C>>>,
+    state: Arc<RwLock<State<C, CmdExeSender<C>>>>,
     /// Last time a rpc is received
     last_rpc_time: Arc<RwLock<Instant>>,
     /// The speculative cmd pool, shared with executor
-    spec: Arc<Mutex<SpeculativePool<C>>>,
+    spec: SpecPoolRef<C>,
     /// The channel to send synced command to background sync task
     sync_chan: flume::Sender<SyncMessage<C>>,
     // TODO: clean up the board when the size is too large
@@ -301,15 +303,16 @@ impl<C: 'static + Command> Protocol<C> {
             },
             others,
             Arc::clone(&cmd_board),
+            Arc::clone(&spec),
             Arc::clone(&last_rpc_time),
+            exe_tx.clone(),
         )));
 
         // run background tasks
-        let _bg_handle = tokio::spawn(bg_tasks::run_bg_tasks::<_, _, Connect>(
+        let _bg_handle = tokio::spawn(bg_tasks::run_bg_tasks::<_, _, Connect, CmdExeSender<C>>(
             Arc::clone(&state),
             sync_rx,
             cmd_executor,
-            Arc::clone(&spec),
             exe_tx.clone(),
             exe_rx,
             Shutdown::new(stop_ch_rx.resubscribe()),
@@ -357,15 +360,16 @@ impl<C: 'static + Command> Protocol<C> {
             },
             others,
             Arc::clone(&cmd_board),
+            Arc::clone(&spec),
             Arc::clone(&last_rpc_time),
+            exe_tx.clone(),
         )));
 
         // run background tasks
-        let _bg_handle = tokio::spawn(bg_tasks::run_bg_tasks::<_, _, Connect>(
+        let _bg_handle = tokio::spawn(bg_tasks::run_bg_tasks::<_, _, Connect, _>(
             Arc::clone(&state),
             sync_rx,
             cmd_executor,
-            Arc::clone(&spec),
             exe_tx.clone(),
             exe_rx,
             Shutdown::new(stop_ch_rx.resubscribe()),
@@ -433,10 +437,6 @@ impl<C: 'static + Command> Protocol<C> {
 
                 // non-leader should return immediately
                 if !is_leader {
-                    assert!(
-                        self.cmd_board.write().needs_exe.insert(cmd.id().clone()),
-                        "shouldn't insert needs_exe twice"
-                    );
                     return if has_conflict {
                         ProposeResponse::new_error(leader_id, term, &ProposeError::KeyConflict)
                     } else {
@@ -551,15 +551,16 @@ impl<C: 'static + Command> Protocol<C> {
     }
 
     /// Handle `AppendEntries` requests
+    #[allow(clippy::indexing_slicing, clippy::integer_arithmetic)] // index on log should be all right
     fn append_entries(
         &self,
         request: tonic::Request<AppendEntriesRequest>,
     ) -> Result<tonic::Response<AppendEntriesResponse>, tonic::Status> {
         let req = request.into_inner();
-        debug!("append_entries received: term({}), commit({}), prev_log_index({}), prev_log_term({}), {} entries",
-            req.term, req.leader_commit, req.prev_log_index, req.prev_log_term, req.entries.len());
-
         let state = self.state.upgradable_read();
+
+        debug!("{} receives append_entries from {}: term({}), commit({}), prev_log_index({}), prev_log_term({}), {} entries", 
+                state.id(), req.leader_id, req.term, req.leader_commit, req.prev_log_index, req.prev_log_term, req.entries.len());
 
         // calibrate term
         if req.term < state.term {
@@ -570,12 +571,12 @@ impl<C: 'static + Command> Protocol<C> {
         }
 
         let mut state = RwLockUpgradableReadGuard::upgrade(state);
+        *self.last_rpc_time.write() = Instant::now();
+
         if req.term > state.term {
             state.update_to_term(req.term);
         }
         state.set_leader(req.leader_id.clone());
-
-        *self.last_rpc_time.write() = Instant::now();
 
         let mut entries = req
             .entries()
@@ -592,7 +593,7 @@ impl<C: 'static + Command> Protocol<C> {
         if state
             .log
             .get(req.prev_log_index.numeric_cast::<usize>())
-            .map_or(false, |entry| entry.term() != req.prev_log_term)
+            .map_or(true, |entry| entry.term() != req.prev_log_term)
         {
             return Ok(tonic::Response::new(AppendEntriesResponse::new_reject(
                 state.term,
@@ -658,7 +659,21 @@ impl<C: 'static + Command> Protocol<C> {
         {
             debug!("vote for server {}", req.candidate_id);
             state.voted_for = Some(req.candidate_id);
-            Ok(tonic::Response::new(VoteResponse::new_accept(state.term)))
+
+            let resp = VoteResponse::new_accept(
+                state.term,
+                self.spec
+                    .lock()
+                    .pool
+                    .values()
+                    .map(|cmd| cmd.as_ref().clone())
+                    .collect_vec(),
+            )
+            .map_err(|e| {
+                warn!("can't create vote response, {e}");
+                tonic::Status::internal(format!("can't create vote response, {e}"))
+            })?;
+            Ok(tonic::Response::new(resp))
         } else {
             Ok(tonic::Response::new(VoteResponse::new_reject(state.term)))
         }

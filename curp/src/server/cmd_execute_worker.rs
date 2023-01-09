@@ -8,7 +8,7 @@ use tracing::{debug, error, warn};
 use utils::parking_lot_lock::RwLockMap;
 
 use crate::{
-    cmd::{Command, CommandExecutor},
+    cmd::{Command, CommandExecutor, ConflictCheck},
     conflict_checked_mpmc,
     conflict_checked_mpmc::{ConflictCheckedMsg, DoneNotifier},
     error::ExecuteError,
@@ -25,15 +25,15 @@ pub(super) async fn execute_worker<C: Command + 'static, CE: 'static + CommandEx
     cmd_board: CmdBoardRef<C>,
     ce: Arc<CE>,
 ) {
-    while let Ok((ExecuteMessage { cmd, er_tx }, done)) = dispatch_rx.recv().await {
-        match er_tx {
-            ExecuteMessageType::Execute(tx) => {
+    while let Ok((msg, done)) = dispatch_rx.recv().await {
+        match msg {
+            ExecuteMessage::Execute { cmd, er_tx } => {
                 let er = ce.execute(cmd.as_ref()).await;
                 debug!("cmd {:?} is executed", cmd.id());
                 cmd_board.write().insert_er(cmd.id(), er.clone()); // insert er
-                let _ignore = tx.send(er); // it's ok to ignore the result here because sometimes the result is not needed
+                let _ignore = er_tx.send(er); // it's ok to ignore the result here because sometimes the result is not needed
             }
-            ExecuteMessageType::AfterSync(index) => {
+            ExecuteMessage::AfterSync { cmd, index } => {
                 /// Different conditions in after sync
                 enum Condition {
                     /// Call both exe and after sync
@@ -78,6 +78,9 @@ pub(super) async fn execute_worker<C: Command + 'static, CE: 'static + CommandEx
                     Condition::Nothing => {}
                 }
             }
+            ExecuteMessage::Reset => {
+                ce.reset().await;
+            }
         }
         if let Err(e) = done.notify() {
             warn!("{e}");
@@ -87,34 +90,54 @@ pub(super) async fn execute_worker<C: Command + 'static, CE: 'static + CommandEx
 }
 
 /// Messages sent to the background cmd execution task
-struct ExecuteMessage<C: Command + 'static> {
-    /// The cmd to be executed
-    cmd: Arc<C>,
-    /// Send execution result
-    er_tx: ExecuteMessageType<C>,
+enum ExecuteMessage<C: Command + 'static> {
+    /// The cmd is ready for execution
+    Execute {
+        /// The cmd to be executed
+        cmd: Arc<C>,
+        /// Send execution result
+        er_tx: oneshot::Sender<Result<C::ER, ExecuteError>>,
+    },
+    /// The cmd is ready for after sync
+    AfterSync {
+        /// The cmd to be executed to be after aynced
+        cmd: Arc<C>,
+        /// Index of the cmd
+        index: LogIndex,
+    },
+    /// We need to reset the ce state
+    Reset,
+}
+
+/// Token of `ExecuteMessage`, used for conflict checking
+enum Token<C> {
+    /// Is a regular cmd exe or after sync
+    Cmd(Arc<C>),
+    /// Is a reset message
+    Reset,
+}
+
+impl<C: Command> ConflictCheck for Token<C> {
+    fn is_conflict(&self, other: &Self) -> bool {
+        match (self, other) {
+            (&Token::Cmd(ref cmd1), &Token::Cmd(ref cmd2)) => cmd1.is_conflict(cmd2),
+            // Reset should conflict with all others
+            _ => true,
+        }
+    }
 }
 
 impl<C: Command + 'static> ConflictCheckedMsg for ExecuteMessage<C> {
-    type Token = C;
+    type Token = Token<C>;
 
-    fn token(&self) -> Arc<Self::Token> {
-        Arc::clone(&self.cmd)
+    fn token(&self) -> Self::Token {
+        match *self {
+            ExecuteMessage::AfterSync { ref cmd, .. } | ExecuteMessage::Execute { ref cmd, .. } => {
+                Token::Cmd(Arc::clone(cmd))
+            }
+            ExecuteMessage::Reset => Token::Reset,
+        }
     }
-}
-
-impl<C: Command + 'static> ExecuteMessage<C> {
-    /// Create a new exe msg
-    fn new(cmd: Arc<C>, er_tx: ExecuteMessageType<C>) -> Self {
-        Self { cmd, er_tx }
-    }
-}
-
-/// Type of execute message
-enum ExecuteMessageType<C: Command + 'static> {
-    /// Only call `execute`
-    Execute(oneshot::Sender<Result<C::ER, ExecuteError>>),
-    /// After sync is ready to be called
-    AfterSync(LogIndex),
 }
 
 /// Send cmd to background execute cmd task
@@ -129,18 +152,21 @@ pub(super) struct CmdExeReceiver<C: Command + 'static>(
 
 /// Send cmd to background execution worker
 #[cfg_attr(test, automock)]
-pub(super) trait CmdExeSenderInterface<C: Command> {
+pub(super) trait CmdExeSenderInterface<C: Command + 'static>: Send + Sync + 'static {
     /// Send cmd to background cmd executor and return a oneshot receiver for the execution result
     fn send_exe(&self, cmd: Arc<C>) -> oneshot::Receiver<Result<C::ER, ExecuteError>>;
 
     /// Send after sync event to the background cmd executor so that after sync can be called
     fn send_after_sync(&self, cmd: Arc<C>, index: LogIndex);
+
+    /// Send flush
+    fn send_reset(&self);
 }
 
 impl<C: Command + 'static> CmdExeSenderInterface<C> for CmdExeSender<C> {
     fn send_exe(&self, cmd: Arc<C>) -> oneshot::Receiver<Result<C::ER, ExecuteError>> {
         let (tx, rx) = oneshot::channel();
-        let msg = ExecuteMessage::new(cmd, ExecuteMessageType::Execute(tx));
+        let msg = ExecuteMessage::Execute { cmd, er_tx: tx };
         if let Err(e) = self.0.send(msg) {
             warn!("failed to send cmd to background execute cmd task, {e}");
         }
@@ -148,7 +174,14 @@ impl<C: Command + 'static> CmdExeSenderInterface<C> for CmdExeSender<C> {
     }
 
     fn send_after_sync(&self, cmd: Arc<C>, index: LogIndex) {
-        let msg = ExecuteMessage::new(cmd, ExecuteMessageType::AfterSync(index));
+        let msg = ExecuteMessage::AfterSync { cmd, index };
+        if let Err(e) = self.0.send(msg) {
+            warn!("failed to send cmd to background execute cmd task, {e}");
+        }
+    }
+
+    fn send_reset(&self) {
+        let msg = ExecuteMessage::Reset;
         if let Err(e) = self.0.send(msg) {
             warn!("failed to send cmd to background execute cmd task, {e}");
         }
