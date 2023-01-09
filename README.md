@@ -72,9 +72,7 @@ other is 100K key space case. Here's the test result.
 It's easy to tell Xline has a better performance than Etcd in a geo-distributed
 multi-cluster environment.
 
-## Quick Start
-
-Please refer to the Contribute Guide for the quick start guide.
+## [Quick Start](./QUICK_START.md)
 
 ## [Contribute Guide](./CONTRIBUTING.md)
 
