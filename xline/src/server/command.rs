@@ -205,6 +205,9 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
             RequestBackend::Auth => Ok(self.auth_storage.after_sync(&id)),
         }
     }
+
+    // TODO
+    async fn reset(&self) {}
 }
 
 /// Command to run consensus protocal

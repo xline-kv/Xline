@@ -41,4 +41,8 @@ impl<T: CurpNode> CurpGroup<T> {
     ) -> impl Iterator<Item = &mut mpsc::UnboundedReceiver<(TestCommand, LogIndex)>> {
         self.nodes.values_mut().map(|node| node.as_rx())
     }
+
+    pub(crate) fn get_node(&self, id: &ServerId) -> &T {
+        &self.nodes[id]
+    }
 }

@@ -1,5 +1,5 @@
 use clippy_utilities::NumericCast;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 pub use self::proto::protocol_server::ProtocolServer;
 pub(crate) use self::proto::{
@@ -52,13 +52,9 @@ impl FetchLeaderResponse {
 
 impl ProposeRequest {
     /// Create a new `Propose` request
-    pub(crate) fn new_from_rc<C, R>(cmd: R) -> bincode::Result<Self>
-    where
-        C: Command,
-        R: AsRef<C>,
-    {
+    pub(crate) fn new<C: Command>(cmd: &C) -> bincode::Result<Self> {
         Ok(Self {
-            command: bincode::serialize(cmd.as_ref())?,
+            command: bincode::serialize(cmd)?,
         })
     }
 
@@ -318,17 +314,34 @@ impl VoteRequest {
 
 impl VoteResponse {
     /// Create a new accepted vote response
-    pub fn new_accept(term: TermNum) -> Self {
-        Self {
+    pub fn new_accept<C: Command + Serialize>(
+        term: TermNum,
+        cmds: Vec<C>,
+    ) -> bincode::Result<Self> {
+        Ok(Self {
             term: term.numeric_cast(),
             vote_granted: true,
-        }
+            spec_pool: cmds
+                .into_iter()
+                .map(|c| bincode::serialize(&c))
+                .collect::<bincode::Result<Vec<Vec<u8>>>>()?,
+        })
     }
+
     /// Create a new rejected vote response
     pub fn new_reject(term: TermNum) -> Self {
         Self {
             term: term.numeric_cast(),
             vote_granted: false,
+            spec_pool: vec![],
         }
+    }
+
+    /// Get spec pool
+    pub fn spec_pool<C: Command + DeserializeOwned>(self) -> bincode::Result<Vec<C>> {
+        self.spec_pool
+            .into_iter()
+            .map(|cmd| bincode::deserialize(&cmd))
+            .collect()
     }
 }

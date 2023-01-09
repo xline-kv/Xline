@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::collections::{HashMap, HashSet};
 
 use clippy_utilities::NumericCast;
 use tracing::{error, info};
@@ -28,7 +25,7 @@ pub(crate) trait ConflictCheckedMsg: Send + 'static {
     /// The token that implements `ConflictCheck`
     type Token: ConflictCheck + Send + Sync;
     /// Get a reference to the token
-    fn token(&self) -> Arc<Self::Token>;
+    fn token(&self) -> Self::Token;
 }
 
 /// The filter will block any msg if its predecessors(msgs that arrive earlier and conflict with it) haven't finished process
@@ -37,7 +34,7 @@ struct Filter<M: ConflictCheckedMsg> {
     buffer: HashMap<u64, M>,
     /// Buffered tokens
     // Why do we need `buffer_keys` here: the `KeyBasedMessage` in `buffer` will be handed out the user, but we still need the keys in the msg to maintain our graph until the msg is marked done by the user
-    buffer_tokens: HashMap<u64, Arc<M::Token>>,
+    buffer_tokens: HashMap<u64, M::Token>,
     /// Successors that arrive later with keys that conflict with this message
     successors: HashMap<u64, HashSet<u64>>,
     /// Predecessors that arrive earlier than this message
@@ -80,7 +77,7 @@ impl<M: ConflictCheckedMsg> Filter<M> {
                     .buffer_tokens
                     .get(predecessor_id)
                     .expect("no such predecessor in buffered keys");
-                msg.token().is_conflict(pre.as_ref()).then(|| {
+                msg.token().is_conflict(pre).then(|| {
                     assert!(successors.insert(id), "should insert only once");
                 })
             })
@@ -184,7 +181,7 @@ pub(crate) fn channel<M: ConflictCheckedMsg>(
                     info!("channel stopped");
                     return;
                 }
-            };
+            }
         }
     });
     (send_tx, recv_rx)
@@ -192,20 +189,29 @@ pub(crate) fn channel<M: ConflictCheckedMsg>(
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{sync::Arc, time::Duration};
 
     use super::*;
 
     #[allow(clippy::rc_buffer)]
     struct Msg {
-        token: Arc<String>,
+        token: Token,
+    }
+
+    #[allow(clippy::rc_buffer)]
+    struct Token(Arc<String>);
+
+    impl ConflictCheck for Token {
+        fn is_conflict(&self, other: &Self) -> bool {
+            self.0.is_conflict(&other.0)
+        }
     }
 
     impl ConflictCheckedMsg for Msg {
-        type Token = String;
+        type Token = Token;
 
-        fn token(&self) -> Arc<Self::Token> {
-            Arc::clone(&self.token)
+        fn token(&self) -> Self::Token {
+            Token(Arc::clone(&self.token.0))
         }
     }
 
@@ -214,13 +220,13 @@ mod tests {
     async fn order() {
         let (tx, rx) = channel::<Msg>();
         let msg1 = Msg {
-            token: Arc::new("1".to_owned()),
+            token: Token(Arc::new("1".to_owned())),
         };
         let msg2 = Msg {
-            token: Arc::new("1".to_owned()),
+            token: Token(Arc::new("1".to_owned())),
         };
         let msg3 = Msg {
-            token: Arc::new("3".to_owned()),
+            token: Token(Arc::new("3".to_owned())),
         };
 
         tx.send(msg1).unwrap();
@@ -228,10 +234,10 @@ mod tests {
         tx.send(msg3).unwrap();
 
         let (r1, done1) = rx.recv_async().await.unwrap();
-        assert_eq!(r1.token.as_str(), "1");
+        assert_eq!(r1.token.0.as_str(), "1");
 
         let (r3, done3) = rx.recv_async().await.unwrap();
-        assert_eq!(r3.token.as_str(), "3");
+        assert_eq!(r3.token.0.as_str(), "3");
 
         assert!(
             tokio::time::timeout(Duration::from_millis(500), rx.recv_async())
@@ -242,7 +248,7 @@ mod tests {
         done3.notify().unwrap();
 
         let (r2, done2) = rx.recv_async().await.unwrap();
-        assert_eq!(r2.token.as_str(), "1");
+        assert_eq!(r2.token.0.as_str(), "1");
         done2.notify().unwrap();
     }
 }

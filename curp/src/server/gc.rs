@@ -1,9 +1,9 @@
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
-use parking_lot::Mutex;
-
-use super::spec_pool::SpeculativePool;
-use crate::{cmd::Command, server::cmd_board::CmdBoardRef};
+use crate::{
+    cmd::Command,
+    server::{cmd_board::CmdBoardRef, spec_pool::SpecPoolRef},
+};
 
 /// How often spec should GC
 const SPEC_GC_INTERVAL: Duration = Duration::from_secs(10);
@@ -12,19 +12,13 @@ const SPEC_GC_INTERVAL: Duration = Duration::from_secs(10);
 const CMD_BOARD_GC_INTERVAL: Duration = Duration::from_secs(20);
 
 /// Run background GC tasks for Curp server
-pub(super) fn run_gc_tasks<C: Command + 'static>(
-    spec: Arc<Mutex<SpeculativePool<C>>>,
-    cmd_board: CmdBoardRef<C>,
-) {
+pub(super) fn run_gc_tasks<C: Command + 'static>(spec: SpecPoolRef<C>, cmd_board: CmdBoardRef<C>) {
     let _spec_gc_handle = tokio::spawn(gc_spec_pool(spec, SPEC_GC_INTERVAL));
     let _cmd_board_gc = tokio::spawn(gc_cmd_board(cmd_board, CMD_BOARD_GC_INTERVAL));
 }
 
 /// Clean up spec pool
-async fn gc_spec_pool<C: Command + 'static>(
-    spec: Arc<Mutex<SpeculativePool<C>>>,
-    interval: Duration,
-) {
+async fn gc_spec_pool<C: Command + 'static>(spec: SpecPoolRef<C>, interval: Duration) {
     let mut last_check_len = 0;
     loop {
         tokio::time::sleep(interval).await;
