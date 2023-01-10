@@ -77,3 +77,50 @@ impl Inject for tonic::metadata::MetadataMap {
         });
     }
 }
+
+#[cfg(test)]
+mod test {
+
+    use opentelemetry::{
+        sdk::propagation::TraceContextPropagator,
+        trace::{TraceContextExt, TraceId},
+    };
+    use tracing::info_span;
+    use tracing_subscriber::{
+        prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt,
+    };
+
+    use super::*;
+    #[test]
+    fn test_inject_and_extract() -> Result<(), Box<dyn std::error::Error>> {
+        init()?;
+        global::set_text_map_propagator(TraceContextPropagator::new());
+        let span = info_span!("test span");
+        let _entered = span.enter();
+        let outer_trace_id = span.context().span().span_context().trace_id();
+        let mut request = tonic::Request::new("message");
+        request.metadata_mut().inject_current();
+        let inner_trace_id = inner_fun(&request);
+        assert_eq!(outer_trace_id, inner_trace_id);
+        Ok(())
+    }
+
+    fn inner_fun(request: &tonic::Request<&str>) -> TraceId {
+        let span = info_span!("inner span");
+        let _entered = span.enter();
+        request.metadata().extract_span();
+        Span::current().context().span().span_context().trace_id()
+    }
+
+    /// init tracing subscriber
+    fn init() -> Result<(), Box<dyn std::error::Error>> {
+        let jaeger_online_layer = opentelemetry_jaeger::new_agent_pipeline()
+            .with_service_name("test")
+            .install_simple()
+            .map(|tracer| tracing_opentelemetry::layer().with_tracer(tracer))?;
+        tracing_subscriber::registry()
+            .with(jaeger_online_layer)
+            .init();
+        Ok(())
+    }
+}
