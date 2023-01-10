@@ -123,8 +123,13 @@ use tracing_subscriber::{fmt::format, prelude::*};
 use utils::parse_members;
 use xline::{
     config::{
-        AuthConfig, ClusterConfig, LevelConfig, LogConfig, RotationConfig, TraceConfig,
-        XlineServerConfig,
+        cluster_duration_utils::{
+            default_candidate_timeout, default_client_timeout, default_client_wait_synced_timeout,
+            default_heartbeat_interval, default_retry_timeout, default_rpc_timeout,
+            default_server_wait_synced_timeout,
+        },
+        AuthConfig, ClientTimeout, ClusterConfig, ClusterDuration, LevelConfig, LogConfig,
+        RotationConfig, ServerTimeout, TraceConfig, XlineServerConfig,
     },
     server::XlineServer,
 };
@@ -169,11 +174,53 @@ struct ServerArgs {
     /// Log verbosity level
     #[clap(long)]
     log_level: Option<LevelConfig>,
+    /// Heartbeat interval between curp server nodes
+    #[clap(long)]
+    heartbeat_interval: Option<ClusterDuration>,
+    /// Curp wait sync timeout
+    #[clap(long)]
+    server_wait_synced_timeout: Option<ClusterDuration>,
+    /// Curp propose retry timeout
+    #[clap(long)]
+    retry_timeout: Option<ClusterDuration>,
+    /// Curp rpc timeout
+    #[clap(long)]
+    rpc_timeout: Option<ClusterDuration>,
+    /// Candidate election timeout
+    #[clap(long)]
+    candidate_timeout: Option<ClusterDuration>,
+    /// Curp client timeout
+    #[clap(long)]
+    client_timeout: Option<ClusterDuration>,
+    /// Curp client wait synced timeout
+    #[clap(long)]
+    client_wait_synced_timeout: Option<ClusterDuration>,
 }
 
 impl From<ServerArgs> for XlineServerConfig {
     fn from(args: ServerArgs) -> Self {
-        let cluster = ClusterConfig::new(args.name, args.members, args.is_leader);
+        let server_timeout = ServerTimeout::new(
+            args.heartbeat_interval
+                .unwrap_or_else(default_heartbeat_interval),
+            args.server_wait_synced_timeout
+                .unwrap_or_else(default_server_wait_synced_timeout),
+            args.retry_timeout.unwrap_or_else(default_retry_timeout),
+            args.rpc_timeout.unwrap_or_else(default_rpc_timeout),
+            args.candidate_timeout
+                .unwrap_or_else(default_candidate_timeout),
+        );
+        let client_timeout = ClientTimeout::new(
+            args.client_timeout.unwrap_or_else(default_client_timeout),
+            args.client_wait_synced_timeout
+                .unwrap_or_else(default_client_wait_synced_timeout),
+        );
+        let cluster = ClusterConfig::new(
+            args.name,
+            args.members,
+            args.is_leader,
+            server_timeout,
+            client_timeout,
+        );
         let log = LogConfig::new(
             args.log_file.unwrap_or_else(|| PathBuf::from("/tmp/xline")),
             args.log_rotate.unwrap_or(RotationConfig::Daily),
