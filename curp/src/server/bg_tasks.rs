@@ -721,7 +721,7 @@ mod test {
     use std::{collections::HashMap, sync::Arc};
 
     use futures::stream;
-    use parking_lot::{Mutex, RwLock};
+    use parking_lot::RwLock;
     use tokio::time::Instant;
     use tracing_test::traced_test;
 
@@ -736,9 +736,7 @@ mod test {
         },
         server::{
             bg_tasks::send_log_until_succeed,
-            cmd_board::CommandBoard,
             cmd_execute_worker::{cmd_exe_channel, MockCmdExeSenderInterface},
-            spec_pool::SpeculativePool,
             state::State,
             ServerRole,
         },
@@ -760,9 +758,6 @@ mod test {
             LEADER_ID.to_owned(),
             ServerRole::Leader,
             others,
-            Arc::new(RwLock::new(CommandBoard::new())),
-            Arc::new(Mutex::new(SpeculativePool::new())),
-            Arc::new(RwLock::new(Instant::now())),
             exe_tx,
         )))
     }
@@ -1235,9 +1230,6 @@ mod test {
             LEADER_ID.to_owned(),
             ServerRole::Leader,
             others,
-            Arc::new(RwLock::new(CommandBoard::new())),
-            Arc::new(Mutex::new(SpeculativePool::new())),
-            Arc::new(RwLock::new(Instant::now())),
             exe_tx,
         )));
         // cmd1 has already been committed
