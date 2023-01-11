@@ -30,7 +30,11 @@ tonic = "0.7.2"
 opentelemetry = "0.18.0"
 tracing = "0.1.37"
 tracing-opentelemetry = "0.18.0"
+getset = "0.1"
+anyhow = "1.0.57"
+serde = { version = "1.0.137", features = ["derive"] }
 
 [dev-dependencies]
 opentelemetry-jaeger = "0.17.0"
 tracing-subscriber = "0.3.16"
+toml = "0.5"

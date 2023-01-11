@@ -120,8 +120,7 @@ use tokio::fs;
 use tracing::{debug, error, metadata::LevelFilter};
 use tracing_appender::rolling::RollingFileAppender;
 use tracing_subscriber::{fmt::format, prelude::*};
-use utils::parse_members;
-use xline::{
+use utils::{
     config::{
         cluster_duration_utils::{
             default_candidate_timeout, default_client_timeout, default_client_wait_synced_timeout,
@@ -131,8 +130,9 @@ use xline::{
         AuthConfig, ClientTimeout, ClusterConfig, ClusterDuration, LevelConfig, LogConfig,
         RotationConfig, ServerTimeout, TraceConfig, XlineServerConfig,
     },
-    server::XlineServer,
+    parse_members,
 };
+use xline::server::XlineServer;
 
 /// Command line arguments
 #[derive(Parser)]

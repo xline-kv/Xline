@@ -112,6 +112,8 @@
 
 use std::collections::HashMap;
 
+/// configuration
+pub mod config;
 /// utils of `parking_lot` lock
 #[cfg(feature = "parking_lot")]
 pub mod parking_lot_lock;

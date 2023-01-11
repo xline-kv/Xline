@@ -1,9 +1,10 @@
 use anyhow::{anyhow, Result};
 use getset::Getters;
 use serde::Deserialize;
-use std::{collections::HashMap, path::PathBuf, str::FromStr, time::Duration};
+use std::{collections::HashMap, ops::Range, path::PathBuf, str::FromStr, time::Duration};
 
 /// Xline server configuration object
+#[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
 pub struct XlineServerConfig {
     /// cluster configuration object
@@ -23,8 +24,6 @@ pub struct XlineServerConfig {
 /// Duration Wrapper for meeting the orphan rule
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct ClusterDuration(Duration);
-
-
 
 impl FromStr for ClusterDuration {
     type Err = anyhow::Error;
@@ -50,6 +49,25 @@ impl FromStr for ClusterDuration {
             }
         } else {
             Err(anyhow!(format!("Invalid time unit:{s}")))
+        }
+    }
+}
+
+/// Range Wrapper
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct ClusterRange(Range<u64>);
+
+impl FromStr for ClusterRange {
+    type Err = anyhow::Error;
+    #[inline]
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Some((start, end)) = s.split_once("..") {
+            Ok(ClusterRange(Range {
+                start: start.parse::<u64>()?,
+                end: end.parse::<u64>()?,
+            }))
+        } else {
+            Err(anyhow!(format!("Invalid cluster range:{s}")))
         }
     }
 }
@@ -121,6 +139,7 @@ pub mod cluster_duration_utils {
 }
 
 /// Cluster configuration object, including cluster relevant configuration fields
+#[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
 pub struct ClusterConfig {
     /// Get xline server name
@@ -258,6 +277,7 @@ impl ClientTimeout {
 }
 
 /// Cluster configuration object
+#[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
 pub struct LogConfig {
     /// Log file path
@@ -286,6 +306,7 @@ impl LogConfig {
 
 /// Xline log rotation strategy
 #[non_exhaustive]
+#[allow(clippy::module_name_repetitions)]
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq)]
 pub enum RotationConfig {
     /// Rotate log file in every hour
@@ -311,7 +332,11 @@ impl FromStr for RotationConfig {
 
 /// A verbosity level configuration field, including log and tracing.
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq)]
-#[allow(clippy::missing_docs_in_private_items, missing_docs)] // The meaning of every variant is quite straightforward, it's ok to ignore doc here.
+#[allow(
+    clippy::missing_docs_in_private_items,
+    missing_docs,
+    clippy::module_name_repetitions
+)] // The meaning of every variant is quite straightforward, it's ok to ignore doc here.
 #[non_exhaustive]
 pub enum LevelConfig {
     Trace,
@@ -337,6 +362,7 @@ impl FromStr for LevelConfig {
 }
 
 /// Xline tracing configuration object
+#[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
 pub struct TraceConfig {
     /// Open jaeger online, sending data to jaeger agent directly
@@ -373,6 +399,7 @@ impl TraceConfig {
 }
 
 /// Xline tracing configuration object
+#[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
 pub struct AuthConfig {
     /// The public key file
@@ -457,6 +484,19 @@ mod tests {
         );
         assert!(ClusterDuration::from_str("5hello").is_err());
         assert!(ClusterDuration::from_str("hellos").is_err());
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_cluster_range_convert() {
+        assert_eq!(
+            ClusterRange::from_str("1000..2000").unwrap(),
+            ClusterRange(1000..2000)
+        );
+
+        assert!(ClusterRange::from_str("5,,10").is_err());
+        assert!(ClusterRange::from_str("a..b").is_err());
+        assert!(ClusterRange::from_str("6c..10a").is_err());
     }
 
     #[allow(clippy::unwrap_used)]
@@ -548,8 +588,46 @@ mod tests {
 
     #[test]
     fn test_xline_server_default_config_should_be_loaded() {
-        let config: XlineServerConfig =
-            toml::from_str(include_str!("../config/xline_server.conf")).unwrap();
+        let config: XlineServerConfig = toml::from_str(
+            r#"[cluster]
+                name = 'node1'
+                is_leader = true
+                
+                [cluster.members]
+                node1 = '127.0.0.1:2379'
+                node2 = '127.0.0.1:2380'
+                node3 = '127.0.0.1:2381'
+                
+                
+                [cluster.server_timeout]
+                # The hearbeat interval between curp server nodes, default value is 150ms
+                # heartbeat_interval = '150ms'
+                # wait_synced_timeout = '5s',
+                # retry_timeout = '800ms',
+                # rpc_timeout = '50ms',
+                # candidate_timeout = '1s',
+                
+                [cluster.client_timeout]
+                # timeout = '1s'
+                # wait_synced_timeout = '2s'
+                
+                
+                [log]
+                path = '/tmp/xline'
+                rotation = 'Daily'
+                level = 'Info'
+                
+                [trace]
+                jaeger_online = false
+                jaeger_offline = false
+                jaeger_output_dir = './jaeger_jsons'
+                jaeger_level = 'Info'
+                
+                [auth]
+                # auth_public_key = './public_key'.pem'
+                # auth_private_key = './private_key.pem'"#,
+        )
+        .unwrap();
 
         assert_eq!(
             config.cluster,
