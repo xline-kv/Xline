@@ -13,7 +13,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v2
-      - run: sudo apt install -y libprotobuf-dev protobuf-compiler
+      - run: sudo bash ./.github/scripts/install_deps.sh
       - uses: actions-rs/toolchain@v1
         with:
           profile: default

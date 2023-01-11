@@ -1,12 +1,7 @@
 #!/bin/bash
 WORKDIR=$(pwd)
 SERVERS=("172.20.0.2" "172.20.0.3" "172.20.0.4" "172.20.0.5")
-CLUSTER_PEERS=(
-    ""
-    "${SERVERS[2]}:2379 ${SERVERS[3]}:2379"
-    "${SERVERS[1]}:2379 ${SERVERS[3]}:2379"
-    "${SERVERS[1]}:2379 ${SERVERS[2]}:2379"
-)
+MEMBERS="node1=${SERVERS[1]}:2379,node2=${SERVERS[2]}:2379,node3=${SERVERS[3]}:2379"
 
 # run xline node by index
 # args:
@@ -14,9 +9,7 @@ CLUSTER_PEERS=(
 run_xline() {
     cmd="/usr/local/bin/xline \
     --name node${1} \
-    --cluster-peers ${CLUSTER_PEERS[$1]} \
-    --self-ip-port ${SERVERS[$1]}:2379 \
-    --leader-ip-port ${SERVERS[1]}:2379"
+    --members ${MEMBERS}"
 
     if [ ${1} -eq 1 ]; then
         cmd="${cmd} --is-leader"
@@ -54,7 +47,7 @@ run_container() {
     for ((i = 1; i <= ${size}; i++)); do
         docker run -d -it --rm --name=node${i} --net=xline_net --ip=172.20.0.$((i + 2)) --cap-add=NET_ADMIN --cpu-shares=1024 -m=512M -v ${WORKDIR}:/mnt ${image} bash &
     done
-        docker run -d -it --rm --name=node4 --net=xline_net --ip=172.20.0.2 --cap-add=NET_ADMIN --cpu-shares=1024 -m=512M -v ${WORKDIR}:/mnt gcr.io/etcd-development/etcd:v3.5.5 bash &
+    docker run -d -it --rm --name=node4 --net=xline_net --ip=172.20.0.2 --cap-add=NET_ADMIN --cpu-shares=1024 -m=512M -v ${WORKDIR}:/mnt gcr.io/etcd-development/etcd:v3.5.5 bash &
     wait
     echo container started
 }

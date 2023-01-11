@@ -2,23 +2,19 @@
 WORKDIR=$(pwd)
 OUTPUT_DIR="${WORKDIR}/out"
 SERVERS=("172.20.0.2" "172.20.0.3" "172.20.0.4" "172.20.0.5")
-CLUSTER_PEERS=(
-    ""
-    "${SERVERS[2]}:2379 ${SERVERS[3]}:2379"
-    "${SERVERS[1]}:2379 ${SERVERS[3]}:2379"
-    "${SERVERS[1]}:2379 ${SERVERS[2]}:2379"
-)
+MEMBERS="node1=${SERVERS[1]}:2379,node2=${SERVERS[2]}:2379,node3=${SERVERS[3]}:2379"
+
 # container use_curp endpoints
 XLINE_TESTCASE=(
-    "node1  false ${SERVERS[1]}:2379"
-    "node2  false ${SERVERS[2]}:2379"
-    "client false ${SERVERS[3]}:2379"
-    "client true  ${SERVERS[1]}:2379 ${SERVERS[2]}:2379 ${SERVERS[3]}:2379"
+    "node1  false node1=${SERVERS[1]}:2379"
+    "node2  false node2=${SERVERS[2]}:2379"
+    "client false node3=${SERVERS[3]}:2379"
+    "client true  ${MEMBERS}"
 )
 ETCD_TESTCASE=(
-    "node1  false ${SERVERS[1]}:2379"
-    "node2  false ${SERVERS[2]}:2379"
-    "client false ${SERVERS[3]}:2379"
+    "node1  false node1=${SERVERS[1]}:2379"
+    "node2  false node2=${SERVERS[2]}:2379"
+    "client false node3=${SERVERS[3]}:2379"
 )
 KEY_SPACE_SIZE=("1" "100000")
 CLIENTS_TOTAL=("1 50" "10 300" "50 1000" "100 3000" "200 5000")
@@ -39,7 +35,7 @@ benchmark_cmd() {
     clients=${4}
     total=${5}
     key_space_size=${6}
-    echo "docker exec ${container_name} /usr/local/bin/benchmark --endpoints ${endpoints} --leader-index=0 ${use_curp} --clients=${clients} --stdout put --key-size=8 --val-size=256 --total=${total} --key-space-size=${key_space_size}"
+    echo "docker exec ${container_name} /usr/local/bin/benchmark --endpoints ${endpoints} ${use_curp} --clients=${clients} --stdout put --key-size=8 --val-size=256 --total=${total} --key-space-size=${key_space_size}"
 }
 
 # run xline node by index
@@ -48,14 +44,14 @@ benchmark_cmd() {
 run_xline() {
     cmd="/usr/local/bin/xline \
     --name node${1} \
-    --cluster-peers ${CLUSTER_PEERS[$1]} \
-    --self-ip-port ${SERVERS[$1]}:2379 \
-    --leader-ip-port ${SERVERS[1]}:2379"
+    --members ${MEMBERS}"
 
     if [ ${1} -eq 1 ]; then
         cmd="${cmd} --is-leader"
     fi
-    docker exec -d node${1} ${cmd}
+
+    docker exec -e RUST_LOG=debug -d node${1} ${cmd}
+    echo "command is: docker exec -e RUST_LOG=debug -d node${1} ${cmd}"
 }
 
 # run etcd node by index
