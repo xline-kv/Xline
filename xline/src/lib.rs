@@ -113,8 +113,6 @@
 
 /// Xline client
 pub mod client;
-/// Xline config
-pub mod config;
 /// Header generator
 mod header_gen;
 /// rpc definition module
