@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use tracing_test::traced_test;
+use utils::config::ClientTimeout;
 
 use crate::common::{curp_group::CurpGroup, test_cmd::TestCommand};
 
@@ -14,7 +15,7 @@ mod common;
 async fn basic_propose() {
     // watch the log while doing sync, TODO: find a better way
     let group = CurpGroup::new(3).await;
-    let client = group.new_client().await;
+    let client = group.new_client(ClientTimeout::default()).await;
 
     assert_eq!(
         client
@@ -36,7 +37,7 @@ async fn basic_propose() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 async fn synced_propose() {
     let mut group = CurpGroup::new(5).await;
-    let client = group.new_client().await;
+    let client = group.new_client(ClientTimeout::default()).await;
     let cmd = TestCommand::new_get(0, vec![0]);
 
     let (er, index) = client.propose_indexed(cmd.clone()).await.unwrap();
@@ -61,7 +62,7 @@ async fn synced_propose() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 async fn exe_exact_n_times() {
     let mut group = CurpGroup::new(3).await;
-    let client = group.new_client().await;
+    let client = group.new_client(ClientTimeout::default()).await;
     let cmd = TestCommand::new_get(0, vec![0]);
 
     let er = client.propose(cmd.clone()).await.unwrap();

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use tokio::sync::mpsc;
+use utils::config::ClientTimeout;
 
 use crate::{
     client::Client,
@@ -21,13 +22,13 @@ pub(crate) struct CurpGroup<T> {
 }
 
 impl<T: CurpNode> CurpGroup<T> {
-    pub(crate) async fn new_client(&self) -> Client<TestCommand> {
+    pub(crate) async fn new_client(&self, timeout: ClientTimeout) -> Client<TestCommand> {
         let addrs = self
             .nodes
             .iter()
             .map(|(id, node)| (id.clone(), node.addr().clone()))
             .collect();
-        Client::<TestCommand>::new(addrs).await
+        Client::<TestCommand>::new(addrs, timeout).await
     }
 
     pub(crate) fn exe_rxs(

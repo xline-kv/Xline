@@ -18,6 +18,7 @@ use tokio::{
     time::{Duration, Instant},
 };
 use tracing::debug;
+use utils::config::ClientTimeout;
 use xline::client::{kv_types::PutRequest, Client};
 
 use crate::{args::Commands, Benchmark};
@@ -166,7 +167,12 @@ impl CommandRunner {
     async fn crate_clients(&self) -> Result<Vec<Client>> {
         let mut clients = Vec::with_capacity(self.args.clients);
         for _ in 0..self.args.clients {
-            let client = Client::new(self.args.endpoints.clone(), self.args.use_curp).await?;
+            let client = Client::new(
+                self.args.endpoints.clone(),
+                self.args.use_curp,
+                ClientTimeout::default(),
+            )
+            .await?;
             clients.push(client);
         }
         Ok(clients)

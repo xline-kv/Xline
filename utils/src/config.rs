@@ -1,7 +1,9 @@
 use anyhow::{anyhow, Result};
 use getset::Getters;
 use serde::Deserialize;
-use std::{collections::HashMap, ops::Range, path::PathBuf, str::FromStr, time::Duration};
+use std::{
+    collections::HashMap, ops::Deref, ops::Range, path::PathBuf, str::FromStr, time::Duration,
+};
 
 /// Xline server configuration object
 #[allow(clippy::module_name_repetitions)]
@@ -53,6 +55,14 @@ impl FromStr for ClusterDuration {
     }
 }
 
+impl Deref for ClusterDuration {
+    type Target = Duration;
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 /// Range Wrapper
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct ClusterRange(Range<u64>);
@@ -72,11 +82,20 @@ impl FromStr for ClusterRange {
     }
 }
 
+impl Deref for ClusterRange {
+    type Target = Range<u64>;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 /// Cluster Duration operations
-pub mod cluster_duration_utils {
+pub mod cluster_duration_format {
     use super::ClusterDuration;
     use serde::{self, Deserialize, Deserializer};
-    use std::{str::FromStr, time::Duration};
+    use std::str::FromStr;
 
     /// deseralizes a cluster duration
     #[allow(single_use_lifetimes)] // TODO: Think is it necessary to allow this clippy??
@@ -86,55 +105,6 @@ pub mod cluster_duration_utils {
     {
         let s = String::deserialize(deserializer)?;
         ClusterDuration::from_str(&s).map_err(serde::de::Error::custom)
-    }
-
-    /// default heartbeat interval
-    #[must_use]
-    #[inline]
-    pub fn default_heartbeat_interval() -> ClusterDuration {
-        ClusterDuration(Duration::from_millis(150))
-    }
-
-    /// default wait synced timeout
-    #[must_use]
-    #[inline]
-    pub fn default_server_wait_synced_timeout() -> ClusterDuration {
-        ClusterDuration(Duration::from_secs(5))
-    }
-
-    /// default retry timeout
-    #[must_use]
-    #[inline]
-    pub fn default_retry_timeout() -> ClusterDuration {
-        ClusterDuration(Duration::from_millis(800))
-    }
-
-    /// default rpc timeout
-    #[must_use]
-    #[inline]
-    pub fn default_rpc_timeout() -> ClusterDuration {
-        ClusterDuration(Duration::from_millis(50))
-    }
-
-    /// default candidate timeout
-    #[must_use]
-    #[inline]
-    pub fn default_candidate_timeout() -> ClusterDuration {
-        ClusterDuration(Duration::from_secs(1))
-    }
-
-    /// default crup client timeout
-    #[must_use]
-    #[inline]
-    pub fn default_client_timeout() -> ClusterDuration {
-        ClusterDuration(Duration::from_secs(1))
-    }
-
-    /// default client wait synced timeout
-    #[must_use]
-    #[inline]
-    pub fn default_client_wait_synced_timeout() -> ClusterDuration {
-        ClusterDuration(Duration::from_secs(2))
     }
 }
 
@@ -186,41 +156,84 @@ pub struct ServerTimeout {
     /// Heartbeat Interval
     #[getset(get = "pub")]
     #[serde(
-        with = "cluster_duration_utils",
-        default = "cluster_duration_utils::default_heartbeat_interval"
+        with = "cluster_duration_format",
+        default = "default_heartbeat_interval"
     )]
     heartbeat_interval: ClusterDuration,
     /// Curp wait sync timeout
     #[getset(get = "pub")]
     #[serde(
-        with = "cluster_duration_utils",
-        default = "cluster_duration_utils::default_server_wait_synced_timeout"
+        with = "cluster_duration_format",
+        default = "default_server_wait_synced_timeout"
     )]
     wait_synced_timeout: ClusterDuration,
 
     /// Curp propose retry timeout
     #[getset(get = "pub")]
-    #[serde(
-        with = "cluster_duration_utils",
-        default = "cluster_duration_utils::default_retry_timeout"
-    )]
+    #[serde(with = "cluster_duration_format", default = "default_retry_timeout")]
     retry_timeout: ClusterDuration,
 
     /// Curp rpc timeout
     #[getset(get = "pub")]
-    #[serde(
-        with = "cluster_duration_utils",
-        default = "cluster_duration_utils::default_rpc_timeout"
-    )]
+    #[serde(with = "cluster_duration_format", default = "default_rpc_timeout")]
     rpc_timeout: ClusterDuration,
 
     /// Candidate election timeout
     #[getset(get = "pub")]
     #[serde(
-        with = "cluster_duration_utils",
-        default = "cluster_duration_utils::default_candidate_timeout"
+        with = "cluster_duration_format",
+        default = "default_candidate_timeout"
     )]
     candidate_timeout: ClusterDuration,
+}
+
+/// default heartbeat interval
+#[must_use]
+#[inline]
+pub fn default_heartbeat_interval() -> ClusterDuration {
+    ClusterDuration(Duration::from_millis(150))
+}
+
+/// default wait synced timeout
+#[must_use]
+#[inline]
+pub fn default_server_wait_synced_timeout() -> ClusterDuration {
+    ClusterDuration(Duration::from_secs(5))
+}
+
+/// default retry timeout
+#[must_use]
+#[inline]
+pub fn default_retry_timeout() -> ClusterDuration {
+    ClusterDuration(Duration::from_millis(800))
+}
+
+/// default rpc timeout
+#[must_use]
+#[inline]
+pub fn default_rpc_timeout() -> ClusterDuration {
+    ClusterDuration(Duration::from_millis(50))
+}
+
+/// default candidate timeout
+#[must_use]
+#[inline]
+pub fn default_candidate_timeout() -> ClusterDuration {
+    ClusterDuration(Duration::from_secs(1))
+}
+
+/// default crup client timeout
+#[must_use]
+#[inline]
+pub fn default_client_timeout() -> ClusterDuration {
+    ClusterDuration(Duration::from_secs(1))
+}
+
+/// default client wait synced timeout
+#[must_use]
+#[inline]
+pub fn default_client_wait_synced_timeout() -> ClusterDuration {
+    ClusterDuration(Duration::from_secs(2))
 }
 
 impl ServerTimeout {
@@ -249,17 +262,14 @@ impl ServerTimeout {
 pub struct ClientTimeout {
     /// Curp client timeout settings
     #[getset(get = "pub")]
-    #[serde(
-        with = "cluster_duration_utils",
-        default = "cluster_duration_utils::default_client_timeout"
-    )]
+    #[serde(with = "cluster_duration_format", default = "default_client_timeout")]
     timeout: ClusterDuration,
 
     /// Curp cliet wait sync timeout
     #[getset(get = "pub")]
     #[serde(
-        with = "cluster_duration_utils",
-        default = "cluster_duration_utils::default_client_wait_synced_timeout"
+        with = "cluster_duration_format",
+        default = "default_client_wait_synced_timeout"
     )]
     wait_synced_timeout: ClusterDuration,
 }
@@ -272,6 +282,16 @@ impl ClientTimeout {
         Self {
             timeout,
             wait_synced_timeout,
+        }
+    }
+}
+
+impl Default for ClientTimeout {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            timeout: default_client_timeout(),
+            wait_synced_timeout: default_client_wait_synced_timeout(),
         }
     }
 }
@@ -444,12 +464,6 @@ impl XlineServerConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cluster_duration_utils::{
-        default_candidate_timeout, default_client_timeout, default_client_wait_synced_timeout,
-        default_heartbeat_interval, default_retry_timeout, default_rpc_timeout,
-        default_server_wait_synced_timeout,
-    };
-
     fn default_timeout_server() -> ServerTimeout {
         ServerTimeout::new(
             default_heartbeat_interval(),
@@ -457,13 +471,6 @@ mod tests {
             default_retry_timeout(),
             default_rpc_timeout(),
             default_candidate_timeout(),
-        )
-    }
-
-    fn default_timeout_client() -> ClientTimeout {
-        ClientTimeout::new(
-            default_client_timeout(),
-            default_client_wait_synced_timeout(),
         )
     }
 
@@ -640,7 +647,7 @@ mod tests {
                 ]),
                 true,
                 default_timeout_server(),
-                default_timeout_client()
+                ClientTimeout::default()
             )
         );
         assert_eq!(

@@ -29,7 +29,7 @@ use tokio::{net::TcpListener, sync::mpsc};
 use tokio_stream::wrappers::TcpListenerStream;
 use tracing::debug;
 use tracing_test::traced_test;
-use utils::parking_lot_lock::RwLockMap;
+use utils::{config::ClientTimeout, parking_lot_lock::RwLockMap};
 
 use crate::{
     message::{ServerId, TermNum},
@@ -318,7 +318,7 @@ async fn reelect() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 async fn propose_after_reelect() {
     let group = CurpGroup::new(5).await;
-    let client = group.new_client().await;
+    let client = group.new_client(ClientTimeout::default()).await;
     assert_eq!(
         client
             .propose(TestCommand::new_put(vec![0], 0))
@@ -344,7 +344,7 @@ async fn propose_after_reelect() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 async fn fast_round_is_slower_than_slow_round() {
     let group = CurpGroup::new(3).await;
-    let client = group.new_client().await;
+    let client = group.new_client(ClientTimeout::default()).await;
     let cmd = Arc::new(TestCommand::new_get(vec![0]));
 
     let leader = group.get_leader().await;

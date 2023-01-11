@@ -122,13 +122,11 @@ use tracing_appender::rolling::RollingFileAppender;
 use tracing_subscriber::{fmt::format, prelude::*};
 use utils::{
     config::{
-        cluster_duration_utils::{
-            default_candidate_timeout, default_client_timeout, default_client_wait_synced_timeout,
-            default_heartbeat_interval, default_retry_timeout, default_rpc_timeout,
-            default_server_wait_synced_timeout,
-        },
-        AuthConfig, ClientTimeout, ClusterConfig, ClusterDuration, LevelConfig, LogConfig,
-        RotationConfig, ServerTimeout, TraceConfig, XlineServerConfig,
+        default_candidate_timeout, default_client_timeout, default_client_wait_synced_timeout,
+        default_heartbeat_interval, default_retry_timeout, default_rpc_timeout,
+        default_server_wait_synced_timeout, AuthConfig, ClientTimeout, ClusterConfig,
+        ClusterDuration, LevelConfig, LogConfig, RotationConfig, ServerTimeout, TraceConfig,
+        XlineServerConfig,
     },
     parse_members,
 };
@@ -402,6 +400,7 @@ async fn main() -> Result<()> {
         cluster_config.members().clone(),
         *is_leader,
         key_pair,
+        *cluster_config.client_timeout(),
     )
     .await;
     debug!("{:?}", server);

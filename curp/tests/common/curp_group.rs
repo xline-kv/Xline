@@ -12,6 +12,7 @@ use curp::{client::Client, server::Rpc, LogIndex, ProtocolServer};
 use futures::future::join_all;
 use tokio::{net::TcpListener, sync::mpsc};
 use tokio_stream::wrappers::TcpListenerStream;
+use utils::config::ClientTimeout;
 
 use crate::common::test_cmd::{TestCE, TestCommand, TestCommandResult};
 
@@ -80,13 +81,13 @@ impl CurpGroup {
         Self { nodes }
     }
 
-    pub async fn new_client(&self) -> Client<TestCommand> {
+    pub async fn new_client(&self, timeout: ClientTimeout) -> Client<TestCommand> {
         let addrs = self
             .nodes
             .iter()
             .map(|(id, node)| (id.clone(), node.addr.clone()))
             .collect();
-        Client::<TestCommand>::new(addrs).await
+        Client::<TestCommand>::new(addrs, timeout).await
     }
 
     pub fn exe_rxs(

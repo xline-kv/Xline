@@ -6,6 +6,7 @@ use tokio::{
     sync::broadcast::{self, Sender},
     time::{self, Duration},
 };
+use utils::config::ClientTimeout;
 use xline::{client::Client, server::XlineServer};
 
 /// Cluster
@@ -54,8 +55,14 @@ impl Cluster {
             let listener = self.listeners.remove(&i).unwrap();
             let all_members = self.all_members.clone();
             tokio::spawn(async move {
-                let server =
-                    XlineServer::new(name, all_members, is_leader, Self::test_key_pair()).await;
+                let server = XlineServer::new(
+                    name,
+                    all_members,
+                    is_leader,
+                    Self::test_key_pair(),
+                    ClientTimeout::default(),
+                )
+                .await;
                 let signal = async {
                     let _ = rx.recv().await;
                 };
@@ -73,7 +80,7 @@ impl Cluster {
     /// Create or get the client with the specified index
     pub(crate) async fn client(&mut self) -> &mut Client {
         if self.client.is_none() {
-            let client = Client::new(self.all_members.clone(), true)
+            let client = Client::new(self.all_members.clone(), true, ClientTimeout::default())
                 .await
                 .unwrap_or_else(|e| {
                     panic!("Client connect error: {:?}", e);
