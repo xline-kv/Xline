@@ -10,16 +10,13 @@ use std::{
 use clippy_utilities::NumericCast;
 use event_listener::Event;
 use itertools::Itertools;
-use parking_lot::{lock_api::RwLockUpgradableReadGuard, Mutex, RwLock};
+use parking_lot::{lock_api::RwLockUpgradableReadGuard, RwLock};
 use tokio::{net::TcpListener, sync::broadcast, time::Instant};
 use tokio_stream::wrappers::TcpListenerStream;
 use tracing::{debug, error, info, instrument, warn};
 use utils::{config::ServerTimeout, parking_lot_lock::RwLockMap, tracing::Extract};
 
-use self::{
-    cmd_board::CommandBoard, cmd_execute_worker::CmdExeSenderInterface, gc::run_gc_tasks,
-    spec_pool::SpeculativePool, state::State,
-};
+use self::{cmd_execute_worker::CmdExeSenderInterface, gc::run_gc_tasks, state::State};
 use crate::{
     cmd::{Command, CommandExecutor},
     error::{ProposeError, ServerError},
@@ -288,13 +285,10 @@ impl<C: 'static + Command> Protocol<C> {
         timeout: Arc<ServerTimeout>,
     ) -> Self {
         let (sync_tx, sync_rx) = flume::unbounded();
-        let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
-        let spec = Arc::new(Mutex::new(SpeculativePool::new()));
-        let last_rpc_time = Arc::new(RwLock::new(Instant::now()));
         let (stop_ch_tx, stop_ch_rx) = broadcast::channel(1);
         let (exe_tx, exe_rx) = cmd_exe_channel();
 
-        let state = Arc::new(RwLock::new(State::new(
+        let state = State::new(
             id,
             if is_leader {
                 ServerRole::Leader
@@ -302,11 +296,12 @@ impl<C: 'static + Command> Protocol<C> {
                 ServerRole::Follower
             },
             others,
-            Arc::clone(&cmd_board),
-            Arc::clone(&spec),
-            Arc::clone(&last_rpc_time),
             exe_tx.clone(),
-        )));
+        );
+        let last_rpc_time = state.last_rpc_time();
+        let spec = state.spec();
+        let cmd_board = state.cmd_board();
+        let state = Arc::new(RwLock::new(state));
 
         // run background tasks
         let _bg_handle = tokio::spawn(bg_tasks::run_bg_tasks::<_, _, Connect, CmdExeSender<C>>(
@@ -345,13 +340,10 @@ impl<C: 'static + Command> Protocol<C> {
         reachable: Arc<AtomicBool>,
     ) -> Self {
         let (sync_tx, sync_rx) = flume::unbounded();
-        let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
-        let spec = Arc::new(Mutex::new(SpeculativePool::new()));
-        let last_rpc_time = Arc::new(RwLock::new(Instant::now()));
         let (stop_ch_tx, stop_ch_rx) = broadcast::channel(1);
         let (exe_tx, exe_rx) = cmd_exe_channel();
 
-        let state = Arc::new(RwLock::new(State::new(
+        let state = State::new(
             id,
             if is_leader {
                 ServerRole::Leader
@@ -359,11 +351,12 @@ impl<C: 'static + Command> Protocol<C> {
                 ServerRole::Follower
             },
             others,
-            Arc::clone(&cmd_board),
-            Arc::clone(&spec),
-            Arc::clone(&last_rpc_time),
             exe_tx.clone(),
-        )));
+        );
+        let last_rpc_time = state.last_rpc_time();
+        let spec = state.spec();
+        let cmd_board = state.cmd_board();
+        let state = Arc::new(RwLock::new(state));
 
         // run background tasks
         let _bg_handle = tokio::spawn(bg_tasks::run_bg_tasks::<_, _, Connect, _>(
