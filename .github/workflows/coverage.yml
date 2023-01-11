@@ -1,3 +1,5 @@
+name: Coverage
+
 on:
   push:
     branches:

@@ -11,9 +11,6 @@ pub struct Benchmark {
     /// The address of the server
     #[clap(long, value_parser = parse_members)]
     pub endpoints: HashMap<String, String>,
-    /// Index of leader serer
-    #[clap(long, required = true)]
-    pub leader_index: usize,
     /// Clients number
     #[clap(long, required = true)]
     pub clients: usize,
