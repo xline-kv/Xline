@@ -317,7 +317,7 @@ async fn main() -> Result<()> {
         let config_file = if let Ok(path) = env::var("XLINE_SERVER_CONFIG") {
             fs::read_to_string(&path).await?
         } else {
-            include_str!("../config/xline_server.conf").to_owned()
+            include_str!("../../xline_server.conf").to_owned()
         };
         toml::from_str(&config_file)?
     } else {
@@ -405,6 +405,7 @@ async fn main() -> Result<()> {
         cluster_config.members().clone(),
         *is_leader,
         key_pair,
+        cluster_config.server_timeout().clone(),
         *cluster_config.client_timeout(),
     )
     .await;

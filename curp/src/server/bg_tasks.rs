@@ -1,6 +1,6 @@
 #[cfg(test)]
 use std::sync::atomic::AtomicBool;
-use std::{iter, ops::Range, sync::Arc, time::Duration};
+use std::{iter, sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
 use futures::future::Either;
@@ -27,10 +27,6 @@ use crate::{
     shutdown::Shutdown,
     LogIndex,
 };
-
-/// Wait for sometime before next retry
-// TODO: make it configurable
-const RETRY_TIMEOUT: Duration = Duration::from_millis(800);
 
 /// Run background tasks
 #[allow(clippy::too_many_arguments)] // we call this function once, it's ok
@@ -119,11 +115,6 @@ async fn bg_get_sync_cmds<C: Command + 'static>(
     }
 }
 
-/// Interval between sending heartbeats
-const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(150);
-/// Rpc request timeout
-const RPC_TIMEOUT: Duration = Duration::from_millis(50);
-
 /// Background `append_entries`, only works for the leader
 async fn bg_append_entries<C: Command + 'static, Conn: ConnectInterface>(
     connects: Vec<Arc<Conn>>,
@@ -179,10 +170,16 @@ async fn send_log_until_succeed<C: Command + 'static, Conn: ConnectInterface>(
     connect: Arc<Conn>,
     state: Arc<RwLock<State<C>>>,
 ) {
+    let (retry_timeout, rpc_timeout) = state.map_read(|state_r| {
+        (
+            *state_r.timeout.retry_timeout(),
+            *state_r.timeout.rpc_timeout(),
+        )
+    });
     // send log[i] until succeed
     loop {
         debug!("append_entries sent to {}", connect.id());
-        let resp = connect.append_entries(req.clone(), RPC_TIMEOUT).await;
+        let resp = connect.append_entries(req.clone(), *rpc_timeout).await;
 
         #[allow(clippy::unwrap_used)]
         // indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
@@ -190,7 +187,7 @@ async fn send_log_until_succeed<C: Command + 'static, Conn: ConnectInterface>(
             Err(e) => {
                 warn!("append_entries error: {e}");
                 // wait for some time until next retry
-                tokio::time::sleep(RETRY_TIMEOUT).await;
+                tokio::time::sleep(*retry_timeout).await;
             }
             Ok(resp) => {
                 let resp = resp.into_inner();
@@ -239,13 +236,18 @@ async fn bg_heartbeat<C: Command + 'static, Conn: ConnectInterface>(
     connects: Vec<Arc<Conn>>,
     state: Arc<RwLock<State<C>>>,
 ) {
-    let (role_trigger, hb_reset_trigger) =
-        state.map_read(|state_r| (state_r.role_trigger(), state_r.heartbeat_reset_trigger()));
+    let (role_trigger, hb_reset_trigger, heartbeat_interval) = state.map_read(|state_r| {
+        (
+            state_r.role_trigger(),
+            state_r.heartbeat_reset_trigger(),
+            *state_r.timeout.heartbeat_interval(),
+        )
+    });
     #[allow(clippy::integer_arithmetic)] // tokio internal triggered
     loop {
         loop {
             tokio::select! {
-                _ = tokio::time::sleep(HEARTBEAT_INTERVAL) => break,
+                _ = tokio::time::sleep(*heartbeat_interval) => break,
                 _ = hb_reset_trigger.listen() => {}
             }
         }
@@ -254,7 +256,6 @@ async fn bg_heartbeat<C: Command + 'static, Conn: ConnectInterface>(
         while !state.read().is_leader() {
             role_trigger.listen().await;
         }
-
         // send append_entries to each server in parallel
         for connect in &connects {
             let _handle = tokio::spawn(send_heartbeat(Arc::clone(connect), Arc::clone(&state)));
@@ -269,20 +270,23 @@ async fn send_heartbeat<C: Command + 'static, Conn: ConnectInterface>(
     state: Arc<RwLock<State<C>>>,
 ) {
     // prepare append_entries request args
-    let req = state.map_read(|state_r| {
+    let (req, rpc_timeout) = state.map_read(|state_r| {
         let next_index = state_r.next_index[connect.id()];
-        AppendEntriesRequest::new_heartbeat(
-            state_r.term,
-            state_r.id().clone(),
-            next_index - 1,
-            state_r.log[next_index - 1].term(),
-            state_r.commit_index,
+        (
+            AppendEntriesRequest::new_heartbeat(
+                state_r.term,
+                state_r.id().clone(),
+                next_index - 1,
+                state_r.log[next_index - 1].term(),
+                state_r.commit_index,
+            ),
+            *state.read().timeout.rpc_timeout(),
         )
     });
 
     // send append_entries request and receive response
     debug!("heartbeat sent to {}", connect.id());
-    let resp = connect.append_entries(req, RPC_TIMEOUT).await;
+    let resp = connect.append_entries(req, *rpc_timeout).await;
 
     #[allow(clippy::unwrap_used)]
     // indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
@@ -432,11 +436,6 @@ fn handle_after_sync_follower<C: Command + 'static, Tx: CmdExeSenderInterface<C>
     let _ignore = exe_tx.send_exe_and_after_sync(cmd, index);
 }
 
-/// How long a candidate should wait before it starts another round of election
-const CANDIDATE_TIMEOUT: Duration = Duration::from_secs(3);
-/// How long a follower should wait before it starts a round of election (in millis)
-const FOLLOWER_TIMEOUT: Range<u64> = 1000..2000;
-
 /// Background election
 async fn bg_election<C: Command + 'static, Conn: ConnectInterface>(
     connects: Vec<Arc<Conn>>,
@@ -478,14 +477,23 @@ async fn bg_election<C: Command + 'static, Conn: ConnectInterface>(
 
 /// wait until an election is needed
 async fn wait_for_election<C: Command + 'static>(state: Arc<RwLock<State<C>>>) {
-    let (role_trigger, last_rpc_time) =
-        state.map_read(|state_r| (state_r.role_trigger(), state_r.last_rpc_time()));
+    let (role_trigger, last_rpc_time, follower_timeout_range, candidate_timeout) =
+        state.map_read(|state_r| {
+            (
+                state_r.role_trigger(),
+                state_r.last_rpc_time(),
+                state_r.timeout.follower_timeout_range().clone(),
+                *state_r.timeout.candidate_timeout(),
+            )
+        });
     'outer: loop {
         // only follower or candidate should try to elect
         let role = state.read().role();
         match role {
             ServerRole::Follower => {
-                let timeout = Duration::from_millis(thread_rng().gen_range(FOLLOWER_TIMEOUT));
+                let timeout = Duration::from_millis(
+                    thread_rng().gen_range((*follower_timeout_range).clone()),
+                );
                 // wait until it needs to vote
                 loop {
                     let next_check = last_rpc_time.read().to_owned() + timeout;
@@ -496,7 +504,7 @@ async fn wait_for_election<C: Command + 'static>(state: Arc<RwLock<State<C>>>) {
                 }
             }
             ServerRole::Candidate => 'inner: loop {
-                let next_check = last_rpc_time.read().to_owned() + CANDIDATE_TIMEOUT;
+                let next_check = last_rpc_time.read().to_owned() + *candidate_timeout;
                 tokio::time::sleep_until(next_check).await;
                 // check election status
                 match state.read().role() {
@@ -507,7 +515,7 @@ async fn wait_for_election<C: Command + 'static>(state: Arc<RwLock<State<C>>>) {
                     ServerRole::Candidate => {}
                 }
                 // another round of election is needed
-                if Instant::now() - *last_rpc_time.read() > CANDIDATE_TIMEOUT {
+                if Instant::now() - *last_rpc_time.read() > *candidate_timeout {
                     break 'outer;
                 }
             },
@@ -525,7 +533,8 @@ async fn send_vote<C: Command + 'static, Conn: ConnectInterface>(
     state: Arc<RwLock<State<C>>>,
     req: VoteRequest,
 ) {
-    let resp = connect.vote(req, RPC_TIMEOUT).await;
+    let rpc_timeout = *state.read().timeout.rpc_timeout();
+    let resp = connect.vote(req, *rpc_timeout).await;
     match resp {
         Err(e) => error!("vote failed, {}", e),
         Ok(resp) => {
@@ -595,9 +604,11 @@ async fn leader_calibrates_follower<C: Command + 'static, Conn: ConnectInterface
 ) {
     loop {
         // send append entry
-        let (req, last_sent_index) = {
+        let (req, last_sent_index, retry_timeout, rpc_timeout) = {
             let state_r = state.read();
             let next_index = state_r.next_index[connect.id()];
+            let retry_timeout = *state_r.timeout.retry_timeout();
+            let rpc_timeout = *state_r.timeout.rpc_timeout();
             match AppendEntriesRequest::new(
                 state_r.term,
                 state_r.id().clone(),
@@ -610,18 +621,18 @@ async fn leader_calibrates_follower<C: Command + 'static, Conn: ConnectInterface
                     error!("unable to serialize append entries request: {}", e);
                     return;
                 }
-                Ok(req) => (req, state_r.log.len() - 1),
+                Ok(req) => (req, state_r.log.len() - 1, retry_timeout, rpc_timeout),
             }
         };
 
-        let resp = connect.append_entries(req, RPC_TIMEOUT).await;
+        let resp = connect.append_entries(req, *rpc_timeout).await;
 
         #[allow(clippy::unwrap_used)]
         // indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
         match resp {
             Err(e) => {
                 warn!("append_entries error: {}", e);
-                tokio::time::sleep(RETRY_TIMEOUT).await;
+                tokio::time::sleep(*retry_timeout).await;
             }
             Ok(resp) => {
                 let resp = resp.into_inner();
@@ -656,6 +667,7 @@ mod test {
     use parking_lot::{Mutex, RwLock};
     use tokio::{sync::oneshot, time::Instant};
     use tracing_test::traced_test;
+    use utils::config::ServerTimeout;
 
     use super::*;
     use crate::{
@@ -688,6 +700,7 @@ mod test {
             others,
             Arc::new(Mutex::new(CommandBoard::new())),
             Arc::new(RwLock::new(Instant::now())),
+            Arc::new(ServerTimeout::default()),
         )))
     }
 

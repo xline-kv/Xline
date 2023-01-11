@@ -6,7 +6,7 @@ use tokio::{
     sync::broadcast::{self, Sender},
     time::{self, Duration},
 };
-use utils::config::ClientTimeout;
+use utils::config::{ClientTimeout, ServerTimeout};
 use xline::{client::Client, server::XlineServer};
 
 /// Cluster
@@ -60,6 +60,7 @@ impl Cluster {
                     all_members,
                     is_leader,
                     Self::test_key_pair(),
+                    ServerTimeout::default(),
                     ClientTimeout::default(),
                 )
                 .await;

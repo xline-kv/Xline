@@ -189,7 +189,7 @@ where
                 if let Some(id) = self.state.read().leader.clone() {
                     break id;
                 }
-                if timeout(*self.timeout.timeout(), notify.listen())
+                if timeout(**self.timeout.timeout(), notify.listen())
                     .await
                     .is_err()
                 {
@@ -206,7 +206,7 @@ where
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .wait_synced(
                     WaitSyncedRequest::new(cmd.id())?,
-                    *self.timeout.wait_synced_timeout(),
+                    **self.timeout.wait_synced_timeout(),
                 )
                 .await
             {
@@ -257,7 +257,7 @@ where
                     (
                         connect.id().clone(),
                         connect
-                            .fetch_leader(FetchLeaderRequest::new(), *self.timeout.timeout())
+                            .fetch_leader(FetchLeaderRequest::new(), **self.timeout.timeout())
                             .await,
                     )
                 })
