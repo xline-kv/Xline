@@ -7,7 +7,7 @@ use parking_lot::RwLock;
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
-use utils::parking_lot_lock::RwLockMap;
+use utils::{parking_lot_lock::RwLockMap,config::ClientTimeout};
 
 use super::{
     auth_server::AuthServer,
@@ -58,11 +58,12 @@ impl XlineServer {
         all_members: HashMap<String, String>,
         is_leader: bool,
         key_pair: Option<(EncodingKey, DecodingKey)>,
+        client_timeout: ClientTimeout,
     ) -> Self {
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let kv_storage = Arc::new(KvStore::new(Arc::clone(&header_gen)));
         let auth_storage = Arc::new(AuthStore::new(key_pair, Arc::clone(&header_gen)));
-        let client = Arc::new(Client::<Command>::new(all_members.clone()).await);
+        let client = Arc::new(Client::<Command>::new(all_members.clone(), client_timeout).await);
         let leader_id = is_leader.then(|| name.clone());
         let state = Arc::new(RwLock::new(State::new(name, leader_id, all_members)));
         Self {

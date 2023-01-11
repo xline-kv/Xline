@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use curp::{client::Client as CurpClient, cmd::ProposeId};
 use etcd_client::{AuthClient, Client as EtcdClient, WatchClient};
+use utils::config::ClientTimeout;
 use uuid::Uuid;
 
 use crate::{
@@ -43,6 +44,7 @@ impl Client {
     pub async fn new(
         all_members: HashMap<String, String>,
         use_curp_client: bool,
+        timeout: ClientTimeout,
     ) -> Result<Self, ClientError> {
         let etcd_client = EtcdClient::connect(
             all_members
@@ -52,7 +54,7 @@ impl Client {
             None,
         )
         .await?;
-        let curp_client = CurpClient::new(all_members).await;
+        let curp_client = CurpClient::new(all_members, timeout).await;
         Ok(Self {
             name: String::from("client"),
             curp_client,

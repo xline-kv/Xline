@@ -8,7 +8,7 @@ use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
 use parking_lot::RwLock;
 use tokio::{sync::broadcast, time::timeout};
 use tracing::{debug, instrument, warn};
-use utils::parking_lot_lock::RwLockMap;
+use utils::{config::ClientTimeout, parking_lot_lock::RwLockMap};
 
 use crate::{
     cmd::Command,
@@ -30,6 +30,8 @@ pub struct Client<C: Command> {
     state: RwLock<State>,
     /// All servers addresses including leader address
     connects: Vec<Arc<Connect>>,
+    /// Curp client timeout settings
+    timeout: ClientTimeout,
     /// To keep Command type
     phatom: PhantomData<C>,
 }
@@ -81,20 +83,13 @@ impl<C> Client<C>
 where
     C: Command + 'static,
 {
-    /// Timeout
-    // TODO: make it configurable
-    const TIMEOUT: Duration = Duration::from_secs(1);
-
-    /// Wait Synced Timeout
-    // TODO: make it configurable
-    const WAIT_SYNCED_TIMEOUT: Duration = Duration::from_secs(2);
-
     /// Create a new protocol client based on the addresses
     #[inline]
-    pub async fn new(addrs: HashMap<ServerId, String>) -> Self {
+    pub async fn new(addrs: HashMap<ServerId, String>, timeout: ClientTimeout) -> Self {
         Self {
             state: RwLock::new(State::new()),
             connects: Connect::try_connect(addrs).await,
+            timeout,
             phatom: PhantomData,
         }
     }
@@ -194,7 +189,10 @@ where
                 if let Some(id) = self.state.read().leader.clone() {
                     break id;
                 }
-                if timeout(Self::TIMEOUT, notify.listen()).await.is_err() {
+                if timeout(*self.timeout.timeout(), notify.listen())
+                    .await
+                    .is_err()
+                {
                     // maybe the fast path fails to set the leader, need to fetch leader proactively
                     self.fetch_leader().await;
                 }
@@ -206,7 +204,10 @@ where
                 .iter()
                 .find(|conn| conn.id() == &leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
-                .wait_synced(WaitSyncedRequest::new(cmd.id())?, Self::WAIT_SYNCED_TIMEOUT)
+                .wait_synced(
+                    WaitSyncedRequest::new(cmd.id())?,
+                    *self.timeout.wait_synced_timeout(),
+                )
                 .await
             {
                 Ok(resp) => resp.into_inner(),
@@ -256,7 +257,7 @@ where
                     (
                         connect.id().clone(),
                         connect
-                            .fetch_leader(FetchLeaderRequest::new(), Self::TIMEOUT)
+                            .fetch_leader(FetchLeaderRequest::new(), *self.timeout.timeout())
                             .await,
                     )
                 })
