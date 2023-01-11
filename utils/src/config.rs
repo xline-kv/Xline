@@ -23,6 +23,8 @@ pub struct XlineServerConfig {
     auth: AuthConfig,
 }
 
+// TODO: support persistent storage configuration in the future
+
 /// Duration Wrapper for meeting the orphan rule
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct ClusterDuration(Duration);
@@ -98,7 +100,7 @@ pub mod cluster_duration_format {
     use std::str::FromStr;
 
     /// deseralizes a cluster duration
-    #[allow(single_use_lifetimes)] // TODO: Think is it necessary to allow this clippy??
+    #[allow(single_use_lifetimes)] //  the false positive case blocks us
     pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<ClusterDuration, D::Error>
     where
         D: Deserializer<'de>,
@@ -195,7 +197,7 @@ pub struct ServerTimeout {
     #[serde(with = "cluster_duration_format", default = "default_rpc_timeout")]
     rpc_timeout: ClusterDuration,
 
-    /// Candidate election timeout
+    /// How long a candidate should wait before it starts another round of election
     #[getset(get = "pub")]
     #[serde(
         with = "cluster_duration_format",
@@ -203,7 +205,7 @@ pub struct ServerTimeout {
     )]
     candidate_timeout: ClusterDuration,
 
-    /// Candidate election timeout
+    /// How long a follower should wait before it starts a round of election (in millis)
     #[getset(get = "pub")]
     #[serde(
         with = "cluster_range_format",
@@ -244,7 +246,7 @@ pub fn default_rpc_timeout() -> ClusterDuration {
 #[must_use]
 #[inline]
 pub fn default_candidate_timeout() -> ClusterDuration {
-    ClusterDuration(Duration::from_secs(1))
+    ClusterDuration(Duration::from_secs(3))
 }
 
 /// default crup client timeout
@@ -476,6 +478,7 @@ pub struct AuthConfig {
     /// The private key file
     #[getset(get = "pub")]
     auth_private_key: Option<PathBuf>,
+    // TODO: support SSL/TLS configuration in the future
 }
 
 impl AuthConfig {
@@ -552,12 +555,12 @@ mod tests {
             r#"[cluster]
             name = 'node1'
             is_leader = true
-            
+
             [cluster.members]
             node1 = '127.0.0.1:2379'
             node2 = '127.0.0.1:2380'
             node3 = '127.0.0.1:2381'
-            
+
             [cluster.server_timeout]
             heartbeat_interval = '200ms'
             wait_synced_timeout = '100ms'
@@ -569,19 +572,18 @@ mod tests {
             [cluster.client_timeout]
             timeout = '5s'
             wait_synced_timeout = '100s'
-            
-            
+
             [log]
-            path = '/tmp/xline'
+            path = '/var/log/xline'
             rotation = 'Daily'
             level = 'Info'
-            
+
             [trace]
             jaeger_online = false
             jaeger_offline = false
             jaeger_output_dir = './jaeger_jsons'
             jaeger_level = 'Info'
-            
+
             [auth]"#,
         )
         .unwrap();
@@ -618,7 +620,7 @@ mod tests {
         assert_eq!(
             config.log,
             LogConfig::new(
-                PathBuf::from("/tmp/xline"),
+                PathBuf::from("/var/log/xline"),
                 RotationConfig::Daily,
                 LevelConfig::Info
             )
@@ -634,19 +636,19 @@ mod tests {
         );
     }
 
+    #[allow(clippy::unwrap_used)]
     #[test]
     fn test_xline_server_default_config_should_be_loaded() {
         let config: XlineServerConfig = toml::from_str(
             r#"[cluster]
                 name = 'node1'
                 is_leader = true
-                
+
                 [cluster.members]
                 node1 = '127.0.0.1:2379'
                 node2 = '127.0.0.1:2380'
                 node3 = '127.0.0.1:2381'
-                
-                
+
                 [cluster.server_timeout]
                 # The hearbeat interval between curp server nodes, default value is 150ms
                 # heartbeat_interval = '150ms'
@@ -654,23 +656,22 @@ mod tests {
                 # retry_timeout = '800ms',
                 # rpc_timeout = '50ms',
                 # candidate_timeout = '1s',
-                
+
                 [cluster.client_timeout]
                 # timeout = '1s'
                 # wait_synced_timeout = '2s'
-                
-                
+
                 [log]
-                path = '/tmp/xline'
+                path = '/var/log/xline'
                 rotation = 'Daily'
                 level = 'Info'
-                
+
                 [trace]
                 jaeger_online = false
                 jaeger_offline = false
                 jaeger_output_dir = './jaeger_jsons'
                 jaeger_level = 'Info'
-                
+
                 [auth]
                 # auth_public_key = './public_key'.pem'
                 # auth_private_key = './private_key.pem'"#,
@@ -694,7 +695,7 @@ mod tests {
         assert_eq!(
             config.log,
             LogConfig::new(
-                PathBuf::from("/tmp/xline"),
+                PathBuf::from("/var/log/xline"),
                 RotationConfig::Daily,
                 LevelConfig::Info
             )

@@ -12,7 +12,7 @@ use curp::{client::Client, server::Rpc, LogIndex, ProtocolServer};
 use futures::future::join_all;
 use tokio::{net::TcpListener, sync::mpsc};
 use tokio_stream::wrappers::TcpListenerStream;
-use utils::config::ClientTimeout;
+use utils::config::{ClientTimeout, ServerTimeout};
 
 use crate::common::test_cmd::{TestCE, TestCommand, TestCommandResult};
 
@@ -57,7 +57,13 @@ impl CurpGroup {
                 let mut others = all.clone();
                 others.remove(i);
 
-                let rpc = Rpc::new(id.clone(), false, others.into_iter().collect(), ce);
+                let rpc = Rpc::new(
+                    id.clone(),
+                    false,
+                    others.into_iter().collect(),
+                    ce,
+                    Arc::new(ServerTimeout::default()),
+                );
 
                 tokio::spawn(
                     tonic::transport::Server::builder()

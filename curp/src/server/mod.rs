@@ -5,7 +5,6 @@ use std::{
     collections::HashMap,
     fmt::Debug,
     sync::Arc,
-    time::Duration,
 };
 
 use clippy_utilities::NumericCast;
@@ -14,7 +13,7 @@ use parking_lot::{lock_api::RwLockUpgradableReadGuard, Mutex, RwLock};
 use tokio::{net::TcpListener, sync::broadcast, time::Instant};
 use tokio_stream::wrappers::TcpListenerStream;
 use tracing::{debug, error, info, instrument};
-use utils::{parking_lot_lock::RwLockMap, tracing::Extract};
+use utils::{config::ServerTimeout, parking_lot_lock::RwLockMap, tracing::Extract};
 
 use self::{
     cmd_board::{CmdState, CommandBoard},
@@ -115,9 +114,10 @@ impl<C: Command + 'static> Rpc<C> {
         is_leader: bool,
         others: HashMap<ServerId, String>,
         executor: CE,
+        timeout: Arc<ServerTimeout>,
     ) -> Self {
         Self {
-            inner: Arc::new(Protocol::new(id, is_leader, others, executor)),
+            inner: Arc::new(Protocol::new(id, is_leader, others, executor, timeout)),
         }
     }
 
@@ -134,6 +134,7 @@ impl<C: Command + 'static> Rpc<C> {
                 false,
                 others.into_iter().collect(),
                 ce,
+                Arc::new(ServerTimeout::default()),
                 switch,
             )),
         }
@@ -151,10 +152,11 @@ impl<C: Command + 'static> Rpc<C> {
         others: HashMap<ServerId, String>,
         server_port: Option<u16>,
         executor: CE,
+        timeout: Arc<ServerTimeout>,
     ) -> Result<(), ServerError> {
         let port = server_port.unwrap_or(DEFAULT_SERVER_PORT);
         info!("RPC server {id} started, listening on port {port}");
-        let server = Self::new(id, is_leader, others, executor);
+        let server = Self::new(id, is_leader, others, executor, timeout);
 
         tonic::transport::Server::builder()
             .add_service(ProtocolServer::new(server))
@@ -179,9 +181,10 @@ impl<C: Command + 'static> Rpc<C> {
         others: HashMap<ServerId, String>,
         listener: TcpListener,
         executor: CE,
+        timeout: Arc<ServerTimeout>,
     ) -> Result<(), ServerError> {
         let server = Self {
-            inner: Arc::new(Protocol::new(id, is_leader, others, executor)),
+            inner: Arc::new(Protocol::new(id, is_leader, others, executor, timeout)),
         };
         tonic::transport::Server::builder()
             .add_service(ProtocolServer::new(server))
@@ -278,6 +281,7 @@ impl<C: 'static + Command> Protocol<C> {
         is_leader: bool,
         others: HashMap<ServerId, String>,
         cmd_executor: CE,
+        timeout: Arc<ServerTimeout>,
     ) -> Self {
         let (sync_tx, sync_rx) = flume::unbounded();
         let cmd_board = Arc::new(Mutex::new(CommandBoard::new()));
@@ -296,6 +300,7 @@ impl<C: 'static + Command> Protocol<C> {
             others,
             Arc::clone(&cmd_board),
             Arc::clone(&last_rpc_time),
+            timeout,
         )));
 
         // run background tasks
@@ -330,6 +335,7 @@ impl<C: 'static + Command> Protocol<C> {
         is_leader: bool,
         others: HashMap<ServerId, String>,
         cmd_executor: CE,
+        timeout: Arc<ServerTimeout>,
         reachable: Arc<AtomicBool>,
     ) -> Self {
         let (sync_tx, sync_rx) = flume::unbounded();
@@ -349,6 +355,7 @@ impl<C: 'static + Command> Protocol<C> {
             others,
             Arc::clone(&cmd_board),
             Arc::clone(&last_rpc_time),
+            timeout,
         )));
 
         // run background tasks
@@ -475,9 +482,6 @@ impl<C: 'static + Command> Protocol<C> {
         )
     }
 
-    /// Wait synced request timeout
-    const WAIT_SYNCED_TIMEOUT: Duration = Duration::from_secs(5);
-
     /// handle "wait synced" request
     async fn wait_synced(
         &self,
@@ -489,7 +493,7 @@ impl<C: 'static + Command> Protocol<C> {
         })?;
 
         let resp = loop {
-            let listener = {
+            let (wait_synced_timeout, listener) = {
                 // check if the server is still leader
                 let state = self.state.read();
                 if !state.is_leader() {
@@ -520,14 +524,18 @@ impl<C: 'static + Command> Protocol<C> {
                     );
                 }
 
+                let wait_synced_timeout = *state.timeout.wait_synced_timeout();
                 // generate wait_synced event listener
-                cmd_board
-                    .notifiers
-                    .entry(id.clone())
-                    .or_insert_with(Event::new)
-                    .listen()
+                (
+                    wait_synced_timeout,
+                    cmd_board
+                        .notifiers
+                        .entry(id.clone())
+                        .or_insert_with(Event::new)
+                        .listen(),
+                )
             };
-            if tokio::time::timeout(Self::WAIT_SYNCED_TIMEOUT, listener)
+            if tokio::time::timeout(*wait_synced_timeout, listener)
                 .await
                 .is_err()
             {
@@ -547,7 +555,7 @@ impl<C: 'static + Command> Protocol<C> {
         request: tonic::Request<AppendEntriesRequest>,
     ) -> Result<tonic::Response<AppendEntriesResponse>, tonic::Status> {
         let req = request.into_inner();
-        debug!("append_entries received: term({}), commit({}), prev_log_index({}), prev_log_term({}), {} entries", 
+        debug!("append_entries received: term({}), commit({}), prev_log_index({}), prev_log_term({}), {} entries",
             req.term, req.leader_commit, req.prev_log_index, req.prev_log_term, req.entries.len());
 
         let state = self.state.upgradable_read();

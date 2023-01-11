@@ -7,7 +7,7 @@ use parking_lot::RwLock;
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
-use utils::{parking_lot_lock::RwLockMap,config::ClientTimeout};
+use utils::{parking_lot_lock::RwLockMap, config::{ClientTimeout, ServerTimeout}};
 
 use super::{
     auth_server::AuthServer,
@@ -44,6 +44,8 @@ pub struct XlineServer {
     client: Arc<Client<Command>>,
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
+    /// Curp server timeout
+    server_timeout: Arc<ServerTimeout>,
 }
 
 impl XlineServer {
@@ -58,6 +60,7 @@ impl XlineServer {
         all_members: HashMap<String, String>,
         is_leader: bool,
         key_pair: Option<(EncodingKey, DecodingKey)>,
+        server_timeout: ServerTimeout,
         client_timeout: ClientTimeout,
     ) -> Self {
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
@@ -66,12 +69,14 @@ impl XlineServer {
         let client = Arc::new(Client::<Command>::new(all_members.clone(), client_timeout).await);
         let leader_id = is_leader.then(|| name.clone());
         let state = Arc::new(RwLock::new(State::new(name, leader_id, all_members)));
+        let server_timeout = Arc::new(server_timeout);
         Self {
             state,
             kv_storage,
             auth_storage,
             client,
             header_gen,
+            server_timeout,
         }
     }
 
@@ -149,6 +154,7 @@ impl XlineServer {
             self.is_leader(),
             self.state.read().others(),
             CommandExecutor::new(Arc::clone(&self.kv_storage), Arc::clone(&self.auth_storage)),
+            Arc::clone(&self.server_timeout)
         );
         let mut rx = curp_server.leader_rx();
         let _handle = tokio::spawn({
@@ -183,7 +189,7 @@ impl XlineServer {
                 self.id(),
             ),
             WatchServer::new(self.kv_storage.kv_watcher()),
-            curp_server,
+            curp_server
         )
     }
 }
