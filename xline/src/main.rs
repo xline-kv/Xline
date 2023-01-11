@@ -123,10 +123,10 @@ use tracing_subscriber::{fmt::format, prelude::*};
 use utils::{
     config::{
         default_candidate_timeout, default_client_timeout, default_client_wait_synced_timeout,
-        default_heartbeat_interval, default_retry_timeout, default_rpc_timeout,
-        default_server_wait_synced_timeout, AuthConfig, ClientTimeout, ClusterConfig,
-        ClusterDuration, LevelConfig, LogConfig, RotationConfig, ServerTimeout, TraceConfig,
-        XlineServerConfig,
+        default_follower_timeout_range, default_heartbeat_interval, default_retry_timeout,
+        default_rpc_timeout, default_server_wait_synced_timeout, AuthConfig, ClientTimeout,
+        ClusterConfig, ClusterDuration, ClusterRange, LevelConfig, LogConfig, RotationConfig,
+        ServerTimeout, TraceConfig, XlineServerConfig,
     },
     parse_members,
 };
@@ -172,25 +172,28 @@ struct ServerArgs {
     /// Log verbosity level
     #[clap(long)]
     log_level: Option<LevelConfig>,
-    /// Heartbeat interval between curp server nodes
+    /// Heartbeat interval between curp server nodes, eg: --heartbeat_interval=100ms, default value is 150ms
     #[clap(long)]
     heartbeat_interval: Option<ClusterDuration>,
-    /// Curp wait sync timeout
+    /// Curp wait sync timeout, eg: --server_wait_synced_timeout=100ms, default value is 5s
     #[clap(long)]
     server_wait_synced_timeout: Option<ClusterDuration>,
-    /// Curp propose retry timeout
+    /// Curp propose retry timeout, eg: --retry_timeout=100ms, default value is 800ms
     #[clap(long)]
     retry_timeout: Option<ClusterDuration>,
-    /// Curp rpc timeout
+    /// Curp rpc timeout, eg: --rpc_timeout=100ms, default value is 50ms
     #[clap(long)]
     rpc_timeout: Option<ClusterDuration>,
-    /// Candidate election timeout
+    /// Candidate election timeout, eg: --candidate_timeout=100ms, default value is 1s
     #[clap(long)]
     candidate_timeout: Option<ClusterDuration>,
-    /// Curp client timeout
+    /// Follower election timeout, eg: --follower_timeout_range=100..200, default value is 1000..2000,
+    #[clap(long)]
+    follower_timeout_range: Option<ClusterRange>,
+    /// Curp client timeout, eg: --client_timeout=100ms, default value is 1s
     #[clap(long)]
     client_timeout: Option<ClusterDuration>,
-    /// Curp client wait synced timeout
+    /// Curp client wait synced timeout, eg: --client_wait_synced_timeout=100ms, default value is 2s
     #[clap(long)]
     client_wait_synced_timeout: Option<ClusterDuration>,
 }
@@ -206,6 +209,8 @@ impl From<ServerArgs> for XlineServerConfig {
             args.rpc_timeout.unwrap_or_else(default_rpc_timeout),
             args.candidate_timeout
                 .unwrap_or_else(default_candidate_timeout),
+            args.follower_timeout_range
+                .unwrap_or_else(default_follower_timeout_range),
         );
         let client_timeout = ClientTimeout::new(
             args.client_timeout.unwrap_or_else(default_client_timeout),

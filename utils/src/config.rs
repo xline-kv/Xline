@@ -91,7 +91,7 @@ impl Deref for ClusterRange {
     }
 }
 
-/// Cluster Duration operations
+/// `ClusterDuration` deserialization formatter
 pub mod cluster_duration_format {
     use super::ClusterDuration;
     use serde::{self, Deserialize, Deserializer};
@@ -105,6 +105,23 @@ pub mod cluster_duration_format {
     {
         let s = String::deserialize(deserializer)?;
         ClusterDuration::from_str(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+/// `ClusterRange` deserialization formatter
+pub mod cluster_range_format {
+    use super::ClusterRange;
+    use serde::{self, Deserialize, Deserializer};
+    use std::str::FromStr;
+
+    /// deseralizes a cluster duration
+    #[allow(single_use_lifetimes)] // TODO: Think is it necessary to allow this clippy??
+    pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<ClusterRange, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        ClusterRange::from_str(&s).map_err(serde::de::Error::custom)
     }
 }
 
@@ -151,7 +168,7 @@ impl ClusterConfig {
 }
 
 /// Curp server timeout settings
-#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
 pub struct ServerTimeout {
     /// Heartbeat Interval
     #[getset(get = "pub")]
@@ -185,6 +202,14 @@ pub struct ServerTimeout {
         default = "default_candidate_timeout"
     )]
     candidate_timeout: ClusterDuration,
+
+    /// Candidate election timeout
+    #[getset(get = "pub")]
+    #[serde(
+        with = "cluster_range_format",
+        default = "default_follower_timeout_range"
+    )]
+    follower_timeout_range: ClusterRange,
 }
 
 /// default heartbeat interval
@@ -236,6 +261,13 @@ pub fn default_client_wait_synced_timeout() -> ClusterDuration {
     ClusterDuration(Duration::from_secs(2))
 }
 
+/// default client wait synced timeout
+#[must_use]
+#[inline]
+pub fn default_follower_timeout_range() -> ClusterRange {
+    ClusterRange(1000..2000)
+}
+
 impl ServerTimeout {
     /// Create a new server timeout
     #[must_use]
@@ -246,6 +278,7 @@ impl ServerTimeout {
         retry_timeout: ClusterDuration,
         rpc_timeout: ClusterDuration,
         candidate_timeout: ClusterDuration,
+        follower_timeout_range: ClusterRange,
     ) -> Self {
         Self {
             heartbeat_interval,
@@ -253,6 +286,21 @@ impl ServerTimeout {
             retry_timeout,
             rpc_timeout,
             candidate_timeout,
+            follower_timeout_range,
+        }
+    }
+}
+
+impl Default for ServerTimeout {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            heartbeat_interval: default_heartbeat_interval(),
+            wait_synced_timeout: default_server_wait_synced_timeout(),
+            retry_timeout: default_retry_timeout(),
+            rpc_timeout: default_rpc_timeout(),
+            candidate_timeout: default_candidate_timeout(),
+            follower_timeout_range: default_follower_timeout_range(),
         }
     }
 }
@@ -464,15 +512,6 @@ impl XlineServerConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn default_timeout_server() -> ServerTimeout {
-        ServerTimeout::new(
-            default_heartbeat_interval(),
-            default_server_wait_synced_timeout(),
-            default_retry_timeout(),
-            default_rpc_timeout(),
-            default_candidate_timeout(),
-        )
-    }
 
     #[allow(clippy::unwrap_used)]
     #[test]
@@ -525,6 +564,7 @@ mod tests {
             rpc_timeout = '100ms'
             retry_timeout = '100us'
             candidate_timeout = '5s'
+            follower_timeout_range = '3000..4000'
 
             [cluster.client_timeout]
             timeout = '5s'
@@ -552,6 +592,7 @@ mod tests {
             ClusterDuration(Duration::from_micros(100)),
             ClusterDuration(Duration::from_millis(100)),
             ClusterDuration(Duration::from_secs(5)),
+            ClusterRange(3000..4000),
         );
 
         let client_timeout = ClientTimeout::new(
@@ -563,7 +604,7 @@ mod tests {
             config.cluster,
             ClusterConfig::new(
                 "node1".to_owned(),
-                HashMap::from([
+                HashMap::from_iter([
                     ("node1".to_owned(), "127.0.0.1:2379".to_owned()),
                     ("node2".to_owned(), "127.0.0.1:2380".to_owned()),
                     ("node3".to_owned(), "127.0.0.1:2381".to_owned()),
@@ -646,7 +687,7 @@ mod tests {
                     ("node3".to_owned(), "127.0.0.1:2381".to_owned()),
                 ]),
                 true,
-                default_timeout_server(),
+                ServerTimeout::default(),
                 ClientTimeout::default()
             )
         );
