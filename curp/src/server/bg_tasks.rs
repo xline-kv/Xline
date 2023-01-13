@@ -89,10 +89,13 @@ pub(super) async fn run_bg_tasks<
         tokio::spawn(bg_get_sync_cmds(Arc::clone(&state), sync_chan, ae_trigger));
 
     // spawn cmd execute worker
+    let spec = state.read().spec();
     let bg_exe_worker_handles: Vec<JoinHandle<_>> =
         iter::repeat((cmd_exe_rx, state.read().cmd_board(), Arc::new(cmd_executor)))
             .take(N_EXECUTE_WORKERS)
-            .map(|(rx, cmd_board, ce)| tokio::spawn(execute_worker(rx, cmd_board, ce)))
+            .map(|(rx, cmd_board, ce)| {
+                tokio::spawn(execute_worker(rx, cmd_board, Arc::clone(&spec), ce))
+            })
             .collect();
 
     shutdown.recv().await;
@@ -376,13 +379,8 @@ async fn bg_apply<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>>(
     state: Arc<RwLock<State<C, ExeTx>>>,
     exe_tx: ExeTx,
 ) {
-    let (commit_trigger, spec, cmd_board) = state.map_read(|state_r| {
-        (
-            state_r.commit_trigger(),
-            state_r.spec(),
-            state_r.cmd_board(),
-        )
-    });
+    let (commit_trigger, cmd_board) =
+        state.map_read(|state_r| (state_r.commit_trigger(), state_r.cmd_board()));
     loop {
         // wait until there is something to commit
         let state = loop {
@@ -401,8 +399,6 @@ async fn bg_apply<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>>(
         // TODO: overflow of log index should be prevented
         for i in (state.last_applied + 1)..=state.commit_index {
             state.log[i].cmds().iter().cloned().for_each(|cmd| {
-                // clean up spec pool
-                spec.lock().mark_ready(cmd.id());
                 if !state.is_leader() {
                     assert!(
                         board_w.needs_exe.insert(cmd.id().clone()),
@@ -1021,7 +1017,6 @@ mod test {
 
         sleep_millis(500).await;
 
-        assert!(state.read().spec().lock().pool.is_empty());
         assert_eq!(state.read().last_applied, 2);
 
         handle.abort();
