@@ -398,7 +398,7 @@ async fn new_leader_will_recover_spec_cmds() {
 
     let leader1 = group.get_leader().await;
 
-    // 1
+    // 1: send cmd1 to all others except the leader
     let cmd1 = Arc::new(TestCommand::new_put(vec![0], 0));
     let connects = client.get_connects();
     let req = ProposeRequest::new(cmd1.as_ref()).unwrap();

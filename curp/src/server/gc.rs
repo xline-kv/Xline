@@ -1,31 +1,13 @@
 use std::time::Duration;
 
-use crate::{
-    cmd::Command,
-    server::{cmd_board::CmdBoardRef, spec_pool::SpecPoolRef},
-};
-
-/// How often spec should GC
-const SPEC_GC_INTERVAL: Duration = Duration::from_secs(10);
+use crate::{cmd::Command, server::cmd_board::CmdBoardRef};
 
 /// How often cmd board should
 const CMD_BOARD_GC_INTERVAL: Duration = Duration::from_secs(20);
 
 /// Run background GC tasks for Curp server
-pub(super) fn run_gc_tasks<C: Command + 'static>(spec: SpecPoolRef<C>, cmd_board: CmdBoardRef<C>) {
-    let _spec_gc_handle = tokio::spawn(gc_spec_pool(spec, SPEC_GC_INTERVAL));
+pub(super) fn run_gc_tasks<C: Command + 'static>(cmd_board: CmdBoardRef<C>) {
     let _cmd_board_gc = tokio::spawn(gc_cmd_board(cmd_board, CMD_BOARD_GC_INTERVAL));
-}
-
-/// Clean up spec pool
-async fn gc_spec_pool<C: Command + 'static>(spec: SpecPoolRef<C>, interval: Duration) {
-    let mut last_check_len = 0;
-    loop {
-        tokio::time::sleep(interval).await;
-        let mut spec = spec.lock();
-        spec.ready = spec.ready.split_off(last_check_len);
-        last_check_len = spec.ready.len();
-    }
 }
 
 /// Cleanup cmd board
