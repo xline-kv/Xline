@@ -63,6 +63,9 @@ pub enum ProposeError {
     /// The command conflicts with keys in the speculative commands
     #[error("key conflict error")]
     KeyConflict,
+    /// The command has already been proposed before
+    #[error("duplicated, the cmd might have already been proposed")]
+    Duplicated,
     /// Command execution error
     #[error("command execution error {0}")]
     ExecutionError(String),
