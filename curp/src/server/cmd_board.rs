@@ -4,7 +4,7 @@ use std::{
 };
 
 use event_listener::Event;
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use parking_lot::RwLock;
 
 use crate::{
@@ -19,6 +19,8 @@ pub(super) type CmdBoardRef<C> = Arc<RwLock<CommandBoard<C>>>;
 pub(super) struct CommandBoard<C: Command> {
     /// Store all notifiers for wait_synced requests
     pub(super) notifiers: HashMap<ProposeId, Event>,
+    /// The cmd has been received before, this is used for dedup
+    pub(super) sync: IndexSet<ProposeId>,
     /// Whether the cmd needs execution when after sync
     pub(super) needs_exe: HashSet<ProposeId>,
     /// Store all execution results
@@ -32,6 +34,7 @@ impl<C: Command> CommandBoard<C> {
     pub(super) fn new() -> Self {
         Self {
             notifiers: HashMap::new(),
+            sync: IndexSet::new(),
             needs_exe: HashSet::new(),
             er_buffer: IndexMap::new(),
             asr_buffer: IndexMap::new(),

@@ -392,7 +392,7 @@ async fn fast_round_is_slower_than_slow_round() {
 // Leader should recover speculatively executed commands
 #[traced_test]
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
-async fn new_leader_will_recover_spec_cmds() {
+async fn new_leader_will_recover_spec_cmds_cond1() {
     let mut group = CurpGroup::new(5).await;
     let client = group.new_client().await;
 
@@ -435,6 +435,37 @@ async fn new_leader_will_recover_spec_cmds() {
         rx.recv().await;
         rx.recv().await;
     }
+}
+
+#[traced_test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+async fn new_leader_will_recover_spec_cmds_cond2() {
+    let group = CurpGroup::new(5).await;
+    let client = group.new_client().await;
+
+    let leader1 = group.get_leader().await;
+
+    // 1
+    group.disable_node(&leader1);
+
+    // now when the client proposes, all others will receive the proposal.
+    // but since a new round of election has not started yet, none of them will execute them
+    // when a new leader is elected, the cmd will be recovered(because it has been replicated on all others)
+    // now the client will resend the proposal to the new leader, asking it to sync again(the leader could have already completed sync or is syncing)
+    // the new leader should return empty, asking the client to fall back to wait synced
+
+    // 2: the client should automatically find the new leader and get the response
+    assert_eq!(
+        client
+            .propose(TestCommand::new_put(vec![0], 0))
+            .await
+            .unwrap(),
+        vec![]
+    );
+    assert_eq!(
+        client.propose(TestCommand::new_get(vec![0])).await.unwrap(),
+        vec![0]
+    );
 }
 
 // Old Leader should discard spec states

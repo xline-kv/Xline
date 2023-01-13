@@ -25,13 +25,13 @@ impl<C: Command + 'static> SpeculativePool<C> {
 
     /// Push a new command into spec pool if it has no conflict
     pub(super) fn try_insert(&mut self, cmd: Arc<C>) -> bool {
-        if self.has_conflict_with(cmd.as_ref()) {
+        if self.has_conflict_with(cmd.as_ref()) || self.pool.contains_key(cmd.id()) {
             false
         } else {
             debug!("insert cmd {:?} to spec pool", cmd.id());
             assert!(
                 self.pool.insert(cmd.id().clone(), cmd).is_none(),
-                "a cmd should be inserted to spec pool twice"
+                "a cmd can't be inserted to spec pool twice"
             );
             true
         }

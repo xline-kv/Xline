@@ -448,7 +448,7 @@ fn recover_from_spec_pools<C: Command, ExeTx: CmdExeSenderInterface<C>>(
             cmd.id(),
             state_w.log.len(),
         );
-
+        let _ig = board_w.sync.insert(cmd.id().clone()); // may have been inserted before
         let _ok = board_w.needs_exe.insert(cmd.id().clone()); // may have been inserted before
         state_w.log.push(LogEntry::new(term, &[cmd]));
     }
@@ -501,7 +501,7 @@ async fn bg_election<
             .filter_map(|(id, resp)| async move {
                 match resp {
                     Err(e) => {
-                        error!("vote failed, {}", e);
+                        warn!("vote failed, {}", e);
                         None
                     }
                     Ok(resp) => Some((id, resp.into_inner())),

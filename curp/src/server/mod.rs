@@ -391,7 +391,6 @@ impl<C: 'static + Command> Protocol<C> {
     }
 
     /// Handle "propose" requests
-    // TODO: dedup proposed commands
     async fn propose(
         &self,
         request: tonic::Request<ProposeRequest>,
@@ -421,6 +420,16 @@ impl<C: 'static + Command> Protocol<C> {
                     };
                 }
                 // leader should sync the cmd to others
+
+                // leader needs dedup first, since a proposal might be sent to the leader twice
+                let duplicated = self
+                    .cmd_board
+                    .map_write(|mut board_w| !board_w.sync.insert(cmd.id().clone()));
+                if duplicated {
+                    warn!("{:?} find duplicated cmd {:?}", leader_id, cmd.id());
+                    return ProposeResponse::new_error(leader_id, term, &ProposeError::Duplicated);
+                }
+
                 if has_conflict {
                     // no spec execute, just sync
                     self.sync_to_others(term, Arc::clone(&cmd), true);

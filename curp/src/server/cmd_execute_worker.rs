@@ -64,10 +64,10 @@ pub(super) async fn execute_worker<C: Command + 'static, CE: 'static + CommandEx
                 match condition {
                     Condition::ExeAndAfterSync => {
                         let er = ce.execute(cmd.as_ref()).await;
+                        debug!("cmd {:?} is executed", cmd.id());
                         let er_ok = er.is_ok();
                         cmd_board.write().insert_er(cmd.id(), er);
                         spec.map_lock(|mut spec_l| spec_l.try_remove(cmd.id())); // clean spec pool
-                        debug!("cmd {:?} is executed", cmd.id());
 
                         if er_ok {
                             let asr = ce.after_sync(cmd.as_ref(), index).await;

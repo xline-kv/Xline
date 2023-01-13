@@ -14,6 +14,7 @@ pub(super) fn run_gc_tasks<C: Command + 'static>(cmd_board: CmdBoardRef<C>) {
 async fn gc_cmd_board<C: Command + 'static>(cmd_board: CmdBoardRef<C>, interval: Duration) {
     let mut last_check_len_er = 0;
     let mut last_check_len_asr = 0;
+    let mut last_check_len_recv = 0;
     loop {
         tokio::time::sleep(interval).await;
         let mut board = cmd_board.write();
@@ -25,6 +26,10 @@ async fn gc_cmd_board<C: Command + 'static>(cmd_board: CmdBoardRef<C>, interval:
         let new_asr_buffer = board.asr_buffer.split_off(last_check_len_asr);
         board.asr_buffer = new_asr_buffer;
         last_check_len_asr = board.asr_buffer.len();
+
+        let new_recv = board.sync.split_off(last_check_len_recv);
+        board.sync = new_recv;
+        last_check_len_recv = board.sync.len();
     }
 }
 
