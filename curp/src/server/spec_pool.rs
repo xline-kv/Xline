@@ -1,5 +1,6 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 use tracing::debug;
 
@@ -12,14 +13,14 @@ pub(super) type SpecPoolRef<C> = Arc<Mutex<SpeculativePool<C>>>;
 #[derive(Debug)]
 pub(super) struct SpeculativePool<C> {
     /// Store
-    pub(super) pool: HashMap<ProposeId, Arc<C>>,
+    pub(super) pool: IndexMap<ProposeId, Arc<C>>,
 }
 
 impl<C: Command + 'static> SpeculativePool<C> {
     /// Create a new speculative pool
     pub(super) fn new() -> Self {
         Self {
-            pool: HashMap::new(),
+            pool: IndexMap::new(),
         }
     }
 

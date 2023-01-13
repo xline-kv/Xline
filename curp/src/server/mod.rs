@@ -312,7 +312,7 @@ impl<C: 'static + Command> Protocol<C> {
             Arc::new(AtomicBool::new(true)),
         ));
 
-        run_gc_tasks(Arc::clone(&cmd_board));
+        run_gc_tasks(Arc::clone(&cmd_board), Arc::clone(&spec));
 
         Self {
             state,
@@ -363,7 +363,7 @@ impl<C: 'static + Command> Protocol<C> {
             reachable,
         ));
 
-        run_gc_tasks(Arc::clone(&cmd_board));
+        run_gc_tasks(Arc::clone(&cmd_board), Arc::clone(&spec));
 
         Self {
             state,

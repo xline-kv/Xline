@@ -2,12 +2,28 @@ use std::time::Duration;
 
 use crate::{cmd::Command, server::cmd_board::CmdBoardRef};
 
+use super::spec_pool::SpecPoolRef;
+
 /// How often cmd board should
-const CMD_BOARD_GC_INTERVAL: Duration = Duration::from_secs(20);
+const GC_INTERVAL: Duration = Duration::from_secs(20);
 
 /// Run background GC tasks for Curp server
-pub(super) fn run_gc_tasks<C: Command + 'static>(cmd_board: CmdBoardRef<C>) {
-    let _cmd_board_gc = tokio::spawn(gc_cmd_board(cmd_board, CMD_BOARD_GC_INTERVAL));
+pub(super) fn run_gc_tasks<C: Command + 'static>(cmd_board: CmdBoardRef<C>, spec: SpecPoolRef<C>) {
+    let _spec_pool_gc = tokio::spawn(gc_spec_pool(spec, GC_INTERVAL));
+    let _cmd_board_gc = tokio::spawn(gc_cmd_board(cmd_board, GC_INTERVAL));
+}
+
+/// Cleanup cmd board
+async fn gc_spec_pool<C: Command + 'static>(spec: SpecPoolRef<C>, interval: Duration) {
+    let mut last_check_len = 0;
+    loop {
+        tokio::time::sleep(interval).await;
+        let mut spec = spec.lock();
+
+        let new_spec = spec.pool.split_off(last_check_len);
+        spec.pool = new_spec;
+        last_check_len = spec.pool.len();
+    }
 }
 
 /// Cleanup cmd board
@@ -35,15 +51,17 @@ async fn gc_cmd_board<C: Command + 'static>(cmd_board: CmdBoardRef<C>, interval:
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use std::{sync::Arc, time::Duration};
 
-    use parking_lot::RwLock;
+    use parking_lot::{Mutex, RwLock};
 
     use crate::{
         cmd::ProposeId,
         server::{
             cmd_board::{CmdBoardRef, CommandBoard},
             gc::gc_cmd_board,
+            spec_pool::{SpecPoolRef, SpeculativePool},
         },
         test_utils::test_cmd::TestCommand,
     };
@@ -98,5 +116,37 @@ mod tests {
             board.asr_buffer.get_index(0).unwrap().0,
             &ProposeId::new("3".to_owned())
         );
+    }
+
+    #[allow(unused_results, clippy::unwrap_used)]
+    #[tokio::test]
+    async fn spec_gc_test() {
+        let spec: SpecPoolRef<TestCommand> = Arc::new(Mutex::new(SpeculativePool::new()));
+        tokio::spawn(gc_spec_pool(Arc::clone(&spec), Duration::from_millis(500)));
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let cmd1 = Arc::new(TestCommand::default());
+        spec.lock()
+            .pool
+            .insert(cmd1.id().clone(), Arc::clone(&cmd1));
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let cmd2 = Arc::new(TestCommand::default());
+        spec.lock()
+            .pool
+            .insert(cmd2.id().clone(), Arc::clone(&cmd2));
+
+        // at 600ms
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        let cmd3 = Arc::new(TestCommand::default());
+        spec.lock()
+            .pool
+            .insert(cmd3.id().clone(), Arc::clone(&cmd3));
+
+        // at 1100ms, the first two kv should be removed
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let spec = spec.lock();
+        assert_eq!(spec.pool.len(), 1);
+        assert_eq!(spec.pool.get_index(0).unwrap().0, cmd3.id());
     }
 }
