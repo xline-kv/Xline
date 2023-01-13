@@ -14,7 +14,11 @@ use parking_lot::{lock_api::RwLockUpgradableReadGuard, RwLock};
 use tokio::{net::TcpListener, sync::broadcast, time::Instant};
 use tokio_stream::wrappers::TcpListenerStream;
 use tracing::{debug, error, info, instrument, warn};
-use utils::{config::ServerTimeout, parking_lot_lock::RwLockMap, tracing::Extract};
+use utils::{
+    config::ServerTimeout,
+    parking_lot_lock::{MutexMap, RwLockMap},
+    tracing::Extract,
+};
 
 use self::{cmd_execute_worker::CmdExeSenderInterface, gc::run_gc_tasks, state::State};
 use crate::{
@@ -316,7 +320,7 @@ impl<C: 'static + Command> Protocol<C> {
             Arc::new(AtomicBool::new(true)),
         ));
 
-        run_gc_tasks(Arc::clone(&spec), Arc::clone(&cmd_board));
+        run_gc_tasks(Arc::clone(&cmd_board));
 
         Self {
             state,
@@ -370,7 +374,7 @@ impl<C: 'static + Command> Protocol<C> {
             reachable,
         ));
 
-        run_gc_tasks(Arc::clone(&spec), Arc::clone(&cmd_board));
+        run_gc_tasks(Arc::clone(&cmd_board));
 
         Self {
             state,
@@ -416,17 +420,9 @@ impl<C: 'static + Command> Protocol<C> {
                 .map_read(|state| (state.is_leader(), state.leader_id.clone(), state.term));
             let cmd = Arc::new(cmd);
             let er_rx = {
-                let mut spec = self.spec.lock();
-
-                // check if the command is ready
-                if spec.ready.contains(cmd.id()) {
-                    return ProposeResponse::new_empty(leader_id, term);
-                }
-
-                let has_conflict = spec.has_conflict_with(&cmd);
-                if !has_conflict {
-                    spec.insert(Arc::clone(&cmd));
-                }
+                let has_conflict = self
+                    .spec
+                    .map_lock(|mut spec_l| spec_l.insert(Arc::clone(&cmd)).is_some());
 
                 // non-leader should return immediately
                 if !is_leader {
