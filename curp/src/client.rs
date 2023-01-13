@@ -271,6 +271,9 @@ where
             let resp = match resp {
                 Ok(resp) => resp.into_inner(),
                 Err(e) => {
+                    if matches!(e, ProposeError::Duplicated) {
+                        return Ok(());
+                    }
                     // if the propose fails again, need to fetch the leader and try again
                     warn!("failed to resend propose, {e}");
                     continue;
