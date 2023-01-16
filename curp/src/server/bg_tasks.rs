@@ -1,19 +1,19 @@
 use std::{
     collections::{HashMap, HashSet},
     iter,
-    sync::Arc,
+    sync::{atomic::Ordering, Arc},
     time::Duration,
 };
 
 use clippy_utilities::NumericCast;
-use futures::{pin_mut, stream::FuturesUnordered, Stream, StreamExt};
+use futures::{future::Either, pin_mut, stream::FuturesUnordered, Stream, StreamExt};
 use itertools::Itertools;
 use madsim::rand::{thread_rng, Rng};
 use parking_lot::{
     lock_api::{RwLockUpgradableReadGuard, RwLockWriteGuard},
     RawRwLock,
 };
-use tokio::{sync::mpsc, task::JoinHandle, time::Instant};
+use tokio::{sync::mpsc, task::JoinHandle, time::MissedTickBehavior};
 use tracing::{debug, error, info, warn};
 use utils::{
     config::ServerTimeout,
@@ -24,7 +24,6 @@ use super::{cmd_worker::CmdAsReceiver, state::StateRef, SyncMessage};
 use crate::{
     cmd::{Command, CommandExecutor, ProposeId},
     log::LogEntry,
-    message::ServerId,
     rpc::{
         self, connect::ConnectInterface, AppendEntriesRequest, AppendEntriesResponse, VoteRequest,
         VoteResponse,
@@ -67,23 +66,18 @@ pub(super) async fn run_bg_tasks<
     // notify when a broadcast of append_entries is needed immediately
     let (ae_trigger, ae_trigger_rx) = mpsc::unbounded_channel::<usize>();
 
+    let bg_tick_handle = tokio::spawn(bg_tick(
+        connects.clone(),
+        Arc::clone(&state),
+        Arc::clone(&timeout),
+    ));
     let bg_ae_handle = tokio::spawn(bg_append_entries(
         connects.clone(),
         Arc::clone(&state),
         ae_trigger_rx,
         Arc::clone(&timeout),
     ));
-    let bg_election_handle = tokio::spawn(bg_election(
-        connects.clone(),
-        Arc::clone(&state),
-        Arc::clone(&timeout),
-    ));
     let bg_apply_handle = tokio::spawn(bg_apply(Arc::clone(&state), cmd_exe_tx));
-    let bg_heartbeat_handle = tokio::spawn(bg_heartbeat(
-        connects.clone(),
-        Arc::clone(&state),
-        Arc::clone(&timeout),
-    ));
     let bg_get_sync_cmds_handle =
         tokio::spawn(bg_get_sync_cmds(Arc::clone(&state), sync_chan, ae_trigger));
 
@@ -111,10 +105,9 @@ pub(super) async fn run_bg_tasks<
     .collect();
 
     shutdown.recv().await;
+    bg_tick_handle.abort();
     bg_ae_handle.abort();
-    bg_election_handle.abort();
     bg_apply_handle.abort();
-    bg_heartbeat_handle.abort();
     bg_get_sync_cmds_handle.abort();
     for handle in bg_exe_worker_handles {
         handle.abort();
@@ -123,6 +116,60 @@ pub(super) async fn run_bg_tasks<
         handle.abort();
     }
     info!("all background task stopped");
+}
+
+/// Do periodical task
+async fn bg_tick<C: Command + 'static, Conn: ConnectInterface, ExeTx: CmdExeSenderInterface<C>>(
+    connects: Vec<Arc<Conn>>,
+    state: StateRef<C, ExeTx>,
+    timeout: Arc<ServerTimeout>,
+) {
+    let (rpc_timeout, heartbeat_interval, follower_timeout_round, candidate_timeout_round) = (
+        *timeout.rpc_timeout(),
+        *timeout.heartbeat_interval(),
+        *timeout.follower_timeout_round(),
+        *timeout.candidate_timeout_round(),
+    );
+    let mut ticker = tokio::time::interval(heartbeat_interval);
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    loop {
+        let _now = ticker.tick().await;
+        let task = {
+            let state_c = Arc::clone(&state);
+            let state_r = state.upgradable_read();
+            if state_r.is_leader()
+                && state_r
+                    .hb_opt
+                    .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
+                    .is_err()
+            {
+                let resps = bcast_heartbeats(connects.clone(), state_r, rpc_timeout);
+                Either::Left(handle_heartbeat_responses(
+                    resps,
+                    state_c,
+                    Arc::clone(&timeout),
+                ))
+            } else {
+                let tick = state_r.election_tick.fetch_add(1, Ordering::SeqCst);
+                #[allow(clippy::integer_arithmetic)] // can't overflow
+                if tick
+                    < (if state_r.role() == ServerRole::Follower {
+                        // randomize to minimize vote split possibility
+                        follower_timeout_round + thread_rng().gen_range(0..follower_timeout_round)
+                    } else {
+                        candidate_timeout_round
+                    })
+                {
+                    continue;
+                }
+                state_r.election_tick.store(0, Ordering::Relaxed); // reset tick
+
+                let resps = bcast_votes(connects.clone(), state_r, rpc_timeout);
+                Either::Right(handle_vote_responses(resps, state_c))
+            }
+        };
+        task.await;
+    }
 }
 
 /// Fetch commands need to be synced and add them to the log
@@ -164,24 +211,25 @@ async fn bg_append_entries<
     mut ae_trigger_rx: mpsc::UnboundedReceiver<usize>,
     timeout: Arc<ServerTimeout>,
 ) {
-    let hb_reset_trigger = state.read().heartbeat_reset_trigger();
     while let Some(i) = ae_trigger_rx.recv().await {
         let req = {
-            let state = state.read();
-            if !state.is_leader() {
+            let state_r = state.read();
+            if !state_r.is_leader() {
                 warn!("Non leader receives sync log[{i}] request");
                 continue;
             }
 
+            debug!("{} sends append_entries to followers", state_r.id());
+
             // log.len() >= 1 because we have a fake log[0]
             #[allow(clippy::integer_arithmetic, clippy::indexing_slicing)]
             match AppendEntriesRequest::new(
-                state.term,
-                state.id().clone(),
+                state_r.term,
+                state_r.id().clone(),
                 i - 1,
-                state.log[i - 1].term(),
-                vec![state.log[i].clone()],
-                state.commit_index,
+                state_r.log[i - 1].term(),
+                vec![state_r.log[i].clone()],
+                state_r.commit_index,
             ) {
                 Err(e) => {
                     error!("unable to serialize append entries request: {}", e);
@@ -201,8 +249,6 @@ async fn bg_append_entries<
                 Arc::clone(&timeout),
             ));
         }
-
-        hb_reset_trigger.notify(1);
     }
 }
 
@@ -221,7 +267,6 @@ async fn send_log_until_succeed<
 ) {
     // send log[i] until succeed
     loop {
-        debug!("append_entries sent to {}", connect.id());
         let resp = connect
             .append_entries(req.clone(), *timeout.rpc_timeout())
             .await;
@@ -231,8 +276,6 @@ async fn send_log_until_succeed<
         match resp {
             Err(e) => {
                 warn!("append_entries error: {e}");
-                // wait for some time until next retry
-                tokio::time::sleep(*timeout.retry_timeout()).await;
             }
             Ok(resp) => {
                 let resp = resp.into_inner();
@@ -278,6 +321,8 @@ async fn send_log_until_succeed<
                 }
             }
         }
+        // wait for some time until next retry
+        tokio::time::sleep(*timeout.retry_timeout()).await;
     }
 }
 
@@ -289,11 +334,10 @@ fn bcast_heartbeats<
     ExeTx: CmdExeSenderInterface<C>,
 >(
     connects: Vec<Arc<Conn>>,
-    state: &StateRef<C, ExeTx>,
-    timeout: Duration,
+    state_r: RwLockUpgradableReadGuard<'_, RawRwLock, State<C, ExeTx>>,
+    rpc_timeout: Duration,
 ) -> impl Stream<Item = (Arc<Conn>, AppendEntriesResponse)> {
-    let state_r = state.read();
-    connects
+    let resps = connects
         .into_iter()
         .map(|connect| {
             let req = {
@@ -308,7 +352,7 @@ fn bcast_heartbeats<
             };
             debug!("{} send heartbeat to {}", state_r.id(), connect.id());
             async move {
-                let resp = connect.append_entries(req, timeout).await;
+                let resp = connect.append_entries(req, rpc_timeout).await;
                 (connect, resp)
             }
         })
@@ -321,39 +365,50 @@ fn bcast_heartbeats<
                 }
                 Ok(resp) => Some((connect, resp.into_inner())),
             }
-        })
+        });
+    drop(state_r);
+    resps
 }
 
-/// The leader will send heartbeats to followers periodically
-async fn bg_heartbeat<
-    C: Command + 'static,
-    Conn: ConnectInterface,
-    ExeTx: CmdExeSenderInterface<C>,
->(
+/// Candidate broadcasts vote
+fn bcast_votes<C: Command + 'static, Conn: ConnectInterface, ExeTx: CmdExeSenderInterface<C>>(
     connects: Vec<Arc<Conn>>,
-    state: StateRef<C, ExeTx>,
-    timeout: Arc<ServerTimeout>,
-) {
-    let (role_trigger, hb_reset_trigger) =
-        state.map_read(|state_r| (state_r.role_trigger(), state_r.heartbeat_reset_trigger()));
-    let heartbeat_interval = *timeout.heartbeat_interval();
-    loop {
-        #[allow(clippy::integer_arithmetic)] // tokio internal triggered
-        loop {
-            tokio::select! {
-                _ = tokio::time::sleep(*timeout.heartbeat_interval()) => break,
-                _ = hb_reset_trigger.listen() => {}
+    state_r: RwLockUpgradableReadGuard<'_, RawRwLock, State<C, ExeTx>>,
+    rpc_timeout: Duration,
+) -> impl Stream<Item = (Arc<Conn>, VoteResponse)> {
+    #[allow(clippy::integer_arithmetic)] // TODO: handle possible overflow
+    let req = {
+        let mut state_w = RwLockUpgradableReadGuard::upgrade(state_r);
+        let new_term = state_w.term + 1;
+        state_w.update_to_term(new_term);
+        state_w.set_role(ServerRole::Candidate);
+        state_w.voted_for = Some(state_w.id().clone());
+        state_w.votes_received = 1;
+        VoteRequest::new(
+            state_w.term,
+            state_w.id().clone(),
+            state_w.last_log_index(),
+            state_w.last_log_term(),
+        )
+    };
+    debug!("server {} starts election", req.candidate_id);
+    connects
+        .into_iter()
+        .zip(iter::repeat(req))
+        .map(|(connect, request)| async move {
+            let resp = connect.vote(request, rpc_timeout).await;
+            (connect, resp)
+        })
+        .collect::<FuturesUnordered<_>>()
+        .filter_map(|(id, resp)| async move {
+            match resp {
+                Err(e) => {
+                    warn!("vote failed, {}", e);
+                    None
+                }
+                Ok(resp) => Some((id, resp.into_inner())),
             }
-        }
-
-        // only leader should run this task
-        while !state.read().is_leader() {
-            role_trigger.listen().await;
-        }
-
-        let responses = bcast_heartbeats(connects.clone(), &state, heartbeat_interval);
-        handle_heartbeat_responses(responses, Arc::clone(&state), Arc::clone(&timeout)).await;
-    }
+        })
 }
 
 /// Handle heartbeat responses
@@ -491,77 +546,18 @@ fn recover_from_spec_pools<C: Command, ExeTx: CmdExeSenderInterface<C>>(
     }
 }
 
-/// Background election
-async fn bg_election<
-    C: Command + 'static,
-    Conn: ConnectInterface,
-    ExeTx: CmdExeSenderInterface<C>,
->(
-    connects: Vec<Arc<Conn>>,
-    state: StateRef<C, ExeTx>,
-    timeout: Arc<ServerTimeout>,
-) {
-    let last_rpc_time = state.map_read(|state_r| state_r.last_rpc_time());
-    let candidate_timeout = *timeout.candidate_timeout();
-    loop {
-        wait_for_election(Arc::clone(&state), Arc::clone(&timeout)).await;
-
-        // start election
-        #[allow(clippy::integer_arithmetic)] // TODO: handle possible overflow
-        let req = {
-            let mut state = state.write();
-            let new_term = state.term + 1;
-            state.update_to_term(new_term);
-            state.set_role(ServerRole::Candidate);
-            state.voted_for = Some(state.id().clone());
-            state.votes_received = 1;
-            VoteRequest::new(
-                state.term,
-                state.id().clone(),
-                state.last_log_index(),
-                state.last_log_term(),
-            )
-        };
-        // reset
-        *last_rpc_time.write() = Instant::now();
-        debug!("server {} starts election", req.candidate_id);
-
-        let rpcs = connects
-            .iter()
-            .cloned()
-            .zip(iter::repeat(req))
-            .map(|(connect, request)| async move {
-                (
-                    connect.id().clone(),
-                    connect.vote(request, candidate_timeout).await,
-                )
-            })
-            .collect::<FuturesUnordered<_>>()
-            .filter_map(|(id, resp)| async move {
-                match resp {
-                    Err(e) => {
-                        warn!("vote failed, {}", e);
-                        None
-                    }
-                    Ok(resp) => Some((id, resp.into_inner())),
-                }
-            });
-
-        handle_vote_responses(rpcs, Arc::clone(&state)).await;
-    }
-}
-
 /// Candidate handles vote responses
 #[allow(clippy::integer_arithmetic)] // vote cnt won't overflow
-async fn handle_vote_responses<C, S, ExeTx>(rpcs: S, state: StateRef<C, ExeTx>)
+async fn handle_vote_responses<C, S, ExeTx, Conn>(rpcs: S, state: StateRef<C, ExeTx>)
 where
     C: Command + 'static,
-    S: Stream<Item = (ServerId, VoteResponse)>,
+    S: Stream<Item = (Arc<Conn>, VoteResponse)>,
     ExeTx: CmdExeSenderInterface<C>,
+    Conn: ConnectInterface,
 {
     let mut spec_pools: Vec<Vec<Arc<C>>> = vec![];
     pin_mut!(rpcs);
-    while let Some((id, resp)) = rpcs.next().await {
+    while let Some((conn, resp)) = rpcs.next().await {
         // calibrate term
         let state = state.upgradable_read();
         if resp.term > state.term {
@@ -579,7 +575,7 @@ where
         if !resp.vote_granted {
             continue;
         }
-        debug!("vote is granted by server {}", id);
+        debug!("vote is granted by server {}", conn.id());
 
         // collect follower spec pool
         let follower_spec_pool = match resp.spec_pool() {
@@ -618,55 +614,6 @@ where
 
             return; // other servers' response no longer matters
         }
-    }
-}
-
-/// wait until an election is needed
-async fn wait_for_election<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>>(
-    state: StateRef<C, ExeTx>,
-    timeout: Arc<ServerTimeout>,
-) {
-    let (role_trigger, last_rpc_time) =
-        state.map_read(|state_r| (state_r.role_trigger(), state_r.last_rpc_time()));
-    'outer: loop {
-        // only follower or candidate should try to elect
-        let role = state.read().role();
-        match role {
-            ServerRole::Follower => {
-                let timeout = Duration::from_millis(
-                    thread_rng().gen_range(timeout.follower_timeout_range().clone()),
-                );
-                // wait until it needs to vote
-                loop {
-                    let next_check = last_rpc_time.read().to_owned() + timeout;
-                    tokio::time::sleep_until(next_check).await;
-                    if Instant::now() - *last_rpc_time.read() > timeout {
-                        break 'outer;
-                    }
-                }
-            }
-            ServerRole::Candidate => 'inner: loop {
-                let candidate_timeout = *timeout.candidate_timeout();
-                let next_check = last_rpc_time.read().to_owned() + candidate_timeout;
-                tokio::time::sleep_until(next_check).await;
-                // check election status
-                match state.read().role() {
-                    // election failed, becomes a follower || election succeeded, becomes a leader
-                    ServerRole::Follower | ServerRole::Leader => {
-                        break 'inner;
-                    }
-                    ServerRole::Candidate => {}
-                }
-                // another round of election is needed
-                if Instant::now() - *last_rpc_time.read() > candidate_timeout {
-                    break 'outer;
-                }
-            },
-            // leader should start election
-            ServerRole::Leader => {
-                role_trigger.listen().await;
-            }
-        };
     }
 }
 
@@ -761,10 +708,13 @@ mod test {
     use std::{collections::HashMap, sync::Arc};
 
     use futures::stream;
+    use madsim::time::sleep;
     use parking_lot::RwLock;
-    use tokio::time::Instant;
     use tracing_test::traced_test;
-    use utils::config::ServerTimeout;
+    use utils::config::{
+        default_candidate_timeout_round, default_follower_timeout_round,
+        default_heartbeat_interval, default_retry_timeout, ServerTimeout,
+    };
 
     use super::*;
     use crate::{
@@ -781,7 +731,7 @@ mod test {
             state::State,
             ServerRole,
         },
-        test_utils::{sleep_millis, sleep_secs, test_cmd::TestCommand},
+        test_utils::{sleep_millis, test_cmd::TestCommand},
     };
 
     const LEADER_ID: &str = "test-leader";
@@ -813,7 +763,7 @@ mod test {
         let mut mock_connect = MockConnectInterface::default();
         mock_connect
             .expect_append_entries()
-            .times(4)
+            .times(3..)
             .returning(|_, _| Err(ProposeError::RpcStatus("timeout".to_owned())));
         mock_connect
             .expect_id()
@@ -838,7 +788,7 @@ mod test {
             )
             .await;
         });
-        sleep_secs(3).await;
+        sleep_millis(default_retry_timeout().as_millis() as u64 * 4).await;
         assert!(!handle.is_finished());
         handle.abort();
     }
@@ -989,18 +939,19 @@ mod test {
     #[tokio::test]
     async fn no_heartbeat_when_contention_is_high() {
         let state = new_test_state();
-        let hb_reset_trigger = state.read().heartbeat_reset_trigger();
         let mut mock_connect = MockConnectInterface::default();
         mock_connect.expect_append_entries().never();
 
         let connects = vec![Arc::new(mock_connect)];
-        let handle = tokio::spawn(async move {
-            bg_heartbeat(connects, state, Arc::new(ServerTimeout::default())).await;
-        });
+        let handle = tokio::spawn(bg_tick(
+            connects,
+            Arc::clone(&state),
+            Arc::new(ServerTimeout::default()),
+        ));
 
         for _ in 0..50 {
             sleep_millis(50).await;
-            hb_reset_trigger.notify(1);
+            state.read().hb_opt.store(true, Ordering::Relaxed);
         }
 
         handle.abort();
@@ -1060,17 +1011,33 @@ mod test {
             let mut state = state.write();
             state.set_role(ServerRole::Follower);
         }
-        let last_rpc_time = state.read().last_rpc_time();
 
-        let handle = tokio::spawn(wait_for_election(state, Arc::new(ServerTimeout::default())));
+        let handle = tokio::spawn(bg_tick::<_, MockConnectInterface, _>(
+            vec![],
+            Arc::clone(&state),
+            Arc::new(ServerTimeout::default()),
+        ));
 
         for _ in 0..20 {
-            sleep_millis(150).await;
-            *last_rpc_time.write() = Instant::now();
+            sleep(default_heartbeat_interval()).await;
+            state.read().election_tick.store(0, Ordering::Relaxed);
         }
 
         assert!(!handle.is_finished());
         handle.abort();
+    }
+
+    fn election_test_mock_connect() -> MockConnectInterface {
+        let mut mock_connect = MockConnectInterface::default();
+        mock_connect.expect_vote().times(3..).returning(|_, _| {
+            Ok(tonic::Response::new(
+                VoteResponse::new_accept::<TestCommand>(1, vec![]).unwrap(),
+            ))
+        });
+        mock_connect
+            .expect_append_entries()
+            .returning(|_, _| Ok(tonic::Response::new(AppendEntriesResponse::new_accept(1))));
+        mock_connect
     }
 
     #[traced_test]
@@ -1082,12 +1049,29 @@ mod test {
             state.set_role(ServerRole::Follower);
         }
 
-        assert!(tokio::time::timeout(
-            Duration::from_secs(3),
-            wait_for_election(state, Arc::new(ServerTimeout::default()))
+        let mut mock_connect1 = election_test_mock_connect();
+        mock_connect1
+            .expect_id()
+            .return_const(FOLLOWER_ID1.to_string());
+        let mut mock_connect2 = election_test_mock_connect();
+        mock_connect2
+            .expect_id()
+            .return_const(FOLLOWER_ID2.to_string());
+
+        let handle = tokio::spawn(bg_tick::<_, MockConnectInterface, _>(
+            vec![Arc::new(mock_connect1), Arc::new(mock_connect2)],
+            Arc::clone(&state),
+            Arc::new(ServerTimeout::default()),
+        ));
+
+        sleep_millis(
+            (default_follower_timeout_round() as u64
+                * 2
+                * default_heartbeat_interval().as_millis() as u64)
+                + 50,
         )
-        .await
-        .is_ok());
+        .await;
+        assert!(!handle.is_finished());
     }
 
     #[traced_test]
@@ -1099,42 +1083,60 @@ mod test {
             state.set_role(ServerRole::Candidate);
         }
 
-        assert!(tokio::time::timeout(
-            Duration::from_secs(4),
-            wait_for_election(state, Arc::new(ServerTimeout::default()))
+        let mut mock_connect1 = election_test_mock_connect();
+        mock_connect1
+            .expect_id()
+            .return_const(FOLLOWER_ID1.to_string());
+        let mut mock_connect2 = election_test_mock_connect();
+        mock_connect2
+            .expect_id()
+            .return_const(FOLLOWER_ID2.to_string());
+
+        let handle = tokio::spawn(bg_tick::<_, MockConnectInterface, _>(
+            vec![Arc::new(mock_connect1), Arc::new(mock_connect2)],
+            Arc::clone(&state),
+            Arc::new(ServerTimeout::default()),
+        ));
+
+        sleep_millis(
+            (default_candidate_timeout_round() as u64
+                * default_heartbeat_interval().as_millis() as u64)
+                + 50,
         )
-        .await
-        .is_ok());
+        .await;
+        assert!(!handle.is_finished());
     }
 
     #[traced_test]
     #[tokio::test]
     async fn candidate_will_not_start_election_if_it_becomes_leader() {
         let state = new_test_state();
-        let last_rpc_time = state.read().last_rpc_time();
         {
             let mut state = state.write();
             state.set_role(ServerRole::Candidate);
         }
-        let handle = tokio::spawn(wait_for_election(
+
+        let mut mock_connect1 = MockConnectInterface::default();
+        mock_connect1.expect_vote().never();
+        let mut mock_connect2 = MockConnectInterface::default();
+        mock_connect2.expect_vote().never();
+        let handle = tokio::spawn(bg_tick::<_, MockConnectInterface, _>(
+            vec![Arc::new(mock_connect1), Arc::new(mock_connect2)],
             Arc::clone(&state),
             Arc::new(ServerTimeout::default()),
         ));
-        let hb_handle = tokio::spawn(async move {
-            for _ in 0..20 {
-                sleep_millis(150).await;
-                *last_rpc_time.write() = Instant::now();
-            }
-        });
 
-        sleep_secs(1).await;
+        sleep_millis(
+            (default_candidate_timeout_round() - 1) as u64
+                * default_heartbeat_interval().as_millis() as u64,
+        )
+        .await;
 
         {
             let mut state = state.write();
             state.set_role(ServerRole::Leader);
         }
 
-        hb_handle.await.unwrap();
         assert!(!handle.is_finished());
         handle.abort();
     }
@@ -1147,12 +1149,23 @@ mod test {
             let mut state = state.write();
             state.set_role(ServerRole::Candidate);
         }
-        let handle = tokio::spawn(wait_for_election(
+
+        let mut mock_connect1 = MockConnectInterface::default();
+        mock_connect1.expect_vote().never();
+        let mut mock_connect2 = MockConnectInterface::default();
+        mock_connect2.expect_vote().never();
+
+        let handle = tokio::spawn(bg_tick::<_, MockConnectInterface, _>(
+            vec![Arc::new(mock_connect1), Arc::new(mock_connect2)],
             Arc::clone(&state),
             Arc::new(ServerTimeout::default()),
         ));
 
-        sleep_secs(1).await;
+        sleep_millis(
+            (default_follower_timeout_round() - 1) as u64
+                * default_heartbeat_interval().as_millis() as u64,
+        )
+        .await;
 
         {
             let mut state = state.write();
@@ -1184,7 +1197,7 @@ mod test {
             .return_const(FOLLOWER_ID1.to_owned());
 
         let rpcs = stream::iter(vec![(
-            "NewLeaderID".to_owned(),
+            Arc::new(MockConnectInterface::default()),
             VoteResponse::new_reject(2),
         )]);
 
@@ -1208,13 +1221,21 @@ mod test {
             state.votes_received = 1;
         }
 
+        let mut mock_connect1 = MockConnectInterface::default();
+        mock_connect1
+            .expect_id()
+            .return_const(FOLLOWER_ID1.to_string());
+        let mut mock_connect2 = MockConnectInterface::default();
+        mock_connect2
+            .expect_id()
+            .return_const(FOLLOWER_ID2.to_string());
         let rpcs = stream::iter(vec![
             (
-                FOLLOWER_ID1.to_owned(),
+                Arc::new(mock_connect1),
                 VoteResponse::new_accept::<TestCommand>(1, vec![]).unwrap(),
             ),
             (
-                FOLLOWER_ID2.to_owned(),
+                Arc::new(mock_connect2),
                 VoteResponse::new_accept::<TestCommand>(1, vec![]).unwrap(),
             ),
         ]);

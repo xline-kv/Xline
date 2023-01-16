@@ -277,6 +277,7 @@ where
                     }
                     // if the propose fails again, need to fetch the leader and try again
                     warn!("failed to resend propose, {e}");
+                    tokio::time::sleep(Self::RETRY_INTERVAL).await;
                     continue;
                 }
             };
@@ -383,7 +384,7 @@ where
     }
 
     /// Retry interval
-    const RETRY_INTERVAL: Duration = Duration::from_micros(500);
+    const RETRY_INTERVAL: Duration = Duration::from_millis(50);
 
     /// Propose the request to servers
     /// # Errors

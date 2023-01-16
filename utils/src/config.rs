@@ -49,24 +49,6 @@ pub mod duration_format {
     }
 }
 
-/// `ClusterRange` deserialization formatter
-pub mod cluster_range_format {
-    use serde::{self, Deserialize, Deserializer};
-
-    use super::ClusterRange;
-    use crate::parse_range;
-
-    /// deseralizes a cluster duration
-    #[allow(single_use_lifetimes)] // TODO: Think is it necessary to allow this clippy??
-    pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<ClusterRange, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        parse_range(&s).map_err(serde::de::Error::custom)
-    }
-}
-
 /// Cluster configuration object, including cluster relevant configuration fields
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
@@ -112,12 +94,13 @@ impl ClusterConfig {
 }
 
 /// Curp server timeout settings
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Getters)]
 pub struct ServerTimeout {
     /// Heartbeat Interval
     #[getset(get = "pub")]
     #[serde(with = "duration_format", default = "default_heartbeat_interval")]
     heartbeat_interval: Duration,
+
     /// Curp wait sync timeout
     #[getset(get = "pub")]
     #[serde(
@@ -136,25 +119,24 @@ pub struct ServerTimeout {
     #[serde(with = "duration_format", default = "default_rpc_timeout")]
     rpc_timeout: Duration,
 
-    /// How long a candidate should wait before it starts another round of election
+    /// How many rounds of heartbeat_interval a candidate needs to wait until it starts a new round of election
+    /// It should be larger than `follower_timeout`
     #[getset(get = "pub")]
-    #[serde(with = "duration_format", default = "default_candidate_timeout")]
-    candidate_timeout: Duration,
+    #[serde(default = "default_candidate_timeout_round")]
+    candidate_timeout_round: u8,
 
-    /// How long a follower should wait before it starts a round of election (in millis)
+    /// How many rounds of heartbeats a follower is allowed to miss before it starts a new round of election
+    /// The actual timeout will be randomized and in between [heartbeat_interval * follower_timeout, heartbeat_interval * (follower_timeout + 1))
     #[getset(get = "pub")]
-    #[serde(
-        with = "cluster_range_format",
-        default = "default_follower_timeout_range"
-    )]
-    follower_timeout_range: ClusterRange,
+    #[serde(default = "default_follower_timeout_round")]
+    follower_timeout_round: u8,
 }
 
 /// default heartbeat interval
 #[must_use]
 #[inline]
 pub fn default_heartbeat_interval() -> Duration {
-    Duration::from_millis(150)
+    Duration::from_millis(300)
 }
 
 /// default wait synced timeout
@@ -168,7 +150,7 @@ pub fn default_server_wait_synced_timeout() -> Duration {
 #[must_use]
 #[inline]
 pub fn default_retry_timeout() -> Duration {
-    Duration::from_millis(800)
+    Duration::from_millis(50)
 }
 
 /// default rpc timeout
@@ -181,11 +163,11 @@ pub fn default_rpc_timeout() -> Duration {
 /// default candidate timeout
 #[must_use]
 #[inline]
-pub fn default_candidate_timeout() -> Duration {
-    Duration::from_secs(3)
+pub fn default_candidate_timeout_round() -> u8 {
+    8
 }
 
-/// default crup client timeout
+/// default curp client timeout
 #[must_use]
 #[inline]
 pub fn default_client_timeout() -> Duration {
@@ -206,11 +188,11 @@ pub fn default_propose_timeout() -> Duration {
     Duration::from_secs(1)
 }
 
-/// default client wait synced timeout
+/// default follower timeout
 #[must_use]
 #[inline]
-pub fn default_follower_timeout_range() -> ClusterRange {
-    1000..2000
+pub fn default_follower_timeout_round() -> u8 {
+    5
 }
 
 impl ServerTimeout {
@@ -222,16 +204,16 @@ impl ServerTimeout {
         wait_synced_timeout: Duration,
         retry_timeout: Duration,
         rpc_timeout: Duration,
-        candidate_timeout: Duration,
-        follower_timeout_range: ClusterRange,
+        candidate_timeout_round: u8,
+        follower_timeout_round: u8,
     ) -> Self {
         Self {
             heartbeat_interval,
             wait_synced_timeout,
             retry_timeout,
             rpc_timeout,
-            candidate_timeout,
-            follower_timeout_range,
+            candidate_timeout_round,
+            follower_timeout_round,
         }
     }
 }
@@ -244,8 +226,8 @@ impl Default for ServerTimeout {
             wait_synced_timeout: default_server_wait_synced_timeout(),
             retry_timeout: default_retry_timeout(),
             rpc_timeout: default_rpc_timeout(),
-            candidate_timeout: default_candidate_timeout(),
-            follower_timeout_range: default_follower_timeout_range(),
+            candidate_timeout_round: default_candidate_timeout_round(),
+            follower_timeout_round: default_follower_timeout_round(),
         }
     }
 }
@@ -520,8 +502,8 @@ mod tests {
             Duration::from_millis(100),
             Duration::from_micros(100),
             Duration::from_millis(100),
-            default_candidate_timeout(),
-            default_follower_timeout_range(),
+            default_candidate_timeout_round(),
+            default_follower_timeout_round(),
         );
 
         let client_timeout = ClientTimeout::new(

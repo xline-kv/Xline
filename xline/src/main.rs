@@ -123,10 +123,11 @@ use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{fmt::format, prelude::*};
 use utils::{
     config::{
-        file_appender, AuthConfig, ClientTimeout, ClusterConfig, ClusterRange, LevelConfig,
-        LogConfig, RotationConfig, ServerTimeout, TraceConfig, XlineServerConfig,
+        default_candidate_timeout_round, default_follower_timeout_round, file_appender, AuthConfig,
+        ClientTimeout, ClusterConfig, LevelConfig, LogConfig, RotationConfig, ServerTimeout,
+        TraceConfig, XlineServerConfig,
     },
-    parse_duration, parse_log_level, parse_members, parse_range, parse_rotation,
+    parse_duration, parse_log_level, parse_members, parse_rotation,
 };
 use xline::server::XlineServer;
 
@@ -171,7 +172,7 @@ struct ServerArgs {
     #[clap(long, value_parser = parse_log_level, default_value = "info")]
     log_level: LevelConfig,
     /// Heartbeat interval between curp server nodes
-    #[clap(long, value_parser = parse_duration, default_value = "150ms")]
+    #[clap(long, value_parser = parse_duration, default_value = "300ms")]
     heartbeat_interval: Duration,
     /// Curp wait sync timeout
     #[clap(long, value_parser = parse_duration, default_value = "5s")]
@@ -183,11 +184,11 @@ struct ServerArgs {
     #[clap(long, value_parser = parse_duration, default_value = "50ms")]
     rpc_timeout: Duration,
     /// Candidate election timeout
-    #[clap(long, value_parser = parse_duration, default_value = "1s")]
-    candidate_timeout: Duration,
+    #[clap(long, default_value_t = default_candidate_timeout_round())]
+    candidate_timeout: u8,
     /// Follower election timeout
-    #[clap(long,value_parser = parse_range, default_value = "1000..2000")]
-    follower_timeout_range: ClusterRange,
+    #[clap(long, default_value_t = default_follower_timeout_round())]
+    follower_timeout: u8,
     /// Curp client timeout
     #[clap(long, value_parser = parse_duration, default_value = "1s")]
     client_timeout: Duration,
@@ -207,7 +208,7 @@ impl From<ServerArgs> for XlineServerConfig {
             args.retry_timeout,
             args.rpc_timeout,
             args.candidate_timeout,
-            args.follower_timeout_range,
+            args.follower_timeout,
         );
         let client_timeout = ClientTimeout::new(
             args.client_timeout,
@@ -368,7 +369,7 @@ async fn main() -> Result<()> {
         cluster_config.members().clone(),
         *is_leader,
         key_pair,
-        cluster_config.server_timeout().clone(),
+        *cluster_config.server_timeout(),
         *cluster_config.client_timeout(),
     )
     .await;
