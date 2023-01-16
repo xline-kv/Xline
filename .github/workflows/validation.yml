@@ -8,7 +8,7 @@ env:
   CI_RUST_TOOLCHAIN: 1.67.1
 
 jobs:
-  becnmark:
+  benchmark:
     name: validation
     runs-on: ubuntu-latest
     steps:

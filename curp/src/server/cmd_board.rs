@@ -17,6 +17,7 @@ use crate::{
 pub(super) type CmdBoardRef<C> = Arc<RwLock<CommandBoard<C>>>;
 
 /// Command board is a buffer to track cmd states and store notifiers for requests that need to wait for a cmd
+#[derive(Debug)]
 pub(super) struct CommandBoard<C: Command> {
     /// Store all notifiers for wait_synced requests
     pub(super) notifiers: HashMap<ProposeId, Event>,
@@ -24,8 +25,8 @@ pub(super) struct CommandBoard<C: Command> {
     pub(super) sync: IndexSet<ProposeId>,
     /// `DoneNotifiers` for `conflict_checked_mpmc`, will be called when after sync has finished
     pub(super) done_notifiers: HashMap<ProposeId, DoneNotifier>,
-    /// Whether the cmd needs execution when after sync
-    pub(super) needs_exe: HashSet<ProposeId>,
+    /// Whether the cmd has been speculatively executed
+    pub(super) spec_executed: HashSet<ProposeId>,
     /// Whether the cmd needs after sync
     pub(super) needs_as: HashMap<ProposeId, LogIndex>,
     /// Store all execution results
@@ -41,7 +42,7 @@ impl<C: Command> CommandBoard<C> {
             notifiers: HashMap::new(),
             sync: IndexSet::new(),
             done_notifiers: HashMap::new(),
-            needs_exe: HashSet::new(),
+            spec_executed: HashSet::new(),
             needs_as: HashMap::new(),
             er_buffer: IndexMap::new(),
             asr_buffer: IndexMap::new(),
@@ -57,7 +58,7 @@ impl<C: Command> CommandBoard<C> {
 
     /// Clear
     pub(super) fn clear(&mut self) {
-        self.needs_exe.clear();
+        self.spec_executed.clear();
         self.er_buffer.clear();
         self.asr_buffer.clear();
         self.release_notifiers();

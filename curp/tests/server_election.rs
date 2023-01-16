@@ -99,6 +99,8 @@ async fn reelect() {
 
 #[tokio::test]
 async fn propose_after_reelect() {
+    init_logger();
+
     let group = CurpGroup::new(5).await;
     let client = group.new_client(ClientTimeout::default()).await;
     assert_eq!(

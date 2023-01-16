@@ -31,7 +31,7 @@ pub trait TxFilter: Send + Sync + Debug {
 pub(crate) async fn connect(
     addrs: HashMap<ServerId, String>,
     tx_filter: Option<Box<dyn TxFilter>>,
-) -> Vec<Arc<Connect>> {
+) -> HashMap<ServerId, Arc<Connect>> {
     futures::future::join_all(addrs.into_iter().map(|(id, mut addr)| async move {
         // Addrs must start with "http" to communicate with the server
         if !addr.starts_with("http://") {
@@ -47,12 +47,15 @@ pub(crate) async fn connect(
     .into_iter()
     .map(|(id, addr, conn)| {
         debug!("successfully establish connection with {addr}");
-        Arc::new(Connect {
-            id,
-            rpc_connect: RwLock::new(conn),
-            addr,
-            tx_filter: tx_filter.as_ref().map(|f| f.boxed_clone()),
-        })
+        (
+            id.clone(),
+            Arc::new(Connect {
+                id,
+                rpc_connect: RwLock::new(conn),
+                addr,
+                tx_filter: tx_filter.as_ref().map(|f| f.boxed_clone()),
+            }),
+        )
     })
     .collect()
 }
