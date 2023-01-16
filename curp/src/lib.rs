@@ -141,6 +141,7 @@
         clippy::cast_lossless,
         clippy::unwrap_in_result,
         clippy::expect_used,
+        clippy::shadow_unrelated,
         dead_code
     )
 )]

@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Debug,
+};
 
 use clippy_utilities::NumericCast;
 use tracing::{error, info};
@@ -11,6 +14,14 @@ pub(crate) struct DoneNotifier {
     notifier: flume::Sender<u64>,
     /// The id of the msg
     id: u64,
+}
+
+impl Debug for DoneNotifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DoneNotifier")
+            .field("id", &self.id)
+            .finish()
+    }
 }
 
 impl DoneNotifier {

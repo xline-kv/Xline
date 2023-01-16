@@ -23,8 +23,8 @@ use crate::{
 pub struct Client<C: Command> {
     /// Current leader and term
     state: RwLock<State>,
-    /// All servers addresses including leader address
-    connects: Vec<Arc<Connect>>,
+    /// All servers's `Connect`
+    connects: HashMap<ServerId, Arc<Connect>>,
     /// Curp client timeout settings
     timeout: ClientTimeout,
     /// To keep Command type
@@ -100,7 +100,7 @@ where
         let req = ProposeRequest::new(cmd_arc.as_ref())?;
         let mut rpcs: FuturesUnordered<_> = self
             .connects
-            .iter()
+            .values()
             .zip(iter::repeat(req))
             .map(|(connect, req_cloned)| {
                 connect.propose(req_cloned, *self.timeout.propose_timeout())
@@ -196,8 +196,7 @@ where
             debug!("wait synced request sent to {}", leader_id);
             let resp = match self
                 .connects
-                .iter()
-                .find(|conn| conn.id() == &leader_id)
+                .get(&leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .wait_synced(
                     WaitSyncedRequest::new(cmd.id())?,
@@ -248,6 +247,8 @@ where
         mut new_leader: Option<ServerId>,
     ) -> Result<(), ProposeError> {
         loop {
+            tokio::time::sleep(*self.timeout.retry_timeout()).await;
+
             let leader_id = if let Some(id) = new_leader.take() {
                 id
             } else {
@@ -257,8 +258,7 @@ where
 
             let resp = self
                 .connects
-                .iter()
-                .find(|conn| conn.id() == &leader_id)
+                .get(&leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .propose(
                     ProposeRequest::new(cmd.as_ref())?,
@@ -322,7 +322,7 @@ where
         loop {
             let mut rpcs: FuturesUnordered<_> = self
                 .connects
-                .iter()
+                .values()
                 .map(|connect| async {
                     (
                         connect.id().clone(),
@@ -455,11 +455,6 @@ where
     #[inline]
     pub fn leader_rx(&self) -> broadcast::Receiver<ServerId> {
         self.state.read().leader_tx.subscribe()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn get_connects(&self) -> &[Arc<Connect>] {
-        self.connects.as_slice()
     }
 }
 

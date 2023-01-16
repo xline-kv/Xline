@@ -1,8 +1,16 @@
-use std::{collections::HashMap, fmt::Display, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    fmt::Display,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use itertools::Itertools;
-use madsim::rand::{distributions::Alphanumeric, thread_rng, Rng};
+use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -29,7 +37,7 @@ pub(crate) struct TestCommand {
 impl Default for TestCommand {
     fn default() -> Self {
         Self {
-            id: random_id(),
+            id: next_id(),
             keys: vec![1],
             exe_dur: Duration::ZERO,
             as_dur: Duration::ZERO,
@@ -51,7 +59,7 @@ pub(crate) type TestCommandResult = Vec<u32>;
 impl TestCommand {
     pub(crate) fn new_get(keys: Vec<u32>) -> Self {
         Self {
-            id: random_id(),
+            id: next_id(),
             keys,
             exe_dur: Duration::ZERO,
             as_dur: Duration::ZERO,
@@ -62,7 +70,7 @@ impl TestCommand {
     }
     pub(crate) fn new_put(keys: Vec<u32>, value: u32) -> Self {
         Self {
-            id: random_id(),
+            id: next_id(),
             keys,
             exe_dur: Duration::ZERO,
             as_dur: Duration::ZERO,
@@ -269,12 +277,8 @@ impl TestCESimple {
     }
 }
 
-pub(crate) fn random_id() -> ProposeId {
-    ProposeId::new(
-        thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(4)
-            .map(char::from)
-            .collect(),
-    )
+static NEXT_ID: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(0));
+
+fn next_id() -> ProposeId {
+    ProposeId::new(NEXT_ID.fetch_add(1, Ordering::AcqRel).to_string())
 }

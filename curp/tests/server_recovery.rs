@@ -278,6 +278,7 @@ async fn old_leader_will_discard_spec_exe_cmds() {
 
     // 3: recover all others and disable leader, a new leader will be elected
     group.disable_node(&leader1);
+    sleep_millis(100).await;
     for node in group.nodes.values().filter(|node| node.id != leader1) {
         group.enable_node(&node.id);
     }

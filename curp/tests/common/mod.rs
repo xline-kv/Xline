@@ -7,6 +7,8 @@ use std::{
 
 use thiserror::Error;
 
+use tracing_subscriber::fmt::time::{uptime, OffsetTime, Uptime};
+
 pub mod curp_group;
 pub mod test_cmd;
 
@@ -15,8 +17,9 @@ pub fn init_logger() {
         env::set_var("RUST_LOG", "curp,server");
     }
     tracing_subscriber::fmt()
+        .with_timer(uptime())
+        .compact()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .with_ansi(false)
         .try_init();
 }
 

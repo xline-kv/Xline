@@ -105,7 +105,7 @@ async fn after_sync_worker<C: Command + 'static, CE: 'static + CommandExecutor<C
             Nothing,
         }
         let condition = cmd_board.map_write(|mut board_w| {
-            if board_w.needs_exe.remove(cmd.id()) {
+            if !board_w.spec_executed.remove(cmd.id()) {
                 // The cmd needs both execution and after sync
                 Condition::ExeAndAfterSync
             } else if let Some(er) = board_w.er_buffer.get(cmd.id()) {
@@ -231,7 +231,7 @@ impl<C: Command + 'static> ConflictCheckedMsg for AsMsg<C> {
 }
 
 /// Send cmd to background execute cmd task
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(super) struct CmdExeSender<C: Command + 'static> {
     /// Send tasks to execute workers
     exe_tx: flume::Sender<ExeMsg<C>>,
@@ -389,9 +389,16 @@ mod tests {
         let ce = TestCE::new("S1".to_owned(), er_tx, as_tx);
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
-        let exe_tx = start_cmd_workers(ce, spec_pool, cmd_board, Arc::new(Event::new()));
+        let exe_tx = start_cmd_workers(
+            ce,
+            spec_pool,
+            Arc::clone(&cmd_board),
+            Arc::new(Event::new()),
+        );
 
         let cmd = Arc::new(TestCommand::default());
+        cmd_board.write().spec_executed.insert(cmd.id().clone());
+
         exe_tx.send_exe(Arc::clone(&cmd));
         assert_eq!(er_rx.recv().await.unwrap().1, vec![]);
 
@@ -403,7 +410,7 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn fast_path_cond1() {
-        let (er_tx, mut er_rx) = mpsc::unbounded_channel();
+        let (er_tx, _er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
         let ce = TestCE::new("S1".to_owned(), er_tx, as_tx);
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
@@ -417,13 +424,14 @@ mod tests {
 
         let begin = Instant::now();
         let cmd = Arc::new(TestCommand::default().set_exe_dur(Duration::from_secs(1)));
+        cmd_board.write().spec_executed.insert(cmd.id().clone());
+
         exe_tx.send_exe(Arc::clone(&cmd));
 
         // at 500ms, sync has completed, call after sync, then needs_as will be updated
         sleep_millis(500).await;
         exe_tx.send_after_sync(Arc::clone(&cmd), 1);
 
-        assert_eq!(er_rx.recv().await.unwrap().1, vec![]);
         assert_eq!(as_rx.recv().await.unwrap().1, 1);
 
         assert!((Instant::now() - begin) >= Duration::from_secs(1));
@@ -450,6 +458,8 @@ mod tests {
                 .set_exe_dur(Duration::from_secs(1))
                 .set_exe_should_fail(),
         );
+        cmd_board.write().spec_executed.insert(cmd.id().clone());
+
         exe_tx.send_exe(Arc::clone(&cmd));
 
         // at 500ms, sync has completed
@@ -479,9 +489,6 @@ mod tests {
         );
 
         let cmd = Arc::new(TestCommand::default());
-        {
-            cmd_board.write().needs_exe.insert(cmd.id().clone());
-        }
 
         exe_tx.send_after_sync(Arc::clone(&cmd), 1);
 
@@ -506,9 +513,6 @@ mod tests {
         );
 
         let cmd = Arc::new(TestCommand::default().set_exe_should_fail());
-        {
-            cmd_board.write().needs_exe.insert(cmd.id().clone());
-        }
 
         exe_tx.send_after_sync(Arc::clone(&cmd), 1);
 
@@ -535,7 +539,9 @@ mod tests {
 
         let cmd1 = Arc::new(TestCommand::new_put(vec![1], 1));
         let cmd2 = Arc::new(TestCommand::new_get(vec![1]));
+        cmd_board.write().spec_executed.insert(cmd1.id().clone());
         exe_tx.send_exe(Arc::clone(&cmd1));
+        cmd_board.write().spec_executed.insert(cmd2.id().clone());
         exe_tx.send_exe(Arc::clone(&cmd2));
 
         // cmd1 exe done

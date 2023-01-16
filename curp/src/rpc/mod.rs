@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use clippy_utilities::NumericCast;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
@@ -281,11 +283,11 @@ impl AppendEntriesRequest {
 
 impl AppendEntriesResponse {
     /// Create a new rejected response
-    pub(crate) fn new_reject(term: TermNum, commit_index: usize) -> Self {
+    pub(crate) fn new_reject(term: TermNum, hint_index: usize) -> Self {
         Self {
             term,
             success: false,
-            commit_index: commit_index.numeric_cast(),
+            hint_index: hint_index.numeric_cast(),
         }
     }
 
@@ -294,7 +296,7 @@ impl AppendEntriesResponse {
         Self {
             term,
             success: true,
-            commit_index: 0,
+            hint_index: 0,
         }
     }
 }
@@ -315,7 +317,7 @@ impl VoteResponse {
     /// Create a new accepted vote response
     pub fn new_accept<C: Command + Serialize>(
         term: TermNum,
-        cmds: Vec<C>,
+        cmds: Vec<Arc<C>>,
     ) -> bincode::Result<Self> {
         Ok(Self {
             term: term.numeric_cast(),
@@ -337,10 +339,10 @@ impl VoteResponse {
     }
 
     /// Get spec pool
-    pub fn spec_pool<C: Command + DeserializeOwned>(self) -> bincode::Result<Vec<C>> {
+    pub fn spec_pool<C: Command + DeserializeOwned>(&self) -> bincode::Result<Vec<C>> {
         self.spec_pool
-            .into_iter()
-            .map(|cmd| bincode::deserialize(&cmd))
+            .iter()
+            .map(|cmd| bincode::deserialize(cmd))
             .collect()
     }
 }
