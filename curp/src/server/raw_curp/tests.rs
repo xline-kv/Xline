@@ -382,7 +382,7 @@ fn recover_from_spec_pools_will_pick_the_correct_cmds() {
     let cmd1 = Arc::new(TestCommand::new_put(vec![2], 1));
     // cmd3 has been speculatively successfully by the leader but not stored by the superquorum of the followers
     let cmd2 = Arc::new(TestCommand::new_put(vec![3], 1));
-    curp.push_log_entry(LogEntry::new(1, &[Arc::clone(&cmd0)]));
+    curp.push_cmd(Arc::clone(&cmd0));
     curp.log.map_write(|mut log_w| log_w.commit_index = 1);
 
     let spec_pools = HashMap::from([
