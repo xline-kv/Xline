@@ -99,7 +99,6 @@ impl XlineServer {
             Arc::clone(&header_gen),
         ));
         let client = Arc::new(Client::<Command>::new(all_members.clone(), client_timeout).await);
-
         Self {
             state,
             kv_storage,
@@ -229,6 +228,7 @@ impl XlineServer {
             LockServer::new(
                 Arc::clone(&self.kv_storage),
                 Arc::clone(&self.client),
+                Arc::clone(&self.state),
                 self.id(),
             ),
             LeaseServer::new(

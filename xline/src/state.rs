@@ -36,6 +36,16 @@ impl State {
         &self.id
     }
 
+    /// Get self address
+    pub(crate) fn self_address(&self) -> &str {
+        self.members.get(&self.id).unwrap_or_else(|| {
+            panic!(
+                "Self address not found, id: {}, members: {:?}",
+                self.id, self.members
+            )
+        })
+    }
+
     /// Get leader address
     pub(crate) fn leader_address(&self) -> Option<&str> {
         self.leader_id
@@ -90,5 +100,46 @@ impl State {
         self.leader_address()
             .map(str::to_owned)
             .ok_or_else(|| tonic::Status::internal("Get leader address error"))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::{sync::Arc, time::Duration};
+
+    use super::*;
+    use tokio::time::timeout;
+
+    #[tokio::test]
+    async fn test_state() -> Result<(), Box<dyn std::error::Error>> {
+        let state = Arc::new(State::new(
+            "1".to_owned(),
+            None,
+            vec![
+                ("1".to_owned(), "1".to_owned()),
+                ("2".to_owned(), "2".to_owned()),
+            ]
+            .into_iter()
+            .collect(),
+        ));
+        let handle = tokio::spawn({
+            let state = Arc::clone(&state);
+            async move {
+                #[allow(clippy::unwrap_used)]
+                let leader = state.wait_leader().await.unwrap();
+                assert_eq!(leader, "2");
+            }
+        });
+        assert!(!state.set_leader_id(Some("2".to_owned())));
+        assert_eq!(state.id(), "1");
+        assert_eq!(state.self_address(), "1");
+        assert_eq!(state.leader_address(), Some("2"));
+        assert!(!state.is_leader());
+        assert_eq!(
+            state.others(),
+            vec![("2".to_owned(), "2".to_owned())].into_iter().collect()
+        );
+        timeout(Duration::from_secs(1), handle).await??;
+        Ok(())
     }
 }

@@ -433,7 +433,7 @@ impl Kv for KvServer {
     ) -> Result<tonic::Response<TxnResponse>, tonic::Status> {
         debug!("Receive TxnRequest {:?}", request);
         Self::check_txn_request(request.get_ref())?;
-        let is_fast_path = true;
+        let is_fast_path = false; // lock need revision of txn
         let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
 
         let mut res = Self::parse_response_op(cmd_res.decode().into());

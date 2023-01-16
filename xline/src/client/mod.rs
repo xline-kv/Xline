@@ -1,8 +1,9 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Debug};
 
 use curp::{client::Client as CurpClient, cmd::ProposeId};
 use etcd_client::{
-    AuthClient, Client as EtcdClient, LeaseKeepAliveStream, LeaseKeeper, WatchClient,
+    AuthClient, Client as EtcdClient, KvClient, LeaseClient, LeaseKeepAliveStream, LeaseKeeper,
+    LockClient, WatchClient,
 };
 use utils::config::ClientTimeout;
 use uuid::Uuid;
@@ -30,7 +31,6 @@ pub mod errors;
 pub mod kv_types;
 
 /// Xline client
-#[allow(missing_debug_implementations)] // EtcdClient doesn't implement Debug
 pub struct Client {
     /// Name of the client
     name: String,
@@ -40,6 +40,17 @@ pub struct Client {
     etcd_client: EtcdClient,
     /// Use curp client to send requests when true
     use_curp_client: bool,
+}
+
+impl Debug for Client {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Client")
+            .field("name", &self.name)
+            .field("use_curp_client", &self.use_curp_client)
+            .field("curp_client", &self.curp_client)
+            .finish()
+    }
 }
 
 impl Client {
@@ -238,15 +249,33 @@ impl Client {
         Ok(response.into())
     }
 
+    /// Gets a kv client.
+    #[inline]
+    pub fn kv_client(&self) -> KvClient {
+        self.etcd_client.kv_client()
+    }
+
     /// Gets an auth client.
     #[inline]
-    pub fn auth_client(&mut self) -> AuthClient {
+    pub fn auth_client(&self) -> AuthClient {
         self.etcd_client.auth_client()
     }
 
-    /// Gets an watch client.
+    /// Gets a watch client.
     #[inline]
-    pub fn watch_client(&mut self) -> WatchClient {
+    pub fn watch_client(&self) -> WatchClient {
         self.etcd_client.watch_client()
+    }
+
+    /// Gets a lock client.
+    #[inline]
+    pub fn lock_client(&self) -> LockClient {
+        self.etcd_client.lock_client()
+    }
+
+    /// Gets a lease client.
+    #[inline]
+    pub fn lease_client(&self) -> LeaseClient {
+        self.etcd_client.lease_client()
     }
 }

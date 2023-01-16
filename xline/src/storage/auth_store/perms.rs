@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    fmt::Debug,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -45,6 +46,15 @@ pub(crate) struct JwtTokenManager {
     encoding_key: EncodingKey,
     /// The key used to verify the token.
     decoding_key: DecodingKey,
+}
+
+impl Debug for JwtTokenManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JwtTokenManager")
+            .field("encoding_key", &"EncodingKey")
+            .field("decoding_key", &"DecodingKey")
+            .finish()
+    }
 }
 
 impl JwtTokenManager {
