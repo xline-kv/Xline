@@ -2,18 +2,16 @@
 
 use std::time::Duration;
 
-use tracing_test::traced_test;
 use utils::config::ClientTimeout;
 
-use crate::common::{curp_group::CurpGroup, test_cmd::TestCommand};
+use crate::common::{curp_group::CurpGroup, init_logger, test_cmd::TestCommand};
 
 mod common;
 
-// Basic propose
-#[traced_test]
-#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+#[tokio::test]
 async fn basic_propose() {
-    // watch the log while doing sync, TODO: find a better way
+    init_logger();
+
     let group = CurpGroup::new(3).await;
     let client = group.new_client(ClientTimeout::default()).await;
 
@@ -31,11 +29,14 @@ async fn basic_propose() {
             .unwrap(),
         vec![0]
     );
+
+    group.stop();
 }
 
-#[traced_test]
-#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+#[tokio::test]
 async fn synced_propose() {
+    init_logger();
+
     let mut group = CurpGroup::new(5).await;
     let client = group.new_client(ClientTimeout::default()).await;
     let cmd = TestCommand::new_get(0, vec![0]);
@@ -55,12 +56,15 @@ async fn synced_propose() {
         assert_eq!(cmd1, cmd);
         assert_eq!(index, 1);
     }
+
+    group.stop();
 }
 
 // Each command should be executed once and only once on each node
-#[traced_test]
-#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+#[tokio::test]
 async fn exe_exact_n_times() {
+    init_logger();
+
     let mut group = CurpGroup::new(3).await;
     let client = group.new_client(ClientTimeout::default()).await;
     let cmd = TestCommand::new_get(0, vec![0]);
@@ -89,4 +93,165 @@ async fn exe_exact_n_times() {
         assert_eq!(cmd1, cmd);
         assert_eq!(index, 1);
     }
+
+    group.stop();
+}
+
+#[tokio::test]
+async fn leader_crash_and_recovery() {
+    init_logger();
+
+    let mut group = CurpGroup::new(5).await;
+    let client = group.new_client(ClientTimeout::default()).await;
+
+    let leader = group.fetch_leader().await.unwrap();
+    group.crash(&leader);
+
+    assert_eq!(
+        client
+            .propose(TestCommand::new_put(0, vec![0], 0))
+            .await
+            .unwrap(),
+        vec![]
+    );
+    assert_eq!(
+        client
+            .propose(TestCommand::new_get(1, vec![0]))
+            .await
+            .unwrap(),
+        vec![0]
+    );
+
+    // restart the original leader
+    group.restart(&leader).await;
+    let old_leader = group.nodes.get_mut(&leader).unwrap();
+
+    let er = old_leader.exe_rx.recv().await.unwrap();
+    assert_eq!(er.1, vec![]);
+    let asr = old_leader.as_rx.recv().await.unwrap();
+    assert_eq!(asr.1, 1);
+
+    let er = old_leader.exe_rx.recv().await.unwrap();
+    assert_eq!(er.1, vec![0]);
+    let asr = old_leader.as_rx.recv().await.unwrap();
+    assert_eq!(asr.1, 2);
+
+    group.stop();
+}
+
+#[tokio::test]
+async fn follower_crash_and_recovery() {
+    init_logger();
+
+    let mut group = CurpGroup::new(5).await;
+    let client = group.new_client(ClientTimeout::default()).await;
+
+    let leader = group.fetch_leader().await.unwrap();
+    let follower = group
+        .nodes
+        .keys()
+        .find(|&id| id != &leader)
+        .unwrap()
+        .clone();
+    group.crash(&follower);
+
+    assert_eq!(
+        client
+            .propose(TestCommand::new_put(0, vec![0], 0))
+            .await
+            .unwrap(),
+        vec![]
+    );
+    assert_eq!(
+        client
+            .propose(TestCommand::new_get(1, vec![0]))
+            .await
+            .unwrap(),
+        vec![0]
+    );
+
+    // let cmds to be synced
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // restart follower
+    group.restart(&follower).await;
+    let follower = group.nodes.get_mut(&follower).unwrap();
+
+    let er = follower.exe_rx.recv().await.unwrap();
+    assert_eq!(er.1, vec![]);
+    let asr = follower.as_rx.recv().await.unwrap();
+    assert_eq!(asr.1, 1);
+
+    let er = follower.exe_rx.recv().await.unwrap();
+    assert_eq!(er.1, vec![0]);
+    let asr = follower.as_rx.recv().await.unwrap();
+    assert_eq!(asr.1, 2);
+
+    group.stop();
+}
+
+#[tokio::test]
+async fn leader_and_follower_both_crash_and_recovery() {
+    init_logger();
+
+    let mut group = CurpGroup::new(5).await;
+    let client = group.new_client(ClientTimeout::default()).await;
+
+    let leader = group.fetch_leader().await.unwrap();
+    let follower = group
+        .nodes
+        .keys()
+        .find(|&id| id != &leader)
+        .unwrap()
+        .clone();
+    group.crash(&follower);
+
+    assert_eq!(
+        client
+            .propose(TestCommand::new_put(0, vec![0], 0))
+            .await
+            .unwrap(),
+        vec![]
+    );
+    assert_eq!(
+        client
+            .propose(TestCommand::new_get(1, vec![0]))
+            .await
+            .unwrap(),
+        vec![0]
+    );
+
+    // let cmds to be synced
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    group.crash(&leader);
+
+    // restart the original leader
+    group.restart(&leader).await;
+    let old_leader = group.nodes.get_mut(&leader).unwrap();
+
+    let er = old_leader.exe_rx.recv().await.unwrap();
+    assert_eq!(er.1, vec![]);
+    let asr = old_leader.as_rx.recv().await.unwrap();
+    assert_eq!(asr.1, 1);
+
+    let er = old_leader.exe_rx.recv().await.unwrap();
+    assert_eq!(er.1, vec![0]);
+    let asr = old_leader.as_rx.recv().await.unwrap();
+    assert_eq!(asr.1, 2);
+
+    // restart follower
+    group.restart(&follower).await;
+    let follower = group.nodes.get_mut(&follower).unwrap();
+
+    let er = follower.exe_rx.recv().await.unwrap();
+    assert_eq!(er.1, vec![]);
+    let asr = follower.as_rx.recv().await.unwrap();
+    assert_eq!(asr.1, 1);
+
+    let er = follower.exe_rx.recv().await.unwrap();
+    assert_eq!(er.1, vec![0]);
+    let asr = follower.as_rx.recv().await.unwrap();
+    assert_eq!(asr.1, 2);
+
+    group.stop();
 }

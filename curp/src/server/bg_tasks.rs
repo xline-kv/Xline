@@ -483,7 +483,7 @@ fn recover_from_spec_pools<C: Command, ExeTx: CmdExeSenderInterface<C>>(
     let term = state_w.term;
     for cmd in recovered_cmds {
         debug!(
-            "{} recover speculatively executed cmd {:?} in log[{}]",
+            "{} recovers speculatively executed cmd {:?} in log[{}]",
             state_w.id(),
             cmd.id(),
             state_w.log.len(),
@@ -507,8 +507,15 @@ async fn bg_election<
 ) {
     let last_rpc_time = state.map_read(|state_r| state_r.last_rpc_time());
     let candidate_timeout = *timeout.candidate_timeout();
+    // FIXME: block the server from election in the first time it starts. It should be removed when persistency is added
+    let mut first_time = true;
     loop {
         wait_for_election(Arc::clone(&state), Arc::clone(&timeout)).await;
+        // prevent the server from election the first time it starts
+        if first_time && state.map_read(|state_r| state_r.leader_id.is_none()) {
+            continue;
+        }
+        first_time = false;
 
         // start election
         #[allow(clippy::integer_arithmetic)] // TODO: handle possible overflow
