@@ -1,9 +1,8 @@
-use anyhow::{anyhow, Result};
+use std::{collections::HashMap, path::PathBuf, time::Duration};
+
 use getset::Getters;
 use serde::Deserialize;
-use std::{
-    collections::HashMap, ops::Deref, ops::Range, path::PathBuf, str::FromStr, time::Duration,
-};
+use tracing_appender::rolling::RollingFileAppender;
 
 /// Xline server configuration object
 #[allow(clippy::module_name_repetitions)]
@@ -25,96 +24,37 @@ pub struct XlineServerConfig {
 
 // TODO: support persistent storage configuration in the future
 
-/// Duration Wrapper for meeting the orphan rule
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
-pub struct ClusterDuration(Duration);
+/// Cluster Range type alias
+pub type ClusterRange = std::ops::Range<u64>;
+/// Log verbosity level alias
+#[allow(clippy::module_name_repetitions)]
+pub type LevelConfig = tracing::metadata::LevelFilter;
 
-impl FromStr for ClusterDuration {
-    type Err = anyhow::Error;
-    #[inline]
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.ends_with("us") {
-            if let Some(dur) = s.strip_suffix("us") {
-                Ok(ClusterDuration(Duration::from_micros(dur.parse()?)))
-            } else {
-                Err(anyhow!(format!("Failed to parse {s} to ClusterDuration")))
-            }
-        } else if s.ends_with("ms") {
-            if let Some(dur) = s.strip_suffix("ms") {
-                Ok(ClusterDuration(Duration::from_millis(dur.parse()?)))
-            } else {
-                Err(anyhow!(format!("Failed to parse {s} to ClusterDuration")))
-            }
-        } else if s.ends_with('s') {
-            if let Some(dur) = s.strip_suffix('s') {
-                Ok(ClusterDuration(Duration::from_secs(dur.parse()?)))
-            } else {
-                Err(anyhow!(format!("Failed to parse {s} to ClusterDuration")))
-            }
-        } else {
-            Err(anyhow!(format!("Invalid time unit:{s}")))
-        }
-    }
-}
+/// `Duration` deserialization formatter
+pub mod duration_format {
+    use std::time::Duration;
 
-impl Deref for ClusterDuration {
-    type Target = Duration;
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-/// Range Wrapper
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-pub struct ClusterRange(Range<u64>);
-
-impl FromStr for ClusterRange {
-    type Err = anyhow::Error;
-    #[inline]
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Some((start, end)) = s.split_once("..") {
-            Ok(ClusterRange(Range {
-                start: start.parse::<u64>()?,
-                end: end.parse::<u64>()?,
-            }))
-        } else {
-            Err(anyhow!(format!("Invalid cluster range:{s}")))
-        }
-    }
-}
-
-impl Deref for ClusterRange {
-    type Target = Range<u64>;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-/// `ClusterDuration` deserialization formatter
-pub mod cluster_duration_format {
-    use super::ClusterDuration;
     use serde::{self, Deserialize, Deserializer};
-    use std::str::FromStr;
+
+    use crate::parse_duration;
 
     /// deseralizes a cluster duration
     #[allow(single_use_lifetimes)] //  the false positive case blocks us
-    pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<ClusterDuration, D::Error>
+    pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
     where
         D: Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        ClusterDuration::from_str(&s).map_err(serde::de::Error::custom)
+        parse_duration(&s).map_err(serde::de::Error::custom)
     }
 }
 
 /// `ClusterRange` deserialization formatter
 pub mod cluster_range_format {
-    use super::ClusterRange;
     use serde::{self, Deserialize, Deserializer};
-    use std::str::FromStr;
+
+    use super::ClusterRange;
+    use crate::parse_range;
 
     /// deseralizes a cluster duration
     #[allow(single_use_lifetimes)] // TODO: Think is it necessary to allow this clippy??
@@ -123,7 +63,7 @@ pub mod cluster_range_format {
         D: Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        ClusterRange::from_str(&s).map_err(serde::de::Error::custom)
+        parse_range(&s).map_err(serde::de::Error::custom)
     }
 }
 
@@ -142,9 +82,11 @@ pub struct ClusterConfig {
     is_leader: bool,
     /// Curp server timeout settings
     #[getset(get = "pub")]
+    #[serde(default = "ServerTimeout::default")]
     server_timeout: ServerTimeout,
     /// Curp client timeout settings
     #[getset(get = "pub")]
+    #[serde(default = "ClientTimeout::default")]
     client_timeout: ClientTimeout,
 }
 
@@ -174,36 +116,30 @@ impl ClusterConfig {
 pub struct ServerTimeout {
     /// Heartbeat Interval
     #[getset(get = "pub")]
-    #[serde(
-        with = "cluster_duration_format",
-        default = "default_heartbeat_interval"
-    )]
-    heartbeat_interval: ClusterDuration,
+    #[serde(with = "duration_format", default = "default_heartbeat_interval")]
+    heartbeat_interval: Duration,
     /// Curp wait sync timeout
     #[getset(get = "pub")]
     #[serde(
-        with = "cluster_duration_format",
+        with = "duration_format",
         default = "default_server_wait_synced_timeout"
     )]
-    wait_synced_timeout: ClusterDuration,
+    wait_synced_timeout: Duration,
 
     /// Curp propose retry timeout
     #[getset(get = "pub")]
-    #[serde(with = "cluster_duration_format", default = "default_retry_timeout")]
-    retry_timeout: ClusterDuration,
+    #[serde(with = "duration_format", default = "default_retry_timeout")]
+    retry_timeout: Duration,
 
     /// Curp rpc timeout
     #[getset(get = "pub")]
-    #[serde(with = "cluster_duration_format", default = "default_rpc_timeout")]
-    rpc_timeout: ClusterDuration,
+    #[serde(with = "duration_format", default = "default_rpc_timeout")]
+    rpc_timeout: Duration,
 
     /// How long a candidate should wait before it starts another round of election
     #[getset(get = "pub")]
-    #[serde(
-        with = "cluster_duration_format",
-        default = "default_candidate_timeout"
-    )]
-    candidate_timeout: ClusterDuration,
+    #[serde(with = "duration_format", default = "default_candidate_timeout")]
+    candidate_timeout: Duration,
 
     /// How long a follower should wait before it starts a round of election (in millis)
     #[getset(get = "pub")]
@@ -217,57 +153,64 @@ pub struct ServerTimeout {
 /// default heartbeat interval
 #[must_use]
 #[inline]
-pub fn default_heartbeat_interval() -> ClusterDuration {
-    ClusterDuration(Duration::from_millis(150))
+pub fn default_heartbeat_interval() -> Duration {
+    Duration::from_millis(150)
 }
 
 /// default wait synced timeout
 #[must_use]
 #[inline]
-pub fn default_server_wait_synced_timeout() -> ClusterDuration {
-    ClusterDuration(Duration::from_secs(5))
+pub fn default_server_wait_synced_timeout() -> Duration {
+    Duration::from_secs(5)
 }
 
 /// default retry timeout
 #[must_use]
 #[inline]
-pub fn default_retry_timeout() -> ClusterDuration {
-    ClusterDuration(Duration::from_millis(800))
+pub fn default_retry_timeout() -> Duration {
+    Duration::from_millis(800)
 }
 
 /// default rpc timeout
 #[must_use]
 #[inline]
-pub fn default_rpc_timeout() -> ClusterDuration {
-    ClusterDuration(Duration::from_millis(50))
+pub fn default_rpc_timeout() -> Duration {
+    Duration::from_millis(50)
 }
 
 /// default candidate timeout
 #[must_use]
 #[inline]
-pub fn default_candidate_timeout() -> ClusterDuration {
-    ClusterDuration(Duration::from_secs(3))
+pub fn default_candidate_timeout() -> Duration {
+    Duration::from_secs(3)
 }
 
 /// default crup client timeout
 #[must_use]
 #[inline]
-pub fn default_client_timeout() -> ClusterDuration {
-    ClusterDuration(Duration::from_secs(1))
+pub fn default_client_timeout() -> Duration {
+    Duration::from_secs(1)
 }
 
 /// default client wait synced timeout
 #[must_use]
 #[inline]
-pub fn default_client_wait_synced_timeout() -> ClusterDuration {
-    ClusterDuration(Duration::from_secs(2))
+pub fn default_client_wait_synced_timeout() -> Duration {
+    Duration::from_secs(2)
+}
+
+/// default client propose timeout
+#[must_use]
+#[inline]
+pub fn default_propose_timeout() -> Duration {
+    Duration::from_secs(1)
 }
 
 /// default client wait synced timeout
 #[must_use]
 #[inline]
 pub fn default_follower_timeout_range() -> ClusterRange {
-    ClusterRange(1000..2000)
+    1000..2000
 }
 
 impl ServerTimeout {
@@ -275,11 +218,11 @@ impl ServerTimeout {
     #[must_use]
     #[inline]
     pub fn new(
-        heartbeat_interval: ClusterDuration,
-        wait_synced_timeout: ClusterDuration,
-        retry_timeout: ClusterDuration,
-        rpc_timeout: ClusterDuration,
-        candidate_timeout: ClusterDuration,
+        heartbeat_interval: Duration,
+        wait_synced_timeout: Duration,
+        retry_timeout: Duration,
+        rpc_timeout: Duration,
+        candidate_timeout: Duration,
         follower_timeout_range: ClusterRange,
     ) -> Self {
         Self {
@@ -312,26 +255,36 @@ impl Default for ServerTimeout {
 pub struct ClientTimeout {
     /// Curp client timeout settings
     #[getset(get = "pub")]
-    #[serde(with = "cluster_duration_format", default = "default_client_timeout")]
-    timeout: ClusterDuration,
+    #[serde(with = "duration_format", default = "default_client_timeout")]
+    timeout: Duration,
 
     /// Curp cliet wait sync timeout
     #[getset(get = "pub")]
     #[serde(
-        with = "cluster_duration_format",
+        with = "duration_format",
         default = "default_client_wait_synced_timeout"
     )]
-    wait_synced_timeout: ClusterDuration,
+    wait_synced_timeout: Duration,
+
+    /// Curp client propose request timeout
+    #[getset(get = "pub")]
+    #[serde(with = "duration_format", default = "default_propose_timeout")]
+    propose_timeout: Duration,
 }
 
 impl ClientTimeout {
     /// Create a new client timeout
     #[must_use]
     #[inline]
-    pub fn new(timeout: ClusterDuration, wait_synced_timeout: ClusterDuration) -> Self {
+    pub fn new(
+        timeout: Duration,
+        wait_synced_timeout: Duration,
+        propose_timeout: Duration,
+    ) -> Self {
         Self {
             timeout,
             wait_synced_timeout,
+            propose_timeout,
         }
     }
 }
@@ -342,6 +295,7 @@ impl Default for ClientTimeout {
         Self {
             timeout: default_client_timeout(),
             wait_synced_timeout: default_client_wait_synced_timeout(),
+            propose_timeout: default_propose_timeout(),
         }
     }
 }
@@ -358,7 +312,33 @@ pub struct LogConfig {
     rotation: RotationConfig,
     /// Log verbosity level
     #[getset(get = "pub")]
+    #[serde(with = "level_format", default = "default_log_level")]
     level: LevelConfig,
+}
+
+/// `ClusterRange` deserialization formatter
+pub mod level_format {
+    use serde::{self, Deserialize, Deserializer};
+
+    use super::LevelConfig;
+    use crate::parse_log_level;
+
+    /// deseralizes a cluster duration
+    #[allow(single_use_lifetimes)] // TODO: Think is it necessary to allow this clippy??
+    pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<LevelConfig, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        parse_log_level(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+/// default lgo level
+#[must_use]
+#[inline]
+pub fn default_log_level() -> LevelConfig {
+    LevelConfig::INFO
 }
 
 impl LogConfig {
@@ -378,6 +358,7 @@ impl LogConfig {
 #[non_exhaustive]
 #[allow(clippy::module_name_repetitions)]
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all(deserialize = "lowercase"))]
 pub enum RotationConfig {
     /// Rotate log file in every hour
     Hourly,
@@ -387,47 +368,27 @@ pub enum RotationConfig {
     Never,
 }
 
-impl FromStr for RotationConfig {
-    type Err = anyhow::Error;
-    #[inline]
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "hourly" => Ok(RotationConfig::Hourly),
-            "daily" => Ok(RotationConfig::Daily),
-            "never" => Ok(RotationConfig::Never),
-            _ => Err(anyhow!(format!("Failed to parse {s} to RotationConfig"))),
+/// Generates a `RollingFileAppender` from the given `RotationConfig` and `name`
+#[must_use]
+#[inline]
+pub fn file_appender(
+    rotation: RotationConfig,
+    file_path: &PathBuf,
+    name: &str,
+) -> RollingFileAppender {
+    match rotation {
+        RotationConfig::Hourly => {
+            tracing_appender::rolling::hourly(file_path, format!("xline_{name}.log"))
         }
-    }
-}
-
-/// A verbosity level configuration field, including log and tracing.
-#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq)]
-#[allow(
-    clippy::missing_docs_in_private_items,
-    missing_docs,
-    clippy::module_name_repetitions
-)] // The meaning of every variant is quite straightforward, it's ok to ignore doc here.
-#[non_exhaustive]
-pub enum LevelConfig {
-    Trace,
-    Debug,
-    Info,
-    Warn,
-    Error,
-}
-
-impl FromStr for LevelConfig {
-    type Err = anyhow::Error;
-    #[inline]
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "trace" => Ok(LevelConfig::Trace),
-            "debug" => Ok(LevelConfig::Debug),
-            "info" => Ok(LevelConfig::Info),
-            "warn" => Ok(LevelConfig::Warn),
-            "error" => Ok(LevelConfig::Error),
-            _ => Err(anyhow!(format!("Failed to parse {s} to LevelConfig"))),
+        RotationConfig::Daily => {
+            tracing_appender::rolling::daily(file_path, format!("xline_{name}.log"))
         }
+        RotationConfig::Never => {
+            tracing_appender::rolling::never(file_path, format!("xline_{name}.log"))
+        }
+        #[allow(unreachable_patterns)]
+        // It's ok because `parse_rotation` have check the validity before.
+        _ => unreachable!("should not call file_appender when parse_rotation failed"),
     }
 }
 
@@ -446,6 +407,7 @@ pub struct TraceConfig {
     jaeger_output_dir: PathBuf,
     /// The verbosity level of tracing
     #[getset(get = "pub")]
+    #[serde(with = "level_format", default = "default_log_level")]
     jaeger_level: LevelConfig,
 }
 
@@ -518,38 +480,6 @@ mod tests {
 
     #[allow(clippy::unwrap_used)]
     #[test]
-    fn test_cluster_duration_convert_should_success() {
-        assert_eq!(
-            ClusterDuration::from_str("5s").unwrap(),
-            ClusterDuration(Duration::from_secs(5))
-        );
-        assert_eq!(
-            ClusterDuration::from_str("5us").unwrap(),
-            ClusterDuration(Duration::from_micros(5))
-        );
-        assert_eq!(
-            ClusterDuration::from_str("5ms").unwrap(),
-            ClusterDuration(Duration::from_millis(5))
-        );
-        assert!(ClusterDuration::from_str("5hello").is_err());
-        assert!(ClusterDuration::from_str("hellos").is_err());
-    }
-
-    #[allow(clippy::unwrap_used)]
-    #[test]
-    fn test_cluster_range_convert() {
-        assert_eq!(
-            ClusterRange::from_str("1000..2000").unwrap(),
-            ClusterRange(1000..2000)
-        );
-
-        assert!(ClusterRange::from_str("5,,10").is_err());
-        assert!(ClusterRange::from_str("a..b").is_err());
-        assert!(ClusterRange::from_str("6c..10a").is_err());
-    }
-
-    #[allow(clippy::unwrap_used)]
-    #[test]
     fn test_xline_server_config_shoule_be_loaded() {
         let config: XlineServerConfig = toml::from_str(
             r#"[cluster]
@@ -566,40 +496,38 @@ mod tests {
             wait_synced_timeout = '100ms'
             rpc_timeout = '100ms'
             retry_timeout = '100us'
-            candidate_timeout = '5s'
-            follower_timeout_range = '3000..4000'
 
             [cluster.client_timeout]
             timeout = '5s'
-            wait_synced_timeout = '100s'
 
             [log]
             path = '/var/log/xline'
-            rotation = 'Daily'
-            level = 'Info'
+            rotation = 'daily'
+            level = 'info'
 
             [trace]
             jaeger_online = false
             jaeger_offline = false
             jaeger_output_dir = './jaeger_jsons'
-            jaeger_level = 'Info'
+            jaeger_level = 'info'
 
             [auth]"#,
         )
         .unwrap();
 
         let server_timeout = ServerTimeout::new(
-            ClusterDuration(Duration::from_millis(200)),
-            ClusterDuration(Duration::from_millis(100)),
-            ClusterDuration(Duration::from_micros(100)),
-            ClusterDuration(Duration::from_millis(100)),
-            ClusterDuration(Duration::from_secs(5)),
-            ClusterRange(3000..4000),
+            Duration::from_millis(200),
+            Duration::from_millis(100),
+            Duration::from_micros(100),
+            Duration::from_millis(100),
+            default_candidate_timeout(),
+            default_follower_timeout_range(),
         );
 
         let client_timeout = ClientTimeout::new(
-            ClusterDuration(Duration::from_secs(5)),
-            ClusterDuration(Duration::from_secs(100)),
+            Duration::from_secs(5),
+            default_client_wait_synced_timeout(),
+            default_propose_timeout(),
         );
 
         assert_eq!(
@@ -622,7 +550,7 @@ mod tests {
             LogConfig::new(
                 PathBuf::from("/var/log/xline"),
                 RotationConfig::Daily,
-                LevelConfig::Info
+                LevelConfig::INFO
             )
         );
         assert_eq!(
@@ -631,7 +559,7 @@ mod tests {
                 false,
                 false,
                 PathBuf::from("./jaeger_jsons"),
-                LevelConfig::Info
+                LevelConfig::INFO
             )
         );
     }
@@ -649,28 +577,16 @@ mod tests {
                 node2 = '127.0.0.1:2380'
                 node3 = '127.0.0.1:2381'
 
-                [cluster.server_timeout]
-                # The hearbeat interval between curp server nodes, default value is 150ms
-                # heartbeat_interval = '150ms'
-                # wait_synced_timeout = '5s',
-                # retry_timeout = '800ms',
-                # rpc_timeout = '50ms',
-                # candidate_timeout = '1s',
-
-                [cluster.client_timeout]
-                # timeout = '1s'
-                # wait_synced_timeout = '2s'
-
                 [log]
                 path = '/var/log/xline'
-                rotation = 'Daily'
-                level = 'Info'
+                rotation = 'daily'
+                level = 'info'
 
                 [trace]
                 jaeger_online = false
                 jaeger_offline = false
                 jaeger_output_dir = './jaeger_jsons'
-                jaeger_level = 'Info'
+                jaeger_level = 'info'
 
                 [auth]
                 # auth_public_key = './public_key'.pem'
@@ -697,7 +613,7 @@ mod tests {
             LogConfig::new(
                 PathBuf::from("/var/log/xline"),
                 RotationConfig::Daily,
-                LevelConfig::Info
+                LevelConfig::INFO
             )
         );
         assert_eq!(
@@ -706,7 +622,7 @@ mod tests {
                 false,
                 false,
                 PathBuf::from("./jaeger_jsons"),
-                LevelConfig::Info
+                LevelConfig::INFO
             )
         );
     }

@@ -7,7 +7,10 @@ use parking_lot::RwLock;
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
-use utils::{parking_lot_lock::RwLockMap, config::{ClientTimeout, ServerTimeout}};
+use utils::{
+    config::{ClientTimeout, ServerTimeout},
+    parking_lot_lock::RwLockMap,
+};
 
 use super::{
     auth_server::AuthServer,
@@ -154,7 +157,7 @@ impl XlineServer {
             self.is_leader(),
             self.state.read().others(),
             CommandExecutor::new(Arc::clone(&self.kv_storage), Arc::clone(&self.auth_storage)),
-            Arc::clone(&self.server_timeout)
+            Arc::clone(&self.server_timeout),
         );
         let mut rx = curp_server.leader_rx();
         let _handle = tokio::spawn({
@@ -189,7 +192,7 @@ impl XlineServer {
                 self.id(),
             ),
             WatchServer::new(self.kv_storage.kv_watcher()),
-            curp_server
+            curp_server,
         )
     }
 }
