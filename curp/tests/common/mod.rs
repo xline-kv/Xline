@@ -1,12 +1,8 @@
 #![allow(dead_code, unused)]
 
-use std::{
-    io,
-    {env, time::Duration},
-};
+use std::{env, io, time::Duration};
 
 use thiserror::Error;
-
 use tracing_subscriber::fmt::time::{uptime, OffsetTime, Uptime};
 
 pub mod curp_group;

@@ -178,11 +178,8 @@ impl<C: 'static + Command> RawCurp<C> {
         }
 
         // start election
-        let vote = self.become_candidate(
-            &mut self.st.write(),
-            &mut self.cst.lock(),
-            &*self.log.read(),
-        );
+        let vote =
+            self.become_candidate(&mut self.st.write(), &mut self.cst.lock(), &self.log.read());
         let votes = self
             .ctx
             .others
@@ -473,9 +470,11 @@ impl<C: 'static + Command> RawCurp<C> {
         Ok(true)
     }
 
-    /// Push a new log entry to the log, returns its index
-    pub(super) fn push_log_entry(&self, entry: LogEntry<C>) -> usize {
+    /// Add a new cmd to the log, will return log entry index
+    pub(super) fn push_cmd(&self, cmd: Arc<C>) -> usize {
+        let st_r = self.st.read();
         let mut log_w = self.log.write();
+        let entry = LogEntry::new(st_r.term, &[cmd]);
         log_w.entries.push(entry);
         log_w.last_log_index()
     }
