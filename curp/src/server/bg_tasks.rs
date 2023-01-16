@@ -483,7 +483,7 @@ fn recover_from_spec_pools<C: Command, ExeTx: CmdExeSenderInterface<C>>(
     let term = state_w.term;
     for cmd in recovered_cmds {
         debug!(
-            "{} recover speculatively executed cmd {:?} in log[{}]",
+            "{} recovers speculatively executed cmd {:?} in log[{}]",
             state_w.id(),
             cmd.id(),
             state_w.log.len(),

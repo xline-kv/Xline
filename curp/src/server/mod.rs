@@ -131,6 +131,7 @@ impl<C: Command + 'static> Rpc<C> {
     #[cfg(test)]
     pub fn new_test<CE: CommandExecutor<C> + 'static>(
         id: ServerId,
+        is_leader: bool,
         others: HashMap<ServerId, String>,
         ce: CE,
         switch: Arc<AtomicBool>,
@@ -138,7 +139,7 @@ impl<C: Command + 'static> Rpc<C> {
         Self {
             inner: Arc::new(Protocol::new_test(
                 id,
-                false,
+                is_leader,
                 others.into_iter().collect(),
                 ce,
                 Arc::new(ServerTimeout::default()),
@@ -634,6 +635,13 @@ impl<C: 'static + Command> Protocol<C> {
 
         // just grab a write lock because it's highly likely that term is updated and a vote is granted
         let mut state = self.state.write();
+
+        // FIXME: prevent the server from voting for someone the first time it starts. That's because voted_for is not persisted.
+        // So to prevent it from voting twice, we just disallow it to vote the first time it starts.
+        // It should be removed when persistency is added
+        if state.first {
+            return Ok(tonic::Response::new(VoteResponse::new_reject(state.term)));
+        }
 
         // calibrate term
         match req.term.cmp(&state.term) {

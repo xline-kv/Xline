@@ -133,6 +133,7 @@ impl CurpGroup<Node> {
 
                 let rpc = Rpc::new_test(
                     id.clone(),
+                    i == 0,
                     others.into_iter().collect(),
                     ce,
                     Arc::clone(&switch),
@@ -161,7 +162,7 @@ impl CurpGroup<Node> {
             })
             .collect();
 
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        sleep_millis(300).await;
         CurpGroup { nodes }
     }
 
@@ -169,6 +170,9 @@ impl CurpGroup<Node> {
     fn get_term(&self) -> TermNum {
         let mut term = 0;
         for node in self.nodes.values() {
+            if !node.switch.load(Ordering::Relaxed) {
+                continue;
+            }
             let state = node.state.read();
             if term < state.term {
                 term = state.term;
@@ -181,6 +185,9 @@ impl CurpGroup<Node> {
         let mut leader_id = None;
         let mut term = 0;
         for node in self.nodes.values() {
+            if !node.switch.load(Ordering::Relaxed) {
+                continue;
+            }
             let state = node.state.read();
             if state.term > term {
                 term = state.term;
@@ -212,6 +219,9 @@ impl CurpGroup<Node> {
     fn get_leader_term(&self) -> TermNum {
         let mut term = 0;
         for node in self.nodes.values() {
+            if !node.switch.load(Ordering::Relaxed) {
+                continue;
+            }
             let state = node.state.read();
             if state.is_leader() {
                 if state.term > term {
@@ -227,6 +237,9 @@ impl CurpGroup<Node> {
     fn get_term_checked(&self) -> TermNum {
         let mut term = None;
         for node in self.nodes.values() {
+            if !node.switch.load(Ordering::Relaxed) {
+                continue;
+            }
             let node_term = node.state.map_read(|state| state.term);
             if let Some(term) = term {
                 assert_eq!(term, node_term);
@@ -251,9 +264,10 @@ impl CurpGroup<Node> {
 // Initial election
 #[traced_test]
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
-async fn initial_election() {
-    // watch the log while doing sync, TODO: find a better way
-    let group = CurpGroup::new(3).await;
+async fn election() {
+    let group = CurpGroup::new(5).await;
+    let leader0 = group.get_leader().await;
+    group.disable_node(&leader0);
 
     // check whether there is exact one leader in the group
     let leader1 = group.get_leader().await;
