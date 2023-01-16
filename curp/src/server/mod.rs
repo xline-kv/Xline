@@ -9,7 +9,7 @@ use clippy_utilities::NumericCast;
 use event_listener::Event;
 use itertools::Itertools;
 use parking_lot::{lock_api::RwLockUpgradableReadGuard, RwLock};
-use tokio::{net::TcpListener, sync::broadcast, time::Instant};
+use tokio::{net::TcpListener, sync::broadcast};
 use tokio_stream::wrappers::TcpListenerStream;
 use tower::filter::FilterLayer;
 use tracing::{debug, error, info, instrument, warn};
@@ -245,8 +245,6 @@ pub struct Protocol<C: Command + 'static> {
     /// Current state
     // TODO: apply fine-grain locking
     state: StateRef<C, CmdExeSender<C>>,
-    /// Last time a rpc is received
-    last_rpc_time: Arc<RwLock<Instant>>,
     /// The speculative cmd pool, shared with executor
     spec: SpecPoolRef<C>,
     /// The channel to send synced command to background sync task
@@ -339,7 +337,7 @@ impl<C: 'static + Command> Protocol<C> {
             others,
             exe_tx.clone(),
         );
-        let last_rpc_time = state.last_rpc_time();
+
         let spec = state.spec();
         let cmd_board = state.cmd_board();
         let state = Arc::new(RwLock::new(state));
@@ -361,7 +359,6 @@ impl<C: 'static + Command> Protocol<C> {
 
         Self {
             state,
-            last_rpc_time,
             spec,
             sync_chan: sync_tx,
             cmd_board,
@@ -552,7 +549,7 @@ impl<C: 'static + Command> Protocol<C> {
         }
 
         let mut state = RwLockUpgradableReadGuard::upgrade(state);
-        *self.last_rpc_time.write() = Instant::now();
+        state.reset_election_tick();
 
         if req.term > state.term {
             state.update_to_term(req.term);
@@ -636,17 +633,17 @@ impl<C: 'static + Command> Protocol<C> {
             }
         }
 
-        // If a follower receives votes from a candidate, it should update last_rpc_time to prevent itself from starting election
-        if state.role() == ServerRole::Follower {
-            *self.last_rpc_time.write() = Instant::now();
-        }
-
         if req.last_log_term > state.last_log_term()
             || (req.last_log_term == state.last_log_term()
                 && req.last_log_index.numeric_cast::<usize>() >= state.last_log_index())
         {
             debug!("vote for server {}", req.candidate_id);
             state.voted_for = Some(req.candidate_id);
+
+            // If a follower approves a vote from a candidate, it should update last_rpc_time to prevent itself from starting election
+            if state.role() == ServerRole::Follower {
+                state.reset_election_tick();
+            }
 
             let resp = VoteResponse::new_accept(
                 state.term,

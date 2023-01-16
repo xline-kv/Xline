@@ -1,9 +1,15 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicBool, AtomicU8, Ordering},
+        Arc,
+    },
+};
 
 use clippy_utilities::NumericCast;
 use event_listener::Event;
 use parking_lot::{Mutex, RwLock};
-use tokio::{sync::broadcast, time::Instant};
+use tokio::sync::broadcast;
 use tracing::debug;
 
 use super::{cmd_board::CommandBoard, spec_pool::SpeculativePool, ServerRole};
@@ -25,6 +31,10 @@ pub(super) struct State<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>> {
     pub(super) leader_id: Option<ServerId>,
     /// Role of the server
     role: ServerRole,
+    /// Heartbeat opt out flag
+    pub(super) hb_opt: Arc<AtomicBool>,
+    /// Election timeout tick
+    pub(super) election_tick: Arc<AtomicU8>,
     /// Current term
     pub(super) term: TermNum,
     /// Consensus log
@@ -48,14 +58,10 @@ pub(super) struct State<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>> {
     pub(super) role_trigger: Arc<Event>,
     /// Trigger when there might be some logs to commit
     pub(super) commit_trigger: Arc<Event>,
-    /// Trigger when append_entries are sent and no heartbeat is needed for a while
-    pub(super) heartbeat_reset_trigger: Arc<Event>,
     /// Cmd watch board for tracking the cmd sync results
     pub(super) cmd_board: CmdBoardRef<C>,
     /// Speculative pool
     pub(super) spec: SpecPoolRef<C>,
-    /// Last time a rpc is received.
-    pub(super) last_rpc_time: Arc<RwLock<Instant>>,
     /// Leader changes tx
     leader_tx: broadcast::Sender<Option<ServerId>>,
     /// Cmd exe sender
@@ -94,13 +100,13 @@ impl<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>> State<C, ExeTx> {
             others,
             role_trigger: Arc::new(Event::new()),
             commit_trigger: Arc::new(Event::new()),
-            heartbeat_reset_trigger: Arc::new(Event::new()),
             cmd_board: Arc::new(RwLock::new(CommandBoard::new())),
             spec: Arc::new(Mutex::new(SpeculativePool::new())),
-            last_rpc_time: Arc::new(RwLock::new(Instant::now())),
             leader_tx: tx,
             cmd_exe_tx,
             first: true,
+            hb_opt: Arc::new(AtomicBool::new(false)),
+            election_tick: Arc::new(AtomicU8::new(0)),
         }
     }
 
@@ -147,7 +153,7 @@ impl<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>> State<C, ExeTx> {
             }
         }
         // old leader will reset time to prevent itself from starting election immediately
-        *self.last_rpc_time.write() = Instant::now();
+        self.reset_election_tick();
     }
 
     /// Update to `term`
@@ -190,11 +196,6 @@ impl<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>> State<C, ExeTx> {
         self.role
     }
 
-    /// Get role trigger
-    pub(super) fn role_trigger(&self) -> Arc<Event> {
-        Arc::clone(&self.role_trigger)
-    }
-
     /// Get commit trigger
     pub(super) fn commit_trigger(&self) -> Arc<Event> {
         Arc::clone(&self.commit_trigger)
@@ -203,11 +204,6 @@ impl<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>> State<C, ExeTx> {
     /// Get id
     pub(super) fn id(&self) -> &ServerId {
         &self.id
-    }
-
-    /// Get `last_rpc_time`
-    pub(super) fn last_rpc_time(&self) -> Arc<RwLock<Instant>> {
-        Arc::clone(&self.last_rpc_time)
     }
 
     /// Get `cmd_board`
@@ -220,14 +216,14 @@ impl<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>> State<C, ExeTx> {
         self.leader_tx.subscribe()
     }
 
-    /// Get heartbeat reset trigger
-    pub(super) fn heartbeat_reset_trigger(&self) -> Arc<Event> {
-        Arc::clone(&self.heartbeat_reset_trigger)
-    }
-
     /// Get a reference to speculative pool
     pub(super) fn spec(&self) -> SpecPoolRef<C> {
         Arc::clone(&self.spec)
+    }
+
+    /// Reset election tick
+    pub(super) fn reset_election_tick(&self) {
+        self.election_tick.store(0, Ordering::Relaxed);
     }
 }
 

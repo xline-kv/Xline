@@ -38,7 +38,7 @@
     unused_results,
     variant_size_differences,
 
-    warnings, // treat all wanings as errors
+    warnings, // treat all warnings as errors
 
     clippy::all,
     clippy::pedantic,
@@ -120,6 +120,11 @@
         clippy::wildcard_enum_match_arm,
         clippy::match_wildcard_for_single_variants,
         clippy::all,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation,
+        clippy::cast_lossless,
+        clippy::unwrap_in_result,
+        clippy::expect_used,
         dead_code
     )
 )]
