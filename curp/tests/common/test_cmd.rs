@@ -43,6 +43,7 @@ impl TestCommand {
             cmd_type: TestCommandType::Get,
         }
     }
+
     pub fn new_put(id: u32, keys: Vec<u32>, value: u32) -> Self {
         Self {
             id: ProposeId::new(id.to_string()),
@@ -54,18 +55,22 @@ impl TestCommand {
             cmd_type: TestCommandType::Put(value),
         }
     }
+
     pub fn set_exe_dur(mut self, dur: Duration) -> Self {
         self.exe_dur = dur;
         self
     }
+
     pub fn set_as_dur(mut self, dur: Duration) -> Self {
         self.as_dur = dur;
         self
     }
+
     pub fn set_exe_should_fail(mut self) -> Self {
         self.exe_should_fail = true;
         self
     }
+
     pub fn set_asr_should_fail(mut self) -> Self {
         self.as_should_fail = true;
         self

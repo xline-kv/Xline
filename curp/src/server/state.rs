@@ -60,6 +60,8 @@ pub(super) struct State<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>> {
     leader_tx: broadcast::Sender<Option<ServerId>>,
     /// Cmd exe sender
     pub(super) cmd_exe_tx: ExeTx,
+    /// First start indicator. FIXIME: remove it after persistency is enabled
+    pub(super) first: bool,
 }
 
 impl<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>> State<C, ExeTx> {
@@ -98,6 +100,7 @@ impl<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>> State<C, ExeTx> {
             last_rpc_time: Arc::new(RwLock::new(Instant::now())),
             leader_tx: tx,
             cmd_exe_tx,
+            first: true,
         }
     }
 
@@ -177,6 +180,7 @@ impl<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>> State<C, ExeTx> {
     pub(super) fn set_leader(&mut self, leader_id: ServerId) {
         if self.leader_id.is_none() {
             self.leader_id = Some(leader_id.clone());
+            self.first = false;
             let _ig = self.leader_tx.send(Some(leader_id)).ok();
         }
     }
