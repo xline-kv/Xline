@@ -219,6 +219,8 @@ pub struct Protocol<C: Command + 'static> {
     stop_ch_tx: broadcast::Sender<()>,
     /// The channel to send cmds to background exe tasks
     cmd_exe_tx: CmdExeSender<C>,
+    /// The curp server timeout
+    timeout: Arc<ServerTimeout>,
 }
 
 /// The message sent to the background sync task
@@ -300,7 +302,6 @@ impl<C: 'static + Command> Protocol<C> {
             others,
             Arc::clone(&cmd_board),
             Arc::clone(&last_rpc_time),
-            timeout,
         )));
 
         // run background tasks
@@ -312,6 +313,7 @@ impl<C: 'static + Command> Protocol<C> {
             exe_tx.clone(),
             exe_rx,
             Shutdown::new(stop_ch_rx.resubscribe()),
+            Arc::clone(&timeout),
             #[cfg(test)]
             Arc::new(AtomicBool::new(true)),
         ));
@@ -326,6 +328,7 @@ impl<C: 'static + Command> Protocol<C> {
             cmd_board,
             stop_ch_tx,
             cmd_exe_tx: exe_tx,
+            timeout,
         }
     }
 
@@ -355,7 +358,6 @@ impl<C: 'static + Command> Protocol<C> {
             others,
             Arc::clone(&cmd_board),
             Arc::clone(&last_rpc_time),
-            timeout,
         )));
 
         // run background tasks
@@ -367,6 +369,7 @@ impl<C: 'static + Command> Protocol<C> {
             exe_tx.clone(),
             exe_rx,
             Shutdown::new(stop_ch_rx.resubscribe()),
+            Arc::clone(&timeout),
             reachable,
         ));
 
@@ -380,6 +383,7 @@ impl<C: 'static + Command> Protocol<C> {
             cmd_board,
             stop_ch_tx,
             cmd_exe_tx: exe_tx,
+            timeout,
         }
     }
 
@@ -524,7 +528,7 @@ impl<C: 'static + Command> Protocol<C> {
                     );
                 }
 
-                let wait_synced_timeout = *state.timeout.wait_synced_timeout();
+                let wait_synced_timeout = *self.timeout.wait_synced_timeout();
                 // generate wait_synced event listener
                 (
                     wait_synced_timeout,
@@ -535,7 +539,7 @@ impl<C: 'static + Command> Protocol<C> {
                         .listen(),
                 )
             };
-            if tokio::time::timeout(*wait_synced_timeout, listener)
+            if tokio::time::timeout(wait_synced_timeout, listener)
                 .await
                 .is_err()
             {

@@ -8,7 +8,7 @@ use madsim::rand::{thread_rng, Rng};
 use parking_lot::{lock_api::RwLockUpgradableReadGuard, Mutex, RwLock};
 use tokio::{sync::mpsc, task::JoinHandle, time::Instant};
 use tracing::{debug, error, info, warn};
-use utils::parking_lot_lock::RwLockMap;
+use utils::{config::ServerTimeout, parking_lot_lock::RwLockMap};
 
 use super::{
     cmd_board::{CmdState, CommandBoard},
@@ -42,6 +42,7 @@ pub(super) async fn run_bg_tasks<
     cmd_exe_tx: CmdExeSender<C>,
     cmd_exe_rx: CmdExeReceiver<C>,
     mut shutdown: Shutdown,
+    timeout: Arc<ServerTimeout>,
     #[cfg(test)] reachable: Arc<AtomicBool>,
 ) {
     // establish connection with other servers
@@ -59,13 +60,26 @@ pub(super) async fn run_bg_tasks<
         connects.clone(),
         Arc::clone(&state),
         ae_trigger_rx,
+        Arc::clone(&timeout),
     ));
-    let bg_election_handle = tokio::spawn(bg_election(connects.clone(), Arc::clone(&state)));
+    let bg_election_handle = tokio::spawn(bg_election(
+        connects.clone(),
+        Arc::clone(&state),
+        Arc::clone(&timeout),
+    ));
     let bg_apply_handle = tokio::spawn(bg_apply(Arc::clone(&state), cmd_exe_tx, spec));
-    let bg_heartbeat_handle = tokio::spawn(bg_heartbeat(connects.clone(), Arc::clone(&state)));
+    let bg_heartbeat_handle = tokio::spawn(bg_heartbeat(
+        connects.clone(),
+        Arc::clone(&state),
+        Arc::clone(&timeout),
+    ));
     let bg_get_sync_cmds_handle =
         tokio::spawn(bg_get_sync_cmds(Arc::clone(&state), sync_chan, ae_trigger));
-    let calibrate_handle = tokio::spawn(bg_leader_calibrates_followers(connects, state));
+    let calibrate_handle = tokio::spawn(bg_leader_calibrates_followers(
+        connects,
+        state,
+        Arc::clone(&timeout),
+    ));
 
     // spawn cmd execute worker
     let bg_exe_worker_handles: Vec<JoinHandle<_>> =
@@ -120,6 +134,7 @@ async fn bg_append_entries<C: Command + 'static, Conn: ConnectInterface>(
     connects: Vec<Arc<Conn>>,
     state: Arc<RwLock<State<C>>>,
     mut ae_trigger_rx: mpsc::UnboundedReceiver<usize>,
+    timeout: Arc<ServerTimeout>,
 ) {
     let hb_reset_trigger = state.read().heartbeat_reset_trigger();
     while let Some(i) = ae_trigger_rx.recv().await {
@@ -155,6 +170,7 @@ async fn bg_append_entries<C: Command + 'static, Conn: ConnectInterface>(
                 req.clone(),
                 Arc::clone(connect),
                 Arc::clone(&state),
+                Arc::clone(&timeout),
             ));
         }
 
@@ -169,17 +185,14 @@ async fn send_log_until_succeed<C: Command + 'static, Conn: ConnectInterface>(
     req: AppendEntriesRequest,
     connect: Arc<Conn>,
     state: Arc<RwLock<State<C>>>,
+    timeout: Arc<ServerTimeout>,
 ) {
-    let (retry_timeout, rpc_timeout) = state.map_read(|state_r| {
-        (
-            *state_r.timeout.retry_timeout(),
-            *state_r.timeout.rpc_timeout(),
-        )
-    });
     // send log[i] until succeed
     loop {
         debug!("append_entries sent to {}", connect.id());
-        let resp = connect.append_entries(req.clone(), *rpc_timeout).await;
+        let resp = connect
+            .append_entries(req.clone(), *timeout.rpc_timeout())
+            .await;
 
         #[allow(clippy::unwrap_used)]
         // indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
@@ -187,7 +200,7 @@ async fn send_log_until_succeed<C: Command + 'static, Conn: ConnectInterface>(
             Err(e) => {
                 warn!("append_entries error: {e}");
                 // wait for some time until next retry
-                tokio::time::sleep(*retry_timeout).await;
+                tokio::time::sleep(*timeout.retry_timeout()).await;
             }
             Ok(resp) => {
                 let resp = resp.into_inner();
@@ -235,19 +248,15 @@ async fn send_log_until_succeed<C: Command + 'static, Conn: ConnectInterface>(
 async fn bg_heartbeat<C: Command + 'static, Conn: ConnectInterface>(
     connects: Vec<Arc<Conn>>,
     state: Arc<RwLock<State<C>>>,
+    timeout: Arc<ServerTimeout>,
 ) {
-    let (role_trigger, hb_reset_trigger, heartbeat_interval) = state.map_read(|state_r| {
-        (
-            state_r.role_trigger(),
-            state_r.heartbeat_reset_trigger(),
-            *state_r.timeout.heartbeat_interval(),
-        )
-    });
+    let (role_trigger, hb_reset_trigger) =
+        state.map_read(|state_r| (state_r.role_trigger(), state_r.heartbeat_reset_trigger()));
     #[allow(clippy::integer_arithmetic)] // tokio internal triggered
     loop {
         loop {
             tokio::select! {
-                _ = tokio::time::sleep(*heartbeat_interval) => break,
+                _ = tokio::time::sleep(*timeout.heartbeat_interval()) => break,
                 _ = hb_reset_trigger.listen() => {}
             }
         }
@@ -258,7 +267,11 @@ async fn bg_heartbeat<C: Command + 'static, Conn: ConnectInterface>(
         }
         // send append_entries to each server in parallel
         for connect in &connects {
-            let _handle = tokio::spawn(send_heartbeat(Arc::clone(connect), Arc::clone(&state)));
+            let _handle = tokio::spawn(send_heartbeat(
+                Arc::clone(connect),
+                Arc::clone(&state),
+                Arc::clone(&timeout),
+            ));
         }
     }
 }
@@ -268,25 +281,24 @@ async fn bg_heartbeat<C: Command + 'static, Conn: ConnectInterface>(
 async fn send_heartbeat<C: Command + 'static, Conn: ConnectInterface>(
     connect: Arc<Conn>,
     state: Arc<RwLock<State<C>>>,
+    timeout: Arc<ServerTimeout>,
 ) {
     // prepare append_entries request args
-    let (req, rpc_timeout) = state.map_read(|state_r| {
+    let req = state.map_read(|state_r| {
         let next_index = state_r.next_index[connect.id()];
-        (
-            AppendEntriesRequest::new_heartbeat(
-                state_r.term,
-                state_r.id().clone(),
-                next_index - 1,
-                state_r.log[next_index - 1].term(),
-                state_r.commit_index,
-            ),
-            *state.read().timeout.rpc_timeout(),
+
+        AppendEntriesRequest::new_heartbeat(
+            state_r.term,
+            state_r.id().clone(),
+            next_index - 1,
+            state_r.log[next_index - 1].term(),
+            state_r.commit_index,
         )
     });
 
     // send append_entries request and receive response
     debug!("heartbeat sent to {}", connect.id());
-    let resp = connect.append_entries(req, *rpc_timeout).await;
+    let resp = connect.append_entries(req, *timeout.rpc_timeout()).await;
 
     #[allow(clippy::unwrap_used)]
     // indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
@@ -440,10 +452,11 @@ fn handle_after_sync_follower<C: Command + 'static, Tx: CmdExeSenderInterface<C>
 async fn bg_election<C: Command + 'static, Conn: ConnectInterface>(
     connects: Vec<Arc<Conn>>,
     state: Arc<RwLock<State<C>>>,
+    timeout: Arc<ServerTimeout>,
 ) {
     let last_rpc_time = state.map_read(|state_r| state_r.last_rpc_time());
     loop {
-        wait_for_election(Arc::clone(&state)).await;
+        wait_for_election(Arc::clone(&state), Arc::clone(&timeout)).await;
 
         // start election
         #[allow(clippy::integer_arithmetic)] // TODO: handle possible overflow
@@ -470,29 +483,26 @@ async fn bg_election<C: Command + 'static, Conn: ConnectInterface>(
                 Arc::clone(connect),
                 Arc::clone(&state),
                 req.clone(),
+                Arc::clone(&timeout),
             ));
         }
     }
 }
 
 /// wait until an election is needed
-async fn wait_for_election<C: Command + 'static>(state: Arc<RwLock<State<C>>>) {
-    let (role_trigger, last_rpc_time, follower_timeout_range, candidate_timeout) =
-        state.map_read(|state_r| {
-            (
-                state_r.role_trigger(),
-                state_r.last_rpc_time(),
-                state_r.timeout.follower_timeout_range().clone(),
-                *state_r.timeout.candidate_timeout(),
-            )
-        });
+async fn wait_for_election<C: Command + 'static>(
+    state: Arc<RwLock<State<C>>>,
+    timeout: Arc<ServerTimeout>,
+) {
+    let (role_trigger, last_rpc_time) =
+        state.map_read(|state_r| (state_r.role_trigger(), state_r.last_rpc_time()));
     'outer: loop {
         // only follower or candidate should try to elect
         let role = state.read().role();
         match role {
             ServerRole::Follower => {
                 let timeout = Duration::from_millis(
-                    thread_rng().gen_range((*follower_timeout_range).clone()),
+                    thread_rng().gen_range(timeout.follower_timeout_range().clone()),
                 );
                 // wait until it needs to vote
                 loop {
@@ -504,7 +514,8 @@ async fn wait_for_election<C: Command + 'static>(state: Arc<RwLock<State<C>>>) {
                 }
             }
             ServerRole::Candidate => 'inner: loop {
-                let next_check = last_rpc_time.read().to_owned() + *candidate_timeout;
+                let candidate_timeout = *timeout.candidate_timeout();
+                let next_check = last_rpc_time.read().to_owned() + candidate_timeout;
                 tokio::time::sleep_until(next_check).await;
                 // check election status
                 match state.read().role() {
@@ -515,7 +526,7 @@ async fn wait_for_election<C: Command + 'static>(state: Arc<RwLock<State<C>>>) {
                     ServerRole::Candidate => {}
                 }
                 // another round of election is needed
-                if Instant::now() - *last_rpc_time.read() > *candidate_timeout {
+                if Instant::now() - *last_rpc_time.read() > candidate_timeout {
                     break 'outer;
                 }
             },
@@ -532,9 +543,9 @@ async fn send_vote<C: Command + 'static, Conn: ConnectInterface>(
     connect: Arc<Conn>,
     state: Arc<RwLock<State<C>>>,
     req: VoteRequest,
+    timeout: Arc<ServerTimeout>,
 ) {
-    let rpc_timeout = *state.read().timeout.rpc_timeout();
-    let resp = connect.vote(req, *rpc_timeout).await;
+    let resp = connect.vote(req, *timeout.rpc_timeout()).await;
     match resp {
         Err(e) => error!("vote failed, {}", e),
         Ok(resp) => {
@@ -586,12 +597,17 @@ async fn send_vote<C: Command + 'static, Conn: ConnectInterface>(
 async fn bg_leader_calibrates_followers<C: Command + 'static, Conn: ConnectInterface>(
     connects: Vec<Arc<Conn>>,
     state: Arc<RwLock<State<C>>>,
+    timeout: Arc<ServerTimeout>,
 ) {
     let calibrate_trigger = Arc::clone(&state.read().calibrate_trigger);
     loop {
         calibrate_trigger.listen().await;
         for connect in connects.clone() {
-            let _handle = tokio::spawn(leader_calibrates_follower(connect, Arc::clone(&state)));
+            let _handle = tokio::spawn(leader_calibrates_follower(
+                connect,
+                Arc::clone(&state),
+                Arc::clone(&timeout),
+            ));
         }
     }
 }
@@ -601,14 +617,13 @@ async fn bg_leader_calibrates_followers<C: Command + 'static, Conn: ConnectInter
 async fn leader_calibrates_follower<C: Command + 'static, Conn: ConnectInterface>(
     connect: Arc<Conn>,
     state: Arc<RwLock<State<C>>>,
+    timeout: Arc<ServerTimeout>,
 ) {
     loop {
         // send append entry
-        let (req, last_sent_index, retry_timeout, rpc_timeout) = {
+        let (req, last_sent_index) = {
             let state_r = state.read();
             let next_index = state_r.next_index[connect.id()];
-            let retry_timeout = *state_r.timeout.retry_timeout();
-            let rpc_timeout = *state_r.timeout.rpc_timeout();
             match AppendEntriesRequest::new(
                 state_r.term,
                 state_r.id().clone(),
@@ -621,18 +636,18 @@ async fn leader_calibrates_follower<C: Command + 'static, Conn: ConnectInterface
                     error!("unable to serialize append entries request: {}", e);
                     return;
                 }
-                Ok(req) => (req, state_r.log.len() - 1, retry_timeout, rpc_timeout),
+                Ok(req) => (req, state_r.log.len() - 1),
             }
         };
 
-        let resp = connect.append_entries(req, *rpc_timeout).await;
+        let resp = connect.append_entries(req, *timeout.rpc_timeout()).await;
 
         #[allow(clippy::unwrap_used)]
         // indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
         match resp {
             Err(e) => {
                 warn!("append_entries error: {}", e);
-                tokio::time::sleep(*retry_timeout).await;
+                tokio::time::sleep(*timeout.retry_timeout()).await;
             }
             Ok(resp) => {
                 let resp = resp.into_inner();
@@ -700,7 +715,6 @@ mod test {
             others,
             Arc::new(Mutex::new(CommandBoard::new())),
             Arc::new(RwLock::new(Instant::now())),
-            Arc::new(ServerTimeout::default()),
         )))
     }
 
@@ -730,7 +744,14 @@ mod test {
                 0,
             )
             .unwrap();
-            send_log_until_succeed(1, req, Arc::new(mock_connect), state).await;
+            send_log_until_succeed(
+                1,
+                req,
+                Arc::new(mock_connect),
+                state,
+                Arc::new(ServerTimeout::default()),
+            )
+            .await;
         });
         sleep_secs(3).await;
         assert!(!handle.is_finished());
@@ -763,7 +784,14 @@ mod test {
                 0,
             )
             .unwrap();
-            send_log_until_succeed(1, req, Arc::new(mock_connect), state_c).await;
+            send_log_until_succeed(
+                1,
+                req,
+                Arc::new(mock_connect),
+                state_c,
+                Arc::new(ServerTimeout::default()),
+            )
+            .await;
         });
 
         assert!(handle.await.is_ok());
@@ -802,7 +830,14 @@ mod test {
                 0,
             )
             .unwrap();
-            send_log_until_succeed(1, req, Arc::new(mock_connect), state_c).await;
+            send_log_until_succeed(
+                1,
+                req,
+                Arc::new(mock_connect),
+                state_c,
+                Arc::new(ServerTimeout::default()),
+            )
+            .await;
         });
 
         assert!(handle.await.is_ok());
@@ -829,7 +864,12 @@ mod test {
             .expect_id()
             .return_const(FOLLOWER_ID1.to_owned());
 
-        send_heartbeat(Arc::new(mock_connect), Arc::clone(&state)).await;
+        send_heartbeat(
+            Arc::new(mock_connect),
+            Arc::clone(&state),
+            Arc::new(ServerTimeout::default()),
+        )
+        .await;
 
         let state = state.read();
         assert_eq!(state.term, 1);
@@ -858,7 +898,12 @@ mod test {
             .expect_id()
             .return_const(FOLLOWER_ID1.to_owned());
 
-        send_heartbeat(Arc::new(mock_connect), Arc::clone(&state)).await;
+        send_heartbeat(
+            Arc::new(mock_connect),
+            Arc::clone(&state),
+            Arc::new(ServerTimeout::default()),
+        )
+        .await;
 
         let state = state.read();
         assert_eq!(state.term, 0);
@@ -875,7 +920,7 @@ mod test {
 
         let connects = vec![Arc::new(mock_connect)];
         let handle = tokio::spawn(async move {
-            bg_heartbeat(connects, state).await;
+            bg_heartbeat(connects, state, Arc::new(ServerTimeout::default())).await;
         });
 
         for _ in 0..50 {
@@ -1000,7 +1045,7 @@ mod test {
         }
         let last_rpc_time = state.read().last_rpc_time();
 
-        let handle = tokio::spawn(wait_for_election(state));
+        let handle = tokio::spawn(wait_for_election(state, Arc::new(ServerTimeout::default())));
 
         for _ in 0..20 {
             sleep_millis(150).await;
@@ -1020,11 +1065,12 @@ mod test {
             state.set_role(ServerRole::Follower);
         }
 
-        assert!(
-            tokio::time::timeout(Duration::from_secs(3), wait_for_election(state))
-                .await
-                .is_ok()
-        );
+        assert!(tokio::time::timeout(
+            Duration::from_secs(3),
+            wait_for_election(state, Arc::new(ServerTimeout::default()))
+        )
+        .await
+        .is_ok());
     }
 
     #[traced_test]
@@ -1036,11 +1082,12 @@ mod test {
             state.set_role(ServerRole::Candidate);
         }
 
-        assert!(
-            tokio::time::timeout(Duration::from_secs(4), wait_for_election(state))
-                .await
-                .is_ok()
-        );
+        assert!(tokio::time::timeout(
+            Duration::from_secs(4),
+            wait_for_election(state, Arc::new(ServerTimeout::default()))
+        )
+        .await
+        .is_ok());
     }
 
     #[traced_test]
@@ -1052,7 +1099,10 @@ mod test {
             let mut state = state.write();
             state.set_role(ServerRole::Candidate);
         }
-        let handle = tokio::spawn(wait_for_election(Arc::clone(&state)));
+        let handle = tokio::spawn(wait_for_election(
+            Arc::clone(&state),
+            Arc::new(ServerTimeout::default()),
+        ));
         let hb_handle = tokio::spawn(async move {
             for _ in 0..20 {
                 sleep_millis(150).await;
@@ -1080,7 +1130,10 @@ mod test {
             let mut state = state.write();
             state.set_role(ServerRole::Candidate);
         }
-        let handle = tokio::spawn(wait_for_election(Arc::clone(&state)));
+        let handle = tokio::spawn(wait_for_election(
+            Arc::clone(&state),
+            Arc::new(ServerTimeout::default()),
+        ));
 
         sleep_secs(1).await;
 
@@ -1114,7 +1167,13 @@ mod test {
             .return_const(FOLLOWER_ID1.to_owned());
 
         let req = VoteRequest::new(2, FOLLOWER_ID1.to_owned(), 0, 0);
-        send_vote(Arc::new(mock_connect), Arc::clone(&state), req).await;
+        send_vote(
+            Arc::new(mock_connect),
+            Arc::clone(&state),
+            req,
+            Arc::new(ServerTimeout::default()),
+        )
+        .await;
 
         let state = state.read();
         assert_eq!(state.term, 2);
@@ -1152,14 +1211,26 @@ mod test {
 
         let req = VoteRequest::new(2, FOLLOWER_ID1.to_owned(), 0, 0);
 
-        send_vote(Arc::new(mock_connect1), Arc::clone(&state), req.clone()).await;
+        send_vote(
+            Arc::new(mock_connect1),
+            Arc::clone(&state),
+            req.clone(),
+            Arc::new(ServerTimeout::default()),
+        )
+        .await;
         {
             let state = state.read();
             assert_eq!(state.term, 1);
             assert_eq!(state.role(), ServerRole::Leader);
         }
 
-        send_vote(Arc::new(mock_connect2), Arc::clone(&state), req.clone()).await;
+        send_vote(
+            Arc::new(mock_connect2),
+            Arc::clone(&state),
+            req.clone(),
+            Arc::new(ServerTimeout::default()),
+        )
+        .await;
 
         let state = state.read();
         assert_eq!(state.term, 1);
@@ -1197,7 +1268,12 @@ mod test {
             .expect_id()
             .return_const(FOLLOWER_ID1.to_owned());
 
-        leader_calibrates_follower(Arc::new(mock_connect), Arc::clone(&state)).await;
+        leader_calibrates_follower(
+            Arc::new(mock_connect),
+            Arc::clone(&state),
+            Arc::new(ServerTimeout::default()),
+        )
+        .await;
         {
             let state = state.read();
             assert_eq!(state.next_index[FOLLOWER_ID1], 3);
@@ -1220,7 +1296,12 @@ mod test {
             .expect_id()
             .return_const(FOLLOWER_ID1.to_owned());
 
-        leader_calibrates_follower(Arc::new(mock_connect), Arc::clone(&state)).await;
+        leader_calibrates_follower(
+            Arc::new(mock_connect),
+            Arc::clone(&state),
+            Arc::new(ServerTimeout::default()),
+        )
+        .await;
 
         let state = state.read();
         assert_eq!(state.term, 1);

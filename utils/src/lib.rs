@@ -110,7 +110,11 @@
 )]
 // When we use rust version 1.65 or later, refactor this with GAT
 
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
+
+use thiserror::Error;
+
+use crate::config::{ClusterRange, LevelConfig, RotationConfig};
 
 /// configuration
 pub mod config;
@@ -126,33 +130,163 @@ pub mod tokio_lock;
 /// utils for pass span context
 pub mod tracing;
 
+/// Config Parse Error
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum ConfigParseError {
+    /// Invalid number when parsing `Duration`
+    #[error("Invalid Value: {0}")]
+    InvalidNumber(#[from] std::num::ParseIntError),
+    /// Invalid time unit
+    #[error("Invalid Unit: {0}")]
+    InvalidUnit(String),
+    /// Invalid values
+    #[error("Invalid Value: {0}")]
+    InvalidValue(String),
+}
+
 /// parse members from string
 /// # Errors
 /// Return error when pass wrong args
 #[inline]
-pub fn parse_members(s: &str) -> Result<HashMap<String, String>, String> {
+pub fn parse_members(s: &str) -> Result<HashMap<String, String>, ConfigParseError> {
     let mut map = HashMap::new();
     for pair in s.split(',') {
         if let Some((id, addr)) = pair.split_once('=') {
             let _ignore = map.insert(id.to_owned(), addr.to_owned());
         } else {
-            return Err("parse members error".to_owned());
+            return Err(ConfigParseError::InvalidValue(
+                "parse members error".to_owned(),
+            ));
         }
     }
     Ok(map)
 }
 
+/// Parse `ClusterRange` from the given string
+/// # Errors
+/// Return error when parsing the given string to `ClusterRange` failed
+#[inline]
+pub fn parse_range(s: &str) -> Result<ClusterRange, ConfigParseError> {
+    if let Some((start, end)) = s.split_once("..") {
+        Ok(ClusterRange {
+            start: start.parse::<u64>()?,
+            end: end.parse::<u64>()?,
+        })
+    } else {
+        Err(ConfigParseError::InvalidValue(format!(
+            "Invalid cluster range:{s}"
+        )))
+    }
+}
+
+/// Parse `Duration` from string
+/// # Errors
+/// Return error when parsing the given string to `Duration` failed
+#[inline]
+pub fn parse_duration(s: &str) -> Result<Duration, ConfigParseError> {
+    if s.ends_with("us") {
+        if let Some(dur) = s.strip_suffix("us") {
+            Ok(Duration::from_micros(dur.parse()?))
+        } else {
+            Err(ConfigParseError::InvalidValue(format!(
+                "the value of time should not be empty. ({s})"
+            )))
+        }
+    } else if s.ends_with("ms") {
+        if let Some(dur) = s.strip_suffix("ms") {
+            Ok(Duration::from_millis(dur.parse()?))
+        } else {
+            Err(ConfigParseError::InvalidValue(format!(
+                "the value of time should not be empty ({s})"
+            )))
+        }
+    } else if s.ends_with('s') {
+        if let Some(dur) = s.strip_suffix('s') {
+            Ok(Duration::from_secs(dur.parse()?))
+        } else {
+            Err(ConfigParseError::InvalidValue(format!(
+                "the value of time should not be empty ({s})"
+            )))
+        }
+    } else {
+        Err(ConfigParseError::InvalidUnit(format!(
+            "the unit of time should be one of 'us', 'ms' or 's'({s})"
+        )))
+    }
+}
+
+/// Parse `LevelConfig` from string
+/// # Errors
+/// Return error when parsing the given string to `LevelConfig` failed
+#[inline]
+pub fn parse_log_level(s: &str) -> Result<LevelConfig, ConfigParseError> {
+    match s {
+        "trace" => Ok(LevelConfig::TRACE),
+        "debug" => Ok(LevelConfig::DEBUG),
+        "info" => Ok(LevelConfig::INFO),
+        "warn" => Ok(LevelConfig::WARN),
+        "error" => Ok(LevelConfig::ERROR),
+        _ => Err(ConfigParseError::InvalidValue(format!(
+            "the log level should be one of 'trace', 'debug', 'info', 'warn' or 'error' ({s})"
+        ))),
+    }
+}
+
+/// Parse `RotationConfig` from string
+/// # Errors
+/// Return error when parsing the given string to `RotationConfig` failed
+#[inline]
+pub fn parse_rotation(s: &str) -> Result<RotationConfig, ConfigParseError> {
+    match s {
+        "hourly" => Ok(RotationConfig::Hourly),
+        "daily" => Ok(RotationConfig::Daily),
+        "never" => Ok(RotationConfig::Never),
+        _ => Err(ConfigParseError::InvalidValue(format!(
+            "the rotation config should be one of 'hourly', 'daily' or 'never' ({s})"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[allow(clippy::unwrap_used)]
     #[test]
-    fn test_parse_members() -> Result<(), String> {
+    fn test_parse_duration() {
+        assert_eq!(parse_duration("5s").unwrap(), Duration::from_secs(5));
+        assert_eq!(parse_duration("3ms").unwrap(), Duration::from_millis(3));
+        assert_eq!(parse_duration("1us").unwrap(), Duration::from_micros(1));
+        let results = vec![
+            parse_duration("hello world"),
+            parse_duration("5x"),
+            parse_duration("helloms"),
+        ];
+
+        for res in results {
+            assert!(res.is_err());
+        }
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_parse_range() {
+        assert_eq!(parse_range("1000..2000").unwrap(), 1000..2000);
+        assert!(parse_range("5,,10").is_err());
+        assert!(parse_range("a..b").is_err());
+        assert!(parse_range("6c..10a").is_err());
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_parse_members() {
         let s1 = "";
         assert!(parse_members(s1).is_err());
 
         let s2 = "a=1";
         let m2 = HashMap::from_iter(vec![("a".to_owned(), "1".to_owned())]);
-        assert_eq!(parse_members(s2)?, m2);
+        assert_eq!(parse_members(s2).unwrap(), m2);
 
         let s3 = "a=1,b=2,c=3";
         let m3 = HashMap::from_iter(vec![
@@ -160,11 +294,31 @@ mod test {
             ("b".to_owned(), "2".to_owned()),
             ("c".to_owned(), "3".to_owned()),
         ]);
-        assert_eq!(parse_members(s3)?, m3);
+        assert_eq!(parse_members(s3).unwrap(), m3);
 
         let s4 = "abcde";
         assert!(parse_members(s4).is_err());
+    }
 
-        Ok(())
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_parse_log_level() {
+        assert_eq!(parse_log_level("trace").unwrap(), LevelConfig::TRACE);
+        assert_eq!(parse_log_level("debug").unwrap(), LevelConfig::DEBUG);
+        assert_eq!(parse_log_level("info").unwrap(), LevelConfig::INFO);
+        assert_eq!(parse_log_level("warn").unwrap(), LevelConfig::WARN);
+        assert_eq!(parse_log_level("error").unwrap(), LevelConfig::ERROR);
+        let res = parse_log_level("hello world");
+        assert!(res.is_err());
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_parse_rotation() {
+        assert_eq!(parse_rotation("daily").unwrap(), RotationConfig::Daily);
+        assert_eq!(parse_rotation("hourly").unwrap(), RotationConfig::Hourly);
+        assert_eq!(parse_rotation("never").unwrap(), RotationConfig::Never);
+        let res = parse_rotation("hello world");
+        assert!(res.is_err());
     }
 }

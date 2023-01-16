@@ -4,7 +4,6 @@ use event_listener::Event;
 use parking_lot::{Mutex, RwLock};
 use tokio::{sync::broadcast, time::Instant};
 use tracing::debug;
-use utils::config::ServerTimeout;
 
 use super::{cmd_board::CommandBoard, ServerRole};
 use crate::{
@@ -55,8 +54,6 @@ pub(super) struct State<C: Command + 'static> {
     pub(super) last_rpc_time: Arc<RwLock<Instant>>,
     /// Leader changes tx
     leader_tx: broadcast::Sender<Option<ServerId>>,
-    /// Server timeout setting
-    pub(super) timeout: Arc<ServerTimeout>,
 }
 
 impl<C: Command + 'static> State<C> {
@@ -67,7 +64,6 @@ impl<C: Command + 'static> State<C> {
         others: HashMap<ServerId, String>,
         cmd_board: Arc<Mutex<CommandBoard>>,
         last_rpc_time: Arc<RwLock<Instant>>,
-        timeout: Arc<ServerTimeout>,
     ) -> Self {
         let mut next_index = HashMap::new();
         let mut match_index = HashMap::new();
@@ -96,7 +92,6 @@ impl<C: Command + 'static> State<C> {
             cmd_board,
             last_rpc_time,
             leader_tx: tx,
-            timeout,
         }
     }
 
@@ -202,9 +197,8 @@ impl<C: Command + 'static> State<C> {
 #[cfg_attr(test, allow(clippy::unwrap_used))]
 #[cfg(test)]
 mod tests {
-    use crate::test_utils::test_cmd::TestCommand;
-
     use super::*;
+    use crate::test_utils::test_cmd::TestCommand;
 
     #[tokio::test]
     async fn leader_broadcast() {
@@ -214,7 +208,6 @@ mod tests {
             HashMap::new(),
             Arc::new(Mutex::new(CommandBoard::new())),
             Arc::new(RwLock::new(Instant::now())),
-            Arc::new(ServerTimeout::default()),
         );
         let mut rx = state.leader_tx.subscribe();
 

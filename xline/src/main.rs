@@ -110,25 +110,23 @@
     clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
 )]
 
-use anyhow::{anyhow, Result};
+use std::{collections::HashMap, env, path::PathBuf, time::Duration};
+
+use anyhow::Result;
 use clap::Parser;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use opentelemetry::{global, runtime::Tokio, sdk::propagation::TraceContextPropagator};
 use opentelemetry_contrib::trace::exporter::jaeger_json::JaegerJsonExporter;
-use std::{collections::HashMap, env, path::PathBuf};
 use tokio::fs;
-use tracing::{debug, error, metadata::LevelFilter};
-use tracing_appender::rolling::RollingFileAppender;
+use tracing::{debug, error};
+use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{fmt::format, prelude::*};
 use utils::{
     config::{
-        default_candidate_timeout, default_client_timeout, default_client_wait_synced_timeout,
-        default_follower_timeout_range, default_heartbeat_interval, default_retry_timeout,
-        default_rpc_timeout, default_server_wait_synced_timeout, AuthConfig, ClientTimeout,
-        ClusterConfig, ClusterDuration, ClusterRange, LevelConfig, LogConfig, RotationConfig,
-        ServerTimeout, TraceConfig, XlineServerConfig,
+        file_appender, AuthConfig, ClientTimeout, ClusterConfig, ClusterRange, LevelConfig,
+        LogConfig, RotationConfig, ServerTimeout, TraceConfig, XlineServerConfig,
     },
-    parse_members,
+    parse_duration, parse_log_level, parse_members, parse_range, parse_rotation,
 };
 use xline::server::XlineServer;
 
@@ -155,67 +153,66 @@ struct ServerArgs {
     #[clap(long)]
     jaeger_offline: bool,
     /// ouput dir for jaeger offline
-    #[clap(long)]
-    jaeger_output_dir: Option<PathBuf>,
+    #[clap(long, default_value = "./jaeger_jsons")]
+    jaeger_output_dir: PathBuf,
     /// Open jaeger online
     #[clap(long)]
     jaeger_online: bool,
     /// Trace level of jaeger
-    #[clap(long)]
-    jaeger_level: Option<LevelConfig>,
+    #[clap(long, value_parser = parse_log_level, default_value = "info")]
+    jaeger_level: LevelConfig,
     /// Log file path
-    #[clap(long)]
-    log_file: Option<PathBuf>,
-    /// Log rotate strategy, eg: never, hourly, daily(default)
-    #[clap(long)]
-    log_rotate: Option<RotationConfig>,
-    /// Log verbosity level
-    #[clap(long)]
-    log_level: Option<LevelConfig>,
-    /// Heartbeat interval between curp server nodes, eg: --heartbeat_interval=100ms, default value is 150ms
-    #[clap(long)]
-    heartbeat_interval: Option<ClusterDuration>,
-    /// Curp wait sync timeout, eg: --server_wait_synced_timeout=100ms, default value is 5s
-    #[clap(long)]
-    server_wait_synced_timeout: Option<ClusterDuration>,
-    /// Curp propose retry timeout, eg: --retry_timeout=100ms, default value is 800ms
-    #[clap(long)]
-    retry_timeout: Option<ClusterDuration>,
-    /// Curp rpc timeout, eg: --rpc_timeout=100ms, default value is 50ms
-    #[clap(long)]
-    rpc_timeout: Option<ClusterDuration>,
-    /// Candidate election timeout, eg: --candidate_timeout=100ms, default value is 1s
-    #[clap(long)]
-    candidate_timeout: Option<ClusterDuration>,
-    /// Follower election timeout, eg: --follower_timeout_range=100..200, default value is 1000..2000,
-    #[clap(long)]
-    follower_timeout_range: Option<ClusterRange>,
-    /// Curp client timeout, eg: --client_timeout=100ms, default value is 1s
-    #[clap(long)]
-    client_timeout: Option<ClusterDuration>,
-    /// Curp client wait synced timeout, eg: --client_wait_synced_timeout=100ms, default value is 2s
-    #[clap(long)]
-    client_wait_synced_timeout: Option<ClusterDuration>,
+    #[clap(long, default_value = "/var/log/xline")]
+    log_file: PathBuf,
+    /// Log rotate strategy, eg: never, hourly, daily
+    #[clap(long, value_parser = parse_rotation, default_value = "daily")]
+    log_rotate: RotationConfig,
+    /// Log verbosity level, eg: trace, debug, info, warn, error
+    #[clap(long, value_parser = parse_log_level, default_value = "info")]
+    log_level: LevelConfig,
+    /// Heartbeat interval between curp server nodes
+    #[clap(long, value_parser = parse_duration, default_value = "150ms")]
+    heartbeat_interval: Duration,
+    /// Curp wait sync timeout
+    #[clap(long, value_parser = parse_duration, default_value = "5s")]
+    server_wait_synced_timeout: Duration,
+    /// Curp propose retry timeout
+    #[clap(long, value_parser = parse_duration, default_value = "800ms")]
+    retry_timeout: Duration,
+    /// Curp rpc timeout
+    #[clap(long, value_parser = parse_duration, default_value = "50ms")]
+    rpc_timeout: Duration,
+    /// Candidate election timeout
+    #[clap(long, value_parser = parse_duration, default_value = "1s")]
+    candidate_timeout: Duration,
+    /// Follower election timeout
+    #[clap(long,value_parser = parse_range, default_value = "1000..2000")]
+    follower_timeout_range: ClusterRange,
+    /// Curp client timeout
+    #[clap(long, value_parser = parse_duration, default_value = "1s")]
+    client_timeout: Duration,
+    /// Curp client wait synced timeout
+    #[clap(long, value_parser = parse_duration, default_value = "2s")]
+    client_wait_synced_timeout: Duration,
+    /// Propose request timeout
+    #[clap(long, value_parser = parse_duration, default_value = "1s")]
+    client_propose_timeout: Duration,
 }
 
 impl From<ServerArgs> for XlineServerConfig {
     fn from(args: ServerArgs) -> Self {
         let server_timeout = ServerTimeout::new(
-            args.heartbeat_interval
-                .unwrap_or_else(default_heartbeat_interval),
-            args.server_wait_synced_timeout
-                .unwrap_or_else(default_server_wait_synced_timeout),
-            args.retry_timeout.unwrap_or_else(default_retry_timeout),
-            args.rpc_timeout.unwrap_or_else(default_rpc_timeout),
-            args.candidate_timeout
-                .unwrap_or_else(default_candidate_timeout),
-            args.follower_timeout_range
-                .unwrap_or_else(default_follower_timeout_range),
+            args.heartbeat_interval,
+            args.server_wait_synced_timeout,
+            args.retry_timeout,
+            args.rpc_timeout,
+            args.candidate_timeout,
+            args.follower_timeout_range,
         );
         let client_timeout = ClientTimeout::new(
-            args.client_timeout.unwrap_or_else(default_client_timeout),
-            args.client_wait_synced_timeout
-                .unwrap_or_else(default_client_wait_synced_timeout),
+            args.client_timeout,
+            args.client_wait_synced_timeout,
+            args.client_propose_timeout,
         );
         let cluster = ClusterConfig::new(
             args.name,
@@ -224,21 +221,71 @@ impl From<ServerArgs> for XlineServerConfig {
             server_timeout,
             client_timeout,
         );
-        let log = LogConfig::new(
-            args.log_file.unwrap_or_else(|| PathBuf::from("/tmp/xline")),
-            args.log_rotate.unwrap_or(RotationConfig::Daily),
-            args.log_level.unwrap_or(LevelConfig::Info),
-        );
+        let log = LogConfig::new(args.log_file, args.log_rotate, args.log_level);
         let trace = TraceConfig::new(
             args.jaeger_online,
             args.jaeger_offline,
-            args.jaeger_output_dir
-                .unwrap_or_else(|| PathBuf::from("./jaeger_jsons")),
-            args.jaeger_level.unwrap_or(LevelConfig::Info),
+            args.jaeger_output_dir,
+            args.jaeger_level,
         );
         let auth = AuthConfig::new(args.auth_public_key, args.auth_private_key);
         XlineServerConfig::new(cluster, log, trace, auth)
     }
+}
+
+/// init tracing subscriber
+fn init_subscriber(
+    name: &str,
+    log_config: &LogConfig,
+    trace_config: &TraceConfig,
+) -> Result<WorkerGuard> {
+    let file_appender = file_appender(*log_config.rotation(), log_config.path(), name);
+
+    // `WorkerGuard` should be assigned in the `main` function or whatever the entrypoint of the program is.
+    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+
+    let log_file_layer = tracing_subscriber::fmt::layer()
+        .event_format(format().compact())
+        .with_writer(non_blocking)
+        .with_filter(*log_config.level());
+
+    let jaeger_level = *trace_config.jaeger_level();
+    let jaeger_online_layer = trace_config
+        .jaeger_online()
+        .then(|| {
+            opentelemetry_jaeger::new_agent_pipeline()
+                .with_service_name(name)
+                .install_batch(Tokio)
+                .ok()
+        })
+        .flatten()
+        .map(|tracer| {
+            tracing_opentelemetry::layer()
+                .with_tracer(tracer)
+                .with_filter(jaeger_level)
+        });
+    let jaeger_offline_layer = trace_config.jaeger_offline().then(|| {
+        tracing_opentelemetry::layer().with_tracer(
+            JaegerJsonExporter::new(
+                trace_config.jaeger_output_dir().clone(),
+                name.to_owned(),
+                name.to_owned(),
+                Tokio,
+            )
+            .install_batch(),
+        )
+    });
+
+    let jaeger_fmt_layer = tracing_subscriber::fmt::layer()
+        .with_filter(tracing_subscriber::EnvFilter::from_default_env());
+
+    tracing_subscriber::registry()
+        .with(log_file_layer)
+        .with(jaeger_fmt_layer)
+        .with(jaeger_online_layer)
+        .with(jaeger_offline_layer)
+        .try_init()?;
+    Ok(guard)
 }
 
 /// Read key pair from file
@@ -275,50 +322,13 @@ async fn read_key_pair(
     Some((encoding_key, decoding_key))
 }
 
-/// Generate a `LevelFilter`
-fn match_level(level: LevelConfig) -> Result<LevelFilter> {
-    match level {
-        LevelConfig::Trace => Ok(LevelFilter::TRACE),
-        LevelConfig::Debug => Ok(LevelFilter::DEBUG),
-        LevelConfig::Info => Ok(LevelFilter::INFO),
-        LevelConfig::Warn => Ok(LevelFilter::WARN),
-        LevelConfig::Error => Ok(LevelFilter::ERROR),
-        _ => Err(anyhow!(format!("Invalid verbosity level: {level:?}"))),
-    }
-}
-
-/// Generates a `RollingFileAppender`
-fn file_appender(
-    rotation: RotationConfig,
-    file_path: &PathBuf,
-    name: &str,
-) -> Result<RollingFileAppender> {
-    match rotation {
-        RotationConfig::Hourly => Ok(tracing_appender::rolling::hourly(
-            file_path,
-            format!("xline_{name}.log"),
-        )),
-        RotationConfig::Daily => Ok(tracing_appender::rolling::daily(
-            file_path,
-            format!("xline_{name}.log"),
-        )),
-        RotationConfig::Never => Ok(tracing_appender::rolling::never(
-            file_path,
-            format!("xline_{name}.log"),
-        )),
-        _ => Err(anyhow!(format!("Invalid rotation config: {rotation:?}"))),
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     global::set_text_map_propagator(TraceContextPropagator::new());
     let config: XlineServerConfig = if env::args_os().len() == 1 {
-        let config_file = if let Ok(path) = env::var("XLINE_SERVER_CONFIG") {
-            fs::read_to_string(&path).await?
-        } else {
-            include_str!("../../xline_server.conf").to_owned()
-        };
+        let path =
+            env::var("XLINE_SERVER_CONFIG").unwrap_or_else(|_| "/etc/xline_server.conf".to_owned());
+        let config_file = fs::read_to_string(&path).await?;
         toml::from_str(&config_file)?
     } else {
         let server_args: ServerArgs = ServerArgs::parse();
@@ -330,54 +340,7 @@ async fn main() -> Result<()> {
     let cluster_config = config.cluster();
     let auth_config = config.auth();
 
-    let file_appender = file_appender(
-        *log_config.rotation(),
-        log_config.path(),
-        cluster_config.name(),
-    )?;
-
-    let (non_blocking, _guard1) = tracing_appender::non_blocking(file_appender);
-    let log_file_layer = tracing_subscriber::fmt::layer()
-        .event_format(format().compact())
-        .with_writer(non_blocking)
-        .with_filter(match_level(*log_config.level())?);
-
-    let jaeger_level = match_level(*trace_config.jaeger_level())?;
-    let jaeger_online_layer = trace_config
-        .jaeger_online()
-        .then(|| {
-            opentelemetry_jaeger::new_agent_pipeline()
-                .with_service_name(cluster_config.name())
-                .install_batch(Tokio)
-                .ok()
-        })
-        .flatten()
-        .map(|tracer| {
-            tracing_opentelemetry::layer()
-                .with_tracer(tracer)
-                .with_filter(jaeger_level)
-        });
-    let jaeger_offline_layer = trace_config.jaeger_offline().then(|| {
-        tracing_opentelemetry::layer().with_tracer(
-            JaegerJsonExporter::new(
-                trace_config.jaeger_output_dir().clone(),
-                cluster_config.name().clone(),
-                cluster_config.name().clone(),
-                Tokio,
-            )
-            .install_batch(),
-        )
-    });
-
-    let jaeger_fmt_layer = tracing_subscriber::fmt::layer()
-        .with_filter(tracing_subscriber::EnvFilter::from_default_env());
-
-    tracing_subscriber::registry()
-        .with(log_file_layer)
-        .with(jaeger_fmt_layer)
-        .with(jaeger_online_layer)
-        .with(jaeger_offline_layer)
-        .try_init()?;
+    let _guard = init_subscriber(cluster_config.name(), log_config, trace_config)?;
 
     let key_pair = read_key_pair(
         auth_config.auth_private_key().clone(),

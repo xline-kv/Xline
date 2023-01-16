@@ -20,9 +20,6 @@ use crate::{
     },
 };
 
-/// Propose request default timeout
-static PROPOSE_TIMEOUT: Duration = Duration::from_secs(1);
-
 #[derive(Debug)]
 /// Protocol client
 pub struct Client<C: Command> {
@@ -107,7 +104,9 @@ where
             .connects
             .iter()
             .zip(iter::repeat(req))
-            .map(|(connect, req_cloned)| connect.propose(req_cloned, PROPOSE_TIMEOUT))
+            .map(|(connect, req_cloned)| {
+                connect.propose(req_cloned, *self.timeout.propose_timeout())
+            })
             .collect();
 
         let mut ok_cnt: usize = 0;
@@ -189,7 +188,7 @@ where
                 if let Some(id) = self.state.read().leader.clone() {
                     break id;
                 }
-                if timeout(**self.timeout.timeout(), notify.listen())
+                if timeout(*self.timeout.timeout(), notify.listen())
                     .await
                     .is_err()
                 {
@@ -206,7 +205,7 @@ where
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .wait_synced(
                     WaitSyncedRequest::new(cmd.id())?,
-                    **self.timeout.wait_synced_timeout(),
+                    *self.timeout.wait_synced_timeout(),
                 )
                 .await
             {
@@ -257,7 +256,7 @@ where
                     (
                         connect.id().clone(),
                         connect
-                            .fetch_leader(FetchLeaderRequest::new(), **self.timeout.timeout())
+                            .fetch_leader(FetchLeaderRequest::new(), *self.timeout.timeout())
                             .await,
                     )
                 })
