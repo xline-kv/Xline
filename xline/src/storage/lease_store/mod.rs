@@ -75,15 +75,14 @@ impl LeaseCollection {
             if *expiry <= Instant::now() {
                 #[allow(clippy::unwrap_used)] // queue.peek() returns Some
                 let id = self.expired_queue.pop().unwrap();
-                expired_leases.push(id);
+                if self.lease_map.contains_key(&id) {
+                    expired_leases.push(id);
+                }
             } else {
                 break;
             }
         }
         expired_leases
-            .into_iter()
-            .filter(|id| self.lease_map.contains_key(id))
-            .collect::<Vec<_>>()
     }
 
     /// Renew lease

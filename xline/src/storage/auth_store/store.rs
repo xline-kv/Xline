@@ -67,6 +67,27 @@ impl AuthStore {
         self.inner.check_password(username, password)
     }
 
+    /// Check if the request need admin permission
+    fn need_admin_permission(wrapper: &RequestWithToken) -> bool {
+        matches!(
+            wrapper.request,
+            RequestWrapper::AuthEnableRequest(_)
+                | RequestWrapper::AuthDisableRequest(_)
+                | RequestWrapper::AuthStatusRequest(_)
+                | RequestWrapper::AuthUserAddRequest(_)
+                | RequestWrapper::AuthUserDeleteRequest(_)
+                | RequestWrapper::AuthUserChangePasswordRequest(_)
+                | RequestWrapper::AuthUserGrantRoleRequest(_)
+                | RequestWrapper::AuthUserRevokeRoleRequest(_)
+                | RequestWrapper::AuthRoleAddRequest(_)
+                | RequestWrapper::AuthRoleGrantPermissionRequest(_)
+                | RequestWrapper::AuthRoleRevokePermissionRequest(_)
+                | RequestWrapper::AuthRoleDeleteRequest(_)
+                | RequestWrapper::AuthUserListRequest(_)
+                | RequestWrapper::AuthRoleListRequest(_)
+        )
+    }
+
     /// check if the request is permitted
     pub(crate) async fn check_permission(
         &self,
@@ -93,54 +114,55 @@ impl AuthStore {
             ));
         }
         let username = claims.username;
-        #[allow(clippy::wildcard_enum_match_arm)]
-        match wrapper.request {
-            RequestWrapper::RangeRequest(ref range_req) => {
-                self.check_range_permission(&username, range_req)?;
-            }
-            RequestWrapper::PutRequest(ref put_req) => {
-                self.check_put_permission(&username, put_req).await?;
-            }
-            RequestWrapper::DeleteRangeRequest(ref del_range_req) => {
-                self.check_delete_permission(&username, del_range_req)?;
-            }
-            RequestWrapper::TxnRequest(ref txn_req) => {
-                self.check_txn_permission(&username, txn_req).await?;
-            }
-            RequestWrapper::LeaseRevokeRequest(ref lease_revoke_req) => {
-                self.check_lease_revoke_permission(&username, lease_revoke_req)
-                    .await?;
-            }
-            RequestWrapper::AuthUserGetRequest(ref user_get_req) => {
-                self.check_admin_permission(&username).map_or_else(
-                    |e| {
-                        if user_get_req.name == username {
-                            Ok(())
-                        } else {
-                            Err(e)
-                        }
-                    },
-                    |_| Ok(()),
-                )?;
-            }
-            RequestWrapper::AuthRoleGetRequest(ref role_get_req) => {
-                self.check_admin_permission(&username).map_or_else(
-                    |e| {
-                        let user = self.inner.get_user(&username)?;
-                        if user.has_role(&role_get_req.role) {
-                            Ok(())
-                        } else {
-                            Err(e)
-                        }
-                    },
-                    |_| Ok(()),
-                )?;
-            }
-            _ => {
-                self.check_admin_permission(&username)?;
+        if Self::need_admin_permission(wrapper) {
+            self.check_admin_permission(&username)?;
+        } else {
+            #[allow(clippy::wildcard_enum_match_arm)]
+            match wrapper.request {
+                RequestWrapper::RangeRequest(ref range_req) => {
+                    self.check_range_permission(&username, range_req)?;
+                }
+                RequestWrapper::PutRequest(ref put_req) => {
+                    self.check_put_permission(&username, put_req).await?;
+                }
+                RequestWrapper::DeleteRangeRequest(ref del_range_req) => {
+                    self.check_delete_permission(&username, del_range_req)?;
+                }
+                RequestWrapper::TxnRequest(ref txn_req) => {
+                    self.check_txn_permission(&username, txn_req).await?;
+                }
+                RequestWrapper::LeaseRevokeRequest(ref lease_revoke_req) => {
+                    self.check_lease_revoke_permission(&username, lease_revoke_req)
+                        .await?;
+                }
+                RequestWrapper::AuthUserGetRequest(ref user_get_req) => {
+                    self.check_admin_permission(&username).map_or_else(
+                        |e| {
+                            if user_get_req.name == username {
+                                Ok(())
+                            } else {
+                                Err(e)
+                            }
+                        },
+                        |_| Ok(()),
+                    )?;
+                }
+                RequestWrapper::AuthRoleGetRequest(ref role_get_req) => {
+                    self.check_admin_permission(&username).map_or_else(
+                        |e| {
+                            let user = self.inner.get_user(&username)?;
+                            if user.has_role(&role_get_req.role) {
+                                Ok(())
+                            } else {
+                                Err(e)
+                            }
+                        },
+                        |_| Ok(()),
+                    )?;
+                }
+                _ => {}
             }
         }
-
         Ok(())
     }
 

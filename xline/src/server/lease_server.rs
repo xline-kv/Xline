@@ -30,7 +30,6 @@ const DEFAULT_LEASE_REQUEST_TIME: Duration = Duration::from_millis(500);
 
 /// Lease Server
 #[derive(Debug)]
-#[allow(dead_code)] // Remove this after feature is completed
 pub(crate) struct LeaseServer {
     /// Lease storage
     storage: Arc<LeaseStore>,
@@ -40,7 +39,7 @@ pub(crate) struct LeaseServer {
     client: Arc<Client<Command>>,
     /// Server name
     name: String,
-    /// Current node is leader or not
+    /// State of current node
     state: Arc<State>,
     /// Id generator
     id_gen: Arc<IdGenerator>,
@@ -72,13 +71,14 @@ impl LeaseServer {
     async fn revoke_expired_leases_task(lease_server: Arc<LeaseServer>) {
         loop {
             // only leader will check expired lease
-            if lease_server.state.is_leader() {
+            if lease_server.is_leader() {
                 for id in lease_server.storage.find_expired_leases() {
                     let _handle = tokio::spawn({
                         let s = Arc::clone(&lease_server);
+                        let token_option = lease_server.auth_storage.root_token();
                         async move {
                             let mut request = tonic::Request::new(LeaseRevokeRequest { id });
-                            if let Ok(token) = s.auth_storage.root_token() {
+                            if let Ok(token) = token_option {
                                 let _ignore = request.metadata_mut().insert(
                                     "token",
                                     token.parse().unwrap_or_else(|e| {

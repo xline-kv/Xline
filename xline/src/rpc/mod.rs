@@ -83,6 +83,7 @@ pub(crate) use self::{
         lease_server::{Lease as LeaseTrait, LeaseServer},
         request_op::Request,
         response_op::Response,
+        watch_client::WatchClient,
         watch_request::RequestUnion,
         watch_server::{Watch, WatchServer},
         AuthDisableRequest, AuthDisableResponse, AuthEnableRequest, AuthEnableResponse,

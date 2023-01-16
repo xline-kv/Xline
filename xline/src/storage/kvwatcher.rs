@@ -187,10 +187,9 @@ impl KvWatcher {
 /// Operations of KV watcher
 #[allow(clippy::integer_arithmetic, clippy::indexing_slicing)] // Introduced by mockall::automock
 #[cfg_attr(test, mockall::automock)]
-#[async_trait::async_trait]
 pub(crate) trait KvWatcherOps {
     /// Create a watch to KV store
-    async fn watch(
+    fn watch(
         &self,
         id: WatchId,
         key_range: KeyRange,
@@ -203,10 +202,9 @@ pub(crate) trait KvWatcherOps {
     fn cancel(&self, watcher: &Watcher) -> i64;
 }
 
-#[async_trait::async_trait]
 impl KvWatcherOps for KvWatcher {
     /// Create a watch to KV store
-    async fn watch(
+    fn watch(
         &self,
         id: WatchId,
         key_range: KeyRange,
@@ -216,7 +214,6 @@ impl KvWatcherOps for KvWatcher {
     ) -> (Watcher, Vec<Event>, i64) {
         self.inner
             .watch(id, key_range, start_rev, filters, event_tx)
-            .await
     }
 
     /// Cancel a watch from KV store
@@ -235,7 +232,7 @@ impl KvWatcherInner {
     }
 
     /// Create a watch to KV store
-    async fn watch(
+    fn watch(
         &self,
         id: WatchId,
         key_range: KeyRange,
