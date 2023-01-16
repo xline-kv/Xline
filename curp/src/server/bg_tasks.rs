@@ -119,7 +119,6 @@ pub(super) async fn run_bg_tasks<
 }
 
 /// Do periodical task
-#[allow(clippy::integer_arithmetic)] // can't overflow
 async fn bg_tick<C: Command + 'static, Conn: ConnectInterface, ExeTx: CmdExeSenderInterface<C>>(
     connects: Vec<Arc<Conn>>,
     state: StateRef<C, ExeTx>,
