@@ -126,6 +126,7 @@ impl<C: Command + 'static> Rpc<C> {
     #[cfg(test)]
     pub fn new_test<CE: CommandExecutor<C> + 'static>(
         id: ServerId,
+        is_leader: bool,
         others: HashMap<ServerId, String>,
         ce: CE,
         switch: Arc<AtomicBool>,
@@ -133,7 +134,7 @@ impl<C: Command + 'static> Rpc<C> {
         Self {
             inner: Arc::new(Protocol::new_test(
                 id,
-                false,
+                is_leader,
                 others.into_iter().collect(),
                 ce,
                 switch,

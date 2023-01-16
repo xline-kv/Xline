@@ -1,31 +1,34 @@
-use std::{
-    collections::HashMap,
-    iter,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-    time::Duration,
-};
+use std::{collections::HashMap, iter, thread, time::Duration};
 
 use curp::{client::Client, server::Rpc, LogIndex, ProtocolServer};
 use futures::future::join_all;
-use tokio::{net::TcpListener, sync::mpsc};
+use itertools::Itertools;
+use tokio::{net::TcpListener, runtime::Runtime, sync::mpsc};
 use tokio_stream::wrappers::TcpListenerStream;
+use tracing::debug;
 
 use crate::common::test_cmd::{TestCE, TestCommand, TestCommandResult};
 
 pub type ServerId = String;
 
-struct CurpNode {
-    id: ServerId,
-    addr: String,
-    exe_rx: mpsc::UnboundedReceiver<(TestCommand, TestCommandResult)>,
-    as_rx: mpsc::UnboundedReceiver<(TestCommand, LogIndex)>,
+mod proto {
+    tonic::include_proto!("messagepb");
+}
+use proto::protocol_client::ProtocolClient;
+
+use self::proto::{FetchLeaderRequest, FetchLeaderResponse};
+
+pub struct CurpNode {
+    pub id: ServerId,
+    pub addr: String,
+    pub exe_rx: mpsc::UnboundedReceiver<(TestCommand, TestCommandResult)>,
+    pub as_rx: mpsc::UnboundedReceiver<(TestCommand, LogIndex)>,
+    pub rt: Runtime,
 }
 
 pub struct CurpGroup {
-    nodes: HashMap<ServerId, CurpNode>,
+    pub nodes: HashMap<ServerId, CurpNode>,
+    all: HashMap<ServerId, String>,
 }
 
 impl CurpGroup {
@@ -36,11 +39,11 @@ impl CurpGroup {
                 .take(n_nodes),
         )
         .await;
-        let all: Vec<_> = listeners
+        let all = listeners
             .iter()
             .enumerate()
             .map(|(i, listener)| (format!("S{i}"), listener.local_addr().unwrap().to_string()))
-            .collect();
+            .collect_vec();
 
         let nodes = listeners
             .into_iter()
@@ -56,13 +59,24 @@ impl CurpGroup {
                 let mut others = all.clone();
                 others.remove(i);
 
-                let rpc = Rpc::new(id.clone(), false, others.into_iter().collect(), ce);
-
-                tokio::spawn(
-                    tonic::transport::Server::builder()
-                        .add_service(ProtocolServer::new(rpc))
-                        .serve_with_incoming(TcpListenerStream::new(listener)),
-                );
+                let id_c = id.clone();
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .thread_name(format!("rt-{id}"))
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                let handle = rt.handle().clone();
+                thread::spawn(move || {
+                    handle.spawn(async move {
+                        let rpc = Rpc::new(id_c.clone(), i == 0, others.into_iter().collect(), ce);
+                        tokio::spawn(
+                            tonic::transport::Server::builder()
+                                .add_service(ProtocolServer::new(rpc))
+                                .serve_with_incoming(TcpListenerStream::new(listener)),
+                        );
+                    });
+                });
 
                 (
                     id.clone(),
@@ -71,13 +85,18 @@ impl CurpGroup {
                         addr,
                         exe_rx,
                         as_rx,
+                        rt,
                     },
                 )
             })
             .collect();
 
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        Self { nodes }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        debug!("successfully start group");
+        Self {
+            nodes,
+            all: all.into_iter().collect(),
+        }
     }
 
     pub async fn new_client(&self) -> Client<TestCommand> {
@@ -99,5 +118,87 @@ impl CurpGroup {
         &mut self,
     ) -> impl Iterator<Item = &mut mpsc::UnboundedReceiver<(TestCommand, LogIndex)>> {
         self.nodes.values_mut().map(|node| &mut node.as_rx)
+    }
+
+    pub fn stop(mut self) {
+        thread::spawn(move || {
+            self.nodes.clear();
+        })
+        .join()
+        .unwrap();
+    }
+
+    pub fn crash(&mut self, id: &ServerId) {
+        let node = self.nodes.remove(id).unwrap();
+        thread::spawn(move || drop(node)).join().unwrap();
+    }
+
+    pub async fn restart(&mut self, id: &ServerId) {
+        let addr = self.all.get(id).unwrap().clone();
+        let listener = TcpListener::bind(&addr)
+            .await
+            .expect("can't restart because the original addr is taken");
+
+        let (exe_tx, exe_rx) = mpsc::unbounded_channel();
+        let (as_tx, as_rx) = mpsc::unbounded_channel();
+        let ce = TestCE::new(id.clone(), exe_tx, as_tx);
+
+        let mut others = self.all.clone();
+        others.remove(id);
+
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name(format!("rt-{id}"))
+            .enable_all()
+            .build()
+            .unwrap();
+        let handle = rt.handle().clone();
+        let id_c = id.clone();
+        thread::spawn(move || {
+            handle.spawn(async move {
+                let rpc = Rpc::new(id_c.clone(), false, others.into_iter().collect(), ce);
+                tokio::spawn(
+                    tonic::transport::Server::builder()
+                        .add_service(ProtocolServer::new(rpc))
+                        .serve_with_incoming(TcpListenerStream::new(listener)),
+                );
+            });
+        });
+
+        let new_node = CurpNode {
+            id: id.clone(),
+            addr,
+            exe_rx,
+            as_rx,
+            rt,
+        };
+        self.nodes.insert(id.clone(), new_node);
+    }
+
+    pub async fn fetch_leader(&self) -> Option<ServerId> {
+        let mut leader = None;
+        let mut max_term = 0;
+        for addr in self.all.values() {
+            let addr = format!("http://{}", addr);
+            let mut client = if let Ok(client) = ProtocolClient::connect(addr.clone()).await {
+                client
+            } else {
+                continue;
+            };
+
+            let FetchLeaderResponse { leader_id, term } =
+                if let Ok(resp) = client.fetch_leader(FetchLeaderRequest {}).await {
+                    resp.into_inner()
+                } else {
+                    continue;
+                };
+            if term > max_term {
+                max_term = term;
+                leader = leader_id;
+            } else if term == max_term && leader.is_none() {
+                leader = leader_id;
+            }
+        }
+        leader
     }
 }
