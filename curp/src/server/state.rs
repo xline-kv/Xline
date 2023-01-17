@@ -11,9 +11,7 @@ use crate::{
     cmd::Command,
     log::LogEntry,
     message::{ServerId, TermNum},
-    server::{
-        cmd_board::CmdBoardRef, cmd_execute_worker::CmdExeSenderInterface, spec_pool::SpecPoolRef,
-    },
+    server::{cmd_board::CmdBoardRef, cmd_worker::CmdExeSenderInterface, spec_pool::SpecPoolRef},
 };
 
 /// State of the server
@@ -231,9 +229,7 @@ impl<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>> State<C, ExeTx> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        server::cmd_execute_worker::MockCmdExeSenderInterface, test_utils::test_cmd::TestCommand,
-    };
+    use crate::{server::cmd_worker::MockCmdExeSenderInterface, test_utils::test_cmd::TestCommand};
 
     #[tokio::test]
     async fn leader_broadcast() {

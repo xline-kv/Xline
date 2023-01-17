@@ -35,7 +35,7 @@ use utils::{
     parking_lot_lock::{MutexMap, RwLockMap},
 };
 
-use super::cmd_execute_worker::CmdExeSender;
+use super::cmd_worker::CmdExeSender;
 use crate::{
     message::{ServerId, TermNum},
     rpc::{connect::ConnectInterface, ProposeRequest},

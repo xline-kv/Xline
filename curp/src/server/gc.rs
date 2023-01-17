@@ -1,10 +1,9 @@
 use std::time::Duration;
 
+use super::spec_pool::SpecPoolRef;
 use crate::{cmd::Command, server::cmd_board::CmdBoardRef};
 
-use super::spec_pool::SpecPoolRef;
-
-/// How often cmd board should
+/// How often we should do gc
 const GC_INTERVAL: Duration = Duration::from_secs(20);
 
 /// Run background GC tasks for Curp server
@@ -13,7 +12,7 @@ pub(super) fn run_gc_tasks<C: Command + 'static>(cmd_board: CmdBoardRef<C>, spec
     let _cmd_board_gc = tokio::spawn(gc_cmd_board(cmd_board, GC_INTERVAL));
 }
 
-/// Cleanup cmd board
+/// Cleanup spec pool
 async fn gc_spec_pool<C: Command + 'static>(spec: SpecPoolRef<C>, interval: Duration) {
     let mut last_check_len = 0;
     loop {
@@ -51,11 +50,11 @@ async fn gc_cmd_board<C: Command + 'static>(cmd_board: CmdBoardRef<C>, interval:
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::{sync::Arc, time::Duration};
 
     use parking_lot::{Mutex, RwLock};
 
+    use super::*;
     use crate::{
         cmd::ProposeId,
         server::{

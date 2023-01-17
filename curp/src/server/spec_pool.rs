@@ -45,10 +45,14 @@ impl<C: Command + 'static> SpeculativePool<C> {
         self.pool.values().any(|spec_cmd| spec_cmd.is_conflict(cmd))
     }
 
-    /// Try to remove the command from spec pool
+    /// Remove the command from spec pool
     pub(super) fn remove(&mut self, cmd_id: &ProposeId) {
         if self.pool.remove(cmd_id).is_some() {
-            debug!("Cmd {:?} is removed from spec pool", cmd_id);
+            debug!("cmd {cmd_id:?} is removed from spec pool");
+        } else {
+            // this happens when a cmd was not added to the spec pool because of conflict
+            // or the fast round proposal never arrived at the server
+            debug!("failed to remove cmd {cmd_id:?} from spec pool");
         };
     }
 }
