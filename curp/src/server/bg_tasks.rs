@@ -22,7 +22,7 @@ use utils::{
     parking_lot_lock::{MutexMap, RwLockMap},
 };
 
-use super::SyncMessage;
+use super::{cmd_worker::CmdAsReceiver, SyncMessage};
 use crate::{
     cmd::{Command, CommandExecutor, ProposeId},
     log::LogEntry,
@@ -32,8 +32,9 @@ use crate::{
         VoteResponse,
     },
     server::{
-        cmd_execute_worker::{
-            execute_worker, CmdExeReceiver, CmdExeSenderInterface, N_EXECUTE_WORKERS,
+        cmd_worker::{
+            after_sync_worker, execute_worker, CmdExeReceiver, CmdExeSenderInterface,
+            N_AFTER_SYNC_WORKERS, N_EXECUTE_WORKERS,
         },
         ServerRole, State,
     },
@@ -53,12 +54,14 @@ pub(super) async fn run_bg_tasks<
     cmd_executor: CE,
     cmd_exe_tx: ExeTx,
     cmd_exe_rx: CmdExeReceiver<C>,
+    cmd_as_rx: CmdAsReceiver<C>,
     mut shutdown: Shutdown,
     timeout: Arc<ServerTimeout>,
     #[cfg(test)] reachable: Arc<AtomicBool>,
 ) {
     // establish connection with other servers
-    let others = state.read().others.clone();
+    let (others, spec, cmd_board) =
+        state.map_read(|state_r| (state_r.others.clone(), state_r.spec(), state_r.cmd_board()));
 
     #[cfg(test)]
     let connects = Conn::try_connect_test(others, reachable).await;
@@ -89,14 +92,27 @@ pub(super) async fn run_bg_tasks<
         tokio::spawn(bg_get_sync_cmds(Arc::clone(&state), sync_chan, ae_trigger));
 
     // spawn cmd execute worker
-    let spec = state.read().spec();
-    let bg_exe_worker_handles: Vec<JoinHandle<_>> =
-        iter::repeat((cmd_exe_rx, state.read().cmd_board(), Arc::new(cmd_executor)))
-            .take(N_EXECUTE_WORKERS)
-            .map(|(rx, cmd_board, ce)| {
-                tokio::spawn(execute_worker(rx, cmd_board, Arc::clone(&spec), ce))
-            })
-            .collect();
+    let cmd_executor = Arc::new(cmd_executor);
+    let bg_exe_worker_handles: Vec<JoinHandle<_>> = iter::repeat((
+        cmd_exe_rx,
+        Arc::clone(&spec),
+        Arc::clone(&cmd_board),
+        Arc::clone(&cmd_executor),
+    ))
+    .take(N_EXECUTE_WORKERS)
+    .map(|(rx, spec_c, cmd_board_c, ce)| tokio::spawn(execute_worker(rx, cmd_board_c, spec_c, ce)))
+    .collect();
+    let bg_as_worker_handles: Vec<JoinHandle<_>> = iter::repeat((
+        cmd_as_rx,
+        Arc::clone(&spec),
+        Arc::clone(&cmd_board),
+        cmd_executor,
+    ))
+    .take(N_AFTER_SYNC_WORKERS)
+    .map(|(rx, spec_c, cmd_board_c, ce)| {
+        tokio::spawn(after_sync_worker(rx, cmd_board_c, spec_c, ce))
+    })
+    .collect();
 
     shutdown.recv().await;
     bg_ae_handle.abort();
@@ -105,6 +121,9 @@ pub(super) async fn run_bg_tasks<
     bg_heartbeat_handle.abort();
     bg_get_sync_cmds_handle.abort();
     for handle in bg_exe_worker_handles {
+        handle.abort();
+    }
+    for handle in bg_as_worker_handles {
         handle.abort();
     }
     info!("all background task stopped");
@@ -266,7 +285,7 @@ async fn send_log_until_succeed<
     }
 }
 
-/// Background `append_entries`, only works for the leader
+/// The leader will send heartbeats to followers periodically
 #[allow(clippy::integer_arithmetic, clippy::indexing_slicing)] // log.len() >= 1 because we have a fake log[0], indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
 async fn bg_heartbeat<
     C: Command + 'static,
@@ -327,7 +346,6 @@ async fn bg_heartbeat<
                 })
         });
 
-        // send append_entries to each server in parallel
         handle_heartbeat_responses(rpcs, Arc::clone(&state), Arc::clone(&timeout)).await;
     }
 }
@@ -749,7 +767,7 @@ mod test {
         },
         server::{
             bg_tasks::send_log_until_succeed,
-            cmd_execute_worker::{cmd_exe_channel, MockCmdExeSenderInterface},
+            cmd_worker::{cmd_exe_channel, MockCmdExeSenderInterface},
             state::State,
             ServerRole,
         },
@@ -1280,7 +1298,7 @@ mod test {
             ("S3".to_owned(), "127.0.0.1:8002".to_owned()),
             ("S4".to_owned(), "127.0.0.1:8002".to_owned()),
         ]);
-        let (exe_tx, _exe_rx) = cmd_exe_channel();
+        let (exe_tx, _exe_rx, _) = cmd_exe_channel();
         let state = Arc::new(RwLock::new(State::new(
             LEADER_ID.to_owned(),
             ServerRole::Leader,

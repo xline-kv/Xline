@@ -15,8 +15,10 @@ pub(crate) struct DoneNotifier {
 
 impl DoneNotifier {
     /// Will mark the msg done
-    pub(crate) fn notify(self) -> Result<(), flume::SendError<u64>> {
-        self.notifier.send(self.id)
+    pub(crate) fn notify(self) {
+        if let Err(e) = self.notifier.send(self.id) {
+            error!("can't mark a msg done, the channel could be closed, {e}");
+        }
     }
 }
 
@@ -244,11 +246,11 @@ mod tests {
                 .await
                 .is_err()
         );
-        done1.notify().unwrap();
-        done3.notify().unwrap();
+        done1.notify();
+        done3.notify();
 
         let (r2, done2) = rx.recv_async().await.unwrap();
         assert_eq!(r2.token.0.as_str(), "1");
-        done2.notify().unwrap();
+        done2.notify();
     }
 }

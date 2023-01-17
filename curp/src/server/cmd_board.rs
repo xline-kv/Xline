@@ -9,7 +9,9 @@ use parking_lot::RwLock;
 
 use crate::{
     cmd::{Command, ProposeId},
+    conflict_checked_mpmc::DoneNotifier,
     error::ExecuteError,
+    LogIndex,
 };
 
 /// Ref to the cmd board
@@ -21,8 +23,12 @@ pub(super) struct CommandBoard<C: Command> {
     pub(super) notifiers: HashMap<ProposeId, Event>,
     /// The cmd has been received before, this is used for dedup
     pub(super) sync: IndexSet<ProposeId>,
+    /// `DoneNotifiers` for `conflict_checked_mpmc`, will be called when after sync has finished
+    pub(super) done_notifiers: HashMap<ProposeId, DoneNotifier>,
     /// Whether the cmd needs execution when after sync
     pub(super) needs_exe: HashSet<ProposeId>,
+    /// Whether the cmd needs after sync
+    pub(super) needs_as: HashMap<ProposeId, LogIndex>,
     /// Store all execution results
     pub(super) er_buffer: IndexMap<ProposeId, Result<C::ER, ExecuteError>>,
     /// Store all after sync results
@@ -35,7 +41,9 @@ impl<C: Command> CommandBoard<C> {
         Self {
             notifiers: HashMap::new(),
             sync: IndexSet::new(),
+            done_notifiers: HashMap::new(),
             needs_exe: HashSet::new(),
+            needs_as: HashMap::new(),
             er_buffer: IndexMap::new(),
             asr_buffer: IndexMap::new(),
         }

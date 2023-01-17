@@ -20,7 +20,7 @@ use utils::{
     tracing::Extract,
 };
 
-use self::{cmd_execute_worker::CmdExeSenderInterface, gc::run_gc_tasks, state::State};
+use self::{cmd_worker::CmdExeSenderInterface, gc::run_gc_tasks, state::State};
 use crate::{
     cmd::{Command, CommandExecutor},
     error::{ProposeError, ServerError},
@@ -32,7 +32,7 @@ use crate::{
     },
     server::{
         cmd_board::CmdBoardRef,
-        cmd_execute_worker::{cmd_exe_channel, CmdExeSender},
+        cmd_worker::{cmd_exe_channel, CmdExeSender},
         spec_pool::SpecPoolRef,
     },
     shutdown::Shutdown,
@@ -41,8 +41,8 @@ use crate::{
 /// Background tasks of Curp protocol
 mod bg_tasks;
 
-/// Command execute worker
-mod cmd_execute_worker;
+/// Command worker to do execution and after sync
+mod cmd_worker;
 
 /// Server state
 mod state;
@@ -290,7 +290,7 @@ impl<C: 'static + Command> Protocol<C> {
     ) -> Self {
         let (sync_tx, sync_rx) = flume::unbounded();
         let (stop_ch_tx, stop_ch_rx) = broadcast::channel(1);
-        let (exe_tx, exe_rx) = cmd_exe_channel();
+        let (exe_tx, exe_rx, as_rx) = cmd_exe_channel();
 
         let state = State::new(
             id,
@@ -314,6 +314,7 @@ impl<C: 'static + Command> Protocol<C> {
             cmd_executor,
             exe_tx.clone(),
             exe_rx,
+            as_rx,
             Shutdown::new(stop_ch_rx.resubscribe()),
             Arc::clone(&timeout),
             #[cfg(test)]
@@ -345,7 +346,7 @@ impl<C: 'static + Command> Protocol<C> {
     ) -> Self {
         let (sync_tx, sync_rx) = flume::unbounded();
         let (stop_ch_tx, stop_ch_rx) = broadcast::channel(1);
-        let (exe_tx, exe_rx) = cmd_exe_channel();
+        let (exe_tx, exe_rx, as_rx) = cmd_exe_channel();
 
         let state = State::new(
             id,
@@ -369,6 +370,7 @@ impl<C: 'static + Command> Protocol<C> {
             cmd_executor,
             exe_tx.clone(),
             exe_rx,
+            as_rx,
             Shutdown::new(stop_ch_rx.resubscribe()),
             Arc::clone(&timeout),
             reachable,
