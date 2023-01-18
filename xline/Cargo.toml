@@ -53,6 +53,7 @@ getset = "0.1"
 toml = "0.5"
 tracing-appender = "0.2"
 priority-queue = "1.3.0"
+futures = "0.3.25"
 
 [build-dependencies]
 tonic-build = "0.7.2"

@@ -1,12 +1,13 @@
 use std::{
-    cmp::Eq,
     collections::{HashMap, HashSet},
     hash::Hash,
     sync::Arc,
 };
 
-use parking_lot::Mutex;
+use futures::{stream::FuturesUnordered, StreamExt};
+use parking_lot::RwLock;
 use tokio::sync::mpsc;
+use utils::parking_lot_lock::RwLockMap;
 
 use crate::{rpc::Event, server::command::KeyRange, storage::kv_store::KvStoreBackend};
 
@@ -15,14 +16,7 @@ pub(crate) type WatchId = i64;
 
 /// Watcher
 #[derive(Debug)]
-pub(crate) struct Watcher {
-    /// Inner data
-    inner: Arc<WatcherInner>,
-}
-
-/// Watcher inner data
-#[derive(Debug)]
-pub(crate) struct WatcherInner {
+struct Watcher {
     /// Key Range
     key_range: KeyRange,
     /// Watch ID
@@ -35,29 +29,21 @@ pub(crate) struct WatcherInner {
     event_tx: mpsc::Sender<WatchEvent>,
 }
 
-impl Hash for Watcher {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        Arc::<WatcherInner>::as_ptr(&self.inner).hash(state);
-    }
-}
-
 impl PartialEq for Watcher {
     fn eq(&self, other: &Self) -> bool {
-        Arc::<WatcherInner>::as_ptr(&self.inner) == Arc::<WatcherInner>::as_ptr(&other.inner)
+        self.watch_id == other.watch_id
     }
 }
 
 impl Eq for Watcher {}
 
-impl Clone for Watcher {
-    fn clone(&self) -> Self {
-        Self {
-            inner: Arc::clone(&self.inner),
-        }
+impl Hash for Watcher {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.watch_id.hash(state);
     }
 }
 
-impl WatcherInner {
+impl Watcher {
     /// New `WatcherInner`
     fn new(
         key_range: KeyRange,
@@ -74,77 +60,35 @@ impl WatcherInner {
             event_tx,
         }
     }
-}
-
-impl Watcher {
-    /// New `Watcher`
-    pub(crate) fn new(
-        key_range: KeyRange,
-        watch_id: WatchId,
-        start_rev: i64,
-        filters: Vec<i32>,
-        event_tx: mpsc::Sender<WatchEvent>,
-    ) -> Self {
-        Self {
-            inner: Arc::new(WatcherInner::new(
-                key_range, watch_id, start_rev, filters, event_tx,
-            )),
-        }
-    }
 
     /// Get watch id
-    pub(crate) fn watch_id(&self) -> i64 {
-        self.inner.watch_id
+    fn watch_id(&self) -> i64 {
+        self.watch_id
     }
 
     /// Get key range
-    pub(crate) fn key_range(&self) -> &KeyRange {
-        &self.inner.key_range
+    fn key_range(&self) -> &KeyRange {
+        &self.key_range
     }
 
     /// Get start revision
-    pub(crate) fn start_rev(&self) -> i64 {
-        self.inner.start_rev
+    fn start_rev(&self) -> i64 {
+        self.start_rev
     }
 
-    /// Filter event
-    pub(crate) fn filter_events(&self, events: &[&Event]) -> Vec<Event> {
-        events
-            .iter()
-            .filter_map(|&event| {
-                if self.key_range().contains_key(
-                    &event
-                        .kv
-                        .as_ref()
-                        .unwrap_or_else(|| panic!("Receive Event with empty kv"))
-                        .key,
-                ) {
-                    if self
-                        .inner
-                        .filters
-                        .iter()
-                        .any(|filter| filter == &event.r#type)
-                    {
-                        None
-                    } else {
-                        Some(event.clone())
-                    }
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
-    /// Notify event
-    pub(crate) async fn notify(&self, id: WatchId, revision: i64, events: Vec<Event>) {
+    /// Notify events
+    async fn notify(&self, (revision, mut events): (i64, Vec<Event>)) {
+        if revision < self.start_rev() {
+            return;
+        }
+        events.retain(|event| self.filters.iter().all(|filter| filter != &event.r#type));
         let watch_event = WatchEvent {
-            id,
+            id: self.watch_id(),
             events,
             revision,
         };
         assert!(
-            self.inner.event_tx.send(watch_event).await.is_ok(),
+            self.event_tx.send(watch_event).await.is_ok(),
             "WatchEvent receiver is closed"
         );
     }
@@ -159,17 +103,72 @@ pub(crate) struct KvWatcher {
 
 /// KV watcher inner data
 #[derive(Debug)]
-pub(crate) struct KvWatcherInner {
+struct KvWatcherInner {
     /// KV storage
     storage: Arc<KvStoreBackend>,
-    /// watchers map
-    /// TODO: change to more efficient data structure
-    watcher_map: Mutex<HashMap<KeyRange, HashSet<Watcher>>>,
+    /// Watch indexes
+    watcher_map: RwLock<WatcherMap>,
+}
+
+/// Store all watchers
+#[derive(Debug)]
+struct WatcherMap {
+    /// All watchers
+    watchers: HashMap<WatchId, Arc<Watcher>>,
+    /// Index for watchers
+    index: HashMap<KeyRange, HashSet<Arc<Watcher>>>,
+}
+
+impl WatcherMap {
+    /// Create a new `WatcherMap`
+    fn new() -> Self {
+        Self {
+            watchers: HashMap::new(),
+            index: HashMap::new(),
+        }
+    }
+
+    /// Insert a new watcher to the map and create. Internally, it will create a index for this watcher.
+    fn insert(&mut self, watcher: Arc<Watcher>) {
+        let key_range = watcher.key_range().clone();
+        let watch_id = watcher.watch_id();
+        assert!(
+            self.watchers
+                .insert(watch_id, Arc::clone(&watcher))
+                .is_none(),
+            "can't insert a watcher twice"
+        );
+        assert!(
+            self.index
+                .entry(key_range)
+                .or_insert_with(HashSet::new)
+                .insert(watcher),
+            "can't insert a watcher twice"
+        );
+    }
+
+    /// Remove a watcher
+    #[allow(clippy::expect_used)] // the logic is managed internally
+    fn remove(&mut self, watch_id: WatchId) {
+        let watcher = self.watchers.remove(&watch_id).expect("no such watcher");
+        let key_range = watcher.key_range();
+        let is_empty = {
+            let watchers = self
+                .index
+                .get_mut(key_range)
+                .expect("no such watcher in index");
+            assert!(watchers.remove(&watcher), "no such watcher in index");
+            watchers.is_empty()
+        };
+        if is_empty {
+            assert!(self.index.remove(key_range).is_some());
+        }
+    }
 }
 
 impl KvWatcher {
     /// New `KvWatcher`
-    pub(crate) fn new(
+    pub(super) fn new(
         storage: Arc<KvStoreBackend>,
         mut kv_update_rx: mpsc::Receiver<(i64, Vec<Event>)>,
     ) -> Self {
@@ -196,10 +195,10 @@ pub(crate) trait KvWatcherOps {
         start_rev: i64,
         filters: Vec<i32>,
         event_tx: mpsc::Sender<WatchEvent>,
-    ) -> (Watcher, Vec<Event>, i64);
+    ) -> (Vec<Event>, i64);
 
     /// Cancel a watch from KV store
-    fn cancel(&self, watcher: &Watcher) -> i64;
+    fn cancel(&self, id: WatchId) -> i64;
 }
 
 impl KvWatcherOps for KvWatcher {
@@ -211,14 +210,14 @@ impl KvWatcherOps for KvWatcher {
         start_rev: i64,
         filters: Vec<i32>,
         event_tx: mpsc::Sender<WatchEvent>,
-    ) -> (Watcher, Vec<Event>, i64) {
+    ) -> (Vec<Event>, i64) {
         self.inner
             .watch(id, key_range, start_rev, filters, event_tx)
     }
 
     /// Cancel a watch from KV store
-    fn cancel(&self, watcher: &Watcher) -> i64 {
-        self.inner.cancel(watcher)
+    fn cancel(&self, id: WatchId) -> i64 {
+        self.inner.cancel(id)
     }
 }
 
@@ -227,7 +226,7 @@ impl KvWatcherInner {
     fn new(storage: Arc<KvStoreBackend>) -> Self {
         Self {
             storage,
-            watcher_map: Mutex::new(HashMap::new()),
+            watcher_map: RwLock::new(WatcherMap::new()),
         }
     }
 
@@ -239,74 +238,67 @@ impl KvWatcherInner {
         start_rev: i64,
         filters: Vec<i32>,
         event_tx: mpsc::Sender<WatchEvent>,
-    ) -> (Watcher, Vec<Event>, i64) {
+    ) -> (Vec<Event>, i64) {
         let watcher = Watcher::new(key_range.clone(), id, start_rev, filters, event_tx);
+
         let revision = self.storage.revision();
-        // TODO handle racing that new event is generated before watcher is registered
-        let events = if start_rev == 0 {
+        // TODO: handle racing that new event is generated before watcher is registered
+        let initial_events = if start_rev == 0 {
             vec![]
         } else {
-            self.storage
-                .get_event_from_revision(key_range.clone(), start_rev)
+            self.storage.get_event_from_revision(key_range, start_rev)
         };
 
-        let _prev = self
-            .watcher_map
-            .lock()
-            .entry(key_range)
-            .or_insert_with(HashSet::new)
-            .insert(watcher.clone());
-        (watcher, events, revision)
+        self.watcher_map.write().insert(Arc::new(watcher));
+
+        (initial_events, revision)
     }
 
     /// Cancel a watch from KV store
-    fn cancel(&self, watcher: &Watcher) -> i64 {
+    fn cancel(&self, watch_id: WatchId) -> i64 {
         let revision = self.storage.revision();
-        let key_range = watcher.key_range().clone();
-        let _prev = self.watcher_map.lock().entry(key_range).and_modify(|set| {
-            let _ = set.remove(watcher);
-        });
-
+        self.watcher_map.write().remove(watch_id);
         revision
     }
 
     /// Handle KV store updates
-    async fn handle_kv_updates(&self, updates: (i64, Vec<Event>)) {
-        let (revision, updates) = updates;
-        let mut watchers = HashSet::new();
-        let events: Vec<_> = {
-            let watcher_map = self.watcher_map.lock();
-            updates
-                .iter()
-                .filter(|e| {
-                    let mut watched = false;
-                    watcher_map.iter().for_each(|(k, v)| {
-                        if k.contains_key(
-                            &e.kv
+    async fn handle_kv_updates(&self, (revision, all_events): (i64, Vec<Event>)) {
+        let watcher_events = self.watcher_map.map_read(|watcher_map_r| {
+            let mut watcher_events: HashMap<Arc<Watcher>, Vec<Event>> = HashMap::new();
+            for event in all_events {
+                // get related watchers
+                let watchers: HashSet<Arc<Watcher>> = watcher_map_r
+                    .index
+                    .iter()
+                    .filter_map(|(k, v)| {
+                        k.contains_key(
+                            &event
+                                .kv
                                 .as_ref()
                                 .unwrap_or_else(|| panic!("Receive Event with empty kv"))
                                 .key,
-                        ) {
-                            watchers.extend(v.iter().cloned());
-                            watched = true;
-                        }
-                    });
-                    watched
-                })
-                .collect()
-        };
+                        )
+                        .then(|| v.clone())
+                    })
+                    .flatten()
+                    .collect();
+                for watcher in watchers {
+                    #[allow(clippy::indexing_slicing)]
+                    watcher_events
+                        .entry(watcher)
+                        .or_default()
+                        .push(event.clone());
+                }
+            }
+            watcher_events
+        });
 
-        for watcher in watchers {
-            if revision < watcher.start_rev() {
-                continue;
-            }
-            let filtered_event = watcher.filter_events(&events);
-            if !filtered_event.is_empty() {
-                watcher
-                    .notify(watcher.watch_id(), revision, filtered_event)
-                    .await;
-            }
-        }
+        let _ig = watcher_events
+            .into_iter()
+            .map(|(watcher, events)| async move { watcher.notify((revision, events)).await })
+            .collect::<FuturesUnordered<_>>()
+            .collect::<Vec<_>>()
+            .await;
     }
 }
 
