@@ -147,7 +147,7 @@ impl XlineServer {
     ///
     /// Will return `Err` when `tonic::Server` serve return an error
     #[inline]
-    pub async fn start_from_listener_shoutdown<F>(
+    pub async fn start_from_listener_shutdown<F>(
         &self,
         xline_listener: TcpListener,
         signal: F,

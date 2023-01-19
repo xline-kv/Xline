@@ -67,7 +67,7 @@ impl Cluster {
                 let signal = async {
                     let _ = rx.recv().await;
                 };
-                let result = server.start_from_listener_shoutdown(listener, signal).await;
+                let result = server.start_from_listener_shutdown(listener, signal).await;
                 if let Err(e) = result {
                     panic!("Server start error: {e}");
                 }

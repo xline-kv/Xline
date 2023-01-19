@@ -60,7 +60,6 @@ pub(crate) struct KvStoreBackend {
 
 impl KvStore {
     /// New `KvStore`
-    #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
     pub(crate) fn new(
         lease_cmd_tx: mpsc::Sender<LeaseMessage>,
         del_rx: mpsc::Receiver<DeleteMessage>,
@@ -158,7 +157,7 @@ impl KvStoreBackend {
     async fn notify_updates(&self, revision: i64, updates: Vec<Event>) {
         assert!(
             self.kv_update_tx.send((revision, updates)).await.is_ok(),
-            "Failed to send updates to KV watchter"
+            "Failed to send updates to KV watcher"
         );
     }
 
@@ -293,7 +292,7 @@ impl KvStoreBackend {
         };
     }
 
-    /// fitler kvs by `{max,min}_{mod,create}_revision`
+    /// filter kvs by `{max,min}_{mod,create}_revision`
     fn filter_kvs(
         kvs: &mut Vec<KeyValue>,
         max_mod_revision: i64,

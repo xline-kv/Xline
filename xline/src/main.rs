@@ -38,7 +38,7 @@
     unused_results,
     variant_size_differences,
 
-    warnings, // treat all wanings as errors
+    warnings, // treat all warnings as errors
 
     clippy::all,
     clippy::pedantic,
@@ -112,7 +112,7 @@
 
 use std::{collections::HashMap, env, path::PathBuf, time::Duration};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::Parser;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use opentelemetry::{global, runtime::Tokio, sdk::propagation::TraceContextPropagator};
@@ -143,16 +143,16 @@ struct ServerArgs {
     /// If node is leader
     #[clap(long)]
     is_leader: bool,
-    /// Private key uesd to sign the token
+    /// Private key used to sign the token
     #[clap(long)]
     auth_private_key: Option<PathBuf>,
-    /// Public key uesd to verify the token
+    /// Public key used to verify the token
     #[clap(long)]
     auth_public_key: Option<PathBuf>,
     /// Open jaeger offline
     #[clap(long)]
     jaeger_offline: bool,
-    /// ouput dir for jaeger offline
+    /// output dir for jaeger offline
     #[clap(long, default_value = "./jaeger_jsons")]
     jaeger_output_dir: PathBuf,
     /// Open jaeger online
@@ -351,12 +351,12 @@ async fn main() -> Result<()> {
     let self_addr = cluster_config
         .members()
         .get(cluster_config.name())
-        .unwrap_or_else(|| {
-            panic!(
+        .ok_or_else(|| {
+            anyhow!(
                 "node name {} not found in cluster peers",
                 cluster_config.name()
             )
-        })
+        })?
         .parse()?;
 
     let is_leader = cluster_config.is_leader();
