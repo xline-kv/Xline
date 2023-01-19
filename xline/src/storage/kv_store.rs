@@ -5,7 +5,6 @@ use curp::{cmd::ProposeId, error::ExecuteError};
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
-use utils::parking_lot_lock::MutexMap;
 use uuid::Uuid;
 
 use super::{
@@ -16,6 +15,7 @@ use super::{
 };
 use crate::{
     header_gen::HeaderGenerator,
+    revision_number::RevisionNumber,
     rpc::{
         Compare, CompareResult, CompareTarget, DeleteRangeRequest, DeleteRangeResponse, Event,
         EventType, KeyValue, PutRequest, PutResponse, RangeRequest, RangeResponse, Request,
@@ -47,7 +47,7 @@ pub(crate) struct KvStoreBackend {
     /// DB to store key value
     db: DB,
     /// Revision
-    revision: Arc<Mutex<i64>>,
+    revision: Arc<RevisionNumber>,
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
     /// Speculative execution pool. Mapping from propose id to request
@@ -150,7 +150,7 @@ impl KvStoreBackend {
 
     /// Get revision of KV store
     pub(crate) fn revision(&self) -> i64 {
-        *self.revision.lock()
+        self.revision.get()
     }
 
     /// Notify KV changes to KV watcher
@@ -525,11 +525,7 @@ impl KvStoreBackend {
         if requests.is_empty() {
             self.revision()
         } else {
-            // TODO: use AtomicI64 for better efficiency
-            let next_revision = self.revision.map_lock(|mut r| {
-                *r = r.overflow_add(1);
-                *r
-            });
+            let next_revision = self.revision.next();
             let mut sub_revision = 0;
             let mut all_events = Vec::new();
             for request in requests {

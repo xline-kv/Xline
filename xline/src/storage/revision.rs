@@ -1,4 +1,4 @@
-/// Revison of a key
+/// Revision of a key
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct KeyRevision {
     /// Last creation revision
