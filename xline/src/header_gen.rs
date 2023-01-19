@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use crate::rpc::ResponseHeader;
+use crate::{revision_number::RevisionNumber, rpc::ResponseHeader};
 
 /// Generator of `ResponseHeader`
 #[derive(Debug)]
@@ -14,7 +14,7 @@ pub(crate) struct HeaderGenerator {
     /// term of curp
     term: Arc<Mutex<u64>>,
     /// revision of kv store
-    revision: Arc<Mutex<i64>>,
+    revision: Arc<RevisionNumber>,
 }
 
 impl HeaderGenerator {
@@ -24,7 +24,7 @@ impl HeaderGenerator {
             cluster_id,
             member_id,
             term: Arc::new(Mutex::new(0)),
-            revision: Arc::new(Mutex::new(1)),
+            revision: Arc::new(RevisionNumber::new()),
         }
     }
 
@@ -34,7 +34,7 @@ impl HeaderGenerator {
             cluster_id: self.cluster_id,
             member_id: self.member_id,
             raft_term: *self.term.lock(),
-            revision: *self.revision.lock(),
+            revision: self.revision(),
         }
     }
 
@@ -56,11 +56,11 @@ impl HeaderGenerator {
 
     /// Get revision
     pub(crate) fn revision(&self) -> i64 {
-        *self.revision.lock()
+        self.revision.get()
     }
 
     /// Return Arc of revision
-    pub(crate) fn revision_arc(&self) -> Arc<Mutex<i64>> {
+    pub(crate) fn revision_arc(&self) -> Arc<RevisionNumber> {
         Arc::clone(&self.revision)
     }
 }

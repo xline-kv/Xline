@@ -38,7 +38,7 @@
     unused_results,
     variant_size_differences,
 
-    warnings, // treat all wanings as errors
+    warnings, // treat all warnings as errors
 
     clippy::all,
     clippy::pedantic,
@@ -117,6 +117,8 @@ pub mod client;
 mod header_gen;
 /// Unique id generator
 mod id_gen;
+/// Revision number
+mod revision_number;
 /// rpc definition module
 mod rpc;
 /// Xline server
