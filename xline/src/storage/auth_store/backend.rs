@@ -199,11 +199,11 @@ impl AuthStoreBackend {
     fn create_permission_cache(&self) {
         let mut permission_cache = PermissionCache::new();
         for user in self.get_all_users() {
-            let user_permisiion = self.get_user_permissions(&user);
+            let user_permission = self.get_user_permissions(&user);
             let username = String::from_utf8_lossy(&user.name).to_string();
             let _ignore = permission_cache
                 .user_permissions
-                .insert(username, user_permisiion);
+                .insert(username, user_permission);
         }
         self.permission_cache
             .map_write(|mut cache| *cache = permission_cache);
@@ -211,7 +211,7 @@ impl AuthStoreBackend {
 
     /// get user permissions
     fn get_user_permissions(&self, user: &User) -> UserPermissions {
-        let mut user_permisiion = UserPermissions::new();
+        let mut user_permission = UserPermissions::new();
         for role_name in &user.roles {
             let role = match self.get_role(role_name) {
                 Ok(role) => role,
@@ -225,19 +225,19 @@ impl AuthStoreBackend {
                 #[allow(clippy::unwrap_used)] // safe unwrap
                 match Type::from_i32(permission.perm_type).unwrap() {
                     Type::Readwrite => {
-                        user_permisiion.read.push(key_range.clone());
-                        user_permisiion.write.push(key_range.clone());
+                        user_permission.read.push(key_range.clone());
+                        user_permission.write.push(key_range.clone());
                     }
                     Type::Write => {
-                        user_permisiion.write.push(key_range.clone());
+                        user_permission.write.push(key_range.clone());
                     }
                     Type::Read => {
-                        user_permisiion.read.push(key_range.clone());
+                        user_permission.read.push(key_range.clone());
                     }
                 }
             }
         }
-        user_permisiion
+        user_permission
     }
 
     /// get user permissions from cache
