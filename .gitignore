@@ -20,6 +20,7 @@ scripts/*
 !scripts/benchmark.sh
 !scripts/quick_start.sh
 !scripts/coverage.sh
+!scripts/validation_test.sh
 
 coverage
 *.profraw

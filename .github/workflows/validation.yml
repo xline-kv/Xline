@@ -1,0 +1,34 @@
+name: Validation
+
+on:
+  pull_request:
+    branches: [ master ]
+
+env:
+  CI_RUST_TOOLCHAIN: 1.61.0
+
+jobs:
+  becnmark:
+    name: validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - run: sudo bash ./.github/scripts/install_deps.sh
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: default
+          toolchain: ${{ env.CI_RUST_TOOLCHAIN }}
+          override: true
+      - run: RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --bin lock_client --target x86_64-unknown-linux-gnu
+      - uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release
+      - run: |
+          cd scripts
+          cp ../target/release/{xline,benchmark} .
+          cp ../target/x86_64-unknown-linux-gnu/release/lock_client .
+          cp ../xline/tests/{private,public}.pem .
+          docker build . -t datenlord/xline:latest
+          docker pull gcr.io/etcd-development/etcd:v3.5.5
+          bash ./validation_test.sh
