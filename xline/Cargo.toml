@@ -52,6 +52,7 @@ flume = "0.10.14"
 getset = "0.1"
 toml = "0.5"
 tracing-appender = "0.2"
+priority-queue = "1.3.0"
 
 [build-dependencies]
 tonic-build = "0.7.2"

@@ -13,7 +13,7 @@ use crate::{
         RequestWithToken, RequestWrapper, TxnRequest, Type,
     },
     server::command::{CommandResponse, KeyRange, SyncResponse},
-    storage::{authstore::backend::AuthStoreBackend, leasestore::LeaseMessage},
+    storage::{auth_store::backend::AuthStoreBackend, lease_store::LeaseMessage},
 };
 
 /// Auth store
@@ -184,12 +184,12 @@ impl AuthStore {
         username: &str,
         req: &TxnRequest,
     ) -> Result<(), ExecuteError> {
-        let mut check_queque = VecDeque::new();
+        let mut check_queue = VecDeque::new();
         let req = RequestOp {
             request: Some(Request::RequestTxn(req.clone())),
         };
-        check_queque.push_back(&req);
-        while let Some(req_op) = check_queque.pop_front() {
+        check_queue.push_back(&req);
+        while let Some(req_op) = check_queue.pop_front() {
             match req_op.request {
                 Some(Request::RequestRange(ref range_req)) => {
                     self.check_range_permission(username, range_req)?;
@@ -210,7 +210,7 @@ impl AuthStore {
                         )?;
                     }
                     for op in txn_req.success.iter().chain(txn_req.failure.iter()) {
-                        check_queque.push_back(op);
+                        check_queue.push_back(op);
                     }
                 }
                 None => unreachable!("txn operation should have request"),
@@ -290,7 +290,7 @@ impl AuthStore {
                 unreachable!("Readwrite is unreachable");
             }
         }
-        Err(ExecuteError::InvalidCommand("premission denied".to_owned()))
+        Err(ExecuteError::InvalidCommand("permission denied".to_owned()))
     }
 
     /// Assign root token
@@ -310,7 +310,7 @@ mod test {
             AuthRoleRevokePermissionRequest, AuthUserAddRequest, AuthUserDeleteRequest,
             AuthUserGrantRoleRequest, Permission,
         },
-        storage::authstore::perms::{PermissionCache, UserPermissions},
+        storage::auth_store::perms::{PermissionCache, UserPermissions},
     };
 
     #[test]

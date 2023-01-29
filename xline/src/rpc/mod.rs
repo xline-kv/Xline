@@ -334,7 +334,7 @@ impl RequestWrapper {
         self.backend() == RequestBackend::Kv
     }
 
-    /// Check if this reqeust is a lease request
+    /// Check if this request is a lease request
     pub(crate) fn is_lease_request(&self) -> bool {
         self.backend() == RequestBackend::Lease
     }

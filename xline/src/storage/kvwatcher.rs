@@ -8,7 +8,7 @@ use std::{
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
 
-use crate::{rpc::Event, server::command::KeyRange, storage::kvstore::KvStoreBackend};
+use crate::{rpc::Event, server::command::KeyRange, storage::kv_store::KvStoreBackend};
 
 /// Watch ID
 pub(crate) type WatchId = i64;
@@ -163,7 +163,7 @@ pub(crate) struct KvWatcherInner {
     /// KV storage
     storage: Arc<KvStoreBackend>,
     /// watchers map
-    /// TODO: change to more effecient data structure
+    /// TODO: change to more efficient data structure
     watcher_map: Mutex<HashMap<KeyRange, HashSet<Watcher>>>,
 }
 
