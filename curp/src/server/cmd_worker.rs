@@ -37,7 +37,7 @@ pub(super) async fn execute_worker<C: Command + 'static, CE: 'static + CommandEx
         match msg {
             ExeMsg::Execute { cmd, er_tx } => {
                 let er = ce.execute(cmd.as_ref()).await;
-                debug!("cmd {:?} is executed", cmd.id());
+                debug!("cmd {:?} is speculatively executed", cmd.id());
 
                 spec.map_lock(|mut spec_l| spec_l.remove(cmd.id())); // clean spec pool
                 let _ignore = er_tx.send(er.clone()); // it's ok to ignore the result here because sometimes the result is not needed

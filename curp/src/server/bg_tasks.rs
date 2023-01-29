@@ -467,6 +467,9 @@ fn recover_from_spec_pools<C: Command, ExeTx: CmdExeSenderInterface<C>>(
 
     let cmd_board = state_w.cmd_board();
     let mut board_w = cmd_board.write();
+    let spec = state_w.spec();
+    let mut spec_l = spec.lock();
+
     let term = state_w.term;
     for cmd in recovered_cmds {
         debug!(
@@ -475,8 +478,9 @@ fn recover_from_spec_pools<C: Command, ExeTx: CmdExeSenderInterface<C>>(
             cmd.id(),
             state_w.log.len(),
         );
-        let _ig = board_w.sync.insert(cmd.id().clone()); // may have been inserted before
-        let _ok = board_w.needs_exe.insert(cmd.id().clone()); // may have been inserted before
+        let _ig_sync = board_w.sync.insert(cmd.id().clone()); // may have been inserted before
+        let _ig_spec = spec_l.insert(Arc::clone(&cmd)); // may have been inserted before
+        let _ig_needs_exe = board_w.needs_exe.insert(cmd.id().clone()); // may have been inserted before
         state_w.log.push(LogEntry::new(term, &[cmd]));
     }
 }

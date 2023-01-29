@@ -75,7 +75,7 @@ impl Cluster {
         }
         self.stop_tx = Some(stop_tx);
         // Sleep 30ms, wait for the server to start
-        time::sleep(Duration::from_millis(30)).await;
+        time::sleep(Duration::from_millis(300)).await;
     }
 
     /// Create or get the client with the specified index
