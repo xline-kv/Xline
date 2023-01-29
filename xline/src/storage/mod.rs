@@ -1,10 +1,10 @@
 /// Storage for KV
-pub(crate) mod kvstore;
+pub(crate) mod kv_store;
 
 /// Storage for Auth
-pub(crate) mod authstore;
+pub(crate) mod auth_store;
 
-/// Datebase module
+/// Database module
 pub(crate) mod db;
 
 /// Revision module
@@ -20,6 +20,6 @@ pub(crate) mod kvwatcher;
 pub(crate) mod req_ctx;
 
 /// Storage for lease
-pub(crate) mod leasestore;
+pub(crate) mod lease_store;
 
-pub(crate) use self::{authstore::AuthStore, kvstore::KvStore, leasestore::LeaseStore};
+pub(crate) use self::{auth_store::AuthStore, kv_store::KvStore, lease_store::LeaseStore};

@@ -1,6 +1,7 @@
-use std::{collections::HashSet, time::Duration};
-
-use tokio::time::Instant;
+use std::{
+    collections::HashSet,
+    time::{Duration, Instant},
+};
 
 /// Lease
 #[derive(Debug, Clone)]
@@ -67,20 +68,16 @@ impl Lease {
         }
     }
 
-    /// Refresh expiry
-    pub(crate) fn refresh(&mut self, extend: Duration) {
+    /// Refresh expiry and return new expiry
+    pub(crate) fn refresh(&mut self, extend: Duration) -> Instant {
         let new_expiry = Instant::now() + extend + self.remaining_ttl();
         self.expiry = Some(new_expiry);
+        new_expiry
     }
 
     /// Set expiry to `None`
     pub(crate) fn forever(&mut self) {
         self.expiry = None;
-    }
-
-    /// expiry
-    pub(crate) fn expiry(&self) -> Option<Instant> {
-        self.expiry
     }
 
     /// Insert a key to lease

@@ -12,7 +12,7 @@ use super::{
     db::DB,
     index::{Index, IndexOperate},
     kvwatcher::KvWatcher,
-    leasestore::{DeleteMessage, LeaseMessage},
+    lease_store::{DeleteMessage, LeaseMessage},
 };
 use crate::{
     header_gen::HeaderGenerator,

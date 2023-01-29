@@ -30,7 +30,7 @@ use crate::{
     storage::{
         db::DB,
         index::Index,
-        leasestore::{Lease, LeaseMessage},
+        lease_store::{Lease, LeaseMessage},
         req_ctx::RequestCtx,
     },
 };
@@ -102,7 +102,7 @@ impl fmt::Debug for AuthStoreBackend {
 
 impl AuthStoreBackend {
     /// New `AuthStoreBackend`
-    pub(crate) fn new(
+    pub(super) fn new(
         lease_cmd_tx: mpsc::Sender<LeaseMessage>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
         header_gen: Arc<HeaderGenerator>,
@@ -123,7 +123,7 @@ impl AuthStoreBackend {
     }
 
     /// Get Lease by lease id
-    pub(crate) async fn get_lease(&self, lease_id: i64) -> Option<Lease> {
+    pub(super) async fn get_lease(&self, lease_id: i64) -> Option<Lease> {
         let (detach, rx) = LeaseMessage::look_up(lease_id);
         assert!(
             self.lease_cmd_tx.send(detach).await.is_ok(),
@@ -133,17 +133,17 @@ impl AuthStoreBackend {
     }
 
     /// Get revision of Auth store
-    pub(crate) fn revision(&self) -> i64 {
+    pub(super) fn revision(&self) -> i64 {
         *self.revision.lock()
     }
 
     /// Get enabled of Auth store
-    pub(crate) fn is_enabled(&self) -> bool {
+    pub(super) fn is_enabled(&self) -> bool {
         self.enabled.load(AtomicOrdering::Acquire)
     }
 
     /// Check password
-    pub(crate) fn check_password(
+    pub(super) fn check_password(
         &self,
         username: &str,
         password: &str,
@@ -172,7 +172,7 @@ impl AuthStoreBackend {
     }
 
     /// Assign token
-    pub(crate) fn assign(&self, username: &str) -> Result<String, ExecuteError> {
+    pub(super) fn assign(&self, username: &str) -> Result<String, ExecuteError> {
         match self.token_manager {
             Some(ref token_manager) => token_manager
                 .assign(username, self.revision())
@@ -184,7 +184,7 @@ impl AuthStoreBackend {
     }
 
     /// verify token
-    pub(crate) fn verify_token(&self, token: &str) -> Result<TokenClaims, ExecuteError> {
+    pub(super) fn verify_token(&self, token: &str) -> Result<TokenClaims, ExecuteError> {
         match self.token_manager {
             Some(ref token_manager) => token_manager
                 .verify(token)
@@ -241,7 +241,7 @@ impl AuthStoreBackend {
     }
 
     /// get user permissions from cache
-    pub(crate) fn get_user_permissions_from_cache(
+    pub(super) fn get_user_permissions_from_cache(
         &self,
         username: &str,
     ) -> Result<UserPermissions, ExecuteError> {
@@ -262,7 +262,7 @@ impl AuthStoreBackend {
     }
 
     /// get user by username
-    pub(crate) fn get_user(&self, username: &str) -> Result<User, ExecuteError> {
+    pub(super) fn get_user(&self, username: &str) -> Result<User, ExecuteError> {
         let key = [USER_PREFIX, username.as_bytes()].concat();
         match self.get(&key) {
             Some(kv) => Ok(User::decode(kv.value.as_slice()).unwrap_or_else(|e| {
@@ -374,7 +374,7 @@ impl AuthStoreBackend {
     }
 
     /// Handle `InternalRequest`
-    pub(crate) fn handle_auth_req(
+    pub(super) fn handle_auth_req(
         &self,
         id: ProposeId,
         wrapper: RequestWrapper,
@@ -728,7 +728,7 @@ impl AuthStoreBackend {
     }
 
     /// Sync `RequestWrapper`
-    pub(crate) fn sync_request(&self, id: &ProposeId) -> i64 {
+    pub(super) fn sync_request(&self, id: &ProposeId) -> i64 {
         let ctx = self.sp_exec_pool.lock().remove(id).unwrap_or_else(|| {
             panic!("Failed to get speculative execution propose id {:?}", id);
         });
@@ -1120,7 +1120,7 @@ impl AuthStoreBackend {
     }
 
     #[cfg(test)]
-    pub(crate) fn permission_cache(&self) -> PermissionCache {
+    pub(super) fn permission_cache(&self) -> PermissionCache {
         self.permission_cache.map_read(|cache| cache.clone())
     }
 }

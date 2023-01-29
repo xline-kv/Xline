@@ -25,6 +25,8 @@ use crate::{
 
 /// Default channel size
 const CHANNEL_SIZE: usize = 128;
+/// Default Lease Request Time
+const DEFAULT_LEASE_REQUEST_TIME: Duration = Duration::from_millis(500);
 
 /// Lease Server
 #[derive(Debug)]
@@ -62,44 +64,41 @@ impl LeaseServer {
             state,
             id_gen,
         });
-
-        let _h = tokio::spawn({
-            let server = Arc::clone(&lease_server);
-            async move {
-                loop {
-                    // only leader will check expired lease
-                    if server.state.is_leader() {
-                        for id in server.find_expired_leases() {
-                            let _handle = tokio::spawn({
-                                let s = Arc::clone(&server);
-                                async move {
-                                    let mut request =
-                                        tonic::Request::new(LeaseRevokeRequest { id });
-                                    if let Ok(token) = s.auth_storage.root_token() {
-                                        let _ignore = request.metadata_mut().insert(
-                                            "token",
-                                            token.parse().unwrap_or_else(|e| {
-                                                panic!("metadata value parse error: {}", e)
-                                            }),
-                                        );
-                                    }
-                                    if let Err(e) = s.lease_revoke(request).await {
-                                        warn!("Failed to revoke expired leases: {}", e);
-                                    }
-                                }
-                            });
-                        }
-                    } else {
-                        let listener = server.state.leader_listener();
-                        listener.await;
-                    }
-
-                    time::sleep(Duration::from_millis(500)).await;
-                }
-            }
-        });
-
+        let _h = tokio::spawn(Self::revoke_expired_leases_task(Arc::clone(&lease_server)));
         lease_server
+    }
+
+    /// Task of revoke expired leases
+    async fn revoke_expired_leases_task(lease_server: Arc<LeaseServer>) {
+        loop {
+            // only leader will check expired lease
+            if lease_server.state.is_leader() {
+                for id in lease_server.storage.find_expired_leases() {
+                    let _handle = tokio::spawn({
+                        let s = Arc::clone(&lease_server);
+                        async move {
+                            let mut request = tonic::Request::new(LeaseRevokeRequest { id });
+                            if let Ok(token) = s.auth_storage.root_token() {
+                                let _ignore = request.metadata_mut().insert(
+                                    "token",
+                                    token.parse().unwrap_or_else(|e| {
+                                        panic!("metadata value parse error: {}", e)
+                                    }),
+                                );
+                            }
+                            if let Err(e) = s.lease_revoke(request).await {
+                                warn!("Failed to revoke expired leases: {}", e);
+                            }
+                        }
+                    });
+                }
+            } else {
+                let listener = lease_server.state.leader_listener();
+                listener.await;
+            }
+
+            time::sleep(DEFAULT_LEASE_REQUEST_TIME).await;
+        }
     }
 
     /// Generate propose id
@@ -166,11 +165,6 @@ impl LeaseServer {
         }
     }
 
-    /// Find expired leases
-    fn find_expired_leases(&self) -> Vec<i64> {
-        self.storage.find_expired_leases()
-    }
-
     /// Handle keep alive at leader
     async fn leader_keep_alive(
         &self,
@@ -185,13 +179,19 @@ impl LeaseServer {
                         Ok(keep_alive_req) => {
                             debug!("Receive LeaseKeepAliveRequest {:?}", keep_alive_req);
                             // TODO wait applied index
-                            let res = lease_storage.keep_alive(keep_alive_req.id).map(|ttl| {
-                                LeaseKeepAliveResponse {
+                            let res = lease_storage
+                                .keep_alive(keep_alive_req.id)
+                                .map(|ttl| LeaseKeepAliveResponse {
                                     id: keep_alive_req.id,
                                     ttl,
                                     ..LeaseKeepAliveResponse::default()
-                                }
-                            });
+                                })
+                                .map_err(|e| {
+                                    tonic::Status::invalid_argument(format!(
+                                        "Keep alive error: {}",
+                                        e
+                                    ))
+                                });
                             assert!(
                                 response_tx.send(res).await.is_ok(),
                                 "Command receiver dropped"
