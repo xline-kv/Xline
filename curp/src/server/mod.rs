@@ -20,7 +20,11 @@ use utils::{
     tracing::Extract,
 };
 
-use self::{cmd_worker::CmdExeSenderInterface, gc::run_gc_tasks, state::State};
+use self::{
+    cmd_worker::CmdExeSenderInterface,
+    gc::run_gc_tasks,
+    state::{State, StateRef},
+};
 use crate::{
     cmd::{Command, CommandExecutor},
     error::{ProposeError, ServerError},
@@ -208,7 +212,7 @@ impl<C: Command + 'static> Rpc<C> {
 pub struct Protocol<C: Command + 'static> {
     /// Current state
     // TODO: apply fine-grain locking
-    state: Arc<RwLock<State<C, CmdExeSender<C>>>>,
+    state: StateRef<C, CmdExeSender<C>>,
     /// Last time a rpc is received
     last_rpc_time: Arc<RwLock<Instant>>,
     /// The speculative cmd pool, shared with executor

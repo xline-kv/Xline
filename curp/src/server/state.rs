@@ -14,6 +14,9 @@ use crate::{
     server::{cmd_board::CmdBoardRef, cmd_worker::CmdExeSenderInterface, spec_pool::SpecPoolRef},
 };
 
+/// Reference to state
+pub(super) type StateRef<C, ExeTx> = Arc<RwLock<State<C, ExeTx>>>;
+
 /// State of the server
 pub(super) struct State<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>> {
     /// Id of the server
@@ -136,7 +139,6 @@ impl<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>> State<C, ExeTx> {
                     board_w.needs_exe.insert(cmd.id().clone()),
                     "shouldn't insert needs_exe twice"
                 );
-                // FIXME: do we need to call after sync or that execution is enough?
                 self.cmd_exe_tx
                     .send_after_sync(Arc::clone(cmd), i.numeric_cast());
             }
