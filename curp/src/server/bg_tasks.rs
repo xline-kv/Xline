@@ -13,7 +13,7 @@ use itertools::Itertools;
 use madsim::rand::{thread_rng, Rng};
 use parking_lot::{
     lock_api::{RwLockUpgradableReadGuard, RwLockWriteGuard},
-    RawRwLock, RwLock,
+    RawRwLock,
 };
 use tokio::{sync::mpsc, task::JoinHandle, time::Instant};
 use tracing::{debug, error, info, warn};
@@ -22,7 +22,7 @@ use utils::{
     parking_lot_lock::{MutexMap, RwLockMap},
 };
 
-use super::{cmd_worker::CmdAsReceiver, SyncMessage};
+use super::{cmd_worker::CmdAsReceiver, state::StateRef, SyncMessage};
 use crate::{
     cmd::{Command, CommandExecutor, ProposeId},
     log::LogEntry,
@@ -49,7 +49,7 @@ pub(super) async fn run_bg_tasks<
     Conn: ConnectInterface,
     ExeTx: CmdExeSenderInterface<C>,
 >(
-    state: Arc<RwLock<State<C, ExeTx>>>,
+    state: StateRef<C, ExeTx>,
     sync_chan: flume::Receiver<SyncMessage<C>>,
     cmd_executor: CE,
     cmd_exe_tx: ExeTx,
@@ -131,7 +131,7 @@ pub(super) async fn run_bg_tasks<
 
 /// Fetch commands need to be synced and add them to the log
 async fn bg_get_sync_cmds<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>>(
-    state: Arc<RwLock<State<C, ExeTx>>>,
+    state: StateRef<C, ExeTx>,
     sync_chan: flume::Receiver<SyncMessage<C>>,
     ae_trigger: mpsc::UnboundedSender<usize>,
 ) {
@@ -164,7 +164,7 @@ async fn bg_append_entries<
     ExeTx: CmdExeSenderInterface<C>,
 >(
     connects: Vec<Arc<Conn>>,
-    state: Arc<RwLock<State<C, ExeTx>>>,
+    state: StateRef<C, ExeTx>,
     mut ae_trigger_rx: mpsc::UnboundedReceiver<usize>,
     timeout: Arc<ServerTimeout>,
 ) {
@@ -220,7 +220,7 @@ async fn send_log_until_succeed<
     i: usize,
     req: AppendEntriesRequest,
     connect: Arc<Conn>,
-    state: Arc<RwLock<State<C, ExeTx>>>,
+    state: StateRef<C, ExeTx>,
     timeout: Arc<ServerTimeout>,
 ) {
     // send log[i] until succeed
@@ -285,22 +285,64 @@ async fn send_log_until_succeed<
     }
 }
 
-/// The leader will send heartbeats to followers periodically
+/// Leader broadcast heartbeats
 #[allow(clippy::integer_arithmetic, clippy::indexing_slicing)] // log.len() >= 1 because we have a fake log[0], indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
+fn bcast_heartbeats<
+    C: Command + 'static,
+    Conn: ConnectInterface,
+    ExeTx: CmdExeSenderInterface<C>,
+>(
+    connects: Vec<Arc<Conn>>,
+    state: &StateRef<C, ExeTx>,
+    timeout: Duration,
+) -> impl Stream<Item = (Arc<Conn>, AppendEntriesResponse)> {
+    let state_r = state.read();
+    connects
+        .into_iter()
+        .map(|connect| {
+            let req = {
+                let next_index = state_r.next_index[connect.id()];
+                AppendEntriesRequest::new_heartbeat(
+                    state_r.term,
+                    state_r.id().clone(),
+                    next_index - 1,
+                    state_r.log[next_index - 1].term(),
+                    state_r.commit_index,
+                )
+            };
+            debug!("{} send heartbeat to {}", state_r.id(), connect.id());
+            async move {
+                let resp = connect.append_entries(req, timeout).await;
+                (connect, resp)
+            }
+        })
+        .collect::<FuturesUnordered<_>>()
+        .filter_map(|(connect, resp)| async move {
+            match resp {
+                Err(e) => {
+                    error!("{}'s heartbeat failed, {}", connect.id(), e);
+                    None
+                }
+                Ok(resp) => Some((connect, resp.into_inner())),
+            }
+        })
+}
+
+/// The leader will send heartbeats to followers periodically
 async fn bg_heartbeat<
     C: Command + 'static,
     Conn: ConnectInterface,
     ExeTx: CmdExeSenderInterface<C>,
 >(
     connects: Vec<Arc<Conn>>,
-    state: Arc<RwLock<State<C, ExeTx>>>,
+    state: StateRef<C, ExeTx>,
     timeout: Arc<ServerTimeout>,
 ) {
     let (role_trigger, hb_reset_trigger) =
         state.map_read(|state_r| (state_r.role_trigger(), state_r.heartbeat_reset_trigger()));
     let heartbeat_interval = *timeout.heartbeat_interval();
-    #[allow(clippy::integer_arithmetic)] // tokio internal triggered
     loop {
+        #[allow(clippy::integer_arithmetic)] // tokio internal triggered
         loop {
             tokio::select! {
                 _ = tokio::time::sleep(*timeout.heartbeat_interval()) => break,
@@ -313,40 +355,8 @@ async fn bg_heartbeat<
             role_trigger.listen().await;
         }
 
-        let rpcs = state.map_read(|state_r| {
-            connects
-                .iter()
-                .cloned()
-                .map(|connect| {
-                    let req = {
-                        let next_index = state_r.next_index[connect.id()];
-                        AppendEntriesRequest::new_heartbeat(
-                            state_r.term,
-                            state_r.id().clone(),
-                            next_index - 1,
-                            state_r.log[next_index - 1].term(),
-                            state_r.commit_index,
-                        )
-                    };
-                    debug!("{} send heartbeat to {}", state_r.id(), connect.id());
-                    async move {
-                        let resp = connect.append_entries(req, heartbeat_interval).await;
-                        (connect, resp)
-                    }
-                })
-                .collect::<FuturesUnordered<_>>()
-                .filter_map(|(connect, resp)| async move {
-                    match resp {
-                        Err(e) => {
-                            error!("{}'s heartbeat failed, {}", connect.id(), e);
-                            None
-                        }
-                        Ok(resp) => Some((connect, resp.into_inner())),
-                    }
-                })
-        });
-
-        handle_heartbeat_responses(rpcs, Arc::clone(&state), Arc::clone(&timeout)).await;
+        let responses = bcast_heartbeats(connects.clone(), &state, heartbeat_interval);
+        handle_heartbeat_responses(responses, Arc::clone(&state), Arc::clone(&timeout)).await;
     }
 }
 
@@ -358,7 +368,7 @@ async fn bg_heartbeat<
 )] // log.len() >= 1 because we have a fake log[0], indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
 async fn handle_heartbeat_responses<C, S, Conn, ExeTx>(
     rpcs: S,
-    state: Arc<RwLock<State<C, ExeTx>>>,
+    state: StateRef<C, ExeTx>,
     timeout: Arc<ServerTimeout>,
 ) where
     C: Command + 'static,
@@ -394,7 +404,7 @@ async fn handle_heartbeat_responses<C, S, Conn, ExeTx>(
 
 /// Background apply
 async fn bg_apply<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>>(
-    state: Arc<RwLock<State<C, ExeTx>>>,
+    state: StateRef<C, ExeTx>,
     exe_tx: ExeTx,
 ) {
     let (commit_trigger, cmd_board) =
@@ -492,7 +502,7 @@ async fn bg_election<
     ExeTx: CmdExeSenderInterface<C>,
 >(
     connects: Vec<Arc<Conn>>,
-    state: Arc<RwLock<State<C, ExeTx>>>,
+    state: StateRef<C, ExeTx>,
     timeout: Arc<ServerTimeout>,
 ) {
     let last_rpc_time = state.map_read(|state_r| state_r.last_rpc_time());
@@ -547,7 +557,7 @@ async fn bg_election<
 
 /// Candidate handles vote responses
 #[allow(clippy::integer_arithmetic)] // vote cnt won't overflow
-async fn handle_vote_responses<C, S, ExeTx>(rpcs: S, state: Arc<RwLock<State<C, ExeTx>>>)
+async fn handle_vote_responses<C, S, ExeTx>(rpcs: S, state: StateRef<C, ExeTx>)
 where
     C: Command + 'static,
     S: Stream<Item = (ServerId, VoteResponse)>,
@@ -617,7 +627,7 @@ where
 
 /// wait until an election is needed
 async fn wait_for_election<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>>(
-    state: Arc<RwLock<State<C, ExeTx>>>,
+    state: StateRef<C, ExeTx>,
     timeout: Arc<ServerTimeout>,
 ) {
     let (role_trigger, last_rpc_time) =
@@ -672,7 +682,7 @@ async fn leader_calibrates_follower<
     ExeTx: CmdExeSenderInterface<C>,
 >(
     connect: Arc<Conn>,
-    state: Arc<RwLock<State<C, ExeTx>>>,
+    state: StateRef<C, ExeTx>,
     last_index: usize,
     timeout: Arc<ServerTimeout>,
 ) {

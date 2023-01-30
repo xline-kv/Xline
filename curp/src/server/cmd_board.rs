@@ -89,7 +89,7 @@ impl<C: Command> CommandBoard<C> {
     }
 
     /// Notify `wait_synced` requests
-    pub(super) fn notify(&self, id: &ProposeId) {
+    fn notify(&self, id: &ProposeId) {
         if let Some(notifier) = self.notifiers.get(id) {
             notifier.notify(usize::MAX);
         }
