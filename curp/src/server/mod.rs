@@ -601,13 +601,18 @@ impl<C: 'static + Command> Protocol<C> {
         request: tonic::Request<VoteRequest>,
     ) -> Result<tonic::Response<VoteResponse>, tonic::Status> {
         let req = request.into_inner();
-        debug!(
-            "vote received: term({}), last_log_index({}), last_log_term({}), id({})",
-            req.term, req.last_log_index, req.last_log_term, req.candidate_id
-        );
 
         // just grab a write lock because it's highly likely that term is updated and a vote is granted
         let mut state = self.state.write();
+
+        debug!(
+            "{} received vote: term({}), last_log_index({}), last_log_term({}), id({})",
+            state.id(),
+            req.term,
+            req.last_log_index,
+            req.last_log_term,
+            req.candidate_id
+        );
 
         // FIXME: prevent the server from voting for someone the first time it starts. That's because voted_for is not persisted.
         // So to prevent it from voting twice, we just disallow it to vote the first time it starts.
@@ -640,10 +645,8 @@ impl<C: 'static + Command> Protocol<C> {
             debug!("vote for server {}", req.candidate_id);
             state.voted_for = Some(req.candidate_id);
 
-            // If a follower approves a vote from a candidate, it should update last_rpc_time to prevent itself from starting election
-            if state.role() == ServerRole::Follower {
-                state.reset_election_tick();
-            }
+            // when granting a vote, the server should update its tick to prevent itself from starting election
+            state.reset_election_tick();
 
             let resp = VoteResponse::new_accept(
                 state.term,

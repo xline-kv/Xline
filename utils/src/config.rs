@@ -119,17 +119,18 @@ pub struct ServerTimeout {
     #[serde(with = "duration_format", default = "default_rpc_timeout")]
     rpc_timeout: Duration,
 
-    /// How many rounds of heartbeat_interval a candidate needs to wait until it starts a new round of election
-    /// It should be larger than `follower_timeout`
+    /// How many ticks a follower is allowed to miss before it starts a new round of election
+    /// The actual timeout will be randomized and in between heartbeat_interval * [follower_timeout_ticks, 2 * follower_timeout_ticks)
     #[getset(get = "pub")]
-    #[serde(default = "default_candidate_timeout_round")]
-    candidate_timeout_round: u8,
+    #[serde(default = "default_follower_timeout_ticks")]
+    follower_timeout_ticks: u8,
 
-    /// How many rounds of heartbeats a follower is allowed to miss before it starts a new round of election
-    /// The actual timeout will be randomized and in between [heartbeat_interval * follower_timeout, heartbeat_interval * (follower_timeout + 1))
+    /// How many ticks a candidate needs to wait before it starts a new round of election
+    /// It should be smaller than `follower_timeout_ticks`
+    /// The actual timeout will be randomized and in between heartbeat_interval * [candidate_timeout_ticks, 2 * candidate_timeout_ticks)
     #[getset(get = "pub")]
-    #[serde(default = "default_follower_timeout_round")]
-    follower_timeout_round: u8,
+    #[serde(default = "default_candidate_timeout_ticks")]
+    candidate_timeout_ticks: u8,
 }
 
 /// default heartbeat interval
@@ -160,11 +161,11 @@ pub fn default_rpc_timeout() -> Duration {
     Duration::from_millis(50)
 }
 
-/// default candidate timeout
+/// default candidate timeout ticks
 #[must_use]
 #[inline]
-pub fn default_candidate_timeout_round() -> u8 {
-    8
+pub fn default_candidate_timeout_ticks() -> u8 {
+    2
 }
 
 /// default curp client timeout
@@ -191,7 +192,7 @@ pub fn default_propose_timeout() -> Duration {
 /// default follower timeout
 #[must_use]
 #[inline]
-pub fn default_follower_timeout_round() -> u8 {
+pub fn default_follower_timeout_ticks() -> u8 {
     5
 }
 
@@ -204,16 +205,16 @@ impl ServerTimeout {
         wait_synced_timeout: Duration,
         retry_timeout: Duration,
         rpc_timeout: Duration,
-        candidate_timeout_round: u8,
-        follower_timeout_round: u8,
+        follower_timeout_ticks: u8,
+        candidate_timeout_ticks: u8,
     ) -> Self {
         Self {
             heartbeat_interval,
             wait_synced_timeout,
             retry_timeout,
             rpc_timeout,
-            candidate_timeout_round,
-            follower_timeout_round,
+            follower_timeout_ticks,
+            candidate_timeout_ticks,
         }
     }
 }
@@ -226,8 +227,8 @@ impl Default for ServerTimeout {
             wait_synced_timeout: default_server_wait_synced_timeout(),
             retry_timeout: default_retry_timeout(),
             rpc_timeout: default_rpc_timeout(),
-            candidate_timeout_round: default_candidate_timeout_round(),
-            follower_timeout_round: default_follower_timeout_round(),
+            follower_timeout_ticks: default_follower_timeout_ticks(),
+            candidate_timeout_ticks: default_candidate_timeout_ticks(),
         }
     }
 }
@@ -502,8 +503,8 @@ mod tests {
             Duration::from_millis(100),
             Duration::from_micros(100),
             Duration::from_millis(100),
-            default_candidate_timeout_round(),
-            default_follower_timeout_round(),
+            default_follower_timeout_ticks(),
+            default_candidate_timeout_ticks(),
         );
 
         let client_timeout = ClientTimeout::new(
