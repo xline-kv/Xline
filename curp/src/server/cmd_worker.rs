@@ -1,12 +1,13 @@
 //! `exe` stands for execution
 //! `as` stands for after sync
 
-use std::sync::Arc;
+use std::{iter, sync::Arc};
 
 use async_trait::async_trait;
+use event_listener::Event;
 #[cfg(test)]
 use mockall::automock;
-use tokio::sync::oneshot;
+use tokio::{sync::oneshot, task::JoinHandle};
 use tracing::{debug, error, warn};
 use utils::parking_lot_lock::{MutexMap, RwLockMap};
 
@@ -21,13 +22,13 @@ use crate::{
 };
 
 /// Number of execute workers
-pub(super) const N_EXECUTE_WORKERS: usize = 4;
+const N_EXECUTE_WORKERS: usize = 4;
 
 /// Number of after sync workers
-pub(super) const N_AFTER_SYNC_WORKERS: usize = 4;
+const N_AFTER_SYNC_WORKERS: usize = 4;
 
 /// Worker that execute commands
-pub(super) async fn execute_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
+async fn execute_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
     dispatch_rx: CmdExeReceiver<C>,
     cmd_board: CmdBoardRef<C>,
     spec: SpecPoolRef<C>,
@@ -85,7 +86,7 @@ pub(super) async fn execute_worker<C: Command + 'static, CE: 'static + CommandEx
 }
 
 /// Worker that do after sync
-pub(super) async fn after_sync_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
+async fn after_sync_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
     dispatch_rx: CmdAsReceiver<C>,
     cmd_board: CmdBoardRef<C>,
     spec: SpecPoolRef<C>,
@@ -231,11 +232,11 @@ pub(super) struct CmdExeSender<C: Command + 'static> {
 
 /// Recv cmds that need to be executed
 #[derive(Clone)]
-pub(super) struct CmdExeReceiver<C: Command + 'static>(flume::Receiver<(ExeMsg<C>, DoneNotifier)>);
+struct CmdExeReceiver<C: Command + 'static>(flume::Receiver<(ExeMsg<C>, DoneNotifier)>);
 
 /// Recv cmds that need to be after synced
 #[derive(Clone)]
-pub(super) struct CmdAsReceiver<C: Command + 'static>(flume::Receiver<(AsMsg<C>, DoneNotifier)>);
+struct CmdAsReceiver<C: Command + 'static>(flume::Receiver<(AsMsg<C>, DoneNotifier)>);
 
 /// Send cmd to background execution worker
 #[cfg_attr(test, automock)]
@@ -307,16 +308,50 @@ impl<C: Command + 'static> CmdAsReceiverInterface<C> for CmdAsReceiver<C> {
     }
 }
 
-/// Create a channel to send cmds to background cmd execute workers. The channel guarantees the execution order and that after sync is called after execution completes
-pub(super) fn cmd_exe_channel<C: Command + 'static>(
-) -> (CmdExeSender<C>, CmdExeReceiver<C>, CmdAsReceiver<C>) {
-    let (exe_tx, rx) = conflict_checked_mpmc::channel();
+/// Run cmd execute workers. Returns a channel to interact with these workers. The channel guarantees the execution order and that after sync is called after execution completes.
+pub(super) fn start_cmd_workers<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
+    cmd_executor: CE,
+    spec: SpecPoolRef<C>,
+    cmd_board: CmdBoardRef<C>,
+    shutdown_trigger: Arc<Event>,
+) -> CmdExeSender<C> {
+    let (exe_tx, exe_rx) = conflict_checked_mpmc::channel();
     let (as_tx, as_rx) = conflict_checked_mpmc::channel();
-    (
-        CmdExeSender { exe_tx, as_tx },
-        CmdExeReceiver(rx),
-        CmdAsReceiver(as_rx),
-    )
+    let cmd_executor = Arc::new(cmd_executor);
+    let bg_exe_worker_handles: Vec<JoinHandle<_>> = iter::repeat((
+        exe_rx,
+        Arc::clone(&spec),
+        Arc::clone(&cmd_board),
+        Arc::clone(&cmd_executor),
+    ))
+    .take(N_EXECUTE_WORKERS)
+    .map(|(rx, spec_c, cmd_board_c, ce)| {
+        tokio::spawn(execute_worker(CmdExeReceiver(rx), cmd_board_c, spec_c, ce))
+    })
+    .collect();
+    let bg_as_worker_handles: Vec<JoinHandle<_>> =
+        iter::repeat((as_rx, spec, cmd_board, cmd_executor))
+            .take(N_AFTER_SYNC_WORKERS)
+            .map(|(rx, spec_c, cmd_board_c, ce)| {
+                tokio::spawn(after_sync_worker(
+                    CmdAsReceiver(rx),
+                    cmd_board_c,
+                    spec_c,
+                    ce,
+                ))
+            })
+            .collect();
+    let _ig = tokio::spawn(async move {
+        shutdown_trigger.listen().await;
+        for handle in bg_exe_worker_handles {
+            handle.abort();
+        }
+        for handle in bg_as_worker_handles {
+            handle.abort();
+        }
+    });
+
+    CmdExeSender { exe_tx, as_tx }
 }
 
 #[cfg(test)]
@@ -342,22 +377,10 @@ mod tests {
     async fn fast_path_normal() {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
-        let ce = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
-        let (exe_tx, exe_rx, exe_as_rx) = cmd_exe_channel::<TestCommand>();
+        let ce = TestCE::new("S1".to_owned(), er_tx, as_tx);
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
-        tokio::spawn(execute_worker(
-            exe_rx,
-            Arc::clone(&cmd_board),
-            Arc::clone(&spec_pool),
-            Arc::clone(&ce),
-        ));
-        tokio::spawn(after_sync_worker(
-            exe_as_rx,
-            cmd_board,
-            Arc::clone(&spec_pool),
-            Arc::clone(&ce),
-        ));
+        let exe_tx = start_cmd_workers(ce, spec_pool, cmd_board, Arc::new(Event::new()));
 
         let cmd = Arc::new(TestCommand::default());
         exe_tx.send_exe(Arc::clone(&cmd));
@@ -373,22 +396,15 @@ mod tests {
     async fn fast_path_cond1() {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
-        let ce = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
-        let (exe_tx, exe_rx, exe_as_rx) = cmd_exe_channel::<TestCommand>();
+        let ce = TestCE::new("S1".to_owned(), er_tx, as_tx);
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
-        tokio::spawn(execute_worker(
-            exe_rx,
+        let exe_tx = start_cmd_workers(
+            ce,
+            spec_pool,
             Arc::clone(&cmd_board),
-            Arc::clone(&spec_pool),
-            Arc::clone(&ce),
-        ));
-        tokio::spawn(after_sync_worker(
-            exe_as_rx,
-            cmd_board,
-            Arc::clone(&spec_pool),
-            Arc::clone(&ce),
-        ));
+            Arc::new(Event::new()),
+        );
 
         let begin = Instant::now();
         let cmd = Arc::new(TestCommand::default().set_exe_dur(Duration::from_secs(1)));
@@ -410,22 +426,15 @@ mod tests {
     async fn fast_path_cond2() {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
-        let ce = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
-        let (exe_tx, exe_rx, exe_as_rx) = cmd_exe_channel::<TestCommand>();
+        let ce = TestCE::new("S1".to_owned(), er_tx, as_tx);
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
-        tokio::spawn(execute_worker(
-            exe_rx,
+        let exe_tx = start_cmd_workers(
+            ce,
+            spec_pool,
             Arc::clone(&cmd_board),
-            Arc::clone(&spec_pool),
-            Arc::clone(&ce),
-        ));
-        tokio::spawn(after_sync_worker(
-            exe_as_rx,
-            cmd_board,
-            Arc::clone(&spec_pool),
-            Arc::clone(&ce),
-        ));
+            Arc::new(Event::new()),
+        );
 
         let cmd = Arc::new(
             TestCommand::default()
@@ -450,22 +459,15 @@ mod tests {
     async fn slow_path_normal() {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
-        let ce = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
-        let (exe_tx, exe_rx, exe_as_rx) = cmd_exe_channel::<TestCommand>();
+        let ce = TestCE::new("S1".to_owned(), er_tx, as_tx);
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
-        tokio::spawn(execute_worker(
-            exe_rx,
+        let exe_tx = start_cmd_workers(
+            ce,
+            spec_pool,
             Arc::clone(&cmd_board),
-            Arc::clone(&spec_pool),
-            Arc::clone(&ce),
-        ));
-        tokio::spawn(after_sync_worker(
-            exe_as_rx,
-            Arc::clone(&cmd_board),
-            Arc::clone(&spec_pool),
-            Arc::clone(&ce),
-        ));
+            Arc::new(Event::new()),
+        );
 
         let cmd = Arc::new(TestCommand::default());
         {
@@ -484,22 +486,15 @@ mod tests {
     async fn slow_path_exe_fails() {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
-        let ce = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
-        let (exe_tx, exe_rx, exe_as_rx) = cmd_exe_channel::<TestCommand>();
+        let ce = TestCE::new("S1".to_owned(), er_tx, as_tx);
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
-        tokio::spawn(execute_worker(
-            exe_rx,
+        let exe_tx = start_cmd_workers(
+            ce,
+            spec_pool,
             Arc::clone(&cmd_board),
-            Arc::clone(&spec_pool),
-            Arc::clone(&ce),
-        ));
-        tokio::spawn(after_sync_worker(
-            exe_as_rx,
-            Arc::clone(&cmd_board),
-            Arc::clone(&spec_pool),
-            Arc::clone(&ce),
-        ));
+            Arc::new(Event::new()),
+        );
 
         let cmd = Arc::new(TestCommand::default().set_exe_should_fail());
         {
@@ -519,22 +514,15 @@ mod tests {
     async fn conflict_cmd_order() {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
-        let ce = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
-        let (exe_tx, exe_rx, exe_as_rx) = cmd_exe_channel::<TestCommand>();
+        let ce = TestCE::new("S1".to_owned(), er_tx, as_tx);
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
-        tokio::spawn(execute_worker(
-            exe_rx,
+        let exe_tx = start_cmd_workers(
+            ce,
+            spec_pool,
             Arc::clone(&cmd_board),
-            Arc::clone(&spec_pool),
-            Arc::clone(&ce),
-        ));
-        tokio::spawn(after_sync_worker(
-            exe_as_rx,
-            Arc::clone(&cmd_board),
-            Arc::clone(&spec_pool),
-            Arc::clone(&ce),
-        ));
+            Arc::new(Event::new()),
+        );
 
         let cmd1 = Arc::new(TestCommand::new_put(vec![1], 1));
         let cmd2 = Arc::new(TestCommand::new_get(vec![1]));

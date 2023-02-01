@@ -14,28 +14,22 @@ use parking_lot::{
     lock_api::{RwLockUpgradableReadGuard, RwLockWriteGuard},
     RawRwLock,
 };
-use tokio::{sync::mpsc, task::JoinHandle, time::MissedTickBehavior};
+use tokio::{sync::mpsc, time::MissedTickBehavior};
 use tracing::{debug, error, info, warn};
 use utils::{
     config::ServerTimeout,
     parking_lot_lock::{MutexMap, RwLockMap},
 };
 
-use super::{cmd_worker::CmdAsReceiver, state::StateRef, SyncMessage};
+use super::{state::StateRef, SyncMessage};
 use crate::{
-    cmd::{Command, CommandExecutor, ProposeId},
+    cmd::{Command, ProposeId},
     log::LogEntry,
     rpc::{
         self, connect::ConnectInterface, AppendEntriesRequest, AppendEntriesResponse, VoteRequest,
         VoteResponse,
     },
-    server::{
-        cmd_worker::{
-            after_sync_worker, execute_worker, CmdExeReceiver, CmdExeSenderInterface,
-            N_AFTER_SYNC_WORKERS, N_EXECUTE_WORKERS,
-        },
-        ServerRole, State,
-    },
+    server::{cmd_worker::CmdExeSenderInterface, ServerRole, State},
     TxFilter,
 };
 
@@ -43,23 +37,18 @@ use crate::{
 #[allow(clippy::too_many_arguments)] // we call this function once, it's ok
 pub(super) async fn run_bg_tasks<
     C: Command + 'static,
-    CE: 'static + CommandExecutor<C>,
     Conn: ConnectInterface,
     ExeTx: CmdExeSenderInterface<C>,
 >(
     state: StateRef<C, ExeTx>,
     sync_rx: flume::Receiver<SyncMessage<C>>,
-    cmd_executor: CE,
     cmd_exe_tx: ExeTx,
-    cmd_exe_rx: CmdExeReceiver<C>,
-    cmd_as_rx: CmdAsReceiver<C>,
     shutdown_trigger: Arc<Event>,
     timeout: Arc<ServerTimeout>,
     tx_filter: Option<Box<dyn TxFilter>>,
 ) {
     // establish connection with other servers
-    let (others, spec, cmd_board) =
-        state.map_read(|state_r| (state_r.others.clone(), state_r.spec(), state_r.cmd_board()));
+    let others = state.map_read(|state_r| state_r.others.clone());
 
     let connects = rpc::connect(others, tx_filter).await;
 
@@ -81,44 +70,16 @@ pub(super) async fn run_bg_tasks<
     let bg_get_sync_cmds_handle =
         tokio::spawn(bg_get_sync_cmds(Arc::clone(&state), sync_rx, ae_tx));
 
-    // spawn cmd execute worker
-    let cmd_executor = Arc::new(cmd_executor);
-    let bg_exe_worker_handles: Vec<JoinHandle<_>> = iter::repeat((
-        cmd_exe_rx,
-        Arc::clone(&spec),
-        Arc::clone(&cmd_board),
-        Arc::clone(&cmd_executor),
-    ))
-    .take(N_EXECUTE_WORKERS)
-    .map(|(rx, spec_c, cmd_board_c, ce)| tokio::spawn(execute_worker(rx, cmd_board_c, spec_c, ce)))
-    .collect();
-    let bg_as_worker_handles: Vec<JoinHandle<_>> = iter::repeat((
-        cmd_as_rx,
-        Arc::clone(&spec),
-        Arc::clone(&cmd_board),
-        cmd_executor,
-    ))
-    .take(N_AFTER_SYNC_WORKERS)
-    .map(|(rx, spec_c, cmd_board_c, ce)| {
-        tokio::spawn(after_sync_worker(rx, cmd_board_c, spec_c, ce))
-    })
-    .collect();
-
     shutdown_trigger.listen().await;
     bg_tick_handle.abort();
     bg_ae_handle.abort();
     bg_apply_handle.abort();
     bg_get_sync_cmds_handle.abort();
-    for handle in bg_exe_worker_handles {
-        handle.abort();
-    }
-    for handle in bg_as_worker_handles {
-        handle.abort();
-    }
     info!("all background task stopped");
 }
 
 /// Do periodical task
+#[allow(clippy::integer_arithmetic)] // can't overflow
 async fn bg_tick<C: Command + 'static, Conn: ConnectInterface, ExeTx: CmdExeSenderInterface<C>>(
     connects: Vec<Arc<Conn>>,
     state: StateRef<C, ExeTx>,
@@ -135,14 +96,11 @@ async fn bg_tick<C: Command + 'static, Conn: ConnectInterface, ExeTx: CmdExeSend
         *timeout.follower_timeout_ticks(),
         *timeout.candidate_timeout_ticks(),
     );
-<<<<<<< HEAD
     // randomize to minimize vote split possibility
     let mut follower_timeout_ticks =
         thread_rng().gen_range(follower_timeout_ticks_base..(2 * follower_timeout_ticks_base));
     let mut candidate_timeout_ticks =
         thread_rng().gen_range(candidate_timeout_ticks_base..(2 * candidate_timeout_ticks_base));
-=======
->>>>>>> randomize tick start time and candidate timeout to avoid split vote
 
     // wait for some random time before tick starts to minimize vote split possibility
     let rand = thread_rng()
@@ -178,11 +136,7 @@ async fn bg_tick<C: Command + 'static, Conn: ConnectInterface, ExeTx: CmdExeSend
                     < (if state_r.role() == ServerRole::Follower {
                         follower_timeout_ticks
                     } else {
-<<<<<<< HEAD
                         candidate_timeout_ticks
-=======
-                        candidate_timeout_round + thread_rng().gen_range(0..follower_timeout_round)
->>>>>>> randomize tick start time and candidate timeout to avoid split vote
                     })
                 {
                     continue;
@@ -739,7 +693,7 @@ mod test {
 
     use futures::stream;
     use madsim::time::sleep;
-    use parking_lot::RwLock;
+    use parking_lot::{Mutex, RwLock};
     use tracing_test::traced_test;
     use utils::config::{
         default_candidate_timeout_ticks, default_follower_timeout_ticks,
@@ -756,9 +710,8 @@ mod test {
             VoteResponse,
         },
         server::{
-            bg_tasks::send_log_until_succeed,
-            cmd_worker::{cmd_exe_channel, MockCmdExeSenderInterface},
-            state::State,
+            bg_tasks::send_log_until_succeed, cmd_board::CommandBoard,
+            cmd_worker::MockCmdExeSenderInterface, spec_pool::SpeculativePool, state::State,
             ServerRole,
         },
         test_utils::{sleep_millis, test_cmd::TestCommand},
@@ -775,11 +728,15 @@ mod test {
         ]);
         let mut exe_tx = MockCmdExeSenderInterface::default();
         exe_tx.expect_send_reset().returning(|| ());
+        let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
+        let spec = Arc::new(Mutex::new(SpeculativePool::new()));
         Arc::new(RwLock::new(State::new(
             LEADER_ID.to_owned(),
             ServerRole::Leader,
             others,
             exe_tx,
+            cmd_board,
+            spec,
         )))
     }
 
@@ -1360,12 +1317,16 @@ mod test {
             ("S3".to_owned(), "127.0.0.1:8002".to_owned()),
             ("S4".to_owned(), "127.0.0.1:8002".to_owned()),
         ]);
-        let (exe_tx, _exe_rx, _) = cmd_exe_channel();
+        let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
+        let spec = Arc::new(Mutex::new(SpeculativePool::new()));
+        let exe_tx = MockCmdExeSenderInterface::default();
         let state = Arc::new(RwLock::new(State::new(
             LEADER_ID.to_owned(),
             ServerRole::Leader,
             others,
             exe_tx,
+            cmd_board,
+            spec,
         )));
         // cmd1 has already been committed
         let cmd1 = Arc::new(TestCommand::new_put(vec![1], 1));

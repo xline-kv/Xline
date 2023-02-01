@@ -8,11 +8,11 @@ use std::{
 
 use clippy_utilities::NumericCast;
 use event_listener::Event;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use tokio::sync::broadcast;
 use tracing::debug;
 
-use super::{cmd_board::CommandBoard, spec_pool::SpeculativePool, ServerRole};
+use super::ServerRole;
 use crate::{
     cmd::Command,
     log::LogEntry,
@@ -77,6 +77,8 @@ impl<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>> State<C, ExeTx> {
         role: ServerRole,
         others: HashMap<ServerId, String>,
         cmd_exe_tx: ExeTx,
+        cmd_board: CmdBoardRef<C>,
+        spec: SpecPoolRef<C>,
     ) -> Self {
         let mut next_index = HashMap::new();
         let mut match_index = HashMap::new();
@@ -100,8 +102,8 @@ impl<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>> State<C, ExeTx> {
             others,
             role_trigger: Arc::new(Event::new()),
             commit_trigger: Arc::new(Event::new()),
-            cmd_board: Arc::new(RwLock::new(CommandBoard::new())),
-            spec: Arc::new(Mutex::new(SpeculativePool::new())),
+            cmd_board,
+            spec,
             leader_tx: tx,
             cmd_exe_tx,
             first: true,
@@ -230,15 +232,31 @@ impl<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>> State<C, ExeTx> {
 #[cfg_attr(test, allow(clippy::unwrap_used))]
 #[cfg(test)]
 mod tests {
+    use parking_lot::Mutex;
+
     use super::*;
-    use crate::{server::cmd_worker::MockCmdExeSenderInterface, test_utils::test_cmd::TestCommand};
+    use crate::{
+        server::{
+            cmd_board::CommandBoard, cmd_worker::MockCmdExeSenderInterface,
+            spec_pool::SpeculativePool,
+        },
+        test_utils::test_cmd::TestCommand,
+    };
 
     #[tokio::test]
     async fn leader_broadcast() {
         let mut exe_tx = MockCmdExeSenderInterface::default();
         exe_tx.expect_send_reset().returning(|| ());
-        let mut state: State<TestCommand, _> =
-            State::new("Foo".to_owned(), ServerRole::Leader, HashMap::new(), exe_tx);
+        let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
+        let spec = Arc::new(Mutex::new(SpeculativePool::new()));
+        let mut state: State<TestCommand, _> = State::new(
+            "Foo".to_owned(),
+            ServerRole::Leader,
+            HashMap::new(),
+            exe_tx,
+            cmd_board,
+            spec,
+        );
         let mut rx = state.leader_tx.subscribe();
 
         state.update_to_term(1);

@@ -8,7 +8,7 @@ use std::{
 use clippy_utilities::NumericCast;
 use event_listener::Event;
 use itertools::Itertools;
-use parking_lot::{lock_api::RwLockUpgradableReadGuard, RwLock};
+use parking_lot::{lock_api::RwLockUpgradableReadGuard, Mutex, RwLock};
 use tokio::{net::TcpListener, sync::broadcast};
 use tokio_stream::wrappers::TcpListenerStream;
 use tower::filter::FilterLayer;
@@ -20,8 +20,10 @@ use utils::{
 };
 
 use self::{
+    cmd_board::CommandBoard,
     cmd_worker::CmdExeSenderInterface,
     gc::run_gc_tasks,
+    spec_pool::SpeculativePool,
     state::{State, StateRef},
 };
 use crate::{
@@ -35,7 +37,7 @@ use crate::{
     },
     server::{
         cmd_board::CmdBoardRef,
-        cmd_worker::{cmd_exe_channel, CmdExeSender},
+        cmd_worker::{start_cmd_workers, CmdExeSender},
         spec_pool::SpecPoolRef,
     },
     TxFilter,
@@ -324,7 +326,15 @@ impl<C: 'static + Command> Protocol<C> {
     ) -> Self {
         let (sync_tx, sync_rx) = flume::unbounded();
         let shutdown_trigger = Arc::new(Event::new());
-        let (exe_tx, exe_rx, as_rx) = cmd_exe_channel();
+        let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
+        let spec = Arc::new(Mutex::new(SpeculativePool::new()));
+
+        let exe_tx = start_cmd_workers(
+            cmd_executor,
+            Arc::clone(&spec),
+            Arc::clone(&cmd_board),
+            Arc::clone(&shutdown_trigger),
+        );
 
         let state = State::new(
             id,
@@ -335,20 +345,17 @@ impl<C: 'static + Command> Protocol<C> {
             },
             others,
             exe_tx.clone(),
+            Arc::clone(&cmd_board),
+            Arc::clone(&spec),
         );
 
-        let spec = state.spec();
-        let cmd_board = state.cmd_board();
         let state = Arc::new(RwLock::new(state));
 
         // run background tasks
-        let _bg_handle = tokio::spawn(bg_tasks::run_bg_tasks::<_, _, Connect, CmdExeSender<C>>(
+        let _bg_handle = tokio::spawn(bg_tasks::run_bg_tasks::<_, Connect, CmdExeSender<C>>(
             Arc::clone(&state),
             sync_rx,
-            cmd_executor,
             exe_tx.clone(),
-            exe_rx,
-            as_rx,
             Arc::clone(&shutdown_trigger),
             Arc::clone(&timeout),
             tx_filter,
@@ -643,8 +650,6 @@ impl<C: 'static + Command> Protocol<C> {
         {
             debug!("vote for server {}", req.candidate_id);
             state.voted_for = Some(req.candidate_id);
-
-            // when granting a vote, the server should update its tick to prevent itself from starting election
             state.reset_election_tick();
 
             let resp = VoteResponse::new_accept(
