@@ -1,5 +1,19 @@
 # ChangeLog
 
+## v0.2.0
+
+### Features:
+* Enable Xline to boot up from the config file `xline_server.conf` (#145)
+* Support ETCD APIs, like the lease api and the lock api  (#142, #153)
+* Enable the recovery mechanism in CURP module (#146)
+* Add ETCD APIs compatibility test (test report: (report)[./VALIDATION_REPORT.md])
+
+### Fix Bugs
+* Fix panic in benchmark (#123)
+* Fix the issue that modify kv pairs will fail after watch them in `etcdctl` (#148)
+
+
+
 ## v0.1.0
 
 ### What is it?
@@ -15,7 +29,7 @@ Existing distributed KV stores mostly adopt the `Raft` consensus protocol, which
   - `Kv` service
   - `Watch` service
   - `Auth` service
-- basic implementation of the `Curp` protocol 
+- basic implementation of the `Curp` protocol
 - basic `Xline` client (use `Curp` directly)
 - benchmark tool
 
