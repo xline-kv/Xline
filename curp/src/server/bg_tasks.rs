@@ -135,11 +135,14 @@ async fn bg_tick<C: Command + 'static, Conn: ConnectInterface, ExeTx: CmdExeSend
         *timeout.follower_timeout_ticks(),
         *timeout.candidate_timeout_ticks(),
     );
+<<<<<<< HEAD
     // randomize to minimize vote split possibility
     let mut follower_timeout_ticks =
         thread_rng().gen_range(follower_timeout_ticks_base..(2 * follower_timeout_ticks_base));
     let mut candidate_timeout_ticks =
         thread_rng().gen_range(candidate_timeout_ticks_base..(2 * candidate_timeout_ticks_base));
+=======
+>>>>>>> randomize tick start time and candidate timeout to avoid split vote
 
     // wait for some random time before tick starts to minimize vote split possibility
     let rand = thread_rng()
@@ -175,7 +178,11 @@ async fn bg_tick<C: Command + 'static, Conn: ConnectInterface, ExeTx: CmdExeSend
                     < (if state_r.role() == ServerRole::Follower {
                         follower_timeout_ticks
                     } else {
+<<<<<<< HEAD
                         candidate_timeout_ticks
+=======
+                        candidate_timeout_round + thread_rng().gen_range(0..follower_timeout_round)
+>>>>>>> randomize tick start time and candidate timeout to avoid split vote
                     })
                 {
                     continue;
