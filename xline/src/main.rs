@@ -123,7 +123,7 @@ use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{fmt::format, prelude::*};
 use utils::{
     config::{
-        default_candidate_timeout_round, default_follower_timeout_round, file_appender, AuthConfig,
+        default_candidate_timeout_ticks, default_follower_timeout_ticks, file_appender, AuthConfig,
         ClientTimeout, ClusterConfig, LevelConfig, LogConfig, RotationConfig, ServerTimeout,
         TraceConfig, XlineServerConfig,
     },
@@ -183,12 +183,12 @@ struct ServerArgs {
     /// Curp rpc timeout
     #[clap(long, value_parser = parse_duration, default_value = "50ms")]
     rpc_timeout: Duration,
-    /// Candidate election timeout
-    #[clap(long, default_value_t = default_candidate_timeout_round())]
-    candidate_timeout: u8,
-    /// Follower election timeout
-    #[clap(long, default_value_t = default_follower_timeout_round())]
-    follower_timeout: u8,
+    /// Follower election timeout ticks
+    #[clap(long, default_value_t = default_follower_timeout_ticks())]
+    follower_timeout_ticks: u8,
+    /// Candidate election timeout ticks
+    #[clap(long, default_value_t = default_candidate_timeout_ticks())]
+    candidate_timeout_ticks: u8,
     /// Curp client timeout
     #[clap(long, value_parser = parse_duration, default_value = "1s")]
     client_timeout: Duration,
@@ -207,8 +207,8 @@ impl From<ServerArgs> for XlineServerConfig {
             args.server_wait_synced_timeout,
             args.retry_timeout,
             args.rpc_timeout,
-            args.candidate_timeout,
-            args.follower_timeout,
+            args.follower_timeout_ticks,
+            args.candidate_timeout_ticks,
         );
         let client_timeout = ClientTimeout::new(
             args.client_timeout,

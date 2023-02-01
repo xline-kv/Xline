@@ -57,7 +57,7 @@ async fn reelect() {
     println!("disable leader {leader1}");
 
     // after some time, a new leader should be elected
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    wait_for_election().await;
     let (leader2, term2) = group.get_leader().await;
 
     assert_ne!(term1, term2);
@@ -68,7 +68,7 @@ async fn reelect() {
     println!("disable leader {leader2}");
 
     // after some time, a new leader should be elected
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    wait_for_election().await;
     let (leader3, term3) = group.get_leader().await;
 
     assert_ne!(term1, term3);
@@ -81,7 +81,7 @@ async fn reelect() {
     println!("disable leader {leader3}");
 
     // after some time, no leader should be elected
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    wait_for_election().await;
     assert!(group.try_get_leader().await.is_none());
 
     // recover network partition
@@ -90,7 +90,7 @@ async fn reelect() {
     group.enable_node(&leader2);
     group.enable_node(&leader3);
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    wait_for_election().await;
     let (_, final_term) = group.get_leader().await;
     assert!(final_term > term3);
 

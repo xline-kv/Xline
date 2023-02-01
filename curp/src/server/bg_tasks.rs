@@ -119,17 +119,35 @@ pub(super) async fn run_bg_tasks<
 }
 
 /// Do periodical task
+#[allow(clippy::integer_arithmetic)] // can't overflow
 async fn bg_tick<C: Command + 'static, Conn: ConnectInterface, ExeTx: CmdExeSenderInterface<C>>(
     connects: Vec<Arc<Conn>>,
     state: StateRef<C, ExeTx>,
     timeout: Arc<ServerTimeout>,
 ) {
-    let (rpc_timeout, heartbeat_interval, follower_timeout_round, candidate_timeout_round) = (
+    let (
+        rpc_timeout,
+        heartbeat_interval,
+        follower_timeout_ticks_base,
+        candidate_timeout_ticks_base,
+    ) = (
         *timeout.rpc_timeout(),
         *timeout.heartbeat_interval(),
-        *timeout.follower_timeout_round(),
-        *timeout.candidate_timeout_round(),
+        *timeout.follower_timeout_ticks(),
+        *timeout.candidate_timeout_ticks(),
     );
+    // randomize to minimize vote split possibility
+    let mut follower_timeout_ticks =
+        thread_rng().gen_range(follower_timeout_ticks_base..(2 * follower_timeout_ticks_base));
+    let mut candidate_timeout_ticks =
+        thread_rng().gen_range(candidate_timeout_ticks_base..(2 * candidate_timeout_ticks_base));
+
+    // wait for some random time before tick starts to minimize vote split possibility
+    let rand = thread_rng()
+        .gen_range(0..heartbeat_interval.as_millis())
+        .numeric_cast();
+    tokio::time::sleep(Duration::from_millis(rand)).await;
+
     let mut ticker = tokio::time::interval(heartbeat_interval);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     loop {
@@ -137,32 +155,38 @@ async fn bg_tick<C: Command + 'static, Conn: ConnectInterface, ExeTx: CmdExeSend
         let task = {
             let state_c = Arc::clone(&state);
             let state_r = state.upgradable_read();
-            if state_r.is_leader()
-                && state_r
+            if state_r.is_leader() {
+                if state_r
                     .hb_opt
                     .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
                     .is_err()
-            {
-                let resps = bcast_heartbeats(connects.clone(), state_r, rpc_timeout);
-                Either::Left(handle_heartbeat_responses(
-                    resps,
-                    state_c,
-                    Arc::clone(&timeout),
-                ))
+                {
+                    let resps = bcast_heartbeats(connects.clone(), state_r, rpc_timeout);
+                    Either::Left(handle_heartbeat_responses(
+                        resps,
+                        state_c,
+                        Arc::clone(&timeout),
+                    ))
+                } else {
+                    continue;
+                }
             } else {
-                let tick = state_r.election_tick.fetch_add(1, Ordering::SeqCst);
-                #[allow(clippy::integer_arithmetic)] // can't overflow
+                let tick = state_r.election_tick.fetch_add(1, Ordering::AcqRel);
                 if tick
                     < (if state_r.role() == ServerRole::Follower {
-                        // randomize to minimize vote split possibility
-                        follower_timeout_round + thread_rng().gen_range(0..follower_timeout_round)
+                        follower_timeout_ticks
                     } else {
-                        candidate_timeout_round
+                        candidate_timeout_ticks
                     })
                 {
                     continue;
                 }
-                state_r.election_tick.store(0, Ordering::Relaxed); // reset tick
+                // re-generate timeout to avoid split vote forever
+                follower_timeout_ticks = thread_rng()
+                    .gen_range(follower_timeout_ticks_base..(2 * follower_timeout_ticks_base));
+                candidate_timeout_ticks = thread_rng()
+                    .gen_range(candidate_timeout_ticks_base..(2 * candidate_timeout_ticks_base));
+                state_r.reset_election_tick(); // reset tick
 
                 let resps = bcast_votes(connects.clone(), state_r, rpc_timeout);
                 Either::Right(handle_vote_responses(resps, state_c))
@@ -712,7 +736,7 @@ mod test {
     use parking_lot::RwLock;
     use tracing_test::traced_test;
     use utils::config::{
-        default_candidate_timeout_round, default_follower_timeout_round,
+        default_candidate_timeout_ticks, default_follower_timeout_ticks,
         default_heartbeat_interval, default_retry_timeout, ServerTimeout,
     };
 
@@ -1065,7 +1089,7 @@ mod test {
         ));
 
         sleep_millis(
-            (default_follower_timeout_round() as u64
+            (default_follower_timeout_ticks() as u64
                 * 2
                 * default_heartbeat_interval().as_millis() as u64)
                 + 50,
@@ -1099,8 +1123,9 @@ mod test {
         ));
 
         sleep_millis(
-            (default_candidate_timeout_round() as u64
-                * default_heartbeat_interval().as_millis() as u64)
+            (default_follower_timeout_ticks() as u64
+                * default_heartbeat_interval().as_millis() as u64
+                * 2)
                 + 50,
         )
         .await;
@@ -1127,7 +1152,7 @@ mod test {
         ));
 
         sleep_millis(
-            (default_candidate_timeout_round() - 1) as u64
+            (default_candidate_timeout_ticks() - 1) as u64
                 * default_heartbeat_interval().as_millis() as u64,
         )
         .await;
@@ -1162,7 +1187,7 @@ mod test {
         ));
 
         sleep_millis(
-            (default_follower_timeout_round() - 1) as u64
+            (default_candidate_timeout_ticks() - 1) as u64
                 * default_heartbeat_interval().as_millis() as u64,
         )
         .await;
