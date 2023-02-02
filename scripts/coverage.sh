@@ -1,8 +1,10 @@
 #/bin/bash
+set -u -e
+
 rm -rf coverage
 mkdir coverage
 
-if [ -z "${CI}" ]; then
+if [[ -v CI ]]; then
   FORMAT=html
   OUTPUT_XLINE=coverage/xline_html
   OUTPUT_CURP=coverage/curp_html
@@ -15,7 +17,7 @@ else
 fi
 
 # generate coverage data
-CARGO_INCREMENTAL=0 RUSTFLAGS='-Cinstrument-coverage' LLVM_PROFILE_FILE='coverage-%p-%m.profraw' cargo test
+CARGO_INCREMENTAL=0 RUSTFLAGS='-Cinstrument-coverage' LLVM_PROFILE_FILE='coverage-%p-%m.profraw' cargo test --lib
 
 # generate report
 echo "generating xline coverage..."
