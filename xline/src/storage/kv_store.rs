@@ -12,6 +12,7 @@ use super::{
     index::{Index, IndexOperate},
     kvwatcher::KvWatcher,
     lease_store::{DeleteMessage, LeaseMessage},
+    storage_api::StorageApi,
 };
 use crate::{
     header_gen::HeaderGenerator,
@@ -32,20 +33,26 @@ const CHANNEL_SIZE: usize = 128;
 /// KV store
 #[allow(dead_code)]
 #[derive(Debug)]
-pub(crate) struct KvStore {
+pub(crate) struct KvStore<S>
+where
+    S: StorageApi,
+{
     /// KV store Backend
-    inner: Arc<KvStoreBackend>,
+    inner: Arc<KvStoreBackend<S>>,
     /// KV watcher
-    kv_watcher: Arc<KvWatcher>,
+    kv_watcher: Arc<KvWatcher<S>>,
 }
 
 /// KV store inner
 #[derive(Debug)]
-pub(crate) struct KvStoreBackend {
+pub(crate) struct KvStoreBackend<S>
+where
+    S: StorageApi,
+{
     /// Key Index
     index: Index,
     /// DB to store key value
-    db: DB,
+    db: DB<S>,
     /// Revision
     revision: Arc<RevisionNumber>,
     /// Header generator
@@ -58,15 +65,24 @@ pub(crate) struct KvStoreBackend {
     lease_cmd_tx: mpsc::Sender<LeaseMessage>,
 }
 
-impl KvStore {
+impl<S> KvStore<S>
+where
+    S: StorageApi,
+{
     /// New `KvStore`
     pub(crate) fn new(
         lease_cmd_tx: mpsc::Sender<LeaseMessage>,
         del_rx: mpsc::Receiver<DeleteMessage>,
         header_gen: Arc<HeaderGenerator>,
+        storage: S,
     ) -> Self {
         let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
-        let inner = Arc::new(KvStoreBackend::new(kv_update_tx, lease_cmd_tx, header_gen));
+        let inner = Arc::new(KvStoreBackend::new(
+            kv_update_tx,
+            lease_cmd_tx,
+            header_gen,
+            storage,
+        ));
         let kv_watcher = Arc::new(KvWatcher::new(Arc::clone(&inner), kv_update_rx));
         let _del_task = tokio::spawn({
             let inner = Arc::clone(&inner);
@@ -77,7 +93,7 @@ impl KvStore {
     }
 
     /// Receive keys from lease storage and delete them
-    async fn del_task(mut del_rx: mpsc::Receiver<DeleteMessage>, inner: Arc<KvStoreBackend>) {
+    async fn del_task(mut del_rx: mpsc::Receiver<DeleteMessage>, inner: Arc<KvStoreBackend<S>>) {
         while let Some(msg) = del_rx.recv().await {
             let (keys, tx) = msg.unpack();
             debug!("Delete keys: {:?} by lease revoked", keys);
@@ -120,26 +136,30 @@ impl KvStore {
     }
 
     /// sync a kv request
-    pub(crate) async fn after_sync(&self, id: ProposeId) -> SyncResponse {
-        SyncResponse::new(self.inner.sync_requests(&id).await)
+    pub(crate) async fn after_sync(&self, id: ProposeId) -> Result<SyncResponse, ExecuteError> {
+        self.inner.sync_requests(&id).await.map(SyncResponse::new)
     }
 
     /// Get KV watcher
-    pub(crate) fn kv_watcher(&self) -> Arc<KvWatcher> {
+    pub(crate) fn kv_watcher(&self) -> Arc<KvWatcher<S>> {
         Arc::clone(&self.kv_watcher)
     }
 }
 
-impl KvStoreBackend {
+impl<S> KvStoreBackend<S>
+where
+    S: StorageApi,
+{
     /// New `KvStoreBackend`
     pub(crate) fn new(
         kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
         lease_cmd_tx: mpsc::Sender<LeaseMessage>,
         header_gen: Arc<HeaderGenerator>,
+        storage: S,
     ) -> Self {
         Self {
             index: Index::new(),
-            db: DB::new(),
+            db: DB::new(storage),
             revision: header_gen.revision_arc(),
             header_gen,
             sp_exec_pool: Mutex::new(HashMap::new()),
@@ -172,7 +192,7 @@ impl KvStoreBackend {
         let res = match wrapper {
             RequestWrapper::RangeRequest(ref req) => {
                 debug!("Receive RangeRequest {:?}", req);
-                Ok(self.handle_range_request(req).into())
+                self.handle_range_request(req).map(Into::into)
             }
             RequestWrapper::PutRequest(ref req) => {
                 debug!("Receive PutRequest {:?}", req);
@@ -180,7 +200,7 @@ impl KvStoreBackend {
             }
             RequestWrapper::DeleteRangeRequest(ref req) => {
                 debug!("Receive DeleteRangeRequest {:?}", req);
-                Ok(self.handle_delete_range_request(req).into())
+                self.handle_delete_range_request(req).map(Into::into)
             }
             RequestWrapper::TxnRequest(ref req) => {
                 debug!("Receive TxnRequest {:?}", req);
@@ -202,7 +222,12 @@ impl KvStoreBackend {
     /// Get `KeyValue` of a range
     ///
     /// If `range_end` is `&[]`, this function will return one or zero `KeyValue`.
-    fn get_range(&self, key: &[u8], range_end: &[u8], revision: i64) -> Vec<KeyValue> {
+    fn get_range(
+        &self,
+        key: &[u8],
+        range_end: &[u8],
+        revision: i64,
+    ) -> Result<Vec<KeyValue>, ExecuteError> {
         let revisions = self.index.get(key, range_end, revision);
         self.db.get_values(&revisions)
     }
@@ -215,26 +240,31 @@ impl KvStoreBackend {
         revision: i64,
         limit: usize,
         count_only: bool,
-    ) -> (Vec<KeyValue>, usize) {
+    ) -> Result<(Vec<KeyValue>, usize), ExecuteError> {
         let mut revisions = self.index.get(key, range_end, revision);
         let total = revisions.len();
         if count_only {
-            return (vec![], total);
+            return Ok((vec![], total));
         }
         if limit != 0 {
             revisions.truncate(limit);
         }
-        let kvs = self.db.get_values(&revisions);
-        (kvs, total)
+        let kvs = self.db.get_values(&revisions)?;
+        Ok((kvs, total))
     }
 
     /// Get `KeyValue` start from a revision and convert to `Event`
-    pub(crate) fn get_event_from_revision(&self, key_range: KeyRange, revision: i64) -> Vec<Event> {
+    pub(crate) fn get_event_from_revision(
+        &self,
+        key_range: KeyRange,
+        revision: i64,
+    ) -> Result<Vec<Event>, ExecuteError> {
         let key = key_range.start.as_slice();
         let range_end = key_range.end.as_slice();
         let revisions = self.index.get_from_rev(key, range_end, revision);
-        let values = self.db.get_values(&revisions);
-        values
+        let events = self
+            .db
+            .get_values(&revisions)?
             .into_iter()
             .map(|kv| {
                 // Delete
@@ -252,7 +282,8 @@ impl KvStoreBackend {
                 event.set_type(event_type);
                 event
             })
-            .collect()
+            .collect();
+        Ok(events)
     }
 
     /// Sort kvs by sort target and order
@@ -315,7 +346,7 @@ impl KvStoreBackend {
     }
 
     /// Handle `RangeRequest`
-    fn handle_range_request(&self, req: &RangeRequest) -> RangeResponse {
+    fn handle_range_request(&self, req: &RangeRequest) -> Result<RangeResponse, ExecuteError> {
         debug!("handle_range_request kvs");
         let storage_fetch_limit = if (req.sort_order() != SortOrder::None)
             || (req.max_mod_revision != 0)
@@ -334,14 +365,14 @@ impl KvStoreBackend {
             req.revision,
             storage_fetch_limit.cast(),
             req.count_only,
-        );
+        )?;
         let mut response = RangeResponse {
             header: Some(self.header_gen.gen_header()),
             count: total.cast(),
             ..RangeResponse::default()
         };
         if kvs.is_empty() {
-            return response;
+            return Ok(response);
         }
 
         Self::filter_kvs(
@@ -361,7 +392,7 @@ impl KvStoreBackend {
             kvs.iter_mut().for_each(|kv| kv.value.clear());
         }
         response.kvs = kvs;
-        response
+        Ok(response)
     }
 
     /// Handle `PutRequest`
@@ -372,7 +403,7 @@ impl KvStoreBackend {
             ..Default::default()
         };
         if req.prev_kv || req.ignore_lease || req.ignore_value {
-            let prev_kv = self.get_range(&req.key, &[], 0).pop();
+            let prev_kv = self.get_range(&req.key, &[], 0)?.pop();
             if prev_kv.is_none() && (req.ignore_lease || req.ignore_value) {
                 return Err(ExecuteError::InvalidCommand(
                     "ignore_lease or ignore_value is set but there is no previous value".to_owned(),
@@ -386,8 +417,11 @@ impl KvStoreBackend {
     }
 
     /// Handle `DeleteRangeRequest`
-    fn handle_delete_range_request(&self, req: &DeleteRangeRequest) -> DeleteRangeResponse {
-        let prev_kvs = self.get_range(&req.key, &req.range_end, 0);
+    fn handle_delete_range_request(
+        &self,
+        req: &DeleteRangeRequest,
+    ) -> Result<DeleteRangeResponse, ExecuteError> {
+        let prev_kvs = self.get_range(&req.key, &req.range_end, 0)?;
         debug!("handle_delete_range_request prev_kvs {:?}", prev_kvs);
         let mut response = DeleteRangeResponse {
             header: Some(self.header_gen.gen_header_without_revision()),
@@ -397,7 +431,7 @@ impl KvStoreBackend {
         if req.prev_kv {
             response.prev_kvs = prev_kvs;
         }
-        response
+        Ok(response)
     }
 
     /// Compare i64
@@ -474,7 +508,9 @@ impl KvStoreBackend {
 
     /// Check result of a `Compare`
     fn check_compare(&self, cmp: &Compare) -> bool {
-        let kvs = self.get_range(&cmp.key, &cmp.range_end, 0);
+        let kvs = self
+            .get_range(&cmp.key, &cmp.range_end, 0)
+            .unwrap_or_default();
         if kvs.is_empty() {
             if let Some(TargetUnion::Value(_)) = cmp.target_union {
                 false
@@ -514,15 +550,15 @@ impl KvStoreBackend {
     }
 
     /// Sync a vec of requests
-    async fn sync_requests(&self, id: &ProposeId) -> i64 {
+    async fn sync_requests(&self, id: &ProposeId) -> Result<i64, ExecuteError> {
         let ctxes = self.sp_exec_pool.lock().remove(id).unwrap_or_else(|| {
             panic!("Failed to get speculative execution propose id {:?}", id);
         });
         if ctxes.iter().any(RequestCtx::met_err) {
-            return self.revision();
+            return Ok(self.revision());
         };
         let requests: Vec<RequestWrapper> = ctxes.into_iter().map(RequestCtx::req).collect();
-        if requests.is_empty() {
+        let rev = if requests.is_empty() {
             self.revision()
         } else {
             let next_revision = self.revision.next();
@@ -531,13 +567,15 @@ impl KvStoreBackend {
             for request in requests {
                 let mut events = self
                     .sync_request(request, next_revision, sub_revision)
-                    .await;
+                    .await?;
                 sub_revision = sub_revision.overflow_add(events.len().cast());
                 all_events.append(&mut events);
             }
             self.notify_updates(next_revision, all_events).await;
             next_revision
-        }
+        };
+
+        Ok(rev)
     }
 
     /// Sync one `Request`
@@ -546,12 +584,12 @@ impl KvStoreBackend {
         req: RequestWrapper,
         revision: i64,
         sub_revision: i64,
-    ) -> Vec<Event> {
+    ) -> Result<Vec<Event>, ExecuteError> {
         #[allow(clippy::wildcard_enum_match_arm)]
         match req {
             RequestWrapper::RangeRequest(req) => {
                 debug!("Sync RequestRange {:?}", req);
-                Self::sync_range_request(&req)
+                Ok(Vec::new())
             }
             RequestWrapper::PutRequest(req) => {
                 debug!("Sync RequestPut {:?}", req);
@@ -572,19 +610,14 @@ impl KvStoreBackend {
         }
     }
 
-    /// Sync `RangeRequest` and return of kvstore is changed
-    fn sync_range_request(_req: &RangeRequest) -> Vec<Event> {
-        Vec::new()
-    }
-
     /// Sync `PutRequest` and return if kvstore is changed
     async fn sync_put_request(
         &self,
         req: PutRequest,
         revision: i64,
         sub_revision: i64,
-    ) -> Vec<Event> {
-        let prev_kv = self.get_range(&req.key, &[], 0).pop();
+    ) -> Result<Vec<Event>, ExecuteError> {
+        let prev_kv = self.get_range(&req.key, &[], 0)?.pop();
         let new_rev = self
             .index
             .insert_or_update_revision(&req.key, revision, sub_revision);
@@ -598,8 +631,11 @@ impl KvStoreBackend {
         };
 
         if req.ignore_lease || req.ignore_value {
-            #[allow(clippy::unwrap_used)] // checked when execute cmd
-            let prev = prev_kv.as_ref().unwrap();
+            let prev = prev_kv.as_ref().ok_or_else(|| {
+                ExecuteError::InvalidCommand(
+                    "ignore_lease or ignore_value is set but previous key is not found".to_owned(),
+                )
+            })?;
             if req.ignore_lease {
                 kv.lease = prev.lease;
             }
@@ -608,7 +644,7 @@ impl KvStoreBackend {
             }
         }
 
-        let _prev = self.db.insert(new_rev.as_revision(), kv.clone());
+        let _prev = self.db.insert(new_rev.as_revision(), &kv);
         let old_lease = self.get_lease(&kv.key).await;
         if old_lease != 0 {
             self.detach(old_lease, kv.key.as_slice())
@@ -626,7 +662,7 @@ impl KvStoreBackend {
             kv: Some(kv),
             prev_kv,
         };
-        vec![event]
+        Ok(vec![event])
     }
 
     /// create events for a deletion
@@ -655,19 +691,19 @@ impl KvStoreBackend {
         req: DeleteRangeRequest,
         revision: i64,
         sub_revision: i64,
-    ) -> Vec<Event> {
+    ) -> Result<Vec<Event>, ExecuteError> {
         let key = req.key;
         let range_end = req.range_end;
         let revisions = self.index.delete(&key, &range_end, revision, sub_revision);
         debug!("sync_delete_range_request: revisions {:?}", revisions);
-        let prev_kv = self.db.mark_deletions(&revisions);
+        let prev_kv = self.db.mark_deletions(&revisions)?;
         for kv in &prev_kv {
             let lease_id = self.get_lease(&kv.key).await;
             self.detach(lease_id, kv.key.as_slice())
                 .await
                 .unwrap_or_else(|e| warn!("Failed to detach lease from a key, error: {:?}", e));
         }
-        Self::new_deletion_events(revision, prev_kv)
+        Ok(Self::new_deletion_events(revision, prev_kv))
     }
 
     /// Send get lease to lease store
@@ -705,6 +741,8 @@ impl KvStoreBackend {
 mod test {
     use std::error::Error;
 
+    use crate::Memory;
+
     use super::*;
 
     #[tokio::test]
@@ -717,7 +755,7 @@ mod test {
             keys_only: true,
             ..Default::default()
         };
-        let response = store.inner.handle_range_request(&request);
+        let response = store.inner.handle_range_request(&request)?;
         assert_eq!(response.kvs.len(), 5);
         for kv in response.kvs {
             assert!(kv.value.is_empty());
@@ -736,7 +774,7 @@ mod test {
             keys_only: true,
             ..Default::default()
         };
-        let response = store.inner.handle_range_request(&request);
+        let response = store.inner.handle_range_request(&request)?;
         assert_eq!(response.kvs.len(), 0);
         assert_eq!(response.count, 0);
 
@@ -757,7 +795,7 @@ mod test {
             min_mod_revision: 2,
             ..Default::default()
         };
-        let response = store.inner.handle_range_request(&request);
+        let response = store.inner.handle_range_request(&request)?;
         assert_eq!(response.count, 5);
         assert_eq!(response.kvs.len(), 2);
         assert_eq!(response.kvs[0].create_revision, 2);
@@ -779,7 +817,7 @@ mod test {
                 SortTarget::Mod,
                 SortTarget::Value,
             ] {
-                let response = store.inner.handle_range_request(&sort_req(order, target));
+                let response = store.inner.handle_range_request(&sort_req(order, target))?;
                 assert_eq!(response.count, 5);
                 assert_eq!(response.kvs.len(), 5);
                 let expected = match order {
@@ -797,7 +835,7 @@ mod test {
         for order in [SortOrder::Ascend, SortOrder::Descend, SortOrder::None] {
             let response = store
                 .inner
-                .handle_range_request(&sort_req(order, SortTarget::Version));
+                .handle_range_request(&sort_req(order, SortTarget::Version))?;
             assert_eq!(response.count, 5);
             assert_eq!(response.kvs.len(), 5);
             let is_identical = response
@@ -821,7 +859,7 @@ mod test {
         }
     }
 
-    async fn init_store() -> Result<KvStore, Box<dyn Error>> {
+    async fn init_store() -> Result<KvStore<Memory>, Box<dyn Error>> {
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let (_, del_rx) = mpsc::channel(128);
         let (lease_cmd_tx, mut lease_cmd_rx) = mpsc::channel(128);
@@ -830,7 +868,8 @@ mod test {
                 assert!(tx.send(0).is_ok());
             }
         });
-        let store = KvStore::new(lease_cmd_tx, del_rx, header_gen);
+        let mem_storage = Memory::new();
+        let store = KvStore::new(lease_cmd_tx, del_rx, header_gen, mem_storage);
         let keys = vec!["a", "b", "c", "d", "e"];
         let vals = vec!["a", "b", "c", "d", "e"];
         for (key, val) in keys.into_iter().zip(vals.into_iter()) {

@@ -127,3 +127,5 @@ pub mod server;
 mod state;
 /// Storage module
 mod storage;
+
+pub use storage::memory::Memory;

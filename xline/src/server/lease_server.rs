@@ -14,13 +14,13 @@ use super::{
 use crate::{
     id_gen::IdGenerator,
     rpc::{
-        LeaseClient, LeaseGrantRequest, LeaseGrantResponse, LeaseKeepAliveRequest,
+        Lease, LeaseClient, LeaseGrantRequest, LeaseGrantResponse, LeaseKeepAliveRequest,
         LeaseKeepAliveResponse, LeaseLeasesRequest, LeaseLeasesResponse, LeaseRevokeRequest,
         LeaseRevokeResponse, LeaseStatus, LeaseTimeToLiveRequest, LeaseTimeToLiveResponse,
-        LeaseTrait, RequestWithToken, RequestWrapper,
+        RequestWithToken, RequestWrapper,
     },
     state::State,
-    storage::{AuthStore, LeaseStore},
+    storage::{storage_api::StorageApi, AuthStore, LeaseStore},
 };
 
 /// Default channel size
@@ -30,11 +30,14 @@ const DEFAULT_LEASE_REQUEST_TIME: Duration = Duration::from_millis(500);
 
 /// Lease Server
 #[derive(Debug)]
-pub(crate) struct LeaseServer {
+pub(crate) struct LeaseServer<S>
+where
+    S: StorageApi,
+{
     /// Lease storage
     storage: Arc<LeaseStore>,
     /// Auth storage
-    auth_storage: Arc<AuthStore>,
+    auth_storage: Arc<AuthStore<S>>,
     /// Consensus client
     client: Arc<Client<Command>>,
     /// Server name
@@ -45,11 +48,14 @@ pub(crate) struct LeaseServer {
     id_gen: Arc<IdGenerator>,
 }
 
-impl LeaseServer {
+impl<S> LeaseServer<S>
+where
+    S: StorageApi,
+{
     /// New `LeaseServer`
     pub(crate) fn new(
         lease_storage: Arc<LeaseStore>,
-        auth_storage: Arc<AuthStore>,
+        auth_storage: Arc<AuthStore<S>>,
         client: Arc<Client<Command>>,
         name: String,
         state: Arc<State>,
@@ -68,7 +74,7 @@ impl LeaseServer {
     }
 
     /// Task of revoke expired leases
-    async fn revoke_expired_leases_task(lease_server: Arc<LeaseServer>) {
+    async fn revoke_expired_leases_task(lease_server: Arc<LeaseServer<S>>) {
         loop {
             // only leader will check expired lease
             if lease_server.is_leader() {
@@ -245,7 +251,10 @@ impl LeaseServer {
 }
 
 #[tonic::async_trait]
-impl LeaseTrait for LeaseServer {
+impl<S> Lease for LeaseServer<S>
+where
+    S: StorageApi,
+{
     /// LeaseGrant creates a lease which expires if the server does not receive a keepAlive
     /// within a given time to live period. All keys attached to the lease will be expired and
     /// deleted if the lease expires. Each expired key generates a delete event in the event history.

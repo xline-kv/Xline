@@ -7,7 +7,7 @@ use tokio::{
     time::{self, Duration},
 };
 use utils::config::{ClientTimeout, ServerTimeout};
-use xline::{client::Client, server::XlineServer};
+use xline::{client::Client, server::XlineServer, Memory};
 
 /// Cluster
 pub struct Cluster {
@@ -54,6 +54,7 @@ impl Cluster {
             let mut rx = stop_tx.subscribe();
             let listener = self.listeners.remove(&i).unwrap();
             let all_members = self.all_members.clone();
+            let s = Memory::new();
             tokio::spawn(async move {
                 let server = XlineServer::new(
                     name,
@@ -62,6 +63,7 @@ impl Cluster {
                     Self::test_key_pair(),
                     ServerTimeout::default(),
                     ClientTimeout::default(),
+                    s,
                 )
                 .await;
                 let signal = async {
