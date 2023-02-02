@@ -1,5 +1,3 @@
-#[cfg(test)]
-use std::sync::atomic::AtomicBool;
 use std::{
     collections::{HashMap, HashSet},
     iter,
@@ -28,7 +26,7 @@ use crate::{
     log::LogEntry,
     message::ServerId,
     rpc::{
-        connect::ConnectInterface, AppendEntriesRequest, AppendEntriesResponse, VoteRequest,
+        self, connect::ConnectInterface, AppendEntriesRequest, AppendEntriesResponse, VoteRequest,
         VoteResponse,
     },
     server::{
@@ -39,6 +37,7 @@ use crate::{
         ServerRole, State,
     },
     shutdown::Shutdown,
+    TxFilter,
 };
 
 /// Run background tasks
@@ -57,16 +56,13 @@ pub(super) async fn run_bg_tasks<
     cmd_as_rx: CmdAsReceiver<C>,
     mut shutdown: Shutdown,
     timeout: Arc<ServerTimeout>,
-    #[cfg(test)] reachable: Arc<AtomicBool>,
+    tx_filter: Option<Box<dyn TxFilter>>,
 ) {
     // establish connection with other servers
     let (others, spec, cmd_board) =
         state.map_read(|state_r| (state_r.others.clone(), state_r.spec(), state_r.cmd_board()));
 
-    #[cfg(test)]
-    let connects = Conn::try_connect_test(others, reachable).await;
-    #[cfg(not(test))]
-    let connects = Conn::try_connect(others).await;
+    let connects = rpc::connect(others, tx_filter).await;
 
     // notify when a broadcast of append_entries is needed immediately
     let (ae_trigger, ae_trigger_rx) = mpsc::unbounded_channel::<usize>();

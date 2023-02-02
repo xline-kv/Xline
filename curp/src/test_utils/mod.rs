@@ -15,7 +15,6 @@
 
 use std::time::Duration;
 
-pub(crate) mod curp_group;
 pub(crate) mod test_cmd;
 
 pub(crate) async fn sleep_millis(n: u64) {

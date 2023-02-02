@@ -1,4 +1,11 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use curp::{
@@ -7,10 +14,17 @@ use curp::{
     LogIndex,
 };
 use itertools::Itertools;
+use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc, time::sleep};
 use tracing::debug;
+
+static NEXT_ID: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(0));
+
+fn next_id() -> u64 {
+    NEXT_ID.fetch_add(1, Ordering::SeqCst)
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct TestCommand {
@@ -32,9 +46,9 @@ pub enum TestCommandType {
 pub type TestCommandResult = Vec<u32>;
 
 impl TestCommand {
-    pub fn new_get(id: u32, keys: Vec<u32>) -> Self {
+    pub fn new_get(keys: Vec<u32>) -> Self {
         Self {
-            id: ProposeId::new(id.to_string()),
+            id: ProposeId::new(next_id().to_string()),
             keys,
             exe_dur: Duration::ZERO,
             as_dur: Duration::ZERO,
@@ -44,9 +58,9 @@ impl TestCommand {
         }
     }
 
-    pub fn new_put(id: u32, keys: Vec<u32>, value: u32) -> Self {
+    pub fn new_put(keys: Vec<u32>, value: u32) -> Self {
         Self {
-            id: ProposeId::new(id.to_string()),
+            id: ProposeId::new(next_id().to_string()),
             keys,
             exe_dur: Duration::ZERO,
             as_dur: Duration::ZERO,
@@ -109,7 +123,7 @@ impl ConflictCheck for TestCommand {
 #[derive(Debug, Clone)]
 pub struct TestCE {
     server_id: String,
-    store: Arc<Mutex<HashMap<u32, u32>>>,
+    pub store: Arc<Mutex<HashMap<u32, u32>>>,
     exe_sender: mpsc::UnboundedSender<(TestCommand, TestCommandResult)>,
     after_sync_sender: mpsc::UnboundedSender<(TestCommand, LogIndex)>,
 }

@@ -1,6 +1,4 @@
-#[cfg(test)]
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 #[cfg(test)]
@@ -18,6 +16,46 @@ use crate::{
         VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
 };
+
+/// Connect will call filter(request) before it sends out a request
+pub trait TxFilter: Send + Sync + Debug {
+    /// Filter request
+    // TODO: add request as a parameter
+    fn filter(&self) -> Option<()>;
+    /// Clone self
+    fn boxed_clone(&self) -> Box<dyn TxFilter>;
+}
+
+/// Convert a vec of addr string to a vec of `Connect`
+// FIXME: move it back to `Connect` when `mockall` supports mock `Fn`
+pub(crate) async fn connect(
+    addrs: HashMap<ServerId, String>,
+    tx_filter: Option<Box<dyn TxFilter>>,
+) -> Vec<Arc<Connect>> {
+    futures::future::join_all(addrs.into_iter().map(|(id, mut addr)| async move {
+        // Addrs must start with "http" to communicate with the server
+        if !addr.starts_with("http://") {
+            addr.insert_str(0, "http://");
+        }
+        (
+            id,
+            addr.clone(),
+            ProtocolClient::connect(addr.clone()).await,
+        )
+    }))
+    .await
+    .into_iter()
+    .map(|(id, addr, conn)| {
+        debug!("successfully establish connection with {addr}");
+        Arc::new(Connect {
+            id,
+            rpc_connect: RwLock::new(conn),
+            addr,
+            tx_filter: tx_filter.as_ref().map(|f| f.boxed_clone()),
+        })
+    })
+    .collect()
+}
 
 /// Connect interface
 #[cfg_attr(test, automock)]
@@ -65,16 +103,6 @@ pub(crate) trait ConnectInterface: Send + Sync + 'static {
         request: FetchLeaderRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<FetchLeaderResponse>, ProposeError>;
-
-    /// Convert a vec of addr string to a vec of `Connect`
-    async fn try_connect(addrs: HashMap<ServerId, String>) -> Vec<Arc<Self>>;
-
-    /// Convert a vec of addr string to a vec of `Connect`
-    #[cfg(test)]
-    async fn try_connect_test(
-        addrs: HashMap<ServerId, String>,
-        reachable: Arc<AtomicBool>,
-    ) -> Vec<Arc<Self>>;
 }
 
 /// The connection struct to hold the real rpc connections, it may failed to connect, but it also
@@ -87,9 +115,8 @@ pub(crate) struct Connect {
     rpc_connect: RwLock<Result<ProtocolClient<tonic::transport::Channel>, tonic::transport::Error>>,
     /// The addr used to connect if failing met
     addr: String,
-    /// Whether the client can reach others, useful for testings
-    #[cfg(test)]
-    reachable: Arc<AtomicBool>,
+    /// The injected filter
+    tx_filter: Option<Box<dyn TxFilter>>,
 }
 
 #[async_trait]
@@ -127,10 +154,7 @@ impl ConnectInterface for Connect {
         request: ProposeRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<ProposeResponse>, ProposeError> {
-        #[cfg(test)]
-        if !self.reachable.load(Ordering::Relaxed) {
-            return Err(ProposeError::RpcError("unreachable".to_owned()));
-        }
+        self.filter()?;
 
         let mut client = self.get().await?;
         let mut req = tonic::Request::new(request);
@@ -146,10 +170,7 @@ impl ConnectInterface for Connect {
         request: WaitSyncedRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<WaitSyncedResponse>, ProposeError> {
-        #[cfg(test)]
-        if !self.reachable.load(Ordering::Relaxed) {
-            return Err(ProposeError::RpcError("unreachable".to_owned()));
-        }
+        self.filter()?;
 
         let mut client = self.get().await?;
         let mut req = tonic::Request::new(request);
@@ -164,10 +185,7 @@ impl ConnectInterface for Connect {
         request: AppendEntriesRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<AppendEntriesResponse>, ProposeError> {
-        #[cfg(test)]
-        if !self.reachable.load(Ordering::Relaxed) {
-            return Err(ProposeError::RpcError("unreachable".to_owned()));
-        }
+        self.filter()?;
 
         let mut client = self.get().await?;
         let mut req = tonic::Request::new(request);
@@ -181,10 +199,7 @@ impl ConnectInterface for Connect {
         request: VoteRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<VoteResponse>, ProposeError> {
-        #[cfg(test)]
-        if !self.reachable.load(Ordering::Relaxed) {
-            return Err(ProposeError::RpcError("unreachable".to_owned()));
-        }
+        self.filter()?;
 
         let mut client = self.get().await?;
         let mut req = tonic::Request::new(request);
@@ -198,73 +213,24 @@ impl ConnectInterface for Connect {
         request: FetchLeaderRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<FetchLeaderResponse>, ProposeError> {
-        #[cfg(test)]
-        if !self.reachable.load(Ordering::Relaxed) {
-            return Err(ProposeError::RpcError("unreachable".to_owned()));
-        }
+        self.filter()?;
 
         let mut client = self.get().await?;
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
         client.fetch_leader(req).await.map_err(Into::into)
     }
+}
 
-    /// Convert a vec of addr string to a vec of `Connect`
-    async fn try_connect(addrs: HashMap<ServerId, String>) -> Vec<Arc<Self>> {
-        futures::future::join_all(addrs.into_iter().map(|(id, mut addr)| async move {
-            // Addrs must start with "http" to communicate with the server
-            if !addr.starts_with("http") {
-                addr.insert_str(0, "http://");
-            }
-            (
-                id,
-                addr.clone(),
-                ProtocolClient::<_>::connect(addr.clone()).await,
+impl Connect {
+    /// Filter requests
+    // TODO: add request as input
+    fn filter(&self) -> Result<(), ProposeError> {
+        self.tx_filter.as_ref().map_or(Ok(()), |f| {
+            f.filter().map_or_else(
+                || Err(ProposeError::RpcError("unreachable".to_owned())),
+                |_| Ok(()),
             )
-        }))
-        .await
-        .into_iter()
-        .map(|(id, addr, conn)| {
-            debug!("successfully establish connection with {addr}");
-            Arc::new(Connect {
-                id,
-                rpc_connect: RwLock::new(conn),
-                addr,
-                #[cfg(test)]
-                reachable: Arc::new(AtomicBool::new(true)),
-            })
         })
-        .collect()
-    }
-
-    /// Convert a vec of addr string to a vec of `Connect`
-    #[cfg(test)]
-    async fn try_connect_test(
-        addrs: HashMap<ServerId, String>,
-        reachable: Arc<AtomicBool>,
-    ) -> Vec<Arc<Self>> {
-        futures::future::join_all(addrs.into_iter().map(|(id, mut addr)| async move {
-            // Addrs must start with "http" to communicate with the server
-            if !addr.starts_with("http") {
-                addr.insert_str(0, "http://");
-            }
-            (
-                id,
-                addr.clone(),
-                ProtocolClient::<_>::connect(addr.clone()).await,
-            )
-        }))
-        .await
-        .into_iter()
-        .map(|(id, addr, conn)| {
-            debug!("successfully establish connection with {addr}");
-            Arc::new(Connect {
-                id,
-                rpc_connect: RwLock::new(conn),
-                addr,
-                reachable: Arc::clone(&reachable),
-            })
-        })
-        .collect()
     }
 }

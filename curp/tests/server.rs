@@ -1,10 +1,14 @@
 //! Integration test for the curp server
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use utils::config::ClientTimeout;
 
-use crate::common::{curp_group::CurpGroup, init_logger, test_cmd::TestCommand};
+use crate::common::{
+    curp_group::{CurpGroup, ProposeRequest, ProposeResponse},
+    init_logger,
+    test_cmd::TestCommand,
+};
 
 mod common;
 
@@ -17,16 +21,13 @@ async fn basic_propose() {
 
     assert_eq!(
         client
-            .propose(TestCommand::new_put(0, vec![0], 0))
+            .propose(TestCommand::new_put(vec![0], 0))
             .await
             .unwrap(),
         vec![]
     );
     assert_eq!(
-        client
-            .propose(TestCommand::new_get(1, vec![0]))
-            .await
-            .unwrap(),
+        client.propose(TestCommand::new_get(vec![0])).await.unwrap(),
         vec![0]
     );
 
@@ -39,7 +40,7 @@ async fn synced_propose() {
 
     let mut group = CurpGroup::new(5).await;
     let client = group.new_client(ClientTimeout::default()).await;
-    let cmd = TestCommand::new_get(0, vec![0]);
+    let cmd = TestCommand::new_get(vec![0]);
 
     let (er, index) = client.propose_indexed(cmd.clone()).await.unwrap();
     assert_eq!(er, vec![]);
@@ -67,7 +68,7 @@ async fn exe_exact_n_times() {
 
     let mut group = CurpGroup::new(3).await;
     let client = group.new_client(ClientTimeout::default()).await;
-    let cmd = TestCommand::new_get(0, vec![0]);
+    let cmd = TestCommand::new_get(vec![0]);
 
     let er = client.propose(cmd.clone()).await.unwrap();
     assert_eq!(er, vec![]);
@@ -97,161 +98,42 @@ async fn exe_exact_n_times() {
     group.stop();
 }
 
+// To verify PR #86 is fixed
 #[tokio::test]
-async fn leader_crash_and_recovery() {
+async fn fast_round_is_slower_than_slow_round() {
     init_logger();
 
-    let mut group = CurpGroup::new(5).await;
-    let client = group.new_client(ClientTimeout::default()).await;
+    let group = CurpGroup::new(3).await;
+    let cmd = Arc::new(TestCommand::new_get(vec![0]));
 
-    let leader = group.fetch_leader().await.unwrap();
-    group.crash(&leader);
+    let leader = group.get_leader().await.0;
 
-    assert_eq!(
-        client
-            .propose(TestCommand::new_put(0, vec![0], 0))
-            .await
-            .unwrap(),
-        vec![]
-    );
-    assert_eq!(
-        client
-            .propose(TestCommand::new_get(1, vec![0]))
-            .await
-            .unwrap(),
-        vec![0]
-    );
+    // send propose only to the leader
+    let mut leader_connect = group.get_connect(&leader).await;
+    leader_connect
+        .propose(tonic::Request::new(ProposeRequest {
+            command: bincode::serialize(&cmd).unwrap(),
+        }))
+        .await
+        .unwrap();
 
-    // restart the original leader
-    group.restart(&leader).await;
-    let old_leader = group.nodes.get_mut(&leader).unwrap();
+    // wait for the command to be synced to others
+    // because followers never get the cmd from the client, it will mark the cmd done in spec pool instead of removing the cmd from it
+    tokio::time::sleep(Duration::from_secs(1)).await;
 
-    let er = old_leader.exe_rx.recv().await.unwrap();
-    assert_eq!(er.1, vec![]);
-    let asr = old_leader.as_rx.recv().await.unwrap();
-    assert_eq!(asr.1, 1);
+    // send propose to follower
+    let follower_addr = group.all.keys().find(|&id| &leader != id).unwrap();
+    let mut follower_connect = group.get_connect(follower_addr).await;
 
-    let er = old_leader.exe_rx.recv().await.unwrap();
-    assert_eq!(er.1, vec![0]);
-    let asr = old_leader.as_rx.recv().await.unwrap();
-    assert_eq!(asr.1, 2);
-
-    group.stop();
-}
-
-#[tokio::test]
-async fn follower_crash_and_recovery() {
-    init_logger();
-
-    let mut group = CurpGroup::new(5).await;
-    let client = group.new_client(ClientTimeout::default()).await;
-
-    let leader = group.fetch_leader().await.unwrap();
-    let follower = group
-        .nodes
-        .keys()
-        .find(|&id| id != &leader)
+    // the follower should response empty immediately
+    let resp: ProposeResponse = follower_connect
+        .propose(tonic::Request::new(ProposeRequest {
+            command: bincode::serialize(&cmd).unwrap(),
+        }))
+        .await
         .unwrap()
-        .clone();
-    group.crash(&follower);
-
-    assert_eq!(
-        client
-            .propose(TestCommand::new_put(0, vec![0], 0))
-            .await
-            .unwrap(),
-        vec![]
-    );
-    assert_eq!(
-        client
-            .propose(TestCommand::new_get(1, vec![0]))
-            .await
-            .unwrap(),
-        vec![0]
-    );
-
-    // let cmds to be synced
-    tokio::time::sleep(Duration::from_secs(2)).await;
-
-    // restart follower
-    group.restart(&follower).await;
-    let follower = group.nodes.get_mut(&follower).unwrap();
-
-    let er = follower.exe_rx.recv().await.unwrap();
-    assert_eq!(er.1, vec![]);
-    let asr = follower.as_rx.recv().await.unwrap();
-    assert_eq!(asr.1, 1);
-
-    let er = follower.exe_rx.recv().await.unwrap();
-    assert_eq!(er.1, vec![0]);
-    let asr = follower.as_rx.recv().await.unwrap();
-    assert_eq!(asr.1, 2);
-
-    group.stop();
-}
-
-#[tokio::test]
-async fn leader_and_follower_both_crash_and_recovery() {
-    init_logger();
-
-    let mut group = CurpGroup::new(5).await;
-    let client = group.new_client(ClientTimeout::default()).await;
-
-    let leader = group.fetch_leader().await.unwrap();
-    let follower = group
-        .nodes
-        .keys()
-        .find(|&id| id != &leader)
-        .unwrap()
-        .clone();
-    group.crash(&follower);
-
-    assert_eq!(
-        client
-            .propose(TestCommand::new_put(0, vec![0], 0))
-            .await
-            .unwrap(),
-        vec![]
-    );
-    assert_eq!(
-        client
-            .propose(TestCommand::new_get(1, vec![0]))
-            .await
-            .unwrap(),
-        vec![0]
-    );
-
-    // let cmds to be synced
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    group.crash(&leader);
-
-    // restart the original leader
-    group.restart(&leader).await;
-    let old_leader = group.nodes.get_mut(&leader).unwrap();
-
-    let er = old_leader.exe_rx.recv().await.unwrap();
-    assert_eq!(er.1, vec![]);
-    let asr = old_leader.as_rx.recv().await.unwrap();
-    assert_eq!(asr.1, 1);
-
-    let er = old_leader.exe_rx.recv().await.unwrap();
-    assert_eq!(er.1, vec![0]);
-    let asr = old_leader.as_rx.recv().await.unwrap();
-    assert_eq!(asr.1, 2);
-
-    // restart follower
-    group.restart(&follower).await;
-    let follower = group.nodes.get_mut(&follower).unwrap();
-
-    let er = follower.exe_rx.recv().await.unwrap();
-    assert_eq!(er.1, vec![]);
-    let asr = follower.as_rx.recv().await.unwrap();
-    assert_eq!(asr.1, 1);
-
-    let er = follower.exe_rx.recv().await.unwrap();
-    assert_eq!(er.1, vec![0]);
-    let asr = follower.as_rx.recv().await.unwrap();
-    assert_eq!(asr.1, 2);
+        .into_inner();
+    assert!(resp.exe_result.is_none());
 
     group.stop();
 }
