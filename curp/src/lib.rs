@@ -125,7 +125,7 @@
 )]
 
 pub use message::LogIndex;
-pub use rpc::ProtocolServer;
+pub use rpc::{connect::TxFilter, ProtocolServer};
 
 /// Client side, sending requests and determining requests' state
 pub mod client;

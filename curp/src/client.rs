@@ -15,6 +15,7 @@ use crate::{
     error::ProposeError,
     message::{ServerId, TermNum},
     rpc::{
+        self,
         connect::{Connect, ConnectInterface},
         FetchLeaderRequest, ProposeRequest, SyncError, SyncResult, WaitSyncedRequest,
     },
@@ -85,7 +86,7 @@ where
     pub async fn new(addrs: HashMap<ServerId, String>, timeout: ClientTimeout) -> Self {
         Self {
             state: RwLock::new(State::new()),
-            connects: Connect::try_connect(addrs).await,
+            connects: rpc::connect(addrs, None).await,
             timeout,
             phatom: PhantomData,
         }

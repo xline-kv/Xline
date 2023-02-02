@@ -210,6 +210,7 @@ impl XlineServer {
                 Arc::clone(&self.lease_storage),
             ),
             Arc::clone(&self.server_timeout),
+            None,
         );
         let _handle = tokio::spawn({
             let state = Arc::clone(&self.state);

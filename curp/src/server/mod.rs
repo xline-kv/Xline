@@ -1,5 +1,3 @@
-#[cfg(test)]
-use std::sync::atomic::AtomicBool;
 use std::{
     cmp::{min, Ordering},
     collections::HashMap,
@@ -13,6 +11,7 @@ use itertools::Itertools;
 use parking_lot::{lock_api::RwLockUpgradableReadGuard, RwLock};
 use tokio::{net::TcpListener, sync::broadcast, time::Instant};
 use tokio_stream::wrappers::TcpListenerStream;
+use tower::filter::FilterLayer;
 use tracing::{debug, error, info, instrument, warn};
 use utils::{
     config::ServerTimeout,
@@ -40,6 +39,7 @@ use crate::{
         spec_pool::SpecPoolRef,
     },
     shutdown::Shutdown,
+    TxFilter,
 };
 
 /// Background tasks of Curp protocol
@@ -122,28 +122,11 @@ impl<C: Command + 'static> Rpc<C> {
         others: HashMap<ServerId, String>,
         executor: CE,
         timeout: Arc<ServerTimeout>,
+        tx_filter: Option<Box<dyn TxFilter>>,
     ) -> Self {
         Self {
-            inner: Arc::new(Protocol::new(id, is_leader, others, executor, timeout)),
-        }
-    }
-
-    #[cfg(test)]
-    pub fn new_test<CE: CommandExecutor<C> + 'static>(
-        id: ServerId,
-        is_leader: bool,
-        others: HashMap<ServerId, String>,
-        ce: CE,
-        switch: Arc<AtomicBool>,
-    ) -> Self {
-        Self {
-            inner: Arc::new(Protocol::new_test(
-                id,
-                is_leader,
-                others.into_iter().collect(),
-                ce,
-                Arc::new(ServerTimeout::default()),
-                switch,
+            inner: Arc::new(Protocol::new(
+                id, is_leader, others, executor, timeout, tx_filter,
             )),
         }
     }
@@ -153,27 +136,52 @@ impl<C: Command + 'static> Rpc<C> {
     /// # Errors
     ///   `ServerError::ParsingError` if parsing failed for the local server address
     ///   `ServerError::RpcError` if any rpc related error met
+    #[allow(clippy::too_many_arguments)]
     #[inline]
-    pub async fn run<CE: CommandExecutor<C> + 'static>(
+    pub async fn run<CE, U, UE>(
         id: ServerId,
-        is_leader: bool, // TODO: remove this option
+        is_leader: bool,
         others: HashMap<ServerId, String>,
         server_port: Option<u16>,
         executor: CE,
         timeout: Arc<ServerTimeout>,
-    ) -> Result<(), ServerError> {
+        tx_filter: Option<Box<dyn TxFilter>>,
+        rx_filter: Option<FilterLayer<U>>,
+    ) -> Result<(), ServerError>
+    where
+        CE: 'static + CommandExecutor<C>,
+        U: 'static
+            + Send
+            + Clone
+            + FnMut(
+                tonic::codegen::http::Request<tonic::transport::Body>,
+            ) -> Result<tonic::codegen::http::Request<tonic::transport::Body>, UE>,
+        UE: 'static + Send + Sync + std::error::Error,
+    {
         let port = server_port.unwrap_or(DEFAULT_SERVER_PORT);
         info!("RPC server {id} started, listening on port {port}");
-        let server = Self::new(id, is_leader, others, executor, timeout);
+        let server = Self::new(id, is_leader, others, executor, timeout, tx_filter);
 
-        tonic::transport::Server::builder()
-            .add_service(ProtocolServer::new(server))
-            .serve(
-                format!("0.0.0.0:{}", port)
-                    .parse()
-                    .map_err(|e| ServerError::ParsingError(format!("{}", e)))?,
-            )
-            .await?;
+        if let Some(f) = rx_filter {
+            tonic::transport::Server::builder()
+                .layer(f)
+                .add_service(ProtocolServer::new(server))
+                .serve(
+                    format!("0.0.0.0:{}", port)
+                        .parse()
+                        .map_err(|e| ServerError::ParsingError(format!("{}", e)))?,
+                )
+                .await?;
+        } else {
+            tonic::transport::Server::builder()
+                .add_service(ProtocolServer::new(server))
+                .serve(
+                    format!("0.0.0.0:{}", port)
+                        .parse()
+                        .map_err(|e| ServerError::ParsingError(format!("{}", e)))?,
+                )
+                .await?;
+        }
         Ok(())
     }
 
@@ -182,22 +190,45 @@ impl<C: Command + 'static> Rpc<C> {
     /// # Errors
     ///   `ServerError::ParsingError` if parsing failed for the local server address
     ///   `ServerError::RpcError` if any rpc related error met
+    #[allow(clippy::too_many_arguments)]
     #[inline]
-    pub async fn run_from_listener<CE: CommandExecutor<C> + 'static>(
+    pub async fn run_from_listener<CE, U, UE>(
         id: ServerId,
         is_leader: bool,
         others: HashMap<ServerId, String>,
         listener: TcpListener,
         executor: CE,
         timeout: Arc<ServerTimeout>,
-    ) -> Result<(), ServerError> {
+        tx_filter: Option<Box<dyn TxFilter>>,
+        rx_filter: Option<FilterLayer<U>>,
+    ) -> Result<(), ServerError>
+    where
+        CE: 'static + CommandExecutor<C>,
+        U: 'static
+            + Send
+            + Clone
+            + FnMut(
+                tonic::codegen::http::Request<tonic::transport::Body>,
+            ) -> Result<tonic::codegen::http::Request<tonic::transport::Body>, UE>,
+        UE: 'static + Send + Sync + std::error::Error,
+    {
         let server = Self {
-            inner: Arc::new(Protocol::new(id, is_leader, others, executor, timeout)),
+            inner: Arc::new(Protocol::new(
+                id, is_leader, others, executor, timeout, tx_filter,
+            )),
         };
-        tonic::transport::Server::builder()
-            .add_service(ProtocolServer::new(server))
-            .serve_with_incoming(TcpListenerStream::new(listener))
-            .await?;
+        if let Some(f) = rx_filter {
+            tonic::transport::Server::builder()
+                .layer(f)
+                .add_service(ProtocolServer::new(server))
+                .serve_with_incoming(TcpListenerStream::new(listener))
+                .await?;
+        } else {
+            tonic::transport::Server::builder()
+                .add_service(ProtocolServer::new(server))
+                .serve_with_incoming(TcpListenerStream::new(listener))
+                .await?;
+        }
         Ok(())
     }
 
@@ -292,6 +323,7 @@ impl<C: 'static + Command> Protocol<C> {
         others: HashMap<ServerId, String>,
         cmd_executor: CE,
         timeout: Arc<ServerTimeout>,
+        tx_filter: Option<Box<dyn TxFilter>>,
     ) -> Self {
         let (sync_tx, sync_rx) = flume::unbounded();
         let (stop_ch_tx, stop_ch_rx) = broadcast::channel(1);
@@ -322,63 +354,7 @@ impl<C: 'static + Command> Protocol<C> {
             as_rx,
             Shutdown::new(stop_ch_rx.resubscribe()),
             Arc::clone(&timeout),
-            #[cfg(test)]
-            Arc::new(AtomicBool::new(true)),
-        ));
-
-        run_gc_tasks(Arc::clone(&cmd_board), Arc::clone(&spec));
-
-        Self {
-            state,
-            last_rpc_time,
-            spec,
-            sync_chan: sync_tx,
-            cmd_board,
-            stop_ch_tx,
-            cmd_exe_tx: exe_tx,
-            timeout,
-        }
-    }
-
-    #[cfg(test)]
-    pub fn new_test<CE: CommandExecutor<C> + 'static>(
-        id: ServerId,
-        is_leader: bool,
-        others: HashMap<ServerId, String>,
-        cmd_executor: CE,
-        timeout: Arc<ServerTimeout>,
-        reachable: Arc<AtomicBool>,
-    ) -> Self {
-        let (sync_tx, sync_rx) = flume::unbounded();
-        let (stop_ch_tx, stop_ch_rx) = broadcast::channel(1);
-        let (exe_tx, exe_rx, as_rx) = cmd_exe_channel();
-
-        let state = State::new(
-            id,
-            if is_leader {
-                ServerRole::Leader
-            } else {
-                ServerRole::Follower
-            },
-            others,
-            exe_tx.clone(),
-        );
-        let last_rpc_time = state.last_rpc_time();
-        let spec = state.spec();
-        let cmd_board = state.cmd_board();
-        let state = Arc::new(RwLock::new(state));
-
-        // run background tasks
-        let _bg_handle = tokio::spawn(bg_tasks::run_bg_tasks::<_, _, Connect, _>(
-            Arc::clone(&state),
-            sync_rx,
-            cmd_executor,
-            exe_tx.clone(),
-            exe_rx,
-            as_rx,
-            Shutdown::new(stop_ch_rx.resubscribe()),
-            Arc::clone(&timeout),
-            reachable,
+            tx_filter,
         ));
 
         run_gc_tasks(Arc::clone(&cmd_board), Arc::clone(&spec));
@@ -713,6 +689,3 @@ impl<C: 'static + Command> Drop for Protocol<C> {
         let _ = self.stop_ch_tx.send(()).ok();
     }
 }
-
-#[cfg(test)]
-mod tests;
