@@ -28,7 +28,7 @@ use crate::{
         LockServer as RpcLockServer, WatchServer as RpcWatchServer,
     },
     state::State,
-    storage::{AuthStore, KvStore, LeaseStore},
+    storage::{storage_api::StorageApi, AuthStore, KvStore, LeaseStore},
 };
 
 /// Default channel size
@@ -40,13 +40,16 @@ type CurpServer = Rpc<Command>;
 /// Xline server
 #[allow(dead_code)] // Remove this after feature is completed
 #[derive(Debug)]
-pub struct XlineServer {
+pub struct XlineServer<S>
+where
+    S: StorageApi,
+{
     /// State of current node
     state: Arc<State>,
     /// Kv storage
-    kv_storage: Arc<KvStore>,
+    kv_storage: Arc<KvStore<S>>,
     /// Auth storage
-    auth_storage: Arc<AuthStore>,
+    auth_storage: Arc<AuthStore<S>>,
     /// Lease storage
     lease_storage: Arc<LeaseStore>,
     /// Consensus client
@@ -59,7 +62,10 @@ pub struct XlineServer {
     id_gen: Arc<IdGenerator>,
 }
 
-impl XlineServer {
+impl<S> XlineServer<S>
+where
+    S: StorageApi + Clone,
+{
     /// New `XlineServer`
     ///
     /// # Panics
@@ -73,6 +79,7 @@ impl XlineServer {
         key_pair: Option<(EncodingKey, DecodingKey)>,
         server_timeout: ServerTimeout,
         client_timeout: ClientTimeout,
+        storage: S,
     ) -> Self {
         // TODO: temporary solution, need real cluster id and member id
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
@@ -92,11 +99,13 @@ impl XlineServer {
             lease_cmd_tx.clone(),
             del_rx,
             Arc::clone(&header_gen),
+            storage.clone(), // TODO: implement bucket storage
         ));
         let auth_storage = Arc::new(AuthStore::new(
             lease_cmd_tx,
             key_pair,
             Arc::clone(&header_gen),
+            storage,
         ));
         let client = Arc::new(Client::<Command>::new(all_members.clone(), client_timeout).await);
         Self {
@@ -190,14 +199,15 @@ impl XlineServer {
 
     /// Init `KvServer`, `LockServer`, `LeaseServer`, `WatchServer` and `CurpServer`
     /// for the Xline Server.
+    #[allow(clippy::type_complexity)] // it is easy to read
     fn init_servers(
         &self,
     ) -> (
-        KvServer,
-        LockServer,
-        Arc<LeaseServer>,
-        AuthServer,
-        WatchServer,
+        KvServer<S>,
+        LockServer<S>,
+        Arc<LeaseServer<S>>,
+        AuthServer<S>,
+        WatchServer<S>,
         CurpServer,
     ) {
         let curp_server = CurpServer::new(

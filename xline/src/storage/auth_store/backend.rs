@@ -47,6 +47,7 @@ use crate::{
         index::{Index, IndexOperate},
         lease_store::{Lease, LeaseMessage},
         req_ctx::RequestCtx,
+        storage_api::StorageApi,
     },
 };
 
@@ -62,11 +63,14 @@ pub(crate) const ROOT_USER: &str = "root";
 pub(crate) const ROOT_ROLE: &str = "root";
 
 /// Auth store inner
-pub(crate) struct AuthStoreBackend {
+pub(crate) struct AuthStoreBackend<S>
+where
+    S: StorageApi,
+{
     /// Key Index
     index: Index,
     /// DB to store key value
-    db: DB,
+    db: DB<S>,
     /// Revision
     revision: RevisionNumber,
     /// Speculative execution pool. Mapping from propose id to request
@@ -83,7 +87,10 @@ pub(crate) struct AuthStoreBackend {
     header_gen: Arc<HeaderGenerator>,
 }
 
-impl fmt::Debug for AuthStoreBackend {
+impl<S> fmt::Debug for AuthStoreBackend<S>
+where
+    S: StorageApi,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AuthStoreBackend")
             .field("index", &self.index)
@@ -98,16 +105,20 @@ impl fmt::Debug for AuthStoreBackend {
     }
 }
 
-impl AuthStoreBackend {
+impl<S> AuthStoreBackend<S>
+where
+    S: StorageApi,
+{
     /// New `AuthStoreBackend`
     pub(super) fn new(
         lease_cmd_tx: mpsc::Sender<LeaseMessage>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
         header_gen: Arc<HeaderGenerator>,
+        storage: S,
     ) -> Self {
         Self {
             index: Index::new(),
-            db: DB::new(),
+            db: DB::new(storage),
             revision: RevisionNumber::new(),
             sp_exec_pool: Mutex::new(HashMap::new()),
             enabled: AtomicBool::new(false),
@@ -194,9 +205,9 @@ impl AuthStoreBackend {
     }
 
     /// create permission cache
-    fn create_permission_cache(&self) {
+    fn create_permission_cache(&self) -> Result<(), ExecuteError> {
         let mut permission_cache = PermissionCache::new();
-        for user in self.get_all_users() {
+        for user in self.get_all_users()? {
             let user_permission = self.get_user_permissions(&user);
             let username = String::from_utf8_lossy(&user.name).to_string();
             let _ignore = permission_cache
@@ -205,6 +216,7 @@ impl AuthStoreBackend {
         }
         self.permission_cache
             .map_write(|mut cache| *cache = permission_cache);
+        Ok(())
     }
 
     /// get user permissions
@@ -253,16 +265,16 @@ impl AuthStoreBackend {
     }
 
     /// get `KeyValue` in `AuthStore`
-    fn get(&self, key: &[u8]) -> Option<KeyValue> {
+    fn get(&self, key: &[u8]) -> Result<Option<KeyValue>, ExecuteError> {
         let revisions = self.index.get(key, &[], 0);
         assert!(revisions.len() <= 1);
-        self.db.get_values(&revisions).pop()
+        self.db.get_values(&revisions).map(|mut kv| kv.pop())
     }
 
     /// get user by username
     pub(super) fn get_user(&self, username: &str) -> Result<User, ExecuteError> {
         let key = [USER_PREFIX, username.as_bytes()].concat();
-        match self.get(&key) {
+        match self.get(&key)? {
             Some(kv) => Ok(User::decode(kv.value.as_slice()).unwrap_or_else(|e| {
                 panic!(
                     "Failed to decode user from kv value, error: {:?}, kv: {:?}",
@@ -276,7 +288,7 @@ impl AuthStoreBackend {
     /// get role by rolename
     fn get_role(&self, rolename: &str) -> Result<Role, ExecuteError> {
         let key = [ROLE_PREFIX, rolename.as_bytes()].concat();
-        match self.get(&key) {
+        match self.get(&key)? {
             Some(kv) => Ok(Role::decode(kv.value.as_slice()).unwrap_or_else(|e| {
                 panic!(
                     "Failed to decode role from kv value, error: {:?}, kv: {:?}",
@@ -288,7 +300,13 @@ impl AuthStoreBackend {
     }
 
     /// get `KeyValue` to `AuthStore`
-    fn put(&self, key: Vec<u8>, value: Vec<u8>, revision: i64, sub_revision: i64) {
+    fn put(
+        &self,
+        key: Vec<u8>,
+        value: Vec<u8>,
+        revision: i64,
+        sub_revision: i64,
+    ) -> Result<(), ExecuteError> {
         let new_rev = self
             .index
             .insert_or_update_revision(&key, revision, sub_revision);
@@ -300,47 +318,59 @@ impl AuthStoreBackend {
             version: new_rev.version,
             ..KeyValue::default()
         };
-        let _prev = self.db.insert(new_rev.as_revision(), kv);
+        self.db.insert(new_rev.as_revision(), &kv)
     }
 
     /// put user to `AuthStore`
-    fn put_user(&self, user: &User, revision: i64, sub_revision: i64) {
+    fn put_user(&self, user: &User, revision: i64, sub_revision: i64) -> Result<(), ExecuteError> {
         let key = [USER_PREFIX, &user.name].concat();
         let value = user.encode_to_vec();
-        self.put(key, value, revision, sub_revision);
+        self.put(key, value, revision, sub_revision)
     }
 
     /// put role to `AuthStore`
-    fn put_role(&self, role: &Role, revision: i64, sub_revision: i64) {
+    fn put_role(&self, role: &Role, revision: i64, sub_revision: i64) -> Result<(), ExecuteError> {
         let key = [ROLE_PREFIX, &role.name].concat();
         let value = role.encode_to_vec();
-        self.put(key, value, revision, sub_revision);
+        self.put(key, value, revision, sub_revision)
     }
 
     /// delete `KeyValue` in `AuthStore`
-    fn delete(&self, key: &[u8], revision: i64, sub_revision: i64) {
+    fn delete(&self, key: &[u8], revision: i64, sub_revision: i64) -> Result<(), ExecuteError> {
         let revisions = self.index.delete(key, &[], revision, sub_revision);
-        let _prev_kv = self.db.mark_deletions(&revisions);
+        let _ignore = self.db.mark_deletions(&revisions)?;
+        Ok(())
     }
 
     /// delete user in `AuthStore`
-    fn delete_user(&self, username: &str, revision: i64, sub_revision: i64) {
+    fn delete_user(
+        &self,
+        username: &str,
+        revision: i64,
+        sub_revision: i64,
+    ) -> Result<(), ExecuteError> {
         let key = [USER_PREFIX, username.as_bytes()].concat();
-        self.delete(&key, revision, sub_revision);
+        self.delete(&key, revision, sub_revision)
     }
 
     /// delete role in `AuthStore`
-    fn delete_role(&self, rolename: &str, revision: i64, sub_revision: i64) {
+    fn delete_role(
+        &self,
+        rolename: &str,
+        revision: i64,
+        sub_revision: i64,
+    ) -> Result<(), ExecuteError> {
         let key = [ROLE_PREFIX, rolename.as_bytes()].concat();
-        self.delete(&key, revision, sub_revision);
+        self.delete(&key, revision, sub_revision)
     }
 
     /// Get all users in the `AuthStore`
-    fn get_all_users(&self) -> Vec<User> {
+    fn get_all_users(&self) -> Result<Vec<User>, ExecuteError> {
         let range_end = KeyRange::get_prefix(USER_PREFIX);
         let revisions = self.index.get(USER_PREFIX, &range_end, 0);
-        self.db
-            .get_values(&revisions)
+        let users = self
+            .db
+            .get_values(&revisions)?
             .into_iter()
             .map(|kv| {
                 User::decode(kv.value.as_slice()).unwrap_or_else(|e| {
@@ -350,15 +380,17 @@ impl AuthStoreBackend {
                     )
                 })
             })
-            .collect()
+            .collect();
+        Ok(users)
     }
 
     /// Get all roles in the `AuthStore`
-    fn get_all_roles(&self) -> Vec<Role> {
+    fn get_all_roles(&self) -> Result<Vec<Role>, ExecuteError> {
         let range_end = KeyRange::get_prefix(ROLE_PREFIX);
         let revisions = self.index.get(ROLE_PREFIX, &range_end, 0);
-        self.db
-            .get_values(&revisions)
+        let roles = self
+            .db
+            .get_values(&revisions)?
             .into_iter()
             .map(|kv| {
                 Role::decode(kv.value.as_slice()).unwrap_or_else(|e| {
@@ -368,7 +400,8 @@ impl AuthStoreBackend {
                     )
                 })
             })
-            .collect()
+            .collect();
+        Ok(roles)
     }
 
     /// Handle `InternalRequest`
@@ -396,7 +429,7 @@ impl AuthStoreBackend {
                 self.handle_user_get_request(req).map(Into::into)
             }
             RequestWrapper::AuthUserListRequest(ref req) => {
-                Ok(self.handle_user_list_request(req).into())
+                self.handle_user_list_request(req).map(Into::into)
             }
             RequestWrapper::AuthUserGrantRoleRequest(ref req) => {
                 self.handle_user_grant_role_request(req).map(Into::into)
@@ -426,7 +459,7 @@ impl AuthStoreBackend {
                 self.handle_role_delete_request(req).map(Into::into)
             }
             RequestWrapper::AuthRoleListRequest(ref req) => {
-                Ok(self.handle_role_list_request(req).into())
+                self.handle_role_list_request(req).map(Into::into)
             }
             RequestWrapper::AuthenticateRequest(ref req) => {
                 self.handle_authenticate_request(req).map(Into::into)
@@ -453,9 +486,7 @@ impl AuthStoreBackend {
             debug!("auth is already enabled");
             return res;
         }
-        let user = self
-            .get_user(ROOT_USER)
-            .map_err(|_ignore| ExecuteError::InvalidCommand("root user is not exist".to_owned()))?;
+        let user = self.get_user(ROOT_USER)?;
         if user.roles.binary_search(&ROOT_ROLE.to_owned()).is_err() {
             return Err(ExecuteError::InvalidCommand(
                 "root user does not have root role".to_owned(),
@@ -533,17 +564,20 @@ impl AuthStoreBackend {
     }
 
     /// Handle `AuthUserListRequest`
-    fn handle_user_list_request(&self, _req: &AuthUserListRequest) -> AuthUserListResponse {
+    fn handle_user_list_request(
+        &self,
+        _req: &AuthUserListRequest,
+    ) -> Result<AuthUserListResponse, ExecuteError> {
         debug!("handle_user_list_request");
         let users = self
-            .get_all_users()
+            .get_all_users()?
             .into_iter()
             .map(|u| String::from_utf8_lossy(&u.name).to_string())
             .collect();
-        AuthUserListResponse {
+        Ok(AuthUserListResponse {
             header: Some(self.header_gen.gen_header_without_revision()),
             users,
-        }
+        })
     }
 
     /// Handle `AuthUserDeleteRequest`
@@ -658,17 +692,20 @@ impl AuthStoreBackend {
     }
 
     /// Handle `AuthRoleListRequest`
-    fn handle_role_list_request(&self, _req: &AuthRoleListRequest) -> AuthRoleListResponse {
+    fn handle_role_list_request(
+        &self,
+        _req: &AuthRoleListRequest,
+    ) -> Result<AuthRoleListResponse, ExecuteError> {
         debug!("handle_role_list_request");
         let roles = self
-            .get_all_roles()
+            .get_all_roles()?
             .into_iter()
             .map(|r| String::from_utf8_lossy(&r.name).to_string())
             .collect();
-        AuthRoleListResponse {
+        Ok(AuthRoleListResponse {
             header: Some(self.header_gen.gen_header_without_revision()),
             roles,
-        }
+        })
     }
 
     /// Handle `UserRoleDeleteRequest`
@@ -726,120 +763,109 @@ impl AuthStoreBackend {
     }
 
     /// Sync `RequestWrapper`
-    pub(super) fn sync_request(&self, id: &ProposeId) -> i64 {
+    pub(super) fn sync_request(&self, id: &ProposeId) -> Result<i64, ExecuteError> {
         let ctx = self.sp_exec_pool.lock().remove(id).unwrap_or_else(|| {
             panic!("Failed to get speculative execution propose id {:?}", id);
         });
         if ctx.met_err() {
-            return self.header_gen.revision();
+            return Ok(self.header_gen.revision());
         }
         let wrapper = ctx.req();
         #[allow(clippy::wildcard_enum_match_arm)]
         match wrapper {
             RequestWrapper::AuthEnableRequest(req) => {
                 debug!("Sync AuthEnableRequest {:?}", req);
-                self.sync_auth_enable_request(&req);
+                self.sync_auth_enable_request(&req)?;
             }
             RequestWrapper::AuthDisableRequest(req) => {
                 debug!("Sync AuthDisableRequest {:?}", req);
-                self.sync_auth_disable_request(&req);
+                self.sync_auth_disable_request(&req)?;
             }
             RequestWrapper::AuthStatusRequest(req) => {
                 debug!("Sync AuthStatusRequest {:?}", req);
-                Self::sync_auth_status_request(&req);
             }
             RequestWrapper::AuthUserAddRequest(req) => {
                 debug!("Sync AuthUserAddRequest {:?}", req);
-                self.sync_user_add_request(req);
+                self.sync_user_add_request(req)?;
             }
             RequestWrapper::AuthUserGetRequest(req) => {
                 debug!("Sync AuthUserGetRequest {:?}", req);
-                Self::sync_user_get_request(&req);
             }
             RequestWrapper::AuthUserListRequest(req) => {
                 debug!("Sync AuthUserListRequest {:?}", req);
-                Self::sync_user_list_request(&req);
             }
             RequestWrapper::AuthUserGrantRoleRequest(req) => {
                 debug!("Sync AuthUserGrantRoleRequest {:?}", req);
-                self.sync_user_grant_role_request(req);
+                self.sync_user_grant_role_request(req)?;
             }
             RequestWrapper::AuthUserRevokeRoleRequest(req) => {
                 debug!("Sync AuthUserRevokeRoleRequest {:?}", req);
-                self.sync_user_revoke_role_request(req);
+                self.sync_user_revoke_role_request(req)?;
             }
             RequestWrapper::AuthUserChangePasswordRequest(req) => {
                 debug!("Sync AuthUserChangePasswordRequest {:?}", req);
-                self.sync_user_change_password_request(req);
+                self.sync_user_change_password_request(req)?;
             }
             RequestWrapper::AuthUserDeleteRequest(req) => {
                 debug!("Sync AuthUserDeleteRequest {:?}", req);
-                self.sync_user_delete_request(&req);
+                self.sync_user_delete_request(&req)?;
             }
             RequestWrapper::AuthRoleAddRequest(req) => {
                 debug!("Sync AuthRoleAddRequest {:?}", req);
-                self.sync_role_add_request(req);
+                self.sync_role_add_request(req)?;
             }
             RequestWrapper::AuthRoleGetRequest(req) => {
                 debug!("Sync AuthRoleGetRequest {:?}", req);
-                Self::sync_role_get_request(&req);
             }
             RequestWrapper::AuthRoleGrantPermissionRequest(req) => {
                 debug!("Sync AuthRoleGrantPermissionRequest {:?}", req);
-                self.sync_role_grant_permission_request(req);
+                self.sync_role_grant_permission_request(req)?;
             }
             RequestWrapper::AuthRoleRevokePermissionRequest(req) => {
                 debug!("Sync AuthRoleRevokePermissionRequest {:?}", req);
-                self.sync_role_revoke_permission_request(&req);
+                self.sync_role_revoke_permission_request(&req)?;
             }
             RequestWrapper::AuthRoleListRequest(req) => {
                 debug!("Sync AuthRoleListRequest {:?}", req);
-                Self::sync_role_list_request(&req);
             }
             RequestWrapper::AuthRoleDeleteRequest(req) => {
                 debug!("Sync AuthRoleDeleteRequest {:?}", req);
-                self.sync_role_delete_request(&req);
+                self.sync_role_delete_request(&req)?;
             }
             RequestWrapper::AuthenticateRequest(req) => {
                 debug!("Sync AuthenticateRequest {:?}", req);
-                Self::sync_authenticate_request(&req);
             }
             _ => {
                 unreachable!("Other request should not be sent to this store");
             }
         }
-        self.header_gen.revision()
+        Ok(self.header_gen.revision())
     }
 
     /// Sync `AuthEnableRequest` and return whether authstore is changed.
-    fn sync_auth_enable_request(&self, _req: &AuthEnableRequest) {
+    fn sync_auth_enable_request(&self, _req: &AuthEnableRequest) -> Result<(), ExecuteError> {
         if self.is_enabled() {
-            return;
+            return Ok(());
         }
         let revision = self.revision.next();
-        self.put(AUTH_ENABLE_KEY.to_vec(), vec![1], revision, 0);
+        self.put(AUTH_ENABLE_KEY.to_vec(), vec![1], revision, 0)?;
         self.enabled.store(true, AtomicOrdering::Release);
-        self.create_permission_cache();
+        self.create_permission_cache()
     }
 
     /// Sync `AuthDisableRequest` and return whether authstore is changed.
-    fn sync_auth_disable_request(&self, _req: &AuthDisableRequest) {
+    fn sync_auth_disable_request(&self, _req: &AuthDisableRequest) -> Result<(), ExecuteError> {
         if !self.is_enabled() {
-            return;
+            return Ok(());
         }
         let revision = self.revision.next();
-        self.put(AUTH_ENABLE_KEY.to_vec(), vec![0], revision, 0);
+        self.put(AUTH_ENABLE_KEY.to_vec(), vec![0], revision, 0)?;
         self.enabled.store(false, AtomicOrdering::Release);
+        Ok(())
     }
 
-    /// Sync `AuthStatusRequest` and return whether authstore is changed.
-    fn sync_auth_status_request(_req: &AuthStatusRequest) {}
-
-    /// Sync `AuthenticateRequest` and return whether authstore is changed.
-    fn sync_authenticate_request(_req: &AuthenticateRequest) {}
-
     /// Sync `AuthUserAddRequest` and return whether authstore is changed.
-    fn sync_user_add_request(&self, req: AuthUserAddRequest) {
+    fn sync_user_add_request(&self, req: AuthUserAddRequest) -> Result<(), ExecuteError> {
         let user = User {
             name: req.name.into_bytes(),
             password: req.hashed_password.into_bytes(),
@@ -847,19 +873,13 @@ impl AuthStoreBackend {
             roles: Vec::new(),
         };
         let revision = self.revision.next();
-        self.put_user(&user, revision, 0);
+        self.put_user(&user, revision, 0)
     }
 
-    /// Sync `AuthUserGetRequest` and return whether authstore is changed.
-    fn sync_user_get_request(_req: &AuthUserGetRequest) {}
-
-    /// Sync `AuthUserListRequest` and return whether authstore is changed.
-    fn sync_user_list_request(_req: &AuthUserListRequest) {}
-
     /// Sync `AuthUserDeleteRequest` and return whether authstore is changed.
-    fn sync_user_delete_request(&self, req: &AuthUserDeleteRequest) {
+    fn sync_user_delete_request(&self, req: &AuthUserDeleteRequest) -> Result<(), ExecuteError> {
         let next_revision = self.revision.next();
-        self.delete_user(&req.name, next_revision, 0);
+        self.delete_user(&req.name, next_revision, 0)?;
         self.permission_cache.map_write(|mut cache| {
             let _ignore = cache.user_permissions.remove(&req.name);
             cache.role_to_users_map.iter_mut().for_each(|(_, users)| {
@@ -868,37 +888,45 @@ impl AuthStoreBackend {
                 };
             });
         });
+        Ok(())
     }
 
     /// Sync `AuthUserChangePasswordRequest` and return whether authstore is changed.
-    fn sync_user_change_password_request(&self, req: AuthUserChangePasswordRequest) {
-        let mut user = match self.get_user(&req.name) {
-            Ok(user) => user,
-            Err(_) => return,
-        };
+    fn sync_user_change_password_request(
+        &self,
+        req: AuthUserChangePasswordRequest,
+    ) -> Result<(), ExecuteError> {
+        let mut user = self.get_user(&req.name)?;
         user.password = req.hashed_password.into_bytes();
         let revision = self.revision.next();
-        self.put_user(&user, revision, 0);
+        self.put_user(&user, revision, 0)
     }
 
     /// Sync `AuthUserGrantRoleRequest` and return whether authstore is changed.
-    fn sync_user_grant_role_request(&self, req: AuthUserGrantRoleRequest) {
-        let mut user = match self.get_user(&req.user) {
-            Ok(user) => user,
-            Err(_) => return,
-        };
+    fn sync_user_grant_role_request(
+        &self,
+        req: AuthUserGrantRoleRequest,
+    ) -> Result<(), ExecuteError> {
+        let mut user = self.get_user(&req.user)?;
         let role = self.get_role(&req.role);
         if (req.role != ROOT_ROLE) && role.is_err() {
-            return;
+            return Err(ExecuteError::InvalidCommand(format!(
+                "Role {} does not exist",
+                req.role
+            )));
         }
-        // TODO get index from binary search and inset directly
-        if user.roles.binary_search(&req.role).is_ok() {
-            return;
-        }
-        user.roles.push(req.role.clone());
-        user.roles.sort();
+        let idx = match user.roles.binary_search(&req.role) {
+            Ok(_) => {
+                return Err(ExecuteError::InvalidCommand(format!(
+                    "User {} already has role {}",
+                    req.user, req.role
+                )));
+            }
+            Err(idx) => idx,
+        };
+        user.roles.insert(idx, req.role.clone());
         let revision = self.revision.next();
-        self.put_user(&user, revision, 0);
+        self.put_user(&user, revision, 0)?;
         if let Ok(role) = role {
             let perms = role.key_permission;
             self.permission_cache.map_write(|mut cache| {
@@ -929,21 +957,24 @@ impl AuthStoreBackend {
                     .push(req.user);
             });
         }
+        Ok(())
     }
 
     /// Sync `AuthUserRevokeRoleRequest` and return whether authstore is changed.
-    fn sync_user_revoke_role_request(&self, req: AuthUserRevokeRoleRequest) {
-        let mut user = match self.get_user(&req.name) {
-            Ok(user) => user,
-            Err(_) => return,
-        };
-        let idx = match user.roles.binary_search(&req.role) {
-            Ok(idx) => idx,
-            Err(_) => return,
-        };
+    fn sync_user_revoke_role_request(
+        &self,
+        req: AuthUserRevokeRoleRequest,
+    ) -> Result<(), ExecuteError> {
+        let mut user = self.get_user(&req.name)?;
+        let idx = user.roles.binary_search(&req.role).map_err(|_ignore| {
+            ExecuteError::InvalidCommand(format!(
+                "User {} does not have role {}",
+                req.name, req.role
+            ))
+        })?;
         let _ignore = user.roles.remove(idx);
         let revision = self.revision.next();
-        self.put_user(&user, revision, 0);
+        self.put_user(&user, revision, 0)?;
         self.permission_cache.map_write(|mut cache| {
             let user_permissions = self.get_user_permissions(&user);
             let _entry = cache.role_to_users_map.entry(req.role).and_modify(|users| {
@@ -953,35 +984,30 @@ impl AuthStoreBackend {
             });
             let _old = cache.user_permissions.insert(req.name, user_permissions);
         });
+        Ok(())
     }
 
     /// Sync `AuthRoleAddRequest` and return whether authstore is changed.
-    fn sync_role_add_request(&self, req: AuthRoleAddRequest) {
+    fn sync_role_add_request(&self, req: AuthRoleAddRequest) -> Result<(), ExecuteError> {
         let role = Role {
             name: req.name.into_bytes(),
             key_permission: Vec::new(),
         };
         let revision = self.revision.next();
-        self.put_role(&role, revision, 0);
+        self.put_role(&role, revision, 0)
     }
 
-    /// Sync `AuthRoleGetRequest` and return whether authstore is changed.
-    fn sync_role_get_request(_req: &AuthRoleGetRequest) {}
-
-    /// Sync `AuthRoleListRequest` and return whether authstore is changed.
-    fn sync_role_list_request(_req: &AuthRoleListRequest) {}
-
     /// Sync `AuthRoleDeleteRequest` and return whether authstore is changed.
-    fn sync_role_delete_request(&self, req: &AuthRoleDeleteRequest) {
+    fn sync_role_delete_request(&self, req: &AuthRoleDeleteRequest) -> Result<(), ExecuteError> {
         let revision = self.revision.next();
-        self.delete_role(&req.role, revision, 0);
-        let users = self.get_all_users();
+        self.delete_role(&req.role, revision, 0)?;
+        let users = self.get_all_users()?;
         let mut sub_revision = 1;
         let mut new_perms = HashMap::new();
         for mut user in users {
             if let Ok(idx) = user.roles.binary_search(&req.role) {
                 let _ignore = user.roles.remove(idx);
-                self.put_user(&user, revision, sub_revision);
+                self.put_user(&user, revision, sub_revision)?;
                 sub_revision = sub_revision.wrapping_add(1);
                 let perms = self.get_user_permissions(&user);
                 let _old = new_perms.insert(String::from_utf8_lossy(&user.name).to_string(), perms);
@@ -991,18 +1017,18 @@ impl AuthStoreBackend {
             cache.user_permissions.extend(new_perms.into_iter());
             let _ignore = cache.role_to_users_map.remove(&req.role);
         });
+        Ok(())
     }
 
     /// Sync `AuthRoleGrantPermissionRequest` and return whether authstore is changed.
-    fn sync_role_grant_permission_request(&self, req: AuthRoleGrantPermissionRequest) {
-        let mut role = match self.get_role(&req.name) {
-            Ok(role) => role,
-            Err(_) => return,
-        };
-        let permission = match req.perm {
-            Some(perm) => perm,
-            None => return,
-        };
+    fn sync_role_grant_permission_request(
+        &self,
+        req: AuthRoleGrantPermissionRequest,
+    ) -> Result<(), ExecuteError> {
+        let mut role = self.get_role(&req.name)?;
+        let permission = req.perm.ok_or_else(|| {
+            ExecuteError::InvalidCommand("Permission is not specified".to_owned())
+        })?;
 
         #[allow(clippy::indexing_slicing)] // this index is always valid
         match role
@@ -1020,7 +1046,7 @@ impl AuthStoreBackend {
             }
         };
         let revision = self.revision.next();
-        self.put_role(&role, revision, 0);
+        self.put_role(&role, revision, 0)?;
         self.permission_cache.map_write(move |mut cache| {
             let users = cache
                 .role_to_users_map
@@ -1048,27 +1074,26 @@ impl AuthStoreBackend {
                 }
             }
         });
+        Ok(())
     }
 
     /// Sync `AuthRoleRevokePermissionRequest` and return whether authstore is changed.
-    fn sync_role_revoke_permission_request(&self, req: &AuthRoleRevokePermissionRequest) {
-        let mut role = match self.get_role(&req.role) {
-            Ok(role) => role,
-            Err(_) => return,
-        };
-        let idx = match role
+    fn sync_role_revoke_permission_request(
+        &self,
+        req: &AuthRoleRevokePermissionRequest,
+    ) -> Result<(), ExecuteError> {
+        let mut role = self.get_role(&req.role)?;
+        let idx = role
             .key_permission
             .binary_search_by(|p| match p.key.cmp(&req.key) {
                 Ordering::Equal => p.range_end.cmp(&req.range_end),
                 Ordering::Less => Ordering::Less,
                 Ordering::Greater => Ordering::Greater,
-            }) {
-            Ok(idx) => idx,
-            Err(_) => return,
-        };
+            })
+            .map_err(|_ignore| ExecuteError::InvalidCommand("Permission not found".to_owned()))?;
         let _ignore = role.key_permission.remove(idx);
         let next_revision = self.revision.next();
-        self.put_role(&role, next_revision, 0);
+        self.put_role(&role, next_revision, 0)?;
         self.permission_cache.map_write(|mut cache| {
             let users = cache
                 .role_to_users_map
@@ -1086,6 +1111,7 @@ impl AuthStoreBackend {
                     .insert(String::from_utf8_lossy(&user.name).to_string(), perms);
             }
         });
+        Ok(())
     }
 
     #[cfg(test)]

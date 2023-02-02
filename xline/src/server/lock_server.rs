@@ -28,7 +28,7 @@ use crate::{
         TxnResponse, UnlockRequest, UnlockResponse, WatchClient, WatchCreateRequest, WatchRequest,
     },
     state::State,
-    storage::KvStore,
+    storage::{storage_api::StorageApi, KvStore},
 };
 
 /// Default session ttl
@@ -37,9 +37,12 @@ const DEFAULT_SESSION_TTL: i64 = 60;
 /// Lock Server
 //#[derive(Debug)]
 #[allow(dead_code)] // Remove this after feature is completed
-pub(crate) struct LockServer {
+pub(crate) struct LockServer<S>
+where
+    S: StorageApi,
+{
     /// KV storage
-    storage: Arc<KvStore>,
+    storage: Arc<KvStore<S>>,
     /// Consensus client
     client: Arc<Client<Command>>,
     /// State of current node
@@ -48,10 +51,13 @@ pub(crate) struct LockServer {
     name: String,
 }
 
-impl LockServer {
+impl<S> LockServer<S>
+where
+    S: StorageApi,
+{
     /// New `LockServer`
     pub(crate) fn new(
-        storage: Arc<KvStore>,
+        storage: Arc<KvStore<S>>,
         client: Arc<Client<Command>>,
         state: Arc<State>,
         name: String,
@@ -263,7 +269,10 @@ impl LockServer {
 }
 
 #[tonic::async_trait]
-impl Lock for LockServer {
+impl<S> Lock for LockServer<S>
+where
+    S: StorageApi,
+{
     /// Lock acquires a distributed shared lock on a given named lock.
     /// On success, it will return a unique key that exists so long as the
     /// lock is held by the caller. This key can be used in conjunction with

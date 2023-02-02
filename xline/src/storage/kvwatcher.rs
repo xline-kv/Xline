@@ -5,10 +5,12 @@ use std::{
 };
 
 use futures::{stream::FuturesUnordered, StreamExt};
+use log::warn;
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 use utils::parking_lot_lock::RwLockMap;
 
+use super::storage_api::StorageApi;
 use crate::{rpc::Event, server::command::KeyRange, storage::kv_store::KvStoreBackend};
 
 /// Watch ID
@@ -96,16 +98,22 @@ impl Watcher {
 
 /// KV watcher
 #[derive(Debug)]
-pub(crate) struct KvWatcher {
+pub(crate) struct KvWatcher<S>
+where
+    S: StorageApi,
+{
     /// Inner data
-    inner: Arc<KvWatcherInner>,
+    inner: Arc<KvWatcherInner<S>>,
 }
 
 /// KV watcher inner data
 #[derive(Debug)]
-struct KvWatcherInner {
+struct KvWatcherInner<S>
+where
+    S: StorageApi,
+{
     /// KV storage
-    storage: Arc<KvStoreBackend>,
+    storage: Arc<KvStoreBackend<S>>,
     /// Watch indexes
     watcher_map: RwLock<WatcherMap>,
 }
@@ -166,10 +174,13 @@ impl WatcherMap {
     }
 }
 
-impl KvWatcher {
+impl<S> KvWatcher<S>
+where
+    S: StorageApi,
+{
     /// New `KvWatcher`
     pub(super) fn new(
-        storage: Arc<KvStoreBackend>,
+        storage: Arc<KvStoreBackend<S>>,
         mut kv_update_rx: mpsc::Receiver<(i64, Vec<Event>)>,
     ) -> Self {
         let inner = Arc::new(KvWatcherInner::new(storage));
@@ -201,7 +212,10 @@ pub(crate) trait KvWatcherOps {
     fn cancel(&self, id: WatchId) -> i64;
 }
 
-impl KvWatcherOps for KvWatcher {
+impl<S> KvWatcherOps for KvWatcher<S>
+where
+    S: StorageApi,
+{
     /// Create a watch to KV store
     fn watch(
         &self,
@@ -221,9 +235,12 @@ impl KvWatcherOps for KvWatcher {
     }
 }
 
-impl KvWatcherInner {
+impl<S> KvWatcherInner<S>
+where
+    S: StorageApi,
+{
     /// New `KvWatchInner`
-    fn new(storage: Arc<KvStoreBackend>) -> Self {
+    fn new(storage: Arc<KvStoreBackend<S>>) -> Self {
         Self {
             storage,
             watcher_map: RwLock::new(WatcherMap::new()),
@@ -246,7 +263,12 @@ impl KvWatcherInner {
         let initial_events = if start_rev == 0 {
             vec![]
         } else {
-            self.storage.get_event_from_revision(key_range, start_rev)
+            self.storage
+                .get_event_from_revision(key_range, start_rev)
+                .unwrap_or_else(|e| {
+                    warn!("failed to get initial events for watcher: {:?}", e);
+                    vec![]
+                })
         };
 
         self.watcher_map.write().insert(Arc::new(watcher));

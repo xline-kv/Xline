@@ -128,7 +128,7 @@ use utils::{
     },
     parse_duration, parse_log_level, parse_members, parse_range, parse_rotation,
 };
-use xline::server::XlineServer;
+use xline::{server::XlineServer, Memory};
 
 /// Command line arguments
 #[derive(Parser)]
@@ -363,6 +363,7 @@ async fn main() -> Result<()> {
     debug!("name = {:?}", cluster_config.name());
     debug!("server_addr = {:?}", self_addr);
     debug!("cluster_peers = {:?}", cluster_config.members());
+    let mem_storage = Memory::new();
     let server = XlineServer::new(
         cluster_config.name().clone(),
         cluster_config.members().clone(),
@@ -370,6 +371,7 @@ async fn main() -> Result<()> {
         key_pair,
         cluster_config.server_timeout().clone(),
         *cluster_config.client_timeout(),
+        mem_storage,
     )
     .await;
     debug!("{:?}", server);

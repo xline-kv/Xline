@@ -80,7 +80,7 @@ pub(crate) use self::{
         kv_client::KvClient,
         kv_server::{Kv, KvServer},
         lease_client::LeaseClient,
-        lease_server::{Lease as LeaseTrait, LeaseServer},
+        lease_server::{Lease, LeaseServer},
         request_op::Request,
         response_op::Response,
         watch_client::WatchClient,

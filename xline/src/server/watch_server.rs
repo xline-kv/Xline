@@ -11,7 +11,10 @@ use crate::{
         RequestUnion, ResponseHeader, Watch, WatchCancelRequest, WatchCreateRequest, WatchRequest,
         WatchResponse,
     },
-    storage::kvwatcher::{KvWatcher, KvWatcherOps, WatchEvent, WatchId},
+    storage::{
+        kvwatcher::{KvWatcher, KvWatcherOps, WatchEvent, WatchId},
+        storage_api::StorageApi,
+    },
 };
 
 /// Default channel size
@@ -19,25 +22,31 @@ const CHANNEL_SIZE: usize = 128;
 
 /// Watch Server
 #[derive(Debug)]
-pub(crate) struct WatchServer {
+pub(crate) struct WatchServer<S>
+where
+    S: StorageApi,
+{
     /// KV watcher
-    watcher: Arc<KvWatcher>,
+    watcher: Arc<KvWatcher<S>>,
 }
 
-impl WatchServer {
+impl<S> WatchServer<S>
+where
+    S: StorageApi,
+{
     /// New `WatchServer`
-    pub(crate) fn new(watcher: Arc<KvWatcher>) -> Self {
+    pub(crate) fn new(watcher: Arc<KvWatcher<S>>) -> Self {
         Self { watcher }
     }
 
     /// bg task for handle watch connection
     #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
-    async fn task<S, W>(
+    async fn task<ST, W>(
         kv_watcher: Arc<W>,
         res_tx: mpsc::Sender<Result<WatchResponse, tonic::Status>>,
-        mut req_rx: S,
+        mut req_rx: ST,
     ) where
-        S: Stream<Item = Result<WatchRequest, tonic::Status>> + Unpin,
+        ST: Stream<Item = Result<WatchRequest, tonic::Status>> + Unpin,
         W: KvWatcherOps,
     {
         let (event_tx, event_rx) = mpsc::channel(CHANNEL_SIZE);
@@ -288,7 +297,10 @@ where
 }
 
 #[tonic::async_trait]
-impl Watch for WatchServer {
+impl<S> Watch for WatchServer<S>
+where
+    S: StorageApi,
+{
     ///Server streaming response type for the Watch method.
     type WatchStream = ReceiverStream<Result<WatchResponse, tonic::Status>>;
 
@@ -311,8 +323,9 @@ impl Watch for WatchServer {
 
 #[cfg(test)]
 mod test {
+
     use super::*;
-    use crate::storage::kvwatcher::MockKvWatcherOps;
+    use crate::storage::{kvwatcher::MockKvWatcherOps, memory::Memory};
 
     #[tokio::test]
     #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
@@ -329,8 +342,11 @@ mod test {
             .return_const((vec![], 0));
         let _ = mock_watcher.expect_cancel().times(1).returning(move |_| 0);
         let watcher = Arc::new(mock_watcher);
-
-        let handle = tokio::spawn(WatchServer::task(Arc::clone(&watcher), res_tx, req_stream));
+        let handle = tokio::spawn(WatchServer::<Memory>::task(
+            Arc::clone(&watcher),
+            res_tx,
+            req_stream,
+        ));
         req_tx
             .send(Ok(WatchRequest {
                 request_union: Some(RequestUnion::CreateRequest(WatchCreateRequest {

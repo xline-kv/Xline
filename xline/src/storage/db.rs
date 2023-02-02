@@ -1,53 +1,106 @@
-use std::collections::HashMap;
+use curp::error::ExecuteError;
+use parking_lot::RwLock;
+use prost::Message;
 
-//use clippy_utilities::OverflowArithmetic;
-use parking_lot::Mutex;
-
-use super::revision::Revision;
+use super::{revision::Revision, storage_api::StorageApi};
 use crate::rpc::KeyValue;
 
 /// Database to store revision to kv mapping
 #[derive(Debug)]
-pub(crate) struct DB {
+pub(crate) struct DB<S>
+where
+    S: StorageApi,
+{
     /// internal storage of `DB`
-    storage: Mutex<HashMap<Revision, KeyValue>>,
+    storage: RwLock<S>,
 }
 
-impl DB {
+impl<S> DB<S>
+where
+    S: StorageApi,
+{
     /// New `DB`
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(storage: S) -> Self {
         Self {
-            storage: Mutex::new(HashMap::new()),
+            storage: RwLock::new(storage),
         }
     }
 
     /// Insert a `KeyValue`
-    pub(crate) fn insert(&self, revision: Revision, kv: KeyValue) -> Option<KeyValue> {
-        self.storage.lock().insert(revision, kv)
+    pub(crate) fn insert(&self, revision: Revision, kv: &KeyValue) -> Result<(), ExecuteError> {
+        let mut storage = self.storage.write();
+        let key = revision.encode_to_vec();
+        let value = kv.encode_to_vec();
+        let _prev_val = storage.insert(key, value).map_err(|e| {
+            ExecuteError::InvalidCommand(format!("Failed to insert revision {:?}: {}", revision, e))
+        })?;
+        Ok(())
     }
 
-    /// Get a list of `KeyValue`
-    pub(crate) fn get_values(&self, revisions: &[Revision]) -> Vec<KeyValue> {
-        let storage = self.storage.lock();
-        revisions
+    /// Get a list of `KeyValue` by `Revision`
+    pub(crate) fn get_values(&self, revisions: &[Revision]) -> Result<Vec<KeyValue>, ExecuteError> {
+        let storage = self.storage.read();
+        let keys = revisions
             .iter()
-            .filter_map(|revision| storage.get(revision).cloned())
-            .collect()
+            .map(Revision::encode_to_vec)
+            .collect::<Vec<_>>();
+        let values = storage
+            .batch_get(&keys)
+            .map_err(|e| {
+                ExecuteError::InvalidCommand(format!(
+                    "Failed to get revisions {:?}: {}",
+                    revisions, e
+                ))
+            })?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+        assert_eq!(values.len(), revisions.len(), "Index doesn't match with DB");
+        let kvs = values
+            .into_iter()
+            .map(|v| KeyValue::decode(v.as_slice()))
+            .collect::<Result<_, _>>()
+            .map_err(|e| {
+                ExecuteError::InvalidCommand(format!(
+                    "Failed to decode revisions {:?}: {}",
+                    revisions, e
+                ))
+            })?;
+        Ok(kvs)
     }
 
     /// Mark deletion for keys
-    /// TODO support don't return `prev_kvs`
-    pub(crate) fn mark_deletions(&self, revisions: &[(Revision, Revision)]) -> Vec<KeyValue> {
-        let mut storage = self.storage.lock();
+    pub(crate) fn mark_deletions(
+        &self,
+        revisions: &[(Revision, Revision)],
+    ) -> Result<Vec<KeyValue>, ExecuteError> {
+        let mut storage = self.storage.write();
         let prev_kvs: Vec<KeyValue> = revisions
             .iter()
             .map(|&(ref prev_rev, _)| {
-                storage
-                    .get(prev_rev)
-                    .cloned()
-                    .unwrap_or_else(|| panic!("Failed to get revision {:?} from DB", prev_rev))
+                let key = prev_rev.encode_to_vec();
+                let value = storage.get(key).map_err(|e| {
+                    ExecuteError::InvalidCommand(format!(
+                        "Failed to get revision {:?}: {}",
+                        prev_rev, e
+                    ))
+                })?;
+                if let Some(value) = value {
+                    let kv = KeyValue::decode(value.as_slice()).map_err(|e| {
+                        ExecuteError::InvalidCommand(format!(
+                            "Failed to decode revision {:?}: {}",
+                            prev_rev, e
+                        ))
+                    })?;
+                    Ok(kv)
+                } else {
+                    Err(ExecuteError::InvalidCommand(format!(
+                        "Failed to get revision {:?} from DB",
+                        prev_rev
+                    )))
+                }
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
         assert!(
             prev_kvs.len() == revisions.len(),
             "Index doesn't match with DB"
@@ -55,15 +108,22 @@ impl DB {
         prev_kvs
             .iter()
             .zip(revisions.iter())
-            .for_each(|(kv, &(_, new_rev))| {
+            .map(|(kv, &(_, new_rev))| {
                 let del_kv = KeyValue {
                     key: kv.key.clone(),
                     mod_revision: new_rev.revision(),
                     ..KeyValue::default()
                 };
-                let _prev_val = storage.insert(new_rev, del_kv);
-            });
-
-        prev_kvs
+                let key = new_rev.encode_to_vec();
+                let value = del_kv.encode_to_vec();
+                let _prev_val = storage.insert(key, value).map_err(|e| {
+                    ExecuteError::InvalidCommand(format!(
+                        "Failed to insert revision {:?}: {}",
+                        new_rev, e
+                    ))
+                });
+                Ok(del_kv)
+            })
+            .collect()
     }
 }

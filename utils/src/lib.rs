@@ -38,7 +38,7 @@
     unused_results,
     variant_size_differences,
 
-    warnings, // treat all wanings as errors
+    warnings, // treat all warns as errors
 
     clippy::all,
     clippy::pedantic,

@@ -16,7 +16,7 @@ use crate::{
         TxnResponse,
     },
     state::State,
-    storage::{AuthStore, KvStore},
+    storage::{AuthStore, KvStore, StorageApi},
 };
 
 /// Default max txn ops
@@ -25,11 +25,14 @@ const DEFAULT_MAX_TXN_OPS: usize = 128;
 /// KV Server
 #[derive(Debug)]
 #[allow(dead_code)] // Remove this after feature is completed
-pub(crate) struct KvServer {
+pub(crate) struct KvServer<S>
+where
+    S: StorageApi,
+{
     /// KV storage
-    kv_storage: Arc<KvStore>,
+    kv_storage: Arc<KvStore<S>>,
     /// KV storage
-    auth_storage: Arc<AuthStore>,
+    auth_storage: Arc<AuthStore<S>>,
     /// Consensus client
     client: Arc<Client<Command>>,
     /// Server name
@@ -38,11 +41,14 @@ pub(crate) struct KvServer {
     state: Arc<State>,
 }
 
-impl KvServer {
+impl<S> KvServer<S>
+where
+    S: StorageApi,
+{
     /// New `KvServer`
     pub(crate) fn new(
-        kv_storage: Arc<KvStore>,
-        auth_storage: Arc<AuthStore>,
+        kv_storage: Arc<KvStore<S>>,
+        auth_storage: Arc<AuthStore<S>>,
         state: Arc<State>,
         client: Arc<Client<Command>>,
         name: String,
@@ -349,7 +355,10 @@ impl KvServer {
 }
 
 #[tonic::async_trait]
-impl Kv for KvServer {
+impl<S> Kv for KvServer<S>
+where
+    S: StorageApi,
+{
     /// Range gets the keys in the range from the key-value store.
     #[instrument(skip(self))]
     async fn range(
@@ -467,6 +476,9 @@ impl Kv for KvServer {
 
 #[cfg(test)]
 mod test {
+
+    use crate::Memory;
+
     use super::*;
 
     #[test]
@@ -509,7 +521,7 @@ mod test {
             ],
             failure: vec![],
         };
-        let result = KvServer::check_txn_request(&txn_req);
+        let result = KvServer::<Memory>::check_txn_request(&txn_req);
         assert!(result.is_ok());
     }
 }

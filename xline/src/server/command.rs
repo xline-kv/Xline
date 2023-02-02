@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     rpc::{RequestBackend, RequestWithToken, RequestWrapper, ResponseWrapper},
-    storage::{AuthStore, KvStore, LeaseStore},
+    storage::{storage_api::StorageApi, AuthStore, KvStore, LeaseStore},
 };
 
 /// Range start and end to get all keys
@@ -85,7 +85,7 @@ impl KeyRange {
                 (Bound::Included(s2), Bound::Included(e1)) => s2 <= e1,
                 (Bound::Included(s2), Bound::Excluded(e1)) => s2 < e1,
                 (Bound::Included(_), Bound::Unbounded) => true,
-                // if other.start_bound() is Unbounded, programe cannot enter this branch
+                // if other.start_bound() is Unbounded, program cannot enter this branch
                 // KeyRange::start_bound() cannot be Excluded
                 _ => unreachable!("other.start_bound() should be Include"),
             }
@@ -96,7 +96,7 @@ impl KeyRange {
                 (Bound::Included(s1), Bound::Included(e2)) => s1 <= e2,
                 (Bound::Included(s1), Bound::Excluded(e2)) => s1 < e2,
                 (Bound::Included(_), Bound::Unbounded) => true,
-                // if self.start_bound() is Unbounded, programe cannnot enter this branch
+                // if self.start_bound() is Unbounded, program cannot enter this branch
                 // KeyRange::start_bound() cannot be Excluded
                 _ => unreachable!("self.start_bound() should be Include"),
             }
@@ -165,20 +165,26 @@ impl RangeBounds<[u8]> for KeyRange {
 
 /// Command Executor
 #[derive(Debug, Clone)]
-pub(crate) struct CommandExecutor {
+pub(crate) struct CommandExecutor<S>
+where
+    S: StorageApi,
+{
     /// Kv Storage
-    kv_storage: Arc<KvStore>,
+    kv_storage: Arc<KvStore<S>>,
     /// Auth Storage
-    auth_storage: Arc<AuthStore>,
+    auth_storage: Arc<AuthStore<S>>,
     /// Lease Storage
     lease_storage: Arc<LeaseStore>,
 }
 
-impl CommandExecutor {
+impl<S> CommandExecutor<S>
+where
+    S: StorageApi,
+{
     /// New `CommandExecutor`
     pub(crate) fn new(
-        kv_storage: Arc<KvStore>,
-        auth_storage: Arc<AuthStore>,
+        kv_storage: Arc<KvStore<S>>,
+        auth_storage: Arc<AuthStore<S>>,
         lease_storage: Arc<LeaseStore>,
     ) -> Self {
         Self {
@@ -190,7 +196,10 @@ impl CommandExecutor {
 }
 
 #[async_trait::async_trait]
-impl CurpCommandExecutor<Command> for CommandExecutor {
+impl<S> CurpCommandExecutor<Command> for CommandExecutor<S>
+where
+    S: StorageApi + Clone,
+{
     async fn execute(&self, cmd: &Command) -> Result<CommandResponse, ExecuteError> {
         let (_, wrapper, id) = cmd.clone().unpack();
         self.auth_storage.check_permission(&wrapper).await?;
@@ -209,8 +218,8 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
         let (_, wrapper, id) = cmd.clone().unpack();
         self.auth_storage.check_permission(&wrapper).await?;
         match wrapper.request.backend() {
-            RequestBackend::Kv => Ok(self.kv_storage.after_sync(id).await),
-            RequestBackend::Auth => Ok(self.auth_storage.after_sync(&id)),
+            RequestBackend::Kv => self.kv_storage.after_sync(id).await,
+            RequestBackend::Auth => self.auth_storage.after_sync(&id),
             RequestBackend::Lease => Ok(self.lease_storage.after_sync(&id).await),
         }
     }
@@ -219,7 +228,7 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
     async fn reset(&self) {}
 }
 
-/// Command to run consensus protocal
+/// Command to run consensus protocol
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Command {
     /// Keys of request
@@ -294,7 +303,7 @@ impl Command {
     }
 }
 
-/// Command to run consensus protocal
+/// Command to run consensus protocol
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct CommandResponse {
     /// Response data

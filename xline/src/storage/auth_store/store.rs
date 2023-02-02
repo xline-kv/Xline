@@ -13,27 +13,41 @@ use crate::{
         RequestWithToken, RequestWrapper, TxnRequest, Type,
     },
     server::command::{CommandResponse, KeyRange, SyncResponse},
-    storage::{auth_store::backend::AuthStoreBackend, lease_store::LeaseMessage},
+    storage::{
+        auth_store::backend::AuthStoreBackend, lease_store::LeaseMessage, storage_api::StorageApi,
+    },
 };
 
 /// Auth store
 #[allow(dead_code)]
 #[derive(Debug)]
-pub(crate) struct AuthStore {
+pub(crate) struct AuthStore<S>
+where
+    S: StorageApi,
+{
     /// Auth store Backend
-    inner: Arc<AuthStoreBackend>,
+    inner: Arc<AuthStoreBackend<S>>,
 }
 
-impl AuthStore {
+impl<S> AuthStore<S>
+where
+    S: StorageApi,
+{
     /// New `AuthStore`
     #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
     pub(crate) fn new(
         lease_cmd_tx: mpsc::Sender<LeaseMessage>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
         header_gen: Arc<HeaderGenerator>,
+        storage: S,
     ) -> Self {
         Self {
-            inner: Arc::new(AuthStoreBackend::new(lease_cmd_tx, key_pair, header_gen)),
+            inner: Arc::new(AuthStoreBackend::new(
+                lease_cmd_tx,
+                key_pair,
+                header_gen,
+                storage,
+            )),
         }
     }
 
@@ -49,8 +63,8 @@ impl AuthStore {
     }
 
     /// sync a auth request
-    pub(crate) fn after_sync(&self, id: &ProposeId) -> SyncResponse {
-        SyncResponse::new(self.inner.sync_request(id))
+    pub(crate) fn after_sync(&self, id: &ProposeId) -> Result<SyncResponse, ExecuteError> {
+        self.inner.sync_request(id).map(SyncResponse::new)
     }
 
     /// Auth revision
@@ -332,7 +346,10 @@ mod test {
             AuthRoleRevokePermissionRequest, AuthUserAddRequest, AuthUserDeleteRequest,
             AuthUserGrantRoleRequest, Permission,
         },
-        storage::auth_store::perms::{PermissionCache, UserPermissions},
+        storage::{
+            auth_store::perms::{PermissionCache, UserPermissions},
+            memory::Memory,
+        },
     };
 
     #[test]
@@ -425,11 +442,12 @@ mod test {
         );
     }
 
-    fn init_auth_store() -> AuthStore {
+    fn init_auth_store() -> AuthStore<Memory> {
         let key_pair = test_key_pair();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let (lease_cmd_tx, _) = mpsc::channel(1);
-        let store = AuthStore::new(lease_cmd_tx, key_pair, header_gen);
+        let mem_storage = Memory::new();
+        let store = AuthStore::new(lease_cmd_tx, key_pair, header_gen, mem_storage);
 
         let req1 = RequestWithToken::new(
             AuthRoleAddRequest {
@@ -486,12 +504,12 @@ mod test {
     }
 
     fn exe_and_sync(
-        store: &AuthStore,
+        store: &AuthStore<Memory>,
         req: RequestWithToken,
     ) -> Result<(CommandResponse, SyncResponse), Box<dyn Error>> {
         let id = ProposeId::new("test-id".to_owned());
         let cmd_res = store.execute(id.clone(), req)?;
-        let sync_res = store.after_sync(&id);
+        let sync_res = store.after_sync(&id)?;
         Ok((cmd_res, sync_res))
     }
 

@@ -24,15 +24,18 @@ use crate::{
         AuthUserRevokeRoleRequest, AuthUserRevokeRoleResponse, AuthenticateRequest,
         AuthenticateResponse, RequestWithToken, RequestWrapper, ResponseWrapper,
     },
-    storage::AuthStore,
+    storage::{storage_api::StorageApi, AuthStore},
 };
 
 /// Auth Server
 #[derive(Debug)]
 #[allow(unused)]
-pub(crate) struct AuthServer {
+pub(crate) struct AuthServer<S>
+where
+    S: StorageApi,
+{
     /// Auth storage
-    storage: Arc<AuthStore>,
+    storage: Arc<AuthStore<S>>,
     /// Consensus client
     client: Arc<Client<Command>>,
     /// Server name
@@ -47,9 +50,16 @@ pub(crate) fn get_token(metadata: &MetadataMap) -> Option<String> {
         .and_then(|v| v.to_str().map(String::from).ok())
 }
 
-impl AuthServer {
+impl<S> AuthServer<S>
+where
+    S: StorageApi,
+{
     /// New `AuthServer`
-    pub(crate) fn new(storage: Arc<AuthStore>, client: Arc<Client<Command>>, name: String) -> Self {
+    pub(crate) fn new(
+        storage: Arc<AuthStore<S>>,
+        client: Arc<Client<Command>>,
+        name: String,
+    ) -> Self {
         Self {
             storage,
             client,
@@ -143,7 +153,10 @@ impl AuthServer {
 }
 
 #[tonic::async_trait]
-impl Auth for AuthServer {
+impl<S> Auth for AuthServer<S>
+where
+    S: StorageApi,
+{
     async fn auth_enable(
         &self,
         request: tonic::Request<AuthEnableRequest>,
