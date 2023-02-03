@@ -48,7 +48,7 @@ pub(super) async fn run_bg_tasks<
     ExeTx: CmdExeSenderInterface<C>,
 >(
     state: StateRef<C, ExeTx>,
-    sync_chan: flume::Receiver<SyncMessage<C>>,
+    sync_rx: flume::Receiver<SyncMessage<C>>,
     cmd_executor: CE,
     cmd_exe_tx: ExeTx,
     cmd_exe_rx: CmdExeReceiver<C>,
@@ -64,7 +64,7 @@ pub(super) async fn run_bg_tasks<
     let connects = rpc::connect(others, tx_filter).await;
 
     // notify when a broadcast of append_entries is needed immediately
-    let (ae_trigger, ae_trigger_rx) = mpsc::unbounded_channel::<usize>();
+    let (ae_tx, ae_rx) = mpsc::unbounded_channel::<usize>();
 
     let bg_tick_handle = tokio::spawn(bg_tick(
         connects.clone(),
@@ -74,12 +74,12 @@ pub(super) async fn run_bg_tasks<
     let bg_ae_handle = tokio::spawn(bg_append_entries(
         connects.clone(),
         Arc::clone(&state),
-        ae_trigger_rx,
+        ae_rx,
         Arc::clone(&timeout),
     ));
     let bg_apply_handle = tokio::spawn(bg_apply(Arc::clone(&state), cmd_exe_tx));
     let bg_get_sync_cmds_handle =
-        tokio::spawn(bg_get_sync_cmds(Arc::clone(&state), sync_chan, ae_trigger));
+        tokio::spawn(bg_get_sync_cmds(Arc::clone(&state), sync_rx, ae_tx));
 
     // spawn cmd execute worker
     let cmd_executor = Arc::new(cmd_executor);
@@ -199,11 +199,11 @@ async fn bg_tick<C: Command + 'static, Conn: ConnectInterface, ExeTx: CmdExeSend
 /// Fetch commands need to be synced and add them to the log
 async fn bg_get_sync_cmds<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>>(
     state: StateRef<C, ExeTx>,
-    sync_chan: flume::Receiver<SyncMessage<C>>,
-    ae_trigger: mpsc::UnboundedSender<usize>,
+    sync_rx: flume::Receiver<SyncMessage<C>>,
+    ae_tx: mpsc::UnboundedSender<usize>,
 ) {
     loop {
-        let (term, cmd) = match sync_chan.recv_async().await {
+        let (term, cmd) = match sync_rx.recv_async().await {
             Ok(msg) => msg.inner(),
             Err(_) => {
                 return;
@@ -212,8 +212,8 @@ async fn bg_get_sync_cmds<C: Command + 'static, ExeTx: CmdExeSenderInterface<C>>
 
         state.map_write(|mut state_w| {
             state_w.log.push(LogEntry::new(term, &[cmd]));
-            if let Err(e) = ae_trigger.send(state_w.last_log_index()) {
-                error!("ae_trigger failed: {}", e);
+            if let Err(e) = ae_tx.send(state_w.last_log_index()) {
+                error!("ae_tx failed: {}", e);
             }
 
             debug!(
@@ -232,10 +232,10 @@ async fn bg_append_entries<
 >(
     connects: Vec<Arc<Conn>>,
     state: StateRef<C, ExeTx>,
-    mut ae_trigger_rx: mpsc::UnboundedReceiver<usize>,
+    mut ae_rx: mpsc::UnboundedReceiver<usize>,
     timeout: Arc<ServerTimeout>,
 ) {
-    while let Some(i) = ae_trigger_rx.recv().await {
+    while let Some(i) = ae_rx.recv().await {
         let req = {
             let state_r = state.read();
             if !state_r.is_leader() {

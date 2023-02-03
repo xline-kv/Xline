@@ -107,8 +107,9 @@ impl State {
 mod test {
     use std::{sync::Arc, time::Duration};
 
-    use super::*;
     use tokio::time::timeout;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_state() -> Result<(), Box<dyn std::error::Error>> {

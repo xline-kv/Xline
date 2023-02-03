@@ -248,12 +248,12 @@ pub struct Protocol<C: Command + 'static> {
     /// The speculative cmd pool, shared with executor
     spec: SpecPoolRef<C>,
     /// The channel to send synced command to background sync task
-    sync_chan: flume::Sender<SyncMessage<C>>,
+    sync_tx: flume::Sender<SyncMessage<C>>,
     // TODO: clean up the board when the size is too large
     /// Cmd watch board for tracking the cmd sync results
     cmd_board: CmdBoardRef<C>,
     /// Stop channel sender
-    stop_ch_tx: broadcast::Sender<()>,
+    stop_tx: broadcast::Sender<()>,
     /// The channel to send cmds to background exe tasks
     cmd_exe_tx: CmdExeSender<C>,
     /// The curp server timeout
@@ -324,7 +324,7 @@ impl<C: 'static + Command> Protocol<C> {
         tx_filter: Option<Box<dyn TxFilter>>,
     ) -> Self {
         let (sync_tx, sync_rx) = flume::unbounded();
-        let (stop_ch_tx, stop_ch_rx) = broadcast::channel(1);
+        let (stop_tx, stop_rx) = broadcast::channel(1);
         let (exe_tx, exe_rx, as_rx) = cmd_exe_channel();
 
         let state = State::new(
@@ -350,7 +350,7 @@ impl<C: 'static + Command> Protocol<C> {
             exe_tx.clone(),
             exe_rx,
             as_rx,
-            Shutdown::new(stop_ch_rx.resubscribe()),
+            Shutdown::new(stop_rx.resubscribe()),
             Arc::clone(&timeout),
             tx_filter,
         ));
@@ -360,9 +360,9 @@ impl<C: 'static + Command> Protocol<C> {
         Self {
             state,
             spec,
-            sync_chan: sync_tx,
+            sync_tx,
             cmd_board,
-            stop_ch_tx,
+            stop_tx,
             cmd_exe_tx: exe_tx,
             timeout,
         }
@@ -377,7 +377,7 @@ impl<C: 'static + Command> Protocol<C> {
                 "shouldn't insert needs_exe twice"
             );
         }
-        if let Err(e) = self.sync_chan.send(SyncMessage::new(term, cmd)) {
+        if let Err(e) = self.sync_tx.send(SyncMessage::new(term, cmd)) {
             error!("send channel error, {e}");
         }
     }
@@ -537,7 +537,7 @@ impl<C: 'static + Command> Protocol<C> {
         let req = request.into_inner();
         let state = self.state.upgradable_read();
 
-        debug!("{} receives append_entries from {}: term({}), commit({}), prev_log_index({}), prev_log_term({}), {} entries", 
+        debug!("{} receives append_entries from {}: term({}), commit({}), prev_log_index({}), prev_log_term({}), {} entries",
                 state.id(), req.leader_id, req.term, req.leader_commit, req.prev_log_index, req.prev_log_term, req.entries.len());
 
         // calibrate term
@@ -686,6 +686,6 @@ impl<C: 'static + Command> Drop for Protocol<C> {
     #[inline]
     fn drop(&mut self) {
         // TODO: async drop is still not supported by Rust(should wait for bg tasks to be stopped?), or we should create an async `stop` function for Protocol
-        let _ = self.stop_ch_tx.send(()).ok();
+        let _ = self.stop_tx.send(()).ok();
     }
 }

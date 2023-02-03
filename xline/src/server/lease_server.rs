@@ -35,7 +35,7 @@ where
     S: StorageApi,
 {
     /// Lease storage
-    storage: Arc<LeaseStore>,
+    lease_storage: Arc<LeaseStore>,
     /// Auth storage
     auth_storage: Arc<AuthStore<S>>,
     /// Consensus client
@@ -62,7 +62,7 @@ where
         id_gen: Arc<IdGenerator>,
     ) -> Arc<Self> {
         let lease_server = Arc::new(Self {
-            storage: lease_storage,
+            lease_storage,
             auth_storage,
             client,
             name,
@@ -78,7 +78,7 @@ where
         loop {
             // only leader will check expired lease
             if lease_server.is_leader() {
-                for id in lease_server.storage.find_expired_leases() {
+                for id in lease_server.lease_storage.find_expired_leases() {
                     let _handle = tokio::spawn({
                         let s = Arc::clone(&lease_server);
                         let token_option = lease_server.auth_storage.root_token();
@@ -119,7 +119,7 @@ where
         wrapper: RequestWithToken,
     ) -> Command {
         let keys = if let RequestWrapper::LeaseRevokeRequest(ref req) = wrapper.request {
-            self.storage
+            self.lease_storage
                 .get_keys(req.id)
                 .into_iter()
                 .map(|k| KeyRange::new(k, ""))
@@ -178,7 +178,7 @@ where
     ) -> ReceiverStream<Result<LeaseKeepAliveResponse, tonic::Status>> {
         let (response_tx, response_rx) = mpsc::channel(CHANNEL_SIZE);
         let _hd = tokio::spawn({
-            let lease_storage = Arc::clone(&self.storage);
+            let lease_storage = Arc::clone(&self.lease_storage);
             async move {
                 while let Some(req_result) = request_stream.next().await {
                     match req_result {
@@ -331,7 +331,7 @@ where
         if self.is_leader() {
             // TODO wait applied index
             let time_to_live_req = request.into_inner();
-            let lease = match self.storage.look_up(time_to_live_req.id) {
+            let lease = match self.lease_storage.look_up(time_to_live_req.id) {
                 Some(lease) => lease,
                 None => return Err(tonic::Status::not_found("Lease not found")),
             };
@@ -341,7 +341,7 @@ where
                 .then(|| lease.keys())
                 .unwrap_or_default();
             let res = LeaseTimeToLiveResponse {
-                header: Some(self.storage.gen_header()),
+                header: Some(self.lease_storage.gen_header()),
                 id: time_to_live_req.id,
                 ttl: lease.remaining().as_secs().cast(),
                 granted_ttl: lease.ttl().as_secs().cast(),
@@ -364,13 +364,13 @@ where
     ) -> Result<tonic::Response<LeaseLeasesResponse>, tonic::Status> {
         debug!("Receive LeaseLeasesRequest {:?}", request);
         let leases = self
-            .storage
+            .lease_storage
             .leases()
             .into_iter()
             .map(|lease| LeaseStatus { id: lease.id() })
             .collect();
         let res = LeaseLeasesResponse {
-            header: Some(self.storage.gen_header()),
+            header: Some(self.lease_storage.gen_header()),
             leases,
         };
         Ok(tonic::Response::new(res))

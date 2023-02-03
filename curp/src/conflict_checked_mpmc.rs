@@ -5,7 +5,7 @@ use tracing::{error, info};
 
 use crate::cmd::ConflictCheck;
 
-/// Call `DoneNotifier::done` when the process of the msg has finished
+/// Call `DoneNotifier::notify` when the process of the msg has finished
 pub(crate) struct DoneNotifier {
     /// Notifier
     notifier: flume::Sender<u64>,
