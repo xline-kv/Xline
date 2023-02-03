@@ -1,7 +1,7 @@
-use curp::error::ExecuteError;
 use tokio::sync::oneshot;
 
 use super::Lease;
+use crate::storage::ExecuteError;
 
 #[derive(Debug)]
 /// Messages from other store

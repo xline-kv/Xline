@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 
 use clippy_utilities::{Cast, OverflowArithmetic};
-use curp::{cmd::ProposeId, error::ExecuteError};
+use curp::cmd::ProposeId;
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
@@ -24,14 +24,13 @@ use crate::{
         TargetUnion, TxnRequest, TxnResponse,
     },
     server::command::{CommandResponse, KeyRange, SyncResponse},
-    storage::req_ctx::RequestCtx,
+    storage::{ExecuteError, RequestCtx},
 };
 
 /// Default channel size
 const CHANNEL_SIZE: usize = 128;
 
 /// KV store
-#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct KvStore<S>
 where
@@ -405,9 +404,7 @@ where
         if req.prev_kv || req.ignore_lease || req.ignore_value {
             let prev_kv = self.get_range(&req.key, &[], 0)?.pop();
             if prev_kv.is_none() && (req.ignore_lease || req.ignore_value) {
-                return Err(ExecuteError::InvalidCommand(
-                    "ignore_lease or ignore_value is set but there is no previous value".to_owned(),
-                ));
+                return Err(ExecuteError::key_not_found());
             }
             if req.prev_kv {
                 response.prev_kv = prev_kv;
@@ -631,11 +628,7 @@ where
         };
 
         if req.ignore_lease || req.ignore_value {
-            let prev = prev_kv.as_ref().ok_or_else(|| {
-                ExecuteError::InvalidCommand(
-                    "ignore_lease or ignore_value is set but previous key is not found".to_owned(),
-                )
-            })?;
+            let prev = prev_kv.as_ref().ok_or_else(ExecuteError::key_not_found)?;
             if req.ignore_lease {
                 kv.lease = prev.lease;
             }

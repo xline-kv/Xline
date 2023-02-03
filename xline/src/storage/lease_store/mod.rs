@@ -12,7 +12,7 @@ use std::{
 };
 
 use clippy_utilities::Cast;
-use curp::{cmd::ProposeId, error::ExecuteError};
+use curp::cmd::ProposeId;
 use log::debug;
 use parking_lot::{Mutex, RwLock};
 use tokio::sync::mpsc;
@@ -23,7 +23,7 @@ pub(crate) use self::{
     lease::Lease,
     message::{DeleteMessage, LeaseMessage},
 };
-use super::req_ctx::RequestCtx;
+use super::{ExecuteError, RequestCtx};
 use crate::{
     header_gen::HeaderGenerator,
     rpc::{
@@ -87,10 +87,10 @@ impl LeaseCollection {
     /// Renew lease
     fn renew(&mut self, lease_id: i64) -> Result<i64, ExecuteError> {
         self.lease_map.get_mut(&lease_id).map_or_else(
-            || Err(ExecuteError::InvalidCommand("lease not found".to_owned())),
+            || Err(ExecuteError::lease_not_found(lease_id)),
             |lease| {
                 if lease.expired() {
-                    return Err(ExecuteError::InvalidCommand("lease expired".to_owned()));
+                    return Err(ExecuteError::lease_expired(lease_id));
                 }
                 let expiry = lease.refresh(Duration::default());
                 let _ignore = self.expired_queue.update(lease_id, expiry);
@@ -102,7 +102,7 @@ impl LeaseCollection {
     /// Attach key to lease
     fn attach(&mut self, lease_id: i64, key: Vec<u8>) -> Result<(), ExecuteError> {
         self.lease_map.get_mut(&lease_id).map_or_else(
-            || Err(ExecuteError::InvalidCommand("lease not found".to_owned())),
+            || Err(ExecuteError::lease_not_found(lease_id)),
             |lease| {
                 lease.insert_key(key.clone());
                 let _ignore = self.item_map.insert(key, lease_id);
@@ -114,7 +114,7 @@ impl LeaseCollection {
     /// Detach key from lease
     fn detach(&mut self, lease_id: i64, key: &[u8]) -> Result<(), ExecuteError> {
         self.lease_map.get_mut(&lease_id).map_or_else(
-            || Err(ExecuteError::InvalidCommand("lease not found".to_owned())),
+            || Err(ExecuteError::lease_not_found(lease_id)),
             |lease| {
                 lease.remove_key(key);
                 let _ignore = self.item_map.remove(key);
@@ -278,9 +278,7 @@ impl LeaseStore {
     /// Keep alive a lease
     pub(crate) fn keep_alive(&self, lease_id: i64) -> Result<i64, ExecuteError> {
         if !self.is_leader() {
-            return Err(ExecuteError::InvalidCommand(
-                "lease keep alive must be called on leader".to_owned(),
-            ));
+            return Err(ExecuteError::lease_not_leader());
         }
         self.inner.lease_collection.write().renew(lease_id)
     }
@@ -382,21 +380,13 @@ impl LeaseStoreBackend {
         req: &LeaseGrantRequest,
     ) -> Result<LeaseGrantResponse, ExecuteError> {
         if req.id == 0 {
-            return Err(ExecuteError::InvalidCommand("lease not found".to_owned()));
+            return Err(ExecuteError::lease_not_found(0));
         }
-
         if req.ttl > MAX_LEASE_TTL {
-            return Err(ExecuteError::InvalidCommand(format!(
-                "lease ttl too large: {}",
-                req.ttl
-            )));
+            return Err(ExecuteError::lease_ttl_too_large(req.ttl));
         }
-
         if self.lease_collection.read().contains_lease(req.id) {
-            return Err(ExecuteError::InvalidCommand(format!(
-                "lease already exists: {}",
-                req.id
-            )));
+            return Err(ExecuteError::lease_already_exists(req.id));
         }
 
         Ok(LeaseGrantResponse {
@@ -417,7 +407,7 @@ impl LeaseStoreBackend {
                 header: Some(self.header_gen.gen_header_without_revision()),
             })
         } else {
-            Err(ExecuteError::InvalidCommand("lease not found".to_owned()))
+            Err(ExecuteError::lease_already_exists(req.id))
         }
     }
 

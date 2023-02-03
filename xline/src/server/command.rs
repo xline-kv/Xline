@@ -7,7 +7,6 @@ use curp::{
     cmd::{
         Command as CurpCommand, CommandExecutor as CurpCommandExecutor, ConflictCheck, ProposeId,
     },
-    error::ExecuteError,
     LogIndex,
 };
 use itertools::Itertools;
@@ -15,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     rpc::{RequestBackend, RequestWithToken, RequestWrapper, ResponseWrapper},
-    storage::{storage_api::StorageApi, AuthStore, KvStore, LeaseStore},
+    storage::{storage_api::StorageApi, AuthStore, ExecuteError, KvStore, LeaseStore},
 };
 
 /// Range start and end to get all keys
@@ -200,6 +199,8 @@ impl<S> CurpCommandExecutor<Command> for CommandExecutor<S>
 where
     S: StorageApi + Clone,
 {
+    type Error = ExecuteError;
+
     async fn execute(&self, cmd: &Command) -> Result<CommandResponse, ExecuteError> {
         let (_, wrapper, id) = cmd.clone().unpack();
         self.auth_storage.check_permission(&wrapper).await?;

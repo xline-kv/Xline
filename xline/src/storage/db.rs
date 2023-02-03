@@ -1,8 +1,7 @@
-use curp::error::ExecuteError;
-use parking_lot::RwLock;
+use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use prost::Message;
 
-use super::{revision::Revision, storage_api::StorageApi};
+use super::{storage_api::StorageApi, ExecuteError, Revision};
 use crate::rpc::KeyValue;
 
 /// Database to store revision to kv mapping
@@ -32,7 +31,7 @@ where
         let key = revision.encode_to_vec();
         let value = kv.encode_to_vec();
         let _prev_val = storage.insert(key, value).map_err(|e| {
-            ExecuteError::InvalidCommand(format!("Failed to insert revision {revision:?}: {e}"))
+            ExecuteError::DbError(format!("Failed to insert key-value, error: {e}"))
         })?;
         Ok(())
     }
@@ -47,7 +46,7 @@ where
         let values = storage
             .batch_get(&keys)
             .map_err(|e| {
-                ExecuteError::InvalidCommand(format!("Failed to get revisions {revisions:?}: {e}"))
+                ExecuteError::DbError(format!("Failed to get revisions {revisions:?}: {e}"))
             })?
             .into_iter()
             .flatten()
@@ -58,9 +57,7 @@ where
             .map(|v| KeyValue::decode(v.as_slice()))
             .collect::<Result<_, _>>()
             .map_err(|e| {
-                ExecuteError::InvalidCommand(format!(
-                    "Failed to decode revisions {revisions:?}: {e}",
-                ))
+                ExecuteError::DbError(format!("Failed to decode key-value from DB, error: {e}"))
             })?;
         Ok(kvs)
     }
@@ -70,38 +67,21 @@ where
         &self,
         revisions: &[(Revision, Revision)],
     ) -> Result<Vec<KeyValue>, ExecuteError> {
-        let mut storage = self.storage.write();
-        let prev_kvs: Vec<KeyValue> = revisions
+        let storage = self.storage.upgradable_read();
+        let prev_revisions = revisions
             .iter()
-            .map(|&(prev_rev, _)| {
-                let key = prev_rev.encode_to_vec();
-                let value = storage.get(key).map_err(|e| {
-                    ExecuteError::InvalidCommand(format!(
-                        "Failed to get revision {prev_rev:?}: {e}",
-                    ))
-                })?;
-                if let Some(value) = value {
-                    let kv = KeyValue::decode(value.as_slice()).map_err(|e| {
-                        ExecuteError::InvalidCommand(format!(
-                            "Failed to decode revision {prev_rev:?}: {e}",
-                        ))
-                    })?;
-                    Ok(kv)
-                } else {
-                    Err(ExecuteError::InvalidCommand(format!(
-                        "Failed to get revision {prev_rev:?} from DB",
-                    )))
-                }
-            })
-            .collect::<Result<_, _>>()?;
+            .map(|&(prev_rev, _)| prev_rev)
+            .collect::<Vec<_>>();
+        let prev_kvs = self.get_values(&prev_revisions)?;
         assert!(
             prev_kvs.len() == revisions.len(),
             "Index doesn't match with DB"
         );
+        let mut storage = RwLockUpgradableReadGuard::upgrade(storage);
         prev_kvs
             .iter()
             .zip(revisions.iter())
-            .map(|(kv, &(_, new_rev))| {
+            .try_for_each(|(kv, &(_, new_rev))| {
                 let del_kv = KeyValue {
                     key: kv.key.clone(),
                     mod_revision: new_rev.revision(),
@@ -110,12 +90,10 @@ where
                 let key = new_rev.encode_to_vec();
                 let value = del_kv.encode_to_vec();
                 let _prev_val = storage.insert(key, value).map_err(|e| {
-                    ExecuteError::InvalidCommand(format!(
-                        "Failed to insert revision {new_rev:?}: {e}",
-                    ))
-                });
-                Ok(del_kv)
-            })
-            .collect()
+                    ExecuteError::DbError(format!("Failed to insert key-value, error: {e}"))
+                })?;
+                Ok(())
+            })?;
+        Ok(prev_kvs)
     }
 }

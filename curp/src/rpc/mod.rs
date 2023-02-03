@@ -12,7 +12,7 @@ pub(crate) use self::proto::{
 };
 use crate::{
     cmd::{Command, ProposeId},
-    error::{ExecuteError, ProposeError},
+    error::ProposeError,
     log::LogEntry,
     message::{ServerId, TermNum},
 };
@@ -159,8 +159,8 @@ impl WaitSyncedResponse {
 
     /// Create a new response from execution result and `after_sync` result
     pub(crate) fn new_from_result<C: Command>(
-        er: Option<Result<C::ER, ExecuteError>>,
-        asr: Option<Result<C::ASR, ExecuteError>>,
+        er: Option<Result<C::ER, String>>,
+        asr: Option<Result<C::ASR, String>>,
     ) -> bincode::Result<Self> {
         match (er, asr) {
             (None, Some(_)) => {
@@ -172,12 +172,10 @@ impl WaitSyncedResponse {
             (Some(Err(_)), Some(_)) => {
                 unreachable!("should not call after_sync when exe failed")
             }
-            (Some(Err(err)), None) => {
-                WaitSyncedResponse::new_error(&SyncError::ExecuteError(err.to_string()))
-            }
+            (Some(Err(err)), None) => WaitSyncedResponse::new_error(&SyncError::ExecuteError(err)),
             (Some(Ok(_er)), Some(Err(err))) => {
                 // FIXME: should er be returned?
-                WaitSyncedResponse::new_error(&SyncError::AfterSyncError(err.to_string()))
+                WaitSyncedResponse::new_error(&SyncError::AfterSyncError(err))
             }
             (Some(Ok(er)), Some(Ok(asr))) => WaitSyncedResponse::new_success::<C>(&asr, &er),
             (Some(Ok(_er)), None) => {

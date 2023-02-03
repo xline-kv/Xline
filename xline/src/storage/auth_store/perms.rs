@@ -98,7 +98,7 @@ impl TokenOperate for JwtTokenManager {
 }
 
 /// Permissions if a user
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct UserPermissions {
     /// `KeyRange` has read permission
     pub(crate) read: Vec<KeyRange>,

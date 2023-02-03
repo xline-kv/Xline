@@ -38,7 +38,6 @@ const CHANNEL_SIZE: usize = 128;
 type CurpServer = Rpc<Command>;
 
 /// Xline server
-#[allow(dead_code)] // Remove this after feature is completed
 #[derive(Debug)]
 pub struct XlineServer<S>
 where
@@ -54,8 +53,6 @@ where
     lease_storage: Arc<LeaseStore>,
     /// Consensus client
     client: Arc<Client<Command>>,
-    /// Header generator
-    header_gen: Arc<HeaderGenerator>,
     /// Curp server timeout
     server_timeout: Arc<ServerTimeout>,
     /// Id generator
@@ -101,12 +98,7 @@ where
             Arc::clone(&header_gen),
             storage.clone(), // TODO: implement bucket storage
         ));
-        let auth_storage = Arc::new(AuthStore::new(
-            lease_cmd_tx,
-            key_pair,
-            Arc::clone(&header_gen),
-            storage,
-        ));
+        let auth_storage = Arc::new(AuthStore::new(lease_cmd_tx, key_pair, header_gen, storage));
         let client = Arc::new(Client::<Command>::new(all_members.clone(), client_timeout).await);
         Self {
             state,
@@ -114,7 +106,6 @@ where
             auth_storage,
             lease_storage,
             client,
-            header_gen,
             server_timeout,
             id_gen,
         }

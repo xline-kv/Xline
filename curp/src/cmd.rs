@@ -3,7 +3,7 @@ use std::hash::Hash;
 use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::{error::ExecuteError, message::LogIndex};
+use crate::message::LogIndex;
 
 /// Command to execute on the server side
 #[async_trait]
@@ -36,7 +36,7 @@ pub trait Command:
 
     /// Execute the command according to the executor
     #[inline]
-    async fn execute<E>(&self, e: &E) -> Result<Self::ER, ExecuteError>
+    async fn execute<E>(&self, e: &E) -> Result<Self::ER, E::Error>
     where
         E: CommandExecutor<Self> + Send + Sync,
     {
@@ -45,7 +45,7 @@ pub trait Command:
 
     /// Execute the command after_sync callback
     #[inline]
-    async fn after_sync<E>(&self, e: &E, index: LogIndex) -> Result<Self::ASR, ExecuteError>
+    async fn after_sync<E>(&self, e: &E, index: LogIndex) -> Result<Self::ASR, E::Error>
     where
         E: CommandExecutor<Self> + Send + Sync,
     {
@@ -98,11 +98,14 @@ pub trait CommandExecutor<C>: Sync + Send + Clone + std::fmt::Debug
 where
     C: Command,
 {
+    /// Error type
+    type Error: std::fmt::Debug + Send + Sync + Clone + std::error::Error;
+
     /// Execute the command
-    async fn execute(&self, cmd: &C) -> Result<C::ER, ExecuteError>;
+    async fn execute(&self, cmd: &C) -> Result<C::ER, Self::Error>;
 
     /// Execute the after_sync callback
-    async fn after_sync(&self, cmd: &C, index: LogIndex) -> Result<C::ASR, ExecuteError>;
+    async fn after_sync(&self, cmd: &C, index: LogIndex) -> Result<C::ASR, Self::Error>;
 
     /// Reset the command executor to the initial state
     async fn reset(&self);

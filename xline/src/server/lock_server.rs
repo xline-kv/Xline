@@ -35,8 +35,7 @@ use crate::{
 const DEFAULT_SESSION_TTL: i64 = 60;
 
 /// Lock Server
-//#[derive(Debug)]
-#[allow(dead_code)] // Remove this after feature is completed
+#[derive(Debug)]
 pub(crate) struct LockServer<S>
 where
     S: StorageApi,

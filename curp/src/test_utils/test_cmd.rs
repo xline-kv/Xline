@@ -1,16 +1,16 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt::Display, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use itertools::Itertools;
 use madsim::rand::{distributions::Alphanumeric, thread_rng, Rng};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use tokio::{sync::mpsc, time::sleep};
 use tracing::debug;
 
 use crate::{
     cmd::{Command, CommandExecutor, ConflictCheck, ProposeId},
-    error::ExecuteError,
     message::ServerId,
     LogIndex,
 };
@@ -130,12 +130,23 @@ pub(crate) struct TestCE {
     after_sync_sender: mpsc::UnboundedSender<(TestCommand, LogIndex)>,
 }
 
+#[derive(Error, Debug, Clone)]
+pub(crate) struct ExecuteError(String);
+
+impl Display for ExecuteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[async_trait]
 impl CommandExecutor<TestCommand> for TestCE {
+    type Error = ExecuteError;
+
     async fn execute(&self, cmd: &TestCommand) -> Result<TestCommandResult, ExecuteError> {
         sleep(cmd.exe_dur).await;
         if cmd.exe_should_fail {
-            return Err(ExecuteError::InvalidCommand("fail".to_owned()));
+            return Err(ExecuteError("fail".to_owned()));
         }
 
         let mut store = self.store.lock();
@@ -167,7 +178,7 @@ impl CommandExecutor<TestCommand> for TestCE {
     ) -> Result<LogIndex, ExecuteError> {
         sleep(cmd.as_dur).await;
         if cmd.as_should_fail {
-            return Err(ExecuteError::InvalidCommand("fail".to_owned()));
+            return Err(ExecuteError("fail".to_owned()));
         }
 
         self.after_sync_sender
@@ -204,10 +215,12 @@ pub(crate) struct TestCESimple {
 
 #[async_trait]
 impl CommandExecutor<TestCommand> for TestCESimple {
+    type Error = ExecuteError;
+
     async fn execute(&self, cmd: &TestCommand) -> Result<TestCommandResult, ExecuteError> {
         sleep(cmd.exe_dur).await;
         if cmd.exe_should_fail {
-            return Err(ExecuteError::InvalidCommand("fail".to_owned()));
+            return Err(ExecuteError("fail".to_owned()));
         }
 
         let mut store = self.store.lock();
@@ -235,7 +248,7 @@ impl CommandExecutor<TestCommand> for TestCESimple {
     ) -> Result<LogIndex, ExecuteError> {
         sleep(cmd.as_dur).await;
         if cmd.as_should_fail {
-            return Err(ExecuteError::InvalidCommand("fail".to_owned()));
+            return Err(ExecuteError("fail".to_owned()));
         }
 
         debug!("{} call cmd {:?} after sync", self.server_id, cmd.id());
