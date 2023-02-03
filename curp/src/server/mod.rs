@@ -38,7 +38,6 @@ use crate::{
         cmd_worker::{cmd_exe_channel, CmdExeSender},
         spec_pool::SpecPoolRef,
     },
-    shutdown::Shutdown,
     TxFilter,
 };
 
@@ -253,7 +252,7 @@ pub struct Protocol<C: Command + 'static> {
     /// Cmd watch board for tracking the cmd sync results
     cmd_board: CmdBoardRef<C>,
     /// Stop channel sender
-    stop_tx: broadcast::Sender<()>,
+    shutdown_trigger: Arc<Event>,
     /// The channel to send cmds to background exe tasks
     cmd_exe_tx: CmdExeSender<C>,
     /// The curp server timeout
@@ -324,7 +323,7 @@ impl<C: 'static + Command> Protocol<C> {
         tx_filter: Option<Box<dyn TxFilter>>,
     ) -> Self {
         let (sync_tx, sync_rx) = flume::unbounded();
-        let (stop_tx, stop_rx) = broadcast::channel(1);
+        let shutdown_trigger = Arc::new(Event::new());
         let (exe_tx, exe_rx, as_rx) = cmd_exe_channel();
 
         let state = State::new(
@@ -350,7 +349,7 @@ impl<C: 'static + Command> Protocol<C> {
             exe_tx.clone(),
             exe_rx,
             as_rx,
-            Shutdown::new(stop_rx.resubscribe()),
+            Arc::clone(&shutdown_trigger),
             Arc::clone(&timeout),
             tx_filter,
         ));
@@ -362,7 +361,7 @@ impl<C: 'static + Command> Protocol<C> {
             spec,
             sync_tx,
             cmd_board,
-            stop_tx,
+            shutdown_trigger,
             cmd_exe_tx: exe_tx,
             timeout,
         }
@@ -686,6 +685,6 @@ impl<C: 'static + Command> Drop for Protocol<C> {
     #[inline]
     fn drop(&mut self) {
         // TODO: async drop is still not supported by Rust(should wait for bg tasks to be stopped?), or we should create an async `stop` function for Protocol
-        let _ = self.stop_tx.send(()).ok();
+        self.shutdown_trigger.notify(usize::MAX);
     }
 }
