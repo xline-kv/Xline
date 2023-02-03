@@ -31,7 +31,7 @@ pub struct Client<C: Command> {
     /// Curp client timeout settings
     timeout: ClientTimeout,
     /// To keep Command type
-    phatom: PhantomData<C>,
+    phantom: PhantomData<C>,
 }
 
 /// State of a client
@@ -88,7 +88,7 @@ where
             state: RwLock::new(State::new()),
             connects: rpc::connect(addrs, None).await,
             timeout,
-            phatom: PhantomData,
+            phantom: PhantomData,
         }
     }
 

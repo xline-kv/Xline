@@ -69,28 +69,28 @@ pub(crate) trait ConnectInterface: Send + Sync + 'static {
         &self,
     ) -> Result<ProtocolClient<tonic::transport::Channel>, tonic::transport::Error>;
 
-    /// send "propose" request
+    /// Send `ProposeRequest`
     async fn propose(
         &self,
         request: ProposeRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<ProposeResponse>, ProposeError>;
 
-    /// send "wait synced" request
+    /// Send `WaitSyncedRequest`
     async fn wait_synced(
         &self,
         request: WaitSyncedRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<WaitSyncedResponse>, ProposeError>;
 
-    /// Send `AppendEntries` request
+    /// Send `AppendEntriesRequest`
     async fn append_entries(
         &self,
         request: AppendEntriesRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<AppendEntriesResponse>, ProposeError>;
 
-    /// Send `Vote` request
+    /// Send `VoteRequest`
     async fn vote(
         &self,
         request: VoteRequest,
@@ -147,7 +147,7 @@ impl ConnectInterface for Connect {
         Ok(client)
     }
 
-    /// send "propose" request
+    /// Send `ProposeRequest`
     #[instrument(skip(self), name = "client propose")]
     async fn propose(
         &self,
@@ -163,7 +163,7 @@ impl ConnectInterface for Connect {
         client.propose(req).await.map_err(Into::into)
     }
 
-    /// send "wait synced" request
+    /// Send `WaitSyncedRequest`
     #[instrument(skip(self), name = "client propose")]
     async fn wait_synced(
         &self,
@@ -179,7 +179,7 @@ impl ConnectInterface for Connect {
         client.wait_synced(req).await.map_err(Into::into)
     }
 
-    /// Send `AppendEntries` request
+    /// Send `AppendEntriesRequest`
     async fn append_entries(
         &self,
         request: AppendEntriesRequest,
@@ -193,7 +193,7 @@ impl ConnectInterface for Connect {
         client.append_entries(req).await.map_err(Into::into)
     }
 
-    /// Send `Vote` request
+    /// Send `VoteRequest`
     async fn vote(
         &self,
         request: VoteRequest,

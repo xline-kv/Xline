@@ -31,7 +31,7 @@ where
 {
     /// KV storage
     kv_storage: Arc<KvStore<S>>,
-    /// KV storage
+    /// Auth storage
     auth_storage: Arc<AuthStore<S>>,
     /// Consensus client
     client: Arc<Client<Command>>,

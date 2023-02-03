@@ -18,6 +18,11 @@ use parking_lot::{Mutex, RwLock};
 use tokio::sync::mpsc;
 use utils::parking_lot_lock::MutexMap;
 
+use self::lease_queue::LeaseQueue;
+pub(crate) use self::{
+    lease::Lease,
+    message::{DeleteMessage, LeaseMessage},
+};
 use super::req_ctx::RequestCtx;
 use crate::{
     header_gen::HeaderGenerator,
@@ -27,12 +32,6 @@ use crate::{
     },
     server::command::{CommandResponse, SyncResponse},
     state::State,
-};
-
-use self::lease_queue::LeaseQueue;
-pub(crate) use self::{
-    lease::Lease,
-    message::{DeleteMessage, LeaseMessage},
 };
 
 /// Max lease ttl

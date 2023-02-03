@@ -38,7 +38,7 @@ pub mod duration_format {
 
     use crate::parse_duration;
 
-    /// deseralizes a cluster duration
+    /// deserializes a cluster duration
     #[allow(single_use_lifetimes)] //  the false positive case blocks us
     pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
     where
@@ -299,14 +299,14 @@ pub struct LogConfig {
     level: LevelConfig,
 }
 
-/// `ClusterRange` deserialization formatter
+/// `LevelConfig` deserialization formatter
 pub mod level_format {
     use serde::{self, Deserialize, Deserializer};
 
     use super::LevelConfig;
     use crate::parse_log_level;
 
-    /// deseralizes a cluster duration
+    /// deserializes a cluster duration
     #[allow(single_use_lifetimes)] // TODO: Think is it necessary to allow this clippy??
     pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<LevelConfig, D::Error>
     where
@@ -463,7 +463,7 @@ mod tests {
 
     #[allow(clippy::unwrap_used)]
     #[test]
-    fn test_xline_server_config_shoule_be_loaded() {
+    fn test_xline_server_config_should_be_loaded() {
         let config: XlineServerConfig = toml::from_str(
             r#"[cluster]
             name = 'node1'

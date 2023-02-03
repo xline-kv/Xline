@@ -29,7 +29,6 @@ use crate::{
 
 /// Auth Server
 #[derive(Debug)]
-#[allow(unused)]
 pub(crate) struct AuthServer<S>
 where
     S: StorageApi,
