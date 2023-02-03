@@ -6,6 +6,7 @@ use std::{
 };
 
 use clippy_utilities::NumericCast;
+use event_listener::Event;
 use futures::{future::Either, pin_mut, stream::FuturesUnordered, Stream, StreamExt};
 use itertools::Itertools;
 use madsim::rand::{thread_rng, Rng};
@@ -35,7 +36,6 @@ use crate::{
         },
         ServerRole, State,
     },
-    shutdown::Shutdown,
     TxFilter,
 };
 
@@ -53,7 +53,7 @@ pub(super) async fn run_bg_tasks<
     cmd_exe_tx: ExeTx,
     cmd_exe_rx: CmdExeReceiver<C>,
     cmd_as_rx: CmdAsReceiver<C>,
-    mut shutdown: Shutdown,
+    shutdown_trigger: Arc<Event>,
     timeout: Arc<ServerTimeout>,
     tx_filter: Option<Box<dyn TxFilter>>,
 ) {
@@ -104,7 +104,7 @@ pub(super) async fn run_bg_tasks<
     })
     .collect();
 
-    shutdown.recv().await;
+    shutdown_trigger.listen().await;
     bg_tick_handle.abort();
     bg_ae_handle.abort();
     bg_apply_handle.abort();

@@ -156,8 +156,5 @@ pub(crate) mod conflict_checked_mpmc;
 /// Protobuf generated types that are used in RPC
 mod rpc;
 
-/// Shutdown related
-mod shutdown;
-
 #[cfg(test)]
 pub(crate) mod test_utils;
