@@ -447,11 +447,9 @@ impl<C: 'static + Command> Protocol<C> {
             let er = er_rx.await;
             match er {
                 Ok(Ok(er)) => ProposeResponse::new_result::<C>(leader_id, term, &er),
-                Ok(Err(err)) => ProposeResponse::new_error(
-                    leader_id,
-                    term,
-                    &ProposeError::ExecutionError(err.to_string()),
-                ),
+                Ok(Err(err)) => {
+                    ProposeResponse::new_error(leader_id, term, &ProposeError::ExecutionError(err))
+                }
                 Err(err) => ProposeResponse::new_error(
                     leader_id,
                     term,

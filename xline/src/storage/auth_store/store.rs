@@ -1,7 +1,7 @@
 use std::{collections::VecDeque, sync::Arc};
 
 use anyhow::Result;
-use curp::{cmd::ProposeId, error::ExecuteError};
+use curp::cmd::ProposeId;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use tokio::sync::mpsc;
 
@@ -15,11 +15,11 @@ use crate::{
     server::command::{CommandResponse, KeyRange, SyncResponse},
     storage::{
         auth_store::backend::AuthStoreBackend, lease_store::LeaseMessage, storage_api::StorageApi,
+        ExecuteError,
     },
 };
 
 /// Auth store
-#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct AuthStore<S>
 where
@@ -117,15 +117,11 @@ where
             Some(ref token) => self.inner.verify_token(token)?,
             None => {
                 // TODO: some requests are allowed without token when auth is enabled
-                return Err(ExecuteError::InvalidCommand(
-                    "token is not provided".to_owned(),
-                ));
+                return Err(ExecuteError::token_not_provided());
             }
         };
         if claims.revision < self.revision() {
-            return Err(ExecuteError::InvalidCommand(
-                "request's revision is older than current revision".to_owned(),
-            ));
+            return Err(ExecuteError::token_old_revision());
         }
         let username = claims.username;
         if Self::need_admin_permission(wrapper) {
@@ -285,7 +281,7 @@ where
         if user.has_role(ROOT_ROLE) {
             return Ok(());
         }
-        Err(ExecuteError::InvalidCommand("permission denied".to_owned()))
+        Err(ExecuteError::PermissionDenied)
     }
 
     /// check permission for a kv operation
@@ -300,33 +296,8 @@ where
         if user.has_role(ROOT_ROLE) {
             return Ok(());
         }
-        let user_perms = self.inner.get_user_permissions_from_cache(username)?;
-        match perm_type {
-            Type::Read => {
-                if user_perms.read.iter().any(|kr| {
-                    kr.contains_range(&KeyRange {
-                        start: key.to_vec(),
-                        end: range_end.to_vec(),
-                    })
-                }) {
-                    return Ok(());
-                }
-            }
-            Type::Write => {
-                if user_perms.write.iter().any(|kr| {
-                    kr.contains_range(&KeyRange {
-                        start: key.to_vec(),
-                        end: range_end.to_vec(),
-                    })
-                }) {
-                    return Ok(());
-                }
-            }
-            Type::Readwrite => {
-                unreachable!("Readwrite is unreachable");
-            }
-        }
-        Err(ExecuteError::InvalidCommand("permission denied".to_owned()))
+        let key_range = KeyRange::new(key, range_end);
+        self.inner.check_permission(username, &key_range, perm_type)
     }
 
     /// Assign root token

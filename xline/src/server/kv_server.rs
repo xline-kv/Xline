@@ -16,7 +16,7 @@ use crate::{
         TxnResponse,
     },
     state::State,
-    storage::{AuthStore, KvStore, StorageApi},
+    storage::{storage_api::StorageApi, AuthStore, KvStore},
 };
 
 /// Default max txn ops
@@ -24,7 +24,6 @@ const DEFAULT_MAX_TXN_OPS: usize = 128;
 
 /// KV Server
 #[derive(Debug)]
-#[allow(dead_code)] // Remove this after feature is completed
 pub(crate) struct KvServer<S>
 where
     S: StorageApi,

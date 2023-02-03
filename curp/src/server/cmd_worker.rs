@@ -16,7 +16,6 @@ use crate::{
     cmd::{Command, CommandExecutor, ConflictCheck},
     conflict_checked_mpmc,
     conflict_checked_mpmc::{ConflictCheckedMsg, DoneNotifier},
-    error::ExecuteError,
     server::cmd_board::CmdBoardRef,
     LogIndex,
 };
@@ -37,7 +36,7 @@ async fn execute_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
     while let Ok((msg, done)) = dispatch_rx.recv().await {
         match msg {
             ExeMsg::Execute { cmd, er_tx } => {
-                let er = ce.execute(cmd.as_ref()).await;
+                let er = ce.execute(cmd.as_ref()).await.map_err(|e| e.to_string());
                 debug!("cmd {:?} is speculatively executed", cmd.id());
 
                 spec.map_lock(|mut spec_l| spec_l.remove(cmd.id())); // clean spec pool
@@ -71,7 +70,10 @@ async fn execute_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
                     }
                 };
 
-                let asr = ce.after_sync(cmd.as_ref(), index).await;
+                let asr = ce
+                    .after_sync(cmd.as_ref(), index)
+                    .await
+                    .map_err(|e| e.to_string());
                 cmd_board.write().insert_asr(cmd.id(), asr);
                 debug!("cmd {:?} after sync is called", cmd.id());
             }
@@ -128,7 +130,7 @@ async fn after_sync_worker<C: Command + 'static, CE: 'static + CommandExecutor<C
 
         match condition {
             Condition::ExeAndAfterSync => {
-                let er = ce.execute(cmd.as_ref()).await;
+                let er = ce.execute(cmd.as_ref()).await.map_err(|e| e.to_string());
                 let er_ok = er.is_ok();
                 cmd_board.write().insert_er(cmd.id(), er);
                 debug!("cmd {:?} is executed", cmd.id());
@@ -136,13 +138,19 @@ async fn after_sync_worker<C: Command + 'static, CE: 'static + CommandExecutor<C
                 spec.map_lock(|mut spec_l| spec_l.remove(cmd.id())); // clean spec pool
 
                 if er_ok {
-                    let asr = ce.after_sync(cmd.as_ref(), index).await;
+                    let asr = ce
+                        .after_sync(cmd.as_ref(), index)
+                        .await
+                        .map_err(|e| e.to_string());
                     cmd_board.write().insert_asr(cmd.id(), asr);
                     debug!("cmd {:?} after sync is called", cmd.id());
                 }
             }
             Condition::AfterSync(exe_d) => {
-                let asr = ce.after_sync(cmd.as_ref(), index).await;
+                let asr = ce
+                    .after_sync(cmd.as_ref(), index)
+                    .await
+                    .map_err(|e| e.to_string());
                 cmd_board.write().insert_asr(cmd.id(), asr);
                 debug!("cmd {:?} after sync is called", cmd.id());
                 exe_d.notify();
@@ -161,7 +169,7 @@ enum ExeMsg<C: Command + 'static> {
         /// The cmd to be executed
         cmd: Arc<C>,
         /// Send execution result
-        er_tx: oneshot::Sender<Result<C::ER, ExecuteError>>,
+        er_tx: oneshot::Sender<Result<C::ER, String>>,
     },
     /// We need to reset the ce state
     Reset,
@@ -243,7 +251,7 @@ struct CmdAsReceiver<C: Command + 'static>(flume::Receiver<(AsMsg<C>, DoneNotifi
 #[cfg_attr(test, automock)]
 pub(super) trait CmdExeSenderInterface<C: Command + 'static>: Send + Sync + 'static {
     /// Send cmd to background cmd executor and return a oneshot receiver for the execution result
-    fn send_exe(&self, cmd: Arc<C>) -> oneshot::Receiver<Result<C::ER, ExecuteError>>;
+    fn send_exe(&self, cmd: Arc<C>) -> oneshot::Receiver<Result<C::ER, String>>;
 
     /// Send after sync event to the background cmd executor so that after sync can be called
     fn send_after_sync(&self, cmd: Arc<C>, index: LogIndex);
@@ -253,7 +261,7 @@ pub(super) trait CmdExeSenderInterface<C: Command + 'static>: Send + Sync + 'sta
 }
 
 impl<C: Command + 'static> CmdExeSenderInterface<C> for CmdExeSender<C> {
-    fn send_exe(&self, cmd: Arc<C>) -> oneshot::Receiver<Result<C::ER, ExecuteError>> {
+    fn send_exe(&self, cmd: Arc<C>) -> oneshot::Receiver<Result<C::ER, String>> {
         let (tx, rx) = oneshot::channel();
         let msg = ExeMsg::Execute { cmd, er_tx: tx };
         if let Err(e) = self.exe_tx.send(msg) {

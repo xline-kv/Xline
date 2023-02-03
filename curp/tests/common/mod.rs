@@ -1,6 +1,11 @@
 #![allow(dead_code, unused)]
 
-use std::{env, time::Duration};
+use std::{
+    io,
+    {env, time::Duration},
+};
+
+use thiserror::Error;
 
 pub mod curp_group;
 pub mod test_cmd;

@@ -10,7 +10,7 @@ use std::{
 
 use anyhow::Result;
 use clippy_utilities::Cast;
-use curp::{cmd::ProposeId, error::ExecuteError};
+use curp::cmd::ProposeId;
 use itertools::Itertools;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use log::debug;
@@ -46,8 +46,8 @@ use crate::{
         db::DB,
         index::{Index, IndexOperate},
         lease_store::{Lease, LeaseMessage},
-        req_ctx::RequestCtx,
         storage_api::StorageApi,
+        ExecuteError, RequestCtx,
     },
 };
 
@@ -158,16 +158,12 @@ where
         password: &str,
     ) -> Result<i64, ExecuteError> {
         if !self.is_enabled() {
-            return Err(ExecuteError::InvalidCommand(
-                "auth is not enabled".to_owned(),
-            ));
+            return Err(ExecuteError::auth_not_enabled());
         }
         let user = self.get_user(username)?;
         let need_password = user.options.as_ref().map_or(true, |o| !o.no_password);
         if !need_password {
-            return Err(ExecuteError::InvalidCommand(
-                "password was given for no password user".to_owned(),
-            ));
+            return Err(ExecuteError::no_password_user());
         }
 
         let hash = String::from_utf8_lossy(&user.password);
@@ -175,7 +171,7 @@ where
             .unwrap_or_else(|e| panic!("Failed to parse password hash, error: {e}"));
         Pbkdf2
             .verify_password(password.as_bytes(), &hash)
-            .map_err(|e| ExecuteError::InvalidCommand(format!("verify password error: {e}")))?;
+            .map_err(|_ignore| ExecuteError::auth_failed())?;
 
         Ok(self.revision())
     }
@@ -185,10 +181,8 @@ where
         match self.token_manager {
             Some(ref token_manager) => token_manager
                 .assign(username, self.revision())
-                .map_err(|e| ExecuteError::InvalidCommand(format!("assign token error: {e}"))),
-            None => Err(ExecuteError::InvalidCommand(
-                "token_manager is not initialized".to_owned(),
-            )),
+                .map_err(|_ignore| ExecuteError::invalid_auth_token()),
+            None => Err(ExecuteError::token_manager_not_init()),
         }
     }
 
@@ -197,10 +191,8 @@ where
         match self.token_manager {
             Some(ref token_manager) => token_manager
                 .verify(token)
-                .map_err(|e| ExecuteError::InvalidCommand(format!("verify token error: {e}"))),
-            None => Err(ExecuteError::InvalidCommand(
-                "token_manager is not initialized".to_owned(),
-            )),
+                .map_err(|_ignore| ExecuteError::invalid_auth_token()),
+            None => Err(ExecuteError::token_manager_not_init()),
         }
     }
 
@@ -249,18 +241,39 @@ where
         user_permission
     }
 
-    /// get user permissions from cache
-    pub(super) fn get_user_permissions_from_cache(
+    /// Check permission by username and key range
+    pub(super) fn check_permission(
         &self,
         username: &str,
-    ) -> Result<UserPermissions, ExecuteError> {
-        self.permission_cache
-            .map_read(|cache| match cache.user_permissions.get(username) {
-                Some(user_permissions) => Ok(user_permissions.clone()),
-                None => Err(ExecuteError::InvalidCommand(
-                    "user permissions not found".to_owned(),
-                )),
-            })
+        key_range: &KeyRange,
+        permission_type: Type,
+    ) -> Result<(), ExecuteError> {
+        if let Some(permissions) = self.permission_cache.read().user_permissions.get(username) {
+            match permission_type {
+                Type::Read => {
+                    if permissions
+                        .read
+                        .iter()
+                        .any(|kr| kr.contains_range(key_range))
+                    {
+                        return Ok(());
+                    }
+                }
+                Type::Write => {
+                    if permissions
+                        .write
+                        .iter()
+                        .any(|kr| kr.contains_range(key_range))
+                    {
+                        return Ok(());
+                    }
+                }
+                Type::Readwrite => {
+                    unreachable!("Readwrite is unreachable");
+                }
+            }
+        }
+        Err(ExecuteError::PermissionDenied)
     }
 
     /// get `KeyValue` in `AuthStore`
@@ -277,7 +290,7 @@ where
             Some(kv) => Ok(User::decode(kv.value.as_slice()).unwrap_or_else(|e| {
                 panic!("Failed to decode user from kv value, error: {e:?}, kv: {kv:?}");
             })),
-            None => Err(ExecuteError::InvalidCommand("user not found".to_owned())),
+            None => Err(ExecuteError::user_not_found(username)),
         }
     }
 
@@ -288,7 +301,7 @@ where
             Some(kv) => Ok(Role::decode(kv.value.as_slice()).unwrap_or_else(|e| {
                 panic!("Failed to decode role from kv value, error: {e:?}, kv: {kv:?}");
             })),
-            None => Err(ExecuteError::InvalidCommand("role not found".to_owned())),
+            None => Err(ExecuteError::role_not_found(rolename)),
         }
     }
 
@@ -475,9 +488,7 @@ where
         }
         let user = self.get_user(ROOT_USER)?;
         if user.roles.binary_search(&ROOT_ROLE.to_owned()).is_err() {
-            return Err(ExecuteError::InvalidCommand(
-                "root user does not have root role".to_owned(),
-            ));
+            return Err(ExecuteError::root_role_not_exist());
         }
         res
     }
@@ -510,9 +521,7 @@ where
     ) -> Result<AuthenticateResponse, ExecuteError> {
         debug!("handle_authenticate_request");
         if !self.is_enabled() {
-            return Err(ExecuteError::InvalidCommand(
-                "auth is not enabled".to_owned(),
-            ));
+            return Err(ExecuteError::auth_not_enabled());
         }
         let token = self.assign(&req.name)?;
         Ok(AuthenticateResponse {
@@ -528,9 +537,7 @@ where
     ) -> Result<AuthUserAddResponse, ExecuteError> {
         debug!("handle_user_add_request");
         if self.get_user(&req.name).is_ok() {
-            return Err(ExecuteError::InvalidCommand(
-                "user already exists".to_owned(),
-            ));
+            return Err(ExecuteError::user_already_exists(&req.name));
         }
         Ok(AuthUserAddResponse {
             header: Some(self.header_gen.gen_header_without_revision()),
@@ -574,9 +581,7 @@ where
     ) -> Result<AuthUserDeleteResponse, ExecuteError> {
         debug!("handle_user_delete_request");
         if self.is_enabled() && (req.name == ROOT_USER) {
-            return Err(ExecuteError::InvalidCommand(
-                "root user cannot be deleted".to_owned(),
-            ));
+            return Err(ExecuteError::invalid_auth_management());
         }
         let _user = self.get_user(&req.name)?;
         Ok(AuthUserDeleteResponse {
@@ -593,9 +598,7 @@ where
         let user = self.get_user(&req.name)?;
         let need_password = user.options.as_ref().map_or(true, |o| !o.no_password);
         if need_password && req.hashed_password.is_empty() {
-            return Err(ExecuteError::InvalidCommand(
-                "password is required but not provided".to_owned(),
-            ));
+            return Err(ExecuteError::no_password_user());
         }
         Ok(AuthUserChangePasswordResponse {
             header: Some(self.header_gen.gen_header_without_revision()),
@@ -624,15 +627,11 @@ where
     ) -> Result<AuthUserRevokeRoleResponse, ExecuteError> {
         debug!("handle_user_revoke_role_request");
         if self.is_enabled() && (req.name == ROOT_USER) && (req.role == ROOT_ROLE) {
-            return Err(ExecuteError::InvalidCommand(
-                "root user cannot revoke root role".to_owned(),
-            ));
+            return Err(ExecuteError::invalid_auth_management());
         }
         let user = self.get_user(&req.name)?;
         if user.roles.binary_search(&req.role).is_err() {
-            return Err(ExecuteError::InvalidCommand(
-                "role is not granted to the user".to_owned(),
-            ));
+            return Err(ExecuteError::role_not_granted(&req.role));
         }
         Ok(AuthUserRevokeRoleResponse {
             header: Some(self.header_gen.gen_header_without_revision()),
@@ -646,9 +645,7 @@ where
     ) -> Result<AuthRoleAddResponse, ExecuteError> {
         debug!("handle_role_add_request");
         if self.get_role(&req.name).is_ok() {
-            return Err(ExecuteError::InvalidCommand(
-                "role already exists".to_owned(),
-            ));
+            return Err(ExecuteError::role_already_exists(&req.name));
         }
         Ok(AuthRoleAddResponse {
             header: Some(self.header_gen.gen_header_without_revision()),
@@ -702,9 +699,7 @@ where
     ) -> Result<AuthRoleDeleteResponse, ExecuteError> {
         debug!("handle_role_delete_request");
         if self.is_enabled() && req.role == ROOT_ROLE {
-            return Err(ExecuteError::InvalidCommand(
-                "root role cannot be deleted".to_owned(),
-            ));
+            return Err(ExecuteError::invalid_auth_management());
         }
         let _role = self.get_role(&req.role)?;
         Ok(AuthRoleDeleteResponse {
@@ -740,9 +735,7 @@ where
             })
             .is_err()
         {
-            return Err(ExecuteError::InvalidCommand(
-                "permission not granted to the role".to_owned(),
-            ));
+            return Err(ExecuteError::permission_not_granted());
         }
         Ok(AuthRoleRevokePermissionResponse {
             header: Some(self.header_gen.gen_header_without_revision()),
@@ -897,16 +890,10 @@ where
         let mut user = self.get_user(&req.user)?;
         let role = self.get_role(&req.role);
         if (req.role != ROOT_ROLE) && role.is_err() {
-            return Err(ExecuteError::InvalidCommand(format!(
-                "Role {} does not exist",
-                req.role
-            )));
+            return Err(ExecuteError::role_not_found(&req.role));
         }
         let Err(idx) =  user.roles.binary_search(&req.role) else {
-            return Err(ExecuteError::InvalidCommand(format!(
-                "User {} already has role {}",
-                req.user, req.role
-            )));
+            return Err(ExecuteError::user_already_has_role(&req.user, &req.role));
         };
         user.roles.insert(idx, req.role.clone());
         let revision = self.revision.next();
@@ -950,12 +937,10 @@ where
         req: AuthUserRevokeRoleRequest,
     ) -> Result<(), ExecuteError> {
         let mut user = self.get_user(&req.name)?;
-        let idx = user.roles.binary_search(&req.role).map_err(|_ignore| {
-            ExecuteError::InvalidCommand(format!(
-                "User {} does not have role {}",
-                req.name, req.role
-            ))
-        })?;
+        let idx = user
+            .roles
+            .binary_search(&req.role)
+            .map_err(|_ignore| ExecuteError::role_not_granted(&req.role))?;
         let _ignore = user.roles.remove(idx);
         let revision = self.revision.next();
         self.put_user(&user, revision, 0)?;
@@ -1010,9 +995,7 @@ where
         req: AuthRoleGrantPermissionRequest,
     ) -> Result<(), ExecuteError> {
         let mut role = self.get_role(&req.name)?;
-        let permission = req.perm.ok_or_else(|| {
-            ExecuteError::InvalidCommand("Permission is not specified".to_owned())
-        })?;
+        let permission = req.perm.ok_or_else(ExecuteError::permission_not_given)?;
 
         #[allow(clippy::indexing_slicing)] // this index is always valid
         match role
@@ -1074,7 +1057,7 @@ where
                 Ordering::Less => Ordering::Less,
                 Ordering::Greater => Ordering::Greater,
             })
-            .map_err(|_ignore| ExecuteError::InvalidCommand("Permission not found".to_owned()))?;
+            .map_err(|_ignore| ExecuteError::permission_not_granted())?;
         let _ignore = role.key_permission.remove(idx);
         let next_revision = self.revision.next();
         self.put_role(&role, next_revision, 0)?;

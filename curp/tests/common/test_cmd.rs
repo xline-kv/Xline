@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    fmt::Display,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -10,13 +11,13 @@ use std::{
 use async_trait::async_trait;
 use curp::{
     cmd::{Command, CommandExecutor, ConflictCheck, ProposeId},
-    error::ExecuteError,
     LogIndex,
 };
 use itertools::Itertools;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use tokio::{sync::mpsc, time::sleep};
 use tracing::debug;
 
@@ -24,6 +25,15 @@ static NEXT_ID: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(0));
 
 fn next_id() -> u64 {
     NEXT_ID.fetch_add(1, Ordering::SeqCst)
+}
+
+#[derive(Error, Debug, Clone)]
+pub struct ExecuteError(String);
+
+impl Display for ExecuteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -130,10 +140,12 @@ pub struct TestCE {
 
 #[async_trait]
 impl CommandExecutor<TestCommand> for TestCE {
+    type Error = ExecuteError;
+
     async fn execute(&self, cmd: &TestCommand) -> Result<TestCommandResult, ExecuteError> {
         sleep(cmd.exe_dur).await;
         if cmd.exe_should_fail {
-            return Err(ExecuteError::InvalidCommand("fail".to_owned()));
+            return Err(ExecuteError("fail".to_owned()));
         }
 
         let mut store = self.store.lock();
@@ -165,7 +177,7 @@ impl CommandExecutor<TestCommand> for TestCE {
     ) -> Result<LogIndex, ExecuteError> {
         sleep(cmd.as_dur).await;
         if cmd.as_should_fail {
-            return Err(ExecuteError::InvalidCommand("fail".to_owned()));
+            return Err(ExecuteError("fail".to_owned()));
         }
 
         self.after_sync_sender

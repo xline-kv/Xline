@@ -10,7 +10,6 @@ use parking_lot::RwLock;
 use crate::{
     cmd::{Command, ProposeId},
     conflict_checked_mpmc::DoneNotifier,
-    error::ExecuteError,
     LogIndex,
 };
 
@@ -30,9 +29,9 @@ pub(super) struct CommandBoard<C: Command> {
     /// Whether the cmd needs after sync
     pub(super) needs_as: HashMap<ProposeId, LogIndex>,
     /// Store all execution results
-    pub(super) er_buffer: IndexMap<ProposeId, Result<C::ER, ExecuteError>>,
+    pub(super) er_buffer: IndexMap<ProposeId, Result<C::ER, String>>,
     /// Store all after sync results
-    pub(super) asr_buffer: IndexMap<ProposeId, Result<C::ASR, ExecuteError>>,
+    pub(super) asr_buffer: IndexMap<ProposeId, Result<C::ASR, String>>,
 }
 
 impl<C: Command> CommandBoard<C> {
@@ -65,7 +64,7 @@ impl<C: Command> CommandBoard<C> {
     }
 
     /// Insert er to internal buffer
-    pub(super) fn insert_er(&mut self, id: &ProposeId, er: Result<C::ER, ExecuteError>) {
+    pub(super) fn insert_er(&mut self, id: &ProposeId, er: Result<C::ER, String>) {
         let er_ok = er.is_ok();
         assert!(
             self.er_buffer.insert(id.clone(), er).is_none(),
@@ -79,7 +78,7 @@ impl<C: Command> CommandBoard<C> {
     }
 
     /// Insert er to internal buffer
-    pub(super) fn insert_asr(&mut self, id: &ProposeId, asr: Result<C::ASR, ExecuteError>) {
+    pub(super) fn insert_asr(&mut self, id: &ProposeId, asr: Result<C::ASR, String>) {
         assert!(
             self.asr_buffer.insert(id.clone(), asr).is_none(),
             "er should not be inserted twice"
