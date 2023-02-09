@@ -4,7 +4,7 @@ set -u -e
 rm -rf coverage
 mkdir coverage
 
-if [[ -v CI ]]; then
+if [[ ! -v CI ]]; then
   FORMAT=html
   OUTPUT_XLINE=coverage/xline_html
   OUTPUT_CURP=coverage/curp_html
