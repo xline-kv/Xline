@@ -741,9 +741,8 @@ where
 mod test {
     use std::error::Error;
 
-    use crate::Memory;
-
     use super::*;
+    use crate::Memory;
 
     #[tokio::test]
     async fn test_keys_only() -> Result<(), Box<dyn Error>> {

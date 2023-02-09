@@ -168,13 +168,6 @@ pub fn default_candidate_timeout_ticks() -> u8 {
     2
 }
 
-/// default curp client timeout
-#[must_use]
-#[inline]
-pub fn default_client_timeout() -> Duration {
-    Duration::from_secs(1)
-}
-
 /// default client wait synced timeout
 #[must_use]
 #[inline]
@@ -236,11 +229,6 @@ impl Default for ServerTimeout {
 /// Curp client timeout settings
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
 pub struct ClientTimeout {
-    /// Curp client timeout settings
-    #[getset(get = "pub")]
-    #[serde(with = "duration_format", default = "default_client_timeout")]
-    timeout: Duration,
-
     /// Curp client wait sync timeout
     #[getset(get = "pub")]
     #[serde(
@@ -253,6 +241,11 @@ pub struct ClientTimeout {
     #[getset(get = "pub")]
     #[serde(with = "duration_format", default = "default_propose_timeout")]
     propose_timeout: Duration,
+
+    /// Curp client retry interval
+    #[getset(get = "pub")]
+    #[serde(with = "duration_format", default = "default_retry_timeout")]
+    retry_timeout: Duration,
 }
 
 impl ClientTimeout {
@@ -260,14 +253,14 @@ impl ClientTimeout {
     #[must_use]
     #[inline]
     pub fn new(
-        timeout: Duration,
         wait_synced_timeout: Duration,
         propose_timeout: Duration,
+        retry_timeout: Duration,
     ) -> Self {
         Self {
-            timeout,
             wait_synced_timeout,
             propose_timeout,
+            retry_timeout,
         }
     }
 }
@@ -276,14 +269,14 @@ impl Default for ClientTimeout {
     #[inline]
     fn default() -> Self {
         Self {
-            timeout: default_client_timeout(),
             wait_synced_timeout: default_client_wait_synced_timeout(),
             propose_timeout: default_propose_timeout(),
+            retry_timeout: default_retry_timeout(),
         }
     }
 }
 
-/// Cluster configuration object
+/// Log configuration object
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
 pub struct LogConfig {
@@ -292,6 +285,7 @@ pub struct LogConfig {
     path: PathBuf,
     /// Log rotation strategy
     #[getset(get = "pub")]
+    #[serde(with = "rotation_format", default = "default_rotation")]
     rotation: RotationConfig,
     /// Log verbosity level
     #[getset(get = "pub")]
@@ -317,7 +311,7 @@ pub mod level_format {
     }
 }
 
-/// default lgo level
+/// default log level
 #[must_use]
 #[inline]
 pub fn default_log_level() -> LevelConfig {
@@ -349,6 +343,31 @@ pub enum RotationConfig {
     Daily,
     /// Never rotate log file
     Never,
+}
+
+/// `RotationConfig` deserialization formatter
+pub mod rotation_format {
+    use serde::{self, Deserialize, Deserializer};
+
+    use super::RotationConfig;
+    use crate::parse_rotation;
+
+    /// deserializes a cluster log rotation strategy
+    #[allow(single_use_lifetimes)]
+    pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<RotationConfig, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        parse_rotation(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+/// default log rotation strategy
+#[must_use]
+#[inline]
+pub fn default_rotation() -> RotationConfig {
+    RotationConfig::Daily
 }
 
 /// Generates a `RollingFileAppender` from the given `RotationConfig` and `name`
@@ -481,7 +500,7 @@ mod tests {
             retry_timeout = '100us'
 
             [cluster.client_timeout]
-            timeout = '5s'
+            retry_timeout = '5s'
 
             [log]
             path = '/var/log/xline'
@@ -508,9 +527,9 @@ mod tests {
         );
 
         let client_timeout = ClientTimeout::new(
-            Duration::from_secs(5),
             default_client_wait_synced_timeout(),
             default_propose_timeout(),
+            Duration::from_secs(5),
         );
 
         assert_eq!(
@@ -562,8 +581,6 @@ mod tests {
 
                 [log]
                 path = '/var/log/xline'
-                rotation = 'daily'
-                level = 'info'
 
                 [trace]
                 jaeger_online = false

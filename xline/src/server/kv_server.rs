@@ -477,9 +477,8 @@ where
 #[cfg(test)]
 mod test {
 
-    use crate::Memory;
-
     use super::*;
+    use crate::Memory;
 
     #[test]
     fn txn_check() {
