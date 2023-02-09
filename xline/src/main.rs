@@ -198,6 +198,9 @@ struct ServerArgs {
     /// Propose request timeout
     #[clap(long, value_parser = parse_duration, default_value = "1s")]
     client_propose_timeout: Duration,
+    /// Curp client retry timeout
+    #[clap(long, value_parser = parse_duration, default_value = "50ms")]
+    client_retry_timeout: Duration,
 }
 
 impl From<ServerArgs> for XlineServerConfig {
@@ -211,9 +214,9 @@ impl From<ServerArgs> for XlineServerConfig {
             args.candidate_timeout_ticks,
         );
         let client_timeout = ClientTimeout::new(
-            args.client_timeout,
             args.client_wait_synced_timeout,
             args.client_propose_timeout,
+            args.client_retry_timeout,
         );
         let cluster = ClusterConfig::new(
             args.name,

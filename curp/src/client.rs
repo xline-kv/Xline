@@ -1,7 +1,4 @@
-use std::{
-    cmp::Ordering, collections::HashMap, fmt::Debug, iter, marker::PhantomData, sync::Arc,
-    time::Duration,
-};
+use std::{cmp::Ordering, collections::HashMap, fmt::Debug, iter, marker::PhantomData, sync::Arc};
 
 use event_listener::Event;
 use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
@@ -183,14 +180,14 @@ where
         cmd: Arc<C>,
     ) -> Result<(<C as Command>::ASR, <C as Command>::ER), ProposeError> {
         let notify = Arc::clone(&self.state.read().leader_notify);
-        let wait_timeout = *self.timeout.timeout();
+        let retry_timeout = *self.timeout.retry_timeout();
         loop {
             // fetch leader id
             let leader_id = loop {
                 if let Some(id) = self.state.read().leader.clone() {
                     break id;
                 }
-                if timeout(wait_timeout, notify.listen()).await.is_err() {
+                if timeout(retry_timeout, notify.listen()).await.is_err() {
                     // maybe the fast path fails to set the leader, need to fetch leader proactively
                     break self.fetch_leader().await;
                 }
@@ -212,7 +209,7 @@ where
                 Err(e) => {
                     warn!("wait synced rpc error: {e}");
                     // it's quite likely that the leader has crashed, then we should wait for some time and fetch the leader again
-                    tokio::time::sleep(wait_timeout).await;
+                    tokio::time::sleep(retry_timeout).await;
                     self.resend_propose(Arc::clone(&cmd), None).await?;
                     continue;
                 }
@@ -277,7 +274,7 @@ where
                     }
                     // if the propose fails again, need to fetch the leader and try again
                     warn!("failed to resend propose, {e}");
-                    tokio::time::sleep(Self::RETRY_INTERVAL).await;
+                    tokio::time::sleep(*self.timeout.retry_timeout()).await;
                     continue;
                 }
             };
@@ -330,7 +327,7 @@ where
                     (
                         connect.id().clone(),
                         connect
-                            .fetch_leader(FetchLeaderRequest::new(), *self.timeout.timeout())
+                            .fetch_leader(FetchLeaderRequest::new(), *self.timeout.retry_timeout())
                             .await,
                     )
                 })
@@ -379,12 +376,9 @@ where
 
             // wait until the election is completed
             // TODO: let user configure it according to average leader election cost
-            tokio::time::sleep(Self::RETRY_INTERVAL).await;
+            tokio::time::sleep(*self.timeout.retry_timeout()).await;
         }
     }
-
-    /// Retry interval
-    const RETRY_INTERVAL: Duration = Duration::from_millis(50);
 
     /// Propose the request to servers
     /// # Errors
