@@ -28,15 +28,15 @@ use crate::{
     error::ProposeError,
     message::ServerId,
     rpc::{
-        self, connect::ConnectInterface, AppendEntriesRequest, AppendEntriesResponse,
-        FetchLeaderRequest, FetchLeaderResponse, ProposeRequest, ProposeResponse, SyncError,
-        VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        self, connect::ConnectApi, AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest,
+        FetchLeaderResponse, ProposeRequest, ProposeResponse, SyncError, VoteRequest, VoteResponse,
+        WaitSyncedRequest, WaitSyncedResponse,
     },
     TxFilter,
 };
 
 /// Connects
-type Connects<Conn> = HashMap<ServerId, Arc<Conn>>;
+type Connects = HashMap<ServerId, Arc<dyn ConnectApi>>;
 
 /// `CurpNode` represents a single node of curp cluster
 pub(super) struct CurpNode<C: Command> {
@@ -269,9 +269,9 @@ impl<C: 'static + Command> CurpNode<C> {
 /// Spawned tasks
 impl<C: 'static + Command> CurpNode<C> {
     /// Tick periodically
-    async fn tick_task<Conn: ConnectInterface>(
+    async fn tick_task(
         curp: Arc<RawCurp<C>>,
-        connects: Connects<Conn>,
+        connects: Connects,
         calibrate_tx: mpsc::UnboundedSender<ServerId>,
     ) {
         let heartbeat_interval = *curp.timeout().heartbeat_interval();
@@ -300,14 +300,19 @@ impl<C: 'static + Command> CurpNode<C> {
     }
 
     /// Background leader calibrate followers
-    async fn calibrate_task<Conn: ConnectInterface>(
+    async fn calibrate_task(
         curp: Arc<RawCurp<C>>,
-        connects: Connects<Conn>,
+        connects: Connects,
         mut calibrate_rx: mpsc::UnboundedReceiver<ServerId>,
     ) {
         let mut handlers: HashMap<ServerId, JoinHandle<()>> = HashMap::new();
         while let Some(follower_id) = calibrate_rx.recv().await {
-            handlers.retain(|_, hd| !hd.is_finished());
+            if handlers
+                .get(&follower_id)
+                .map_or(false, |hd| !hd.is_finished())
+            {
+                continue;
+            }
             let _ig = handlers.entry(follower_id.clone()).or_insert_with(|| {
                 let connect = connects
                     .get(&follower_id)
@@ -401,9 +406,9 @@ impl<C: 'static + Command> CurpNode<C> {
     }
 
     /// Leader broadcasts heartbeats
-    async fn bcast_heartbeats<Conn: ConnectInterface>(
+    async fn bcast_heartbeats(
         curp: Arc<RawCurp<C>>,
-        connects: &Connects<Conn>,
+        connects: &Connects,
         calibrate_tx: &mpsc::UnboundedSender<ServerId>,
         hbs: HashMap<ServerId, AppendEntries<C>>,
     ) {
@@ -459,9 +464,9 @@ impl<C: 'static + Command> CurpNode<C> {
     }
 
     /// Candidate broadcasts votes
-    async fn bcast_votes<Conn: ConnectInterface>(
+    async fn bcast_votes(
         curp: Arc<RawCurp<C>>,
-        connects: &Connects<Conn>,
+        connects: &Connects,
         votes: HashMap<ServerId, Vote>,
     ) {
         let rpc_timeout = *curp.timeout().rpc_timeout();
@@ -514,10 +519,7 @@ impl<C: 'static + Command> CurpNode<C> {
 
     /// Leader calibrates a follower
     #[allow(clippy::integer_arithmetic, clippy::indexing_slicing)] // log.len() >= 1 because we have a fake log[0], indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
-    async fn leader_calibrates_follower<Conn: ConnectInterface>(
-        curp: Arc<RawCurp<C>>,
-        connect: Arc<Conn>,
-    ) {
+    async fn leader_calibrates_follower(curp: Arc<RawCurp<C>>, connect: Arc<dyn ConnectApi>) {
         debug!("{} starts calibrating follower {}", curp.id(), connect.id());
         let (rpc_timeout, retry_timeout) = (
             *curp.timeout().rpc_timeout(),
@@ -582,9 +584,9 @@ impl<C: 'static + Command> CurpNode<C> {
     }
 
     /// Sync task is responsible for replicating log entries
-    async fn sync_task<Conn: ConnectInterface>(
+    async fn sync_task(
         curp: Arc<RawCurp<C>>,
-        connects: Connects<Conn>,
+        connects: Connects,
         mut sync_rx: mpsc::UnboundedReceiver<usize>,
         calibrate_tx: mpsc::UnboundedSender<ServerId>,
     ) {
@@ -623,9 +625,9 @@ impl<C: 'static + Command> CurpNode<C> {
 
     /// Send `append_entries` containing a single log to a server
     #[allow(clippy::integer_arithmetic, clippy::indexing_slicing)] // log.len() >= 1 because we have a fake log[0], indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
-    async fn send_log_until_succeed<Conn: ConnectInterface>(
+    async fn send_log_until_succeed(
         curp: Arc<RawCurp<C>>,
-        connect: Arc<Conn>,
+        connect: Arc<dyn ConnectApi>,
         calibrate_tx: mpsc::UnboundedSender<ServerId>,
         i: usize,
         req: AppendEntriesRequest,
@@ -702,7 +704,7 @@ mod tests {
     use super::*;
     use crate::{
         log::LogEntry,
-        rpc::connect::MockConnectInterface,
+        rpc::connect::MockConnectApi,
         server::cmd_worker::MockCmdExeSenderInterface,
         test_utils::{sleep_millis, test_cmd::TestCommand},
     };
@@ -717,7 +719,7 @@ mod tests {
             MockCmdExeSenderInterface::<TestCommand>::default(),
         ));
 
-        let mut mock_connect = MockConnectInterface::default();
+        let mut mock_connect = MockConnectApi::default();
         mock_connect
             .expect_append_entries()
             .times(3..)
@@ -751,7 +753,7 @@ mod tests {
             Arc::new(RawCurp::new_test(3, exe_tx))
         };
 
-        let mut mock_connect = MockConnectInterface::default();
+        let mut mock_connect = MockConnectApi::default();
         mock_connect.expect_append_entries().returning(|_, _| {
             Ok(tonic::Response::new(AppendEntriesResponse::new_reject(
                 2, 0,
@@ -791,7 +793,7 @@ mod tests {
         curp.push_cmd(Arc::clone(&cmd));
         let (tx, _rx) = mpsc::unbounded_channel();
 
-        let mut mock_connect = MockConnectInterface::default();
+        let mut mock_connect = MockConnectApi::default();
         mock_connect
             .expect_append_entries()
             .returning(|_, _| Ok(tonic::Response::new(AppendEntriesResponse::new_accept(0))));
@@ -828,7 +830,7 @@ mod tests {
         let cmd2 = Arc::new(TestCommand::default());
         curp.push_cmd(Arc::clone(&cmd2));
 
-        let mut mock_connect = MockConnectInterface::default();
+        let mut mock_connect = MockConnectApi::default();
         let mut call_cnt = 0;
         mock_connect
             .expect_append_entries()

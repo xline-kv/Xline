@@ -12,23 +12,31 @@ use crate::{
     error::ProposeError,
     message::{ServerId, TermNum},
     rpc::{
-        self,
-        connect::{Connect, ConnectInterface},
-        FetchLeaderRequest, ProposeRequest, SyncError, SyncResult, WaitSyncedRequest,
+        self, connect::ConnectApi, FetchLeaderRequest, ProposeRequest, SyncError, SyncResult,
+        WaitSyncedRequest,
     },
 };
 
-#[derive(Debug)]
 /// Protocol client
 pub struct Client<C: Command> {
     /// Current leader and term
     state: RwLock<State>,
     /// All servers's `Connect`
-    connects: HashMap<ServerId, Arc<Connect>>,
+    connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
     /// Curp client timeout settings
     timeout: ClientTimeout,
     /// To keep Command type
     phantom: PhantomData<C>,
+}
+
+impl<C: Command> Debug for Client<C> {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Client")
+            .field("state", &self.state)
+            .field("timeout", &self.timeout)
+            .finish()
+    }
 }
 
 /// State of a client
