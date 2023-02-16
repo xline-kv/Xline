@@ -23,7 +23,10 @@ use clippy_utilities::NumericCast;
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use tokio::sync::broadcast;
-use tracing::{debug, error};
+use tracing::{
+    debug, error,
+    log::{log_enabled, Level},
+};
 use utils::{
     config::ServerTimeout,
     parking_lot_lock::{MutexMap, RwLockMap},
@@ -36,16 +39,16 @@ use self::{
 use super::cmd_worker::CmdExeSenderInterface;
 use crate::{
     cmd::{Command, ProposeId},
-    log::LogEntry,
+    log_entry::LogEntry,
     message::ServerId,
     server::{cmd_board::CmdBoardRef, spec_pool::SpecPoolRef},
 };
 
-/// Curp log
-mod log;
-
 /// Curp state
 mod state;
+
+/// Curp log
+mod log;
 
 /// The curp state machine
 #[derive(Debug)]
@@ -212,14 +215,15 @@ impl<C: 'static + Command> RawCurp<C> {
             .iter()
             .map(|id| {
                 let next_index = lst_r.get_next_index(id);
+                let (prev_log_term, prev_log_index) = log_r.get_prev_entry_info(next_index);
                 debug!("{} send heartbeat to {}", self.id(), id);
                 (
                     id.clone(),
                     AppendEntries {
                         term,
                         leader_id: self.id().clone(),
-                        prev_log_index: next_index - 1,
-                        prev_log_term: log_r.entries[next_index - 1].term(),
+                        prev_log_index,
+                        prev_log_term,
                         leader_commit: log_r.commit_index,
                         entries: vec![],
                     },
@@ -474,9 +478,7 @@ impl<C: 'static + Command> RawCurp<C> {
     pub(super) fn push_cmd(&self, cmd: Arc<C>) -> usize {
         let st_r = self.st.read();
         let mut log_w = self.log.write();
-        let entry = LogEntry::new(st_r.term, &[cmd]);
-        log_w.entries.push(entry);
-        log_w.last_log_index()
+        log_w.push_cmd(st_r.term, cmd)
     }
 }
 
@@ -548,15 +550,17 @@ impl<C: 'static + Command> RawCurp<C> {
     /// Get `append_entries` request for log[i]
     #[allow(clippy::indexing_slicing)] // use index to access log is safe
     pub(super) fn append_entries_single(&self, i: usize) -> AppendEntries<C> {
+        assert!(i > 0, "can't generate append_entries for fake log[0]");
         let term = self.term();
         let log_r = self.log.read();
+        let (prev_log_term, prev_log_index) = log_r.get_prev_entry_info(i);
         AppendEntries {
             term,
             leader_id: self.id().clone(),
-            prev_log_index: i - 1,
-            prev_log_term: log_r.entries[i - 1].term(),
+            prev_log_index,
+            prev_log_term,
             leader_commit: log_r.commit_index,
-            entries: vec![log_r.entries[i].clone()],
+            entries: vec![log_r[i].clone()],
         }
     }
 
@@ -566,13 +570,14 @@ impl<C: 'static + Command> RawCurp<C> {
         let term = self.term();
         let next_index = self.lst.map_read(|lst_r| lst_r.get_next_index(follower_id));
         let log_r = self.log.read();
+        let (prev_log_term, prev_log_index) = log_r.get_prev_entry_info(next_index);
         AppendEntries {
             term,
             leader_id: self.id().clone(),
-            prev_log_index: next_index - 1,
-            prev_log_term: log_r.entries[next_index - 1].term(),
+            prev_log_index,
+            prev_log_term,
             leader_commit: log_r.commit_index,
-            entries: log_r.entries[next_index..].to_vec(),
+            entries: log_r.get_from(next_index).to_vec(),
         }
     }
 
@@ -675,8 +680,7 @@ impl<C: 'static + Command> RawCurp<C> {
         }
 
         // don't commit log from previous term
-        #[allow(clippy::indexing_slicing)] // use index to access log is safe
-        if log.entries[i].term() != cur_term {
+        if log[i].term != cur_term {
             return false;
         }
 
@@ -697,7 +701,13 @@ impl<C: 'static + Command> RawCurp<C> {
         log: &mut Log<C>,
         spec_pools: &HashMap<ServerId, Vec<Arc<C>>>,
     ) {
-        debug!("{} collected spec pools: {spec_pools:?}", self.id());
+        if log_enabled!(Level::Debug) {
+            let debug_sps: HashMap<ServerId, Vec<ProposeId>> = spec_pools
+                .iter()
+                .map(|(id, sp)| (id.clone(), sp.iter().map(|cmd| cmd.id().clone()).collect()))
+                .collect();
+            debug!("{} collected spec pools: {debug_sps:#?}", self.id());
+        }
 
         let mut cmd_cnt: HashMap<ProposeId, (Arc<C>, u64)> = HashMap::new();
         for cmd in spec_pools.values().flatten().cloned() {
@@ -706,11 +716,7 @@ impl<C: 'static + Command> RawCurp<C> {
         }
 
         // get all possibly executed(fast path) commands
-        let existing_log_ids: HashSet<ProposeId> = log
-            .entries
-            .iter()
-            .flat_map(|entries| entries.cmds().iter().map(|cmd| cmd.id()).cloned())
-            .collect();
+        let existing_log_ids = log.get_cmd_ids();
         let recovered_cmds = cmd_cnt
             .into_values()
             // only cmds whose cnt >= 3/4 can be recovered
@@ -727,27 +733,25 @@ impl<C: 'static + Command> RawCurp<C> {
 
         let term = st.term;
         for cmd in recovered_cmds {
+            let _ig_sync = cb_w.sync.insert(cmd.id().clone()); // may have been inserted before
+            let _ig_spec = sp_l.insert(Arc::clone(&cmd)); // may have been inserted before
+            let index = log.push_cmd(term, Arc::clone(&cmd));
             debug!(
                 "{} recovers speculatively executed cmd {:?} in log[{}]",
                 self.id(),
                 cmd.id(),
-                log.entries.len(),
+                index,
             );
-            let _ig_sync = cb_w.sync.insert(cmd.id().clone()); // may have been inserted before
-            let _ig_spec = sp_l.insert(Arc::clone(&cmd)); // may have been inserted before
-            log.entries.push(LogEntry::new(term, &[cmd]));
         }
     }
 
     /// Apply new logs
     fn apply(&self, log: &mut Log<C>) {
         for i in (log.last_applied + 1)..=log.commit_index {
-            #[allow(clippy::indexing_slicing)] // use index to access log is safe
-            for cmd in log.entries[i].cmds() {
-                self.ctx
-                    .cmd_tx
-                    .send_after_sync(Arc::clone(cmd), i.numeric_cast());
-            }
+            let entry = &log[i];
+            self.ctx
+                .cmd_tx
+                .send_after_sync(Arc::clone(&entry.cmd), i.numeric_cast());
             log.last_applied = i;
 
             debug!(
@@ -777,14 +781,11 @@ impl<C: 'static + Command> RawCurp<C> {
         cb_w.clear();
 
         let log_r = self.log.read();
-        for i in 0..=log_r.commit_index {
-            #[allow(clippy::indexing_slicing)] // use index to access log is safe
-            let entry = &log_r.entries[i];
-            for cmd in entry.cmds() {
-                self.ctx
-                    .cmd_tx
-                    .send_after_sync(Arc::clone(cmd), i.numeric_cast());
-            }
+        for i in 1..=log_r.commit_index {
+            let entry = &log_r[i];
+            self.ctx
+                .cmd_tx
+                .send_after_sync(Arc::clone(&entry.cmd), i.numeric_cast());
         }
     }
 }

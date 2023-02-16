@@ -164,8 +164,8 @@ pub mod cmd;
 /// Message sent between servers and clients
 mod message;
 
-/// Log
-mod log;
+/// Log Entry
+mod log_entry;
 
 /// The special conflict checked mpmc
 pub(crate) mod conflict_checked_mpmc;

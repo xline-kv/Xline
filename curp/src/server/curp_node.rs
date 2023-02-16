@@ -313,13 +313,12 @@ impl<C: 'static + Command> CurpNode<C> {
             {
                 continue;
             }
-            let _ig = handlers.entry(follower_id.clone()).or_insert_with(|| {
-                let connect = connects
-                    .get(&follower_id)
-                    .cloned()
-                    .unwrap_or_else(|| unreachable!("no server {follower_id}'s connect"));
-                tokio::spawn(Self::leader_calibrates_follower(Arc::clone(&curp), connect))
-            });
+            let connect = connects
+                .get(&follower_id)
+                .cloned()
+                .unwrap_or_else(|| unreachable!("no server {follower_id}'s connect"));
+            let hd = tokio::spawn(Self::leader_calibrates_follower(Arc::clone(&curp), connect));
+            let _prev_hd = handlers.insert(follower_id, hd);
         }
     }
 }
@@ -703,7 +702,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        log::LogEntry,
+        log_entry::LogEntry,
         rpc::connect::MockConnectApi,
         server::cmd_worker::MockCmdExeSenderInterface,
         test_utils::{sleep_millis, test_cmd::TestCommand},
@@ -733,7 +732,7 @@ mod tests {
                 "S0".to_owned(),
                 0,
                 0,
-                vec![LogEntry::new(1, &[Arc::new(TestCommand::default())])],
+                vec![LogEntry::new(1, 1, Arc::new(TestCommand::default()))],
                 0,
             )
             .unwrap();
@@ -769,7 +768,7 @@ mod tests {
                 "S0".to_owned(),
                 0,
                 0,
-                vec![LogEntry::new(1, &[Arc::new(TestCommand::default())])],
+                vec![LogEntry::new(1, 1, Arc::new(TestCommand::default()))],
                 0,
             )
             .unwrap();
@@ -805,7 +804,7 @@ mod tests {
                 "S0".to_owned(),
                 0,
                 0,
-                vec![LogEntry::new(1, &[cmd])],
+                vec![LogEntry::new(1, 1, cmd)],
                 0,
             )
             .unwrap();
