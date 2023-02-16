@@ -15,7 +15,7 @@ pub(crate) use self::proto::{
 use crate::{
     cmd::{Command, ProposeId},
     error::ProposeError,
-    log::LogEntry,
+    log_entry::LogEntry,
     message::{ServerId, TermNum},
 };
 
