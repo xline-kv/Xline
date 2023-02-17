@@ -28,6 +28,7 @@ impl<C: 'static + Command> RawCurp<C> {
         let others = (1..n).map(|i| format!("S{i}")).collect();
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
+        let (sync_tx, _sync_rx) = mpsc::unbounded_channel();
         Self::new(
             "S0".to_owned(),
             others,
@@ -36,6 +37,7 @@ impl<C: 'static + Command> RawCurp<C> {
             spec_pool,
             Arc::new(ServerTimeout::default()),
             Box::new(exe_tx),
+            sync_tx,
         )
     }
 
@@ -45,6 +47,13 @@ impl<C: 'static + Command> RawCurp<C> {
 
     pub(crate) fn spec_pool(&self) -> SpecPoolRef<C> {
         Arc::clone(&self.ctx.sp)
+    }
+
+    /// Add a new cmd to the log, will return log entry index
+    pub(crate) fn push_cmd(&self, cmd: Arc<C>) -> usize {
+        let st_r = self.st.read();
+        let mut log_w = self.log.write();
+        log_w.push_cmd(st_r.term, cmd)
     }
 }
 

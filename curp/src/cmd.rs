@@ -1,4 +1,4 @@
-use std::hash::Hash;
+use std::{fmt::Display, hash::Hash};
 
 use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -64,6 +64,13 @@ impl ProposeId {
     #[must_use]
     pub fn new(id: String) -> Self {
         Self(id)
+    }
+}
+
+impl Display for ProposeId {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 

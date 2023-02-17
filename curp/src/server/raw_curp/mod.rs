@@ -22,7 +22,7 @@ use std::{
 use clippy_utilities::NumericCast;
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::{
     debug, error,
     log::{log_enabled, Level},
@@ -39,6 +39,7 @@ use self::{
 use super::cmd_worker::CmdExeSenderInterface;
 use crate::{
     cmd::{Command, ProposeId},
+    error::{ExecuteError, ProposeError},
     log_entry::LogEntry,
     message::ServerId,
     server::{cmd_board::CmdBoardRef, spec_pool::SpecPoolRef},
@@ -135,6 +136,8 @@ struct Context<C: Command> {
     hb_opt: AtomicBool,
     /// Tx to send cmds to execute and do after sync
     cmd_tx: Box<dyn CmdExeSenderInterface<C>>,
+    /// Tx to send the index of log entry which needs to be replicated on followers
+    sync_tx: mpsc::UnboundedSender<usize>,
 }
 
 impl<C: Command> Debug for Context<C> {
@@ -236,6 +239,62 @@ impl<C: 'static + Command> RawCurp<C> {
 
 // Curp handlers
 impl<C: 'static + Command> RawCurp<C> {
+    /// Handle `propose` request
+    /// Return `Ok((leader_id, term), conflict, Option<exe_rx>)`
+    /// Return `Err(())` if the cmd has been proposed before
+    #[allow(clippy::type_complexity)] // it's clear
+    pub(super) fn handle_propose(
+        &self,
+        cmd: Arc<C>,
+    ) -> (
+        (Option<ServerId>, u64),
+        Result<Option<oneshot::Receiver<Result<C::ER, ExecuteError>>>, ProposeError>,
+    ) {
+        let conflict = self
+            .ctx
+            .sp
+            .map_lock(|mut spec_l| spec_l.insert(Arc::clone(&cmd)).is_some());
+
+        let st_r = self.st.read();
+        let info = (st_r.leader_id.clone(), st_r.term);
+
+        // Non-leader doesn't need to sync or execute
+        if st_r.role != Role::Leader {
+            return (
+                info,
+                if conflict {
+                    Err(ProposeError::KeyConflict)
+                } else {
+                    Ok(None)
+                },
+            );
+        }
+
+        let duplicated = self
+            .ctx
+            .cb
+            .map_write(|mut board_w| !board_w.sync.insert(cmd.id().clone()));
+        if duplicated {
+            return (info, Err(ProposeError::Duplicated));
+        }
+
+        let mut log_w = self.log.write();
+        let index = log_w.push_cmd(st_r.term, Arc::clone(&cmd));
+
+        let exe_rx = (!conflict).then(|| {
+            self.ctx
+                .cb
+                .map_write(|mut cb_w| assert!(cb_w.spec_executed.insert(cmd.id().clone())));
+            self.ctx.cmd_tx.send_exe(cmd)
+        });
+
+        if let Err(e) = self.ctx.sync_tx.send(index) {
+            error!("send channel error, {e}");
+        }
+
+        (info, Ok(exe_rx))
+    }
+
     /// Handle `append_entries`
     /// Return `Ok(term)` if succeeds
     /// Return `Err(term, hint_index)` if fails
@@ -442,7 +501,7 @@ impl<C: 'static + Command> RawCurp<C> {
         }
 
         let mut cst_w = self.cst.lock();
-        debug!("vote is granted by server {}", id);
+        debug!("{}'s vote is granted by server {}", self.id(), id);
 
         cst_w.votes_received += 1;
         assert!(
@@ -473,18 +532,12 @@ impl<C: 'static + Command> RawCurp<C> {
 
         Ok(true)
     }
-
-    /// Add a new cmd to the log, will return log entry index
-    pub(super) fn push_cmd(&self, cmd: Arc<C>) -> usize {
-        let st_r = self.st.read();
-        let mut log_w = self.log.write();
-        log_w.push_cmd(st_r.term, cmd)
-    }
 }
 
 /// Other small public interface
 impl<C: 'static + Command> RawCurp<C> {
     /// Create a new `RawCurp`
+    #[allow(clippy::too_many_arguments)] // only called once
     pub(super) fn new(
         id: ServerId,
         others: HashSet<ServerId>,
@@ -493,6 +546,7 @@ impl<C: 'static + Command> RawCurp<C> {
         spec_pool: SpecPoolRef<C>,
         timeout: Arc<ServerTimeout>,
         cmd_tx: Box<dyn CmdExeSenderInterface<C>>,
+        sync_tx: mpsc::UnboundedSender<usize>,
     ) -> Self {
         let next_index = others.iter().map(|o| (o.clone(), 1)).collect();
         let match_index = others.iter().map(|o| (o.clone(), 0)).collect();
@@ -518,6 +572,7 @@ impl<C: 'static + Command> RawCurp<C> {
                 election_tick: AtomicU8::new(0),
                 hb_opt: AtomicBool::new(false),
                 cmd_tx,
+                sync_tx,
             },
         };
         if is_leader {
@@ -702,11 +757,14 @@ impl<C: 'static + Command> RawCurp<C> {
         spec_pools: &HashMap<ServerId, Vec<Arc<C>>>,
     ) {
         if log_enabled!(Level::Debug) {
-            let debug_sps: HashMap<ServerId, Vec<ProposeId>> = spec_pools
+            let debug_sps: HashMap<ServerId, String> = spec_pools
                 .iter()
-                .map(|(id, sp)| (id.clone(), sp.iter().map(|cmd| cmd.id().clone()).collect()))
+                .map(|(id, sp)| {
+                    let sp: Vec<String> = sp.iter().map(|cmd| cmd.id().to_string()).collect();
+                    (id.clone(), sp.join(","))
+                })
                 .collect();
-            debug!("{} collected spec pools: {debug_sps:#?}", self.id());
+            debug!("{} collected spec pools:\n{debug_sps:#?}", self.id());
         }
 
         let mut cmd_cnt: HashMap<ProposeId, (Arc<C>, u64)> = HashMap::new();
