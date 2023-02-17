@@ -10,15 +10,12 @@ use tokio::{
     task::JoinHandle,
     time::MissedTickBehavior,
 };
-use tracing::{debug, error, instrument, warn};
-use utils::{
-    config::ServerTimeout,
-    parking_lot_lock::{MutexMap, RwLockMap},
-};
+use tracing::{debug, error, warn};
+use utils::config::ServerTimeout;
 
 use super::{
     cmd_board::{CmdBoardRef, CommandBoard},
-    cmd_worker::{start_cmd_workers, CmdExeSenderInterface},
+    cmd_worker::start_cmd_workers,
     gc::run_gc_tasks,
     raw_curp::{AppendEntries, RawCurp, TickAction, Vote},
     spec_pool::{SpecPoolRef, SpeculativePool},
@@ -44,14 +41,10 @@ pub(super) struct CurpNode<C: Command> {
     curp: Arc<RawCurp<C>>,
     /// The speculative cmd pool, shared with executor
     spec_pool: SpecPoolRef<C>,
-    /// The channel to send command to the sync task
-    sync_tx: mpsc::UnboundedSender<usize>,
     /// Cmd watch board for tracking the cmd sync results
     cmd_board: CmdBoardRef<C>,
     /// Shutdown trigger
     shutdown_trigger: Arc<Event>,
-    /// The channel to send cmds to background exe tasks
-    cmd_exe_tx: Box<dyn CmdExeSenderInterface<C>>,
 }
 
 // handlers
@@ -63,59 +56,14 @@ impl<C: 'static + Command> CurpNode<C> {
     ) -> Result<tonic::Response<ProposeResponse>, tonic::Status> {
         let p = request.into_inner();
 
-        let cmd: C = p.cmd().map_err(|e| {
+        let cmd: Arc<C> = Arc::new(p.cmd().map_err(|e| {
             tonic::Status::invalid_argument(format!("can't deserialize the proposed cmd: {e}"))
-        })?;
+        })?);
 
-        async {
-            let (leader_id, term) = self.curp.leader();
-            let is_leader = leader_id.as_ref() == Some(self.curp.id());
-            let cmd = Arc::new(cmd);
-            let er_rx = {
-                let has_conflict = self
-                    .spec_pool
-                    .map_lock(|mut spec_l| spec_l.insert(Arc::clone(&cmd)).is_some());
-
-                // non-leader should return immediately, leader should sync the cmd to others
-                if !is_leader {
-                    return if has_conflict {
-                        ProposeResponse::new_error(leader_id, term, &ProposeError::KeyConflict)
-                    } else {
-                        ProposeResponse::new_empty(leader_id, term)
-                    };
-                }
-
-                // leader needs dedup first, since a proposal might be sent to the leader twice
-                let duplicated = self
-                    .cmd_board
-                    .map_write(|mut board_w| !board_w.sync.insert(cmd.id().clone()));
-                if duplicated {
-                    warn!("{:?} find duplicated cmd {:?}", self.curp.id(), cmd.id());
-                    return ProposeResponse::new_error(leader_id, term, &ProposeError::Duplicated);
-                }
-
-                let index = self.curp.push_cmd(Arc::clone(&cmd));
-
-                if has_conflict {
-                    // no spec execute, just sync
-                    self.sync_to_others(index);
-                    return ProposeResponse::new_error(leader_id, term, &ProposeError::KeyConflict);
-                }
-
-                // spec execute and sync
-                // execute the command before sync so that the order of cmd is preserved
-                let er_rx = self.cmd_exe_tx.send_exe(Arc::clone(&cmd));
-                self.cmd_board
-                    .map_write(|mut cb_w| assert!(cb_w.spec_executed.insert(cmd.id().clone())));
-                self.sync_to_others(index);
-
-                // now we can release the lock and wait for the execution result
-                er_rx
-            };
-
-            // wait for the speculative execution
-            let er = er_rx.await;
-            match er {
+        // handle proposal
+        let ((leader_id, term), result) = self.curp.handle_propose(Arc::clone(&cmd));
+        match result {
+            Ok(Some(er_rx)) => match er_rx.await {
                 Ok(Ok(er)) => ProposeResponse::new_result::<C>(leader_id, term, &er),
                 Ok(Err(err)) => ProposeResponse::new_error(
                     leader_id,
@@ -127,9 +75,10 @@ impl<C: 'static + Command> CurpNode<C> {
                     term,
                     &ProposeError::ProtocolError(err.to_string()),
                 ),
-            }
+            },
+            Ok(None) => ProposeResponse::new_empty(leader_id, term),
+            Err(err) => ProposeResponse::new_error(leader_id, term, &err),
         }
-        .await
         .map_or_else(
             |err| {
                 Err(tonic::Status::internal(format!(
@@ -358,7 +307,8 @@ impl<C: 'static + Command> CurpNode<C> {
             Arc::clone(&cmd_board),
             Arc::clone(&spec_pool),
             timeout,
-            Box::new(exe_tx.clone()),
+            Box::new(exe_tx),
+            sync_tx,
         ));
 
         run_gc_tasks(Arc::clone(&cmd_board), Arc::clone(&spec_pool));
@@ -389,18 +339,8 @@ impl<C: 'static + Command> CurpNode<C> {
         Self {
             curp,
             spec_pool,
-            sync_tx,
             cmd_board,
             shutdown_trigger,
-            cmd_exe_tx: Box::new(exe_tx),
-        }
-    }
-
-    /// Send the log index to sync task
-    #[instrument(skip(self))]
-    fn sync_to_others(&self, i: usize) {
-        if let Err(e) = self.sync_tx.send(i) {
-            error!("send channel error, {e}");
         }
     }
 
