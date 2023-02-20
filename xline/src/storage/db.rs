@@ -2,7 +2,7 @@ use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use prost::Message;
 
 use super::{storage_api::StorageApi, ExecuteError, Revision};
-use crate::rpc::KeyValue;
+use crate::rpc::{KeyValue, PbLease};
 
 /// Database to store revision to kv mapping
 #[derive(Debug)]
@@ -95,5 +95,48 @@ where
                 Ok(())
             })?;
         Ok(prev_kvs)
+    }
+}
+
+/// Database to store leaseS
+#[derive(Debug)]
+pub(crate) struct LeaseDB<S>
+where
+    S: StorageApi,
+{
+    /// internal storage of `DB`
+    storage: RwLock<S>,
+}
+
+impl<S> LeaseDB<S>
+where
+    S: StorageApi,
+{
+    /// New `LeaseDB`
+    pub(crate) fn new(storage: S) -> Self {
+        Self {
+            storage: RwLock::new(storage),
+        }
+    }
+
+    /// Insert a `PbLease`
+    pub(crate) fn insert(&self, lease_id: i64, kv: &PbLease) -> Result<(), ExecuteError> {
+        let mut storage = self.storage.write();
+        let key = lease_id.encode_to_vec();
+        let value = kv.encode_to_vec();
+        let _prev_val = storage
+            .insert(key, value)
+            .map_err(|e| ExecuteError::DbError(format!("Failed to insert Lease, error: {e}")))?;
+        Ok(())
+    }
+
+    /// Delete a `PbLease` by `lease_id`
+    pub(crate) fn delete(&self, lease_id: i64) -> Result<(), ExecuteError> {
+        let mut storage = self.storage.write();
+        let key = lease_id.encode_to_vec();
+        let _prev_val = storage
+            .remove(&key)
+            .map_err(|e| ExecuteError::DbError(format!("Failed to delete Lease, error: {e}")))?;
+        Ok(())
     }
 }

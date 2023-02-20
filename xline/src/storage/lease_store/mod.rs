@@ -23,11 +23,11 @@ pub(crate) use self::{
     lease::Lease,
     message::{DeleteMessage, LeaseMessage},
 };
-use super::{ExecuteError, RequestCtx};
+use super::{db::LeaseDB, storage_api::StorageApi, ExecuteError, RequestCtx};
 use crate::{
     header_gen::HeaderGenerator,
     rpc::{
-        LeaseGrantRequest, LeaseGrantResponse, LeaseRevokeRequest, LeaseRevokeResponse,
+        LeaseGrantRequest, LeaseGrantResponse, LeaseRevokeRequest, LeaseRevokeResponse, PbLease,
         RequestWithToken, RequestWrapper, ResponseHeader, ResponseWrapper,
     },
     server::command::{CommandResponse, SyncResponse},
@@ -41,9 +41,12 @@ const MIN_LEASE_TTL: i64 = 1; // TODO: this num should calculated by election ti
 
 /// Lease store
 #[derive(Debug)]
-pub(crate) struct LeaseStore {
+pub(crate) struct LeaseStore<S>
+where
+    S: StorageApi,
+{
     /// Lease store Backend
-    inner: Arc<LeaseStoreBackend>,
+    inner: Arc<LeaseStoreBackend<S>>,
 }
 
 /// Collection of lease related data
@@ -129,7 +132,7 @@ impl LeaseCollection {
     }
 
     /// Grant a lease
-    fn grant(&mut self, lease_id: i64, ttl: i64, is_leader: bool) {
+    fn grant(&mut self, lease_id: i64, ttl: i64, is_leader: bool) -> PbLease {
         let mut lease = Lease::new(lease_id, ttl.max(MIN_LEASE_TTL).cast());
         if is_leader {
             let expiry = lease.refresh(Duration::ZERO);
@@ -138,7 +141,11 @@ impl LeaseCollection {
             lease.forever();
         }
         let _ignore = self.lease_map.insert(lease_id, lease.clone());
-        // TODO: Persist lease
+        PbLease {
+            id: lease.id(),
+            ttl: lease.ttl().as_secs().cast(),
+            remaining_ttl: lease.remaining_ttl().as_secs().cast(),
+        }
     }
 
     /// Revokes a lease
@@ -163,9 +170,14 @@ impl LeaseCollection {
 
 /// Lease store inner
 #[derive(Debug)]
-pub(crate) struct LeaseStoreBackend {
+pub(crate) struct LeaseStoreBackend<S>
+where
+    S: StorageApi,
+{
     /// lease collection
     lease_collection: RwLock<LeaseCollection>,
+    /// Db to store lease
+    db: LeaseDB<S>,
     /// delete channel
     del_tx: mpsc::Sender<DeleteMessage>,
     /// Speculative execution pool. Mapping from propose id to request
@@ -176,16 +188,20 @@ pub(crate) struct LeaseStoreBackend {
     header_gen: Arc<HeaderGenerator>,
 }
 
-impl LeaseStore {
-    /// New `KvStore`
+impl<S> LeaseStore<S>
+where
+    S: StorageApi,
+{
+    /// New `LeaseStore`
     #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
     pub(crate) fn new(
         del_tx: mpsc::Sender<DeleteMessage>,
         mut lease_cmd_rx: mpsc::Receiver<LeaseMessage>,
         state: Arc<State>,
         header_gen: Arc<HeaderGenerator>,
+        storage: S,
     ) -> Self {
-        let inner = Arc::new(LeaseStoreBackend::new(del_tx, state, header_gen));
+        let inner = Arc::new(LeaseStoreBackend::new(del_tx, state, header_gen, storage));
         let _handle = tokio::spawn({
             let inner = Arc::clone(&inner);
             async move {
@@ -219,7 +235,7 @@ impl LeaseStore {
         Self { inner }
     }
 
-    /// execute a auth request
+    /// execute a lease request
     pub(crate) fn execute(
         &self,
         id: ProposeId,
@@ -230,9 +246,9 @@ impl LeaseStore {
             .map(CommandResponse::new)
     }
 
-    /// sync a auth request
-    pub(crate) async fn after_sync(&self, id: &ProposeId) -> SyncResponse {
-        SyncResponse::new(self.inner.sync_request(id).await)
+    /// sync a lease request
+    pub(crate) async fn after_sync(&self, id: &ProposeId) -> Result<SyncResponse, ExecuteError> {
+        self.inner.sync_request(id).await.map(SyncResponse::new)
     }
 
     /// Check if the node is leader
@@ -299,15 +315,20 @@ impl LeaseStore {
     }
 }
 
-impl LeaseStoreBackend {
-    /// New `KvStoreBackend`
+impl<S> LeaseStoreBackend<S>
+where
+    S: StorageApi,
+{
+    /// New `LeaseStoreBackend`
     pub(crate) fn new(
         del_tx: mpsc::Sender<DeleteMessage>,
         state: Arc<State>,
         header_gen: Arc<HeaderGenerator>,
+        storage: S,
     ) -> Self {
         Self {
             lease_collection: RwLock::new(LeaseCollection::new()),
+            db: LeaseDB::new(storage),
             sp_exec_pool: Mutex::new(HashMap::new()),
             del_tx,
             state,
@@ -349,7 +370,7 @@ impl LeaseStoreBackend {
             .cloned()
     }
 
-    /// Handle kv requests
+    /// Handle lease requests
     fn handle_lease_requests(
         &self,
         id: ProposeId,
@@ -407,63 +428,63 @@ impl LeaseStoreBackend {
                 header: Some(self.header_gen.gen_header_without_revision()),
             })
         } else {
-            Err(ExecuteError::lease_already_exists(req.id))
+            Err(ExecuteError::lease_not_found(req.id))
         }
     }
 
     /// Sync `RequestWithToken`
-    async fn sync_request(&self, id: &ProposeId) -> i64 {
+    async fn sync_request(&self, id: &ProposeId) -> Result<i64, ExecuteError> {
         let ctx = self.sp_exec_pool.lock().remove(id).unwrap_or_else(|| {
             panic!("Failed to get speculative execution propose id {id:?}");
         });
         if ctx.met_err() {
-            return self.header_gen.revision();
+            return Ok(self.header_gen.revision());
         }
         let wrapper = ctx.req();
         #[allow(clippy::wildcard_enum_match_arm)]
         match wrapper {
             RequestWrapper::LeaseGrantRequest(req) => {
                 debug!("Sync LeaseGrantRequest {:?}", req);
-                self.sync_lease_grant_request(&req);
+                self.sync_lease_grant_request(&req)?;
             }
             RequestWrapper::LeaseRevokeRequest(req) => {
                 debug!("Sync LeaseRevokeRequest {:?}", req);
-                self.sync_lease_revoke_request(&req).await;
+                self.sync_lease_revoke_request(&req).await?;
             }
             _ => unreachable!("Other request should not be sent to this store"),
         };
-        self.header_gen.revision()
+        Ok(self.header_gen.revision())
     }
 
     /// Sync `LeaseGrantRequest`
-    fn sync_lease_grant_request(&self, req: &LeaseGrantRequest) {
-        if (req.id == 0)
-            || (req.ttl > MAX_LEASE_TTL)
-            || self.lease_collection.read().lease_map.contains_key(&req.id)
-        {
-            return;
-        }
-        self.lease_collection
+    fn sync_lease_grant_request(&self, req: &LeaseGrantRequest) -> Result<(), ExecuteError> {
+        let lease = self
+            .lease_collection
             .write()
             .grant(req.id, req.ttl, self.is_leader());
+        self.db.insert(lease.id, &lease)
     }
 
     /// Sync `LeaseRevokeRequest`
-    async fn sync_lease_revoke_request(&self, req: &LeaseRevokeRequest) {
-        let mut keys = match self.lease_collection.write().revoke(req.id) {
+    async fn sync_lease_revoke_request(
+        &self,
+        req: &LeaseRevokeRequest,
+    ) -> Result<(), ExecuteError> {
+        let mut keys = match self.lease_collection.read().lease_map.get(&req.id) {
             Some(l) => l.keys(),
-            None => return,
+            None => return Err(ExecuteError::lease_not_found(req.id)),
         };
-        if keys.is_empty() {
-            return;
+        if !keys.is_empty() {
+            keys.sort(); // all node delete in same order
+            let (msg, rx) = DeleteMessage::new(keys);
+            assert!(
+                self.del_tx.send(msg).await.is_ok(),
+                "Failed to send delete keys"
+            );
+            assert!(rx.await.is_ok(), "Failed to receive delete keys response");
         }
-        keys.sort(); // all node delete in same order
-        let (msg, rx) = DeleteMessage::new(keys);
-        assert!(
-            self.del_tx.send(msg).await.is_ok(),
-            "Failed to send delete keys"
-        );
-        assert!(rx.await.is_ok(), "Failed to receive delete keys response");
+        let _ignore = self.lease_collection.write().revoke(req.id);
+        self.db.delete(req.id)
     }
 }
 
@@ -473,6 +494,8 @@ mod test {
 
     use tracing::info;
 
+    use crate::Memory;
+
     use super::*;
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn test_lease_storage() -> Result<(), Box<dyn Error>> {
@@ -480,7 +503,8 @@ mod test {
         let (_, lease_cmd_rx) = mpsc::channel(128);
         let state = Arc::new(State::default());
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
-        let lease_store = LeaseStore::new(del_tx, lease_cmd_rx, state, header_gen);
+        let mem_storage = Memory::new();
+        let lease_store = LeaseStore::new(del_tx, lease_cmd_rx, state, header_gen, mem_storage);
         let _handle = tokio::spawn(async move {
             while let Some(msg) = del_rx.recv().await {
                 let (keys, tx) = msg.unpack();
@@ -514,7 +538,7 @@ mod test {
     }
 
     async fn exe_and_sync_req(
-        ls: &LeaseStore,
+        ls: &LeaseStore<Memory>,
         req: RequestWithToken,
     ) -> Result<ResponseWrapper, ExecuteError> {
         let id = ProposeId::new("testid".to_owned());

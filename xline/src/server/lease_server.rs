@@ -35,7 +35,7 @@ where
     S: StorageApi,
 {
     /// Lease storage
-    lease_storage: Arc<LeaseStore>,
+    lease_storage: Arc<LeaseStore<S>>,
     /// Auth storage
     auth_storage: Arc<AuthStore<S>>,
     /// Consensus client
@@ -54,7 +54,7 @@ where
 {
     /// New `LeaseServer`
     pub(crate) fn new(
-        lease_storage: Arc<LeaseStore>,
+        lease_storage: Arc<LeaseStore<S>>,
         auth_storage: Arc<AuthStore<S>>,
         client: Arc<Client<Command>>,
         name: String,

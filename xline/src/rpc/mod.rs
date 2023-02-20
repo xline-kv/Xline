@@ -104,6 +104,7 @@ pub(crate) use self::{
         ResponseOp, TxnRequest, TxnResponse, WatchCancelRequest, WatchCreateRequest, WatchRequest,
         WatchResponse,
     },
+    leasepb::Lease as PbLease,
     mvccpb::{event::EventType, Event, KeyValue},
     v3lockpb::{
         lock_server::{Lock, LockServer},
