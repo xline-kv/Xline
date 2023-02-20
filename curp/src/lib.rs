@@ -104,6 +104,22 @@
     // clippy::use_debug, debug is allow for debug log
     clippy::verbose_file_reads,
     clippy::wildcard_enum_match_arm,
+
+    // The followings are selected lints from 1.61.0 to 1.67.1
+    clippy::as_ptr_cast_mut,
+    clippy::derive_partial_eq_without_eq,
+    clippy::empty_drop,
+    clippy::empty_structs_with_brackets,
+    clippy::format_push_string,
+    clippy::iter_on_empty_collections,
+    clippy::iter_on_single_items,
+    clippy::large_include_file,
+    clippy::manual_clamp,
+    clippy::suspicious_xor_used_as_pow,
+    clippy::unnecessary_safety_comment,
+    clippy::unnecessary_safety_doc,
+    clippy::unused_peekable,
+    clippy::unused_rounding
 )]
 #![allow(
     clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
