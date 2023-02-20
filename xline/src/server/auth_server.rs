@@ -117,7 +117,7 @@ where
         let salt = SaltString::generate(&mut OsRng);
         let hashed_password = Pbkdf2
             .hash_password(password, salt.as_ref())
-            .unwrap_or_else(|e| panic!("Failed to hash password: {}", e));
+            .unwrap_or_else(|e| panic!("Failed to hash password: {e}"));
         hashed_password.to_string()
     }
 
@@ -190,7 +190,7 @@ where
             let checked_revision =
                 self.check_password(&request.get_ref().name, &request.get_ref().password)?;
             let mut authenticate_req = request.get_ref().clone();
-            authenticate_req.password = "".to_owned();
+            authenticate_req.password = String::new();
 
             let (res, sync_res) = self
                 .propose(tonic::Request::new(authenticate_req), false)
@@ -230,7 +230,7 @@ where
         }
         let hashed_password = Self::hash_password(user_add_req.password.as_bytes());
         user_add_req.hashed_password = hashed_password;
-        user_add_req.password = "".to_owned();
+        user_add_req.password = String::new();
         self.handle_req(request, false).await
     }
 
@@ -268,7 +268,7 @@ where
         let mut user_change_password_req = request.get_mut();
         let hashed_password = Self::hash_password(user_change_password_req.password.as_bytes());
         user_change_password_req.hashed_password = hashed_password;
-        user_change_password_req.password = "".to_owned();
+        user_change_password_req.password = String::new();
         self.handle_req(request, false).await
     }
 

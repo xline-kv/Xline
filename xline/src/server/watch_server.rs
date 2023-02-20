@@ -150,9 +150,7 @@ where
 
     /// Handle `WatchCreateRequest`
     async fn handle_watch_create(&mut self, req: WatchCreateRequest) {
-        let watch_id = if let Some(id) = self.validate_watch_id(req.watch_id) {
-            id
-        } else {
+        let Some(watch_id) = self.validate_watch_id(req.watch_id) else {
             let result = Err(tonic::Status::already_exists(format!(
                 "Watch ID {} has already been used",
                 req.watch_id
@@ -178,8 +176,7 @@ where
         );
         assert!(
             self.active_watch_ids.insert(watch_id),
-            "WatchId {} already exists in watcher_map",
-            watch_id
+            "WatchId {watch_id} already exists in watcher_map",
         );
 
         let response = WatchResponse {

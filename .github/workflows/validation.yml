@@ -2,10 +2,10 @@ name: Validation
 
 on:
   pull_request:
-    branches: [ master ]
+    branches: [master]
 
 env:
-  CI_RUST_TOOLCHAIN: 1.61.0
+  CI_RUST_TOOLCHAIN: 1.67.1
 
 jobs:
   becnmark:

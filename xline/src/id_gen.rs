@@ -25,7 +25,7 @@ impl IdGenerator {
         let prefix = member_id.overflowing_shl(48).0;
         let mut ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap_or_else(|e| panic!("SystemTime before UNIX EPOCH! {}", e))
+            .unwrap_or_else(|e| panic!("SystemTime before UNIX EPOCH! {e}"))
             .as_millis();
         ts &= (u128::MAX.overflowing_shr(88).0); // lower 40 bits (128 - 40)
         ts = ts.overflowing_shl(8).0; // shift left 8 bits

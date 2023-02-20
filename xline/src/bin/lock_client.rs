@@ -55,7 +55,7 @@ mod test {
     use super::*;
     #[test]
     fn it_works() {
-        let args: ClientArgs = ClientArgs::parse_from(&[
+        let args: ClientArgs = ClientArgs::parse_from([
             "lock_client",
             "--endpoints",
             "http://127.0.0.1:1234",
@@ -69,7 +69,7 @@ mod test {
                 name: "test".to_owned()
             }
         );
-        let args2: ClientArgs = ClientArgs::parse_from(&["lock_client", "unlock", "test"]);
+        let args2: ClientArgs = ClientArgs::parse_from(["lock_client", "unlock", "test"]);
         assert_eq!(args2.endpoints, Vec::<String>::new());
         assert_eq!(
             args2.command,

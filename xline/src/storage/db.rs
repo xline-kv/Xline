@@ -32,7 +32,7 @@ where
         let key = revision.encode_to_vec();
         let value = kv.encode_to_vec();
         let _prev_val = storage.insert(key, value).map_err(|e| {
-            ExecuteError::InvalidCommand(format!("Failed to insert revision {:?}: {}", revision, e))
+            ExecuteError::InvalidCommand(format!("Failed to insert revision {revision:?}: {e}"))
         })?;
         Ok(())
     }
@@ -47,10 +47,7 @@ where
         let values = storage
             .batch_get(&keys)
             .map_err(|e| {
-                ExecuteError::InvalidCommand(format!(
-                    "Failed to get revisions {:?}: {}",
-                    revisions, e
-                ))
+                ExecuteError::InvalidCommand(format!("Failed to get revisions {revisions:?}: {e}"))
             })?
             .into_iter()
             .flatten()
@@ -62,8 +59,7 @@ where
             .collect::<Result<_, _>>()
             .map_err(|e| {
                 ExecuteError::InvalidCommand(format!(
-                    "Failed to decode revisions {:?}: {}",
-                    revisions, e
+                    "Failed to decode revisions {revisions:?}: {e}",
                 ))
             })?;
         Ok(kvs)
@@ -77,26 +73,23 @@ where
         let mut storage = self.storage.write();
         let prev_kvs: Vec<KeyValue> = revisions
             .iter()
-            .map(|&(ref prev_rev, _)| {
+            .map(|&(prev_rev, _)| {
                 let key = prev_rev.encode_to_vec();
                 let value = storage.get(key).map_err(|e| {
                     ExecuteError::InvalidCommand(format!(
-                        "Failed to get revision {:?}: {}",
-                        prev_rev, e
+                        "Failed to get revision {prev_rev:?}: {e}",
                     ))
                 })?;
                 if let Some(value) = value {
                     let kv = KeyValue::decode(value.as_slice()).map_err(|e| {
                         ExecuteError::InvalidCommand(format!(
-                            "Failed to decode revision {:?}: {}",
-                            prev_rev, e
+                            "Failed to decode revision {prev_rev:?}: {e}",
                         ))
                     })?;
                     Ok(kv)
                 } else {
                     Err(ExecuteError::InvalidCommand(format!(
-                        "Failed to get revision {:?} from DB",
-                        prev_rev
+                        "Failed to get revision {prev_rev:?} from DB",
                     )))
                 }
             })
@@ -118,8 +111,7 @@ where
                 let value = del_kv.encode_to_vec();
                 let _prev_val = storage.insert(key, value).map_err(|e| {
                     ExecuteError::InvalidCommand(format!(
-                        "Failed to insert revision {:?}: {}",
-                        new_rev, e
+                        "Failed to insert revision {new_rev:?}: {e}",
                     ))
                 });
                 Ok(del_kv)

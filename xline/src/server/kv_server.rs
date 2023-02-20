@@ -117,12 +117,12 @@ where
         let cmd_res = self
             .kv_storage
             .execute(id, wrapper)
-            .map_err(|e| tonic::Status::internal(&format!("Execute failed: {:?}", e)))?;
+            .map_err(|e| tonic::Status::internal(format!("Execute failed: {e:?}")))?;
         let res = Self::parse_response_op(cmd_res.decode().into());
         if let Response::ResponseRange(response) = res {
             Ok(tonic::Response::new(response))
         } else {
-            panic!("Receive wrong response {:?} for RangeRequest", res);
+            panic!("Receive wrong response {res:?} for RangeRequest");
         }
     }
 
@@ -401,7 +401,7 @@ where
         if let Response::ResponsePut(response) = res {
             Ok(tonic::Response::new(response))
         } else {
-            panic!("Receive wrong response {:?} for PutRequest", res);
+            panic!("Receive wrong response {res:?} for PutRequest");
         }
     }
 
@@ -427,7 +427,7 @@ where
         if let Response::ResponseDeleteRange(response) = res {
             Ok(tonic::Response::new(response))
         } else {
-            panic!("Receive wrong response {:?} for DeleteRangeRequest", res);
+            panic!("Receive wrong response {res:?} for DeleteRangeRequest");
         }
     }
 
@@ -454,7 +454,7 @@ where
         if let Response::ResponseTxn(response) = res {
             Ok(tonic::Response::new(response))
         } else {
-            panic!("Receive wrong response {:?} for TxnRequest", res);
+            panic!("Receive wrong response {res:?} for TxnRequest");
         }
     }
 

@@ -5,6 +5,7 @@ use etcd_client::{
     AuthClient, Client as EtcdClient, KvClient, LeaseClient, LeaseKeepAliveStream, LeaseKeeper,
     LockClient, WatchClient,
 };
+use itertools::Itertools;
 use utils::config::ClientTimeout;
 use uuid::Uuid;
 
@@ -65,14 +66,8 @@ impl Client {
         use_curp_client: bool,
         timeout: ClientTimeout,
     ) -> Result<Self, ClientError> {
-        let etcd_client = EtcdClient::connect(
-            all_members
-                .iter()
-                .map(|(_, addr)| addr.clone())
-                .collect::<Vec<_>>(),
-            None,
-        )
-        .await?;
+        let etcd_client =
+            EtcdClient::connect(all_members.values().cloned().collect_vec(), None).await?;
         let curp_client = CurpClient::new(all_members, timeout).await;
         Ok(Self {
             name: String::from("client"),

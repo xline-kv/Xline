@@ -238,7 +238,7 @@ where
                     return Err(ProposeError::SyncedError("wait sync timeout".to_owned()));
                 }
                 SyncResult::Error(e) => {
-                    return Err(ProposeError::SyncedError(format!("{:?}", e)));
+                    return Err(ProposeError::SyncedError(format!("{e:?}")));
                 }
             }
         }

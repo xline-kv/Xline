@@ -196,7 +196,7 @@ impl IndexOperate for Index {
                 revisions.push(new_rev);
                 new_rev
             } else {
-                panic!("Get empty revision list for key {:?}", key);
+                panic!("Get empty revision list for key {key:?}");
             }
         } else {
             let new_rev = KeyRevision::new(revision, 1, revision, sub_revision);

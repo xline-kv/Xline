@@ -502,7 +502,7 @@ fn recover_from_spec_pools<C: Command, ExeTx: CmdExeSenderInterface<C>>(
     let recovered_cmds = cmd_cnt
         .into_values()
         // only cmds whose cnt >= 3/4 can be recovered
-        .filter_map(|(cmd, cnt)| (cnt >= superquorum_cnt).then(|| cmd))
+        .filter_map(|(cmd, cnt)| (cnt >= superquorum_cnt).then_some(cmd))
         // dedup in current logs
         .filter(|cmd| {
             // TODO: better dedup mechanism

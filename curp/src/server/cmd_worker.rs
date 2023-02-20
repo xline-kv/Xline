@@ -177,8 +177,9 @@ enum ExeMsgToken<C> {
 
 impl<C: Command> ConflictCheck for ExeMsgToken<C> {
     fn is_conflict(&self, other: &Self) -> bool {
-        match (self, other) {
-            (&ExeMsgToken::Cmd(ref cmd1), &ExeMsgToken::Cmd(ref cmd2)) => cmd1.is_conflict(cmd2),
+        #[allow(clippy::pattern_type_mismatch)] // clash with clippy::needless_borrowed_reference
+        match (&self, &other) {
+            (ExeMsgToken::Cmd(ref cmd1), ExeMsgToken::Cmd(ref cmd2)) => cmd1.is_conflict(cmd2),
             // Reset should conflict with all others
             _ => true,
         }
