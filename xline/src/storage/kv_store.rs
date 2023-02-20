@@ -552,7 +552,7 @@ where
     /// Sync a vec of requests
     async fn sync_requests(&self, id: &ProposeId) -> Result<i64, ExecuteError> {
         let ctxes = self.sp_exec_pool.lock().remove(id).unwrap_or_else(|| {
-            panic!("Failed to get speculative execution propose id {:?}", id);
+            panic!("Failed to get speculative execution propose id {id:?}");
         });
         if ctxes.iter().any(RequestCtx::met_err) {
             return Ok(self.revision());
@@ -654,7 +654,7 @@ where
         if req.lease != 0 {
             self.attach(req.lease, kv.key.as_slice())
                 .await // already checked, lease is not 0
-                .unwrap_or_else(|e| panic!("unexpected error from lease Attach: {}", e));
+                .unwrap_or_else(|e| panic!("unexpected error from lease Attach: {e}"));
         }
         let event = Event {
             #[allow(clippy::as_conversions)] // This cast is always valid

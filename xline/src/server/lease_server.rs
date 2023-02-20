@@ -88,7 +88,7 @@ where
                                 let _ignore = request.metadata_mut().insert(
                                     "token",
                                     token.parse().unwrap_or_else(|e| {
-                                        panic!("metadata value parse error: {}", e)
+                                        panic!("metadata value parse error: {e}")
                                     }),
                                 );
                             }
@@ -194,8 +194,7 @@ where
                                 })
                                 .map_err(|e| {
                                     tonic::Status::invalid_argument(format!(
-                                        "Keep alive error: {}",
-                                        e
+                                        "Keep alive error: {e}",
                                     ))
                                 });
                             assert!(
@@ -331,9 +330,8 @@ where
         if self.is_leader() {
             // TODO wait applied index
             let time_to_live_req = request.into_inner();
-            let lease = match self.lease_storage.look_up(time_to_live_req.id) {
-                Some(lease) => lease,
-                None => return Err(tonic::Status::not_found("Lease not found")),
+            let Some(lease) = self.lease_storage.look_up(time_to_live_req.id) else {
+                return Err(tonic::Status::not_found("Lease not found"));
             };
 
             let keys = time_to_live_req

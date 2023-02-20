@@ -18,7 +18,7 @@ impl<T, R> MutexMap<T, R> for Mutex<T> {
     where
         F: FnOnce(MutexGuard<'_, T>) -> R,
     {
-        let lock = self.lock().map_err(|e| format!("{:?}", e))?;
+        let lock = self.lock().map_err(|e| format!("{e:?}"))?;
         Ok(f(lock))
     }
 }
@@ -50,7 +50,7 @@ impl<T, R> RwLockMap<T, R> for RwLock<T> {
     where
         READ: FnOnce(RwLockReadGuard<'_, T>) -> R,
     {
-        let read_guard = self.read().map_err(|e| format!("{:?}", e))?;
+        let read_guard = self.read().map_err(|e| format!("{e:?}"))?;
         Ok(f(read_guard))
     }
 
@@ -59,7 +59,7 @@ impl<T, R> RwLockMap<T, R> for RwLock<T> {
     where
         WRITE: FnOnce(RwLockWriteGuard<'_, T>) -> R,
     {
-        let write_guard = self.write().map_err(|e| format!("{:?}", e))?;
+        let write_guard = self.write().map_err(|e| format!("{e:?}"))?;
         Ok(f(write_guard))
     }
 }

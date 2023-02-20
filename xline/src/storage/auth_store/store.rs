@@ -459,7 +459,7 @@ mod test {
         let req2 = RequestWithToken::new(
             AuthUserAddRequest {
                 name: "u".to_owned(),
-                password: "".to_owned(),
+                password: String::new(),
                 hashed_password: "123".to_owned(),
                 options: None,
             }

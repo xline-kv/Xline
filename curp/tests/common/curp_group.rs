@@ -59,7 +59,7 @@ impl TestTxFilter {
 
 impl TxFilter for TestTxFilter {
     fn filter(&self) -> Option<()> {
-        self.reachable.load(Ordering::Acquire).then(|| ())
+        self.reachable.load(Ordering::Acquire).then_some(())
     }
 
     fn boxed_clone(&self) -> Box<dyn TxFilter> {
@@ -346,7 +346,7 @@ impl CurpGroup {
         let addr = self
             .all
             .iter()
-            .find_map(|(node_id, addr)| (node_id == id).then(|| addr))
+            .find_map(|(node_id, addr)| (node_id == id).then_some(addr))
             .unwrap();
         let addr = format!("http://{}", addr);
         ProtocolClient::connect(addr.clone()).await.unwrap()

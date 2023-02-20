@@ -134,7 +134,7 @@ where
 
     /// Crate txn for try acquire lock
     fn create_acquire_txn(prefix: &str, lease_id: i64) -> TxnRequest {
-        let key = format!("{}{:x}", prefix, lease_id);
+        let key = format!("{prefix}{lease_id:x}");
         #[allow(clippy::as_conversions)] // this cast is always safe
         let cmp = Compare {
             result: CompareResult::Equal as i32,
@@ -219,7 +219,7 @@ where
                     })),
                 })
                 .await
-                .unwrap_or_else(|e| panic!("failed to send watch request: {}", e));
+                .unwrap_or_else(|e| panic!("failed to send watch request: {e}"));
 
             let mut response_stream = watch_client.watch(request_stream).await?.into_inner();
             while let Some(watch_res) = response_stream.message().await? {
@@ -255,7 +255,7 @@ where
     async fn lease_grant(&self, token: Option<String>) -> Result<i64, tonic::Status> {
         let lease_id = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap_or_else(|e| panic!("SystemTime before UNIX EPOCH! {}", e))
+            .unwrap_or_else(|e| panic!("SystemTime before UNIX EPOCH! {e}"))
             .as_secs()
             .cast(); // TODO: generate lease unique id
         let lease_grant_req = LeaseGrantRequest {
@@ -293,7 +293,7 @@ where
         };
 
         let prefix = format!("{}/", String::from_utf8_lossy(&lock_req.name).into_owned());
-        let key = format!("{}{:x}", prefix, lease_id);
+        let key = format!("{prefix}{lease_id:x}");
 
         let txn = Self::create_acquire_txn(&prefix, lease_id);
         let (cmd_res, sync_res) = self.propose(txn, token.clone(), false).await?;

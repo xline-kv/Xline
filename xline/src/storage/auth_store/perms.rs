@@ -75,7 +75,7 @@ impl TokenOperate for JwtTokenManager {
     fn assign(&self, username: &str, revision: i64) -> Result<String, Self::Error> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap_or_else(|e| panic!("SystemTime before UNIX EPOCH! {}", e))
+            .unwrap_or_else(|e| panic!("SystemTime before UNIX EPOCH! {e}"))
             .as_secs();
         let claims = TokenClaims {
             username: username.to_owned(),

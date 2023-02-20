@@ -403,7 +403,7 @@ impl LeaseStoreBackend {
             header: Some(self.header_gen.gen_header_without_revision()),
             id: req.id,
             ttl: req.ttl,
-            error: "".to_owned(),
+            error: String::new(),
         })
     }
 
@@ -424,7 +424,7 @@ impl LeaseStoreBackend {
     /// Sync `RequestWithToken`
     async fn sync_request(&self, id: &ProposeId) -> i64 {
         let ctx = self.sp_exec_pool.lock().remove(id).unwrap_or_else(|| {
-            panic!("Failed to get speculative execution propose id {:?}", id);
+            panic!("Failed to get speculative execution propose id {id:?}");
         });
         if ctx.met_err() {
             return self.header_gen.revision();

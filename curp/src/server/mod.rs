@@ -168,18 +168,18 @@ impl<C: Command + 'static> Rpc<C> {
                 .layer(f)
                 .add_service(ProtocolServer::new(server))
                 .serve(
-                    format!("0.0.0.0:{}", port)
+                    format!("0.0.0.0:{port}")
                         .parse()
-                        .map_err(|e| ServerError::ParsingError(format!("{}", e)))?,
+                        .map_err(|e| ServerError::ParsingError(format!("{e}")))?,
                 )
                 .await?;
         } else {
             tonic::transport::Server::builder()
                 .add_service(ProtocolServer::new(server))
                 .serve(
-                    format!("0.0.0.0:{}", port)
+                    format!("0.0.0.0:{port}")
                         .parse()
-                        .map_err(|e| ServerError::ParsingError(format!("{}", e)))?,
+                        .map_err(|e| ServerError::ParsingError(format!("{e}")))?,
                 )
                 .await?;
         }
@@ -396,7 +396,7 @@ impl<C: 'static + Command> Protocol<C> {
         let p = request.into_inner();
 
         let cmd: C = p.cmd().map_err(|e| {
-            tonic::Status::invalid_argument(format!("propose cmd decode failed: {}", e))
+            tonic::Status::invalid_argument(format!("propose cmd decode failed: {e}"))
         })?;
 
         async {
@@ -463,8 +463,7 @@ impl<C: 'static + Command> Protocol<C> {
         .map_or_else(
             |err| {
                 Err(tonic::Status::internal(format!(
-                    "encode or decode error, {}",
-                    err
+                    "encode or decode error, {err}",
                 )))
             },
             |resp| Ok(tonic::Response::new(resp)),
@@ -478,7 +477,7 @@ impl<C: 'static + Command> Protocol<C> {
     ) -> Result<tonic::Response<WaitSyncedResponse>, tonic::Status> {
         let ws = request.into_inner();
         let id = ws.id().map_err(|e| {
-            tonic::Status::invalid_argument(format!("wait_synced id decode failed: {}", e))
+            tonic::Status::invalid_argument(format!("wait_synced id decode failed: {e}"))
         })?;
 
         debug!("get wait synced request for {id:?}");
@@ -531,7 +530,7 @@ impl<C: 'static + Command> Protocol<C> {
         };
         debug!("wait synced for {id:?} finishes");
         resp.map(tonic::Response::new)
-            .map_err(|err| tonic::Status::internal(format!("encode or decode error, {}", err)))
+            .map_err(|err| tonic::Status::internal(format!("encode or decode error, {err}")))
     }
 
     /// Handle `AppendEntries` requests
@@ -564,7 +563,7 @@ impl<C: 'static + Command> Protocol<C> {
 
         let mut entries = req
             .entries()
-            .map_err(|e| tonic::Status::internal(format!("encode or decode error, {}", e)))?;
+            .map_err(|e| tonic::Status::internal(format!("encode or decode error, {e}")))?;
 
         // if the request is a heartbeat(heartbeat requests' entries are always empty), don't modify local logs
         if !entries.is_empty() {

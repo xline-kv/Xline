@@ -223,9 +223,8 @@ where
     fn get_user_permissions(&self, user: &User) -> UserPermissions {
         let mut user_permission = UserPermissions::new();
         for role_name in &user.roles {
-            let role = match self.get_role(role_name) {
-                Ok(role) => role,
-                Err(_) => continue,
+            let Ok(role) = self.get_role(role_name) else {
+                continue;
             };
             for permission in role.key_permission {
                 let key_range = KeyRange {
@@ -276,10 +275,7 @@ where
         let key = [USER_PREFIX, username.as_bytes()].concat();
         match self.get(&key)? {
             Some(kv) => Ok(User::decode(kv.value.as_slice()).unwrap_or_else(|e| {
-                panic!(
-                    "Failed to decode user from kv value, error: {:?}, kv: {:?}",
-                    e, kv
-                )
+                panic!("Failed to decode user from kv value, error: {e:?}, kv: {kv:?}");
             })),
             None => Err(ExecuteError::InvalidCommand("user not found".to_owned())),
         }
@@ -290,10 +286,7 @@ where
         let key = [ROLE_PREFIX, rolename.as_bytes()].concat();
         match self.get(&key)? {
             Some(kv) => Ok(Role::decode(kv.value.as_slice()).unwrap_or_else(|e| {
-                panic!(
-                    "Failed to decode role from kv value, error: {:?}, kv: {:?}",
-                    e, kv
-                )
+                panic!("Failed to decode role from kv value, error: {e:?}, kv: {kv:?}");
             })),
             None => Err(ExecuteError::InvalidCommand("role not found".to_owned())),
         }
@@ -374,10 +367,7 @@ where
             .into_iter()
             .map(|kv| {
                 User::decode(kv.value.as_slice()).unwrap_or_else(|e| {
-                    panic!(
-                        "Failed to decode user from kv value, error: {:?}, kv: {:?}",
-                        e, kv
-                    )
+                    panic!("Failed to decode user from kv value, error: {e:?}, kv: {kv:?}");
                 })
             })
             .collect();
@@ -394,10 +384,7 @@ where
             .into_iter()
             .map(|kv| {
                 Role::decode(kv.value.as_slice()).unwrap_or_else(|e| {
-                    panic!(
-                        "Failed to decode role from kv value, error: {:?}, kv: {:?}",
-                        e, kv
-                    )
+                    panic!("Failed to decode role from kv value, error: {e:?}, kv: {kv:?}");
                 })
             })
             .collect();
@@ -765,7 +752,7 @@ where
     /// Sync `RequestWrapper`
     pub(super) fn sync_request(&self, id: &ProposeId) -> Result<i64, ExecuteError> {
         let ctx = self.sp_exec_pool.lock().remove(id).unwrap_or_else(|| {
-            panic!("Failed to get speculative execution propose id {:?}", id);
+            panic!("Failed to get speculative execution propose id {id:?}");
         });
         if ctx.met_err() {
             return Ok(self.header_gen.revision());
@@ -915,14 +902,11 @@ where
                 req.role
             )));
         }
-        let idx = match user.roles.binary_search(&req.role) {
-            Ok(_) => {
-                return Err(ExecuteError::InvalidCommand(format!(
-                    "User {} already has role {}",
-                    req.user, req.role
-                )));
-            }
-            Err(idx) => idx,
+        let Err(idx) =  user.roles.binary_search(&req.role) else {
+            return Err(ExecuteError::InvalidCommand(format!(
+                "User {} already has role {}",
+                req.user, req.role
+            )));
         };
         user.roles.insert(idx, req.role.clone());
         let revision = self.revision.next();
