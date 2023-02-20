@@ -50,7 +50,7 @@ where
     /// Auth storage
     auth_storage: Arc<AuthStore<S>>,
     /// Lease storage
-    lease_storage: Arc<LeaseStore>,
+    lease_storage: Arc<LeaseStore<S>>,
     /// Consensus client
     client: Arc<Client<Command>>,
     /// Curp server timeout
@@ -91,6 +91,7 @@ where
             lease_cmd_rx,
             Arc::clone(&state),
             Arc::clone(&header_gen),
+            storage.clone(),
         ));
         let kv_storage = Arc::new(KvStore::new(
             lease_cmd_tx.clone(),
@@ -172,7 +173,7 @@ where
     async fn leader_change_task(
         mut rx: broadcast::Receiver<Option<String>>,
         state: Arc<State>,
-        lease_storage: Arc<LeaseStore>,
+        lease_storage: Arc<LeaseStore<S>>,
     ) {
         while let Ok(leader_id) = rx.recv().await {
             info!("receive new leader_id: {leader_id:?}");

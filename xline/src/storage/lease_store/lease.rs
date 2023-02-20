@@ -60,7 +60,7 @@ impl Lease {
     }
 
     /// Lease remaining ttl
-    fn remaining_ttl(&self) -> Duration {
+    pub(crate) fn remaining_ttl(&self) -> Duration {
         if self.remaining_ttl > Duration::from_secs(0) {
             self.remaining_ttl
         } else {

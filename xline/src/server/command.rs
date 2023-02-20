@@ -173,7 +173,7 @@ where
     /// Auth Storage
     auth_storage: Arc<AuthStore<S>>,
     /// Lease Storage
-    lease_storage: Arc<LeaseStore>,
+    lease_storage: Arc<LeaseStore<S>>,
 }
 
 impl<S> CommandExecutor<S>
@@ -184,7 +184,7 @@ where
     pub(crate) fn new(
         kv_storage: Arc<KvStore<S>>,
         auth_storage: Arc<AuthStore<S>>,
-        lease_storage: Arc<LeaseStore>,
+        lease_storage: Arc<LeaseStore<S>>,
     ) -> Self {
         Self {
             kv_storage,
@@ -221,7 +221,7 @@ where
         match wrapper.request.backend() {
             RequestBackend::Kv => self.kv_storage.after_sync(id).await,
             RequestBackend::Auth => self.auth_storage.after_sync(&id),
-            RequestBackend::Lease => Ok(self.lease_storage.after_sync(&id).await),
+            RequestBackend::Lease => self.lease_storage.after_sync(&id).await,
         }
     }
 
