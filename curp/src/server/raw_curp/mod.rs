@@ -39,7 +39,7 @@ use self::{
 use super::cmd_worker::CmdExeSenderInterface;
 use crate::{
     cmd::{Command, ProposeId},
-    error::{ExecuteError, ProposeError},
+    error::ProposeError,
     log_entry::LogEntry,
     message::ServerId,
     server::{cmd_board::CmdBoardRef, spec_pool::SpecPoolRef},
@@ -138,6 +138,8 @@ struct Context<C: Command> {
     cmd_tx: Box<dyn CmdExeSenderInterface<C>>,
     /// Tx to send the index of log entry which needs to be replicated on followers
     sync_tx: mpsc::UnboundedSender<usize>,
+    /// Tx to send the id of followers that need to be calibrated
+    calibrate_tx: mpsc::UnboundedSender<ServerId>,
 }
 
 impl<C: Command> Debug for Context<C> {
@@ -248,7 +250,7 @@ impl<C: 'static + Command> RawCurp<C> {
         cmd: Arc<C>,
     ) -> (
         (Option<ServerId>, u64),
-        Result<Option<oneshot::Receiver<Result<C::ER, ExecuteError>>>, ProposeError>,
+        Result<Option<oneshot::Receiver<Result<C::ER, String>>>, ProposeError>,
     ) {
         let conflict = self
             .ctx
@@ -360,7 +362,7 @@ impl<C: 'static + Command> RawCurp<C> {
     }
 
     /// Handle `append_entries` response
-    /// Return `Ok(append_entries_succeeded)`
+    /// Return `Ok(())`
     /// Return `Err(())` if self is no longer the leader
     #[allow(clippy::unwrap_in_result)]
     pub(super) fn handle_append_entries_resp(
@@ -391,6 +393,7 @@ impl<C: 'static + Command> RawCurp<C> {
                 self.id(),
                 follower_id,
             );
+            self.calibrate(&mut lst_w, follower_id.clone());
             return Ok(false);
         }
 
@@ -520,6 +523,7 @@ impl<C: 'static + Command> RawCurp<C> {
         let mut lst_w = self.lst.write();
         let mut log_w = self.log.write();
 
+        let prev_last_log_index = log_w.last_log_index();
         self.recover_from_spec_pools(&mut st_w, &mut log_w, &spec_pools);
         let last_log_index = log_w.last_log_index();
 
@@ -528,6 +532,13 @@ impl<C: 'static + Command> RawCurp<C> {
         // update next_index for each follower
         for other in &self.ctx.others {
             lst_w.update_next_index(other, last_log_index + 1); // iter from the end to front is more likely to match the follower
+        }
+        lst_w.calibrating.clear();
+        if prev_last_log_index < last_log_index {
+            // if some entries are recovered, calibrate immediately
+            for follower_id in &self.ctx.others {
+                self.calibrate(&mut lst_w, follower_id.clone());
+            }
         }
 
         Ok(true)
@@ -547,6 +558,7 @@ impl<C: 'static + Command> RawCurp<C> {
         timeout: Arc<ServerTimeout>,
         cmd_tx: Box<dyn CmdExeSenderInterface<C>>,
         sync_tx: mpsc::UnboundedSender<usize>,
+        calibrate_tx: mpsc::UnboundedSender<ServerId>,
     ) -> Self {
         let next_index = others.iter().map(|o| (o.clone(), 1)).collect();
         let match_index = others.iter().map(|o| (o.clone(), 0)).collect();
@@ -573,6 +585,7 @@ impl<C: 'static + Command> RawCurp<C> {
                 hb_opt: AtomicBool::new(false),
                 cmd_tx,
                 sync_tx,
+                calibrate_tx,
             },
         };
         if is_leader {
@@ -735,6 +748,7 @@ impl<C: 'static + Command> RawCurp<C> {
         }
 
         // don't commit log from previous term
+        #[allow(clippy::indexing_slicing)] // use index to access log is safe
         if log[i].term != cur_term {
             return false;
         }
@@ -806,6 +820,7 @@ impl<C: 'static + Command> RawCurp<C> {
     /// Apply new logs
     fn apply(&self, log: &mut Log<C>) {
         for i in (log.last_applied + 1)..=log.commit_index {
+            #[allow(clippy::indexing_slicing)] // use index to access log is safe
             let entry = &log[i];
             self.ctx
                 .cmd_tx
@@ -840,10 +855,20 @@ impl<C: 'static + Command> RawCurp<C> {
 
         let log_r = self.log.read();
         for i in 1..=log_r.commit_index {
+            #[allow(clippy::indexing_slicing)] // use index to access log is safe
             let entry = &log_r[i];
             self.ctx
                 .cmd_tx
                 .send_after_sync(Arc::clone(&entry.cmd), i.numeric_cast());
+        }
+    }
+
+    /// Send calibrate task
+    fn calibrate(&self, lst: &mut LeaderState, id: ServerId) {
+        if lst.calibrating.insert(id.clone()) {
+            if let Err(e) = self.ctx.calibrate_tx.send(id) {
+                error!("can't send calibrate task {e}");
+            }
         }
     }
 }

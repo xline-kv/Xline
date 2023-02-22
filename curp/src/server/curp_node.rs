@@ -65,11 +65,9 @@ impl<C: 'static + Command> CurpNode<C> {
         match result {
             Ok(Some(er_rx)) => match er_rx.await {
                 Ok(Ok(er)) => ProposeResponse::new_result::<C>(leader_id, term, &er),
-                Ok(Err(err)) => ProposeResponse::new_error(
-                    leader_id,
-                    term,
-                    &ProposeError::ExecutionError(err.to_string()),
-                ),
+                Ok(Err(err)) => {
+                    ProposeResponse::new_error(leader_id, term, &ProposeError::ExecutionError(err))
+                }
                 Err(err) => ProposeResponse::new_error(
                     leader_id,
                     term,
@@ -218,11 +216,7 @@ impl<C: 'static + Command> CurpNode<C> {
 /// Spawned tasks
 impl<C: 'static + Command> CurpNode<C> {
     /// Tick periodically
-    async fn tick_task(
-        curp: Arc<RawCurp<C>>,
-        connects: Connects,
-        calibrate_tx: mpsc::UnboundedSender<ServerId>,
-    ) {
+    async fn tick_task(curp: Arc<RawCurp<C>>, connects: Connects) {
         let heartbeat_interval = *curp.timeout().heartbeat_interval();
         // wait for some random time before tick starts to minimize vote split possibility
         let rand = thread_rng()
@@ -238,7 +232,7 @@ impl<C: 'static + Command> CurpNode<C> {
             let action = curp.tick();
             match action {
                 TickAction::Heartbeat(hbs) => {
-                    Self::bcast_heartbeats(Arc::clone(&curp), &connects, &calibrate_tx, hbs).await;
+                    Self::bcast_heartbeats(Arc::clone(&curp), &connects, hbs).await;
                 }
                 TickAction::Votes(votes) => {
                     Self::bcast_votes(Arc::clone(&curp), &connects, votes).await;
@@ -309,6 +303,7 @@ impl<C: 'static + Command> CurpNode<C> {
             timeout,
             Box::new(exe_tx),
             sync_tx,
+            calibrate_tx,
         ));
 
         run_gc_tasks(Arc::clone(&cmd_board), Arc::clone(&spec_pool));
@@ -318,16 +313,11 @@ impl<C: 'static + Command> CurpNode<C> {
         let _ig = tokio::spawn(async move {
             // establish connection with other servers
             let connects = rpc::connect(others, tx_filter).await;
-            let tick_task = tokio::spawn(Self::tick_task(
-                Arc::clone(&curp_c),
-                connects.clone(),
-                calibrate_tx.clone(),
-            ));
+            let tick_task = tokio::spawn(Self::tick_task(Arc::clone(&curp_c), connects.clone()));
             let sync_task = tokio::spawn(Self::sync_task(
                 Arc::clone(&curp_c),
                 connects.clone(),
                 sync_rx,
-                calibrate_tx,
             ));
             let calibrate_task = tokio::spawn(Self::calibrate_task(curp_c, connects, calibrate_rx));
             shutdown_trigger_c.listen().await;
@@ -348,7 +338,6 @@ impl<C: 'static + Command> CurpNode<C> {
     async fn bcast_heartbeats(
         curp: Arc<RawCurp<C>>,
         connects: &Connects,
-        calibrate_tx: &mpsc::UnboundedSender<ServerId>,
         hbs: HashMap<ServerId, AppendEntries<C>>,
     ) {
         let rpc_timeout = *curp.timeout().rpc_timeout();
@@ -390,14 +379,8 @@ impl<C: 'static + Command> CurpNode<C> {
                 resp.success,
                 resp.hint_index.numeric_cast(),
             );
-            match result {
-                Ok(true) => {}
-                Ok(false) => {
-                    if let Err(e) = calibrate_tx.send(id) {
-                        warn!("can't send calibrate task, {e}");
-                    }
-                }
-                Err(()) => return,
+            if result.is_err() {
+                return;
             }
         }
     }
@@ -489,7 +472,7 @@ impl<C: 'static + Command> CurpNode<C> {
             // indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
             match resp {
                 Err(e) => {
-                    warn!("append_entries error: {}", e);
+                    warn!("append_entries error: {e}");
                 }
                 Ok(resp) => {
                     let resp = resp.into_inner();
@@ -527,7 +510,6 @@ impl<C: 'static + Command> CurpNode<C> {
         curp: Arc<RawCurp<C>>,
         connects: Connects,
         mut sync_rx: mpsc::UnboundedReceiver<usize>,
-        calibrate_tx: mpsc::UnboundedSender<ServerId>,
     ) {
         while let Some(i) = sync_rx.recv().await {
             let req = {
@@ -553,7 +535,6 @@ impl<C: 'static + Command> CurpNode<C> {
                 let _handle = tokio::spawn(Self::send_log_until_succeed(
                     Arc::clone(&curp),
                     Arc::clone(connect),
-                    calibrate_tx.clone(),
                     i,
                     req.clone(),
                 ));
@@ -567,7 +548,6 @@ impl<C: 'static + Command> CurpNode<C> {
     async fn send_log_until_succeed(
         curp: Arc<RawCurp<C>>,
         connect: Arc<dyn ConnectApi>,
-        calibrate_tx: mpsc::UnboundedSender<ServerId>,
         i: usize,
         req: AppendEntriesRequest,
     ) {
@@ -599,9 +579,7 @@ impl<C: 'static + Command> CurpNode<C> {
                     match result {
                         Ok(true) | Err(()) => return,
                         Ok(false) => {
-                            if let Err(e) = calibrate_tx.send(connect.id().clone()) {
-                                warn!("can't send calibrate task, {e}");
-                            }
+                            warn!("{} failed to send log {i}, retrying", curp.id());
                         }
                     }
                 }
@@ -664,7 +642,6 @@ mod tests {
             .times(3..)
             .returning(|_, _| Err(ProposeError::RpcStatus("timeout".to_owned())));
         mock_connect.expect_id().return_const("S1".to_owned());
-        let (tx, _rx) = mpsc::unbounded_channel();
 
         let handle = tokio::spawn(async move {
             let req = AppendEntriesRequest::new(
@@ -676,7 +653,7 @@ mod tests {
                 0,
             )
             .unwrap();
-            CurpNode::send_log_until_succeed(curp, Arc::new(mock_connect), tx, 1, req).await;
+            CurpNode::send_log_until_succeed(curp, Arc::new(mock_connect), 1, req).await;
         });
         sleep_millis(default_retry_timeout().as_millis() as u64 * 4).await;
         assert!(!handle.is_finished());
@@ -699,7 +676,6 @@ mod tests {
             )))
         });
         mock_connect.expect_id().return_const("S1".to_owned());
-        let (tx, _rx) = mpsc::unbounded_channel();
 
         let curp_c = Arc::clone(&curp);
         let handle = tokio::spawn(async move {
@@ -712,7 +688,7 @@ mod tests {
                 0,
             )
             .unwrap();
-            CurpNode::send_log_until_succeed(curp, Arc::new(mock_connect), tx, 1, req).await;
+            CurpNode::send_log_until_succeed(curp, Arc::new(mock_connect), 1, req).await;
         });
 
         assert!(handle.await.is_ok());
@@ -730,7 +706,6 @@ mod tests {
         };
         let cmd = Arc::new(TestCommand::default());
         curp.push_cmd(Arc::clone(&cmd));
-        let (tx, _rx) = mpsc::unbounded_channel();
 
         let mut mock_connect = MockConnectApi::default();
         mock_connect
@@ -748,7 +723,7 @@ mod tests {
                 0,
             )
             .unwrap();
-            CurpNode::send_log_until_succeed(curp, Arc::new(mock_connect), tx, 1, req).await;
+            CurpNode::send_log_until_succeed(curp, Arc::new(mock_connect), 1, req).await;
         });
 
         assert!(handle.await.is_ok());

@@ -29,6 +29,7 @@ impl<C: 'static + Command> RawCurp<C> {
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
         let (sync_tx, _sync_rx) = mpsc::unbounded_channel();
+        let (calibrate_tx, _rx) = mpsc::unbounded_channel();
         Self::new(
             "S0".to_owned(),
             others,
@@ -38,6 +39,7 @@ impl<C: 'static + Command> RawCurp<C> {
             Arc::new(ServerTimeout::default()),
             Box::new(exe_tx),
             sync_tx,
+            calibrate_tx,
         )
     }
 

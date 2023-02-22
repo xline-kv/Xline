@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use madsim::rand::{thread_rng, Rng};
 use tracing::debug;
@@ -48,6 +51,8 @@ pub(super) struct LeaderState {
     next_index: HashMap<ServerId, usize>,
     /// For each server, index of highest log entry known to be replicated on server
     match_index: HashMap<ServerId, usize>,
+    /// Servers that are being calibrated by the leader
+    pub(super) calibrating: HashSet<ServerId>,
 }
 
 impl State {
@@ -93,6 +98,7 @@ impl LeaderState {
         Self {
             next_index,
             match_index,
+            calibrating: HashSet::new(),
         }
     }
 
