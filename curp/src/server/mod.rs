@@ -6,7 +6,7 @@ use tower::filter::FilterLayer;
 use tracing::{info, instrument};
 use utils::{config::ServerTimeout, tracing::Extract};
 
-use self::curp_node::CurpNode;
+use self::curp_node::{CurpError, CurpNode};
 use crate::{
     cmd::{Command, CommandExecutor},
     error::ServerError,
@@ -56,7 +56,9 @@ impl<C: 'static + Command> crate::rpc::Protocol for Rpc<C> {
         request: tonic::Request<ProposeRequest>,
     ) -> Result<tonic::Response<ProposeResponse>, tonic::Status> {
         request.metadata().extract_span();
-        self.inner.propose(request).await
+        Ok(tonic::Response::new(
+            self.inner.propose(request.into_inner()).await?,
+        ))
     }
 
     #[instrument(skip(self), name = "server wait_synced")]
@@ -65,28 +67,34 @@ impl<C: 'static + Command> crate::rpc::Protocol for Rpc<C> {
         request: tonic::Request<WaitSyncedRequest>,
     ) -> Result<tonic::Response<WaitSyncedResponse>, tonic::Status> {
         request.metadata().extract_span();
-        self.inner.wait_synced(request).await
+        Ok(tonic::Response::new(
+            self.inner.wait_synced(request.into_inner()).await?,
+        ))
     }
 
     async fn append_entries(
         &self,
         request: tonic::Request<AppendEntriesRequest>,
     ) -> Result<tonic::Response<AppendEntriesResponse>, tonic::Status> {
-        self.inner.append_entries(request)
+        Ok(tonic::Response::new(
+            self.inner.append_entries(request.into_inner())?,
+        ))
     }
 
     async fn vote(
         &self,
         request: tonic::Request<VoteRequest>,
     ) -> Result<tonic::Response<VoteResponse>, tonic::Status> {
-        self.inner.vote(request)
+        Ok(tonic::Response::new(self.inner.vote(request.into_inner())?))
     }
 
     async fn fetch_leader(
         &self,
         request: tonic::Request<FetchLeaderRequest>,
     ) -> Result<tonic::Response<FetchLeaderResponse>, tonic::Status> {
-        self.inner.fetch_leader(request)
+        Ok(tonic::Response::new(
+            self.inner.fetch_leader(request.into_inner())?,
+        ))
     }
 }
 
@@ -214,5 +222,12 @@ impl<C: Command + 'static> Rpc<C> {
     #[must_use]
     pub fn leader_rx(&self) -> broadcast::Receiver<Option<ServerId>> {
         self.inner.leader_rx()
+    }
+}
+
+impl From<CurpError> for tonic::Status {
+    #[inline]
+    fn from(err: CurpError) -> Self {
+        tonic::Status::internal(err.to_string())
     }
 }

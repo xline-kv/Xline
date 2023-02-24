@@ -5,6 +5,7 @@ use event_listener::Event;
 use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
 use madsim::rand::{thread_rng, Rng};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
+use thiserror::Error;
 use tokio::{
     sync::{broadcast, mpsc},
     task::JoinHandle,
@@ -32,6 +33,14 @@ use crate::{
     TxFilter,
 };
 
+/// Curp error
+#[derive(Debug, Error)]
+pub(super) enum CurpError {
+    /// Encode or decode error
+    #[error("encode or decode error")]
+    EncodeDecode(#[from] bincode::Error),
+}
+
 /// Connects
 type Connects = HashMap<ServerId, Arc<dyn ConnectApi>>;
 
@@ -50,53 +59,36 @@ pub(super) struct CurpNode<C: Command> {
 // handlers
 impl<C: 'static + Command> CurpNode<C> {
     /// Handle "propose" requests
-    pub(super) async fn propose(
-        &self,
-        request: tonic::Request<ProposeRequest>,
-    ) -> Result<tonic::Response<ProposeResponse>, tonic::Status> {
-        let p = request.into_inner();
-
-        let cmd: Arc<C> = Arc::new(p.cmd().map_err(|e| {
-            tonic::Status::invalid_argument(format!("can't deserialize the proposed cmd: {e}"))
-        })?);
+    pub(super) async fn propose(&self, req: ProposeRequest) -> Result<ProposeResponse, CurpError> {
+        let cmd: Arc<C> = Arc::new(req.cmd()?);
 
         // handle proposal
         let ((leader_id, term), result) = self.curp.handle_propose(Arc::clone(&cmd));
-        match result {
+        let resp = match result {
             Ok(Some(er_rx)) => match er_rx.await {
-                Ok(Ok(er)) => ProposeResponse::new_result::<C>(leader_id, term, &er),
+                Ok(Ok(er)) => ProposeResponse::new_result::<C>(leader_id, term, &er)?,
                 Ok(Err(err)) => {
-                    ProposeResponse::new_error(leader_id, term, &ProposeError::ExecutionError(err))
+                    ProposeResponse::new_error(leader_id, term, &ProposeError::ExecutionError(err))?
                 }
                 Err(err) => ProposeResponse::new_error(
                     leader_id,
                     term,
                     &ProposeError::ProtocolError(err.to_string()),
-                ),
+                )?,
             },
-            Ok(None) => ProposeResponse::new_empty(leader_id, term),
-            Err(err) => ProposeResponse::new_error(leader_id, term, &err),
-        }
-        .map_or_else(
-            |err| {
-                Err(tonic::Status::internal(format!(
-                    "encode or decode error, {err}"
-                )))
-            },
-            |resp| Ok(tonic::Response::new(resp)),
-        )
+            Ok(None) => ProposeResponse::new_empty(leader_id, term)?,
+            Err(err) => ProposeResponse::new_error(leader_id, term, &err)?,
+        };
+
+        Ok(resp)
     }
 
     /// Handle `AppendEntries` requests
     pub(super) fn append_entries(
         &self,
-        request: tonic::Request<AppendEntriesRequest>,
-    ) -> Result<tonic::Response<AppendEntriesResponse>, tonic::Status> {
-        let req = request.into_inner();
-
-        let entries = req
-            .entries()
-            .map_err(|e| tonic::Status::internal(format!("encode or decode error, {e}")))?;
+        req: AppendEntriesRequest,
+    ) -> Result<AppendEntriesResponse, CurpError> {
+        let entries = req.entries()?;
 
         let result = self.curp.handle_append_entries(
             req.term,
@@ -111,17 +103,12 @@ impl<C: 'static + Command> CurpNode<C> {
             Err((term, hint)) => AppendEntriesResponse::new_reject(term, hint),
         };
 
-        Ok(tonic::Response::new(resp))
+        Ok(resp)
     }
 
     /// Handle `Vote` requests
     #[allow(clippy::pedantic)] // need not return result, but to keep it consistent with rpc handler functions, we keep it this way
-    pub(super) fn vote(
-        &self,
-        request: tonic::Request<VoteRequest>,
-    ) -> Result<tonic::Response<VoteResponse>, tonic::Status> {
-        let req = request.into_inner();
-
+    pub(super) fn vote(&self, req: VoteRequest) -> Result<VoteResponse, CurpError> {
         let result = self.curp.handle_vote(
             req.term,
             req.candidate_id,
@@ -129,23 +116,19 @@ impl<C: 'static + Command> CurpNode<C> {
             req.last_log_term,
         );
         let resp = match result {
-            Ok((term, sp)) => VoteResponse::new_accept(term, sp)
-                .map_err(|e| tonic::Status::internal(format!("can't serialize cmds, {e}")))?,
+            Ok((term, sp)) => VoteResponse::new_accept(term, sp)?,
             Err(term) => VoteResponse::new_reject(term),
         };
 
-        Ok(tonic::Response::new(resp))
+        Ok(resp)
     }
 
     /// handle "wait synced" request
     pub(super) async fn wait_synced(
         &self,
-        request: tonic::Request<WaitSyncedRequest>,
-    ) -> Result<tonic::Response<WaitSyncedResponse>, tonic::Status> {
-        let ws = request.into_inner();
-        let id = ws.id().map_err(|e| {
-            tonic::Status::invalid_argument(format!("wait_synced id decode failed: {e}"))
-        })?;
+        req: WaitSyncedRequest,
+    ) -> Result<WaitSyncedResponse, CurpError> {
+        let id = req.id()?;
 
         debug!("{} get wait synced request for {id:?}", self.curp.id());
         let resp = loop {
@@ -155,7 +138,7 @@ impl<C: 'static + Command> CurpNode<C> {
                 let is_leader = leader.as_ref() == Some(self.curp.id());
                 if !is_leader {
                     warn!("non-leader server {} receives wait_synced", self.curp.id());
-                    break WaitSyncedResponse::new_error(&SyncError::Redirect(leader, term));
+                    break WaitSyncedResponse::new_error(&SyncError::Redirect(leader, term))?;
                 }
 
                 // check if the cmd board already has response
@@ -165,13 +148,13 @@ impl<C: 'static + Command> CurpNode<C> {
                     (Some(Err(err)), _) => {
                         break WaitSyncedResponse::new_error(&SyncError::ExecuteError(
                             err.to_string(),
-                        ));
+                        ))?;
                     }
                     (Some(er), Some(asr)) => {
                         break WaitSyncedResponse::new_from_result::<C>(
                             Some(er.clone()),
                             Some(asr.clone()),
-                        );
+                        )?;
                     }
                     _ => {}
                 }
@@ -191,25 +174,22 @@ impl<C: 'static + Command> CurpNode<C> {
             {
                 let _ignored = self.cmd_board.write().notifiers.remove(&id);
                 warn!("wait synced timeout for {id:?}");
-                break WaitSyncedResponse::new_error(&SyncError::Timeout);
+                break WaitSyncedResponse::new_error(&SyncError::Timeout)?;
             }
         };
 
         debug!("{} wait synced for {id:?} finishes", self.curp.id());
-        resp.map(tonic::Response::new)
-            .map_err(|err| tonic::Status::internal(format!("encode or decode error, {err}")))
+        Ok(resp)
     }
 
     /// Handle fetch leader requests
     #[allow(clippy::unnecessary_wraps, clippy::needless_pass_by_value)] // To keep type consistent with other request handlers
     pub(super) fn fetch_leader(
         &self,
-        _request: tonic::Request<FetchLeaderRequest>,
-    ) -> Result<tonic::Response<FetchLeaderResponse>, tonic::Status> {
+        _req: FetchLeaderRequest,
+    ) -> Result<FetchLeaderResponse, CurpError> {
         let (leader_id, term) = self.curp.leader();
-        Ok(tonic::Response::new(FetchLeaderResponse::new(
-            leader_id, term,
-        )))
+        Ok(FetchLeaderResponse::new(leader_id, term))
     }
 }
 
