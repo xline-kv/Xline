@@ -59,6 +59,103 @@ impl<C: 'static + Command> RawCurp<C> {
     }
 }
 
+/*************** tests for propose **************/
+#[traced_test]
+#[test]
+fn leader_handle_propose_will_succeed() {
+    let curp = {
+        let mut exe_tx = MockCmdExeSenderInterface::<TestCommand>::default();
+        exe_tx.expect_send_exe().returning(|_| oneshot::channel().1);
+        RawCurp::new_test(3, exe_tx)
+    };
+    let cmd = Arc::new(TestCommand::default());
+    let ((leader_id, term), result) = curp.handle_propose(cmd);
+    assert_eq!(leader_id, Some(curp.id().clone()));
+    assert_eq!(term, 0);
+    assert!(matches!(result, Ok(Some(_))));
+}
+
+#[traced_test]
+#[test]
+fn leader_handle_propose_will_reject_conflicted() {
+    let curp = {
+        let mut exe_tx = MockCmdExeSenderInterface::<TestCommand>::default();
+        exe_tx.expect_send_exe().returning(|_| oneshot::channel().1);
+        RawCurp::new_test(3, exe_tx)
+    };
+
+    let cmd1 = Arc::new(TestCommand::new_get(vec![1]));
+    let ((leader_id, term), result) = curp.handle_propose(cmd1);
+    assert_eq!(leader_id, Some(curp.id().clone()));
+    assert_eq!(term, 0);
+    assert!(matches!(result, Ok(Some(_))));
+
+    let cmd2 = Arc::new(TestCommand::new_get(vec![1]));
+    let ((leader_id, term), result) = curp.handle_propose(cmd2);
+    assert_eq!(leader_id, Some(curp.id().clone()));
+    assert_eq!(term, 0);
+    assert!(matches!(result, Err(ProposeError::KeyConflict)));
+}
+
+#[traced_test]
+#[test]
+fn leader_handle_propose_will_reject_duplicated() {
+    let curp = {
+        let mut exe_tx = MockCmdExeSenderInterface::<TestCommand>::default();
+        exe_tx.expect_send_exe().returning(|_| oneshot::channel().1);
+        RawCurp::new_test(3, exe_tx)
+    };
+    let cmd = Arc::new(TestCommand::default());
+    let ((leader_id, term), result) = curp.handle_propose(Arc::clone(&cmd));
+    assert_eq!(leader_id, Some(curp.id().clone()));
+    assert_eq!(term, 0);
+    assert!(matches!(result, Ok(Some(_))));
+
+    let ((leader_id, term), result) = curp.handle_propose(cmd);
+    assert_eq!(leader_id, Some(curp.id().clone()));
+    assert_eq!(term, 0);
+    assert!(matches!(result, Err(ProposeError::Duplicated)));
+}
+
+#[traced_test]
+#[test]
+fn follower_handle_propose_will_succeed() {
+    let curp = {
+        let mut exe_tx = MockCmdExeSenderInterface::<TestCommand>::default();
+        exe_tx.expect_send_reset().return_const(());
+        Arc::new(RawCurp::new_test(3, exe_tx))
+    };
+    curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
+    let cmd = Arc::new(TestCommand::new_get(vec![1]));
+    let ((leader_id, term), result) = curp.handle_propose(cmd);
+    assert_eq!(leader_id, None);
+    assert_eq!(term, 1);
+    assert!(matches!(result, Ok(None)));
+}
+
+#[traced_test]
+#[test]
+fn follower_handle_propose_will_reject_conflicted() {
+    let curp = {
+        let mut exe_tx = MockCmdExeSenderInterface::<TestCommand>::default();
+        exe_tx.expect_send_reset().return_const(());
+        Arc::new(RawCurp::new_test(3, exe_tx))
+    };
+    curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
+
+    let cmd1 = Arc::new(TestCommand::new_get(vec![1]));
+    let ((leader_id, term), result) = curp.handle_propose(cmd1);
+    assert_eq!(leader_id, None);
+    assert_eq!(term, 1);
+    assert!(matches!(result, Ok(None)));
+
+    let cmd2 = Arc::new(TestCommand::new_get(vec![1]));
+    let ((leader_id, term), result) = curp.handle_propose(cmd2);
+    assert_eq!(leader_id, None);
+    assert_eq!(term, 1);
+    assert!(matches!(result, Err(ProposeError::KeyConflict)));
+}
+
 /*************** tests for append_entries(heartbeat) **************/
 
 #[traced_test]
