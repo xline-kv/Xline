@@ -15,6 +15,8 @@
 
 use std::time::Duration;
 
+use madsim::rand::{distributions::Alphanumeric, thread_rng, Rng};
+
 pub(crate) mod test_cmd;
 
 pub(crate) async fn sleep_millis(n: u64) {
@@ -23,4 +25,12 @@ pub(crate) async fn sleep_millis(n: u64) {
 
 pub(crate) async fn sleep_secs(n: u64) {
     tokio::time::sleep(Duration::from_secs(n)).await;
+}
+
+pub(crate) fn random_id() -> String {
+    thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(4)
+        .map(char::from)
+        .collect()
 }

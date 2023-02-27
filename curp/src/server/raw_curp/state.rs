@@ -137,7 +137,7 @@ impl LeaderState {
         }
 
         *match_index = index;
-        debug!("follower {}'s match_index to {match_index}", id);
+        debug!("follower {}'s match_index updated to {match_index}", id);
 
         let next_index = self
             .next_index

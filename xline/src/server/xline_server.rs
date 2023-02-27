@@ -11,6 +11,7 @@ use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
 use tracing::info;
 use utils::config::{ClientTimeout, ServerTimeout};
+use uuid::Uuid;
 
 use super::{
     auth_server::AuthServer,
@@ -139,7 +140,7 @@ where
     #[inline]
     pub async fn start(&self, addr: SocketAddr) -> Result<()> {
         let (kv_server, lock_server, lease_server, auth_server, watch_server, curp_server) =
-            self.init_servers();
+            self.init_servers().await;
         Ok(Server::builder()
             .add_service(RpcLockServer::new(lock_server))
             .add_service(RpcKvServer::new(kv_server))
@@ -166,7 +167,7 @@ where
         F: Future<Output = ()>,
     {
         let (kv_server, lock_server, lease_server, auth_server, watch_server, curp_server) =
-            self.init_servers();
+            self.init_servers().await;
         Ok(Server::builder()
             .add_service(RpcLockServer::new(lock_server))
             .add_service(RpcKvServer::new(kv_server))
@@ -201,7 +202,7 @@ where
     /// Init `KvServer`, `LockServer`, `LeaseServer`, `WatchServer` and `CurpServer`
     /// for the Xline Server.
     #[allow(clippy::type_complexity)] // it is easy to read
-    fn init_servers(
+    async fn init_servers(
         &self,
     ) -> (
         KvServer<S>,
@@ -222,7 +223,10 @@ where
             ),
             Arc::clone(&self.server_timeout),
             None,
-        );
+            // FIXME: real storage path
+            format!("/tmp/xline/curp-{}", Uuid::new_v4()),
+        )
+        .await;
         let _handle = tokio::spawn({
             let state = Arc::clone(&self.state);
             let lease_storage = Arc::clone(&self.lease_storage);
