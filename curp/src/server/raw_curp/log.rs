@@ -1,6 +1,9 @@
 #![allow(clippy::integer_arithmetic)] // u64 is large enough and won't overflow
 
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, fmt::Debug, sync::Arc};
+
+use tokio::sync::mpsc;
+use tracing::error;
 
 use crate::{
     cmd::{Command, ProposeId},
@@ -9,7 +12,6 @@ use crate::{
 
 /// Curp logs
 /// There exists a fake log entry 0 whose term equals 0
-#[derive(Debug)]
 pub(super) struct Log<C: Command> {
     /// Log entries, should be persisted
     /// Note that the logical index in `LogEntry` is different from physical index
@@ -22,17 +24,34 @@ pub(super) struct Log<C: Command> {
     pub(super) commit_index: usize,
     /// Index of highest log entry applied to state machine
     pub(super) last_applied: usize,
+    /// Tx to send log entries to persist task
+    log_tx: mpsc::UnboundedSender<LogEntry<C>>,
 }
 
-impl<C: Command> Log<C> {
+impl<C: Command> Debug for Log<C> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Log")
+            .field("entries", &self.entries)
+            .field("base_index", &self.base_index)
+            .field("commit_index", &self.commit_index)
+            .field("last_applied", &self.last_applied)
+            .finish()
+    }
+}
+
+impl<C: 'static + Command> Log<C> {
     /// Create a new log
-    pub(super) fn new() -> Self {
+    pub(super) fn new(
+        log_tx: mpsc::UnboundedSender<LogEntry<C>>,
+        entries: Vec<LogEntry<C>>,
+    ) -> Self {
         Self {
-            entries: vec![], // a fake log[0]
+            entries, // a fake log[0]
             commit_index: 0,
             last_applied: 0,
             base_index: 1,
             base_term: 0,
+            log_tx,
         }
     }
 
@@ -97,10 +116,18 @@ impl<C: Command> Log<C> {
             }
 
             self.entries.truncate(pi);
-            self.entries.push(entry);
+            self.entries.push(entry.clone());
+            self.send_persist(entry);
         }
 
         Ok(())
+    }
+
+    /// Send log entries to persist task
+    pub(super) fn send_persist(&self, entry: LogEntry<C>) {
+        if let Err(err) = self.log_tx.send(entry) {
+            error!("failed to send log to persist, {err}");
+        }
     }
 
     /// Check if the candidate's log is up-to-date
@@ -118,7 +145,8 @@ impl<C: Command> Log<C> {
     pub(super) fn push_cmd(&mut self, term: u64, cmd: Arc<C>) -> usize {
         let index = self.last_log_index() + 1;
         let entry = LogEntry::new(index, term, cmd);
-        self.entries.push(entry);
+        self.entries.push(entry.clone());
+        self.send_persist(entry);
         self.last_log_index()
     }
 
@@ -158,7 +186,7 @@ mod tests {
     use crate::test_utils::test_cmd::TestCommand;
 
     // impl index for test is handy
-    impl<C: Command> Index<usize> for Log<C> {
+    impl<C: 'static + Command> Index<usize> for Log<C> {
         type Output = LogEntry<C>;
 
         fn index(&self, i: usize) -> &Self::Output {
@@ -169,7 +197,8 @@ mod tests {
 
     #[test]
     fn test_log_up_to_date() {
-        let mut log = Log::<TestCommand>::new();
+        let (log_tx, _log_rx) = mpsc::unbounded_channel();
+        let mut log = Log::<TestCommand>::new(log_tx, vec![]);
         let result = log.try_append_entries(
             vec![
                 LogEntry::new(1, 1, Arc::new(TestCommand::default())),
@@ -189,7 +218,8 @@ mod tests {
 
     #[test]
     fn try_append_entries_will_remove_inconsistencies() {
-        let mut log = Log::<TestCommand>::new();
+        let (log_tx, _log_rx) = mpsc::unbounded_channel();
+        let mut log = Log::<TestCommand>::new(log_tx, vec![]);
         let result = log.try_append_entries(
             vec![
                 LogEntry::new(1, 1, Arc::new(TestCommand::default())),
@@ -216,7 +246,8 @@ mod tests {
 
     #[test]
     fn try_append_entries_will_not_append() {
-        let mut log = Log::<TestCommand>::new();
+        let (log_tx, _log_rx) = mpsc::unbounded_channel();
+        let mut log = Log::<TestCommand>::new(log_tx, vec![]);
         let result = log.try_append_entries(
             vec![LogEntry::new(1, 1, Arc::new(TestCommand::default()))],
             0,

@@ -20,7 +20,10 @@ use tokio_stream::wrappers::TcpListenerStream;
 use tracing::debug;
 use utils::config::{ClientTimeout, ServerTimeout};
 
-use crate::common::test_cmd::{TestCE, TestCommand, TestCommandResult};
+use crate::common::{
+    random_id,
+    test_cmd::{TestCE, TestCommand, TestCommandResult},
+};
 
 pub type ServerId = String;
 
@@ -77,10 +80,18 @@ pub struct CurpNode {
     pub store: Arc<Mutex<HashMap<u32, u32>>>,
     pub rt: Runtime,
     pub switch: Arc<AtomicBool>,
+    pub storage_path: String,
+}
+
+pub struct CrashedCurpNode {
+    pub id: ServerId,
+    pub addr: String,
+    pub storage_path: String,
 }
 
 pub struct CurpGroup {
     pub nodes: HashMap<ServerId, CurpNode>,
+    pub crashed_nodes: HashMap<ServerId, CrashedCurpNode>,
     pub all: HashMap<ServerId, String>,
 }
 
@@ -104,6 +115,7 @@ impl CurpGroup {
             .map(|(i, listener)| {
                 let id = format!("S{i}");
                 let addr = listener.local_addr().unwrap().to_string();
+                let storage_path = format!("/tmp/curp-{}", random_id());
 
                 let (exe_tx, exe_rx) = mpsc::unbounded_channel();
                 let (as_tx, as_rx) = mpsc::unbounded_channel();
@@ -134,6 +146,7 @@ impl CurpGroup {
 
                 let id_c = id.clone();
                 let switch_c = Arc::clone(&switch);
+                let storage_path_c = storage_path.clone();
                 thread::spawn(move || {
                     handle.spawn(Rpc::run_from_listener(
                         id_c,
@@ -144,6 +157,7 @@ impl CurpGroup {
                         Arc::new(ServerTimeout::default()),
                         Some(Box::new(TestTxFilter::new(Arc::clone(&switch_c)))),
                         Some(reachable_layer),
+                        storage_path_c,
                     ));
                 });
 
@@ -157,6 +171,7 @@ impl CurpGroup {
                         store,
                         rt,
                         switch,
+                        storage_path,
                     },
                 )
             })
@@ -167,6 +182,7 @@ impl CurpGroup {
         Self {
             nodes,
             all: all.into_iter().collect(),
+            crashed_nodes: HashMap::new(),
         }
     }
 
@@ -205,14 +221,21 @@ impl CurpGroup {
 
     pub fn crash(&mut self, id: &ServerId) {
         let node = self.nodes.remove(id).unwrap();
+        let crashed = CrashedCurpNode {
+            id: node.id.clone(),
+            addr: node.addr.clone(),
+            storage_path: node.storage_path.clone(),
+        };
+        self.crashed_nodes.insert(id.clone(), crashed);
         thread::spawn(move || drop(node)).join().unwrap();
     }
 
-    pub async fn restart(&mut self, id: &ServerId) {
+    pub async fn restart(&mut self, id: &ServerId, is_leader: bool) {
         let addr = self.all.get(id).unwrap().clone();
         let listener = TcpListener::bind(&addr)
             .await
             .expect("can't restart because the original addr is taken");
+        let crashed = self.crashed_nodes.remove(id).expect("no such crashed node");
 
         let (exe_tx, exe_rx) = mpsc::unbounded_channel();
         let (as_tx, as_rx) = mpsc::unbounded_channel();
@@ -243,16 +266,18 @@ impl CurpGroup {
 
         let id_c = id.clone();
         let switch_c = Arc::clone(&switch);
+        let storage_path = crashed.storage_path.clone();
         thread::spawn(move || {
             handle.spawn(Rpc::run_from_listener(
                 id_c,
-                false,
+                is_leader,
                 others.into_iter().collect(),
                 listener,
                 ce,
                 Arc::new(ServerTimeout::default()),
                 Some(Box::new(TestTxFilter::new(Arc::clone(&switch_c)))),
                 Some(reachable_layer),
+                storage_path,
             ));
         });
 
@@ -264,6 +289,7 @@ impl CurpGroup {
             store,
             rt,
             switch,
+            storage_path: crashed.storage_path,
         };
         self.nodes.insert(id.clone(), new_node);
     }

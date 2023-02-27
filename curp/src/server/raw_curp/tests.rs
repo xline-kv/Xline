@@ -32,6 +32,7 @@ impl<C: 'static + Command> RawCurp<C> {
         let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
         let (sync_tx, _sync_rx) = mpsc::unbounded_channel();
         let (calibrate_tx, _rx) = mpsc::unbounded_channel();
+        let (log_tx, _log_rx) = mpsc::unbounded_channel();
         Self::new(
             "S0".to_owned(),
             others,
@@ -43,6 +44,7 @@ impl<C: 'static + Command> RawCurp<C> {
             Box::new(exe_tx),
             sync_tx,
             calibrate_tx,
+            log_tx,
         )
     }
 

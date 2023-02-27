@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt::Debug, path::Path, sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
 use event_listener::Event;
@@ -11,7 +11,7 @@ use tokio::{
     task::JoinHandle,
     time::MissedTickBehavior,
 };
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 use utils::config::ServerTimeout;
 
 use super::{
@@ -20,16 +20,19 @@ use super::{
     gc::run_gc_tasks,
     raw_curp::{AppendEntries, RawCurp, TickAction, Vote},
     spec_pool::{SpecPoolRef, SpeculativePool},
+    storage::StorageApi,
 };
 use crate::{
     cmd::{Command, CommandExecutor, ProposeId},
     error::ProposeError,
+    log_entry::LogEntry,
     message::ServerId,
     rpc::{
         self, connect::ConnectApi, AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest,
         FetchLeaderResponse, ProposeRequest, ProposeResponse, SyncError, VoteRequest, VoteResponse,
         WaitSyncedRequest, WaitSyncedResponse,
     },
+    server::storage::rocksdb::RocksDBStorage,
     TxFilter,
 };
 
@@ -45,6 +48,9 @@ pub(super) enum CurpError {
     /// Encode or decode error
     #[error("encode or decode error")]
     EncodeDecode(#[from] bincode::Error),
+    /// Storage error
+    #[error("storage error, {0}")]
+    Storage(#[from] Box<dyn std::error::Error>),
 }
 
 /// Connects
@@ -60,6 +66,8 @@ pub(super) struct CurpNode<C: Command> {
     cmd_board: CmdBoardRef<C>,
     /// Shutdown trigger
     shutdown_trigger: Arc<Event>,
+    /// Storage
+    storage: Arc<dyn StorageApi<Command = C>>,
 }
 
 // handlers
@@ -114,15 +122,18 @@ impl<C: 'static + Command> CurpNode<C> {
 
     /// Handle `Vote` requests
     #[allow(clippy::pedantic)] // need not return result, but to keep it consistent with rpc handler functions, we keep it this way
-    pub(super) fn vote(&self, req: VoteRequest) -> Result<VoteResponse, CurpError> {
+    pub(super) async fn vote(&self, req: VoteRequest) -> Result<VoteResponse, CurpError> {
         let result = self.curp.handle_vote(
             req.term,
-            req.candidate_id,
+            req.candidate_id.clone(),
             req.last_log_index.numeric_cast(),
             req.last_log_term,
         );
         let resp = match result {
-            Ok((term, sp)) => VoteResponse::new_accept(term, sp)?,
+            Ok((term, sp)) => {
+                self.storage.flush_voted_for(term, req.candidate_id).await?;
+                VoteResponse::new_accept(term, sp)?
+            }
             Err(term) => VoteResponse::new_reject(term),
         };
 
@@ -255,22 +266,27 @@ impl<C: 'static + Command> CurpNode<C> {
 // utils
 impl<C: 'static + Command> CurpNode<C> {
     /// Create a new server instance
-    #[must_use]
     #[inline]
-    pub(super) fn new<CE: CommandExecutor<C> + 'static>(
+    pub(super) async fn new<CE: CommandExecutor<C> + 'static>(
         id: ServerId,
         is_leader: bool,
         others: HashMap<ServerId, String>,
         cmd_executor: CE,
         timeout: Arc<ServerTimeout>,
         tx_filter: Option<Box<dyn TxFilter>>,
-    ) -> Self {
+        storage_path: impl AsRef<Path>,
+    ) -> Result<Self, CurpError> {
         let (sync_tx, sync_rx) = mpsc::unbounded_channel();
         let (calibrate_tx, calibrate_rx) = mpsc::unbounded_channel();
+        let (log_tx, log_rx) = mpsc::unbounded_channel();
         let shutdown_trigger = Arc::new(Event::new());
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
         let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
+
+        let storage = Arc::new(
+            RocksDBStorage::new(storage_path).map_err(|err| CurpError::Storage(Box::new(err)))?,
+        );
 
         // start cmd workers
         let exe_tx = start_cmd_workers(
@@ -282,23 +298,50 @@ impl<C: 'static + Command> CurpNode<C> {
         );
 
         // create curp state machine
-        let curp = Arc::new(RawCurp::new(
-            id,
-            others.keys().cloned().collect(),
-            is_leader,
-            Arc::clone(&cmd_board),
-            Arc::clone(&spec_pool),
-            uncommitted_pool,
-            timeout,
-            Box::new(exe_tx),
-            sync_tx,
-            calibrate_tx,
-        ));
+        let (voted_for, entries) = storage.recover().await?;
+        let curp = if voted_for.is_none() && entries.is_empty() {
+            Arc::new(RawCurp::new(
+                id,
+                others.keys().cloned().collect(),
+                is_leader,
+                Arc::clone(&cmd_board),
+                Arc::clone(&spec_pool),
+                uncommitted_pool,
+                timeout,
+                Box::new(exe_tx),
+                sync_tx,
+                calibrate_tx,
+                log_tx,
+            ))
+        } else {
+            info!(
+                "{} recovered voted_for({voted_for:?}), entries from {:?} to {:?}",
+                id,
+                entries.first(),
+                entries.last()
+            );
+            Arc::new(RawCurp::recover_from(
+                id,
+                others.keys().cloned().collect(),
+                is_leader,
+                Arc::clone(&cmd_board),
+                Arc::clone(&spec_pool),
+                uncommitted_pool,
+                timeout,
+                Box::new(exe_tx),
+                sync_tx,
+                calibrate_tx,
+                log_tx,
+                voted_for,
+                entries,
+            ))
+        };
 
         run_gc_tasks(Arc::clone(&cmd_board), Arc::clone(&spec_pool));
 
         let curp_c = Arc::clone(&curp);
         let shutdown_trigger_c = Arc::clone(&shutdown_trigger);
+        let storage_c = Arc::clone(&storage);
         let _ig = tokio::spawn(async move {
             // establish connection with other servers
             let connects = rpc::connect(others, tx_filter).await;
@@ -309,18 +352,21 @@ impl<C: 'static + Command> CurpNode<C> {
                 sync_rx,
             ));
             let calibrate_task = tokio::spawn(Self::calibrate_task(curp_c, connects, calibrate_rx));
+            let log_persist_task = tokio::spawn(Self::log_persist_task(log_rx, storage_c));
             shutdown_trigger_c.listen().await;
             tick_task.abort();
             sync_task.abort();
             calibrate_task.abort();
+            log_persist_task.abort();
         });
 
-        Self {
+        Ok(Self {
             curp,
             spec_pool,
             cmd_board,
             shutdown_trigger,
-        }
+            storage,
+        })
     }
 
     /// Leader broadcasts heartbeats
@@ -585,6 +631,19 @@ impl<C: 'static + Command> CurpNode<C> {
     /// Get a rx for leader changes
     pub(super) fn leader_rx(&self) -> broadcast::Receiver<Option<ServerId>> {
         self.curp.leader_rx()
+    }
+
+    /// Log persist task
+    pub(super) async fn log_persist_task(
+        mut log_rx: mpsc::UnboundedReceiver<LogEntry<C>>,
+        storage: Arc<dyn StorageApi<Command = C>>,
+    ) {
+        while let Some(e) = log_rx.recv().await {
+            if let Err(err) = storage.put_log_entry(e).await {
+                error!("storage error, {err}");
+            }
+        }
+        error!("log persist task exits unexpectedly");
     }
 }
 

@@ -575,6 +575,7 @@ impl<C: 'static + Command> RawCurp<C> {
         cmd_tx: Box<dyn CmdExeSenderApi<C>>,
         sync_tx: mpsc::UnboundedSender<usize>,
         calibrate_tx: mpsc::UnboundedSender<ServerId>,
+        log_tx: mpsc::UnboundedSender<LogEntry<C>>,
     ) -> Self {
         let next_index = others.iter().map(|o| (o.clone(), 1)).collect();
         let match_index = others.iter().map(|o| (o.clone(), 0)).collect();
@@ -589,7 +590,7 @@ impl<C: 'static + Command> RawCurp<C> {
             )),
             lst: RwLock::new(LeaderState::new(next_index, match_index)),
             cst: Mutex::new(CandidateState::new()),
-            log: RwLock::new(Log::new()),
+            log: RwLock::new(Log::new(log_tx, vec![])),
             ctx: Context {
                 id,
                 others,
@@ -609,6 +610,58 @@ impl<C: 'static + Command> RawCurp<C> {
             let mut st_w = raw_curp.st.write();
             raw_curp.become_leader(&mut st_w);
         }
+        raw_curp
+    }
+
+    /// Create a new `RawCurp`
+    /// `is_leader` will only take effect when all servers start from a fresh state
+    #[allow(clippy::too_many_arguments)] // only called once
+    pub(super) fn recover_from(
+        id: ServerId,
+        others: HashSet<ServerId>,
+        is_leader: bool,
+        cmd_board: CmdBoardRef<C>,
+        spec_pool: SpecPoolRef<C>,
+        uncommitted_pool: UncommittedPoolRef<C>,
+        timeout: Arc<ServerTimeout>,
+        cmd_tx: Box<dyn CmdExeSenderApi<C>>,
+        sync_tx: mpsc::UnboundedSender<usize>,
+        calibrate_tx: mpsc::UnboundedSender<ServerId>,
+        log_tx: mpsc::UnboundedSender<LogEntry<C>>,
+        voted_for: Option<(u64, ServerId)>,
+        entries: Vec<LogEntry<C>>,
+    ) -> Self {
+        // recovered cmds should be stored in the
+        let mut raw_curp = Self::new(
+            id,
+            others,
+            is_leader,
+            cmd_board,
+            spec_pool,
+            uncommitted_pool,
+            timeout,
+            cmd_tx,
+            sync_tx,
+            calibrate_tx,
+            log_tx.clone(),
+        );
+
+        if let Some((term, server_id)) = voted_for {
+            let mut st_w = raw_curp.st.write();
+            raw_curp.update_to_term_and_become_follower(&mut st_w, term);
+            st_w.voted_for = Some(server_id);
+        } else if is_leader {
+            // all uncommitted cmds should stay in ucp until there are executed
+            raw_curp.ctx.ucp.map_lock(|mut ucp_l| {
+                for e in &entries {
+                    let _ig = ucp_l.insert(e.cmd.id().clone(), Arc::clone(&e.cmd));
+                }
+            });
+        } else {
+        }
+
+        raw_curp.log = RwLock::new(Log::new(log_tx, entries));
+
         raw_curp
     }
 

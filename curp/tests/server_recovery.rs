@@ -2,6 +2,7 @@
 
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
+use itertools::Itertools;
 use utils::{config::ClientTimeout, parking_lot_lock::MutexMap};
 
 use crate::common::{
@@ -35,7 +36,8 @@ async fn leader_crash_and_recovery() {
     );
 
     // restart the original leader
-    group.restart(&leader).await;
+    sleep_secs(3).await;
+    group.restart(&leader, false).await;
     let old_leader = group.nodes.get_mut(&leader).unwrap();
 
     let er = old_leader.exe_rx.recv().await.unwrap();
@@ -83,7 +85,7 @@ async fn follower_crash_and_recovery() {
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // restart follower
-    group.restart(&follower).await;
+    group.restart(&follower, false).await;
     let follower = group.nodes.get_mut(&follower).unwrap();
 
     let er = follower.exe_rx.recv().await.unwrap();
@@ -132,7 +134,12 @@ async fn leader_and_follower_both_crash_and_recovery() {
     group.crash(&leader);
 
     // restart the original leader
-    group.restart(&leader).await;
+    group.restart(&leader, false).await;
+    // add a new log to commit previous logs
+    assert_eq!(
+        client.propose(TestCommand::new_get(vec![0])).await.unwrap(),
+        vec![0]
+    );
     let old_leader = group.nodes.get_mut(&leader).unwrap();
 
     let er = old_leader.exe_rx.recv().await.unwrap();
@@ -146,7 +153,7 @@ async fn leader_and_follower_both_crash_and_recovery() {
     assert_eq!(asr.1, 2);
 
     // restart follower
-    group.restart(&follower).await;
+    group.restart(&follower, false).await;
     let follower = group.nodes.get_mut(&follower).unwrap();
 
     let er = follower.exe_rx.recv().await.unwrap();
@@ -297,6 +304,53 @@ async fn old_leader_will_discard_spec_exe_cmds() {
     assert_eq!(
         client.propose(TestCommand::new_get(vec![0])).await.unwrap(),
         vec![0]
+    );
+
+    group.stop();
+}
+
+#[tokio::test]
+async fn all_crash_and_recovery() {
+    init_logger();
+
+    let mut group = CurpGroup::new(3).await;
+    let client = group.new_client(ClientTimeout::default()).await;
+
+    assert_eq!(
+        client
+            .propose(TestCommand::new_put(vec![0], 0))
+            .await
+            .unwrap(),
+        vec![]
+    );
+    assert_eq!(
+        client.propose(TestCommand::new_get(vec![0])).await.unwrap(),
+        vec![0]
+    );
+
+    let all = group.all.keys().cloned().collect_vec();
+    for node in &all {
+        group.crash(node);
+    }
+    sleep_secs(2).await;
+    for node in &all {
+        group.restart(node, node.as_str() == "S0").await;
+    }
+
+    assert_eq!(
+        client.propose(TestCommand::new_get(vec![0])).await.unwrap(),
+        vec![0]
+    );
+    assert_eq!(
+        client
+            .propose(TestCommand::new_put(vec![0], 1))
+            .await
+            .unwrap(),
+        vec![0]
+    );
+    assert_eq!(
+        client.propose(TestCommand::new_get(vec![0])).await.unwrap(),
+        vec![1]
     );
 
     group.stop();

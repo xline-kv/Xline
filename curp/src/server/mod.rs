@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Debug, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, path::Path, sync::Arc};
 
 use tokio::{net::TcpListener, sync::broadcast};
 use tokio_stream::wrappers::TcpListenerStream;
@@ -36,6 +36,9 @@ mod gc;
 
 /// Curp Node
 mod curp_node;
+
+/// Storage
+mod storage;
 
 /// Default server serving port
 static DEFAULT_SERVER_PORT: u16 = 12345;
@@ -85,7 +88,9 @@ impl<C: 'static + Command> crate::rpc::Protocol for Rpc<C> {
         &self,
         request: tonic::Request<VoteRequest>,
     ) -> Result<tonic::Response<VoteResponse>, tonic::Status> {
-        Ok(tonic::Response::new(self.inner.vote(request.into_inner())?))
+        Ok(tonic::Response::new(
+            self.inner.vote(request.into_inner()).await?,
+        ))
     }
 
     async fn fetch_leader(
@@ -100,19 +105,39 @@ impl<C: 'static + Command> crate::rpc::Protocol for Rpc<C> {
 
 impl<C: Command + 'static> Rpc<C> {
     /// New `Rpc`
+    ///
+    /// # Panics
+    /// Panic if storage creation failed
     #[inline]
-    pub fn new<CE: CommandExecutor<C> + 'static>(
+    pub async fn new<CE: CommandExecutor<C> + 'static>(
         id: ServerId,
         is_leader: bool,
         others: HashMap<ServerId, String>,
         executor: CE,
         timeout: Arc<ServerTimeout>,
         tx_filter: Option<Box<dyn TxFilter>>,
+        storage_path: impl AsRef<Path>,
     ) -> Self {
+        #[allow(clippy::panic)]
+        let curp_node = match CurpNode::new(
+            id,
+            is_leader,
+            others,
+            executor,
+            timeout,
+            tx_filter,
+            storage_path,
+        )
+        .await
+        {
+            Ok(n) => n,
+            Err(err) => {
+                panic!("failed to create curp service {err}");
+            }
+        };
+
         Self {
-            inner: Arc::new(CurpNode::new(
-                id, is_leader, others, executor, timeout, tx_filter,
-            )),
+            inner: Arc::new(curp_node),
         }
     }
 
@@ -132,6 +157,7 @@ impl<C: Command + 'static> Rpc<C> {
         timeout: Arc<ServerTimeout>,
         tx_filter: Option<Box<dyn TxFilter>>,
         rx_filter: Option<FilterLayer<U>>,
+        storage_path: impl AsRef<Path>,
     ) -> Result<(), ServerError>
     where
         CE: 'static + CommandExecutor<C>,
@@ -145,7 +171,16 @@ impl<C: Command + 'static> Rpc<C> {
     {
         let port = server_port.unwrap_or(DEFAULT_SERVER_PORT);
         info!("RPC server {id} started, listening on port {port}");
-        let server = Self::new(id, is_leader, others, executor, timeout, tx_filter);
+        let server = Self::new(
+            id,
+            is_leader,
+            others,
+            executor,
+            timeout,
+            tx_filter,
+            storage_path,
+        )
+        .await;
 
         if let Some(f) = rx_filter {
             tonic::transport::Server::builder()
@@ -186,6 +221,7 @@ impl<C: Command + 'static> Rpc<C> {
         timeout: Arc<ServerTimeout>,
         tx_filter: Option<Box<dyn TxFilter>>,
         rx_filter: Option<FilterLayer<U>>,
+        storage_path: impl AsRef<Path>,
     ) -> Result<(), ServerError>
     where
         CE: 'static + CommandExecutor<C>,
@@ -197,11 +233,17 @@ impl<C: Command + 'static> Rpc<C> {
             ) -> Result<tonic::codegen::http::Request<tonic::transport::Body>, UE>,
         UE: 'static + Send + Sync + std::error::Error,
     {
-        let server = Self {
-            inner: Arc::new(CurpNode::new(
-                id, is_leader, others, executor, timeout, tx_filter,
-            )),
-        };
+        let server = Self::new(
+            id,
+            is_leader,
+            others,
+            executor,
+            timeout,
+            tx_filter,
+            storage_path,
+        )
+        .await;
+
         if let Some(f) = rx_filter {
             tonic::transport::Server::builder()
                 .layer(f)

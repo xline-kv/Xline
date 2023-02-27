@@ -2,6 +2,7 @@
 
 use std::{env, io, time::Duration};
 
+use madsim::rand::{distributions::Alphanumeric, thread_rng, Rng};
 use thiserror::Error;
 use tracing_subscriber::fmt::time::{uptime, OffsetTime, Uptime};
 
@@ -25,4 +26,12 @@ pub async fn sleep_millis(n: u64) {
 
 pub async fn sleep_secs(n: u64) {
     tokio::time::sleep(Duration::from_secs(n)).await;
+}
+
+pub(crate) fn random_id() -> String {
+    thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(4)
+        .map(char::from)
+        .collect()
 }
