@@ -242,8 +242,8 @@ impl<C: 'static + Command> RawCurp<C> {
 // Curp handlers
 impl<C: 'static + Command> RawCurp<C> {
     /// Handle `propose` request
-    /// Return `Ok((leader_id, term), conflict, Option<exe_rx>)`
-    /// Return `Err(())` if the cmd has been proposed before
+    /// Return `((leader_id, term), Ok(Option<exe_rx>))` if the proposal succeeds, `Some(exe_rx)` if is leader and needs to wait for the execution result
+    /// Return `((leader_id, term), Err(ProposeError))` if the cmd cannot be speculatively executed or is duplicated
     #[allow(clippy::type_complexity)] // it's clear
     pub(super) fn handle_propose(
         &self,
@@ -272,11 +272,8 @@ impl<C: 'static + Command> RawCurp<C> {
             );
         }
 
-        let duplicated = self
-            .ctx
-            .cb
-            .map_write(|mut board_w| !board_w.sync.insert(cmd.id().clone()));
-        if duplicated {
+        let mut cb_w = self.ctx.cb.write();
+        if !cb_w.sync.insert(cmd.id().clone()) {
             return (info, Err(ProposeError::Duplicated));
         }
 
@@ -284,9 +281,10 @@ impl<C: 'static + Command> RawCurp<C> {
         let index = log_w.push_cmd(st_r.term, Arc::clone(&cmd));
 
         let exe_rx = (!conflict).then(|| {
-            self.ctx
-                .cb
-                .map_write(|mut cb_w| assert!(cb_w.spec_executed.insert(cmd.id().clone())));
+            assert!(
+                cb_w.spec_executed.insert(cmd.id().clone()),
+                "can't insert twice to spec_executed"
+            );
             self.ctx.cmd_tx.send_exe(cmd)
         });
 
@@ -294,7 +292,14 @@ impl<C: 'static + Command> RawCurp<C> {
             error!("send channel error, {e}");
         }
 
-        (info, Ok(exe_rx))
+        (
+            info,
+            if conflict {
+                Err(ProposeError::KeyConflict)
+            } else {
+                Ok(exe_rx)
+            },
+        )
     }
 
     /// Handle `append_entries`
