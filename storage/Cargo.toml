@@ -1,0 +1,18 @@
+[package]
+authors = ["DatenLord <dev@datenlord.io>"]
+description = "Xline Persistent Layer "
+categories = ["Storage"]
+keywords = ["storage engine"]
+license = "Apache-2.0"
+repository = "https://github.com/datenlord/Xline/tree/master/storage"
+readme = "../README.md"
+name = "storage"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+parking_lot = "0.12.1"
+rocksdb = "0.20.1"
+thiserror = "1.0.38"
