@@ -3,10 +3,10 @@ use std::io;
 use thiserror::Error;
 
 /// The `EngineError`
-#[allow(dead_code)]
+#[allow(clippy::module_name_repetitions)]
 #[non_exhaustive]
 #[derive(Error, Debug)]
-pub(crate) enum EngineError {
+pub enum EngineError {
     /// Met I/O Error during persisting data
     #[error("I/O Error")]
     IoError(#[from] io::Error),

@@ -147,8 +147,10 @@
 )]
 
 /// Storage Engine Trait Definition
-mod engine_api;
+pub mod engine_api;
 /// Engine Error Definition
-mod error;
+pub mod error;
 /// Memory Storage Engine
-mod memory_engine;
+pub mod memory_engine;
+
+pub use self::engine_api::{Delete, DeleteRange, Put, StorageEngine, WriteOperation};
