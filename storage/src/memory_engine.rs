@@ -12,7 +12,7 @@ type TableStore = HashMap<Vec<u8>, Vec<u8>>;
 
 /// Memory Storage Engine Implementation
 #[derive(Debug, Default)]
-struct MemoryEngine {
+pub struct MemoryEngine {
     /// The inner storage engine of `MemoryStorage`
     inner: RwLock<HashMap<String, TableStore>>,
 }
@@ -21,8 +21,7 @@ impl MemoryEngine {
     /// New `MemoryEngine`
     #[inline]
     #[must_use]
-    #[allow(dead_code)]
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         let inner: HashMap<String, HashMap<Vec<u8>, Vec<u8>>> = HashMap::new();
         Self {
             inner: RwLock::new(inner),
@@ -31,39 +30,41 @@ impl MemoryEngine {
 }
 
 impl StorageEngine for MemoryEngine {
-    type Error = EngineError;
     type Key = Vec<u8>;
-    type Value = Vec<u8>;
 
-    fn create_table(&self, table: &str) -> Result<(), Self::Error> {
+    #[inline]
+    fn create_table(&self, table: &str) -> Result<(), EngineError> {
         let mut inner = self.inner.write();
         let _ = inner.entry(table.to_owned()).or_insert(HashMap::new());
         Ok(())
     }
 
-    fn get(&self, table: &str, key: &Self::Key) -> Result<Option<Vec<u8>>, Self::Error> {
+    #[inline]
+    fn get(&self, table: &str, key: &Self::Key) -> Result<Option<Vec<u8>>, EngineError> {
         let inner = self.inner.read();
         let table = inner
             .get(table)
-            .ok_or_else(|| Self::Error::TableNotFound(table.to_owned()))?;
+            .ok_or_else(|| EngineError::TableNotFound(table.to_owned()))?;
 
         Ok(table.get(key).cloned())
     }
 
+    #[inline]
     fn get_multi(
         &self,
         table: &str,
         keys: &[Self::Key],
-    ) -> Result<Vec<Option<Vec<u8>>>, Self::Error> {
+    ) -> Result<Vec<Option<Vec<u8>>>, EngineError> {
         let inner = self.inner.read();
         let table = inner
             .get(table)
-            .ok_or_else(|| Self::Error::TableNotFound(table.to_owned()))?;
+            .ok_or_else(|| EngineError::TableNotFound(table.to_owned()))?;
 
         Ok(keys.iter().map(|key| table.get(key).cloned()).collect())
     }
 
-    fn write_batch(&self, wr_ops: Vec<WriteOperation<'_>>) -> Result<(), Self::Error> {
+    #[inline]
+    fn write_batch(&self, wr_ops: Vec<WriteOperation<'_>>) -> Result<(), EngineError> {
         let mut inner = self.inner.write();
         for op in wr_ops {
             match op {
@@ -71,22 +72,22 @@ impl StorageEngine for MemoryEngine {
                     table, key, value, ..
                 }) => {
                     let table = inner
-                        .get_mut(&table)
-                        .ok_or_else(|| Self::Error::TableNotFound(table))?;
+                        .get_mut(table)
+                        .ok_or_else(|| EngineError::TableNotFound(table.to_owned()))?;
                     let _ignore = table.insert(key, value);
                 }
                 WriteOperation::Delete(Delete { table, key, .. }) => {
                     let table = inner
-                        .get_mut(&table)
-                        .ok_or_else(|| Self::Error::TableNotFound(table))?;
+                        .get_mut(table)
+                        .ok_or_else(|| EngineError::TableNotFound(table.to_owned()))?;
                     let _ignore = table.remove(key);
                 }
                 WriteOperation::DeleteRange(DeleteRange {
                     table, from, to, ..
                 }) => {
                     let table = inner
-                        .get_mut(&table)
-                        .ok_or_else(|| Self::Error::TableNotFound(table))?;
+                        .get_mut(table)
+                        .ok_or_else(|| EngineError::TableNotFound(table.to_owned()))?;
                     table.retain(|key, _value| {
                         let key_slice = key.as_slice();
                         match key_slice.cmp(from) {

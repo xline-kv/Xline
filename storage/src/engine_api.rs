@@ -1,8 +1,11 @@
+use crate::error::EngineError;
+
 /// Write operation
-#[allow(dead_code)]
-pub(super) enum WriteOperation<'a> {
+#[non_exhaustive]
+#[derive(Debug)]
+pub enum WriteOperation<'a> {
     /// `Put` operation
-    Put(Put),
+    Put(Put<'a>),
     /// `Delete` operation
     Delete(Delete<'a>),
     /// `DeleteRange` operation
@@ -11,9 +14,10 @@ pub(super) enum WriteOperation<'a> {
 
 /// Put operation
 #[allow(dead_code)]
-pub(crate) struct Put {
+#[derive(Debug)]
+pub struct Put<'a> {
     /// The table name
-    pub(crate) table: String,
+    pub(crate) table: &'a str,
     /// Key
     pub(crate) key: Vec<u8>,
     /// Value
@@ -24,13 +28,13 @@ pub(crate) struct Put {
     pub(crate) sync: bool,
 }
 
-impl Put {
+impl<'a> Put<'a> {
     /// Create a new `Put` operation
     #[inline]
-    #[allow(dead_code)]
-    pub(crate) fn new(table: &str, key: Vec<u8>, value: Vec<u8>, sync: bool) -> Put {
+    #[must_use]
+    pub fn new(table: &'a str, key: Vec<u8>, value: Vec<u8>, sync: bool) -> Put<'a> {
         Put {
-            table: table.to_owned(),
+            table,
             key,
             value,
             sync,
@@ -40,9 +44,10 @@ impl Put {
 
 /// Delete operation,
 #[allow(dead_code)]
-pub(crate) struct Delete<'a> {
+#[derive(Debug)]
+pub struct Delete<'a> {
     /// The table name
-    pub(crate) table: String,
+    pub(crate) table: &'a str,
     /// The target key
     pub(crate) key: &'a [u8],
     /// See `Put::sync` for more details
@@ -52,22 +57,19 @@ pub(crate) struct Delete<'a> {
 impl<'a> Delete<'a> {
     /// Create a new `Delete` operation
     #[inline]
-    #[allow(dead_code)]
-    pub(crate) fn new(table: &str, key: &'a [u8], sync: bool) -> Delete<'a> {
-        Delete {
-            table: table.to_owned(),
-            key,
-            sync,
-        }
+    #[must_use]
+    pub fn new(table: &'a str, key: &'a [u8], sync: bool) -> Delete<'a> {
+        Delete { table, key, sync }
     }
 }
 
 /// Delete range operation, it will remove the database
 /// entries in the range [from, to)
 #[allow(dead_code)]
-pub(super) struct DeleteRange<'a> {
+#[derive(Debug)]
+pub struct DeleteRange<'a> {
     /// The table name
-    pub(crate) table: String,
+    pub(crate) table: &'a str,
     /// The `from` key
     pub(crate) from: &'a [u8],
     /// The `to` key
@@ -80,9 +82,9 @@ impl<'a> DeleteRange<'a> {
     /// Create a new `DeleteRange` operation
     #[inline]
     #[allow(dead_code)]
-    pub(crate) fn new(table: &str, from: &'a [u8], to: &'a [u8], sync: bool) -> DeleteRange<'a> {
+    pub(crate) fn new(table: &'a str, from: &'a [u8], to: &'a [u8], sync: bool) -> DeleteRange<'a> {
         DeleteRange {
-            table: table.to_owned(),
+            table,
             from,
             to,
             sync,
@@ -91,27 +93,38 @@ impl<'a> DeleteRange<'a> {
 }
 
 /// The `StorageEngine` trait
-pub(super) trait StorageEngine: Send + Sync + 'static {
-    /// The associated error type
-    type Error: std::error::Error;
+pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
     /// The associated key type
     type Key: AsRef<[u8]>;
-    /// The associated value type
-    type Value: AsRef<[u8]>;
 
     /// Create a logical table with the given name
-    fn create_table(&self, table: &str) -> Result<(), Self::Error>;
+    ///
+    /// # Errors
+    /// Return `IoError` if met some io errors
+    fn create_table(&self, table: &str) -> Result<(), EngineError>;
 
     /// Get the value associated with a key value and the given table
-    fn get(&self, table: &str, key: &Self::Key) -> Result<Option<Vec<u8>>, Self::Error>;
+    ///
+    /// # Errors
+    /// Return `TableNotFound` if the given table does not exist
+    /// Return `IoError` if met some io errors
+    fn get(&self, table: &str, key: &Self::Key) -> Result<Option<Vec<u8>>, EngineError>;
 
     /// Get the values associated with the given keys
+    ///
+    /// # Errors
+    /// Return `TableNotFound` if the given table does not exist
+    /// Return `IoError` if met some io errors
     fn get_multi(
         &self,
         table: &str,
         keys: &[Self::Key],
-    ) -> Result<Vec<Option<Vec<u8>>>, Self::Error>;
+    ) -> Result<Vec<Option<Vec<u8>>>, EngineError>;
 
     /// Commit a batch of write operations
-    fn write_batch(&self, wr_ops: Vec<WriteOperation<'_>>) -> Result<(), Self::Error>;
+    ///
+    /// # Errors
+    /// Return `TableNotFound` if the given table does not exist
+    /// Return `IoError` if met some io errors
+    fn write_batch(&self, wr_ops: Vec<WriteOperation<'_>>) -> Result<(), EngineError>;
 }

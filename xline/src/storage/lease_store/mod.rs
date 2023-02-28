@@ -494,9 +494,8 @@ mod test {
 
     use tracing::info;
 
-    use crate::Memory;
-
     use super::*;
+    use crate::Memory;
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn test_lease_storage() -> Result<(), Box<dyn Error>> {
         let (del_tx, mut del_rx) = mpsc::channel(128);
