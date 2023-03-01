@@ -65,6 +65,10 @@ where
 {
     /// New `XlineServer`
     ///
+    /// # Errors
+    ///
+    /// Return `ExecuteError::DbError` if the server cannot initialize the database
+    ///
     /// # Panics
     ///
     /// panic when peers do not contain leader address
