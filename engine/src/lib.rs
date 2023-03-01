@@ -152,5 +152,7 @@ pub mod engine_api;
 pub mod error;
 /// Memory Storage Engine, it's test only
 pub mod memory_engine;
+/// `RocksDB` Storage Engine
+pub mod rocksdb_engine;
 
 pub use self::engine_api::{Delete, DeleteRange, Put, StorageEngine, WriteOperation};

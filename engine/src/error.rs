@@ -1,5 +1,3 @@
-use std::io;
-
 use thiserror::Error;
 
 /// The `EngineError`
@@ -9,7 +7,7 @@ use thiserror::Error;
 pub enum EngineError {
     /// Met I/O Error during persisting data
     #[error("I/O Error")]
-    IoError(#[from] io::Error),
+    IoError(String),
     /// Table Not Found
     #[error("Table {0} Not Found")]
     TableNotFound(String),
