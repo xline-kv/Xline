@@ -1,7 +1,6 @@
-#![allow(clippy::indexing_slicing)] // use index to access log is safe
 #![allow(clippy::integer_arithmetic)] // u64 is large enough and won't overflow
 
-use std::{collections::HashSet, ops::Index, sync::Arc};
+use std::{collections::HashSet, sync::Arc};
 
 use crate::{
     cmd::{Command, ProposeId},
@@ -17,19 +16,12 @@ pub(super) struct Log<C: Command> {
     entries: Vec<LogEntry<C>>,
     /// Base index in entries, is `1`(if no snapshot) or `last_log_index_in_snapshot + 1`
     base_index: usize,
+    /// Term of log[base_index]
+    base_term: u64,
     /// Index of highest log entry known to be committed
     pub(super) commit_index: usize,
     /// Index of highest log entry applied to state machine
     pub(super) last_applied: usize,
-}
-
-impl<C: Command> Index<usize> for Log<C> {
-    type Output = LogEntry<C>;
-
-    fn index(&self, i: usize) -> &Self::Output {
-        let pi = self.li_to_pi(i);
-        &self.entries[pi]
-    }
 }
 
 impl<C: Command> Log<C> {
@@ -40,27 +32,39 @@ impl<C: Command> Log<C> {
             commit_index: 0,
             last_applied: 0,
             base_index: 1,
+            base_term: 0,
         }
     }
 
     /// Get last log index
     pub(super) fn last_log_index(&self) -> usize {
-        self.entries.last().map_or(0, |entry| entry.index)
+        self.entries
+            .last()
+            .map_or(self.base_index - 1, |entry| entry.index)
     }
 
     /// Get last log term
     pub(super) fn last_log_term(&self) -> u64 {
-        self.entries.last().map_or(0, |entry| entry.term)
+        self.entries
+            .last()
+            .map_or(self.base_term, |entry| entry.term)
     }
 
     /// Transform logical index to physical index of `self.entries`
-    pub(super) fn li_to_pi(&self, i: usize) -> usize {
+    fn li_to_pi(&self, i: usize) -> usize {
         assert!(
             i >= self.base_index,
             "can't access the log entry whose index is smaller than {}",
             self.base_index
         );
         i - self.base_index
+    }
+
+    /// Get log entry
+    pub(super) fn get(&self, i: usize) -> Option<&LogEntry<C>> {
+        (i >= self.base_index)
+            .then(|| self.entries.get(i - self.base_index))
+            .flatten()
     }
 
     /// Try to append log entries, hand back the entries if they can't be appended
@@ -71,10 +75,9 @@ impl<C: Command> Log<C> {
         prev_log_term: u64,
     ) -> Result<(), Vec<LogEntry<C>>> {
         // check if entries can be appended
-        if prev_log_index != 0
+        if !(prev_log_index == 0 && prev_log_term == 0)
             && self
-                .entries
-                .get(self.li_to_pi(prev_log_index))
+                .get(prev_log_index)
                 .map_or(true, |entry| entry.term != prev_log_term)
         {
             return Err(entries);
@@ -85,16 +88,16 @@ impl<C: Command> Log<C> {
         for entry in entries {
             li += 1;
             let pi = self.li_to_pi(li);
-            let inconsistent = if let Some(old_entry) = self.entries.get(pi) {
-                old_entry.term != entry.term
-            } else {
-                self.entries.push(entry);
+            if self
+                .entries
+                .get(pi)
+                .map_or(false, |old_entry| old_entry.term == entry.term)
+            {
                 continue;
-            };
-            if inconsistent {
-                self.entries.truncate(pi);
-                self.entries.push(entry);
             }
+
+            self.entries.truncate(pi);
+            self.entries.push(entry);
         }
 
         Ok(())
@@ -120,9 +123,9 @@ impl<C: Command> Log<C> {
     }
 
     /// Get a range of log entry
-    pub(super) fn get_from(&self, li: usize) -> &[LogEntry<C>] {
+    pub(super) fn get_from(&self, li: usize) -> Option<&[LogEntry<C>]> {
         let pi = self.li_to_pi(li);
-        &self.entries[pi..]
+        self.entries.get(pi..)
     }
 
     /// Get existing cmd ids
@@ -136,17 +139,33 @@ impl<C: Command> Log<C> {
         if i == 1 {
             (0, 0) // fake log[0]
         } else {
-            (self.index(i - 1).term, self.index(i - 1).index)
+            let entry = self.get(i - 1).unwrap_or_else(|| {
+                unreachable!(
+                    "system corrupted, get log[{i}] when we only have {} log entries",
+                    self.last_log_index()
+                )
+            });
+            (entry.term, entry.index)
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{ops::Index, sync::Arc};
 
     use super::*;
     use crate::test_utils::test_cmd::TestCommand;
+
+    // impl index for test is handy
+    impl<C: Command> Index<usize> for Log<C> {
+        type Output = LogEntry<C>;
+
+        fn index(&self, i: usize) -> &Self::Output {
+            let pi = self.li_to_pi(i);
+            &self.entries[pi]
+        }
+    }
 
     #[test]
     fn test_log_up_to_date() {

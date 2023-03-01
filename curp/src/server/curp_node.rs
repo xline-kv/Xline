@@ -22,7 +22,7 @@ use super::{
     spec_pool::{SpecPoolRef, SpeculativePool},
 };
 use crate::{
-    cmd::{Command, CommandExecutor},
+    cmd::{Command, CommandExecutor, ProposeId},
     error::ProposeError,
     message::ServerId,
     rpc::{
@@ -32,6 +32,12 @@ use crate::{
     },
     TxFilter,
 };
+
+/// Uncommitted pool type
+pub(super) type UncommittedPool<C> = HashMap<ProposeId, Arc<C>>;
+
+/// Reference to uncommitted pool
+pub(super) type UncommittedPoolRef<C> = Arc<Mutex<UncommittedPool<C>>>;
 
 /// Curp error
 #[derive(Debug, Error)]
@@ -264,11 +270,13 @@ impl<C: 'static + Command> CurpNode<C> {
         let shutdown_trigger = Arc::new(Event::new());
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
+        let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
 
         // start cmd workers
         let exe_tx = start_cmd_workers(
             cmd_executor,
             Arc::clone(&spec_pool),
+            Arc::clone(&uncommitted_pool),
             Arc::clone(&cmd_board),
             Arc::clone(&shutdown_trigger),
         );
@@ -280,6 +288,7 @@ impl<C: 'static + Command> CurpNode<C> {
             is_leader,
             Arc::clone(&cmd_board),
             Arc::clone(&spec_pool),
+            uncommitted_pool,
             timeout,
             Box::new(exe_tx),
             sync_tx,
@@ -429,7 +438,9 @@ impl<C: 'static + Command> CurpNode<C> {
         );
         loop {
             // send append entry
-            let ae = curp.append_entries(connect.id());
+            let Ok(ae) = curp.append_entries(connect.id()) else {
+                return;
+            };
             let last_sent_index = ae.prev_log_index + ae.entries.len();
             let req = match AppendEntriesRequest::new(
                 ae.term,
@@ -493,7 +504,9 @@ impl<C: 'static + Command> CurpNode<C> {
     ) {
         while let Some(i) = sync_rx.recv().await {
             let req = {
-                let ae = curp.append_entries_single(i);
+                let Ok(ae) = curp.append_entries_single(i) else {
+                    continue;
+                };
                 let req = AppendEntriesRequest::new(
                     ae.term,
                     ae.leader_id,
@@ -602,7 +615,7 @@ mod tests {
     use crate::{
         log_entry::LogEntry,
         rpc::connect::MockConnectApi,
-        server::cmd_worker::MockCmdExeSenderInterface,
+        server::cmd_worker::MockCmdExeSenderApi,
         test_utils::{sleep_millis, test_cmd::TestCommand},
     };
 
@@ -613,7 +626,7 @@ mod tests {
     async fn logs_will_be_resent() {
         let curp = Arc::new(RawCurp::new_test(
             3,
-            MockCmdExeSenderInterface::<TestCommand>::default(),
+            MockCmdExeSenderApi::<TestCommand>::default(),
         ));
 
         let mut mock_connect = MockConnectApi::default();
@@ -644,7 +657,7 @@ mod tests {
     #[tokio::test]
     async fn send_log_will_stop_after_new_election() {
         let curp = {
-            let mut exe_tx = MockCmdExeSenderInterface::<TestCommand>::default();
+            let mut exe_tx = MockCmdExeSenderApi::<TestCommand>::default();
             exe_tx.expect_send_reset().returning(|| ());
             Arc::new(RawCurp::new_test(3, exe_tx))
         };
@@ -679,7 +692,7 @@ mod tests {
     #[tokio::test]
     async fn send_log_will_succeed_and_commit() {
         let curp = {
-            let mut exe_tx = MockCmdExeSenderInterface::<TestCommand>::default();
+            let mut exe_tx = MockCmdExeSenderApi::<TestCommand>::default();
             exe_tx.expect_send_reset().returning(|| ());
             exe_tx.expect_send_after_sync().returning(|_, _| ());
             Arc::new(RawCurp::new_test(3, exe_tx))
@@ -715,7 +728,7 @@ mod tests {
     #[tokio::test]
     async fn leader_will_calibrate_follower_until_succeed() {
         let curp = {
-            let mut exe_tx = MockCmdExeSenderInterface::<TestCommand>::default();
+            let mut exe_tx = MockCmdExeSenderApi::<TestCommand>::default();
             exe_tx.expect_send_after_sync().returning(|_, _| ());
             Arc::new(RawCurp::new_test(3, exe_tx))
         };

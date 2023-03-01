@@ -36,7 +36,7 @@ use self::{
     log::Log,
     state::{CandidateState, LeaderState, State},
 };
-use super::cmd_worker::CmdExeSenderInterface;
+use super::{cmd_worker::CmdExeSenderApi, curp_node::UncommittedPoolRef};
 use crate::{
     cmd::{Command, ProposeId},
     error::ProposeError,
@@ -128,6 +128,8 @@ struct Context<C: Command> {
     cb: CmdBoardRef<C>,
     /// Speculative pool
     sp: SpecPoolRef<C>,
+    /// Uncommitted pool
+    ucp: UncommittedPoolRef<C>,
     /// Tx to send leader changes
     leader_tx: broadcast::Sender<Option<ServerId>>,
     /// Election tick
@@ -135,7 +137,7 @@ struct Context<C: Command> {
     /// Heartbeat opt out flag
     hb_opt: AtomicBool,
     /// Tx to send cmds to execute and do after sync
-    cmd_tx: Box<dyn CmdExeSenderInterface<C>>,
+    cmd_tx: Box<dyn CmdExeSenderApi<C>>,
     /// Tx to send the index of log entry which needs to be replicated on followers
     sync_tx: mpsc::UnboundedSender<usize>,
     /// Tx to send the id of followers that need to be calibrated
@@ -213,7 +215,6 @@ impl<C: 'static + Command> RawCurp<C> {
         let lst_r = self.lst.read();
         let log_r = self.log.read();
 
-        #[allow(clippy::indexing_slicing)] // use index to access log is safe
         let hbs = self
             .ctx
             .others
@@ -252,7 +253,8 @@ impl<C: 'static + Command> RawCurp<C> {
         (Option<ServerId>, u64),
         Result<Option<oneshot::Receiver<Result<C::ER, String>>>, ProposeError>,
     ) {
-        let conflict = self
+        debug!("{} gets proposal for cmd {}", self.id(), cmd.id());
+        let mut conflict = self
             .ctx
             .sp
             .map_lock(|mut spec_l| spec_l.insert(Arc::clone(&cmd)).is_some());
@@ -276,6 +278,16 @@ impl<C: 'static + Command> RawCurp<C> {
         if !cb_w.sync.insert(cmd.id().clone()) {
             return (info, Err(ProposeError::Duplicated));
         }
+
+        // leader also needs to check if the cmd conflicts un-synced commands
+        conflict |= self.ctx.ucp.map_lock(|mut ucp_l| {
+            let conflict_uncommitted = ucp_l.values().any(|c| c.is_conflict(cmd.as_ref()));
+            assert!(
+                ucp_l.insert(cmd.id().clone(), Arc::clone(&cmd)).is_none(),
+                "cmd should never be inserted to uncommitted pool twice"
+            );
+            conflict_uncommitted
+        });
 
         let mut log_w = self.log.write();
         let index = log_w.push_cmd(st_r.term, Arc::clone(&cmd));
@@ -369,7 +381,6 @@ impl<C: 'static + Command> RawCurp<C> {
     /// Handle `append_entries` response
     /// Return `Ok(())`
     /// Return `Err(())` if self is no longer the leader
-    #[allow(clippy::unwrap_in_result)]
     pub(super) fn handle_append_entries_resp(
         &self,
         follower_id: &ServerId,
@@ -389,7 +400,6 @@ impl<C: 'static + Command> RawCurp<C> {
             return Err(());
         }
 
-        #[allow(clippy::unwrap_used)] // there must be a next_index for each follower
         if !success {
             let mut lst_w = self.lst.write();
             lst_w.update_next_index(follower_id, hint_index);
@@ -560,8 +570,9 @@ impl<C: 'static + Command> RawCurp<C> {
         is_leader: bool,
         cmb_board: CmdBoardRef<C>,
         spec_pool: SpecPoolRef<C>,
+        uncommitted_pool: UncommittedPoolRef<C>,
         timeout: Arc<ServerTimeout>,
-        cmd_tx: Box<dyn CmdExeSenderInterface<C>>,
+        cmd_tx: Box<dyn CmdExeSenderApi<C>>,
         sync_tx: mpsc::UnboundedSender<usize>,
         calibrate_tx: mpsc::UnboundedSender<ServerId>,
     ) -> Self {
@@ -584,6 +595,7 @@ impl<C: 'static + Command> RawCurp<C> {
                 others,
                 cb: cmb_board,
                 sp: spec_pool,
+                ucp: uncommitted_pool,
                 leader_tx: broadcast::channel(1).0,
                 timeout,
                 election_tick: AtomicU8::new(0),
@@ -610,48 +622,54 @@ impl<C: 'static + Command> RawCurp<C> {
         &self.ctx.id
     }
 
-    /// Get current term
-    pub(super) fn term(&self) -> u64 {
-        self.st.map_read(|st_r| st_r.term)
-    }
-
     /// Get a rx for leader changes
     pub(super) fn leader_rx(&self) -> broadcast::Receiver<Option<ServerId>> {
         self.ctx.leader_tx.subscribe()
     }
 
     /// Get `append_entries` request for log[i]
-    #[allow(clippy::indexing_slicing)] // use index to access log is safe
-    pub(super) fn append_entries_single(&self, i: usize) -> AppendEntries<C> {
+    /// Return `Err(())` if self is no longer the leader
+    pub(super) fn append_entries_single(&self, i: usize) -> Result<AppendEntries<C>, ()> {
         assert!(i > 0, "can't generate append_entries for fake log[0]");
-        let term = self.term();
+        let st_r = self.st.read();
+        if st_r.role != Role::Leader {
+            return Err(());
+        }
         let log_r = self.log.read();
         let (prev_log_term, prev_log_index) = log_r.get_prev_entry_info(i);
-        AppendEntries {
-            term,
+        let entry = log_r.get(i).unwrap_or_else(|| {
+            unreachable!("system corrupted, leader wants to log[{i}] when it doesn't have it")
+        });
+        Ok(AppendEntries {
+            term: st_r.term,
             leader_id: self.id().clone(),
             prev_log_index,
             prev_log_term,
             leader_commit: log_r.commit_index,
-            entries: vec![log_r[i].clone()],
-        }
+            entries: vec![entry.clone()],
+        })
     }
 
     /// Get `append_entries` request for `follower_id` that contains the latest log entries
-    #[allow(clippy::indexing_slicing)] // use index to access log is safe
-    pub(super) fn append_entries(&self, follower_id: &ServerId) -> AppendEntries<C> {
-        let term = self.term();
+    pub(super) fn append_entries(&self, follower_id: &ServerId) -> Result<AppendEntries<C>, ()> {
+        let st_r = self.st.read();
+        if st_r.role != Role::Leader {
+            return Err(());
+        }
         let next_index = self.lst.map_read(|lst_r| lst_r.get_next_index(follower_id));
         let log_r = self.log.read();
         let (prev_log_term, prev_log_index) = log_r.get_prev_entry_info(next_index);
-        AppendEntries {
-            term,
+        let entries = log_r.get_from(next_index).unwrap_or_else(|| {
+            unreachable!("system corrupted, leader get log[{next_index}] when it doesn't have one")
+        });
+        Ok(AppendEntries {
+            term: st_r.term,
             leader_id: self.id().clone(),
             prev_log_index,
             prev_log_term,
             leader_commit: log_r.commit_index,
-            entries: log_r.get_from(next_index).to_vec(),
-        }
+            entries: entries.to_vec(),
+        })
     }
 
     /// Optimize out heartbeat
@@ -753,8 +771,7 @@ impl<C: 'static + Command> RawCurp<C> {
         }
 
         // don't commit log from previous term
-        #[allow(clippy::indexing_slicing)] // use index to access log is safe
-        if log[i].term != cur_term {
+        if log.get(i).map_or(true, |entry| entry.term != cur_term) {
             return false;
         }
 
@@ -825,8 +842,12 @@ impl<C: 'static + Command> RawCurp<C> {
     /// Apply new logs
     fn apply(&self, log: &mut Log<C>) {
         for i in (log.last_applied + 1)..=log.commit_index {
-            #[allow(clippy::indexing_slicing)] // use index to access log is safe
-            let entry = &log[i];
+            let entry = log.get(i).unwrap_or_else(|| {
+                unreachable!(
+                    "system corrupted, apply log[{i}] when we only have {} log entries",
+                    log.last_log_index()
+                )
+            });
             self.ctx
                 .cmd_tx
                 .send_after_sync(Arc::clone(&entry.cmd), i.numeric_cast());
@@ -860,8 +881,12 @@ impl<C: 'static + Command> RawCurp<C> {
 
         let log_r = self.log.read();
         for i in 1..=log_r.commit_index {
-            #[allow(clippy::indexing_slicing)] // use index to access log is safe
-            let entry = &log_r[i];
+            let entry = log_r.get(i).unwrap_or_else(|| {
+                unreachable!(
+                    "system corrupted, apply log[{i}] when we only have {} log entries",
+                    log_r.last_log_index()
+                )
+            });
             self.ctx
                 .cmd_tx
                 .send_after_sync(Arc::clone(&entry.cmd), i.numeric_cast());

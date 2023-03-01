@@ -10,7 +10,7 @@ use utils::{config::ClientTimeout, parking_lot_lock::RwLockMap};
 use crate::{
     cmd::Command,
     error::ProposeError,
-    message::{ServerId, TermNum},
+    message::ServerId,
     rpc::{
         self, connect::ConnectApi, FetchLeaderRequest, ProposeRequest, SyncError, SyncResult,
         WaitSyncedRequest,
@@ -45,7 +45,7 @@ struct State {
     /// Current leader
     leader: Option<ServerId>,
     /// Current term
-    term: TermNum,
+    term: u64,
     /// When a new leader is set, notify
     leader_notify: Arc<Event>,
     /// Send leader changes
@@ -75,7 +75,7 @@ impl State {
     }
 
     /// Update to the newest term and reset local cache
-    fn update_to_term(&mut self, term: TermNum) {
+    fn update_to_term(&mut self, term: u64) {
         debug_assert!(self.term <= term);
         self.term = term;
         self.leader = None;
