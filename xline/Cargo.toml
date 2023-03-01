@@ -22,7 +22,8 @@ etcd-client = "0.10.1"
 event-listener = "2.5.2"
 jsonwebtoken = "8.1.1"
 itertools = "0.10.3"
-utils = { path = "../utils", version = "0.1.0", features = ["parking_lot"] }
+utils = { path = "../utils", features = ["parking_lot"] }
+engine = { path = "../engine"}
 log = "0.4.17"
 opentelemetry = { version = "0.18.0", features = ["rt-tokio"] }
 opentelemetry-contrib = { version = "0.10.0", features = [

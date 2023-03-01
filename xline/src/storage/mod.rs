@@ -1,7 +1,7 @@
 /// Storage for Auth
 pub(crate) mod auth_store;
 /// Database module
-pub(crate) mod db;
+pub mod db;
 /// Execute error
 pub(crate) mod execute_error;
 /// Index module
@@ -12,8 +12,6 @@ pub(crate) mod kv_store;
 pub(crate) mod kvwatcher;
 /// Storage for lease
 pub(crate) mod lease_store;
-/// Memory storage module
-pub(crate) mod memory;
 /// Request context module
 pub(crate) mod req_ctx;
 /// Revision module

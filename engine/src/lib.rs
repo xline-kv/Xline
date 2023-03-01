@@ -150,7 +150,7 @@
 pub mod engine_api;
 /// Engine Error Definition
 pub mod error;
-/// Memory Storage Engine
+/// Memory Storage Engine, it's test only
 pub mod memory_engine;
 
 pub use self::engine_api::{Delete, DeleteRange, Put, StorageEngine, WriteOperation};

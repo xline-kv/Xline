@@ -15,6 +15,7 @@ use clippy_utilities::Cast;
 use curp::cmd::ProposeId;
 use log::debug;
 use parking_lot::{Mutex, RwLock};
+use prost::Message;
 use tokio::sync::mpsc;
 use utils::parking_lot_lock::MutexMap;
 
@@ -23,7 +24,7 @@ pub(crate) use self::{
     lease::Lease,
     message::{DeleteMessage, LeaseMessage},
 };
-use super::{db::LeaseDB, storage_api::StorageApi, ExecuteError, RequestCtx};
+use super::{storage_api::StorageApi, ExecuteError, RequestCtx};
 use crate::{
     header_gen::HeaderGenerator,
     rpc::{
@@ -41,12 +42,12 @@ const MIN_LEASE_TTL: i64 = 1; // TODO: this num should calculated by election ti
 
 /// Lease store
 #[derive(Debug)]
-pub(crate) struct LeaseStore<S>
+pub(crate) struct LeaseStore<DB>
 where
-    S: StorageApi,
+    DB: StorageApi,
 {
     /// Lease store Backend
-    inner: Arc<LeaseStoreBackend<S>>,
+    inner: Arc<LeaseStoreBackend<DB>>,
 }
 
 /// Collection of lease related data
@@ -170,14 +171,16 @@ impl LeaseCollection {
 
 /// Lease store inner
 #[derive(Debug)]
-pub(crate) struct LeaseStoreBackend<S>
+pub(crate) struct LeaseStoreBackend<DB>
 where
-    S: StorageApi,
+    DB: StorageApi,
 {
+    /// Table name
+    table: String,
     /// lease collection
     lease_collection: RwLock<LeaseCollection>,
     /// Db to store lease
-    db: LeaseDB<S>,
+    db: Arc<DB>,
     /// delete channel
     del_tx: mpsc::Sender<DeleteMessage>,
     /// Speculative execution pool. Mapping from propose id to request
@@ -188,9 +191,9 @@ where
     header_gen: Arc<HeaderGenerator>,
 }
 
-impl<S> LeaseStore<S>
+impl<DB> LeaseStore<DB>
 where
-    S: StorageApi,
+    DB: StorageApi,
 {
     /// New `LeaseStore`
     #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
@@ -199,9 +202,9 @@ where
         mut lease_cmd_rx: mpsc::Receiver<LeaseMessage>,
         state: Arc<State>,
         header_gen: Arc<HeaderGenerator>,
-        storage: S,
+        db: Arc<DB>,
     ) -> Self {
-        let inner = Arc::new(LeaseStoreBackend::new(del_tx, state, header_gen, storage));
+        let inner = Arc::new(LeaseStoreBackend::new(del_tx, state, header_gen, db));
         let _handle = tokio::spawn({
             let inner = Arc::clone(&inner);
             async move {
@@ -315,20 +318,21 @@ where
     }
 }
 
-impl<S> LeaseStoreBackend<S>
+impl<DB> LeaseStoreBackend<DB>
 where
-    S: StorageApi,
+    DB: StorageApi,
 {
     /// New `LeaseStoreBackend`
     pub(crate) fn new(
         del_tx: mpsc::Sender<DeleteMessage>,
         state: Arc<State>,
         header_gen: Arc<HeaderGenerator>,
-        storage: S,
+        db: Arc<DB>,
     ) -> Self {
         Self {
+            table: "lease".to_owned(),
             lease_collection: RwLock::new(LeaseCollection::new()),
-            db: LeaseDB::new(storage),
+            db,
             sp_exec_pool: Mutex::new(HashMap::new()),
             del_tx,
             state,
@@ -462,7 +466,23 @@ where
             .lease_collection
             .write()
             .grant(req.id, req.ttl, self.is_leader());
-        self.db.insert(lease.id, &lease)
+        self.insert(lease.id, &lease)
+    }
+
+    /// Insert a `PbLease`
+    fn insert(&self, lease_id: i64, kv: &PbLease) -> Result<(), ExecuteError> {
+        let key = lease_id.encode_to_vec();
+        let value = kv.encode_to_vec();
+        self.db.insert(&self.table, key, value)
+    }
+
+    /// Delete a `PbLease` by `lease_id`
+    fn delete(&self, lease_id: i64) -> Result<(), ExecuteError> {
+        let key = lease_id.encode_to_vec();
+        self.db
+            .delete(&self.table, key)
+            .map_err(|e| ExecuteError::DbError(format!("Failed to delete Lease, error: {e}")))?;
+        Ok(())
     }
 
     /// Sync `LeaseRevokeRequest`
@@ -484,7 +504,7 @@ where
             assert!(rx.await.is_ok(), "Failed to receive delete keys response");
         }
         let _ignore = self.lease_collection.write().revoke(req.id);
-        self.db.delete(req.id)
+        self.delete(req.id)
     }
 }
 
@@ -492,18 +512,22 @@ where
 mod test {
     use std::{error::Error, time::Duration};
 
+    use engine::memory_engine::MemoryEngine;
     use tracing::info;
 
     use super::*;
-    use crate::Memory;
+    use crate::storage::db::{DB, XLINETABLES};
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn test_lease_storage() -> Result<(), Box<dyn Error>> {
         let (del_tx, mut del_rx) = mpsc::channel(128);
         let (_, lease_cmd_rx) = mpsc::channel(128);
         let state = Arc::new(State::default());
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
-        let mem_storage = Memory::new();
-        let lease_store = LeaseStore::new(del_tx, lease_cmd_rx, state, header_gen, mem_storage);
+        let mem_engine = MemoryEngine::new(&XLINETABLES)?;
+        let lease_db = Arc::new(DB::new(mem_engine));
+        #[allow(clippy::unwrap_used)] // safe unwrap
+        let lease_store = LeaseStore::new(del_tx, lease_cmd_rx, state, header_gen, lease_db);
         let _handle = tokio::spawn(async move {
             while let Some(msg) = del_rx.recv().await {
                 let (keys, tx) = msg.unpack();
@@ -537,7 +561,7 @@ mod test {
     }
 
     async fn exe_and_sync_req(
-        ls: &LeaseStore<Memory>,
+        ls: &LeaseStore<DB<MemoryEngine>>,
         req: RequestWithToken,
     ) -> Result<ResponseWrapper, ExecuteError> {
         let id = ProposeId::new("testid".to_owned());

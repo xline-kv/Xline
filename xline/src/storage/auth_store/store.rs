@@ -39,7 +39,7 @@ where
         lease_cmd_tx: mpsc::Sender<LeaseMessage>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
         header_gen: Arc<HeaderGenerator>,
-        storage: S,
+        storage: Arc<S>,
     ) -> Self {
         Self {
             inner: Arc::new(AuthStoreBackend::new(
@@ -310,6 +310,8 @@ where
 mod test {
     use std::{collections::HashMap, error::Error};
 
+    use engine::memory_engine::MemoryEngine;
+
     use super::*;
     use crate::{
         rpc::{
@@ -319,7 +321,7 @@ mod test {
         },
         storage::{
             auth_store::perms::{PermissionCache, UserPermissions},
-            memory::Memory,
+            db::{DB, XLINETABLES},
         },
     };
 
@@ -413,12 +415,15 @@ mod test {
         );
     }
 
-    fn init_auth_store() -> AuthStore<Memory> {
+    fn init_auth_store() -> AuthStore<DB<MemoryEngine>> {
         let key_pair = test_key_pair();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let (lease_cmd_tx, _) = mpsc::channel(1);
-        let mem_storage = Memory::new();
-        let store = AuthStore::new(lease_cmd_tx, key_pair, header_gen, mem_storage);
+        #[allow(clippy::unwrap_used)]
+        let mem_engine = MemoryEngine::new(&XLINETABLES).unwrap();
+        let auth_db = Arc::new(DB::new(mem_engine));
+        // It's ok to do so in that a memory engine should return an error
+        let store = AuthStore::new(lease_cmd_tx, key_pair, header_gen, auth_db);
 
         let req1 = RequestWithToken::new(
             AuthRoleAddRequest {
@@ -475,7 +480,7 @@ mod test {
     }
 
     fn exe_and_sync(
-        store: &AuthStore<Memory>,
+        store: &AuthStore<DB<MemoryEngine>>,
         req: RequestWithToken,
     ) -> Result<(CommandResponse, SyncResponse), Box<dyn Error>> {
         let id = ProposeId::new("test-id".to_owned());

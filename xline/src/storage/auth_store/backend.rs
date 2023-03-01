@@ -43,11 +43,10 @@ use crate::{
     },
     server::command::KeyRange,
     storage::{
-        db::DB,
         index::{Index, IndexOperate},
         lease_store::{Lease, LeaseMessage},
         storage_api::StorageApi,
-        ExecuteError, RequestCtx,
+        ExecuteError, RequestCtx, Revision,
     },
 };
 
@@ -63,14 +62,16 @@ pub(crate) const ROOT_USER: &str = "root";
 pub(crate) const ROOT_ROLE: &str = "root";
 
 /// Auth store inner
-pub(crate) struct AuthStoreBackend<S>
+pub(crate) struct AuthStoreBackend<DB>
 where
-    S: StorageApi,
+    DB: StorageApi,
 {
+    /// Table name
+    table: String,
     /// Key Index
     index: Index,
     /// DB to store key value
-    db: DB<S>,
+    db: Arc<DB>,
     /// Revision
     revision: RevisionNumber,
     /// Speculative execution pool. Mapping from propose id to request
@@ -87,12 +88,13 @@ where
     header_gen: Arc<HeaderGenerator>,
 }
 
-impl<S> fmt::Debug for AuthStoreBackend<S>
+impl<DB> fmt::Debug for AuthStoreBackend<DB>
 where
-    S: StorageApi,
+    DB: StorageApi,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AuthStoreBackend")
+            .field("table", &self.table)
             .field("index", &self.index)
             .field("db", &self.db)
             .field("revision", &self.revision)
@@ -105,20 +107,21 @@ where
     }
 }
 
-impl<S> AuthStoreBackend<S>
+impl<DB> AuthStoreBackend<DB>
 where
-    S: StorageApi,
+    DB: StorageApi,
 {
     /// New `AuthStoreBackend`
     pub(super) fn new(
         lease_cmd_tx: mpsc::Sender<LeaseMessage>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
         header_gen: Arc<HeaderGenerator>,
-        storage: S,
+        db: Arc<DB>,
     ) -> Self {
         Self {
+            table: "auth".to_owned(),
             index: Index::new(),
-            db: DB::new(storage),
+            db,
             revision: RevisionNumber::new(),
             sp_exec_pool: Mutex::new(HashMap::new()),
             enabled: AtomicBool::new(false),
@@ -276,11 +279,28 @@ where
         Err(ExecuteError::PermissionDenied)
     }
 
+    /// Get `KeyValue` from the `AuthStore`
+    fn get_values(&self, revisions: &[Revision]) -> Result<Vec<KeyValue>, ExecuteError> {
+        let revisions = revisions
+            .iter()
+            .map(Revision::encode_to_vec)
+            .collect::<Vec<Vec<u8>>>();
+        let values = self.db.get_values(&self.table, &revisions)?;
+        let kvs = values
+            .into_iter()
+            .map(|v| KeyValue::decode(v.as_slice()))
+            .collect::<Result<_, _>>()
+            .map_err(|e| {
+                ExecuteError::DbError(format!("Failed to decode key-value from DB, error: {e}"))
+            })?;
+        Ok(kvs)
+    }
+
     /// get `KeyValue` in `AuthStore`
     fn get(&self, key: &[u8]) -> Result<Option<KeyValue>, ExecuteError> {
         let revisions = self.index.get(key, &[], 0);
         assert!(revisions.len() <= 1);
-        self.db.get_values(&revisions).map(|mut kv| kv.pop())
+        self.get_values(&revisions).map(|mut kv| kv.pop())
     }
 
     /// get user by username
@@ -305,6 +325,13 @@ where
         }
     }
 
+    /// Insert a `KeyValue`
+    fn insert(&self, revision: Revision, kv: &KeyValue) -> Result<(), ExecuteError> {
+        let key = revision.encode_to_vec();
+        let value = kv.encode_to_vec();
+        self.db.insert(&self.table, key, value)
+    }
+
     /// get `KeyValue` to `AuthStore`
     fn put(
         &self,
@@ -324,7 +351,7 @@ where
             version: new_rev.version,
             ..KeyValue::default()
         };
-        self.db.insert(new_rev.as_revision(), &kv)
+        self.insert(new_rev.as_revision(), &kv)
     }
 
     /// put user to `AuthStore`
@@ -341,10 +368,40 @@ where
         self.put(key, value, revision, sub_revision)
     }
 
+    /// Mark deletion for keys
+    fn mark_deletions(
+        &self,
+        revisions: &[(Revision, Revision)],
+    ) -> Result<Vec<KeyValue>, ExecuteError> {
+        let prev_revisions = revisions
+            .iter()
+            .map(|&(prev_rev, _)| prev_rev)
+            .collect::<Vec<_>>();
+        let prev_kvs = self.get_values(&prev_revisions)?;
+        assert!(
+            prev_kvs.len() == revisions.len(),
+            "Index doesn't match with DB"
+        );
+        prev_kvs
+            .iter()
+            .zip(revisions.iter())
+            .try_for_each(|(kv, &(_, new_rev))| {
+                let del_kv = KeyValue {
+                    key: kv.key.clone(),
+                    mod_revision: new_rev.revision(),
+                    ..KeyValue::default()
+                };
+                let key = new_rev.encode_to_vec();
+                let value = del_kv.encode_to_vec();
+                self.db.insert(&self.table, key, value)
+            })?;
+        Ok(prev_kvs)
+    }
+
     /// delete `KeyValue` in `AuthStore`
     fn delete(&self, key: &[u8], revision: i64, sub_revision: i64) -> Result<(), ExecuteError> {
         let revisions = self.index.delete(key, &[], revision, sub_revision);
-        let _ignore = self.db.mark_deletions(&revisions)?;
+        let _ignore = self.mark_deletions(&revisions)?;
         Ok(())
     }
 
@@ -375,7 +432,6 @@ where
         let range_end = KeyRange::get_prefix(USER_PREFIX);
         let revisions = self.index.get(USER_PREFIX, &range_end, 0);
         let users = self
-            .db
             .get_values(&revisions)?
             .into_iter()
             .map(|kv| {
@@ -392,7 +448,6 @@ where
         let range_end = KeyRange::get_prefix(ROLE_PREFIX);
         let revisions = self.index.get(ROLE_PREFIX, &range_end, 0);
         let roles = self
-            .db
             .get_values(&revisions)?
             .into_iter()
             .map(|kv| {

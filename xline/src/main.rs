@@ -110,10 +110,11 @@
     clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
 )]
 
-use std::{collections::HashMap, env, path::PathBuf, time::Duration};
+use std::{collections::HashMap, env, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
+use engine::memory_engine::MemoryEngine;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use opentelemetry::{global, runtime::Tokio, sdk::propagation::TraceContextPropagator};
 use opentelemetry_contrib::trace::exporter::jaeger_json::JaegerJsonExporter;
@@ -129,7 +130,10 @@ use utils::{
     },
     parse_duration, parse_log_level, parse_members, parse_rotation,
 };
-use xline::{server::XlineServer, Memory};
+use xline::{
+    server::XlineServer,
+    storage::db::{DB, XLINETABLES},
+};
 
 /// Command line arguments
 #[derive(Parser)]
@@ -367,7 +371,7 @@ async fn main() -> Result<()> {
     debug!("name = {:?}", cluster_config.name());
     debug!("server_addr = {:?}", self_addr);
     debug!("cluster_peers = {:?}", cluster_config.members());
-    let mem_storage = Memory::new();
+    let mem_engine = MemoryEngine::new(&XLINETABLES)?;
     let server = XlineServer::new(
         cluster_config.name().clone(),
         cluster_config.members().clone(),
@@ -375,7 +379,7 @@ async fn main() -> Result<()> {
         key_pair,
         *cluster_config.server_timeout(),
         *cluster_config.client_timeout(),
-        mem_storage,
+        Arc::new(DB::new(mem_engine)),
     )
     .await;
     debug!("{:?}", server);

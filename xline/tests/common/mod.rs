@@ -1,5 +1,9 @@
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 
+use engine::memory_engine::MemoryEngine;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use tokio::{
     net::TcpListener,
@@ -7,7 +11,11 @@ use tokio::{
     time::{self, Duration},
 };
 use utils::config::{ClientTimeout, ServerTimeout};
-use xline::{client::Client, server::XlineServer, Memory};
+use xline::{
+    client::Client,
+    server::XlineServer,
+    storage::db::{DB, XLINETABLES},
+};
 
 /// Cluster
 pub struct Cluster {
@@ -54,7 +62,9 @@ impl Cluster {
             let mut rx = stop_tx.subscribe();
             let listener = self.listeners.remove(&i).unwrap();
             let all_members = self.all_members.clone();
-            let s = Memory::new();
+            #[allow(clippy::unwrap_used)]
+            let s = MemoryEngine::new(&XLINETABLES).unwrap();
+            let db = Arc::new(DB::new(s));
             tokio::spawn(async move {
                 let server = XlineServer::new(
                     name,
@@ -63,7 +73,7 @@ impl Cluster {
                     Self::test_key_pair(),
                     ServerTimeout::default(),
                     ClientTimeout::default(),
-                    s,
+                    db,
                 )
                 .await;
                 let signal = async {

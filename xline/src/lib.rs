@@ -142,6 +142,4 @@ pub mod server;
 /// State of current node
 mod state;
 /// Storage module
-mod storage;
-
-pub use storage::memory::Memory;
+pub mod storage;
