@@ -5,8 +5,8 @@ use std::{sync::Arc, time::Duration};
 use utils::config::ClientTimeout;
 
 use crate::common::{
-    curp_group::{CurpGroup, ProposeRequest, ProposeResponse},
-    init_logger,
+    curp_group::{proto::propose_response::ExeResult, CurpGroup, ProposeRequest, ProposeResponse},
+    init_logger, sleep_millis, sleep_secs,
     test_cmd::TestCommand,
 };
 
@@ -134,6 +134,57 @@ async fn fast_round_is_slower_than_slow_round() {
         .unwrap()
         .into_inner();
     assert!(resp.exe_result.is_none());
+
+    group.stop();
+}
+
+#[tokio::test]
+async fn concurrent_cmd_order() {
+    init_logger();
+
+    let cmd0 = TestCommand::new_put(vec![0], 0).set_exe_dur(Duration::from_secs(1));
+    let cmd1 = TestCommand::new_put(vec![0, 1], 1);
+    let cmd2 = TestCommand::new_put(vec![1], 2);
+
+    let group = CurpGroup::new(3).await;
+    let leader = group.get_leader().await.0;
+    let mut leader_connect = group.get_connect(&leader).await;
+
+    let mut c = leader_connect.clone();
+    tokio::spawn(async move {
+        c.propose(ProposeRequest {
+            command: bincode::serialize(&cmd0).unwrap(),
+        })
+        .await
+        .expect("propose failed");
+    });
+
+    sleep_millis(20).await;
+    let response = leader_connect
+        .propose(ProposeRequest {
+            command: bincode::serialize(&cmd1).unwrap(),
+        })
+        .await
+        .expect("propose failed")
+        .into_inner();
+    assert!(matches!(response.exe_result.unwrap(), ExeResult::Error(_)));
+    let response = leader_connect
+        .propose(ProposeRequest {
+            command: bincode::serialize(&cmd2).unwrap(),
+        })
+        .await
+        .expect("propose failed")
+        .into_inner();
+    assert!(matches!(response.exe_result.unwrap(), ExeResult::Error(_)));
+
+    sleep_secs(1).await;
+
+    let client = group.new_client(ClientTimeout::default()).await;
+
+    assert_eq!(
+        client.propose(TestCommand::new_get(vec![1])).await.unwrap(),
+        vec![2]
+    );
 
     group.stop();
 }

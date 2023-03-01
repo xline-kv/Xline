@@ -52,7 +52,7 @@ impl<C: Command + 'static> SpeculativePool<C> {
         } else {
             // this happens when a cmd was not added to the spec pool because of conflict
             // or the fast round proposal never arrived at the server
-            debug!("failed to remove cmd {cmd_id:?} from spec pool");
+            debug!("cmd {cmd_id:?} is not in spec pool");
         };
     }
 }

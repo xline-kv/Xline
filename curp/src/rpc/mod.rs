@@ -16,7 +16,7 @@ use crate::{
     cmd::{Command, ProposeId},
     error::ProposeError,
     log_entry::LogEntry,
-    message::{ServerId, TermNum},
+    message::ServerId,
 };
 
 /// Rpc connect
@@ -48,7 +48,7 @@ impl FetchLeaderRequest {
 
 impl FetchLeaderResponse {
     /// Create a new `FetchLeaderResponse`
-    pub(crate) fn new(leader_id: Option<ServerId>, term: TermNum) -> Self {
+    pub(crate) fn new(leader_id: Option<ServerId>, term: u64) -> Self {
         Self { leader_id, term }
     }
 }
@@ -220,7 +220,7 @@ pub(crate) enum SyncResult<C: Command> {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub(crate) enum SyncError {
     /// If client sent a wait synced request to a non-leader
-    Redirect(Option<ServerId>, TermNum),
+    Redirect(Option<ServerId>, u64),
     /// If the execution of the cmd went wrong
     ExecuteError(String),
     /// If after sync of the cmd went wrong
@@ -234,10 +234,10 @@ pub(crate) enum SyncError {
 impl AppendEntriesRequest {
     /// Create a new `append_entries` request
     pub(crate) fn new<C: Command + Serialize>(
-        term: TermNum,
+        term: u64,
         leader_id: ServerId,
         prev_log_index: usize,
-        prev_log_term: TermNum,
+        prev_log_term: u64,
         entries: Vec<LogEntry<C>>,
         leader_commit: usize,
     ) -> bincode::Result<Self> {
@@ -256,10 +256,10 @@ impl AppendEntriesRequest {
 
     /// Create a new `append_entries` heartbeat request
     pub(crate) fn new_heartbeat(
-        term: TermNum,
+        term: u64,
         leader_id: ServerId,
         prev_log_index: usize,
-        prev_log_term: TermNum,
+        prev_log_term: u64,
         leader_commit: usize,
     ) -> Self {
         Self {
@@ -283,7 +283,7 @@ impl AppendEntriesRequest {
 
 impl AppendEntriesResponse {
     /// Create a new rejected response
-    pub(crate) fn new_reject(term: TermNum, hint_index: usize) -> Self {
+    pub(crate) fn new_reject(term: u64, hint_index: usize) -> Self {
         Self {
             term,
             success: false,
@@ -292,7 +292,7 @@ impl AppendEntriesResponse {
     }
 
     /// Create a new accepted response
-    pub(crate) fn new_accept(term: TermNum) -> Self {
+    pub(crate) fn new_accept(term: u64) -> Self {
         Self {
             term,
             success: true,
@@ -316,7 +316,7 @@ impl VoteRequest {
 impl VoteResponse {
     /// Create a new accepted vote response
     pub fn new_accept<C: Command + Serialize>(
-        term: TermNum,
+        term: u64,
         cmds: Vec<Arc<C>>,
     ) -> bincode::Result<Self> {
         Ok(Self {
@@ -330,7 +330,7 @@ impl VoteResponse {
     }
 
     /// Create a new rejected vote response
-    pub fn new_reject(term: TermNum) -> Self {
+    pub fn new_reject(term: u64) -> Self {
         Self {
             term: term.numeric_cast(),
             vote_granted: false,

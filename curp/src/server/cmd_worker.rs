@@ -11,7 +11,7 @@ use tokio::{sync::oneshot, task::JoinHandle};
 use tracing::{debug, error, warn};
 use utils::parking_lot_lock::{MutexMap, RwLockMap};
 
-use super::spec_pool::SpecPoolRef;
+use super::{curp_node::UncommittedPoolRef, spec_pool::SpecPoolRef};
 use crate::{
     cmd::{Command, CommandExecutor, ConflictCheck},
     conflict_checked_mpmc,
@@ -31,6 +31,7 @@ async fn execute_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
     dispatch_rx: CmdExeReceiver<C>,
     cmd_board: CmdBoardRef<C>,
     spec: SpecPoolRef<C>,
+    uncommitted_pool: UncommittedPoolRef<C>,
     ce: Arc<CE>,
 ) {
     while let Ok((msg, done)) = dispatch_rx.recv().await {
@@ -75,6 +76,7 @@ async fn execute_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
                     .await
                     .map_err(|e| e.to_string());
                 cmd_board.write().insert_asr(cmd.id(), asr);
+                let _ig = uncommitted_pool.map_lock(|mut up_l| up_l.remove(cmd.id()));
                 debug!("cmd {:?} after sync is called", cmd.id());
             }
             ExeMsg::Reset => {
@@ -92,6 +94,7 @@ async fn after_sync_worker<C: Command + 'static, CE: 'static + CommandExecutor<C
     dispatch_rx: CmdAsReceiver<C>,
     cmd_board: CmdBoardRef<C>,
     spec: SpecPoolRef<C>,
+    uncommitted_pool: UncommittedPoolRef<C>,
     ce: Arc<CE>,
 ) {
     while let Ok((AsMsg { cmd, index }, done)) = dispatch_rx.recv().await {
@@ -143,6 +146,7 @@ async fn after_sync_worker<C: Command + 'static, CE: 'static + CommandExecutor<C
                         .await
                         .map_err(|e| e.to_string());
                     cmd_board.write().insert_asr(cmd.id(), asr);
+                    let _ig = uncommitted_pool.map_lock(|mut up_l| up_l.remove(cmd.id()));
                     debug!("cmd {:?} after sync is called", cmd.id());
                 }
             }
@@ -152,6 +156,7 @@ async fn after_sync_worker<C: Command + 'static, CE: 'static + CommandExecutor<C
                     .await
                     .map_err(|e| e.to_string());
                 cmd_board.write().insert_asr(cmd.id(), asr);
+                let _ig = uncommitted_pool.map_lock(|mut up_l| up_l.remove(cmd.id()));
                 debug!("cmd {:?} after sync is called", cmd.id());
                 exe_d.notify();
             }
@@ -249,7 +254,7 @@ struct CmdAsReceiver<C: Command + 'static>(flume::Receiver<(AsMsg<C>, DoneNotifi
 
 /// Send cmd to background execution worker
 #[cfg_attr(test, automock)]
-pub(super) trait CmdExeSenderInterface<C: Command + 'static>: Send + Sync + 'static {
+pub(super) trait CmdExeSenderApi<C: Command + 'static>: Send + Sync + 'static {
     /// Send cmd to background cmd executor and return a oneshot receiver for the execution result
     fn send_exe(&self, cmd: Arc<C>) -> oneshot::Receiver<Result<C::ER, String>>;
 
@@ -260,7 +265,7 @@ pub(super) trait CmdExeSenderInterface<C: Command + 'static>: Send + Sync + 'sta
     fn send_reset(&self);
 }
 
-impl<C: Command + 'static> CmdExeSenderInterface<C> for CmdExeSender<C> {
+impl<C: Command + 'static> CmdExeSenderApi<C> for CmdExeSender<C> {
     fn send_exe(&self, cmd: Arc<C>) -> oneshot::Receiver<Result<C::ER, String>> {
         let (tx, rx) = oneshot::channel();
         let msg = ExeMsg::Execute { cmd, er_tx: tx };
@@ -321,6 +326,7 @@ impl<C: Command + 'static> CmdAsReceiverInterface<C> for CmdAsReceiver<C> {
 pub(super) fn start_cmd_workers<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
     cmd_executor: CE,
     spec: SpecPoolRef<C>,
+    uncommitted_pool: UncommittedPoolRef<C>,
     cmd_board: CmdBoardRef<C>,
     shutdown_trigger: Arc<Event>,
 ) -> CmdExeSender<C> {
@@ -330,22 +336,30 @@ pub(super) fn start_cmd_workers<C: Command + 'static, CE: 'static + CommandExecu
     let bg_exe_worker_handles: Vec<JoinHandle<_>> = iter::repeat((
         exe_rx,
         Arc::clone(&spec),
+        Arc::clone(&uncommitted_pool),
         Arc::clone(&cmd_board),
         Arc::clone(&cmd_executor),
     ))
     .take(N_EXECUTE_WORKERS)
-    .map(|(rx, spec_c, cmd_board_c, ce)| {
-        tokio::spawn(execute_worker(CmdExeReceiver(rx), cmd_board_c, spec_c, ce))
+    .map(|(rx, spec_c, uncommitted_pool_c, cmd_board_c, ce)| {
+        tokio::spawn(execute_worker(
+            CmdExeReceiver(rx),
+            cmd_board_c,
+            spec_c,
+            uncommitted_pool_c,
+            ce,
+        ))
     })
     .collect();
     let bg_as_worker_handles: Vec<JoinHandle<_>> =
-        iter::repeat((as_rx, spec, cmd_board, cmd_executor))
+        iter::repeat((as_rx, spec, uncommitted_pool, cmd_board, cmd_executor))
             .take(N_AFTER_SYNC_WORKERS)
-            .map(|(rx, spec_c, cmd_board_c, ce)| {
+            .map(|(rx, spec_c, uncommitted_pool_c, cmd_board_c, ce)| {
                 tokio::spawn(after_sync_worker(
                     CmdAsReceiver(rx),
                     cmd_board_c,
                     spec_c,
+                    uncommitted_pool_c,
                     ce,
                 ))
             })
@@ -373,7 +387,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        server::{cmd_board::CommandBoard, spec_pool::SpeculativePool},
+        server::{cmd_board::CommandBoard, curp_node::UncommittedPool, spec_pool::SpeculativePool},
         test_utils::{
             sleep_millis, sleep_secs,
             test_cmd::{TestCE, TestCommand},
@@ -389,9 +403,11 @@ mod tests {
         let ce = TestCE::new("S1".to_owned(), er_tx, as_tx);
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
+        let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
         let exe_tx = start_cmd_workers(
             ce,
             spec_pool,
+            uncommitted_pool,
             Arc::clone(&cmd_board),
             Arc::new(Event::new()),
         );
@@ -415,9 +431,11 @@ mod tests {
         let ce = TestCE::new("S1".to_owned(), er_tx, as_tx);
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
+        let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
         let exe_tx = start_cmd_workers(
             ce,
             spec_pool,
+            uncommitted_pool,
             Arc::clone(&cmd_board),
             Arc::new(Event::new()),
         );
@@ -446,9 +464,11 @@ mod tests {
         let ce = TestCE::new("S1".to_owned(), er_tx, as_tx);
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
+        let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
         let exe_tx = start_cmd_workers(
             ce,
             spec_pool,
+            uncommitted_pool,
             Arc::clone(&cmd_board),
             Arc::new(Event::new()),
         );
@@ -481,9 +501,11 @@ mod tests {
         let ce = TestCE::new("S1".to_owned(), er_tx, as_tx);
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
+        let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
         let exe_tx = start_cmd_workers(
             ce,
             spec_pool,
+            uncommitted_pool,
             Arc::clone(&cmd_board),
             Arc::new(Event::new()),
         );
@@ -505,13 +527,14 @@ mod tests {
         let ce = TestCE::new("S1".to_owned(), er_tx, as_tx);
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
+        let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
         let exe_tx = start_cmd_workers(
             ce,
             spec_pool,
+            uncommitted_pool,
             Arc::clone(&cmd_board),
             Arc::new(Event::new()),
         );
-
         let cmd = Arc::new(TestCommand::default().set_exe_should_fail());
 
         exe_tx.send_after_sync(Arc::clone(&cmd), 1);
@@ -530,9 +553,11 @@ mod tests {
         let ce = TestCE::new("S1".to_owned(), er_tx, as_tx);
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
+        let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
         let exe_tx = start_cmd_workers(
             ce,
             spec_pool,
+            uncommitted_pool,
             Arc::clone(&cmd_board),
             Arc::new(Event::new()),
         );
