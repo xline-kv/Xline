@@ -475,9 +475,10 @@ where
 
 #[cfg(test)]
 mod test {
+    use engine::memory_engine::MemoryEngine;
 
     use super::*;
-    use crate::Memory;
+    use crate::storage::db::DB;
 
     #[test]
     fn txn_check() {
@@ -519,7 +520,7 @@ mod test {
             ],
             failure: vec![],
         };
-        let result = KvServer::<Memory>::check_txn_request(&txn_req);
+        let result = KvServer::<DB<MemoryEngine>>::check_txn_request(&txn_req);
         assert!(result.is_ok());
     }
 }

@@ -321,8 +321,10 @@ where
 #[cfg(test)]
 mod test {
 
+    use engine::memory_engine::MemoryEngine;
+
     use super::*;
-    use crate::storage::{kvwatcher::MockKvWatcherOps, memory::Memory};
+    use crate::storage::{db::DB, kvwatcher::MockKvWatcherOps};
 
     #[tokio::test]
     #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
@@ -339,7 +341,7 @@ mod test {
             .return_const((vec![], 0));
         let _ = mock_watcher.expect_cancel().times(1).returning(move |_| 0);
         let watcher = Arc::new(mock_watcher);
-        let handle = tokio::spawn(WatchServer::<Memory>::task(
+        let handle = tokio::spawn(WatchServer::<DB<MemoryEngine>>::task(
             Arc::clone(&watcher),
             res_tx,
             req_stream,

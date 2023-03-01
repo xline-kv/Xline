@@ -4,7 +4,7 @@ use thiserror::Error;
 // #[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
 // #[non_exhaustive]
 #[derive(Error, Debug, Clone)]
-pub(crate) enum ExecuteError {
+pub enum ExecuteError {
     /// Kv error
     #[error("kv error: {0}")]
     KvError(String),

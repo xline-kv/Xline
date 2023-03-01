@@ -3,16 +3,17 @@ use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::cmd::ProposeId;
 use parking_lot::Mutex;
+use prost::Message;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
 use super::{
-    db::DB,
     index::{Index, IndexOperate},
     kvwatcher::KvWatcher,
     lease_store::{DeleteMessage, LeaseMessage},
     storage_api::StorageApi,
+    Revision,
 };
 use crate::{
     header_gen::HeaderGenerator,
@@ -32,26 +33,28 @@ const CHANNEL_SIZE: usize = 128;
 
 /// KV store
 #[derive(Debug)]
-pub(crate) struct KvStore<S>
+pub(crate) struct KvStore<DB>
 where
-    S: StorageApi,
+    DB: StorageApi,
 {
     /// KV store Backend
-    inner: Arc<KvStoreBackend<S>>,
+    inner: Arc<KvStoreBackend<DB>>,
     /// KV watcher
-    kv_watcher: Arc<KvWatcher<S>>,
+    kv_watcher: Arc<KvWatcher<DB>>,
 }
 
 /// KV store inner
 #[derive(Debug)]
-pub(crate) struct KvStoreBackend<S>
+pub(crate) struct KvStoreBackend<DB>
 where
-    S: StorageApi,
+    DB: StorageApi,
 {
+    /// Table name
+    table: String,
     /// Key Index
     index: Index,
     /// DB to store key value
-    db: DB<S>,
+    db: Arc<DB>,
     /// Revision
     revision: Arc<RevisionNumber>,
     /// Header generator
@@ -64,16 +67,16 @@ where
     lease_cmd_tx: mpsc::Sender<LeaseMessage>,
 }
 
-impl<S> KvStore<S>
+impl<DB> KvStore<DB>
 where
-    S: StorageApi,
+    DB: StorageApi,
 {
     /// New `KvStore`
     pub(crate) fn new(
         lease_cmd_tx: mpsc::Sender<LeaseMessage>,
         del_rx: mpsc::Receiver<DeleteMessage>,
         header_gen: Arc<HeaderGenerator>,
-        storage: S,
+        storage: Arc<DB>,
     ) -> Self {
         let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
         let inner = Arc::new(KvStoreBackend::new(
@@ -87,12 +90,11 @@ where
             let inner = Arc::clone(&inner);
             Self::del_task(del_rx, inner)
         });
-
         Self { inner, kv_watcher }
     }
 
     /// Receive keys from lease storage and delete them
-    async fn del_task(mut del_rx: mpsc::Receiver<DeleteMessage>, inner: Arc<KvStoreBackend<S>>) {
+    async fn del_task(mut del_rx: mpsc::Receiver<DeleteMessage>, inner: Arc<KvStoreBackend<DB>>) {
         while let Some(msg) = del_rx.recv().await {
             let (keys, tx) = msg.unpack();
             debug!("Delete keys: {:?} by lease revoked", keys);
@@ -140,25 +142,26 @@ where
     }
 
     /// Get KV watcher
-    pub(crate) fn kv_watcher(&self) -> Arc<KvWatcher<S>> {
+    pub(crate) fn kv_watcher(&self) -> Arc<KvWatcher<DB>> {
         Arc::clone(&self.kv_watcher)
     }
 }
 
-impl<S> KvStoreBackend<S>
+impl<DB> KvStoreBackend<DB>
 where
-    S: StorageApi,
+    DB: StorageApi,
 {
     /// New `KvStoreBackend`
     pub(crate) fn new(
         kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
         lease_cmd_tx: mpsc::Sender<LeaseMessage>,
         header_gen: Arc<HeaderGenerator>,
-        storage: S,
+        db: Arc<DB>,
     ) -> Self {
         Self {
+            table: "kv".to_owned(),
             index: Index::new(),
-            db: DB::new(storage),
+            db,
             revision: header_gen.revision_arc(),
             header_gen,
             sp_exec_pool: Mutex::new(HashMap::new()),
@@ -218,6 +221,23 @@ where
         res
     }
 
+    /// Get `KeyValue` from the `KvStoreBackend`
+    fn get_values(&self, revisions: &[Revision]) -> Result<Vec<KeyValue>, ExecuteError> {
+        let revisions = revisions
+            .iter()
+            .map(Revision::encode_to_vec)
+            .collect::<Vec<Vec<u8>>>();
+        let values = self.db.get_values(&self.table, &revisions)?;
+        let kvs = values
+            .into_iter()
+            .map(|v| KeyValue::decode(v.as_slice()))
+            .collect::<Result<_, _>>()
+            .map_err(|e| {
+                ExecuteError::DbError(format!("Failed to decode key-value from DB, error: {e}"))
+            })?;
+        Ok(kvs)
+    }
+
     /// Get `KeyValue` of a range
     ///
     /// If `range_end` is `&[]`, this function will return one or zero `KeyValue`.
@@ -228,7 +248,7 @@ where
         revision: i64,
     ) -> Result<Vec<KeyValue>, ExecuteError> {
         let revisions = self.index.get(key, range_end, revision);
-        self.db.get_values(&revisions)
+        self.get_values(&revisions)
     }
 
     /// Get `KeyValue` of a range with limit and count only, return kvs and total count
@@ -248,7 +268,7 @@ where
         if limit != 0 {
             revisions.truncate(limit);
         }
-        let kvs = self.db.get_values(&revisions)?;
+        let kvs = self.get_values(&revisions)?;
         Ok((kvs, total))
     }
 
@@ -262,7 +282,6 @@ where
         let range_end = key_range.end.as_slice();
         let revisions = self.index.get_from_rev(key, range_end, revision);
         let events = self
-            .db
             .get_values(&revisions)?
             .into_iter()
             .map(|kv| {
@@ -607,6 +626,13 @@ where
         }
     }
 
+    /// Insert a `KeyValue`
+    fn insert(&self, revision: Revision, kv: &KeyValue) -> Result<(), ExecuteError> {
+        let key = revision.encode_to_vec();
+        let value = kv.encode_to_vec();
+        self.db.insert(&self.table, key, value)
+    }
+
     /// Sync `PutRequest` and return if kvstore is changed
     async fn sync_put_request(
         &self,
@@ -637,7 +663,7 @@ where
             }
         }
 
-        let _prev = self.db.insert(new_rev.as_revision(), &kv);
+        let _prev = self.insert(new_rev.as_revision(), &kv);
         let old_lease = self.get_lease(&kv.key).await;
         if old_lease != 0 {
             self.detach(old_lease, kv.key.as_slice())
@@ -678,6 +704,36 @@ where
             .collect()
     }
 
+    /// Mark deletion for keys
+    fn mark_deletions(
+        &self,
+        revisions: &[(Revision, Revision)],
+    ) -> Result<Vec<KeyValue>, ExecuteError> {
+        let prev_revisions = revisions
+            .iter()
+            .map(|&(prev_rev, _)| prev_rev)
+            .collect::<Vec<_>>();
+        let prev_kvs = self.get_values(&prev_revisions)?;
+        assert!(
+            prev_kvs.len() == revisions.len(),
+            "Index doesn't match with DB"
+        );
+        prev_kvs
+            .iter()
+            .zip(revisions.iter())
+            .try_for_each(|(kv, &(_, new_rev))| {
+                let del_kv = KeyValue {
+                    key: kv.key.clone(),
+                    mod_revision: new_rev.revision(),
+                    ..KeyValue::default()
+                };
+                let key = new_rev.encode_to_vec();
+                let value = del_kv.encode_to_vec();
+                self.db.insert(&self.table, key, value)
+            })?;
+        Ok(prev_kvs)
+    }
+
     /// Sync `DeleteRangeRequest` and return if kvstore is changed
     async fn sync_delete_range_request(
         &self,
@@ -689,7 +745,7 @@ where
         let range_end = req.range_end;
         let revisions = self.index.delete(&key, &range_end, revision, sub_revision);
         debug!("sync_delete_range_request: revisions {:?}", revisions);
-        let prev_kv = self.db.mark_deletions(&revisions)?;
+        let prev_kv = self.mark_deletions(&revisions)?;
         for kv in &prev_kv {
             let lease_id = self.get_lease(&kv.key).await;
             self.detach(lease_id, kv.key.as_slice())
@@ -734,8 +790,10 @@ where
 mod test {
     use std::error::Error;
 
+    use engine::memory_engine::MemoryEngine;
+
     use super::*;
-    use crate::Memory;
+    use crate::storage::db::{DB, XLINETABLES};
 
     #[tokio::test]
     async fn test_keys_only() -> Result<(), Box<dyn Error>> {
@@ -851,7 +909,7 @@ mod test {
         }
     }
 
-    async fn init_store() -> Result<KvStore<Memory>, Box<dyn Error>> {
+    async fn init_store() -> Result<KvStore<DB<MemoryEngine>>, Box<dyn Error>> {
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let (_, del_rx) = mpsc::channel(128);
         let (lease_cmd_tx, mut lease_cmd_rx) = mpsc::channel(128);
@@ -860,8 +918,13 @@ mod test {
                 assert!(tx.send(0).is_ok());
             }
         });
-        let mem_storage = Memory::new();
-        let store = KvStore::new(lease_cmd_tx, del_rx, header_gen, mem_storage);
+        let mem_engine = MemoryEngine::new(&XLINETABLES)?;
+        let store = KvStore::new(
+            lease_cmd_tx,
+            del_rx,
+            header_gen,
+            Arc::new(DB::new(mem_engine)),
+        );
         let keys = vec!["a", "b", "c", "d", "e"];
         let vals = vec!["a", "b", "c", "d", "e"];
         for (key, val) in keys.into_iter().zip(vals.into_iter()) {

@@ -94,9 +94,6 @@ impl<'a> DeleteRange<'a> {
 
 /// The `StorageEngine` trait
 pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
-    /// The associated key type
-    type Key: AsRef<[u8]>;
-
     /// Create a logical table with the given name
     ///
     /// # Errors
@@ -108,7 +105,7 @@ pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
     /// # Errors
     /// Return `TableNotFound` if the given table does not exist
     /// Return `IoError` if met some io errors
-    fn get(&self, table: &str, key: &Self::Key) -> Result<Option<Vec<u8>>, EngineError>;
+    fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError>;
 
     /// Get the values associated with the given keys
     ///
@@ -118,7 +115,7 @@ pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
     fn get_multi(
         &self,
         table: &str,
-        keys: &[Self::Key],
+        keys: &[impl AsRef<[u8]>],
     ) -> Result<Vec<Option<Vec<u8>>>, EngineError>;
 
     /// Commit a batch of write operations

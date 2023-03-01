@@ -1,51 +1,32 @@
-/// persistent storage abstraction
-pub trait StorageApi: Send + Sync + 'static + std::fmt::Debug {
-    /// Error type returned by storage
-    type Error: std::error::Error + Send + Sync + 'static;
+use super::ExecuteError;
 
-    /// Get value by key from storage
-    ///
-    /// if key found, return `Ok(Some(value))`
-    ///
-    /// if key not found, return `Ok(None)`
+/// The Stable Storage Api
+pub trait StorageApi: Send + Sync + 'static + std::fmt::Debug {
+    /// Insert key-value pair into the underlying storage engine
     ///
     /// # Errors
     ///
     /// if error occurs in storage, return `Err(error)`
-    fn get(&self, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, Self::Error>;
+    fn insert<K, V>(&self, table: &str, key: K, value: V) -> Result<(), ExecuteError>
+    where
+        K: Into<Vec<u8>> + std::fmt::Debug + Sized,
+        V: Into<Vec<u8>> + std::fmt::Debug + Sized;
 
     /// Get values by keys from storage
     ///
-    /// same as `get`, but get multiple keys at once
-    ///
     /// # Errors
     ///
     /// if error occurs in storage, return `Err(error)`
-    fn batch_get(&self, keys: &[impl AsRef<[u8]>]) -> Result<Vec<Option<Vec<u8>>>, Self::Error>;
+    fn get_values<K>(&self, table: &str, keys: &[K]) -> Result<Vec<Vec<u8>>, ExecuteError>
+    where
+        K: AsRef<[u8]> + std::fmt::Debug + Sized;
 
-    /// Insert key-value pair into storage
-    ///
-    /// if key already exists, return `Ok(Some(old_value))`
-    ///
-    /// if key not exists, return `Ok(None)`
+    /// Delete key-value pair from storage
     ///
     /// # Errors
     ///
     /// if error occurs in storage, return `Err(error)`
-    fn insert(
-        &mut self,
-        key: impl Into<Vec<u8>>,
-        value: impl Into<Vec<u8>>,
-    ) -> Result<Option<Vec<u8>>, Self::Error>;
-
-    /// Delete key from storage
-    ///
-    /// if key already exists, return `Ok(Some(old_value))`
-    ///
-    /// if key not exists, return `Ok(None)`
-    ///
-    /// # Errors
-    ///
-    /// if error occurs in storage, return `Err(error)`
-    fn remove(&mut self, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, Self::Error>;
+    fn delete<K>(&self, table: &str, key: K) -> Result<(), ExecuteError>
+    where
+        K: AsRef<[u8]> + std::fmt::Debug + Sized;
 }

@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, collections::HashMap};
+use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 
 use parking_lot::RwLock;
 
@@ -8,30 +8,34 @@ use crate::{
 };
 
 /// A helper type to store the key-value pairs for the `MemoryEngine`
-type TableStore = HashMap<Vec<u8>, Vec<u8>>;
+type MemoryTable = HashMap<Vec<u8>, Vec<u8>>;
 
 /// Memory Storage Engine Implementation
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct MemoryEngine {
     /// The inner storage engine of `MemoryStorage`
-    inner: RwLock<HashMap<String, TableStore>>,
+    inner: Arc<RwLock<HashMap<String, MemoryTable>>>,
 }
 
 impl MemoryEngine {
     /// New `MemoryEngine`
+    ///
+    /// # Errors
+    ///
+    /// Returns `EngineError` when DB create tables failed or open failed.
     #[inline]
-    #[must_use]
-    pub fn new() -> Self {
-        let inner: HashMap<String, HashMap<Vec<u8>, Vec<u8>>> = HashMap::new();
-        Self {
-            inner: RwLock::new(inner),
+    pub fn new(tables: &[&'static str]) -> Result<Self, EngineError> {
+        let mut inner: HashMap<String, HashMap<Vec<u8>, Vec<u8>>> = HashMap::new();
+        for table in tables {
+            let _ignore = inner.entry((*table).to_owned()).or_insert(HashMap::new());
         }
+        Ok(Self {
+            inner: Arc::new(RwLock::new(inner)),
+        })
     }
 }
 
 impl StorageEngine for MemoryEngine {
-    type Key = Vec<u8>;
-
     #[inline]
     fn create_table(&self, table: &str) -> Result<(), EngineError> {
         let mut inner = self.inner.write();
@@ -40,27 +44,29 @@ impl StorageEngine for MemoryEngine {
     }
 
     #[inline]
-    fn get(&self, table: &str, key: &Self::Key) -> Result<Option<Vec<u8>>, EngineError> {
+    fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
         let inner = self.inner.read();
         let table = inner
             .get(table)
             .ok_or_else(|| EngineError::TableNotFound(table.to_owned()))?;
-
-        Ok(table.get(key).cloned())
+        Ok(table.get(&key.as_ref().to_vec()).cloned())
     }
 
     #[inline]
     fn get_multi(
         &self,
         table: &str,
-        keys: &[Self::Key],
+        keys: &[impl AsRef<[u8]>],
     ) -> Result<Vec<Option<Vec<u8>>>, EngineError> {
         let inner = self.inner.read();
         let table = inner
             .get(table)
             .ok_or_else(|| EngineError::TableNotFound(table.to_owned()))?;
 
-        Ok(keys.iter().map(|key| table.get(key).cloned()).collect())
+        Ok(keys
+            .iter()
+            .map(|key| table.get(&key.as_ref().to_vec()).cloned())
+            .collect())
     }
 
     #[inline]
@@ -113,28 +119,11 @@ mod test {
     use super::*;
     use crate::engine_api::Put;
 
-    fn get_data_from_non_existing_table_should_fail() {
-        let engine = MemoryEngine::new();
-        let single_key = "hello".as_bytes().to_vec();
-        let multi_keys = ["hello", "world", "superman"]
-            .map(|key| key.as_bytes().to_vec())
-            .to_vec();
-        let res_1 = engine.get("kv", &single_key);
-        assert!(res_1.is_err());
-        let res_2 = engine.get_multi("kv", &multi_keys);
-        assert!(res_2.is_err());
+    const TESTTABLES: [&'static str; 3] = ["kv", "lease", "auth"];
 
-        let res_3 = engine.create_table("kv");
-        assert!(res_3.is_ok());
-
-        let res_4 = engine.get("kv", &single_key);
-        assert!(res_4.is_ok());
-        let res_5 = engine.get_multi("kv", &multi_keys);
-        assert!(res_5.is_ok());
-    }
-
+    #[test]
     fn write_batch_into_a_non_existing_table_should_fail() {
-        let engine = MemoryEngine::new();
+        let engine = MemoryEngine::new(&TESTTABLES).unwrap();
 
         let put = WriteOperation::Put(Put::new(
             "hello",
@@ -152,8 +141,9 @@ mod test {
         assert!(engine.write_batch(vec![delete_range]).is_err());
     }
 
+    #[test]
     fn write_batch_should_success() {
-        let engine = MemoryEngine::new();
+        let engine = MemoryEngine::new(&TESTTABLES).unwrap();
         engine.create_table("table").unwrap();
         let origin_set: Vec<Vec<u8>> = (1u8..=10u8)
             .map(|val| repeat(val).take(4).collect())

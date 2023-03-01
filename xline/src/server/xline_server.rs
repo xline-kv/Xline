@@ -76,7 +76,7 @@ where
         key_pair: Option<(EncodingKey, DecodingKey)>,
         server_timeout: ServerTimeout,
         client_timeout: ClientTimeout,
-        storage: S,
+        storage: Arc<S>,
     ) -> Self {
         // TODO: temporary solution, need real cluster id and member id
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
@@ -91,15 +91,20 @@ where
             lease_cmd_rx,
             Arc::clone(&state),
             Arc::clone(&header_gen),
-            storage.clone(),
+            Arc::clone(&storage),
         ));
         let kv_storage = Arc::new(KvStore::new(
             lease_cmd_tx.clone(),
             del_rx,
             Arc::clone(&header_gen),
-            storage.clone(), // TODO: implement bucket storage
+            Arc::clone(&storage),
         ));
-        let auth_storage = Arc::new(AuthStore::new(lease_cmd_tx, key_pair, header_gen, storage));
+        let auth_storage = Arc::new(AuthStore::new(
+            lease_cmd_tx,
+            key_pair,
+            header_gen,
+            Arc::clone(&storage),
+        ));
         let client = Arc::new(Client::<Command>::new(all_members.clone(), client_timeout).await);
         Self {
             state,
