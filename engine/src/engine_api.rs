@@ -94,12 +94,6 @@ impl<'a> DeleteRange<'a> {
 
 /// The `StorageEngine` trait
 pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
-    /// Create a logical table with the given name
-    ///
-    /// # Errors
-    /// Return `IoError` if met some io errors
-    fn create_table(&self, table: &str) -> Result<(), EngineError>;
-
     /// Get the value associated with a key value and the given table
     ///
     /// # Errors
