@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use engine::{engine_api::StorageEngine, Delete, Put, WriteOperation};
+use engine::{
+    engine_api::StorageEngine, memory_engine::MemoryEngine, rocksdb_engine::RocksEngine, Delete,
+    Put, WriteOperation,
+};
 
 use super::{storage_api::StorageApi, ExecuteError};
 
@@ -72,5 +75,78 @@ where
             .write_batch(vec![del_op])
             .map_err(|e| ExecuteError::DbError(format!("Failed to delete Lease, error: {e}")))?;
         Ok(())
+    }
+}
+
+/// `DBProxy` is designed to mask the different type of `DB<MemoryEngine>` and `DB<RocksEngine>`
+/// and provides an uniform type to the upper layer.
+///
+/// Why don't we use dyn trait object to erase the type difference?
+/// There are two reasons behind doing so:
+/// 1. The `StorageApi` trait has some method with generic parameters, like insert<K, V>.
+/// This breaks the object safety rules. If we remove these generic parameters, we will
+/// lose some flexibility when calling these methods.
+/// 2. A dyn object should not be bounded by Sized trait, and some async functions, like
+/// `XlineServer::new`, requires its parameter to satisfy the Sized trait when we await
+/// it. So here is a contradictory.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub enum DBProxy {
+    /// DB which base on the Memory Engine
+    MemDB(DB<MemoryEngine>),
+    /// DB which base on the Rocks Engine
+    RocksDB(DB<RocksEngine>),
+}
+
+impl StorageApi for DBProxy {
+    fn get_values<K>(&self, table: &str, keys: &[K]) -> Result<Vec<Vec<u8>>, ExecuteError>
+    where
+        K: AsRef<[u8]> + std::fmt::Debug + Sized,
+    {
+        match *self {
+            DBProxy::MemDB(ref inner_db) => inner_db.get_values(table, keys),
+            DBProxy::RocksDB(ref inner_db) => inner_db.get_values(table, keys),
+        }
+    }
+
+    fn insert<K, V>(&self, table: &str, key: K, value: V) -> Result<(), ExecuteError>
+    where
+        K: Into<Vec<u8>> + std::fmt::Debug,
+        V: Into<Vec<u8>> + std::fmt::Debug,
+    {
+        match *self {
+            DBProxy::MemDB(ref inner_db) => inner_db.insert(table, key, value),
+            DBProxy::RocksDB(ref inner_db) => inner_db.insert(table, key, value),
+        }
+    }
+
+    fn delete<K>(&self, table: &str, key: K) -> Result<(), ExecuteError>
+    where
+        K: AsRef<[u8]> + std::fmt::Debug,
+    {
+        match *self {
+            DBProxy::MemDB(ref inner_db) => inner_db.delete(table, key),
+            DBProxy::RocksDB(ref inner_db) => inner_db.delete(table, key),
+        }
+    }
+}
+
+impl DBProxy {
+    /// Create a new `DBProxy`
+    /// 
+    /// # Errors
+    /// 
+    /// Return `ExecuteError::DbError` when open db failed
+    #[inline]
+    pub fn new(flag: bool) -> Result<Arc<DBProxy>, ExecuteError> {
+        if flag {
+            let engine = MemoryEngine::new(&XLINETABLES)
+                .map_err(|e| ExecuteError::DbError(format!("Cannot open database: {e}")))?;
+            Ok(Arc::new(DBProxy::MemDB(DB::new(engine))))
+        } else {
+            let engine = RocksEngine::new("/tmp/xline_db", &XLINETABLES)
+                .map_err(|e| ExecuteError::DbError(format!("Cannot open database: {e}")))?;
+            Ok(Arc::new(DBProxy::RocksDB(DB::new(engine))))
+        }
     }
 }
