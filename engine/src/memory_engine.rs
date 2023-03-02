@@ -1,9 +1,15 @@
-use std::{cmp::Ordering, collections::HashMap, sync::Arc};
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+    io::{self, Cursor, Read, Write},
+    sync::Arc,
+};
 
+use clippy_utilities::NumericCast;
 use parking_lot::RwLock;
 
 use crate::{
-    engine_api::{StorageEngine, WriteOperation},
+    engine_api::{SnapshotApi, StorageEngine, WriteOperation},
     error::EngineError,
 };
 
@@ -15,6 +21,39 @@ type MemoryTable = HashMap<Vec<u8>, Vec<u8>>;
 pub struct MemoryEngine {
     /// The inner storage engine of `MemoryStorage`
     inner: Arc<RwLock<HashMap<String, MemoryTable>>>,
+}
+
+/// A snapshot of the `MemoryEngine`
+#[derive(Debug, Default)]
+pub struct MemorySnapshot {
+    /// data of the snapshot
+    data: Cursor<Vec<u8>>,
+}
+
+impl Read for MemorySnapshot {
+    #[inline]
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.data.read(buf)
+    }
+}
+
+impl Write for MemorySnapshot {
+    #[inline]
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.data.write(buf)
+    }
+
+    #[inline]
+    fn flush(&mut self) -> io::Result<()> {
+        self.data.flush()
+    }
+}
+
+impl SnapshotApi for MemorySnapshot {
+    #[inline]
+    fn size(&self) -> u64 {
+        self.data.get_ref().len().numeric_cast()
+    }
 }
 
 impl MemoryEngine {
@@ -36,6 +75,8 @@ impl MemoryEngine {
 }
 
 impl StorageEngine for MemoryEngine {
+    type Snapshot = MemorySnapshot;
+
     #[inline]
     fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
         let inner = self.inner.read();
@@ -111,6 +152,30 @@ impl StorageEngine for MemoryEngine {
                 }
             }
         }
+        Ok(())
+    }
+
+    #[inline]
+    fn snapshot(&self) -> Result<Self::Snapshot, EngineError> {
+        let inner_r = self.inner.read();
+        let db = &*inner_r;
+        let data = bincode::serialize(db).map_err(|e| {
+            EngineError::UnderlyingError(format!("serialize memory engine failed: {e:?}"))
+        })?;
+        Ok(MemorySnapshot {
+            data: Cursor::new(data),
+        })
+    }
+
+    #[inline]
+    fn apply_snapshot(&self, snapshot: Self::Snapshot) -> Result<(), EngineError> {
+        let mut inner = self.inner.write();
+        let db = &mut *inner;
+        let data = snapshot.data.into_inner();
+        let new_db = bincode::deserialize(&data).map_err(|e| {
+            EngineError::UnderlyingError(format!("deserialize memory engine failed: {e:?}"))
+        })?;
+        *db = new_db;
         Ok(())
     }
 }

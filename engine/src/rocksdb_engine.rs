@@ -1,5 +1,5 @@
 use std::{
-    io::{Error as IoError, ErrorKind::Other},
+    io::{Error as IoError, ErrorKind::Other, Read, Write},
     iter::repeat,
     path::Path,
     sync::Arc,
@@ -8,7 +8,7 @@ use std::{
 use rocksdb::{Error as RocksError, Options, WriteBatchWithTransaction, WriteOptions, DB};
 
 use crate::{
-    engine_api::{StorageEngine, WriteOperation},
+    engine_api::{SnapshotApi, StorageEngine, WriteOperation},
     error::EngineError,
 };
 
@@ -60,7 +60,40 @@ impl RocksEngine {
     }
 }
 
+/// Snapshot type of `RocksDB`'
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct RocksSnapshot;
+
+impl Read for RocksSnapshot {
+    #[inline]
+    fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+        unimplemented!()
+    }
+}
+
+impl Write for RocksSnapshot {
+    #[inline]
+    fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+        unimplemented!()
+    }
+
+    #[inline]
+    fn flush(&mut self) -> std::io::Result<()> {
+        unimplemented!()
+    }
+}
+
+impl SnapshotApi for RocksSnapshot {
+    #[inline]
+    fn size(&self) -> u64 {
+        unimplemented!()
+    }
+}
+
 impl StorageEngine for RocksEngine {
+    type Snapshot = RocksSnapshot;
+
     #[inline]
     fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
         if let Some(cf) = self.inner.cf_handle(table) {
@@ -134,6 +167,16 @@ impl StorageEngine for RocksEngine {
         let mut opt = WriteOptions::default();
         opt.set_sync(sync);
         self.inner.write_opt(batch, &opt).map_err(EngineError::from)
+    }
+
+    #[inline]
+    fn snapshot(&self) -> Result<Self::Snapshot, EngineError> {
+        unimplemented!()
+    }
+
+    #[inline]
+    fn apply_snapshot(&self, _snapshot: Self::Snapshot) -> Result<(), EngineError> {
+        unimplemented!()
     }
 }
 
