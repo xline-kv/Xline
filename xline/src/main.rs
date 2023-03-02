@@ -114,7 +114,7 @@ use std::{collections::HashMap, env, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
-use engine::memory_engine::MemoryEngine;
+use engine::rocksdb_engine::RocksEngine;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use opentelemetry::{global, runtime::Tokio, sdk::propagation::TraceContextPropagator};
 use opentelemetry_contrib::trace::exporter::jaeger_json::JaegerJsonExporter;
@@ -371,7 +371,7 @@ async fn main() -> Result<()> {
     debug!("name = {:?}", cluster_config.name());
     debug!("server_addr = {:?}", self_addr);
     debug!("cluster_peers = {:?}", cluster_config.members());
-    let mem_engine = MemoryEngine::new(&XLINETABLES)?;
+    let mem_engine = RocksEngine::new("/tmp/xline/xlinedb", &XLINETABLES)?;
     let server = XlineServer::new(
         cluster_config.name().clone(),
         cluster_config.members().clone(),
