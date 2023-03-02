@@ -790,10 +790,8 @@ where
 mod test {
     use std::error::Error;
 
-    use engine::memory_engine::MemoryEngine;
-
     use super::*;
-    use crate::storage::db::{DB, XLINETABLES};
+    use crate::storage::db::DBProxy;
 
     #[tokio::test]
     async fn test_keys_only() -> Result<(), Box<dyn Error>> {
@@ -909,7 +907,7 @@ mod test {
         }
     }
 
-    async fn init_store() -> Result<KvStore<DB<MemoryEngine>>, Box<dyn Error>> {
+    async fn init_store() -> Result<KvStore<DBProxy>, Box<dyn Error>> {
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let (_, del_rx) = mpsc::channel(128);
         let (lease_cmd_tx, mut lease_cmd_rx) = mpsc::channel(128);
@@ -918,13 +916,8 @@ mod test {
                 assert!(tx.send(0).is_ok());
             }
         });
-        let mem_engine = MemoryEngine::new(&XLINETABLES)?;
-        let store = KvStore::new(
-            lease_cmd_tx,
-            del_rx,
-            header_gen,
-            Arc::new(DB::new(mem_engine)),
-        );
+        let kv_db = DBProxy::new(true)?;
+        let store = KvStore::new(lease_cmd_tx, del_rx, header_gen, kv_db);
         let keys = vec!["a", "b", "c", "d", "e"];
         let vals = vec!["a", "b", "c", "d", "e"];
         for (key, val) in keys.into_iter().zip(vals.into_iter()) {
