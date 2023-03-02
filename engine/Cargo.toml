@@ -16,3 +16,6 @@ edition = "2021"
 parking_lot = "0.12.1"
 rocksdb = { version = "0.20.1", features = ["multi-threaded-cf"] }
 thiserror = "1.0.38"
+serde = { version = "1.0.152", features = ["derive"] }
+bincode = "1.3.3"
+clippy-utilities = "0.2.0"
