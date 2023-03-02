@@ -1,3 +1,5 @@
+use std::io::{Read, Write};
+
 use crate::error::EngineError;
 
 /// Write operation
@@ -73,8 +75,17 @@ impl<'a> DeleteRange<'a> {
     }
 }
 
+/// This trait is a abstraction of the snapshot, We can Read/Write the snapshot like a file.
+pub trait SnapshotApi: Read + Write {
+    /// Get the size of the snapshot
+    fn size(&self) -> u64;
+}
+
 /// The `StorageEngine` trait
 pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
+    /// Snapshot type
+    type Snapshot: SnapshotApi;
+
     /// Get the value associated with a key value and the given table
     ///
     /// # Errors
@@ -102,4 +113,16 @@ pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
     /// Return `TableNotFound` if the given table does not exist
     /// Return `IoError` if met some io errors
     fn write_batch(&self, wr_ops: Vec<WriteOperation<'_>>, sync: bool) -> Result<(), EngineError>;
+
+    /// Get a snapshot of the current state of the database
+    ///
+    /// # Errors
+    /// Return `UnderlyingError` if met some errors when creating the snapshot
+    fn snapshot(&self) -> Result<Self::Snapshot, EngineError>;
+
+    /// Apply a snapshot to the database
+    ///
+    /// # Errors
+    /// Return `UnderlyingError` if met some errors when applying the snapshot
+    fn apply_snapshot(&self, snapshot: Self::Snapshot) -> Result<(), EngineError>;
 }

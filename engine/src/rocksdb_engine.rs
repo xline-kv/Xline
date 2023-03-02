@@ -1,9 +1,14 @@
-use std::{iter::repeat, path::PathBuf, sync::Arc};
+use std::{
+    io::{Read, Write},
+    iter::repeat,
+    path::PathBuf,
+    sync::Arc,
+};
 
 use rocksdb::{Options, WriteBatchWithTransaction, WriteOptions, DB};
 
 use crate::{
-    engine_api::{Delete, DeleteRange, Put, StorageEngine, WriteOperation},
+    engine_api::{Delete, DeleteRange, Put, SnapshotApi, StorageEngine, WriteOperation},
     error::EngineError,
 };
 
@@ -35,7 +40,36 @@ impl RocksEngine {
     }
 }
 
+/// TODO
+#[derive(Debug, Clone, Copy)]
+pub struct RocksSnapshot {}
+
+impl Read for RocksSnapshot {
+    #[inline]
+    fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+        Ok(0)
+    }
+}
+
+impl Write for RocksSnapshot {
+    fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+        Ok(0)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl SnapshotApi for RocksSnapshot {
+    fn size(&self) -> u64 {
+        0
+    }
+}
+
 impl StorageEngine for RocksEngine {
+    type Snapshot = RocksSnapshot;
+
     #[inline]
     fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
         if let Some(cf) = self.inner.cf_handle(table) {
@@ -103,6 +137,14 @@ impl StorageEngine for RocksEngine {
         self.inner
             .write_opt(batch, &opt)
             .map_err(|e| EngineError::UnderlyingError(format!("{e}")))
+    }
+
+    fn snapshot(&self) -> Result<Self::Snapshot, EngineError> {
+        todo!()
+    }
+
+    fn apply_snapshot(&self, _snapshot: Self::Snapshot) -> Result<(), EngineError> {
+        todo!()
     }
 }
 
