@@ -512,11 +512,10 @@ where
 mod test {
     use std::{error::Error, time::Duration};
 
-    use engine::memory_engine::MemoryEngine;
     use tracing::info;
 
     use super::*;
-    use crate::storage::db::{DB, XLINETABLES};
+    use crate::storage::db::DBProxy;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn test_lease_storage() -> Result<(), Box<dyn Error>> {
@@ -524,8 +523,8 @@ mod test {
         let (_, lease_cmd_rx) = mpsc::channel(128);
         let state = Arc::new(State::default());
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
-        let mem_engine = MemoryEngine::new(&XLINETABLES)?;
-        let lease_db = Arc::new(DB::new(mem_engine));
+
+        let lease_db = DBProxy::new(true)?;
         #[allow(clippy::unwrap_used)] // safe unwrap
         let lease_store = LeaseStore::new(del_tx, lease_cmd_rx, state, header_gen, lease_db);
         let _handle = tokio::spawn(async move {
@@ -561,7 +560,7 @@ mod test {
     }
 
     async fn exe_and_sync_req(
-        ls: &LeaseStore<DB<MemoryEngine>>,
+        ls: &LeaseStore<DBProxy>,
         req: RequestWithToken,
     ) -> Result<ResponseWrapper, ExecuteError> {
         let id = ProposeId::new("testid".to_owned());

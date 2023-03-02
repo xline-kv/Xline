@@ -9,8 +9,8 @@ pub trait StorageApi: Send + Sync + 'static + std::fmt::Debug {
     /// if error occurs in storage, return `Err(error)`
     fn insert<K, V>(&self, table: &str, key: K, value: V) -> Result<(), ExecuteError>
     where
-        K: Into<Vec<u8>> + std::fmt::Debug + Sized,
-        V: Into<Vec<u8>> + std::fmt::Debug + Sized;
+        K: Into<Vec<u8>> + std::fmt::Debug,
+        V: Into<Vec<u8>> + std::fmt::Debug;
 
     /// Get values by keys from storage
     ///
@@ -19,7 +19,7 @@ pub trait StorageApi: Send + Sync + 'static + std::fmt::Debug {
     /// if error occurs in storage, return `Err(error)`
     fn get_values<K>(&self, table: &str, keys: &[K]) -> Result<Vec<Vec<u8>>, ExecuteError>
     where
-        K: AsRef<[u8]> + std::fmt::Debug + Sized;
+        K: AsRef<[u8]> + std::fmt::Debug;
 
     /// Delete key-value pair from storage
     ///
@@ -28,5 +28,5 @@ pub trait StorageApi: Send + Sync + 'static + std::fmt::Debug {
     /// if error occurs in storage, return `Err(error)`
     fn delete<K>(&self, table: &str, key: K) -> Result<(), ExecuteError>
     where
-        K: AsRef<[u8]> + std::fmt::Debug + Sized;
+        K: AsRef<[u8]> + std::fmt::Debug;
 }
