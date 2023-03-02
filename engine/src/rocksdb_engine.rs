@@ -37,15 +37,6 @@ impl RocksEngine {
 
 impl StorageEngine for RocksEngine {
     #[inline]
-    fn create_table(&self, table: &str) -> Result<(), EngineError> {
-        let mut opts = Options::default();
-        opts.create_missing_column_families(true);
-        self.inner
-            .create_cf(table, &opts)
-            .map_err(|e| EngineError::UnderlyingError(format!("create table failed: {e}")))
-    }
-
-    #[inline]
     fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
         if let Some(cf) = self.inner.cf_handle(table) {
             Ok(self
@@ -163,34 +154,33 @@ mod test {
     fn write_batch_should_success() {
         let path = "/tmp/write_batch_should_success";
         let engine = RocksEngine::new(path, &TESTTABLES).unwrap();
-        engine.create_table("table").unwrap();
         let origin_set: Vec<Vec<u8>> = (1u8..=10u8)
             .map(|val| repeat(val).take(4).collect())
             .collect();
         let keys = origin_set.clone();
         let values = origin_set.clone();
         let puts = zip(keys, values)
-            .map(|(k, v)| WriteOperation::Put(Put::new("table", k, v, false)))
+            .map(|(k, v)| WriteOperation::Put(Put::new("kv", k, v, false)))
             .collect::<Vec<WriteOperation<'_>>>();
 
         assert!(engine.write_batch(puts).is_ok());
 
-        let res_1 = engine.get_multi("table", &origin_set).unwrap();
+        let res_1 = engine.get_multi("kv", &origin_set).unwrap();
         assert_eq!(res_1.iter().filter(|v| v.is_some()).count(), 10);
 
         let delete_key: Vec<u8> = vec![1, 1, 1, 1];
-        let delete = WriteOperation::Delete(Delete::new("table", delete_key.as_slice(), false));
+        let delete = WriteOperation::Delete(Delete::new("kv", delete_key.as_slice(), false));
 
         let res_2 = engine.write_batch(vec![delete]);
         assert!(res_2.is_ok());
 
-        let res_3 = engine.get("table", &delete_key).unwrap();
+        let res_3 = engine.get("kv", &delete_key).unwrap();
         assert!(res_3.is_none());
 
         let delete_start: Vec<u8> = vec![2, 2, 2, 2];
         let delete_end: Vec<u8> = vec![5, 5, 5, 5];
         let delete_range = WriteOperation::DeleteRange(DeleteRange::new(
-            "table",
+            "kv",
             delete_start.as_slice(),
             &delete_end.as_slice(),
             false,
@@ -200,8 +190,8 @@ mod test {
 
         let get_key_1: Vec<u8> = vec![5, 5, 5, 5];
         let get_key_2: Vec<u8> = vec![3, 3, 3, 3];
-        assert!(engine.get("table", &get_key_1).unwrap().is_some());
-        assert!(engine.get("table", &get_key_2).unwrap().is_none());
+        assert!(engine.get("kv", &get_key_1).unwrap().is_some());
+        assert!(engine.get("kv", &get_key_2).unwrap().is_none());
         drop(engine);
         destroy(path);
     }
