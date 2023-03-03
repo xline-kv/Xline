@@ -473,14 +473,14 @@ where
     fn insert(&self, lease_id: i64, kv: &PbLease) -> Result<(), ExecuteError> {
         let key = lease_id.encode_to_vec();
         let value = kv.encode_to_vec();
-        self.db.insert(&self.table, key, value)
+        self.db.insert(&self.table, key, value, false)
     }
 
     /// Delete a `PbLease` by `lease_id`
     fn delete(&self, lease_id: i64) -> Result<(), ExecuteError> {
         let key = lease_id.encode_to_vec();
         self.db
-            .delete(&self.table, key)
+            .delete(&self.table, key, false)
             .map_err(|e| ExecuteError::DbError(format!("Failed to delete Lease, error: {e}")))?;
         Ok(())
     }

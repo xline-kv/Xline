@@ -13,7 +13,6 @@ pub enum WriteOperation<'a> {
 }
 
 /// Put operation
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct Put<'a> {
     /// The table name
@@ -22,23 +21,14 @@ pub struct Put<'a> {
     pub(crate) key: Vec<u8>,
     /// Value
     pub(crate) value: Vec<u8>,
-    /// If true, the write will be flushed from the operating system
-    /// buffer cache before the write is considered complete. If this
-    /// flag is true, writes will be slower.
-    pub(crate) sync: bool,
 }
 
 impl<'a> Put<'a> {
     /// Create a new `Put` operation
     #[inline]
     #[must_use]
-    pub fn new(table: &'a str, key: Vec<u8>, value: Vec<u8>, sync: bool) -> Put<'a> {
-        Put {
-            table,
-            key,
-            value,
-            sync,
-        }
+    pub fn new(table: &'a str, key: Vec<u8>, value: Vec<u8>) -> Put<'a> {
+        Put { table, key, value }
     }
 }
 
@@ -50,16 +40,14 @@ pub struct Delete<'a> {
     pub(crate) table: &'a str,
     /// The target key
     pub(crate) key: &'a [u8],
-    /// See `Put::sync` for more details
-    pub(crate) sync: bool,
 }
 
 impl<'a> Delete<'a> {
     /// Create a new `Delete` operation
     #[inline]
     #[must_use]
-    pub fn new(table: &'a str, key: &'a [u8], sync: bool) -> Delete<'a> {
-        Delete { table, key, sync }
+    pub fn new(table: &'a str, key: &'a [u8]) -> Delete<'a> {
+        Delete { table, key }
     }
 }
 
@@ -74,21 +62,14 @@ pub struct DeleteRange<'a> {
     pub(crate) from: &'a [u8],
     /// The `to` key
     pub(crate) to: &'a [u8],
-    /// See `Put::sync` for more details
-    pub(crate) sync: bool,
 }
 
 impl<'a> DeleteRange<'a> {
     /// Create a new `DeleteRange` operation
     #[inline]
     #[allow(dead_code)]
-    pub(crate) fn new(table: &'a str, from: &'a [u8], to: &'a [u8], sync: bool) -> DeleteRange<'a> {
-        DeleteRange {
-            table,
-            from,
-            to,
-            sync,
-        }
+    pub(crate) fn new(table: &'a str, from: &'a [u8], to: &'a [u8]) -> DeleteRange<'a> {
+        DeleteRange { table, from, to }
     }
 }
 
@@ -113,9 +94,12 @@ pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
     ) -> Result<Vec<Option<Vec<u8>>>, EngineError>;
 
     /// Commit a batch of write operations
+    /// If sync is true, the write will be flushed from the operating system
+    /// buffer cache before the write is considered complete. If this
+    /// flag is true, writes will be slower.
     ///
     /// # Errors
     /// Return `TableNotFound` if the given table does not exist
     /// Return `IoError` if met some io errors
-    fn write_batch(&self, wr_ops: Vec<WriteOperation<'_>>) -> Result<(), EngineError>;
+    fn write_batch(&self, wr_ops: Vec<WriteOperation<'_>>, sync: bool) -> Result<(), EngineError>;
 }
