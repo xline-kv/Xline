@@ -4,12 +4,12 @@ use engine::{
     engine_api::StorageEngine, memory_engine::MemoryEngine, rocksdb_engine::RocksEngine, Delete,
     Put, WriteOperation,
 };
+use utils::config::StorageConfig;
 
 use super::{storage_api::StorageApi, ExecuteError};
 
 /// Xline Server Storage Table
-#[allow(dead_code)]
-pub const XLINETABLES: [&str; 3] = ["kv", "lease", "auth"];
+const XLINETABLES: [&str; 3] = ["kv", "lease", "auth"];
 
 /// Database to store revision to kv mapping
 #[derive(Debug, Clone)]
@@ -133,20 +133,24 @@ impl StorageApi for DBProxy {
 
 impl DBProxy {
     /// Create a new `DBProxy`
-    /// 
+    ///
     /// # Errors
-    /// 
+    ///
     /// Return `ExecuteError::DbError` when open db failed
     #[inline]
-    pub fn new(flag: bool) -> Result<Arc<DBProxy>, ExecuteError> {
-        if flag {
-            let engine = MemoryEngine::new(&XLINETABLES)
-                .map_err(|e| ExecuteError::DbError(format!("Cannot open database: {e}")))?;
-            Ok(Arc::new(DBProxy::MemDB(DB::new(engine))))
-        } else {
-            let engine = RocksEngine::new("/tmp/xline_db", &XLINETABLES)
-                .map_err(|e| ExecuteError::DbError(format!("Cannot open database: {e}")))?;
-            Ok(Arc::new(DBProxy::RocksDB(DB::new(engine))))
+    pub fn new(config: &StorageConfig) -> Result<Arc<DBProxy>, ExecuteError> {
+        match *config {
+            StorageConfig::Memory => {
+                let engine = MemoryEngine::new(&XLINETABLES)
+                    .map_err(|e| ExecuteError::DbError(format!("Cannot open database: {e}")))?;
+                Ok(Arc::new(DBProxy::MemDB(DB::new(engine))))
+            }
+            StorageConfig::RocksDB(ref path) => {
+                let engine = RocksEngine::new(path, &XLINETABLES)
+                    .map_err(|e| ExecuteError::DbError(format!("Cannot open database: {e}")))?;
+                Ok(Arc::new(DBProxy::RocksDB(DB::new(engine))))
+            }
+            _ => unreachable!(),
         }
     }
 }

@@ -1,21 +1,13 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    sync::Arc,
-};
+use std::collections::{BTreeMap, HashMap};
 
-use engine::memory_engine::MemoryEngine;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use tokio::{
     net::TcpListener,
     sync::broadcast::{self, Sender},
     time::{self, Duration},
 };
-use utils::config::{ClientTimeout, ServerTimeout};
-use xline::{
-    client::Client,
-    server::XlineServer,
-    storage::db::{DB, XLINETABLES},
-};
+use utils::config::{ClientTimeout, ServerTimeout, StorageConfig};
+use xline::{client::Client, server::XlineServer, storage::db::DBProxy};
 
 /// Cluster
 pub struct Cluster {
@@ -63,8 +55,7 @@ impl Cluster {
             let listener = self.listeners.remove(&i).unwrap();
             let all_members = self.all_members.clone();
             #[allow(clippy::unwrap_used)]
-            let s = MemoryEngine::new(&XLINETABLES).unwrap();
-            let db = Arc::new(DB::new(s));
+            let db = DBProxy::new(&StorageConfig::default()).unwrap();
             tokio::spawn(async move {
                 let server = XlineServer::new(
                     name,
