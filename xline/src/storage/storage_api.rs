@@ -7,7 +7,7 @@ pub trait StorageApi: Send + Sync + 'static + std::fmt::Debug {
     /// # Errors
     ///
     /// if error occurs in storage, return `Err(error)`
-    fn insert<K, V>(&self, table: &str, key: K, value: V) -> Result<(), ExecuteError>
+    fn insert<K, V>(&self, table: &str, key: K, value: V, sync: bool) -> Result<(), ExecuteError>
     where
         K: Into<Vec<u8>> + std::fmt::Debug,
         V: Into<Vec<u8>> + std::fmt::Debug;
@@ -26,7 +26,7 @@ pub trait StorageApi: Send + Sync + 'static + std::fmt::Debug {
     /// # Errors
     ///
     /// if error occurs in storage, return `Err(error)`
-    fn delete<K>(&self, table: &str, key: K) -> Result<(), ExecuteError>
+    fn delete<K>(&self, table: &str, key: K, sync: bool) -> Result<(), ExecuteError>
     where
         K: AsRef<[u8]> + std::fmt::Debug;
 }

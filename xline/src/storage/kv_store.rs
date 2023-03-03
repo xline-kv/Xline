@@ -630,7 +630,7 @@ where
     fn insert(&self, revision: Revision, kv: &KeyValue) -> Result<(), ExecuteError> {
         let key = revision.encode_to_vec();
         let value = kv.encode_to_vec();
-        self.db.insert(&self.table, key, value)
+        self.db.insert(&self.table, key, value, false)
     }
 
     /// Sync `PutRequest` and return if kvstore is changed
@@ -729,7 +729,7 @@ where
                 };
                 let key = new_rev.encode_to_vec();
                 let value = del_kv.encode_to_vec();
-                self.db.insert(&self.table, key, value)
+                self.db.insert(&self.table, key, value, false)
             })?;
         Ok(prev_kvs)
     }

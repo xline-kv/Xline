@@ -1,6 +1,6 @@
 use std::{iter::repeat, path::PathBuf, sync::Arc};
 
-use rocksdb::{Options, WriteBatchWithTransaction, DB};
+use rocksdb::{Options, WriteBatchWithTransaction, WriteOptions, DB};
 
 use crate::{
     engine_api::{Delete, DeleteRange, Put, StorageEngine, WriteOperation},
@@ -70,30 +70,26 @@ impl StorageEngine for RocksEngine {
     }
 
     #[inline]
-    fn write_batch(&self, wr_ops: Vec<WriteOperation<'_>>) -> Result<(), EngineError> {
+    fn write_batch(&self, wr_ops: Vec<WriteOperation<'_>>, sync: bool) -> Result<(), EngineError> {
         let mut batch = WriteBatchWithTransaction::<false>::default();
 
         for op in wr_ops {
             match op {
-                WriteOperation::Put(Put {
-                    table, key, value, ..
-                }) => {
+                WriteOperation::Put(Put { table, key, value }) => {
                     let cf = self
                         .inner
                         .cf_handle(table)
                         .ok_or(EngineError::TableNotFound(table.to_owned()))?;
                     batch.put_cf(&cf, key, value);
                 }
-                WriteOperation::Delete(Delete { table, key, .. }) => {
+                WriteOperation::Delete(Delete { table, key }) => {
                     let cf = self
                         .inner
                         .cf_handle(table)
                         .ok_or(EngineError::TableNotFound(table.to_owned()))?;
                     batch.delete_cf(&cf, key);
                 }
-                WriteOperation::DeleteRange(DeleteRange {
-                    table, from, to, ..
-                }) => {
+                WriteOperation::DeleteRange(DeleteRange { table, from, to }) => {
                     let cf = self
                         .inner
                         .cf_handle(table)
@@ -102,8 +98,10 @@ impl StorageEngine for RocksEngine {
                 }
             }
         }
+        let mut opt = WriteOptions::default();
+        opt.set_sync(sync);
         self.inner
-            .write(batch)
+            .write_opt(batch, &opt)
             .map_err(|e| EngineError::UnderlyingError(format!("{e}")))
     }
 }
@@ -138,16 +136,15 @@ mod test {
             "hello",
             "hello".as_bytes().to_vec(),
             "world".as_bytes().to_vec(),
-            false,
         ));
-        assert!(engine.write_batch(vec![put]).is_err());
+        assert!(engine.write_batch(vec![put], false).is_err());
 
-        let delete = WriteOperation::Delete(Delete::new("hello", b"hello", false));
-        assert!(engine.write_batch(vec![delete]).is_err());
+        let delete = WriteOperation::Delete(Delete::new("hello", b"hello"));
+        assert!(engine.write_batch(vec![delete], false).is_err());
 
         let delete_range =
-            WriteOperation::DeleteRange(DeleteRange::new("hello", b"hello", b"world", false));
-        assert!(engine.write_batch(vec![delete_range]).is_err());
+            WriteOperation::DeleteRange(DeleteRange::new("hello", b"hello", b"world"));
+        assert!(engine.write_batch(vec![delete_range], false).is_err());
 
         drop(engine);
         destroy(&data_dir);
@@ -163,18 +160,18 @@ mod test {
         let keys = origin_set.clone();
         let values = origin_set.clone();
         let puts = zip(keys, values)
-            .map(|(k, v)| WriteOperation::Put(Put::new("kv", k, v, false)))
+            .map(|(k, v)| WriteOperation::Put(Put::new("kv", k, v)))
             .collect::<Vec<WriteOperation<'_>>>();
 
-        assert!(engine.write_batch(puts).is_ok());
+        assert!(engine.write_batch(puts, false).is_ok());
 
         let res_1 = engine.get_multi("kv", &origin_set).unwrap();
         assert_eq!(res_1.iter().filter(|v| v.is_some()).count(), 10);
 
         let delete_key: Vec<u8> = vec![1, 1, 1, 1];
-        let delete = WriteOperation::Delete(Delete::new("kv", delete_key.as_slice(), false));
+        let delete = WriteOperation::Delete(Delete::new("kv", delete_key.as_slice()));
 
-        let res_2 = engine.write_batch(vec![delete]);
+        let res_2 = engine.write_batch(vec![delete], false);
         assert!(res_2.is_ok());
 
         let res_3 = engine.get("kv", &delete_key).unwrap();
@@ -186,9 +183,8 @@ mod test {
             "kv",
             delete_start.as_slice(),
             &delete_end.as_slice(),
-            false,
         ));
-        let res_4 = engine.write_batch(vec![delete_range]);
+        let res_4 = engine.write_batch(vec![delete_range], false);
         assert!(res_4.is_ok());
 
         let get_key_1: Vec<u8> = vec![5, 5, 5, 5];

@@ -36,13 +36,13 @@ impl<S> StorageApi for DB<S>
 where
     S: StorageEngine,
 {
-    fn insert<K, V>(&self, table: &str, key: K, value: V) -> Result<(), ExecuteError>
+    fn insert<K, V>(&self, table: &str, key: K, value: V, sync: bool) -> Result<(), ExecuteError>
     where
         K: Into<Vec<u8>> + std::fmt::Debug + Sized,
         V: Into<Vec<u8>> + std::fmt::Debug + Sized,
     {
-        let put_op = WriteOperation::Put(Put::new(table, key.into(), value.into(), false));
-        self.engine.write_batch(vec![put_op]).map_err(|e| {
+        let put_op = WriteOperation::Put(Put::new(table, key.into(), value.into()));
+        self.engine.write_batch(vec![put_op], sync).map_err(|e| {
             ExecuteError::DbError(format!("Failed to insert key-value, error: {e}"))
         })?;
         Ok(())
@@ -66,13 +66,13 @@ where
     }
 
     /// Delete key from storage
-    fn delete<K>(&self, table: &str, key: K) -> Result<(), ExecuteError>
+    fn delete<K>(&self, table: &str, key: K, sync: bool) -> Result<(), ExecuteError>
     where
         K: AsRef<[u8]> + std::fmt::Debug + Sized,
     {
-        let del_op = WriteOperation::Delete(Delete::new(table, key.as_ref(), false));
+        let del_op = WriteOperation::Delete(Delete::new(table, key.as_ref()));
         self.engine
-            .write_batch(vec![del_op])
+            .write_batch(vec![del_op], sync)
             .map_err(|e| ExecuteError::DbError(format!("Failed to delete Lease, error: {e}")))?;
         Ok(())
     }
@@ -109,24 +109,24 @@ impl StorageApi for DBProxy {
         }
     }
 
-    fn insert<K, V>(&self, table: &str, key: K, value: V) -> Result<(), ExecuteError>
+    fn insert<K, V>(&self, table: &str, key: K, value: V, sync: bool) -> Result<(), ExecuteError>
     where
         K: Into<Vec<u8>> + std::fmt::Debug,
         V: Into<Vec<u8>> + std::fmt::Debug,
     {
         match *self {
-            DBProxy::MemDB(ref inner_db) => inner_db.insert(table, key, value),
-            DBProxy::RocksDB(ref inner_db) => inner_db.insert(table, key, value),
+            DBProxy::MemDB(ref inner_db) => inner_db.insert(table, key, value, sync),
+            DBProxy::RocksDB(ref inner_db) => inner_db.insert(table, key, value, sync),
         }
     }
 
-    fn delete<K>(&self, table: &str, key: K) -> Result<(), ExecuteError>
+    fn delete<K>(&self, table: &str, key: K, sync: bool) -> Result<(), ExecuteError>
     where
         K: AsRef<[u8]> + std::fmt::Debug,
     {
         match *self {
-            DBProxy::MemDB(ref inner_db) => inner_db.delete(table, key),
-            DBProxy::RocksDB(ref inner_db) => inner_db.delete(table, key),
+            DBProxy::MemDB(ref inner_db) => inner_db.delete(table, key, sync),
+            DBProxy::RocksDB(ref inner_db) => inner_db.delete(table, key, sync),
         }
     }
 }
