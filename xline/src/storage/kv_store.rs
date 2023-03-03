@@ -790,6 +790,8 @@ where
 mod test {
     use std::error::Error;
 
+    use utils::config::StorageConfig;
+
     use super::*;
     use crate::storage::db::DBProxy;
 
@@ -916,7 +918,7 @@ mod test {
                 assert!(tx.send(0).is_ok());
             }
         });
-        let kv_db = DBProxy::new(true)?;
+        let kv_db = DBProxy::new(&StorageConfig::default())?;
         let store = KvStore::new(lease_cmd_tx, del_rx, header_gen, kv_db);
         let keys = vec!["a", "b", "c", "d", "e"];
         let vals = vec!["a", "b", "c", "d", "e"];

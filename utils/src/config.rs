@@ -11,6 +11,9 @@ pub struct XlineServerConfig {
     /// cluster configuration object
     #[getset(get = "pub")]
     cluster: ClusterConfig,
+    /// xline storage configuration object
+    #[getset(get = "pub")]
+    storage: StorageConfig,
     /// log configuration object
     #[getset(get = "pub")]
     log: LogConfig,
@@ -276,6 +279,29 @@ impl Default for ClientTimeout {
     }
 }
 
+/// Storage Configuration
+#[allow(clippy::module_name_repetitions)]
+#[non_exhaustive]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(
+    tag = "engine",
+    content = "datadir",
+    rename_all(deserialize = "lowercase")
+)]
+pub enum StorageConfig {
+    /// Memory Storage Engine
+    Memory,
+    /// RocksDB Storage Engine
+    RocksDB(PathBuf),
+}
+
+impl Default for StorageConfig {
+    #[inline]
+    fn default() -> Self {
+        StorageConfig::Memory
+    }
+}
+
 /// Log configuration object
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
@@ -463,12 +489,14 @@ impl XlineServerConfig {
     #[inline]
     pub fn new(
         cluster: ClusterConfig,
+        storage: StorageConfig,
         log: LogConfig,
         trace: TraceConfig,
         auth: AuthConfig,
     ) -> Self {
         Self {
             cluster,
+            storage,
             log,
             trace,
             auth,
@@ -501,6 +529,9 @@ mod tests {
 
             [cluster.client_timeout]
             retry_timeout = '5s'
+
+            [storage]
+            engine = 'memory'
 
             [log]
             path = '/var/log/xline'
@@ -547,6 +578,8 @@ mod tests {
             )
         );
 
+        assert_eq!(config.storage, StorageConfig::default());
+
         assert_eq!(
             config.log,
             LogConfig::new(
@@ -579,6 +612,10 @@ mod tests {
                 node2 = '127.0.0.1:2380'
                 node3 = '127.0.0.1:2381'
 
+                [storage]
+                engine = 'rocksdb'
+                datadir = '/tmp/xline/data-dir'
+
                 [log]
                 path = '/var/log/xline'
 
@@ -608,6 +645,13 @@ mod tests {
                 ClientTimeout::default()
             )
         );
+
+        if let StorageConfig::RocksDB(path) = config.storage {
+            assert_eq!(path, PathBuf::from("/tmp/xline/data-dir"));
+        } else {
+            unreachable!();
+        }
+
         assert_eq!(
             config.log,
             LogConfig::new(

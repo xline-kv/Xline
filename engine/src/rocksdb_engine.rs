@@ -1,4 +1,4 @@
-use std::{iter::repeat, sync::Arc};
+use std::{iter::repeat, path::PathBuf, sync::Arc};
 
 use rocksdb::{Options, WriteBatchWithTransaction, DB};
 
@@ -21,13 +21,13 @@ impl RocksEngine {
     ///
     /// Return `EngineError` when DB open failed.
     #[inline]
-    pub fn new(path: &str, tables: &[&'static str]) -> Result<Self, EngineError> {
+    pub fn new(data_dir: &PathBuf, tables: &[&'static str]) -> Result<Self, EngineError> {
         let mut db_opts = Options::default();
         db_opts.create_missing_column_families(true);
         db_opts.create_if_missing(true);
         Ok(Self {
             inner: Arc::new(
-                DB::open_cf(&db_opts, path, tables).map_err(|e| {
+                DB::open_cf(&db_opts, data_dir, tables).map_err(|e| {
                     EngineError::UnderlyingError(format!("cannot open database: {e}"))
                 })?,
             ),
@@ -114,22 +114,25 @@ impl StorageEngine for RocksEngine {
 ///
 /// Panic if db destroy failed.
 #[cfg(test)]
-pub fn destroy(path: &str) {
+pub fn destroy(data_dir: &PathBuf) {
     #[allow(clippy::unwrap_used)]
-    DB::destroy(&Options::default(), path).unwrap();
+    DB::destroy(&Options::default(), data_dir).unwrap();
 }
 
 #[cfg(test)]
 mod test {
-    use std::iter::{repeat, zip};
+    use std::{
+        iter::{repeat, zip},
+        path::PathBuf,
+    };
 
     use super::*;
     const TESTTABLES: [&'static str; 3] = ["kv", "lease", "auth"];
 
     #[test]
     fn write_batch_into_a_non_existing_table_should_fail() {
-        let path = "/tmp/write_batch_into_a_non_existing_table_should_fail";
-        let engine = RocksEngine::new(path, &TESTTABLES).unwrap();
+        let data_dir = PathBuf::from("/tmp/write_batch_into_a_non_existing_table_should_fail");
+        let engine = RocksEngine::new(&data_dir, &TESTTABLES).unwrap();
 
         let put = WriteOperation::Put(Put::new(
             "hello",
@@ -147,13 +150,13 @@ mod test {
         assert!(engine.write_batch(vec![delete_range]).is_err());
 
         drop(engine);
-        destroy(path);
+        destroy(&data_dir);
     }
 
     #[test]
     fn write_batch_should_success() {
-        let path = "/tmp/write_batch_should_success";
-        let engine = RocksEngine::new(path, &TESTTABLES).unwrap();
+        let data_dir = PathBuf::from("/tmp/write_batch_should_success");
+        let engine = RocksEngine::new(&data_dir, &TESTTABLES).unwrap();
         let origin_set: Vec<Vec<u8>> = (1u8..=10u8)
             .map(|val| repeat(val).take(4).collect())
             .collect();
@@ -193,6 +196,6 @@ mod test {
         assert!(engine.get("kv", &get_key_1).unwrap().is_some());
         assert!(engine.get("kv", &get_key_2).unwrap().is_none());
         drop(engine);
-        destroy(path);
+        destroy(&data_dir);
     }
 }
