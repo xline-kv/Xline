@@ -125,7 +125,7 @@ use utils::{
     config::{
         default_candidate_timeout_ticks, default_follower_timeout_ticks, file_appender, AuthConfig,
         ClientTimeout, ClusterConfig, LevelConfig, LogConfig, RotationConfig, ServerTimeout,
-        TraceConfig, XlineServerConfig,
+        StorageConfig, TraceConfig, XlineServerConfig,
     },
     parse_duration, parse_log_level, parse_members, parse_rotation,
 };
@@ -201,6 +201,12 @@ struct ServerArgs {
     /// Curp client retry timeout
     #[clap(long, value_parser = parse_duration, default_value = "50ms")]
     client_retry_timeout: Duration,
+    /// Storage engine
+    #[clap(long)]
+    storage_engine: String,
+    /// DB directory
+    #[clap(long, default_value = "/usr/local/xline/data-dir")]
+    data_dir: PathBuf,
 }
 
 impl From<ServerArgs> for XlineServerConfig {
@@ -213,6 +219,13 @@ impl From<ServerArgs> for XlineServerConfig {
             args.follower_timeout_ticks,
             args.candidate_timeout_ticks,
         );
+
+        let storage = match args.storage_engine.as_str() {
+            "memory" => StorageConfig::Memory,
+            "rocksdb" => StorageConfig::RocksDB(args.data_dir),
+            &_ => unreachable!(),
+        };
+
         let client_timeout = ClientTimeout::new(
             args.client_wait_synced_timeout,
             args.client_propose_timeout,
@@ -233,7 +246,7 @@ impl From<ServerArgs> for XlineServerConfig {
             args.jaeger_level,
         );
         let auth = AuthConfig::new(args.auth_public_key, args.auth_private_key);
-        XlineServerConfig::new(cluster, log, trace, auth)
+        XlineServerConfig::new(cluster, storage, log, trace, auth)
     }
 }
 
@@ -339,6 +352,7 @@ async fn main() -> Result<()> {
         server_args.into()
     };
 
+    let storage_config = config.storage();
     let log_config = config.log();
     let trace_config = config.trace();
     let cluster_config = config.cluster();
@@ -368,7 +382,7 @@ async fn main() -> Result<()> {
     debug!("server_addr = {:?}", self_addr);
     debug!("cluster_peers = {:?}", cluster_config.members());
 
-    let db_proxy = DBProxy::new(false)?;
+    let db_proxy = DBProxy::new(storage_config)?;
     let server = XlineServer::new(
         cluster_config.name().clone(),
         cluster_config.members().clone(),

@@ -13,6 +13,7 @@ run_xline() {
     cmd="/usr/local/bin/xline \
     --name node${1} \
     --members ${MEMBERS} \
+    --storage-engine rocksdb \
     --auth-public-key /mnt/public.pem \
     --auth-private-key /mnt/private.pem"
 

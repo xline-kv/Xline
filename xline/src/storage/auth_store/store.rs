@@ -310,6 +310,8 @@ where
 mod test {
     use std::{collections::HashMap, error::Error};
 
+    use utils::config::StorageConfig;
+
     use super::*;
     use crate::{
         rpc::{
@@ -419,7 +421,7 @@ mod test {
         let (lease_cmd_tx, _) = mpsc::channel(1);
 
         #[allow(clippy::unwrap_used)]
-        let auth_db = DBProxy::new(true).unwrap();
+        let auth_db = DBProxy::new(&StorageConfig::default()).unwrap();
         // It's ok to do so in that a memory engine should return an error
         let store = AuthStore::new(lease_cmd_tx, key_pair, header_gen, auth_db);
 
