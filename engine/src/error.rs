@@ -1,3 +1,5 @@
+use std::io;
+
 use thiserror::Error;
 
 /// The `EngineError`
@@ -20,4 +22,18 @@ pub enum EngineError {
     /// The Underlying Database Error
     #[error("The Underlying Database Error: {0}")]
     UnderlyingError(String),
+}
+
+impl From<io::Error> for EngineError {
+    #[inline]
+    fn from(err: io::Error) -> Self {
+        Self::IoError(err.to_string())
+    }
+}
+
+impl From<rocksdb::Error> for EngineError {
+    #[inline]
+    fn from(err: rocksdb::Error) -> Self {
+        Self::UnderlyingError(err.to_string())
+    }
 }

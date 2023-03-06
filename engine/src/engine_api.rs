@@ -1,4 +1,7 @@
-use std::io::{Read, Write};
+use std::{
+    io::{Read, Write},
+    path::Path,
+};
 
 use crate::error::EngineError;
 
@@ -118,11 +121,19 @@ pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
     ///
     /// # Errors
     /// Return `UnderlyingError` if met some errors when creating the snapshot
-    fn snapshot(&self) -> Result<Self::Snapshot, EngineError>;
+    fn snapshot(
+        &self,
+        path: impl AsRef<Path>,
+        tables: &[&'static str],
+    ) -> Result<Self::Snapshot, EngineError>;
 
     /// Apply a snapshot to the database
     ///
     /// # Errors
     /// Return `UnderlyingError` if met some errors when applying the snapshot
-    fn apply_snapshot(&self, snapshot: Self::Snapshot) -> Result<(), EngineError>;
+    fn apply_snapshot(
+        &self,
+        snapshot: Self::Snapshot,
+        tables: &[&'static str],
+    ) -> Result<(), EngineError>;
 }

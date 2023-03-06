@@ -2,6 +2,7 @@ use std::{
     cmp::Ordering,
     collections::HashMap,
     io::{self, Cursor, Read, Write},
+    path::Path,
     sync::Arc,
 };
 
@@ -142,7 +143,11 @@ impl StorageEngine for MemoryEngine {
     }
 
     #[inline]
-    fn snapshot(&self) -> Result<Self::Snapshot, EngineError> {
+    fn snapshot(
+        &self,
+        _path: impl AsRef<Path>,
+        _tables: &[&'static str],
+    ) -> Result<Self::Snapshot, EngineError> {
         let inner_r = self.inner.read();
         let db = &*inner_r;
         let data = bincode::serialize(db).map_err(|e| {
@@ -154,7 +159,11 @@ impl StorageEngine for MemoryEngine {
     }
 
     #[inline]
-    fn apply_snapshot(&self, snapshot: Self::Snapshot) -> Result<(), EngineError> {
+    fn apply_snapshot(
+        &self,
+        snapshot: Self::Snapshot,
+        _tables: &[&'static str],
+    ) -> Result<(), EngineError> {
         let mut inner = self.inner.write();
         let db = &mut *inner;
         let data = snapshot.data.into_inner();
@@ -242,9 +251,9 @@ mod test {
         let put = WriteOperation::Put(Put::new("kv", "key".into(), "value".into()));
         assert!(engine.write_batch(vec![put], false).is_ok());
 
-        let snapshot = engine.snapshot().unwrap();
+        let snapshot = engine.snapshot("", &TESTTABLES).unwrap();
         let engine_2 = MemoryEngine::new(&TESTTABLES).unwrap();
-        assert!(engine_2.apply_snapshot(snapshot).is_ok());
+        assert!(engine_2.apply_snapshot(snapshot, &TESTTABLES).is_ok());
 
         let value = engine_2.get("kv", "key").unwrap();
         assert_eq!(value, Some("value".into()));
