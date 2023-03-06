@@ -13,6 +13,7 @@ pub struct XlineServerConfig {
     cluster: ClusterConfig,
     /// xline storage configuration object
     #[getset(get = "pub")]
+    #[serde(default = "StorageConfig::default")]
     storage: StorageConfig,
     /// log configuration object
     #[getset(get = "pub")]
@@ -285,7 +286,7 @@ impl Default for ClientTimeout {
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(
     tag = "engine",
-    content = "datadir",
+    content = "data_dir",
     rename_all(deserialize = "lowercase")
 )]
 pub enum StorageConfig {
@@ -298,7 +299,7 @@ pub enum StorageConfig {
 impl Default for StorageConfig {
     #[inline]
     fn default() -> Self {
-        StorageConfig::Memory
+        StorageConfig::RocksDB(PathBuf::from("/usr/local/xline/data-dir"))
     }
 }
 
@@ -578,7 +579,7 @@ mod tests {
             )
         );
 
-        assert_eq!(config.storage, StorageConfig::default());
+        assert_eq!(config.storage, StorageConfig::Memory);
 
         assert_eq!(
             config.log,
@@ -612,10 +613,6 @@ mod tests {
                 node2 = '127.0.0.1:2380'
                 node3 = '127.0.0.1:2381'
 
-                [storage]
-                engine = 'rocksdb'
-                datadir = '/tmp/xline/data-dir'
-
                 [log]
                 path = '/var/log/xline'
 
@@ -647,7 +644,7 @@ mod tests {
         );
 
         if let StorageConfig::RocksDB(path) = config.storage {
-            assert_eq!(path, PathBuf::from("/tmp/xline/data-dir"));
+            assert_eq!(path, PathBuf::from("/usr/local/xline/data-dir"));
         } else {
             unreachable!();
         }

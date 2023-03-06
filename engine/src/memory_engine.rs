@@ -3,7 +3,7 @@ use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 use parking_lot::RwLock;
 
 use crate::{
-    engine_api::{Delete, DeleteRange, Put, StorageEngine, WriteOperation},
+    engine_api::{StorageEngine, WriteOperation},
     error::EngineError,
 };
 
@@ -67,19 +67,19 @@ impl StorageEngine for MemoryEngine {
         let mut inner = self.inner.write();
         for op in wr_ops {
             match op {
-                WriteOperation::Put(Put { table, key, value }) => {
+                WriteOperation::Put { table, key, value } => {
                     let table = inner
                         .get_mut(table)
                         .ok_or_else(|| EngineError::TableNotFound(table.to_owned()))?;
                     let _ignore = table.insert(key, value);
                 }
-                WriteOperation::Delete(Delete { table, key }) => {
+                WriteOperation::Delete { table, key } => {
                     let table = inner
                         .get_mut(table)
                         .ok_or_else(|| EngineError::TableNotFound(table.to_owned()))?;
                     let _ignore = table.remove(key);
                 }
-                WriteOperation::DeleteRange(DeleteRange { table, from, to }) => {
+                WriteOperation::DeleteRange { table, from, to } => {
                     let table = inner
                         .get_mut(table)
                         .ok_or_else(|| EngineError::TableNotFound(table.to_owned()))?;
@@ -106,7 +106,6 @@ mod test {
     use std::iter::{repeat, zip};
 
     use super::*;
-    use crate::engine_api::Put;
 
     const TESTTABLES: [&'static str; 3] = ["kv", "lease", "auth"];
 
@@ -114,18 +113,17 @@ mod test {
     fn write_batch_into_a_non_existing_table_should_fail() {
         let engine = MemoryEngine::new(&TESTTABLES).unwrap();
 
-        let put = WriteOperation::Put(Put::new(
+        let put = WriteOperation::new_put(
             "hello",
             "hello".as_bytes().to_vec(),
             "world".as_bytes().to_vec(),
-        ));
+        );
         assert!(engine.write_batch(vec![put], false).is_err());
 
-        let delete = WriteOperation::Delete(Delete::new("hello", b"hello"));
+        let delete = WriteOperation::new_delete("hello", b"hello");
         assert!(engine.write_batch(vec![delete], false).is_err());
 
-        let delete_range =
-            WriteOperation::DeleteRange(DeleteRange::new("hello", b"hello", b"world"));
+        let delete_range = WriteOperation::new_delete_range("hello", b"hello", b"world");
         assert!(engine.write_batch(vec![delete_range], false).is_err());
     }
 
@@ -138,7 +136,7 @@ mod test {
         let keys = origin_set.clone();
         let values = origin_set.clone();
         let puts = zip(keys, values)
-            .map(|(k, v)| WriteOperation::Put(Put::new("kv", k, v)))
+            .map(|(k, v)| WriteOperation::new_put("kv", k, v))
             .collect::<Vec<WriteOperation<'_>>>();
 
         assert!(engine.write_batch(puts, false).is_ok());
@@ -147,7 +145,7 @@ mod test {
         assert_eq!(res_1.iter().filter(|v| v.is_some()).count(), 10);
 
         let delete_key: Vec<u8> = vec![1, 1, 1, 1];
-        let delete = WriteOperation::Delete(Delete::new("kv", delete_key.as_slice()));
+        let delete = WriteOperation::new_delete("kv", delete_key.as_slice());
 
         let res_2 = engine.write_batch(vec![delete], false);
         assert!(res_2.is_ok());
@@ -157,11 +155,8 @@ mod test {
 
         let delete_start: Vec<u8> = vec![2, 2, 2, 2];
         let delete_end: Vec<u8> = vec![5, 5, 5, 5];
-        let delete_range = WriteOperation::DeleteRange(DeleteRange::new(
-            "kv",
-            delete_start.as_slice(),
-            &delete_end.as_slice(),
-        ));
+        let delete_range =
+            WriteOperation::new_delete_range("kv", delete_start.as_slice(), &delete_end.as_slice());
         let res_4 = engine.write_batch(vec![delete_range], false);
         assert!(res_4.is_ok());
 

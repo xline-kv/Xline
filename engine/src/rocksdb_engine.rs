@@ -1,11 +1,35 @@
-use std::{iter::repeat, path::PathBuf, sync::Arc};
+use std::{iter::repeat, path::Path, sync::Arc};
 
-use rocksdb::{Options, WriteBatchWithTransaction, WriteOptions, DB};
+use rocksdb::{Error as RocksError, Options, WriteBatchWithTransaction, WriteOptions, DB};
 
 use crate::{
-    engine_api::{Delete, DeleteRange, Put, StorageEngine, WriteOperation},
+    engine_api::{StorageEngine, WriteOperation},
     error::EngineError,
 };
+
+/// Translate a `RocksError` into a `EngineError`
+impl From<RocksError> for EngineError {
+    #[inline]
+    fn from(err: RocksError) -> Self {
+        let err = err.into_string();
+        if let Some((err_kind, err_msg)) = err.split_once(':') {
+            match err_kind {
+                "Corruption" => EngineError::Corruption(err_msg.to_owned()),
+                "Invalid argument" => {
+                    if let Some(table_name) = err_msg.strip_prefix(" Column family not found: ") {
+                        EngineError::TableNotFound(table_name.to_owned())
+                    } else {
+                        EngineError::InvalidArgument(err_msg.to_owned())
+                    }
+                }
+                "IO error" => EngineError::IoError(err_msg.to_owned()),
+                _ => EngineError::UnderlyingError(err_msg.to_owned()),
+            }
+        } else {
+            EngineError::UnderlyingError(err)
+        }
+    }
+}
 
 /// `RocksDB` Storage Engine
 #[derive(Debug, Clone)]
@@ -21,16 +45,12 @@ impl RocksEngine {
     ///
     /// Return `EngineError` when DB open failed.
     #[inline]
-    pub fn new(data_dir: &PathBuf, tables: &[&'static str]) -> Result<Self, EngineError> {
+    pub fn new(data_dir: impl AsRef<Path>, tables: &[&'static str]) -> Result<Self, EngineError> {
         let mut db_opts = Options::default();
         db_opts.create_missing_column_families(true);
         db_opts.create_if_missing(true);
         Ok(Self {
-            inner: Arc::new(
-                DB::open_cf(&db_opts, data_dir, tables).map_err(|e| {
-                    EngineError::UnderlyingError(format!("cannot open database: {e}"))
-                })?,
-            ),
+            inner: Arc::new(DB::open_cf(&db_opts, data_dir, tables)?),
         })
     }
 }
@@ -39,10 +59,7 @@ impl StorageEngine for RocksEngine {
     #[inline]
     fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
         if let Some(cf) = self.inner.cf_handle(table) {
-            Ok(self
-                .inner
-                .get_cf(&cf, key)
-                .map_err(|e| EngineError::IoError(format!("get key from {table} failed: {e}")))?)
+            Ok(self.inner.get_cf(&cf, key)?)
         } else {
             Err(EngineError::TableNotFound(table.to_owned()))
         }
@@ -58,12 +75,8 @@ impl StorageEngine for RocksEngine {
             self.inner
                 .multi_get_cf(repeat(&cf).zip(keys.iter()))
                 .into_iter()
-                .map(|res| {
-                    res.map_err(|err| {
-                        EngineError::IoError(format!("get key from {table} failed: {err}"))
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()
+                .map(|res| res.map_err(EngineError::from))
+                .collect::<Result<Vec<_>, EngineError>>()
         } else {
             Err(EngineError::TableNotFound(table.to_owned()))
         }
@@ -75,21 +88,21 @@ impl StorageEngine for RocksEngine {
 
         for op in wr_ops {
             match op {
-                WriteOperation::Put(Put { table, key, value }) => {
+                WriteOperation::Put { table, key, value } => {
                     let cf = self
                         .inner
                         .cf_handle(table)
                         .ok_or(EngineError::TableNotFound(table.to_owned()))?;
                     batch.put_cf(&cf, key, value);
                 }
-                WriteOperation::Delete(Delete { table, key }) => {
+                WriteOperation::Delete { table, key } => {
                     let cf = self
                         .inner
                         .cf_handle(table)
                         .ok_or(EngineError::TableNotFound(table.to_owned()))?;
                     batch.delete_cf(&cf, key);
                 }
-                WriteOperation::DeleteRange(DeleteRange { table, from, to }) => {
+                WriteOperation::DeleteRange { table, from, to } => {
                     let cf = self
                         .inner
                         .cf_handle(table)
@@ -100,9 +113,7 @@ impl StorageEngine for RocksEngine {
         }
         let mut opt = WriteOptions::default();
         opt.set_sync(sync);
-        self.inner
-            .write_opt(batch, &opt)
-            .map_err(|e| EngineError::UnderlyingError(format!("{e}")))
+        self.inner.write_opt(batch, &opt).map_err(EngineError::from)
     }
 }
 
@@ -112,7 +123,7 @@ impl StorageEngine for RocksEngine {
 ///
 /// Panic if db destroy failed.
 #[cfg(test)]
-pub fn destroy(data_dir: &PathBuf) {
+pub fn destroy(data_dir: impl AsRef<Path>) {
     #[allow(clippy::unwrap_used)]
     DB::destroy(&Options::default(), data_dir).unwrap();
 }
@@ -132,18 +143,17 @@ mod test {
         let data_dir = PathBuf::from("/tmp/write_batch_into_a_non_existing_table_should_fail");
         let engine = RocksEngine::new(&data_dir, &TESTTABLES).unwrap();
 
-        let put = WriteOperation::Put(Put::new(
+        let put = WriteOperation::new_put(
             "hello",
             "hello".as_bytes().to_vec(),
             "world".as_bytes().to_vec(),
-        ));
+        );
         assert!(engine.write_batch(vec![put], false).is_err());
 
-        let delete = WriteOperation::Delete(Delete::new("hello", b"hello"));
+        let delete = WriteOperation::new_delete("hello", b"hello");
         assert!(engine.write_batch(vec![delete], false).is_err());
 
-        let delete_range =
-            WriteOperation::DeleteRange(DeleteRange::new("hello", b"hello", b"world"));
+        let delete_range = WriteOperation::new_delete_range("hello", b"hello", b"world");
         assert!(engine.write_batch(vec![delete_range], false).is_err());
 
         drop(engine);
@@ -160,7 +170,7 @@ mod test {
         let keys = origin_set.clone();
         let values = origin_set.clone();
         let puts = zip(keys, values)
-            .map(|(k, v)| WriteOperation::Put(Put::new("kv", k, v)))
+            .map(|(k, v)| WriteOperation::new_put("kv", k, v))
             .collect::<Vec<WriteOperation<'_>>>();
 
         assert!(engine.write_batch(puts, false).is_ok());
@@ -169,7 +179,7 @@ mod test {
         assert_eq!(res_1.iter().filter(|v| v.is_some()).count(), 10);
 
         let delete_key: Vec<u8> = vec![1, 1, 1, 1];
-        let delete = WriteOperation::Delete(Delete::new("kv", delete_key.as_slice()));
+        let delete = WriteOperation::new_delete("kv", delete_key.as_slice());
 
         let res_2 = engine.write_batch(vec![delete], false);
         assert!(res_2.is_ok());
@@ -179,11 +189,8 @@ mod test {
 
         let delete_start: Vec<u8> = vec![2, 2, 2, 2];
         let delete_end: Vec<u8> = vec![5, 5, 5, 5];
-        let delete_range = WriteOperation::DeleteRange(DeleteRange::new(
-            "kv",
-            delete_start.as_slice(),
-            &delete_end.as_slice(),
-        ));
+        let delete_range =
+            WriteOperation::new_delete_range("kv", delete_start.as_slice(), &delete_end.as_slice());
         let res_4 = engine.write_batch(vec![delete_range], false);
         assert!(res_4.is_ok());
 
