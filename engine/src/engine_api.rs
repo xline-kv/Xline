@@ -5,71 +5,52 @@ use crate::error::EngineError;
 #[derive(Debug)]
 pub enum WriteOperation<'a> {
     /// `Put` operation
-    Put(Put<'a>),
+    Put {
+        /// The table name
+        table: &'a str,
+        /// Key
+        key: Vec<u8>,
+        /// Value
+        value: Vec<u8>,
+    },
     /// `Delete` operation
-    Delete(Delete<'a>),
-    /// `DeleteRange` operation
-    DeleteRange(DeleteRange<'a>),
+    Delete {
+        /// The table name
+        table: &'a str,
+        /// The target key
+        key: &'a [u8],
+    },
+    /// Delete range operation, it will remove the database entries in the range [from, to)
+    DeleteRange {
+        /// The table name
+        table: &'a str,
+        /// The `from` key
+        from: &'a [u8],
+        /// The `to` key
+        to: &'a [u8],
+    },
 }
 
-/// Put operation
-#[derive(Debug)]
-pub struct Put<'a> {
-    /// The table name
-    pub(crate) table: &'a str,
-    /// Key
-    pub(crate) key: Vec<u8>,
-    /// Value
-    pub(crate) value: Vec<u8>,
-}
-
-impl<'a> Put<'a> {
+impl<'a> WriteOperation<'a> {
     /// Create a new `Put` operation
     #[inline]
     #[must_use]
-    pub fn new(table: &'a str, key: Vec<u8>, value: Vec<u8>) -> Put<'a> {
-        Put { table, key, value }
+    pub fn new_put(table: &'a str, key: Vec<u8>, value: Vec<u8>) -> Self {
+        Self::Put { table, key, value }
     }
-}
 
-/// Delete operation,
-#[allow(dead_code)]
-#[derive(Debug)]
-pub struct Delete<'a> {
-    /// The table name
-    pub(crate) table: &'a str,
-    /// The target key
-    pub(crate) key: &'a [u8],
-}
-
-impl<'a> Delete<'a> {
     /// Create a new `Delete` operation
     #[inline]
     #[must_use]
-    pub fn new(table: &'a str, key: &'a [u8]) -> Delete<'a> {
-        Delete { table, key }
+    pub fn new_delete(table: &'a str, key: &'a [u8]) -> Self {
+        Self::Delete { table, key }
     }
-}
 
-/// Delete range operation, it will remove the database
-/// entries in the range [from, to)
-#[allow(dead_code)]
-#[derive(Debug)]
-pub struct DeleteRange<'a> {
-    /// The table name
-    pub(crate) table: &'a str,
-    /// The `from` key
-    pub(crate) from: &'a [u8],
-    /// The `to` key
-    pub(crate) to: &'a [u8],
-}
-
-impl<'a> DeleteRange<'a> {
     /// Create a new `DeleteRange` operation
-    #[inline]
     #[allow(dead_code)]
-    pub(crate) fn new(table: &'a str, from: &'a [u8], to: &'a [u8]) -> DeleteRange<'a> {
-        DeleteRange { table, from, to }
+    #[inline]
+    pub(crate) fn new_delete_range(table: &'a str, from: &'a [u8], to: &'a [u8]) -> Self {
+        Self::DeleteRange { table, from, to }
     }
 }
 

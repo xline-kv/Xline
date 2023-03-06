@@ -55,7 +55,7 @@ impl Cluster {
             let listener = self.listeners.remove(&i).unwrap();
             let all_members = self.all_members.clone();
             #[allow(clippy::unwrap_used)]
-            let db = DBProxy::new(&StorageConfig::default()).unwrap();
+            let db = DBProxy::open(&StorageConfig::Memory).unwrap();
             tokio::spawn(async move {
                 let server = XlineServer::new(
                     name,

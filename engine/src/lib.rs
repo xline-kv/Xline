@@ -155,4 +155,4 @@ pub mod memory_engine;
 /// `RocksDB` Storage Engine
 pub mod rocksdb_engine;
 
-pub use self::engine_api::{Delete, DeleteRange, Put, StorageEngine, WriteOperation};
+pub use self::engine_api::{StorageEngine, WriteOperation};

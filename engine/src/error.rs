@@ -6,7 +6,7 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum EngineError {
     /// Met I/O Error during persisting data
-    #[error("I/O Error")]
+    #[error("I/O Error: {0}")]
     IoError(String),
     /// Table Not Found
     #[error("Table {0} Not Found")]

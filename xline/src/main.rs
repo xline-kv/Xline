@@ -202,7 +202,7 @@ struct ServerArgs {
     #[clap(long, value_parser = parse_duration, default_value = "50ms")]
     client_retry_timeout: Duration,
     /// Storage engine
-    #[clap(long)]
+    #[clap(long, default_value = "rocksdb")]
     storage_engine: String,
     /// DB directory
     #[clap(long, default_value = "/usr/local/xline/data-dir")]
@@ -382,7 +382,7 @@ async fn main() -> Result<()> {
     debug!("server_addr = {:?}", self_addr);
     debug!("cluster_peers = {:?}", cluster_config.members());
 
-    let db_proxy = DBProxy::new(storage_config)?;
+    let db_proxy = DBProxy::open(storage_config)?;
     let server = XlineServer::new(
         cluster_config.name().clone(),
         cluster_config.members().clone(),

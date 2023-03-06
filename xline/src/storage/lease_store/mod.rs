@@ -525,7 +525,7 @@ mod test {
         let state = Arc::new(State::default());
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
 
-        let lease_db = DBProxy::new(&StorageConfig::default())?;
+        let lease_db = DBProxy::open(&StorageConfig::Memory)?;
         #[allow(clippy::unwrap_used)] // safe unwrap
         let lease_store = LeaseStore::new(del_tx, lease_cmd_rx, state, header_gen, lease_db);
         let _handle = tokio::spawn(async move {

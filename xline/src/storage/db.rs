@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use engine::{
-    engine_api::StorageEngine, memory_engine::MemoryEngine, rocksdb_engine::RocksEngine, Delete,
-    Put, WriteOperation,
+    engine_api::StorageEngine, memory_engine::MemoryEngine, rocksdb_engine::RocksEngine,
+    WriteOperation,
 };
 use utils::config::StorageConfig;
 
@@ -41,7 +41,7 @@ where
         K: Into<Vec<u8>> + std::fmt::Debug + Sized,
         V: Into<Vec<u8>> + std::fmt::Debug + Sized,
     {
-        let put_op = WriteOperation::Put(Put::new(table, key.into(), value.into()));
+        let put_op = WriteOperation::new_put(table, key.into(), value.into());
         self.engine.write_batch(vec![put_op], sync).map_err(|e| {
             ExecuteError::DbError(format!("Failed to insert key-value, error: {e}"))
         })?;
@@ -70,7 +70,7 @@ where
     where
         K: AsRef<[u8]> + std::fmt::Debug + Sized,
     {
-        let del_op = WriteOperation::Delete(Delete::new(table, key.as_ref()));
+        let del_op = WriteOperation::new_delete(table, key.as_ref());
         self.engine
             .write_batch(vec![del_op], sync)
             .map_err(|e| ExecuteError::DbError(format!("Failed to delete Lease, error: {e}")))?;
@@ -138,7 +138,7 @@ impl DBProxy {
     ///
     /// Return `ExecuteError::DbError` when open db failed
     #[inline]
-    pub fn new(config: &StorageConfig) -> Result<Arc<DBProxy>, ExecuteError> {
+    pub fn open(config: &StorageConfig) -> Result<Arc<DBProxy>, ExecuteError> {
         match *config {
             StorageConfig::Memory => {
                 let engine = MemoryEngine::new(&XLINETABLES)
