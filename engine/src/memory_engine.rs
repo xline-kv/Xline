@@ -1,7 +1,8 @@
 use std::{
     cmp::Ordering,
     collections::HashMap,
-    io::{self, Cursor, Read, Write},
+    io::{self, Cursor, Read, Seek, Write},
+    path::Path,
     sync::Arc,
 };
 
@@ -46,6 +47,13 @@ impl Write for MemorySnapshot {
     #[inline]
     fn flush(&mut self) -> io::Result<()> {
         self.data.flush()
+    }
+}
+
+impl Seek for MemorySnapshot {
+    #[inline]
+    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
+        self.data.seek(pos)
     }
 }
 
@@ -156,7 +164,11 @@ impl StorageEngine for MemoryEngine {
     }
 
     #[inline]
-    fn snapshot(&self) -> Result<Self::Snapshot, EngineError> {
+    fn snapshot(
+        &self,
+        _path: impl AsRef<Path>,
+        _tables: &[&'static str],
+    ) -> Result<Self::Snapshot, EngineError> {
         let inner_r = self.inner.read();
         let db = &*inner_r;
         let data = bincode::serialize(db).map_err(|e| {
@@ -168,7 +180,11 @@ impl StorageEngine for MemoryEngine {
     }
 
     #[inline]
-    fn apply_snapshot(&self, snapshot: Self::Snapshot) -> Result<(), EngineError> {
+    fn apply_snapshot(
+        &self,
+        snapshot: Self::Snapshot,
+        _tables: &[&'static str],
+    ) -> Result<(), EngineError> {
         let mut inner = self.inner.write();
         let db = &mut *inner;
         let data = snapshot.data.into_inner();
@@ -272,5 +288,19 @@ mod test {
             .map(|(key, value)| (key.as_bytes().to_vec(), value.as_bytes().to_vec()))
             .collect::<Vec<(Vec<u8>, Vec<u8>)>>();
         assert_eq!(res_3.sort(), expected_all_values.sort());
+    }
+
+    #[test]
+    fn snapshot_should_work() {
+        let engine = MemoryEngine::new(&TESTTABLES).unwrap();
+        let put = WriteOperation::new_put("kv", "key".into(), "value".into());
+        assert!(engine.write_batch(vec![put], false).is_ok());
+
+        let snapshot = engine.snapshot("", &TESTTABLES).unwrap();
+        let engine_2 = MemoryEngine::new(&TESTTABLES).unwrap();
+        assert!(engine_2.apply_snapshot(snapshot, &TESTTABLES).is_ok());
+
+        let value = engine_2.get("kv", "key").unwrap();
+        assert_eq!(value, Some("value".into()));
     }
 }
