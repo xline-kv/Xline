@@ -59,20 +59,27 @@ pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
     /// Get the value associated with a key value and the given table
     ///
     /// # Errors
-    /// Return `TableNotFound` if the given table does not exist
-    /// Return `IoError` if met some io errors
+    /// Return `EngineError::TableNotFound` if the given table does not exist
+    /// Return `EngineError` if met some errors
     fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError>;
 
     /// Get the values associated with the given keys
     ///
     /// # Errors
-    /// Return `TableNotFound` if the given table does not exist
-    /// Return `IoError` if met some io errors
+    /// Return `EngineError::TableNotFound` if the given table does not exist
+    /// Return `EngineError` if met some errors
     fn get_multi(
         &self,
         table: &str,
         keys: &[impl AsRef<[u8]>],
     ) -> Result<Vec<Option<Vec<u8>>>, EngineError>;
+
+    /// Get all the values of the given table
+    /// # Errors
+    /// Return `EngineError::TableNotFound` if the given table does not exist
+    /// Return `EngineError` if met some errors
+    #[allow(clippy::type_complexity)] // it's clear that (Vec<u8>, Vec<u8>) is a key-value pair
+    fn get_all(&self, table: &str) -> Result<Vec<(Vec<u8>, Vec<u8>)>, EngineError>;
 
     /// Commit a batch of write operations
     /// If sync is true, the write will be flushed from the operating system
@@ -80,7 +87,7 @@ pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
     /// flag is true, writes will be slower.
     ///
     /// # Errors
-    /// Return `TableNotFound` if the given table does not exist
-    /// Return `IoError` if met some io errors
+    /// Return `EngineError::TableNotFound` if the given table does not exist
+    /// Return `EngineError` if met some errors
     fn write_batch(&self, wr_ops: Vec<WriteOperation<'_>>, sync: bool) -> Result<(), EngineError>;
 }

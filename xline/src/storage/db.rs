@@ -9,7 +9,7 @@ use utils::config::StorageConfig;
 use super::{storage_api::StorageApi, ExecuteError};
 
 /// Xline Server Storage Table
-const XLINETABLES: [&str; 3] = ["kv", "lease", "auth"];
+const XLINETABLES: [&str; 5] = ["kv", "lease", "auth", "user", "role"];
 
 /// Database to store revision to kv mapping
 #[derive(Debug, Clone)]
@@ -48,7 +48,7 @@ where
         Ok(())
     }
 
-    fn get_values<K>(&self, table: &str, keys: &[K]) -> Result<Vec<Vec<u8>>, ExecuteError>
+    fn get_values<K>(&self, table: &str, keys: &[K]) -> Result<Vec<Option<Vec<u8>>>, ExecuteError>
     where
         K: AsRef<[u8]> + std::fmt::Debug + Sized,
     {
@@ -57,12 +57,26 @@ where
             .get_multi(table, keys)
             .map_err(|e| ExecuteError::DbError(format!("Failed to get keys {keys:?}: {e}")))?
             .into_iter()
-            .flatten()
             .collect::<Vec<_>>();
 
         assert_eq!(values.len(), keys.len(), "Index doesn't match with DB");
 
         Ok(values)
+    }
+
+    fn get_value<K>(&self, table: &str, key: K) -> Result<Option<Vec<u8>>, ExecuteError>
+    where
+        K: AsRef<[u8]> + std::fmt::Debug,
+    {
+        self.engine
+            .get(table, key.as_ref())
+            .map_err(|e| ExecuteError::DbError(format!("Failed to get key {key:?}: {e}")))
+    }
+
+    fn get_all(&self, table: &str) -> Result<Vec<(Vec<u8>, Vec<u8>)>, ExecuteError> {
+        self.engine.get_all(table).map_err(|e| {
+            ExecuteError::DbError(format!("Failed to get all keys from {table:?}: {e}"))
+        })
     }
 
     /// Delete key from storage
@@ -99,13 +113,30 @@ pub enum DBProxy {
 }
 
 impl StorageApi for DBProxy {
-    fn get_values<K>(&self, table: &str, keys: &[K]) -> Result<Vec<Vec<u8>>, ExecuteError>
+    fn get_values<K>(&self, table: &str, keys: &[K]) -> Result<Vec<Option<Vec<u8>>>, ExecuteError>
     where
         K: AsRef<[u8]> + std::fmt::Debug + Sized,
     {
         match *self {
             DBProxy::MemDB(ref inner_db) => inner_db.get_values(table, keys),
             DBProxy::RocksDB(ref inner_db) => inner_db.get_values(table, keys),
+        }
+    }
+
+    fn get_value<K>(&self, table: &str, key: K) -> Result<Option<Vec<u8>>, ExecuteError>
+    where
+        K: AsRef<[u8]> + std::fmt::Debug,
+    {
+        match *self {
+            DBProxy::MemDB(ref inner_db) => inner_db.get_value(table, key),
+            DBProxy::RocksDB(ref inner_db) => inner_db.get_value(table, key),
+        }
+    }
+
+    fn get_all(&self, table: &str) -> Result<Vec<(Vec<u8>, Vec<u8>)>, ExecuteError> {
+        match *self {
+            DBProxy::MemDB(ref inner_db) => inner_db.get_all(table),
+            DBProxy::RocksDB(ref inner_db) => inner_db.get_all(table),
         }
     }
 

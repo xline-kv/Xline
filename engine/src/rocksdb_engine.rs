@@ -83,6 +83,21 @@ impl StorageEngine for RocksEngine {
     }
 
     #[inline]
+    fn get_all(&self, table: &str) -> Result<Vec<(Vec<u8>, Vec<u8>)>, EngineError> {
+        if let Some(cf) = self.inner.cf_handle(table) {
+            self.inner
+                .iterator_cf(&cf, rocksdb::IteratorMode::Start)
+                .map(|v| {
+                    v.map(|(key, value)| (key.to_vec(), value.to_vec()))
+                        .map_err(EngineError::from)
+                })
+                .collect()
+        } else {
+            Err(EngineError::TableNotFound(table.to_owned()))
+        }
+    }
+
+    #[inline]
     fn write_batch(&self, wr_ops: Vec<WriteOperation<'_>>, sync: bool) -> Result<(), EngineError> {
         let mut batch = WriteBatchWithTransaction::<false>::default();
 
@@ -198,6 +213,39 @@ mod test {
         let get_key_2: Vec<u8> = vec![3, 3, 3, 3];
         assert!(engine.get("kv", &get_key_1).unwrap().is_some());
         assert!(engine.get("kv", &get_key_2).unwrap().is_none());
+        drop(engine);
+        destroy(&data_dir);
+    }
+
+    #[test]
+    fn get_operation_should_success() {
+        let data_dir = PathBuf::from("/tmp/get_operation_should_success");
+        let engine = RocksEngine::new(&data_dir, &TESTTABLES).unwrap();
+        let test_set = vec![("hello", "hello"), ("world", "world"), ("foo", "foo")];
+        let batch = test_set.iter().map(|&(key, value)| {
+            WriteOperation::new_put("kv", key.as_bytes().to_vec(), value.as_bytes().to_vec())
+        });
+        let res = engine.write_batch(batch.collect(), false);
+        assert!(res.is_ok());
+
+        let res_1 = engine.get("kv", "hello").unwrap();
+        assert_eq!(res_1, Some("hello".as_bytes().to_vec()));
+        let multi_keys = vec!["hello", "world", "bar"];
+        let expected_multi_values = vec![
+            Some("hello".as_bytes().to_vec()),
+            Some("world".as_bytes().to_vec()),
+            None,
+        ];
+        let res_2 = engine.get_multi("kv", &multi_keys).unwrap();
+        assert_eq!(multi_keys.len(), res_2.len());
+        assert_eq!(res_2, expected_multi_values);
+
+        let mut res_3 = engine.get_all("kv").unwrap();
+        let mut expected_all_values = test_set
+            .into_iter()
+            .map(|(key, value)| (key.as_bytes().to_vec(), value.as_bytes().to_vec()))
+            .collect::<Vec<(Vec<u8>, Vec<u8>)>>();
+        assert_eq!(res_3.sort(), expected_all_values.sort());
         drop(engine);
         destroy(&data_dir);
     }
