@@ -288,6 +288,7 @@ where
         let values = self.db.get_values(&self.table, &revisions)?;
         let kvs = values
             .into_iter()
+            .flatten()
             .map(|v| KeyValue::decode(v.as_slice()))
             .collect::<Result<_, _>>()
             .map_err(|e| {
