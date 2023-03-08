@@ -1,15 +1,18 @@
 # Usage
 
 ## Configurations
+
 The Xline configuration file is written in toml format and the default path is /etc/xline_server.conf. If you need to change the path of the configuration file, you can set it via the environment variable XLINE_SERVER_CONFIG.
 
 The configuration file has four sections, as follows:
+
 1. cluster section: contains information about curp cluster, including basic information, cluster member configuration, curp server timeout settings (optional), curp client timeout settings (optional).
 2. log section: contains the Xline log-related configuration, where path is required, rotation (optional, default value is 'daily'), level (optional, default value is 'info')
 3. trace section: contains the jaeger's trace mode (online or offline), trace level and the log directory in offline mode
 4. auth section: contains the address of the key pair required for authentication
 
 A minimum config file looks like:
+
 ```toml
 [cluster]
 name = 'node1'                  # server identity
@@ -35,9 +38,10 @@ auth_public_key = '/etc/xline/public_key.pem'
 auth_private_key = '/etc/xline/private_key.pem'
 ```
 
-For tuning and development purpose, the cluster section provides two subsections, server_timeout, and client_timeout, with the following definitions and default values.
+For tuning and development purpose, the cluster section provides two subsections, curp_cfg, and client_timeout, with the following definitions and default values.
+
 ```toml
-[cluster.server_timeout]
+[cluster.curp_config]
 heartbeat_interval = '300ms'    # the curp heartbeat(tick) interval of which default value is 300ms
 wait_synced_timeout = '5s'      # server wait synced timeout
 rpc_timeout = '50ms'            # the rpc timeout of which default value is 50ms
@@ -56,8 +60,10 @@ retry_timeout = '50ms'          # the rpc retry interval, of which the default i
 ```
 
 ## Boot up an Xline cluster
+
 1. Download binary from [release]() page.
 2. Use the following command to start cluster:
+
     ```bash
     # Run in 3 terminals. If you want more logs, add `RUST_LOG=debug` before the command.
 
@@ -67,8 +73,10 @@ retry_timeout = '50ms'          # the rpc retry interval, of which the default i
 
     ./xline --name node3 --members node1=127.0.0.1:2379,node2=127.0.0.1:2380,node3=127.0.0.1:2381
     ```
+
 3. Download or build `etcdctl` from [etcd](https://github.com/etcd-io/etcd) project.
 4. Use `etcdctl` to operate the cluster:
+
     ```bash
     etcdctl --endpoints=http://127.0.0.1:2379 put foo bar
 

@@ -67,8 +67,8 @@ pub struct ClusterConfig {
     is_leader: bool,
     /// Curp server timeout settings
     #[getset(get = "pub")]
-    #[serde(default = "ServerTimeout::default")]
-    server_timeout: ServerTimeout,
+    #[serde(default = "CurpConfig::default")]
+    curp_config: CurpConfig,
     /// Curp client timeout settings
     #[getset(get = "pub")]
     #[serde(default = "ClientTimeout::default")]
@@ -83,57 +83,56 @@ impl ClusterConfig {
         name: String,
         members: HashMap<String, String>,
         is_leader: bool,
-        server_timeout: ServerTimeout,
+        curp: CurpConfig,
         client_timeout: ClientTimeout,
     ) -> Self {
         Self {
             name,
             members,
             is_leader,
-            server_timeout,
+            curp_config: curp,
             client_timeout,
         }
     }
 }
 
 /// Curp server timeout settings
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Getters)]
-pub struct ServerTimeout {
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
+#[allow(clippy::module_name_repetitions, clippy::exhaustive_structs)]
+pub struct CurpConfig {
     /// Heartbeat Interval
-    #[getset(get = "pub")]
     #[serde(with = "duration_format", default = "default_heartbeat_interval")]
-    heartbeat_interval: Duration,
+    pub heartbeat_interval: Duration,
 
     /// Curp wait sync timeout
-    #[getset(get = "pub")]
     #[serde(
         with = "duration_format",
         default = "default_server_wait_synced_timeout"
     )]
-    wait_synced_timeout: Duration,
+    pub wait_synced_timeout: Duration,
 
     /// Curp propose retry timeout
-    #[getset(get = "pub")]
     #[serde(with = "duration_format", default = "default_retry_timeout")]
-    retry_timeout: Duration,
+    pub retry_timeout: Duration,
 
     /// Curp rpc timeout
-    #[getset(get = "pub")]
     #[serde(with = "duration_format", default = "default_rpc_timeout")]
-    rpc_timeout: Duration,
+    pub rpc_timeout: Duration,
 
     /// How many ticks a follower is allowed to miss before it starts a new round of election
     /// The actual timeout will be randomized and in between heartbeat_interval * [follower_timeout_ticks, 2 * follower_timeout_ticks)
-    #[getset(get = "pub")]
     #[serde(default = "default_follower_timeout_ticks")]
-    follower_timeout_ticks: u8,
+    pub follower_timeout_ticks: u8,
 
     /// How many ticks a candidate needs to wait before it starts a new round of election
     /// It should be smaller than `follower_timeout_ticks`
     /// The actual timeout will be randomized and in between heartbeat_interval * [candidate_timeout_ticks, 2 * candidate_timeout_ticks)
-    #[getset(get = "pub")]
     #[serde(default = "default_candidate_timeout_ticks")]
-    candidate_timeout_ticks: u8,
+    pub candidate_timeout_ticks: u8,
+
+    /// Curp storage path
+    #[serde(default = "default_curp_data_dir")]
+    pub data_dir: PathBuf,
 }
 
 /// default heartbeat interval
@@ -192,7 +191,14 @@ pub fn default_follower_timeout_ticks() -> u8 {
     5
 }
 
-impl ServerTimeout {
+/// default curp data path
+#[must_use]
+#[inline]
+pub fn default_curp_data_dir() -> PathBuf {
+    PathBuf::from("/var/lib/curp")
+}
+
+impl CurpConfig {
     /// Create a new server timeout
     #[must_use]
     #[inline]
@@ -203,6 +209,7 @@ impl ServerTimeout {
         rpc_timeout: Duration,
         follower_timeout_ticks: u8,
         candidate_timeout_ticks: u8,
+        data_dir: PathBuf,
     ) -> Self {
         Self {
             heartbeat_interval,
@@ -211,11 +218,12 @@ impl ServerTimeout {
             rpc_timeout,
             follower_timeout_ticks,
             candidate_timeout_ticks,
+            data_dir,
         }
     }
 }
 
-impl Default for ServerTimeout {
+impl Default for CurpConfig {
     #[inline]
     fn default() -> Self {
         Self {
@@ -225,6 +233,7 @@ impl Default for ServerTimeout {
             rpc_timeout: default_rpc_timeout(),
             follower_timeout_ticks: default_follower_timeout_ticks(),
             candidate_timeout_ticks: default_candidate_timeout_ticks(),
+            data_dir: default_curp_data_dir(),
         }
     }
 }
@@ -525,7 +534,7 @@ mod tests {
             node2 = '127.0.0.1:2380'
             node3 = '127.0.0.1:2381'
 
-            [cluster.server_timeout]
+            [cluster.curp_config]
             heartbeat_interval = '200ms'
             wait_synced_timeout = '100ms'
             rpc_timeout = '100ms'
@@ -552,13 +561,14 @@ mod tests {
         )
         .unwrap();
 
-        let server_timeout = ServerTimeout::new(
+        let curp_config = CurpConfig::new(
             Duration::from_millis(200),
             Duration::from_millis(100),
             Duration::from_micros(100),
             Duration::from_millis(100),
             default_follower_timeout_ticks(),
             default_candidate_timeout_ticks(),
+            default_curp_data_dir(),
         );
 
         let client_timeout = ClientTimeout::new(
@@ -577,7 +587,7 @@ mod tests {
                     ("node3".to_owned(), "127.0.0.1:2381".to_owned()),
                 ]),
                 true,
-                server_timeout,
+                curp_config,
                 client_timeout
             )
         );
@@ -645,7 +655,7 @@ mod tests {
                     ("node3".to_owned(), "127.0.0.1:2381".to_owned()),
                 ]),
                 true,
-                ServerTimeout::default(),
+                CurpConfig::default(),
                 ClientTimeout::default()
             )
         );

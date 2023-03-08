@@ -40,7 +40,7 @@ impl<C: 'static + Command> RawCurp<C> {
             cmd_board,
             spec_pool,
             uncommitted_pool,
-            Arc::new(ServerTimeout::default()),
+            Arc::new(CurpConfig::default()),
             Box::new(exe_tx),
             sync_tx,
             calibrate_tx,

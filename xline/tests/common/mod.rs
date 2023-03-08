@@ -1,12 +1,13 @@
 use std::collections::{BTreeMap, HashMap};
 
 use jsonwebtoken::{DecodingKey, EncodingKey};
+use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use tokio::{
     net::TcpListener,
     sync::broadcast::{self, Sender},
     time::{self, Duration},
 };
-use utils::config::{ClientTimeout, ServerTimeout, StorageConfig};
+use utils::config::{ClientTimeout, CurpConfig, StorageConfig};
 use xline::{client::Client, server::XlineServer, storage::db::DBProxy};
 
 /// Cluster
@@ -62,7 +63,10 @@ impl Cluster {
                     all_members,
                     is_leader,
                     Self::test_key_pair(),
-                    ServerTimeout::default(),
+                    CurpConfig {
+                        data_dir: format!("/tmp/curp-{}", random_id()).into(),
+                        ..Default::default()
+                    },
                     ClientTimeout::default(),
                     db,
                 )
@@ -106,4 +110,12 @@ impl Cluster {
         let decoding_key = DecodingKey::from_rsa_pem(public_key).unwrap();
         Some((encoding_key, decoding_key))
     }
+}
+
+fn random_id() -> String {
+    thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(4)
+        .map(char::from)
+        .collect()
 }
