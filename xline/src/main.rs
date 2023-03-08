@@ -123,9 +123,12 @@ use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{fmt::format, prelude::*};
 use utils::{
     config::{
-        default_candidate_timeout_ticks, default_follower_timeout_ticks, file_appender, AuthConfig,
-        ClientTimeout, ClusterConfig, LevelConfig, LogConfig, RotationConfig, ServerTimeout,
-        StorageConfig, TraceConfig, XlineServerConfig,
+        default_candidate_timeout_ticks, default_client_wait_synced_timeout,
+        default_follower_timeout_ticks, default_heartbeat_interval, default_log_level,
+        default_propose_timeout, default_retry_timeout, default_rotation, default_rpc_timeout,
+        default_server_wait_synced_timeout, file_appender, AuthConfig, ClientTimeout,
+        ClusterConfig, LevelConfig, LogConfig, RotationConfig, ServerTimeout, StorageConfig,
+        TraceConfig, XlineServerConfig,
     },
     parse_duration, parse_log_level, parse_members, parse_rotation,
 };
@@ -160,62 +163,61 @@ struct ServerArgs {
     #[clap(long)]
     jaeger_online: bool,
     /// Trace level of jaeger
-    #[clap(long, value_parser = parse_log_level, default_value = "info")]
+    #[clap(long, value_parser = parse_log_level, default_value_t = default_log_level())]
     jaeger_level: LevelConfig,
     /// Log file path
     #[clap(long, default_value = "/var/log/xline")]
     log_file: PathBuf,
     /// Log rotate strategy, eg: never, hourly, daily
-    #[clap(long, value_parser = parse_rotation, default_value = "daily")]
+    #[clap(long, value_parser = parse_rotation, default_value_t = default_rotation())]
     log_rotate: RotationConfig,
     /// Log verbosity level, eg: trace, debug, info, warn, error
-    #[clap(long, value_parser = parse_log_level, default_value = "info")]
+    #[clap(long, value_parser = parse_log_level, default_value_t = default_log_level())]
     log_level: LevelConfig,
     /// Heartbeat interval between curp server nodes
-    #[clap(long, value_parser = parse_duration, default_value = "300ms")]
-    heartbeat_interval: Duration,
+    #[clap(long, value_parser = parse_duration)]
+    heartbeat_interval: Option<Duration>,
     /// Curp wait sync timeout
-    #[clap(long, value_parser = parse_duration, default_value = "5s")]
-    server_wait_synced_timeout: Duration,
+    #[clap(long, value_parser = parse_duration)]
+    server_wait_synced_timeout: Option<Duration>,
     /// Curp propose retry timeout
-    #[clap(long, value_parser = parse_duration, default_value = "800ms")]
-    retry_timeout: Duration,
+    #[clap(long, value_parser = parse_duration)]
+    retry_timeout: Option<Duration>,
     /// Curp rpc timeout
-    #[clap(long, value_parser = parse_duration, default_value = "50ms")]
-    rpc_timeout: Duration,
+    #[clap(long, value_parser = parse_duration)]
+    rpc_timeout: Option<Duration>,
     /// Follower election timeout ticks
     #[clap(long, default_value_t = default_follower_timeout_ticks())]
     follower_timeout_ticks: u8,
     /// Candidate election timeout ticks
     #[clap(long, default_value_t = default_candidate_timeout_ticks())]
     candidate_timeout_ticks: u8,
-    /// Curp client timeout
-    #[clap(long, value_parser = parse_duration, default_value = "1s")]
-    client_timeout: Duration,
     /// Curp client wait synced timeout
-    #[clap(long, value_parser = parse_duration, default_value = "2s")]
-    client_wait_synced_timeout: Duration,
+    #[clap(long, value_parser = parse_duration)]
+    client_wait_synced_timeout: Option<Duration>,
     /// Propose request timeout
-    #[clap(long, value_parser = parse_duration, default_value = "1s")]
-    client_propose_timeout: Duration,
+    #[clap(long, value_parser = parse_duration)]
+    client_propose_timeout: Option<Duration>,
     /// Curp client retry timeout
-    #[clap(long, value_parser = parse_duration, default_value = "50ms")]
-    client_retry_timeout: Duration,
+    #[clap(long, value_parser = parse_duration)]
+    client_retry_timeout: Option<Duration>,
     /// Storage engine
-    #[clap(long, default_value = "rocksdb")]
+    #[clap(long)]
     storage_engine: String,
     /// DB directory
-    #[clap(long, default_value = "/usr/local/xline/data-dir")]
+    #[clap(long)]
     data_dir: PathBuf,
 }
 
 impl From<ServerArgs> for XlineServerConfig {
     fn from(args: ServerArgs) -> Self {
         let server_timeout = ServerTimeout::new(
-            args.heartbeat_interval,
-            args.server_wait_synced_timeout,
-            args.retry_timeout,
-            args.rpc_timeout,
+            args.heartbeat_interval
+                .unwrap_or_else(default_heartbeat_interval),
+            args.server_wait_synced_timeout
+                .unwrap_or_else(default_server_wait_synced_timeout),
+            args.retry_timeout.unwrap_or_else(default_retry_timeout),
+            args.rpc_timeout.unwrap_or_else(default_rpc_timeout),
             args.follower_timeout_ticks,
             args.candidate_timeout_ticks,
         );
@@ -227,9 +229,12 @@ impl From<ServerArgs> for XlineServerConfig {
         };
 
         let client_timeout = ClientTimeout::new(
-            args.client_wait_synced_timeout,
-            args.client_propose_timeout,
-            args.client_retry_timeout,
+            args.client_wait_synced_timeout
+                .unwrap_or_else(default_client_wait_synced_timeout),
+            args.client_propose_timeout
+                .unwrap_or_else(default_propose_timeout),
+            args.client_retry_timeout
+                .unwrap_or_else(default_retry_timeout),
         );
         let cluster = ClusterConfig::new(
             args.name,

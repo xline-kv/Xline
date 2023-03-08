@@ -13,6 +13,8 @@ run_xline() {
     cmd="/usr/local/bin/xline \
     --name node${1} \
     --members ${MEMBERS} \
+    --storage-engine rocksdb \
+    --data-dir /usr/local/xline/data-dir \
     --auth-public-key /mnt/public.pem \
     --auth-private-key /mnt/private.pem"
 
@@ -37,7 +39,7 @@ run_cluster() {
 # stop all containers
 stop_all() {
     echo stopping
-    docker stop $(docker ps -a -q)
+    docker stop node1 node2 node3 node4
     sleep 1
     echo stopped
 }
