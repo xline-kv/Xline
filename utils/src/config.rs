@@ -13,7 +13,6 @@ pub struct XlineServerConfig {
     cluster: ClusterConfig,
     /// xline storage configuration object
     #[getset(get = "pub")]
-    #[serde(default = "StorageConfig::default")]
     storage: StorageConfig,
     /// log configuration object
     #[getset(get = "pub")]
@@ -296,13 +295,6 @@ pub enum StorageConfig {
     RocksDB(PathBuf),
 }
 
-impl Default for StorageConfig {
-    #[inline]
-    fn default() -> Self {
-        StorageConfig::RocksDB(PathBuf::from("/usr/local/xline/data-dir"))
-    }
-}
-
 /// Log configuration object
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
@@ -370,6 +362,17 @@ pub enum RotationConfig {
     Daily,
     /// Never rotate log file
     Never,
+}
+
+impl std::fmt::Display for RotationConfig {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            RotationConfig::Hourly => write!(f, "hourly"),
+            RotationConfig::Daily => write!(f, "daily"),
+            RotationConfig::Never => write!(f, "never"),
+        }
+    }
 }
 
 /// `RotationConfig` deserialization formatter
@@ -615,6 +618,10 @@ mod tests {
 
                 [log]
                 path = '/var/log/xline'
+
+                [storage]
+                engine = 'rocksdb'
+                data_dir = '/usr/local/xline/data-dir'
 
                 [trace]
                 jaeger_online = false
