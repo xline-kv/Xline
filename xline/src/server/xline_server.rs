@@ -10,8 +10,7 @@ use tokio::{
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
 use tracing::info;
-use utils::config::{ClientTimeout, ServerTimeout};
-use uuid::Uuid;
+use utils::config::{ClientTimeout, CurpConfig};
 
 use super::{
     auth_server::AuthServer,
@@ -55,7 +54,7 @@ where
     /// Consensus client
     client: Arc<Client<Command>>,
     /// Curp server timeout
-    server_timeout: Arc<ServerTimeout>,
+    curp_cfg: Arc<CurpConfig>,
     /// Id generator
     id_gen: Arc<IdGenerator>,
 }
@@ -79,7 +78,7 @@ where
         all_members: HashMap<String, String>,
         is_leader: bool,
         key_pair: Option<(EncodingKey, DecodingKey)>,
-        server_timeout: ServerTimeout,
+        curp_config: CurpConfig,
         client_timeout: ClientTimeout,
         storage: Arc<S>,
     ) -> Self {
@@ -88,7 +87,7 @@ where
         let id_gen = Arc::new(IdGenerator::new(0));
         let leader_id = is_leader.then(|| name.clone());
         let state = Arc::new(State::new(name, leader_id, all_members.clone()));
-        let server_timeout = Arc::new(server_timeout);
+        let curp_config = Arc::new(curp_config);
         let (del_tx, del_rx) = mpsc::channel(CHANNEL_SIZE);
         let (lease_cmd_tx, lease_cmd_rx) = mpsc::channel(CHANNEL_SIZE);
         let lease_storage = Arc::new(LeaseStore::new(
@@ -117,7 +116,7 @@ where
             auth_storage,
             lease_storage,
             client,
-            server_timeout,
+            curp_cfg: curp_config,
             id_gen,
         }
     }
@@ -221,10 +220,8 @@ where
                 Arc::clone(&self.auth_storage),
                 Arc::clone(&self.lease_storage),
             ),
-            Arc::clone(&self.server_timeout),
+            Arc::clone(&self.curp_cfg),
             None,
-            // FIXME: real storage path
-            format!("/tmp/xline/curp-{}", Uuid::new_v4()),
         )
         .await;
         let _handle = tokio::spawn({

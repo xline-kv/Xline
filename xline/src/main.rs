@@ -127,7 +127,7 @@ use utils::{
         default_follower_timeout_ticks, default_heartbeat_interval, default_log_level,
         default_propose_timeout, default_retry_timeout, default_rotation, default_rpc_timeout,
         default_server_wait_synced_timeout, file_appender, AuthConfig, ClientTimeout,
-        ClusterConfig, LevelConfig, LogConfig, RotationConfig, ServerTimeout, StorageConfig,
+        ClusterConfig, CurpConfig, LevelConfig, LogConfig, RotationConfig, StorageConfig,
         TraceConfig, XlineServerConfig,
     },
     parse_duration, parse_log_level, parse_members, parse_rotation,
@@ -207,11 +207,13 @@ struct ServerArgs {
     /// DB directory
     #[clap(long)]
     data_dir: PathBuf,
+    /// Curp directory
+    curp_dir: Option<PathBuf>,
 }
 
 impl From<ServerArgs> for XlineServerConfig {
     fn from(args: ServerArgs) -> Self {
-        let server_timeout = ServerTimeout::new(
+        let curp_config = CurpConfig::new(
             args.heartbeat_interval
                 .unwrap_or_else(default_heartbeat_interval),
             args.server_wait_synced_timeout
@@ -220,6 +222,11 @@ impl From<ServerArgs> for XlineServerConfig {
             args.rpc_timeout.unwrap_or_else(default_rpc_timeout),
             args.follower_timeout_ticks,
             args.candidate_timeout_ticks,
+            args.curp_dir.unwrap_or_else(|| {
+                let mut path = args.data_dir.clone();
+                path.push("curp");
+                path
+            }),
         );
 
         let storage = match args.storage_engine.as_str() {
@@ -240,7 +247,7 @@ impl From<ServerArgs> for XlineServerConfig {
             args.name,
             args.members,
             args.is_leader,
-            server_timeout,
+            curp_config,
             client_timeout,
         );
         let log = LogConfig::new(args.log_file, args.log_rotate, args.log_level);
@@ -393,7 +400,7 @@ async fn main() -> Result<()> {
         cluster_config.members().clone(),
         *is_leader,
         key_pair,
-        *cluster_config.server_timeout(),
+        cluster_config.curp_config().clone(),
         *cluster_config.client_timeout(),
         db_proxy,
     )

@@ -3,6 +3,7 @@ use std::{
     error::Error,
     fmt::Display,
     iter,
+    path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -18,7 +19,11 @@ use parking_lot::Mutex;
 use tokio::{net::TcpListener, runtime::Runtime, sync::mpsc};
 use tokio_stream::wrappers::TcpListenerStream;
 use tracing::debug;
-use utils::config::{ClientTimeout, ServerTimeout};
+use utils::config::{
+    default_candidate_timeout_ticks, default_follower_timeout_ticks, default_heartbeat_interval,
+    default_retry_timeout, default_rpc_timeout, default_server_wait_synced_timeout, ClientTimeout,
+    CurpConfig,
+};
 
 use crate::common::{
     random_id,
@@ -154,10 +159,17 @@ impl CurpGroup {
                         others.into_iter().collect(),
                         listener,
                         ce,
-                        Arc::new(ServerTimeout::default()),
+                        Arc::new(CurpConfig::new(
+                            default_heartbeat_interval(),
+                            default_server_wait_synced_timeout(),
+                            default_retry_timeout(),
+                            default_rpc_timeout(),
+                            default_follower_timeout_ticks(),
+                            default_candidate_timeout_ticks(),
+                            PathBuf::from(storage_path_c),
+                        )),
                         Some(Box::new(TestTxFilter::new(Arc::clone(&switch_c)))),
                         Some(reachable_layer),
-                        storage_path_c,
                     ));
                 });
 
@@ -274,10 +286,17 @@ impl CurpGroup {
                 others.into_iter().collect(),
                 listener,
                 ce,
-                Arc::new(ServerTimeout::default()),
+                Arc::new(CurpConfig::new(
+                    default_heartbeat_interval(),
+                    default_server_wait_synced_timeout(),
+                    default_retry_timeout(),
+                    default_rpc_timeout(),
+                    default_follower_timeout_ticks(),
+                    default_candidate_timeout_ticks(),
+                    PathBuf::from(storage_path),
+                )),
                 Some(Box::new(TestTxFilter::new(Arc::clone(&switch_c)))),
                 Some(reachable_layer),
-                storage_path,
             ));
         });
 

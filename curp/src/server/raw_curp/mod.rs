@@ -28,7 +28,7 @@ use tracing::{
     log::{log_enabled, Level},
 };
 use utils::{
-    config::ServerTimeout,
+    config::CurpConfig,
     parking_lot_lock::{MutexMap, RwLockMap},
 };
 
@@ -122,8 +122,8 @@ struct Context<C: Command> {
     id: ServerId,
     /// Other server ids
     others: HashSet<ServerId>,
-    /// Timeout
-    timeout: Arc<ServerTimeout>,
+    /// Config
+    cfg: Arc<CurpConfig>,
     /// Cmd board for tracking the cmd sync results
     cb: CmdBoardRef<C>,
     /// Speculative pool
@@ -149,7 +149,7 @@ impl<C: Command> Debug for Context<C> {
         f.debug_struct("Context")
             .field("id", &self.id)
             .field("others", &self.others)
-            .field("timeout", &self.timeout)
+            .field("config", &self.cfg)
             .field("cb", &self.cb)
             .field("sp", &self.sp)
             .field("leader_tx", &self.leader_tx)
@@ -571,7 +571,7 @@ impl<C: 'static + Command> RawCurp<C> {
         cmb_board: CmdBoardRef<C>,
         spec_pool: SpecPoolRef<C>,
         uncommitted_pool: UncommittedPoolRef<C>,
-        timeout: Arc<ServerTimeout>,
+        cfg: Arc<CurpConfig>,
         cmd_tx: Box<dyn CmdExeSenderApi<C>>,
         sync_tx: mpsc::UnboundedSender<usize>,
         calibrate_tx: mpsc::UnboundedSender<ServerId>,
@@ -585,8 +585,8 @@ impl<C: 'static + Command> RawCurp<C> {
                 None,
                 Role::Follower,
                 None,
-                *timeout.follower_timeout_ticks(),
-                *timeout.candidate_timeout_ticks(),
+                cfg.follower_timeout_ticks,
+                cfg.candidate_timeout_ticks,
             )),
             lst: RwLock::new(LeaderState::new(next_index, match_index)),
             cst: Mutex::new(CandidateState::new()),
@@ -598,7 +598,7 @@ impl<C: 'static + Command> RawCurp<C> {
                 sp: spec_pool,
                 ucp: uncommitted_pool,
                 leader_tx: broadcast::channel(1).0,
-                timeout,
+                cfg,
                 election_tick: AtomicU8::new(0),
                 hb_opt: AtomicBool::new(false),
                 cmd_tx,
@@ -623,7 +623,7 @@ impl<C: 'static + Command> RawCurp<C> {
         cmd_board: CmdBoardRef<C>,
         spec_pool: SpecPoolRef<C>,
         uncommitted_pool: UncommittedPoolRef<C>,
-        timeout: Arc<ServerTimeout>,
+        cfg: Arc<CurpConfig>,
         cmd_tx: Box<dyn CmdExeSenderApi<C>>,
         sync_tx: mpsc::UnboundedSender<usize>,
         calibrate_tx: mpsc::UnboundedSender<ServerId>,
@@ -639,7 +639,7 @@ impl<C: 'static + Command> RawCurp<C> {
             cmd_board,
             spec_pool,
             uncommitted_pool,
-            timeout,
+            cfg,
             cmd_tx,
             sync_tx,
             calibrate_tx,
@@ -730,9 +730,9 @@ impl<C: 'static + Command> RawCurp<C> {
         self.ctx.hb_opt.store(true, Ordering::Relaxed);
     }
 
-    /// Get a reference to `ServerTimeout`
-    pub(super) fn timeout(&self) -> &ServerTimeout {
-        self.ctx.timeout.as_ref()
+    /// Get a reference to `CurpConfig`
+    pub(super) fn cfg(&self) -> &CurpConfig {
+        self.ctx.cfg.as_ref()
     }
 }
 

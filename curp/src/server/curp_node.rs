@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Debug, path::Path, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
 use event_listener::Event;
@@ -12,7 +12,7 @@ use tokio::{
     time::MissedTickBehavior,
 };
 use tracing::{debug, error, info, warn};
-use utils::config::ServerTimeout;
+use utils::config::CurpConfig;
 
 use super::{
     cmd_board::{CmdBoardRef, CommandBoard},
@@ -49,7 +49,7 @@ pub(super) enum CurpError {
     #[error("encode or decode error")]
     EncodeDecode(#[from] bincode::Error),
     /// Storage error
-    #[error("storage error, {0}")]
+    #[error("storage error, {0:?}")]
     Storage(#[from] Box<dyn std::error::Error>),
 }
 
@@ -184,7 +184,7 @@ impl<C: 'static + Command> CurpNode<C> {
                     .or_insert_with(Event::new)
                     .listen()
             };
-            let wait_synced_timeout = *self.curp.timeout().wait_synced_timeout();
+            let wait_synced_timeout = self.curp.cfg().wait_synced_timeout;
             if tokio::time::timeout(wait_synced_timeout, listener)
                 .await
                 .is_err()
@@ -214,7 +214,7 @@ impl<C: 'static + Command> CurpNode<C> {
 impl<C: 'static + Command> CurpNode<C> {
     /// Tick periodically
     async fn tick_task(curp: Arc<RawCurp<C>>, connects: Connects) {
-        let heartbeat_interval = *curp.timeout().heartbeat_interval();
+        let heartbeat_interval = curp.cfg().heartbeat_interval;
         // wait for some random time before tick starts to minimize vote split possibility
         let rand = thread_rng()
             .gen_range(0..heartbeat_interval.as_millis())
@@ -272,9 +272,8 @@ impl<C: 'static + Command> CurpNode<C> {
         is_leader: bool,
         others: HashMap<ServerId, String>,
         cmd_executor: CE,
-        timeout: Arc<ServerTimeout>,
+        curp_cfg: Arc<CurpConfig>,
         tx_filter: Option<Box<dyn TxFilter>>,
-        storage_path: impl AsRef<Path>,
     ) -> Result<Self, CurpError> {
         let (sync_tx, sync_rx) = mpsc::unbounded_channel();
         let (calibrate_tx, calibrate_rx) = mpsc::unbounded_channel();
@@ -285,7 +284,8 @@ impl<C: 'static + Command> CurpNode<C> {
         let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
 
         let storage = Arc::new(
-            RocksDBStorage::new(storage_path).map_err(|err| CurpError::Storage(Box::new(err)))?,
+            RocksDBStorage::new(&curp_cfg.data_dir)
+                .map_err(|err| CurpError::Storage(Box::new(err)))?,
         );
 
         // start cmd workers
@@ -307,7 +307,7 @@ impl<C: 'static + Command> CurpNode<C> {
                 Arc::clone(&cmd_board),
                 Arc::clone(&spec_pool),
                 uncommitted_pool,
-                timeout,
+                curp_cfg,
                 Box::new(exe_tx),
                 sync_tx,
                 calibrate_tx,
@@ -327,7 +327,7 @@ impl<C: 'static + Command> CurpNode<C> {
                 Arc::clone(&cmd_board),
                 Arc::clone(&spec_pool),
                 uncommitted_pool,
-                timeout,
+                curp_cfg,
                 Box::new(exe_tx),
                 sync_tx,
                 calibrate_tx,
@@ -375,7 +375,7 @@ impl<C: 'static + Command> CurpNode<C> {
         connects: &Connects,
         hbs: HashMap<ServerId, AppendEntries<C>>,
     ) {
-        let rpc_timeout = *curp.timeout().rpc_timeout();
+        let rpc_timeout = curp.cfg().rpc_timeout;
         let resps = hbs
             .into_iter()
             .map(|(id, hb)| {
@@ -426,7 +426,7 @@ impl<C: 'static + Command> CurpNode<C> {
         connects: &Connects,
         votes: HashMap<ServerId, Vote>,
     ) {
-        let rpc_timeout = *curp.timeout().rpc_timeout();
+        let rpc_timeout = curp.cfg().rpc_timeout;
         let resps = votes
             .into_iter()
             .map(|(id, vote)| {
@@ -478,10 +478,7 @@ impl<C: 'static + Command> CurpNode<C> {
     #[allow(clippy::integer_arithmetic, clippy::indexing_slicing)] // log.len() >= 1 because we have a fake log[0], indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
     async fn leader_calibrates_follower(curp: Arc<RawCurp<C>>, connect: Arc<dyn ConnectApi>) {
         debug!("{} starts calibrating follower {}", curp.id(), connect.id());
-        let (rpc_timeout, retry_timeout) = (
-            *curp.timeout().rpc_timeout(),
-            *curp.timeout().retry_timeout(),
-        );
+        let (rpc_timeout, retry_timeout) = (curp.cfg().rpc_timeout, curp.cfg().retry_timeout);
         loop {
             // send append entry
             let Ok(ae) = curp.append_entries(connect.id()) else {
@@ -590,10 +587,7 @@ impl<C: 'static + Command> CurpNode<C> {
         i: usize,
         req: AppendEntriesRequest,
     ) {
-        let (rpc_timeout, retry_timeout) = (
-            *curp.timeout().rpc_timeout(),
-            *curp.timeout().retry_timeout(),
-        );
+        let (rpc_timeout, retry_timeout) = (curp.cfg().rpc_timeout, curp.cfg().retry_timeout);
         // send log[i] until succeed
         loop {
             let resp = connect.append_entries(req.clone(), rpc_timeout).await;
