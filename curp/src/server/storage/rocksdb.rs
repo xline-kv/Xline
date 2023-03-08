@@ -1,10 +1,9 @@
 use std::{marker::PhantomData, path::Path};
 
 use async_trait::async_trait;
-use engine::{error::EngineError, rocksdb_engine::RocksEngine, StorageEngine, WriteOperation};
-use thiserror::Error;
+use engine::{rocksdb_engine::RocksEngine, StorageEngine, WriteOperation};
 
-use super::StorageApi;
+use super::{StorageApi, StorageError};
 use crate::{cmd::Command, log_entry::LogEntry, message::ServerId};
 
 /// Key for persisted state
@@ -12,17 +11,6 @@ const VOTE_FOR: &[u8] = b"VoteFor";
 
 /// Column family name for curp storage
 const CF: &str = "curp";
-
-/// `RocksDBStorage` error
-#[derive(Error, Debug)]
-pub(in crate::server) enum Error {
-    /// Serialize or deserialize error
-    #[error("bincode error")]
-    Bincode(#[from] bincode::Error),
-    /// Rocksdb error
-    #[error("rocksdb error")]
-    RocksDB(#[from] EngineError),
-}
 
 /// `RocksDB` storage implementation
 pub(in crate::server) struct RocksDBStorage<C> {
@@ -37,11 +25,7 @@ impl<C: 'static + Command> StorageApi for RocksDBStorage<C> {
     /// Command
     type Command = C;
 
-    async fn flush_voted_for(
-        &self,
-        term: u64,
-        voted_for: ServerId,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    async fn flush_voted_for(&self, term: u64, voted_for: ServerId) -> Result<(), StorageError> {
         let bytes = bincode::serialize(&(term, voted_for))?;
         let op = WriteOperation::new_put(CF, VOTE_FOR.to_vec(), bytes);
         self.db.write_batch(vec![op], true)?;
@@ -49,10 +33,7 @@ impl<C: 'static + Command> StorageApi for RocksDBStorage<C> {
         Ok(())
     }
 
-    async fn put_log_entry(
-        &self,
-        entry: LogEntry<Self::Command>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    async fn put_log_entry(&self, entry: LogEntry<Self::Command>) -> Result<(), StorageError> {
         let bytes = bincode::serialize(&entry)?;
         let op = WriteOperation::new_put(CF, entry.index.to_be_bytes().to_vec(), bytes);
         self.db.write_batch(vec![op], false)?;
@@ -62,8 +43,7 @@ impl<C: 'static + Command> StorageApi for RocksDBStorage<C> {
 
     async fn recover(
         &self,
-    ) -> Result<(Option<(u64, ServerId)>, Vec<LogEntry<Self::Command>>), Box<dyn std::error::Error>>
-    {
+    ) -> Result<(Option<(u64, ServerId)>, Vec<LogEntry<Self::Command>>), StorageError> {
         let voted_for = self
             .db
             .get(CF, VOTE_FOR)?
@@ -93,7 +73,7 @@ impl<C: 'static + Command> StorageApi for RocksDBStorage<C> {
 
 impl<C> RocksDBStorage<C> {
     /// Create a new `RocksDBStorage`
-    pub(in crate::server) fn new(dir: impl AsRef<Path>) -> Result<Self, Error> {
+    pub(in crate::server) fn new(dir: impl AsRef<Path>) -> Result<Self, StorageError> {
         let db = RocksEngine::new(dir, &[CF])?;
         Ok(Self {
             db,

@@ -115,7 +115,7 @@ impl Cluster {
 fn random_id() -> String {
     thread_rng()
         .sample_iter(&Alphanumeric)
-        .take(4)
+        .take(8)
         .map(char::from)
         .collect()
 }

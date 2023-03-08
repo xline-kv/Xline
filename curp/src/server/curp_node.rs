@@ -20,7 +20,7 @@ use super::{
     gc::run_gc_tasks,
     raw_curp::{AppendEntries, RawCurp, TickAction, Vote},
     spec_pool::{SpecPoolRef, SpeculativePool},
-    storage::StorageApi,
+    storage::{StorageApi, StorageError},
 };
 use crate::{
     cmd::{Command, CommandExecutor, ProposeId},
@@ -49,8 +49,8 @@ pub(super) enum CurpError {
     #[error("encode or decode error")]
     EncodeDecode(#[from] bincode::Error),
     /// Storage error
-    #[error("storage error, {0:?}")]
-    Storage(#[from] Box<dyn std::error::Error>),
+    #[error("storage error, {0}")]
+    Storage(#[from] StorageError),
 }
 
 /// Connects
@@ -283,10 +283,7 @@ impl<C: 'static + Command> CurpNode<C> {
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
         let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
 
-        let storage = Arc::new(
-            RocksDBStorage::new(&curp_cfg.data_dir)
-                .map_err(|err| CurpError::Storage(Box::new(err)))?,
-        );
+        let storage = Arc::new(RocksDBStorage::new(&curp_cfg.data_dir)?);
 
         // start cmd workers
         let exe_tx = start_cmd_workers(
