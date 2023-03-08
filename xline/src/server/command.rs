@@ -202,12 +202,12 @@ where
     type Error = ExecuteError;
 
     async fn execute(&self, cmd: &Command) -> Result<CommandResponse, ExecuteError> {
-        let (_, wrapper, id) = cmd.clone().unpack();
-        self.auth_storage.check_permission(&wrapper).await?;
+        let wrapper = cmd.request();
+        self.auth_storage.check_permission(wrapper).await?;
         match wrapper.request.backend() {
-            RequestBackend::Kv => self.kv_storage.execute(id, wrapper),
-            RequestBackend::Auth => self.auth_storage.execute(id, wrapper),
-            RequestBackend::Lease => self.lease_storage.execute(id, wrapper),
+            RequestBackend::Kv => self.kv_storage.execute(wrapper),
+            RequestBackend::Auth => self.auth_storage.execute(wrapper),
+            RequestBackend::Lease => self.lease_storage.execute(wrapper),
         }
     }
 
@@ -216,12 +216,12 @@ where
         cmd: &Command,
         _index: LogIndex,
     ) -> Result<SyncResponse, ExecuteError> {
-        let (_, wrapper, id) = cmd.clone().unpack();
-        self.auth_storage.check_permission(&wrapper).await?;
+        let wrapper = cmd.request();
+        self.auth_storage.check_permission(wrapper).await?;
         match wrapper.request.backend() {
-            RequestBackend::Kv => self.kv_storage.after_sync(id).await,
-            RequestBackend::Auth => self.auth_storage.after_sync(&id),
-            RequestBackend::Lease => self.lease_storage.after_sync(&id).await,
+            RequestBackend::Kv => self.kv_storage.after_sync(wrapper).await,
+            RequestBackend::Auth => self.auth_storage.after_sync(wrapper),
+            RequestBackend::Lease => self.lease_storage.after_sync(wrapper).await,
         }
     }
 
@@ -302,10 +302,9 @@ impl Command {
         Self { keys, request, id }
     }
 
-    /// Consume `Command` and get ownership of each field
-    pub(crate) fn unpack(self) -> (Vec<KeyRange>, RequestWithToken, ProposeId) {
-        let Self { keys, request, id } = self;
-        (keys, request, id)
+    /// get request
+    pub(crate) fn request(&self) -> &RequestWithToken {
+        &self.request
     }
 }
 

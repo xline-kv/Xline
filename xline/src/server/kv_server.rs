@@ -112,10 +112,9 @@ where
             .check_permission(&wrapper)
             .await
             .map_err(|err| tonic::Status::invalid_argument(err.to_string()))?;
-        let id = self.generate_propose_id();
         let cmd_res = self
             .kv_storage
-            .execute(id, wrapper)
+            .execute(&wrapper)
             .map_err(|e| tonic::Status::internal(format!("Execute failed: {e:?}")))?;
         let res = Self::parse_response_op(cmd_res.decode().into());
         if let Response::ResponseRange(response) = res {

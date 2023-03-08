@@ -1,12 +1,9 @@
-use std::{cmp::Ordering, collections::HashMap, sync::Arc};
+use std::{cmp::Ordering, collections::VecDeque, sync::Arc};
 
 use clippy_utilities::{Cast, OverflowArithmetic};
-use curp::cmd::ProposeId;
-use parking_lot::Mutex;
 use prost::Message;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
-use uuid::Uuid;
 
 use super::{
     index::{Index, IndexOperate},
@@ -25,7 +22,7 @@ use crate::{
         TargetUnion, TxnRequest, TxnResponse,
     },
     server::command::{CommandResponse, KeyRange, SyncResponse},
-    storage::{ExecuteError, RequestCtx},
+    storage::ExecuteError,
 };
 
 /// Default channel size
@@ -59,8 +56,6 @@ where
     revision: Arc<RevisionNumber>,
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
-    /// Speculative execution pool. Mapping from propose id to request
-    sp_exec_pool: Mutex<HashMap<ProposeId, Vec<RequestCtx>>>,
     /// KV update sender
     kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
     /// Lease command sender
@@ -98,7 +93,7 @@ where
         while let Some(msg) = del_rx.recv().await {
             let (keys, tx) = msg.unpack();
             debug!("Delete keys: {:?} by lease revoked", keys);
-            let id = ProposeId::new(Uuid::new_v4().to_string());
+            // let id = ProposeId::new(Uuid::new_v4().to_string());
             let del_reqs = keys
                 .into_iter()
                 .map(|key| RequestOp {
@@ -109,15 +104,15 @@ where
                     })),
                 })
                 .collect();
-            let txn_req = TxnRequest {
+            let txn_req = RequestWrapper::TxnRequest(TxnRequest {
                 compare: vec![],
                 success: del_reqs,
                 failure: vec![],
-            };
-            if let Err(e) = inner.handle_kv_requests(id.clone(), txn_req.into()) {
+            });
+            if let Err(e) = inner.handle_kv_requests(&txn_req) {
                 warn!("Delete keys by lease revoked failed: {:?}", e);
             }
-            let _revision = inner.sync_requests(&id).await;
+            let _revision = inner.sync_requests(&txn_req).await;
 
             if tx.send(()).is_err() {
                 warn!("receiver dropped");
@@ -128,17 +123,22 @@ where
     /// execute a kv request
     pub(crate) fn execute(
         &self,
-        id: ProposeId,
-        request: RequestWithToken,
+        request: &RequestWithToken,
     ) -> Result<CommandResponse, ExecuteError> {
         self.inner
-            .handle_kv_requests(id, request.request)
+            .handle_kv_requests(&request.request)
             .map(CommandResponse::new)
     }
 
     /// sync a kv request
-    pub(crate) async fn after_sync(&self, id: ProposeId) -> Result<SyncResponse, ExecuteError> {
-        self.inner.sync_requests(&id).await.map(SyncResponse::new)
+    pub(crate) async fn after_sync(
+        &self,
+        request: &RequestWithToken,
+    ) -> Result<SyncResponse, ExecuteError> {
+        self.inner
+            .sync_requests(&request.request)
+            .await
+            .map(SyncResponse::new)
     }
 
     /// Get KV watcher
@@ -164,7 +164,6 @@ where
             db,
             revision: header_gen.revision_arc(),
             header_gen,
-            sp_exec_pool: Mutex::new(HashMap::new()),
             kv_update_tx,
             lease_cmd_tx,
         }
@@ -186,12 +185,11 @@ where
     /// Handle kv requests
     fn handle_kv_requests(
         &self,
-        id: ProposeId,
-        wrapper: RequestWrapper,
+        wrapper: &RequestWrapper,
     ) -> Result<ResponseWrapper, ExecuteError> {
         debug!("Receive request {:?}", wrapper);
         #[allow(clippy::wildcard_enum_match_arm)]
-        let res = match wrapper {
+        let res = match *wrapper {
             RequestWrapper::RangeRequest(ref req) => {
                 debug!("Receive RangeRequest {:?}", req);
                 self.handle_range_request(req).map(Into::into)
@@ -206,18 +204,10 @@ where
             }
             RequestWrapper::TxnRequest(ref req) => {
                 debug!("Receive TxnRequest {:?}", req);
-                self.handle_txn_request(&id, req).map(Into::into)
+                self.handle_txn_request(req).map(Into::into)
             }
             _ => unreachable!("Other request should not be sent to this store"),
         };
-        if !matches!(wrapper, RequestWrapper::TxnRequest(_)) {
-            let ctx = RequestCtx::new(wrapper, res.is_err());
-            self.sp_exec_pool
-                .lock()
-                .entry(id)
-                .or_insert_with(Vec::new)
-                .push(ctx);
-        }
         res
     }
 
@@ -540,11 +530,7 @@ where
     }
 
     /// Handle `TxnRequest`
-    fn handle_txn_request(
-        &self,
-        id: &ProposeId,
-        req: &TxnRequest,
-    ) -> Result<TxnResponse, ExecuteError> {
+    fn handle_txn_request(&self, req: &TxnRequest) -> Result<TxnResponse, ExecuteError> {
         let success = req
             .compare
             .iter()
@@ -556,7 +542,7 @@ where
         };
         let mut responses = Vec::with_capacity(requests.len());
         for request_op in requests {
-            let response = self.handle_kv_requests(id.clone(), request_op.clone().into())?;
+            let response = self.handle_kv_requests(&request_op.clone().into())?;
             responses.push(response.into());
         }
         Ok(TxnResponse {
@@ -567,62 +553,86 @@ where
     }
 
     /// Sync a vec of requests
-    async fn sync_requests(&self, id: &ProposeId) -> Result<i64, ExecuteError> {
-        let ctxes = self.sp_exec_pool.lock().remove(id).unwrap_or_else(|| {
-            panic!("Failed to get speculative execution propose id {id:?}");
-        });
-        if ctxes.iter().any(RequestCtx::met_err) {
-            return Ok(self.revision());
-        };
-        let requests: Vec<RequestWrapper> = ctxes.into_iter().map(RequestCtx::req).collect();
-        let rev = if requests.is_empty() {
-            self.revision()
-        } else {
-            let next_revision = self.revision.next();
-            let mut sub_revision = 0;
-            let mut all_events = Vec::new();
-            for request in requests {
-                let mut events = self
-                    .sync_request(request, next_revision, sub_revision)
-                    .await?;
-                sub_revision = sub_revision.overflow_add(events.len().cast());
-                all_events.append(&mut events);
+    async fn sync_requests(&self, wrapper: &RequestWrapper) -> Result<i64, ExecuteError> {
+        #[allow(clippy::wildcard_enum_match_arm)] // other members will send to other stores
+        let origin_req = match wrapper.clone() {
+            RequestWrapper::RangeRequest(req) => Request::RequestRange(req),
+            RequestWrapper::PutRequest(req) => Request::RequestPut(req),
+            RequestWrapper::DeleteRangeRequest(req) => Request::RequestDeleteRange(req),
+            RequestWrapper::TxnRequest(req) => Request::RequestTxn(req),
+            _ => {
+                unreachable!("only kv requests can be sent to kv store");
             }
-            self.notify_updates(next_revision, all_events).await;
-            next_revision
         };
+        let mut origin_reqs = VecDeque::new();
+        origin_reqs.push_back(origin_req);
+        let mut requests = Vec::new();
+        while let Some(req) = origin_reqs.pop_front() {
+            #[allow(clippy::wildcard_enum_match_arm)] // other members will send to other stores
+            match req {
+                Request::RequestRange(_)
+                | Request::RequestPut(_)
+                | Request::RequestDeleteRange(_) => {
+                    requests.push(req);
+                }
+                Request::RequestTxn(txn_req) => {
+                    let success = txn_req
+                        .compare
+                        .iter()
+                        .all(|compare| self.check_compare(compare));
+                    let reqs_iter = if success {
+                        txn_req.success.into_iter()
+                    } else {
+                        txn_req.failure.into_iter()
+                    };
+                    origin_reqs.extend(reqs_iter.filter_map(|req_op| req_op.request));
+                }
+            }
+        }
 
-        Ok(rev)
+        if requests.is_empty() {
+            return Ok(self.revision());
+        }
+
+        let next_revision = self.revision.next();
+        let mut sub_revision = 0;
+        let mut all_events = Vec::new();
+        for request in requests {
+            let mut events = self
+                .sync_request(&request, next_revision, sub_revision)
+                .await?;
+            sub_revision = sub_revision.overflow_add(events.len().cast());
+            all_events.append(&mut events);
+        }
+        self.notify_updates(next_revision, all_events).await;
+        Ok(next_revision)
     }
 
     /// Sync one `Request`
     async fn sync_request(
         &self,
-        req: RequestWrapper,
+        req: &Request,
         revision: i64,
         sub_revision: i64,
     ) -> Result<Vec<Event>, ExecuteError> {
         #[allow(clippy::wildcard_enum_match_arm)]
-        match req {
-            RequestWrapper::RangeRequest(req) => {
+        match *req {
+            Request::RequestRange(ref req) => {
                 debug!("Sync RequestRange {:?}", req);
                 Ok(Vec::new())
             }
-            RequestWrapper::PutRequest(req) => {
+            Request::RequestPut(ref req) => {
                 debug!("Sync RequestPut {:?}", req);
                 self.sync_put_request(req, revision, sub_revision).await
             }
-            RequestWrapper::DeleteRangeRequest(req) => {
+            Request::RequestDeleteRange(ref req) => {
                 debug!("Sync DeleteRequest {:?}", req);
                 self.sync_delete_range_request(req, revision, sub_revision)
                     .await
             }
-            RequestWrapper::TxnRequest(req) => {
+            Request::RequestTxn(ref req) => {
                 debug!("Sync TxnRequest {:?}", req);
                 panic!("Sync for TxnRequest is impossible");
-            }
-            _ => {
-                unreachable!("Other request should not be sent to this store");
             }
         }
     }
@@ -637,7 +647,7 @@ where
     /// Sync `PutRequest` and return if kvstore is changed
     async fn sync_put_request(
         &self,
-        req: PutRequest,
+        req: &PutRequest,
         revision: i64,
         sub_revision: i64,
     ) -> Result<Vec<Event>, ExecuteError> {
@@ -646,8 +656,8 @@ where
             .index
             .insert_or_update_revision(&req.key, revision, sub_revision);
         let mut kv = KeyValue {
-            key: req.key,
-            value: req.value,
+            key: req.key.clone(),
+            value: req.value.clone(),
             create_revision: new_rev.create_revision,
             mod_revision: new_rev.mod_revision,
             version: new_rev.version,
@@ -738,13 +748,13 @@ where
     /// Sync `DeleteRangeRequest` and return if kvstore is changed
     async fn sync_delete_range_request(
         &self,
-        req: DeleteRangeRequest,
+        req: &DeleteRangeRequest,
         revision: i64,
         sub_revision: i64,
     ) -> Result<Vec<Event>, ExecuteError> {
-        let key = req.key;
-        let range_end = req.range_end;
-        let revisions = self.index.delete(&key, &range_end, revision, sub_revision);
+        let revisions = self
+            .index
+            .delete(&req.key, &req.range_end, revision, sub_revision);
         debug!("sync_delete_range_request: revisions {:?}", revisions);
         let prev_kv = self.mark_deletions(&revisions)?;
         for kv in &prev_kv {
@@ -899,6 +909,62 @@ mod test {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn test_txn() -> Result<(), Box<dyn Error>> {
+        let txn_req = RequestWithToken::new(
+            TxnRequest {
+                compare: vec![Compare {
+                    result: CompareResult::Equal as i32,
+                    target: CompareTarget::Value as i32,
+                    key: "a".into(),
+                    range_end: vec![],
+                    target_union: Some(TargetUnion::Value("a".into())),
+                }],
+                success: vec![RequestOp {
+                    request: Some(Request::RequestTxn(TxnRequest {
+                        compare: vec![Compare {
+                            result: CompareResult::Equal as i32,
+                            target: CompareTarget::Value as i32,
+                            key: "b".into(),
+                            range_end: vec![],
+                            target_union: Some(TargetUnion::Value("b".into())),
+                        }],
+                        success: vec![RequestOp {
+                            request: Some(Request::RequestPut(PutRequest {
+                                key: "success".into(),
+                                value: "1".into(),
+                                ..Default::default()
+                            })),
+                        }],
+                        failure: vec![],
+                    })),
+                }],
+                failure: vec![RequestOp {
+                    request: Some(Request::RequestPut(PutRequest {
+                        key: "success".into(),
+                        value: "0".into(),
+                        ..Default::default()
+                    })),
+                }],
+            }
+            .into(),
+        );
+        let store = init_store().await?;
+        let _ignore = store.after_sync(&txn_req).await?;
+
+        let request = RangeRequest {
+            key: "success".into(),
+            range_end: vec![],
+            ..Default::default()
+        };
+        let response = store.inner.handle_range_request(&request)?;
+        assert_eq!(response.count, 1);
+        assert_eq!(response.kvs.len(), 1);
+        assert_eq!(response.kvs[0].value, "1".as_bytes());
+
+        Ok(())
+    }
+
     fn sort_req(sort_order: SortOrder, sort_target: SortTarget) -> RangeRequest {
         #[allow(clippy::as_conversions)] // this cast is always safe
         RangeRequest {
@@ -932,9 +998,8 @@ mod test {
                 }
                 .into(),
             );
-            let id = ProposeId::new("test-id".to_owned());
-            let _cmd_res = store.execute(id.clone(), req)?;
-            let _sync_res = store.after_sync(id).await;
+            let _cmd_res = store.execute(&req)?;
+            let _sync_res = store.after_sync(&req).await;
         }
         Ok(store)
     }

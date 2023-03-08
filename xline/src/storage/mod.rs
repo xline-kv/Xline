@@ -12,8 +12,6 @@ pub(crate) mod kv_store;
 pub(crate) mod kvwatcher;
 /// Storage for lease
 pub(crate) mod lease_store;
-/// Request context module
-pub(crate) mod req_ctx;
 /// Revision module
 pub(crate) mod revision;
 /// Persistent storage abstraction
@@ -21,5 +19,5 @@ pub(crate) mod storage_api;
 
 pub(crate) use self::{
     auth_store::AuthStore, execute_error::ExecuteError, kv_store::KvStore, lease_store::LeaseStore,
-    req_ctx::RequestCtx, revision::Revision,
+    revision::Revision,
 };

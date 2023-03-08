@@ -10,11 +10,10 @@ use std::{
 
 use anyhow::Result;
 use clippy_utilities::Cast;
-use curp::cmd::ProposeId;
 use itertools::Itertools;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use log::debug;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use pbkdf2::{
     password_hash::{PasswordHash, PasswordVerifier},
     Pbkdf2,
@@ -46,7 +45,7 @@ use crate::{
         index::{Index, IndexOperate},
         lease_store::{Lease, LeaseMessage},
         storage_api::StorageApi,
-        ExecuteError, RequestCtx, Revision,
+        ExecuteError, Revision,
     },
 };
 
@@ -74,8 +73,6 @@ where
     db: Arc<DB>,
     /// Revision
     revision: RevisionNumber,
-    /// Speculative execution pool. Mapping from propose id to request
-    sp_exec_pool: Mutex<HashMap<ProposeId, RequestCtx>>,
     /// Enabled
     enabled: AtomicBool,
     /// Permission cache
@@ -98,7 +95,6 @@ where
             .field("index", &self.index)
             .field("db", &self.db)
             .field("revision", &self.revision)
-            .field("sp_exec_pool", &self.sp_exec_pool)
             .field("enabled", &self.enabled)
             .field("permission_cache", &self.permission_cache)
             .field("lease_cmd_tx", &self.lease_cmd_tx)
@@ -123,7 +119,6 @@ where
             index: Index::new(),
             db,
             revision: RevisionNumber::new(),
-            sp_exec_pool: Mutex::new(HashMap::new()),
             enabled: AtomicBool::new(false),
             token_manager: key_pair.map(|(encoding_key, decoding_key)| {
                 JwtTokenManager::new(encoding_key, decoding_key)
@@ -463,12 +458,11 @@ where
     /// Handle `InternalRequest`
     pub(super) fn handle_auth_req(
         &self,
-        id: ProposeId,
-        wrapper: RequestWrapper,
+        wrapper: &RequestWrapper,
     ) -> Result<ResponseWrapper, ExecuteError> {
         // routed when call execute, other request will be routed to other backend
         #[allow(clippy::wildcard_enum_match_arm)]
-        let res = match wrapper {
+        match *wrapper {
             RequestWrapper::AuthEnableRequest(ref req) => {
                 self.handle_auth_enable_request(req).map(Into::into)
             }
@@ -523,10 +517,7 @@ where
             _ => {
                 unreachable!("Other request should not be sent to this store");
             }
-        };
-        let ctx = RequestCtx::new(wrapper, res.is_err());
-        let _prev = self.sp_exec_pool.lock().insert(id, ctx);
-        res
+        }
     }
 
     /// Handle `AuthEnableRequest`
@@ -799,76 +790,69 @@ where
     }
 
     /// Sync `RequestWrapper`
-    pub(super) fn sync_request(&self, id: &ProposeId) -> Result<i64, ExecuteError> {
-        let ctx = self.sp_exec_pool.lock().remove(id).unwrap_or_else(|| {
-            panic!("Failed to get speculative execution propose id {id:?}");
-        });
-        if ctx.met_err() {
-            return Ok(self.header_gen.revision());
-        }
-        let wrapper = ctx.req();
+    pub(super) fn sync_request(&self, wrapper: &RequestWrapper) -> Result<i64, ExecuteError> {
         #[allow(clippy::wildcard_enum_match_arm)]
-        match wrapper {
-            RequestWrapper::AuthEnableRequest(req) => {
+        match *wrapper {
+            RequestWrapper::AuthEnableRequest(ref req) => {
                 debug!("Sync AuthEnableRequest {:?}", req);
-                self.sync_auth_enable_request(&req)?;
+                self.sync_auth_enable_request(req)?;
             }
-            RequestWrapper::AuthDisableRequest(req) => {
+            RequestWrapper::AuthDisableRequest(ref req) => {
                 debug!("Sync AuthDisableRequest {:?}", req);
-                self.sync_auth_disable_request(&req)?;
+                self.sync_auth_disable_request(req)?;
             }
-            RequestWrapper::AuthStatusRequest(req) => {
+            RequestWrapper::AuthStatusRequest(ref req) => {
                 debug!("Sync AuthStatusRequest {:?}", req);
             }
-            RequestWrapper::AuthUserAddRequest(req) => {
+            RequestWrapper::AuthUserAddRequest(ref req) => {
                 debug!("Sync AuthUserAddRequest {:?}", req);
                 self.sync_user_add_request(req)?;
             }
-            RequestWrapper::AuthUserGetRequest(req) => {
+            RequestWrapper::AuthUserGetRequest(ref req) => {
                 debug!("Sync AuthUserGetRequest {:?}", req);
             }
-            RequestWrapper::AuthUserListRequest(req) => {
+            RequestWrapper::AuthUserListRequest(ref req) => {
                 debug!("Sync AuthUserListRequest {:?}", req);
             }
-            RequestWrapper::AuthUserGrantRoleRequest(req) => {
+            RequestWrapper::AuthUserGrantRoleRequest(ref req) => {
                 debug!("Sync AuthUserGrantRoleRequest {:?}", req);
                 self.sync_user_grant_role_request(req)?;
             }
-            RequestWrapper::AuthUserRevokeRoleRequest(req) => {
+            RequestWrapper::AuthUserRevokeRoleRequest(ref req) => {
                 debug!("Sync AuthUserRevokeRoleRequest {:?}", req);
                 self.sync_user_revoke_role_request(req)?;
             }
-            RequestWrapper::AuthUserChangePasswordRequest(req) => {
+            RequestWrapper::AuthUserChangePasswordRequest(ref req) => {
                 debug!("Sync AuthUserChangePasswordRequest {:?}", req);
                 self.sync_user_change_password_request(req)?;
             }
-            RequestWrapper::AuthUserDeleteRequest(req) => {
+            RequestWrapper::AuthUserDeleteRequest(ref req) => {
                 debug!("Sync AuthUserDeleteRequest {:?}", req);
-                self.sync_user_delete_request(&req)?;
+                self.sync_user_delete_request(req)?;
             }
-            RequestWrapper::AuthRoleAddRequest(req) => {
+            RequestWrapper::AuthRoleAddRequest(ref req) => {
                 debug!("Sync AuthRoleAddRequest {:?}", req);
                 self.sync_role_add_request(req)?;
             }
-            RequestWrapper::AuthRoleGetRequest(req) => {
+            RequestWrapper::AuthRoleGetRequest(ref req) => {
                 debug!("Sync AuthRoleGetRequest {:?}", req);
             }
-            RequestWrapper::AuthRoleGrantPermissionRequest(req) => {
+            RequestWrapper::AuthRoleGrantPermissionRequest(ref req) => {
                 debug!("Sync AuthRoleGrantPermissionRequest {:?}", req);
                 self.sync_role_grant_permission_request(req)?;
             }
-            RequestWrapper::AuthRoleRevokePermissionRequest(req) => {
+            RequestWrapper::AuthRoleRevokePermissionRequest(ref req) => {
                 debug!("Sync AuthRoleRevokePermissionRequest {:?}", req);
-                self.sync_role_revoke_permission_request(&req)?;
+                self.sync_role_revoke_permission_request(req)?;
             }
-            RequestWrapper::AuthRoleListRequest(req) => {
+            RequestWrapper::AuthRoleListRequest(ref req) => {
                 debug!("Sync AuthRoleListRequest {:?}", req);
             }
-            RequestWrapper::AuthRoleDeleteRequest(req) => {
+            RequestWrapper::AuthRoleDeleteRequest(ref req) => {
                 debug!("Sync AuthRoleDeleteRequest {:?}", req);
-                self.sync_role_delete_request(&req)?;
+                self.sync_role_delete_request(req)?;
             }
-            RequestWrapper::AuthenticateRequest(req) => {
+            RequestWrapper::AuthenticateRequest(ref req) => {
                 debug!("Sync AuthenticateRequest {:?}", req);
             }
             _ => {
@@ -901,11 +885,11 @@ where
     }
 
     /// Sync `AuthUserAddRequest` and return whether authstore is changed.
-    fn sync_user_add_request(&self, req: AuthUserAddRequest) -> Result<(), ExecuteError> {
+    fn sync_user_add_request(&self, req: &AuthUserAddRequest) -> Result<(), ExecuteError> {
         let user = User {
-            name: req.name.into_bytes(),
-            password: req.hashed_password.into_bytes(),
-            options: req.options,
+            name: req.name.as_str().into(),
+            password: req.hashed_password.as_str().into(),
+            options: req.options.clone(),
             roles: Vec::new(),
         };
         let revision = self.revision.next();
@@ -930,10 +914,10 @@ where
     /// Sync `AuthUserChangePasswordRequest` and return whether authstore is changed.
     fn sync_user_change_password_request(
         &self,
-        req: AuthUserChangePasswordRequest,
+        req: &AuthUserChangePasswordRequest,
     ) -> Result<(), ExecuteError> {
         let mut user = self.get_user(&req.name)?;
-        user.password = req.hashed_password.into_bytes();
+        user.password = req.hashed_password.as_str().into();
         let revision = self.revision.next();
         self.put_user(&user, revision, 0)
     }
@@ -941,7 +925,7 @@ where
     /// Sync `AuthUserGrantRoleRequest` and return whether authstore is changed.
     fn sync_user_grant_role_request(
         &self,
-        req: AuthUserGrantRoleRequest,
+        req: &AuthUserGrantRoleRequest,
     ) -> Result<(), ExecuteError> {
         let mut user = self.get_user(&req.user)?;
         let role = self.get_role(&req.role);
@@ -979,9 +963,9 @@ where
                 }
                 cache
                     .role_to_users_map
-                    .entry(req.role)
+                    .entry(req.role.clone())
                     .or_insert_with(Vec::new)
-                    .push(req.user);
+                    .push(req.user.clone());
             });
         }
         Ok(())
@@ -990,7 +974,7 @@ where
     /// Sync `AuthUserRevokeRoleRequest` and return whether authstore is changed.
     fn sync_user_revoke_role_request(
         &self,
-        req: AuthUserRevokeRoleRequest,
+        req: &AuthUserRevokeRoleRequest,
     ) -> Result<(), ExecuteError> {
         let mut user = self.get_user(&req.name)?;
         let idx = user
@@ -1002,20 +986,25 @@ where
         self.put_user(&user, revision, 0)?;
         self.permission_cache.map_write(|mut cache| {
             let user_permissions = self.get_user_permissions(&user);
-            let _entry = cache.role_to_users_map.entry(req.role).and_modify(|users| {
-                if let Some((i, _)) = users.iter().find_position(|uname| uname == &&req.name) {
-                    let _old = users.swap_remove(i);
-                };
-            });
-            let _old = cache.user_permissions.insert(req.name, user_permissions);
+            let _entry = cache
+                .role_to_users_map
+                .entry(req.role.clone())
+                .and_modify(|users| {
+                    if let Some((i, _)) = users.iter().find_position(|uname| uname == &&req.name) {
+                        let _old = users.swap_remove(i);
+                    };
+                });
+            let _old = cache
+                .user_permissions
+                .insert(req.name.clone(), user_permissions);
         });
         Ok(())
     }
 
     /// Sync `AuthRoleAddRequest` and return whether authstore is changed.
-    fn sync_role_add_request(&self, req: AuthRoleAddRequest) -> Result<(), ExecuteError> {
+    fn sync_role_add_request(&self, req: &AuthRoleAddRequest) -> Result<(), ExecuteError> {
         let role = Role {
-            name: req.name.into_bytes(),
+            name: req.name.as_str().into(),
             key_permission: Vec::new(),
         };
         let revision = self.revision.next();
@@ -1048,10 +1037,13 @@ where
     /// Sync `AuthRoleGrantPermissionRequest` and return whether authstore is changed.
     fn sync_role_grant_permission_request(
         &self,
-        req: AuthRoleGrantPermissionRequest,
+        req: &AuthRoleGrantPermissionRequest,
     ) -> Result<(), ExecuteError> {
         let mut role = self.get_role(&req.name)?;
-        let permission = req.perm.ok_or_else(ExecuteError::permission_not_given)?;
+        let permission = req
+            .perm
+            .clone()
+            .ok_or_else(ExecuteError::permission_not_given)?;
 
         #[allow(clippy::indexing_slicing)] // this index is always valid
         match role
