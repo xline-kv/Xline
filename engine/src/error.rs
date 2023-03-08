@@ -7,7 +7,7 @@ use thiserror::Error;
 pub enum EngineError {
     /// Met I/O Error during persisting data
     #[error("I/O Error: {0}")]
-    IoError(String),
+    IoError(#[from] std::io::Error),
     /// Table Not Found
     #[error("Table {0} Not Found")]
     TableNotFound(String),

@@ -1,4 +1,9 @@
-use std::{iter::repeat, path::Path, sync::Arc};
+use std::{
+    io::{Error as IoError, ErrorKind::Other},
+    iter::repeat,
+    path::Path,
+    sync::Arc,
+};
 
 use rocksdb::{Error as RocksError, Options, WriteBatchWithTransaction, WriteOptions, DB};
 
@@ -22,7 +27,7 @@ impl From<RocksError> for EngineError {
                         EngineError::InvalidArgument(err_msg.to_owned())
                     }
                 }
-                "IO error" => EngineError::IoError(err_msg.to_owned()),
+                "IO error" => EngineError::IoError(IoError::new(Other, err_msg)),
                 _ => EngineError::UnderlyingError(err_msg.to_owned()),
             }
         } else {
