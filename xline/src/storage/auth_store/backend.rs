@@ -37,22 +37,22 @@ use crate::{
         AuthUserGetRequest, AuthUserGetResponse, AuthUserGrantRoleRequest,
         AuthUserGrantRoleResponse, AuthUserListRequest, AuthUserListResponse,
         AuthUserRevokeRoleRequest, AuthUserRevokeRoleResponse, AuthenticateRequest,
-        AuthenticateResponse, KeyValue, Permission, RequestWrapper, ResponseWrapper, Role, Type,
-        User,
+        AuthenticateResponse, Permission, RequestWrapper, ResponseWrapper, Role, Type, User,
     },
     server::command::KeyRange,
     storage::{
-        index::{Index, IndexOperate},
         lease_store::{Lease, LeaseMessage},
         storage_api::StorageApi,
-        ExecuteError, Revision,
+        ExecuteError
     },
 };
 
-/// Key prefix of user
-pub(crate) const USER_PREFIX: &[u8] = b"user/";
-/// Key prefix of role
-pub(crate) const ROLE_PREFIX: &[u8] = b"role/";
+/// User table
+pub(crate) const USER_TABLE: &str = "user";
+/// Role table
+pub(crate) const ROLE_TABLE: &str = "role";
+/// Auth table
+pub(crate) const AUTH_TABLE: &str = "auth";
 /// Key of `AuthEnable`
 pub(crate) const AUTH_ENABLE_KEY: &[u8] = b"auth_enable";
 /// Root user
@@ -65,10 +65,6 @@ pub(crate) struct AuthStoreBackend<DB>
 where
     DB: StorageApi,
 {
-    /// Table name
-    table: String,
-    /// Key Index
-    index: Index,
     /// DB to store key value
     db: Arc<DB>,
     /// Revision
@@ -91,8 +87,6 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AuthStoreBackend")
-            .field("table", &self.table)
-            .field("index", &self.index)
             .field("db", &self.db)
             .field("revision", &self.revision)
             .field("enabled", &self.enabled)
@@ -115,8 +109,6 @@ where
         db: Arc<DB>,
     ) -> Self {
         Self {
-            table: "auth".to_owned(),
-            index: Index::new(),
             db,
             revision: RevisionNumber::new(),
             enabled: AtomicBool::new(false),
@@ -274,37 +266,11 @@ where
         Err(ExecuteError::PermissionDenied)
     }
 
-    /// Get `KeyValue` from the `AuthStore`
-    fn get_values(&self, revisions: &[Revision]) -> Result<Vec<KeyValue>, ExecuteError> {
-        let revisions = revisions
-            .iter()
-            .map(Revision::encode_to_vec)
-            .collect::<Vec<Vec<u8>>>();
-        let values = self.db.get_values(&self.table, &revisions)?;
-        let kvs = values
-            .into_iter()
-            .flatten()
-            .map(|v| KeyValue::decode(v.as_slice()))
-            .collect::<Result<_, _>>()
-            .map_err(|e| {
-                ExecuteError::DbError(format!("Failed to decode key-value from DB, error: {e}"))
-            })?;
-        Ok(kvs)
-    }
-
-    /// get `KeyValue` in `AuthStore`
-    fn get(&self, key: &[u8]) -> Result<Option<KeyValue>, ExecuteError> {
-        let revisions = self.index.get(key, &[], 0);
-        assert!(revisions.len() <= 1);
-        self.get_values(&revisions).map(|mut kv| kv.pop())
-    }
-
     /// get user by username
     pub(super) fn get_user(&self, username: &str) -> Result<User, ExecuteError> {
-        let key = [USER_PREFIX, username.as_bytes()].concat();
-        match self.get(&key)? {
-            Some(kv) => Ok(User::decode(kv.value.as_slice()).unwrap_or_else(|e| {
-                panic!("Failed to decode user from kv value, error: {e:?}, kv: {kv:?}");
+        match self.db.get_value(USER_TABLE, username)? {
+            Some(value) => Ok(User::decode(value.as_slice()).unwrap_or_else(|e| {
+                panic!("Failed to decode user from value, error: {e:?}, value: {value:?}");
             })),
             None => Err(ExecuteError::user_not_found(username)),
         }
@@ -312,127 +278,43 @@ where
 
     /// get role by rolename
     fn get_role(&self, rolename: &str) -> Result<Role, ExecuteError> {
-        let key = [ROLE_PREFIX, rolename.as_bytes()].concat();
-        match self.get(&key)? {
-            Some(kv) => Ok(Role::decode(kv.value.as_slice()).unwrap_or_else(|e| {
-                panic!("Failed to decode role from kv value, error: {e:?}, kv: {kv:?}");
+        match self.db.get_value(ROLE_TABLE, rolename)? {
+            Some(value) => Ok(Role::decode(value.as_slice()).unwrap_or_else(|e| {
+                panic!("Failed to decode role from value, error: {e:?}, value: {value:?}");
             })),
             None => Err(ExecuteError::role_not_found(rolename)),
         }
     }
 
-    /// Insert a `KeyValue`
-    fn insert(&self, revision: Revision, kv: &KeyValue) -> Result<(), ExecuteError> {
-        let key = revision.encode_to_vec();
-        let value = kv.encode_to_vec();
-        self.db.insert(&self.table, key, value, false)
-    }
-
-    /// get `KeyValue` to `AuthStore`
-    fn put(
-        &self,
-        key: Vec<u8>,
-        value: Vec<u8>,
-        revision: i64,
-        sub_revision: i64,
-    ) -> Result<(), ExecuteError> {
-        let new_rev = self
-            .index
-            .insert_or_update_revision(&key, revision, sub_revision);
-        let kv = KeyValue {
-            key,
-            value,
-            create_revision: new_rev.create_revision,
-            mod_revision: new_rev.mod_revision,
-            version: new_rev.version,
-            ..KeyValue::default()
-        };
-        self.insert(new_rev.as_revision(), &kv)
-    }
-
     /// put user to `AuthStore`
-    fn put_user(&self, user: &User, revision: i64, sub_revision: i64) -> Result<(), ExecuteError> {
-        let key = [USER_PREFIX, &user.name].concat();
+    fn put_user(&self, user: &User) -> Result<(), ExecuteError> {
+        let key = user.name.clone();
         let value = user.encode_to_vec();
-        self.put(key, value, revision, sub_revision)
+        self.db.insert(USER_TABLE, key, value, false)?;
+        let rev = self.revision.next();
+        self.db
+            .insert(AUTH_TABLE, "revision", rev.to_le_bytes(), false)
     }
 
     /// put role to `AuthStore`
-    fn put_role(&self, role: &Role, revision: i64, sub_revision: i64) -> Result<(), ExecuteError> {
-        let key = [ROLE_PREFIX, &role.name].concat();
+    fn put_role(&self, role: &Role) -> Result<(), ExecuteError> {
+        let key = role.name.clone();
         let value = role.encode_to_vec();
-        self.put(key, value, revision, sub_revision)
-    }
-
-    /// Mark deletion for keys
-    fn mark_deletions(
-        &self,
-        revisions: &[(Revision, Revision)],
-    ) -> Result<Vec<KeyValue>, ExecuteError> {
-        let prev_revisions = revisions
-            .iter()
-            .map(|&(prev_rev, _)| prev_rev)
-            .collect::<Vec<_>>();
-        let prev_kvs = self.get_values(&prev_revisions)?;
-        assert!(
-            prev_kvs.len() == revisions.len(),
-            "Index doesn't match with DB"
-        );
-        prev_kvs
-            .iter()
-            .zip(revisions.iter())
-            .try_for_each(|(kv, &(_, new_rev))| {
-                let del_kv = KeyValue {
-                    key: kv.key.clone(),
-                    mod_revision: new_rev.revision(),
-                    ..KeyValue::default()
-                };
-                let key = new_rev.encode_to_vec();
-                let value = del_kv.encode_to_vec();
-                self.db.insert(&self.table, key, value, false)
-            })?;
-        Ok(prev_kvs)
-    }
-
-    /// delete `KeyValue` in `AuthStore`
-    fn delete(&self, key: &[u8], revision: i64, sub_revision: i64) -> Result<(), ExecuteError> {
-        let revisions = self.index.delete(key, &[], revision, sub_revision);
-        let _ignore = self.mark_deletions(&revisions)?;
-        Ok(())
-    }
-
-    /// delete user in `AuthStore`
-    fn delete_user(
-        &self,
-        username: &str,
-        revision: i64,
-        sub_revision: i64,
-    ) -> Result<(), ExecuteError> {
-        let key = [USER_PREFIX, username.as_bytes()].concat();
-        self.delete(&key, revision, sub_revision)
-    }
-
-    /// delete role in `AuthStore`
-    fn delete_role(
-        &self,
-        rolename: &str,
-        revision: i64,
-        sub_revision: i64,
-    ) -> Result<(), ExecuteError> {
-        let key = [ROLE_PREFIX, rolename.as_bytes()].concat();
-        self.delete(&key, revision, sub_revision)
+        self.db.insert(ROLE_TABLE, key, value, false)?;
+        let rev = self.revision.next();
+        self.db
+            .insert(AUTH_TABLE, "revision", rev.to_le_bytes(), false)
     }
 
     /// Get all users in the `AuthStore`
     fn get_all_users(&self) -> Result<Vec<User>, ExecuteError> {
-        let range_end = KeyRange::get_prefix(USER_PREFIX);
-        let revisions = self.index.get(USER_PREFIX, &range_end, 0);
         let users = self
-            .get_values(&revisions)?
+            .db
+            .get_all(USER_TABLE)?
             .into_iter()
-            .map(|kv| {
-                User::decode(kv.value.as_slice()).unwrap_or_else(|e| {
-                    panic!("Failed to decode user from kv value, error: {e:?}, kv: {kv:?}");
+            .map(|(_, user)| {
+                User::decode(user.as_slice()).unwrap_or_else(|e| {
+                    panic!("Failed to decode user from value, error: {e:?}, user: {user:?}");
                 })
             })
             .collect();
@@ -441,14 +323,13 @@ where
 
     /// Get all roles in the `AuthStore`
     fn get_all_roles(&self) -> Result<Vec<Role>, ExecuteError> {
-        let range_end = KeyRange::get_prefix(ROLE_PREFIX);
-        let revisions = self.index.get(ROLE_PREFIX, &range_end, 0);
         let roles = self
-            .get_values(&revisions)?
+            .db
+            .get_all(ROLE_TABLE)?
             .into_iter()
-            .map(|kv| {
-                Role::decode(kv.value.as_slice()).unwrap_or_else(|e| {
-                    panic!("Failed to decode role from kv value, error: {e:?}, kv: {kv:?}");
+            .map(|(_, value)| {
+                Role::decode(value.as_slice()).unwrap_or_else(|e| {
+                    panic!("Failed to decode role from value, error: {e:?}, value: {value:?}");
                 })
             })
             .collect();
@@ -867,9 +748,12 @@ where
         if self.is_enabled() {
             return Ok(());
         }
-        let revision = self.revision.next();
-        self.put(AUTH_ENABLE_KEY.to_vec(), vec![1], revision, 0)?;
-        self.enabled.store(true, AtomicOrdering::Release);
+        self.db
+            .insert(AUTH_TABLE, AUTH_ENABLE_KEY, vec![1], false)?;
+        self.enabled.store(true, AtomicOrdering::Relaxed);
+        let rev = self.revision.next();
+        self.db
+            .insert(AUTH_TABLE, "revision", rev.to_le_bytes(), false)?;
         self.create_permission_cache()
     }
 
@@ -878,10 +762,12 @@ where
         if !self.is_enabled() {
             return Ok(());
         }
-        let revision = self.revision.next();
-        self.put(AUTH_ENABLE_KEY.to_vec(), vec![0], revision, 0)?;
-        self.enabled.store(false, AtomicOrdering::Release);
-        Ok(())
+        self.db
+            .insert(AUTH_TABLE, AUTH_ENABLE_KEY, vec![0], false)?;
+        self.enabled.store(false, AtomicOrdering::Relaxed);
+        let rev = self.revision.next();
+        self.db
+            .insert(AUTH_TABLE, "revision", rev.to_le_bytes(), false)
     }
 
     /// Sync `AuthUserAddRequest` and return whether authstore is changed.
@@ -892,14 +778,12 @@ where
             options: req.options.clone(),
             roles: Vec::new(),
         };
-        let revision = self.revision.next();
-        self.put_user(&user, revision, 0)
+        self.put_user(&user)
     }
 
     /// Sync `AuthUserDeleteRequest` and return whether authstore is changed.
     fn sync_user_delete_request(&self, req: &AuthUserDeleteRequest) -> Result<(), ExecuteError> {
-        let next_revision = self.revision.next();
-        self.delete_user(&req.name, next_revision, 0)?;
+        self.db.delete(USER_TABLE, &req.name, false)?;
         self.permission_cache.map_write(|mut cache| {
             let _ignore = cache.user_permissions.remove(&req.name);
             cache.role_to_users_map.iter_mut().for_each(|(_, users)| {
@@ -918,8 +802,7 @@ where
     ) -> Result<(), ExecuteError> {
         let mut user = self.get_user(&req.name)?;
         user.password = req.hashed_password.as_str().into();
-        let revision = self.revision.next();
-        self.put_user(&user, revision, 0)
+        self.put_user(&user)
     }
 
     /// Sync `AuthUserGrantRoleRequest` and return whether authstore is changed.
@@ -936,8 +819,7 @@ where
             return Err(ExecuteError::user_already_has_role(&req.user, &req.role));
         };
         user.roles.insert(idx, req.role.clone());
-        let revision = self.revision.next();
-        self.put_user(&user, revision, 0)?;
+        self.put_user(&user)?;
         if let Ok(role) = role {
             let perms = role.key_permission;
             self.permission_cache.map_write(|mut cache| {
@@ -982,8 +864,6 @@ where
             .binary_search(&req.role)
             .map_err(|_ignore| ExecuteError::role_not_granted(&req.role))?;
         let _ignore = user.roles.remove(idx);
-        let revision = self.revision.next();
-        self.put_user(&user, revision, 0)?;
         self.permission_cache.map_write(|mut cache| {
             let user_permissions = self.get_user_permissions(&user);
             let _entry = cache
@@ -1007,24 +887,20 @@ where
             name: req.name.as_str().into(),
             key_permission: Vec::new(),
         };
-        let revision = self.revision.next();
-        self.put_role(&role, revision, 0)
+        self.put_role(&role)
     }
 
     /// Sync `AuthRoleDeleteRequest` and return whether authstore is changed.
     fn sync_role_delete_request(&self, req: &AuthRoleDeleteRequest) -> Result<(), ExecuteError> {
-        let revision = self.revision.next();
-        self.delete_role(&req.role, revision, 0)?;
+        self.db.delete(ROLE_TABLE, &req.role, false)?;
         let users = self.get_all_users()?;
-        let mut sub_revision = 1;
         let mut new_perms = HashMap::new();
         for mut user in users {
             if let Ok(idx) = user.roles.binary_search(&req.role) {
                 let _ignore = user.roles.remove(idx);
-                self.put_user(&user, revision, sub_revision)?;
-                sub_revision = sub_revision.wrapping_add(1);
                 let perms = self.get_user_permissions(&user);
                 let _old = new_perms.insert(String::from_utf8_lossy(&user.name).to_string(), perms);
+                self.put_user(&user)?;
             }
         }
         self.permission_cache.map_write(|mut cache| {
@@ -1060,8 +936,7 @@ where
                 role.key_permission.insert(idx, permission.clone());
             }
         };
-        let revision = self.revision.next();
-        self.put_role(&role, revision, 0)?;
+        self.put_role(&role)?;
         self.permission_cache.map_write(move |mut cache| {
             let users = cache
                 .role_to_users_map
@@ -1107,8 +982,7 @@ where
             })
             .map_err(|_ignore| ExecuteError::permission_not_granted())?;
         let _ignore = role.key_permission.remove(idx);
-        let next_revision = self.revision.next();
-        self.put_role(&role, next_revision, 0)?;
+        self.put_role(&role)?;
         self.permission_cache.map_write(|mut cache| {
             let users = cache
                 .role_to_users_map
