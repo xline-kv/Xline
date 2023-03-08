@@ -126,7 +126,10 @@
     clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
     clippy::module_name_repetitions, // TODO: refactor module to remove this
 )]
-
+#![cfg_attr(
+    test,
+    allow(clippy::unwrap_used, clippy::as_conversions, clippy::indexing_slicing)
+)]
 /// Xline client
 pub mod client;
 /// Header generator

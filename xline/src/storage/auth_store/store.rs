@@ -1,7 +1,6 @@
 use std::{collections::VecDeque, sync::Arc};
 
 use anyhow::Result;
-use curp::cmd::ProposeId;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use tokio::sync::mpsc;
 
@@ -54,17 +53,21 @@ where
     /// execute a auth request
     pub(crate) fn execute(
         &self,
-        id: ProposeId,
-        request: RequestWithToken,
+        request: &RequestWithToken,
     ) -> Result<CommandResponse, ExecuteError> {
         self.inner
-            .handle_auth_req(id, request.request)
+            .handle_auth_req(&request.request)
             .map(CommandResponse::new)
     }
 
     /// sync a auth request
-    pub(crate) fn after_sync(&self, id: &ProposeId) -> Result<SyncResponse, ExecuteError> {
-        self.inner.sync_request(id).map(SyncResponse::new)
+    pub(crate) fn after_sync(
+        &self,
+        request: &RequestWithToken,
+    ) -> Result<SyncResponse, ExecuteError> {
+        self.inner
+            .sync_request(&request.request)
+            .map(SyncResponse::new)
     }
 
     /// Auth revision
@@ -340,7 +343,7 @@ mod test {
             }
             .into(),
         );
-        assert!(exe_and_sync(&store, req).is_ok());
+        assert!(exe_and_sync(&store, &req).is_ok());
         assert_eq!(
             store.inner.permission_cache(),
             PermissionCache {
@@ -367,7 +370,7 @@ mod test {
             }
             .into(),
         );
-        assert!(exe_and_sync(&store, req).is_ok());
+        assert!(exe_and_sync(&store, &req).is_ok());
         assert_eq!(
             store.inner.permission_cache(),
             PermissionCache {
@@ -386,7 +389,7 @@ mod test {
             }
             .into(),
         );
-        assert!(exe_and_sync(&store, req).is_ok());
+        assert!(exe_and_sync(&store, &req).is_ok());
         assert_eq!(
             store.inner.permission_cache(),
             PermissionCache {
@@ -405,7 +408,7 @@ mod test {
             }
             .into(),
         );
-        assert!(exe_and_sync(&store, req).is_ok());
+        assert!(exe_and_sync(&store, &req).is_ok());
         assert_eq!(
             store.inner.permission_cache(),
             PermissionCache {
@@ -431,7 +434,7 @@ mod test {
             }
             .into(),
         );
-        assert!(exe_and_sync(&store, req1).is_ok());
+        assert!(exe_and_sync(&store, &req1).is_ok());
         let req2 = RequestWithToken::new(
             AuthUserAddRequest {
                 name: "u".to_owned(),
@@ -441,7 +444,7 @@ mod test {
             }
             .into(),
         );
-        assert!(exe_and_sync(&store, req2).is_ok());
+        assert!(exe_and_sync(&store, &req2).is_ok());
         let req3 = RequestWithToken::new(
             AuthUserGrantRoleRequest {
                 user: "u".to_owned(),
@@ -449,7 +452,7 @@ mod test {
             }
             .into(),
         );
-        assert!(exe_and_sync(&store, req3).is_ok());
+        assert!(exe_and_sync(&store, &req3).is_ok());
         let req4 = RequestWithToken::new(
             AuthRoleGrantPermissionRequest {
                 name: "r".to_owned(),
@@ -462,7 +465,7 @@ mod test {
             }
             .into(),
         );
-        assert!(exe_and_sync(&store, req4).is_ok());
+        assert!(exe_and_sync(&store, &req4).is_ok());
         assert_eq!(
             store.inner.permission_cache(),
             PermissionCache {
@@ -481,11 +484,10 @@ mod test {
 
     fn exe_and_sync(
         store: &AuthStore<DBProxy>,
-        req: RequestWithToken,
+        req: &RequestWithToken,
     ) -> Result<(CommandResponse, SyncResponse), Box<dyn Error>> {
-        let id = ProposeId::new("test-id".to_owned());
-        let cmd_res = store.execute(id.clone(), req)?;
-        let sync_res = store.after_sync(&id)?;
+        let cmd_res = store.execute(req)?;
+        let sync_res = store.after_sync(req)?;
         Ok((cmd_res, sync_res))
     }
 

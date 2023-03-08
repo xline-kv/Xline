@@ -12,19 +12,17 @@ use std::{
 };
 
 use clippy_utilities::Cast;
-use curp::cmd::ProposeId;
 use log::debug;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use prost::Message;
 use tokio::sync::mpsc;
-use utils::parking_lot_lock::MutexMap;
 
 use self::lease_queue::LeaseQueue;
 pub(crate) use self::{
     lease::Lease,
     message::{DeleteMessage, LeaseMessage},
 };
-use super::{storage_api::StorageApi, ExecuteError, RequestCtx};
+use super::{storage_api::StorageApi, ExecuteError};
 use crate::{
     header_gen::HeaderGenerator,
     rpc::{
@@ -183,8 +181,6 @@ where
     db: Arc<DB>,
     /// delete channel
     del_tx: mpsc::Sender<DeleteMessage>,
-    /// Speculative execution pool. Mapping from propose id to request
-    sp_exec_pool: Mutex<HashMap<ProposeId, RequestCtx>>,
     /// Current node is leader or not
     state: Arc<State>,
     /// Header generator
@@ -241,17 +237,22 @@ where
     /// execute a lease request
     pub(crate) fn execute(
         &self,
-        id: ProposeId,
-        request: RequestWithToken,
+        request: &RequestWithToken,
     ) -> Result<CommandResponse, ExecuteError> {
         self.inner
-            .handle_lease_requests(id, request.request)
+            .handle_lease_requests(&request.request)
             .map(CommandResponse::new)
     }
 
     /// sync a lease request
-    pub(crate) async fn after_sync(&self, id: &ProposeId) -> Result<SyncResponse, ExecuteError> {
-        self.inner.sync_request(id).await.map(SyncResponse::new)
+    pub(crate) async fn after_sync(
+        &self,
+        request: &RequestWithToken,
+    ) -> Result<SyncResponse, ExecuteError> {
+        self.inner
+            .sync_request(&request.request)
+            .await
+            .map(SyncResponse::new)
     }
 
     /// Check if the node is leader
@@ -333,7 +334,6 @@ where
             table: "lease".to_owned(),
             lease_collection: RwLock::new(LeaseCollection::new()),
             db,
-            sp_exec_pool: Mutex::new(HashMap::new()),
             del_tx,
             state,
             header_gen,
@@ -377,12 +377,11 @@ where
     /// Handle lease requests
     fn handle_lease_requests(
         &self,
-        id: ProposeId,
-        wrapper: RequestWrapper,
+        wrapper: &RequestWrapper,
     ) -> Result<ResponseWrapper, ExecuteError> {
         debug!("Receive request {:?}", wrapper);
         #[allow(clippy::wildcard_enum_match_arm)]
-        let res = match wrapper {
+        let res = match *wrapper {
             RequestWrapper::LeaseGrantRequest(ref req) => {
                 debug!("Receive LeaseGrantRequest {:?}", req);
                 self.handle_lease_grant_request(req).map(Into::into)
@@ -393,9 +392,6 @@ where
             }
             _ => unreachable!("Other request should not be sent to this store"),
         };
-        self.sp_exec_pool.map_lock(|mut pool| {
-            let _prev = pool.insert(id, RequestCtx::new(wrapper, res.is_err()));
-        });
         res
     }
 
@@ -437,23 +433,16 @@ where
     }
 
     /// Sync `RequestWithToken`
-    async fn sync_request(&self, id: &ProposeId) -> Result<i64, ExecuteError> {
-        let ctx = self.sp_exec_pool.lock().remove(id).unwrap_or_else(|| {
-            panic!("Failed to get speculative execution propose id {id:?}");
-        });
-        if ctx.met_err() {
-            return Ok(self.header_gen.revision());
-        }
-        let wrapper = ctx.req();
+    async fn sync_request(&self, wrapper: &RequestWrapper) -> Result<i64, ExecuteError> {
         #[allow(clippy::wildcard_enum_match_arm)]
-        match wrapper {
-            RequestWrapper::LeaseGrantRequest(req) => {
+        match *wrapper {
+            RequestWrapper::LeaseGrantRequest(ref req) => {
                 debug!("Sync LeaseGrantRequest {:?}", req);
-                self.sync_lease_grant_request(&req)?;
+                self.sync_lease_grant_request(req)?;
             }
-            RequestWrapper::LeaseRevokeRequest(req) => {
+            RequestWrapper::LeaseRevokeRequest(ref req) => {
                 debug!("Sync LeaseRevokeRequest {:?}", req);
-                self.sync_lease_revoke_request(&req).await?;
+                self.sync_lease_revoke_request(req).await?;
             }
             _ => unreachable!("Other request should not be sent to this store"),
         };
@@ -470,9 +459,9 @@ where
     }
 
     /// Insert a `PbLease`
-    fn insert(&self, lease_id: i64, kv: &PbLease) -> Result<(), ExecuteError> {
+    fn insert(&self, lease_id: i64, lease: &PbLease) -> Result<(), ExecuteError> {
         let key = lease_id.encode_to_vec();
-        let value = kv.encode_to_vec();
+        let value = lease.encode_to_vec();
         self.db.insert(&self.table, key, value, false)
     }
 
@@ -564,9 +553,8 @@ mod test {
         ls: &LeaseStore<DBProxy>,
         req: RequestWithToken,
     ) -> Result<ResponseWrapper, ExecuteError> {
-        let id = ProposeId::new("testid".to_owned());
-        let cmd_res = ls.execute(id.clone(), req)?;
-        let _ignore = ls.after_sync(&id).await;
+        let cmd_res = ls.execute(&req)?;
+        let _ignore = ls.after_sync(&req).await;
         Ok(cmd_res.decode())
     }
 }

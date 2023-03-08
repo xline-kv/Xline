@@ -129,7 +129,7 @@ pub(crate) struct RequestWithToken {
 }
 
 /// Internal request
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[allow(clippy::enum_variant_names)] // in order to quickly implement trait by macro
 pub(crate) enum RequestWrapper {
     /// `RangeRequest`
