@@ -167,9 +167,6 @@ mod message;
 /// Log Entry
 mod log_entry;
 
-/// The special conflict checked mpmc
-pub(crate) mod conflict_checked_mpmc;
-
 /// Protobuf generated types that are used in RPC
 mod rpc;
 

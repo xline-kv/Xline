@@ -7,9 +7,9 @@ use event_listener::Event;
 use indexmap::{IndexMap, IndexSet};
 use parking_lot::RwLock;
 
+use super::cmd_worker::conflict_checked_mpmc::DoneNotifier;
 use crate::{
     cmd::{Command, ProposeId},
-    conflict_checked_mpmc::DoneNotifier,
     LogIndex,
 };
 
