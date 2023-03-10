@@ -53,7 +53,7 @@ pub struct Rpc<C: Command + 'static> {
 
 #[tonic::async_trait]
 impl<C: 'static + Command> crate::rpc::Protocol for Rpc<C> {
-    #[instrument(skip(self), name = "server propose")]
+    #[instrument(skip_all, name = "curp_propose")]
     async fn propose(
         &self,
         request: tonic::Request<ProposeRequest>,
@@ -64,7 +64,7 @@ impl<C: 'static + Command> crate::rpc::Protocol for Rpc<C> {
         ))
     }
 
-    #[instrument(skip(self), name = "server wait_synced")]
+    #[instrument(skip_all, name = "curp_wait_synced")]
     async fn wait_synced(
         &self,
         request: tonic::Request<WaitSyncedRequest>,
@@ -75,6 +75,7 @@ impl<C: 'static + Command> crate::rpc::Protocol for Rpc<C> {
         ))
     }
 
+    #[instrument(skip_all, name = "curp_append_entries")]
     async fn append_entries(
         &self,
         request: tonic::Request<AppendEntriesRequest>,
@@ -84,6 +85,7 @@ impl<C: 'static + Command> crate::rpc::Protocol for Rpc<C> {
         ))
     }
 
+    #[instrument(skip_all, name = "curp_vote")]
     async fn vote(
         &self,
         request: tonic::Request<VoteRequest>,
@@ -93,6 +95,7 @@ impl<C: 'static + Command> crate::rpc::Protocol for Rpc<C> {
         ))
     }
 
+    #[instrument(skip_all, name = "curp_fetch_leader")]
     async fn fetch_leader(
         &self,
         request: tonic::Request<FetchLeaderRequest>,

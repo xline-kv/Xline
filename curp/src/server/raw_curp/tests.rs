@@ -9,7 +9,9 @@ use utils::config::{
 use super::*;
 use crate::{
     server::{
-        cmd_board::CommandBoard, cmd_worker::MockCmdExeSenderApi, curp_node::UncommittedPool,
+        cmd_board::CommandBoard,
+        cmd_worker::{CEEventTxApi, MockCEEventTxApi},
+        curp_node::UncommittedPool,
         spec_pool::SpeculativePool,
     },
     test_utils::{sleep_millis, test_cmd::TestCommand},
@@ -25,7 +27,7 @@ impl<C: 'static + Command> RawCurp<C> {
         self.log.read().commit_index
     }
 
-    pub(crate) fn new_test<Tx: CmdExeSenderApi<C>>(n: u64, exe_tx: Tx) -> Self {
+    pub(crate) fn new_test<Tx: CEEventTxApi<C>>(n: u64, exe_tx: Tx) -> Self {
         let others = (1..n).map(|i| format!("S{i}")).collect();
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
@@ -74,23 +76,23 @@ impl<C: 'static + Command> RawCurp<C> {
 #[test]
 fn leader_handle_propose_will_succeed() {
     let curp = {
-        let mut exe_tx = MockCmdExeSenderApi::<TestCommand>::default();
-        exe_tx.expect_send_exe().returning(|_| oneshot::channel().1);
+        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
+        exe_tx.expect_send_sp_exe().returning(|_| {});
         RawCurp::new_test(3, exe_tx)
     };
     let cmd = Arc::new(TestCommand::default());
     let ((leader_id, term), result) = curp.handle_propose(cmd);
     assert_eq!(leader_id, Some(curp.id().clone()));
     assert_eq!(term, 0);
-    assert!(matches!(result, Ok(Some(_))));
+    assert!(matches!(result, Ok(true)));
 }
 
 #[traced_test]
 #[test]
 fn leader_handle_propose_will_reject_conflicted() {
     let curp = {
-        let mut exe_tx = MockCmdExeSenderApi::<TestCommand>::default();
-        exe_tx.expect_send_exe().returning(|_| oneshot::channel().1);
+        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
+        exe_tx.expect_send_sp_exe().returning(|_| {});
         RawCurp::new_test(3, exe_tx)
     };
 
@@ -98,7 +100,7 @@ fn leader_handle_propose_will_reject_conflicted() {
     let ((leader_id, term), result) = curp.handle_propose(cmd1);
     assert_eq!(leader_id, Some(curp.id().clone()));
     assert_eq!(term, 0);
-    assert!(matches!(result, Ok(Some(_))));
+    assert!(matches!(result, Ok(true)));
 
     let cmd2 = Arc::new(TestCommand::new_put(vec![1, 2], 1));
     let ((leader_id, term), result) = curp.handle_propose(cmd2);
@@ -118,15 +120,15 @@ fn leader_handle_propose_will_reject_conflicted() {
 #[test]
 fn leader_handle_propose_will_reject_duplicated() {
     let curp = {
-        let mut exe_tx = MockCmdExeSenderApi::<TestCommand>::default();
-        exe_tx.expect_send_exe().returning(|_| oneshot::channel().1);
+        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
+        exe_tx.expect_send_sp_exe().returning(|_| {});
         RawCurp::new_test(3, exe_tx)
     };
     let cmd = Arc::new(TestCommand::default());
     let ((leader_id, term), result) = curp.handle_propose(Arc::clone(&cmd));
     assert_eq!(leader_id, Some(curp.id().clone()));
     assert_eq!(term, 0);
-    assert!(matches!(result, Ok(Some(_))));
+    assert!(matches!(result, Ok(true)));
 
     let ((leader_id, term), result) = curp.handle_propose(cmd);
     assert_eq!(leader_id, Some(curp.id().clone()));
@@ -138,7 +140,7 @@ fn leader_handle_propose_will_reject_duplicated() {
 #[test]
 fn follower_handle_propose_will_succeed() {
     let curp = {
-        let mut exe_tx = MockCmdExeSenderApi::<TestCommand>::default();
+        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx.expect_send_reset().return_const(());
         Arc::new(RawCurp::new_test(3, exe_tx))
     };
@@ -147,14 +149,14 @@ fn follower_handle_propose_will_succeed() {
     let ((leader_id, term), result) = curp.handle_propose(cmd);
     assert_eq!(leader_id, None);
     assert_eq!(term, 1);
-    assert!(matches!(result, Ok(None)));
+    assert!(matches!(result, Ok(false)));
 }
 
 #[traced_test]
 #[test]
 fn follower_handle_propose_will_reject_conflicted() {
     let curp = {
-        let mut exe_tx = MockCmdExeSenderApi::<TestCommand>::default();
+        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx.expect_send_reset().return_const(());
         Arc::new(RawCurp::new_test(3, exe_tx))
     };
@@ -164,7 +166,7 @@ fn follower_handle_propose_will_reject_conflicted() {
     let ((leader_id, term), result) = curp.handle_propose(cmd1);
     assert_eq!(leader_id, None);
     assert_eq!(term, 1);
-    assert!(matches!(result, Ok(None)));
+    assert!(matches!(result, Ok(false)));
 
     let cmd2 = Arc::new(TestCommand::new_get(vec![1]));
     let ((leader_id, term), result) = curp.handle_propose(cmd2);
@@ -179,7 +181,7 @@ fn follower_handle_propose_will_reject_conflicted() {
 #[test]
 fn leader_will_send_heartbeat() {
     let curp = {
-        let exe_tx = MockCmdExeSenderApi::<TestCommand>::default();
+        let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         RawCurp::new_test(3, exe_tx)
     };
     let action = curp.tick();
@@ -190,7 +192,7 @@ fn leader_will_send_heartbeat() {
 #[test]
 fn heartbeat_will_calibrate_term() {
     let curp = {
-        let mut exe_tx = MockCmdExeSenderApi::<TestCommand>::default();
+        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx.expect_send_reset().return_const(());
         RawCurp::new_test(3, exe_tx)
     };
@@ -206,7 +208,7 @@ fn heartbeat_will_calibrate_term() {
 #[traced_test]
 #[test]
 fn heartbeat_will_calibrate_next_index() {
-    let curp = RawCurp::new_test(3, MockCmdExeSenderApi::<TestCommand>::default());
+    let curp = RawCurp::new_test(3, MockCEEventTxApi::<TestCommand>::default());
 
     let result = curp.handle_append_entries_resp(&"S1".to_owned(), None, 0, false, 1);
     assert_eq!(result, Ok(false));
@@ -222,7 +224,7 @@ fn heartbeat_will_calibrate_next_index() {
 async fn no_heartbeat_when_contention_is_high() {
     let curp = Arc::new(RawCurp::new_test(
         3,
-        MockCmdExeSenderApi::<TestCommand>::default(),
+        MockCEEventTxApi::<TestCommand>::default(),
     ));
 
     let curp_c = Arc::clone(&curp);
@@ -247,7 +249,7 @@ async fn no_heartbeat_when_contention_is_high() {
 #[test]
 fn handle_ae_will_calibrate_term() {
     let curp = {
-        let mut exe_tx = MockCmdExeSenderApi::<TestCommand>::default();
+        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx.expect_send_reset().return_const(());
         Arc::new(RawCurp::new_test(3, exe_tx))
     };
@@ -266,7 +268,7 @@ fn handle_ae_will_calibrate_term() {
 #[test]
 fn handle_ae_will_set_leader_id() {
     let curp = {
-        let mut exe_tx = MockCmdExeSenderApi::<TestCommand>::default();
+        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx.expect_send_reset().return_const(());
         Arc::new(RawCurp::new_test(3, exe_tx))
     };
@@ -285,7 +287,7 @@ fn handle_ae_will_set_leader_id() {
 #[test]
 fn handle_ae_will_reject_wrong_term() {
     let curp = {
-        let mut exe_tx = MockCmdExeSenderApi::<TestCommand>::default();
+        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx.expect_send_reset().return_const(());
         Arc::new(RawCurp::new_test(3, exe_tx))
     };
@@ -300,7 +302,7 @@ fn handle_ae_will_reject_wrong_term() {
 #[test]
 fn handle_ae_will_reject_wrong_log() {
     let curp = {
-        let mut exe_tx = MockCmdExeSenderApi::<TestCommand>::default();
+        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx.expect_send_reset().return_const(());
         Arc::new(RawCurp::new_test(3, exe_tx))
     };
@@ -323,7 +325,7 @@ fn handle_ae_will_reject_wrong_log() {
 #[tokio::test]
 async fn follower_will_not_start_election_when_heartbeats_are_received() {
     let curp = {
-        let mut exe_tx = MockCmdExeSenderApi::<TestCommand>::default();
+        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx.expect_send_reset().return_const(());
         Arc::new(RawCurp::new_test(3, exe_tx))
     };
@@ -351,7 +353,7 @@ async fn follower_will_not_start_election_when_heartbeats_are_received() {
 #[tokio::test]
 async fn follower_or_candidate_will_start_election_if_timeout() {
     let curp = {
-        let mut exe_tx = MockCmdExeSenderApi::<TestCommand>::default();
+        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx.expect_send_reset().return_const(());
         Arc::new(RawCurp::new_test(3, exe_tx))
     };
@@ -392,7 +394,7 @@ async fn follower_or_candidate_will_start_election_if_timeout() {
 #[test]
 fn handle_vote_will_calibrate_term() {
     let curp = {
-        let mut exe_tx = MockCmdExeSenderApi::<TestCommand>::default();
+        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx.expect_send_reset().return_const(());
         Arc::new(RawCurp::new_test(3, exe_tx))
     };
@@ -408,7 +410,7 @@ fn handle_vote_will_calibrate_term() {
 #[test]
 fn handle_vote_will_reject_smaller_term() {
     let curp = {
-        let mut exe_tx = MockCmdExeSenderApi::<TestCommand>::default();
+        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx.expect_send_reset().return_const(());
         Arc::new(RawCurp::new_test(3, exe_tx))
     };
@@ -422,7 +424,7 @@ fn handle_vote_will_reject_smaller_term() {
 #[test]
 fn handle_vote_will_reject_outdated_candidate() {
     let curp = {
-        let mut exe_tx = MockCmdExeSenderApi::<TestCommand>::default();
+        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx.expect_send_reset().return_const(());
         Arc::new(RawCurp::new_test(3, exe_tx))
     };
@@ -444,7 +446,7 @@ fn handle_vote_will_reject_outdated_candidate() {
 #[test]
 fn candidate_will_become_leader_after_election_succeeds() {
     let curp = {
-        let mut exe_tx = MockCmdExeSenderApi::<TestCommand>::default();
+        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx.expect_send_reset().return_const(());
         Arc::new(RawCurp::new_test(3, exe_tx))
     };
@@ -470,7 +472,7 @@ fn candidate_will_become_leader_after_election_succeeds() {
 #[test]
 fn vote_will_calibrate_candidate_term() {
     let curp = {
-        let mut exe_tx = MockCmdExeSenderApi::<TestCommand>::default();
+        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx.expect_send_reset().return_const(());
         Arc::new(RawCurp::new_test(3, exe_tx))
     };
@@ -495,7 +497,7 @@ fn vote_will_calibrate_candidate_term() {
 #[test]
 fn recover_from_spec_pools_will_pick_the_correct_cmds() {
     let curp = {
-        let mut exe_tx = MockCmdExeSenderApi::<TestCommand>::default();
+        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx.expect_send_reset().return_const(());
         Arc::new(RawCurp::new_test(5, exe_tx))
     };
@@ -533,7 +535,7 @@ fn recover_from_spec_pools_will_pick_the_correct_cmds() {
 #[test]
 fn quorum() {
     let curp = {
-        let mut exe_tx = MockCmdExeSenderApi::<TestCommand>::default();
+        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx.expect_send_reset().return_const(());
         Arc::new(RawCurp::new_test(5, exe_tx))
     };
