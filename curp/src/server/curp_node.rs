@@ -282,6 +282,7 @@ impl<C: 'static + Command> CurpNode<C> {
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
         let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
+        let last_applied = cmd_executor.last_applied();
 
         let storage = Arc::new(RocksDBStorage::new(&curp_cfg.data_dir)?);
 
@@ -331,6 +332,7 @@ impl<C: 'static + Command> CurpNode<C> {
                 log_tx,
                 voted_for,
                 entries,
+                last_applied,
             ))
         };
 

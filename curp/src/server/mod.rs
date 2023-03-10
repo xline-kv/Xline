@@ -122,7 +122,7 @@ impl<C: Command + 'static> Rpc<C> {
             match CurpNode::new(id, is_leader, others, executor, curp_cfg, tx_filter).await {
                 Ok(n) => n,
                 Err(err) => {
-                    panic!("failed to create curp service， {err}");
+                    panic!("failed to create curp service, {err}");
                 }
             };
 

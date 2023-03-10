@@ -227,6 +227,11 @@ where
 
     // TODO
     async fn reset(&self) {}
+
+    // TODO
+    fn last_applied(&self) -> usize {
+        0
+    }
 }
 
 /// Command to run consensus protocol

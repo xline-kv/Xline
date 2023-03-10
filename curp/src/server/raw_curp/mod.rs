@@ -568,7 +568,7 @@ impl<C: 'static + Command> RawCurp<C> {
         id: ServerId,
         others: HashSet<ServerId>,
         is_leader: bool,
-        cmb_board: CmdBoardRef<C>,
+        cmd_board: CmdBoardRef<C>,
         spec_pool: SpecPoolRef<C>,
         uncommitted_pool: UncommittedPoolRef<C>,
         cfg: Arc<CurpConfig>,
@@ -594,7 +594,7 @@ impl<C: 'static + Command> RawCurp<C> {
             ctx: Context {
                 id,
                 others,
-                cb: cmb_board,
+                cb: cmd_board,
                 sp: spec_pool,
                 ucp: uncommitted_pool,
                 leader_tx: broadcast::channel(1).0,
@@ -630,8 +630,8 @@ impl<C: 'static + Command> RawCurp<C> {
         log_tx: mpsc::UnboundedSender<LogEntry<C>>,
         voted_for: Option<(u64, ServerId)>,
         entries: Vec<LogEntry<C>>,
+        last_applied: usize,
     ) -> Self {
-        // recovered cmds should be stored in the
         let mut raw_curp = Self::new(
             id,
             others,
@@ -651,7 +651,7 @@ impl<C: 'static + Command> RawCurp<C> {
             raw_curp.update_to_term_and_become_follower(&mut st_w, term);
             st_w.voted_for = Some(server_id);
         } else if is_leader {
-            // all uncommitted cmds should stay in ucp until there are executed
+            // all uncommitted cmds should stay in ucp until they are executed
             raw_curp.ctx.ucp.map_lock(|mut ucp_l| {
                 for e in &entries {
                     let _ig = ucp_l.insert(e.cmd.id().clone(), Arc::clone(&e.cmd));
@@ -659,6 +659,11 @@ impl<C: 'static + Command> RawCurp<C> {
             });
         } else {
         }
+
+        raw_curp.log.map_write(|mut log_w| {
+            log_w.last_applied = last_applied;
+            log_w.commit_index = last_applied;
+        });
 
         raw_curp.log = RwLock::new(Log::new(log_tx, entries));
 

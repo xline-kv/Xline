@@ -116,4 +116,7 @@ where
 
     /// Reset the command executor to the initial state
     async fn reset(&self);
+
+    /// Index of the last log entry that has been successfully applied to the command executor
+    fn last_applied(&self) -> usize;
 }

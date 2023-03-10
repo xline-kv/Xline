@@ -2,13 +2,14 @@ use std::{
     collections::HashMap,
     fmt::Display,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc,
     },
     time::Duration,
 };
 
 use async_trait::async_trait;
+use clippy_utilities::NumericCast;
 use curp::{
     cmd::{Command, CommandExecutor, ConflictCheck, ProposeId},
     LogIndex,
@@ -133,6 +134,7 @@ impl ConflictCheck for TestCommand {
 #[derive(Debug, Clone)]
 pub struct TestCE {
     server_id: String,
+    last_applied: Arc<AtomicUsize>,
     pub store: Arc<Mutex<HashMap<u32, u32>>>,
     exe_sender: mpsc::UnboundedSender<(TestCommand, TestCommandResult)>,
     after_sync_sender: mpsc::UnboundedSender<(TestCommand, LogIndex)>,
@@ -183,11 +185,17 @@ impl CommandExecutor<TestCommand> for TestCE {
         self.after_sync_sender
             .send((cmd.clone(), index))
             .expect("failed to send after sync msg");
+        self.last_applied
+            .store(index.numeric_cast(), Ordering::Relaxed);
         Ok(index)
     }
 
     async fn reset(&self) {
         self.store.lock().clear();
+    }
+
+    fn last_applied(&self) -> usize {
+        self.last_applied.load(Ordering::Relaxed)
     }
 }
 
@@ -199,6 +207,7 @@ impl TestCE {
     ) -> Self {
         Self {
             server_id,
+            last_applied: Arc::new(AtomicUsize::new(0)),
             store: Arc::new(Mutex::new(HashMap::new())),
             exe_sender,
             after_sync_sender,
