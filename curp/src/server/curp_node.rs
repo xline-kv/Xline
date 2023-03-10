@@ -4,7 +4,7 @@ use clippy_utilities::NumericCast;
 use event_listener::Event;
 use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
 use madsim::rand::{thread_rng, Rng};
-use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
+use parking_lot::{Mutex, RwLock};
 use thiserror::Error;
 use tokio::{
     sync::{broadcast, mpsc},
@@ -29,7 +29,7 @@ use crate::{
     message::ServerId,
     rpc::{
         self, connect::ConnectApi, AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest,
-        FetchLeaderResponse, ProposeRequest, ProposeResponse, SyncError, VoteRequest, VoteResponse,
+        FetchLeaderResponse, ProposeRequest, ProposeResponse, VoteRequest, VoteResponse,
         WaitSyncedRequest, WaitSyncedResponse,
     },
     server::storage::rocksdb::RocksDBStorage,
@@ -79,18 +79,13 @@ impl<C: 'static + Command> CurpNode<C> {
         // handle proposal
         let ((leader_id, term), result) = self.curp.handle_propose(Arc::clone(&cmd));
         let resp = match result {
-            Ok(Some(er_rx)) => match er_rx.await {
-                Ok(Ok(er)) => ProposeResponse::new_result::<C>(leader_id, term, &er)?,
-                Ok(Err(err)) => {
+            Ok(true) => match CommandBoard::wait_for_er(&self.cmd_board, cmd.id()).await {
+                Ok(er) => ProposeResponse::new_result::<C>(leader_id, term, &er)?,
+                Err(err) => {
                     ProposeResponse::new_error(leader_id, term, &ProposeError::ExecutionError(err))?
                 }
-                Err(err) => ProposeResponse::new_error(
-                    leader_id,
-                    term,
-                    &ProposeError::ProtocolError(err.to_string()),
-                )?,
             },
-            Ok(None) => ProposeResponse::new_empty(leader_id, term)?,
+            Ok(false) => ProposeResponse::new_empty(leader_id, term)?,
             Err(err) => ProposeResponse::new_error(leader_id, term, &err)?,
         };
 
@@ -146,54 +141,10 @@ impl<C: 'static + Command> CurpNode<C> {
         req: WaitSyncedRequest,
     ) -> Result<WaitSyncedResponse, CurpError> {
         let id = req.id()?;
-
         debug!("{} get wait synced request for {id:?}", self.curp.id());
-        let resp = loop {
-            let listener = {
-                // check if the server is still leader
-                let (leader, term) = self.curp.leader();
-                let is_leader = leader.as_ref() == Some(self.curp.id());
-                if !is_leader {
-                    warn!("non-leader server {} receives wait_synced", self.curp.id());
-                    break WaitSyncedResponse::new_error(&SyncError::Redirect(leader, term))?;
-                }
 
-                // check if the cmd board already has response
-                let board_r = self.cmd_board.upgradable_read();
-                #[allow(clippy::pattern_type_mismatch)] // can't get away with this
-                match (board_r.er_buffer.get(&id), board_r.asr_buffer.get(&id)) {
-                    (Some(Err(err)), _) => {
-                        break WaitSyncedResponse::new_error(&SyncError::ExecuteError(
-                            err.to_string(),
-                        ))?;
-                    }
-                    (Some(er), Some(asr)) => {
-                        break WaitSyncedResponse::new_from_result::<C>(
-                            Some(er.clone()),
-                            Some(asr.clone()),
-                        )?;
-                    }
-                    _ => {}
-                }
-
-                let mut board_w = RwLockUpgradableReadGuard::upgrade(board_r);
-                // generate wait_synced event listener
-                board_w
-                    .notifiers
-                    .entry(id.clone())
-                    .or_insert_with(Event::new)
-                    .listen()
-            };
-            let wait_synced_timeout = self.curp.cfg().wait_synced_timeout;
-            if tokio::time::timeout(wait_synced_timeout, listener)
-                .await
-                .is_err()
-            {
-                let _ignored = self.cmd_board.write().notifiers.remove(&id);
-                warn!("wait synced timeout for {id:?}");
-                break WaitSyncedResponse::new_error(&SyncError::Timeout)?;
-            }
-        };
+        let (er, asr) = CommandBoard::wait_for_er_asr(&self.cmd_board, &id).await;
+        let resp = WaitSyncedResponse::new_from_result::<C>(Some(er), asr)?;
 
         debug!("{} wait synced for {id:?} finishes", self.curp.id());
         Ok(resp)
@@ -669,7 +620,7 @@ mod tests {
     use crate::{
         log_entry::LogEntry,
         rpc::connect::MockConnectApi,
-        server::cmd_worker::MockCmdExeSenderApi,
+        server::cmd_worker::MockCEEventTxApi,
         test_utils::{sleep_millis, test_cmd::TestCommand},
     };
 
@@ -680,7 +631,7 @@ mod tests {
     async fn logs_will_be_resent() {
         let curp = Arc::new(RawCurp::new_test(
             3,
-            MockCmdExeSenderApi::<TestCommand>::default(),
+            MockCEEventTxApi::<TestCommand>::default(),
         ));
 
         let mut mock_connect = MockConnectApi::default();
@@ -711,7 +662,7 @@ mod tests {
     #[tokio::test]
     async fn send_log_will_stop_after_new_election() {
         let curp = {
-            let mut exe_tx = MockCmdExeSenderApi::<TestCommand>::default();
+            let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
             exe_tx.expect_send_reset().returning(|| ());
             Arc::new(RawCurp::new_test(3, exe_tx))
         };
@@ -746,7 +697,7 @@ mod tests {
     #[tokio::test]
     async fn send_log_will_succeed_and_commit() {
         let curp = {
-            let mut exe_tx = MockCmdExeSenderApi::<TestCommand>::default();
+            let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
             exe_tx.expect_send_reset().returning(|| ());
             exe_tx.expect_send_after_sync().returning(|_, _| ());
             Arc::new(RawCurp::new_test(3, exe_tx))
@@ -782,7 +733,7 @@ mod tests {
     #[tokio::test]
     async fn leader_will_calibrate_follower_until_succeed() {
         let curp = {
-            let mut exe_tx = MockCmdExeSenderApi::<TestCommand>::default();
+            let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
             exe_tx.expect_send_after_sync().returning(|_, _| ());
             Arc::new(RawCurp::new_test(3, exe_tx))
         };

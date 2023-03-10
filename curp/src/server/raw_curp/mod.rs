@@ -22,7 +22,7 @@ use std::{
 use clippy_utilities::NumericCast;
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc};
 use tracing::{
     debug, error,
     log::{log_enabled, Level},
@@ -36,7 +36,7 @@ use self::{
     log::Log,
     state::{CandidateState, LeaderState, State},
 };
-use super::{cmd_worker::CmdExeSenderApi, curp_node::UncommittedPoolRef};
+use super::{cmd_worker::CEEventTxApi, curp_node::UncommittedPoolRef};
 use crate::{
     cmd::{Command, ProposeId},
     error::ProposeError,
@@ -137,7 +137,7 @@ struct Context<C: Command> {
     /// Heartbeat opt out flag
     hb_opt: AtomicBool,
     /// Tx to send cmds to execute and do after sync
-    cmd_tx: Box<dyn CmdExeSenderApi<C>>,
+    cmd_tx: Box<dyn CEEventTxApi<C>>,
     /// Tx to send the index of log entry which needs to be replicated on followers
     sync_tx: mpsc::UnboundedSender<usize>,
     /// Tx to send the id of followers that need to be calibrated
@@ -243,16 +243,13 @@ impl<C: 'static + Command> RawCurp<C> {
 // Curp handlers
 impl<C: 'static + Command> RawCurp<C> {
     /// Handle `propose` request
-    /// Return `((leader_id, term), Ok(Option<exe_rx>))` if the proposal succeeds, `Some(exe_rx)` if is leader and needs to wait for the execution result
+    /// Return `((leader_id, term), Ok(spec_executed))` if the proposal succeeds, `Ok(true)` if leader speculatively executed the command
     /// Return `((leader_id, term), Err(ProposeError))` if the cmd cannot be speculatively executed or is duplicated
     #[allow(clippy::type_complexity)] // it's clear
     pub(super) fn handle_propose(
         &self,
         cmd: Arc<C>,
-    ) -> (
-        (Option<ServerId>, u64),
-        Result<Option<oneshot::Receiver<Result<C::ER, String>>>, ProposeError>,
-    ) {
+    ) -> ((Option<ServerId>, u64), Result<bool, ProposeError>) {
         debug!("{} gets proposal for cmd {}", self.id(), cmd.id());
         let mut conflict = self
             .ctx
@@ -269,13 +266,16 @@ impl<C: 'static + Command> RawCurp<C> {
                 if conflict {
                     Err(ProposeError::KeyConflict)
                 } else {
-                    Ok(None)
+                    Ok(false)
                 },
             );
         }
 
-        let mut cb_w = self.ctx.cb.write();
-        if !cb_w.sync.insert(cmd.id().clone()) {
+        if !self
+            .ctx
+            .cb
+            .map_write(|mut cb_w| cb_w.sync.insert(cmd.id().clone()))
+        {
             return (info, Err(ProposeError::Duplicated));
         }
 
@@ -292,13 +292,9 @@ impl<C: 'static + Command> RawCurp<C> {
         let mut log_w = self.log.write();
         let index = log_w.push_cmd(st_r.term, Arc::clone(&cmd));
 
-        let exe_rx = (!conflict).then(|| {
-            assert!(
-                cb_w.spec_executed.insert(cmd.id().clone()),
-                "can't insert twice to spec_executed"
-            );
-            self.ctx.cmd_tx.send_exe(cmd)
-        });
+        if !conflict {
+            self.ctx.cmd_tx.send_sp_exe(cmd);
+        }
 
         if let Err(e) = self.ctx.sync_tx.send(index) {
             error!("send channel error, {e}");
@@ -309,7 +305,7 @@ impl<C: 'static + Command> RawCurp<C> {
             if conflict {
                 Err(ProposeError::KeyConflict)
             } else {
-                Ok(exe_rx)
+                Ok(true)
             },
         )
     }
@@ -572,7 +568,7 @@ impl<C: 'static + Command> RawCurp<C> {
         spec_pool: SpecPoolRef<C>,
         uncommitted_pool: UncommittedPoolRef<C>,
         cfg: Arc<CurpConfig>,
-        cmd_tx: Box<dyn CmdExeSenderApi<C>>,
+        cmd_tx: Box<dyn CEEventTxApi<C>>,
         sync_tx: mpsc::UnboundedSender<usize>,
         calibrate_tx: mpsc::UnboundedSender<ServerId>,
         log_tx: mpsc::UnboundedSender<LogEntry<C>>,
@@ -624,7 +620,7 @@ impl<C: 'static + Command> RawCurp<C> {
         spec_pool: SpecPoolRef<C>,
         uncommitted_pool: UncommittedPoolRef<C>,
         cfg: Arc<CurpConfig>,
-        cmd_tx: Box<dyn CmdExeSenderApi<C>>,
+        cmd_tx: Box<dyn CEEventTxApi<C>>,
         sync_tx: mpsc::UnboundedSender<usize>,
         calibrate_tx: mpsc::UnboundedSender<ServerId>,
         log_tx: mpsc::UnboundedSender<LogEntry<C>>,
@@ -931,6 +927,8 @@ impl<C: 'static + Command> RawCurp<C> {
 
     /// When leader retires, it should reset state
     fn leader_retires(&self) {
+        debug!("leader {} retires", self.id());
+
         // when a leader retires, it should wipe up speculatively executed cmds by resetting and re-executing
         self.ctx.cmd_tx.send_reset();
 
