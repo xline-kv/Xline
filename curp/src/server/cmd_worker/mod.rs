@@ -11,14 +11,16 @@ use tokio::{sync::oneshot, task::JoinHandle};
 use tracing::{debug, error, warn};
 use utils::parking_lot_lock::{MutexMap, RwLockMap};
 
+use self::conflict_checked_mpmc::ConflictCheckedMsg;
 use super::{curp_node::UncommittedPoolRef, spec_pool::SpecPoolRef};
 use crate::{
     cmd::{Command, CommandExecutor, ConflictCheck},
-    conflict_checked_mpmc,
-    conflict_checked_mpmc::{ConflictCheckedMsg, DoneNotifier},
-    server::cmd_board::CmdBoardRef,
+    server::{cmd_board::CmdBoardRef, cmd_worker::conflict_checked_mpmc::DoneNotifier},
     LogIndex,
 };
+
+/// Conflict checked mpmc
+pub(super) mod conflict_checked_mpmc;
 
 /// Number of execute workers
 const N_EXECUTE_WORKERS: usize = 4;

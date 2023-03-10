@@ -9,7 +9,7 @@ use tracing::{error, info};
 use crate::cmd::ConflictCheck;
 
 /// Call `DoneNotifier::notify` when the process of the msg has finished
-pub(crate) struct DoneNotifier {
+pub(in crate::server) struct DoneNotifier {
     /// Notifier
     notifier: flume::Sender<u64>,
     /// The id of the msg
@@ -169,7 +169,7 @@ impl<M: ConflictCheckedMsg> Filter<M> {
 /// Create conflict checked channel. The channel guarantees there will be no conflicted msgs received by multiple receivers at the same time.
 // Message flow:
 // send_tx -> filter_rx -> filter -> filter_tx -> recv_rx -> done_tx -> done_rx
-pub(crate) fn channel<M: ConflictCheckedMsg>(
+pub(in crate::server) fn channel<M: ConflictCheckedMsg>(
 ) -> (flume::Sender<M>, flume::Receiver<(M, DoneNotifier)>) {
     // recv from user, insert it into filter
     let (send_tx, filter_rx) = flume::unbounded();
