@@ -24,7 +24,7 @@ impl HeaderGenerator {
             cluster_id,
             member_id,
             term: Arc::new(Mutex::new(0)),
-            revision: Arc::new(RevisionNumber::new()),
+            revision: Arc::new(RevisionNumber::default()),
         }
     }
 

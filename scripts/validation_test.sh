@@ -114,7 +114,7 @@ auth_validation() {
     run_with_expect "${ETCDCTL} role add root" "Role root created"
     run_with_expect "${ETCDCTL} user grant-role root root" "Role root is granted to user root"
     run_with_expect "${ETCDCTL} auth enable" "Authentication Enabled"
-    run_with_expect "${ETCDCTL} --user root:root auth status" "Authentication Status: true\nAuthRevision: 5"
+    run_with_expect "${ETCDCTL} --user root:root auth status" "Authentication Status: true\nAuthRevision: 4"
     run_with_expect "${ETCDCTL} --user root:root user add u:u" "User u created"
     run_with_expect "${ETCDCTL} --user root:root role add r" "Role r created"
     run_with_expect "${ETCDCTL} --user root:root user grant-role u r" "Role r is granted to user u"
