@@ -23,6 +23,9 @@ pub(super) struct Log<C: Command> {
     /// Index of highest log entry known to be committed
     pub(super) commit_index: usize,
     /// Index of highest log entry applied to state machine
+    /// Note this `last_applied` is a little bit different from the one in command executor
+    /// in that it means the index of the last log sent to the `cmd_worker`(may not be executed yet)
+    /// while the `last_applied` in command executor means index of the last log entry that has been successfully applied to the command executor.
     pub(super) last_applied: usize,
     /// Tx to send log entries to persist task
     log_tx: mpsc::UnboundedSender<LogEntry<C>>,

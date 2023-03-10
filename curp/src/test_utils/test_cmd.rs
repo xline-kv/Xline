@@ -2,13 +2,14 @@ use std::{
     collections::HashMap,
     fmt::Display,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc,
     },
     time::Duration,
 };
 
 use async_trait::async_trait;
+use clippy_utilities::NumericCast;
 use itertools::Itertools;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -133,6 +134,7 @@ impl ConflictCheck for TestCommand {
 #[derive(Debug, Clone)]
 pub(crate) struct TestCE {
     server_id: ServerId,
+    last_applied: Arc<AtomicUsize>,
     pub(crate) store: Arc<Mutex<HashMap<u32, u32>>>,
     exe_sender: mpsc::UnboundedSender<(TestCommand, TestCommandResult)>,
     after_sync_sender: mpsc::UnboundedSender<(TestCommand, LogIndex)>,
@@ -198,6 +200,10 @@ impl CommandExecutor<TestCommand> for TestCE {
     async fn reset(&self) {
         self.store.lock().clear();
     }
+
+    fn last_applied(&self) -> usize {
+        self.last_applied.load(Ordering::Relaxed)
+    }
 }
 
 impl TestCE {
@@ -208,6 +214,7 @@ impl TestCE {
     ) -> Self {
         Self {
             server_id,
+            last_applied: Arc::new(AtomicUsize::new(0)),
             store: Arc::new(Mutex::new(HashMap::new())),
             exe_sender,
             after_sync_sender,
@@ -218,6 +225,7 @@ impl TestCE {
 #[derive(Debug, Clone)]
 pub(crate) struct TestCESimple {
     server_id: ServerId,
+    last_applied: Arc<AtomicUsize>,
     store: Arc<Mutex<HashMap<u32, u32>>>,
 }
 
@@ -258,6 +266,8 @@ impl CommandExecutor<TestCommand> for TestCESimple {
         if cmd.as_should_fail {
             return Err(ExecuteError("fail".to_owned()));
         }
+        self.last_applied
+            .store(index.numeric_cast(), Ordering::Relaxed);
 
         debug!("{} call cmd {:?} after sync", self.server_id, cmd.id());
         Ok(index)
@@ -266,12 +276,17 @@ impl CommandExecutor<TestCommand> for TestCESimple {
     async fn reset(&self) {
         self.store.lock().clear();
     }
+
+    fn last_applied(&self) -> usize {
+        self.last_applied.load(Ordering::Relaxed)
+    }
 }
 
 impl TestCESimple {
     pub(crate) fn new(server_id: ServerId) -> Self {
         Self {
             server_id,
+            last_applied: Arc::new(AtomicUsize::new(0)),
             store: Arc::new(Mutex::new(HashMap::new())),
         }
     }
