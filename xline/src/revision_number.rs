@@ -6,15 +6,28 @@ pub(crate) struct RevisionNumber(AtomicI64);
 
 impl RevisionNumber {
     /// Create a new revision
-    pub(crate) fn new() -> Self {
-        Self(AtomicI64::new(1))
+    pub(crate) fn new(rev: i64) -> Self {
+        Self(AtomicI64::new(rev))
     }
     /// Get the revision number
     pub(crate) fn get(&self) -> i64 {
         self.0.load(Ordering::Relaxed)
     }
+
     /// Get the next revision number
     pub(crate) fn next(&self) -> i64 {
-        self.0.fetch_add(1, Ordering::SeqCst).wrapping_add(1)
+        self.0.fetch_add(1, Ordering::AcqRel).wrapping_add(1)
+    }
+
+    /// Set the revision number
+    pub(crate) fn set(&self, revision: i64) {
+        self.0.store(revision, Ordering::SeqCst);
+    }
+}
+
+impl Default for RevisionNumber {
+    #[inline]
+    fn default() -> Self {
+        RevisionNumber::new(1)
     }
 }

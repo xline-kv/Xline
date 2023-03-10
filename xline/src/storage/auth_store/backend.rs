@@ -15,7 +15,9 @@ pub(crate) const ROLE_TABLE: &str = "role";
 /// Auth table
 pub(crate) const AUTH_TABLE: &str = "auth";
 /// Key of `AuthEnable`
-pub(crate) const AUTH_ENABLE_KEY: &[u8] = b"auth_enable";
+pub(crate) const AUTH_ENABLE_KEY: &[u8] = b"enable";
+/// Key of `AuthRevision`
+pub(crate) const AUTH_REVISION_KEY: &[u8] = b"revision";
 /// Root user
 pub(crate) const ROOT_USER: &str = "root";
 /// Root role
@@ -28,8 +30,6 @@ where
 {
     /// DB to store key value
     db: Arc<DB>,
-    /// Revision
-    revision: RevisionNumber,
 }
 
 impl<DB> fmt::Debug for AuthStoreBackend<DB>
@@ -39,7 +39,6 @@ where
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AuthStoreBackend")
             .field("db", &self.db)
-            .field("revision", &self.revision)
             .finish()
     }
 }
@@ -50,10 +49,7 @@ where
 {
     /// New `AuthStoreBackend`
     pub(crate) fn new(db: Arc<DB>) -> Self {
-        Self {
-            db,
-            revision: RevisionNumber::new(),
-        }
+        Self { db }
     }
 
     /// get user by username
@@ -74,35 +70,6 @@ where
             })),
             None => Err(ExecuteError::role_not_found(rolename)),
         }
-    }
-
-    /// put user to `AuthStore`
-    pub(crate) fn put_user(&self, user: &User) -> Result<(), ExecuteError> {
-        let key = user.name.clone();
-        let value = user.encode_to_vec();
-        self.db.insert(USER_TABLE, key, value, false)?;
-        let rev = self.revision.next();
-        self.db
-            .insert(AUTH_TABLE, "revision", rev.to_le_bytes(), true)
-    }
-
-    /// put role to `AuthStore`
-    pub(crate) fn put_role(&self, role: &Role) -> Result<(), ExecuteError> {
-        let key = role.name.clone();
-        let value = role.encode_to_vec();
-        self.db.insert(ROLE_TABLE, key, value, false)?;
-        let rev = self.revision.next();
-        self.db
-            .insert(AUTH_TABLE, "revision", rev.to_le_bytes(), true)
-    }
-
-    /// put `auth_enabled` into `AuthStore`
-    pub(crate) fn put_auth_enable(&self, enable: bool) -> Result<(), ExecuteError> {
-        self.db
-            .insert(AUTH_TABLE, AUTH_ENABLE_KEY, vec![u8::from(enable)], true)?;
-        let rev = self.revision.next();
-        self.db
-            .insert(AUTH_TABLE, "revision", rev.to_le_bytes(), true)
     }
 
     /// Get all users in the `AuthStore`
@@ -135,24 +102,64 @@ where
         Ok(roles)
     }
 
+    /// get auth enable
+    #[allow(dead_code)]
+    pub(crate) fn get_enable(&self) -> Result<bool, ExecuteError> {
+        if let Some(enabled) = self.db.get_value(AUTH_TABLE, AUTH_ENABLE_KEY)? {
+            match enabled.first() {
+                Some(&value) => Ok(value != 0),
+                None => unreachable!("enabled should not be empty"),
+            }
+        } else {
+            Ok(bool::default())
+        }
+    }
+
+    /// get auth revision
+    pub(crate) fn get_revision(&self) -> Result<RevisionNumber, ExecuteError> {
+        if let Some(revision) = self.db.get_value(AUTH_TABLE, AUTH_REVISION_KEY)? {
+            let rev: [u8; 8] = revision.try_into().unwrap_or_else(|e| {
+                panic!("Auth Revision maybe Corrupted: cannot decode revision from auth, {e:?}")
+            });
+            Ok(RevisionNumber::new(i64::from_le_bytes(rev)))
+        } else {
+            Ok(RevisionNumber::default())
+        }
+    }
+
+    /// put user to `AuthStore`
+    pub(crate) fn put_user(&self, user: &User) -> Result<(), ExecuteError> {
+        let key = user.name.clone();
+        let value = user.encode_to_vec();
+        self.db.insert(USER_TABLE, key, value, false)
+    }
+
+    /// put role to `AuthStore`
+    pub(crate) fn put_role(&self, role: &Role) -> Result<(), ExecuteError> {
+        let key = role.name.clone();
+        let value = role.encode_to_vec();
+        self.db.insert(ROLE_TABLE, key, value, false)
+    }
+
+    /// put `auth_enabled` into `AuthStore`
+    pub(crate) fn save_auth_enable(&self, enable: bool) -> Result<(), ExecuteError> {
+        self.db
+            .insert(AUTH_TABLE, AUTH_ENABLE_KEY, vec![u8::from(enable)], true)
+    }
+
+    /// put `auth_enabled` into `AuthStore`
+    pub(crate) fn save_revision(&self, rev: &RevisionNumber) -> Result<(), ExecuteError> {
+        self.db
+            .insert(AUTH_TABLE, AUTH_REVISION_KEY, rev.get().to_le_bytes(), true)
+    }
+
     /// Delete user by the given username
     pub(crate) fn delete_user(&self, username: &str) -> Result<(), ExecuteError> {
-        self.db.delete(USER_TABLE, username, false)?;
-        let rev = self.revision.next();
-        self.db
-            .insert(AUTH_TABLE, "revision", rev.to_le_bytes(), true)
+        self.db.delete(USER_TABLE, username, false)
     }
 
     /// Delete role by the given rolename
     pub(crate) fn delete_role(&self, rolename: &str) -> Result<(), ExecuteError> {
-        self.db.delete(ROLE_TABLE, rolename, false)?;
-        let rev = self.revision.next();
-        self.db
-            .insert(AUTH_TABLE, "revision", rev.to_le_bytes(), true)
-    }
-
-    /// Get revision of Auth store
-    pub(crate) fn revision(&self) -> i64 {
-        self.revision.get()
+        self.db.delete(ROLE_TABLE, rolename, false)
     }
 }
