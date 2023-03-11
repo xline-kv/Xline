@@ -1,7 +1,7 @@
-use prost::bytes::BufMut;
+use prost::bytes::{Buf, BufMut};
 
 /// Revision of a key
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct KeyRevision {
     /// Last creation revision
     pub(crate) create_revision: i64,
@@ -36,12 +36,22 @@ impl Revision {
         self.revision
     }
 
+    /// Get sub revision
+    pub(crate) fn sub_revision(&self) -> i64 {
+        self.sub_revision
+    }
+
     /// Encode `Revision` to `Vec<u8>`
     pub(crate) fn encode_to_vec(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(16);
         buf.put_i64(self.revision);
         buf.put_i64(self.sub_revision);
         buf
+    }
+
+    /// Decode `Revision` from `&[u8]`
+    pub(crate) fn decode(mut buf: &[u8]) -> Self {
+        Self::new(buf.get_i64(), buf.get_i64())
     }
 }
 
@@ -84,15 +94,14 @@ impl KeyRevision {
 
 #[cfg(test)]
 mod test {
-    use prost::bytes::Buf;
 
     use super::*;
     #[test]
     fn test_revision_encode_to_vec() {
         let revision = Revision::new(1, 2);
         let vec = revision.encode_to_vec();
-        let mut buf = vec.as_slice();
-        let revision2 = Revision::new(buf.get_i64(), buf.get_i64());
+
+        let revision2 = Revision::decode(&vec);
         assert_eq!(revision, revision2);
     }
 }

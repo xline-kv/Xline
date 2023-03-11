@@ -9,6 +9,7 @@ impl RevisionNumber {
     pub(crate) fn new(rev: i64) -> Self {
         Self(AtomicI64::new(rev))
     }
+
     /// Get the revision number
     pub(crate) fn get(&self) -> i64 {
         self.0.load(Ordering::Relaxed)
@@ -20,8 +21,8 @@ impl RevisionNumber {
     }
 
     /// Set the revision number
-    pub(crate) fn set(&self, revision: i64) {
-        self.0.store(revision, Ordering::SeqCst);
+    pub(crate) fn set(&self, rev: i64) {
+        self.0.store(rev, Ordering::SeqCst);
     }
 }
 

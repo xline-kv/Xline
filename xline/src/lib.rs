@@ -128,8 +128,15 @@
 )]
 #![cfg_attr(
     test,
-    allow(clippy::unwrap_used, clippy::as_conversions, clippy::indexing_slicing)
+    allow(
+        clippy::indexing_slicing,
+        unused_results,
+        clippy::unwrap_used,
+        clippy::as_conversions,
+        clippy::shadow_unrelated,
+    )
 )]
+
 /// Xline client
 pub mod client;
 /// Header generator

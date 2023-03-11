@@ -327,7 +327,6 @@ mod test {
     use crate::storage::{db::DB, kvwatcher::MockKvWatcherOps};
 
     #[tokio::test]
-    #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
     async fn test_watch_client_closes_connection() -> Result<(), Box<dyn std::error::Error>> {
         let (req_tx, req_rx) = mpsc::channel(CHANNEL_SIZE);
         let (res_tx, mut res_rx) = mpsc::channel(CHANNEL_SIZE);

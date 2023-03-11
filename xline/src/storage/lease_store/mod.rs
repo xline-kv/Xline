@@ -317,6 +317,11 @@ where
     pub(crate) fn promote(&self, extend: Duration) {
         self.inner.lease_collection.write().promote(extend);
     }
+
+    /// Recover data form persistent storage
+    pub(crate) fn recover(&self) -> Result<(), ExecuteError> {
+        self.inner.recover_from_current_db()
+    }
 }
 
 impl<DB> LeaseStoreBackend<DB>
@@ -372,6 +377,18 @@ where
             .lease_map
             .get(&lease_id)
             .cloned()
+    }
+
+    /// Recover data form persistent storage
+    fn recover_from_current_db(&self) -> Result<(), ExecuteError> {
+        let leases = self.get_all()?;
+        for lease in leases {
+            let _ignore = self
+                .lease_collection
+                .write()
+                .grant(lease.id, lease.ttl, false);
+        }
+        Ok(())
     }
 
     /// Handle lease requests
@@ -474,6 +491,20 @@ where
         Ok(())
     }
 
+    /// Get all `PbLease`
+    fn get_all(&self) -> Result<Vec<PbLease>, ExecuteError> {
+        self.db
+            .get_all(&self.table)
+            .map_err(|e| ExecuteError::DbError(format!("Failed to get all leases, error: {e}")))?
+            .into_iter()
+            .map(|(_, v)| {
+                PbLease::decode(&mut v.as_slice()).map_err(|e| {
+                    ExecuteError::DbError(format!("Failed to decode lease, error: {e}"))
+                })
+            })
+            .collect()
+    }
+
     /// Sync `LeaseRevokeRequest`
     async fn sync_lease_revoke_request(
         &self,
@@ -501,7 +532,7 @@ where
 mod test {
     use std::{error::Error, time::Duration};
 
-    use tracing::info;
+    use log::info;
     use utils::config::StorageConfig;
 
     use super::*;
@@ -509,29 +540,13 @@ mod test {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn test_lease_storage() -> Result<(), Box<dyn Error>> {
-        let (del_tx, mut del_rx) = mpsc::channel(128);
-        let (_, lease_cmd_rx) = mpsc::channel(128);
-        let state = Arc::new(State::default());
-        let header_gen = Arc::new(HeaderGenerator::new(0, 0));
-
-        let lease_db = DBProxy::open(&StorageConfig::Memory)?;
-        #[allow(clippy::unwrap_used)] // safe unwrap
-        let lease_store = LeaseStore::new(del_tx, lease_cmd_rx, state, header_gen, lease_db);
-        let _handle = tokio::spawn(async move {
-            while let Some(msg) = del_rx.recv().await {
-                let (keys, tx) = msg.unpack();
-                info!("Delete keys {:?}", keys);
-                assert!(tx.send(()).is_ok(), "Failed to send delete keys response");
-            }
-        });
+        let db = DBProxy::open(&StorageConfig::Memory)?;
+        let lease_store = init_store(db);
 
         let req1 = RequestWithToken::new(LeaseGrantRequest { ttl: 10, id: 1 }.into());
         let _ignore1 = exe_and_sync_req(&lease_store, req1).await?;
 
-        let lo = lease_store.look_up(1);
-        assert!(lo.is_some());
-        #[allow(clippy::unwrap_used)] // checked
-        let lo = lo.unwrap();
+        let lo = lease_store.look_up(1).unwrap();
         assert_eq!(lo.id(), 1);
         assert_eq!(lo.ttl(), Duration::from_secs(10));
         assert_eq!(lease_store.leases().len(), 1);
@@ -547,6 +562,45 @@ mod test {
         assert!(lease_store.leases().is_empty());
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_recover() -> Result<(), ExecuteError> {
+        let db = DBProxy::open(&StorageConfig::Memory)?;
+        let store = init_store(Arc::clone(&db));
+
+        let req1 = RequestWithToken::new(LeaseGrantRequest { ttl: 10, id: 1 }.into());
+        let _ignore1 = exe_and_sync_req(&store, req1).await?;
+        store.inner.attach(1, "key".into())?;
+
+        let new_store = init_store(db);
+        assert!(new_store.look_up(1).is_none());
+        new_store.inner.recover_from_current_db()?;
+
+        let lease1 = store.look_up(1).unwrap();
+        let lease2 = new_store.look_up(1).unwrap();
+
+        assert_eq!(lease1.id(), lease2.id());
+        assert_eq!(lease1.ttl(), lease2.ttl());
+        assert!(!lease1.keys().is_empty());
+        assert!(lease2.keys().is_empty()); // keys will be recovered when recover kv store
+
+        Ok(())
+    }
+
+    fn init_store(db: Arc<DBProxy>) -> LeaseStore<DBProxy> {
+        let (del_tx, mut del_rx) = mpsc::channel::<DeleteMessage>(1);
+        tokio::spawn(async move {
+            while let Some(msg) = del_rx.recv().await {
+                let (keys, tx) = msg.unpack();
+                info!("delete keys: {:?}", keys);
+                assert!(tx.send(()).is_ok());
+            }
+        });
+        let (_, lease_cmd_rx) = mpsc::channel(1);
+        let state = Arc::new(State::default());
+        let header_gen = Arc::new(HeaderGenerator::new(0, 0));
+        LeaseStore::new(del_tx, lease_cmd_rx, state, header_gen, db)
     }
 
     async fn exe_and_sync_req(

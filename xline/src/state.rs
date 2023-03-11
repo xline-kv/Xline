@@ -126,7 +126,6 @@ mod test {
         let handle = tokio::spawn({
             let state = Arc::clone(&state);
             async move {
-                #[allow(clippy::unwrap_used)]
                 let leader = state.wait_leader().await.unwrap();
                 assert_eq!(leader, "2");
             }

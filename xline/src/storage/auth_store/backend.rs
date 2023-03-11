@@ -116,14 +116,14 @@ where
     }
 
     /// get auth revision
-    pub(crate) fn get_revision(&self) -> Result<RevisionNumber, ExecuteError> {
+    pub(crate) fn get_revision(&self) -> Result<i64, ExecuteError> {
         if let Some(revision) = self.db.get_value(AUTH_TABLE, AUTH_REVISION_KEY)? {
             let rev: [u8; 8] = revision.try_into().unwrap_or_else(|e| {
                 panic!("Auth Revision maybe Corrupted: cannot decode revision from auth, {e:?}")
             });
-            Ok(RevisionNumber::new(i64::from_le_bytes(rev)))
+            Ok(i64::from_le_bytes(rev))
         } else {
-            Ok(RevisionNumber::default())
+            Ok(1)
         }
     }
 
