@@ -1,8 +1,6 @@
 use thiserror::Error;
 
 /// Error met when executing commands
-// #[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
-// #[non_exhaustive]
 #[derive(Error, Debug, Clone)]
 pub enum ExecuteError {
     /// Kv error

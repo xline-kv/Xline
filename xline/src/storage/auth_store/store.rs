@@ -148,7 +148,14 @@ where
             let username = String::from_utf8_lossy(&user.name).to_string();
             let _ignore = permission_cache
                 .user_permissions
-                .insert(username, user_permission);
+                .insert(username.clone(), user_permission);
+            for role in user.roles {
+                permission_cache
+                    .role_to_users_map
+                    .entry(role)
+                    .or_insert_with(Vec::new)
+                    .push(username.clone());
+            }
         }
         self.permission_cache
             .map_write(|mut cache| *cache = permission_cache);
@@ -606,7 +613,7 @@ where
         self.enabled.store(true, AtomicOrdering::Relaxed);
         self.create_permission_cache()?;
         let rev = self.backend.get_revision()?;
-        self.revision.set(rev.get());
+        self.revision.set(rev);
         Ok(())
     }
 
@@ -1147,11 +1154,23 @@ where
     pub(crate) fn root_token(&self) -> Result<String, ExecuteError> {
         self.assign(ROOT_USER)
     }
+
+    /// Recover data from persistent storage
+    pub(crate) fn recover(&self) -> Result<(), ExecuteError> {
+        let enabled = self.backend.get_enable()?;
+        if enabled {
+            self.enabled.store(true, AtomicOrdering::Relaxed);
+        }
+        let revision = self.backend.get_revision()?;
+        self.revision.set(revision);
+        self.create_permission_cache()?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use std::{collections::HashMap, error::Error};
+    use std::collections::HashMap;
 
     use utils::config::StorageConfig;
 
@@ -1169,8 +1188,9 @@ mod test {
     };
 
     #[test]
-    fn test_role_grant_permission() {
-        let store = init_auth_store();
+    fn test_role_grant_permission() -> Result<(), ExecuteError> {
+        let db = DBProxy::open(&StorageConfig::Memory)?;
+        let store = init_auth_store(db);
         let req = RequestWithToken::new(
             AuthRoleGrantPermissionRequest {
                 name: "r".to_owned(),
@@ -1197,11 +1217,13 @@ mod test {
                 role_to_users_map: HashMap::from([("r".to_owned(), vec!["u".to_owned()])]),
             },
         );
+        Ok(())
     }
 
     #[test]
-    fn test_role_revoke_permission() {
-        let store = init_auth_store();
+    fn test_role_revoke_permission() -> Result<(), ExecuteError> {
+        let db = DBProxy::open(&StorageConfig::Memory)?;
+        let store = init_auth_store(db);
         let req = RequestWithToken::new(
             AuthRoleRevokePermissionRequest {
                 role: "r".to_owned(),
@@ -1218,11 +1240,13 @@ mod test {
                 role_to_users_map: HashMap::from([("r".to_owned(), vec!["u".to_owned()])]),
             },
         );
+        Ok(())
     }
 
     #[test]
-    fn test_role_delete() {
-        let store = init_auth_store();
+    fn test_role_delete() -> Result<(), ExecuteError> {
+        let db = DBProxy::open(&StorageConfig::Memory)?;
+        let store = init_auth_store(db);
         let req = RequestWithToken::new(
             AuthRoleDeleteRequest {
                 role: "r".to_owned(),
@@ -1237,11 +1261,13 @@ mod test {
                 role_to_users_map: HashMap::new(),
             },
         );
+        Ok(())
     }
 
     #[test]
-    fn test_user_delete() {
-        let store = init_auth_store();
+    fn test_user_delete() -> Result<(), ExecuteError> {
+        let db = DBProxy::open(&StorageConfig::Memory)?;
+        let store = init_auth_store(db);
         let req = RequestWithToken::new(
             AuthUserDeleteRequest {
                 name: "u".to_owned(),
@@ -1256,11 +1282,13 @@ mod test {
                 role_to_users_map: HashMap::from([("r".to_owned(), vec![])]),
             },
         );
+        Ok(())
     }
 
     #[test]
     fn test_auth_enable_and_disable() {
-        let store = init_auth_store();
+        let db = DBProxy::open(&StorageConfig::Memory).unwrap();
+        let store = init_auth_store(db);
         let revision = store.revision();
         assert!(!store.is_enabled());
 
@@ -1307,16 +1335,22 @@ mod test {
         assert!(!store.is_enabled());
     }
 
-    fn init_auth_store() -> AuthStore<DBProxy> {
-        let key_pair = test_key_pair();
-        let header_gen = Arc::new(HeaderGenerator::new(0, 0));
-        let (lease_cmd_tx, _) = mpsc::channel(1);
+    #[test]
+    fn test_recover() -> Result<(), ExecuteError> {
+        let db = DBProxy::open(&StorageConfig::Memory).unwrap();
+        let store = init_auth_store(Arc::clone(&db));
 
-        #[allow(clippy::unwrap_used)]
-        let auth_db = DBProxy::open(&StorageConfig::Memory).unwrap();
-        // It's ok to do so in that a memory engine should return an error
-        let store = AuthStore::new(lease_cmd_tx, key_pair, header_gen, auth_db);
+        let new_store = init_empty_store(db);
+        assert_eq!(new_store.permission_cache(), PermissionCache::new());
+        new_store.recover()?;
+        assert_eq!(store.permission_cache(), new_store.permission_cache());
+        assert_eq!(store.revision(), new_store.revision());
 
+        Ok(())
+    }
+
+    fn init_auth_store(db: Arc<DBProxy>) -> AuthStore<DBProxy> {
+        let store = init_empty_store(db);
         let req1 = RequestWithToken::new(
             AuthRoleAddRequest {
                 name: "r".to_owned(),
@@ -1371,10 +1405,17 @@ mod test {
         store
     }
 
+    fn init_empty_store(db: Arc<DBProxy>) -> AuthStore<DBProxy> {
+        let key_pair = test_key_pair();
+        let header_gen = Arc::new(HeaderGenerator::new(0, 0));
+        let (lease_cmd_tx, _) = mpsc::channel(1);
+        AuthStore::new(lease_cmd_tx, key_pair, header_gen, db)
+    }
+
     fn exe_and_sync(
         store: &AuthStore<DBProxy>,
         req: &RequestWithToken,
-    ) -> Result<(CommandResponse, SyncResponse), Box<dyn Error>> {
+    ) -> Result<(CommandResponse, SyncResponse), ExecuteError> {
         let cmd_res = store.execute(req)?;
         let sync_res = store.after_sync(req)?;
         Ok((cmd_res, sync_res))

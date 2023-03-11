@@ -138,6 +138,10 @@ where
     /// Will return `Err` when `tonic::Server` serve return an error
     #[inline]
     pub async fn start(&self, addr: SocketAddr) -> Result<()> {
+        // lease storage must recover before kv storage
+        self.lease_storage.recover()?;
+        self.kv_storage.recover().await?;
+        self.auth_storage.recover()?;
         let (kv_server, lock_server, lease_server, auth_server, watch_server, curp_server) =
             self.init_servers().await;
         Ok(Server::builder()

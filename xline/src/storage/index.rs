@@ -76,6 +76,16 @@ pub(crate) trait IndexOperate {
         sub_revision: i64,
     ) -> KeyRevision;
 
+    /// Restore `KeyRevision` of a key
+    fn restore(
+        &self,
+        key: Vec<u8>,
+        revision: i64,
+        sub_revision: i64,
+        create_revision: i64,
+        version: i64,
+    );
+
     // TODO: fn compact(rev:i64)
 }
 
@@ -203,5 +213,95 @@ impl IndexOperate for Index {
             let _prev_val = index.insert(key.to_vec(), vec![new_rev]);
             new_rev
         }
+    }
+
+    fn restore(
+        &self,
+        key: Vec<u8>,
+        revision: i64,
+        sub_revision: i64,
+        create_revision: i64,
+        version: i64,
+    ) {
+        let mut index = self.index.lock();
+        let new_rev = KeyRevision::new(create_revision, version, revision, sub_revision);
+        index.entry(key).or_insert_with(Vec::new).push(new_rev);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    fn init_and_test_insert() -> Index {
+        let index = Index::new();
+
+        index.insert_or_update_revision(b"key", 1, 3);
+        index.insert_or_update_revision(b"key", 2, 2);
+        index.insert_or_update_revision(b"key", 3, 1);
+
+        assert_eq!(
+            *index.index.lock(),
+            BTreeMap::from_iter(vec![(
+                b"key".to_vec(),
+                vec![
+                    KeyRevision::new(1, 1, 1, 3),
+                    KeyRevision::new(1, 2, 2, 2),
+                    KeyRevision::new(1, 3, 3, 1),
+                ]
+            ),])
+        );
+
+        index
+    }
+
+    #[test]
+    fn test_get() {
+        let index = init_and_test_insert();
+        assert_eq!(index.get(b"key", b"", 0), vec![Revision::new(3, 1)]);
+        assert_eq!(index.get(b"key", b"", 1), vec![Revision::new(1, 3)]);
+        assert_eq!(
+            index.get_from_rev(b"key", b"", 2),
+            vec![Revision::new(2, 2), Revision::new(3, 1)]
+        );
+    }
+
+    #[test]
+    fn test_delete() {
+        let index = init_and_test_insert();
+        assert_eq!(
+            index.delete(b"key", b"", 4, 0),
+            vec![(Revision::new(3, 1), Revision::new(4, 0))]
+        );
+        assert_eq!(
+            *index.index.lock(),
+            BTreeMap::from_iter(vec![(
+                b"key".to_vec(),
+                vec![
+                    KeyRevision::new(1, 1, 1, 3),
+                    KeyRevision::new(1, 2, 2, 2),
+                    KeyRevision::new(1, 3, 3, 1),
+                    KeyRevision::new_deletion(4, 0),
+                ]
+            ),])
+        );
+    }
+
+    #[test]
+    fn test_restore() {
+        let index = Index::new();
+        index.restore(b"key".to_vec(), 2, 0, 2, 1);
+        index.restore(b"key".to_vec(), 3, 0, 2, 2);
+        index.restore(b"foo".to_vec(), 4, 0, 4, 1);
+        assert_eq!(
+            *index.index.lock(),
+            BTreeMap::from_iter(vec![
+                (b"foo".to_vec(), vec![KeyRevision::new(4, 1, 4, 0)]),
+                (
+                    b"key".to_vec(),
+                    vec![KeyRevision::new(2, 1, 2, 0), KeyRevision::new(2, 2, 3, 0)]
+                ),
+            ])
+        );
     }
 }
