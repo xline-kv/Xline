@@ -19,6 +19,7 @@ jobs:
           profile: default
           toolchain: ${{ env.CI_RUST_TOOLCHAIN }}
           override: true
+      - uses: Swatinem/rust-cache@v2
       - run: RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --bin lock_client --target x86_64-unknown-linux-gnu
       - uses: actions-rs/cargo@v1
         with:
