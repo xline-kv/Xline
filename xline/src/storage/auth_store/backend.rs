@@ -3,7 +3,6 @@ use std::{fmt, sync::Arc};
 use prost::Message;
 
 use crate::{
-    revision_number::RevisionNumber,
     rpc::{Role, User},
     storage::{storage_api::StorageApi, ExecuteError},
 };
@@ -127,39 +126,12 @@ where
         }
     }
 
-    /// put user to `AuthStore`
-    pub(crate) fn put_user(&self, user: &User) -> Result<(), ExecuteError> {
-        let key = user.name.clone();
-        let value = user.encode_to_vec();
-        self.db.insert(USER_TABLE, key, value, false)
-    }
-
-    /// put role to `AuthStore`
-    pub(crate) fn put_role(&self, role: &Role) -> Result<(), ExecuteError> {
-        let key = role.name.clone();
-        let value = role.encode_to_vec();
-        self.db.insert(ROLE_TABLE, key, value, false)
-    }
-
-    /// put `auth_enabled` into `AuthStore`
-    pub(crate) fn save_auth_enable(&self, enable: bool) -> Result<(), ExecuteError> {
-        self.db
-            .insert(AUTH_TABLE, AUTH_ENABLE_KEY, vec![u8::from(enable)], true)
-    }
-
-    /// put `auth_enabled` into `AuthStore`
-    pub(crate) fn save_revision(&self, rev: &RevisionNumber) -> Result<(), ExecuteError> {
-        self.db
-            .insert(AUTH_TABLE, AUTH_REVISION_KEY, rev.get().to_le_bytes(), true)
-    }
-
-    /// Delete user by the given username
-    pub(crate) fn delete_user(&self, username: &str) -> Result<(), ExecuteError> {
-        self.db.delete(USER_TABLE, username, false)
-    }
-
-    /// Delete role by the given rolename
-    pub(crate) fn delete_role(&self, rolename: &str) -> Result<(), ExecuteError> {
-        self.db.delete(ROLE_TABLE, rolename, false)
+    #[cfg(test)]
+    pub(crate) fn write_batch(
+        &self,
+        wr_ops: Vec<engine::WriteOperation>,
+        sync: bool,
+    ) -> Result<(), ExecuteError> {
+        self.db.write_batch(wr_ops, sync)
     }
 }
