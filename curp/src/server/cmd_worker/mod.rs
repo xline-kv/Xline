@@ -61,7 +61,7 @@ async fn cmd_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
             TaskType::SpecExe(ref cmd) => {
                 let er = ce.execute(cmd.as_ref()).await.map_err(|e| e.to_string());
                 let er_ok = er.is_ok();
-                debug!("cmd {:?} is speculatively executed", cmd.id());
+                debug!("cmd({}) is speculatively executed", cmd.id());
                 cb.write().insert_er(cmd.id(), er);
                 er_ok
             }
@@ -74,7 +74,7 @@ async fn cmd_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
                 cb.write().insert_asr(cmd.id(), asr);
                 sp.lock().remove(cmd.id());
                 let _ig = ucp.lock().remove(cmd.id());
-                debug!("cmd {:?} after sync is called", cmd.id());
+                debug!("cmd({}) after sync is called", cmd.id());
                 asr_ok
             }
             TaskType::Reset => {

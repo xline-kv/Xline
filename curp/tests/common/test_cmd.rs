@@ -151,7 +151,7 @@ impl CommandExecutor<TestCommand> for TestCE {
         }
 
         let mut store = self.store.lock();
-        debug!("{} execute cmd {:?}", self.server_id, cmd.id());
+        debug!("{} execute cmd({})", self.server_id, cmd.id());
 
         let result: TestCommandResult = match cmd.cmd_type {
             TestCommandType::Get => cmd

@@ -32,7 +32,7 @@ impl<C: Command + 'static> SpeculativePool<C> {
             let id = cmd.id().clone();
             let result = self.pool.insert(id.clone(), cmd);
             if result.is_none() {
-                debug!("insert cmd {id:?} into spec pool");
+                debug!("insert cmd({id}) into spec pool");
             } else {
                 warn!("cmd {id:?} is inserted into spec pool twice");
             }
@@ -48,11 +48,11 @@ impl<C: Command + 'static> SpeculativePool<C> {
     /// Remove the command from spec pool
     pub(super) fn remove(&mut self, cmd_id: &ProposeId) {
         if self.pool.remove(cmd_id).is_some() {
-            debug!("cmd {cmd_id:?} is removed from spec pool");
+            debug!("cmd({cmd_id}) is removed from spec pool");
         } else {
             // this happens when a cmd was not added to the spec pool because of conflict
             // or the fast round proposal never arrived at the server
-            debug!("cmd {cmd_id:?} is not in spec pool");
+            debug!("cmd({cmd_id}) is not in spec pool");
         };
     }
 }

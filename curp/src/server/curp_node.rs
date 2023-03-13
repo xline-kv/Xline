@@ -141,12 +141,12 @@ impl<C: 'static + Command> CurpNode<C> {
         req: WaitSyncedRequest,
     ) -> Result<WaitSyncedResponse, CurpError> {
         let id = req.id()?;
-        debug!("{} get wait synced request for {id:?}", self.curp.id());
+        debug!("{} get wait synced request for cmd({id})", self.curp.id());
 
         let (er, asr) = CommandBoard::wait_for_er_asr(&self.cmd_board, &id).await;
         let resp = WaitSyncedResponse::new_from_result::<C>(Some(er), asr)?;
 
-        debug!("{} wait synced for {id:?} finishes", self.curp.id());
+        debug!("{} wait synced for cmd({id}) finishes", self.curp.id());
         Ok(resp)
     }
 
