@@ -225,7 +225,7 @@ where
 
             match resp.into::<C>()? {
                 SyncResult::Success { er, asr } => {
-                    debug!("slow round for cmd {:?} succeeded", cmd.id());
+                    debug!("slow round for cmd({}) succeeded", cmd.id());
                     return Ok((asr, er));
                 }
                 SyncResult::Error(SyncError::Redirect(new_leader, term)) => {

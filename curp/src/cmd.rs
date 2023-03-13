@@ -70,7 +70,7 @@ impl ProposeId {
 impl Display for ProposeId {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "\"{}\"", self.0)
     }
 }
 

@@ -160,7 +160,7 @@ impl<C: Command> Filter<C> {
 
     /// Mark a cmd executed, will release blocked msgs
     fn mark_executed(&mut self, vid: u64, succeeded: bool) {
-        let Some(v) = self.vs.get_mut(&vid) else { return; };
+        let v = self.get_vertex_mut(vid);
         match v.inner {
             VertexInner::Cmd { ref mut exe_st, .. } => {
                 debug_assert!(matches!(*exe_st, ExeState::Executing));
@@ -173,7 +173,7 @@ impl<C: Command> Filter<C> {
 
     /// Mark a cmd after synced, will release blocked msgs
     fn mark_after_synced(&mut self, vid: u64) {
-        let Some(v) = self.vs.get_mut(&vid) else { return; };
+        let v = self.get_vertex_mut(vid);
         match v.inner {
             VertexInner::Cmd { ref mut as_st, .. } => {
                 debug_assert!(matches!(*as_st, AsState::AfterSyncing));
@@ -186,7 +186,7 @@ impl<C: Command> Filter<C> {
 
     /// Mark a vertex reset
     fn mark_reset(&mut self, vid: u64) {
-        let Some(v) = self.vs.get_mut(&vid) else { return; };
+        let v = self.get_vertex_mut(vid);
         match v.inner {
             VertexInner::Reset(ref mut st) => {
                 debug_assert!(matches!(*st, ResetState::Resetting));

@@ -160,7 +160,7 @@ impl CommandExecutor<TestCommand> for TestCE {
         }
 
         let mut store = self.store.lock();
-        debug!("{} execute cmd {:?}", self.server_id, cmd.id());
+        debug!("{} execute cmd({})", self.server_id, cmd.id());
 
         let result: TestCommandResult = match cmd.cmd_type {
             TestCommandType::Get => cmd
@@ -240,7 +240,7 @@ impl CommandExecutor<TestCommand> for TestCESimple {
         }
 
         let mut store = self.store.lock();
-        debug!("{} execute cmd {:?}", self.server_id, cmd.id());
+        debug!("{} execute cmd({})", self.server_id, cmd.id());
 
         let result: TestCommandResult = match cmd.cmd_type {
             TestCommandType::Get => cmd
@@ -269,7 +269,7 @@ impl CommandExecutor<TestCommand> for TestCESimple {
         self.last_applied
             .store(index.numeric_cast(), Ordering::Relaxed);
 
-        debug!("{} call cmd {:?} after sync", self.server_id, cmd.id());
+        debug!("{} call cmd({}) after sync", self.server_id, cmd.id());
         Ok(index)
     }
 

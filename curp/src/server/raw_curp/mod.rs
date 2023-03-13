@@ -250,7 +250,7 @@ impl<C: 'static + Command> RawCurp<C> {
         &self,
         cmd: Arc<C>,
     ) -> ((Option<ServerId>, u64), Result<bool, ProposeError>) {
-        debug!("{} gets proposal for cmd {}", self.id(), cmd.id());
+        debug!("{} gets proposal for cmd({})", self.id(), cmd.id());
         let mut conflict = self
             .ctx
             .sp
@@ -885,7 +885,7 @@ impl<C: 'static + Command> RawCurp<C> {
             let _ig_spec = sp_l.insert(Arc::clone(&cmd)); // may have been inserted before
             let index = log.push_cmd(term, Arc::clone(&cmd));
             debug!(
-                "{} recovers speculatively executed cmd {:?} in log[{}]",
+                "{} recovers speculatively executed cmd({}) in log[{}]",
                 self.id(),
                 cmd.id(),
                 index,
