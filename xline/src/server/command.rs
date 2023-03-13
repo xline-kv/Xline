@@ -241,7 +241,8 @@ where
                 Ok(res)
             }
             RequestBackend::Auth => {
-                let res = self.auth_storage.after_sync(wrapper)?;
+                let (res, mut ops) = self.auth_storage.after_sync(wrapper)?;
+                wr_ops.append(&mut ops);
                 self.persistent.write_batch(wr_ops, false)?;
                 Ok(res)
             }
