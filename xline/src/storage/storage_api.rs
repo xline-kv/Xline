@@ -34,6 +34,20 @@ pub trait StorageApi: Send + Sync + 'static + std::fmt::Debug {
     #[allow(clippy::type_complexity)] // it's clear that (Vec<u8>, Vec<u8>) is a key-value pair
     fn get_all(&self, table: &'static str) -> Result<Vec<(Vec<u8>, Vec<u8>)>, ExecuteError>;
 
-    /// TODO
+    /// Commit a batch of write operations
+    /// If sync is true, the write will be flushed from the operating system
+    /// buffer cache before the write is considered complete. If this
+    /// flag is true, writes will be slower.
+    ///
+    /// # Errors
+    ///
+    /// if error occurs in storage, return `Err(error)`
     fn write_batch(&self, wr_ops: Vec<WriteOperation>, sync: bool) -> Result<(), ExecuteError>;
+
+    /// Reset the storage
+    ///
+    /// # Errors
+    ///
+    /// if error occurs in storage, return `Err(error)`
+    fn reset(&self) -> Result<(), ExecuteError>;
 }

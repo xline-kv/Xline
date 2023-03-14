@@ -243,8 +243,11 @@ where
         Ok(res)
     }
 
-    // TODO
-    async fn reset(&self) {}
+    async fn reset(&self) {
+        self.persistent
+            .reset()
+            .unwrap_or_else(|e| panic!("reset backend failed, {e:?}"));
+    }
 
     fn last_applied(&self) -> Result<LogIndex, ExecuteError> {
         let Some(index_bytes) = self.persistent.get_value("meta", "applied_index")? else {
