@@ -61,9 +61,8 @@ impl WriteOperation {
     }
 
     /// Create a new `DeleteRange` operation
-    #[allow(dead_code)]
     #[inline]
-    pub(crate) fn new_delete_range<K>(table: &'static str, from: K, to: K) -> Self
+    pub fn new_delete_range<K>(table: &'static str, from: K, to: K) -> Self
     where
         K: Into<Vec<u8>>,
     {

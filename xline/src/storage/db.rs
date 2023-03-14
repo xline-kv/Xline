@@ -91,6 +91,16 @@ where
             .write_batch(wr_ops, sync)
             .map_err(|e| ExecuteError::DbError(format!("Failed to write batch, error: {e}")))
     }
+
+    fn reset(&self) -> Result<(), ExecuteError> {
+        let start = vec![];
+        let end = vec![0xff];
+        let ops = XLINE_TABLES
+            .iter()
+            .map(|table| WriteOperation::new_delete_range(table, start.as_slice(), end.as_slice()))
+            .collect();
+        self.write_batch(ops, true)
+    }
 }
 
 /// `DBProxy` is designed to mask the different type of `DB<MemoryEngine>` and `DB<RocksEngine>`
@@ -151,6 +161,13 @@ impl StorageApi for DBProxy {
             DBProxy::RocksDB(ref inner_db) => inner_db.write_batch(wr_ops, sync),
         }
     }
+
+    fn reset(&self) -> Result<(), ExecuteError> {
+        match *self {
+            DBProxy::MemDB(ref inner_db) => inner_db.reset(),
+            DBProxy::RocksDB(ref inner_db) => inner_db.reset(),
+        }
+    }
 }
 
 impl DBProxy {
@@ -174,5 +191,31 @@ impl DBProxy {
             }
             _ => unreachable!(),
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::path::PathBuf;
+
+    use super::*;
+    #[test]
+    fn test_reset() -> Result<(), ExecuteError> {
+        let data_dir = PathBuf::from("/tmp/test_reset");
+        let db = DBProxy::open(&StorageConfig::RocksDB(data_dir))?;
+
+        let op = WriteOperation::new_put(KV_TABLE, "key1", "value1");
+        db.write_batch(vec![op], true)?;
+        let res = db.get_value(KV_TABLE, "key1")?;
+        assert_eq!(res, Some("value1".as_bytes().to_vec()));
+
+        db.reset()?;
+
+        let res = db.get_values(KV_TABLE, &["key1"])?;
+        assert_eq!(res, vec![None]);
+        let res = db.get_all(KV_TABLE)?;
+        assert!(res.is_empty());
+
+        Ok(())
     }
 }
