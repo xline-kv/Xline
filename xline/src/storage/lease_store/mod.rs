@@ -33,6 +33,8 @@ use crate::{
     state::State,
 };
 
+/// Lease table name
+pub(crate) const LEASE_TABLE: &str = "lease";
 /// Max lease ttl
 const MAX_LEASE_TTL: i64 = 9_000_000_000;
 /// Min lease ttl
@@ -173,8 +175,6 @@ pub(crate) struct LeaseStoreBackend<DB>
 where
     DB: StorageApi,
 {
-    /// Table name
-    table: String,
     /// lease collection
     lease_collection: RwLock<LeaseCollection>,
     /// Db to store lease
@@ -336,7 +336,6 @@ where
         db: Arc<DB>,
     ) -> Self {
         Self {
-            table: "lease".to_owned(),
             lease_collection: RwLock::new(LeaseCollection::new()),
             db,
             del_tx,
@@ -479,14 +478,14 @@ where
     fn insert(&self, lease_id: i64, lease: &PbLease) -> Result<(), ExecuteError> {
         let key = lease_id.encode_to_vec();
         let value = lease.encode_to_vec();
-        self.db.insert(&self.table, key, value, false)
+        self.db.insert(LEASE_TABLE, key, value, false)
     }
 
     /// Delete a `PbLease` by `lease_id`
     fn delete(&self, lease_id: i64) -> Result<(), ExecuteError> {
         let key = lease_id.encode_to_vec();
         self.db
-            .delete(&self.table, key, false)
+            .delete(LEASE_TABLE, key, false)
             .map_err(|e| ExecuteError::DbError(format!("Failed to delete Lease, error: {e}")))?;
         Ok(())
     }
@@ -494,7 +493,7 @@ where
     /// Get all `PbLease`
     fn get_all(&self) -> Result<Vec<PbLease>, ExecuteError> {
         self.db
-            .get_all(&self.table)
+            .get_all(LEASE_TABLE)
             .map_err(|e| ExecuteError::DbError(format!("Failed to get all leases, error: {e}")))?
             .into_iter()
             .map(|(_, v)| {

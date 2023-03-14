@@ -3,11 +3,11 @@ use crate::error::EngineError;
 /// Write operation
 #[non_exhaustive]
 #[derive(Debug)]
-pub enum WriteOperation<'a> {
+pub enum WriteOperation {
     /// `Put` operation
     Put {
         /// The table name
-        table: &'a str,
+        table: &'static str,
         /// Key
         key: Vec<u8>,
         /// Value
@@ -16,41 +16,62 @@ pub enum WriteOperation<'a> {
     /// `Delete` operation
     Delete {
         /// The table name
-        table: &'a str,
+        table: &'static str,
         /// The target key
-        key: &'a [u8],
+        key: Vec<u8>,
     },
     /// Delete range operation, it will remove the database entries in the range [from, to)
     DeleteRange {
         /// The table name
-        table: &'a str,
+        table: &'static str,
         /// The `from` key
-        from: &'a [u8],
+        from: Vec<u8>,
         /// The `to` key
-        to: &'a [u8],
+        to: Vec<u8>,
     },
 }
 
-impl<'a> WriteOperation<'a> {
+impl WriteOperation {
     /// Create a new `Put` operation
     #[inline]
     #[must_use]
-    pub fn new_put(table: &'a str, key: Vec<u8>, value: Vec<u8>) -> Self {
-        Self::Put { table, key, value }
+    pub fn new_put<K, V>(table: &'static str, key: K, value: V) -> Self
+    where
+        K: Into<Vec<u8>>,
+        V: Into<Vec<u8>>,
+    {
+        Self::Put {
+            table,
+            key: key.into(),
+            value: value.into(),
+        }
     }
 
     /// Create a new `Delete` operation
     #[inline]
     #[must_use]
-    pub fn new_delete(table: &'a str, key: &'a [u8]) -> Self {
-        Self::Delete { table, key }
+    pub fn new_delete<K>(table: &'static str, key: K) -> Self
+    where
+        K: Into<Vec<u8>>,
+    {
+        Self::Delete {
+            table,
+            key: key.into(),
+        }
     }
 
     /// Create a new `DeleteRange` operation
     #[allow(dead_code)]
     #[inline]
-    pub(crate) fn new_delete_range(table: &'a str, from: &'a [u8], to: &'a [u8]) -> Self {
-        Self::DeleteRange { table, from, to }
+    pub(crate) fn new_delete_range<K>(table: &'static str, from: K, to: K) -> Self
+    where
+        K: Into<Vec<u8>>,
+    {
+        Self::DeleteRange {
+            table,
+            from: from.into(),
+            to: to.into(),
+        }
     }
 }
 
@@ -89,5 +110,5 @@ pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
     /// # Errors
     /// Return `EngineError::TableNotFound` if the given table does not exist
     /// Return `EngineError` if met some errors
-    fn write_batch(&self, wr_ops: Vec<WriteOperation<'_>>, sync: bool) -> Result<(), EngineError>;
+    fn write_batch(&self, wr_ops: Vec<WriteOperation>, sync: bool) -> Result<(), EngineError>;
 }

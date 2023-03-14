@@ -6,10 +6,25 @@ use engine::{
 };
 use utils::config::StorageConfig;
 
-use super::{storage_api::StorageApi, ExecuteError};
+use crate::server::command::META_TABLE;
+
+use super::{
+    auth_store::{AUTH_TABLE, ROLE_TABLE, USER_TABLE},
+    kv_store::KV_TABLE,
+    lease_store::LEASE_TABLE,
+    storage_api::StorageApi,
+    ExecuteError,
+};
 
 /// Xline Server Storage Table
-const XLINE_TABLES: [&str; 6] = ["meta", "kv", "lease", "auth", "user", "role"];
+const XLINE_TABLES: [&str; 6] = [
+    META_TABLE,
+    KV_TABLE,
+    LEASE_TABLE,
+    AUTH_TABLE,
+    USER_TABLE,
+    ROLE_TABLE,
+];
 
 /// Database to store revision to kv mapping
 #[derive(Debug, Clone)]
@@ -36,7 +51,13 @@ impl<S> StorageApi for DB<S>
 where
     S: StorageEngine,
 {
-    fn insert<K, V>(&self, table: &str, key: K, value: V, sync: bool) -> Result<(), ExecuteError>
+    fn insert<K, V>(
+        &self,
+        table: &'static str,
+        key: K,
+        value: V,
+        sync: bool,
+    ) -> Result<(), ExecuteError>
     where
         K: Into<Vec<u8>> + std::fmt::Debug + Sized,
         V: Into<Vec<u8>> + std::fmt::Debug + Sized,
@@ -48,7 +69,11 @@ where
         Ok(())
     }
 
-    fn get_values<K>(&self, table: &str, keys: &[K]) -> Result<Vec<Option<Vec<u8>>>, ExecuteError>
+    fn get_values<K>(
+        &self,
+        table: &'static str,
+        keys: &[K],
+    ) -> Result<Vec<Option<Vec<u8>>>, ExecuteError>
     where
         K: AsRef<[u8]> + std::fmt::Debug + Sized,
     {
@@ -64,7 +89,7 @@ where
         Ok(values)
     }
 
-    fn get_value<K>(&self, table: &str, key: K) -> Result<Option<Vec<u8>>, ExecuteError>
+    fn get_value<K>(&self, table: &'static str, key: K) -> Result<Option<Vec<u8>>, ExecuteError>
     where
         K: AsRef<[u8]> + std::fmt::Debug,
     {
@@ -73,22 +98,28 @@ where
             .map_err(|e| ExecuteError::DbError(format!("Failed to get key {key:?}: {e}")))
     }
 
-    fn get_all(&self, table: &str) -> Result<Vec<(Vec<u8>, Vec<u8>)>, ExecuteError> {
+    fn get_all(&self, table: &'static str) -> Result<Vec<(Vec<u8>, Vec<u8>)>, ExecuteError> {
         self.engine.get_all(table).map_err(|e| {
             ExecuteError::DbError(format!("Failed to get all keys from {table:?}: {e}"))
         })
     }
 
     /// Delete key from storage
-    fn delete<K>(&self, table: &str, key: K, sync: bool) -> Result<(), ExecuteError>
+    fn delete<K>(&self, table: &'static str, key: K, sync: bool) -> Result<(), ExecuteError>
     where
-        K: AsRef<[u8]> + std::fmt::Debug + Sized,
+        K: Into<Vec<u8>> + std::fmt::Debug + Sized,
     {
-        let del_op = WriteOperation::new_delete(table, key.as_ref());
+        let del_op = WriteOperation::new_delete(table, key.into());
         self.engine
             .write_batch(vec![del_op], sync)
             .map_err(|e| ExecuteError::DbError(format!("Failed to delete Lease, error: {e}")))?;
         Ok(())
+    }
+
+    fn write_batch(&self, wr_ops: Vec<WriteOperation>, sync: bool) -> Result<(), ExecuteError> {
+        self.engine
+            .write_batch(wr_ops, sync)
+            .map_err(|e| ExecuteError::DbError(format!("Failed to write batch, error: {e}")))
     }
 }
 
@@ -113,7 +144,11 @@ pub enum DBProxy {
 }
 
 impl StorageApi for DBProxy {
-    fn get_values<K>(&self, table: &str, keys: &[K]) -> Result<Vec<Option<Vec<u8>>>, ExecuteError>
+    fn get_values<K>(
+        &self,
+        table: &'static str,
+        keys: &[K],
+    ) -> Result<Vec<Option<Vec<u8>>>, ExecuteError>
     where
         K: AsRef<[u8]> + std::fmt::Debug + Sized,
     {
@@ -123,7 +158,7 @@ impl StorageApi for DBProxy {
         }
     }
 
-    fn get_value<K>(&self, table: &str, key: K) -> Result<Option<Vec<u8>>, ExecuteError>
+    fn get_value<K>(&self, table: &'static str, key: K) -> Result<Option<Vec<u8>>, ExecuteError>
     where
         K: AsRef<[u8]> + std::fmt::Debug,
     {
@@ -133,14 +168,20 @@ impl StorageApi for DBProxy {
         }
     }
 
-    fn get_all(&self, table: &str) -> Result<Vec<(Vec<u8>, Vec<u8>)>, ExecuteError> {
+    fn get_all(&self, table: &'static str) -> Result<Vec<(Vec<u8>, Vec<u8>)>, ExecuteError> {
         match *self {
             DBProxy::MemDB(ref inner_db) => inner_db.get_all(table),
             DBProxy::RocksDB(ref inner_db) => inner_db.get_all(table),
         }
     }
 
-    fn insert<K, V>(&self, table: &str, key: K, value: V, sync: bool) -> Result<(), ExecuteError>
+    fn insert<K, V>(
+        &self,
+        table: &'static str,
+        key: K,
+        value: V,
+        sync: bool,
+    ) -> Result<(), ExecuteError>
     where
         K: Into<Vec<u8>> + std::fmt::Debug,
         V: Into<Vec<u8>> + std::fmt::Debug,
@@ -151,13 +192,20 @@ impl StorageApi for DBProxy {
         }
     }
 
-    fn delete<K>(&self, table: &str, key: K, sync: bool) -> Result<(), ExecuteError>
+    fn delete<K>(&self, table: &'static str, key: K, sync: bool) -> Result<(), ExecuteError>
     where
-        K: AsRef<[u8]> + std::fmt::Debug,
+        K: Into<Vec<u8>> + std::fmt::Debug,
     {
         match *self {
             DBProxy::MemDB(ref inner_db) => inner_db.delete(table, key, sync),
             DBProxy::RocksDB(ref inner_db) => inner_db.delete(table, key, sync),
+        }
+    }
+
+    fn write_batch(&self, wr_ops: Vec<WriteOperation>, sync: bool) -> Result<(), ExecuteError> {
+        match *self {
+            DBProxy::MemDB(ref inner_db) => inner_db.write_batch(wr_ops, sync),
+            DBProxy::RocksDB(ref inner_db) => inner_db.write_batch(wr_ops, sync),
         }
     }
 }

@@ -9,6 +9,7 @@ use curp::{
     },
     LogIndex,
 };
+use engine::WriteOperation;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +17,11 @@ use crate::{
     rpc::{RequestBackend, RequestWithToken, RequestWrapper, ResponseWrapper},
     storage::{storage_api::StorageApi, AuthStore, ExecuteError, KvStore, LeaseStore},
 };
+
+/// Meta table name
+pub(crate) const META_TABLE: &str = "meta";
+/// Key of applied index
+const APPLIED_INDEX_KEY: &str = "applied_index";
 
 /// Range start and end to get all keys
 const UNBOUNDED: &[u8] = &[0_u8];
@@ -35,7 +41,7 @@ pub(crate) enum RangeType {
 impl RangeType {
     /// Get `RangeType` by given `key` and `range_end`
     pub(crate) fn get_range_type(key: &[u8], range_end: &[u8]) -> Self {
-        if key == ONE_KEY {
+        if range_end == ONE_KEY {
             RangeType::OneKey
         } else if key == UNBOUNDED && range_end == UNBOUNDED {
             RangeType::AllKeys
@@ -175,7 +181,7 @@ where
     /// Lease Storage
     lease_storage: Arc<LeaseStore<S>>,
     /// persistent storage
-    backend: Arc<S>,
+    persistent: Arc<S>,
 }
 
 impl<S> CommandExecutor<S>
@@ -187,13 +193,13 @@ where
         kv_storage: Arc<KvStore<S>>,
         auth_storage: Arc<AuthStore<S>>,
         lease_storage: Arc<LeaseStore<S>>,
-        backend: Arc<S>,
+        persistent: Arc<S>,
     ) -> Self {
         Self {
             kv_storage,
             auth_storage,
             lease_storage,
-            backend,
+            persistent,
         }
     }
 }
@@ -222,12 +228,28 @@ where
     ) -> Result<SyncResponse, ExecuteError> {
         let wrapper = cmd.request();
         self.auth_storage.check_permission(wrapper).await?;
-        self.backend
-            .insert("meta", "applied_index", index.to_le_bytes(), false)?;
+        let mut wr_ops = vec![WriteOperation::new_put(
+            META_TABLE,
+            APPLIED_INDEX_KEY,
+            index.to_le_bytes(),
+        )];
         match wrapper.request.backend() {
-            RequestBackend::Kv => self.kv_storage.after_sync(wrapper).await,
-            RequestBackend::Auth => self.auth_storage.after_sync(wrapper),
-            RequestBackend::Lease => self.lease_storage.after_sync(wrapper).await,
+            RequestBackend::Kv => {
+                let (res, mut ops) = self.kv_storage.after_sync(wrapper).await?;
+                wr_ops.append(&mut ops);
+                self.persistent.write_batch(wr_ops, false)?;
+                Ok(res)
+            }
+            RequestBackend::Auth => {
+                let res = self.auth_storage.after_sync(wrapper)?;
+                self.persistent.write_batch(wr_ops, false)?;
+                Ok(res)
+            }
+            RequestBackend::Lease => {
+                let res = self.lease_storage.after_sync(wrapper).await?;
+                self.persistent.write_batch(wr_ops, false)?;
+                Ok(res)
+            }
         }
     }
 
@@ -235,7 +257,7 @@ where
     async fn reset(&self) {}
 
     fn last_applied(&self) -> Result<LogIndex, ExecuteError> {
-        let Some(index_bytes) = self.backend.get_value("meta", "applied_index")? else {
+        let Some(index_bytes) = self.persistent.get_value("meta", "applied_index")? else {
             return Ok(0);
         };
         let buf: [u8; 8] = index_bytes

@@ -52,8 +52,8 @@ pub(super) enum CurpError {
     #[error("storage error, {0}")]
     Storage(#[from] StorageError),
     /// Get applied index error
-    #[error("get applied index error, {0}")]
-    GetAppliedIndex(String),
+    #[error("internal error {0}")]
+    Internal(String),
 }
 
 /// Connects
@@ -287,7 +287,7 @@ impl<C: 'static + Command> CurpNode<C> {
         let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
         let last_applied = cmd_executor
             .last_applied()
-            .map_err(|e| CurpError::GetAppliedIndex(e.to_string()))?;
+            .map_err(|e| CurpError::Internal(format!("get applied index error, {e}")))?;
 
         let storage = Arc::new(RocksDBStorage::new(&curp_cfg.data_dir)?);
 
