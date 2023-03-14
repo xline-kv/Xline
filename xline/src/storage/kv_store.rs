@@ -123,11 +123,7 @@ where
                     continue;
                 }
             };
-            if let Err(e) = inner.db.write_batch(ops, false) {
-                warn!("Delete keys by lease revoked failed: {:?}", e);
-                continue;
-            }
-            if tx.send(()).is_err() {
+            if tx.send(ops).is_err() {
                 warn!("receiver dropped");
             }
         }

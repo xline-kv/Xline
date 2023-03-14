@@ -233,25 +233,14 @@ where
             APPLIED_INDEX_KEY,
             index.to_le_bytes(),
         )];
-        match wrapper.request.backend() {
-            RequestBackend::Kv => {
-                let (res, mut ops) = self.kv_storage.after_sync(wrapper).await?;
-                wr_ops.append(&mut ops);
-                self.persistent.write_batch(wr_ops, false)?;
-                Ok(res)
-            }
-            RequestBackend::Auth => {
-                let (res, mut ops) = self.auth_storage.after_sync(wrapper)?;
-                wr_ops.append(&mut ops);
-                self.persistent.write_batch(wr_ops, false)?;
-                Ok(res)
-            }
-            RequestBackend::Lease => {
-                let res = self.lease_storage.after_sync(wrapper).await?;
-                self.persistent.write_batch(wr_ops, false)?;
-                Ok(res)
-            }
-        }
+        let (res, mut ops) = match wrapper.request.backend() {
+            RequestBackend::Kv => self.kv_storage.after_sync(wrapper).await?,
+            RequestBackend::Auth => self.auth_storage.after_sync(wrapper)?,
+            RequestBackend::Lease => self.lease_storage.after_sync(wrapper).await?,
+        };
+        wr_ops.append(&mut ops);
+        self.persistent.write_batch(wr_ops, false)?;
+        Ok(res)
     }
 
     // TODO
