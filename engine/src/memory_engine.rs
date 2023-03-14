@@ -75,7 +75,7 @@ impl StorageEngine for MemoryEngine {
     }
 
     #[inline]
-    fn write_batch(&self, wr_ops: Vec<WriteOperation<'_>>, _sync: bool) -> Result<(), EngineError> {
+    fn write_batch(&self, wr_ops: Vec<WriteOperation>, _sync: bool) -> Result<(), EngineError> {
         let mut inner = self.inner.write();
         for op in wr_ops {
             match op {
@@ -89,7 +89,7 @@ impl StorageEngine for MemoryEngine {
                     let table = inner
                         .get_mut(table)
                         .ok_or_else(|| EngineError::TableNotFound(table.to_owned()))?;
-                    let _ignore = table.remove(key);
+                    let _ignore = table.remove(&key);
                 }
                 WriteOperation::DeleteRange { table, from, to } => {
                     let table = inner
@@ -97,10 +97,10 @@ impl StorageEngine for MemoryEngine {
                         .ok_or_else(|| EngineError::TableNotFound(table.to_owned()))?;
                     table.retain(|key, _value| {
                         let key_slice = key.as_slice();
-                        match key_slice.cmp(from) {
+                        match key_slice.cmp(&from) {
                             Ordering::Less => true,
                             Ordering::Equal => false,
-                            Ordering::Greater => match key_slice.cmp(to) {
+                            Ordering::Greater => match key_slice.cmp(&to) {
                                 Ordering::Less => false,
                                 Ordering::Equal | Ordering::Greater => true,
                             },
@@ -132,10 +132,10 @@ mod test {
         );
         assert!(engine.write_batch(vec![put], false).is_err());
 
-        let delete = WriteOperation::new_delete("hello", b"hello");
+        let delete = WriteOperation::new_delete("hello", "hello");
         assert!(engine.write_batch(vec![delete], false).is_err());
 
-        let delete_range = WriteOperation::new_delete_range("hello", b"hello", b"world");
+        let delete_range = WriteOperation::new_delete_range("hello", "hello", "world");
         assert!(engine.write_batch(vec![delete_range], false).is_err());
     }
 
@@ -149,7 +149,7 @@ mod test {
         let values = origin_set.clone();
         let puts = zip(keys, values)
             .map(|(k, v)| WriteOperation::new_put("kv", k, v))
-            .collect::<Vec<WriteOperation<'_>>>();
+            .collect::<Vec<WriteOperation>>();
 
         assert!(engine.write_batch(puts, false).is_ok());
 
@@ -157,7 +157,7 @@ mod test {
         assert_eq!(res_1.iter().filter(|v| v.is_some()).count(), 10);
 
         let delete_key: Vec<u8> = vec![1, 1, 1, 1];
-        let delete = WriteOperation::new_delete("kv", delete_key.as_slice());
+        let delete = WriteOperation::new_delete("kv", delete_key.clone());
 
         let res_2 = engine.write_batch(vec![delete], false);
         assert!(res_2.is_ok());
@@ -167,8 +167,7 @@ mod test {
 
         let delete_start: Vec<u8> = vec![2, 2, 2, 2];
         let delete_end: Vec<u8> = vec![5, 5, 5, 5];
-        let delete_range =
-            WriteOperation::new_delete_range("kv", delete_start.as_slice(), &delete_end.as_slice());
+        let delete_range = WriteOperation::new_delete_range("kv", delete_start, delete_end);
         let res_4 = engine.write_batch(vec![delete_range], false);
         assert!(res_4.is_ok());
 

@@ -52,7 +52,7 @@ where
     /// Lease storage
     lease_storage: Arc<LeaseStore<S>>,
     /// persistent storage
-    backend: Arc<S>,
+    persistent: Arc<S>,
     /// Consensus client
     client: Arc<Client<Command>>,
     /// Curp server timeout
@@ -82,7 +82,7 @@ where
         key_pair: Option<(EncodingKey, DecodingKey)>,
         curp_config: CurpConfig,
         client_timeout: ClientTimeout,
-        backend: Arc<S>,
+        persistent: Arc<S>,
     ) -> Self {
         // TODO: temporary solution, need real cluster id and member id
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
@@ -97,19 +97,19 @@ where
             lease_cmd_rx,
             Arc::clone(&state),
             Arc::clone(&header_gen),
-            Arc::clone(&backend),
+            Arc::clone(&persistent),
         ));
         let kv_storage = Arc::new(KvStore::new(
             lease_cmd_tx.clone(),
             del_rx,
             Arc::clone(&header_gen),
-            Arc::clone(&backend),
+            Arc::clone(&persistent),
         ));
         let auth_storage = Arc::new(AuthStore::new(
             lease_cmd_tx,
             key_pair,
             header_gen,
-            Arc::clone(&backend),
+            Arc::clone(&persistent),
         ));
         let client = Arc::new(Client::<Command>::new(all_members.clone(), client_timeout).await);
         Self {
@@ -117,7 +117,7 @@ where
             kv_storage,
             auth_storage,
             lease_storage,
-            backend,
+            persistent,
             client,
             curp_cfg: curp_config,
             id_gen,
@@ -226,7 +226,7 @@ where
                 Arc::clone(&self.kv_storage),
                 Arc::clone(&self.auth_storage),
                 Arc::clone(&self.lease_storage),
-                Arc::clone(&self.backend),
+                Arc::clone(&self.persistent),
             ),
             Arc::clone(&self.curp_cfg),
             None,
