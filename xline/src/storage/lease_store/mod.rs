@@ -12,6 +12,7 @@ use std::{
 };
 
 use clippy_utilities::Cast;
+use engine::WriteOperation;
 use log::debug;
 use parking_lot::RwLock;
 use prost::Message;
@@ -248,11 +249,11 @@ where
     pub(crate) async fn after_sync(
         &self,
         request: &RequestWithToken,
-    ) -> Result<SyncResponse, ExecuteError> {
+    ) -> Result<(SyncResponse, Vec<WriteOperation>), ExecuteError> {
         self.inner
             .sync_request(&request.request)
             .await
-            .map(SyncResponse::new)
+            .map(|(rev, ops)| (SyncResponse::new(rev), ops))
     }
 
     /// Check if the node is leader
@@ -342,6 +343,16 @@ where
             state,
             header_gen,
         }
+    }
+
+    /// Operations of put lease
+    fn op_put_lease(lease: &PbLease) -> WriteOperation {
+        WriteOperation::new_put(LEASE_TABLE, lease.id.encode_to_vec(), lease.encode_to_vec())
+    }
+
+    /// Operations of delete lease
+    fn op_delete_lease(lease_id: i64) -> WriteOperation {
+        WriteOperation::new_delete(LEASE_TABLE, lease_id.encode_to_vec())
     }
 
     /// Check if the node is leader
@@ -449,45 +460,32 @@ where
     }
 
     /// Sync `RequestWithToken`
-    async fn sync_request(&self, wrapper: &RequestWrapper) -> Result<i64, ExecuteError> {
+    async fn sync_request(
+        &self,
+        wrapper: &RequestWrapper,
+    ) -> Result<(i64, Vec<WriteOperation>), ExecuteError> {
         #[allow(clippy::wildcard_enum_match_arm)]
-        match *wrapper {
+        let ops = match *wrapper {
             RequestWrapper::LeaseGrantRequest(ref req) => {
                 debug!("Sync LeaseGrantRequest {:?}", req);
-                self.sync_lease_grant_request(req)?;
+                self.sync_lease_grant_request(req)
             }
             RequestWrapper::LeaseRevokeRequest(ref req) => {
                 debug!("Sync LeaseRevokeRequest {:?}", req);
-                self.sync_lease_revoke_request(req).await?;
+                self.sync_lease_revoke_request(req).await?
             }
             _ => unreachable!("Other request should not be sent to this store"),
         };
-        Ok(self.header_gen.revision())
+        Ok((self.header_gen.revision(), ops))
     }
 
     /// Sync `LeaseGrantRequest`
-    fn sync_lease_grant_request(&self, req: &LeaseGrantRequest) -> Result<(), ExecuteError> {
+    fn sync_lease_grant_request(&self, req: &LeaseGrantRequest) -> Vec<WriteOperation> {
         let lease = self
             .lease_collection
             .write()
             .grant(req.id, req.ttl, self.is_leader());
-        self.insert(lease.id, &lease)
-    }
-
-    /// Insert a `PbLease`
-    fn insert(&self, lease_id: i64, lease: &PbLease) -> Result<(), ExecuteError> {
-        let key = lease_id.encode_to_vec();
-        let value = lease.encode_to_vec();
-        self.db.insert(LEASE_TABLE, key, value, false)
-    }
-
-    /// Delete a `PbLease` by `lease_id`
-    fn delete(&self, lease_id: i64) -> Result<(), ExecuteError> {
-        let key = lease_id.encode_to_vec();
-        self.db
-            .delete(LEASE_TABLE, key, false)
-            .map_err(|e| ExecuteError::DbError(format!("Failed to delete Lease, error: {e}")))?;
-        Ok(())
+        vec![Self::op_put_lease(&lease)]
     }
 
     /// Get all `PbLease`
@@ -508,7 +506,8 @@ where
     async fn sync_lease_revoke_request(
         &self,
         req: &LeaseRevokeRequest,
-    ) -> Result<(), ExecuteError> {
+    ) -> Result<Vec<WriteOperation>, ExecuteError> {
+        let mut ops = Vec::new();
         let mut keys = match self.lease_collection.read().lease_map.get(&req.id) {
             Some(l) => l.keys(),
             None => return Err(ExecuteError::lease_not_found(req.id)),
@@ -520,10 +519,14 @@ where
                 self.del_tx.send(msg).await.is_ok(),
                 "Failed to send delete keys"
             );
-            assert!(rx.await.is_ok(), "Failed to receive delete keys response");
+            let mut del_ops = rx
+                .await
+                .unwrap_or_else(|e| panic!("Failed to receive delete keys response: {e}"));
+            ops.append(&mut del_ops);
         }
         let _ignore = self.lease_collection.write().revoke(req.id);
-        self.delete(req.id)
+        ops.push(Self::op_delete_lease(req.id));
+        Ok(ops)
     }
 }
 
@@ -593,7 +596,7 @@ mod test {
             while let Some(msg) = del_rx.recv().await {
                 let (keys, tx) = msg.unpack();
                 info!("delete keys: {:?}", keys);
-                assert!(tx.send(()).is_ok());
+                assert!(tx.send(Vec::new()).is_ok());
             }
         });
         let (_, lease_cmd_rx) = mpsc::channel(1);
@@ -607,7 +610,8 @@ mod test {
         req: RequestWithToken,
     ) -> Result<ResponseWrapper, ExecuteError> {
         let cmd_res = ls.execute(&req)?;
-        let _ignore = ls.after_sync(&req).await;
+        let (_ignore, ops) = ls.after_sync(&req).await?;
+        ls.inner.db.write_batch(ops, false)?;
         Ok(cmd_res.decode())
     }
 }
