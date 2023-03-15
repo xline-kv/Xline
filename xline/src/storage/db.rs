@@ -9,7 +9,7 @@ use utils::config::StorageConfig;
 use super::{storage_api::StorageApi, ExecuteError};
 
 /// Xline Server Storage Table
-const XLINETABLES: [&str; 5] = ["kv", "lease", "auth", "user", "role"];
+const XLINE_TABLES: [&str; 6] = ["meta", "kv", "lease", "auth", "user", "role"];
 
 /// Database to store revision to kv mapping
 #[derive(Debug, Clone)]
@@ -172,12 +172,12 @@ impl DBProxy {
     pub fn open(config: &StorageConfig) -> Result<Arc<DBProxy>, ExecuteError> {
         match *config {
             StorageConfig::Memory => {
-                let engine = MemoryEngine::new(&XLINETABLES)
+                let engine = MemoryEngine::new(&XLINE_TABLES)
                     .map_err(|e| ExecuteError::DbError(format!("Cannot open database: {e}")))?;
                 Ok(Arc::new(DBProxy::MemDB(DB::new(engine))))
             }
             StorageConfig::RocksDB(ref path) => {
-                let engine = RocksEngine::new(path, &XLINETABLES)
+                let engine = RocksEngine::new(path, &XLINE_TABLES)
                     .map_err(|e| ExecuteError::DbError(format!("Cannot open database: {e}")))?;
                 Ok(Arc::new(DBProxy::RocksDB(DB::new(engine))))
             }

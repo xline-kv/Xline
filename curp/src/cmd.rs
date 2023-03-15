@@ -118,5 +118,5 @@ where
     async fn reset(&self);
 
     /// Index of the last log entry that has been successfully applied to the command executor
-    fn last_applied(&self) -> usize;
+    fn last_applied(&self) -> Result<LogIndex, Self::Error>;
 }

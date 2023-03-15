@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     fmt::Display,
     sync::{
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicU64, Ordering},
         Arc,
     },
     time::Duration,
@@ -134,7 +134,7 @@ impl ConflictCheck for TestCommand {
 #[derive(Debug, Clone)]
 pub(crate) struct TestCE {
     server_id: ServerId,
-    last_applied: Arc<AtomicUsize>,
+    last_applied: Arc<AtomicU64>,
     pub(crate) store: Arc<Mutex<HashMap<u32, u32>>>,
     exe_sender: mpsc::UnboundedSender<(TestCommand, TestCommandResult)>,
     after_sync_sender: mpsc::UnboundedSender<(TestCommand, LogIndex)>,
@@ -201,8 +201,8 @@ impl CommandExecutor<TestCommand> for TestCE {
         self.store.lock().clear();
     }
 
-    fn last_applied(&self) -> usize {
-        self.last_applied.load(Ordering::Relaxed)
+    fn last_applied(&self) -> Result<LogIndex, ExecuteError> {
+        Ok(self.last_applied.load(Ordering::Relaxed))
     }
 }
 
@@ -214,7 +214,7 @@ impl TestCE {
     ) -> Self {
         Self {
             server_id,
-            last_applied: Arc::new(AtomicUsize::new(0)),
+            last_applied: Arc::new(AtomicU64::new(0)),
             store: Arc::new(Mutex::new(HashMap::new())),
             exe_sender,
             after_sync_sender,
@@ -225,7 +225,7 @@ impl TestCE {
 #[derive(Debug, Clone)]
 pub(crate) struct TestCESimple {
     server_id: ServerId,
-    last_applied: Arc<AtomicUsize>,
+    last_applied: Arc<AtomicU64>,
     store: Arc<Mutex<HashMap<u32, u32>>>,
 }
 
@@ -277,8 +277,8 @@ impl CommandExecutor<TestCommand> for TestCESimple {
         self.store.lock().clear();
     }
 
-    fn last_applied(&self) -> usize {
-        self.last_applied.load(Ordering::Relaxed)
+    fn last_applied(&self) -> Result<LogIndex, ExecuteError> {
+        Ok(self.last_applied.load(Ordering::Relaxed))
     }
 }
 
@@ -286,7 +286,7 @@ impl TestCESimple {
     pub(crate) fn new(server_id: ServerId) -> Self {
         Self {
             server_id,
-            last_applied: Arc::new(AtomicUsize::new(0)),
+            last_applied: Arc::new(AtomicU64::new(0)),
             store: Arc::new(Mutex::new(HashMap::new())),
         }
     }
