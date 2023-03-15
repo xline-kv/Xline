@@ -53,9 +53,6 @@ pub(super) enum CurpError {
     Storage(#[from] StorageError),
 }
 
-/// Connects
-type Connects = HashMap<ServerId, Arc<dyn ConnectApi>>;
-
 /// `CurpNode` represents a single node of curp cluster
 pub(super) struct CurpNode<C: Command> {
     /// `RawCurp` state machine
@@ -213,7 +210,7 @@ impl<C: 'static + Command> CurpNode<C> {
 /// Spawned tasks
 impl<C: 'static + Command> CurpNode<C> {
     /// Tick periodically
-    async fn tick_task(curp: Arc<RawCurp<C>>, connects: Connects) {
+    async fn tick_task(curp: Arc<RawCurp<C>>, connects: HashMap<ServerId, Arc<impl ConnectApi>>) {
         let heartbeat_interval = curp.cfg().heartbeat_interval;
         // wait for some random time before tick starts to minimize vote split possibility
         let rand = thread_rng()
@@ -242,7 +239,7 @@ impl<C: 'static + Command> CurpNode<C> {
     /// Background leader calibrate followers
     async fn calibrate_task(
         curp: Arc<RawCurp<C>>,
-        connects: Connects,
+        connects: HashMap<ServerId, Arc<impl ConnectApi>>,
         mut calibrate_rx: mpsc::UnboundedReceiver<ServerId>,
     ) {
         let mut handlers: HashMap<ServerId, JoinHandle<()>> = HashMap::new();
@@ -371,7 +368,7 @@ impl<C: 'static + Command> CurpNode<C> {
     /// Leader broadcasts heartbeats
     async fn bcast_heartbeats(
         curp: Arc<RawCurp<C>>,
-        connects: &Connects,
+        connects: &HashMap<ServerId, Arc<impl ConnectApi>>,
         hbs: HashMap<ServerId, AppendEntries<C>>,
     ) {
         let rpc_timeout = curp.cfg().rpc_timeout;
@@ -422,7 +419,7 @@ impl<C: 'static + Command> CurpNode<C> {
     /// Candidate broadcasts votes
     async fn bcast_votes(
         curp: Arc<RawCurp<C>>,
-        connects: &Connects,
+        connects: &HashMap<ServerId, Arc<impl ConnectApi>>,
         votes: HashMap<ServerId, Vote>,
     ) {
         let rpc_timeout = curp.cfg().rpc_timeout;
@@ -541,7 +538,7 @@ impl<C: 'static + Command> CurpNode<C> {
     /// Sync task is responsible for replicating log entries
     async fn sync_task(
         curp: Arc<RawCurp<C>>,
-        connects: Connects,
+        connects: HashMap<ServerId, Arc<impl ConnectApi>>,
         mut sync_rx: mpsc::UnboundedReceiver<usize>,
     ) {
         while let Some(i) = sync_rx.recv().await {
@@ -582,7 +579,7 @@ impl<C: 'static + Command> CurpNode<C> {
     #[allow(clippy::integer_arithmetic, clippy::indexing_slicing)] // log.len() >= 1 because we have a fake log[0], indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
     async fn send_log_until_succeed(
         curp: Arc<RawCurp<C>>,
-        connect: Arc<dyn ConnectApi>,
+        connect: Arc<impl ConnectApi>,
         i: usize,
         req: AppendEntriesRequest,
     ) {
