@@ -12,8 +12,9 @@ use crate::{
     error::ProposeError,
     message::ServerId,
     rpc::{
-        self, connect::ConnectApi, FetchLeaderRequest, ProposeRequest, SyncError, SyncResult,
-        WaitSyncedRequest,
+        self,
+        connect::{Connect, ConnectApi},
+        FetchLeaderRequest, ProposeRequest, SyncError, SyncResult, WaitSyncedRequest,
     },
 };
 
@@ -22,7 +23,7 @@ pub struct Client<C: Command> {
     /// Current leader and term
     state: RwLock<State>,
     /// All servers's `Connect`
-    connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
+    connects: HashMap<ServerId, Arc<Connect>>,
     /// Curp client timeout settings
     timeout: ClientTimeout,
     /// To keep Command type
