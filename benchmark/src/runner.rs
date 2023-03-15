@@ -18,7 +18,7 @@ use tokio::{
     time::{Duration, Instant},
 };
 use tracing::debug;
-use utils::config::ClientTimeout;
+use utils::config::{default_client_wait_synced_timeout, default_propose_timeout, ClientTimeout};
 use xline::client::{kv_types::PutRequest, Client};
 
 use crate::{args::Commands, Benchmark};
@@ -141,7 +141,7 @@ impl CommandRunner {
     /// Errors if the benchmark fails.
     #[inline]
     pub async fn run(&mut self) -> Result<Stats> {
-        let clients = self.crate_clients().await?;
+        let clients = self.create_clients().await?;
         match self.args.command {
             Commands::Put {
                 key_size,
@@ -164,13 +164,17 @@ impl CommandRunner {
     }
 
     /// Create clients
-    async fn crate_clients(&self) -> Result<Vec<Client>> {
+    async fn create_clients(&self) -> Result<Vec<Client>> {
         let mut clients = Vec::with_capacity(self.args.clients);
         for _ in 0..self.args.clients {
             let client = Client::new(
                 self.args.endpoints.clone(),
                 self.args.use_curp,
-                ClientTimeout::default(),
+                ClientTimeout::new(
+                    default_client_wait_synced_timeout(),
+                    default_propose_timeout(),
+                    Duration::from_millis(250),
+                ),
             )
             .await?;
             clients.push(client);
@@ -206,7 +210,7 @@ impl CommandRunner {
                 let mut key = vec![0u8; key_size];
                 let _ = c.wait().await;
                 loop {
-                    let idx = count_clone.fetch_add(1, Ordering::SeqCst);
+                    let idx = count_clone.fetch_add(1, Ordering::Relaxed);
                     if idx >= total {
                         break;
                     }
