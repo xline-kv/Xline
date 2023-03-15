@@ -174,6 +174,8 @@ where
     auth_storage: Arc<AuthStore<S>>,
     /// Lease Storage
     lease_storage: Arc<LeaseStore<S>>,
+    /// persistent storage
+    backend: Arc<S>,
 }
 
 impl<S> CommandExecutor<S>
@@ -185,11 +187,13 @@ where
         kv_storage: Arc<KvStore<S>>,
         auth_storage: Arc<AuthStore<S>>,
         lease_storage: Arc<LeaseStore<S>>,
+        backend: Arc<S>,
     ) -> Self {
         Self {
             kv_storage,
             auth_storage,
             lease_storage,
+            backend,
         }
     }
 }
@@ -214,10 +218,12 @@ where
     async fn after_sync(
         &self,
         cmd: &Command,
-        _index: LogIndex,
+        index: LogIndex,
     ) -> Result<SyncResponse, ExecuteError> {
         let wrapper = cmd.request();
         self.auth_storage.check_permission(wrapper).await?;
+        self.backend
+            .insert("meta", "applied_index", index.to_le_bytes(), false)?;
         match wrapper.request.backend() {
             RequestBackend::Kv => self.kv_storage.after_sync(wrapper).await,
             RequestBackend::Auth => self.auth_storage.after_sync(wrapper),
@@ -228,9 +234,14 @@ where
     // TODO
     async fn reset(&self) {}
 
-    // TODO
-    fn last_applied(&self) -> usize {
-        0
+    fn last_applied(&self) -> Result<LogIndex, ExecuteError> {
+        let Some(index_bytes) = self.backend.get_value("meta", "applied_index")? else {
+            return Ok(0);
+        };
+        let buf: [u8; 8] = index_bytes
+            .try_into()
+            .unwrap_or_else(|e| panic!("cannot decode index from backend, {e:?}"));
+        Ok(u64::from_le_bytes(buf))
     }
 }
 
