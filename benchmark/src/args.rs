@@ -36,7 +36,7 @@ pub enum Commands {
         /// Value size
         #[clap(long, default_value_t = 8)]
         val_size: usize,
-        /// Total number of keys
+        /// Total number of requests
         #[clap(long, default_value_t = 10000)]
         total: usize,
         /// Key space size

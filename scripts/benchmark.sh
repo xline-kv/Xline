@@ -44,7 +44,11 @@ benchmark_cmd() {
 run_xline() {
     cmd="/usr/local/bin/xline \
     --name node${1} \
-    --members ${MEMBERS}"
+    --members ${MEMBERS} \
+    --storage-engine rocksdb \
+    --data-dir /usr/local/xline/data-dir \
+    --retry-timeout 250ms \
+    --rpc-timeout 250ms"
 
     if [ ${1} -eq 1 ]; then
         cmd="${cmd} --is-leader"
@@ -112,7 +116,12 @@ stop_cluster() {
 # stop all containers
 stop_all() {
     echo stopping
-    docker stop $(docker ps -a -q)
+    for name in "node1" "node2" "node3" "client"; do
+        docker_id=$(docker ps -qf "name=${name}")
+        if [ -n "$docker_id" ]; then
+            docker stop $docker_id
+        fi
+    done
     sleep 1
     echo stopped
 }
