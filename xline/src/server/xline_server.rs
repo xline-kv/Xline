@@ -28,7 +28,7 @@ use crate::{
         LockServer as RpcLockServer, WatchServer as RpcWatchServer,
     },
     state::State,
-    storage::{storage_api::StorageApi, AuthStore, KvStore, LeaseStore},
+    storage::{index::Index, storage_api::StorageApi, AuthStore, KvStore, LeaseStore},
 };
 
 /// Default channel size
@@ -90,20 +90,22 @@ where
         let leader_id = is_leader.then(|| name.clone());
         let state = Arc::new(State::new(name, leader_id, all_members.clone()));
         let curp_config = Arc::new(curp_config);
-        let (del_tx, del_rx) = mpsc::channel(CHANNEL_SIZE);
         let (lease_cmd_tx, lease_cmd_rx) = mpsc::channel(CHANNEL_SIZE);
+        let index = Arc::new(Index::new());
+
+        let kv_storage = Arc::new(KvStore::new(
+            lease_cmd_tx.clone(),
+            Arc::clone(&header_gen),
+            Arc::clone(&persistent),
+            Arc::clone(&index),
+        ));
         let lease_storage = Arc::new(LeaseStore::new(
-            del_tx,
             lease_cmd_rx,
             Arc::clone(&state),
             Arc::clone(&header_gen),
             Arc::clone(&persistent),
-        ));
-        let kv_storage = Arc::new(KvStore::new(
-            lease_cmd_tx.clone(),
-            del_rx,
-            Arc::clone(&header_gen),
-            Arc::clone(&persistent),
+            index,
+            kv_storage.kv_update_tx(),
         ));
         let auth_storage = Arc::new(AuthStore::new(
             lease_cmd_tx,

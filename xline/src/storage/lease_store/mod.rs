@@ -13,25 +13,31 @@ use std::{
 
 use clippy_utilities::Cast;
 use engine::WriteOperation;
+use itertools::Itertools;
 use log::debug;
 use parking_lot::RwLock;
 use prost::Message;
 use tokio::sync::mpsc;
 
 use self::lease_queue::LeaseQueue;
-pub(crate) use self::{
-    lease::Lease,
-    message::{DeleteMessage, LeaseMessage},
+pub(crate) use self::{lease::Lease, message::LeaseMessage};
+use super::{
+    index::{Index, IndexOperate},
+    kv_store::KV_TABLE,
+    storage_api::StorageApi,
+    ExecuteError,
 };
-use super::{storage_api::StorageApi, ExecuteError};
 use crate::{
     header_gen::HeaderGenerator,
+    revision_number::RevisionNumber,
     rpc::{
-        LeaseGrantRequest, LeaseGrantResponse, LeaseRevokeRequest, LeaseRevokeResponse, PbLease,
-        RequestWithToken, RequestWrapper, ResponseHeader, ResponseWrapper,
+        Event, EventType, KeyValue, LeaseGrantRequest, LeaseGrantResponse, LeaseRevokeRequest,
+        LeaseRevokeResponse, PbLease, RequestWithToken, RequestWrapper, ResponseHeader,
+        ResponseWrapper,
     },
     server::command::{CommandResponse, SyncResponse},
     state::State,
+    storage::Revision,
 };
 
 /// Lease table name
@@ -180,12 +186,16 @@ where
     lease_collection: RwLock<LeaseCollection>,
     /// Db to store lease
     db: Arc<DB>,
-    /// delete channel
-    del_tx: mpsc::Sender<DeleteMessage>,
+    /// Key to revision index
+    index: Arc<Index>,
     /// Current node is leader or not
     state: Arc<State>,
+    /// Revision
+    revision: Arc<RevisionNumber>,
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
+    /// KV update sender
+    kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
 }
 
 impl<DB> LeaseStore<DB>
@@ -195,13 +205,20 @@ where
     /// New `LeaseStore`
     #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
     pub(crate) fn new(
-        del_tx: mpsc::Sender<DeleteMessage>,
         mut lease_cmd_rx: mpsc::Receiver<LeaseMessage>,
         state: Arc<State>,
         header_gen: Arc<HeaderGenerator>,
         db: Arc<DB>,
+        index: Arc<Index>,
+        kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
     ) -> Self {
-        let inner = Arc::new(LeaseStoreBackend::new(del_tx, state, header_gen, db));
+        let inner = Arc::new(LeaseStoreBackend::new(
+            state,
+            header_gen,
+            db,
+            index,
+            kv_update_tx,
+        ));
         let _handle = tokio::spawn({
             let inner = Arc::clone(&inner);
             async move {
@@ -331,17 +348,20 @@ where
 {
     /// New `LeaseStoreBackend`
     pub(crate) fn new(
-        del_tx: mpsc::Sender<DeleteMessage>,
         state: Arc<State>,
         header_gen: Arc<HeaderGenerator>,
         db: Arc<DB>,
+        index: Arc<Index>,
+        kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
     ) -> Self {
         Self {
             lease_collection: RwLock::new(LeaseCollection::new()),
             db,
-            del_tx,
             state,
+            revision: header_gen.revision_arc(),
             header_gen,
+            index,
+            kv_update_tx,
         }
     }
 
@@ -507,25 +527,84 @@ where
         &self,
         req: &LeaseRevokeRequest,
     ) -> Result<Vec<WriteOperation>, ExecuteError> {
-        let mut ops = Vec::new();
-        let mut keys = match self.lease_collection.read().lease_map.get(&req.id) {
+        let mut ops = vec![Self::op_delete_lease(req.id)];
+        let keys = match self.lease_collection.read().lease_map.get(&req.id) {
             Some(l) => l.keys(),
             None => return Err(ExecuteError::lease_not_found(req.id)),
         };
-        if !keys.is_empty() {
-            keys.sort(); // all node delete in same order
-            let (msg, rx) = DeleteMessage::new(keys);
-            assert!(
-                self.del_tx.send(msg).await.is_ok(),
-                "Failed to send delete keys"
-            );
-            let mut del_ops = rx
-                .await
-                .unwrap_or_else(|e| panic!("Failed to receive delete keys response: {e}"));
-            ops.append(&mut del_ops);
+
+        if keys.is_empty() {
+            let _ignore = self.lease_collection.write().revoke(req.id);
+
+            return Ok(ops);
         }
+
+        let revision = self.revision.next();
+        let (prev_keys, del_revs): (Vec<Vec<u8>>, Vec<Revision>) = keys
+            .into_iter()
+            .zip(0..)
+            .map(|(key, sub_revision)| {
+                let (prev_rev, del_rev) = self
+                    .index
+                    .delete(&key, &[], revision, sub_revision)
+                    .pop()
+                    .unwrap_or_else(|| panic!("delete one key should return 1 result"));
+                (prev_rev.encode_to_vec(), del_rev)
+            })
+            .unzip();
+        let prev_kvs: Vec<KeyValue> = self
+            .db
+            .get_values(KV_TABLE, &prev_keys)?
+            .into_iter()
+            .flatten()
+            .map(|v| KeyValue::decode(v.as_slice()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| {
+                ExecuteError::DbError(format!("Failed to decode key-value from DB, error: {e}"))
+            })?;
+        assert_eq!(prev_kvs.len(), del_revs.len());
+        for kv in &prev_kvs {
+            let lease_id = self.get_lease(&kv.key);
+            self.detach(lease_id, kv.key.as_slice())?;
+        }
+        let mut del_ops = prev_kvs
+            .iter()
+            .zip(del_revs.iter())
+            .map(|(kv, &del_rev)| {
+                let del_kv = KeyValue {
+                    key: kv.key.clone(),
+                    mod_revision: del_rev.revision(),
+                    ..KeyValue::default()
+                };
+                let key = del_rev.encode_to_vec();
+                let value = del_kv.encode_to_vec();
+                WriteOperation::new_put(KV_TABLE, key, value)
+            })
+            .collect_vec();
+
+        let updates = prev_kvs
+            .into_iter()
+            .map(|prev| {
+                let kv = KeyValue {
+                    key: prev.key.clone(),
+                    mod_revision: revision,
+                    ..Default::default()
+                };
+                Event {
+                    #[allow(clippy::as_conversions)] // This cast is always valid
+                    r#type: EventType::Delete as i32,
+                    kv: Some(kv),
+                    prev_kv: Some(prev),
+                }
+            })
+            .collect();
+
         let _ignore = self.lease_collection.write().revoke(req.id);
-        ops.push(Self::op_delete_lease(req.id));
+        assert!(
+            self.kv_update_tx.send((revision, updates)).await.is_ok(),
+            "Failed to send updates to KV watcher"
+        );
+        ops.append(&mut del_ops);
         Ok(ops)
     }
 }
@@ -534,7 +613,6 @@ where
 mod test {
     use std::{error::Error, time::Duration};
 
-    use log::info;
     use utils::config::StorageConfig;
 
     use super::*;
@@ -546,7 +624,7 @@ mod test {
         let lease_store = init_store(db);
 
         let req1 = RequestWithToken::new(LeaseGrantRequest { ttl: 10, id: 1 }.into());
-        let _ignore1 = exe_and_sync_req(&lease_store, req1).await?;
+        let _ignore1 = exe_and_sync_req(&lease_store, &req1).await?;
 
         let lo = lease_store.look_up(1).unwrap();
         assert_eq!(lo.id(), 1);
@@ -557,9 +635,10 @@ mod test {
         assert!(attach_non_existing_lease.is_err());
         let attach_existing_lease = lease_store.inner.attach(1, "key".into());
         assert!(attach_existing_lease.is_ok());
+        lease_store.inner.detach(1, "key".as_bytes())?;
 
         let req2 = RequestWithToken::new(LeaseRevokeRequest { id: 1 }.into());
-        let _ignore2 = exe_and_sync_req(&lease_store, req2).await?;
+        let _ignore2 = exe_and_sync_req(&lease_store, &req2).await?;
         assert!(lease_store.look_up(1).is_none());
         assert!(lease_store.leases().is_empty());
 
@@ -572,7 +651,7 @@ mod test {
         let store = init_store(Arc::clone(&db));
 
         let req1 = RequestWithToken::new(LeaseGrantRequest { ttl: 10, id: 1 }.into());
-        let _ignore1 = exe_and_sync_req(&store, req1).await?;
+        let _ignore1 = exe_and_sync_req(&store, &req1).await?;
         store.inner.attach(1, "key".into())?;
 
         let new_store = init_store(db);
@@ -591,26 +670,20 @@ mod test {
     }
 
     fn init_store(db: Arc<DBProxy>) -> LeaseStore<DBProxy> {
-        let (del_tx, mut del_rx) = mpsc::channel::<DeleteMessage>(1);
-        tokio::spawn(async move {
-            while let Some(msg) = del_rx.recv().await {
-                let (keys, tx) = msg.unpack();
-                info!("delete keys: {:?}", keys);
-                assert!(tx.send(Vec::new()).is_ok());
-            }
-        });
         let (_, lease_cmd_rx) = mpsc::channel(1);
+        let (kv_update_tx, _) = mpsc::channel(1);
         let state = Arc::new(State::default());
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
-        LeaseStore::new(del_tx, lease_cmd_rx, state, header_gen, db)
+        let index = Arc::new(Index::new());
+        LeaseStore::new(lease_cmd_rx, state, header_gen, db, index, kv_update_tx)
     }
 
     async fn exe_and_sync_req(
         ls: &LeaseStore<DBProxy>,
-        req: RequestWithToken,
+        req: &RequestWithToken,
     ) -> Result<ResponseWrapper, ExecuteError> {
-        let cmd_res = ls.execute(&req)?;
-        let (_ignore, ops) = ls.after_sync(&req).await?;
+        let cmd_res = ls.execute(req)?;
+        let (_ignore, ops) = ls.after_sync(req).await?;
         ls.inner.db.write_batch(ops, false)?;
         Ok(cmd_res.decode())
     }
