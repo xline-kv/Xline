@@ -101,7 +101,7 @@ impl ConflictCheck for u32 {
 /// Command executor which actually executes the command.
 /// It is usually defined by the protocol user.
 #[async_trait]
-pub trait CommandExecutor<C>: Sync + Send + Clone + std::fmt::Debug
+pub trait CommandExecutor<C>: Sync + Send + std::fmt::Debug
 where
     C: Command,
 {

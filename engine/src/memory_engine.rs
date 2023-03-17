@@ -68,10 +68,12 @@ impl StorageEngine for MemoryEngine {
         let table = inner
             .get(table)
             .ok_or_else(|| EngineError::TableNotFound(table.to_owned()))?;
-        Ok(table
+        let mut values = table
             .iter()
             .map(|(key, value)| (key.clone(), value.clone()))
-            .collect())
+            .collect::<Vec<_>>();
+        values.sort_by(|v1, v2| v1.0.cmp(&v2.0));
+        Ok(values)
     }
 
     #[inline]

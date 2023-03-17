@@ -63,7 +63,7 @@ where
 
 impl<S> XlineServer<S>
 where
-    S: StorageApi + Clone,
+    S: StorageApi,
 {
     /// New `XlineServer`
     ///

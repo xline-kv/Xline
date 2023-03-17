@@ -1,6 +1,6 @@
-use engine::WriteOperation;
+use curp::cmd::ProposeId;
 
-use super::ExecuteError;
+use super::{db::WriteOp, ExecuteError};
 
 /// The Stable Storage Api
 pub trait StorageApi: Send + Sync + 'static + std::fmt::Debug {
@@ -34,20 +34,16 @@ pub trait StorageApi: Send + Sync + 'static + std::fmt::Debug {
     #[allow(clippy::type_complexity)] // it's clear that (Vec<u8>, Vec<u8>) is a key-value pair
     fn get_all(&self, table: &'static str) -> Result<Vec<(Vec<u8>, Vec<u8>)>, ExecuteError>;
 
-    /// Commit a batch of write operations
-    /// If sync is true, the write will be flushed from the operating system
-    /// buffer cache before the write is considered complete. If this
-    /// flag is true, writes will be slower.
-    ///
-    /// # Errors
-    ///
-    /// if error occurs in storage, return `Err(error)`
-    fn write_batch(&self, wr_ops: Vec<WriteOperation>, sync: bool) -> Result<(), ExecuteError>;
-
     /// Reset the storage
     ///
     /// # Errors
     ///
     /// if error occurs in storage, return `Err(error)`
     fn reset(&self) -> Result<(), ExecuteError>;
+
+    /// Put a write operation to the buffer
+    fn buffer_op(&self, id: &ProposeId, op: WriteOp);
+
+    /// Flush the buffer to storage
+    fn flush(&self, id: &ProposeId) -> Result<(), ExecuteError>;
 }

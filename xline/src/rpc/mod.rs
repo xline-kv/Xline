@@ -1,5 +1,5 @@
 // Skip for generated code
-#[allow(
+#![allow(
     clippy::all,
     clippy::restriction,
     clippy::pedantic,
@@ -11,60 +11,23 @@
     missing_copy_implementations,
     missing_docs
 )]
+
 mod etcdserverpb {
     tonic::include_proto!("etcdserverpb");
 }
-#[allow(
-    clippy::all,
-    clippy::restriction,
-    clippy::pedantic,
-    clippy::nursery,
-    clippy::cargo,
-    unused_qualifications,
-    unreachable_pub,
-    variant_size_differences
-)]
+
 mod authpb {
     tonic::include_proto!("authpb");
 }
-#[allow(
-    clippy::all,
-    clippy::restriction,
-    clippy::pedantic,
-    clippy::nursery,
-    clippy::cargo,
-    unused_qualifications,
-    unreachable_pub,
-    variant_size_differences
-)]
+
 mod mvccpb {
     tonic::include_proto!("mvccpb");
 }
 
-#[allow(
-    clippy::all,
-    clippy::restriction,
-    clippy::pedantic,
-    clippy::nursery,
-    clippy::cargo,
-    unused_qualifications,
-    unreachable_pub,
-    variant_size_differences
-)]
 mod v3lockpb {
     tonic::include_proto!("v3lockpb");
 }
 
-#[allow(
-    clippy::all,
-    clippy::restriction,
-    clippy::pedantic,
-    clippy::nursery,
-    clippy::cargo,
-    unused_qualifications,
-    unreachable_pub,
-    variant_size_differences
-)]
 mod leasepb {
     tonic::include_proto!("leasepb");
 }

@@ -1,10 +1,11 @@
 use std::{fmt, sync::Arc};
 
+use curp::cmd::ProposeId;
 use prost::Message;
 
 use crate::{
     rpc::{Role, User},
-    storage::{storage_api::StorageApi, ExecuteError},
+    storage::{db::WriteOp, storage_api::StorageApi, ExecuteError},
 };
 
 /// User table
@@ -102,7 +103,6 @@ where
     }
 
     /// get auth enable
-    #[allow(dead_code)]
     pub(crate) fn get_enable(&self) -> Result<bool, ExecuteError> {
         if let Some(enabled) = self.db.get_value(AUTH_TABLE, AUTH_ENABLE_KEY)? {
             match enabled.first() {
@@ -117,21 +117,22 @@ where
     /// get auth revision
     pub(crate) fn get_revision(&self) -> Result<i64, ExecuteError> {
         if let Some(revision) = self.db.get_value(AUTH_TABLE, AUTH_REVISION_KEY)? {
-            let rev: [u8; 8] = revision.try_into().unwrap_or_else(|e| {
+            let rev = i64::decode(revision.as_slice()).unwrap_or_else(|e| {
                 panic!("Auth Revision maybe Corrupted: cannot decode revision from auth, {e:?}")
             });
-            Ok(i64::from_le_bytes(rev))
+            Ok(rev)
         } else {
             Ok(1)
         }
     }
 
+    /// put write operation
+    pub(crate) fn buffer_op(&self, id: &ProposeId, op: WriteOp) {
+        self.db.buffer_op(id, op);
+    }
+
     #[cfg(test)]
-    pub(crate) fn write_batch(
-        &self,
-        wr_ops: Vec<engine::WriteOperation>,
-        sync: bool,
-    ) -> Result<(), ExecuteError> {
-        self.db.write_batch(wr_ops, sync)
+    pub(crate) fn flush(&self, id: &ProposeId) -> Result<(), ExecuteError> {
+        self.db.flush(id)
     }
 }
