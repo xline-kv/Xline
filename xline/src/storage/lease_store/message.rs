@@ -1,4 +1,3 @@
-use engine::WriteOperation;
 use tokio::sync::oneshot;
 
 use super::Lease;
@@ -46,26 +45,5 @@ impl LeaseMessage {
     pub(crate) fn look_up(lease_id: i64) -> (Self, oneshot::Receiver<Option<Lease>>) {
         let (tx, rx) = oneshot::channel();
         (Self::LookUp(tx, lease_id), rx)
-    }
-}
-
-/// Message that will be sent to kv store
-pub(crate) struct DeleteMessage {
-    /// keys
-    keys: Vec<Vec<u8>>,
-    /// Send response message after delete
-    res_sender: oneshot::Sender<Vec<WriteOperation>>,
-}
-
-impl DeleteMessage {
-    /// New `DeleteMessage`
-    pub(crate) fn new(keys: Vec<Vec<u8>>) -> (Self, oneshot::Receiver<Vec<WriteOperation>>) {
-        let (res_sender, res_receiver) = oneshot::channel();
-        (Self { keys, res_sender }, res_receiver)
-    }
-
-    /// Unpack `DeleteMessage`
-    pub(crate) fn unpack(self) -> (Vec<Vec<u8>>, oneshot::Sender<Vec<WriteOperation>>) {
-        (self.keys, self.res_sender)
     }
 }

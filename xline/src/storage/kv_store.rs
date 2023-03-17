@@ -13,7 +13,7 @@ use tracing::{debug, warn};
 use super::{
     index::{Index, IndexOperate},
     kvwatcher::KvWatcher,
-    lease_store::{DeleteMessage, LeaseMessage},
+    lease_store::LeaseMessage,
     storage_api::StorageApi,
     Revision,
 };
@@ -23,8 +23,8 @@ use crate::{
     rpc::{
         Compare, CompareResult, CompareTarget, DeleteRangeRequest, DeleteRangeResponse, Event,
         EventType, KeyValue, PutRequest, PutResponse, RangeRequest, RangeResponse, Request,
-        RequestOp, RequestWithToken, RequestWrapper, ResponseWrapper, SortOrder, SortTarget,
-        TargetUnion, TxnRequest, TxnResponse,
+        RequestWithToken, RequestWrapper, ResponseWrapper, SortOrder, SortTarget, TargetUnion,
+        TxnRequest, TxnResponse,
     },
     server::command::{CommandResponse, KeyRange, SyncResponse},
     storage::ExecuteError,
@@ -54,7 +54,7 @@ where
     DB: StorageApi,
 {
     /// Key Index
-    index: Index,
+    index: Arc<Index>,
     /// DB to store key value
     db: Arc<DB>,
     /// Revision
@@ -74,9 +74,9 @@ where
     /// New `KvStore`
     pub(crate) fn new(
         lease_cmd_tx: mpsc::Sender<LeaseMessage>,
-        del_rx: mpsc::Receiver<DeleteMessage>,
         header_gen: Arc<HeaderGenerator>,
         storage: Arc<DB>,
+        index: Arc<Index>,
     ) -> Self {
         let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
         let inner = Arc::new(KvStoreBackend::new(
@@ -84,49 +84,10 @@ where
             lease_cmd_tx,
             header_gen,
             storage,
+            index,
         ));
         let kv_watcher = Arc::new(KvWatcher::new(Arc::clone(&inner), kv_update_rx));
-        let _del_task = tokio::spawn({
-            let inner = Arc::clone(&inner);
-            Self::del_task(del_rx, inner)
-        });
         Self { inner, kv_watcher }
-    }
-
-    /// Receive keys from lease storage and delete them
-    async fn del_task(mut del_rx: mpsc::Receiver<DeleteMessage>, inner: Arc<KvStoreBackend<DB>>) {
-        while let Some(msg) = del_rx.recv().await {
-            let (keys, tx) = msg.unpack();
-            debug!("Delete keys: {:?} by lease revoked", keys);
-            let del_reqs = keys
-                .into_iter()
-                .map(|key| RequestOp {
-                    request: Some(Request::RequestDeleteRange(DeleteRangeRequest {
-                        key,
-                        range_end: vec![],
-                        prev_kv: false,
-                    })),
-                })
-                .collect();
-            let txn_req = RequestWrapper::TxnRequest(TxnRequest {
-                compare: vec![],
-                success: del_reqs,
-                failure: vec![],
-            });
-            if let Err(e) = inner.handle_kv_requests(&txn_req) {
-                warn!("Delete keys by lease revoked failed: {:?}", e);
-            }
-            let ops = match inner.sync_request(&txn_req).await {
-                Ok((_, ops)) => ops,
-                Err(e) => {
-                    warn!("Delete keys by lease revoked failed: {:?}", e);
-                    continue;
-                }
-            };
-            if tx.send(ops).is_err() {
-                warn!("receiver dropped");
-            }
-        }
     }
 
     /// execute a kv request
@@ -155,6 +116,11 @@ where
         Arc::clone(&self.kv_watcher)
     }
 
+    /// Get KV update tx
+    pub(crate) fn kv_update_tx(&self) -> mpsc::Sender<(i64, Vec<Event>)> {
+        self.inner.kv_update_tx.clone()
+    }
+
     /// Recover data from persistent storage
     pub(crate) async fn recover(&self) -> Result<(), ExecuteError> {
         self.inner.recover_from_current_db().await
@@ -171,9 +137,10 @@ where
         lease_cmd_tx: mpsc::Sender<LeaseMessage>,
         header_gen: Arc<HeaderGenerator>,
         db: Arc<DB>,
+        index: Arc<Index>,
     ) -> Self {
         Self {
-            index: Index::new(),
+            index,
             db,
             revision: header_gen.revision_arc(),
             header_gen,
@@ -860,7 +827,7 @@ mod test {
     use utils::config::StorageConfig;
 
     use super::*;
-    use crate::storage::db::DBProxy;
+    use crate::{rpc::RequestOp, storage::db::DBProxy};
 
     #[tokio::test]
     async fn test_keys_only() -> Result<(), ExecuteError> {
@@ -1081,13 +1048,13 @@ mod test {
 
     fn init_empty_store(db: Arc<DBProxy>) -> KvStore<DBProxy> {
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
-        let (_, del_rx) = mpsc::channel(128);
         let (lease_cmd_tx, mut lease_cmd_rx) = mpsc::channel(128);
+        let index = Arc::new(Index::new());
         let _handle = tokio::spawn(async move {
             while let Some(LeaseMessage::GetLease(tx, _)) = lease_cmd_rx.recv().await {
                 assert!(tx.send(0).is_ok());
             }
         });
-        KvStore::new(lease_cmd_tx, del_rx, header_gen, db)
+        KvStore::new(lease_cmd_tx, header_gen, db, index)
     }
 }
