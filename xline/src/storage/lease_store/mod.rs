@@ -12,8 +12,7 @@ use std::{
 };
 
 use clippy_utilities::Cast;
-use engine::WriteOperation;
-use itertools::Itertools;
+use curp::cmd::ProposeId;
 use log::debug;
 use parking_lot::RwLock;
 use prost::Message;
@@ -22,6 +21,7 @@ use tokio::sync::mpsc;
 use self::lease_queue::LeaseQueue;
 pub(crate) use self::{lease::Lease, message::LeaseMessage};
 use super::{
+    db::WriteOp,
     index::{Index, IndexOperate},
     kv_store::KV_TABLE,
     storage_api::StorageApi,
@@ -265,12 +265,13 @@ where
     /// sync a lease request
     pub(crate) async fn after_sync(
         &self,
+        id: &ProposeId,
         request: &RequestWithToken,
-    ) -> Result<(SyncResponse, Vec<WriteOperation>), ExecuteError> {
+    ) -> Result<SyncResponse, ExecuteError> {
         self.inner
-            .sync_request(&request.request)
+            .sync_request(id, &request.request)
             .await
-            .map(|(rev, ops)| (SyncResponse::new(rev), ops))
+            .map(SyncResponse::new)
     }
 
     /// Check if the node is leader
@@ -363,16 +364,6 @@ where
             index,
             kv_update_tx,
         }
-    }
-
-    /// Operations of put lease
-    fn op_put_lease(lease: &PbLease) -> WriteOperation {
-        WriteOperation::new_put(LEASE_TABLE, lease.id.encode_to_vec(), lease.encode_to_vec())
-    }
-
-    /// Operations of delete lease
-    fn op_delete_lease(lease_id: i64) -> WriteOperation {
-        WriteOperation::new_delete(LEASE_TABLE, lease_id.encode_to_vec())
     }
 
     /// Check if the node is leader
@@ -482,30 +473,31 @@ where
     /// Sync `RequestWithToken`
     async fn sync_request(
         &self,
+        id: &ProposeId,
         wrapper: &RequestWrapper,
-    ) -> Result<(i64, Vec<WriteOperation>), ExecuteError> {
+    ) -> Result<i64, ExecuteError> {
         #[allow(clippy::wildcard_enum_match_arm)]
-        let ops = match *wrapper {
+        match *wrapper {
             RequestWrapper::LeaseGrantRequest(ref req) => {
                 debug!("Sync LeaseGrantRequest {:?}", req);
-                self.sync_lease_grant_request(req)
+                self.sync_lease_grant_request(id, req);
             }
             RequestWrapper::LeaseRevokeRequest(ref req) => {
                 debug!("Sync LeaseRevokeRequest {:?}", req);
-                self.sync_lease_revoke_request(req).await?
+                self.sync_lease_revoke_request(id, req).await?;
             }
             _ => unreachable!("Other request should not be sent to this store"),
         };
-        Ok((self.header_gen.revision(), ops))
+        Ok(self.header_gen.revision())
     }
 
     /// Sync `LeaseGrantRequest`
-    fn sync_lease_grant_request(&self, req: &LeaseGrantRequest) -> Vec<WriteOperation> {
+    fn sync_lease_grant_request(&self, id: &ProposeId, req: &LeaseGrantRequest) {
         let lease = self
             .lease_collection
             .write()
             .grant(req.id, req.ttl, self.is_leader());
-        vec![Self::op_put_lease(&lease)]
+        self.db.buffer_op(id, WriteOp::PutLease(lease));
     }
 
     /// Get all `PbLease`
@@ -525,9 +517,10 @@ where
     /// Sync `LeaseRevokeRequest`
     async fn sync_lease_revoke_request(
         &self,
+        id: &ProposeId,
         req: &LeaseRevokeRequest,
-    ) -> Result<Vec<WriteOperation>, ExecuteError> {
-        let mut ops = vec![Self::op_delete_lease(req.id)];
+    ) -> Result<(), ExecuteError> {
+        self.db.buffer_op(id, WriteOp::DeleteLease(req.id));
         let keys = match self.lease_collection.read().lease_map.get(&req.id) {
             Some(l) => l.keys(),
             None => return Err(ExecuteError::lease_not_found(req.id)),
@@ -535,8 +528,7 @@ where
 
         if keys.is_empty() {
             let _ignore = self.lease_collection.write().revoke(req.id);
-
-            return Ok(ops);
+            return Ok(());
         }
 
         let revision = self.revision.next();
@@ -567,20 +559,18 @@ where
             let lease_id = self.get_lease(&kv.key);
             self.detach(lease_id, kv.key.as_slice())?;
         }
-        let mut del_ops = prev_kvs
+        prev_kvs
             .iter()
-            .zip(del_revs.iter())
-            .map(|(kv, &del_rev)| {
+            .zip(del_revs.into_iter())
+            .for_each(|(kv, del_rev)| {
                 let del_kv = KeyValue {
                     key: kv.key.clone(),
                     mod_revision: del_rev.revision(),
                     ..KeyValue::default()
                 };
-                let key = del_rev.encode_to_vec();
-                let value = del_kv.encode_to_vec();
-                WriteOperation::new_put(KV_TABLE, key, value)
-            })
-            .collect_vec();
+                self.db
+                    .buffer_op(id, WriteOp::PutKeyValue(del_rev, del_kv.encode_to_vec()));
+            });
 
         let updates = prev_kvs
             .into_iter()
@@ -604,8 +594,7 @@ where
             self.kv_update_tx.send((revision, updates)).await.is_ok(),
             "Failed to send updates to KV watcher"
         );
-        ops.append(&mut del_ops);
-        Ok(ops)
+        Ok(())
     }
 }
 
@@ -683,8 +672,9 @@ mod test {
         req: &RequestWithToken,
     ) -> Result<ResponseWrapper, ExecuteError> {
         let cmd_res = ls.execute(req)?;
-        let (_ignore, ops) = ls.after_sync(req).await?;
-        ls.inner.db.write_batch(ops, false)?;
+        let id = ProposeId::new("test-id".to_owned());
+        let _ignore = ls.after_sync(&id, req).await?;
+        ls.inner.db.flush(&id)?;
         Ok(cmd_res.decode())
     }
 }

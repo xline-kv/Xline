@@ -9,19 +9,18 @@ use curp::{
     },
     LogIndex,
 };
-use engine::WriteOperation;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     rpc::{RequestBackend, RequestWithToken, RequestWrapper, ResponseWrapper},
-    storage::{storage_api::StorageApi, AuthStore, ExecuteError, KvStore, LeaseStore},
+    storage::{db::WriteOp, storage_api::StorageApi, AuthStore, ExecuteError, KvStore, LeaseStore},
 };
 
 /// Meta table name
 pub(crate) const META_TABLE: &str = "meta";
 /// Key of applied index
-const APPLIED_INDEX_KEY: &str = "applied_index";
+pub(crate) const APPLIED_INDEX_KEY: &str = "applied_index";
 
 /// Range start and end to get all keys
 const UNBOUNDED: &[u8] = &[0_u8];
@@ -207,7 +206,7 @@ where
 #[async_trait::async_trait]
 impl<S> CurpCommandExecutor<Command> for CommandExecutor<S>
 where
-    S: StorageApi + Clone,
+    S: StorageApi,
 {
     type Error = ExecuteError;
 
@@ -226,20 +225,18 @@ where
         cmd: &Command,
         index: LogIndex,
     ) -> Result<SyncResponse, ExecuteError> {
+        let id = cmd.id();
         let wrapper = cmd.request();
         self.auth_storage.check_permission(wrapper).await?;
-        let mut wr_ops = vec![WriteOperation::new_put(
-            META_TABLE,
-            APPLIED_INDEX_KEY,
-            index.to_le_bytes(),
-        )];
-        let (res, mut ops) = match wrapper.request.backend() {
-            RequestBackend::Kv => self.kv_storage.after_sync(wrapper).await?,
-            RequestBackend::Auth => self.auth_storage.after_sync(wrapper)?,
-            RequestBackend::Lease => self.lease_storage.after_sync(wrapper).await?,
+        self.persistent
+            .buffer_op(id, WriteOp::PutAppliedIndex(index));
+
+        let res = match wrapper.request.backend() {
+            RequestBackend::Kv => self.kv_storage.after_sync(id, wrapper).await?,
+            RequestBackend::Auth => self.auth_storage.after_sync(id, wrapper)?,
+            RequestBackend::Lease => self.lease_storage.after_sync(id, wrapper).await?,
         };
-        wr_ops.append(&mut ops);
-        self.persistent.write_batch(wr_ops, false)?;
+        self.persistent.flush(id)?;
         Ok(res)
     }
 
@@ -250,7 +247,7 @@ where
     }
 
     fn last_applied(&self) -> Result<LogIndex, ExecuteError> {
-        let Some(index_bytes) = self.persistent.get_value("meta", "applied_index")? else {
+        let Some(index_bytes) = self.persistent.get_value(META_TABLE, APPLIED_INDEX_KEY)? else {
             return Ok(0);
         };
         let buf: [u8; 8] = index_bytes

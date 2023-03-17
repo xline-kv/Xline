@@ -5,7 +5,7 @@ use std::{
 };
 
 use clippy_utilities::{Cast, OverflowArithmetic};
-use engine::WriteOperation;
+use curp::cmd::ProposeId;
 use prost::Message;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
@@ -27,7 +27,7 @@ use crate::{
         TxnRequest, TxnResponse,
     },
     server::command::{CommandResponse, KeyRange, SyncResponse},
-    storage::ExecuteError,
+    storage::{db::WriteOp, ExecuteError},
 };
 
 /// KV table name
@@ -103,12 +103,13 @@ where
     /// sync a kv request
     pub(crate) async fn after_sync(
         &self,
+        id: &ProposeId,
         request: &RequestWithToken,
-    ) -> Result<(SyncResponse, Vec<WriteOperation>), ExecuteError> {
+    ) -> Result<SyncResponse, ExecuteError> {
         self.inner
-            .sync_request(&request.request)
+            .sync_request(id, &request.request)
             .await
-            .map(|(rev, ops)| (SyncResponse::new(rev), ops))
+            .map(SyncResponse::new)
     }
 
     /// Get KV watcher
@@ -377,11 +378,6 @@ where
 
         Ok(())
     }
-
-    #[cfg(test)]
-    fn write_batch(&self, ops: Vec<WriteOperation>, sync: bool) -> Result<(), ExecuteError> {
-        self.db.write_batch(ops, sync)
-    }
 }
 
 /// db operations
@@ -621,52 +617,53 @@ where
     /// Sync requests in kv store
     async fn sync_request(
         &self,
+        id: &ProposeId,
         wrapper: &RequestWrapper,
-    ) -> Result<(i64, Vec<WriteOperation>), ExecuteError> {
+    ) -> Result<i64, ExecuteError> {
         let next_revision = self.revision.next();
         #[allow(clippy::wildcard_enum_match_arm)] // only kv requests can be sent to kv store
-        let (operations, events) = match *wrapper {
+        let events = match *wrapper {
             RequestWrapper::RangeRequest(ref req) => {
                 debug!("sync range request: {:?}", req);
-                (Vec::new(), Vec::new())
+                Vec::new()
             }
             RequestWrapper::PutRequest(ref req) => {
-                self.sync_put_request(req, next_revision, 0).await?
+                self.sync_put_request(id, req, next_revision, 0).await?
             }
             RequestWrapper::DeleteRangeRequest(ref req) => {
-                self.sync_delete_range_request(req, next_revision, 0)
+                self.sync_delete_range_request(id, req, next_revision, 0)
                     .await?
             }
             RequestWrapper::TxnRequest(ref req) => {
-                self.sync_txn_request(req, next_revision).await?
+                self.sync_txn_request(id, req, next_revision).await?
             }
             _ => {
                 unreachable!("only kv requests can be sent to kv store");
             }
         };
         self.notify_updates(next_revision, events).await;
-        Ok((next_revision, operations))
+        Ok(next_revision)
     }
 
     /// Sync `TxnRequest` and return if kvstore is changed
     async fn sync_txn_request(
         &self,
+        id: &ProposeId,
         req: &TxnRequest,
         revision: i64,
-    ) -> Result<(Vec<WriteOperation>, Vec<Event>), ExecuteError> {
+    ) -> Result<Vec<Event>, ExecuteError> {
         let mut sub_revision = 0;
         let mut origin_reqs = VecDeque::from([Request::RequestTxn(req.clone())]);
-        let mut all_operations = Vec::new();
         let mut all_events = Vec::new();
         while let Some(request) = origin_reqs.pop_front() {
-            let (mut operations, mut events) = match request {
-                Request::RequestRange(_) => (Vec::new(), Vec::new()),
-                Request::RequestPut(put_req) => {
-                    self.sync_put_request(&put_req, revision, sub_revision)
+            let mut events = match request {
+                Request::RequestRange(_) => Vec::new(),
+                Request::RequestPut(ref put_req) => {
+                    self.sync_put_request(id, put_req, revision, sub_revision)
                         .await?
                 }
                 Request::RequestDeleteRange(del_req) => {
-                    self.sync_delete_range_request(&del_req, revision, sub_revision)
+                    self.sync_delete_range_request(id, &del_req, revision, sub_revision)
                         .await?
                 }
                 Request::RequestTxn(txn_req) => {
@@ -683,20 +680,20 @@ where
                     continue;
                 }
             };
-            sub_revision = sub_revision.overflow_add(operations.len().cast());
-            all_operations.append(&mut operations);
+            sub_revision = sub_revision.overflow_add(events.len().cast());
             all_events.append(&mut events);
         }
-        Ok((all_operations, all_events))
+        Ok(all_events)
     }
 
     /// Sync `PutRequest` and return if kvstore is changed
     async fn sync_put_request(
         &self,
+        id: &ProposeId,
         req: &PutRequest,
         revision: i64,
         sub_revision: i64,
-    ) -> Result<(Vec<WriteOperation>, Vec<Event>), ExecuteError> {
+    ) -> Result<Vec<Event>, ExecuteError> {
         debug!("Sync PutRequest {:?}", req);
         let prev_kv = self.get_range(&req.key, &[], 0)?.pop();
         let new_rev = self
@@ -731,11 +728,9 @@ where
                 .await // already checked, lease is not 0
                 .unwrap_or_else(|e| panic!("unexpected error from lease Attach: {e}"));
         }
-
-        let op = WriteOperation::new_put(
-            KV_TABLE,
-            new_rev.as_revision().encode_to_vec(),
-            kv.encode_to_vec(),
+        self.db.buffer_op(
+            id,
+            WriteOp::PutKeyValue(new_rev.as_revision(), kv.encode_to_vec()),
         );
         let event = Event {
             #[allow(clippy::as_conversions)] // This cast is always valid
@@ -743,7 +738,7 @@ where
             kv: Some(kv),
             prev_kv,
         };
-        Ok((vec![op], vec![event]))
+        Ok(vec![event])
     }
 
     /// create events for a deletion
@@ -769,8 +764,9 @@ where
     /// Mark deletion for keys
     fn mark_deletions(
         &self,
+        id: &ProposeId,
         revisions: &[(Revision, Revision)],
-    ) -> Result<(Vec<KeyValue>, Vec<WriteOperation>), ExecuteError> {
+    ) -> Result<Vec<KeyValue>, ExecuteError> {
         let prev_revisions = revisions
             .iter()
             .map(|&(prev_rev, _)| prev_rev)
@@ -781,35 +777,34 @@ where
             revisions.len(),
             "Index doesn't match with DB"
         );
-        let ops = prev_kvs
+        prev_kvs
             .iter()
             .zip(revisions.iter())
-            .map(|(kv, &(_, new_rev))| {
+            .for_each(|(kv, &(_, new_rev))| {
                 let del_kv = KeyValue {
                     key: kv.key.clone(),
                     mod_revision: new_rev.revision(),
                     ..KeyValue::default()
                 };
-                let key = new_rev.encode_to_vec();
                 let value = del_kv.encode_to_vec();
-                WriteOperation::new_put(KV_TABLE, key, value)
-            })
-            .collect::<Vec<_>>();
-        Ok((prev_kvs, ops))
+                self.db.buffer_op(id, WriteOp::PutKeyValue(new_rev, value));
+            });
+        Ok(prev_kvs)
     }
 
     /// Sync `DeleteRangeRequest` and return if kvstore is changed
     async fn sync_delete_range_request(
         &self,
+        id: &ProposeId,
         req: &DeleteRangeRequest,
         revision: i64,
         sub_revision: i64,
-    ) -> Result<(Vec<WriteOperation>, Vec<Event>), ExecuteError> {
+    ) -> Result<Vec<Event>, ExecuteError> {
         debug!("Sync DeleteRangeRequest {:?}", req);
         let revisions = self
             .index
             .delete(&req.key, &req.range_end, revision, sub_revision);
-        let (prev_kvs, ops) = self.mark_deletions(&revisions)?;
+        let prev_kvs = self.mark_deletions(id, &revisions)?;
         for kv in &prev_kvs {
             let lease_id = self.get_lease(&kv.key).await;
             self.detach(lease_id, kv.key.as_slice())
@@ -817,7 +812,7 @@ where
                 .unwrap_or_else(|e| warn!("Failed to detach lease from a key, error: {:?}", e));
         }
         let events = Self::new_deletion_events(revision, prev_kvs);
-        Ok((ops, events))
+        Ok(events)
     }
 }
 
@@ -1001,8 +996,9 @@ mod test {
         );
         let db = DBProxy::open(&StorageConfig::Memory)?;
         let store = init_store(db).await?;
-        let (_ignore, ops) = store.after_sync(&txn_req).await?;
-        store.inner.write_batch(ops, false)?;
+        let id = ProposeId::new("test-id".to_owned());
+        let _ignore = store.after_sync(&id, &txn_req).await?;
+        store.inner.db.flush(&id)?;
         let request = RangeRequest {
             key: "success".into(),
             range_end: vec![],
@@ -1040,8 +1036,9 @@ mod test {
                 .into(),
             );
             let _cmd_res = store.execute(&req)?;
-            let (_sync_res, ops) = store.after_sync(&req).await?;
-            store.inner.db.write_batch(ops, false)?;
+            let id = ProposeId::new("test-id".to_owned());
+            let _sync_res = store.after_sync(&id, &req).await?;
+            store.inner.db.flush(&id)?;
         }
         Ok(store)
     }
