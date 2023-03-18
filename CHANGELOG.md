@@ -1,5 +1,16 @@
 # ChangeLog
 
+## v0.3.0
+
+### Features:
+* Implement a persistent storage layer to enable durability, including:
+  * Implement a storage engine layer to abstract the concrete storage engine, like `rocksdb`,
+    and enable upper layer storage function (#185, #187)
+  * Enable recover loggic for `curp` and `xline` (#194, #184)
+
+### Fix Bugs:
+* Fix concurrent cmd order bug (#197)
+
 ## v0.2.0
 
 ### Features:
@@ -11,7 +22,6 @@
 ### Fix Bugs
 * Fix panic in benchmark (#123)
 * Fix the issue that modify kv pairs will fail after watch them in `etcdctl` (#148)
-
 
 
 ## v0.1.0
