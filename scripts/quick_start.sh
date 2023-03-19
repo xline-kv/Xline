@@ -39,7 +39,12 @@ run_cluster() {
 # stop all containers
 stop_all() {
     echo stopping
-    docker stop node1 node2 node3 node4
+    for name in "node1" "node2" "node3" "node4"; do
+        docker_id=$(docker ps -qf "name=${name}")
+        if [ -n "$docker_id" ]; then
+            docker stop $docker_id
+        fi
+    done
     sleep 1
     echo stopped
 }
