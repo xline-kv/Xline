@@ -133,6 +133,10 @@ pub struct CurpConfig {
     /// Curp storage path
     #[serde(default = "default_curp_data_dir")]
     pub data_dir: PathBuf,
+
+    /// Number of command execute workers
+    #[serde(default = "default_cmd_workers")]
+    pub cmd_workers: u8,
 }
 
 /// default heartbeat interval
@@ -198,10 +202,18 @@ pub fn default_curp_data_dir() -> PathBuf {
     PathBuf::from("/var/lib/curp")
 }
 
+/// default number of execute workers
+#[must_use]
+#[inline]
+pub fn default_cmd_workers() -> u8 {
+    8
+}
+
 impl CurpConfig {
     /// Create a new server timeout
     #[must_use]
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         heartbeat_interval: Duration,
         wait_synced_timeout: Duration,
@@ -210,6 +222,7 @@ impl CurpConfig {
         follower_timeout_ticks: u8,
         candidate_timeout_ticks: u8,
         data_dir: PathBuf,
+        cmd_workers: u8,
     ) -> Self {
         Self {
             heartbeat_interval,
@@ -219,6 +232,7 @@ impl CurpConfig {
             follower_timeout_ticks,
             candidate_timeout_ticks,
             data_dir,
+            cmd_workers,
         }
     }
 }
@@ -234,6 +248,7 @@ impl Default for CurpConfig {
             follower_timeout_ticks: default_follower_timeout_ticks(),
             candidate_timeout_ticks: default_candidate_timeout_ticks(),
             data_dir: default_curp_data_dir(),
+            cmd_workers: default_cmd_workers(),
         }
     }
 }
@@ -569,6 +584,7 @@ mod tests {
             default_follower_timeout_ticks(),
             default_candidate_timeout_ticks(),
             default_curp_data_dir(),
+            default_cmd_workers(),
         );
 
         let client_timeout = ClientTimeout::new(

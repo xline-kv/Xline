@@ -319,6 +319,7 @@ impl<C: 'static + Command> CurpNode<C> {
             Arc::clone(&uncommitted_pool),
             Arc::clone(&cmd_board),
             Arc::clone(&shutdown_trigger),
+            usize::from(curp_cfg.cmd_workers),
         );
 
         // create curp state machine

@@ -20,9 +20,6 @@ use crate::{
 /// The special conflict checked mpmc
 mod conflict_checked_mpmc;
 
-/// Number of execute workers
-const N_WORKERS: usize = 8;
-
 /// Event for command executor
 enum CEEvent<C> {
     /// The cmd is ready for speculative execution
@@ -157,6 +154,7 @@ pub(super) fn start_cmd_workers<C: Command + 'static, CE: 'static + CommandExecu
     uncommitted_pool: UncommittedPoolRef<C>,
     cmd_board: CmdBoardRef<C>,
     shutdown_trigger: Arc<event_listener::Event>,
+    cmd_workers: usize,
 ) -> CEEventTx<C> {
     let (event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel();
     #[allow(clippy::shadow_unrelated)] // false positive
@@ -168,7 +166,7 @@ pub(super) fn start_cmd_workers<C: Command + 'static, CE: 'static + CommandExecu
         uncommitted_pool,
         Arc::new(cmd_executor),
     ))
-    .take(N_WORKERS)
+    .take(cmd_workers)
     .map(|(task_rx, done_tx, cb, sp, ucp, ce)| {
         tokio::spawn(cmd_worker(TaskRx(task_rx), done_tx, cb, sp, ucp, ce))
     })
@@ -191,6 +189,7 @@ mod tests {
     use parking_lot::{Mutex, RwLock};
     use tokio::{sync::mpsc, time::Instant};
     use tracing_test::traced_test;
+    use utils::config::default_cmd_workers;
 
     use super::*;
     use crate::{
@@ -217,6 +216,7 @@ mod tests {
             uncommitted_pool,
             Arc::clone(&cmd_board),
             Arc::new(event_listener::Event::new()),
+            usize::from(default_cmd_workers()),
         );
 
         let cmd = Arc::new(TestCommand::default());
@@ -244,6 +244,7 @@ mod tests {
             uncommitted_pool,
             Arc::clone(&cmd_board),
             Arc::new(event_listener::Event::new()),
+            usize::from(default_cmd_workers()),
         );
 
         let begin = Instant::now();
@@ -276,6 +277,7 @@ mod tests {
             uncommitted_pool,
             Arc::clone(&cmd_board),
             Arc::new(event_listener::Event::new()),
+            usize::from(default_cmd_workers()),
         );
 
         let cmd = Arc::new(
@@ -312,6 +314,7 @@ mod tests {
             uncommitted_pool,
             Arc::clone(&cmd_board),
             Arc::new(event_listener::Event::new()),
+            usize::from(default_cmd_workers()),
         );
 
         let cmd = Arc::new(TestCommand::default());
@@ -338,6 +341,7 @@ mod tests {
             uncommitted_pool,
             Arc::clone(&cmd_board),
             Arc::new(event_listener::Event::new()),
+            usize::from(default_cmd_workers()),
         );
         let cmd = Arc::new(TestCommand::default().set_exe_should_fail());
 
@@ -364,6 +368,7 @@ mod tests {
             uncommitted_pool,
             Arc::clone(&cmd_board),
             Arc::new(event_listener::Event::new()),
+            usize::from(default_cmd_workers()),
         );
 
         let cmd1 = Arc::new(TestCommand::new_put(vec![1], 1));
@@ -404,6 +409,7 @@ mod tests {
             uncommitted_pool,
             Arc::clone(&cmd_board),
             Arc::new(event_listener::Event::new()),
+            usize::from(default_cmd_workers()),
         );
 
         let cmd1 =
