@@ -124,11 +124,11 @@ use tracing_subscriber::{fmt::format, prelude::*};
 use utils::{
     config::{
         default_candidate_timeout_ticks, default_client_wait_synced_timeout, default_cmd_workers,
-        default_follower_timeout_ticks, default_heartbeat_interval, default_log_level,
-        default_propose_timeout, default_retry_timeout, default_rotation, default_rpc_timeout,
-        default_server_wait_synced_timeout, file_appender, AuthConfig, ClientTimeout,
-        ClusterConfig, CurpConfig, LevelConfig, LogConfig, RotationConfig, StorageConfig,
-        TraceConfig, XlineServerConfig,
+        default_follower_timeout_ticks, default_gc_interval, default_heartbeat_interval,
+        default_log_level, default_propose_timeout, default_retry_timeout, default_rotation,
+        default_rpc_timeout, default_server_wait_synced_timeout, file_appender, AuthConfig,
+        ClientTimeout, ClusterConfig, CurpConfigBuilder, LevelConfig, LogConfig, RotationConfig,
+        StorageConfig, TraceConfig, XlineServerConfig,
     },
     parse_duration, parse_log_level, parse_members, parse_rotation,
 };
@@ -201,6 +201,9 @@ struct ServerArgs {
     /// Curp client retry timeout
     #[clap(long, value_parser = parse_duration)]
     client_retry_timeout: Option<Duration>,
+    /// How often should the gc task run
+    #[clap(long, value_parser = parse_duration)]
+    gc_interval: Option<Duration>,
     /// Storage engine
     #[clap(long)]
     storage_engine: String,
@@ -216,22 +219,23 @@ struct ServerArgs {
 
 impl From<ServerArgs> for XlineServerConfig {
     fn from(args: ServerArgs) -> Self {
-        let curp_config = CurpConfig::new(
-            args.heartbeat_interval
-                .unwrap_or_else(default_heartbeat_interval),
-            args.server_wait_synced_timeout
-                .unwrap_or_else(default_server_wait_synced_timeout),
-            args.retry_timeout.unwrap_or_else(default_retry_timeout),
-            args.rpc_timeout.unwrap_or_else(default_rpc_timeout),
-            args.follower_timeout_ticks,
-            args.candidate_timeout_ticks,
-            args.curp_dir.unwrap_or_else(|| {
-                let mut path = args.data_dir.clone();
-                path.push("curp");
-                path
-            }),
-            args.cmd_workers,
-        );
+        let Ok(curp_config) = CurpConfigBuilder::default()
+            .heartbeat_interval(args.heartbeat_interval
+                .unwrap_or_else(default_heartbeat_interval))
+            .wait_synced_timeout(args.server_wait_synced_timeout
+                .unwrap_or_else(default_server_wait_synced_timeout))
+            .retry_timeout(args.retry_timeout.unwrap_or_else(default_retry_timeout))
+            .rpc_timeout(args.rpc_timeout.unwrap_or_else(default_rpc_timeout))
+            .follower_timeout_ticks(args.follower_timeout_ticks)
+            .candidate_timeout_ticks(args.candidate_timeout_ticks)
+            .data_dir(args.curp_dir.unwrap_or_else(|| {
+                    let mut path = args.data_dir.clone();
+                    path.push("curp");
+                    path
+                }))
+            .gc_interval(args.gc_interval.unwrap_or_else(default_gc_interval))
+            .cmd_workers(args.cmd_workers)
+            .build() else {unreachable!()};
 
         let storage = match args.storage_engine.as_str() {
             "memory" => StorageConfig::Memory,

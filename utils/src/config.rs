@@ -1,5 +1,6 @@
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 
+use derive_builder::Builder;
 use getset::Getters;
 use serde::Deserialize;
 use tracing_appender::rolling::RollingFileAppender;
@@ -97,14 +98,16 @@ impl ClusterConfig {
 }
 
 /// Curp server timeout settings
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters, Builder)]
 #[allow(clippy::module_name_repetitions, clippy::exhaustive_structs)]
 pub struct CurpConfig {
     /// Heartbeat Interval
+    #[builder(default = "default_heartbeat_interval()")]
     #[serde(with = "duration_format", default = "default_heartbeat_interval")]
     pub heartbeat_interval: Duration,
 
     /// Curp wait sync timeout
+    #[builder(default = "default_server_wait_synced_timeout()")]
     #[serde(
         with = "duration_format",
         default = "default_server_wait_synced_timeout"
@@ -112,31 +115,42 @@ pub struct CurpConfig {
     pub wait_synced_timeout: Duration,
 
     /// Curp propose retry timeout
+    #[builder(default = "default_retry_timeout()")]
     #[serde(with = "duration_format", default = "default_retry_timeout")]
     pub retry_timeout: Duration,
 
     /// Curp rpc timeout
+    #[builder(default = "default_rpc_timeout()")]
     #[serde(with = "duration_format", default = "default_rpc_timeout")]
     pub rpc_timeout: Duration,
 
     /// How many ticks a follower is allowed to miss before it starts a new round of election
     /// The actual timeout will be randomized and in between heartbeat_interval * [follower_timeout_ticks, 2 * follower_timeout_ticks)
+    #[builder(default = "default_follower_timeout_ticks()")]
     #[serde(default = "default_follower_timeout_ticks")]
     pub follower_timeout_ticks: u8,
 
     /// How many ticks a candidate needs to wait before it starts a new round of election
     /// It should be smaller than `follower_timeout_ticks`
     /// The actual timeout will be randomized and in between heartbeat_interval * [candidate_timeout_ticks, 2 * candidate_timeout_ticks)
+    #[builder(default = "default_candidate_timeout_ticks()")]
     #[serde(default = "default_candidate_timeout_ticks")]
     pub candidate_timeout_ticks: u8,
 
     /// Curp storage path
+    #[builder(default = "default_curp_data_dir()")]
     #[serde(default = "default_curp_data_dir")]
     pub data_dir: PathBuf,
 
     /// Number of command execute workers
+    #[builder(default = "default_cmd_workers()")]
     #[serde(default = "default_cmd_workers")]
     pub cmd_workers: u8,
+
+    /// How often should the gc task run
+    #[builder(default = "default_gc_interval()")]
+    #[serde(with = "duration_format", default = "default_gc_interval")]
+    pub gc_interval: Duration,
 }
 
 /// default heartbeat interval
@@ -209,32 +223,11 @@ pub const fn default_cmd_workers() -> u8 {
     8
 }
 
-impl CurpConfig {
-    /// Create a new server timeout
-    #[must_use]
-    #[inline]
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        heartbeat_interval: Duration,
-        wait_synced_timeout: Duration,
-        retry_timeout: Duration,
-        rpc_timeout: Duration,
-        follower_timeout_ticks: u8,
-        candidate_timeout_ticks: u8,
-        data_dir: PathBuf,
-        cmd_workers: u8,
-    ) -> Self {
-        Self {
-            heartbeat_interval,
-            wait_synced_timeout,
-            retry_timeout,
-            rpc_timeout,
-            follower_timeout_ticks,
-            candidate_timeout_ticks,
-            data_dir,
-            cmd_workers,
-        }
-    }
+/// default gc interval
+#[must_use]
+#[inline]
+pub fn default_gc_interval() -> Duration {
+    Duration::from_secs(20)
 }
 
 impl Default for CurpConfig {
@@ -249,6 +242,7 @@ impl Default for CurpConfig {
             candidate_timeout_ticks: default_candidate_timeout_ticks(),
             data_dir: default_curp_data_dir(),
             cmd_workers: default_cmd_workers(),
+            gc_interval: default_gc_interval(),
         }
     }
 }
@@ -576,16 +570,13 @@ mod tests {
         )
         .unwrap();
 
-        let curp_config = CurpConfig::new(
-            Duration::from_millis(200),
-            Duration::from_millis(100),
-            Duration::from_micros(100),
-            Duration::from_millis(100),
-            default_follower_timeout_ticks(),
-            default_candidate_timeout_ticks(),
-            default_curp_data_dir(),
-            default_cmd_workers(),
-        );
+        let curp_config = CurpConfigBuilder::default()
+            .heartbeat_interval(Duration::from_millis(200))
+            .wait_synced_timeout(Duration::from_millis(100))
+            .retry_timeout(Duration::from_micros(100))
+            .rpc_timeout(Duration::from_millis(100))
+            .build()
+            .unwrap();
 
         let client_timeout = ClientTimeout::new(
             default_client_wait_synced_timeout(),

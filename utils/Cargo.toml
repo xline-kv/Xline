@@ -35,6 +35,7 @@ serde = { version = "1.0.137", features = ["derive"] }
 toml = "0.5"
 thiserror = "1.0.31"
 tracing-appender = "0.2"
+derive_builder = "0.12.0"
 
 [dev-dependencies]
 opentelemetry-jaeger = "0.17.0"

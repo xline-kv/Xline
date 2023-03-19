@@ -397,7 +397,7 @@ impl<C: 'static + Command> CurpNode<C> {
                 Arc::clone(&cmd_board),
                 Arc::clone(&spec_pool),
                 uncommitted_pool,
-                curp_cfg,
+                Arc::clone(&curp_cfg),
                 Box::new(ce_event_tx.clone()),
                 Arc::clone(&sync_event),
                 log_tx,
@@ -416,7 +416,7 @@ impl<C: 'static + Command> CurpNode<C> {
                 Arc::clone(&cmd_board),
                 Arc::clone(&spec_pool),
                 uncommitted_pool,
-                curp_cfg,
+                Arc::clone(&curp_cfg),
                 Box::new(ce_event_tx.clone()),
                 Arc::clone(&sync_event),
                 log_tx,
@@ -433,7 +433,11 @@ impl<C: 'static + Command> CurpNode<C> {
             done_tx,
             Arc::clone(&shutdown_trigger),
         );
-        run_gc_tasks(Arc::clone(&cmd_board), Arc::clone(&spec_pool));
+        run_gc_tasks(
+            Arc::clone(&cmd_board),
+            Arc::clone(&spec_pool),
+            curp_cfg.gc_interval,
+        );
 
         let curp_c = Arc::clone(&curp);
         let shutdown_trigger_c = Arc::clone(&shutdown_trigger);

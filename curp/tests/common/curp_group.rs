@@ -21,8 +21,8 @@ use tokio_stream::wrappers::TcpListenerStream;
 use tracing::debug;
 use utils::config::{
     default_candidate_timeout_ticks, default_cmd_workers, default_follower_timeout_ticks,
-    default_heartbeat_interval, default_retry_timeout, default_rpc_timeout,
-    default_server_wait_synced_timeout, ClientTimeout, CurpConfig,
+    default_gc_interval, default_heartbeat_interval, default_retry_timeout, default_rpc_timeout,
+    default_server_wait_synced_timeout, ClientTimeout, CurpConfig, CurpConfigBuilder,
 };
 
 use crate::common::{
@@ -159,16 +159,12 @@ impl CurpGroup {
                         others.into_iter().collect(),
                         listener,
                         ce,
-                        Arc::new(CurpConfig::new(
-                            default_heartbeat_interval(),
-                            default_server_wait_synced_timeout(),
-                            default_retry_timeout(),
-                            default_rpc_timeout(),
-                            default_follower_timeout_ticks(),
-                            default_candidate_timeout_ticks(),
-                            PathBuf::from(storage_path_c),
-                            default_cmd_workers(),
-                        )),
+                        Arc::new(
+                            CurpConfigBuilder::default()
+                                .data_dir(PathBuf::from(storage_path_c))
+                                .build()
+                                .unwrap(),
+                        ),
                         Some(Box::new(TestTxFilter::new(Arc::clone(&switch_c)))),
                         Some(reachable_layer),
                     ));
@@ -300,16 +296,12 @@ impl CurpGroup {
                 others.into_iter().collect(),
                 listener,
                 ce,
-                Arc::new(CurpConfig::new(
-                    default_heartbeat_interval(),
-                    default_server_wait_synced_timeout(),
-                    default_retry_timeout(),
-                    default_rpc_timeout(),
-                    default_follower_timeout_ticks(),
-                    default_candidate_timeout_ticks(),
-                    PathBuf::from(storage_path),
-                    default_cmd_workers(),
-                )),
+                Arc::new(
+                    CurpConfigBuilder::default()
+                        .data_dir(PathBuf::from(storage_path))
+                        .build()
+                        .unwrap(),
+                ),
                 Some(Box::new(TestTxFilter::new(Arc::clone(&switch_c)))),
                 Some(reachable_layer),
             ));

@@ -8,13 +8,14 @@ use crate::{
     server::cmd_board::CmdBoardRef,
 };
 
-/// How often we should do gc
-const GC_INTERVAL: Duration = Duration::from_secs(20);
-
 /// Run background GC tasks for Curp server
-pub(super) fn run_gc_tasks<C: Command + 'static>(cmd_board: CmdBoardRef<C>, spec: SpecPoolRef<C>) {
-    let _spec_pool_gc = tokio::spawn(gc_spec_pool(spec, GC_INTERVAL));
-    let _cmd_board_gc = tokio::spawn(gc_cmd_board(cmd_board, GC_INTERVAL));
+pub(super) fn run_gc_tasks<C: Command + 'static>(
+    cmd_board: CmdBoardRef<C>,
+    spec: SpecPoolRef<C>,
+    gc_interval: Duration,
+) {
+    let _spec_pool_gc = tokio::spawn(gc_spec_pool(spec, gc_interval));
+    let _cmd_board_gc = tokio::spawn(gc_cmd_board(cmd_board, gc_interval));
 }
 
 /// Cleanup spec pool
