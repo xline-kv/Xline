@@ -52,7 +52,7 @@ run_xline() {
     --server-wait-synced-timeout 10s \
     --client-wait-synced-timeout 10s \
     --client_propose_timeout 5s \
-    --log-level debug"
+    --cmd-workers 16"
 
     if [ ${1} -eq 1 ]; then
         cmd="${cmd} --is-leader"

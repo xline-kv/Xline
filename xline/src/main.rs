@@ -123,7 +123,7 @@ use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{fmt::format, prelude::*};
 use utils::{
     config::{
-        default_candidate_timeout_ticks, default_client_wait_synced_timeout,
+        default_candidate_timeout_ticks, default_client_wait_synced_timeout, default_cmd_workers,
         default_follower_timeout_ticks, default_heartbeat_interval, default_log_level,
         default_propose_timeout, default_retry_timeout, default_rotation, default_rpc_timeout,
         default_server_wait_synced_timeout, file_appender, AuthConfig, ClientTimeout,
@@ -209,6 +209,9 @@ struct ServerArgs {
     data_dir: PathBuf,
     /// Curp directory
     curp_dir: Option<PathBuf>,
+    /// Curp command workers count
+    #[clap(long, default_value_t = default_cmd_workers())]
+    cmd_workers: u8,
 }
 
 impl From<ServerArgs> for XlineServerConfig {
@@ -227,6 +230,7 @@ impl From<ServerArgs> for XlineServerConfig {
                 path.push("curp");
                 path
             }),
+            args.cmd_workers,
         );
 
         let storage = match args.storage_engine.as_str() {
