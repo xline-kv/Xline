@@ -45,17 +45,20 @@ run_xline() {
     cmd="/usr/local/bin/xline \
     --name node${1} \
     --members ${MEMBERS} \
-    --storage-engine rocksdb \
+    --storage-engine memory \
     --data-dir /usr/local/xline/data-dir \
-    --retry-timeout 250ms \
-    --rpc-timeout 250ms"
+    --retry-timeout 150ms \
+    --rpc-timeout 5s   \
+    --server-wait-synced-timeout 10s \
+    --client-wait-synced-timeout 10s \
+    --client_propose_timeout 5s \
+    --log-level debug"
 
     if [ ${1} -eq 1 ]; then
         cmd="${cmd} --is-leader"
     fi
 
     docker exec -e RUST_LOG=debug -d node${1} ${cmd}
-    echo "command is: docker exec -e RUST_LOG=debug -d node${1} ${cmd}"
 }
 
 # run etcd node by index
@@ -186,7 +189,7 @@ run_container() {
     esac
     docker run -d -it --rm --name=client --net=xline_net --ip=172.20.0.2 --cap-add=NET_ADMIN --cpu-shares=512 -m=512M -v ${WORKDIR}:/mnt ${image} bash &
     for ((i = 1; i <= ${size}; i++)); do
-        docker run -d -it --rm --name=node${i} --net=xline_net --ip=172.20.0.$((i + 2)) --cap-add=NET_ADMIN --cpu-shares=1024 -m=512M -v ${WORKDIR}:/mnt ${image} bash &
+        docker run -d -it --rm --name=node${i} --net=xline_net --ip=172.20.0.$((i + 2)) --cap-add=NET_ADMIN -m=1024M -v ${WORKDIR}:/mnt ${image} bash &
     done
     wait
     set_cluster_latency ${size}

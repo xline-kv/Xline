@@ -18,7 +18,7 @@ use tokio::{
     time::{Duration, Instant},
 };
 use tracing::debug;
-use utils::config::{default_client_wait_synced_timeout, default_propose_timeout, ClientTimeout};
+use utils::config::ClientTimeout;
 use xline::client::{kv_types::PutRequest, Client};
 
 use crate::{args::Commands, Benchmark};
@@ -171,8 +171,8 @@ impl CommandRunner {
                 self.args.endpoints.clone(),
                 self.args.use_curp,
                 ClientTimeout::new(
-                    default_client_wait_synced_timeout(),
-                    default_propose_timeout(),
+                    Duration::from_secs(10),
+                    Duration::from_secs(5),
                     Duration::from_millis(250),
                 ),
             )
@@ -252,7 +252,7 @@ impl CommandRunner {
         clippy::cast_precision_loss,
         clippy::float_arithmetic
     )]
-    async fn collecter(&mut self, mut rx: Receiver<CmdResult>, b: Arc<Barrier>) -> Stats {
+    async fn collecter(&mut self, mut rx: Receiver<CmdResult>, barrier: Arc<Barrier>) -> Stats {
         let bar_len = match self.args.command {
             Commands::Put { total, .. } => total,
         };
@@ -268,7 +268,7 @@ impl CommandRunner {
             });
         }
         let mut stats = Stats::new();
-        let _ = b.wait().await;
+        let _ = barrier.wait().await;
         debug!("Collecting benchmark results...");
         let start = Instant::now();
         while let Some(result) = rx.recv().await {
