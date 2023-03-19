@@ -1,4 +1,4 @@
-name: release
+name: Release
 
 on:
   push:
@@ -6,15 +6,15 @@ on:
       - "v*"
 
 env:
-  CI_RUST_TOOLCHAIN: 1.61.0
+  CI_RUST_TOOLCHAIN: 1.67.1
 
 jobs:
   build:
     name: Upload Release Asset
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v2
       - name: Install Dependencies
-        uses: actions/checkout@v2
         run: sudo bash ./.github/scripts/install_deps.sh
       - name: Install Rust Toolchain
         uses: actions-rs/toolchain@v1
