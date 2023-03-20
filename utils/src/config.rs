@@ -142,56 +142,56 @@ pub struct CurpConfig {
 /// default heartbeat interval
 #[must_use]
 #[inline]
-pub fn default_heartbeat_interval() -> Duration {
+pub const fn default_heartbeat_interval() -> Duration {
     Duration::from_millis(300)
 }
 
 /// default wait synced timeout
 #[must_use]
 #[inline]
-pub fn default_server_wait_synced_timeout() -> Duration {
+pub const fn default_server_wait_synced_timeout() -> Duration {
     Duration::from_secs(5)
 }
 
 /// default retry timeout
 #[must_use]
 #[inline]
-pub fn default_retry_timeout() -> Duration {
+pub const fn default_retry_timeout() -> Duration {
     Duration::from_millis(50)
 }
 
 /// default rpc timeout
 #[must_use]
 #[inline]
-pub fn default_rpc_timeout() -> Duration {
+pub const fn default_rpc_timeout() -> Duration {
     Duration::from_millis(50)
 }
 
 /// default candidate timeout ticks
 #[must_use]
 #[inline]
-pub fn default_candidate_timeout_ticks() -> u8 {
+pub const fn default_candidate_timeout_ticks() -> u8 {
     2
 }
 
 /// default client wait synced timeout
 #[must_use]
 #[inline]
-pub fn default_client_wait_synced_timeout() -> Duration {
+pub const fn default_client_wait_synced_timeout() -> Duration {
     Duration::from_secs(2)
 }
 
 /// default client propose timeout
 #[must_use]
 #[inline]
-pub fn default_propose_timeout() -> Duration {
+pub const fn default_propose_timeout() -> Duration {
     Duration::from_secs(1)
 }
 
 /// default follower timeout
 #[must_use]
 #[inline]
-pub fn default_follower_timeout_ticks() -> u8 {
+pub const fn default_follower_timeout_ticks() -> u8 {
     5
 }
 
@@ -205,7 +205,7 @@ pub fn default_curp_data_dir() -> PathBuf {
 /// default number of execute workers
 #[must_use]
 #[inline]
-pub fn default_cmd_workers() -> u8 {
+pub const fn default_cmd_workers() -> u8 {
     8
 }
 
@@ -357,7 +357,7 @@ pub mod level_format {
 /// default log level
 #[must_use]
 #[inline]
-pub fn default_log_level() -> LevelConfig {
+pub const fn default_log_level() -> LevelConfig {
     LevelConfig::INFO
 }
 
@@ -420,7 +420,7 @@ pub mod rotation_format {
 /// default log rotation strategy
 #[must_use]
 #[inline]
-pub fn default_rotation() -> RotationConfig {
+pub const fn default_rotation() -> RotationConfig {
     RotationConfig::Daily
 }
 
