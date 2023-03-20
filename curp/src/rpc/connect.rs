@@ -9,12 +9,12 @@ use utils::tracing::Inject;
 
 use crate::{
     error::ProposeError,
-    message::ServerId,
     rpc::{
         proto::protocol_client::ProtocolClient, AppendEntriesRequest, AppendEntriesResponse,
         FetchLeaderRequest, FetchLeaderResponse, ProposeRequest, ProposeResponse, VoteRequest,
         VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
+    ServerId,
 };
 
 /// Connect will call filter(request) before it sends out a request

@@ -26,14 +26,13 @@ use crate::{
     cmd::{Command, CommandExecutor, ProposeId},
     error::ProposeError,
     log_entry::LogEntry,
-    message::ServerId,
     rpc::{
         self, connect::ConnectApi, AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest,
         FetchLeaderResponse, ProposeRequest, ProposeResponse, VoteRequest, VoteResponse,
         WaitSyncedRequest, WaitSyncedResponse,
     },
     server::storage::rocksdb::RocksDBStorage,
-    TxFilter,
+    LogIndex, ServerId, TxFilter,
 };
 
 /// Uncommitted pool type
@@ -102,10 +101,10 @@ impl<C: 'static + Command> CurpNode<C> {
         let result = self.curp.handle_append_entries(
             req.term,
             req.leader_id,
-            req.prev_log_index.numeric_cast(),
+            req.prev_log_index,
             req.prev_log_term,
             entries,
-            req.leader_commit.numeric_cast(),
+            req.leader_commit,
         );
         let resp = match result {
             Ok(term) => AppendEntriesResponse::new_accept(term),
@@ -121,7 +120,7 @@ impl<C: 'static + Command> CurpNode<C> {
         let result = self.curp.handle_vote(
             req.term,
             req.candidate_id.clone(),
-            req.last_log_index.numeric_cast(),
+            req.last_log_index,
             req.last_log_term,
         );
         let resp = match result {
@@ -285,7 +284,7 @@ impl<C: 'static + Command> CurpNode<C> {
                 log_tx,
                 voted_for,
                 entries,
-                last_applied.numeric_cast(),
+                last_applied,
             ))
         };
 
@@ -364,7 +363,7 @@ impl<C: 'static + Command> CurpNode<C> {
                 None,
                 resp.term,
                 resp.success,
-                resp.hint_index.numeric_cast(),
+                resp.hint_index,
             );
             if result.is_err() {
                 return;
@@ -436,7 +435,7 @@ impl<C: 'static + Command> CurpNode<C> {
             let Ok(ae) = curp.append_entries(connect.id()) else {
                 return;
             };
-            let last_sent_index = ae.prev_log_index + ae.entries.len();
+            let last_sent_index = ae.prev_log_index + ae.entries.len().numeric_cast::<u64>();
             let req = match AppendEntriesRequest::new(
                 ae.term,
                 ae.leader_id,
@@ -468,7 +467,7 @@ impl<C: 'static + Command> CurpNode<C> {
                         Some(last_sent_index),
                         resp.term,
                         resp.success,
-                        resp.hint_index.numeric_cast(),
+                        resp.hint_index,
                     );
 
                     match result {
@@ -495,7 +494,7 @@ impl<C: 'static + Command> CurpNode<C> {
     async fn sync_task(
         curp: Arc<RawCurp<C>>,
         connects: HashMap<ServerId, Arc<impl ConnectApi>>,
-        mut sync_rx: mpsc::UnboundedReceiver<usize>,
+        mut sync_rx: mpsc::UnboundedReceiver<LogIndex>,
     ) {
         while let Some(i) = sync_rx.recv().await {
             let req = {
@@ -536,7 +535,7 @@ impl<C: 'static + Command> CurpNode<C> {
     async fn send_log_until_succeed(
         curp: Arc<RawCurp<C>>,
         connect: Arc<impl ConnectApi>,
-        i: usize,
+        i: LogIndex,
         req: AppendEntriesRequest,
     ) {
         let (rpc_timeout, retry_timeout) = (curp.cfg().rpc_timeout, curp.cfg().retry_timeout);
@@ -558,7 +557,7 @@ impl<C: 'static + Command> CurpNode<C> {
                         Some(i),
                         resp.term,
                         resp.success,
-                        resp.hint_index.numeric_cast(),
+                        resp.hint_index,
                     );
 
                     match result {

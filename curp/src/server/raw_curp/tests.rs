@@ -15,6 +15,7 @@ use crate::{
         spec_pool::SpeculativePool,
     },
     test_utils::{sleep_millis, test_cmd::TestCommand},
+    LogIndex,
 };
 
 // Hooks for tests
@@ -23,7 +24,7 @@ impl<C: 'static + Command> RawCurp<C> {
         self.st.read().role
     }
 
-    pub(crate) fn commit_index(&self) -> usize {
+    pub(crate) fn commit_index(&self) -> LogIndex {
         self.log.read().commit_index
     }
 
@@ -59,7 +60,7 @@ impl<C: 'static + Command> RawCurp<C> {
     }
 
     /// Add a new cmd to the log, will return log entry index
-    pub(crate) fn push_cmd(&self, cmd: Arc<C>) -> usize {
+    pub(crate) fn push_cmd(&self, cmd: Arc<C>) -> LogIndex {
         let st_r = self.st.read();
         let mut log_w = self.log.write();
         log_w.push_cmd(st_r.term, cmd)

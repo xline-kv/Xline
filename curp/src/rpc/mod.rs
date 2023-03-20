@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use clippy_utilities::NumericCast;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 pub use self::proto::protocol_server::ProtocolServer;
@@ -16,7 +15,7 @@ use crate::{
     cmd::{Command, ProposeId},
     error::ProposeError,
     log_entry::LogEntry,
-    message::ServerId,
+    LogIndex, ServerId,
 };
 
 /// Rpc connect
@@ -236,21 +235,21 @@ impl AppendEntriesRequest {
     pub(crate) fn new<C: Command + Serialize>(
         term: u64,
         leader_id: ServerId,
-        prev_log_index: usize,
+        prev_log_index: LogIndex,
         prev_log_term: u64,
         entries: Vec<LogEntry<C>>,
-        leader_commit: usize,
+        leader_commit: LogIndex,
     ) -> bincode::Result<Self> {
         Ok(Self {
             term,
             leader_id,
-            prev_log_index: prev_log_index.numeric_cast(),
-            prev_log_term: prev_log_term.numeric_cast(),
+            prev_log_index,
+            prev_log_term,
             entries: entries
                 .into_iter()
                 .map(|e| bincode::serialize(&e))
                 .collect::<bincode::Result<Vec<Vec<u8>>>>()?,
-            leader_commit: leader_commit.numeric_cast(),
+            leader_commit,
         })
     }
 
@@ -258,17 +257,17 @@ impl AppendEntriesRequest {
     pub(crate) fn new_heartbeat(
         term: u64,
         leader_id: ServerId,
-        prev_log_index: usize,
+        prev_log_index: LogIndex,
         prev_log_term: u64,
-        leader_commit: usize,
+        leader_commit: LogIndex,
     ) -> Self {
         Self {
             term,
             leader_id,
-            prev_log_index: prev_log_index.numeric_cast(),
-            prev_log_term: prev_log_term.numeric_cast(),
+            prev_log_index,
+            prev_log_term,
             entries: vec![],
-            leader_commit: leader_commit.numeric_cast(),
+            leader_commit,
         }
     }
 
@@ -283,11 +282,11 @@ impl AppendEntriesRequest {
 
 impl AppendEntriesResponse {
     /// Create a new rejected response
-    pub(crate) fn new_reject(term: u64, hint_index: usize) -> Self {
+    pub(crate) fn new_reject(term: u64, hint_index: LogIndex) -> Self {
         Self {
             term,
             success: false,
-            hint_index: hint_index.numeric_cast(),
+            hint_index,
         }
     }
 
@@ -303,11 +302,16 @@ impl AppendEntriesResponse {
 
 impl VoteRequest {
     /// Create a new vote request
-    pub fn new(term: u64, candidate_id: String, last_log_index: usize, last_log_term: u64) -> Self {
+    pub fn new(
+        term: u64,
+        candidate_id: String,
+        last_log_index: LogIndex,
+        last_log_term: u64,
+    ) -> Self {
         Self {
             term,
             candidate_id,
-            last_log_index: last_log_index.numeric_cast(),
+            last_log_index,
             last_log_term,
         }
     }
@@ -320,7 +324,7 @@ impl VoteResponse {
         cmds: Vec<Arc<C>>,
     ) -> bincode::Result<Self> {
         Ok(Self {
-            term: term.numeric_cast(),
+            term,
             vote_granted: true,
             spec_pool: cmds
                 .into_iter()
@@ -332,7 +336,7 @@ impl VoteResponse {
     /// Create a new rejected vote response
     pub fn new_reject(term: u64) -> Self {
         Self {
-            term: term.numeric_cast(),
+            term,
             vote_granted: false,
             spec_pool: vec![],
         }

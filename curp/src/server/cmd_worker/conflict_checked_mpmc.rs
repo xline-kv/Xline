@@ -12,7 +12,10 @@ use std::{
 use tracing::{debug, error};
 
 use super::CEEvent;
-use crate::cmd::{Command, ProposeId};
+use crate::{
+    cmd::{Command, ProposeId},
+    LogIndex,
+};
 
 /// CE task
 pub(super) struct Task<C> {
@@ -27,7 +30,7 @@ pub(super) enum TaskType<C> {
     /// Execute a cmd
     SpecExe(Arc<C>),
     /// After sync a cmd
-    AS(Arc<C>, usize),
+    AS(Arc<C>, LogIndex),
     /// Reset the CE
     Reset,
 }
@@ -95,7 +98,7 @@ enum AsState {
     /// Not Synced yet
     NotSynced,
     /// Is ready to do after sync
-    AfterSyncReady(usize),
+    AfterSyncReady(LogIndex),
     /// Is doing after syncing
     AfterSyncing,
     /// Has been after synced

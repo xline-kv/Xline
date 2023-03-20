@@ -41,8 +41,8 @@ use crate::{
     cmd::{Command, ProposeId},
     error::ProposeError,
     log_entry::LogEntry,
-    message::ServerId,
     server::{cmd_board::CmdBoardRef, spec_pool::SpecPoolRef},
+    LogIndex, ServerId,
 };
 
 /// Curp state
@@ -84,7 +84,7 @@ pub(super) struct Vote {
     /// Candidate's Id
     pub(super) candidate_id: ServerId,
     /// Candidate's last log index
-    pub(super) last_log_index: usize,
+    pub(super) last_log_index: LogIndex,
     /// Candidate's last log term
     pub(super) last_log_term: u64,
 }
@@ -96,11 +96,11 @@ pub(super) struct AppendEntries<C> {
     /// Leader's id
     pub(super) leader_id: ServerId,
     /// Index of log entry immediately preceding new ones
-    pub(super) prev_log_index: usize,
+    pub(super) prev_log_index: LogIndex,
     /// Term of log entry immediately preceding new ones
     pub(super) prev_log_term: u64,
     /// Leader's commit index
-    pub(super) leader_commit: usize,
+    pub(super) leader_commit: LogIndex,
     /// New entries to be appended to the follower
     pub(super) entries: Vec<LogEntry<C>>,
 }
@@ -139,7 +139,7 @@ struct Context<C: Command> {
     /// Tx to send cmds to execute and do after sync
     cmd_tx: Box<dyn CEEventTxApi<C>>,
     /// Tx to send the index of log entry which needs to be replicated on followers
-    sync_tx: mpsc::UnboundedSender<usize>,
+    sync_tx: mpsc::UnboundedSender<LogIndex>,
     /// Tx to send the id of followers that need to be calibrated
     calibrate_tx: mpsc::UnboundedSender<ServerId>,
 }
@@ -221,7 +221,7 @@ impl<C: 'static + Command> RawCurp<C> {
             .iter()
             .map(|id| {
                 let next_index = lst_r.get_next_index(id);
-                let (prev_log_term, prev_log_index) = log_r.get_prev_entry_info(next_index);
+                let (prev_log_index, prev_log_term) = log_r.get_prev_entry_info(next_index);
                 debug!("{} send heartbeat to {}", self.id(), id);
                 (
                     id.clone(),
@@ -317,11 +317,11 @@ impl<C: 'static + Command> RawCurp<C> {
         &self,
         term: u64,
         leader_id: String,
-        prev_log_index: usize,
+        prev_log_index: LogIndex,
         prev_log_term: u64,
         entries: Vec<LogEntry<C>>,
-        leader_commit: usize,
-    ) -> Result<u64, (u64, usize)> {
+        leader_commit: LogIndex,
+    ) -> Result<u64, (u64, LogIndex)> {
         debug!(
             "{} received append_entries from {}: term({}), commit({}), prev_log_index({}), prev_log_term({}), {} entries", 
             self.id(), leader_id, term, leader_commit, prev_log_index, prev_log_term, entries.len()
@@ -380,10 +380,10 @@ impl<C: 'static + Command> RawCurp<C> {
     pub(super) fn handle_append_entries_resp(
         &self,
         follower_id: &ServerId,
-        last_sent_index: Option<usize>, // None means the ae is a heartbeat
+        last_sent_index: Option<LogIndex>, // None means the ae is a heartbeat
         term: u64,
         success: bool,
-        hint_index: usize,
+        hint_index: LogIndex,
     ) -> Result<bool, ()> {
         // validate term
         let (cur_term, cur_role) = self.st.map_read(|st_r| (st_r.term, st_r.role));
@@ -441,7 +441,7 @@ impl<C: 'static + Command> RawCurp<C> {
         &self,
         term: u64,
         candidate_id: ServerId,
-        last_log_index: usize,
+        last_log_index: LogIndex,
         last_log_term: u64,
     ) -> Result<(u64, Vec<Arc<C>>), u64> {
         debug!(
@@ -569,7 +569,7 @@ impl<C: 'static + Command> RawCurp<C> {
         uncommitted_pool: UncommittedPoolRef<C>,
         cfg: Arc<CurpConfig>,
         cmd_tx: Box<dyn CEEventTxApi<C>>,
-        sync_tx: mpsc::UnboundedSender<usize>,
+        sync_tx: mpsc::UnboundedSender<LogIndex>,
         calibrate_tx: mpsc::UnboundedSender<ServerId>,
         log_tx: mpsc::UnboundedSender<LogEntry<C>>,
     ) -> Self {
@@ -621,12 +621,12 @@ impl<C: 'static + Command> RawCurp<C> {
         uncommitted_pool: UncommittedPoolRef<C>,
         cfg: Arc<CurpConfig>,
         cmd_tx: Box<dyn CEEventTxApi<C>>,
-        sync_tx: mpsc::UnboundedSender<usize>,
+        sync_tx: mpsc::UnboundedSender<LogIndex>,
         calibrate_tx: mpsc::UnboundedSender<ServerId>,
         log_tx: mpsc::UnboundedSender<LogEntry<C>>,
         voted_for: Option<(u64, ServerId)>,
         entries: Vec<LogEntry<C>>,
-        last_applied: usize,
+        last_applied: LogIndex,
     ) -> Self {
         let mut raw_curp = Self::new(
             id,
@@ -683,14 +683,14 @@ impl<C: 'static + Command> RawCurp<C> {
 
     /// Get `append_entries` request for log[i]
     /// Return `Err(())` if self is no longer the leader
-    pub(super) fn append_entries_single(&self, i: usize) -> Result<AppendEntries<C>, ()> {
+    pub(super) fn append_entries_single(&self, i: LogIndex) -> Result<AppendEntries<C>, ()> {
         assert!(i > 0, "can't generate append_entries for fake log[0]");
         let st_r = self.st.read();
         if st_r.role != Role::Leader {
             return Err(());
         }
         let log_r = self.log.read();
-        let (prev_log_term, prev_log_index) = log_r.get_prev_entry_info(i);
+        let (prev_log_index, prev_log_term) = log_r.get_prev_entry_info(i);
         let entry = log_r.get(i).unwrap_or_else(|| {
             unreachable!("system corrupted, leader wants to log[{i}] when it doesn't have it")
         });
@@ -712,7 +712,7 @@ impl<C: 'static + Command> RawCurp<C> {
         }
         let next_index = self.lst.map_read(|lst_r| lst_r.get_next_index(follower_id));
         let log_r = self.log.read();
-        let (prev_log_term, prev_log_index) = log_r.get_prev_entry_info(next_index);
+        let (prev_log_index, prev_log_term) = log_r.get_prev_entry_info(next_index);
         let entries = log_r.get_from(next_index).unwrap_or_else(|| {
             unreachable!("system corrupted, leader get log[{next_index}] when it doesn't have one")
         });
@@ -817,7 +817,7 @@ impl<C: 'static + Command> RawCurp<C> {
         &self,
         lst: &LeaderState,
         log: &Log<C>,
-        i: usize,
+        i: LogIndex,
         cur_term: u64,
     ) -> bool {
         if log.commit_index >= i {
@@ -902,9 +902,7 @@ impl<C: 'static + Command> RawCurp<C> {
                     log.last_log_index()
                 )
             });
-            self.ctx
-                .cmd_tx
-                .send_after_sync(Arc::clone(&entry.cmd), i.numeric_cast());
+            self.ctx.cmd_tx.send_after_sync(Arc::clone(&entry.cmd), i);
             log.last_applied = i;
 
             debug!(
@@ -943,9 +941,7 @@ impl<C: 'static + Command> RawCurp<C> {
                     log_r.last_log_index()
                 )
             });
-            self.ctx
-                .cmd_tx
-                .send_after_sync(Arc::clone(&entry.cmd), i.numeric_cast());
+            self.ctx.cmd_tx.send_after_sync(Arc::clone(&entry.cmd), i);
         }
     }
 

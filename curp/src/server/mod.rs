@@ -10,13 +10,12 @@ use self::curp_node::{CurpError, CurpNode};
 use crate::{
     cmd::{Command, CommandExecutor},
     error::ServerError,
-    message::ServerId,
     rpc::{
         AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest, FetchLeaderResponse,
         ProposeRequest, ProposeResponse, ProtocolServer, VoteRequest, VoteResponse,
         WaitSyncedRequest, WaitSyncedResponse,
     },
-    TxFilter,
+    ServerId, TxFilter,
 };
 
 /// Command worker to do execution and after sync
