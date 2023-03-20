@@ -58,8 +58,8 @@ run_xline() {
         cmd="${cmd} --is-leader"
     fi
 
-    docker exec -e RUST_LOG=debug -d node${1} ${cmd}
-    echo "docker exec -e RUST_LOG=debug -d node${1} ${cmd}"
+    docker exec -e RUST_LOG=curp,xline. -d node${1} ${cmd}
+    echo "docker exec -e RUST_LOG=curp,xline -d node${1} ${cmd}"
 }
 
 # run etcd node by index
