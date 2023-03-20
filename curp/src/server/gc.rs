@@ -1,7 +1,12 @@
-use std::time::Duration;
+use std::{collections::HashSet, time::Duration};
+
+use utils::parking_lot_lock::MutexMap;
 
 use super::spec_pool::SpecPoolRef;
-use crate::{cmd::Command, server::cmd_board::CmdBoardRef};
+use crate::{
+    cmd::{Command, ProposeId},
+    server::cmd_board::CmdBoardRef,
+};
 
 /// How often we should do gc
 const GC_INTERVAL: Duration = Duration::from_secs(20);
@@ -13,15 +18,15 @@ pub(super) fn run_gc_tasks<C: Command + 'static>(cmd_board: CmdBoardRef<C>, spec
 }
 
 /// Cleanup spec pool
-async fn gc_spec_pool<C: Command + 'static>(spec: SpecPoolRef<C>, interval: Duration) {
-    let mut last_check_len = 0;
+async fn gc_spec_pool<C: Command + 'static>(sp: SpecPoolRef<C>, interval: Duration) {
+    let mut last_check: HashSet<ProposeId> =
+        sp.map_lock(|sp_l| sp_l.pool.keys().cloned().collect());
     loop {
         tokio::time::sleep(interval).await;
-        let mut spec = spec.lock();
+        let mut sp = sp.lock();
+        sp.pool.retain(|k, _v| !last_check.contains(k));
 
-        let new_spec = spec.pool.split_off(last_check_len);
-        spec.pool = new_spec;
-        last_check_len = spec.pool.len();
+        last_check = sp.pool.keys().cloned().collect();
     }
 }
 
@@ -29,22 +34,30 @@ async fn gc_spec_pool<C: Command + 'static>(spec: SpecPoolRef<C>, interval: Dura
 async fn gc_cmd_board<C: Command + 'static>(cmd_board: CmdBoardRef<C>, interval: Duration) {
     let mut last_check_len_er = 0;
     let mut last_check_len_asr = 0;
-    let mut last_check_len_recv = 0;
+    let mut last_check_len_sync = 0;
     loop {
         tokio::time::sleep(interval).await;
         let mut board = cmd_board.write();
 
-        let new_er_buffer = board.er_buffer.split_off(last_check_len_er);
-        board.er_buffer = new_er_buffer;
-        last_check_len_er = board.er_buffer.len();
+        // last_check_len_xxx should always be smaller than board.xxx_.len(), the check is just for precaution
 
-        let new_asr_buffer = board.asr_buffer.split_off(last_check_len_asr);
-        board.asr_buffer = new_asr_buffer;
-        last_check_len_asr = board.asr_buffer.len();
+        if last_check_len_er <= board.er_buffer.len() {
+            let new_er_buffer = board.er_buffer.split_off(last_check_len_er);
+            board.er_buffer = new_er_buffer;
+            last_check_len_er = board.er_buffer.len();
+        }
 
-        let new_recv = board.sync.split_off(last_check_len_recv);
-        board.sync = new_recv;
-        last_check_len_recv = board.sync.len();
+        if last_check_len_asr <= board.asr_buffer.len() {
+            let new_asr_buffer = board.asr_buffer.split_off(last_check_len_asr);
+            board.asr_buffer = new_asr_buffer;
+            last_check_len_asr = board.asr_buffer.len();
+        }
+
+        if last_check_len_sync <= board.sync.len() {
+            let new_sync = board.sync.split_off(last_check_len_sync);
+            board.sync = new_sync;
+            last_check_len_sync = board.sync.len();
+        }
     }
 }
 
@@ -62,10 +75,9 @@ mod tests {
             gc::gc_cmd_board,
             spec_pool::{SpecPoolRef, SpeculativePool},
         },
-        test_utils::test_cmd::TestCommand,
+        test_utils::{sleep_secs, test_cmd::TestCommand},
     };
 
-    #[allow(unused_results, clippy::unwrap_used)]
     #[tokio::test]
     async fn cmd_board_gc_test() {
         let board: CmdBoardRef<TestCommand> = Arc::new(RwLock::new(CommandBoard::new()));
@@ -117,7 +129,6 @@ mod tests {
         );
     }
 
-    #[allow(unused_results, clippy::unwrap_used)]
     #[tokio::test]
     async fn spec_gc_test() {
         let spec: SpecPoolRef<TestCommand> = Arc::new(Mutex::new(SpeculativePool::new()));
@@ -147,5 +158,33 @@ mod tests {
         let spec = spec.lock();
         assert_eq!(spec.pool.len(), 1);
         assert_eq!(spec.pool.get_index(0).unwrap().0, cmd3.id());
+    }
+
+    // To verify #206 is fixed
+    #[tokio::test]
+    async fn spec_gc_will_not_panic() {
+        let spec: SpecPoolRef<TestCommand> = Arc::new(Mutex::new(SpeculativePool::new()));
+
+        let cmd1 = Arc::new(TestCommand::default());
+        spec.lock()
+            .pool
+            .insert(cmd1.id().clone(), Arc::clone(&cmd1));
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let cmd2 = Arc::new(TestCommand::default());
+        spec.lock()
+            .pool
+            .insert(cmd2.id().clone(), Arc::clone(&cmd2));
+
+        let cmd3 = Arc::new(TestCommand::default());
+        spec.lock()
+            .pool
+            .insert(cmd2.id().clone(), Arc::clone(&cmd3));
+
+        tokio::spawn(gc_spec_pool(Arc::clone(&spec), Duration::from_millis(500)));
+
+        spec.lock().remove(cmd2.id());
+
+        sleep_secs(1).await;
     }
 }
