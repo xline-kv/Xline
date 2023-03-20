@@ -157,7 +157,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
         let spec = spec.lock();
         assert_eq!(spec.pool.len(), 1);
-        assert_eq!(spec.pool.get_index(0).unwrap().0, cmd3.id());
+        assert!(spec.pool.contains_key(cmd3.id()));
     }
 
     // To verify #206 is fixed
