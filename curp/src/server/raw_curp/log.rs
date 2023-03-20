@@ -2,12 +2,14 @@
 
 use std::{collections::HashSet, fmt::Debug, sync::Arc};
 
+use clippy_utilities::NumericCast;
 use tokio::sync::mpsc;
 use tracing::error;
 
 use crate::{
     cmd::{Command, ProposeId},
     log_entry::LogEntry,
+    LogIndex,
 };
 
 /// Curp logs
@@ -16,17 +18,17 @@ pub(super) struct Log<C: Command> {
     /// Log entries, should be persisted
     /// Note that the logical index in `LogEntry` is different from physical index
     entries: Vec<LogEntry<C>>,
-    /// Base index in entries, is `1`(if no snapshot) or `last_log_index_in_snapshot + 1`
-    base_index: usize,
-    /// Term of log[base_index]
-    base_term: u64,
+    /// The last log index that has been compacted
+    pub(super) base_index: LogIndex,
+    /// The last log term that has been compacted
+    pub(super) base_term: u64,
     /// Index of highest log entry known to be committed
-    pub(super) commit_index: usize,
+    pub(super) commit_index: LogIndex,
     /// Index of highest log entry applied to state machine
     /// Note this `last_applied` is a little bit different from the one in command executor
     /// in that it means the index of the last log sent to the `cmd_worker`(may not be executed yet)
     /// while the `last_applied` in command executor means index of the last log entry that has been successfully applied to the command executor.
-    pub(super) last_applied: usize,
+    pub(super) last_applied: LogIndex,
     /// Tx to send log entries to persist task
     log_tx: mpsc::UnboundedSender<LogEntry<C>>,
 }
@@ -52,17 +54,17 @@ impl<C: 'static + Command> Log<C> {
             entries, // a fake log[0]
             commit_index: 0,
             last_applied: 0,
-            base_index: 1,
+            base_index: 0,
             base_term: 0,
             log_tx,
         }
     }
 
     /// Get last log index
-    pub(super) fn last_log_index(&self) -> usize {
+    pub(super) fn last_log_index(&self) -> LogIndex {
         self.entries
             .last()
-            .map_or(self.base_index - 1, |entry| entry.index)
+            .map_or(self.base_index, |entry| entry.index)
     }
 
     /// Get last log term
@@ -73,19 +75,19 @@ impl<C: 'static + Command> Log<C> {
     }
 
     /// Transform logical index to physical index of `self.entries`
-    fn li_to_pi(&self, i: usize) -> usize {
+    fn li_to_pi(&self, i: LogIndex) -> usize {
         assert!(
-            i >= self.base_index,
-            "can't access the log entry whose index is smaller than {}",
+            i > self.base_index,
+            "can't access the log entry whose index is smaller than {}, might have been compacted",
             self.base_index
         );
-        i - self.base_index
+        (i - self.base_index - 1).numeric_cast()
     }
 
     /// Get log entry
-    pub(super) fn get(&self, i: usize) -> Option<&LogEntry<C>> {
-        (i >= self.base_index)
-            .then(|| self.entries.get(i - self.base_index))
+    pub(super) fn get(&self, i: LogIndex) -> Option<&LogEntry<C>> {
+        (i > self.base_index)
+            .then(|| self.entries.get(self.li_to_pi(i)))
             .flatten()
     }
 
@@ -93,15 +95,14 @@ impl<C: 'static + Command> Log<C> {
     pub(super) fn try_append_entries(
         &mut self,
         entries: Vec<LogEntry<C>>,
-        prev_log_index: usize,
+        prev_log_index: LogIndex,
         prev_log_term: u64,
     ) -> Result<(), Vec<LogEntry<C>>> {
         // check if entries can be appended
-        if !(prev_log_index == 0 && prev_log_term == 0)
-            && self
-                .get(prev_log_index)
-                .map_or(true, |entry| entry.term != prev_log_term)
-        {
+        if self.get(prev_log_index).map_or_else(
+            || (self.base_index, self.base_term) != (prev_log_index, prev_log_term),
+            |entry| entry.term != prev_log_term,
+        ) {
             return Err(entries);
         }
 
@@ -134,7 +135,7 @@ impl<C: 'static + Command> Log<C> {
     }
 
     /// Check if the candidate's log is up-to-date
-    pub(super) fn log_up_to_date(&self, last_log_term: u64, last_log_index: usize) -> bool {
+    pub(super) fn log_up_to_date(&self, last_log_term: u64, last_log_index: LogIndex) -> bool {
         if last_log_term == self.last_log_term() {
             // if the last log entry has the same term, grant vote if candidate has a longer log
             last_log_index >= self.last_log_index()
@@ -145,7 +146,7 @@ impl<C: 'static + Command> Log<C> {
     }
 
     /// Pack the cmd into a log entry and push it to the end of the log, return its index
-    pub(super) fn push_cmd(&mut self, term: u64, cmd: Arc<C>) -> usize {
+    pub(super) fn push_cmd(&mut self, term: u64, cmd: Arc<C>) -> LogIndex {
         let index = self.last_log_index() + 1;
         let entry = LogEntry::new(index, term, cmd);
         self.entries.push(entry.clone());
@@ -154,7 +155,7 @@ impl<C: 'static + Command> Log<C> {
     }
 
     /// Get a range of log entry
-    pub(super) fn get_from(&self, li: usize) -> Option<&[LogEntry<C>]> {
+    pub(super) fn get_from(&self, li: LogIndex) -> Option<&[LogEntry<C>]> {
         let pi = self.li_to_pi(li);
         self.entries.get(pi..)
     }
@@ -165,18 +166,19 @@ impl<C: 'static + Command> Log<C> {
     }
 
     /// Get previous log entry's term and index
-    pub(super) fn get_prev_entry_info(&self, i: usize) -> (u64, usize) {
-        assert!(i > 0);
-        if i == 1 {
-            (0, 0) // fake log[0]
+    pub(super) fn get_prev_entry_info(&self, i: LogIndex) -> (LogIndex, u64) {
+        assert!(i > 0, "log[0] has no previous log");
+        if self.base_index == i - 1 {
+            (self.base_index, self.base_term)
         } else {
             let entry = self.get(i - 1).unwrap_or_else(|| {
                 unreachable!(
-                    "system corrupted, get log[{i}] when we only have {} log entries",
+                    "system corrupted, get log[{}] when we only have {} log entries",
+                    i - 1,
                     self.last_log_index()
                 )
             });
-            (entry.term, entry.index)
+            (entry.index, entry.term)
         }
     }
 }
@@ -193,7 +195,7 @@ mod tests {
         type Output = LogEntry<C>;
 
         fn index(&self, i: usize) -> &Self::Output {
-            let pi = self.li_to_pi(i);
+            let pi = self.li_to_pi(i.numeric_cast());
             &self.entries[pi]
         }
     }

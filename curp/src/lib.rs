@@ -146,8 +146,11 @@
     )
 )]
 
-pub use message::LogIndex;
+pub use log_entry::LogIndex;
 pub use rpc::{connect::TxFilter, ProtocolServer};
+
+/// Server Id
+pub(crate) type ServerId = String;
 
 /// Client side, sending requests and determining requests' state
 pub mod client;
@@ -160,9 +163,6 @@ pub mod error;
 
 /// The command to be executed
 pub mod cmd;
-
-/// Message sent between servers and clients
-mod message;
 
 /// Log Entry
 mod log_entry;

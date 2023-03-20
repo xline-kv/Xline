@@ -185,8 +185,7 @@ impl CommandExecutor<TestCommand> for TestCE {
         self.after_sync_sender
             .send((cmd.clone(), index))
             .expect("failed to send after sync msg");
-        self.last_applied
-            .store(index.numeric_cast(), Ordering::Relaxed);
+        self.last_applied.store(index, Ordering::Relaxed);
         Ok(index)
     }
 

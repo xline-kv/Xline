@@ -4,7 +4,6 @@
 use std::{fmt::Debug, iter, sync::Arc};
 
 use async_trait::async_trait;
-use clippy_utilities::NumericCast;
 #[cfg(test)]
 use mockall::automock;
 use tokio::task::JoinHandle;
@@ -15,6 +14,7 @@ use super::{curp_node::UncommittedPoolRef, spec_pool::SpecPoolRef};
 use crate::{
     cmd::{Command, CommandExecutor},
     server::{cmd_board::CmdBoardRef, cmd_worker::conflict_checked_mpmc::TaskType},
+    LogIndex,
 };
 
 /// The special conflict checked mpmc
@@ -28,7 +28,7 @@ enum CEEvent<C> {
     /// The cmd is ready for speculative execution
     SpecExeReady(Arc<C>),
     /// The cmd is ready for after sync
-    ASReady(Arc<C>, usize),
+    ASReady(Arc<C>, LogIndex),
     /// Reset the command executor
     Reset,
 }
@@ -67,7 +67,7 @@ async fn cmd_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
             }
             TaskType::AS(ref cmd, index) => {
                 let asr = ce
-                    .after_sync(cmd.as_ref(), index.numeric_cast())
+                    .after_sync(cmd.as_ref(), index)
                     .await
                     .map_err(|e| e.to_string());
                 let asr_ok = asr.is_ok();
@@ -105,7 +105,7 @@ pub(super) trait CEEventTxApi<C: Command + 'static>: Send + Sync + 'static {
     fn send_sp_exe(&self, cmd: Arc<C>);
 
     /// Send after sync event to the background cmd worker so that after sync can be called
-    fn send_after_sync(&self, cmd: Arc<C>, index: usize);
+    fn send_after_sync(&self, cmd: Arc<C>, index: LogIndex);
 
     /// Send reset
     fn send_reset(&self);
@@ -119,7 +119,7 @@ impl<C: Command + 'static> CEEventTxApi<C> for CEEventTx<C> {
         }
     }
 
-    fn send_after_sync(&self, cmd: Arc<C>, index: usize) {
+    fn send_after_sync(&self, cmd: Arc<C>, index: LogIndex) {
         let event = CEEvent::ASReady(cmd, index);
         if let Err(e) = self.0.send(event) {
             error!("failed to send cmd as event to background cmd worker, {e}");

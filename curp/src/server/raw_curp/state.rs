@@ -7,7 +7,7 @@ use madsim::rand::{thread_rng, Rng};
 use tracing::debug;
 
 use super::Role;
-use crate::message::ServerId;
+use crate::{LogIndex, ServerId};
 
 /// Curp state
 #[derive(Debug)]
@@ -48,9 +48,9 @@ pub(super) struct CandidateState<C> {
 #[derive(Debug)]
 pub(super) struct LeaderState {
     /// For each server, index of the next log entry to send to that server
-    next_index: HashMap<ServerId, usize>,
+    next_index: HashMap<ServerId, LogIndex>,
     /// For each server, index of highest log entry known to be replicated on server
-    match_index: HashMap<ServerId, usize>,
+    match_index: HashMap<ServerId, LogIndex>,
     /// Servers that are being calibrated by the leader
     pub(super) calibrating: HashSet<ServerId>,
 }
@@ -92,8 +92,8 @@ impl State {
 impl LeaderState {
     /// Create a `LeaderState`
     pub(super) fn new(
-        next_index: HashMap<ServerId, usize>,
-        match_index: HashMap<ServerId, usize>,
+        next_index: HashMap<ServerId, LogIndex>,
+        match_index: HashMap<ServerId, LogIndex>,
     ) -> Self {
         Self {
             next_index,
@@ -103,7 +103,7 @@ impl LeaderState {
     }
 
     /// Get `next_index` for server
-    pub(super) fn get_next_index(&self, id: &ServerId) -> usize {
+    pub(super) fn get_next_index(&self, id: &ServerId) -> LogIndex {
         *self
             .next_index
             .get(id)
@@ -111,7 +111,7 @@ impl LeaderState {
     }
 
     /// Get `match_index` for server
-    pub(super) fn get_match_index(&self, id: &ServerId) -> usize {
+    pub(super) fn get_match_index(&self, id: &ServerId) -> LogIndex {
         *self
             .match_index
             .get(id)
@@ -119,7 +119,7 @@ impl LeaderState {
     }
 
     /// Update `next_index` for server
-    pub(super) fn update_next_index(&mut self, id: &ServerId, index: usize) {
+    pub(super) fn update_next_index(&mut self, id: &ServerId, index: LogIndex) {
         *self
             .next_index
             .get_mut(id)
@@ -127,7 +127,7 @@ impl LeaderState {
     }
 
     /// Update `match_index` for server, will update `next_index` if possible
-    pub(super) fn update_match_index(&mut self, id: &ServerId, index: usize) {
+    pub(super) fn update_match_index(&mut self, id: &ServerId, index: LogIndex) {
         let match_index = self
             .match_index
             .get_mut(id)

@@ -3,7 +3,7 @@ use std::{fmt::Display, hash::Hash};
 use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::message::LogIndex;
+use crate::log_entry::LogIndex;
 
 /// Command to execute on the server side
 #[async_trait]

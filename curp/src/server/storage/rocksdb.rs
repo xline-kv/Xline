@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use engine::{rocksdb_engine::RocksEngine, StorageEngine, WriteOperation};
 
 use super::{StorageApi, StorageError};
-use crate::{cmd::Command, log_entry::LogEntry, message::ServerId};
+use crate::{cmd::Command, log_entry::LogEntry, ServerId};
 
 /// Key for persisted state
 const VOTE_FOR: &[u8] = b"VoteFor";

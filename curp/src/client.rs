@@ -10,12 +10,12 @@ use utils::{config::ClientTimeout, parking_lot_lock::RwLockMap};
 use crate::{
     cmd::Command,
     error::ProposeError,
-    message::ServerId,
     rpc::{
         self,
         connect::{Connect, ConnectApi},
         FetchLeaderRequest, ProposeRequest, SyncError, SyncResult, WaitSyncedRequest,
     },
+    ServerId,
 };
 
 /// Protocol client

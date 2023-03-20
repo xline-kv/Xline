@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use engine::error::EngineError;
 use thiserror::Error;
 
-use crate::{cmd::Command, log_entry::LogEntry, message::ServerId};
+use crate::{cmd::Command, log_entry::LogEntry, ServerId};
 
 /// Storage layer error
 #[derive(Error, Debug)]

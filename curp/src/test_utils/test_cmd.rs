@@ -9,7 +9,6 @@ use std::{
 };
 
 use async_trait::async_trait;
-use clippy_utilities::NumericCast;
 use itertools::Itertools;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -20,8 +19,7 @@ use tracing::debug;
 
 use crate::{
     cmd::{Command, CommandExecutor, ConflictCheck, ProposeId},
-    message::ServerId,
-    LogIndex,
+    LogIndex, ServerId,
 };
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -266,8 +264,7 @@ impl CommandExecutor<TestCommand> for TestCESimple {
         if cmd.as_should_fail {
             return Err(ExecuteError("fail".to_owned()));
         }
-        self.last_applied
-            .store(index.numeric_cast(), Ordering::Relaxed);
+        self.last_applied.store(index, Ordering::Relaxed);
 
         debug!("{} call cmd({}) after sync", self.server_id, cmd.id());
         Ok(index)
