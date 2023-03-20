@@ -45,13 +45,13 @@ run_xline() {
     cmd="/usr/local/bin/xline \
     --name node${1} \
     --members ${MEMBERS} \
-    --storage-engine memory \
+    --storage-engine rocksdb \
     --data-dir /usr/local/xline/data-dir \
     --retry-timeout 150ms \
     --rpc-timeout 5s   \
     --server-wait-synced-timeout 10s \
     --client-wait-synced-timeout 10s \
-    --client_propose_timeout 5s \
+    --client-propose-timeout 5s \
     --cmd-workers 16"
 
     if [ ${1} -eq 1 ]; then
@@ -59,6 +59,7 @@ run_xline() {
     fi
 
     docker exec -e RUST_LOG=debug -d node${1} ${cmd}
+    echo "docker exec -e RUST_LOG=debug -d node${1} ${cmd}"
 }
 
 # run etcd node by index
@@ -89,7 +90,7 @@ run_cluster() {
         run_xline 1 &
         run_xline 2 &
         run_xline 3 &
-        sleep 0.2
+        sleep 3
         ;;
     etcd)
         run_etcd 1
@@ -111,6 +112,7 @@ stop_cluster() {
     for x in 1 2 3; do
         docker exec node${x} pkill -9 ${server} &
         docker exec node${x} rm -rf /tmp/node${x} &
+        docker exec node${x} rm -rf /usr/local/xline/data-dir &
     done
     wait
     echo cluster stopped
@@ -189,7 +191,7 @@ run_container() {
     esac
     docker run -d -it --rm --name=client --net=xline_net --ip=172.20.0.2 --cap-add=NET_ADMIN --cpu-shares=512 -m=512M -v ${WORKDIR}:/mnt ${image} bash &
     for ((i = 1; i <= ${size}; i++)); do
-        docker run -d -it --rm --name=node${i} --net=xline_net --ip=172.20.0.$((i + 2)) --cap-add=NET_ADMIN -m=1024M -v ${WORKDIR}:/mnt ${image} bash &
+        docker run -d -it --rm --name=node${i} --net=xline_net --ip=172.20.0.$((i + 2)) --cap-add=NET_ADMIN -m=2048M -v ${WORKDIR}:/mnt ${image} bash &
     done
     wait
     set_cluster_latency ${size}
@@ -217,6 +219,7 @@ for server in "xline" "etcd"; do
         ;;
     esac
     run_container 3 ${server}
+
     for testcase in "${TESTCASE[@]}"; do
 
         tmp=(${testcase})
@@ -232,6 +235,16 @@ for server in "xline" "etcd"; do
         endpoints=${tmp[@]:2}
         for key_space_size in "${KEY_SPACE_SIZE[@]}"; do
             for clients_total in "${CLIENTS_TOTAL[@]}"; do
+                echo ""
+                echo "##################################################"
+                echo ""
+                echo "server: $server"
+                echo "testcase: ${testcase}"
+                echo "clients_total: ${clients_total}"
+                echo "key_space_size: ${key_space_size}"
+                echo ""
+                echo "##################################################"
+                echo ""
                 tmp=(${clients_total})
                 clients=${tmp[0]}
                 total=${tmp[1]}
