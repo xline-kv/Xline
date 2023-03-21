@@ -264,7 +264,7 @@ where
         debug!("Receive LeaseGrantRequest {:?}", request);
         let lease_grant_req = request.get_mut();
         if lease_grant_req.id == 0 {
-            lease_grant_req.id = self.id_gen.next().cast();
+            lease_grant_req.id = self.id_gen.next();
         }
 
         let is_fast_path = true;
