@@ -1,14 +1,9 @@
-#![allow(unused)]
-use std::{
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::sync::Arc;
 
-use clippy_utilities::{Cast, OverflowArithmetic};
+use clippy_utilities::OverflowArithmetic;
 use curp::{client::Client, cmd::ProposeId, error::ProposeError};
-use etcd_client::{EventType, WatchOptions};
-use parking_lot::Mutex;
-use tokio::{sync::mpsc, time::Duration};
+use etcd_client::EventType;
+use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::debug;
 use uuid::Uuid;
@@ -16,10 +11,9 @@ use uuid::Uuid;
 use super::{
     auth_server::get_token,
     command::{Command, CommandResponse, KeyRange, SyncResponse},
-    kv_server::KvServer,
 };
 use crate::{
-    client::errors::ClientError,
+    id_gen::IdGenerator,
     rpc::{
         Compare, CompareResult, CompareTarget, DeleteRangeRequest, DeleteRangeResponse,
         LeaseGrantRequest, LeaseGrantResponse, Lock, LockRequest, LockResponse, PutRequest,
@@ -28,7 +22,6 @@ use crate::{
         TxnResponse, UnlockRequest, UnlockResponse, WatchClient, WatchCreateRequest, WatchRequest,
     },
     state::State,
-    storage::{storage_api::StorageApi, KvStore},
 };
 
 /// Default session ttl
@@ -36,35 +29,29 @@ const DEFAULT_SESSION_TTL: i64 = 60;
 
 /// Lock Server
 #[derive(Debug)]
-pub(crate) struct LockServer<S>
-where
-    S: StorageApi,
-{
-    /// KV storage
-    storage: Arc<KvStore<S>>,
+pub(crate) struct LockServer {
     /// Consensus client
     client: Arc<Client<Command>>,
     /// State of current node
     state: Arc<State>,
+    /// Id Generator
+    id_gen: Arc<IdGenerator>,
     /// Server name
     name: String,
 }
 
-impl<S> LockServer<S>
-where
-    S: StorageApi,
-{
+impl LockServer {
     /// New `LockServer`
     pub(crate) fn new(
-        storage: Arc<KvStore<S>>,
         client: Arc<Client<Command>>,
         state: Arc<State>,
+        id_gen: Arc<IdGenerator>,
         name: String,
     ) -> Self {
         Self {
-            storage,
             client,
             state,
+            id_gen,
             name,
         }
     }
@@ -199,14 +186,12 @@ where
                 max_create_revision: rev,
                 ..Default::default()
             };
-            let (cmd_res, sync_res) = self.propose(get_req, token.cloned(), false).await?;
+            let (cmd_res, _sync_res) = self.propose(get_req, token.cloned(), false).await?;
             let response = Into::<RangeResponse>::into(cmd_res.decode());
             let last_key = match response.kvs.first() {
                 Some(kv) => kv.key.as_slice(),
                 None => return Ok(()),
             };
-            #[allow(clippy::unwrap_used)] // sync_res always has value when use slow path
-            let response_revision = sync_res.unwrap().revision();
 
             let (request_sender, request_receiver) = mpsc::channel(100);
             let request_stream = ReceiverStream::new(request_receiver);
@@ -240,7 +225,6 @@ where
         key: &[u8],
         token: Option<String>,
     ) -> Result<Option<ResponseHeader>, tonic::Status> {
-        let keys = vec![KeyRange::new(key, "")];
         let del_req = DeleteRangeRequest {
             key: key.into(),
             ..Default::default()
@@ -252,11 +236,7 @@ where
 
     /// Lease grant
     async fn lease_grant(&self, token: Option<String>) -> Result<i64, tonic::Status> {
-        let lease_id = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_else(|e| panic!("SystemTime before UNIX EPOCH! {e}"))
-            .as_secs()
-            .cast(); // TODO: generate lease unique id
+        let lease_id = self.id_gen.next();
         let lease_grant_req = LeaseGrantRequest {
             ttl: DEFAULT_SESSION_TTL,
             id: lease_id,
@@ -268,10 +248,7 @@ where
 }
 
 #[tonic::async_trait]
-impl<S> Lock for LockServer<S>
-where
-    S: StorageApi,
-{
+impl Lock for LockServer {
     /// Lock acquires a distributed shared lock on a given named lock.
     /// On success, it will return a unique key that exists so long as the
     /// lock is held by the caller. This key can be used in conjunction with

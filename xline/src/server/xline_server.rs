@@ -1,4 +1,11 @@
-use std::{collections::HashMap, future::Future, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    collections::{hash_map::DefaultHasher, HashMap},
+    future::Future,
+    hash::Hasher,
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use anyhow::Result;
 use curp::{client::Client, server::Rpc, ProtocolServer};
@@ -84,9 +91,18 @@ where
         client_timeout: ClientTimeout,
         persistent: Arc<S>,
     ) -> Self {
-        // TODO: temporary solution, need real cluster id and member id
-        let header_gen = Arc::new(HeaderGenerator::new(0, 0));
-        let id_gen = Arc::new(IdGenerator::new(0));
+        let url = all_members
+            .get(&name)
+            .unwrap_or_else(|| panic!("peer {} not found in peers {:?}", name, all_members.keys()));
+        let ts = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_else(|e| panic!("SystemTime before UNIX EPOCH! {e}"))
+            .as_secs();
+        let member_id = Self::calc_member_id(url, "", ts);
+        let peer_urls = all_members.values().map(String::as_str).collect::<Vec<_>>();
+        let cluster_id = Self::calc_cluster_id(&peer_urls, "");
+        let header_gen = Arc::new(HeaderGenerator::new(cluster_id, member_id));
+        let id_gen = Arc::new(IdGenerator::new(member_id));
         let leader_id = is_leader.then(|| name.clone());
         let state = Arc::new(State::new(name, leader_id, all_members.clone()));
         let curp_config = Arc::new(curp_config);
@@ -124,6 +140,25 @@ where
             curp_cfg: curp_config,
             id_gen,
         }
+    }
+
+    /// calculate member id
+    fn calc_member_id(peer_url: &str, cluster_name: &str, now: u64) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        hasher.write(peer_url.as_bytes());
+        hasher.write(cluster_name.as_bytes());
+        hasher.write_u64(now);
+        hasher.finish()
+    }
+
+    /// calculate cluster id
+    fn calc_cluster_id(member_urls: &[&str], cluster_name: &str) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        for id in member_urls {
+            hasher.write(id.as_bytes());
+        }
+        hasher.write(cluster_name.as_bytes());
+        hasher.finish()
     }
 
     /// Server id
@@ -214,7 +249,7 @@ where
         &self,
     ) -> (
         KvServer<S>,
-        LockServer<S>,
+        LockServer,
         Arc<LeaseServer<S>>,
         AuthServer<S>,
         WatchServer<S>,
@@ -249,9 +284,9 @@ where
                 self.id(),
             ),
             LockServer::new(
-                Arc::clone(&self.kv_storage),
                 Arc::clone(&self.client),
                 Arc::clone(&self.state),
+                Arc::clone(&self.id_gen),
                 self.id(),
             ),
             LeaseServer::new(

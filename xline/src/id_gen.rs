@@ -34,9 +34,10 @@ impl IdGenerator {
     }
 
     /// Generate next id
-    pub(crate) fn next(&self) -> u64 {
-        let suffix = self.suffix.fetch_add(1, Ordering::Release);
-        self.prefix | suffix
+    pub(crate) fn next(&self) -> i64 {
+        let suffix = self.suffix.fetch_add(1, Ordering::Relaxed);
+        let id = self.prefix | suffix;
+        (id & 0x7fff_ffff_ffff_ffff).cast()
     }
 }
 
