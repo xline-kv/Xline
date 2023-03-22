@@ -1,11 +1,10 @@
 use std::{fmt, sync::Arc};
 
-use curp::cmd::ProposeId;
 use prost::Message;
 
 use crate::{
     rpc::{Role, User},
-    storage::{db::WriteOp, storage_api::StorageApi, ExecuteError},
+    storage::{storage_api::StorageApi, ExecuteError},
 };
 
 /// User table
@@ -126,13 +125,11 @@ where
         }
     }
 
-    /// put write operation
-    pub(crate) fn buffer_op(&self, id: &ProposeId, op: WriteOp) {
-        self.db.buffer_op(id, op);
-    }
-
     #[cfg(test)]
-    pub(crate) fn flush(&self, id: &ProposeId) -> Result<(), ExecuteError> {
-        self.db.flush(id)
+    pub(crate) fn flush_ops(
+        &self,
+        ops: Vec<crate::storage::db::WriteOp>,
+    ) -> Result<(), ExecuteError> {
+        self.db.flush_ops(ops)
     }
 }

@@ -225,18 +225,15 @@ where
         cmd: &Command,
         index: LogIndex,
     ) -> Result<SyncResponse, ExecuteError> {
-        let id = cmd.id();
         let wrapper = cmd.request();
         self.auth_storage.check_permission(wrapper).await?;
-        self.persistent
-            .buffer_op(id, WriteOp::PutAppliedIndex(index));
-
-        let res = match wrapper.request.backend() {
-            RequestBackend::Kv => self.kv_storage.after_sync(id, wrapper).await?,
-            RequestBackend::Auth => self.auth_storage.after_sync(id, wrapper)?,
-            RequestBackend::Lease => self.lease_storage.after_sync(id, wrapper).await?,
+        let (res, mut ops) = match wrapper.request.backend() {
+            RequestBackend::Kv => self.kv_storage.after_sync(wrapper).await?,
+            RequestBackend::Auth => self.auth_storage.after_sync(wrapper)?,
+            RequestBackend::Lease => self.lease_storage.after_sync(wrapper).await?,
         };
-        self.persistent.flush(id)?;
+        ops.push(WriteOp::PutAppliedIndex(index));
+        self.persistent.flush_ops(ops)?;
         Ok(res)
     }
 

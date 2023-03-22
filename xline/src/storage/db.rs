@@ -1,18 +1,11 @@
 use std::{collections::HashMap, sync::Arc};
 
-use curp::cmd::ProposeId;
 use engine::{
     engine_api::StorageEngine, memory_engine::MemoryEngine, rocksdb_engine::RocksEngine,
     WriteOperation,
 };
-use parking_lot::Mutex;
 use prost::Message;
 use utils::config::StorageConfig;
-
-use crate::{
-    rpc::{PbLease, Role, User},
-    server::command::{APPLIED_INDEX_KEY, META_TABLE},
-};
 
 use super::{
     auth_store::{AUTH_ENABLE_KEY, AUTH_REVISION_KEY, AUTH_TABLE, ROLE_TABLE, USER_TABLE},
@@ -20,6 +13,10 @@ use super::{
     lease_store::LEASE_TABLE,
     storage_api::StorageApi,
     ExecuteError, Revision,
+};
+use crate::{
+    rpc::{PbLease, Role, User},
+    server::command::{APPLIED_INDEX_KEY, META_TABLE},
 };
 
 /// Xline Server Storage Table
@@ -37,8 +34,6 @@ const XLINE_TABLES: [&str; 6] = [
 pub struct DB<S: StorageEngine> {
     /// internal storage of `DB`
     engine: Arc<S>,
-    /// Buffer
-    buffer: Mutex<HashMap<ProposeId, Vec<WriteOp>>>,
 }
 
 impl<S> DB<S>
@@ -51,7 +46,6 @@ where
     pub fn new(engine: S) -> Self {
         Self {
             engine: Arc::new(engine),
-            buffer: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -107,22 +101,70 @@ where
             .map_err(|e| ExecuteError::DbError(format!("Failed to reset database, error: {e}")))
     }
 
-    fn buffer_op(&self, propose_id: &ProposeId, op: WriteOp) {
-        let mut buffer = self.buffer.lock();
-        if let Some(ops) = buffer.get_mut(propose_id) {
-            ops.push(op);
-        } else {
-            let _ignore = buffer.insert(propose_id.clone(), vec![op]);
+    fn flush_ops(&self, ops: Vec<WriteOp>) -> Result<(), ExecuteError> {
+        let mut wr_ops = Vec::new();
+        let del_lease_key_buffer = ops
+            .iter()
+            .filter_map(|op| {
+                if let WriteOp::DeleteLease(lease_id) = *op {
+                    Some((lease_id, lease_id.encode_to_vec()))
+                } else {
+                    None
+                }
+            })
+            .collect::<HashMap<_, _>>();
+        for op in ops {
+            let wop = match op {
+                WriteOp::PutKeyValue(rev, value) => {
+                    let key = rev.encode_to_vec();
+                    WriteOperation::new_put(KV_TABLE, key, value.clone())
+                }
+                WriteOp::PutAppliedIndex(index) => WriteOperation::new_put(
+                    META_TABLE,
+                    APPLIED_INDEX_KEY.as_bytes().to_vec(),
+                    index.to_le_bytes().to_vec(),
+                ),
+                WriteOp::PutLease(lease) => WriteOperation::new_put(
+                    LEASE_TABLE,
+                    lease.id.encode_to_vec(),
+                    lease.encode_to_vec(),
+                ),
+                WriteOp::DeleteLease(lease_id) => {
+                    let key = del_lease_key_buffer.get(&lease_id).unwrap_or_else(|| {
+                        panic!("lease_id({lease_id}) is not in del_lease_key_buffer")
+                    });
+                    WriteOperation::new_delete(LEASE_TABLE, key)
+                }
+                WriteOp::PutAuthEnable(enable) => WriteOperation::new_put(
+                    AUTH_TABLE,
+                    AUTH_ENABLE_KEY.to_vec(),
+                    vec![u8::from(enable)],
+                ),
+                WriteOp::PutAuthRevision(rev) => WriteOperation::new_put(
+                    AUTH_TABLE,
+                    AUTH_REVISION_KEY.to_vec(),
+                    rev.encode_to_vec(),
+                ),
+                WriteOp::PutUser(user) => {
+                    let value = user.encode_to_vec();
+                    WriteOperation::new_put(USER_TABLE, user.name.clone(), value)
+                }
+                WriteOp::DeleteUser(name) => {
+                    WriteOperation::new_delete(USER_TABLE, name.as_bytes())
+                }
+                WriteOp::PutRole(role) => {
+                    let value = role.encode_to_vec();
+                    WriteOperation::new_put(ROLE_TABLE, role.name.clone(), value)
+                }
+                WriteOp::DeleteRole(name) => {
+                    WriteOperation::new_delete(ROLE_TABLE, name.as_bytes())
+                }
+            };
+            wr_ops.push(wop);
         }
-    }
-
-    fn flush(&self, id: &ProposeId) -> Result<(), ExecuteError> {
-        if let Some(ops) = self.buffer.lock().remove(id) {
-            let wr_ops = ops.into_iter().map(WriteOperation::from).collect();
-            self.engine
-                .write_batch(wr_ops, false)
-                .map_err(|e| ExecuteError::DbError(format!("Failed to flush ops, error: {e}")))?;
-        }
+        self.engine
+            .write_batch(wr_ops, false)
+            .map_err(|e| ExecuteError::DbError(format!("Failed to flush ops, error: {e}")))?;
         Ok(())
     }
 }
@@ -186,17 +228,10 @@ impl StorageApi for DBProxy {
         }
     }
 
-    fn buffer_op(&self, id: &ProposeId, op: WriteOp) {
+    fn flush_ops(&self, ops: Vec<WriteOp>) -> Result<(), ExecuteError> {
         match *self {
-            DBProxy::MemDB(ref inner_db) => inner_db.buffer_op(id, op),
-            DBProxy::RocksDB(ref inner_db) => inner_db.buffer_op(id, op),
-        }
-    }
-
-    fn flush(&self, id: &ProposeId) -> Result<(), ExecuteError> {
-        match *self {
-            DBProxy::MemDB(ref inner_db) => inner_db.flush(id),
-            DBProxy::RocksDB(ref inner_db) => inner_db.flush(id),
+            DBProxy::MemDB(ref inner_db) => inner_db.flush_ops(ops),
+            DBProxy::RocksDB(ref inner_db) => inner_db.flush_ops(ops),
         }
     }
 }
@@ -228,7 +263,7 @@ impl DBProxy {
 /// Buffered Write Operation
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub enum WriteOp {
+pub enum WriteOp<'a> {
     /// Put a key-value pair to kv table
     PutKeyValue(Revision, Vec<u8>),
     /// Put the applied index to meta table
@@ -244,48 +279,11 @@ pub enum WriteOp {
     /// Put a user to user table
     PutUser(User),
     /// Delete a user from user table
-    DeleteUser(String),
+    DeleteUser(&'a str),
     /// Put a role to role table
     PutRole(Role),
     /// Delete a role from role table
-    DeleteRole(String),
-}
-
-impl From<WriteOp> for WriteOperation {
-    #[inline]
-    fn from(wr_op: WriteOp) -> Self {
-        match wr_op {
-            WriteOp::PutKeyValue(rev, value) => {
-                let key = rev.encode_to_vec();
-                WriteOperation::new_put(KV_TABLE, key, value)
-            }
-            WriteOp::PutAppliedIndex(index) => {
-                WriteOperation::new_put(META_TABLE, APPLIED_INDEX_KEY, index.to_le_bytes())
-            }
-            WriteOp::PutLease(lease) => WriteOperation::new_put(
-                LEASE_TABLE,
-                lease.id.encode_to_vec(),
-                lease.encode_to_vec(),
-            ),
-            WriteOp::DeleteLease(id) => WriteOperation::new_delete(LEASE_TABLE, id.encode_to_vec()),
-            WriteOp::PutAuthEnable(enable) => {
-                WriteOperation::new_put(AUTH_TABLE, AUTH_ENABLE_KEY, vec![u8::from(enable)])
-            }
-            WriteOp::PutAuthRevision(rev) => {
-                WriteOperation::new_put(AUTH_TABLE, AUTH_REVISION_KEY, rev.encode_to_vec())
-            }
-            WriteOp::PutUser(user) => {
-                let value = user.encode_to_vec();
-                WriteOperation::new_put(USER_TABLE, user.name, value)
-            }
-            WriteOp::DeleteUser(name) => WriteOperation::new_delete(USER_TABLE, name),
-            WriteOp::PutRole(role) => {
-                let value = role.encode_to_vec();
-                WriteOperation::new_put(ROLE_TABLE, role.name, value)
-            }
-            WriteOp::DeleteRole(name) => WriteOperation::new_delete(ROLE_TABLE, name),
-        }
-    }
+    DeleteRole(&'a str),
 }
 
 #[cfg(test)]
@@ -300,9 +298,8 @@ mod test {
 
         let revision = Revision::new(1, 1);
         let key = revision.encode_to_vec();
-        let id = ProposeId::new("test-id".to_owned());
-        db.buffer_op(&id, WriteOp::PutKeyValue(revision, "value1".into()));
-        db.flush(&id)?;
+        let ops = vec![WriteOp::PutKeyValue(revision, "value1".into())];
+        db.flush_ops(ops)?;
         let res = db.get_value(KV_TABLE, &key)?;
         assert_eq!(res, Some("value1".as_bytes().to_vec()));
 
