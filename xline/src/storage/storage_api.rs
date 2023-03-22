@@ -1,5 +1,3 @@
-use curp::cmd::ProposeId;
-
 use super::{db::WriteOp, ExecuteError};
 
 /// The Stable Storage Api
@@ -41,9 +39,6 @@ pub trait StorageApi: Send + Sync + 'static + std::fmt::Debug {
     /// if error occurs in storage, return `Err(error)`
     fn reset(&self) -> Result<(), ExecuteError>;
 
-    /// Put a write operation to the buffer
-    fn buffer_op(&self, id: &ProposeId, op: WriteOp);
-
-    /// Flush the buffer to storage
-    fn flush(&self, id: &ProposeId) -> Result<(), ExecuteError>;
+    /// Flush the operations to storage
+    fn flush_ops(&self, ops: Vec<WriteOp>) -> Result<(), ExecuteError>;
 }

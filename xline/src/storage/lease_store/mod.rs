@@ -12,7 +12,6 @@ use std::{
 };
 
 use clippy_utilities::Cast;
-use curp::cmd::ProposeId;
 use log::debug;
 use parking_lot::RwLock;
 use prost::Message;
@@ -265,13 +264,12 @@ where
     /// sync a lease request
     pub(crate) async fn after_sync(
         &self,
-        id: &ProposeId,
         request: &RequestWithToken,
-    ) -> Result<SyncResponse, ExecuteError> {
+    ) -> Result<(SyncResponse, Vec<WriteOp>), ExecuteError> {
         self.inner
-            .sync_request(id, &request.request)
+            .sync_request(&request.request)
             .await
-            .map(SyncResponse::new)
+            .map(|(rev, ops)| (SyncResponse::new(rev), ops))
     }
 
     /// Check if the node is leader
@@ -473,31 +471,30 @@ where
     /// Sync `RequestWithToken`
     async fn sync_request(
         &self,
-        id: &ProposeId,
         wrapper: &RequestWrapper,
-    ) -> Result<i64, ExecuteError> {
+    ) -> Result<(i64, Vec<WriteOp>), ExecuteError> {
         #[allow(clippy::wildcard_enum_match_arm)]
-        match *wrapper {
+        let ops = match *wrapper {
             RequestWrapper::LeaseGrantRequest(ref req) => {
                 debug!("Sync LeaseGrantRequest {:?}", req);
-                self.sync_lease_grant_request(id, req);
+                self.sync_lease_grant_request(req)
             }
             RequestWrapper::LeaseRevokeRequest(ref req) => {
                 debug!("Sync LeaseRevokeRequest {:?}", req);
-                self.sync_lease_revoke_request(id, req).await?;
+                self.sync_lease_revoke_request(req).await?
             }
             _ => unreachable!("Other request should not be sent to this store"),
         };
-        Ok(self.header_gen.revision())
+        Ok((self.header_gen.revision(), ops))
     }
 
     /// Sync `LeaseGrantRequest`
-    fn sync_lease_grant_request(&self, id: &ProposeId, req: &LeaseGrantRequest) {
+    fn sync_lease_grant_request(&self, req: &LeaseGrantRequest) -> Vec<WriteOp> {
         let lease = self
             .lease_collection
             .write()
             .grant(req.id, req.ttl, self.is_leader());
-        self.db.buffer_op(id, WriteOp::PutLease(lease));
+        vec![WriteOp::PutLease(lease)]
     }
 
     /// Get all `PbLease`
@@ -517,10 +514,11 @@ where
     /// Sync `LeaseRevokeRequest`
     async fn sync_lease_revoke_request(
         &self,
-        id: &ProposeId,
         req: &LeaseRevokeRequest,
-    ) -> Result<(), ExecuteError> {
-        self.db.buffer_op(id, WriteOp::DeleteLease(req.id));
+    ) -> Result<Vec<WriteOp>, ExecuteError> {
+        let mut ops = Vec::new();
+        ops.push(WriteOp::DeleteLease(req.id));
+
         let keys = match self.lease_collection.read().lease_map.get(&req.id) {
             Some(l) => l.keys(),
             None => return Err(ExecuteError::lease_not_found(req.id)),
@@ -528,7 +526,7 @@ where
 
         if keys.is_empty() {
             let _ignore = self.lease_collection.write().revoke(req.id);
-            return Ok(());
+            return Ok(Vec::new());
         }
 
         let revision = self.revision.next();
@@ -568,8 +566,7 @@ where
                     mod_revision: del_rev.revision(),
                     ..KeyValue::default()
                 };
-                self.db
-                    .buffer_op(id, WriteOp::PutKeyValue(del_rev, del_kv.encode_to_vec()));
+                ops.push(WriteOp::PutKeyValue(del_rev, del_kv.encode_to_vec()));
             });
 
         let updates = prev_kvs
@@ -594,7 +591,7 @@ where
             self.kv_update_tx.send((revision, updates)).await.is_ok(),
             "Failed to send updates to KV watcher"
         );
-        Ok(())
+        Ok(ops)
     }
 }
 
@@ -672,9 +669,8 @@ mod test {
         req: &RequestWithToken,
     ) -> Result<ResponseWrapper, ExecuteError> {
         let cmd_res = ls.execute(req)?;
-        let id = ProposeId::new("test-id".to_owned());
-        let _ignore = ls.after_sync(&id, req).await?;
-        ls.inner.db.flush(&id)?;
+        let (_ignore, ops) = ls.after_sync(req).await?;
+        ls.inner.db.flush_ops(ops)?;
         Ok(cmd_res.decode())
     }
 }

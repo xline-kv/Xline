@@ -8,7 +8,6 @@ use std::{
 };
 
 use clippy_utilities::Cast;
-use curp::cmd::ProposeId;
 use itertools::Itertools;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use log::debug;
@@ -531,113 +530,118 @@ where
     }
 
     /// sync a auth request
-    pub(crate) fn after_sync(
+    pub(crate) fn after_sync<'a>(
         &self,
-        id: &ProposeId,
-        request: &RequestWithToken,
-    ) -> Result<SyncResponse, ExecuteError> {
+        request: &'a RequestWithToken,
+    ) -> Result<(SyncResponse, Vec<WriteOp<'a>>), ExecuteError> {
         #[allow(clippy::wildcard_enum_match_arm)]
-        match request.request {
+        let ops = match request.request {
             RequestWrapper::AuthEnableRequest(ref req) => {
                 debug!("Sync AuthEnableRequest {:?}", req);
-                self.sync_auth_enable_request(id, req)?;
+                self.sync_auth_enable_request(req)?
             }
             RequestWrapper::AuthDisableRequest(ref req) => {
                 debug!("Sync AuthDisableRequest {:?}", req);
-                self.sync_auth_disable_request(id, req);
+                self.sync_auth_disable_request(req)
             }
             RequestWrapper::AuthStatusRequest(ref req) => {
                 debug!("Sync AuthStatusRequest {:?}", req);
+                Vec::new()
             }
             RequestWrapper::AuthUserAddRequest(ref req) => {
                 debug!("Sync AuthUserAddRequest {:?}", req);
-                self.sync_user_add_request(id, req);
+                self.sync_user_add_request(req)
             }
             RequestWrapper::AuthUserGetRequest(ref req) => {
                 debug!("Sync AuthUserGetRequest {:?}", req);
+                Vec::new()
             }
             RequestWrapper::AuthUserListRequest(ref req) => {
                 debug!("Sync AuthUserListRequest {:?}", req);
+                Vec::new()
             }
             RequestWrapper::AuthUserGrantRoleRequest(ref req) => {
                 debug!("Sync AuthUserGrantRoleRequest {:?}", req);
-                self.sync_user_grant_role_request(id, req)?;
+                self.sync_user_grant_role_request(req)?
             }
             RequestWrapper::AuthUserRevokeRoleRequest(ref req) => {
                 debug!("Sync AuthUserRevokeRoleRequest {:?}", req);
-                self.sync_user_revoke_role_request(id, req)?;
+                self.sync_user_revoke_role_request(req)?
             }
             RequestWrapper::AuthUserChangePasswordRequest(ref req) => {
                 debug!("Sync AuthUserChangePasswordRequest {:?}", req);
-                self.sync_user_change_password_request(id, req)?;
+                self.sync_user_change_password_request(req)?
             }
             RequestWrapper::AuthUserDeleteRequest(ref req) => {
                 debug!("Sync AuthUserDeleteRequest {:?}", req);
-                self.sync_user_delete_request(id, req);
+                self.sync_user_delete_request(req)
             }
             RequestWrapper::AuthRoleAddRequest(ref req) => {
                 debug!("Sync AuthRoleAddRequest {:?}", req);
-                self.sync_role_add_request(id, req);
+                self.sync_role_add_request(req)
             }
             RequestWrapper::AuthRoleGetRequest(ref req) => {
                 debug!("Sync AuthRoleGetRequest {:?}", req);
+                Vec::new()
             }
             RequestWrapper::AuthRoleGrantPermissionRequest(ref req) => {
                 debug!("Sync AuthRoleGrantPermissionRequest {:?}", req);
-                self.sync_role_grant_permission_request(id, req)?;
+                self.sync_role_grant_permission_request(req)?
             }
             RequestWrapper::AuthRoleRevokePermissionRequest(ref req) => {
                 debug!("Sync AuthRoleRevokePermissionRequest {:?}", req);
-                self.sync_role_revoke_permission_request(id, req)?;
+                self.sync_role_revoke_permission_request(req)?
             }
             RequestWrapper::AuthRoleListRequest(ref req) => {
                 debug!("Sync AuthRoleListRequest {:?}", req);
+                Vec::new()
             }
             RequestWrapper::AuthRoleDeleteRequest(ref req) => {
                 debug!("Sync AuthRoleDeleteRequest {:?}", req);
-                self.sync_role_delete_request(id, req)?;
+                self.sync_role_delete_request(req)?
             }
             RequestWrapper::AuthenticateRequest(ref req) => {
                 debug!("Sync AuthenticateRequest {:?}", req);
+                Vec::new()
             }
             _ => {
                 unreachable!("Other request should not be sent to this store");
             }
         };
-        Ok(SyncResponse::new(self.header_gen.revision()))
+        Ok((SyncResponse::new(self.header_gen.revision()), ops))
     }
 
     /// Sync `AuthEnableRequest` and return whether authstore is changed.
-    fn sync_auth_enable_request(
+    fn sync_auth_enable_request<'a>(
         &self,
-        id: &ProposeId,
-        _req: &AuthEnableRequest,
-    ) -> Result<(), ExecuteError> {
+        _req: &'a AuthEnableRequest,
+    ) -> Result<Vec<WriteOp<'a>>, ExecuteError> {
         if self.is_enabled() {
-            return Ok(());
+            return Ok(Vec::new());
         }
         self.enabled.store(true, AtomicOrdering::Relaxed);
         self.create_permission_cache()?;
         let rev = self.backend.get_revision()?;
         self.revision.set(rev);
-        self.backend.buffer_op(id, WriteOp::PutAuthEnable(true));
-        Ok(())
+        Ok(vec![WriteOp::PutAuthEnable(true)])
     }
 
     /// Sync `AuthDisableRequest` and return whether authstore is changed.
-    fn sync_auth_disable_request(&self, id: &ProposeId, _req: &AuthDisableRequest) {
+    fn sync_auth_disable_request<'a>(&self, _req: &'a AuthDisableRequest) -> Vec<WriteOp<'a>> {
+        let mut ops = Vec::new();
         if !self.is_enabled() {
-            return;
+            return Vec::new();
         }
         self.enabled.store(false, AtomicOrdering::Relaxed);
         let revision = self.revision.next();
-        self.backend
-            .buffer_op(id, WriteOp::PutAuthRevision(revision));
-        self.backend.buffer_op(id, WriteOp::PutAuthEnable(false));
+        ops.push(WriteOp::PutAuthRevision(revision));
+        ops.push(WriteOp::PutAuthEnable(false));
+        ops
     }
 
     /// Sync `AuthUserAddRequest` and return whether authstore is changed.
-    fn sync_user_add_request(&self, id: &ProposeId, req: &AuthUserAddRequest) {
+    fn sync_user_add_request<'a>(&self, req: &'a AuthUserAddRequest) -> Vec<WriteOp<'a>> {
+        let mut ops = Vec::new();
         let user = User {
             name: req.name.as_str().into(),
             password: req.hashed_password.as_str().into(),
@@ -645,13 +649,14 @@ where
             roles: Vec::new(),
         };
         let revision = self.revision.next();
-        self.backend
-            .buffer_op(id, WriteOp::PutAuthRevision(revision));
-        self.backend.buffer_op(id, WriteOp::PutUser(user));
+        ops.push(WriteOp::PutAuthRevision(revision));
+        ops.push(WriteOp::PutUser(user));
+        ops
     }
 
     /// Sync `AuthUserDeleteRequest` and return whether authstore is changed.
-    fn sync_user_delete_request(&self, id: &ProposeId, req: &AuthUserDeleteRequest) {
+    fn sync_user_delete_request<'a>(&self, req: &'a AuthUserDeleteRequest) -> Vec<WriteOp<'a>> {
+        let mut ops = Vec::new();
         self.permission_cache.map_write(|mut cache| {
             let _ignore = cache.user_permissions.remove(&req.name);
             cache.role_to_users_map.iter_mut().for_each(|(_, users)| {
@@ -661,33 +666,31 @@ where
             });
         });
         let revision = self.revision.next();
-        self.backend
-            .buffer_op(id, WriteOp::PutAuthRevision(revision));
-        self.backend
-            .buffer_op(id, WriteOp::DeleteUser(req.name.clone()));
+        ops.push(WriteOp::PutAuthRevision(revision));
+        ops.push(WriteOp::DeleteUser(req.name.as_str()));
+        ops
     }
 
     /// Sync `AuthUserChangePasswordRequest` and return whether authstore is changed.
-    fn sync_user_change_password_request(
+    fn sync_user_change_password_request<'a>(
         &self,
-        id: &ProposeId,
-        req: &AuthUserChangePasswordRequest,
-    ) -> Result<(), ExecuteError> {
+        req: &'a AuthUserChangePasswordRequest,
+    ) -> Result<Vec<WriteOp<'a>>, ExecuteError> {
+        let mut ops = Vec::new();
         let mut user = self.backend.get_user(&req.name)?;
         user.password = req.hashed_password.as_str().into();
         let revision = self.revision.next();
-        self.backend
-            .buffer_op(id, WriteOp::PutAuthRevision(revision));
-        self.backend.buffer_op(id, WriteOp::PutUser(user));
-        Ok(())
+        ops.push(WriteOp::PutAuthRevision(revision));
+        ops.push(WriteOp::PutUser(user));
+        Ok(ops)
     }
 
     /// Sync `AuthUserGrantRoleRequest` and return whether authstore is changed.
-    fn sync_user_grant_role_request(
+    fn sync_user_grant_role_request<'a>(
         &self,
-        id: &ProposeId,
-        req: &AuthUserGrantRoleRequest,
-    ) -> Result<(), ExecuteError> {
+        req: &'a AuthUserGrantRoleRequest,
+    ) -> Result<Vec<WriteOp<'a>>, ExecuteError> {
+        let mut ops = Vec::new();
         let mut user = self.backend.get_user(&req.user)?;
         let role = self.backend.get_role(&req.role);
         if (req.role != ROOT_ROLE) && role.is_err() {
@@ -728,18 +731,17 @@ where
             });
         }
         let revision = self.revision.next();
-        self.backend
-            .buffer_op(id, WriteOp::PutAuthRevision(revision));
-        self.backend.buffer_op(id, WriteOp::PutUser(user));
-        Ok(())
+        ops.push(WriteOp::PutAuthRevision(revision));
+        ops.push(WriteOp::PutUser(user));
+        Ok(ops)
     }
 
     /// Sync `AuthUserRevokeRoleRequest` and return whether authstore is changed.
-    fn sync_user_revoke_role_request(
+    fn sync_user_revoke_role_request<'a>(
         &self,
-        id: &ProposeId,
-        req: &AuthUserRevokeRoleRequest,
-    ) -> Result<(), ExecuteError> {
+        req: &'a AuthUserRevokeRoleRequest,
+    ) -> Result<Vec<WriteOp<'a>>, ExecuteError> {
+        let mut ops = Vec::new();
         let mut user = self.backend.get_user(&req.name)?;
         let idx = user
             .roles
@@ -761,58 +763,56 @@ where
                 .insert(req.name.clone(), user_permissions);
         });
         let revision = self.revision.next();
-        self.backend
-            .buffer_op(id, WriteOp::PutAuthRevision(revision));
-        self.backend.buffer_op(id, WriteOp::PutUser(user));
-        Ok(())
+        ops.push(WriteOp::PutAuthRevision(revision));
+        ops.push(WriteOp::PutUser(user));
+        Ok(ops)
     }
 
     /// Sync `AuthRoleAddRequest` and return whether authstore is changed.
-    fn sync_role_add_request(&self, id: &ProposeId, req: &AuthRoleAddRequest) {
+    fn sync_role_add_request<'a>(&self, req: &'a AuthRoleAddRequest) -> Vec<WriteOp<'a>> {
+        let mut ops = Vec::new();
         let role = Role {
             name: req.name.as_str().into(),
             key_permission: Vec::new(),
         };
         let revision = self.revision.next();
-        self.backend
-            .buffer_op(id, WriteOp::PutAuthRevision(revision));
-        self.backend.buffer_op(id, WriteOp::PutRole(role));
+        ops.push(WriteOp::PutAuthRevision(revision));
+        ops.push(WriteOp::PutRole(role));
+        ops
     }
 
     /// Sync `AuthRoleDeleteRequest` and return whether authstore is changed.
-    fn sync_role_delete_request(
+    fn sync_role_delete_request<'a>(
         &self,
-        id: &ProposeId,
-        req: &AuthRoleDeleteRequest,
-    ) -> Result<(), ExecuteError> {
+        req: &'a AuthRoleDeleteRequest,
+    ) -> Result<Vec<WriteOp<'a>>, ExecuteError> {
+        let mut ops = Vec::new();
         let users = self.backend.get_all_users()?;
         let mut new_perms = HashMap::new();
         let revision = self.revision.next();
-        self.backend
-            .buffer_op(id, WriteOp::PutAuthRevision(revision));
-        self.backend
-            .buffer_op(id, WriteOp::DeleteRole(req.role.clone()));
+        ops.push(WriteOp::PutAuthRevision(revision));
+        ops.push(WriteOp::DeleteRole(req.role.as_str()));
         for mut user in users {
             if let Ok(idx) = user.roles.binary_search(&req.role) {
                 let _ignore = user.roles.remove(idx);
                 let perms = self.get_user_permissions(&user, None);
                 let _old = new_perms.insert(String::from_utf8_lossy(&user.name).to_string(), perms);
-                self.backend.buffer_op(id, WriteOp::PutUser(user));
+                ops.push(WriteOp::PutUser(user));
             }
         }
         self.permission_cache.map_write(|mut cache| {
             cache.user_permissions.extend(new_perms.into_iter());
             let _ignore = cache.role_to_users_map.remove(&req.role);
         });
-        Ok(())
+        Ok(ops)
     }
 
     /// Sync `AuthRoleGrantPermissionRequest` and return whether authstore is changed.
-    fn sync_role_grant_permission_request(
+    fn sync_role_grant_permission_request<'a>(
         &self,
-        id: &ProposeId,
-        req: &AuthRoleGrantPermissionRequest,
-    ) -> Result<(), ExecuteError> {
+        req: &'a AuthRoleGrantPermissionRequest,
+    ) -> Result<Vec<WriteOp<'a>>, ExecuteError> {
+        let mut ops = Vec::new();
         let mut role = self.backend.get_role(&req.name)?;
         let permission = req
             .perm
@@ -862,18 +862,17 @@ where
             }
         });
         let revision = self.revision.next();
-        self.backend
-            .buffer_op(id, WriteOp::PutAuthRevision(revision));
-        self.backend.buffer_op(id, WriteOp::PutRole(role));
-        Ok(())
+        ops.push(WriteOp::PutAuthRevision(revision));
+        ops.push(WriteOp::PutRole(role));
+        Ok(ops)
     }
 
     /// Sync `AuthRoleRevokePermissionRequest` and return whether authstore is changed.
-    fn sync_role_revoke_permission_request(
+    fn sync_role_revoke_permission_request<'a>(
         &self,
-        id: &ProposeId,
-        req: &AuthRoleRevokePermissionRequest,
-    ) -> Result<(), ExecuteError> {
+        req: &'a AuthRoleRevokePermissionRequest,
+    ) -> Result<Vec<WriteOp<'a>>, ExecuteError> {
+        let mut ops = Vec::new();
         let mut role = self.backend.get_role(&req.role)?;
         let idx = role
             .key_permission
@@ -902,10 +901,9 @@ where
             }
         });
         let revision = self.revision.next();
-        self.backend
-            .buffer_op(id, WriteOp::PutAuthRevision(revision));
-        self.backend.buffer_op(id, WriteOp::PutRole(role));
-        Ok(())
+        ops.push(WriteOp::PutAuthRevision(revision));
+        ops.push(WriteOp::PutRole(role));
+        Ok(ops)
     }
 
     /// Auth revision
@@ -1454,9 +1452,8 @@ mod test {
         req: &RequestWithToken,
     ) -> Result<(CommandResponse, SyncResponse), ExecuteError> {
         let cmd_res = store.execute(req)?;
-        let id = ProposeId::new("test-id".to_owned());
-        let sync_res = store.after_sync(&id, req)?;
-        store.backend.flush(&id)?;
+        let (sync_res, ops) = store.after_sync(req)?;
+        store.backend.flush_ops(ops)?;
         Ok((cmd_res, sync_res))
     }
 
