@@ -234,13 +234,18 @@ async fn no_heartbeat_when_contention_is_high() {
         loop {
             sleep(default_heartbeat_interval()).await;
             let action = curp_c.tick();
-            assert!(matches!(action, TickAction::Nothing));
+            assert!(match action {
+                TickAction::Heartbeat(hb) => hb.is_empty(),
+                _ => false,
+            });
         }
     });
 
     for _ in 0..50 {
         sleep_millis(50).await;
-        curp.opt_out_hb();
+        for other in &curp.ctx.others {
+            curp.opt_out_hb(other);
+        }
     }
 
     handle.abort();
