@@ -329,22 +329,26 @@ impl<C: 'static + Command> CurpNode<C> {
         let rpc_timeout = curp.cfg().rpc_timeout;
         let resps = hbs
             .into_iter()
-            .map(|(id, hb)| {
+            .filter_map(|(id, hb)| {
                 let connect = connects
                     .get(&id)
                     .cloned()
                     .unwrap_or_else(|| unreachable!("no server {id}'s connect"));
-                let req = AppendEntriesRequest::new_heartbeat(
+                let Ok(req) = AppendEntriesRequest::new(
                     hb.term,
                     hb.leader_id,
                     hb.prev_log_index,
                     hb.prev_log_term,
+                    hb.entries,
                     hb.leader_commit,
-                );
-                async move {
+                ) else {
+                    error!("failed to serialize ae");
+                    return None;
+                };
+                Some(async move {
                     let resp = connect.append_entries(req, rpc_timeout).await;
                     (id, resp)
-                }
+                })
             })
             .collect::<FuturesUnordered<_>>()
             .filter_map(|(id, resp)| async move {
@@ -499,6 +503,7 @@ impl<C: 'static + Command> CurpNode<C> {
         while let Some(i) = sync_rx.recv().await {
             let req = {
                 let Ok(ae) = curp.append_entries_single(i) else {
+                    error!("{} get log {i} failed", curp.id());
                     continue;
                 };
                 let req = AppendEntriesRequest::new(
@@ -517,59 +522,55 @@ impl<C: 'static + Command> CurpNode<C> {
                     Ok(req) => req,
                 }
             };
-            // send append_entries to each server in parallel
-            for connect in connects.values() {
-                let _handle = tokio::spawn(Self::send_log_until_succeed(
+            for connect in connects.values().cloned() {
+                let _handle = tokio::spawn(Self::send_log_to_follower(
                     Arc::clone(&curp),
-                    Arc::clone(connect),
+                    connect,
                     i,
                     req.clone(),
                 ));
             }
-            curp.opt_out_hb();
         }
     }
 
     /// Send `append_entries` containing a single log to a server
     #[allow(clippy::integer_arithmetic, clippy::indexing_slicing)] // log.len() >= 1 because we have a fake log[0], indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
-    async fn send_log_until_succeed(
+    async fn send_log_to_follower(
         curp: Arc<RawCurp<C>>,
         connect: Arc<impl ConnectApi>,
         i: LogIndex,
         req: AppendEntriesRequest,
     ) {
-        let (rpc_timeout, retry_timeout) = (curp.cfg().rpc_timeout, curp.cfg().retry_timeout);
+        debug!("{} sends log[{i}] to follower {}", curp.id(), connect.id());
+        let rpc_timeout = curp.cfg().rpc_timeout;
         // send log[i] until succeed
-        loop {
-            let resp = connect.append_entries(req.clone(), rpc_timeout).await;
+        let resp = connect.append_entries(req, rpc_timeout).await;
 
-            #[allow(clippy::unwrap_used)]
-            // indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
-            match resp {
-                Err(e) => {
-                    warn!("append_entries error: {e}");
-                }
-                Ok(resp) => {
-                    let resp = resp.into_inner();
+        #[allow(clippy::unwrap_used)]
+        // indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
+        match resp {
+            Err(e) => {
+                warn!("append_entries error: {e}");
+            }
+            Ok(resp) => {
+                let resp = resp.into_inner();
 
-                    let result = curp.handle_append_entries_resp(
-                        connect.id(),
-                        Some(i),
-                        resp.term,
-                        resp.success,
-                        resp.hint_index,
-                    );
+                let result = curp.handle_append_entries_resp(
+                    connect.id(),
+                    Some(i),
+                    resp.term,
+                    resp.success,
+                    resp.hint_index,
+                );
 
-                    match result {
-                        Ok(true) | Err(()) => return,
-                        Ok(false) => {
-                            warn!("{} failed to send log {i}, retrying", curp.id());
-                        }
+                match result {
+                    Ok(true) => curp.opt_out_hb(connect.id()),
+                    Ok(false) => {
+                        warn!("{} failed to send log {i}, retrying", curp.id());
                     }
+                    Err(()) => {}
                 }
             }
-            // wait for some time until next retry
-            tokio::time::sleep(retry_timeout).await;
         }
     }
 
@@ -613,49 +614,12 @@ impl<C: Command> Debug for CurpNode<C> {
 #[cfg(test)]
 mod tests {
     use tracing_test::traced_test;
-    use utils::config::default_retry_timeout;
 
     use super::*;
     use crate::{
-        log_entry::LogEntry,
-        rpc::connect::MockConnectApi,
-        server::cmd_worker::MockCEEventTxApi,
-        test_utils::{sleep_millis, test_cmd::TestCommand},
+        log_entry::LogEntry, rpc::connect::MockConnectApi, server::cmd_worker::MockCEEventTxApi,
+        test_utils::test_cmd::TestCommand,
     };
-
-    /*************** tests for send_log_until_succeed **************/
-
-    #[traced_test]
-    #[tokio::test]
-    async fn logs_will_be_resent() {
-        let curp = Arc::new(RawCurp::new_test(
-            3,
-            MockCEEventTxApi::<TestCommand>::default(),
-        ));
-
-        let mut mock_connect = MockConnectApi::default();
-        mock_connect
-            .expect_append_entries()
-            .times(3..)
-            .returning(|_, _| Err(ProposeError::RpcStatus("timeout".to_owned())));
-        mock_connect.expect_id().return_const("S1".to_owned());
-
-        let handle = tokio::spawn(async move {
-            let req = AppendEntriesRequest::new(
-                1,
-                "S0".to_owned(),
-                0,
-                0,
-                vec![LogEntry::new(1, 1, Arc::new(TestCommand::default()))],
-                0,
-            )
-            .unwrap();
-            CurpNode::send_log_until_succeed(curp, Arc::new(mock_connect), 1, req).await;
-        });
-        sleep_millis(default_retry_timeout().as_millis() as u64 * 4).await;
-        assert!(!handle.is_finished());
-        handle.abort();
-    }
 
     #[traced_test]
     #[tokio::test]
@@ -685,7 +649,7 @@ mod tests {
                 0,
             )
             .unwrap();
-            CurpNode::send_log_until_succeed(curp, Arc::new(mock_connect), 1, req).await;
+            CurpNode::send_log_to_follower(curp, Arc::new(mock_connect), 1, req).await;
         });
 
         assert!(handle.await.is_ok());
@@ -720,7 +684,7 @@ mod tests {
                 0,
             )
             .unwrap();
-            CurpNode::send_log_until_succeed(curp, Arc::new(mock_connect), 1, req).await;
+            CurpNode::send_log_to_follower(curp, Arc::new(mock_connect), 1, req).await;
         });
 
         assert!(handle.await.is_ok());

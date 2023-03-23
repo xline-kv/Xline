@@ -253,24 +253,6 @@ impl AppendEntriesRequest {
         })
     }
 
-    /// Create a new `append_entries` heartbeat request
-    pub(crate) fn new_heartbeat(
-        term: u64,
-        leader_id: ServerId,
-        prev_log_index: LogIndex,
-        prev_log_term: u64,
-        leader_commit: LogIndex,
-    ) -> Self {
-        Self {
-            term,
-            leader_id,
-            prev_log_index,
-            prev_log_term,
-            entries: vec![],
-            leader_commit,
-        }
-    }
-
     /// Get log entries
     pub(crate) fn entries<C: Command>(&self) -> bincode::Result<Vec<LogEntry<C>>> {
         self.entries

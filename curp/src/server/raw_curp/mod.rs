@@ -135,7 +135,7 @@ struct Context<C: Command> {
     /// Election tick
     election_tick: AtomicU8,
     /// Heartbeat opt out flag
-    hb_opt: AtomicBool,
+    hb_opt: HashMap<ServerId, AtomicBool>,
     /// Tx to send cmds to execute and do after sync
     cmd_tx: Box<dyn CEEventTxApi<C>>,
     /// Tx to send the index of log entry which needs to be replicated on followers
@@ -201,16 +201,6 @@ impl<C: 'static + Command> RawCurp<C> {
 
     /// Tick heartbeat, will generate heartbeat if timeout
     fn tick_heartbeat(&self) -> TickAction<C> {
-        // check if heartbeat has been optimized out
-        if self
-            .ctx
-            .hb_opt
-            .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
-            .is_ok()
-        {
-            return TickAction::Nothing;
-        }
-
         let term = self.st.map_read(|st_r| st_r.term);
         let lst_r = self.lst.read();
         let log_r = self.log.read();
@@ -219,11 +209,19 @@ impl<C: 'static + Command> RawCurp<C> {
             .ctx
             .others
             .iter()
-            .map(|id| {
+            .filter_map(|id| {
+                #[allow(clippy::indexing_slicing)]
+                // check if heartbeat has been optimized out
+                if self.ctx.hb_opt[id]
+                    .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
+                    .is_ok()
+                {
+                    return None;
+                }
                 let next_index = lst_r.get_next_index(id);
                 let (prev_log_index, prev_log_term) = log_r.get_prev_entry_info(next_index);
                 debug!("{} send heartbeat to {}", self.id(), id);
-                (
+                let req = (
                     id.clone(),
                     AppendEntries {
                         term,
@@ -231,9 +229,10 @@ impl<C: 'static + Command> RawCurp<C> {
                         prev_log_index,
                         prev_log_term,
                         leader_commit: log_r.commit_index,
-                        entries: vec![],
+                        entries: log_r.get_from(next_index).unwrap_or_default().to_vec(),
                     },
-                )
+                );
+                Some(req)
             })
             .collect();
         TickAction::Heartbeat(hbs)
@@ -375,7 +374,7 @@ impl<C: 'static + Command> RawCurp<C> {
     }
 
     /// Handle `append_entries` response
-    /// Return `Ok(())`
+    /// Return `Ok(ae_succeeded)`
     /// Return `Err(())` if self is no longer the leader
     pub(super) fn handle_append_entries_resp(
         &self,
@@ -404,7 +403,7 @@ impl<C: 'static + Command> RawCurp<C> {
                 self.id(),
                 follower_id,
             );
-            self.calibrate(&mut lst_w, follower_id.clone());
+            self.send_calibrate(&mut lst_w, follower_id.clone());
             return Ok(false);
         }
 
@@ -548,7 +547,7 @@ impl<C: 'static + Command> RawCurp<C> {
         if prev_last_log_index < last_log_index {
             // if some entries are recovered, calibrate immediately
             for follower_id in &self.ctx.others {
-                self.calibrate(&mut lst_w, follower_id.clone());
+                self.send_calibrate(&mut lst_w, follower_id.clone());
             }
         }
 
@@ -575,6 +574,10 @@ impl<C: 'static + Command> RawCurp<C> {
     ) -> Self {
         let next_index = others.iter().map(|o| (o.clone(), 1)).collect();
         let match_index = others.iter().map(|o| (o.clone(), 0)).collect();
+        let hb_opt = others
+            .iter()
+            .map(|o| (o.clone(), AtomicBool::new(false)))
+            .collect();
         let raw_curp = Self {
             st: RwLock::new(State::new(
                 0,
@@ -596,7 +599,7 @@ impl<C: 'static + Command> RawCurp<C> {
                 leader_tx: broadcast::channel(1).0,
                 cfg,
                 election_tick: AtomicU8::new(0),
-                hb_opt: AtomicBool::new(false),
+                hb_opt,
                 cmd_tx,
                 sync_tx,
                 calibrate_tx,
@@ -727,8 +730,9 @@ impl<C: 'static + Command> RawCurp<C> {
     }
 
     /// Optimize out heartbeat
-    pub(super) fn opt_out_hb(&self) {
-        self.ctx.hb_opt.store(true, Ordering::Relaxed);
+    pub(super) fn opt_out_hb(&self, id: &ServerId) {
+        #[allow(clippy::indexing_slicing)]
+        self.ctx.hb_opt[id].store(true, Ordering::Relaxed);
     }
 
     /// Get a reference to `CurpConfig`
@@ -800,7 +804,9 @@ impl<C: 'static + Command> RawCurp<C> {
         st.leader_id = None;
         let _ig = self.ctx.leader_tx.send(None).ok();
         st.randomize_timeout_ticks(); // regenerate timeout ticks
-        self.ctx.hb_opt.store(false, Ordering::Relaxed);
+        for o in self.ctx.hb_opt.values() {
+            o.store(false, Ordering::Relaxed);
+        }
         debug!(
             "{} updates to term {term} and becomes a follower",
             self.id()
@@ -946,7 +952,7 @@ impl<C: 'static + Command> RawCurp<C> {
     }
 
     /// Send calibrate task
-    fn calibrate(&self, lst: &mut LeaderState, id: ServerId) {
+    fn send_calibrate(&self, lst: &mut LeaderState, id: ServerId) {
         if lst.calibrating.insert(id.clone()) {
             if let Err(e) = self.ctx.calibrate_tx.send(id) {
                 error!("can't send calibrate task {e}");
