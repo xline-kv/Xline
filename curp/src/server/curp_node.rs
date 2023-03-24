@@ -35,7 +35,7 @@ use crate::{
     },
     server::{cmd_worker::CEEventTxApi, raw_curp::SyncAction, storage::rocksdb::RocksDBStorage},
     snapshot::{Snapshot, SnapshotMeta},
-    ServerId, TxFilter,
+    ServerId, SnapshotAllocator, TxFilter,
 };
 
 /// Curp error
@@ -100,6 +100,8 @@ pub(super) struct CurpNode<C: Command> {
     ce_event_tx: CEEventTx<C>,
     /// Storage
     storage: Arc<dyn StorageApi<Command = C>>,
+    /// Snapshot allocator
+    snapshot_allocator: Box<dyn SnapshotAllocator>,
 }
 
 // handlers
@@ -199,7 +201,14 @@ impl<C: 'static + Command> CurpNode<C> {
         req_stream: impl Stream<Item = Result<InstallSnapshotRequest, String>>,
     ) -> Result<InstallSnapshotResponse, CurpError> {
         pin_mut!(req_stream);
-        let mut snapshot = self.storage.new_snapshot().await?;
+        let mut snapshot = self
+            .snapshot_allocator
+            .allocate_new_snapshot()
+            .await
+            .map_err(|err| {
+                error!("failed to allocate a new snapshot, {err:?}");
+                CurpError::Internal("failed to allocate a new snapshot".to_owned())
+            })?;
         while let Some(req) = req_stream.next().await {
             let req = req.map_err(|e| {
                 warn!("snapshot stream error, {e}");
@@ -213,23 +222,28 @@ impl<C: 'static + Command> CurpNode<C> {
             ) {
                 return Ok(InstallSnapshotResponse::new(self.curp.term()));
             }
-            snapshot.write_all(req.data.as_slice()).await?;
+            snapshot
+                .write_all(req.data.as_slice())
+                .await
+                .map_err(|err| {
+                    error!("can't write snapshot data, {err:?}");
+                    err
+                })?;
             if req.done {
                 debug_assert_eq!(
                     snapshot.size(),
                     req.offset + req.data.len().numeric_cast::<u64>(),
                     "snapshot corrupted"
                 );
-                info!(
-                    "{} successfully received a snapshot, size: {}",
-                    self.curp.id(),
-                    snapshot.size()
-                );
                 let meta = SnapshotMeta {
                     last_included_index: req.last_included_index,
                     last_included_term: req.last_included_term,
                 };
                 let snapshot = Snapshot::new(meta, snapshot);
+                info!(
+                    "{} successfully received a snapshot, {snapshot:?}",
+                    self.curp.id(),
+                );
                 self.ce_event_tx
                     .send_reset(Some(snapshot))
                     .await
@@ -398,6 +412,7 @@ impl<C: 'static + Command> CurpNode<C> {
         is_leader: bool,
         others: HashMap<ServerId, String>,
         cmd_executor: CE,
+        snapshot_allocator: impl SnapshotAllocator + 'static,
         curp_cfg: Arc<CurpConfig>,
         tx_filter: Option<Box<dyn TxFilter>>,
     ) -> Result<Self, CurpError> {
@@ -505,6 +520,7 @@ impl<C: 'static + Command> CurpNode<C> {
             shutdown_trigger,
             ce_event_tx,
             storage,
+            snapshot_allocator: Box::new(snapshot_allocator),
         })
     }
 

@@ -12,7 +12,9 @@ use std::{
     time::Duration,
 };
 
-use curp::{client::Client, server::Rpc, LogIndex, ProtocolServer, TxFilter};
+use async_trait::async_trait;
+use curp::{client::Client, server::Rpc, LogIndex, ProtocolServer, SnapshotAllocator, TxFilter};
+use engine::snapshot_api::{MemorySnapshot, SnapshotProxy};
 use futures::future::join_all;
 use itertools::Itertools;
 use parking_lot::Mutex;
@@ -38,6 +40,16 @@ pub mod proto {
 pub use proto::{protocol_client::ProtocolClient, ProposeRequest, ProposeResponse};
 
 use self::proto::{FetchLeaderRequest, FetchLeaderResponse};
+
+struct MemorySnapshotAllocator;
+
+#[async_trait]
+impl SnapshotAllocator for MemorySnapshotAllocator {
+    async fn allocate_new_snapshot(&self) -> Result<SnapshotProxy, Box<dyn Error>> {
+        let snapshot = MemorySnapshot::default();
+        Ok(SnapshotProxy::Memory(snapshot))
+    }
+}
 
 #[derive(Debug)]
 pub struct NotReachable;
@@ -159,9 +171,11 @@ impl CurpGroup {
                         others.into_iter().collect(),
                         listener,
                         ce,
+                        MemorySnapshotAllocator,
                         Arc::new(
                             CurpConfigBuilder::default()
                                 .data_dir(PathBuf::from(storage_path_c))
+                                .log_entries_cap(10)
                                 .build()
                                 .unwrap(),
                         ),
@@ -296,6 +310,7 @@ impl CurpGroup {
                 others.into_iter().collect(),
                 listener,
                 ce,
+                MemorySnapshotAllocator,
                 Arc::new(
                     CurpConfigBuilder::default()
                         .data_dir(PathBuf::from(storage_path))

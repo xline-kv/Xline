@@ -106,7 +106,9 @@ async fn cmd_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
             TaskType::Snapshot(meta, tx) => match ce.snapshot().await {
                 Ok(snapshot) => {
                     debug_assert_eq!(ce.last_applied().unwrap(), meta.last_included_index); // sanity check
-                    if tx.send(Snapshot::new(meta, snapshot)).is_err() {
+                    let snapshot = Snapshot::new(meta, snapshot);
+                    debug!("{} takes a snapshot, {snapshot:?}", curp.id());
+                    if tx.send(snapshot).is_err() {
                         error!("snapshot oneshot closed");
                     }
                     true

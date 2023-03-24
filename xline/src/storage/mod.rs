@@ -14,6 +14,8 @@ pub(crate) mod kvwatcher;
 pub(crate) mod lease_store;
 /// Revision module
 pub(crate) mod revision;
+/// Snapshot Allocators
+pub(crate) mod snapshot_allocator;
 /// Persistent storage abstraction
 pub(crate) mod storage_api;
 

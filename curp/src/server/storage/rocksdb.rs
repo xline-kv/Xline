@@ -1,16 +1,7 @@
-use std::{
-    marker::PhantomData,
-    path::{Path, PathBuf},
-};
+use std::{marker::PhantomData, path::Path};
 
 use async_trait::async_trait;
-use chrono::Local;
-use engine::{
-    rocksdb_engine::RocksEngine,
-    snapshot_api::{RocksSnapshot, SnapshotProxy},
-    StorageEngine, WriteOperation,
-};
-use uuid::Uuid;
+use engine::{rocksdb_engine::RocksEngine, StorageEngine, WriteOperation};
 
 use super::{StorageApi, StorageError};
 use crate::{cmd::Command, log_entry::LogEntry, ServerId};
@@ -25,8 +16,6 @@ const CF: &str = "curp";
 pub(in crate::server) struct RocksDBStorage<C> {
     /// DB handle
     db: RocksEngine,
-    /// Storage Path
-    data_dir: PathBuf,
     /// Phantom
     phantom: PhantomData<C>,
 }
@@ -80,16 +69,6 @@ impl<C: 'static + Command> StorageApi for RocksDBStorage<C> {
 
         Ok((voted_for, entries))
     }
-
-    async fn new_snapshot(&self) -> Result<SnapshotProxy, StorageError> {
-        // TODO: delete outdated snapshot
-        // TODO: better snapshot file naming
-        let dir = self
-            .data_dir
-            .join(format!("snapshot-{}-{}", Local::now(), Uuid::new_v4()));
-        let snapshot = RocksSnapshot::new_for_receiving(dir)?;
-        Ok(SnapshotProxy::Rocks(snapshot))
-    }
 }
 
 impl<C> RocksDBStorage<C> {
@@ -98,7 +77,6 @@ impl<C> RocksDBStorage<C> {
         let db = RocksEngine::new(dir.as_ref(), &[CF])?;
         Ok(Self {
             db,
-            data_dir: dir.as_ref().into(),
             phantom: PhantomData,
         })
     }

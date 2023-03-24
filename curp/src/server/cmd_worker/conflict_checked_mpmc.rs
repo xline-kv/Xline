@@ -55,7 +55,7 @@ pub(in crate::server) struct Task<C> {
 }
 
 /// Task Type
-pub(in crate::server) enum TaskType<C> {
+pub(super) enum TaskType<C> {
     /// Execute a cmd
     SpecExe(Arc<C>),
     /// After sync a cmd

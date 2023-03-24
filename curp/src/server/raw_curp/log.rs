@@ -37,11 +37,10 @@ pub(super) struct Log<C: Command> {
     pub(super) base_term: u64,
     /// Index of highest log entry known to be committed
     pub(super) commit_index: LogIndex,
-    /// Index of highest log entry applied to state machine
-    /// Note this `last_applied` is a little bit different from the one in command executor
-    /// in that it means the index of the last log sent to the `cmd_worker`(may not be executed yet)
-    /// while the `last_applied` in command executor means index of the last log entry that has been successfully applied to the command executor.
-    pub(super) last_applied: LogIndex,
+    /// Index of highest log entry sent to after sync. `last_as` should always be less than or equal to `last_exe`.
+    pub(super) last_as: LogIndex,
+    /// Index of highest log entry sent to speculatively exe. `last_exe` should always be greater than or equal to `last_as`.
+    pub(super) last_exe: LogIndex,
     /// Tx to send log entries to persist task
     log_tx: mpsc::UnboundedSender<LogEntry<C>>,
     /// Prefix sum vector of log entries
@@ -59,26 +58,32 @@ impl<C: Command> Debug for Log<C> {
             .field("base_index", &self.base_index)
             .field("base_term", &self.base_term)
             .field("commit_index", &self.commit_index)
-            .field("last_applied", &self.last_applied)
+            .field("last_as", &self.last_as)
+            .field("last_exe", &self.last_exe)
             .finish()
     }
 }
 
 impl<C: 'static + Command> Log<C> {
     /// Create a new log
-    pub(super) fn new(log_tx: mpsc::UnboundedSender<LogEntry<C>>, batch_limit: u64) -> Self {
-        let mut batch_index = VecDeque::with_capacity(LOG_INIT_CAPACITY);
+    pub(super) fn new(
+        log_tx: mpsc::UnboundedSender<LogEntry<C>>,
+        batch_limit: u64,
+        entries_cap: usize,
+    ) -> Self {
+        let mut batch_index = VecDeque::with_capacity(entries_cap);
         batch_index.push_back(0);
         Self {
             entries: VecDeque::with_capacity(LOG_INIT_CAPACITY),
             commit_index: 0,
             base_index: 0,
             base_term: 0,
-            last_applied: 0,
+            last_as: 0,
+            last_exe: 0,
             log_tx,
             batch_index,
             batch_limit,
-            entries_cap: LOG_INIT_CAPACITY,
+            entries_cap,
         }
     }
 
@@ -244,11 +249,7 @@ impl<C: 'static + Command> Log<C> {
             (self.base_index, self.base_term)
         } else {
             let entry = self.get(i - 1).unwrap_or_else(|| {
-                unreachable!(
-                    "system corrupted, get log[{}] when we only have {} log entries",
-                    i - 1,
-                    self.last_log_index()
-                )
+                unreachable!("get log[{}] when base_index is {}", i - 1, self.base_index)
             });
             (entry.index, entry.term)
         }
@@ -256,10 +257,11 @@ impl<C: 'static + Command> Log<C> {
 
     /// Reset log base by snapshot
     pub(super) fn reset_by_snapshot_meta(&mut self, meta: SnapshotMeta) {
-        self.base_index = meta.last_included_index.numeric_cast();
+        self.base_index = meta.last_included_index;
         self.base_term = meta.last_included_term;
-        self.last_applied = meta.last_included_index.numeric_cast();
-        self.commit_index = meta.last_included_index.numeric_cast();
+        self.last_as = meta.last_included_index;
+        self.last_exe = meta.last_included_index;
+        self.commit_index = meta.last_included_index;
         self.entries.clear();
     }
 
@@ -280,28 +282,33 @@ impl<C: 'static + Command> Log<C> {
         self.batch_index = batch_index;
 
         self.entries = VecDeque::from(entries);
-        let Some(front) = self.entries.front() else {
+        self.compact();
+    }
+
+    /// Compact log
+    pub(super) fn compact(&mut self) {
+        let Some(first_entry) = self.entries.front() else {
             return;
         };
-        let front_index = front.index;
-        let reserve_from = if self.last_applied > self.entries_cap.numeric_cast() {
-            std::cmp::max(
-                self.last_applied - self.entries_cap.numeric_cast::<u64>(),
-                front_index,
-            )
+        if self.last_as <= first_entry.index {
+            return;
+        }
+        let compact_from = if self.last_as - first_entry.index >= self.entries_cap.numeric_cast() {
+            self.last_as - self.entries_cap.numeric_cast::<u64>()
         } else {
-            front_index
+            return;
         };
-        // retain only the latest entries
+        #[allow(clippy::unwrap_used)] // checked
         while self
             .entries
             .front()
-            .map_or(false, |e| e.index < reserve_from)
+            .map_or(false, |e| e.index <= compact_from)
         {
-            let _ig = self.entries.pop_front();
-            let _ig_i = self.batch_index.pop_front();
+            let e = self.entries.pop_front().unwrap();
+            let _ig_i = self.batch_index.pop_front().unwrap();
+            self.base_index = e.index;
+            self.base_term = e.term;
         }
-        self.entries.shrink_to_fit();
     }
 }
 
@@ -309,7 +316,7 @@ impl<C: 'static + Command> Log<C> {
 mod tests {
     use std::{iter::repeat, ops::Index, sync::Arc};
 
-    use utils::config::default_batch_max_size;
+    use utils::config::{default_batch_max_size, default_log_entries_cap};
 
     use super::*;
     use crate::test_utils::test_cmd::TestCommand;
@@ -331,7 +338,8 @@ mod tests {
     #[test]
     fn test_log_up_to_date() {
         let (log_tx, _log_rx) = mpsc::unbounded_channel();
-        let mut log = Log::<TestCommand>::new(log_tx, default_batch_max_size());
+        let mut log =
+            Log::<TestCommand>::new(log_tx, default_batch_max_size(), default_log_entries_cap());
         let result = log.try_append_entries(
             vec![
                 LogEntry::new(1, 1, Arc::new(TestCommand::default())),
@@ -352,7 +360,8 @@ mod tests {
     #[test]
     fn try_append_entries_will_remove_inconsistencies() {
         let (log_tx, _log_rx) = mpsc::unbounded_channel();
-        let mut log = Log::<TestCommand>::new(log_tx, default_batch_max_size());
+        let mut log =
+            Log::<TestCommand>::new(log_tx, default_batch_max_size(), default_log_entries_cap());
         let result = log.try_append_entries(
             vec![
                 LogEntry::new(1, 1, Arc::new(TestCommand::default())),
@@ -380,7 +389,8 @@ mod tests {
     #[test]
     fn try_append_entries_will_not_append() {
         let (log_tx, _log_rx) = mpsc::unbounded_channel();
-        let mut log = Log::<TestCommand>::new(log_tx, default_batch_max_size());
+        let mut log =
+            Log::<TestCommand>::new(log_tx, default_batch_max_size(), default_log_entries_cap());
         let result = log.try_append_entries(
             vec![LogEntry::new(1, 1, Arc::new(TestCommand::default()))],
             0,
@@ -415,7 +425,8 @@ mod tests {
         let log_entry_size = serialized_size(&log_entry).unwrap();
 
         let (tx, _rx) = mpsc::unbounded_channel();
-        let mut log = Log::new(tx, default_batch_max_size());
+        let mut log =
+            Log::<TestCommand>::new(tx, default_batch_max_size(), default_log_entries_cap());
 
         let _res = repeat(TestCommand::default())
             .take(10)
@@ -492,7 +503,9 @@ mod tests {
             .map(|(idx, cmd)| LogEntry::new((idx + 1).numeric_cast(), 0, cmd))
             .collect::<Vec<LogEntry<TestCommand>>>();
         let (tx, _rx) = mpsc::unbounded_channel();
-        let mut log = Log::new(tx, default_batch_max_size());
+        let mut log =
+            Log::<TestCommand>::new(tx, default_batch_max_size(), default_log_entries_cap());
+
         log.restore_entries(entries);
         assert_eq!(log.entries.len(), 10);
         assert_eq!(log.batch_index.len(), 11);
@@ -502,5 +515,21 @@ mod tests {
             .iter()
             .enumerate()
             .for_each(|(idx, &size)| assert_eq!(size, entry_size * idx.numeric_cast::<u64>()));
+    }
+
+    #[test]
+    fn compact_test() {
+        let (log_tx, _log_rx) = mpsc::unbounded_channel();
+        let mut log = Log::<TestCommand>::new(log_tx, default_batch_max_size(), 10);
+
+        for _ in 0..30 {
+            log.push_cmd(0, Arc::new(TestCommand::default())).unwrap();
+        }
+        log.last_as = 22;
+        log.last_exe = 22;
+        log.compact();
+        assert_eq!(log.base_index, 12);
+        assert_eq!(log.entries.front().unwrap().index, 13);
+        assert_eq!(log.batch_index.len(), 19);
     }
 }
