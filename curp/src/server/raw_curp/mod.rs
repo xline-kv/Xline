@@ -235,14 +235,18 @@ impl<C: 'static + Command> RawCurp<C> {
         });
         let mut log_w = self.log.write();
 
-        match log_w.push_cmd(st_r.term, Arc::clone(&cmd)) {
-            Ok(index) => debug!("{} gets new log[{index}]", self.id()),
+        let index = match log_w.push_cmd(st_r.term, Arc::clone(&cmd)) {
+            Ok(index) => {
+                debug!("{} gets new log[{index}]", self.id());
+                index
+            }
             Err(e) => {
                 return (info, Err(e.into()));
             }
-        }
+        };
 
         if !conflict {
+            log_w.last_exe = index;
             self.ctx.cmd_tx.send_sp_exe(cmd);
         }
 
@@ -588,7 +592,7 @@ impl<C: 'static + Command> RawCurp<C> {
             )),
             lst: LeaderState::new(&others),
             cst: Mutex::new(CandidateState::new()),
-            log: RwLock::new(Log::new(log_tx, cfg.batch_max_size)),
+            log: RwLock::new(Log::new(log_tx, cfg.batch_max_size, cfg.log_entries_cap)),
             ctx: Context {
                 id,
                 others,
@@ -656,7 +660,8 @@ impl<C: 'static + Command> RawCurp<C> {
         }
 
         raw_curp.log.map_write(|mut log_w| {
-            log_w.last_applied = last_applied;
+            log_w.last_as = last_applied;
+            log_w.last_exe = last_applied;
             log_w.commit_index = last_applied;
             log_w.restore_entries(entries);
         });
@@ -693,15 +698,19 @@ impl<C: 'static + Command> RawCurp<C> {
         let log_r = self.log.read();
         if next_index <= log_r.base_index {
             // the log has already been compacted
-            let entry = log_r.get(log_r.last_applied).unwrap_or_else(|| {
+            let entry = log_r.get(log_r.last_exe).unwrap_or_else(|| {
                 unreachable!(
                     "log entry {} should not have been compacted yet, needed for snapshot",
-                    log_r.last_applied
+                    log_r.last_as
                 )
             });
+            // TODO: buffer a local snapshot: if a follower is down for a long time,
+            // the leader will take a snapshot itself every time `sync` is called in effort to
+            // calibrate it. Since taking a snapshot will block the leader's execute workers, we should
+            // not take snapshot so often. A better solution would be to keep a snapshot cache.
             Ok(SyncAction::Snapshot(self.ctx.cmd_tx.send_snapshot(
                 SnapshotMeta {
-                    last_included_index: entry.index.numeric_cast(),
+                    last_included_index: entry.index,
                     last_included_term: entry.term,
                 },
             )))
@@ -927,7 +936,7 @@ impl<C: 'static + Command> RawCurp<C> {
 
     /// Apply new logs
     fn apply(&self, log: &mut Log<C>) {
-        for i in (log.last_applied + 1)..=log.commit_index {
+        for i in (log.last_as + 1)..=log.commit_index {
             let entry = log.get(i).unwrap_or_else(|| {
                 unreachable!(
                     "system corrupted, apply log[{i}] when we only have {} log entries",
@@ -935,7 +944,10 @@ impl<C: 'static + Command> RawCurp<C> {
                 )
             });
             self.ctx.cmd_tx.send_after_sync(Arc::clone(&entry.cmd), i);
-            log.last_applied = i;
+            log.last_as = i;
+            if log.last_exe < log.last_as {
+                log.last_exe = log.last_as;
+            }
 
             debug!(
                 "{} committed log[{i}], last_applied updated to {}",
@@ -943,6 +955,7 @@ impl<C: 'static + Command> RawCurp<C> {
                 i
             );
         }
+        log.compact();
     }
 
     /// Get quorum: the smallest number of servers who must be online for the cluster to work

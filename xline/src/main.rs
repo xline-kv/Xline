@@ -125,11 +125,12 @@ use utils::{
     config::{
         default_batch_max_size, default_batch_timeout, default_candidate_timeout_ticks,
         default_client_wait_synced_timeout, default_cmd_workers, default_follower_timeout_ticks,
-        default_gc_interval, default_heartbeat_interval, default_log_level,
-        default_propose_timeout, default_range_retry_timeout, default_retry_timeout,
-        default_rotation, default_rpc_timeout, default_server_wait_synced_timeout, file_appender,
-        AuthConfig, ClientTimeout, ClusterConfig, CurpConfigBuilder, LevelConfig, LogConfig,
-        RotationConfig, StorageConfig, TraceConfig, XlineServerConfig,
+        default_gc_interval, default_heartbeat_interval, default_log_entries_cap,
+        default_log_level, default_propose_timeout, default_range_retry_timeout,
+        default_retry_timeout, default_rotation, default_rpc_timeout,
+        default_server_wait_synced_timeout, file_appender, AuthConfig, ClientTimeout,
+        ClusterConfig, CurpConfigBuilder, LevelConfig, LogConfig, RotationConfig, StorageConfig,
+        TraceConfig, XlineServerConfig,
     },
     parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_rotation,
 };
@@ -199,6 +200,9 @@ struct ServerArgs {
     /// Candidate election timeout ticks
     #[clap(long, default_value_t = default_candidate_timeout_ticks())]
     candidate_timeout_ticks: u8,
+    /// Number of log entries to keep in memory
+    #[clap(long, default_value_t = default_log_entries_cap())]
+    log_entries_cap: usize,
     /// Curp client wait synced timeout [default: 2s]
     #[clap(long, value_parser = parse_duration)]
     client_wait_synced_timeout: Option<Duration>,
@@ -230,24 +234,24 @@ struct ServerArgs {
 impl From<ServerArgs> for XlineServerConfig {
     fn from(args: ServerArgs) -> Self {
         let Ok(curp_config) = CurpConfigBuilder::default()
-            .heartbeat_interval(args.heartbeat_interval
-                .unwrap_or_else(default_heartbeat_interval))
-            .wait_synced_timeout(args.server_wait_synced_timeout
-                .unwrap_or_else(default_server_wait_synced_timeout))
-            .retry_timeout(args.retry_timeout.unwrap_or_else(default_retry_timeout))
-            .rpc_timeout(args.rpc_timeout.unwrap_or_else(default_rpc_timeout))
-            .batch_timeout(args.batch_timeout.unwrap_or_else(default_batch_timeout))
-            .batch_max_size(args.batch_max_size.unwrap_or_else(default_batch_max_size))
-            .follower_timeout_ticks(args.follower_timeout_ticks)
-            .candidate_timeout_ticks(args.candidate_timeout_ticks)
-            .data_dir(args.curp_dir.unwrap_or_else(|| {
-                    let mut path = args.data_dir.clone();
-                    path.push("curp");
-                    path
-                }))
-            .gc_interval(args.gc_interval.unwrap_or_else(default_gc_interval))
-            .cmd_workers(args.cmd_workers)
-            .build() else {unreachable!()};
+        .heartbeat_interval(args.heartbeat_interval
+            .unwrap_or_else(default_heartbeat_interval))
+        .wait_synced_timeout(args.server_wait_synced_timeout
+            .unwrap_or_else(default_server_wait_synced_timeout))
+        .retry_timeout(args.retry_timeout.unwrap_or_else(default_retry_timeout))
+        .rpc_timeout(args.rpc_timeout.unwrap_or_else(default_rpc_timeout))
+        .batch_timeout(args.batch_timeout.unwrap_or_else(default_batch_timeout))
+        .batch_max_size(args.batch_max_size.unwrap_or_else(default_batch_max_size))
+        .follower_timeout_ticks(args.follower_timeout_ticks)
+        .candidate_timeout_ticks(args.candidate_timeout_ticks)
+        .data_dir(args.curp_dir.unwrap_or_else(|| {
+                let mut path = args.data_dir.clone();
+                path.push("curp");
+                path
+            }))
+        .gc_interval(args.gc_interval.unwrap_or_else(default_gc_interval))
+        .cmd_workers(args.cmd_workers)
+        .build() else { panic!("failed to create curp config") };
 
         let storage = match args.storage_engine.as_str() {
             "memory" => StorageConfig::Memory,
@@ -427,6 +431,7 @@ async fn main() -> Result<()> {
         cluster_config.curp_config().clone(),
         *cluster_config.client_timeout(),
         *cluster_config.range_retry_timeout(),
+        config.storage().clone(),
         db_proxy,
     )
     .await;

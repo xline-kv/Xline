@@ -87,6 +87,7 @@ impl Cluster {
                     },
                     ClientTimeout::default(),
                     default_range_retry_timeout(),
+                    StorageConfig::Memory,
                     db,
                 )
                 .await;

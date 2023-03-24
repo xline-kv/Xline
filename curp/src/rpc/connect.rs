@@ -118,7 +118,7 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
         &self,
         term: u64,
         leader_id: ServerId,
-        mut snapshot: Snapshot,
+        snapshot: Snapshot,
     ) -> Result<tonic::Response<InstallSnapshotResponse>, ProposeError>;
 
     /// Send `FetchReadStateRequest`

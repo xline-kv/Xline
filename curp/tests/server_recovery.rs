@@ -3,6 +3,7 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use itertools::Itertools;
+use tracing::debug;
 use utils::{config::ClientTimeout, parking_lot_lock::MutexMap};
 
 use crate::common::{
@@ -358,6 +359,49 @@ async fn all_crash_and_recovery() {
         client.propose(TestCommand::new_get(vec![0])).await.unwrap(),
         vec![1]
     );
+
+    group.stop();
+}
+
+#[tokio::test]
+async fn recovery_after_compaction() {
+    init_logger();
+
+    let mut group = CurpGroup::new(5).await;
+    let client = group.new_client(Default::default()).await;
+    let (leader, _term) = group.get_leader().await;
+    let node_id = group
+        .nodes
+        .keys()
+        .find(|&n| n != &leader)
+        .unwrap()
+        .to_owned();
+    group.crash(&node_id);
+
+    // since the log entries cap is set to 10, 50 commands will trigger log compactions
+    for i in 0..50 {
+        assert!(client
+            .propose(TestCommand::new_put(vec![i], i))
+            .await
+            .is_ok());
+    }
+
+    sleep_secs(1).await;
+
+    debug!("start recovery");
+
+    // the restarted node should use snapshot to recover
+    group.restart(&node_id, false).await;
+
+    sleep_secs(3).await;
+
+    {
+        let node = group.nodes.get_mut(&node_id).unwrap();
+        let store = node.store.lock();
+        for i in 0..50 {
+            assert_eq!(store[&i], i);
+        }
+    }
 
     group.stop();
 }

@@ -17,7 +17,7 @@ use crate::{
         InstallSnapshotResponse, ProposeRequest, ProposeResponse, ProtocolServer, VoteRequest,
         VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
-    ServerId, TxFilter,
+    ServerId, SnapshotAllocator, TxFilter,
 };
 
 /// Command worker to do execution and after sync
@@ -141,17 +141,27 @@ impl<C: Command + 'static> Rpc<C> {
         is_leader: bool,
         others: HashMap<ServerId, String>,
         executor: CE,
+        snapshot_allocator: impl SnapshotAllocator + 'static,
         curp_cfg: Arc<CurpConfig>,
         tx_filter: Option<Box<dyn TxFilter>>,
     ) -> Self {
         #[allow(clippy::panic)]
-        let curp_node =
-            match CurpNode::new(id, is_leader, others, executor, curp_cfg, tx_filter).await {
-                Ok(n) => n,
-                Err(err) => {
-                    panic!("failed to create curp service, {err}");
-                }
-            };
+        let curp_node = match CurpNode::new(
+            id,
+            is_leader,
+            others,
+            executor,
+            snapshot_allocator,
+            curp_cfg,
+            tx_filter,
+        )
+        .await
+        {
+            Ok(n) => n,
+            Err(err) => {
+                panic!("failed to create curp service, {err}");
+            }
+        };
 
         Self {
             inner: Arc::new(curp_node),
@@ -171,6 +181,7 @@ impl<C: Command + 'static> Rpc<C> {
         others: HashMap<ServerId, String>,
         server_port: Option<u16>,
         executor: CE,
+        snapshot_allocator: impl SnapshotAllocator + 'static,
         curp_cfg: Arc<CurpConfig>,
         tx_filter: Option<Box<dyn TxFilter>>,
         rx_filter: Option<FilterLayer<U>>,
@@ -187,7 +198,16 @@ impl<C: Command + 'static> Rpc<C> {
     {
         let port = server_port.unwrap_or(DEFAULT_SERVER_PORT);
         info!("RPC server {id} started, listening on port {port}");
-        let server = Self::new(id, is_leader, others, executor, curp_cfg, tx_filter).await;
+        let server = Self::new(
+            id,
+            is_leader,
+            others,
+            executor,
+            snapshot_allocator,
+            curp_cfg,
+            tx_filter,
+        )
+        .await;
 
         if let Some(f) = rx_filter {
             tonic::transport::Server::builder()
@@ -225,6 +245,7 @@ impl<C: Command + 'static> Rpc<C> {
         others: HashMap<ServerId, String>,
         listener: TcpListener,
         executor: CE,
+        snapshot_allocator: impl SnapshotAllocator + 'static,
         curp_cfg: Arc<CurpConfig>,
         tx_filter: Option<Box<dyn TxFilter>>,
         rx_filter: Option<FilterLayer<U>>,
@@ -239,7 +260,16 @@ impl<C: Command + 'static> Rpc<C> {
             ) -> Result<tonic::codegen::http::Request<tonic::transport::Body>, UE>,
         UE: 'static + Send + Sync + std::error::Error,
     {
-        let server = Self::new(id, is_leader, others, executor, curp_cfg, tx_filter).await;
+        let server = Self::new(
+            id,
+            is_leader,
+            others,
+            executor,
+            snapshot_allocator,
+            curp_cfg,
+            tx_filter,
+        )
+        .await;
 
         if let Some(f) = rx_filter {
             tonic::transport::Server::builder()

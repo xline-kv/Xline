@@ -148,6 +148,7 @@
 
 pub use log_entry::LogIndex;
 pub use rpc::{connect::TxFilter, ProtocolServer};
+pub use snapshot::SnapshotAllocator;
 
 /// Server Id
 pub(crate) type ServerId = String;

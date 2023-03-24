@@ -17,7 +17,7 @@ use tokio::{
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
 use tracing::info;
-use utils::config::{ClientTimeout, CurpConfig};
+use utils::config::{ClientTimeout, CurpConfig, StorageConfig};
 
 use super::{
     auth_server::AuthServer,
@@ -38,7 +38,12 @@ use crate::{
         WatchServer as RpcWatchServer,
     },
     state::State,
-    storage::{index::Index, storage_api::StorageApi, AuthStore, KvStore, LeaseStore},
+    storage::{
+        index::Index,
+        snapshot_allocator::{MemorySnapshotAllocator, RocksSnapshotAllocator},
+        storage_api::StorageApi,
+        AuthStore, KvStore, LeaseStore,
+    },
 };
 
 /// Default channel size
@@ -67,6 +72,8 @@ where
     client: Arc<Client<Command>>,
     /// Curp server timeout
     curp_cfg: Arc<CurpConfig>,
+    /// Storage config,
+    storage_cfg: StorageConfig,
     /// Id generator
     id_gen: Arc<IdGenerator>,
     /// Header generator
@@ -102,6 +109,7 @@ where
         curp_config: CurpConfig,
         client_timeout: ClientTimeout,
         range_retry_timeout: Duration,
+        storage_config: StorageConfig,
         persistent: Arc<S>,
     ) -> Self {
         let url = all_members
@@ -153,6 +161,7 @@ where
             persistent,
             client,
             curp_cfg: curp_config,
+            storage_cfg: storage_config,
             id_gen,
             header_gen,
             index_barrier,
@@ -295,22 +304,48 @@ where
         MaintenanceServer<S>,
         CurpServer,
     ) {
-        let curp_server = CurpServer::new(
-            self.id(),
-            self.is_leader(),
-            self.state.others(),
-            CommandExecutor::new(
-                Arc::clone(&self.kv_storage),
-                Arc::clone(&self.auth_storage),
-                Arc::clone(&self.lease_storage),
-                Arc::clone(&self.persistent),
-                Arc::clone(&self.index_barrier),
-                Arc::clone(&self.id_barrier),
-            ),
-            Arc::clone(&self.curp_cfg),
-            None,
-        )
-        .await;
+        let curp_server = match self.storage_cfg {
+            StorageConfig::Memory => {
+                CurpServer::new(
+                    self.id(),
+                    self.is_leader(),
+                    self.state.others(),
+                    CommandExecutor::new(
+                        Arc::clone(&self.kv_storage),
+                        Arc::clone(&self.auth_storage),
+                        Arc::clone(&self.lease_storage),
+                        Arc::clone(&self.persistent),
+                        Arc::clone(&self.index_barrier),
+                        Arc::clone(&self.id_barrier),
+                    ),
+                    MemorySnapshotAllocator,
+                    Arc::clone(&self.curp_cfg),
+                    None,
+                )
+                .await
+            }
+            StorageConfig::RocksDB(_) => {
+                CurpServer::new(
+                    self.id(),
+                    self.is_leader(),
+                    self.state.others(),
+                    CommandExecutor::new(
+                        Arc::clone(&self.kv_storage),
+                        Arc::clone(&self.auth_storage),
+                        Arc::clone(&self.lease_storage),
+                        Arc::clone(&self.persistent),
+                        Arc::clone(&self.index_barrier),
+                        Arc::clone(&self.id_barrier),
+                    ),
+                    RocksSnapshotAllocator,
+                    Arc::clone(&self.curp_cfg),
+                    None,
+                )
+                .await
+            }
+            #[allow(clippy::unimplemented)]
+            _ => unimplemented!(),
+        };
         let _handle = tokio::spawn({
             let state = Arc::clone(&self.state);
             let lease_storage = Arc::clone(&self.lease_storage);

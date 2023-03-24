@@ -357,7 +357,7 @@ impl TestCESimple {
     }
 }
 
-static NEXT_ID: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(0));
+static NEXT_ID: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(1));
 
 fn next_id() -> ProposeId {
     ProposeId::new(NEXT_ID.fetch_add(1, Ordering::AcqRel).to_string())

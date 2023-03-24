@@ -184,6 +184,11 @@ pub struct CurpConfig {
     #[builder(default = "default_gc_interval()")]
     #[serde(with = "duration_format", default = "default_gc_interval")]
     pub gc_interval: Duration,
+
+    /// Number of log entires to keep in memory
+    #[builder(default = "default_log_entries_cap()")]
+    #[serde(default = "default_log_entries_cap")]
+    pub log_entries_cap: usize,
 }
 
 /// default heartbeat interval
@@ -285,6 +290,13 @@ pub const fn default_gc_interval() -> Duration {
     Duration::from_secs(20)
 }
 
+/// default number of log entries to keep in memory
+#[must_use]
+#[inline]
+pub const fn default_log_entries_cap() -> usize {
+    5000
+}
+
 impl Default for CurpConfig {
     #[inline]
     fn default() -> Self {
@@ -300,6 +312,7 @@ impl Default for CurpConfig {
             data_dir: default_curp_data_dir(),
             cmd_workers: default_cmd_workers(),
             gc_interval: default_gc_interval(),
+            log_entries_cap: default_log_entries_cap(),
         }
     }
 }
@@ -605,7 +618,7 @@ mod tests {
             heartbeat_interval = '200ms'
             wait_synced_timeout = '100ms'
             rpc_timeout = '100ms'
-            retry_timeout = '100us'
+            retry_timeout = '100ms'
 
             [cluster.client_timeout]
             retry_timeout = '5s'
@@ -631,7 +644,7 @@ mod tests {
         let curp_config = CurpConfigBuilder::default()
             .heartbeat_interval(Duration::from_millis(200))
             .wait_synced_timeout(Duration::from_millis(100))
-            .retry_timeout(Duration::from_micros(100))
+            .retry_timeout(Duration::from_millis(100))
             .rpc_timeout(Duration::from_millis(100))
             .build()
             .unwrap();

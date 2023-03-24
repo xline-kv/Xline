@@ -24,7 +24,7 @@ use thiserror::Error;
 use tokio::{sync::mpsc, time::sleep};
 use tracing::debug;
 
-static NEXT_ID: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(0));
+static NEXT_ID: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(1));
 
 fn next_id() -> u64 {
     NEXT_ID.fetch_add(1, Ordering::SeqCst)
@@ -200,6 +200,11 @@ impl CommandExecutor<TestCommand> for TestCE {
                 .expect("failed to send after sync msg");
         }
         self.last_applied.store(index, Ordering::Relaxed);
+        debug!(
+            "{} after sync cmd({}), index: {index}",
+            self.server_id,
+            cmd.id()
+        );
         Ok(index)
     }
 
