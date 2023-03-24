@@ -628,7 +628,7 @@ impl<C: 'static + Command> RawCurp<C> {
         entries: Vec<LogEntry<C>>,
         last_applied: LogIndex,
     ) -> Self {
-        let mut raw_curp = Self::new(
+        let raw_curp = Self::new(
             id,
             others,
             is_leader,
@@ -638,7 +638,7 @@ impl<C: 'static + Command> RawCurp<C> {
             Arc::clone(cfg),
             cmd_tx,
             sync_event,
-            log_tx.clone(),
+            log_tx,
         );
 
         if let Some((term, server_id)) = voted_for {
@@ -658,9 +658,8 @@ impl<C: 'static + Command> RawCurp<C> {
         raw_curp.log.map_write(|mut log_w| {
             log_w.last_applied = last_applied;
             log_w.commit_index = last_applied;
+            log_w.restore_entries(entries);
         });
-
-        raw_curp.log = RwLock::new(Log::recover(log_tx, entries, cfg.batch_max_size));
 
         raw_curp
     }
@@ -708,7 +707,7 @@ impl<C: 'static + Command> RawCurp<C> {
             )))
         } else {
             let (prev_log_index, prev_log_term) = log_r.get_prev_entry_info(next_index);
-            let entries = log_r.get_from(next_index).unwrap_or_default().to_vec();
+            let entries = log_r.get_from(next_index);
             let ae = AppendEntries {
                 term,
                 leader_id: self.id().clone(),
