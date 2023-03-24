@@ -403,7 +403,7 @@ impl<C: 'static + Command> RawCurp<C> {
                 self.id(),
                 follower_id,
             );
-            self.send_calibrate(&mut lst_w, follower_id.clone());
+            self.send_calibrate(follower_id.clone());
             return Ok(false);
         }
 
@@ -543,11 +543,10 @@ impl<C: 'static + Command> RawCurp<C> {
         for other in &self.ctx.others {
             lst_w.update_next_index(other, last_log_index + 1); // iter from the end to front is more likely to match the follower
         }
-        lst_w.calibrating.clear();
         if prev_last_log_index < last_log_index {
             // if some entries are recovered, calibrate immediately
             for follower_id in &self.ctx.others {
-                self.send_calibrate(&mut lst_w, follower_id.clone());
+                self.send_calibrate(follower_id.clone());
             }
         }
 
@@ -952,11 +951,9 @@ impl<C: 'static + Command> RawCurp<C> {
     }
 
     /// Send calibrate task
-    fn send_calibrate(&self, lst: &mut LeaderState, id: ServerId) {
-        if lst.calibrating.insert(id.clone()) {
-            if let Err(e) = self.ctx.calibrate_tx.send(id) {
-                error!("can't send calibrate task {e}");
-            }
+    fn send_calibrate(&self, id: ServerId) {
+        if let Err(e) = self.ctx.calibrate_tx.send(id) {
+            error!("can't send calibrate task {e}");
         }
     }
 }

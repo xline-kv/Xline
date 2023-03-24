@@ -543,10 +543,9 @@ impl<C: 'static + Command> CurpNode<C> {
     ) {
         debug!("{} sends log[{i}] to follower {}", curp.id(), connect.id());
         let rpc_timeout = curp.cfg().rpc_timeout;
-        // send log[i] until succeed
+
         let resp = connect.append_entries(req, rpc_timeout).await;
 
-        #[allow(clippy::unwrap_used)]
         // indexing of `next_index` or `match_index` won't panic because we created an entry when initializing the server state
         match resp {
             Err(e) => {
