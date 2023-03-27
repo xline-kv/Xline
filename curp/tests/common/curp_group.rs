@@ -20,9 +20,9 @@ use tokio::{net::TcpListener, runtime::Runtime, sync::mpsc};
 use tokio_stream::wrappers::TcpListenerStream;
 use tracing::debug;
 use utils::config::{
-    default_candidate_timeout_ticks, default_follower_timeout_ticks, default_heartbeat_interval,
-    default_retry_timeout, default_rpc_timeout, default_server_wait_synced_timeout, ClientTimeout,
-    CurpConfig,
+    default_batch_max_size, default_batch_timeout, default_candidate_timeout_ticks,
+    default_follower_timeout_ticks, default_heartbeat_interval, default_retry_timeout,
+    default_rpc_timeout, default_server_wait_synced_timeout, ClientTimeout, CurpConfig,
 };
 
 use crate::common::{
@@ -164,6 +164,8 @@ impl CurpGroup {
                             default_server_wait_synced_timeout(),
                             default_retry_timeout(),
                             default_rpc_timeout(),
+                            default_batch_timeout(),
+                            default_batch_max_size(),
                             default_follower_timeout_ticks(),
                             default_candidate_timeout_ticks(),
                             PathBuf::from(storage_path_c),
@@ -291,6 +293,8 @@ impl CurpGroup {
                     default_server_wait_synced_timeout(),
                     default_retry_timeout(),
                     default_rpc_timeout(),
+                    default_batch_timeout(),
+                    default_batch_max_size(),
                     default_follower_timeout_ticks(),
                     default_candidate_timeout_ticks(),
                     PathBuf::from(storage_path),

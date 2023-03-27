@@ -354,7 +354,7 @@ pub(crate) struct SyncResponse {
     revision: i64,
 }
 impl SyncResponse {
-    /// New `SyncRequest`
+    /// New `SyncResponse`
     pub(crate) fn new(revision: i64) -> Self {
         Self { revision }
     }

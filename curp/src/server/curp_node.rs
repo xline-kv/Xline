@@ -9,7 +9,7 @@ use thiserror::Error;
 use tokio::{
     sync::{broadcast, mpsc},
     task::JoinHandle,
-    time::MissedTickBehavior,
+    time::{sleep, MissedTickBehavior},
 };
 use tracing::{debug, error, info, warn};
 use utils::config::CurpConfig;
@@ -169,7 +169,7 @@ impl<C: 'static + Command> CurpNode<C> {
         let rand = thread_rng()
             .gen_range(0..heartbeat_interval.as_millis())
             .numeric_cast();
-        tokio::time::sleep(Duration::from_millis(rand)).await;
+        sleep(Duration::from_millis(rand)).await;
 
         let mut ticker = tokio::time::interval(heartbeat_interval);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -490,7 +490,43 @@ impl<C: 'static + Command> CurpNode<C> {
                     }
                 }
             };
-            tokio::time::sleep(retry_timeout).await;
+            sleep(retry_timeout).await;
+        }
+    }
+
+    /// invoke `send_log_to_follower` for every follower
+    fn bcast_append_entries(
+        curp: &Arc<RawCurp<C>>,
+        connects: &HashMap<ServerId, Arc<impl ConnectApi>>,
+        first_sent_idx: LogIndex,
+        last_sent_idx: LogIndex,
+    ) {
+        let Ok(ae) = curp.append_entries_batch(first_sent_idx, last_sent_idx) else {
+            return;
+        };
+
+        let req = match AppendEntriesRequest::new(
+            ae.term,
+            ae.leader_id,
+            ae.prev_log_index,
+            ae.prev_log_term,
+            ae.entries,
+            ae.leader_commit,
+        ) {
+            Err(e) => {
+                error!("unable to serialize append entries request: {}", e);
+                return;
+            }
+            Ok(req) => req,
+        };
+
+        for connect in connects.values().cloned() {
+            let _handle = tokio::spawn(Self::send_log_to_follower(
+                Arc::clone(curp),
+                connect,
+                last_sent_idx,
+                req.clone(),
+            ));
         }
     }
 
@@ -498,37 +534,47 @@ impl<C: 'static + Command> CurpNode<C> {
     async fn sync_task(
         curp: Arc<RawCurp<C>>,
         connects: HashMap<ServerId, Arc<impl ConnectApi>>,
-        mut sync_rx: mpsc::UnboundedReceiver<LogIndex>,
+        mut sync_rx: mpsc::UnboundedReceiver<(LogIndex, usize)>,
     ) {
-        while let Some(i) = sync_rx.recv().await {
-            let req = {
-                let Ok(ae) = curp.append_entries_single(i) else {
-                    error!("{} get log {i} failed", curp.id());
-                    continue;
-                };
-                let req = AppendEntriesRequest::new(
-                    ae.term,
-                    ae.leader_id,
-                    ae.prev_log_index,
-                    ae.prev_log_term,
-                    ae.entries,
-                    ae.leader_commit,
-                );
-                match req {
-                    Err(e) => {
-                        error!("can't serialize log entries, {e}");
-                        continue;
+        let batch_timeout = curp.cfg().batch_timeout;
+        let batch_max_size = curp.cfg().batch_max_size;
+        let connects = Arc::new(connects);
+        let timer = sleep(batch_timeout);
+        let mut batch = Vec::new();
+        let mut batch_size = 0;
+
+        pin_mut!(timer);
+
+        #[allow(clippy::integer_arithmetic, clippy::pattern_type_mismatch)]
+        loop {
+            tokio::select! {
+                biased;
+                Some((idx, cmd_size)) = sync_rx.recv() => {
+                    batch_size += cmd_size;
+                    if batch_size < batch_max_size {
+                        batch.push(idx);
+                    } else {
+                        let (first_sent_idx, last_sent_idx) =
+                            if let (Some(&first), Some(&last)) = (batch.first(), batch.last()) {
+                                batch.clear();
+                                batch.push(idx);
+                                batch_size = cmd_size;
+                                (first, last)
+                            } else {
+                                batch_size = 0;
+                                (idx, idx)
+                            };
+                        Self::bcast_append_entries(&curp, &connects, first_sent_idx, last_sent_idx);
+                        timer.as_mut().reset(tokio::time::Instant::now() + batch_timeout);
                     }
-                    Ok(req) => req,
                 }
-            };
-            for connect in connects.values().cloned() {
-                let _handle = tokio::spawn(Self::send_log_to_follower(
-                    Arc::clone(&curp),
-                    connect,
-                    i,
-                    req.clone(),
-                ));
+                _ = &mut timer => {
+                    if let (Some(&first_sent_idx), Some(&last_sent_idx)) = (batch.first(), batch.last()) {
+                        batch.clear();
+                        batch_size = 0;
+                        Self::bcast_append_entries(&curp, &connects, first_sent_idx, last_sent_idx);
+                    }
+                }
             }
         }
     }
@@ -612,7 +658,10 @@ impl<C: Command> Debug for CurpNode<C> {
 
 #[cfg(test)]
 mod tests {
+    use std::mem::size_of_val;
+
     use tracing_test::traced_test;
+    use utils::config::{default_batch_max_size, default_batch_timeout};
 
     use super::*;
     use crate::{
@@ -722,5 +771,52 @@ mod tests {
         mock_connect.expect_id().return_const("S1".to_owned());
 
         CurpNode::leader_calibrates_follower(curp, Arc::new(mock_connect)).await;
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn append_entries_will_success() {
+        let curp = {
+            let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
+            exe_tx.expect_send_reset().returning(|| ());
+            exe_tx.expect_send_after_sync().returning(|_, _| ());
+            Arc::new(RawCurp::new_test(3, exe_tx))
+        };
+
+        let mut mock_connect = MockConnectApi::default();
+        mock_connect
+            .expect_append_entries()
+            .times(2)
+            .returning(|_, _| Ok(tonic::Response::new(AppendEntriesResponse::new_accept(0))));
+        mock_connect.expect_id().return_const("S1".to_owned());
+        let mut connects = HashMap::new();
+        connects.insert("S1".to_owned(), Arc::new(mock_connect));
+
+        let cmd = Arc::new(TestCommand::new_put(vec![0u32; 512], 0));
+        let cmd_size = size_of_val(&*cmd);
+
+        let cmd_cnt = default_batch_max_size() / cmd_size + 2;
+
+        let (sync_tx, sync_rx) = mpsc::unbounded_channel();
+        let curp_c = Arc::clone(&curp);
+
+        let _ig = tokio::spawn(async move {
+            let _sync_task = tokio::spawn(CurpNode::sync_task(
+                Arc::clone(&curp),
+                connects.clone(),
+                sync_rx,
+            ));
+        });
+
+        for _i in 0..cmd_cnt {
+            let cmd = Arc::new(TestCommand::new_put(vec![0u32; 512], 0));
+            let cmd_size = size_of_val(&*cmd);
+            let idx = curp_c.push_cmd(Arc::clone(&cmd));
+            assert!(sync_tx.send((idx, cmd_size)).is_ok());
+        }
+        // the first invoke `append_entries` since the `batch_max_size` has been reached
+        sleep(Duration::from_millis(1)).await;
+        // the second invoke `append_entires` since the `batch_timeout` has expired.
+        sleep(default_batch_timeout()).await;
     }
 }

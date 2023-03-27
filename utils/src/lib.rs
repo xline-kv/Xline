@@ -151,7 +151,7 @@ pub mod tracing;
 #[non_exhaustive]
 pub enum ConfigParseError {
     /// Invalid number when parsing `Duration`
-    #[error("Invalid Value: {0}")]
+    #[error("Invalid Number: {0}")]
     InvalidNumber(#[from] std::num::ParseIntError),
     /// Invalid time unit
     #[error("Invalid Unit: {0}")]
@@ -201,6 +201,7 @@ pub fn parse_range(s: &str) -> Result<ClusterRange, ConfigParseError> {
 /// Return error when parsing the given string to `Duration` failed
 #[inline]
 pub fn parse_duration(s: &str) -> Result<Duration, ConfigParseError> {
+    let s = s.to_lowercase();
     if s.ends_with("us") {
         if let Some(dur) = s.strip_suffix("us") {
             Ok(Duration::from_micros(dur.parse()?))
@@ -261,6 +262,43 @@ pub fn parse_rotation(s: &str) -> Result<RotationConfig, ConfigParseError> {
         _ => Err(ConfigParseError::InvalidValue(format!(
             "the rotation config should be one of 'hourly', 'daily' or 'never' ({s})"
         ))),
+    }
+}
+
+/// Parse bytes from string
+/// # Errors
+/// Return error when parsing the given string to usize failed
+#[inline]
+#[allow(clippy::integer_arithmetic)]
+pub fn parse_batch_bytes(s: &str) -> Result<usize, ConfigParseError> {
+    let s = s.to_lowercase();
+    if s.ends_with("kb") {
+        if let Some(value) = s.strip_suffix("kb") {
+            Ok(value.parse::<usize>()? * 1024)
+        } else {
+            Err(ConfigParseError::InvalidValue(format!(
+                "the value of size should not be empty. ({s})"
+            )))
+        }
+    } else if s.ends_with("mb") {
+        if let Some(value) = s.strip_suffix("mb") {
+            let bytes = value.parse::<usize>()? * 1024 * 1024;
+            if bytes >= 4 * 1024 * 1024 {
+                Err(ConfigParseError::InvalidValue(format!(
+                    "the batch size should be smaller than 4MB. ({s})"
+                )))
+            } else {
+                Ok(bytes)
+            }
+        } else {
+            Err(ConfigParseError::InvalidValue(format!(
+                "the value of size should not be empty ({s})"
+            )))
+        }
+    } else {
+        Err(ConfigParseError::InvalidUnit(format!(
+            "the unit of size should be one of 'kb' or 'mb'({s})"
+        )))
     }
 }
 
@@ -335,6 +373,15 @@ mod test {
         assert_eq!(parse_rotation("hourly").unwrap(), RotationConfig::Hourly);
         assert_eq!(parse_rotation("never").unwrap(), RotationConfig::Never);
         let res = parse_rotation("hello world");
+        assert!(res.is_err());
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_parse_batch_size() {
+        assert_eq!(parse_batch_bytes("10kb").unwrap(), 10 * 1024);
+        assert_eq!(parse_batch_bytes("2mb").unwrap(), 2 * 1024 * 1024);
+        let res = parse_batch_bytes("10mb");
         assert!(res.is_err());
     }
 }

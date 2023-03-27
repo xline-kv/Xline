@@ -123,14 +123,15 @@ use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{fmt::format, prelude::*};
 use utils::{
     config::{
-        default_candidate_timeout_ticks, default_client_wait_synced_timeout,
-        default_follower_timeout_ticks, default_heartbeat_interval, default_log_level,
-        default_propose_timeout, default_retry_timeout, default_rotation, default_rpc_timeout,
+        default_batch_max_size, default_batch_timeout, default_candidate_timeout_ticks,
+        default_client_wait_synced_timeout, default_follower_timeout_ticks,
+        default_heartbeat_interval, default_log_level, default_propose_timeout,
+        default_retry_timeout, default_rotation, default_rpc_timeout,
         default_server_wait_synced_timeout, file_appender, AuthConfig, ClientTimeout,
         ClusterConfig, CurpConfig, LevelConfig, LogConfig, RotationConfig, StorageConfig,
         TraceConfig, XlineServerConfig,
     },
-    parse_duration, parse_log_level, parse_members, parse_rotation,
+    parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_rotation,
 };
 use xline::{server::XlineServer, storage::db::DBProxy};
 
@@ -186,6 +187,12 @@ struct ServerArgs {
     /// Curp rpc timeout
     #[clap(long, value_parser = parse_duration)]
     rpc_timeout: Option<Duration>,
+    /// Curp append entries batch timeout
+    #[clap(long, value_parser = parse_duration)]
+    batch_timeout: Option<Duration>,
+    /// Curp append entries batch max size
+    #[clap(long, value_parser = parse_batch_bytes)]
+    batch_max_size: Option<usize>,
     /// Follower election timeout ticks
     #[clap(long, default_value_t = default_follower_timeout_ticks())]
     follower_timeout_ticks: u8,
@@ -220,6 +227,8 @@ impl From<ServerArgs> for XlineServerConfig {
                 .unwrap_or_else(default_server_wait_synced_timeout),
             args.retry_timeout.unwrap_or_else(default_retry_timeout),
             args.rpc_timeout.unwrap_or_else(default_rpc_timeout),
+            args.batch_timeout.unwrap_or_else(default_batch_timeout),
+            args.batch_max_size.unwrap_or_else(default_batch_max_size),
             args.follower_timeout_ticks,
             args.candidate_timeout_ticks,
             args.curp_dir.unwrap_or_else(|| {

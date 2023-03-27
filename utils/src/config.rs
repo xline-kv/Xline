@@ -52,6 +52,23 @@ pub mod duration_format {
     }
 }
 
+/// batch size deserialization formatter
+pub mod bytes_format {
+    use serde::{self, Deserialize, Deserializer};
+
+    use crate::parse_batch_bytes;
+
+    /// deserializes a cluster duration
+    #[allow(single_use_lifetimes)] //  the false positive case blocks us
+    pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<usize, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        parse_batch_bytes(&s).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Cluster configuration object, including cluster relevant configuration fields
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
@@ -96,7 +113,7 @@ impl ClusterConfig {
     }
 }
 
-/// Curp server timeout settings
+/// Curp server settings
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
 #[allow(clippy::module_name_repetitions, clippy::exhaustive_structs)]
 pub struct CurpConfig {
@@ -119,6 +136,16 @@ pub struct CurpConfig {
     #[serde(with = "duration_format", default = "default_rpc_timeout")]
     pub rpc_timeout: Duration,
 
+    /// Curp append entries batch timeout
+    /// If the `batch_timeout` has expired, then it will be dispatched
+    /// wether its size reaches the `BATCHING_MSG_MAX_SIZE` or not.
+    #[serde(with = "duration_format", default = "default_batch_timeout")]
+    pub batch_timeout: Duration,
+
+    /// The maximum number of bytes per batch.
+    #[serde(with = "bytes_format", default = "default_batch_max_size")]
+    pub batch_max_size: usize,
+
     /// How many ticks a follower is allowed to miss before it starts a new round of election
     /// The actual timeout will be randomized and in between heartbeat_interval * [follower_timeout_ticks, 2 * follower_timeout_ticks)
     #[serde(default = "default_follower_timeout_ticks")]
@@ -140,6 +167,21 @@ pub struct CurpConfig {
 #[inline]
 pub fn default_heartbeat_interval() -> Duration {
     Duration::from_millis(300)
+}
+
+/// default batch timeout
+#[must_use]
+#[inline]
+pub const fn default_batch_timeout() -> Duration {
+    Duration::from_millis(15)
+}
+
+/// default batch timeout
+#[must_use]
+#[inline]
+#[allow(clippy::integer_arithmetic)]
+pub const fn default_batch_max_size() -> usize {
+    2 * 1024 * 1024
 }
 
 /// default wait synced timeout
@@ -202,11 +244,14 @@ impl CurpConfig {
     /// Create a new server timeout
     #[must_use]
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         heartbeat_interval: Duration,
         wait_synced_timeout: Duration,
         retry_timeout: Duration,
         rpc_timeout: Duration,
+        batch_timeout: Duration,
+        batch_max_size: usize,
         follower_timeout_ticks: u8,
         candidate_timeout_ticks: u8,
         data_dir: PathBuf,
@@ -216,6 +261,8 @@ impl CurpConfig {
             wait_synced_timeout,
             retry_timeout,
             rpc_timeout,
+            batch_timeout,
+            batch_max_size,
             follower_timeout_ticks,
             candidate_timeout_ticks,
             data_dir,
@@ -231,6 +278,8 @@ impl Default for CurpConfig {
             wait_synced_timeout: default_server_wait_synced_timeout(),
             retry_timeout: default_retry_timeout(),
             rpc_timeout: default_rpc_timeout(),
+            batch_timeout: default_batch_timeout(),
+            batch_max_size: default_batch_max_size(),
             follower_timeout_ticks: default_follower_timeout_ticks(),
             candidate_timeout_ticks: default_candidate_timeout_ticks(),
             data_dir: default_curp_data_dir(),
@@ -566,6 +615,8 @@ mod tests {
             Duration::from_millis(100),
             Duration::from_micros(100),
             Duration::from_millis(100),
+            default_batch_timeout(),
+            default_batch_max_size(),
             default_follower_timeout_ticks(),
             default_candidate_timeout_ticks(),
             default_curp_data_dir(),

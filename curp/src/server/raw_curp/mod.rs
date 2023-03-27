@@ -13,6 +13,7 @@ use std::{
     cmp::min,
     collections::{HashMap, HashSet},
     fmt::Debug,
+    mem::size_of_val,
     sync::{
         atomic::{AtomicBool, AtomicU8, Ordering},
         Arc,
@@ -139,7 +140,7 @@ struct Context<C: Command> {
     /// Tx to send cmds to execute and do after sync
     cmd_tx: Box<dyn CEEventTxApi<C>>,
     /// Tx to send the index of log entry which needs to be replicated on followers
-    sync_tx: mpsc::UnboundedSender<LogIndex>,
+    sync_tx: mpsc::UnboundedSender<(LogIndex, usize)>,
     /// Tx to send the id of followers that need to be calibrated
     calibrate_tx: mpsc::UnboundedSender<ServerId>,
 }
@@ -290,12 +291,12 @@ impl<C: 'static + Command> RawCurp<C> {
 
         let mut log_w = self.log.write();
         let index = log_w.push_cmd(st_r.term, Arc::clone(&cmd));
-
+        let cmd_size = size_of_val(&*cmd);
         if !conflict {
             self.ctx.cmd_tx.send_sp_exe(cmd);
         }
 
-        if let Err(e) = self.ctx.sync_tx.send(index) {
+        if let Err(e) = self.ctx.sync_tx.send((index, cmd_size)) {
             error!("send channel error, {e}");
         }
 
@@ -567,7 +568,7 @@ impl<C: 'static + Command> RawCurp<C> {
         uncommitted_pool: UncommittedPoolRef<C>,
         cfg: Arc<CurpConfig>,
         cmd_tx: Box<dyn CEEventTxApi<C>>,
-        sync_tx: mpsc::UnboundedSender<LogIndex>,
+        sync_tx: mpsc::UnboundedSender<(LogIndex, usize)>,
         calibrate_tx: mpsc::UnboundedSender<ServerId>,
         log_tx: mpsc::UnboundedSender<LogEntry<C>>,
     ) -> Self {
@@ -623,7 +624,7 @@ impl<C: 'static + Command> RawCurp<C> {
         uncommitted_pool: UncommittedPoolRef<C>,
         cfg: Arc<CurpConfig>,
         cmd_tx: Box<dyn CEEventTxApi<C>>,
-        sync_tx: mpsc::UnboundedSender<LogIndex>,
+        sync_tx: mpsc::UnboundedSender<(LogIndex, usize)>,
         calibrate_tx: mpsc::UnboundedSender<ServerId>,
         log_tx: mpsc::UnboundedSender<LogEntry<C>>,
         voted_for: Option<(u64, ServerId)>,
@@ -683,26 +684,42 @@ impl<C: 'static + Command> RawCurp<C> {
         self.ctx.leader_tx.subscribe()
     }
 
-    /// Get `append_entries` request for log[i]
+    /// Get `append_entries` request for log batch
     /// Return `Err(())` if self is no longer the leader
-    pub(super) fn append_entries_single(&self, i: LogIndex) -> Result<AppendEntries<C>, ()> {
-        assert!(i > 0, "can't generate append_entries for fake log[0]");
+    pub(super) fn append_entries_batch(
+        &self,
+        first_idx: LogIndex,
+        last_idx: LogIndex,
+    ) -> Result<AppendEntries<C>, ()> {
+        assert!(
+            first_idx > 0,
+            "can't generate append_entries for fake log[0]"
+        );
         let st_r = self.st.read();
         if st_r.role != Role::Leader {
             return Err(());
         }
         let log_r = self.log.read();
-        let (prev_log_index, prev_log_term) = log_r.get_prev_entry_info(i);
-        let entry = log_r.get(i).unwrap_or_else(|| {
-            unreachable!("system corrupted, leader wants to log[{i}] when it doesn't have it")
-        });
+        let (prev_log_index, prev_log_term) = log_r.get_prev_entry_info(first_idx);
+
+        let entries = (first_idx..=last_idx)
+            .map(|idx| {
+                log_r.get(idx).unwrap_or_else(|| {
+                    unreachable!(
+                        "system corrupted, leader wants to log[{idx}] when it doesn't have it"
+                    )
+                })
+            })
+            .cloned()
+            .collect();
+
         Ok(AppendEntries {
             term: st_r.term,
             leader_id: self.id().clone(),
             prev_log_index,
             prev_log_term,
             leader_commit: log_r.commit_index,
-            entries: vec![entry.clone()],
+            entries,
         })
     }
 
