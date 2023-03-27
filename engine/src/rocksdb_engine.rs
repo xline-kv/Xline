@@ -1,7 +1,10 @@
 use std::{
     cmp::Ordering,
-    fs::{self, File},
-    io::{self, Cursor, Error as IoError, ErrorKind::Other, Read, Seek, Write},
+    fs,
+    io::{
+        self, Cursor, Error as IoError,
+        ErrorKind::{self, Other},
+    },
     iter::repeat,
     path::{Path, PathBuf},
     sync::Arc,
@@ -13,6 +16,10 @@ use rocksdb::{
     WriteOptions, DB,
 };
 use serde::{Deserialize, Serialize};
+use tokio::{
+    fs::File,
+    io::{AsyncReadExt, AsyncWriteExt},
+};
 
 use crate::{
     engine_api::{SnapshotApi, StorageEngine, WriteOperation},
@@ -67,7 +74,7 @@ impl RocksEngine {
     }
 }
 
-/// meta of the snapshot
+/// Human readable format for `RocksEngine`
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct SnapMeta {
     /// filenames and sizes of the snapshot
@@ -85,12 +92,19 @@ struct SnapFile {
     size: u64,
 }
 
-/// Meta data of the snapshot
+impl SnapFile {
+    /// remain size of the file
+    fn remain_size(&self) -> u64 {
+        self.size.overflow_sub(self.written_size)
+    }
+}
+
+/// Serialized `SnapMeta`, used for reading and writing,
 #[derive(Debug, Default)]
 struct Meta {
     /// Meta data
     data: Cursor<Vec<u8>>,
-    /// Whether the meta is current or not
+    /// when `is_current` is true, read from meta, otherwise read from files
     is_current: bool,
 }
 
@@ -119,14 +133,31 @@ pub struct RocksSnapshot {
     /// files of the snapshot
     snap_files: Vec<SnapFile>,
     /// current file index
-    file_index: usize,
+    snap_file_idx: usize,
     /// current file
     current_file: Option<File>,
 }
 
 impl RocksSnapshot {
     /// New empty `RocksSnapshot`
-    fn new<P>(dir: P) -> Result<Self, EngineError>
+    fn new<P>(dir: P) -> Self
+    where
+        P: Into<PathBuf>,
+    {
+        RocksSnapshot {
+            meta: Meta::new(),
+            dir: dir.into(),
+            snap_files: Vec::new(),
+            snap_file_idx: 0,
+            current_file: None,
+        }
+    }
+
+    /// Create a new snapshot for receiving
+    /// # Errors
+    /// Return `EngineError` when create directory failed.
+    #[inline]
+    pub fn new_for_receiving<P>(dir: P) -> Result<Self, EngineError>
     where
         P: Into<PathBuf>,
     {
@@ -134,23 +165,19 @@ impl RocksSnapshot {
         if !dir.exists() {
             fs::create_dir_all(&dir)?;
         }
-        Ok(RocksSnapshot {
-            meta: Meta::new(),
-            dir,
-            snap_files: Vec::new(),
-            file_index: 0,
-            current_file: None,
-        })
+        Ok(Self::new(dir))
     }
 
     /// Create a new snapshot for sending
-    fn new_for_sending<P>(dir: P) -> Result<RocksSnapshot, EngineError>
+    /// # Errors
+    /// Return `EngineError` when read directory failed.
+    fn new_for_sending<P>(dir: P) -> Result<Self, EngineError>
     where
         P: Into<PathBuf>,
     {
         let dir = dir.into();
         let files = fs::read_dir(&dir)?;
-        let mut s = Self::new(dir)?;
+        let mut s = Self::new(dir);
         for file in files {
             let entry = file?;
             let filename = entry.file_name().into_string().map_err(|_e| {
@@ -195,38 +222,33 @@ impl RocksSnapshot {
         })?;
         let len = meta_bytes.len().numeric_cast::<u64>();
         let mut data = Vec::new();
-        data.write_all(&len.to_le_bytes())?;
-        data.write_all(&meta_bytes)?;
+        data.extend(len.to_le_bytes());
+        data.extend(meta_bytes);
         self.meta.data = Cursor::new(data);
         Ok(())
     }
 
     /// path of current file
-    fn current_file_path(&self) -> PathBuf {
-        let Some(current_filename) = self.snap_files.get(self.file_index).map(|sf| &sf.filename) else {
+    fn current_file_path(&self, tmp: bool) -> PathBuf {
+        let Some(current_filename) = self.snap_files.get(self.snap_file_idx).map(|sf| &sf.filename) else {
             unreachable!("this method must be called when self.file_index < self.snap_files.len()")
         };
-        self.dir.join(current_filename)
-    }
-
-    /// tmp path of current file
-    fn current_file_tmp_path(&self) -> PathBuf {
-        let Some(current_filename) = self.snap_files.get(self.file_index).map(|sf| &sf.filename) else {
-            unreachable!("this method must be called when self.file_index < self.snap_files.len()")
+        let filename = if tmp {
+            format!("{current_filename}.tmp")
+        } else {
+            current_filename.clone()
         };
-        self.dir.join(format!("{current_filename}.tmp"))
+        self.dir.join(filename)
     }
-}
 
-impl Read for RocksSnapshot {
-    #[inline]
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    /// Read data from the snapshot
+    async fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if buf.is_empty() {
             return Ok(0);
         }
 
         if self.meta.is_current {
-            let n = self.meta.data.read(buf)?;
+            let n = self.meta.data.read(buf).await?;
             if n == 0 {
                 self.meta.is_current = false;
             } else {
@@ -234,33 +256,31 @@ impl Read for RocksSnapshot {
             }
         }
 
-        while self.file_index < self.snap_files.len() {
+        while self.snap_file_idx < self.snap_files.len() {
             let f = if let Some(ref mut f) = self.current_file {
                 f
             } else {
-                let path = self.current_file_path();
-                let reader = File::open(path)?;
+                let path = self.current_file_path(false);
+                let reader = File::open(path).await?;
                 self.current_file = Some(reader);
                 self.current_file
                     .as_mut()
                     .unwrap_or_else(|| unreachable!("current_file must be `Some` here"))
             };
-            let n = f.read(buf)?;
+            let n = f.read(buf).await?;
             if n == 0 {
                 let _ignore = self.current_file.take();
-                self.file_index = self.file_index.overflow_add(1);
+                self.snap_file_idx = self.snap_file_idx.overflow_add(1);
             } else {
                 return Ok(n);
             }
         }
         Ok(0)
     }
-}
 
-impl Write for RocksSnapshot {
-    #[inline]
+    /// Write snapshot data
     #[allow(clippy::indexing_slicing)] // safe indexing
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+    async fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if buf.is_empty() {
             return Ok(0);
         }
@@ -274,7 +294,7 @@ impl Write for RocksSnapshot {
 
             let meta_bytes: Vec<u8> = next_buf[8..meta_len.overflow_add(8).numeric_cast()]
                 .try_into()
-                .unwrap_or_else(|_e| unreachable!("infallible "));
+                .unwrap_or_else(|_e| unreachable!("infallible"));
             let meta = bincode::deserialize(&meta_bytes).map_err(|e| io::Error::new(Other, e))?;
 
             self.apply_snap_meta(meta);
@@ -286,13 +306,10 @@ impl Write for RocksSnapshot {
             next_buf = &next_buf[meta_len.overflow_add(8).numeric_cast()..];
         }
 
-        while self.file_index < self.snap_files.len() {
-            let snap_file = &mut self.snap_files[self.file_index];
+        while self.snap_file_idx < self.snap_files.len() {
+            let snap_file = &mut self.snap_files[self.snap_file_idx];
             assert!(snap_file.size != 0);
-            let left = snap_file
-                .size
-                .overflow_sub(snap_file.written_size)
-                .numeric_cast();
+            let left = snap_file.remain_size().numeric_cast();
             let (write_len, switch, finished) = match next_buf.len().cmp(&left) {
                 Ordering::Greater => (left, true, false),
                 Ordering::Equal => (left, true, true),
@@ -308,25 +325,25 @@ impl Write for RocksSnapshot {
             let f = if let Some(ref mut f) = self.current_file {
                 f
             } else {
-                let path = self.current_file_tmp_path();
-                let writer = File::create(path)?;
+                let path = self.current_file_path(true);
+                let writer = File::create(path).await?;
                 self.current_file = Some(writer);
                 self.current_file
                     .as_mut()
                     .unwrap_or_else(|| unreachable!("current_file must be `Some` here"))
             };
-            f.write_all(buffer)?;
+            f.write_all(buffer).await?;
 
             if switch {
                 next_buf = &next_buf[write_len..];
                 let old = self.current_file.take();
                 if let Some(mut old_f) = old {
-                    old_f.flush()?;
-                    let path = self.current_file_path();
-                    let tmp_path = self.current_file_tmp_path();
+                    old_f.flush().await?;
+                    let path = self.current_file_path(false);
+                    let tmp_path = self.current_file_path(true);
                     fs::rename(tmp_path, path)?;
                 }
-                self.file_index = self.file_index.overflow_add(1);
+                self.snap_file_idx = self.snap_file_idx.overflow_add(1);
             }
             if finished {
                 break;
@@ -334,78 +351,9 @@ impl Write for RocksSnapshot {
         }
         Ok(written_bytes)
     }
-
-    #[inline]
-    fn flush(&mut self) -> std::io::Result<()> {
-        if let Some(ref mut f) = self.current_file {
-            f.flush()?;
-        }
-        Ok(())
-    }
 }
 
-impl Seek for RocksSnapshot {
-    #[inline]
-    #[allow(clippy::indexing_slicing)] // safe indexing
-    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
-        let (base_pos, offset) = match pos {
-            io::SeekFrom::Start(mut offset) => {
-                let new_pos = offset;
-                self.file_index = 0;
-                self.meta.is_current = true;
-                let meta_len = self.meta.len().numeric_cast();
-                if offset < meta_len {
-                    return self.meta.data.seek(io::SeekFrom::Start(offset));
-                }
-                offset = offset.overflow_sub(meta_len);
-                self.meta.is_current = false;
-                let mut current_file_size = self.snap_files[self.file_index].size;
-                while offset > current_file_size {
-                    offset = offset.overflow_sub(current_file_size);
-                    self.file_index = self.file_index.overflow_add(1);
-                    current_file_size = self.snap_files[self.file_index].size;
-                }
-                self.current_file = Some(File::open(self.current_file_path())?);
-                let f = self
-                    .current_file
-                    .as_mut()
-                    .unwrap_or_else(|| unreachable!("current_file must be `Some` here"));
-                let _ignore = f.seek(io::SeekFrom::Start(offset))?;
-                return Ok(new_pos);
-            }
-            io::SeekFrom::End(offset) => {
-                assert!(offset <= 0);
-                let base = self.size().numeric_cast();
-                (base, offset)
-            }
-            io::SeekFrom::Current(offset) => {
-                let current_pos = if self.meta.is_current {
-                    self.meta.data.stream_position()?
-                } else {
-                    let mut current_pos: u64 = self.meta.len().numeric_cast();
-                    for i in 0..self.file_index {
-                        current_pos = current_pos.overflow_add(self.snap_files[i].size);
-                    }
-                    let file_pos = self
-                        .current_file
-                        .as_mut()
-                        .map_or(Ok(0), Seek::stream_position)?;
-                    current_pos = current_pos.overflow_add(file_pos);
-                    current_pos
-                };
-                (current_pos, offset)
-            }
-        };
-        let Some(new_offset) = base_pos.checked_add_signed(offset) else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "invalid seek to a negative or overflowing position",
-            ));
-        };
-        self.seek(io::SeekFrom::Start(new_offset))
-    }
-}
-
+#[async_trait::async_trait]
 impl SnapshotApi for RocksSnapshot {
     #[inline]
     fn size(&self) -> u64 {
@@ -413,8 +361,55 @@ impl SnapshotApi for RocksSnapshot {
         size = size.overflow_add(self.meta.len().numeric_cast());
         size
     }
+
+    #[inline]
+    #[allow(clippy::indexing_slicing)] // safe indexing
+    async fn read_exact(&mut self, mut buf: &mut [u8]) -> std::io::Result<()> {
+        while !buf.is_empty() {
+            match self.read(buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    let tmp = buf;
+                    buf = &mut tmp[n..];
+                }
+                Err(ref e) if e.kind() == ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
+        if buf.is_empty() {
+            Ok(())
+        } else {
+            Err(std::io::Error::new(
+                ErrorKind::UnexpectedEof,
+                "failed to fill whole buffer",
+            ))
+        }
+    }
+
+    #[inline]
+    #[allow(clippy::indexing_slicing)] // safe indexing
+    async fn write_all(&mut self, mut buf: &[u8]) -> std::io::Result<()> {
+        while !buf.is_empty() {
+            let n = self.write(buf).await?;
+            buf = &buf[n..];
+            if n == 0 {
+                return Err(io::ErrorKind::WriteZero.into());
+            }
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn rewind(&mut self) -> std::io::Result<()> {
+        self.snap_file_idx = 0;
+        self.meta.is_current = true;
+        self.meta.data.set_position(0);
+        self.current_file = None;
+        Ok(())
+    }
 }
 
+#[async_trait::async_trait]
 impl StorageEngine for RocksEngine {
     type Snapshot = RocksSnapshot;
 
@@ -494,11 +489,11 @@ impl StorageEngine for RocksEngine {
     }
 
     #[inline]
-    fn snapshot(
+    fn get_snapshot(
         &self,
         path: impl AsRef<Path>,
         tables: &[&'static str],
-    ) -> Result<RocksSnapshot, EngineError> {
+    ) -> Result<Self::Snapshot, EngineError> {
         if path.as_ref().exists() {
             fs::remove_dir_all(&path)?;
         }
@@ -529,12 +524,15 @@ impl StorageEngine for RocksEngine {
                 sst_writer_option = None;
             }
         }
-        let s = RocksSnapshot::new_for_sending(path.as_ref())?;
-        Ok(s)
+        RocksSnapshot::new_for_sending(path.as_ref())
     }
 
     #[inline]
-    fn apply_snapshot(&self, s: RocksSnapshot, tables: &[&'static str]) -> Result<(), EngineError> {
+    fn apply_snapshot(
+        &self,
+        s: Self::Snapshot,
+        tables: &[&'static str],
+    ) -> Result<(), EngineError> {
         for cf_name in tables {
             let file_name = format!("{cf_name}.sst");
             let file_path = s.dir.join(file_name);
@@ -677,58 +675,22 @@ mod test {
         let put = WriteOperation::new_put("kv", "key".into(), "value".into());
         assert!(engine.write_batch(vec![put], false).is_ok());
 
-        let snapshot = engine.snapshot(&snapshot_dir, &TESTTABLES).unwrap();
+        let snapshot = engine.get_snapshot(&snapshot_dir, &TESTTABLES).unwrap();
+        let put = WriteOperation::new_put("kv", "key2".into(), "value2".into());
+        assert!(engine.write_batch(vec![put], false).is_ok());
+
         let engine_2 = RocksEngine::new(&recover_data_dir, &TESTTABLES).unwrap();
         assert!(engine_2.apply_snapshot(snapshot, &TESTTABLES).is_ok());
 
         let value = engine_2.get("kv", "key").unwrap();
         assert_eq!(value, Some("value".into()));
+        let value2 = engine_2.get("kv", "key2").unwrap();
+        assert!(value2.is_none());
 
         drop(engine);
         drop(engine_2);
         destroy(&origin_data_dir);
         destroy(&recover_data_dir);
         fs::remove_dir_all(&snapshot_dir).unwrap();
-    }
-
-    #[test]
-    fn test_snapshot_seek() {
-        let path = PathBuf::from("/tmp/test_snapshot_seek");
-        {
-            fs::create_dir_all(&path).unwrap();
-            (0..3).for_each(|i| {
-                let mut f = File::create(path.join(i.to_string())).unwrap();
-                f.write(&vec![i; 3]).unwrap();
-            });
-        }
-        let mut snapshot = RocksSnapshot::new_for_sending(&path).unwrap();
-        let mete_size = snapshot.meta.len().numeric_cast();
-
-        let expect = snapshot.snap_files.iter().fold(Vec::new(), |mut acc, f| {
-            match f.filename.as_str() {
-                "0" => acc.append(&mut vec![0, 0, 0]),
-                "1" => acc.append(&mut vec![1, 1, 1]),
-                "2" => acc.append(&mut vec![2, 2, 2]),
-                _ => unreachable!(),
-            }
-            acc
-        });
-
-        let mut buf = Vec::new();
-        snapshot.seek(io::SeekFrom::Start(mete_size)).unwrap();
-        snapshot.read_to_end(buf.as_mut()).unwrap();
-        assert_eq!(buf, expect);
-
-        buf.clear();
-        snapshot.seek(io::SeekFrom::End(-5)).unwrap();
-        snapshot.read_to_end(buf.as_mut()).unwrap();
-        assert_eq!(buf, expect[4..]);
-
-        buf.clear();
-        snapshot.seek(io::SeekFrom::Current(-6)).unwrap();
-        snapshot.read_to_end(buf.as_mut()).unwrap();
-        assert_eq!(buf, expect[3..]);
-
-        fs::remove_dir_all(&path).unwrap();
     }
 }

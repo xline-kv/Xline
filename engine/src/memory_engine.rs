@@ -1,13 +1,14 @@
 use std::{
     cmp::Ordering,
     collections::HashMap,
-    io::{self, Cursor, Read, Seek, Write},
+    io::{Cursor, Seek},
     path::Path,
     sync::Arc,
 };
 
 use clippy_utilities::NumericCast;
 use parking_lot::RwLock;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::{
     engine_api::{SnapshotApi, StorageEngine, WriteOperation},
@@ -31,36 +32,26 @@ pub struct MemorySnapshot {
     data: Cursor<Vec<u8>>,
 }
 
-impl Read for MemorySnapshot {
-    #[inline]
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.data.read(buf)
-    }
-}
-
-impl Write for MemorySnapshot {
-    #[inline]
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.data.write(buf)
-    }
-
-    #[inline]
-    fn flush(&mut self) -> io::Result<()> {
-        self.data.flush()
-    }
-}
-
-impl Seek for MemorySnapshot {
-    #[inline]
-    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
-        self.data.seek(pos)
-    }
-}
-
+#[async_trait::async_trait]
 impl SnapshotApi for MemorySnapshot {
     #[inline]
     fn size(&self) -> u64 {
         self.data.get_ref().len().numeric_cast()
+    }
+
+    #[inline]
+    async fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
+        self.data.read_exact(buf).await.map(drop)
+    }
+
+    #[inline]
+    async fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        self.data.write_all(buf).await
+    }
+
+    #[inline]
+    fn rewind(&mut self) -> std::io::Result<()> {
+        Seek::rewind(&mut self.data)
     }
 }
 
@@ -82,6 +73,7 @@ impl MemoryEngine {
     }
 }
 
+#[async_trait::async_trait]
 impl StorageEngine for MemoryEngine {
     type Snapshot = MemorySnapshot;
 
@@ -164,7 +156,7 @@ impl StorageEngine for MemoryEngine {
     }
 
     #[inline]
-    fn snapshot(
+    fn get_snapshot(
         &self,
         _path: impl AsRef<Path>,
         _tables: &[&'static str],
@@ -296,11 +288,16 @@ mod test {
         let put = WriteOperation::new_put("kv", "key".into(), "value".into());
         assert!(engine.write_batch(vec![put], false).is_ok());
 
-        let snapshot = engine.snapshot("", &TESTTABLES).unwrap();
+        let snapshot = engine.get_snapshot("", &TESTTABLES).unwrap();
+        let put = WriteOperation::new_put("kv", "key2".into(), "value2".into());
+        assert!(engine.write_batch(vec![put], false).is_ok());
+
         let engine_2 = MemoryEngine::new(&TESTTABLES).unwrap();
         assert!(engine_2.apply_snapshot(snapshot, &TESTTABLES).is_ok());
 
         let value = engine_2.get("kv", "key").unwrap();
         assert_eq!(value, Some("value".into()));
+        let value2 = engine_2.get("kv", "key2").unwrap();
+        assert!(value2.is_none());
     }
 }
