@@ -103,10 +103,7 @@ impl IndexOperate for Index {
                 .filter_map(|revs| Self::get_revision(revs, revision))
                 .collect(),
             RangeType::Range => index
-                .range(KeyRange {
-                    start: key.to_vec(),
-                    end: range_end.to_vec(),
-                })
+                .range(KeyRange::new(key, range_end))
                 .filter_map(|(_k, revs)| Self::get_revision(revs, revision))
                 .collect(),
         }
@@ -124,10 +121,7 @@ impl IndexOperate for Index {
                 .flat_map(|revs| Self::filter_revision(revs, revision))
                 .collect(),
             RangeType::Range => index
-                .range(KeyRange {
-                    start: key.to_vec(),
-                    end: range_end.to_vec(),
-                })
+                .range(KeyRange::new(key, range_end))
                 .flat_map(|(_k, revs)| Self::filter_revision(revs, revision))
                 .collect(),
         }
@@ -167,10 +161,7 @@ impl IndexOperate for Index {
                 })
                 .collect(),
             RangeType::Range => index
-                .range_mut(KeyRange {
-                    start: key.to_vec(),
-                    end: range_end.to_vec(),
-                })
+                .range_mut(KeyRange::new(key, range_end))
                 .zip(0..)
                 .filter_map(|((_k, revs), i)| {
                     Self::get_revision(revs, 0).map(|rev| {
