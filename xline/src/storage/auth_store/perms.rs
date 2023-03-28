@@ -7,9 +7,13 @@ use std::{
 use jsonwebtoken::{
     errors::Error as JwtError, Algorithm, DecodingKey, EncodingKey, Header, Validation,
 };
+use merged_range::MergedRange;
 use serde::{Deserialize, Serialize};
 
-use crate::server::command::KeyRange;
+use crate::{
+    rpc::{Permission, Type},
+    server::command::KeyRange,
+};
 
 /// default token ttl
 const DEFAULT_TOKEN_TTL: u64 = 300;
@@ -100,18 +104,36 @@ impl TokenOperate for JwtTokenManager {
 /// Permissions if a user
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct UserPermissions {
-    /// `KeyRange` has read permission
-    pub(crate) read: Vec<KeyRange>,
-    /// `KeyRange` has write permission
-    pub(crate) write: Vec<KeyRange>,
+    /// `MergedRange` has read permission
+    pub(crate) read: MergedRange<Vec<u8>>,
+    /// `MergedRange` has write permission
+    pub(crate) write: MergedRange<Vec<u8>>,
 }
 
 impl UserPermissions {
     /// New `UserPermissions`
     pub(crate) fn new() -> Self {
         Self {
-            read: Vec::new(),
-            write: Vec::new(),
+            read: MergedRange::new(),
+            write: MergedRange::new(),
+        }
+    }
+
+    /// Insert a permission to `UserPermissions`
+    pub(crate) fn insert(&mut self, perm: Permission) {
+        let range = KeyRange::new(perm.key, perm.range_end).unpack();
+        #[allow(clippy::unwrap_used)] // safe unwrap
+        match Type::from_i32(perm.perm_type).unwrap() {
+            Type::Readwrite => {
+                self.read.insert(range.clone());
+                self.write.insert(range);
+            }
+            Type::Write => {
+                self.write.insert(range);
+            }
+            Type::Read => {
+                self.read.insert(range);
+            }
         }
     }
 }

@@ -74,25 +74,17 @@ where
     fn command_from_request_wrapper(propose_id: ProposeId, wrapper: RequestWithToken) -> Command {
         #[allow(clippy::wildcard_enum_match_arm)]
         let key_ranges = match wrapper.request {
-            RequestWrapper::RangeRequest(ref req) => vec![KeyRange {
-                start: req.key.clone(),
-                end: req.range_end.clone(),
-            }],
-            RequestWrapper::PutRequest(ref req) => vec![KeyRange {
-                start: req.key.clone(),
-                end: vec![],
-            }],
-            RequestWrapper::DeleteRangeRequest(ref req) => vec![KeyRange {
-                start: req.key.clone(),
-                end: req.range_end.clone(),
-            }],
+            RequestWrapper::RangeRequest(ref req) => {
+                vec![KeyRange::new(req.key.as_slice(), req.range_end.as_slice())]
+            }
+            RequestWrapper::PutRequest(ref req) => vec![KeyRange::new_one_key(req.key.as_slice())],
+            RequestWrapper::DeleteRangeRequest(ref req) => {
+                vec![KeyRange::new(req.key.as_slice(), req.range_end.as_slice())]
+            }
             RequestWrapper::TxnRequest(ref req) => req
                 .compare
                 .iter()
-                .map(|cmp| KeyRange {
-                    start: cmp.key.clone(),
-                    end: cmp.range_end.clone(),
-                })
+                .map(|cmp| KeyRange::new(cmp.key.as_slice(), cmp.range_end.as_slice()))
                 .collect(),
             _ => unreachable!("Other request should not be sent to this store"),
         };
@@ -280,10 +272,7 @@ where
         for op in ops {
             if let Some(Request::RequestDeleteRange(ref req)) = op.request {
                 // collect dels
-                let del = KeyRange {
-                    start: req.key.clone(),
-                    end: req.range_end.clone(),
-                };
+                let del = KeyRange::new(req.key.as_slice(), req.range_end.as_slice());
                 dels.push(del);
             }
         }

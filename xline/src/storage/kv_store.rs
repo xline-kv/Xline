@@ -441,9 +441,9 @@ where
         key_range: KeyRange,
         revision: i64,
     ) -> Result<Vec<Event>, ExecuteError> {
-        let key = key_range.start.as_slice();
-        let range_end = key_range.end.as_slice();
-        let revisions = self.index.get_from_rev(key, range_end, revision);
+        let revisions =
+            self.index
+                .get_from_rev(key_range.range_start(), key_range.range_end(), revision);
         let events = self
             .get_values(&revisions)?
             .into_iter()

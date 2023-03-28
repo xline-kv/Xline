@@ -54,17 +54,35 @@ impl RangeType {
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub(crate) struct KeyRange {
     /// Start of range
-    pub(crate) start: Vec<u8>,
+    key: Bound<Vec<u8>>,
     /// End of range
-    pub(crate) end: Vec<u8>,
+    range_end: Bound<Vec<u8>>,
 }
 
 impl KeyRange {
     /// New `KeyRange`
     pub(crate) fn new(start: impl Into<Vec<u8>>, end: impl Into<Vec<u8>>) -> Self {
+        let key_vec = start.into();
+        let range_end_vec = end.into();
+        let range_end = match range_end_vec.as_slice() {
+            UNBOUNDED => Bound::Unbounded,
+            ONE_KEY => Bound::Included(key_vec.clone()),
+            _ => Bound::Excluded(range_end_vec),
+        };
+        let key = match key_vec.as_slice() {
+            UNBOUNDED => Bound::Unbounded,
+            _ => Bound::Included(key_vec),
+        };
+        KeyRange { key, range_end }
+    }
+
+    /// New `KeyRange` only contains one key
+    pub(crate) fn new_one_key(key: impl Into<Vec<u8>>) -> Self {
+        let key_vec = key.into();
+        assert!(key_vec.as_slice() != UNBOUNDED);
         Self {
-            start: start.into(),
-            end: end.into(),
+            key: Bound::Included(key_vec.clone()),
+            range_end: Bound::Included(key_vec),
         }
     }
 
@@ -109,29 +127,15 @@ impl KeyRange {
 
     /// Check if `KeyRange` contains a key
     pub(crate) fn contains_key(&self, key: &[u8]) -> bool {
-        self.contains(key)
-    }
-
-    /// Check if `KeyRange` contains another `KeyRange`
-    pub(crate) fn contains_range(&self, other: &Self) -> bool {
-        if other.end.is_empty() {
-            self.contains_key(other.start.as_slice())
-        } else {
-            let s1_lt_s2 = match (self.start_bound(), other.start_bound()) {
-                (Bound::Included(s1), Bound::Included(s2)) => s1 <= s2,
-                (Bound::Unbounded, _) => true,
-                (_, Bound::Unbounded) => false,
-                _ => unreachable!("KeyRange::start_bound() cannot be Excluded"),
-            };
-            let e1_gt_e2 = match (self.end_bound(), other.end_bound()) {
-                (Bound::Excluded(e1) | Bound::Included(e1), Bound::Excluded(e2))
-                | (Bound::Included(e1), Bound::Included(e2)) => e1 >= e2,
-                (Bound::Excluded(e1), Bound::Included(e2)) => e1 > e2,
-                (Bound::Unbounded, _) => true,
-                (_, Bound::Unbounded) => false,
-            };
-            s1_lt_s2 && e1_gt_e2
-        }
+        (match self.start_bound() {
+            Bound::Included(start) => start.as_slice() <= key,
+            Bound::Excluded(start) => start.as_slice() < key,
+            Bound::Unbounded => true,
+        }) && (match self.end_bound() {
+            Bound::Included(end) => key <= end.as_slice(),
+            Bound::Excluded(end) => key < end.as_slice(),
+            Bound::Unbounded => true,
+        })
     }
 
     /// Get end of range with prefix
@@ -149,20 +153,44 @@ impl KeyRange {
         // next prefix does not exist (e.g., 0xffff);
         vec![0]
     }
-}
 
-impl RangeBounds<[u8]> for KeyRange {
-    fn start_bound(&self) -> Bound<&[u8]> {
-        match self.start.as_slice() {
-            UNBOUNDED => Bound::Unbounded,
-            _ => Bound::Included(&self.start),
+    /// unpack `KeyRange` to tuple
+    pub(crate) fn unpack(self) -> (Bound<Vec<u8>>, Bound<Vec<u8>>) {
+        (self.key, self.range_end)
+    }
+
+    /// start key of `KeyRange`
+    pub(crate) fn range_start(&self) -> &[u8] {
+        match self.key {
+            Bound::Included(ref k) => k.as_slice(),
+            Bound::Excluded(_) => unreachable!("KeyRange::start_bound() cannot be Excluded"),
+            Bound::Unbounded => &[0],
         }
     }
-    fn end_bound(&self) -> Bound<&[u8]> {
-        match self.end.as_slice() {
-            UNBOUNDED => Bound::Unbounded,
-            ONE_KEY => Bound::Included(&self.start),
-            _ => Bound::Excluded(&self.end),
+
+    /// end key of `KeyRange`
+    pub(crate) fn range_end(&self) -> &[u8] {
+        match self.range_end {
+            Bound::Included(_) => &[],
+            Bound::Excluded(ref k) => k.as_slice(),
+            Bound::Unbounded => &[0],
+        }
+    }
+}
+
+impl RangeBounds<Vec<u8>> for KeyRange {
+    fn start_bound(&self) -> Bound<&Vec<u8>> {
+        match self.key {
+            Bound::Unbounded => Bound::Unbounded,
+            Bound::Included(ref k) => Bound::Included(k),
+            Bound::Excluded(_) => unreachable!("KeyRange::start_bound() cannot be Excluded"),
+        }
+    }
+    fn end_bound(&self) -> Bound<&Vec<u8>> {
+        match self.range_end {
+            Bound::Unbounded => Bound::Unbounded,
+            Bound::Included(ref k) => Bound::Included(k),
+            Bound::Excluded(ref k) => Bound::Excluded(k),
         }
     }
 }

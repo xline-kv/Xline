@@ -66,7 +66,7 @@ impl LockServer {
         #[allow(clippy::wildcard_enum_match_arm)]
         let keys = match wrapper.request {
             RequestWrapper::DeleteRangeRequest(ref req) => {
-                vec![KeyRange::new(req.key.as_slice(), "")]
+                vec![KeyRange::new_one_key(req.key.as_slice())]
             }
             RequestWrapper::RangeRequest(ref req) => {
                 vec![KeyRange::new(req.key.as_slice(), req.range_end.as_slice())]

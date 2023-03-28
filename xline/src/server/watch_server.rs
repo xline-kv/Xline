@@ -163,10 +163,7 @@ where
             return;
         };
 
-        let key_range = KeyRange {
-            start: req.key,
-            end: req.range_end,
-        };
+        let key_range = KeyRange::new(req.key, req.range_end);
         let (events, revision) = self.kv_watcher.watch(
             watch_id,
             key_range,

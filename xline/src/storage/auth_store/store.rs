@@ -140,9 +140,6 @@ where
         for user in self.backend.get_all_users()? {
             let user_permission = self.get_user_permissions(&user, None);
             let username = String::from_utf8_lossy(&user.name).to_string();
-            let _ignore = permission_cache
-                .user_permissions
-                .insert(username.clone(), user_permission);
             for role in user.roles {
                 permission_cache
                     .role_to_users_map
@@ -150,6 +147,9 @@ where
                     .or_insert_with(Vec::new)
                     .push(username.clone());
             }
+            let _ignore = permission_cache
+                .user_permissions
+                .insert(username, user_permission);
         }
         self.permission_cache
             .map_write(|mut cache| *cache = permission_cache);
@@ -171,23 +171,7 @@ where
                 continue;
             };
             for permission in role.key_permission {
-                let key_range = KeyRange {
-                    start: permission.key,
-                    end: permission.range_end,
-                };
-                #[allow(clippy::unwrap_used)] // safe unwrap
-                match Type::from_i32(permission.perm_type).unwrap() {
-                    Type::Readwrite => {
-                        user_permission.read.push(key_range.clone());
-                        user_permission.write.push(key_range.clone());
-                    }
-                    Type::Write => {
-                        user_permission.write.push(key_range.clone());
-                    }
-                    Type::Read => {
-                        user_permission.read.push(key_range.clone());
-                    }
-                }
+                user_permission.insert(permission);
             }
         }
         user_permission
@@ -708,20 +692,7 @@ where
                     .entry(req.user.clone())
                     .or_insert_with(UserPermissions::new);
                 for perm in perms {
-                    let key_range = KeyRange::new(perm.key, perm.range_end);
-                    #[allow(clippy::unwrap_used)] // safe unwrap
-                    match Type::from_i32(perm.perm_type).unwrap() {
-                        Type::Readwrite => {
-                            entry.read.push(key_range.clone());
-                            entry.write.push(key_range);
-                        }
-                        Type::Write => {
-                            entry.write.push(key_range);
-                        }
-                        Type::Read => {
-                            entry.read.push(key_range);
-                        }
-                    }
+                    entry.insert(perm);
                 }
                 cache
                     .role_to_users_map
@@ -840,25 +811,12 @@ where
                 .get(&req.name)
                 .cloned()
                 .unwrap_or_default();
-            let key_range = KeyRange::new(permission.key, permission.range_end);
             for user in users {
                 let entry = cache
                     .user_permissions
                     .entry(user)
                     .or_insert_with(UserPermissions::new);
-                #[allow(clippy::unwrap_used)] // safe unwrap
-                match Type::from_i32(permission.perm_type).unwrap() {
-                    Type::Readwrite => {
-                        entry.read.push(key_range.clone());
-                        entry.write.push(key_range.clone());
-                    }
-                    Type::Write => {
-                        entry.write.push(key_range.clone());
-                    }
-                    Type::Read => {
-                        entry.read.push(key_range.clone());
-                    }
-                }
+                entry.insert(permission.clone());
             }
         });
         let revision = self.revision.next();
@@ -1160,20 +1118,12 @@ where
         if let Some(permissions) = self.permission_cache.read().user_permissions.get(username) {
             match perm_type {
                 Type::Read => {
-                    if permissions
-                        .read
-                        .iter()
-                        .any(|kr| kr.contains_range(&key_range))
-                    {
+                    if permissions.read.contains_range(&key_range) {
                         return Ok(());
                     }
                 }
                 Type::Write => {
-                    if permissions
-                        .write
-                        .iter()
-                        .any(|kr| kr.contains_range(&key_range))
-                    {
+                    if permissions.write.contains_range(&key_range) {
                         return Ok(());
                     }
                 }
@@ -1207,6 +1157,7 @@ where
 mod test {
     use std::collections::HashMap;
 
+    use merged_range::MergedRange;
     use utils::config::StorageConfig;
 
     use super::*;
@@ -1245,8 +1196,11 @@ mod test {
                 user_permissions: HashMap::from([(
                     "u".to_owned(),
                     UserPermissions {
-                        read: vec![KeyRange::new("foo", "")],
-                        write: vec![KeyRange::new("foo", ""), KeyRange::new("fop", "foz")],
+                        read: MergedRange::from_iter(vec![KeyRange::new("foo", "")]),
+                        write: MergedRange::from_iter(vec![
+                            KeyRange::new("foo", ""),
+                            KeyRange::new("fop", "foz")
+                        ]),
                     },
                 )]),
                 role_to_users_map: HashMap::from([("r".to_owned(), vec!["u".to_owned()])]),
@@ -1430,8 +1384,8 @@ mod test {
                 user_permissions: HashMap::from([(
                     "u".to_owned(),
                     UserPermissions {
-                        read: vec![KeyRange::new("foo", "")],
-                        write: vec![KeyRange::new("foo", "")],
+                        read: MergedRange::from_iter(vec![KeyRange::new("foo", "")]),
+                        write: MergedRange::from_iter(vec![KeyRange::new("foo", "")]),
                     },
                 )]),
                 role_to_users_map: HashMap::from([("r".to_owned(), vec!["u".to_owned()])]),

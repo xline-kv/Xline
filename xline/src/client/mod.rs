@@ -96,10 +96,7 @@ impl Client {
     #[inline]
     pub async fn put(&mut self, request: PutRequest) -> Result<PutResponse, ClientError> {
         if self.use_curp_client {
-            let key_ranges = vec![KeyRange {
-                start: request.key().to_vec(),
-                end: vec![],
-            }];
+            let key_ranges = vec![KeyRange::new_one_key(request.key())];
             let propose_id = self.generate_propose_id();
             let request = RequestWithToken::new(rpc::PutRequest::from(request).into());
             let cmd = Command::new(key_ranges, request, propose_id);
@@ -123,10 +120,7 @@ impl Client {
     #[inline]
     pub async fn range(&mut self, request: RangeRequest) -> Result<RangeResponse, ClientError> {
         if self.use_curp_client {
-            let key_ranges = vec![KeyRange {
-                start: request.key().to_vec(),
-                end: request.range_end().to_vec(),
-            }];
+            let key_ranges = vec![KeyRange::new(request.key(), request.range_end())];
             let propose_id = self.generate_propose_id();
             let request = RequestWithToken::new(rpc::RangeRequest::from(request).into());
             let cmd = Command::new(key_ranges, request, propose_id);
@@ -150,10 +144,7 @@ impl Client {
         request: DeleteRangeRequest,
     ) -> Result<DeleteRangeResponse, ClientError> {
         if self.use_curp_client {
-            let key_ranges = vec![KeyRange {
-                start: request.key().to_vec(),
-                end: request.range_end().to_vec(),
-            }];
+            let key_ranges = vec![KeyRange::new(request.key(), request.range_end())];
             let propose_id = self.generate_propose_id();
             let request = RequestWithToken::new(rpc::DeleteRangeRequest::from(request).into());
             let cmd = Command::new(key_ranges, request, propose_id);
