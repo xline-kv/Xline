@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use madsim::rand::{thread_rng, Rng};
 use tracing::debug;
@@ -86,10 +89,9 @@ impl State {
 
 impl LeaderState {
     /// Create a `LeaderState`
-    pub(super) fn new(
-        next_index: HashMap<ServerId, LogIndex>,
-        match_index: HashMap<ServerId, LogIndex>,
-    ) -> Self {
+    pub(super) fn new(others: &HashSet<ServerId>) -> Self {
+        let next_index = others.iter().map(|o| (o.clone(), 1)).collect();
+        let match_index = others.iter().map(|o| (o.clone(), 0)).collect();
         Self {
             next_index,
             match_index,

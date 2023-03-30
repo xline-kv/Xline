@@ -14,12 +14,13 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::Debug,
     sync::{
-        atomic::{AtomicBool, AtomicU8, Ordering},
+        atomic::{AtomicU8, Ordering},
         Arc,
     },
 };
 
 use clippy_utilities::NumericCast;
+use event_listener::Event;
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use tokio::sync::{broadcast, mpsc};
@@ -64,16 +65,6 @@ pub(super) struct RawCurp<C: Command> {
     log: RwLock<Log<C>>,
     /// Relevant context
     ctx: Context<C>,
-}
-
-/// Actions to perform on tick
-pub(super) enum TickAction<C> {
-    /// Send out heartbeats
-    Heartbeat(HashMap<ServerId, AppendEntries<C>>),
-    /// Send out votes
-    Votes(HashMap<ServerId, Vote>),
-    /// Do nothing
-    Nothing,
 }
 
 /// Invoked by candidates to gather votes
@@ -134,14 +125,12 @@ struct Context<C: Command> {
     leader_tx: broadcast::Sender<Option<ServerId>>,
     /// Election tick
     election_tick: AtomicU8,
-    /// Heartbeat opt out flag
-    hb_opt: HashMap<ServerId, AtomicBool>,
     /// Tx to send cmds to execute and do after sync
     cmd_tx: Box<dyn CEEventTxApi<C>>,
-    /// Tx to send the index of log entry which needs to be replicated on followers
-    sync_tx: mpsc::UnboundedSender<LogIndex>,
-    /// Tx to send the id of followers that need to be calibrated
-    calibrate_tx: mpsc::UnboundedSender<ServerId>,
+    /// Sync event trigger
+    sync_event: Arc<Event>,
+    /// Become leader event
+    leader_event: Arc<Event>,
 }
 
 impl<C: Command> Debug for Context<C> {
@@ -154,7 +143,6 @@ impl<C: Command> Debug for Context<C> {
             .field("sp", &self.sp)
             .field("leader_tx", &self.leader_tx)
             .field("election_tick", &self.election_tick)
-            .field("hb_opt", &self.hb_opt)
             .finish()
     }
 }
@@ -162,80 +150,22 @@ impl<C: Command> Debug for Context<C> {
 // Tick
 impl<C: 'static + Command> RawCurp<C> {
     /// Tick
-    pub(super) fn tick(&self) -> TickAction<C> {
-        let (role, timeout) = self.st.map_read(|st_r| {
-            (
-                st_r.role,
-                if st_r.role == Role::Follower {
-                    st_r.follower_timeout_ticks
-                } else {
-                    st_r.candidate_timeout_ticks
-                },
-            )
-        });
-        if role == Role::Leader {
-            self.tick_heartbeat()
-        } else {
-            self.tick_election(timeout)
-        }
-    }
-
-    /// Tick election, will generate votes if timeout
-    fn tick_election(&self, timeout: u8) -> TickAction<C> {
+    pub(super) fn tick_election(&self) -> Option<Vote> {
+        let timeout = {
+            let st_r = self.st.read();
+            match st_r.role {
+                Role::Follower => st_r.follower_timeout_ticks,
+                Role::Candidate => st_r.candidate_timeout_ticks,
+                Role::Leader => return None,
+            }
+        };
         let tick = self.ctx.election_tick.fetch_add(1, Ordering::AcqRel);
         if tick < timeout {
-            return TickAction::Nothing;
+            return None;
         }
-
-        // start election
         let vote =
             self.become_candidate(&mut self.st.write(), &mut self.cst.lock(), &self.log.read());
-        let votes = self
-            .ctx
-            .others
-            .iter()
-            .map(|id| (id.clone(), vote.clone()))
-            .collect();
-        TickAction::Votes(votes)
-    }
-
-    /// Tick heartbeat, will generate heartbeat if timeout
-    fn tick_heartbeat(&self) -> TickAction<C> {
-        let term = self.st.map_read(|st_r| st_r.term);
-        let lst_r = self.lst.read();
-        let log_r = self.log.read();
-
-        let hbs = self
-            .ctx
-            .others
-            .iter()
-            .filter_map(|id| {
-                #[allow(clippy::indexing_slicing)]
-                // check if heartbeat has been optimized out
-                if self.ctx.hb_opt[id]
-                    .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
-                    .is_ok()
-                {
-                    return None;
-                }
-                let next_index = lst_r.get_next_index(id);
-                let (prev_log_index, prev_log_term) = log_r.get_prev_entry_info(next_index);
-                debug!("{} send heartbeat to {}", self.id(), id);
-                let req = (
-                    id.clone(),
-                    AppendEntries {
-                        term,
-                        leader_id: self.id().clone(),
-                        prev_log_index,
-                        prev_log_term,
-                        leader_commit: log_r.commit_index,
-                        entries: log_r.get_from(next_index).unwrap_or_default().to_vec(),
-                    },
-                );
-                Some(req)
-            })
-            .collect();
-        TickAction::Heartbeat(hbs)
+        Some(vote)
     }
 }
 
@@ -290,13 +220,10 @@ impl<C: 'static + Command> RawCurp<C> {
 
         let mut log_w = self.log.write();
         let index = log_w.push_cmd(st_r.term, Arc::clone(&cmd));
+        debug!("{} gets new log[{index}]", self.id());
 
         if !conflict {
             self.ctx.cmd_tx.send_sp_exe(cmd);
-        }
-
-        if let Err(e) = self.ctx.sync_tx.send(index) {
-            error!("send channel error, {e}");
         }
 
         (
@@ -399,11 +326,10 @@ impl<C: 'static + Command> RawCurp<C> {
             let mut lst_w = self.lst.write();
             lst_w.update_next_index(follower_id, hint_index);
             debug!(
-                "{} updates follower {}'s next_index to {hint_index}",
+                "{} updates follower {}'s next_index to {hint_index} because it rejects ae",
                 self.id(),
                 follower_id,
             );
-            self.send_calibrate(follower_id.clone());
             return Ok(false);
         }
 
@@ -544,10 +470,8 @@ impl<C: 'static + Command> RawCurp<C> {
             lst_w.update_next_index(other, last_log_index + 1); // iter from the end to front is more likely to match the follower
         }
         if prev_last_log_index < last_log_index {
-            // if some entries are recovered, calibrate immediately
-            for follower_id in &self.ctx.others {
-                self.send_calibrate(follower_id.clone());
-            }
+            // if some entries are recovered, sync with followers immediately
+            self.ctx.sync_event.notify(usize::MAX);
         }
 
         Ok(true)
@@ -567,16 +491,9 @@ impl<C: 'static + Command> RawCurp<C> {
         uncommitted_pool: UncommittedPoolRef<C>,
         cfg: Arc<CurpConfig>,
         cmd_tx: Box<dyn CEEventTxApi<C>>,
-        sync_tx: mpsc::UnboundedSender<LogIndex>,
-        calibrate_tx: mpsc::UnboundedSender<ServerId>,
+        sync_event: Arc<Event>,
         log_tx: mpsc::UnboundedSender<LogEntry<C>>,
     ) -> Self {
-        let next_index = others.iter().map(|o| (o.clone(), 1)).collect();
-        let match_index = others.iter().map(|o| (o.clone(), 0)).collect();
-        let hb_opt = others
-            .iter()
-            .map(|o| (o.clone(), AtomicBool::new(false)))
-            .collect();
         let raw_curp = Self {
             st: RwLock::new(State::new(
                 0,
@@ -586,7 +503,7 @@ impl<C: 'static + Command> RawCurp<C> {
                 cfg.follower_timeout_ticks,
                 cfg.candidate_timeout_ticks,
             )),
-            lst: RwLock::new(LeaderState::new(next_index, match_index)),
+            lst: RwLock::new(LeaderState::new(&others)),
             cst: Mutex::new(CandidateState::new()),
             log: RwLock::new(Log::new(log_tx, vec![])),
             ctx: Context {
@@ -598,10 +515,9 @@ impl<C: 'static + Command> RawCurp<C> {
                 leader_tx: broadcast::channel(1).0,
                 cfg,
                 election_tick: AtomicU8::new(0),
-                hb_opt,
                 cmd_tx,
-                sync_tx,
-                calibrate_tx,
+                sync_event,
+                leader_event: Arc::new(Event::new()),
             },
         };
         if is_leader {
@@ -623,8 +539,7 @@ impl<C: 'static + Command> RawCurp<C> {
         uncommitted_pool: UncommittedPoolRef<C>,
         cfg: Arc<CurpConfig>,
         cmd_tx: Box<dyn CEEventTxApi<C>>,
-        sync_tx: mpsc::UnboundedSender<LogIndex>,
-        calibrate_tx: mpsc::UnboundedSender<ServerId>,
+        sync_event: Arc<Event>,
         log_tx: mpsc::UnboundedSender<LogEntry<C>>,
         voted_for: Option<(u64, ServerId)>,
         entries: Vec<LogEntry<C>>,
@@ -639,8 +554,7 @@ impl<C: 'static + Command> RawCurp<C> {
             uncommitted_pool,
             cfg,
             cmd_tx,
-            sync_tx,
-            calibrate_tx,
+            sync_event,
             log_tx.clone(),
         );
 
@@ -683,60 +597,48 @@ impl<C: 'static + Command> RawCurp<C> {
         self.ctx.leader_tx.subscribe()
     }
 
-    /// Get `append_entries` request for log[i]
-    /// Return `Err(())` if self is no longer the leader
-    pub(super) fn append_entries_single(&self, i: LogIndex) -> Result<AppendEntries<C>, ()> {
-        assert!(i > 0, "can't generate append_entries for fake log[0]");
-        let st_r = self.st.read();
-        if st_r.role != Role::Leader {
-            return Err(());
-        }
-        let log_r = self.log.read();
-        let (prev_log_index, prev_log_term) = log_r.get_prev_entry_info(i);
-        let entry = log_r.get(i).unwrap_or_else(|| {
-            unreachable!("system corrupted, leader wants to log[{i}] when it doesn't have it")
-        });
-        Ok(AppendEntries {
-            term: st_r.term,
-            leader_id: self.id().clone(),
-            prev_log_index,
-            prev_log_term,
-            leader_commit: log_r.commit_index,
-            entries: vec![entry.clone()],
-        })
-    }
-
     /// Get `append_entries` request for `follower_id` that contains the latest log entries
-    pub(super) fn append_entries(&self, follower_id: &ServerId) -> Result<AppendEntries<C>, ()> {
-        let st_r = self.st.read();
-        if st_r.role != Role::Leader {
-            return Err(());
-        }
-        let next_index = self.lst.map_read(|lst_r| lst_r.get_next_index(follower_id));
+    /// TODO: sync can also return snapshot
+    pub(super) fn sync(&self, follower_id: &ServerId) -> Result<AppendEntries<C>, ()> {
+        let term = {
+            let lst_r = self.st.read();
+            if lst_r.role != Role::Leader {
+                return Err(());
+            }
+            lst_r.term
+        };
+
+        let lst_r = self.lst.read();
         let log_r = self.log.read();
+
+        let next_index = lst_r.get_next_index(follower_id);
         let (prev_log_index, prev_log_term) = log_r.get_prev_entry_info(next_index);
-        let entries = log_r.get_from(next_index).unwrap_or_else(|| {
-            unreachable!("system corrupted, leader get log[{next_index}] when it doesn't have one")
-        });
-        Ok(AppendEntries {
-            term: st_r.term,
+        let entries = log_r.get_from(next_index).unwrap_or_default().to_vec(); // TODO: limit batch size here
+        let ae = AppendEntries {
+            term,
             leader_id: self.id().clone(),
             prev_log_index,
             prev_log_term,
             leader_commit: log_r.commit_index,
-            entries: entries.to_vec(),
-        })
-    }
+            entries,
+        };
 
-    /// Optimize out heartbeat
-    pub(super) fn opt_out_hb(&self, id: &ServerId) {
-        #[allow(clippy::indexing_slicing)]
-        self.ctx.hb_opt[id].store(true, Ordering::Relaxed);
+        Ok(ae)
     }
 
     /// Get a reference to `CurpConfig`
     pub(super) fn cfg(&self) -> &CurpConfig {
         self.ctx.cfg.as_ref()
+    }
+
+    /// Is leader?
+    pub(super) fn is_leader(&self) -> bool {
+        self.st.read().role == Role::Leader
+    }
+
+    /// Get leader event
+    pub(super) fn leader_event(&self) -> Arc<Event> {
+        Arc::clone(&self.ctx.leader_event)
     }
 }
 
@@ -781,6 +683,7 @@ impl<C: 'static + Command> RawCurp<C> {
         st.role = Role::Leader;
         st.leader_id = Some(self.id().clone());
         let _ig = self.ctx.leader_tx.send(Some(self.id().clone())).ok();
+        self.ctx.leader_event.notify(usize::MAX);
 
         debug!("{} becomes the leader", self.id());
     }
@@ -803,9 +706,6 @@ impl<C: 'static + Command> RawCurp<C> {
         st.leader_id = None;
         let _ig = self.ctx.leader_tx.send(None).ok();
         st.randomize_timeout_ticks(); // regenerate timeout ticks
-        for o in self.ctx.hb_opt.values() {
-            o.store(false, Ordering::Relaxed);
-        }
         debug!(
             "{} updates to term {term} and becomes a follower",
             self.id()
@@ -947,13 +847,6 @@ impl<C: 'static + Command> RawCurp<C> {
                 )
             });
             self.ctx.cmd_tx.send_after_sync(Arc::clone(&entry.cmd), i);
-        }
-    }
-
-    /// Send calibrate task
-    fn send_calibrate(&self, id: ServerId) {
-        if let Err(e) = self.ctx.calibrate_tx.send(id) {
-            error!("can't send calibrate task {e}");
         }
     }
 }
