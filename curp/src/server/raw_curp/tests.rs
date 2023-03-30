@@ -14,7 +14,7 @@ use crate::{
         curp_node::UncommittedPool,
         spec_pool::SpeculativePool,
     },
-    test_utils::{sleep_millis, test_cmd::TestCommand},
+    test_utils::test_cmd::TestCommand,
     LogIndex,
 };
 
@@ -33,8 +33,6 @@ impl<C: 'static + Command> RawCurp<C> {
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
         let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
-        let (sync_tx, _sync_rx) = mpsc::unbounded_channel();
-        let (calibrate_tx, _rx) = mpsc::unbounded_channel();
         let (log_tx, _log_rx) = mpsc::unbounded_channel();
         Self::new(
             "S0".to_owned(),
@@ -45,8 +43,7 @@ impl<C: 'static + Command> RawCurp<C> {
             uncommitted_pool,
             Arc::new(CurpConfig::default()),
             Box::new(exe_tx),
-            sync_tx,
-            calibrate_tx,
+            Arc::new(Event::new()),
             log_tx,
         )
     }
@@ -180,17 +177,6 @@ fn follower_handle_propose_will_reject_conflicted() {
 
 #[traced_test]
 #[test]
-fn leader_will_send_heartbeat() {
-    let curp = {
-        let exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        RawCurp::new_test(3, exe_tx)
-    };
-    let action = curp.tick();
-    assert!(matches!(action, TickAction::Heartbeat(_)));
-}
-
-#[traced_test]
-#[test]
 fn heartbeat_will_calibrate_term() {
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
@@ -218,37 +204,6 @@ fn heartbeat_will_calibrate_next_index() {
     let lst_r = curp.lst.read();
     assert_eq!(st_r.term, 0);
     assert_eq!(lst_r.get_next_index(&"S1".to_string()), 1);
-}
-
-#[traced_test]
-#[tokio::test]
-async fn no_heartbeat_when_contention_is_high() {
-    let curp = Arc::new(RawCurp::new_test(
-        3,
-        MockCEEventTxApi::<TestCommand>::default(),
-    ));
-
-    let curp_c = Arc::clone(&curp);
-    let handle = tokio::spawn(async move {
-        sleep_millis(50).await;
-        loop {
-            sleep(default_heartbeat_interval()).await;
-            let action = curp_c.tick();
-            assert!(match action {
-                TickAction::Heartbeat(hb) => hb.is_empty(),
-                _ => false,
-            });
-        }
-    });
-
-    for _ in 0..50 {
-        sleep_millis(50).await;
-        for other in &curp.ctx.others {
-            curp.opt_out_hb(other);
-        }
-    }
-
-    handle.abort();
 }
 
 #[traced_test]
@@ -341,8 +296,8 @@ async fn follower_will_not_start_election_when_heartbeats_are_received() {
     let handle = tokio::spawn(async move {
         loop {
             sleep(default_heartbeat_interval()).await;
-            let action = curp_c.tick();
-            assert!(matches!(action, TickAction::Nothing));
+            let action = curp_c.tick_election();
+            assert!(matches!(action, None));
         }
     });
 
@@ -370,8 +325,8 @@ async fn follower_or_candidate_will_start_election_if_timeout() {
     loop {
         sleep(default_heartbeat_interval()).await;
         let role = curp.role();
-        let action = curp.tick();
-        if matches!(action, TickAction::Votes(_)) && role == Role::Follower {
+        let action = curp.tick_election();
+        if matches!(action, Some(_)) && role == Role::Follower {
             let now = Instant::now();
             let dur = now - start;
             assert!(dur >= default_heartbeat_interval() * default_follower_timeout_ticks() as u32);
@@ -381,7 +336,7 @@ async fn follower_or_candidate_will_start_election_if_timeout() {
             );
             follower_election = Some(now);
         }
-        if matches!(action, TickAction::Votes(_)) && role == Role::Candidate {
+        if matches!(action, Some(_)) && role == Role::Candidate {
             let prev = follower_election.unwrap();
             let now = Instant::now();
 
@@ -460,7 +415,7 @@ fn candidate_will_become_leader_after_election_succeeds() {
 
     // tick till election starts
     while curp.role() != Role::Candidate {
-        let _ig = curp.tick();
+        let _ig = curp.tick_election();
     }
 
     let result = curp
@@ -486,7 +441,7 @@ fn vote_will_calibrate_candidate_term() {
 
     // tick till election starts
     while curp.role() != Role::Candidate {
-        let _ig = curp.tick();
+        let _ig = curp.tick_election();
     }
 
     let result = curp.handle_vote_resp(&"S1".to_owned(), 3, false, vec![]);
