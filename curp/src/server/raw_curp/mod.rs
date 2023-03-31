@@ -226,6 +226,8 @@ impl<C: 'static + Command> RawCurp<C> {
             self.ctx.cmd_tx.send_sp_exe(cmd);
         }
 
+        self.ctx.sync_event.notify(usize::MAX);
+
         (
             info,
             if conflict {
