@@ -8,8 +8,8 @@ pub(crate) use self::proto::{
     protocol_server::Protocol,
     wait_synced_response::{Success, SyncResult as SyncResultRaw},
     AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest, FetchLeaderResponse,
-    ProposeRequest, ProposeResponse, VoteRequest, VoteResponse, WaitSyncedRequest,
-    WaitSyncedResponse,
+    InstallSnapshotRequest, InstallSnapshotResponse, ProposeRequest, ProposeResponse, VoteRequest,
+    VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
 };
 use crate::{
     cmd::{Command, ProposeId},
@@ -330,5 +330,12 @@ impl VoteResponse {
             .iter()
             .map(|cmd| bincode::deserialize(cmd))
             .collect()
+    }
+}
+
+impl InstallSnapshotResponse {
+    /// Create a new snapshot response
+    pub(crate) fn new(term: u64) -> Self {
+        Self { term }
     }
 }

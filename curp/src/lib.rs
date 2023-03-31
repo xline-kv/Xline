@@ -170,5 +170,8 @@ mod log_entry;
 /// Protobuf generated types that are used in RPC
 mod rpc;
 
+/// Snapshot
+mod snapshot;
+
 #[cfg(test)]
 pub(crate) mod test_utils;

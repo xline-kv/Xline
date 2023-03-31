@@ -1,5 +1,6 @@
 use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
+use futures::TryStreamExt;
 use tokio::{net::TcpListener, sync::broadcast};
 use tokio_stream::wrappers::TcpListenerStream;
 use tower::filter::FilterLayer;
@@ -12,8 +13,8 @@ use crate::{
     error::ServerError,
     rpc::{
         AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest, FetchLeaderResponse,
-        ProposeRequest, ProposeResponse, ProtocolServer, VoteRequest, VoteResponse,
-        WaitSyncedRequest, WaitSyncedResponse,
+        InstallSnapshotRequest, InstallSnapshotResponse, ProposeRequest, ProposeResponse,
+        ProtocolServer, VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
     ServerId, TxFilter,
 };
@@ -101,6 +102,19 @@ impl<C: 'static + Command> crate::rpc::Protocol for Rpc<C> {
     ) -> Result<tonic::Response<FetchLeaderResponse>, tonic::Status> {
         Ok(tonic::Response::new(
             self.inner.fetch_leader(request.into_inner())?,
+        ))
+    }
+
+    #[instrument(skip_all, name = "curp_install_snapshot")]
+    async fn install_snapshot(
+        &self,
+        request: tonic::Request<tonic::Streaming<InstallSnapshotRequest>>,
+    ) -> Result<tonic::Response<InstallSnapshotResponse>, tonic::Status> {
+        let req_stream = request
+            .into_inner()
+            .map_err(|e| format!("snapshot transmission failed at client side, {e}"));
+        Ok(tonic::Response::new(
+            self.inner.install_snapshot(req_stream).await?,
         ))
     }
 }

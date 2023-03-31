@@ -9,16 +9,18 @@ use std::{
     sync::Arc,
 };
 
+use tokio::sync::oneshot;
 use tracing::{debug, error};
 
-use super::CEEvent;
+use super::{CEEvent, CEEventTx};
 use crate::{
     cmd::{Command, ProposeId},
+    snapshot::{Snapshot, SnapshotMeta},
     LogIndex,
 };
 
 /// CE task
-pub(super) struct Task<C> {
+pub(in crate::server) struct Task<C> {
     /// Corresponding vertex id
     vid: u64,
     /// Task type
@@ -26,23 +28,26 @@ pub(super) struct Task<C> {
 }
 
 /// Task Type
-pub(super) enum TaskType<C> {
+pub(in crate::server) enum TaskType<C> {
     /// Execute a cmd
     SpecExe(Arc<C>),
     /// After sync a cmd
     AS(Arc<C>, LogIndex),
     /// Reset the CE
-    Reset,
+    Reset(Option<Snapshot>, Option<oneshot::Sender<()>>),
+    /// Snapshot
+    Snapshot(Option<(oneshot::Sender<Snapshot>, SnapshotMeta)>),
 }
 
 impl<C> Task<C> {
     /// Get inner task
-    pub(super) fn inner(&self) -> &TaskType<C> {
-        &self.inner
+    pub(super) fn inner(&mut self) -> &mut TaskType<C> {
+        &mut self.inner
     }
 }
 
 /// Vertex
+#[derive(Debug)]
 struct Vertex<C> {
     /// Successor cmds that arrive later with keys that conflict this cmd
     successors: HashSet<u64>,
@@ -67,6 +72,7 @@ impl<C: Command> Vertex<C> {
 }
 
 /// Vertex inner
+#[derive(Debug)]
 enum VertexInner<C> {
     /// A cmd vertex
     Cmd {
@@ -78,7 +84,21 @@ enum VertexInner<C> {
         as_st: AsState,
     },
     /// A reset vertex
-    Reset(ResetState),
+    Reset {
+        /// The snapshot
+        snapshot: Option<Snapshot>,
+        /// Finish tx
+        finish_tx: Option<oneshot::Sender<()>>,
+        /// Reset state
+        st: OnceState,
+    },
+    /// A snapshot vertex
+    Snapshot {
+        /// The sender
+        tx: Option<(oneshot::Sender<Snapshot>, SnapshotMeta)>,
+        /// Snapshot state
+        st: OnceState,
+    },
 }
 
 /// Execute state of a cmd
@@ -105,13 +125,13 @@ enum AsState {
     AfterSynced,
 }
 
-/// Reset state
-#[derive(Debug, Clone, Copy)]
-enum ResetState {
+/// State of a vertex that only has one task
+#[derive(Debug)]
+enum OnceState {
     /// Reset ready
-    ResetReady,
+    Ready,
     /// Resetting
-    Resetting,
+    Doing,
     /// Completed
     Completed,
 }
@@ -169,7 +189,7 @@ impl<C: Command> Filter<C> {
                 debug_assert!(matches!(*exe_st, ExeState::Executing));
                 *exe_st = ExeState::Executed(succeeded);
             }
-            _ => unreachable!("impossible vertex type"),
+            _ => unreachable!("impossible vertex type, {v:?}"),
         };
         self.update_graph(vid);
     }
@@ -182,7 +202,7 @@ impl<C: Command> Filter<C> {
                 debug_assert!(matches!(*as_st, AsState::AfterSyncing));
                 *as_st = AsState::AfterSynced;
             }
-            _ => unreachable!("impossible vertex type"),
+            _ => unreachable!("impossible vertex type, {v:?}"),
         };
         self.update_graph(vid);
     }
@@ -191,9 +211,29 @@ impl<C: Command> Filter<C> {
     fn mark_reset(&mut self, vid: u64) {
         let v = self.get_vertex_mut(vid);
         match v.inner {
-            VertexInner::Reset(ref mut st) => {
-                debug_assert!(matches!(*st, ResetState::Resetting));
-                *st = ResetState::Completed;
+            VertexInner::Reset {
+                ref snapshot,
+                ref finish_tx,
+                ref mut st,
+            } => {
+                debug_assert!(snapshot.is_none(), "snapshot is not taken");
+                debug_assert!(finish_tx.is_none(), "snapshot finish tx is not taken");
+                debug_assert!(matches!(*st, OnceState::Doing));
+                *st = OnceState::Completed;
+            }
+            _ => unreachable!("impossible vertex type, {v:?}"),
+        }
+        self.update_graph(vid);
+    }
+
+    /// Mark a vertex snapshot finished
+    fn mark_snapshot_finished(&mut self, vid: u64) {
+        let Some(v) = self.vs.get_mut(&vid) else { return; };
+        match v.inner {
+            VertexInner::Snapshot { ref tx, ref mut st } => {
+                debug_assert!(tx.is_none(), "snapshot tx is not taken");
+                debug_assert!(matches!(*st, OnceState::Doing));
+                *st = OnceState::Completed;
             }
             _ => unreachable!("impossible vertex type"),
         }
@@ -272,20 +312,42 @@ impl<C: Command> Filter<C> {
                     unreachable!("no such cmd state can be reached: {exe_st:?}, {as_st:?}")
                 }
             },
-            VertexInner::Reset(ref mut st) => match *st {
-                ResetState::ResetReady => {
+            VertexInner::Reset {
+                ref mut snapshot,
+                ref mut finish_tx,
+                ref mut st,
+            } => match *st {
+                OnceState::Ready => {
                     let task = Task {
                         vid,
-                        inner: TaskType::Reset,
+                        inner: TaskType::Reset(snapshot.take(), finish_tx.take()),
                     };
-                    *st = ResetState::Resetting;
+                    *st = OnceState::Doing;
                     if let Err(e) = self.filter_tx.send(task) {
                         error!("failed to send task through filter, {e}");
                     }
                     false
                 }
-                ResetState::Resetting => false,
-                ResetState::Completed => true,
+                OnceState::Doing => false,
+                OnceState::Completed => true,
+            },
+            VertexInner::Snapshot {
+                ref mut tx,
+                ref mut st,
+            } => match *st {
+                OnceState::Ready => {
+                    let task = Task {
+                        vid,
+                        inner: TaskType::Snapshot(tx.take()),
+                    };
+                    *st = OnceState::Doing;
+                    if let Err(e) = self.filter_tx.send(task) {
+                        error!("failed to send task through filter, {e}");
+                    }
+                    false
+                }
+                OnceState::Doing => false,
+                OnceState::Completed => true,
             },
         }
     }
@@ -350,7 +412,7 @@ impl<C: Command> Filter<C> {
                     new_vid
                 }
             }
-            CEEvent::Reset => {
+            CEEvent::Reset(snapshot, finish_tx) => {
                 // since a reset is needed, all other vertexes doesn't matter anymore, so delete them all
                 self.cmd_vid.clear();
                 self.vs.clear();
@@ -359,7 +421,24 @@ impl<C: Command> Filter<C> {
                 let new_v = Vertex {
                     successors: HashSet::new(),
                     predecessor_cnt: 0,
-                    inner: VertexInner::Reset(ResetState::ResetReady),
+                    inner: VertexInner::Reset {
+                        snapshot,
+                        finish_tx: Some(finish_tx),
+                        st: OnceState::Ready,
+                    },
+                };
+                self.insert_new_vertex(new_vid, new_v);
+                new_vid
+            }
+            CEEvent::Snapshot(tx, meta) => {
+                let new_vid = self.next_vertex_id();
+                let new_v = Vertex {
+                    successors: HashSet::new(),
+                    predecessor_cnt: 0,
+                    inner: VertexInner::Snapshot {
+                        tx: Some((tx, meta)),
+                        st: OnceState::Ready,
+                    },
                 };
                 self.insert_new_vertex(new_vid, new_v);
                 new_vid
@@ -373,8 +452,8 @@ impl<C: Command> Filter<C> {
 // Message flow:
 // send_tx -> filter_rx -> filter -> filter_tx -> recv_rx -> done_tx -> done_rx
 #[allow(clippy::type_complexity)] // it's clear
-pub(super) fn channel<C: 'static + Command>() -> (
-    flume::Sender<CEEvent<C>>,
+pub(in crate::server) fn channel<C: 'static + Command>() -> (
+    CEEventTx<C>,
     flume::Receiver<Task<C>>,
     flume::Sender<(Task<C>, bool)>,
 ) {
@@ -395,7 +474,8 @@ pub(super) fn channel<C: 'static + Command>() -> (
                     match task.inner {
                         TaskType::SpecExe(_) => filter.mark_executed(task.vid, succeeded),
                         TaskType::AS(_, _) => filter.mark_after_synced(task.vid),
-                        TaskType::Reset => filter.mark_reset(task.vid),
+                        TaskType::Reset(_, _) => filter.mark_reset(task.vid),
+                        TaskType::Snapshot(_) => filter.mark_snapshot_finished(task.vid),
                     }
                 },
                 Ok(event) = filter_rx.recv_async() => {
@@ -408,5 +488,5 @@ pub(super) fn channel<C: 'static + Command>() -> (
             }
         }
     });
-    (send_tx, recv_rx, done_tx)
+    (CEEventTx(send_tx), recv_rx, done_tx)
 }

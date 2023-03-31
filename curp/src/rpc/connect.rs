@@ -1,12 +1,17 @@
 use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
+use clippy_utilities::NumericCast;
+use futures::Stream;
 #[cfg(test)]
 use mockall::automock;
-use tokio::sync::RwLock;
-use tracing::{debug, instrument};
+use tokio::sync::{mpsc, RwLock};
+use tokio_stream::wrappers::ReceiverStream;
+use tonic::Request;
+use tracing::{debug, error, instrument};
 use utils::tracing::Inject;
 
+use super::{InstallSnapshotRequest, InstallSnapshotResponse};
 use crate::{
     error::ProposeError,
     rpc::{
@@ -14,8 +19,12 @@ use crate::{
         FetchLeaderRequest, FetchLeaderResponse, ProposeRequest, ProposeResponse, VoteRequest,
         VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
+    snapshot::Snapshot,
     ServerId,
 };
+
+/// Install snapshot chunk size: 64KB
+const SNAPSHOT_CHUNK_SIZE: u64 = 64 * 1024;
 
 /// Connect will call filter(request) before it sends out a request
 pub trait TxFilter: Send + Sync + Debug {
@@ -103,6 +112,14 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
         request: FetchLeaderRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<FetchLeaderResponse>, ProposeError>;
+
+    /// Send a snapshot
+    async fn install_snapshot(
+        &self,
+        term: u64,
+        leader_id: ServerId,
+        mut snapshot: Snapshot,
+    ) -> Result<tonic::Response<InstallSnapshotResponse>, ProposeError>;
 }
 
 /// The connection struct to hold the real rpc connections, it may failed to connect, but it also
@@ -220,6 +237,98 @@ impl ConnectApi for Connect {
         req.set_timeout(timeout);
         client.fetch_leader(req).await.map_err(Into::into)
     }
+
+    async fn install_snapshot(
+        &self,
+        term: u64,
+        leader_id: ServerId,
+        snapshot: Snapshot,
+    ) -> Result<tonic::Response<InstallSnapshotResponse>, ProposeError> {
+        self.filter()?;
+
+        let mut client = self.get().await?;
+        client
+            .install_snapshot(Request::new(install_snapshot_stream(
+                term, leader_id, snapshot,
+            )))
+            .await
+            .map_err(Into::into)
+    }
+}
+
+/// Generate install snapshot stream
+fn install_snapshot_stream(
+    term: u64,
+    leader_id: ServerId,
+    snapshot: Snapshot,
+) -> impl Stream<Item = InstallSnapshotRequest> {
+    // FIXME: The following code is better. But it will result in an unknown compiling error that might origin from a compiler bug(https://github.com/rust-lang/rust/issues/102211).
+    // let req_stream = futures::stream::unfold(
+    //     (0, snapshot, term, leader_id, meta),
+    //     |(offset, mut snapshot, term, leader_id, meta)| async move {
+    //         if offset >= snapshot.size() {
+    //             return None;
+    //         }
+    //         let mut data = Vec::with_capacity(
+    //             std::cmp::min(snapshot.size() - offset, SNAPSHOT_CHUNK_SIZE).numeric_cast(),
+    //         );
+    //         let n: u64 = match snapshot.read(&mut data) {
+    //             Ok(n) => n.numeric_cast(),
+    //             Err(e) => {
+    //                 error!("read snapshot error, {e}");
+    //                 return None;
+    //             }
+    //         };
+    //         let done = (offset + n) == snapshot.size();
+    //         let req = InstallSnapshotRequest {
+    //             term,
+    //             leader_id: leader_id.clone(),
+    //             last_included_index: meta.last_included_index,
+    //             last_included_term: meta.last_included_term,
+    //             offset,
+    //             data,
+    //             done,
+    //         };
+    //         Some((req, (offset + n, snapshot, term, leader_id, meta)))
+    //     },
+    // );
+
+    let (tx, rx) = mpsc::channel(1);
+    let _ig = tokio::spawn(async move {
+        let meta = snapshot.meta;
+        let mut snapshot = snapshot.into_inner();
+        let mut offset = 0;
+        if let Err(e) = snapshot.rewind() {
+            error!("snapshot seek failed, {e}");
+            return;
+        }
+        #[allow(clippy::integer_arithmetic)] // can't overflow
+        while offset < snapshot.size() {
+            let len: u64 =
+                std::cmp::min(snapshot.size() - offset, SNAPSHOT_CHUNK_SIZE).numeric_cast();
+            let mut data = vec![0; len.numeric_cast()];
+            if let Err(e) = snapshot.read_exact(&mut data).await {
+                error!("read snapshot error, {e}");
+                break;
+            }
+            let req = InstallSnapshotRequest {
+                term,
+                leader_id: leader_id.clone(),
+                last_included_index: meta.last_included_index,
+                last_included_term: meta.last_included_term,
+                offset,
+                data,
+                done: (offset + len) == snapshot.size(),
+            };
+            if let Err(e) = tx.send(req).await {
+                error!("snapshot tx error, {e}");
+                break;
+            }
+            offset += len;
+        }
+    });
+
+    ReceiverStream::new(rx)
 }
 
 impl Connect {
@@ -232,5 +341,47 @@ impl Connect {
                 |_| Ok(()),
             )
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use engine::{engine_api::SnapshotApi, memory_engine::MemorySnapshot};
+    use futures::StreamExt;
+    use tracing_test::traced_test;
+
+    use super::*;
+    use crate::snapshot::SnapshotMeta;
+
+    #[traced_test]
+    #[tokio::test]
+    async fn test_install_snapshot_stream() {
+        const SNAPSHOT_SIZE: u64 = 200 * 1024;
+        let mut snapshot = MemorySnapshot::default();
+        snapshot
+            .write_all(&mut vec![1; SNAPSHOT_SIZE.numeric_cast()])
+            .await
+            .unwrap();
+        let mut stream = install_snapshot_stream(
+            0,
+            "test".to_owned(),
+            Snapshot::new(
+                SnapshotMeta {
+                    last_included_index: 1,
+                    last_included_term: 1,
+                },
+                Box::new(snapshot),
+            ),
+        );
+        let mut sum = 0;
+        while let Some(req) = stream.next().await {
+            assert_eq!(req.term, 0);
+            assert_eq!(req.leader_id, "test".to_owned());
+            assert_eq!(req.last_included_index, 1);
+            assert_eq!(req.last_included_term, 1);
+            sum += req.data.len() as u64;
+            assert_eq!(sum == SNAPSHOT_SIZE, req.done);
+        }
+        assert_eq!(sum, SNAPSHOT_SIZE);
     }
 }

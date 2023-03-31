@@ -1,8 +1,8 @@
-use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt::Debug, io, sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
 use event_listener::Event;
-use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
+use futures::{pin_mut, stream::FuturesUnordered, Stream, StreamExt};
 use itertools::Itertools;
 use madsim::rand::{thread_rng, Rng};
 use parking_lot::{Mutex, RwLock};
@@ -16,9 +16,9 @@ use utils::config::CurpConfig;
 
 use super::{
     cmd_board::{CmdBoardRef, CommandBoard},
-    cmd_worker::start_cmd_workers,
+    cmd_worker::{conflict_checked_mpmc, start_cmd_workers, CEEventTx},
     gc::run_gc_tasks,
-    raw_curp::{RawCurp, Vote},
+    raw_curp::{AppendEntries, RawCurp, Vote},
     spec_pool::{SpecPoolRef, SpeculativePool},
     storage::{StorageApi, StorageError},
 };
@@ -28,10 +28,11 @@ use crate::{
     log_entry::LogEntry,
     rpc::{
         self, connect::ConnectApi, AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest,
-        FetchLeaderResponse, ProposeRequest, ProposeResponse, VoteRequest, VoteResponse,
-        WaitSyncedRequest, WaitSyncedResponse,
+        FetchLeaderResponse, InstallSnapshotRequest, InstallSnapshotResponse, ProposeRequest,
+        ProposeResponse, VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
-    server::storage::rocksdb::RocksDBStorage,
+    server::{cmd_worker::CEEventTxApi, raw_curp::SyncAction, storage::rocksdb::RocksDBStorage},
+    snapshot::{Snapshot, SnapshotMeta},
     ServerId, TxFilter,
 };
 
@@ -50,9 +51,43 @@ pub(super) enum CurpError {
     /// Storage error
     #[error("storage error, {0}")]
     Storage(#[from] StorageError),
-    /// Get applied index error
-    #[error("internal error {0}")]
+    /// Transport error
+    #[error("transport error, {0}")]
+    Transport(String),
+    /// Io error
+    #[error("io error, {0}")]
+    IO(#[from] io::Error),
+    /// Internal error
+    #[error("internal error, {0}")]
     Internal(String),
+}
+
+/// Internal error encountered when sending `append_entries`
+#[derive(Debug, Error)]
+enum SendAEError {
+    /// When self is no longer leader
+    #[error("self is no longer leader")]
+    NotLeader,
+    /// When the follower rejects
+    #[error("follower rejected")]
+    Rejected,
+    /// Transport
+    #[error("transport error, {0}")]
+    Transport(#[from] ProposeError),
+    /// Encode/Decode error
+    #[error("encode or decode error")]
+    EncodeDecode(#[from] bincode::Error),
+}
+
+/// Internal error encountered when sending snapshot
+#[derive(Debug, Error)]
+enum SendSnapshotError {
+    /// When self is no longer leader
+    #[error("self is no longer leader")]
+    NotLeader,
+    /// Transport
+    #[error("transport error, {0}")]
+    Transport(#[from] ProposeError),
 }
 
 /// `CurpNode` represents a single node of curp cluster
@@ -65,6 +100,8 @@ pub(super) struct CurpNode<C: Command> {
     cmd_board: CmdBoardRef<C>,
     /// Shutdown trigger
     shutdown_trigger: Arc<Event>,
+    /// CE event tx,
+    ce_event_tx: CEEventTx<C>,
     /// Storage
     storage: Arc<dyn StorageApi<Command = C>>,
 }
@@ -158,6 +195,62 @@ impl<C: 'static + Command> CurpNode<C> {
         let (leader_id, term) = self.curp.leader();
         Ok(FetchLeaderResponse::new(leader_id, term))
     }
+
+    /// Install snapshot
+    #[allow(clippy::integer_arithmetic)] // can't overflow
+    pub(super) async fn install_snapshot(
+        &self,
+        req_stream: impl Stream<Item = Result<InstallSnapshotRequest, String>>,
+    ) -> Result<InstallSnapshotResponse, CurpError> {
+        pin_mut!(req_stream);
+        let mut snapshot = self.storage.new_snapshot().await?;
+        while let Some(req) = req_stream.next().await {
+            let req = req.map_err(|e| {
+                warn!("snapshot stream error, {e}");
+                CurpError::Transport(e)
+            })?;
+            if !self.curp.verify_install_snapshot(
+                req.term,
+                req.leader_id,
+                req.last_included_index,
+                req.last_included_term,
+            ) {
+                return Ok(InstallSnapshotResponse::new(self.curp.term()));
+            }
+            snapshot.write_all(req.data.as_slice()).await?;
+            if req.done {
+                debug_assert_eq!(
+                    snapshot.size(),
+                    req.offset + req.data.len().numeric_cast::<u64>(),
+                    "snapshot corrupted"
+                );
+                info!(
+                    "{} successfully received a snapshot, size: {}",
+                    self.curp.id(),
+                    snapshot.size()
+                );
+                let meta = SnapshotMeta {
+                    last_included_index: req.last_included_index,
+                    last_included_term: req.last_included_term,
+                };
+                let snapshot = Snapshot::new(meta, snapshot);
+                self.ce_event_tx
+                    .send_reset(Some(snapshot))
+                    .await
+                    .map_err(|err| {
+                        let err = CurpError::Internal(format!(
+                            "failed to reset the command executor by snapshot, {err}"
+                        ));
+                        error!("{err}");
+                        err
+                    })?;
+                return Ok(InstallSnapshotResponse::new(self.curp.term()));
+            }
+        }
+        Err(CurpError::Transport(
+            "failed to receive a complete snapshot".to_owned(),
+        ))
+    }
 }
 
 /// Spawned tasks
@@ -184,8 +277,8 @@ impl<C: 'static + Command> CurpNode<C> {
         }
     }
 
-    /// Sync follower task is responsible for syncing a follower
-    async fn sync_follower_task(
+    /// Responsible for bringing up `sync_follower_task` when self becomes leader
+    async fn sync_follower_daemon(
         curp: Arc<RawCurp<C>>,
         connect: Arc<impl ConnectApi>,
         sync_event: Arc<Event>,
@@ -195,7 +288,7 @@ impl<C: 'static + Command> CurpNode<C> {
             if !curp.is_leader() {
                 leader_event.listen().await;
             }
-            Self::sync_follower(
+            Self::sync_follower_task(
                 Arc::clone(&curp),
                 Arc::clone(&connect),
                 Arc::clone(&sync_event),
@@ -204,8 +297,8 @@ impl<C: 'static + Command> CurpNode<C> {
         }
     }
 
-    /// real sync follower task, will stop if self is no long the leader
-    async fn sync_follower(
+    /// Leader use this task to keep a follower up-to-date, will return if self is no longer leader
+    async fn sync_follower_task(
         curp: Arc<RawCurp<C>>,
         connect: Arc<impl ConnectApi>,
         sync_event: Arc<Event>,
@@ -214,62 +307,44 @@ impl<C: 'static + Command> CurpNode<C> {
         let mut ticker = tokio::time::interval(curp.cfg().heartbeat_interval);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let id = connect.id();
-        let rpc_timeout = curp.cfg().rpc_timeout;
 
         #[allow(clippy::integer_arithmetic, clippy::unwrap_used)]
         // tokio select internal triggered,
         loop {
+            // grab the listener in the beginning to prevent missing sync events
             let listener = sync_event.listen();
 
-            let Ok(ae) = curp.sync(id) else {
+            let Ok(sync_action) = curp.sync(id) else {
                 return;
             };
 
-            let result = async {
-                let last_sent_index = (!ae.entries.is_empty())
-                    .then(|| ae.prev_log_index + ae.entries.len().numeric_cast::<u64>());
-                let Ok(req) = AppendEntriesRequest::new(
-                    ae.term,
-                    ae.leader_id,
-                    ae.prev_log_index,
-                    ae.prev_log_term,
-                    ae.entries,
-                    ae.leader_commit,
-                ) else {
-                    error!("failed to serialize ae");
-                    return Ok(());
-                };
-
-                debug!("{} send ae to {}", curp.id(), connect.id());
-                let resp = match connect.append_entries(req, rpc_timeout).await {
-                    Err(e) => {
-                        warn!("ae to {} failed, {e}", connect.id());
-                        return Ok(());
+            match sync_action {
+                SyncAction::AppendEntries(ae) => {
+                    let result = Self::send_ae(connect.as_ref(), curp.as_ref(), ae).await;
+                    if let Err(err) = result {
+                        warn!("ae to {} failed, {err}", connect.id());
+                        if matches!(err, SendAEError::NotLeader) {
+                            return;
+                        }
+                    } else {
+                        hb_opt = true;
                     }
-                    Ok(resp) => resp.into_inner(),
-                };
-
-                let Ok(succeeded) = curp.handle_append_entries_resp(
-                    connect.id(),
-                    last_sent_index,
-                    resp.term,
-                    resp.success,
-                    resp.hint_index,
-                ) else {
-                    return Err(());
-                };
-
-                // is not a heartbeat and succeeded, then we opt out heartbeat
-                if succeeded && last_sent_index.is_some() {
-                    hb_opt = true;
                 }
-
-                Ok(())
-            }
-            .await;
-
-            if result.is_err() {
-                return; // is no longer the leader
+                SyncAction::Snapshot(rx) => match rx.await {
+                    Ok(snapshot) => {
+                        let result =
+                            Self::send_snapshot(connect.as_ref(), curp.as_ref(), snapshot).await;
+                        if let Err(err) = result {
+                            warn!("snapshot to {} failed, {err}", connect.id());
+                            if matches!(err, SendSnapshotError::NotLeader) {
+                                return;
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        warn!("failed to receive snapshot result, {err}");
+                    }
+                },
             }
 
             // a sync is either triggered by an heartbeat timeout event or when new log entries arrive
@@ -281,8 +356,7 @@ impl<C: 'static + Command> CurpNode<C> {
                     }
                 }
                 // TODO: use a batch timer
-                _ = listener => {
-                }
+                _ = listener => {}
             }
         }
     }
@@ -309,18 +383,9 @@ impl<C: 'static + Command> CurpNode<C> {
         let last_applied = cmd_executor
             .last_applied()
             .map_err(|e| CurpError::Internal(format!("get applied index error, {e}")))?;
+        let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel();
 
         let storage = Arc::new(RocksDBStorage::new(&curp_cfg.data_dir)?);
-
-        // start cmd workers
-        let exe_tx = start_cmd_workers(
-            cmd_executor,
-            Arc::clone(&spec_pool),
-            Arc::clone(&uncommitted_pool),
-            Arc::clone(&cmd_board),
-            Arc::clone(&shutdown_trigger),
-            usize::from(curp_cfg.cmd_workers),
-        );
 
         // create curp state machine
         let (voted_for, entries) = storage.recover().await?;
@@ -333,7 +398,7 @@ impl<C: 'static + Command> CurpNode<C> {
                 Arc::clone(&spec_pool),
                 uncommitted_pool,
                 curp_cfg,
-                Box::new(exe_tx),
+                Box::new(ce_event_tx.clone()),
                 Arc::clone(&sync_event),
                 log_tx,
             ))
@@ -352,7 +417,7 @@ impl<C: 'static + Command> CurpNode<C> {
                 Arc::clone(&spec_pool),
                 uncommitted_pool,
                 curp_cfg,
-                Box::new(exe_tx),
+                Box::new(ce_event_tx.clone()),
                 Arc::clone(&sync_event),
                 log_tx,
                 voted_for,
@@ -361,6 +426,13 @@ impl<C: 'static + Command> CurpNode<C> {
             ))
         };
 
+        start_cmd_workers(
+            cmd_executor,
+            Arc::clone(&curp),
+            task_rx,
+            done_tx,
+            Arc::clone(&shutdown_trigger),
+        );
         run_gc_tasks(Arc::clone(&cmd_board), Arc::clone(&spec_pool));
 
         let curp_c = Arc::clone(&curp);
@@ -371,10 +443,10 @@ impl<C: 'static + Command> CurpNode<C> {
             let connects = rpc::connect(others.clone(), tx_filter).await;
             let election_task =
                 tokio::spawn(Self::election_task(Arc::clone(&curp_c), connects.clone()));
-            let sync_tasks = connects
+            let sync_task_daemons = connects
                 .into_values()
                 .map(|connect| {
-                    tokio::spawn(Self::sync_follower_task(
+                    tokio::spawn(Self::sync_follower_daemon(
                         Arc::clone(&curp_c),
                         connect,
                         Arc::clone(&sync_event),
@@ -385,7 +457,7 @@ impl<C: 'static + Command> CurpNode<C> {
             let log_persist_task = tokio::spawn(Self::log_persist_task(log_rx, storage_c));
             shutdown_trigger_c.listen().await;
             election_task.abort();
-            for sync_task in sync_tasks {
+            for sync_task in sync_task_daemons {
                 sync_task.abort();
             }
             log_persist_task.abort();
@@ -396,6 +468,7 @@ impl<C: 'static + Command> CurpNode<C> {
             spec_pool,
             cmd_board,
             shutdown_trigger,
+            ce_event_tx,
             storage,
         })
     }
@@ -468,6 +541,62 @@ impl<C: 'static + Command> CurpNode<C> {
         }
         error!("log persist task exits unexpectedly");
     }
+
+    /// Send `append_entries` request
+    #[allow(clippy::integer_arithmetic)] // won't overflow
+    async fn send_ae(
+        connect: &impl ConnectApi,
+        curp: &RawCurp<C>,
+        ae: AppendEntries<C>,
+    ) -> Result<(), SendAEError> {
+        let last_sent_index = (!ae.entries.is_empty())
+            .then(|| ae.prev_log_index + ae.entries.len().numeric_cast::<u64>());
+        let req = AppendEntriesRequest::new(
+            ae.term,
+            ae.leader_id,
+            ae.prev_log_index,
+            ae.prev_log_term,
+            ae.entries,
+            ae.leader_commit,
+        )?;
+
+        debug!("{} send ae to {}", curp.id(), connect.id());
+        let resp = connect
+            .append_entries(req, curp.cfg().rpc_timeout)
+            .await?
+            .into_inner();
+
+        let succeeded = curp
+            .handle_append_entries_resp(
+                connect.id(),
+                last_sent_index,
+                resp.term,
+                resp.success,
+                resp.hint_index,
+            )
+            .map_err(|_e| SendAEError::NotLeader)?;
+
+        if succeeded {
+            Ok(())
+        } else {
+            Err(SendAEError::Rejected)
+        }
+    }
+
+    /// Send snapshot
+    async fn send_snapshot(
+        connect: &impl ConnectApi,
+        curp: &RawCurp<C>,
+        snapshot: Snapshot,
+    ) -> Result<(), SendSnapshotError> {
+        let meta = snapshot.meta;
+        let resp = connect
+            .install_snapshot(curp.term(), curp.id().clone(), snapshot)
+            .await?
+            .into_inner();
+        curp.handle_snapshot_resp(connect.id(), meta, resp.term)
+            .map_err(|_e| SendSnapshotError::NotLeader)
+    }
 }
 
 impl<C: Command> Drop for CurpNode<C> {
@@ -490,6 +619,7 @@ impl<C: Command> Debug for CurpNode<C> {
 
 #[cfg(test)]
 mod tests {
+    use tokio::sync::oneshot;
     use tracing_test::traced_test;
 
     use super::*;
@@ -512,7 +642,7 @@ mod tests {
             .times(1..)
             .returning(|_, _| Ok(tonic::Response::new(AppendEntriesResponse::new_accept(0))));
         mock_connect1.expect_id().return_const("S1".to_owned());
-        tokio::spawn(CurpNode::sync_follower(
+        tokio::spawn(CurpNode::sync_follower_task(
             curp,
             Arc::new(mock_connect1),
             Arc::new(Event::new()),
@@ -525,7 +655,9 @@ mod tests {
     async fn tick_task_will_bcast_votes() {
         let curp = {
             let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
-            exe_tx.expect_send_reset().return_const(());
+            exe_tx
+                .expect_send_reset()
+                .returning(|_| oneshot::channel().1);
             Arc::new(RawCurp::new_test(3, exe_tx))
         };
         curp.handle_append_entries(1, "S2".to_owned(), 0, 0, vec![], 0)

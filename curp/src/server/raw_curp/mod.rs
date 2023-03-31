@@ -23,7 +23,7 @@ use clippy_utilities::NumericCast;
 use event_listener::Event;
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::{
     debug, error,
     log::{log_enabled, Level},
@@ -43,6 +43,7 @@ use crate::{
     error::ProposeError,
     log_entry::LogEntry,
     server::{cmd_board::CmdBoardRef, spec_pool::SpecPoolRef},
+    snapshot::{Snapshot, SnapshotMeta},
     LogIndex, ServerId,
 };
 
@@ -65,6 +66,14 @@ pub(super) struct RawCurp<C: Command> {
     log: RwLock<Log<C>>,
     /// Relevant context
     ctx: Context<C>,
+}
+
+/// Actions of syncing
+pub(super) enum SyncAction<C> {
+    /// Use append entires to calibrate
+    AppendEntries(AppendEntries<C>),
+    /// Use snapshot to calibrate
+    Snapshot(oneshot::Receiver<Snapshot>),
 }
 
 /// Invoked by candidates to gather votes
@@ -470,6 +479,52 @@ impl<C: 'static + Command> RawCurp<C> {
 
         Ok(true)
     }
+
+    /// Verify `install_snapshot` request
+    pub(super) fn verify_install_snapshot(
+        &self,
+        term: u64,
+        leader_id: ServerId,
+        last_included_index: LogIndex,
+        last_included_term: u64,
+    ) -> bool {
+        let mut st_w = self.st.write();
+        if st_w.term < term {
+            self.update_to_term_and_become_follower(&mut st_w, term);
+            st_w.leader_id = Some(leader_id);
+        }
+        let log_r = self.log.read();
+        // FIXME: is this correct
+        let validate = log_r.last_log_index() < last_included_index
+            && log_r.last_log_term() <= last_included_term;
+        if validate {
+            self.reset_election_tick();
+        }
+        validate
+    }
+
+    /// Handle `install_snapshot` resp
+    /// Return Err(()) if
+    pub(super) fn handle_snapshot_resp(
+        &self,
+        follower_id: &ServerId,
+        meta: SnapshotMeta,
+        term: u64,
+    ) -> Result<(), ()> {
+        // validate term
+        let (cur_term, cur_role) = self.st.map_read(|st_r| (st_r.term, st_r.role));
+        if cur_term < term {
+            let mut st_w = self.st.write();
+            self.update_to_term_and_become_follower(&mut st_w, term);
+            return Err(());
+        }
+        if cur_role != Role::Leader {
+            return Err(());
+        }
+        self.lst
+            .update_match_index(follower_id, meta.last_included_index.numeric_cast());
+        Ok(())
+    }
 }
 
 /// Other small public interface
@@ -592,8 +647,7 @@ impl<C: 'static + Command> RawCurp<C> {
     }
 
     /// Get `append_entries` request for `follower_id` that contains the latest log entries
-    /// TODO: sync can also return snapshot
-    pub(super) fn sync(&self, follower_id: &ServerId) -> Result<AppendEntries<C>, ()> {
+    pub(super) fn sync(&self, follower_id: &ServerId) -> Result<SyncAction<C>, ()> {
         let term = {
             let lst_r = self.st.read();
             if lst_r.role != Role::Leader {
@@ -602,21 +656,35 @@ impl<C: 'static + Command> RawCurp<C> {
             lst_r.term
         };
 
-        let log_r = self.log.read();
-
         let next_index = self.lst.get_next_index(follower_id);
-        let (prev_log_index, prev_log_term) = log_r.get_prev_entry_info(next_index);
-        let entries = log_r.get_from(next_index).unwrap_or_default().to_vec(); // TODO: limit batch size here
-        let ae = AppendEntries {
-            term,
-            leader_id: self.id().clone(),
-            prev_log_index,
-            prev_log_term,
-            leader_commit: log_r.commit_index,
-            entries,
-        };
-
-        Ok(ae)
+        let log_r = self.log.read();
+        if next_index <= log_r.base_index {
+            // the log has already been compacted
+            let entry = log_r.get(log_r.last_applied).unwrap_or_else(|| {
+                unreachable!(
+                    "log entry {} should not have been compacted yet, needed for snapshot",
+                    log_r.last_applied
+                )
+            });
+            Ok(SyncAction::Snapshot(self.ctx.cmd_tx.send_snapshot(
+                SnapshotMeta {
+                    last_included_index: entry.index.numeric_cast(),
+                    last_included_term: entry.term,
+                },
+            )))
+        } else {
+            let (prev_log_index, prev_log_term) = log_r.get_prev_entry_info(next_index);
+            let entries = log_r.get_from(next_index).unwrap_or_default().to_vec(); // TODO: limit batch size here
+            let ae = AppendEntries {
+                term,
+                leader_id: self.id().clone(),
+                prev_log_index,
+                prev_log_term,
+                leader_commit: log_r.commit_index,
+                entries,
+            };
+            Ok(SyncAction::AppendEntries(ae))
+        }
     }
 
     /// Get a reference to `CurpConfig`
@@ -632,6 +700,32 @@ impl<C: 'static + Command> RawCurp<C> {
     /// Get leader event
     pub(super) fn leader_event(&self) -> Arc<Event> {
         Arc::clone(&self.ctx.leader_event)
+    }
+
+    /// Reset log base
+    pub(super) fn reset_by_snapshot(&self, meta: SnapshotMeta) {
+        let mut log_w = self.log.write();
+        log_w.reset_by_snapshot_meta(meta);
+    }
+
+    /// Get current term
+    pub(super) fn term(&self) -> u64 {
+        self.st.read().term
+    }
+
+    /// Get a reference to command board
+    pub(super) fn cmd_board(&self) -> CmdBoardRef<C> {
+        Arc::clone(&self.ctx.cb)
+    }
+
+    /// Get a reference to spec pool
+    pub(crate) fn spec_pool(&self) -> SpecPoolRef<C> {
+        Arc::clone(&self.ctx.sp)
+    }
+
+    /// Get a reference to uncommitted pool
+    pub(crate) fn uncommitted_pool(&self) -> UncommittedPoolRef<C> {
+        Arc::clone(&self.ctx.ucp)
     }
 }
 
@@ -820,7 +914,7 @@ impl<C: 'static + Command> RawCurp<C> {
         debug!("leader {} retires", self.id());
 
         // when a leader retires, it should wipe up speculatively executed cmds by resetting and re-executing
-        self.ctx.cmd_tx.send_reset();
+        let _ig = self.ctx.cmd_tx.send_reset(None);
 
         let mut cb_w = self.ctx.cb.write();
         cb_w.clear();
