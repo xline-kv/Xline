@@ -163,7 +163,10 @@ impl<C: 'static + Command> CurpNode<C> {
 /// Spawned tasks
 impl<C: 'static + Command> CurpNode<C> {
     /// Tick periodically
-    async fn tick_task(curp: Arc<RawCurp<C>>, connects: HashMap<ServerId, Arc<impl ConnectApi>>) {
+    async fn election_task(
+        curp: Arc<RawCurp<C>>,
+        connects: HashMap<ServerId, Arc<impl ConnectApi>>,
+    ) {
         let heartbeat_interval = curp.cfg().heartbeat_interval;
         // wait for some random time before tick starts to minimize vote split possibility
         let rand = thread_rng()
@@ -181,8 +184,8 @@ impl<C: 'static + Command> CurpNode<C> {
         }
     }
 
-    /// Sync task is responsible for syncing a follower
-    async fn sync_task(
+    /// Sync follower task is responsible for syncing a follower
+    async fn sync_follower_task(
         curp: Arc<RawCurp<C>>,
         connect: Arc<impl ConnectApi>,
         sync_event: Arc<Event>,
@@ -192,7 +195,7 @@ impl<C: 'static + Command> CurpNode<C> {
             if !curp.is_leader() {
                 leader_event.listen().await;
             }
-            Self::_sync_task(
+            Self::sync_follower(
                 Arc::clone(&curp),
                 Arc::clone(&connect),
                 Arc::clone(&sync_event),
@@ -201,8 +204,8 @@ impl<C: 'static + Command> CurpNode<C> {
         }
     }
 
-    /// real sync task, will stop if self is no long the leader
-    async fn _sync_task(
+    /// real sync follower task, will stop if self is no long the leader
+    async fn sync_follower(
         curp: Arc<RawCurp<C>>,
         connect: Arc<impl ConnectApi>,
         sync_event: Arc<Event>,
@@ -213,8 +216,62 @@ impl<C: 'static + Command> CurpNode<C> {
         let id = connect.id();
         let rpc_timeout = curp.cfg().rpc_timeout;
 
-        #[allow(clippy::integer_arithmetic)] // tokio select internal triggered
+        #[allow(clippy::integer_arithmetic, clippy::unwrap_used)]
+        // tokio select internal triggered,
         loop {
+            let listener = sync_event.listen();
+
+            let Ok(ae) = curp.sync(id) else {
+                return;
+            };
+
+            let result = async {
+                let last_sent_index = (!ae.entries.is_empty())
+                    .then(|| ae.prev_log_index + ae.entries.len().numeric_cast::<u64>());
+                let Ok(req) = AppendEntriesRequest::new(
+                    ae.term,
+                    ae.leader_id,
+                    ae.prev_log_index,
+                    ae.prev_log_term,
+                    ae.entries,
+                    ae.leader_commit,
+                ) else {
+                    error!("failed to serialize ae");
+                    return Ok(());
+                };
+
+                debug!("{} send ae to {}", curp.id(), connect.id());
+                let resp = match connect.append_entries(req, rpc_timeout).await {
+                    Err(e) => {
+                        warn!("ae to {} failed, {e}", connect.id());
+                        return Ok(());
+                    }
+                    Ok(resp) => resp.into_inner(),
+                };
+
+                let Ok(succeeded) = curp.handle_append_entries_resp(
+                    connect.id(),
+                    last_sent_index,
+                    resp.term,
+                    resp.success,
+                    resp.hint_index,
+                ) else {
+                    return Err(());
+                };
+
+                // is not a heartbeat and succeeded, then we opt out heartbeat
+                if succeeded && last_sent_index.is_some() {
+                    hb_opt = true;
+                }
+
+                Ok(())
+            }
+            .await;
+
+            if result.is_err() {
+                return; // is no longer the leader
+            }
+
             // a sync is either triggered by an heartbeat timeout event or when new log entries arrive
             tokio::select! {
                 _now = ticker.tick() => {
@@ -224,49 +281,8 @@ impl<C: 'static + Command> CurpNode<C> {
                     }
                 }
                 // TODO: use a batch timer
-                _ = sync_event.listen() => {}
-            }
-
-            let Ok(ae) = curp.sync(id) else {
-                return;
-            };
-
-            let last_sent_index = (!ae.entries.is_empty())
-                .then(|| ae.prev_log_index + ae.entries.len().numeric_cast::<u64>());
-            let Ok(req) = AppendEntriesRequest::new(
-                ae.term,
-                ae.leader_id,
-                ae.prev_log_index,
-                ae.prev_log_term,
-                ae.entries,
-                ae.leader_commit,
-            ) else {
-                error!("failed to serialize ae");
-                continue;
-            };
-
-            debug!("{} send ae to {}", curp.id(), connect.id());
-            let resp = match connect.append_entries(req, rpc_timeout).await {
-                Err(e) => {
-                    warn!("ae to {} failed, {e}", connect.id());
-                    continue;
+                _ = listener => {
                 }
-                Ok(resp) => resp.into_inner(),
-            };
-
-            let Ok(succeeded) = curp.handle_append_entries_resp(
-                connect.id(),
-                last_sent_index,
-                resp.term,
-                resp.success,
-                resp.hint_index,
-            ) else {
-                return;
-            };
-
-            // is not a heartbeat and succeeded, then we opt out heartbeat
-            if succeeded && last_sent_index.is_some() {
-                hb_opt = true;
             }
         }
     }
@@ -352,11 +368,12 @@ impl<C: 'static + Command> CurpNode<C> {
         let _ig = tokio::spawn(async move {
             // establish connection with other servers
             let connects = rpc::connect(others.clone(), tx_filter).await;
-            let tick_task = tokio::spawn(Self::tick_task(Arc::clone(&curp_c), connects.clone()));
+            let election_task =
+                tokio::spawn(Self::election_task(Arc::clone(&curp_c), connects.clone()));
             let sync_tasks = connects
                 .into_values()
                 .map(|connect| {
-                    tokio::spawn(Self::sync_task(
+                    tokio::spawn(Self::sync_follower_task(
                         Arc::clone(&curp_c),
                         connect,
                         Arc::clone(&sync_event),
@@ -366,7 +383,7 @@ impl<C: 'static + Command> CurpNode<C> {
 
             let log_persist_task = tokio::spawn(Self::log_persist_task(log_rx, storage_c));
             shutdown_trigger_c.listen().await;
-            tick_task.abort();
+            election_task.abort();
             for sync_task in sync_tasks {
                 sync_task.abort();
             }
@@ -388,6 +405,7 @@ impl<C: 'static + Command> CurpNode<C> {
         connects: &HashMap<ServerId, Arc<impl ConnectApi>>,
         vote: Vote,
     ) {
+        debug!("{} broadcasts votes to all servers", curp.id());
         let rpc_timeout = curp.cfg().rpc_timeout;
         let resps = connects
             .iter()
@@ -466,5 +484,76 @@ impl<C: Command> Debug for CurpNode<C> {
             .field("cmd_board", &self.cmd_board)
             .field("shutdown_trigger", &self.shutdown_trigger)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tracing_test::traced_test;
+
+    use super::*;
+    use crate::{
+        rpc::connect::MockConnectApi,
+        server::cmd_worker::MockCEEventTxApi,
+        test_utils::{sleep_secs, test_cmd::TestCommand},
+    };
+
+    #[traced_test]
+    #[tokio::test]
+    async fn sync_task_will_send_hb() {
+        let curp = Arc::new(RawCurp::new_test(
+            3,
+            MockCEEventTxApi::<TestCommand>::default(),
+        ));
+        let mut mock_connect1 = MockConnectApi::default();
+        mock_connect1
+            .expect_append_entries()
+            .times(1..)
+            .returning(|_, _| Ok(tonic::Response::new(AppendEntriesResponse::new_accept(0))));
+        mock_connect1.expect_id().return_const("S1".to_owned());
+        tokio::spawn(CurpNode::sync_follower(
+            curp,
+            Arc::new(mock_connect1),
+            Arc::new(Event::new()),
+        ));
+        sleep_secs(2).await;
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn tick_task_will_bcast_votes() {
+        let curp = {
+            let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
+            exe_tx.expect_send_reset().return_const(());
+            Arc::new(RawCurp::new_test(3, exe_tx))
+        };
+        curp.handle_append_entries(1, "S2".to_owned(), 0, 0, vec![], 0)
+            .unwrap();
+
+        let mut mock_connect1 = MockConnectApi::default();
+        mock_connect1.expect_vote().returning(|req, _| {
+            Ok(tonic::Response::new(
+                VoteResponse::new_accept::<TestCommand>(req.term, vec![]).unwrap(),
+            ))
+        });
+        mock_connect1.expect_id().return_const("S1".to_owned());
+
+        let mut mock_connect2 = MockConnectApi::default();
+        mock_connect2.expect_vote().returning(|req, _| {
+            Ok(tonic::Response::new(
+                VoteResponse::new_accept::<TestCommand>(req.term, vec![]).unwrap(),
+            ))
+        });
+        mock_connect2.expect_id().return_const("S2".to_owned());
+
+        tokio::spawn(CurpNode::election_task(
+            Arc::clone(&curp),
+            HashMap::from([
+                ("S1".to_owned(), Arc::new(mock_connect1)),
+                ("S2".to_owned(), Arc::new(mock_connect2)),
+            ]),
+        ));
+        sleep_secs(3).await;
+        assert!(curp.is_leader());
     }
 }

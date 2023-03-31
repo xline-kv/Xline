@@ -1,6 +1,6 @@
 mod common;
 
-use std::error::Error;
+use std::{error::Error, time::Duration};
 
 use etcd_client::Client;
 use xline::client::kv_types::{
@@ -167,6 +167,7 @@ async fn test_range_redirect() -> Result<(), Box<dyn Error>> {
     let addr = cluster.addrs()["server1"].clone();
     let mut kv_client = Client::connect([addr], None).await?.kv_client();
     let _ignore = kv_client.put("foo", "bar", None).await?;
+    tokio::time::sleep(Duration::from_millis(300)).await;
     let res = kv_client.get("foo", None).await?;
     assert_eq!(res.kvs().len(), 1);
     assert_eq!(res.kvs()[0].value(), b"bar");
