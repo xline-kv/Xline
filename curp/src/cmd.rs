@@ -1,6 +1,7 @@
 use std::{fmt::Display, hash::Hash};
 
 use async_trait::async_trait;
+use engine::engine_api::SnapshotApi;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::log_entry::LogIndex;
@@ -114,9 +115,15 @@ where
     /// Execute the after_sync callback
     async fn after_sync(&self, cmd: &C, index: LogIndex) -> Result<C::ASR, Self::Error>;
 
-    /// Reset the command executor to the initial state
-    async fn reset(&self);
-
     /// Index of the last log entry that has been successfully applied to the command executor
     fn last_applied(&self) -> Result<LogIndex, Self::Error>;
+
+    /// Take a snapshot
+    async fn snapshot(&self) -> Result<Box<dyn SnapshotApi>, Self::Error>;
+
+    /// Reset the command executor using the snapshot or to the initial state if None
+    async fn reset(
+        &self,
+        snapshot: Option<(Box<dyn SnapshotApi>, LogIndex)>,
+    ) -> Result<(), Self::Error>;
 }

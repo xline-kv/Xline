@@ -9,11 +9,13 @@ use tracing::error;
 use crate::{
     cmd::{Command, ProposeId},
     log_entry::LogEntry,
+    snapshot::SnapshotMeta,
     LogIndex,
 };
 
 /// Curp logs
 /// There exists a fake log entry 0 whose term equals 0
+/// For the leader, there should never be a gap between snapshot and entries
 pub(super) struct Log<C: Command> {
     /// Log entries, should be persisted
     /// Note that the logical index in `LogEntry` is different from physical index
@@ -38,6 +40,7 @@ impl<C: Command> Debug for Log<C> {
         f.debug_struct("Log")
             .field("entries", &self.entries)
             .field("base_index", &self.base_index)
+            .field("base_term", &self.base_term)
             .field("commit_index", &self.commit_index)
             .field("last_applied", &self.last_applied)
             .finish()
@@ -53,9 +56,9 @@ impl<C: 'static + Command> Log<C> {
         Self {
             entries, // a fake log[0]
             commit_index: 0,
-            last_applied: 0,
             base_index: 0,
             base_term: 0,
+            last_applied: 0,
             log_tx,
         }
     }
@@ -180,6 +183,15 @@ impl<C: 'static + Command> Log<C> {
             });
             (entry.index, entry.term)
         }
+    }
+
+    /// Reset log base by snapshot
+    pub(super) fn reset_by_snapshot_meta(&mut self, meta: SnapshotMeta) {
+        self.base_index = meta.last_included_index.numeric_cast();
+        self.base_term = meta.last_included_term;
+        self.last_applied = meta.last_included_index.numeric_cast();
+        self.commit_index = meta.last_included_index.numeric_cast();
+        self.entries.clear();
     }
 }
 

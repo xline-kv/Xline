@@ -4,30 +4,34 @@
 use std::{fmt::Debug, iter, sync::Arc};
 
 use async_trait::async_trait;
+use clippy_utilities::NumericCast;
 #[cfg(test)]
 use mockall::automock;
-use tokio::task::JoinHandle;
+use tokio::{sync::oneshot, task::JoinHandle};
 use tracing::{debug, error};
 
 use self::conflict_checked_mpmc::Task;
-use super::{curp_node::UncommittedPoolRef, spec_pool::SpecPoolRef};
+use super::raw_curp::RawCurp;
 use crate::{
     cmd::{Command, CommandExecutor},
-    server::{cmd_board::CmdBoardRef, cmd_worker::conflict_checked_mpmc::TaskType},
+    server::cmd_worker::conflict_checked_mpmc::TaskType,
+    snapshot::{Snapshot, SnapshotMeta},
     LogIndex,
 };
 
 /// The special conflict checked mpmc
-mod conflict_checked_mpmc;
+pub(super) mod conflict_checked_mpmc;
 
 /// Event for command executor
-enum CEEvent<C> {
+pub(super) enum CEEvent<C> {
     /// The cmd is ready for speculative execution
     SpecExeReady(Arc<C>),
     /// The cmd is ready for after sync
     ASReady(Arc<C>, LogIndex),
-    /// Reset the command executor
-    Reset,
+    /// Reset the command executor, send(()) when finishes
+    Reset(Option<Snapshot>, oneshot::Sender<()>),
+    /// Take a snapshot
+    Snapshot(oneshot::Sender<Snapshot>, SnapshotMeta),
 }
 
 impl<C: Command> Debug for CEEvent<C> {
@@ -39,7 +43,14 @@ impl<C: Command> Debug for CEEvent<C> {
                 .field(cmd.id())
                 .field(index)
                 .finish(),
-            Self::Reset => write!(f, "Reset"),
+            Self::Reset(ref ss, _) => {
+                if ss.is_none() {
+                    write!(f, "Reset(None)")
+                } else {
+                    write!(f, "Reset(Some(_))")
+                }
+            }
+            Self::Snapshot(_, meta) => f.debug_tuple("Snapshot").field(&meta).finish(),
         }
     }
 }
@@ -48,37 +59,81 @@ impl<C: Command> Debug for CEEvent<C> {
 async fn cmd_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
     dispatch_rx: TaskRx<C>,
     done_tx: flume::Sender<(Task<C>, bool)>,
-    cb: CmdBoardRef<C>,
-    sp: SpecPoolRef<C>,
-    ucp: UncommittedPoolRef<C>,
+    curp: Arc<RawCurp<C>>,
     ce: Arc<CE>,
 ) {
-    while let Ok(task) = dispatch_rx.recv().await {
-        let succeeded = match *task.inner() {
-            TaskType::SpecExe(ref cmd) => {
+    let (cb, sp, ucp) = (curp.cmd_board(), curp.spec_pool(), curp.uncommitted_pool());
+    let id = curp.id();
+    while let Ok(mut task) = dispatch_rx.recv().await {
+        #[allow(clippy::pattern_type_mismatch)] // can't get away with it
+        let succeeded = match task.inner() {
+            TaskType::SpecExe(cmd) => {
                 let er = ce.execute(cmd.as_ref()).await.map_err(|e| e.to_string());
                 let er_ok = er.is_ok();
-                debug!("cmd({}) is speculatively executed", cmd.id());
+                debug!("{id} cmd({}) is speculatively executed", cmd.id());
                 cb.write().insert_er(cmd.id(), er);
                 er_ok
             }
-            TaskType::AS(ref cmd, index) => {
+            TaskType::AS(cmd, index) => {
                 let asr = ce
-                    .after_sync(cmd.as_ref(), index)
+                    .after_sync(cmd.as_ref(), *index)
                     .await
                     .map_err(|e| e.to_string());
                 let asr_ok = asr.is_ok();
                 cb.write().insert_asr(cmd.id(), asr);
                 sp.lock().remove(cmd.id());
                 let _ig = ucp.lock().remove(cmd.id());
-                debug!("cmd({}) after sync is called", cmd.id());
+                debug!("{id} cmd({}) after sync is called", cmd.id());
                 asr_ok
             }
-            TaskType::Reset => {
-                ce.reset().await;
-                debug!("command executor has been reset");
+            TaskType::Reset(ss, finish_tx) => {
+                let snapshot = ss.take();
+                if let Some(snapshot) = snapshot {
+                    let meta = snapshot.meta;
+                    #[allow(clippy::expect_used)] // only in debug
+                    if let Err(e) = ce
+                        .reset(Some((snapshot.into_inner(), meta.last_included_index)))
+                        .await
+                    {
+                        error!("reset failed, {e}");
+                    } else {
+                        debug_assert_eq!(
+                            ce.last_applied()
+                                .expect("failed to get last_applied from ce"),
+                            meta.last_included_index,
+                            "inconsistent last_applied"
+                        );
+                        debug!("{id}'s command executor has been reset by a snapshot");
+                        curp.reset_by_snapshot(meta);
+                    }
+                } else {
+                    if let Err(e) = ce.reset(None).await {
+                        error!("reset failed, {e}");
+                    }
+                    debug!("{id}'s command executor has been restored to the initial state");
+                }
+                let _ig = finish_tx
+                    .take()
+                    .unwrap_or_else(|| unreachable!("no finish tx"))
+                    .send(());
                 true
             }
+            #[allow(clippy::unwrap_used)]
+            TaskType::Snapshot(inner) => match ce.snapshot().await {
+                Ok(snapshot) => {
+                    #[allow(clippy::expect_used)]
+                    let (tx, meta) = inner.take().expect("no snapshot tx");
+                    debug_assert_eq!(ce.last_applied().unwrap(), meta.last_included_index); // sanity check
+                    if tx.send(Snapshot::new(meta, snapshot)).is_err() {
+                        error!("snapshot oneshot closed");
+                    }
+                    true
+                }
+                Err(e) => {
+                    error!("snapshot failed, {e}");
+                    false
+                }
+            },
         };
         if let Err(e) = done_tx.send((task, succeeded)) {
             error!("can't mark a task done, the channel could be closed, {e}");
@@ -89,11 +144,11 @@ async fn cmd_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
 
 /// Send event to background command executor workers
 #[derive(Debug, Clone)]
-pub(super) struct CEEventTx<C: Command + 'static>(flume::Sender<CEEvent<C>>);
+pub(super) struct CEEventTx<C: Command>(flume::Sender<CEEvent<C>>);
 
 /// Recv cmds that need to be executed
 #[derive(Clone)]
-struct TaskRx<C: Command + 'static>(flume::Receiver<Task<C>>);
+struct TaskRx<C: Command>(flume::Receiver<Task<C>>);
 
 /// Send cmd to background execution worker
 #[cfg_attr(test, automock)]
@@ -105,7 +160,10 @@ pub(super) trait CEEventTxApi<C: Command + 'static>: Send + Sync + 'static {
     fn send_after_sync(&self, cmd: Arc<C>, index: LogIndex);
 
     /// Send reset
-    fn send_reset(&self);
+    fn send_reset(&self, snapshot: Option<Snapshot>) -> oneshot::Receiver<()>;
+
+    /// Send snapshot
+    fn send_snapshot(&self, meta: SnapshotMeta) -> oneshot::Receiver<Snapshot>;
 }
 
 impl<C: Command + 'static> CEEventTxApi<C> for CEEventTx<C> {
@@ -123,11 +181,22 @@ impl<C: Command + 'static> CEEventTxApi<C> for CEEventTx<C> {
         }
     }
 
-    fn send_reset(&self) {
-        let msg = CEEvent::Reset;
+    fn send_reset(&self, snapshot: Option<Snapshot>) -> oneshot::Receiver<()> {
+        let (tx, rx) = oneshot::channel();
+        let msg = CEEvent::Reset(snapshot, tx);
         if let Err(e) = self.0.send(msg) {
             error!("failed to send reset event to background cmd worker, {e}");
         }
+        rx
+    }
+
+    fn send_snapshot(&self, meta: SnapshotMeta) -> oneshot::Receiver<Snapshot> {
+        let (tx, rx) = oneshot::channel();
+        let msg = CEEvent::Snapshot(tx, meta);
+        if let Err(e) = self.0.send(msg) {
+            error!("failed to send snapshot event to background cmd worker, {e}");
+        }
+        rx
     }
 }
 
@@ -150,27 +219,20 @@ impl<C: Command + 'static> TaskRxApi<C> for TaskRx<C> {
 /// Run cmd execute workers. Returns a channel to interact with these workers. The channel guarantees the execution order and that after sync is called after execution completes.
 pub(super) fn start_cmd_workers<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
     cmd_executor: CE,
-    spec_pool: SpecPoolRef<C>,
-    uncommitted_pool: UncommittedPoolRef<C>,
-    cmd_board: CmdBoardRef<C>,
+    curp: Arc<RawCurp<C>>,
+    task_rx: flume::Receiver<Task<C>>,
+    done_tx: flume::Sender<(Task<C>, bool)>,
     shutdown_trigger: Arc<event_listener::Event>,
-    cmd_workers: usize,
-) -> CEEventTx<C> {
-    let (event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel();
+) {
+    let n_workers: usize = curp.cfg().cmd_workers.numeric_cast();
     #[allow(clippy::shadow_unrelated)] // false positive
-    let bg_worker_handles: Vec<JoinHandle<_>> = iter::repeat((
-        task_rx,
-        done_tx,
-        cmd_board,
-        spec_pool,
-        uncommitted_pool,
-        Arc::new(cmd_executor),
-    ))
-    .take(cmd_workers)
-    .map(|(task_rx, done_tx, cb, sp, ucp, ce)| {
-        tokio::spawn(cmd_worker(TaskRx(task_rx), done_tx, cb, sp, ucp, ce))
-    })
-    .collect();
+    let bg_worker_handles: Vec<JoinHandle<_>> =
+        iter::repeat((task_rx, done_tx, curp, Arc::new(cmd_executor)))
+            .take(n_workers)
+            .map(|(task_rx, done_tx, curp, ce)| {
+                tokio::spawn(cmd_worker(TaskRx(task_rx), done_tx, curp, ce))
+            })
+            .collect();
 
     let _ig = tokio::spawn(async move {
         shutdown_trigger.listen().await;
@@ -178,22 +240,18 @@ pub(super) fn start_cmd_workers<C: Command + 'static, CE: 'static + CommandExecu
             handle.abort();
         }
     });
-
-    CEEventTx(event_tx)
 }
 
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use parking_lot::{Mutex, RwLock};
     use tokio::{sync::mpsc, time::Instant};
     use tracing_test::traced_test;
-    use utils::config::default_cmd_workers;
 
     use super::*;
     use crate::{
-        server::{cmd_board::CommandBoard, curp_node::UncommittedPool, spec_pool::SpeculativePool},
+        log_entry::LogEntry,
         test_utils::{
             sleep_millis, sleep_secs,
             test_cmd::{TestCE, TestCommand},
@@ -207,24 +265,21 @@ mod tests {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
         let ce = TestCE::new("S1".to_owned(), er_tx, as_tx);
-        let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
-        let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
-        let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
-        let exe_tx = start_cmd_workers(
+        let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel();
+        start_cmd_workers(
             ce,
-            spec_pool,
-            uncommitted_pool,
-            Arc::clone(&cmd_board),
+            Arc::new(RawCurp::new_test(3, ce_event_tx.clone())),
+            task_rx,
+            done_tx,
             Arc::new(event_listener::Event::new()),
-            usize::from(default_cmd_workers()),
         );
 
         let cmd = Arc::new(TestCommand::default());
 
-        exe_tx.send_sp_exe(Arc::clone(&cmd));
+        ce_event_tx.send_sp_exe(Arc::clone(&cmd));
         assert_eq!(er_rx.recv().await.unwrap().1, vec![]);
 
-        exe_tx.send_after_sync(Arc::clone(&cmd), 1);
+        ce_event_tx.send_after_sync(Arc::clone(&cmd), 1);
         assert_eq!(as_rx.recv().await.unwrap().1, 1);
     }
 
@@ -235,26 +290,23 @@ mod tests {
         let (er_tx, _er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
         let ce = TestCE::new("S1".to_owned(), er_tx, as_tx);
-        let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
-        let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
-        let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
-        let exe_tx = start_cmd_workers(
+        let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel();
+        start_cmd_workers(
             ce,
-            spec_pool,
-            uncommitted_pool,
-            Arc::clone(&cmd_board),
+            Arc::new(RawCurp::new_test(3, ce_event_tx.clone())),
+            task_rx,
+            done_tx,
             Arc::new(event_listener::Event::new()),
-            usize::from(default_cmd_workers()),
         );
 
         let begin = Instant::now();
         let cmd = Arc::new(TestCommand::default().set_exe_dur(Duration::from_secs(1)));
 
-        exe_tx.send_sp_exe(Arc::clone(&cmd));
+        ce_event_tx.send_sp_exe(Arc::clone(&cmd));
 
         // at 500ms, sync has completed, call after sync, then needs_as will be updated
         sleep_millis(500).await;
-        exe_tx.send_after_sync(Arc::clone(&cmd), 1);
+        ce_event_tx.send_after_sync(Arc::clone(&cmd), 1);
 
         assert_eq!(as_rx.recv().await.unwrap().1, 1);
 
@@ -268,16 +320,13 @@ mod tests {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
         let ce = TestCE::new("S1".to_owned(), er_tx, as_tx);
-        let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
-        let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
-        let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
-        let exe_tx = start_cmd_workers(
+        let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel();
+        start_cmd_workers(
             ce,
-            spec_pool,
-            uncommitted_pool,
-            Arc::clone(&cmd_board),
+            Arc::new(RawCurp::new_test(3, ce_event_tx.clone())),
+            task_rx,
+            done_tx,
             Arc::new(event_listener::Event::new()),
-            usize::from(default_cmd_workers()),
         );
 
         let cmd = Arc::new(
@@ -286,11 +335,11 @@ mod tests {
                 .set_exe_should_fail(),
         );
 
-        exe_tx.send_sp_exe(Arc::clone(&cmd));
+        ce_event_tx.send_sp_exe(Arc::clone(&cmd));
 
         // at 500ms, sync has completed
         sleep_millis(500).await;
-        exe_tx.send_after_sync(Arc::clone(&cmd), 1);
+        ce_event_tx.send_after_sync(Arc::clone(&cmd), 1);
 
         // at 1500ms, as should not be called
         sleep_secs(1).await;
@@ -305,21 +354,18 @@ mod tests {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
         let ce = TestCE::new("S1".to_owned(), er_tx, as_tx);
-        let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
-        let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
-        let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
-        let exe_tx = start_cmd_workers(
+        let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel();
+        start_cmd_workers(
             ce,
-            spec_pool,
-            uncommitted_pool,
-            Arc::clone(&cmd_board),
+            Arc::new(RawCurp::new_test(3, ce_event_tx.clone())),
+            task_rx,
+            done_tx,
             Arc::new(event_listener::Event::new()),
-            usize::from(default_cmd_workers()),
         );
 
         let cmd = Arc::new(TestCommand::default());
 
-        exe_tx.send_after_sync(Arc::clone(&cmd), 1);
+        ce_event_tx.send_after_sync(Arc::clone(&cmd), 1);
 
         assert_eq!(er_rx.recv().await.unwrap().1, vec![]);
         assert_eq!(as_rx.recv().await.unwrap().1, 1);
@@ -332,20 +378,18 @@ mod tests {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
         let ce = TestCE::new("S1".to_owned(), er_tx, as_tx);
-        let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
-        let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
-        let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
-        let exe_tx = start_cmd_workers(
+        let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel();
+        start_cmd_workers(
             ce,
-            spec_pool,
-            uncommitted_pool,
-            Arc::clone(&cmd_board),
+            Arc::new(RawCurp::new_test(3, ce_event_tx.clone())),
+            task_rx,
+            done_tx,
             Arc::new(event_listener::Event::new()),
-            usize::from(default_cmd_workers()),
         );
+
         let cmd = Arc::new(TestCommand::default().set_exe_should_fail());
 
-        exe_tx.send_after_sync(Arc::clone(&cmd), 1);
+        ce_event_tx.send_after_sync(Arc::clone(&cmd), 1);
 
         sleep_millis(100).await;
         assert!(er_rx.try_recv().is_err());
@@ -359,22 +403,19 @@ mod tests {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
         let ce = TestCE::new("S1".to_owned(), er_tx, as_tx);
-        let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
-        let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
-        let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
-        let exe_tx = start_cmd_workers(
+        let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel();
+        start_cmd_workers(
             ce,
-            spec_pool,
-            uncommitted_pool,
-            Arc::clone(&cmd_board),
+            Arc::new(RawCurp::new_test(3, ce_event_tx.clone())),
+            task_rx,
+            done_tx,
             Arc::new(event_listener::Event::new()),
-            usize::from(default_cmd_workers()),
         );
 
         let cmd1 = Arc::new(TestCommand::new_put(vec![1], 1));
         let cmd2 = Arc::new(TestCommand::new_get(vec![1]));
-        exe_tx.send_sp_exe(Arc::clone(&cmd1));
-        exe_tx.send_sp_exe(Arc::clone(&cmd2));
+        ce_event_tx.send_sp_exe(Arc::clone(&cmd1));
+        ce_event_tx.send_sp_exe(Arc::clone(&cmd2));
 
         // cmd1 exe done
         assert_eq!(er_rx.recv().await.unwrap().1, vec![]);
@@ -386,8 +427,8 @@ mod tests {
         assert!(as_rx.try_recv().is_err());
 
         // cmd1 and cmd2 after sync
-        exe_tx.send_after_sync(Arc::clone(&cmd1), 1);
-        exe_tx.send_after_sync(Arc::clone(&cmd2), 2);
+        ce_event_tx.send_after_sync(Arc::clone(&cmd1), 1);
+        ce_event_tx.send_after_sync(Arc::clone(&cmd2), 2);
 
         assert_eq!(er_rx.recv().await.unwrap().1, vec![1]);
         assert_eq!(as_rx.recv().await.unwrap().1, 1);
@@ -400,35 +441,91 @@ mod tests {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
         let ce = TestCE::new("S1".to_owned(), er_tx, as_tx);
-        let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
-        let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
-        let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
-        let exe_tx = start_cmd_workers(
+        let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel();
+        start_cmd_workers(
             ce,
-            spec_pool,
-            uncommitted_pool,
-            Arc::clone(&cmd_board),
+            Arc::new(RawCurp::new_test(3, ce_event_tx.clone())),
+            task_rx,
+            done_tx,
             Arc::new(event_listener::Event::new()),
-            usize::from(default_cmd_workers()),
         );
 
         let cmd1 =
             Arc::new(TestCommand::new_put(vec![1], 1).set_exe_dur(Duration::from_millis(50)));
         let cmd2 = Arc::new(TestCommand::new_get(vec![1]));
-        exe_tx.send_sp_exe(Arc::clone(&cmd1));
-        exe_tx.send_sp_exe(Arc::clone(&cmd2));
+        ce_event_tx.send_sp_exe(Arc::clone(&cmd1));
+        ce_event_tx.send_sp_exe(Arc::clone(&cmd2));
 
         assert_eq!(er_rx.recv().await.unwrap().1, vec![]);
 
-        exe_tx.send_reset();
+        ce_event_tx.send_reset(None);
 
         let cmd3 = Arc::new(TestCommand::new_get(vec![1]));
-        exe_tx.send_after_sync(cmd3, 1);
+        ce_event_tx.send_after_sync(cmd3, 1);
 
         assert_eq!(er_rx.recv().await.unwrap().1, vec![]);
 
         // there will be only one after sync results
         assert!(as_rx.recv().await.is_some());
         assert!(as_rx.try_recv().is_err());
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn test_snapshot() {
+        // ce1
+        let (er_tx, mut _er_rx) = mpsc::unbounded_channel();
+        let (as_tx, mut _as_rx) = mpsc::unbounded_channel();
+        let ce1 = TestCE::new("S1".to_owned(), er_tx, as_tx);
+        let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel();
+        let curp = RawCurp::new_test(3, ce_event_tx.clone());
+        curp.handle_append_entries(
+            1,
+            "S3".to_owned(),
+            0,
+            0,
+            vec![LogEntry::new(1, 1, Arc::new(TestCommand::default()))],
+            0,
+        )
+        .unwrap();
+        start_cmd_workers(
+            ce1,
+            Arc::new(curp),
+            task_rx,
+            done_tx,
+            Arc::new(event_listener::Event::new()),
+        );
+
+        let cmd1 =
+            Arc::new(TestCommand::new_put(vec![1], 1).set_exe_dur(Duration::from_millis(50)));
+
+        ce_event_tx.send_after_sync(Arc::clone(&cmd1), 1);
+
+        let snapshot = ce_event_tx
+            .send_snapshot(SnapshotMeta {
+                last_included_index: 1,
+                last_included_term: 0,
+            })
+            .await
+            .unwrap();
+
+        // ce2
+        let (er_tx, mut er_rx) = mpsc::unbounded_channel();
+        let (as_tx, mut _as_rx) = mpsc::unbounded_channel();
+        let ce2 = TestCE::new("S1".to_owned(), er_tx, as_tx);
+        let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel();
+        start_cmd_workers(
+            ce2,
+            Arc::new(RawCurp::new_test(3, ce_event_tx.clone())),
+            task_rx,
+            done_tx,
+            Arc::new(event_listener::Event::new()),
+        );
+
+        ce_event_tx.send_reset(Some(snapshot)).await.unwrap();
+
+        let cmd2 = Arc::new(TestCommand::new_get(vec![1]));
+        ce_event_tx.send_after_sync(Arc::clone(&cmd2), 2);
+        assert_eq!(er_rx.recv().await.unwrap().1, vec![1]);
     }
 }

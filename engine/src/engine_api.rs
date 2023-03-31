@@ -58,7 +58,7 @@ impl<'a> WriteOperation<'a> {
 
 /// This trait is a abstraction of the snapshot, We can Read/Write the snapshot like a file.
 #[async_trait::async_trait]
-pub trait SnapshotApi: Send + Sync {
+pub trait SnapshotApi: Send + Sync + std::fmt::Debug {
     /// Get the size of the snapshot
     fn size(&self) -> u64;
 

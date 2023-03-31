@@ -9,6 +9,7 @@ use curp::{
     },
     LogIndex,
 };
+use engine::engine_api::SnapshotApi;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
@@ -265,10 +266,22 @@ where
         Ok(res)
     }
 
-    async fn reset(&self) {
-        self.persistent
-            .reset()
-            .unwrap_or_else(|e| panic!("reset backend failed, {e:?}"));
+    #[allow(clippy::todo)]
+    async fn reset(
+        &self,
+        snapshot: Option<(Box<dyn SnapshotApi>, LogIndex)>,
+    ) -> Result<(), Self::Error> {
+        if snapshot.is_none() {
+            self.persistent.reset()
+        } else {
+            todo!("apply snapshot");
+        }
+    }
+
+    /// Todo
+    #[allow(clippy::todo)]
+    async fn snapshot(&self) -> Result<Box<dyn SnapshotApi>, Self::Error> {
+        todo!("snapshot");
     }
 
     fn last_applied(&self) -> Result<LogIndex, ExecuteError> {

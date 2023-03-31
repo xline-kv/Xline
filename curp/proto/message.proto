@@ -71,10 +71,25 @@ message VoteResponse {
     repeated bytes spec_pool = 3;
 }
 
+message InstallSnapshotRequest {
+    uint64 term = 1;
+    string leader_id = 2;
+    uint64 last_included_index = 3;
+    uint64 last_included_term = 4;
+    uint64 offset = 5;
+    bytes data = 6;
+    bool done = 7;
+}
+
+message InstallSnapshotResponse {
+    uint64 term = 1;
+}
+
 service Protocol {
     rpc Propose (ProposeRequest) returns (ProposeResponse);
     rpc WaitSynced (WaitSyncedRequest) returns (WaitSyncedResponse);
     rpc AppendEntries (AppendEntriesRequest) returns (AppendEntriesResponse);
     rpc Vote (VoteRequest) returns (VoteResponse);
     rpc FetchLeader (FetchLeaderRequest) returns (FetchLeaderResponse);
+    rpc InstallSnapshot (stream InstallSnapshotRequest) returns (InstallSnapshotResponse);
 }
