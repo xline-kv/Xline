@@ -665,22 +665,31 @@ mod test {
         destroy(&data_dir);
     }
 
-    #[test]
-    fn snapshot_should_work() {
+    #[tokio::test]
+    async fn snapshot_should_work() {
         let origin_data_dir = PathBuf::from("/tmp/snapshot_should_work_origin");
         let recover_data_dir = PathBuf::from("/tmp/snapshot_should_work_recover");
         let snapshot_dir = PathBuf::from("/tmp/snapshot");
+        let snapshot_bak_dir = PathBuf::from("/tmp/snapshot_bak");
 
         let engine = RocksEngine::new(&origin_data_dir, &TESTTABLES).unwrap();
         let put = WriteOperation::new_put("kv", "key".into(), "value".into());
         assert!(engine.write_batch(vec![put], false).is_ok());
 
-        let snapshot = engine.get_snapshot(&snapshot_dir, &TESTTABLES).unwrap();
+        let mut snapshot = engine.get_snapshot(&snapshot_dir, &TESTTABLES).unwrap();
         let put = WriteOperation::new_put("kv", "key2".into(), "value2".into());
         assert!(engine.write_batch(vec![put], false).is_ok());
 
+        let mut buf = vec![0u8; snapshot.size().numeric_cast()];
+        snapshot.read_exact(&mut buf).await.unwrap();
+
+        let mut received_snapshot = RocksSnapshot::new_for_receiving(snapshot_bak_dir).unwrap();
+        received_snapshot.write_all(&buf).await.unwrap();
+
         let engine_2 = RocksEngine::new(&recover_data_dir, &TESTTABLES).unwrap();
-        assert!(engine_2.apply_snapshot(snapshot, &TESTTABLES).is_ok());
+        assert!(engine_2
+            .apply_snapshot(received_snapshot, &TESTTABLES)
+            .is_ok());
 
         let value = engine_2.get("kv", "key").unwrap();
         assert_eq!(value, Some("value".into()));
