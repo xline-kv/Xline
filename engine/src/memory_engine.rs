@@ -282,18 +282,26 @@ mod test {
         assert_eq!(res_3.sort(), expected_all_values.sort());
     }
 
-    #[test]
-    fn snapshot_should_work() {
+    #[tokio::test]
+    async fn snapshot_should_work() {
         let engine = MemoryEngine::new(&TESTTABLES).unwrap();
         let put = WriteOperation::new_put("kv", "key".into(), "value".into());
         assert!(engine.write_batch(vec![put], false).is_ok());
 
-        let snapshot = engine.get_snapshot("", &TESTTABLES).unwrap();
+        let mut snapshot = engine.get_snapshot("", &TESTTABLES).unwrap();
         let put = WriteOperation::new_put("kv", "key2".into(), "value2".into());
         assert!(engine.write_batch(vec![put], false).is_ok());
 
+        let mut buf = vec![0u8; snapshot.size().numeric_cast()];
+        snapshot.read_exact(&mut buf).await.unwrap();
+
+        let mut new_snapshot = MemorySnapshot {
+            data: Cursor::new(Vec::new()),
+        };
+        new_snapshot.write_all(&buf).await.unwrap();
+
         let engine_2 = MemoryEngine::new(&TESTTABLES).unwrap();
-        assert!(engine_2.apply_snapshot(snapshot, &TESTTABLES).is_ok());
+        assert!(engine_2.apply_snapshot(new_snapshot, &TESTTABLES).is_ok());
 
         let value = engine_2.get("kv", "key").unwrap();
         assert_eq!(value, Some("value".into()));
