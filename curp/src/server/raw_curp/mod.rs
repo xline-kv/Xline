@@ -136,8 +136,8 @@ struct Context<C: Command> {
     election_tick: AtomicU8,
     /// Tx to send cmds to execute and do after sync
     cmd_tx: Box<dyn CEEventTxApi<C>>,
-    /// Sync event trigger
-    sync_event: Arc<Event>,
+    /// Followers sync event trigger
+    sync_events: HashMap<ServerId, Arc<Event>>,
     /// Become leader event
     leader_event: Arc<Event>,
 }
@@ -226,16 +226,25 @@ impl<C: 'static + Command> RawCurp<C> {
             );
             conflict_uncommitted
         });
-
         let mut log_w = self.log.write();
-        let index = log_w.push_cmd(st_r.term, Arc::clone(&cmd));
-        debug!("{} gets new log[{index}]", self.id());
+
+        match log_w.push_cmd(st_r.term, Arc::clone(&cmd)) {
+            Ok(index) => debug!("{} gets new log[{index}]", self.id()),
+            Err(e) => {
+                return (info, Err(e.into()));
+            }
+        }
 
         if !conflict {
             self.ctx.cmd_tx.send_sp_exe(cmd);
         }
 
-        self.ctx.sync_event.notify(usize::MAX);
+        self.ctx.sync_events.iter().for_each(|(id, event)| {
+            let next = self.lst.get_next_index(id);
+            if log_w.has_next_batch(next) {
+                event.notify(1);
+            }
+        });
 
         (
             info,
@@ -474,7 +483,10 @@ impl<C: 'static + Command> RawCurp<C> {
         }
         if prev_last_log_index < last_log_index {
             // if some entries are recovered, sync with followers immediately
-            self.ctx.sync_event.notify(usize::MAX);
+            self.ctx
+                .sync_events
+                .values()
+                .for_each(|event| event.notify(1));
         }
 
         Ok(true)
@@ -540,7 +552,7 @@ impl<C: 'static + Command> RawCurp<C> {
         uncommitted_pool: UncommittedPoolRef<C>,
         cfg: Arc<CurpConfig>,
         cmd_tx: Box<dyn CEEventTxApi<C>>,
-        sync_event: Arc<Event>,
+        sync_events: HashMap<ServerId, Arc<Event>>,
         log_tx: mpsc::UnboundedSender<LogEntry<C>>,
     ) -> Self {
         let raw_curp = Self {
@@ -554,7 +566,7 @@ impl<C: 'static + Command> RawCurp<C> {
             )),
             lst: LeaderState::new(&others),
             cst: Mutex::new(CandidateState::new()),
-            log: RwLock::new(Log::new(log_tx, vec![])),
+            log: RwLock::new(Log::new(log_tx, vec![], cfg.batch_max_size)),
             ctx: Context {
                 id,
                 others,
@@ -565,7 +577,7 @@ impl<C: 'static + Command> RawCurp<C> {
                 cfg,
                 election_tick: AtomicU8::new(0),
                 cmd_tx,
-                sync_event,
+                sync_events,
                 leader_event: Arc::new(Event::new()),
             },
         };
@@ -586,9 +598,9 @@ impl<C: 'static + Command> RawCurp<C> {
         cmd_board: CmdBoardRef<C>,
         spec_pool: SpecPoolRef<C>,
         uncommitted_pool: UncommittedPoolRef<C>,
-        cfg: Arc<CurpConfig>,
+        cfg: &Arc<CurpConfig>,
         cmd_tx: Box<dyn CEEventTxApi<C>>,
-        sync_event: Arc<Event>,
+        sync_event: HashMap<ServerId, Arc<Event>>,
         log_tx: mpsc::UnboundedSender<LogEntry<C>>,
         voted_for: Option<(u64, ServerId)>,
         entries: Vec<LogEntry<C>>,
@@ -601,7 +613,7 @@ impl<C: 'static + Command> RawCurp<C> {
             cmd_board,
             spec_pool,
             uncommitted_pool,
-            cfg,
+            Arc::clone(cfg),
             cmd_tx,
             sync_event,
             log_tx.clone(),
@@ -626,7 +638,7 @@ impl<C: 'static + Command> RawCurp<C> {
             log_w.commit_index = last_applied;
         });
 
-        raw_curp.log = RwLock::new(Log::new(log_tx, entries));
+        raw_curp.log = RwLock::new(Log::new(log_tx, entries, cfg.batch_max_size));
 
         raw_curp
     }
@@ -674,7 +686,7 @@ impl<C: 'static + Command> RawCurp<C> {
             )))
         } else {
             let (prev_log_index, prev_log_term) = log_r.get_prev_entry_info(next_index);
-            let entries = log_r.get_from(next_index).unwrap_or_default().to_vec(); // TODO: limit batch size here
+            let entries = log_r.get_from(next_index).unwrap_or_default().to_vec();
             let ae = AppendEntries {
                 term,
                 leader_id: self.id().clone(),
@@ -726,6 +738,16 @@ impl<C: 'static + Command> RawCurp<C> {
     /// Get a reference to uncommitted pool
     pub(crate) fn uncommitted_pool(&self) -> UncommittedPoolRef<C> {
         Arc::clone(&self.ctx.ucp)
+    }
+
+    /// Get sync event
+    pub(super) fn sync_event(&self, id: &ServerId) -> Arc<Event> {
+        Arc::clone(
+            self.ctx
+                .sync_events
+                .get(id)
+                .unwrap_or_else(|| unreachable!("server id {id} not found")),
+        )
     }
 }
 
@@ -869,7 +891,10 @@ impl<C: 'static + Command> RawCurp<C> {
         for cmd in recovered_cmds {
             let _ig_sync = cb_w.sync.insert(cmd.id().clone()); // may have been inserted before
             let _ig_spec = sp_l.insert(Arc::clone(&cmd)); // may have been inserted before
-            let index = log.push_cmd(term, Arc::clone(&cmd));
+            #[allow(clippy::expect_used)]
+            let index = log
+                .push_cmd(term, Arc::clone(&cmd))
+                .expect("cmd {cmd:?} cannot be serialized");
             debug!(
                 "{} recovers speculatively executed cmd({}) in log[{}]",
                 self.id(),

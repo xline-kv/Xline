@@ -307,12 +307,13 @@ impl<C: 'static + Command> CurpNode<C> {
         let mut ticker = tokio::time::interval(curp.cfg().heartbeat_interval);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let id = connect.id();
+        let batch_timeout = curp.cfg().batch_timeout;
 
         #[allow(clippy::integer_arithmetic, clippy::unwrap_used)]
         // tokio select internal triggered,
         loop {
             // grab the listener in the beginning to prevent missing sync events
-            let listener = sync_event.listen();
+            let listener: event_listener::EventListener = sync_event.listen();
 
             let Ok(sync_action) = curp.sync(id) else {
                 return;
@@ -320,14 +321,20 @@ impl<C: 'static + Command> CurpNode<C> {
 
             match sync_action {
                 SyncAction::AppendEntries(ae) => {
-                    let result = Self::send_ae(connect.as_ref(), curp.as_ref(), ae).await;
-                    if let Err(err) = result {
-                        warn!("ae to {} failed, {err}", connect.id());
-                        if matches!(err, SendAEError::NotLeader) {
-                            return;
+                    // (hb_opt, entries) status combination
+                    // (false, empty) => send heartbeat to followers
+                    // (true, empty) => indicates that `batch_timeout` expired, and during this period there is not any log generated. Do nothing
+                    // (true | false, not empty) => send append entries
+                    if !hb_opt || !ae.entries.is_empty() {
+                        let result = Self::send_ae(connect.as_ref(), curp.as_ref(), ae).await;
+                        if let Err(err) = result {
+                            warn!("ae to {} failed, {err}", connect.id());
+                            if matches!(err, SendAEError::NotLeader) {
+                                return;
+                            }
+                        } else {
+                            hb_opt = true;
                         }
-                    } else {
-                        hb_opt = true;
                     }
                 }
                 SyncAction::Snapshot(rx) => match rx.await {
@@ -350,13 +357,13 @@ impl<C: 'static + Command> CurpNode<C> {
             // a sync is either triggered by an heartbeat timeout event or when new log entries arrive
             tokio::select! {
                 _now = ticker.tick() => {
-                    if hb_opt {
-                        hb_opt = false;
-                        continue;
+                    hb_opt = false;
+                }
+                res = tokio::time::timeout(batch_timeout, listener) => {
+                    if let Err(_e) = res {
+                        hb_opt = true;
                     }
                 }
-                // TODO: use a batch timer
-                _ = listener => {}
             }
         }
     }
@@ -374,7 +381,10 @@ impl<C: 'static + Command> CurpNode<C> {
         curp_cfg: Arc<CurpConfig>,
         tx_filter: Option<Box<dyn TxFilter>>,
     ) -> Result<Self, CurpError> {
-        let sync_event = Arc::new(Event::new());
+        let sync_events = others
+            .keys()
+            .map(|server_id| (server_id.clone(), Arc::new(Event::new())))
+            .collect();
         let (log_tx, log_rx) = mpsc::unbounded_channel();
         let shutdown_trigger = Arc::new(Event::new());
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
@@ -399,7 +409,7 @@ impl<C: 'static + Command> CurpNode<C> {
                 uncommitted_pool,
                 Arc::clone(&curp_cfg),
                 Box::new(ce_event_tx.clone()),
-                Arc::clone(&sync_event),
+                sync_events,
                 log_tx,
             ))
         } else {
@@ -416,9 +426,9 @@ impl<C: 'static + Command> CurpNode<C> {
                 Arc::clone(&cmd_board),
                 Arc::clone(&spec_pool),
                 uncommitted_pool,
-                Arc::clone(&curp_cfg),
+                &curp_cfg,
                 Box::new(ce_event_tx.clone()),
-                Arc::clone(&sync_event),
+                sync_events,
                 log_tx,
                 voted_for,
                 entries,
@@ -448,12 +458,12 @@ impl<C: 'static + Command> CurpNode<C> {
             let election_task =
                 tokio::spawn(Self::election_task(Arc::clone(&curp_c), connects.clone()));
             let sync_task_daemons = connects
-                .into_values()
-                .map(|connect| {
+                .into_iter()
+                .map(|(server_id, connect)| {
                     tokio::spawn(Self::sync_follower_daemon(
                         Arc::clone(&curp_c),
                         connect,
-                        Arc::clone(&sync_event),
+                        curp_c.sync_event(&server_id),
                     ))
                 })
                 .collect_vec();
