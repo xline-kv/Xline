@@ -312,7 +312,7 @@ mod test {
     #[test]
     fn test_reset() -> Result<(), ExecuteError> {
         let data_dir = PathBuf::from("/tmp/test_reset");
-        let db = DBProxy::open(&StorageConfig::RocksDB(data_dir))?;
+        let db = DBProxy::open(&StorageConfig::RocksDB(data_dir.clone()))?;
 
         let revision = Revision::new(1, 1);
         let key = revision.encode_to_vec();
@@ -328,6 +328,7 @@ mod test {
         let res = db.get_all(KV_TABLE)?;
         assert!(res.is_empty());
 
+        std::fs::remove_dir_all(data_dir).unwrap();
         Ok(())
     }
 

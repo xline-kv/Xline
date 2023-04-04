@@ -46,11 +46,16 @@ pub trait Command:
 
     /// Execute the command after_sync callback
     #[inline]
-    async fn after_sync<E>(&self, e: &E, index: LogIndex) -> Result<Self::ASR, E::Error>
+    async fn after_sync<E>(
+        &self,
+        e: &E,
+        index: LogIndex,
+        need_run: bool,
+    ) -> Result<Self::ASR, E::Error>
     where
         E: CommandExecutor<Self> + Send + Sync,
     {
-        <E as CommandExecutor<Self>>::after_sync(e, self, index).await
+        <E as CommandExecutor<Self>>::after_sync(e, self, index, need_run).await
     }
 }
 
@@ -113,7 +118,12 @@ where
     async fn execute(&self, cmd: &C) -> Result<C::ER, Self::Error>;
 
     /// Execute the after_sync callback
-    async fn after_sync(&self, cmd: &C, index: LogIndex) -> Result<C::ASR, Self::Error>;
+    async fn after_sync(
+        &self,
+        cmd: &C,
+        index: LogIndex,
+        need_run: bool,
+    ) -> Result<C::ASR, Self::Error>;
 
     /// Index of the last log entry that has been successfully applied to the command executor
     fn last_applied(&self) -> Result<LogIndex, Self::Error>;

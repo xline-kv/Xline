@@ -26,8 +26,6 @@ pub struct XlineServerConfig {
     auth: AuthConfig,
 }
 
-// TODO: support persistent storage configuration in the future
-
 /// Cluster Range type alias
 pub type ClusterRange = std::ops::Range<u64>;
 /// Log verbosity level alias
@@ -91,6 +89,10 @@ pub struct ClusterConfig {
     #[getset(get = "pub")]
     #[serde(default = "ClientTimeout::default")]
     client_timeout: ClientTimeout,
+    /// Range request retry timeout settings
+    #[getset(get = "pub")]
+    #[serde(with = "duration_format", default = "default_range_retry_timeout")]
+    range_retry_timeout: Duration,
 }
 
 impl ClusterConfig {
@@ -103,6 +105,7 @@ impl ClusterConfig {
         is_leader: bool,
         curp: CurpConfig,
         client_timeout: ClientTimeout,
+        range_retry_timeout: Duration,
     ) -> Self {
         Self {
             name,
@@ -110,6 +113,7 @@ impl ClusterConfig {
             is_leader,
             curp_config: curp,
             client_timeout,
+            range_retry_timeout,
         }
     }
 }
@@ -265,6 +269,13 @@ pub fn default_curp_data_dir() -> PathBuf {
 #[inline]
 pub const fn default_cmd_workers() -> u8 {
     8
+}
+
+/// default range retry timeout
+#[must_use]
+#[inline]
+pub const fn default_range_retry_timeout() -> Duration {
+    Duration::from_secs(2)
 }
 
 /// default gc interval
@@ -583,6 +594,7 @@ mod tests {
             r#"[cluster]
             name = 'node1'
             is_leader = true
+            range_retry_timeout = '3s'
 
             [cluster.members]
             node1 = '127.0.0.1:2379'
@@ -630,6 +642,8 @@ mod tests {
             Duration::from_secs(5),
         );
 
+        let range_retry_timeout = Duration::from_secs(3);
+
         assert_eq!(
             config.cluster,
             ClusterConfig::new(
@@ -641,7 +655,8 @@ mod tests {
                 ]),
                 true,
                 curp_config,
-                client_timeout
+                client_timeout,
+                range_retry_timeout
             )
         );
 
@@ -709,7 +724,8 @@ mod tests {
                 ]),
                 true,
                 CurpConfig::default(),
-                ClientTimeout::default()
+                ClientTimeout::default(),
+                default_range_retry_timeout()
             )
         );
 

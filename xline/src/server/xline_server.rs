@@ -21,6 +21,7 @@ use utils::config::{ClientTimeout, CurpConfig};
 
 use super::{
     auth_server::AuthServer,
+    barriers::{IdBarrier, IndexBarrier},
     command::{Command, CommandExecutor},
     kv_server::KvServer,
     lease_server::LeaseServer,
@@ -70,6 +71,12 @@ where
     id_gen: Arc<IdGenerator>,
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
+    /// Barrier for applied index
+    index_barrier: Arc<IndexBarrier>,
+    /// Barrier for propose id
+    id_barrier: Arc<IdBarrier>,
+    /// Range request retry timeout
+    range_retry_timeout: Duration,
 }
 
 impl<S> XlineServer<S>
@@ -86,6 +93,7 @@ where
     ///
     /// panic when peers do not contain leader address
     #[inline]
+    #[allow(clippy::too_many_arguments)] // TODO: refactor this use builder pattern, or just pass a reference of config
     pub async fn new(
         name: String,
         all_members: HashMap<String, String>,
@@ -93,6 +101,7 @@ where
         key_pair: Option<(EncodingKey, DecodingKey)>,
         curp_config: CurpConfig,
         client_timeout: ClientTimeout,
+        range_retry_timeout: Duration,
         persistent: Arc<S>,
     ) -> Self {
         let url = all_members
@@ -134,6 +143,8 @@ where
             Arc::clone(&persistent),
         ));
         let client = Arc::new(Client::<Command>::new(all_members.clone(), client_timeout).await);
+        let index_barrier = Arc::new(IndexBarrier::new());
+        let id_barrier = Arc::new(IdBarrier::new());
         Self {
             state,
             kv_storage,
@@ -144,6 +155,9 @@ where
             curp_cfg: curp_config,
             id_gen,
             header_gen,
+            index_barrier,
+            id_barrier,
+            range_retry_timeout,
         }
     }
 
@@ -286,6 +300,8 @@ where
                 Arc::clone(&self.auth_storage),
                 Arc::clone(&self.lease_storage),
                 Arc::clone(&self.persistent),
+                Arc::clone(&self.index_barrier),
+                Arc::clone(&self.id_barrier),
             ),
             Arc::clone(&self.curp_cfg),
             None,
@@ -301,7 +317,9 @@ where
             KvServer::new(
                 Arc::clone(&self.kv_storage),
                 Arc::clone(&self.auth_storage),
-                Arc::clone(&self.state),
+                Arc::clone(&self.index_barrier),
+                Arc::clone(&self.id_barrier),
+                self.range_retry_timeout,
                 Arc::clone(&self.client),
                 self.id(),
             ),

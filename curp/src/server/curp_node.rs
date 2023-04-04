@@ -28,8 +28,9 @@ use crate::{
     log_entry::LogEntry,
     rpc::{
         self, connect::ConnectApi, AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest,
-        FetchLeaderResponse, InstallSnapshotRequest, InstallSnapshotResponse, ProposeRequest,
-        ProposeResponse, VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        FetchLeaderResponse, FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,
+        InstallSnapshotResponse, ProposeRequest, ProposeResponse, VoteRequest, VoteResponse,
+        WaitSyncedRequest, WaitSyncedResponse,
     },
     server::{cmd_worker::CEEventTxApi, raw_curp::SyncAction, storage::rocksdb::RocksDBStorage},
     snapshot::{Snapshot, SnapshotMeta},
@@ -250,6 +251,17 @@ impl<C: 'static + Command> CurpNode<C> {
         Err(CurpError::Transport(
             "failed to receive a complete snapshot".to_owned(),
         ))
+    }
+
+    /// Handle fetch read state requests
+    #[allow(clippy::needless_pass_by_value)] // To keep type consistent with other request handlers
+    pub(super) fn fetch_read_state(
+        &self,
+        req: FetchReadStateRequest,
+    ) -> Result<FetchReadStateResponse, CurpError> {
+        let cmd = req.cmd()?;
+        let state = self.curp.handle_fetch_read_state(&cmd)?;
+        Ok(FetchReadStateResponse::new(state))
     }
 }
 

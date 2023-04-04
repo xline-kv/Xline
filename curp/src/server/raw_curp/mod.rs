@@ -42,6 +42,7 @@ use crate::{
     cmd::{Command, ProposeId},
     error::ProposeError,
     log_entry::LogEntry,
+    rpc::{IdSet, ReadState},
     server::{cmd_board::CmdBoardRef, spec_pool::SpecPoolRef},
     snapshot::{Snapshot, SnapshotMeta},
     LogIndex, ServerId,
@@ -536,6 +537,21 @@ impl<C: 'static + Command> RawCurp<C> {
         self.lst
             .update_match_index(follower_id, meta.last_included_index.numeric_cast());
         Ok(())
+    }
+
+    /// Handle `fetch_read_state`
+    pub(super) fn handle_fetch_read_state(&self, cmd: &C) -> bincode::Result<ReadState> {
+        let ids = self.ctx.sp.map_lock(|sp| {
+            sp.pool
+                .iter()
+                .filter_map(|(id, c)| c.is_conflict(cmd).then_some(id.clone()))
+                .collect_vec()
+        });
+        if ids.is_empty() {
+            Ok(ReadState::CommitIndex(self.log.read().commit_index))
+        } else {
+            Ok(ReadState::Ids(IdSet::new(ids)?))
+        }
     }
 }
 

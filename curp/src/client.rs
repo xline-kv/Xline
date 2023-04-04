@@ -8,14 +8,15 @@ use tracing::{debug, instrument, warn};
 use utils::{config::ClientTimeout, parking_lot_lock::RwLockMap};
 
 use crate::{
-    cmd::Command,
+    cmd::{Command, ProposeId},
     error::ProposeError,
     rpc::{
         self,
         connect::{Connect, ConnectApi},
-        FetchLeaderRequest, ProposeRequest, SyncError, SyncResult, WaitSyncedRequest,
+        FetchLeaderRequest, FetchReadStateRequest, ProposeRequest, ReadState as PbReadState,
+        SyncError, SyncResult, WaitSyncedRequest,
     },
-    ServerId,
+    LogIndex, ServerId,
 };
 
 /// Protocol client
@@ -81,6 +82,16 @@ impl State {
         self.term = term;
         self.leader = None;
     }
+}
+
+/// Read state of a command
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum ReadState {
+    /// need to wait other proposals
+    Ids(Vec<ProposeId>),
+    /// need to wait the commit index
+    CommitIndex(LogIndex),
 }
 
 impl<C> Client<C>
@@ -188,19 +199,10 @@ where
         &self,
         cmd: Arc<C>,
     ) -> Result<(<C as Command>::ASR, <C as Command>::ER), ProposeError> {
-        let notify = Arc::clone(&self.state.read().leader_notify);
         let retry_timeout = *self.timeout.retry_timeout();
         loop {
             // fetch leader id
-            let leader_id = loop {
-                if let Some(id) = self.state.read().leader.clone() {
-                    break id;
-                }
-                if timeout(retry_timeout, notify.listen()).await.is_err() {
-                    // maybe the fast path fails to set the leader, need to fetch leader proactively
-                    break self.fetch_leader().await;
-                }
-            };
+            let leader_id = self.get_leader_id().await;
 
             debug!("wait synced request sent to {}", leader_id);
             let resp = match self
@@ -389,6 +391,20 @@ where
         }
     }
 
+    /// Get leader id from the state or fetch it from servers
+    async fn get_leader_id(&self) -> ServerId {
+        let notify = Arc::clone(&self.state.read().leader_notify);
+        let retry_timeout = *self.timeout.retry_timeout();
+        loop {
+            if let Some(id) = self.state.read().leader.clone() {
+                return id;
+            }
+            if timeout(retry_timeout, notify.listen()).await.is_err() {
+                break self.fetch_leader().await;
+            }
+        }
+    }
+
     /// Propose the request to servers
     /// # Errors
     ///   `ProposeError::ExecutionError` if execution error is met
@@ -451,6 +467,48 @@ where
         match slow_result {
             Ok((asr, er)) => Ok((er, asr)),
             Err(e) => Err(e),
+        }
+    }
+
+    /// Fetch Read state from leader
+    /// # Errors
+    ///   `ProposeError::EncodingError` encoding error met while deserializing the propose id
+    #[inline]
+    pub async fn fetch_read_state(&self, cmd: &C) -> Result<ReadState, ProposeError> {
+        let retry_timeout = *self.timeout.retry_timeout();
+        loop {
+            let leader_id = self.get_leader_id().await;
+            debug!("fetch read state request sent to {}", leader_id);
+            let resp = match self
+                .connects
+                .get(&leader_id)
+                .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
+                .fetch_read_state(
+                    FetchReadStateRequest::new(cmd)?,
+                    *self.timeout.wait_synced_timeout(),
+                )
+                .await
+            {
+                Ok(resp) => resp.into_inner(),
+                Err(e) => {
+                    warn!("fetch read state rpc error: {e}");
+                    tokio::time::sleep(retry_timeout).await;
+                    continue;
+                }
+            };
+            let pb_state = resp
+                .read_state
+                .unwrap_or_else(|| unreachable!("read state should be some"));
+            let state = match pb_state {
+                PbReadState::CommitIndex(i) => ReadState::CommitIndex(i),
+                PbReadState::Ids(i) => ReadState::Ids(
+                    i.ids
+                        .into_iter()
+                        .map(|id| bincode::deserialize(&id))
+                        .collect::<bincode::Result<Vec<ProposeId>>>()?,
+                ),
+            };
+            return Ok(state);
         }
     }
 

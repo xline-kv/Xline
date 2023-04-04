@@ -306,7 +306,7 @@ impl<C: Command> Filter<C> {
                     }
                     false
                 }
-                (ExeState::Executed(true), AsState::AfterSyncReady(index)) => {
+                (ExeState::Executed(_), AsState::AfterSyncReady(index)) => {
                     *as_st = AsState::AfterSyncing;
                     let task = Task {
                         vid,
@@ -317,8 +317,7 @@ impl<C: Command> Filter<C> {
                     }
                     false
                 }
-                (ExeState::Executed(true), AsState::AfterSynced)
-                | (ExeState::Executed(false), AsState::AfterSyncReady(_)) => true,
+                (ExeState::Executed(_), AsState::AfterSynced) => true,
                 (ExeState::Executing | ExeState::Executed(_), AsState::NotSynced)
                 | (ExeState::Executing, AsState::AfterSyncReady(_) | AsState::AfterSyncing)
                 | (ExeState::Executed(true), AsState::AfterSyncing) => false,

@@ -4,12 +4,14 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 pub use self::proto::protocol_server::ProtocolServer;
 pub(crate) use self::proto::{
+    fetch_read_state_response::ReadState,
     propose_response::ExeResult,
     protocol_server::Protocol,
     wait_synced_response::{Success, SyncResult as SyncResultRaw},
     AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest, FetchLeaderResponse,
-    InstallSnapshotRequest, InstallSnapshotResponse, ProposeRequest, ProposeResponse, VoteRequest,
-    VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+    FetchReadStateRequest, FetchReadStateResponse, IdSet, InstallSnapshotRequest,
+    InstallSnapshotResponse, ProposeRequest, ProposeResponse, VoteRequest, VoteResponse,
+    WaitSyncedRequest, WaitSyncedResponse,
 };
 use crate::{
     cmd::{Command, ProposeId},
@@ -337,5 +339,40 @@ impl InstallSnapshotResponse {
     /// Create a new snapshot response
     pub(crate) fn new(term: u64) -> Self {
         Self { term }
+    }
+}
+
+impl IdSet {
+    /// Create a new `IdSet`
+    pub fn new(ids: Vec<ProposeId>) -> bincode::Result<Self> {
+        Ok(Self {
+            ids: ids
+                .into_iter()
+                .map(|id| bincode::serialize(&id))
+                .collect::<bincode::Result<Vec<Vec<u8>>>>()?,
+        })
+    }
+}
+
+impl FetchReadStateRequest {
+    /// Create a new fetch read state request
+    pub(crate) fn new<C: Command>(cmd: &C) -> bincode::Result<Self> {
+        Ok(Self {
+            command: bincode::serialize(cmd)?,
+        })
+    }
+
+    /// Get command
+    pub(crate) fn cmd<C: Command>(&self) -> bincode::Result<C> {
+        bincode::deserialize(&self.command)
+    }
+}
+
+impl FetchReadStateResponse {
+    /// Create a new fetch read state response
+    pub(crate) fn new(state: ReadState) -> Self {
+        Self {
+            read_state: Some(state),
+        }
     }
 }

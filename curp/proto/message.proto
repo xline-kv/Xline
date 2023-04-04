@@ -85,6 +85,21 @@ message InstallSnapshotResponse {
     uint64 term = 1;
 }
 
+message IdSet {
+    repeated bytes ids = 1;
+}
+
+message FetchReadStateRequest{
+    bytes command = 1;
+}
+
+message FetchReadStateResponse {
+    oneof read_state {
+        IdSet ids = 1;
+        uint64 commit_index = 2;
+    }
+}
+
 service Protocol {
     rpc Propose (ProposeRequest) returns (ProposeResponse);
     rpc WaitSynced (WaitSyncedRequest) returns (WaitSyncedResponse);
@@ -92,4 +107,5 @@ service Protocol {
     rpc Vote (VoteRequest) returns (VoteResponse);
     rpc FetchLeader (FetchLeaderRequest) returns (FetchLeaderResponse);
     rpc InstallSnapshot (stream InstallSnapshotRequest) returns (InstallSnapshotResponse);
+    rpc FetchReadState (FetchReadStateRequest) returns (FetchReadStateResponse);
 }
