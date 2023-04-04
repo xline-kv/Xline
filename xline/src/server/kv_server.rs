@@ -1,21 +1,26 @@
-use std::{collections::HashSet, fmt::Debug, sync::Arc};
+use std::{collections::HashSet, fmt::Debug, sync::Arc, time::Duration};
 
-use curp::{client::Client, cmd::ProposeId, error::ProposeError};
+use curp::{
+    client::{Client, ReadState},
+    cmd::ProposeId,
+    error::ProposeError,
+};
+use futures::future::join_all;
+use tokio::time::timeout;
 use tracing::{debug, instrument};
 use uuid::Uuid;
 
 use super::{
     auth_server::get_token,
+    barriers::{IdBarrier, IndexBarrier},
     command::{Command, CommandResponse, KeyRange, SyncResponse},
 };
 use crate::{
     rpc::{
         CompactionRequest, CompactionResponse, DeleteRangeRequest, DeleteRangeResponse, Kv,
-        KvClient, PutRequest, PutResponse, RangeRequest, RangeResponse, Request, RequestOp,
-        RequestWithToken, RequestWrapper, Response, ResponseOp, SortOrder, SortTarget, TxnRequest,
-        TxnResponse,
+        PutRequest, PutResponse, RangeRequest, RangeResponse, Request, RequestOp, RequestWithToken,
+        RequestWrapper, Response, ResponseOp, SortOrder, SortTarget, TxnRequest, TxnResponse,
     },
-    state::State,
     storage::{storage_api::StorageApi, AuthStore, KvStore},
 };
 
@@ -32,12 +37,16 @@ where
     kv_storage: Arc<KvStore<S>>,
     /// Auth storage
     auth_storage: Arc<AuthStore<S>>,
+    /// Barrier for applied index
+    index_barrier: Arc<IndexBarrier>,
+    /// Barrier for propose id
+    id_barrier: Arc<IdBarrier>,
+    /// Range request retry timeout
+    range_retry_timeout: Duration,
     /// Consensus client
     client: Arc<Client<Command>>,
     /// Server name
     name: String,
-    /// State of current node
-    state: Arc<State>,
 }
 
 impl<S> KvServer<S>
@@ -48,16 +57,20 @@ where
     pub(crate) fn new(
         kv_storage: Arc<KvStore<S>>,
         auth_storage: Arc<AuthStore<S>>,
-        state: Arc<State>,
+        index_barrier: Arc<IndexBarrier>,
+        id_barrier: Arc<IdBarrier>,
+        range_retry_timeout: Duration,
         client: Arc<Client<Command>>,
         name: String,
     ) -> Self {
         Self {
             kv_storage,
             auth_storage,
+            index_barrier,
+            id_barrier,
+            range_retry_timeout,
             client,
             name,
-            state,
         }
     }
 
@@ -94,19 +107,15 @@ where
     /// Execute `RangeRequest` in current node
     async fn serializable_range(
         &self,
-        request: tonic::Request<RangeRequest>,
+        wrapper: &RequestWithToken,
     ) -> Result<tonic::Response<RangeResponse>, tonic::Status> {
-        let wrapper = match get_token(request.metadata()) {
-            Some(token) => RequestWithToken::new_with_token(request.into_inner().into(), token),
-            None => RequestWithToken::new(request.into_inner().into()),
-        };
         self.auth_storage
-            .check_permission(&wrapper)
+            .check_permission(wrapper)
             .await
             .map_err(|err| tonic::Status::invalid_argument(err.to_string()))?;
         let cmd_res = self
             .kv_storage
-            .execute(&wrapper)
+            .execute(wrapper)
             .map_err(|e| tonic::Status::internal(format!("Execute failed: {e:?}")))?;
         let res = Self::parse_response_op(cmd_res.decode().into());
         if let Response::ResponseRange(response) = res {
@@ -335,9 +344,34 @@ where
         Ok((puts, dels))
     }
 
-    /// Check if the current node is leader
-    fn is_leader(&self) -> bool {
-        self.state.is_leader()
+    /// Wait current node's state machine apply the conflict commands
+    async fn wait_read_state(&self, cmd: &Command) -> Result<(), tonic::Status> {
+        loop {
+            let rd_state = self
+                .client
+                .fetch_read_state(cmd)
+                .await
+                .map_err(|e| tonic::Status::internal(e.to_string()))?;
+            let wait_future = async move {
+                match rd_state {
+                    ReadState::Ids(ids) => {
+                        let fus = ids
+                            .into_iter()
+                            .map(|id| self.id_barrier.wait(id))
+                            .collect::<Vec<_>>();
+                        let _ignore = join_all(fus).await;
+                    }
+                    ReadState::CommitIndex(index) => {
+                        self.index_barrier.wait(index).await;
+                    }
+                    _ => unreachable!(),
+                }
+            };
+            if timeout(self.range_retry_timeout, wait_future).await.is_ok() {
+                break;
+            };
+        }
+        Ok(())
     }
 }
 
@@ -355,15 +389,17 @@ where
         debug!("Receive RangeRequest {:?}", request);
         let range_req = request.get_ref();
         Self::check_range_request(range_req)?;
-        if range_req.serializable || self.is_leader() {
-            self.serializable_range(request).await
-        } else {
-            let leader_addr = self.state.wait_leader().await?;
-            let mut kv_client = KvClient::connect(format!("http://{leader_addr}"))
-                .await
-                .map_err(|e| tonic::Status::internal(format!("Connect to leader error: {e}")))?;
-            kv_client.range(request).await
+        let is_serializable = range_req.serializable;
+        let wrapper = match get_token(request.metadata()) {
+            Some(token) => RequestWithToken::new_with_token(request.into_inner().into(), token),
+            None => RequestWithToken::new(request.into_inner().into()),
+        };
+        let propose_id = self.generate_propose_id();
+        let cmd = Self::command_from_request_wrapper(propose_id, wrapper);
+        if !is_serializable {
+            self.wait_read_state(&cmd).await?;
         }
+        self.serializable_range(cmd.request()).await
     }
 
     /// Put puts the given key into the key-value store.

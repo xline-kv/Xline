@@ -126,10 +126,10 @@ use utils::{
         default_batch_max_size, default_batch_timeout, default_candidate_timeout_ticks,
         default_client_wait_synced_timeout, default_cmd_workers, default_follower_timeout_ticks,
         default_gc_interval, default_heartbeat_interval, default_log_level,
-        default_propose_timeout, default_retry_timeout, default_rotation, default_rpc_timeout,
-        default_server_wait_synced_timeout, file_appender, AuthConfig, ClientTimeout,
-        ClusterConfig, CurpConfigBuilder, LevelConfig, LogConfig, RotationConfig, StorageConfig,
-        TraceConfig, XlineServerConfig,
+        default_propose_timeout, default_range_retry_timeout, default_retry_timeout,
+        default_rotation, default_rpc_timeout, default_server_wait_synced_timeout, file_appender,
+        AuthConfig, ClientTimeout, ClusterConfig, CurpConfigBuilder, LevelConfig, LogConfig,
+        RotationConfig, StorageConfig, TraceConfig, XlineServerConfig,
     },
     parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_rotation,
 };
@@ -211,6 +211,9 @@ struct ServerArgs {
     /// How often should the gc task run
     #[clap(long, value_parser = parse_duration)]
     gc_interval: Option<Duration>,
+    /// Range request retry timeout [default: 2s]
+    #[clap(long, value_parser = parse_duration)]
+    range_retry_timeout: Option<Duration>,
     /// Storage engine
     #[clap(long)]
     storage_engine: String,
@@ -260,12 +263,17 @@ impl From<ServerArgs> for XlineServerConfig {
             args.client_retry_timeout
                 .unwrap_or_else(default_retry_timeout),
         );
+
+        let range_retry_timeout = args
+            .range_retry_timeout
+            .unwrap_or_else(default_range_retry_timeout);
         let cluster = ClusterConfig::new(
             args.name,
             args.members,
             args.is_leader,
             curp_config,
             client_timeout,
+            range_retry_timeout,
         );
         let log = LogConfig::new(args.log_file, args.log_rotate, args.log_level);
         let trace = TraceConfig::new(
@@ -406,7 +414,6 @@ async fn main() -> Result<()> {
         })?
         .parse()?;
 
-    let is_leader = cluster_config.is_leader();
     debug!("name = {:?}", cluster_config.name());
     debug!("server_addr = {:?}", self_addr);
     debug!("cluster_peers = {:?}", cluster_config.members());
@@ -415,10 +422,11 @@ async fn main() -> Result<()> {
     let server = XlineServer::new(
         cluster_config.name().clone(),
         cluster_config.members().clone(),
-        *is_leader,
+        *cluster_config.is_leader(),
         key_pair,
         cluster_config.curp_config().clone(),
         *cluster_config.client_timeout(),
+        *cluster_config.range_retry_timeout(),
         db_proxy,
     )
     .await;

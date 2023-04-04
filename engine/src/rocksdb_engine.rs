@@ -688,10 +688,11 @@ mod test {
 
     #[tokio::test]
     async fn snapshot_should_work() {
-        let origin_data_dir = PathBuf::from("/tmp/snapshot_should_work_origin");
-        let recover_data_dir = PathBuf::from("/tmp/snapshot_should_work_recover");
-        let snapshot_dir = PathBuf::from("/tmp/snapshot");
-        let snapshot_bak_dir = PathBuf::from("/tmp/snapshot_bak");
+        let test_dir = PathBuf::from("/tmp/snapshot_should_work_rocksdb");
+        let origin_data_dir = test_dir.join("origin");
+        let recover_data_dir = test_dir.join("recover");
+        let snapshot_dir = test_dir.join("snapshot");
+        let snapshot_bak_dir = test_dir.join("snapshot_bak");
 
         let engine = RocksEngine::new(&origin_data_dir, &TESTTABLES).unwrap();
         let put = WriteOperation::new_put("kv", "key".into(), "value".into());
@@ -723,6 +724,6 @@ mod test {
         drop(engine_2);
         destroy(&origin_data_dir);
         destroy(&recover_data_dir);
-        fs::remove_dir_all(&snapshot_dir).unwrap();
+        fs::remove_dir_all(&test_dir).unwrap();
     }
 }

@@ -1,5 +1,7 @@
 /// Xline auth server
 mod auth_server;
+/// Barriers for range requests
+mod barriers;
 /// Command to be executed
 pub(crate) mod command;
 /// Xline kv server

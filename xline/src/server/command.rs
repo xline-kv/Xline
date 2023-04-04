@@ -18,6 +18,8 @@ use crate::{
     storage::{db::WriteOp, storage_api::StorageApi, AuthStore, ExecuteError, KvStore, LeaseStore},
 };
 
+use super::barriers::{IdBarrier, IndexBarrier};
+
 /// Meta table name
 pub(crate) const META_TABLE: &str = "meta";
 /// Key of applied index
@@ -210,6 +212,10 @@ where
     lease_storage: Arc<LeaseStore<S>>,
     /// persistent storage
     persistent: Arc<S>,
+    /// Barrier for applied index
+    index_barrier: Arc<IndexBarrier>,
+    /// Barrier for propose id
+    id_barrier: Arc<IdBarrier>,
 }
 
 impl<S> CommandExecutor<S>
@@ -222,12 +228,16 @@ where
         auth_storage: Arc<AuthStore<S>>,
         lease_storage: Arc<LeaseStore<S>>,
         persistent: Arc<S>,
+        index_barrier: Arc<IndexBarrier>,
+        id_barrier: Arc<IdBarrier>,
     ) -> Self {
         Self {
             kv_storage,
             auth_storage,
             lease_storage,
             persistent,
+            index_barrier,
+            id_barrier,
         }
     }
 }
@@ -253,16 +263,24 @@ where
         &self,
         cmd: &Command,
         index: LogIndex,
+        need_run: bool,
     ) -> Result<SyncResponse, ExecuteError> {
-        let wrapper = cmd.request();
-        self.auth_storage.check_permission(wrapper).await?;
-        let (res, mut ops) = match wrapper.request.backend() {
-            RequestBackend::Kv => self.kv_storage.after_sync(wrapper).await?,
-            RequestBackend::Auth => self.auth_storage.after_sync(wrapper)?,
-            RequestBackend::Lease => self.lease_storage.after_sync(wrapper).await?,
-        };
-        ops.push(WriteOp::PutAppliedIndex(index));
+        let mut ops = vec![WriteOp::PutAppliedIndex(index)];
+        let mut res = SyncResponse::new(-1);
+        if need_run {
+            let wrapper = cmd.request();
+            self.auth_storage.check_permission(wrapper).await?;
+            let (sync_res, mut wr_ops) = match wrapper.request.backend() {
+                RequestBackend::Kv => self.kv_storage.after_sync(wrapper).await?,
+                RequestBackend::Auth => self.auth_storage.after_sync(wrapper)?,
+                RequestBackend::Lease => self.lease_storage.after_sync(wrapper).await?,
+            };
+            ops.append(&mut wr_ops);
+            res = sync_res;
+        }
         self.persistent.flush_ops(ops)?;
+        self.id_barrier.trigger(cmd.id());
+        self.index_barrier.trigger(index);
         Ok(res)
     }
 

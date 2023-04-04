@@ -11,13 +11,13 @@ use tonic::Request;
 use tracing::{debug, error, instrument};
 use utils::tracing::Inject;
 
-use super::{InstallSnapshotRequest, InstallSnapshotResponse};
 use crate::{
     error::ProposeError,
     rpc::{
         proto::protocol_client::ProtocolClient, AppendEntriesRequest, AppendEntriesResponse,
-        FetchLeaderRequest, FetchLeaderResponse, ProposeRequest, ProposeResponse, VoteRequest,
-        VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        FetchLeaderRequest, FetchLeaderResponse, FetchReadStateRequest, FetchReadStateResponse,
+        InstallSnapshotRequest, InstallSnapshotResponse, ProposeRequest, ProposeResponse,
+        VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
     snapshot::Snapshot,
     ServerId,
@@ -120,6 +120,13 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
         leader_id: ServerId,
         mut snapshot: Snapshot,
     ) -> Result<tonic::Response<InstallSnapshotResponse>, ProposeError>;
+
+    /// Send `FetchReadStateRequest`
+    async fn fetch_read_state(
+        &self,
+        request: FetchReadStateRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<FetchReadStateResponse>, ProposeError>;
 }
 
 /// The connection struct to hold the real rpc connections, it may failed to connect, but it also
@@ -253,6 +260,20 @@ impl ConnectApi for Connect {
             )))
             .await
             .map_err(Into::into)
+    }
+
+    /// Send `FetchReadStateRequest`
+    async fn fetch_read_state(
+        &self,
+        request: FetchReadStateRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<FetchReadStateResponse>, ProposeError> {
+        self.filter()?;
+
+        let mut client = self.get().await?;
+        let mut req = tonic::Request::new(request);
+        req.set_timeout(timeout);
+        client.fetch_read_state(req).await.map_err(Into::into)
     }
 }
 
