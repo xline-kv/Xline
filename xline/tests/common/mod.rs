@@ -22,6 +22,8 @@ pub struct Cluster {
     stop_tx: Option<Sender<()>>,
     /// Cluster size
     size: usize,
+    /// storage paths
+    paths: Vec<String>,
 }
 
 impl Cluster {
@@ -42,6 +44,7 @@ impl Cluster {
             client: None,
             stop_tx: None,
             size,
+            paths: vec![],
         }
     }
 
@@ -55,6 +58,8 @@ impl Cluster {
             let mut rx = stop_tx.subscribe();
             let listener = self.listeners.remove(&i).unwrap();
             let all_members = self.all_members.clone();
+            let path = format!("/tmp/curp-{}", random_id());
+            self.paths.push(path.clone());
             #[allow(clippy::unwrap_used)]
             let db = DBProxy::open(&StorageConfig::Memory).unwrap();
             tokio::spawn(async move {
@@ -64,7 +69,7 @@ impl Cluster {
                     is_leader,
                     Self::test_key_pair(),
                     CurpConfig {
-                        data_dir: format!("/tmp/curp-{}", random_id()).into(),
+                        data_dir: path.into(),
                         ..Default::default()
                     },
                     ClientTimeout::default(),
@@ -109,6 +114,17 @@ impl Cluster {
         let encoding_key = EncodingKey::from_rsa_pem(private_key).unwrap();
         let decoding_key = DecodingKey::from_rsa_pem(public_key).unwrap();
         Some((encoding_key, decoding_key))
+    }
+}
+
+impl Drop for Cluster {
+    fn drop(&mut self) {
+        if let Some(ref stop_tx) = self.stop_tx {
+            let _ = stop_tx.send(());
+        }
+        for path in &self.paths {
+            std::fs::remove_dir_all(path).unwrap();
+        }
     }
 }
 
