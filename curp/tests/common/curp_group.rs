@@ -225,11 +225,24 @@ impl CurpGroup {
     }
 
     pub fn stop(mut self) {
+        let paths = self
+            .nodes
+            .values()
+            .map(|node| node.storage_path.clone())
+            .chain(
+                self.crashed_nodes
+                    .values()
+                    .map(|node| node.storage_path.clone()),
+            )
+            .collect_vec();
         thread::spawn(move || {
             self.nodes.clear();
         })
         .join()
         .unwrap();
+        for path in paths {
+            std::fs::remove_dir_all(path).unwrap();
+        }
     }
 
     pub fn crash(&mut self, id: &ServerId) {
