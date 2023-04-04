@@ -29,11 +29,15 @@ impl<C: 'static + Command> RawCurp<C> {
     }
 
     pub(crate) fn new_test<Tx: CEEventTxApi<C>>(n: u64, exe_tx: Tx) -> Self {
-        let others = (1..n).map(|i| format!("S{i}")).collect();
+        let others: HashSet<ServerId> = (1..n).map(|i| format!("S{i}")).collect();
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
         let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
         let (log_tx, _log_rx) = mpsc::unbounded_channel();
+        let sync_events = others
+            .iter()
+            .map(|id| (id.clone(), Arc::new(Event::new())))
+            .collect();
         Self::new(
             "S0".to_owned(),
             others,
@@ -43,7 +47,7 @@ impl<C: 'static + Command> RawCurp<C> {
             uncommitted_pool,
             Arc::new(CurpConfig::default()),
             Box::new(exe_tx),
-            Arc::new(Event::new()),
+            sync_events,
             log_tx,
         )
     }
@@ -52,7 +56,7 @@ impl<C: 'static + Command> RawCurp<C> {
     pub(crate) fn push_cmd(&self, cmd: Arc<C>) -> LogIndex {
         let st_r = self.st.read();
         let mut log_w = self.log.write();
-        log_w.push_cmd(st_r.term, cmd)
+        log_w.push_cmd(st_r.term, cmd).unwrap()
     }
 }
 
