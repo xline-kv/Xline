@@ -201,9 +201,8 @@ fn heartbeat_will_calibrate_next_index() {
     assert_eq!(result, Ok(false));
 
     let st_r = curp.st.read();
-    let lst_r = curp.lst.read();
     assert_eq!(st_r.term, 0);
-    assert_eq!(lst_r.get_next_index(&"S1".to_string()), 1);
+    assert_eq!(curp.lst.get_next_index(&"S1".to_string()), 1);
 }
 
 #[traced_test]
