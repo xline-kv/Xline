@@ -3,7 +3,7 @@
 //! 1. To group similar functions, I divide Curp impl into three scope: one for utils(don't grab lock here), one for tick, one for handlers
 //! 2. Lock order should be:
 //!     1. self.st
-//!     2. self.lst || self.cst (there is no need for grabbing both)
+//!     2. self.cst
 //!     3. self.log
 
 #![allow(clippy::similar_names)] // st, lst, cst is similar but not confusing
@@ -58,7 +58,7 @@ pub(super) struct RawCurp<C: Command> {
     /// Curp state
     st: RwLock<State>,
     /// Additional leader state
-    lst: RwLock<LeaderState>,
+    lst: LeaderState,
     /// Additional candidate state
     cst: Mutex<CandidateState<C>>,
     /// Curp logs
@@ -325,8 +325,7 @@ impl<C: 'static + Command> RawCurp<C> {
         }
 
         if !success {
-            let mut lst_w = self.lst.write();
-            lst_w.update_next_index(follower_id, hint_index);
+            self.lst.update_next_index(follower_id, hint_index);
             debug!(
                 "{} updates follower {}'s next_index to {hint_index} because it rejects ae",
                 self.id(),
@@ -340,16 +339,10 @@ impl<C: 'static + Command> RawCurp<C> {
             return Ok(true);
         };
 
-        self.lst
-            .map_write(|mut lst_w| lst_w.update_match_index(follower_id, last_sent_index));
+        self.lst.update_match_index(follower_id, last_sent_index);
 
         // check if commit_index needs to be updated
-        if self.can_update_commit_index_to(
-            &self.lst.read(),
-            &self.log.read(),
-            last_sent_index,
-            cur_term,
-        ) {
+        if self.can_update_commit_index_to(&self.log.read(), last_sent_index, cur_term) {
             let mut log_w = self.log.write();
             if last_sent_index > log_w.commit_index {
                 log_w.commit_index = last_sent_index;
@@ -458,7 +451,6 @@ impl<C: 'static + Command> RawCurp<C> {
         // vote is granted by the majority of servers, can become leader
         let spec_pools = cst_w.sps.drain().collect();
         drop(cst_w);
-        let mut lst_w = self.lst.write();
         let mut log_w = self.log.write();
 
         let prev_last_log_index = log_w.last_log_index();
@@ -469,7 +461,7 @@ impl<C: 'static + Command> RawCurp<C> {
 
         // update next_index for each follower
         for other in &self.ctx.others {
-            lst_w.update_next_index(other, last_log_index + 1); // iter from the end to front is more likely to match the follower
+            self.lst.update_next_index(other, last_log_index + 1); // iter from the end to front is more likely to match the follower
         }
         if prev_last_log_index < last_log_index {
             // if some entries are recovered, sync with followers immediately
@@ -505,7 +497,7 @@ impl<C: 'static + Command> RawCurp<C> {
                 cfg.follower_timeout_ticks,
                 cfg.candidate_timeout_ticks,
             )),
-            lst: RwLock::new(LeaderState::new(&others)),
+            lst: LeaderState::new(&others),
             cst: Mutex::new(CandidateState::new()),
             log: RwLock::new(Log::new(log_tx, vec![])),
             ctx: Context {
@@ -610,10 +602,9 @@ impl<C: 'static + Command> RawCurp<C> {
             lst_r.term
         };
 
-        let lst_r = self.lst.read();
         let log_r = self.log.read();
 
-        let next_index = lst_r.get_next_index(follower_id);
+        let next_index = self.lst.get_next_index(follower_id);
         let (prev_log_index, prev_log_term) = log_r.get_prev_entry_info(next_index);
         let entries = log_r.get_from(next_index).unwrap_or_default().to_vec(); // TODO: limit batch size here
         let ae = AppendEntries {
@@ -720,13 +711,7 @@ impl<C: 'static + Command> RawCurp<C> {
     }
 
     /// Check whether `commit_index` can be updated to i
-    fn can_update_commit_index_to(
-        &self,
-        lst: &LeaderState,
-        log: &Log<C>,
-        i: LogIndex,
-        cur_term: u64,
-    ) -> bool {
+    fn can_update_commit_index_to(&self, log: &Log<C>, i: LogIndex, cur_term: u64) -> bool {
         if log.commit_index >= i {
             return false;
         }
@@ -740,7 +725,7 @@ impl<C: 'static + Command> RawCurp<C> {
             .ctx
             .others
             .iter()
-            .filter(|&id| lst.get_match_index(id) >= i)
+            .filter(|&id| self.lst.get_match_index(id) >= i)
             .count()
             .numeric_cast();
         replicated_cnt + 1 >= self.quorum()

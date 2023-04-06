@@ -4,6 +4,7 @@ use std::{
 };
 
 use madsim::rand::{thread_rng, Rng};
+use parking_lot::{Mutex, MutexGuard};
 use tracing::debug;
 
 use super::Role;
@@ -44,13 +45,20 @@ pub(super) struct CandidateState<C> {
     pub(super) votes_received: u64,
 }
 
+/// Status of a follower
+#[derive(Debug)]
+struct FollowerStatus {
+    /// Index of the next log entry to send to that follower
+    next_index: LogIndex,
+    /// Index of highest log entry known to be replicated on that follower
+    match_index: LogIndex,
+}
+
 /// Additional state for the leader, all volatile
 #[derive(Debug)]
 pub(super) struct LeaderState {
-    /// For each server, index of the next log entry to send to that server
-    next_index: HashMap<ServerId, LogIndex>,
-    /// For each server, index of highest log entry known to be replicated on server
-    match_index: HashMap<ServerId, LogIndex>,
+    /// For each server, the leader maintains its status
+    statuses: HashMap<ServerId, Mutex<FollowerStatus>>,
 }
 
 impl State {
@@ -90,56 +98,58 @@ impl State {
 impl LeaderState {
     /// Create a `LeaderState`
     pub(super) fn new(others: &HashSet<ServerId>) -> Self {
-        let next_index = others.iter().map(|o| (o.clone(), 1)).collect();
-        let match_index = others.iter().map(|o| (o.clone(), 0)).collect();
         Self {
-            next_index,
-            match_index,
+            statuses: others
+                .iter()
+                .cloned()
+                .map(|o| {
+                    (
+                        o,
+                        Mutex::new(FollowerStatus {
+                            next_index: 1,
+                            match_index: 0,
+                        }),
+                    )
+                })
+                .collect(),
         }
+    }
+
+    /// Get status for a server
+    fn get_status(&self, id: &ServerId) -> MutexGuard<'_, FollowerStatus> {
+        self.statuses
+            .get(id)
+            .unwrap_or_else(|| unreachable!("no status for {id}"))
+            .lock()
     }
 
     /// Get `next_index` for server
     pub(super) fn get_next_index(&self, id: &ServerId) -> LogIndex {
-        *self
-            .next_index
-            .get(id)
-            .unwrap_or_else(|| unreachable!("no next_index for {id}"))
+        self.get_status(id).next_index
     }
 
     /// Get `match_index` for server
     pub(super) fn get_match_index(&self, id: &ServerId) -> LogIndex {
-        *self
-            .match_index
-            .get(id)
-            .unwrap_or_else(|| unreachable!("no match_index for {id}"))
+        self.get_status(id).match_index
     }
 
     /// Update `next_index` for server
-    pub(super) fn update_next_index(&mut self, id: &ServerId, index: LogIndex) {
-        *self
-            .next_index
-            .get_mut(id)
-            .unwrap_or_else(|| unreachable!("no next_index for {id}")) = index;
+    pub(super) fn update_next_index(&self, id: &ServerId, index: LogIndex) {
+        self.get_status(id).next_index = index;
     }
 
     /// Update `match_index` for server, will update `next_index` if possible
-    pub(super) fn update_match_index(&mut self, id: &ServerId, index: LogIndex) {
-        let match_index = self
-            .match_index
-            .get_mut(id)
-            .unwrap_or_else(|| unreachable!("no match_index for {id}"));
-        if *match_index >= index {
+    pub(super) fn update_match_index(&self, id: &ServerId, index: LogIndex) {
+        let mut status = self.get_status(id);
+
+        if status.match_index >= index {
             return;
         }
 
-        *match_index = index;
-        debug!("follower {}'s match_index updated to {match_index}", id);
+        status.match_index = index;
+        status.next_index = index + 1;
 
-        let next_index = self
-            .next_index
-            .get_mut(id)
-            .unwrap_or_else(|| unreachable!("no next_index for {id}"));
-        *next_index = *match_index + 1;
+        debug!("follower {id}'s match_index updated to {index}");
     }
 }
 
