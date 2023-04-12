@@ -70,6 +70,9 @@ pub trait SnapshotApi: Send + Sync + std::fmt::Debug {
 
     /// Write the given buffer to the snapshot
     async fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()>;
+
+    /// Clean files of current snapshot
+    async fn clean(&mut self) -> std::io::Result<()>;
 }
 
 /// The `StorageEngine` trait

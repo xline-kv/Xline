@@ -8,6 +8,8 @@ mod kv_server;
 mod lease_server;
 /// Xline lock server
 mod lock_server;
+/// Xline maintenance client
+mod maintenance;
 /// Xline watch server
 mod watch_server;
 /// Xline server

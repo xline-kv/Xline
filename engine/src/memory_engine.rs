@@ -53,6 +53,12 @@ impl SnapshotApi for MemorySnapshot {
     fn rewind(&mut self) -> std::io::Result<()> {
         Seek::rewind(&mut self.data)
     }
+
+    #[inline]
+    async fn clean(&mut self) -> std::io::Result<()> {
+        self.data.get_mut().clear();
+        Ok(())
+    }
 }
 
 impl MemoryEngine {

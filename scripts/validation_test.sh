@@ -156,9 +156,17 @@ lock_rpc_validation() {
     echo "lock rpc validation test passed"
 }
 
+# validate maintenance requests
+maintenance_validation() {
+    echo "maintenance validation test running..."
+    run_with_expect "${ETCDCTL} snapshot save snap.db" "Snapshot saved at snap.db"
+    echo "maintenance validation test passed"
+}
+
 kv_validation
 watch_validation
 lease_validation
 auth_validation
 lock_validation
 lock_rpc_validation
+maintenance_validation

@@ -25,6 +25,7 @@ use super::{
     kv_server::KvServer,
     lease_server::LeaseServer,
     lock_server::LockServer,
+    maintenance::MaintenanceServer,
     watch_server::WatchServer,
 };
 use crate::{
@@ -32,7 +33,8 @@ use crate::{
     id_gen::IdGenerator,
     rpc::{
         AuthServer as RpcAuthServer, KvServer as RpcKvServer, LeaseServer as RpcLeaseServer,
-        LockServer as RpcLockServer, WatchServer as RpcWatchServer,
+        LockServer as RpcLockServer, MaintenanceServer as RpcMaintenanceServer,
+        WatchServer as RpcWatchServer,
     },
     state::State,
     storage::{index::Index, storage_api::StorageApi, AuthStore, KvStore, LeaseStore},
@@ -66,6 +68,8 @@ where
     curp_cfg: Arc<CurpConfig>,
     /// Id generator
     id_gen: Arc<IdGenerator>,
+    /// Header generator
+    header_gen: Arc<HeaderGenerator>,
 }
 
 impl<S> XlineServer<S>
@@ -126,7 +130,7 @@ where
         let auth_storage = Arc::new(AuthStore::new(
             lease_cmd_tx,
             key_pair,
-            header_gen,
+            Arc::clone(&header_gen),
             Arc::clone(&persistent),
         ));
         let client = Arc::new(Client::<Command>::new(all_members.clone(), client_timeout).await);
@@ -139,6 +143,7 @@ where
             client,
             curp_cfg: curp_config,
             id_gen,
+            header_gen,
         }
     }
 
@@ -182,14 +187,22 @@ where
         self.lease_storage.recover()?;
         self.kv_storage.recover().await?;
         self.auth_storage.recover()?;
-        let (kv_server, lock_server, lease_server, auth_server, watch_server, curp_server) =
-            self.init_servers().await;
+        let (
+            kv_server,
+            lock_server,
+            lease_server,
+            auth_server,
+            watch_server,
+            maintenance_server,
+            curp_server,
+        ) = self.init_servers().await;
         Ok(Server::builder()
             .add_service(RpcLockServer::new(lock_server))
             .add_service(RpcKvServer::new(kv_server))
             .add_service(RpcLeaseServer::from_arc(lease_server))
             .add_service(RpcAuthServer::new(auth_server))
             .add_service(RpcWatchServer::new(watch_server))
+            .add_service(RpcMaintenanceServer::new(maintenance_server))
             .add_service(ProtocolServer::new(curp_server))
             .serve(addr)
             .await?)
@@ -209,14 +222,22 @@ where
     where
         F: Future<Output = ()>,
     {
-        let (kv_server, lock_server, lease_server, auth_server, watch_server, curp_server) =
-            self.init_servers().await;
+        let (
+            kv_server,
+            lock_server,
+            lease_server,
+            auth_server,
+            watch_server,
+            maintenance_server,
+            curp_server,
+        ) = self.init_servers().await;
         Ok(Server::builder()
             .add_service(RpcLockServer::new(lock_server))
             .add_service(RpcKvServer::new(kv_server))
             .add_service(RpcLeaseServer::from_arc(lease_server))
             .add_service(RpcAuthServer::new(auth_server))
             .add_service(RpcWatchServer::new(watch_server))
+            .add_service(RpcMaintenanceServer::new(maintenance_server))
             .add_service(ProtocolServer::new(curp_server))
             .serve_with_incoming_shutdown(TcpListenerStream::new(xline_listener), signal)
             .await?)
@@ -253,6 +274,7 @@ where
         Arc<LeaseServer<S>>,
         AuthServer<S>,
         WatchServer<S>,
+        MaintenanceServer<S>,
         CurpServer,
     ) {
         let curp_server = CurpServer::new(
@@ -303,6 +325,7 @@ where
                 self.id(),
             ),
             WatchServer::new(self.kv_storage.kv_watcher()),
+            MaintenanceServer::new(Arc::clone(&self.persistent), Arc::clone(&self.header_gen)),
             curp_server,
         )
     }

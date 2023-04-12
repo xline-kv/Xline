@@ -1,3 +1,5 @@
+use engine::engine_api::SnapshotApi;
+
 use super::{db::WriteOp, ExecuteError};
 
 /// The Stable Storage Api
@@ -38,6 +40,9 @@ pub trait StorageApi: Send + Sync + 'static + std::fmt::Debug {
     ///
     /// if error occurs in storage, return `Err(error)`
     fn reset(&self) -> Result<(), ExecuteError>;
+
+    /// Get the snapshot of the storage
+    fn get_snapshot(&self) -> Result<Box<dyn SnapshotApi>, ExecuteError>;
 
     /// Flush the operations to storage
     fn flush_ops(&self, ops: Vec<WriteOp>) -> Result<(), ExecuteError>;
