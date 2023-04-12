@@ -297,6 +297,7 @@ impl RocksSnapshot {
                 .unwrap_or_else(|_e| unreachable!("infallible"));
             let meta = bincode::deserialize(&meta_bytes).map_err(|e| io::Error::new(Other, e))?;
 
+            self.meta.data = Cursor::new(meta_bytes);
             self.apply_snap_meta(meta);
 
             self.meta.is_current = false;
@@ -393,6 +394,17 @@ impl SnapshotApi for RocksSnapshot {
             let n = self.write(buf).await?;
             buf = &buf[n..];
             if n == 0 {
+                // when all written size equals to snapshot size, it means that the snapshot is
+                // finished. left data is padding data. we should ignore it.
+                let all_written_size = self
+                    .snap_files
+                    .iter()
+                    .map(|f| f.written_size)
+                    .sum::<u64>()
+                    .overflow_add(self.meta.data.get_ref().len().numeric_cast());
+                if all_written_size == self.size() {
+                    break;
+                }
                 return Err(io::ErrorKind::WriteZero.into());
             }
         }
@@ -405,6 +417,15 @@ impl SnapshotApi for RocksSnapshot {
         self.meta.is_current = true;
         self.meta.data.set_position(0);
         self.current_file = None;
+        Ok(())
+    }
+
+    #[inline]
+    async fn clean(&mut self) -> std::io::Result<()> {
+        for snap_file in &self.snap_files {
+            let path = self.dir.join(&snap_file.filename);
+            tokio::fs::remove_file(path).await?;
+        }
         Ok(())
     }
 }
@@ -682,6 +703,8 @@ mod test {
 
         let mut buf = vec![0u8; snapshot.size().numeric_cast()];
         snapshot.read_exact(&mut buf).await.unwrap();
+
+        buf.extend([0u8; 100]); // add some padding, will be ignored when receiving
 
         let mut received_snapshot = RocksSnapshot::new_for_receiving(snapshot_bak_dir).unwrap();
         received_snapshot.write_all(&buf).await.unwrap();

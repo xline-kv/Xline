@@ -1,7 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
 
 use engine::{
-    engine_api::StorageEngine, memory_engine::MemoryEngine, rocksdb_engine::RocksEngine,
+    engine_api::{SnapshotApi, StorageEngine},
+    memory_engine::MemoryEngine,
+    rocksdb_engine::RocksEngine,
     WriteOperation,
 };
 use prost::Message;
@@ -87,6 +89,15 @@ where
         self.engine.get_all(table).map_err(|e| {
             ExecuteError::DbError(format!("Failed to get all keys from {table:?}: {e}"))
         })
+    }
+
+    fn get_snapshot(&self) -> Result<Box<dyn SnapshotApi>, ExecuteError> {
+        let path = format!("/tmp/xline_snapshot_{}", uuid::Uuid::new_v4());
+        let snapshot = self
+            .engine
+            .get_snapshot(path, &XLINE_TABLES)
+            .map_err(|e| ExecuteError::DbError(format!("Failed to get snapshot: {e}")))?;
+        Ok(Box::new(snapshot))
     }
 
     fn reset(&self) -> Result<(), ExecuteError> {
@@ -221,6 +232,13 @@ impl StorageApi for DBProxy {
         }
     }
 
+    fn get_snapshot(&self) -> Result<Box<dyn SnapshotApi>, ExecuteError> {
+        match *self {
+            DBProxy::MemDB(ref inner_db) => inner_db.get_snapshot(),
+            DBProxy::RocksDB(ref inner_db) => inner_db.get_snapshot(),
+        }
+    }
+
     fn reset(&self) -> Result<(), ExecuteError> {
         match *self {
             DBProxy::MemDB(ref inner_db) => inner_db.reset(),
@@ -310,6 +328,16 @@ mod test {
         let res = db.get_all(KV_TABLE)?;
         assert!(res.is_empty());
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_snapshot() -> Result<(), ExecuteError> {
+        let data_dir = PathBuf::from("/tmp/test_get_snapshot");
+        let db = DBProxy::open(&StorageConfig::RocksDB(data_dir.clone()))?;
+        let res = db.get_snapshot()?;
+        assert_ne!(res.size(), 0);
+        std::fs::remove_dir_all(data_dir).unwrap();
         Ok(())
     }
 }
