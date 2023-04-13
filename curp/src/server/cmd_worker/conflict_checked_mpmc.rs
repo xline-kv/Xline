@@ -12,6 +12,7 @@ use std::{
 use tokio::sync::oneshot;
 use tracing::{debug, error};
 
+use self::cart::Cart;
 use super::{CEEvent, CEEventTx};
 use crate::{
     cmd::{Command, ProposeId},
@@ -19,30 +20,56 @@ use crate::{
     LogIndex,
 };
 
+/// Cart
+mod cart {
+    /// Cart is a utility that acts as a temporary container.
+    /// It is usually filled by the provider and consumed by the customer.
+    /// This is useful when we are sure that the provider will fill the cart and the cart will be consumed by the customer
+    /// so that we don't need to check whether there is something in the `Option`.
+    #[derive(Debug)]
+    pub(super) struct Cart<T>(Option<T>);
+
+    impl<T> Cart<T> {
+        /// New cart with object
+        pub(super) fn new(object: T) -> Self {
+            Self(Some(object))
+        }
+        /// Take the object. Panic if its inner has already been taken.
+        pub(super) fn take(&mut self) -> T {
+            #[allow(clippy::expect_used)]
+            self.0.take().expect("the cart is empty")
+        }
+        /// Check whether the object is taken
+        pub(super) fn is_taken(&self) -> bool {
+            self.0.is_none()
+        }
+    }
+}
+
 /// CE task
 pub(in crate::server) struct Task<C> {
     /// Corresponding vertex id
     vid: u64,
     /// Task type
-    inner: TaskType<C>,
+    inner: Cart<TaskType<C>>,
 }
 
 /// Task Type
-pub(in crate::server) enum TaskType<C> {
+pub(super) enum TaskType<C> {
     /// Execute a cmd
     SpecExe(Arc<C>),
     /// After sync a cmd
     AS(Arc<C>, LogIndex),
     /// Reset the CE
-    Reset(Option<Snapshot>, Option<oneshot::Sender<()>>),
+    Reset(Option<Snapshot>, oneshot::Sender<()>),
     /// Snapshot
-    Snapshot(Option<(oneshot::Sender<Snapshot>, SnapshotMeta)>),
+    Snapshot(SnapshotMeta, oneshot::Sender<Snapshot>),
 }
 
 impl<C> Task<C> {
     /// Get inner task
-    pub(super) fn inner(&mut self) -> &mut TaskType<C> {
-        &mut self.inner
+    pub(super) fn take(&mut self) -> TaskType<C> {
+        self.inner.take()
     }
 }
 
@@ -85,24 +112,22 @@ enum VertexInner<C> {
     },
     /// A reset vertex
     Reset {
-        /// The snapshot
-        snapshot: Option<Snapshot>,
-        /// Finish tx
-        finish_tx: Option<oneshot::Sender<()>>,
+        /// The snapshot and finish notifier
+        inner: Cart<(Option<Snapshot>, oneshot::Sender<()>)>,
         /// Reset state
         st: OnceState,
     },
     /// A snapshot vertex
     Snapshot {
         /// The sender
-        tx: Option<(oneshot::Sender<Snapshot>, SnapshotMeta)>,
+        inner: Cart<(SnapshotMeta, oneshot::Sender<Snapshot>)>,
         /// Snapshot state
         st: OnceState,
     },
 }
 
 /// Execute state of a cmd
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExeState {
     /// Is ready to execute
     ExecuteReady,
@@ -113,7 +138,7 @@ enum ExeState {
 }
 
 /// After sync state of a cmd
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AsState {
     /// Not Synced yet
     NotSynced,
@@ -126,7 +151,7 @@ enum AsState {
 }
 
 /// State of a vertex that only has one task
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 enum OnceState {
     /// Reset ready
     Ready,
@@ -181,61 +206,50 @@ impl<C: Command> Filter<C> {
         );
     }
 
-    /// Mark a cmd executed, will release blocked msgs
-    fn mark_executed(&mut self, vid: u64, succeeded: bool) {
+    /// Progress a vertex
+    fn progress(&mut self, vid: u64, succeeded: bool) {
         let v = self.get_vertex_mut(vid);
         match v.inner {
-            VertexInner::Cmd { ref mut exe_st, .. } => {
-                debug_assert!(matches!(*exe_st, ExeState::Executing));
-                *exe_st = ExeState::Executed(succeeded);
+            VertexInner::Cmd {
+                ref mut exe_st,
+                ref mut as_st,
+                ..
+            } => {
+                if *exe_st == ExeState::Executing && *as_st != AsState::AfterSyncing {
+                    *exe_st = ExeState::Executed(succeeded);
+                } else if *as_st == AsState::AfterSyncing {
+                    *as_st = AsState::AfterSynced;
+                } else {
+                    unreachable!("cmd is neither being executed nor being after synced, exe_st: {exe_st:?}, as_st: {as_st:?}")
+                }
             }
-            _ => unreachable!("impossible vertex type, {v:?}"),
-        };
-        self.update_graph(vid);
-    }
-
-    /// Mark a cmd after synced, will release blocked msgs
-    fn mark_after_synced(&mut self, vid: u64) {
-        let v = self.get_vertex_mut(vid);
-        match v.inner {
-            VertexInner::Cmd { ref mut as_st, .. } => {
-                debug_assert!(matches!(*as_st, AsState::AfterSyncing));
-                *as_st = AsState::AfterSynced;
-            }
-            _ => unreachable!("impossible vertex type, {v:?}"),
-        };
-        self.update_graph(vid);
-    }
-
-    /// Mark a vertex reset
-    fn mark_reset(&mut self, vid: u64) {
-        let v = self.get_vertex_mut(vid);
-        match v.inner {
             VertexInner::Reset {
-                ref snapshot,
-                ref finish_tx,
+                ref inner,
                 ref mut st,
             } => {
-                debug_assert!(snapshot.is_none(), "snapshot is not taken");
-                debug_assert!(finish_tx.is_none(), "snapshot finish tx is not taken");
-                debug_assert!(matches!(*st, OnceState::Doing));
-                *st = OnceState::Completed;
+                if *st == OnceState::Doing {
+                    debug_assert!(inner.is_taken(), "snapshot and tx is not taken by the user");
+                    *st = OnceState::Completed;
+                } else {
+                    unreachable!("reset is not ongoing when it is marked done, reset state: {st:?}")
+                }
             }
-            _ => unreachable!("impossible vertex type, {v:?}"),
-        }
-        self.update_graph(vid);
-    }
-
-    /// Mark a vertex snapshot finished
-    fn mark_snapshot_finished(&mut self, vid: u64) {
-        let Some(v) = self.vs.get_mut(&vid) else { return; };
-        match v.inner {
-            VertexInner::Snapshot { ref tx, ref mut st } => {
-                debug_assert!(tx.is_none(), "snapshot tx is not taken");
-                debug_assert!(matches!(*st, OnceState::Doing));
-                *st = OnceState::Completed;
+            VertexInner::Snapshot {
+                ref inner,
+                ref mut st,
+            } => {
+                if *st == OnceState::Doing {
+                    debug_assert!(
+                        inner.is_taken(),
+                        "snapshot meta and tx is not taken by the user"
+                    );
+                    *st = OnceState::Completed;
+                } else {
+                    unreachable!(
+                        "snapshot is not ongoing when it is marked done, reset state: {st:?}"
+                    )
+                }
             }
-            _ => unreachable!("impossible vertex type"),
         }
         self.update_graph(vid);
     }
@@ -285,7 +299,7 @@ impl<C: Command> Filter<C> {
                     *exe_st = ExeState::Executing;
                     let task = Task {
                         vid,
-                        inner: TaskType::SpecExe(Arc::clone(cmd)),
+                        inner: Cart::new(TaskType::SpecExe(Arc::clone(cmd))),
                     };
                     if let Err(e) = self.filter_tx.send(task) {
                         error!("failed to send task through filter, {e}");
@@ -296,7 +310,7 @@ impl<C: Command> Filter<C> {
                     *as_st = AsState::AfterSyncing;
                     let task = Task {
                         vid,
-                        inner: TaskType::AS(Arc::clone(cmd), index),
+                        inner: Cart::new(TaskType::AS(Arc::clone(cmd), index)),
                     };
                     if let Err(e) = self.filter_tx.send(task) {
                         error!("failed to send task through filter, {e}");
@@ -309,18 +323,18 @@ impl<C: Command> Filter<C> {
                 | (ExeState::Executing, AsState::AfterSyncReady(_) | AsState::AfterSyncing)
                 | (ExeState::Executed(true), AsState::AfterSyncing) => false,
                 (exe_st, as_st) => {
-                    unreachable!("no such cmd state can be reached: {exe_st:?}, {as_st:?}")
+                    unreachable!("no such exe and as state can be reached: {exe_st:?}, {as_st:?}")
                 }
             },
             VertexInner::Reset {
-                ref mut snapshot,
-                ref mut finish_tx,
+                ref mut inner,
                 ref mut st,
             } => match *st {
                 OnceState::Ready => {
+                    let (snapshot, tx) = inner.take();
                     let task = Task {
                         vid,
-                        inner: TaskType::Reset(snapshot.take(), finish_tx.take()),
+                        inner: Cart::new(TaskType::Reset(snapshot, tx)),
                     };
                     *st = OnceState::Doing;
                     if let Err(e) = self.filter_tx.send(task) {
@@ -332,13 +346,14 @@ impl<C: Command> Filter<C> {
                 OnceState::Completed => true,
             },
             VertexInner::Snapshot {
-                ref mut tx,
+                ref mut inner,
                 ref mut st,
             } => match *st {
                 OnceState::Ready => {
+                    let (meta, tx) = inner.take();
                     let task = Task {
                         vid,
-                        inner: TaskType::Snapshot(tx.take()),
+                        inner: Cart::new(TaskType::Snapshot(meta, tx)),
                     };
                     *st = OnceState::Doing;
                     if let Err(e) = self.filter_tx.send(task) {
@@ -422,21 +437,20 @@ impl<C: Command> Filter<C> {
                     successors: HashSet::new(),
                     predecessor_cnt: 0,
                     inner: VertexInner::Reset {
-                        snapshot,
-                        finish_tx: Some(finish_tx),
+                        inner: Cart::new((snapshot, finish_tx)),
                         st: OnceState::Ready,
                     },
                 };
                 self.insert_new_vertex(new_vid, new_v);
                 new_vid
             }
-            CEEvent::Snapshot(tx, meta) => {
+            CEEvent::Snapshot(meta, tx) => {
                 let new_vid = self.next_vertex_id();
                 let new_v = Vertex {
                     successors: HashSet::new(),
                     predecessor_cnt: 0,
                     inner: VertexInner::Snapshot {
-                        tx: Some((tx, meta)),
+                        inner: Cart::new((meta, tx)),
                         st: OnceState::Ready,
                     },
                 };
@@ -449,6 +463,9 @@ impl<C: Command> Filter<C> {
 }
 
 /// Create conflict checked channel. The channel guarantees there will be no conflicted msgs received by multiple receivers at the same time.
+/// The user should use the `CEEventTx` to send events for command executor.
+/// The events will be automatically processed and corresponding ce tasks will be generated and sent through the task receiver.
+/// After the task is finished, the user should notify the channel by the done notifier.
 // Message flow:
 // send_tx -> filter_rx -> filter -> filter_tx -> recv_rx -> done_tx -> done_rx
 #[allow(clippy::type_complexity)] // it's clear
@@ -471,12 +488,7 @@ pub(in crate::server) fn channel<C: 'static + Command>() -> (
             tokio::select! {
                 biased; // cleanup filter first so that the buffer in filter can be kept as small as possible
                 Ok((task, succeeded)) = done_rx.recv_async() => {
-                    match task.inner {
-                        TaskType::SpecExe(_) => filter.mark_executed(task.vid, succeeded),
-                        TaskType::AS(_, _) => filter.mark_after_synced(task.vid),
-                        TaskType::Reset(_, _) => filter.mark_reset(task.vid),
-                        TaskType::Snapshot(_) => filter.mark_snapshot_finished(task.vid),
-                    }
+                    filter.progress(task.vid, succeeded);
                 },
                 Ok(event) = filter_rx.recv_async() => {
                     filter.handle_event(event);
