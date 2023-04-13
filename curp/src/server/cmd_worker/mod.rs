@@ -31,7 +31,7 @@ pub(super) enum CEEvent<C> {
     /// Reset the command executor, send(()) when finishes
     Reset(Option<Snapshot>, oneshot::Sender<()>),
     /// Take a snapshot
-    Snapshot(oneshot::Sender<Snapshot>, SnapshotMeta),
+    Snapshot(SnapshotMeta, oneshot::Sender<Snapshot>),
 }
 
 impl<C: Command> Debug for CEEvent<C> {
@@ -50,7 +50,7 @@ impl<C: Command> Debug for CEEvent<C> {
                     write!(f, "Reset(Some(_))")
                 }
             }
-            Self::Snapshot(_, meta) => f.debug_tuple("Snapshot").field(&meta).finish(),
+            Self::Snapshot(meta, _) => f.debug_tuple("Snapshot").field(&meta).finish(),
         }
     }
 }
@@ -66,7 +66,7 @@ async fn cmd_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
     let id = curp.id();
     while let Ok(mut task) = dispatch_rx.recv().await {
         #[allow(clippy::pattern_type_mismatch)] // can't get away with it
-        let succeeded = match task.inner() {
+        let succeeded = match task.take() {
             TaskType::SpecExe(cmd) => {
                 let er = ce.execute(cmd.as_ref()).await.map_err(|e| e.to_string());
                 let er_ok = er.is_ok();
@@ -76,7 +76,7 @@ async fn cmd_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
             }
             TaskType::AS(cmd, index) => {
                 let asr = ce
-                    .after_sync(cmd.as_ref(), *index)
+                    .after_sync(cmd.as_ref(), index)
                     .await
                     .map_err(|e| e.to_string());
                 let asr_ok = asr.is_ok();
@@ -86,8 +86,7 @@ async fn cmd_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
                 debug!("{id} cmd({}) after sync is called", cmd.id());
                 asr_ok
             }
-            TaskType::Reset(ss, finish_tx) => {
-                let snapshot = ss.take();
+            TaskType::Reset(snapshot, finish_tx) => {
                 if let Some(snapshot) = snapshot {
                     let meta = snapshot.meta;
                     #[allow(clippy::expect_used)] // only in debug
@@ -112,17 +111,12 @@ async fn cmd_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
                     }
                     debug!("{id}'s command executor has been restored to the initial state");
                 }
-                let _ig = finish_tx
-                    .take()
-                    .unwrap_or_else(|| unreachable!("no finish tx"))
-                    .send(());
+                let _ig = finish_tx.send(());
                 true
             }
             #[allow(clippy::unwrap_used)]
-            TaskType::Snapshot(inner) => match ce.snapshot().await {
+            TaskType::Snapshot(meta, tx) => match ce.snapshot().await {
                 Ok(snapshot) => {
-                    #[allow(clippy::expect_used)]
-                    let (tx, meta) = inner.take().expect("no snapshot tx");
                     debug_assert_eq!(ce.last_applied().unwrap(), meta.last_included_index); // sanity check
                     if tx.send(Snapshot::new(meta, snapshot)).is_err() {
                         error!("snapshot oneshot closed");
@@ -192,7 +186,7 @@ impl<C: Command + 'static> CEEventTxApi<C> for CEEventTx<C> {
 
     fn send_snapshot(&self, meta: SnapshotMeta) -> oneshot::Receiver<Snapshot> {
         let (tx, rx) = oneshot::channel();
-        let msg = CEEvent::Snapshot(tx, meta);
+        let msg = CEEvent::Snapshot(meta, tx);
         if let Err(e) = self.0.send(msg) {
             error!("failed to send snapshot event to background cmd worker, {e}");
         }
@@ -216,7 +210,7 @@ impl<C: Command + 'static> TaskRxApi<C> for TaskRx<C> {
     }
 }
 
-/// Run cmd execute workers. Returns a channel to interact with these workers. The channel guarantees the execution order and that after sync is called after execution completes.
+/// Run cmd execute workers. Each cmd execute worker will continually fetch task to perform from `task_rx`.
 pub(super) fn start_cmd_workers<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
     cmd_executor: CE,
     curp: Arc<RawCurp<C>>,
