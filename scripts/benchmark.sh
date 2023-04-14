@@ -5,16 +5,18 @@ SERVERS=("172.20.0.2" "172.20.0.3" "172.20.0.4" "172.20.0.5")
 MEMBERS="node1=${SERVERS[1]}:2379,node2=${SERVERS[2]}:2379,node3=${SERVERS[3]}:2379"
 
 # container use_curp endpoints
+# XLINE_TESTCASE[0] VS ETCD_TESTCASE[0]: In the best performance case contrast, xline uses the curp-client while the 
+#                                        etcd uses etcd-client to propose to the leader directly.
+# XLINE_TESTCASE[1] VS ETCD_TESTCASE[1]: Both etcd and xline use etcd-client to issue a proposal to their nearest follower.
+# XLINE_TESTCASE[0] VS ETCD_TESTCASE[2]: The performance contrast between one using curp-client to propose and the other use etcd-client.
 XLINE_TESTCASE=(
-    "node1  false node1=${SERVERS[1]}:2379"
-    "node2  false node2=${SERVERS[2]}:2379"
-    "client false node3=${SERVERS[3]}:2379"
-    "client true  ${MEMBERS}"
+    "client  true  ${MEMBERS}"
+    "client  false node3=${SERVERS[3]}:2379"
+    "client  false node1=${SERVERS[1]}:2379"
 )
 ETCD_TESTCASE=(
-    "node1  false node1=${SERVERS[1]}:2379"
-    "node2  false node2=${SERVERS[2]}:2379"
-    "client false node3=${SERVERS[3]}:2379"
+    "client  false node1=${SERVERS[1]}:2379"
+    "client  false node3=${SERVERS[2]}:2379"
 )
 KEY_SPACE_SIZE=("1" "100000")
 CLIENTS_TOTAL=("1 50" "10 300" "50 1000" "100 3000" "200 5000")
@@ -52,6 +54,7 @@ run_xline() {
     --server-wait-synced-timeout 10s \
     --client-wait-synced-timeout 10s \
     --client-propose-timeout 5s \
+    --batch-timeout 1ms \
     --cmd-workers 16"
 
     if [ ${1} -eq 1 ]; then
