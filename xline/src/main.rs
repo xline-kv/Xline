@@ -175,22 +175,22 @@ struct ServerArgs {
     /// Log verbosity level, eg: trace, debug, info, warn, error
     #[clap(long, value_parser = parse_log_level, default_value_t = default_log_level())]
     log_level: LevelConfig,
-    /// Heartbeat interval between curp server nodes
+    /// Heartbeat interval between curp server nodes [default: 300ms]
     #[clap(long, value_parser = parse_duration)]
     heartbeat_interval: Option<Duration>,
-    /// Curp wait sync timeout
+    /// Curp wait sync timeout [default: 5s]
     #[clap(long, value_parser = parse_duration)]
     server_wait_synced_timeout: Option<Duration>,
-    /// Curp propose retry timeout
+    /// Curp propose retry timeout [default: 50ms]
     #[clap(long, value_parser = parse_duration)]
     retry_timeout: Option<Duration>,
-    /// Curp rpc timeout
+    /// Curp rpc timeout [default: 50ms]
     #[clap(long, value_parser = parse_duration)]
     rpc_timeout: Option<Duration>,
-    /// Curp append entries batch timeout
+    /// Curp append entries batch timeout [default: 15ms]
     #[clap(long, value_parser = parse_duration)]
     batch_timeout: Option<Duration>,
-    /// Curp append entries batch max size
+    /// Curp append entries batch max size [default: 2MB]
     #[clap(long, value_parser = parse_batch_bytes)]
     batch_max_size: Option<u64>,
     /// Follower election timeout ticks
@@ -199,13 +199,13 @@ struct ServerArgs {
     /// Candidate election timeout ticks
     #[clap(long, default_value_t = default_candidate_timeout_ticks())]
     candidate_timeout_ticks: u8,
-    /// Curp client wait synced timeout
+    /// Curp client wait synced timeout [default: 2s]
     #[clap(long, value_parser = parse_duration)]
     client_wait_synced_timeout: Option<Duration>,
-    /// Propose request timeout
+    /// Propose request timeout [default: 1s]
     #[clap(long, value_parser = parse_duration)]
     client_propose_timeout: Option<Duration>,
-    /// Curp client retry timeout
+    /// Curp client retry timeout [default: 50ms]
     #[clap(long, value_parser = parse_duration)]
     client_retry_timeout: Option<Duration>,
     /// How often should the gc task run

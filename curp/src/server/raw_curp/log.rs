@@ -14,6 +14,10 @@ use crate::{
     LogIndex,
 };
 
+/// Given that the log vector is used to store a large number of log entries, we can specify a suitable capacity to avoid unnecessary allocation.
+/// The initial capacity of the log entries
+const LOG_INIT_CAPACITY: usize = 8192;
+
 /// Curp logs
 /// There exists a fake log entry 0 whose term equals 0
 /// For the leader, there should never be a gap between snapshot and entries
@@ -36,7 +40,7 @@ pub(super) struct Log<C: Command> {
     log_tx: mpsc::UnboundedSender<LogEntry<C>>,
     /// Prefix sum vector of log entries
     batch_index: Vec<u64>,
-    /// batch size limit
+    /// Batch size limit
     batch_limit: u64,
 }
 
@@ -53,15 +57,17 @@ impl<C: Command> Debug for Log<C> {
 }
 
 impl<C: 'static + Command> Log<C> {
-    /// Create a new log
-    pub(super) fn new(
+    /// Recover log from the given entires
+    pub(super) fn recover(
         log_tx: mpsc::UnboundedSender<LogEntry<C>>,
         entries: Vec<LogEntry<C>>,
         batch_limit: u64,
     ) -> Self {
-        let mut batch_index = vec![0u64];
+        let mut batch_index = Vec::with_capacity(entries.capacity());
+        batch_index.push(0);
         for entry in &entries {
             #[allow(clippy::expect_used)]
+            // it's in the initialization stage, panic doesn't affect much
             let entry_size =
                 serialized_size(entry).expect("log entry {entry:?} cannot be serialized");
             if let Some(cur_size) = batch_index.last() {
@@ -69,6 +75,23 @@ impl<C: 'static + Command> Log<C> {
             }
         }
 
+        Self {
+            entries, // a fake log[0]
+            commit_index: 0,
+            base_index: 0,
+            base_term: 0,
+            last_applied: 0,
+            log_tx,
+            batch_index,
+            batch_limit,
+        }
+    }
+
+    /// Create a new log
+    pub(super) fn new(log_tx: mpsc::UnboundedSender<LogEntry<C>>, batch_limit: u64) -> Self {
+        let entries = Vec::with_capacity(LOG_INIT_CAPACITY);
+        let mut batch_index = Vec::with_capacity(LOG_INIT_CAPACITY);
+        batch_index.push(0);
         Self {
             entries, // a fake log[0]
             commit_index: 0,
@@ -113,6 +136,7 @@ impl<C: 'static + Command> Log<C> {
     }
 
     /// Try to append log entries, hand back the entries if they can't be appended
+    #[allow(clippy::unwrap_in_result)]
     pub(super) fn try_append_entries(
         &mut self,
         entries: Vec<LogEntry<C>>,
@@ -140,9 +164,9 @@ impl<C: 'static + Command> Log<C> {
                 continue;
             }
 
-            let Ok(entry_size) = serialized_size(&entry) else {
-                unreachable!("{entry:?} cannot be serialized")
-            };
+            #[allow(clippy::expect_used)] // It's safe to expect here.
+            let entry_size =
+                serialized_size(&entry).expect("log entry {entry:?} cannot be serialized");
 
             self.entries.truncate(pi);
             self.batch_index.truncate(pi.overflow_add(1));
@@ -288,7 +312,7 @@ mod tests {
     #[test]
     fn test_log_up_to_date() {
         let (log_tx, _log_rx) = mpsc::unbounded_channel();
-        let mut log = Log::<TestCommand>::new(log_tx, vec![], default_batch_max_size());
+        let mut log = Log::<TestCommand>::new(log_tx, default_batch_max_size());
         let result = log.try_append_entries(
             vec![
                 LogEntry::new(1, 1, Arc::new(TestCommand::default())),
@@ -309,7 +333,7 @@ mod tests {
     #[test]
     fn try_append_entries_will_remove_inconsistencies() {
         let (log_tx, _log_rx) = mpsc::unbounded_channel();
-        let mut log = Log::<TestCommand>::new(log_tx, vec![], default_batch_max_size());
+        let mut log = Log::<TestCommand>::new(log_tx, default_batch_max_size());
         let result = log.try_append_entries(
             vec![
                 LogEntry::new(1, 1, Arc::new(TestCommand::default())),
@@ -337,7 +361,7 @@ mod tests {
     #[test]
     fn try_append_entries_will_not_append() {
         let (log_tx, _log_rx) = mpsc::unbounded_channel();
-        let mut log = Log::<TestCommand>::new(log_tx, vec![], default_batch_max_size());
+        let mut log = Log::<TestCommand>::new(log_tx, default_batch_max_size());
         let result = log.try_append_entries(
             vec![LogEntry::new(1, 1, Arc::new(TestCommand::default()))],
             0,
@@ -372,7 +396,7 @@ mod tests {
         let log_entry_size = serialized_size(&log_entry).unwrap();
 
         let (tx, _rx) = mpsc::unbounded_channel();
-        let mut log = Log::new(tx, vec![], default_batch_max_size());
+        let mut log = Log::new(tx, default_batch_max_size());
 
         let _res = repeat(TestCommand::default())
             .take(10)
@@ -449,7 +473,7 @@ mod tests {
             .map(|(idx, cmd)| LogEntry::new((idx + 1).numeric_cast(), 0, cmd))
             .collect::<Vec<LogEntry<TestCommand>>>();
         let (tx, _rx) = mpsc::unbounded_channel();
-        let log = Log::new(tx, entries, default_batch_max_size());
+        let log = Log::recover(tx, entries, default_batch_max_size());
         assert_eq!(log.entries.len(), 10);
         assert_eq!(log.batch_index.len(), 11);
         assert_eq!(log.batch_index[0], 0);

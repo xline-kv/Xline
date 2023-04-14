@@ -566,7 +566,7 @@ impl<C: 'static + Command> RawCurp<C> {
             )),
             lst: LeaderState::new(&others),
             cst: Mutex::new(CandidateState::new()),
-            log: RwLock::new(Log::new(log_tx, vec![], cfg.batch_max_size)),
+            log: RwLock::new(Log::new(log_tx, cfg.batch_max_size)),
             ctx: Context {
                 id,
                 others,
@@ -638,7 +638,7 @@ impl<C: 'static + Command> RawCurp<C> {
             log_w.commit_index = last_applied;
         });
 
-        raw_curp.log = RwLock::new(Log::new(log_tx, entries, cfg.batch_max_size));
+        raw_curp.log = RwLock::new(Log::recover(log_tx, entries, cfg.batch_max_size));
 
         raw_curp
     }
