@@ -57,9 +57,9 @@ run_container() {
     size=${1}
     image="datenlord/xline:latest"
     for ((i = 1; i <= ${size}; i++)); do
-        docker run -d -it --rm --name=node${i} --net=xline_net --ip=172.20.0.$((i + 2)) --cap-add=NET_ADMIN --cpu-shares=1024 -m=512M -v ${DIR}:/mnt ${image} bash &
+        docker run -d -it --rm --name=node${i} --net=xline_net --ip=${SERVERS[$i]} --cap-add=NET_ADMIN --cpu-shares=1024 -m=512M -v ${DIR}:/mnt ${image} bash &
     done
-    docker run -d -it --rm --name=node4 --net=xline_net --ip=172.20.0.2 --cap-add=NET_ADMIN --cpu-shares=1024 -m=512M -v ${DIR}:/mnt gcr.io/etcd-development/etcd:v3.5.5 bash &
+    docker run -d -it --rm --name=node4 --net=xline_net --ip=${SERVERS[0]} --cap-add=NET_ADMIN --cpu-shares=1024 -m=512M -v ${DIR}:/mnt gcr.io/etcd-development/etcd:v3.5.5 bash &
     wait
     echo container started
 }

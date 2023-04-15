@@ -154,24 +154,32 @@ set_latency() {
 #   $1: size of cluster
 set_cluster_latency() {
     cluster_size=${1}
+    client_ipaddr=${SERVERS[0]}
     docker exec client tc qdisc add dev eth0 root handle 1: prio bands $((cluster_size + 4))
+    # set latency:
+    #   client -> node1 : 75ms
+    #   client -> node2 : 75ms
     for ((i = 1; i < ${cluster_size}; i++)); do
-        set_latency client 172.20.0.$((i + 2)) 75ms $((i + 3)) &
+        set_latency client ${SERVERS[$i]} 75ms $((i + 3)) &
     done
-    set_latency client 172.20.0.$((cluster_size + 2)) 50ms $((cluster_size + 3)) &
+    # client -> node3: 50ms
+    set_latency client ${SERVERS[3]} 50ms $((cluster_size + 3)) &
     for ((i = 1; i <= ${cluster_size}; i++)); do
         docker exec node$i tc qdisc add dev eth0 root handle 1: prio bands $((cluster_size + 4))
         idx=4
+        # node1 <-> node2, node2 <-> node3, node3 <-> node1: 50ms
         for ((j = 1; j <= ${cluster_size}; j++)); do
             if [ ${i} -ne ${j} ]; then
-                set_latency node$i 172.20.0.$((j + 2)) 50ms ${idx} &
+                set_latency node$i ${SERVERS[$j]} 50ms ${idx} &
                 idx=$((idx + 1))
             fi
         done
         if [[ ${i} -eq ${cluster_size} ]]; then
-            set_latency node${i} 172.20.0.2 50ms ${idx} &
+            # node3 -> client: 50ms
+            set_latency node${i} ${SERVERS[0]} 50ms ${idx} &
         else
-            set_latency node${i} 172.20.0.2 75ms ${idx} &
+            # node1, node2 -> client: 75ms
+            set_latency node${i} ${SERVERS[0]} 75ms ${idx} &
         fi
     done
     wait
@@ -192,9 +200,9 @@ run_container() {
         image="datenlord/etcd:v3.5.5"
         ;;
     esac
-    docker run -d -it --rm --name=client --net=xline_net --ip=172.20.0.2 --cap-add=NET_ADMIN --cpu-shares=512 -m=512M -v ${WORKDIR}:/mnt ${image} bash &
+    docker run -d -it --rm --name=client --net=xline_net --ip=${SERVERS[0]} --cap-add=NET_ADMIN --cpu-shares=512 -m=512M -v ${WORKDIR}:/mnt ${image} bash &
     for ((i = 1; i <= ${size}; i++)); do
-        docker run -d -it --rm --name=node${i} --net=xline_net --ip=172.20.0.$((i + 2)) --cap-add=NET_ADMIN -m=2048M -v ${WORKDIR}:/mnt ${image} bash &
+        docker run -d -it --rm --name=node${i} --net=xline_net --ip=${SERVERS[$i]} --cap-add=NET_ADMIN -m=2048M -v ${WORKDIR}:/mnt ${image} bash &
     done
     wait
     set_cluster_latency ${size}
