@@ -193,7 +193,7 @@ where
 /// lose some flexibility when calling these methods.
 /// 2. A dyn object should not be bounded by Sized trait, and some async functions, like
 /// `XlineServer::new`, requires its parameter to satisfy the Sized trait when we await
-/// it. So here is a contradictory.
+/// it. So here is a contradiction.
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum DBProxy {

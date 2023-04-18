@@ -281,7 +281,7 @@ pub const fn default_range_retry_timeout() -> Duration {
 /// default gc interval
 #[must_use]
 #[inline]
-pub fn default_gc_interval() -> Duration {
+pub const fn default_gc_interval() -> Duration {
     Duration::from_secs(20)
 }
 

@@ -897,8 +897,8 @@ impl<C: 'static + Command> RawCurp<C> {
         let existing_log_ids = log.get_cmd_ids();
         let recovered_cmds = cmd_cnt
             .into_values()
-            // only cmds whose cnt >= 3/4 can be recovered
-            .filter_map(|(cmd, cnt)| (cnt >= self.superquorum()).then_some(cmd))
+            // only cmds whose cnt >= ( f + 1 ) / 2 + 1 can be recovered
+            .filter_map(|(cmd, cnt)| (cnt >= self.recover_quorum()).then_some(cmd))
             // dedup in current logs
             .filter(|cmd| {
                 // TODO: better dedup mechanism
@@ -951,8 +951,8 @@ impl<C: 'static + Command> RawCurp<C> {
         (self.ctx.others.len() / 2 + 1).numeric_cast()
     }
 
-    /// Get superquorum: the smallest number of servers who must contain a command in speculative pool for it to be recovered
-    fn superquorum(&self) -> u64 {
+    /// Get `recover_quorum`: the smallest number of servers who must contain a command in speculative pool for it to be recovered
+    fn recover_quorum(&self) -> u64 {
         self.quorum() / 2 + 1
     }
 
