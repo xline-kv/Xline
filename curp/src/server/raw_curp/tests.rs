@@ -11,7 +11,7 @@ use crate::{
     server::{
         cmd_board::CommandBoard,
         cmd_worker::{CEEventTxApi, MockCEEventTxApi},
-        curp_node::UncommittedPool,
+        raw_curp::UncommittedPool,
         spec_pool::SpeculativePool,
     },
     test_utils::test_cmd::TestCommand,

@@ -19,12 +19,12 @@ use super::{
     cmd_board::{CmdBoardRef, CommandBoard},
     cmd_worker::{conflict_checked_mpmc, start_bg_workers, CEEventTx},
     gc::run_gc_tasks,
-    raw_curp::{AppendEntries, RawCurp, Vote},
+    raw_curp::{AppendEntries, RawCurp, UncommittedPool, Vote},
     spec_pool::{SpecPoolRef, SpeculativePool},
     storage::{StorageApi, StorageError},
 };
 use crate::{
-    cmd::{Command, CommandExecutor, ProposeId},
+    cmd::{Command, CommandExecutor},
     error::ProposeError,
     log_entry::LogEntry,
     rpc::{
@@ -37,12 +37,6 @@ use crate::{
     snapshot::{Snapshot, SnapshotMeta},
     ServerId, TxFilter,
 };
-
-/// Uncommitted pool type
-pub(super) type UncommittedPool<C> = HashMap<ProposeId, Arc<C>>;
-
-/// Reference to uncommitted pool
-pub(super) type UncommittedPoolRef<C> = Arc<Mutex<UncommittedPool<C>>>;
 
 /// Curp error
 #[derive(Debug, Error)]
