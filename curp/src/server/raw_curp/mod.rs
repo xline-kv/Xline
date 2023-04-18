@@ -37,7 +37,7 @@ use self::{
     log::Log,
     state::{CandidateState, LeaderState, State},
 };
-use super::{cmd_worker::CEEventTxApi, curp_node::UncommittedPoolRef};
+use super::cmd_worker::CEEventTxApi;
 use crate::{
     cmd::{Command, ProposeId},
     error::ProposeError,
@@ -53,6 +53,12 @@ mod state;
 
 /// Curp log
 mod log;
+
+/// Uncommitted pool type
+pub(super) type UncommittedPool<C> = HashMap<ProposeId, Arc<C>>;
+
+/// Reference to uncommitted pool
+type UncommittedPoolRef<C> = Arc<Mutex<UncommittedPool<C>>>;
 
 /// The curp state machine
 #[derive(Debug)]
