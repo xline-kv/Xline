@@ -374,6 +374,19 @@ impl<C: 'static + Command> CurpNode<C> {
             }
         }
     }
+
+    /// Log persist task
+    pub(super) async fn log_persist_task(
+        mut log_rx: mpsc::UnboundedReceiver<LogEntry<C>>,
+        storage: Arc<dyn StorageApi<Command = C>>,
+    ) {
+        while let Some(e) = log_rx.recv().await {
+            if let Err(err) = storage.put_log_entry(e).await {
+                error!("storage error, {err}");
+            }
+        }
+        error!("log persist task exits unexpectedly");
+    }
 }
 
 // utils
@@ -549,19 +562,6 @@ impl<C: 'static + Command> CurpNode<C> {
     /// Get a rx for leader changes
     pub(super) fn leader_rx(&self) -> broadcast::Receiver<Option<ServerId>> {
         self.curp.leader_rx()
-    }
-
-    /// Log persist task
-    pub(super) async fn log_persist_task(
-        mut log_rx: mpsc::UnboundedReceiver<LogEntry<C>>,
-        storage: Arc<dyn StorageApi<Command = C>>,
-    ) {
-        while let Some(e) = log_rx.recv().await {
-            if let Err(err) = storage.put_log_entry(e).await {
-                error!("storage error, {err}");
-            }
-        }
-        error!("log persist task exits unexpectedly");
     }
 
     /// Send `append_entries` request

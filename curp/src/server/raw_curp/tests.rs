@@ -523,5 +523,5 @@ fn quorum() {
         Arc::new(RawCurp::new_test(5, exe_tx))
     };
     assert_eq!(curp.quorum(), 3);
-    assert_eq!(curp.superquorum(), 2);
+    assert_eq!(curp.recover_quorum(), 2);
 }

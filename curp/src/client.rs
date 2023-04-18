@@ -116,7 +116,6 @@ where
         &self,
         cmd_arc: Arc<C>,
     ) -> Result<(Option<<C as Command>::ER>, bool), ProposeError> {
-        let max_fault = self.connects.len().wrapping_div(2);
         let req = ProposeRequest::new(cmd_arc.as_ref())?;
         let mut rpcs: FuturesUnordered<_> = self
             .connects
@@ -129,9 +128,7 @@ where
 
         let mut ok_cnt: usize = 0;
         let mut execute_result: Option<C::ER> = None;
-        let major_cnt = max_fault
-            .wrapping_add(max_fault.wrapping_add(1).wrapping_div(2))
-            .wrapping_add(1);
+        let superquorum = self.superquorum();
         while let Some(resp_result) = rpcs.next().await {
             let resp = match resp_result {
                 Ok(resp) => resp.into_inner(),
@@ -185,7 +182,7 @@ where
                     Ok(())
                 },
             )??;
-            if (ok_cnt >= major_cnt) && execute_result.is_some() {
+            if (ok_cnt >= superquorum) && execute_result.is_some() {
                 debug!("fast round succeeds");
                 return Ok((execute_result, true));
             }
@@ -522,6 +519,18 @@ where
     #[inline]
     pub fn leader_rx(&self) -> broadcast::Receiver<ServerId> {
         self.state.read().leader_tx.subscribe()
+    }
+
+    /// Get the superquorum for curp protocol
+    /// Although curp can proceed with f + 1 available replicas, it needs f + 1 + (f + 1)/2 replicas
+    /// (for superquorum of witenesses) to use 1 RTT operations. With less than superquorum replicas,
+    /// clients must ask masters to commit operations in f + 1 replicas before returning result.(2 RTTs).
+    #[inline]
+    fn superquorum(&self) -> usize {
+        let fault_tolerance = self.connects.len().wrapping_div(2);
+        fault_tolerance
+            .wrapping_add(fault_tolerance.wrapping_add(1).wrapping_div(2))
+            .wrapping_add(1)
     }
 }
 

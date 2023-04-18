@@ -208,7 +208,7 @@ struct ServerArgs {
     /// Curp client retry timeout [default: 50ms]
     #[clap(long, value_parser = parse_duration)]
     client_retry_timeout: Option<Duration>,
-    /// How often should the gc task run
+    /// How often should the gc task run [default: 20s]
     #[clap(long, value_parser = parse_duration)]
     gc_interval: Option<Duration>,
     /// Range request retry timeout [default: 2s]
