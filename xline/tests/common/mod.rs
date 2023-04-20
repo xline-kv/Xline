@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::PathBuf,
+};
 
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
@@ -23,7 +26,7 @@ pub struct Cluster {
     /// Cluster size
     size: usize,
     /// storage paths
-    paths: Vec<String>,
+    paths: Vec<PathBuf>,
 }
 
 impl Cluster {
@@ -48,6 +51,11 @@ impl Cluster {
         }
     }
 
+    #[allow(dead_code)] // used in tests but get warning
+    pub(crate) fn set_paths(&mut self, paths: Vec<PathBuf>) {
+        self.paths = paths;
+    }
+
     /// Start `Cluster`
     pub(crate) async fn start(&mut self) {
         let (stop_tx, _) = broadcast::channel(1);
@@ -58,10 +66,15 @@ impl Cluster {
             let mut rx = stop_tx.subscribe();
             let listener = self.listeners.remove(&i).unwrap();
             let all_members = self.all_members.clone();
-            let path = format!("/tmp/curp-{}", random_id());
-            self.paths.push(path.clone());
+            let path = if let Some(path) = self.paths.get(i) {
+                path.clone()
+            } else {
+                let path = PathBuf::from(format!("/tmp/xline-{}", random_id()));
+                self.paths.push(path.clone());
+                path
+            };
             #[allow(clippy::unwrap_used)]
-            let db = DBProxy::open(&StorageConfig::Memory).unwrap();
+            let db = DBProxy::open(&StorageConfig::RocksDB(path.clone())).unwrap();
             tokio::spawn(async move {
                 let server = XlineServer::new(
                     name,
@@ -69,7 +82,7 @@ impl Cluster {
                     is_leader,
                     Self::test_key_pair(),
                     CurpConfig {
-                        data_dir: path.into(),
+                        data_dir: path.join("curp"),
                         ..Default::default()
                     },
                     ClientTimeout::default(),
@@ -123,7 +136,7 @@ impl Drop for Cluster {
             let _ = stop_tx.send(());
         }
         for path in &self.paths {
-            std::fs::remove_dir_all(path).unwrap();
+            let _ignore = std::fs::remove_dir_all(path);
         }
     }
 }

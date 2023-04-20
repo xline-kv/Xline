@@ -10,6 +10,12 @@ pub enum ClientError {
     /// Propose error
     #[error("propose error {0}")]
     ProposeError(#[from] curp::error::ProposeError),
+    /// IO error
+    #[error("IO error {0}")]
+    IoError(#[from] std::io::Error),
+    /// Engine error
+    #[error("Engine error {0}")]
+    EngineError(#[from] engine::error::EngineError),
 }
 
 impl From<etcd_client::Error> for ClientError {
