@@ -20,7 +20,7 @@ use crate::{
 /// Minimum page size
 const MIN_PAGE_SIZE: u64 = 512;
 /// Snapshot chunk size
-const MAINTENANCE_SNAPSHOT_CHUNK_SIZE: u64 = 64 * 1024;
+pub(crate) const MAINTENANCE_SNAPSHOT_CHUNK_SIZE: u64 = 64 * 1024;
 
 /// Maintenance Server
 #[derive(Debug)]
@@ -224,6 +224,7 @@ mod test {
         let snap1_data = recv_data[..size].to_vec();
         assert_eq!(snap1_data, snap2_data);
 
+        snap2.clean().await.unwrap();
         std::fs::remove_dir_all(dir).unwrap();
         Ok(())
     }

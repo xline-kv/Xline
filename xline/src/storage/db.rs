@@ -22,7 +22,7 @@ use crate::{
 };
 
 /// Xline Server Storage Table
-const XLINE_TABLES: [&str; 6] = [
+pub(crate) const XLINE_TABLES: [&str; 6] = [
     META_TABLE,
     KV_TABLE,
     LEASE_TABLE,
@@ -332,12 +332,13 @@ mod test {
         Ok(())
     }
 
-    #[test]
-    fn test_get_snapshot() -> Result<(), ExecuteError> {
+    #[tokio::test]
+    async fn test_get_snapshot() -> Result<(), ExecuteError> {
         let data_dir = PathBuf::from("/tmp/test_get_snapshot");
         let db = DBProxy::open(&StorageConfig::RocksDB(data_dir.clone()))?;
-        let res = db.get_snapshot()?;
+        let mut res = db.get_snapshot()?;
         assert_ne!(res.size(), 0);
+        res.clean().await.unwrap();
         std::fs::remove_dir_all(data_dir).unwrap();
         Ok(())
     }

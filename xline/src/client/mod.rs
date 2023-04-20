@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt::Debug};
 use curp::{client::Client as CurpClient, cmd::ProposeId};
 use etcd_client::{
     AuthClient, Client as EtcdClient, KvClient, LeaseClient, LeaseKeepAliveStream, LeaseKeeper,
-    LockClient, WatchClient,
+    LockClient, MaintenanceClient, WatchClient,
 };
 use itertools::Itertools;
 use utils::config::ClientTimeout;
@@ -30,6 +30,8 @@ mod convert;
 pub mod errors;
 /// Requests used by Client
 pub mod kv_types;
+/// Restore from snapshot
+pub mod restore;
 
 /// Xline client
 pub struct Client {
@@ -263,5 +265,11 @@ impl Client {
     #[inline]
     pub fn lease_client(&self) -> LeaseClient {
         self.etcd_client.lease_client()
+    }
+
+    /// Gets a maintenance client.
+    #[inline]
+    pub fn maintenance_client(&self) -> MaintenanceClient {
+        self.etcd_client.maintenance_client()
     }
 }

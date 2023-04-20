@@ -236,6 +236,10 @@ where
     where
         F: Future<Output = ()>,
     {
+        // lease storage must recover before kv storage
+        self.lease_storage.recover()?;
+        self.kv_storage.recover().await?;
+        self.auth_storage.recover()?;
         let (
             kv_server,
             lock_server,

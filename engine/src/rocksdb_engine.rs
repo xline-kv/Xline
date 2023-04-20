@@ -279,6 +279,9 @@ impl RocksSnapshot {
     }
 
     /// Write snapshot data
+    /// # Errors
+    /// Return `io::Error` when write failed with io error.
+    #[inline]
     #[allow(clippy::indexing_slicing)] // safe indexing
     async fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if buf.is_empty() {
@@ -309,7 +312,12 @@ impl RocksSnapshot {
 
         while self.snap_file_idx < self.snap_files.len() {
             let snap_file = &mut self.snap_files[self.snap_file_idx];
-            assert!(snap_file.size != 0);
+            if snap_file.size == 0 {
+                return Err(io::Error::new(
+                    Other,
+                    format!("snap file {} size is 0", snap_file.filename),
+                ));
+            }
             let left = snap_file.remain_size().numeric_cast();
             let (write_len, switch, finished) = match next_buf.len().cmp(&left) {
                 Ordering::Greater => (left, true, false),
@@ -422,11 +430,7 @@ impl SnapshotApi for RocksSnapshot {
 
     #[inline]
     async fn clean(&mut self) -> std::io::Result<()> {
-        for snap_file in &self.snap_files {
-            let path = self.dir.join(&snap_file.filename);
-            tokio::fs::remove_file(path).await?;
-        }
-        Ok(())
+        tokio::fs::remove_dir_all(&self.dir).await
     }
 }
 
