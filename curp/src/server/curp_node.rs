@@ -16,7 +16,7 @@ use utils::config::CurpConfig;
 
 use super::{
     cmd_board::{CmdBoardRef, CommandBoard},
-    cmd_worker::{conflict_checked_mpmc, start_cmd_workers, CEEventTx},
+    cmd_worker::{conflict_checked_mpmc, start_bg_workers, CEEventTx},
     gc::run_gc_tasks,
     raw_curp::{AppendEntries, RawCurp, Vote},
     spec_pool::{SpecPoolRef, SpeculativePool},
@@ -405,7 +405,7 @@ impl<C: 'static + Command> CurpNode<C> {
         let last_applied = cmd_executor
             .last_applied()
             .map_err(|e| CurpError::Internal(format!("get applied index error, {e}")))?;
-        let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel();
+        let (ce_event_tx, task_rx, as_rx, done_tx) = conflict_checked_mpmc::channel();
 
         let storage = Arc::new(RocksDBStorage::new(&curp_cfg.data_dir)?);
 
@@ -448,10 +448,11 @@ impl<C: 'static + Command> CurpNode<C> {
             ))
         };
 
-        start_cmd_workers(
+        start_bg_workers(
             cmd_executor,
             Arc::clone(&curp),
             task_rx,
+            as_rx,
             done_tx,
             Arc::clone(&shutdown_trigger),
         );
