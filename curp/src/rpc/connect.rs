@@ -284,37 +284,7 @@ fn install_snapshot_stream(
     leader_id: ServerId,
     snapshot: Snapshot,
 ) -> impl Stream<Item = InstallSnapshotRequest> {
-    // FIXME: The following code is better. But it will result in an unknown compiling error that might origin from a compiler bug(https://github.com/rust-lang/rust/issues/102211).
-    // let req_stream = futures::stream::unfold(
-    //     (0, snapshot, term, leader_id, meta),
-    //     |(offset, mut snapshot, term, leader_id, meta)| async move {
-    //         if offset >= snapshot.size() {
-    //             return None;
-    //         }
-    //         let mut data = Vec::with_capacity(
-    //             std::cmp::min(snapshot.size() - offset, SNAPSHOT_CHUNK_SIZE).numeric_cast(),
-    //         );
-    //         let n: u64 = match snapshot.read(&mut data) {
-    //             Ok(n) => n.numeric_cast(),
-    //             Err(e) => {
-    //                 error!("read snapshot error, {e}");
-    //                 return None;
-    //             }
-    //         };
-    //         let done = (offset + n) == snapshot.size();
-    //         let req = InstallSnapshotRequest {
-    //             term,
-    //             leader_id: leader_id.clone(),
-    //             last_included_index: meta.last_included_index,
-    //             last_included_term: meta.last_included_term,
-    //             offset,
-    //             data,
-    //             done,
-    //         };
-    //         Some((req, (offset + n, snapshot, term, leader_id, meta)))
-    //     },
-    // );
-
+    // FIXME: Maybe here is unnecessary to spawn a new task to generate the stream
     let (tx, rx) = mpsc::channel(1);
     let _ig = tokio::spawn(async move {
         let meta = snapshot.meta;

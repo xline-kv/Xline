@@ -523,7 +523,7 @@ impl<C: 'static + Command> RawCurp<C> {
     }
 
     /// Handle `install_snapshot` resp
-    /// Return Err(()) if
+    /// Return Err(()) if the current node isn't a leader or current term is less than the given term
     pub(super) fn handle_snapshot_resp(
         &self,
         follower_id: &ServerId,
