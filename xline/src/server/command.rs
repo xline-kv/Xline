@@ -13,12 +13,11 @@ use engine::engine_api::SnapshotApi;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
+use super::barriers::{IdBarrier, IndexBarrier};
 use crate::{
     rpc::{RequestBackend, RequestWithToken, RequestWrapper, ResponseWrapper},
     storage::{db::WriteOp, storage_api::StorageApi, AuthStore, ExecuteError, KvStore, LeaseStore},
 };
-
-use super::barriers::{IdBarrier, IndexBarrier};
 
 /// Meta table name
 pub(crate) const META_TABLE: &str = "meta";
