@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::error::EngineError;
+use crate::{error::EngineError, snapshot_api::SnapshotProxy};
 
 /// Write operation
 #[non_exhaustive]
@@ -56,31 +56,9 @@ impl<'a> WriteOperation<'a> {
     }
 }
 
-/// This trait is a abstraction of the snapshot, We can Read/Write the snapshot like a file.
-#[async_trait::async_trait]
-pub trait SnapshotApi: Send + Sync + std::fmt::Debug {
-    /// Get the size of the snapshot
-    fn size(&self) -> u64;
-
-    /// Rewind the snapshot to the beginning
-    fn rewind(&mut self) -> std::io::Result<()>;
-
-    /// Read the snapshot to the given buffer
-    async fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()>;
-
-    /// Write the given buffer to the snapshot
-    async fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()>;
-
-    /// Clean files of current snapshot
-    async fn clean(&mut self) -> std::io::Result<()>;
-}
-
 /// The `StorageEngine` trait
 #[async_trait::async_trait]
 pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
-    /// Snapshot type
-    type Snapshot: SnapshotApi;
-
     /// Get the value associated with a key value and the given table
     ///
     /// # Errors
@@ -124,7 +102,7 @@ pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
         &self,
         path: impl AsRef<Path>,
         tables: &[&'static str],
-    ) -> Result<Self::Snapshot, EngineError>;
+    ) -> Result<SnapshotProxy, EngineError>;
 
     /// Apply a snapshot to the database
     ///
@@ -132,7 +110,7 @@ pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
     /// Return `EngineError` if met some errors when applying the snapshot
     fn apply_snapshot(
         &self,
-        snapshot: Self::Snapshot,
+        snapshot: SnapshotProxy,
         tables: &[&'static str],
     ) -> Result<(), EngineError>;
 }

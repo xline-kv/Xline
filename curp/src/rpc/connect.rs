@@ -2,6 +2,7 @@ use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use clippy_utilities::NumericCast;
+use engine::snapshot_api::SnapshotApi;
 use futures::Stream;
 #[cfg(test)]
 use mockall::automock;
@@ -347,6 +348,9 @@ fn install_snapshot_stream(
             }
             offset += len;
         }
+        if let Err(e) = snapshot.clean().await {
+            error!("snapshot clean error, {e}");
+        };
     });
 
     ReceiverStream::new(rx)
@@ -367,7 +371,7 @@ impl Connect {
 
 #[cfg(test)]
 mod tests {
-    use engine::{engine_api::SnapshotApi, memory_engine::MemorySnapshot};
+    use engine::snapshot_api::{MemorySnapshot, SnapshotApi, SnapshotProxy};
     use futures::StreamExt;
     use tracing_test::traced_test;
 
@@ -391,7 +395,7 @@ mod tests {
                     last_included_index: 1,
                     last_included_term: 1,
                 },
-                Box::new(snapshot),
+                SnapshotProxy::Memory(snapshot),
             ),
         );
         let mut sum = 0;

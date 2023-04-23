@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use engine::engine_api::SnapshotApi;
+use engine::snapshot_api::SnapshotProxy;
 
 /// Snapshot
 #[derive(Debug)]
@@ -8,20 +8,17 @@ pub(crate) struct Snapshot {
     /// Snapshot metadata
     pub(crate) meta: SnapshotMeta,
     /// Snapshot
-    inner: Box<dyn SnapshotApi>,
+    inner: SnapshotProxy,
 }
 
 impl Snapshot {
     /// Create a new snapshot
-    pub(crate) fn new(meta: SnapshotMeta, snapshot: Box<dyn SnapshotApi>) -> Self {
-        Self {
-            meta,
-            inner: snapshot,
-        }
+    pub(crate) fn new(meta: SnapshotMeta, inner: SnapshotProxy) -> Self {
+        Self { meta, inner }
     }
 
     /// Into inner snapshot
-    pub(crate) fn into_inner(self) -> Box<dyn SnapshotApi> {
+    pub(crate) fn into_inner(self) -> SnapshotProxy {
         self.inner
     }
 }

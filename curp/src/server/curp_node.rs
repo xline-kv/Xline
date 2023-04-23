@@ -1,6 +1,7 @@
 use std::{collections::HashMap, fmt::Debug, io, sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
+use engine::snapshot_api::SnapshotApi;
 use event_listener::Event;
 use futures::{pin_mut, stream::FuturesUnordered, Stream, StreamExt};
 use itertools::Itertools;

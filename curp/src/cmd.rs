@@ -1,7 +1,7 @@
 use std::{fmt::Display, hash::Hash};
 
 use async_trait::async_trait;
-use engine::engine_api::SnapshotApi;
+use engine::snapshot_api::SnapshotProxy;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::log_entry::LogIndex;
@@ -129,11 +129,8 @@ where
     fn last_applied(&self) -> Result<LogIndex, Self::Error>;
 
     /// Take a snapshot
-    async fn snapshot(&self) -> Result<Box<dyn SnapshotApi>, Self::Error>;
+    async fn snapshot(&self) -> Result<SnapshotProxy, Self::Error>;
 
     /// Reset the command executor using the snapshot or to the initial state if None
-    async fn reset(
-        &self,
-        snapshot: Option<(Box<dyn SnapshotApi>, LogIndex)>,
-    ) -> Result<(), Self::Error>;
+    async fn reset(&self, snapshot: Option<(SnapshotProxy, LogIndex)>) -> Result<(), Self::Error>;
 }

@@ -1,10 +1,8 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 use engine::{
-    engine_api::{SnapshotApi, StorageEngine},
-    memory_engine::MemoryEngine,
-    rocksdb_engine::RocksEngine,
-    WriteOperation,
+    engine_api::StorageEngine, memory_engine::MemoryEngine, rocksdb_engine::RocksEngine,
+    snapshot_api::SnapshotProxy, WriteOperation,
 };
 use prost::Message;
 use utils::config::StorageConfig;
@@ -91,25 +89,30 @@ where
         })
     }
 
-    fn get_snapshot(&self) -> Result<Box<dyn SnapshotApi>, ExecuteError> {
-        let path = format!("/tmp/xline_snapshot_{}", uuid::Uuid::new_v4());
-        let snapshot = self
-            .engine
-            .get_snapshot(path, &XLINE_TABLES)
-            .map_err(|e| ExecuteError::DbError(format!("Failed to get snapshot: {e}")))?;
-        Ok(Box::new(snapshot))
+    fn get_snapshot(&self, snap_path: impl AsRef<Path>) -> Result<SnapshotProxy, ExecuteError> {
+        self.engine
+            .get_snapshot(snap_path, &XLINE_TABLES)
+            .map_err(|e| ExecuteError::DbError(format!("Failed to get snapshot, error: {e}")))
     }
 
-    fn reset(&self) -> Result<(), ExecuteError> {
-        let start = vec![];
-        let end = vec![0xff];
-        let ops = XLINE_TABLES
-            .iter()
-            .map(|table| WriteOperation::new_delete_range(table, start.as_slice(), end.as_slice()))
-            .collect();
-        self.engine
-            .write_batch(ops, true)
-            .map_err(|e| ExecuteError::DbError(format!("Failed to reset database, error: {e}")))
+    fn reset(&self, snapshot: Option<SnapshotProxy>) -> Result<(), ExecuteError> {
+        if let Some(snap) = snapshot {
+            self.engine
+                .apply_snapshot(snap, &XLINE_TABLES)
+                .map_err(|e| ExecuteError::DbError(format!("Failed to reset database, error: {e}")))
+        } else {
+            let start = vec![];
+            let end = vec![0xff];
+            let ops = XLINE_TABLES
+                .iter()
+                .map(|table| {
+                    WriteOperation::new_delete_range(table, start.as_slice(), end.as_slice())
+                })
+                .collect();
+            self.engine
+                .write_batch(ops, true)
+                .map_err(|e| ExecuteError::DbError(format!("Failed to reset database, error: {e}")))
+        }
     }
 
     fn flush_ops(&self, ops: Vec<WriteOp>) -> Result<(), ExecuteError> {
@@ -232,17 +235,17 @@ impl StorageApi for DBProxy {
         }
     }
 
-    fn get_snapshot(&self) -> Result<Box<dyn SnapshotApi>, ExecuteError> {
+    fn get_snapshot(&self, snap_path: impl AsRef<Path>) -> Result<SnapshotProxy, ExecuteError> {
         match *self {
-            DBProxy::MemDB(ref inner_db) => inner_db.get_snapshot(),
-            DBProxy::RocksDB(ref inner_db) => inner_db.get_snapshot(),
+            DBProxy::MemDB(ref inner_db) => inner_db.get_snapshot(snap_path),
+            DBProxy::RocksDB(ref inner_db) => inner_db.get_snapshot(snap_path),
         }
     }
 
-    fn reset(&self) -> Result<(), ExecuteError> {
+    fn reset(&self, snapshot: Option<SnapshotProxy>) -> Result<(), ExecuteError> {
         match *self {
-            DBProxy::MemDB(ref inner_db) => inner_db.reset(),
-            DBProxy::RocksDB(ref inner_db) => inner_db.reset(),
+            DBProxy::MemDB(ref inner_db) => inner_db.reset(snapshot),
+            DBProxy::RocksDB(ref inner_db) => inner_db.reset(snapshot),
         }
     }
 
@@ -308,6 +311,8 @@ pub enum WriteOp<'a> {
 mod test {
     use std::path::PathBuf;
 
+    use engine::snapshot_api::SnapshotApi;
+
     use super::*;
     #[test]
     fn test_reset() -> Result<(), ExecuteError> {
@@ -321,7 +326,7 @@ mod test {
         let res = db.get_value(KV_TABLE, &key)?;
         assert_eq!(res, Some("value1".as_bytes().to_vec()));
 
-        db.reset()?;
+        db.reset(None)?;
 
         let res = db.get_values(KV_TABLE, &[&key])?;
         assert_eq!(res, vec![None]);
@@ -332,14 +337,58 @@ mod test {
         Ok(())
     }
 
+    #[test]
+    fn test_db_snapshot() -> Result<(), ExecuteError> {
+        let dir = PathBuf::from("/tmp/test_db_snapshot");
+        let origin_db_path = dir.join("origin_db");
+        let new_db_path = dir.join("new_db");
+        let snapshot_path = dir.join("snapshot");
+        let origin_db = DBProxy::open(&StorageConfig::RocksDB(origin_db_path))?;
+
+        let revision = Revision::new(1, 1);
+        let key = revision.encode_to_vec();
+        let ops = vec![WriteOp::PutKeyValue(revision, "value1".into())];
+        origin_db.flush_ops(ops)?;
+
+        let snapshot = origin_db.get_snapshot(snapshot_path)?;
+
+        let new_db = DBProxy::open(&StorageConfig::RocksDB(new_db_path))?;
+        new_db.reset(Some(snapshot))?;
+
+        let res = new_db.get_values(KV_TABLE, &[&key])?;
+        assert_eq!(res, vec![Some("value1".as_bytes().to_vec())]);
+
+        std::fs::remove_dir_all(dir).unwrap();
+        Ok(())
+    }
+
+    #[test]
+    fn test_db_snapshot_wrong_type() -> Result<(), ExecuteError> {
+        let dir = PathBuf::from("/tmp/test_db_snapshot_wrong_type");
+        let db_path = dir.join("db");
+        let snapshot_path = dir.join("snapshot");
+        let rocks_db = DBProxy::open(&StorageConfig::RocksDB(db_path))?;
+        let mem_db = DBProxy::open(&StorageConfig::Memory)?;
+
+        let rocks_snap = rocks_db.get_snapshot(snapshot_path)?;
+        let res = mem_db.reset(Some(rocks_snap));
+        assert!(res.is_err());
+
+        std::fs::remove_dir_all(dir).unwrap();
+        Ok(())
+    }
+
     #[tokio::test]
     async fn test_get_snapshot() -> Result<(), ExecuteError> {
-        let data_dir = PathBuf::from("/tmp/test_get_snapshot");
-        let db = DBProxy::open(&StorageConfig::RocksDB(data_dir.clone()))?;
-        let mut res = db.get_snapshot()?;
+        let dir = PathBuf::from("/tmp/test_get_snapshot");
+        let data_path = dir.join("data");
+        let snapshot_path = dir.join("snapshot");
+        let db = DBProxy::open(&StorageConfig::RocksDB(data_path))?;
+        let mut res = db.get_snapshot(snapshot_path)?;
         assert_ne!(res.size(), 0);
         res.clean().await.unwrap();
-        std::fs::remove_dir_all(data_dir).unwrap();
+
+        std::fs::remove_dir_all(dir).unwrap();
         Ok(())
     }
 }

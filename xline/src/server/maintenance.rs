@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use clippy_utilities::{Cast, OverflowArithmetic};
+use engine::snapshot_api::SnapshotApi;
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -103,7 +104,8 @@ where
         &self,
         _request: tonic::Request<SnapshotRequest>,
     ) -> Result<tonic::Response<Self::SnapshotStream>, tonic::Status> {
-        let mut snapshot = self.persistent.get_snapshot().map_err(|e| {
+        let tmp_path = format!("/tmp/snapshot-{}", uuid::Uuid::new_v4());
+        let mut snapshot = self.persistent.get_snapshot(tmp_path).map_err(|e| {
             error!("get snapshot failed, {e}");
             tonic::Status::internal("get snapshot failed")
         })?;
@@ -200,6 +202,7 @@ mod test {
     async fn test_snapshot_rpc() -> Result<(), Box<dyn Error>> {
         let dir = PathBuf::from("/tmp/test_snapshot_rpc");
         let db_path = dir.join("db");
+        let snapshot_path = dir.join("snapshot");
 
         let persistent = DBProxy::open(&StorageConfig::RocksDB(db_path.clone()))?;
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
@@ -217,7 +220,10 @@ mod test {
             Sha256::output_size()
         );
 
-        let mut snap2 = maintenance_server.persistent.get_snapshot().unwrap();
+        let mut snap2 = maintenance_server
+            .persistent
+            .get_snapshot(snapshot_path)
+            .unwrap();
         let size = snap2.size().cast();
         let mut snap2_data = vec![0; size];
         snap2.read_exact(&mut snap2_data).await.unwrap();

@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use engine::{engine_api::SnapshotApi, error::EngineError};
+use engine::{error::EngineError, snapshot_api::SnapshotProxy};
 use thiserror::Error;
 
 use crate::{cmd::Command, log_entry::LogEntry, ServerId};
@@ -34,7 +34,7 @@ pub(super) trait StorageApi: Send + Sync {
     ) -> Result<(Option<(u64, ServerId)>, Vec<LogEntry<Self::Command>>), StorageError>;
 
     /// Initialize a new snapshot
-    async fn new_snapshot(&self) -> Result<Box<dyn SnapshotApi>, StorageError>;
+    async fn new_snapshot(&self) -> Result<SnapshotProxy, StorageError>;
 }
 
 /// `RocksDB` storage implementation

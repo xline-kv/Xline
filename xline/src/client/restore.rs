@@ -2,8 +2,8 @@ use std::path::Path;
 
 use clippy_utilities::Cast;
 use engine::{
-    engine_api::SnapshotApi,
-    rocksdb_engine::{RocksEngine, RocksSnapshot},
+    rocksdb_engine::RocksEngine,
+    snapshot_api::{RocksSnapshot, SnapshotApi, SnapshotProxy},
     StorageEngine,
 };
 use tokio::io::AsyncReadExt;
@@ -34,7 +34,7 @@ pub async fn restore(
     }
 
     let restore_rocks_engine = RocksEngine::new(data_dir, &XLINE_TABLES)?;
-    restore_rocks_engine.apply_snapshot(rocks_snapshot, &XLINE_TABLES)?;
+    restore_rocks_engine.apply_snapshot(SnapshotProxy::Rocks(rocks_snapshot), &XLINE_TABLES)?;
     tokio::fs::remove_dir_all(tmp_path).await?;
     Ok(())
 }
