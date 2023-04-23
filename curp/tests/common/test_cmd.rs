@@ -15,7 +15,7 @@ use curp::{
     cmd::{Command, CommandExecutor, ConflictCheck, ProposeId},
     LogIndex,
 };
-use engine::{engine_api::SnapshotApi, memory_engine::MemorySnapshot};
+use engine::snapshot_api::{MemorySnapshot, SnapshotApi, SnapshotProxy};
 use itertools::Itertools;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -197,18 +197,15 @@ impl CommandExecutor<TestCommand> for TestCE {
         Ok(self.last_applied.load(Ordering::Relaxed))
     }
 
-    async fn snapshot(&self) -> Result<Box<dyn SnapshotApi>, Self::Error> {
+    async fn snapshot(&self) -> Result<SnapshotProxy, Self::Error> {
         let mut ss = MemorySnapshot::default();
         let buf = bincode::serialize(&*self.store.lock()).unwrap();
         ss.write_all(&buf).await.unwrap();
         debug!("{} takes a snapshot", self.server_id);
-        Ok(Box::new(ss))
+        Ok(SnapshotProxy::Memory(ss))
     }
 
-    async fn reset(
-        &self,
-        snapshot: Option<(Box<dyn SnapshotApi>, LogIndex)>,
-    ) -> Result<(), Self::Error> {
+    async fn reset(&self, snapshot: Option<(SnapshotProxy, LogIndex)>) -> Result<(), Self::Error> {
         let Some((mut snapshot, index)) = snapshot else {
             self.last_applied.store(0, Ordering::Relaxed);
             self.store.lock().clear();

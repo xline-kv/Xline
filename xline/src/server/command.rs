@@ -9,7 +9,7 @@ use curp::{
     },
     LogIndex,
 };
-use engine::engine_api::SnapshotApi;
+use engine::snapshot_api::SnapshotProxy;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
@@ -283,22 +283,20 @@ where
         Ok(res)
     }
 
-    #[allow(clippy::todo)]
-    async fn reset(
-        &self,
-        snapshot: Option<(Box<dyn SnapshotApi>, LogIndex)>,
-    ) -> Result<(), Self::Error> {
-        if snapshot.is_none() {
-            self.persistent.reset()
+    async fn reset(&self, snapshot: Option<(SnapshotProxy, LogIndex)>) -> Result<(), Self::Error> {
+        let s = if let Some((snapshot, index)) = snapshot {
+            self.persistent
+                .flush_ops(vec![WriteOp::PutAppliedIndex(index)])?;
+            Some(snapshot)
         } else {
-            todo!("apply snapshot");
-        }
+            None
+        };
+        self.persistent.reset(s)
     }
 
-    /// Todo
-    #[allow(clippy::todo)]
-    async fn snapshot(&self) -> Result<Box<dyn SnapshotApi>, Self::Error> {
-        todo!("snapshot");
+    async fn snapshot(&self) -> Result<SnapshotProxy, Self::Error> {
+        let path = format!("/tmp/snapshot-{}", uuid::Uuid::new_v4());
+        self.persistent.get_snapshot(path)
     }
 
     fn last_applied(&self) -> Result<LogIndex, ExecuteError> {

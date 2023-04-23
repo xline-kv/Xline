@@ -154,5 +154,7 @@ pub mod error;
 pub mod memory_engine;
 /// `RocksDB` Storage Engine
 pub mod rocksdb_engine;
+/// Snapshot Trait Definition And Implementation
+pub mod snapshot_api;
 
 pub use self::engine_api::{StorageEngine, WriteOperation};

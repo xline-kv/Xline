@@ -6,8 +6,8 @@ use std::{
 use async_trait::async_trait;
 use chrono::Local;
 use engine::{
-    engine_api::SnapshotApi,
-    rocksdb_engine::{RocksEngine, RocksSnapshot},
+    rocksdb_engine::RocksEngine,
+    snapshot_api::{RocksSnapshot, SnapshotProxy},
     StorageEngine, WriteOperation,
 };
 use uuid::Uuid;
@@ -81,14 +81,14 @@ impl<C: 'static + Command> StorageApi for RocksDBStorage<C> {
         Ok((voted_for, entries))
     }
 
-    async fn new_snapshot(&self) -> Result<Box<dyn SnapshotApi>, StorageError> {
+    async fn new_snapshot(&self) -> Result<SnapshotProxy, StorageError> {
         // TODO: delete outdated snapshot
         // TODO: better snapshot file naming
         let dir = self
             .data_dir
             .join(format!("snapshot-{}-{}", Local::now(), Uuid::new_v4()));
         let snapshot = RocksSnapshot::new_for_receiving(dir)?;
-        Ok(Box::new(snapshot))
+        Ok(SnapshotProxy::Rocks(snapshot))
     }
 }
 

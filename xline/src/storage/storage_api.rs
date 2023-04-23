@@ -1,4 +1,6 @@
-use engine::engine_api::SnapshotApi;
+use std::path::Path;
+
+use engine::snapshot_api::SnapshotProxy;
 
 use super::{db::WriteOp, ExecuteError};
 
@@ -34,15 +36,15 @@ pub trait StorageApi: Send + Sync + 'static + std::fmt::Debug {
     #[allow(clippy::type_complexity)] // it's clear that (Vec<u8>, Vec<u8>) is a key-value pair
     fn get_all(&self, table: &'static str) -> Result<Vec<(Vec<u8>, Vec<u8>)>, ExecuteError>;
 
-    /// Reset the storage
+    /// Reset the storage by given snapshot
     ///
     /// # Errors
     ///
     /// if error occurs in storage, return `Err(error)`
-    fn reset(&self) -> Result<(), ExecuteError>;
+    fn reset(&self, snapshot: Option<SnapshotProxy>) -> Result<(), ExecuteError>;
 
     /// Get the snapshot of the storage
-    fn get_snapshot(&self) -> Result<Box<dyn SnapshotApi>, ExecuteError>;
+    fn get_snapshot(&self, snap_path: impl AsRef<Path>) -> Result<SnapshotProxy, ExecuteError>;
 
     /// Flush the operations to storage
     fn flush_ops(&self, ops: Vec<WriteOp>) -> Result<(), ExecuteError>;

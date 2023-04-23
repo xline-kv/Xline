@@ -1,18 +1,11 @@
-use std::{
-    cmp::Ordering,
-    collections::HashMap,
-    io::{Cursor, Seek},
-    path::Path,
-    sync::Arc,
-};
+use std::{cmp::Ordering, collections::HashMap, path::Path, sync::Arc};
 
-use clippy_utilities::NumericCast;
 use parking_lot::RwLock;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::{
-    engine_api::{SnapshotApi, StorageEngine, WriteOperation},
+    engine_api::{StorageEngine, WriteOperation},
     error::EngineError,
+    snapshot_api::{MemorySnapshot, SnapshotProxy},
 };
 
 /// A helper type to store the key-value pairs for the `MemoryEngine`
@@ -23,42 +16,6 @@ type MemoryTable = HashMap<Vec<u8>, Vec<u8>>;
 pub struct MemoryEngine {
     /// The inner storage engine of `MemoryStorage`
     inner: Arc<RwLock<HashMap<String, MemoryTable>>>,
-}
-
-/// A snapshot of the `MemoryEngine`
-#[derive(Debug, Default)]
-pub struct MemorySnapshot {
-    /// data of the snapshot
-    data: Cursor<Vec<u8>>,
-}
-
-#[async_trait::async_trait]
-impl SnapshotApi for MemorySnapshot {
-    #[inline]
-    fn size(&self) -> u64 {
-        self.data.get_ref().len().numeric_cast()
-    }
-
-    #[inline]
-    async fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
-        self.data.read_exact(buf).await.map(drop)
-    }
-
-    #[inline]
-    async fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
-        self.data.write_all(buf).await
-    }
-
-    #[inline]
-    fn rewind(&mut self) -> std::io::Result<()> {
-        Seek::rewind(&mut self.data)
-    }
-
-    #[inline]
-    async fn clean(&mut self) -> std::io::Result<()> {
-        self.data.get_mut().clear();
-        Ok(())
-    }
 }
 
 impl MemoryEngine {
@@ -81,8 +38,6 @@ impl MemoryEngine {
 
 #[async_trait::async_trait]
 impl StorageEngine for MemoryEngine {
-    type Snapshot = MemorySnapshot;
-
     #[inline]
     fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
         let inner = self.inner.read();
@@ -166,26 +121,27 @@ impl StorageEngine for MemoryEngine {
         &self,
         _path: impl AsRef<Path>,
         _tables: &[&'static str],
-    ) -> Result<Self::Snapshot, EngineError> {
+    ) -> Result<SnapshotProxy, EngineError> {
         let inner_r = self.inner.read();
         let db = &*inner_r;
         let data = bincode::serialize(db).map_err(|e| {
             EngineError::UnderlyingError(format!("serialize memory engine failed: {e:?}"))
         })?;
-        Ok(MemorySnapshot {
-            data: Cursor::new(data),
-        })
+        Ok(SnapshotProxy::Memory(MemorySnapshot::new(data)))
     }
 
     #[inline]
     fn apply_snapshot(
         &self,
-        snapshot: Self::Snapshot,
+        snapshot: SnapshotProxy,
         _tables: &[&'static str],
     ) -> Result<(), EngineError> {
+        let SnapshotProxy::Memory(snapshot) = snapshot else {
+            return  Err(EngineError::UnderlyingError("snapshot type mismatch".to_owned()));
+        };
         let mut inner = self.inner.write();
         let db = &mut *inner;
-        let data = snapshot.data.into_inner();
+        let data = snapshot.into_inner();
         let new_db = bincode::deserialize(&data).map_err(|e| {
             EngineError::UnderlyingError(format!("deserialize memory engine failed: {e:?}"))
         })?;
@@ -197,6 +153,10 @@ impl StorageEngine for MemoryEngine {
 #[cfg(test)]
 mod test {
     use std::iter::{repeat, zip};
+
+    use clippy_utilities::NumericCast;
+
+    use crate::snapshot_api::SnapshotApi;
 
     use super::*;
 
@@ -301,9 +261,7 @@ mod test {
         let mut buf = vec![0u8; snapshot.size().numeric_cast()];
         snapshot.read_exact(&mut buf).await.unwrap();
 
-        let mut new_snapshot = MemorySnapshot {
-            data: Cursor::new(Vec::new()),
-        };
+        let mut new_snapshot = SnapshotProxy::Memory(MemorySnapshot::new(Vec::new()));
         new_snapshot.write_all(&buf).await.unwrap();
 
         let engine_2 = MemoryEngine::new(&TESTTABLES).unwrap();

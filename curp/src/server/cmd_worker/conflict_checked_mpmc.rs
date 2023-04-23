@@ -113,7 +113,7 @@ enum VertexInner<C> {
     /// A reset vertex
     Reset {
         /// The snapshot and finish notifier
-        inner: Cart<(Option<Snapshot>, oneshot::Sender<()>)>,
+        inner: Cart<(Box<Option<Snapshot>>, oneshot::Sender<()>)>, // use `Box` to avoid enum members with large size
         /// Reset state
         st: OnceState,
     },
@@ -336,7 +336,7 @@ impl<C: Command> Filter<C> {
                     let (snapshot, tx) = inner.take();
                     let task = Task {
                         vid,
-                        inner: Cart::new(TaskType::Reset(snapshot, tx)),
+                        inner: Cart::new(TaskType::Reset(*snapshot, tx)),
                     };
                     *st = OnceState::Doing;
                     if let Err(e) = self.filter_tx.send(task) {
@@ -439,7 +439,7 @@ impl<C: Command> Filter<C> {
                     successors: HashSet::new(),
                     predecessor_cnt: 0,
                     inner: VertexInner::Reset {
-                        inner: Cart::new((snapshot, finish_tx)),
+                        inner: Cart::new((Box::new(snapshot), finish_tx)),
                         st: OnceState::Ready,
                     },
                 };
