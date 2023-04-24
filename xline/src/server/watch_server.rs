@@ -331,7 +331,6 @@ mod test {
 
     use std::collections::HashMap;
 
-    use engine::memory_engine::MemoryEngine;
     use parking_lot::Mutex;
 
     use super::*;
@@ -352,7 +351,7 @@ mod test {
         let _ = mock_watcher.expect_cancel().times(1).returning(move |_| 0);
         let watcher = Arc::new(mock_watcher);
         let next_id = Arc::new(WatchIdGenerator::new(1));
-        let handle = tokio::spawn(WatchServer::<DB<MemoryEngine>>::task(
+        let handle = tokio::spawn(WatchServer::<DB>::task(
             next_id,
             Arc::clone(&watcher),
             res_tx,
@@ -397,7 +396,7 @@ mod test {
         let (res_tx1, _res_rx1) = mpsc::channel(CHANNEL_SIZE);
         let req_stream1: ReceiverStream<Result<WatchRequest, tonic::Status>> =
             ReceiverStream::new(req_rx1);
-        let handle1 = tokio::spawn(WatchServer::<DB<MemoryEngine>>::task(
+        let handle1 = tokio::spawn(WatchServer::<DB>::task(
             Arc::clone(&next_id_gen),
             Arc::clone(&kv_watcher),
             res_tx1,
@@ -408,7 +407,7 @@ mod test {
         let (res_tx2, _res_rx2) = mpsc::channel(CHANNEL_SIZE);
         let req_stream2: ReceiverStream<Result<WatchRequest, tonic::Status>> =
             ReceiverStream::new(req_rx2);
-        let handle2 = tokio::spawn(WatchServer::<DB<MemoryEngine>>::task(
+        let handle2 = tokio::spawn(WatchServer::<DB>::task(
             next_id_gen,
             kv_watcher,
             res_tx2,

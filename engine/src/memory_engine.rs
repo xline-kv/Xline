@@ -1,11 +1,19 @@
-use std::{cmp::Ordering, collections::HashMap, path::Path, sync::Arc};
+use std::{
+    cmp::Ordering,
+    collections::HashMap,
+    io::{Cursor, Seek},
+    path::Path,
+    sync::Arc,
+};
 
+use clippy_utilities::NumericCast;
 use parking_lot::RwLock;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::{
-    engine_api::{StorageEngine, WriteOperation},
+    api::engine_api::{StorageEngine, WriteOperation},
+    api::snapshot_api::SnapshotApi,
     error::EngineError,
-    snapshot_api::{MemorySnapshot, SnapshotProxy},
 };
 
 /// A helper type to store the key-value pairs for the `MemoryEngine`
@@ -20,24 +28,22 @@ pub struct MemoryEngine {
 
 impl MemoryEngine {
     /// New `MemoryEngine`
-    ///
-    /// # Errors
-    ///
-    /// Returns `EngineError` when DB create tables failed or open failed.
     #[inline]
-    pub fn new(tables: &[&'static str]) -> Result<Self, EngineError> {
+    pub(crate) fn new(tables: &[&'static str]) -> Self {
         let mut inner: HashMap<String, HashMap<Vec<u8>, Vec<u8>>> = HashMap::new();
         for table in tables {
             let _ignore = inner.entry((*table).to_owned()).or_insert(HashMap::new());
         }
-        Ok(Self {
+        Self {
             inner: Arc::new(RwLock::new(inner)),
-        })
+        }
     }
 }
 
 #[async_trait::async_trait]
 impl StorageEngine for MemoryEngine {
+    type Snapshot = MemorySnapshot;
+
     #[inline]
     fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
         let inner = self.inner.read();
@@ -121,24 +127,21 @@ impl StorageEngine for MemoryEngine {
         &self,
         _path: impl AsRef<Path>,
         _tables: &[&'static str],
-    ) -> Result<SnapshotProxy, EngineError> {
+    ) -> Result<Self::Snapshot, EngineError> {
         let inner_r = self.inner.read();
         let db = &*inner_r;
         let data = bincode::serialize(db).map_err(|e| {
             EngineError::UnderlyingError(format!("serialize memory engine failed: {e:?}"))
         })?;
-        Ok(SnapshotProxy::Memory(MemorySnapshot::new(data)))
+        Ok(MemorySnapshot::new(data))
     }
 
     #[inline]
     async fn apply_snapshot(
         &self,
-        snapshot: SnapshotProxy,
+        snapshot: Self::Snapshot,
         _tables: &[&'static str],
     ) -> Result<(), EngineError> {
-        let SnapshotProxy::Memory(snapshot) = snapshot else {
-            return  Err(EngineError::UnderlyingError("snapshot type mismatch".to_owned()));
-        };
         let mut inner = self.inner.write();
         let db = &mut *inner;
         let data = snapshot.into_inner();
@@ -150,128 +153,52 @@ impl StorageEngine for MemoryEngine {
     }
 }
 
-#[cfg(test)]
-mod test {
-    use std::iter::{repeat, zip};
+/// A snapshot of the `MemoryEngine`
+#[derive(Debug, Default)]
+pub struct MemorySnapshot {
+    /// data of the snapshot
+    data: Cursor<Vec<u8>>,
+}
 
-    use clippy_utilities::NumericCast;
-
-    use super::*;
-    use crate::snapshot_api::SnapshotApi;
-
-    const TESTTABLES: [&'static str; 3] = ["kv", "lease", "auth"];
-
-    #[test]
-    fn write_batch_into_a_non_existing_table_should_fail() {
-        let engine = MemoryEngine::new(&TESTTABLES).unwrap();
-
-        let put = WriteOperation::new_put(
-            "hello",
-            "hello".as_bytes().to_vec(),
-            "world".as_bytes().to_vec(),
-        );
-        assert!(engine.write_batch(vec![put], false).is_err());
-
-        let delete = WriteOperation::new_delete("hello", b"hello");
-        assert!(engine.write_batch(vec![delete], false).is_err());
-
-        let delete_range = WriteOperation::new_delete_range("hello", b"hello", b"world");
-        assert!(engine.write_batch(vec![delete_range], false).is_err());
+impl MemorySnapshot {
+    /// Create a new `MemorySnapshot`
+    pub(crate) fn new(data: Vec<u8>) -> Self {
+        Self {
+            data: Cursor::new(data),
+        }
     }
 
-    #[test]
-    fn write_batch_should_success() {
-        let engine = MemoryEngine::new(&TESTTABLES).unwrap();
-        let origin_set: Vec<Vec<u8>> = (1u8..=10u8)
-            .map(|val| repeat(val).take(4).collect())
-            .collect();
-        let keys = origin_set.clone();
-        let values = origin_set.clone();
-        let puts = zip(keys, values)
-            .map(|(k, v)| WriteOperation::new_put("kv", k, v))
-            .collect::<Vec<WriteOperation<'_>>>();
+    /// Get the inner data of the snapshot
+    pub(crate) fn into_inner(self) -> Vec<u8> {
+        self.data.into_inner()
+    }
+}
 
-        assert!(engine.write_batch(puts, false).is_ok());
-
-        let res_1 = engine.get_multi("kv", &origin_set).unwrap();
-        assert_eq!(res_1.iter().filter(|v| v.is_some()).count(), 10);
-
-        let delete_key: Vec<u8> = vec![1, 1, 1, 1];
-        let delete = WriteOperation::new_delete("kv", &delete_key);
-
-        let res_2 = engine.write_batch(vec![delete], false);
-        assert!(res_2.is_ok());
-
-        let res_3 = engine.get("kv", &delete_key).unwrap();
-        assert!(res_3.is_none());
-
-        let delete_start: Vec<u8> = vec![2, 2, 2, 2];
-        let delete_end: Vec<u8> = vec![5, 5, 5, 5];
-        let delete_range = WriteOperation::new_delete_range("kv", &delete_start, &delete_end);
-        let res_4 = engine.write_batch(vec![delete_range], false);
-        assert!(res_4.is_ok());
-
-        let get_key_1: Vec<u8> = vec![5, 5, 5, 5];
-        let get_key_2: Vec<u8> = vec![3, 3, 3, 3];
-        assert!(engine.get("kv", &get_key_1).unwrap().is_some());
-        assert!(engine.get("kv", &get_key_2).unwrap().is_none());
+#[async_trait::async_trait]
+impl SnapshotApi for MemorySnapshot {
+    #[inline]
+    fn size(&self) -> u64 {
+        self.data.get_ref().len().numeric_cast()
     }
 
-    #[test]
-    fn get_operation_should_success() {
-        let engine = MemoryEngine::new(&TESTTABLES).unwrap();
-        let test_set = vec![("hello", "hello"), ("world", "world"), ("foo", "foo")];
-        let batch = test_set.iter().map(|&(key, value)| {
-            WriteOperation::new_put("kv", key.as_bytes().to_vec(), value.as_bytes().to_vec())
-        });
-        let res = engine.write_batch(batch.collect(), false);
-        assert!(res.is_ok());
-
-        let res_1 = engine.get("kv", "hello").unwrap();
-        assert_eq!(res_1, Some("hello".as_bytes().to_vec()));
-        let multi_keys = vec!["hello", "world", "bar"];
-        let expected_multi_values = vec![
-            Some("hello".as_bytes().to_vec()),
-            Some("world".as_bytes().to_vec()),
-            None,
-        ];
-        let res_2 = engine.get_multi("kv", &multi_keys).unwrap();
-        assert_eq!(multi_keys.len(), res_2.len());
-        assert_eq!(res_2, expected_multi_values);
-
-        let mut res_3 = engine.get_all("kv").unwrap();
-        let mut expected_all_values = test_set
-            .into_iter()
-            .map(|(key, value)| (key.as_bytes().to_vec(), value.as_bytes().to_vec()))
-            .collect::<Vec<(Vec<u8>, Vec<u8>)>>();
-        assert_eq!(res_3.sort(), expected_all_values.sort());
+    #[inline]
+    fn rewind(&mut self) -> std::io::Result<()> {
+        Seek::rewind(&mut self.data)
     }
 
-    #[tokio::test]
-    async fn snapshot_should_work() {
-        let engine = MemoryEngine::new(&TESTTABLES).unwrap();
-        let put = WriteOperation::new_put("kv", "key".into(), "value".into());
-        assert!(engine.write_batch(vec![put], false).is_ok());
+    #[inline]
+    async fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
+        self.data.read_exact(buf).await.map(drop)
+    }
 
-        let mut snapshot = engine.get_snapshot("", &TESTTABLES).unwrap();
-        let put = WriteOperation::new_put("kv", "key2".into(), "value2".into());
-        assert!(engine.write_batch(vec![put], false).is_ok());
+    #[inline]
+    async fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        self.data.write_all(buf).await
+    }
 
-        let mut buf = vec![0u8; snapshot.size().numeric_cast()];
-        snapshot.read_exact(&mut buf).await.unwrap();
-
-        let mut new_snapshot = SnapshotProxy::Memory(MemorySnapshot::new(Vec::new()));
-        new_snapshot.write_all(&buf).await.unwrap();
-
-        let engine_2 = MemoryEngine::new(&TESTTABLES).unwrap();
-        assert!(engine_2
-            .apply_snapshot(new_snapshot, &TESTTABLES)
-            .await
-            .is_ok());
-
-        let value = engine_2.get("kv", "key").unwrap();
-        assert_eq!(value, Some("value".into()));
-        let value2 = engine_2.get("kv", "key2").unwrap();
-        assert!(value2.is_none());
+    #[inline]
+    async fn clean(&mut self) -> std::io::Result<()> {
+        self.data.get_mut().clear();
+        Ok(())
     }
 }

@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
 use async_stream::stream;
 use async_trait::async_trait;
 use clippy_utilities::NumericCast;
-use engine::snapshot_api::SnapshotApi;
+use engine::SnapshotApi;
 use futures::Stream;
 #[cfg(test)]
 use mockall::automock;
@@ -329,7 +329,7 @@ impl Connect {
 
 #[cfg(test)]
 mod tests {
-    use engine::snapshot_api::{MemorySnapshot, SnapshotApi, SnapshotProxy};
+    use engine::{EngineType, Snapshot as EngineSnapshot};
     use futures::{pin_mut, StreamExt};
     use tracing_test::traced_test;
 
@@ -340,7 +340,7 @@ mod tests {
     #[tokio::test]
     async fn test_install_snapshot_stream() {
         const SNAPSHOT_SIZE: u64 = 200 * 1024;
-        let mut snapshot = MemorySnapshot::default();
+        let mut snapshot = EngineSnapshot::new_for_receiving(EngineType::Memory).unwrap();
         snapshot
             .write_all(&mut vec![1; SNAPSHOT_SIZE.numeric_cast()])
             .await
@@ -353,7 +353,7 @@ mod tests {
                     last_included_index: 1,
                     last_included_term: 1,
                 },
-                SnapshotProxy::Memory(snapshot),
+                snapshot,
             ),
         );
         pin_mut!(stream);

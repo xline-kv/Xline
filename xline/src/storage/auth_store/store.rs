@@ -1151,13 +1151,13 @@ mod test {
         },
         storage::{
             auth_store::perms::{PermissionCache, UserPermissions},
-            db::DBProxy,
+            db::DB,
         },
     };
 
     #[test]
     fn test_role_grant_permission() -> Result<(), ExecuteError> {
-        let db = DBProxy::open(&StorageConfig::Memory)?;
+        let db = DB::open(&StorageConfig::Memory)?;
         let store = init_auth_store(db);
         let req = RequestWithToken::new(
             AuthRoleGrantPermissionRequest {
@@ -1193,7 +1193,7 @@ mod test {
 
     #[test]
     fn test_role_revoke_permission() -> Result<(), ExecuteError> {
-        let db = DBProxy::open(&StorageConfig::Memory)?;
+        let db = DB::open(&StorageConfig::Memory)?;
         let store = init_auth_store(db);
         let req = RequestWithToken::new(
             AuthRoleRevokePermissionRequest {
@@ -1216,7 +1216,7 @@ mod test {
 
     #[test]
     fn test_role_delete() -> Result<(), ExecuteError> {
-        let db = DBProxy::open(&StorageConfig::Memory)?;
+        let db = DB::open(&StorageConfig::Memory)?;
         let store = init_auth_store(db);
         let req = RequestWithToken::new(
             AuthRoleDeleteRequest {
@@ -1237,7 +1237,7 @@ mod test {
 
     #[test]
     fn test_user_delete() -> Result<(), ExecuteError> {
-        let db = DBProxy::open(&StorageConfig::Memory)?;
+        let db = DB::open(&StorageConfig::Memory)?;
         let store = init_auth_store(db);
         let req = RequestWithToken::new(
             AuthUserDeleteRequest {
@@ -1258,7 +1258,7 @@ mod test {
 
     #[test]
     fn test_auth_enable_and_disable() {
-        let db = DBProxy::open(&StorageConfig::Memory).unwrap();
+        let db = DB::open(&StorageConfig::Memory).unwrap();
         let store = init_auth_store(db);
         let revision = store.revision();
         assert!(!store.is_enabled());
@@ -1308,7 +1308,7 @@ mod test {
 
     #[test]
     fn test_recover() -> Result<(), ExecuteError> {
-        let db = DBProxy::open(&StorageConfig::Memory).unwrap();
+        let db = DB::open(&StorageConfig::Memory).unwrap();
         let store = init_auth_store(Arc::clone(&db));
 
         let new_store = init_empty_store(db);
@@ -1320,7 +1320,7 @@ mod test {
         Ok(())
     }
 
-    fn init_auth_store(db: Arc<DBProxy>) -> AuthStore<DBProxy> {
+    fn init_auth_store(db: Arc<DB>) -> AuthStore<DB> {
         let store = init_empty_store(db);
         let req1 = RequestWithToken::new(
             AuthRoleAddRequest {
@@ -1376,7 +1376,7 @@ mod test {
         store
     }
 
-    fn init_empty_store(db: Arc<DBProxy>) -> AuthStore<DBProxy> {
+    fn init_empty_store(db: Arc<DB>) -> AuthStore<DB> {
         let key_pair = test_key_pair();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let lease_collection = Arc::new(LeaseCollection::new(0));
@@ -1384,7 +1384,7 @@ mod test {
     }
 
     fn exe_and_sync(
-        store: &AuthStore<DBProxy>,
+        store: &AuthStore<DB>,
         req: &RequestWithToken,
     ) -> Result<(CommandResponse, SyncResponse), ExecuteError> {
         let cmd_res = store.execute(req)?;

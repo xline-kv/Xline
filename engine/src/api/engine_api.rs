@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::{error::EngineError, snapshot_api::SnapshotProxy};
+use crate::{api::snapshot_api::SnapshotApi, error::EngineError};
 
 /// Write operation
 #[non_exhaustive]
@@ -59,6 +59,9 @@ impl<'a> WriteOperation<'a> {
 /// The `StorageEngine` trait
 #[async_trait::async_trait]
 pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
+    /// The snapshot type
+    type Snapshot: SnapshotApi;
+
     /// Get the value associated with a key value and the given table
     ///
     /// # Errors
@@ -102,7 +105,7 @@ pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
         &self,
         path: impl AsRef<Path>,
         tables: &[&'static str],
-    ) -> Result<SnapshotProxy, EngineError>;
+    ) -> Result<Self::Snapshot, EngineError>;
 
     /// Apply a snapshot to the database
     ///
@@ -110,7 +113,7 @@ pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
     /// Return `EngineError` if met some errors when applying the snapshot
     async fn apply_snapshot(
         &self,
-        snapshot: SnapshotProxy,
+        snapshot: Self::Snapshot,
         tables: &[&'static str],
     ) -> Result<(), EngineError>;
 }

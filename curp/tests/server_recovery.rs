@@ -1,15 +1,17 @@
 //! Integration test for the curp server
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
+use engine::StorageEngine;
 use itertools::Itertools;
 use tracing::debug;
-use utils::{config::ClientTimeout, parking_lot_lock::MutexMap};
+use utils::config::ClientTimeout;
 
 use crate::common::{
     curp_group::{CurpGroup, ProposeRequest},
     init_logger, sleep_millis, sleep_secs,
     test_cmd::TestCommand,
+    TEST_TABLE,
 };
 
 mod common;
@@ -280,12 +282,11 @@ async fn old_leader_will_discard_spec_exe_cmds() {
     leader1_connect.propose(req1).await.unwrap();
     sleep_millis(100).await;
     let leader1_store = Arc::clone(&group.get_node(&leader1).store);
-    leader1_store.map_lock(|store_l| {
-        assert_eq!(
-            *store_l,
-            HashMap::from_iter([(0u32.to_be_bytes().to_vec(), 1u32.to_be_bytes().to_vec())])
-        );
-    });
+    let res = leader1_store.get_all(TEST_TABLE).unwrap();
+    assert_eq!(
+        res,
+        vec![(0u32.to_be_bytes().to_vec(), 1u32.to_be_bytes().to_vec())]
+    );
 
     // 3: recover all others and disable leader, a new leader will be elected
     group.disable_node(&leader1);
@@ -300,12 +301,11 @@ async fn old_leader_will_discard_spec_exe_cmds() {
     // 4: recover the old leader, its state should be reverted to the original state
     group.enable_node(&leader1);
     sleep_secs(1).await;
-    leader1_store.map_lock(|store_l| {
-        assert_eq!(
-            *store_l,
-            HashMap::from_iter([(0u32.to_be_bytes().to_vec(), 0u32.to_be_bytes().to_vec())])
-        );
-    });
+    let res = leader1_store.get_all(TEST_TABLE).unwrap();
+    assert_eq!(
+        res,
+        vec![(0u32.to_be_bytes().to_vec(), 0u32.to_be_bytes().to_vec())]
+    );
 
     // 5: the client should also get the original state
     assert_eq!(
@@ -353,7 +353,7 @@ async fn all_crash_and_recovery() {
             .propose(TestCommand::new_put(vec![0], 1))
             .await
             .unwrap(),
-        vec![0]
+        vec![]
     );
     assert_eq!(
         client.propose(TestCommand::new_get(vec![0])).await.unwrap(),
@@ -397,10 +397,10 @@ async fn recovery_after_compaction() {
 
     {
         let node = group.nodes.get_mut(&node_id).unwrap();
-        let store = node.store.lock();
         for i in 0..50_u32 {
             let kv = i.to_be_bytes().to_vec();
-            assert_eq!(store[&kv], kv);
+            let val = node.store.get(TEST_TABLE, &kv).unwrap().unwrap();
+            assert_eq!(val, kv);
         }
     }
 

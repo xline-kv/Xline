@@ -15,7 +15,7 @@ pub enum ClientError {
     IoError(#[from] std::io::Error),
     /// Engine error
     #[error("Engine error {0}")]
-    EngineError(#[from] engine::error::EngineError),
+    EngineError(#[from] engine::EngineError),
 }
 
 impl From<etcd_client::Error> for ClientError {

@@ -2,7 +2,7 @@ use std::{pin::Pin, sync::Arc};
 
 use async_stream::try_stream;
 use clippy_utilities::{Cast, OverflowArithmetic};
-use engine::snapshot_api::SnapshotApi;
+use engine::SnapshotApi;
 use futures::stream::Stream;
 use sha2::{Digest, Sha256};
 use tracing::error;
@@ -181,7 +181,7 @@ mod test {
     use utils::config::StorageConfig;
 
     use super::*;
-    use crate::storage::db::DBProxy;
+    use crate::storage::db::DB;
 
     #[tokio::test]
     async fn test_snapshot_rpc() -> Result<(), Box<dyn Error>> {
@@ -189,7 +189,7 @@ mod test {
         let db_path = dir.join("db");
         let snapshot_path = dir.join("snapshot");
 
-        let persistent = DBProxy::open(&StorageConfig::RocksDB(db_path.clone()))?;
+        let persistent = DB::open(&StorageConfig::RocksDB(db_path.clone()))?;
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let maintenance_server = MaintenanceServer::new(persistent, header_gen);
         let mut snap1_stream = maintenance_server

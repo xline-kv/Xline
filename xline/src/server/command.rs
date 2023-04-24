@@ -9,7 +9,7 @@ use curp::{
     },
     LogIndex,
 };
-use engine::snapshot_api::SnapshotProxy;
+use engine::Snapshot;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
@@ -283,7 +283,7 @@ where
         Ok(res)
     }
 
-    async fn reset(&self, snapshot: Option<(SnapshotProxy, LogIndex)>) -> Result<(), Self::Error> {
+    async fn reset(&self, snapshot: Option<(Snapshot, LogIndex)>) -> Result<(), Self::Error> {
         let s = if let Some((snapshot, index)) = snapshot {
             self.persistent
                 .flush_ops(vec![WriteOp::PutAppliedIndex(index)])?;
@@ -294,7 +294,7 @@ where
         self.persistent.reset(s).await
     }
 
-    async fn snapshot(&self) -> Result<SnapshotProxy, Self::Error> {
+    async fn snapshot(&self) -> Result<Snapshot, Self::Error> {
         let path = format!("/tmp/snapshot-{}", uuid::Uuid::new_v4());
         self.persistent.get_snapshot(path)
     }
