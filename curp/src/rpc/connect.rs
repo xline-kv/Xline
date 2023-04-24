@@ -1,14 +1,13 @@
 use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
 
+use async_stream::stream;
 use async_trait::async_trait;
 use clippy_utilities::NumericCast;
 use engine::snapshot_api::SnapshotApi;
 use futures::Stream;
 #[cfg(test)]
 use mockall::automock;
-use tokio::sync::{mpsc, RwLock};
-use tokio_stream::wrappers::ReceiverStream;
-use tonic::Request;
+use tokio::sync::RwLock;
 use tracing::{debug, error, instrument};
 use utils::tracing::Inject;
 
@@ -253,14 +252,9 @@ impl ConnectApi for Connect {
         snapshot: Snapshot,
     ) -> Result<tonic::Response<InstallSnapshotResponse>, ProposeError> {
         self.filter()?;
-
+        let stream = install_snapshot_stream(term, leader_id, snapshot);
         let mut client = self.get().await?;
-        client
-            .install_snapshot(Request::new(install_snapshot_stream(
-                term, leader_id, snapshot,
-            )))
-            .await
-            .map_err(Into::into)
+        client.install_snapshot(stream).await.map_err(Into::into)
     }
 
     /// Send `FetchReadStateRequest`
@@ -284,9 +278,7 @@ fn install_snapshot_stream(
     leader_id: ServerId,
     snapshot: Snapshot,
 ) -> impl Stream<Item = InstallSnapshotRequest> {
-    // FIXME: Maybe here is unnecessary to spawn a new task to generate the stream
-    let (tx, rx) = mpsc::channel(1);
-    let _ig = tokio::spawn(async move {
+    stream! {
         let meta = snapshot.meta;
         let mut snapshot = snapshot.into_inner();
         let mut offset = 0;
@@ -303,7 +295,7 @@ fn install_snapshot_stream(
                 error!("read snapshot error, {e}");
                 break;
             }
-            let req = InstallSnapshotRequest {
+            yield InstallSnapshotRequest {
                 term,
                 leader_id: leader_id.clone(),
                 last_included_index: meta.last_included_index,
@@ -312,18 +304,14 @@ fn install_snapshot_stream(
                 data,
                 done: (offset + len) == snapshot.size(),
             };
-            if let Err(e) = tx.send(req).await {
-                error!("snapshot tx error, {e}");
-                break;
-            }
+
             offset += len;
         }
+        // TODO: Shall we clean snapshot after stream generation complete
         if let Err(e) = snapshot.clean().await {
             error!("snapshot clean error, {e}");
-        };
-    });
-
-    ReceiverStream::new(rx)
+        }
+    }
 }
 
 impl Connect {
@@ -342,7 +330,7 @@ impl Connect {
 #[cfg(test)]
 mod tests {
     use engine::snapshot_api::{MemorySnapshot, SnapshotApi, SnapshotProxy};
-    use futures::StreamExt;
+    use futures::{pin_mut, StreamExt};
     use tracing_test::traced_test;
 
     use super::*;
@@ -357,7 +345,7 @@ mod tests {
             .write_all(&mut vec![1; SNAPSHOT_SIZE.numeric_cast()])
             .await
             .unwrap();
-        let mut stream = install_snapshot_stream(
+        let stream = install_snapshot_stream(
             0,
             "test".to_owned(),
             Snapshot::new(
@@ -368,6 +356,7 @@ mod tests {
                 SnapshotProxy::Memory(snapshot),
             ),
         );
+        pin_mut!(stream);
         let mut sum = 0;
         while let Some(req) = stream.next().await {
             assert_eq!(req.term, 0);
