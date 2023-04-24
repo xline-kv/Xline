@@ -9,6 +9,8 @@ use tracing_subscriber::fmt::time::{uptime, OffsetTime, Uptime};
 pub mod curp_group;
 pub mod test_cmd;
 
+pub const TEST_TABLE: &str = "test";
+
 pub fn init_logger() {
     if env::var("RUST_LOG").is_err() {
         env::set_var("RUST_LOG", "curp,server");

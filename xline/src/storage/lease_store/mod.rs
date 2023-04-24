@@ -418,11 +418,11 @@ mod test {
     use utils::config::StorageConfig;
 
     use super::*;
-    use crate::storage::db::DBProxy;
+    use crate::storage::db::DB;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn test_lease_storage() -> Result<(), Box<dyn Error>> {
-        let db = DBProxy::open(&StorageConfig::Memory)?;
+        let db = DB::open(&StorageConfig::Memory)?;
         let lease_store = init_store(db);
 
         let req1 = RequestWithToken::new(LeaseGrantRequest { ttl: 10, id: 1 }.into());
@@ -449,7 +449,7 @@ mod test {
 
     #[tokio::test]
     async fn test_recover() -> Result<(), ExecuteError> {
-        let db = DBProxy::open(&StorageConfig::Memory)?;
+        let db = DB::open(&StorageConfig::Memory)?;
         let store = init_store(Arc::clone(&db));
 
         let req1 = RequestWithToken::new(LeaseGrantRequest { ttl: 10, id: 1 }.into());
@@ -471,7 +471,7 @@ mod test {
         Ok(())
     }
 
-    fn init_store(db: Arc<DBProxy>) -> LeaseStore<DBProxy> {
+    fn init_store(db: Arc<DB>) -> LeaseStore<DB> {
         let lease_collection = Arc::new(LeaseCollection::new(0));
         let (kv_update_tx, _) = mpsc::channel(1);
         let state = Arc::new(State::default());
@@ -481,7 +481,7 @@ mod test {
     }
 
     async fn exe_and_sync_req(
-        ls: &LeaseStore<DBProxy>,
+        ls: &LeaseStore<DB>,
         req: &RequestWithToken,
     ) -> Result<ResponseWrapper, ExecuteError> {
         let cmd_res = ls.execute(req)?;

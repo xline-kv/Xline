@@ -1,7 +1,7 @@
 use std::{error::Error, fmt::Debug};
 
 use async_trait::async_trait;
-use engine::snapshot_api::SnapshotProxy;
+use engine::Snapshot as EngineSnapshot;
 
 /// Snapshot
 #[derive(Debug)]
@@ -9,17 +9,17 @@ pub(crate) struct Snapshot {
     /// Snapshot metadata
     pub(crate) meta: SnapshotMeta,
     /// Snapshot
-    inner: SnapshotProxy,
+    inner: EngineSnapshot,
 }
 
 impl Snapshot {
     /// Create a new snapshot
-    pub(crate) fn new(meta: SnapshotMeta, inner: SnapshotProxy) -> Self {
+    pub(crate) fn new(meta: SnapshotMeta, inner: EngineSnapshot) -> Self {
         Self { meta, inner }
     }
 
     /// Into inner snapshot
-    pub(crate) fn into_inner(self) -> SnapshotProxy {
+    pub(crate) fn into_inner(self) -> EngineSnapshot {
         self.inner
     }
 }
@@ -38,5 +38,5 @@ pub(crate) struct SnapshotMeta {
 #[async_trait]
 pub trait SnapshotAllocator: Send + Sync {
     /// Allocate a new snapshot
-    async fn allocate_new_snapshot(&self) -> Result<SnapshotProxy, Box<dyn Error>>;
+    async fn allocate_new_snapshot(&self) -> Result<EngineSnapshot, Box<dyn Error>>;
 }

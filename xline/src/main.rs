@@ -134,7 +134,7 @@ use utils::{
     },
     parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_rotation,
 };
-use xline::{server::XlineServer, storage::db::DBProxy};
+use xline::{server::XlineServer, storage::db::DB};
 
 /// Command line arguments
 #[derive(Parser)]
@@ -422,7 +422,7 @@ async fn main() -> Result<()> {
     debug!("server_addr = {:?}", self_addr);
     debug!("cluster_peers = {:?}", cluster_config.members());
 
-    let db_proxy = DBProxy::open(storage_config)?;
+    let db_proxy = DB::open(storage_config)?;
     let server = XlineServer::new(
         cluster_config.name().clone(),
         cluster_config.members().clone(),

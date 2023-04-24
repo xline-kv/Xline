@@ -1,7 +1,7 @@
 use std::{marker::PhantomData, path::Path};
 
 use async_trait::async_trait;
-use engine::{rocksdb_engine::RocksEngine, StorageEngine, WriteOperation};
+use engine::{Engine, StorageEngine, WriteOperation};
 
 use super::{StorageApi, StorageError};
 use crate::{cmd::Command, log_entry::LogEntry, ServerId};
@@ -15,7 +15,7 @@ const CF: &str = "curp";
 /// `RocksDB` storage implementation
 pub(in crate::server) struct RocksDBStorage<C> {
     /// DB handle
-    db: RocksEngine,
+    db: Engine,
     /// Phantom
     phantom: PhantomData<C>,
 }
@@ -74,7 +74,7 @@ impl<C: 'static + Command> StorageApi for RocksDBStorage<C> {
 impl<C> RocksDBStorage<C> {
     /// Create a new `RocksDBStorage`
     pub(in crate::server) fn new(dir: impl AsRef<Path>) -> Result<Self, StorageError> {
-        let db = RocksEngine::new(dir.as_ref(), &[CF])?;
+        let db = Engine::new(engine::EngineType::Rocks(dir.as_ref().into()), &[CF])?;
         Ok(Self {
             db,
             phantom: PhantomData,

@@ -1,16 +1,12 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use clippy_utilities::Cast;
-use engine::{
-    rocksdb_engine::RocksEngine,
-    snapshot_api::{RocksSnapshot, SnapshotApi, SnapshotProxy},
-    StorageEngine,
-};
+use engine::{Engine, EngineType, Snapshot, SnapshotApi, StorageEngine};
 use tokio::io::AsyncReadExt;
 
-use crate::{
-    client::errors::ClientError, server::MAINTENANCE_SNAPSHOT_CHUNK_SIZE, storage::db::XLINE_TABLES,
-};
+use crate::{server::MAINTENANCE_SNAPSHOT_CHUNK_SIZE, storage::db::XLINE_TABLES};
+
+use super::errors::ClientError;
 
 /// Restore snapshot to data dir
 /// # Errors
@@ -20,11 +16,11 @@ use crate::{
 #[allow(clippy::indexing_slicing)] // safe operation
 pub async fn restore(
     snapshot_path: impl AsRef<Path>,
-    data_dir: impl AsRef<Path>,
+    data_dir: impl Into<PathBuf>,
 ) -> Result<(), ClientError> {
     let mut snapshot_f = tokio::fs::File::open(snapshot_path).await?;
     let tmp_path = format!("/tmp/snapshot-{}", uuid::Uuid::new_v4());
-    let mut rocks_snapshot = RocksSnapshot::new_for_receiving(tmp_path.clone())?;
+    let mut rocks_snapshot = Snapshot::new_for_receiving(EngineType::Rocks((&tmp_path).into()))?;
     let mut buf = vec![0; MAINTENANCE_SNAPSHOT_CHUNK_SIZE.cast()];
     while let Ok(n) = snapshot_f.read(&mut buf).await {
         if n == 0 {
@@ -33,9 +29,9 @@ pub async fn restore(
         rocks_snapshot.write_all(&buf[..n]).await?;
     }
 
-    let restore_rocks_engine = RocksEngine::new(data_dir, &XLINE_TABLES)?;
+    let restore_rocks_engine = Engine::new(EngineType::Rocks(data_dir.into()), &XLINE_TABLES)?;
     restore_rocks_engine
-        .apply_snapshot(SnapshotProxy::Rocks(rocks_snapshot), &XLINE_TABLES)
+        .apply_snapshot(rocks_snapshot, &XLINE_TABLES)
         .await?;
     Ok(())
 }

@@ -1,9 +1,6 @@
 use std::{collections::HashMap, path::Path, sync::Arc};
 
-use engine::{
-    engine_api::StorageEngine, memory_engine::MemoryEngine, rocksdb_engine::RocksEngine,
-    snapshot_api::SnapshotProxy, WriteOperation,
-};
+use engine::{Engine, EngineType, Snapshot, StorageEngine, WriteOperation};
 use prost::Message;
 use utils::config::StorageConfig;
 
@@ -31,30 +28,32 @@ pub(crate) const XLINE_TABLES: [&str; 6] = [
 
 /// Database to store revision to kv mapping
 #[derive(Debug)]
-pub struct DB<S: StorageEngine> {
+pub struct DB {
     /// internal storage of `DB`
-    engine: Arc<S>,
+    engine: Arc<Engine>,
 }
 
-impl<S> DB<S>
-where
-    S: StorageEngine,
-{
-    /// New `DB`
+impl DB {
+    /// Create a new `DB`
+    ///
+    /// # Errors
+    /// Return `ExecuteError::DbError` when open db failed
     #[inline]
-    #[must_use]
-    pub fn new(engine: S) -> Self {
-        Self {
+    pub fn open(config: &StorageConfig) -> Result<Arc<Self>, ExecuteError> {
+        let engine_type = match *config {
+            StorageConfig::Memory => EngineType::Memory,
+            StorageConfig::RocksDB(ref path) => EngineType::Rocks(path.clone()),
+            _ => unreachable!("Not supported storage type"),
+        };
+        let engine = Engine::new(engine_type, &XLINE_TABLES)
+            .map_err(|e| ExecuteError::DbError(format!("Cannot open database: {e}")))?;
+        Ok(Arc::new(Self {
             engine: Arc::new(engine),
-        }
+        }))
     }
 }
-
 #[async_trait::async_trait]
-impl<S> StorageApi for DB<S>
-where
-    S: StorageEngine,
-{
+impl StorageApi for DB {
     fn get_values<K>(
         &self,
         table: &'static str,
@@ -90,13 +89,13 @@ where
         })
     }
 
-    fn get_snapshot(&self, snap_path: impl AsRef<Path>) -> Result<SnapshotProxy, ExecuteError> {
+    fn get_snapshot(&self, snap_path: impl AsRef<Path>) -> Result<Snapshot, ExecuteError> {
         self.engine
             .get_snapshot(snap_path, &XLINE_TABLES)
             .map_err(|e| ExecuteError::DbError(format!("Failed to get snapshot, error: {e}")))
     }
 
-    async fn reset(&self, snapshot: Option<SnapshotProxy>) -> Result<(), ExecuteError> {
+    async fn reset(&self, snapshot: Option<Snapshot>) -> Result<(), ExecuteError> {
         if let Some(snap) = snapshot {
             self.engine
                 .apply_snapshot(snap, &XLINE_TABLES)
@@ -185,105 +184,6 @@ where
     }
 }
 
-/// `DBProxy` is designed to mask the different type of `DB<MemoryEngine>` and `DB<RocksEngine>`
-/// and provides an uniform type to the upper layer.
-///
-/// Why don't we use dyn trait object to erase the type difference?
-/// There are two reasons behind doing so:
-/// 1. The `StorageApi` trait has some method with generic parameters, like insert<K, V>.
-/// This breaks the object safety rules. If we remove these generic parameters, we will
-/// lose some flexibility when calling these methods.
-/// 2. A dyn object should not be bounded by Sized trait, and some async functions, like
-/// `XlineServer::new`, requires its parameter to satisfy the Sized trait when we await
-/// it. So here is a contradiction.
-#[non_exhaustive]
-#[derive(Debug)]
-pub enum DBProxy {
-    /// DB which base on the Memory Engine
-    MemDB(DB<MemoryEngine>),
-    /// DB which base on the Rocks Engine
-    RocksDB(DB<RocksEngine>),
-}
-
-#[async_trait::async_trait]
-impl StorageApi for DBProxy {
-    fn get_values<K>(
-        &self,
-        table: &'static str,
-        keys: &[K],
-    ) -> Result<Vec<Option<Vec<u8>>>, ExecuteError>
-    where
-        K: AsRef<[u8]> + std::fmt::Debug + Sized,
-    {
-        match *self {
-            DBProxy::MemDB(ref inner_db) => inner_db.get_values(table, keys),
-            DBProxy::RocksDB(ref inner_db) => inner_db.get_values(table, keys),
-        }
-    }
-
-    fn get_value<K>(&self, table: &'static str, key: K) -> Result<Option<Vec<u8>>, ExecuteError>
-    where
-        K: AsRef<[u8]> + std::fmt::Debug,
-    {
-        match *self {
-            DBProxy::MemDB(ref inner_db) => inner_db.get_value(table, key),
-            DBProxy::RocksDB(ref inner_db) => inner_db.get_value(table, key),
-        }
-    }
-
-    fn get_all(&self, table: &'static str) -> Result<Vec<(Vec<u8>, Vec<u8>)>, ExecuteError> {
-        match *self {
-            DBProxy::MemDB(ref inner_db) => inner_db.get_all(table),
-            DBProxy::RocksDB(ref inner_db) => inner_db.get_all(table),
-        }
-    }
-
-    fn get_snapshot(&self, snap_path: impl AsRef<Path>) -> Result<SnapshotProxy, ExecuteError> {
-        match *self {
-            DBProxy::MemDB(ref inner_db) => inner_db.get_snapshot(snap_path),
-            DBProxy::RocksDB(ref inner_db) => inner_db.get_snapshot(snap_path),
-        }
-    }
-
-    async fn reset(&self, snapshot: Option<SnapshotProxy>) -> Result<(), ExecuteError> {
-        match *self {
-            DBProxy::MemDB(ref inner_db) => inner_db.reset(snapshot).await,
-            DBProxy::RocksDB(ref inner_db) => inner_db.reset(snapshot).await,
-        }
-    }
-
-    fn flush_ops(&self, ops: Vec<WriteOp>) -> Result<(), ExecuteError> {
-        match *self {
-            DBProxy::MemDB(ref inner_db) => inner_db.flush_ops(ops),
-            DBProxy::RocksDB(ref inner_db) => inner_db.flush_ops(ops),
-        }
-    }
-}
-
-impl DBProxy {
-    /// Create a new `DBProxy`
-    ///
-    /// # Errors
-    ///
-    /// Return `ExecuteError::DbError` when open db failed
-    #[inline]
-    pub fn open(config: &StorageConfig) -> Result<Arc<DBProxy>, ExecuteError> {
-        match *config {
-            StorageConfig::Memory => {
-                let engine = MemoryEngine::new(&XLINE_TABLES)
-                    .map_err(|e| ExecuteError::DbError(format!("Cannot open database: {e}")))?;
-                Ok(Arc::new(DBProxy::MemDB(DB::new(engine))))
-            }
-            StorageConfig::RocksDB(ref path) => {
-                let engine = RocksEngine::new(path, &XLINE_TABLES)
-                    .map_err(|e| ExecuteError::DbError(format!("Cannot open database: {e}")))?;
-                Ok(Arc::new(DBProxy::RocksDB(DB::new(engine))))
-            }
-            _ => unreachable!(),
-        }
-    }
-}
-
 /// Buffered Write Operation
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -314,13 +214,13 @@ pub enum WriteOp<'a> {
 mod test {
     use std::path::PathBuf;
 
-    use engine::snapshot_api::SnapshotApi;
+    use engine::SnapshotApi;
 
     use super::*;
     #[tokio::test]
     async fn test_reset() -> Result<(), ExecuteError> {
         let data_dir = PathBuf::from("/tmp/test_reset");
-        let db = DBProxy::open(&StorageConfig::RocksDB(data_dir.clone()))?;
+        let db = DB::open(&StorageConfig::RocksDB(data_dir.clone()))?;
 
         let revision = Revision::new(1, 1);
         let key = revision.encode_to_vec();
@@ -346,7 +246,7 @@ mod test {
         let origin_db_path = dir.join("origin_db");
         let new_db_path = dir.join("new_db");
         let snapshot_path = dir.join("snapshot");
-        let origin_db = DBProxy::open(&StorageConfig::RocksDB(origin_db_path))?;
+        let origin_db = DB::open(&StorageConfig::RocksDB(origin_db_path))?;
 
         let revision = Revision::new(1, 1);
         let key = revision.encode_to_vec();
@@ -355,7 +255,7 @@ mod test {
 
         let snapshot = origin_db.get_snapshot(snapshot_path)?;
 
-        let new_db = DBProxy::open(&StorageConfig::RocksDB(new_db_path))?;
+        let new_db = DB::open(&StorageConfig::RocksDB(new_db_path))?;
         new_db.reset(Some(snapshot)).await?;
 
         let res = new_db.get_values(KV_TABLE, &[&key])?;
@@ -370,8 +270,8 @@ mod test {
         let dir = PathBuf::from("/tmp/test_db_snapshot_wrong_type");
         let db_path = dir.join("db");
         let snapshot_path = dir.join("snapshot");
-        let rocks_db = DBProxy::open(&StorageConfig::RocksDB(db_path))?;
-        let mem_db = DBProxy::open(&StorageConfig::Memory)?;
+        let rocks_db = DB::open(&StorageConfig::RocksDB(db_path))?;
+        let mem_db = DB::open(&StorageConfig::Memory)?;
 
         let rocks_snap = rocks_db.get_snapshot(snapshot_path)?;
         let res = mem_db.reset(Some(rocks_snap)).await;
@@ -386,12 +286,81 @@ mod test {
         let dir = PathBuf::from("/tmp/test_get_snapshot");
         let data_path = dir.join("data");
         let snapshot_path = dir.join("snapshot");
-        let db = DBProxy::open(&StorageConfig::RocksDB(data_path))?;
+        let db = DB::open(&StorageConfig::RocksDB(data_path))?;
         let mut res = db.get_snapshot(snapshot_path)?;
         assert_ne!(res.size(), 0);
         res.clean().await.unwrap();
 
         std::fs::remove_dir_all(dir).unwrap();
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_db_write_ops() {
+        let db = DB::open(&StorageConfig::Memory).unwrap();
+        let lease = PbLease {
+            id: 1,
+            ttl: 10,
+            remaining_ttl: 10,
+        };
+        let lease_bytes = lease.encode_to_vec();
+        let user = User {
+            name: "user".into(),
+            password: "password".into(),
+            roles: vec!["role".into()],
+            options: None,
+        };
+        let user_bytes = user.encode_to_vec();
+        let role = Role {
+            name: "role".into(),
+            key_permission: vec![],
+        };
+        let role_bytes = role.encode_to_vec();
+        let write_ops = vec![
+            WriteOp::PutKeyValue(Revision::new(1, 2), "value".into()),
+            WriteOp::PutAppliedIndex(5),
+            WriteOp::PutLease(lease),
+            WriteOp::PutAuthEnable(true),
+            WriteOp::PutAuthRevision(1),
+            WriteOp::PutUser(user),
+            WriteOp::PutRole(role),
+        ];
+        db.flush_ops(write_ops).unwrap();
+        assert_eq!(
+            db.get_value(KV_TABLE, Revision::new(1, 2).encode_to_vec())
+                .unwrap(),
+            Some("value".as_bytes().to_vec())
+        );
+        assert_eq!(
+            db.get_value(META_TABLE, b"applied_index").unwrap(),
+            Some(5u64.to_le_bytes().to_vec())
+        );
+        assert_eq!(
+            db.get_value(LEASE_TABLE, 1i64.encode_to_vec()).unwrap(),
+            Some(lease_bytes)
+        );
+        assert_eq!(
+            db.get_value(AUTH_TABLE, b"enable").unwrap(),
+            Some(vec![u8::from(true)])
+        );
+        assert_eq!(
+            db.get_value(AUTH_TABLE, b"revision").unwrap(),
+            Some(1u64.encode_to_vec())
+        );
+        assert_eq!(db.get_value(USER_TABLE, b"user").unwrap(), Some(user_bytes));
+        assert_eq!(db.get_value(ROLE_TABLE, b"role").unwrap(), Some(role_bytes));
+
+        let del_ops = vec![
+            WriteOp::DeleteLease(1),
+            WriteOp::DeleteUser("user"),
+            WriteOp::DeleteRole("role"),
+        ];
+        db.flush_ops(del_ops).unwrap();
+        assert_eq!(
+            db.get_value(LEASE_TABLE, 1i64.encode_to_vec()).unwrap(),
+            None
+        );
+        assert_eq!(db.get_value(USER_TABLE, b"user").unwrap(), None);
+        assert_eq!(db.get_value(ROLE_TABLE, b"role").unwrap(), None);
     }
 }

@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     fmt::Display,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -10,10 +9,9 @@ use std::{
 
 use async_trait::async_trait;
 use clippy_utilities::NumericCast;
-use engine::snapshot_api::{MemorySnapshot, SnapshotApi, SnapshotProxy};
+use engine::{Engine, EngineType, Snapshot, SnapshotApi, StorageEngine, WriteOperation};
 use itertools::Itertools;
 use once_cell::sync::Lazy;
-use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::{sync::mpsc, time::sleep};
@@ -23,6 +21,8 @@ use crate::{
     cmd::{Command, CommandExecutor, ConflictCheck, ProposeId},
     LogIndex, ServerId,
 };
+
+pub(crate) const TEST_TABLE: &str = "test";
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub(crate) struct TestCommand {
@@ -135,7 +135,7 @@ impl ConflictCheck for TestCommand {
 pub(crate) struct TestCE {
     server_id: ServerId,
     last_applied: Arc<AtomicU64>,
-    pub(crate) store: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
+    pub(crate) store: Arc<Engine>,
     exe_sender: mpsc::UnboundedSender<(TestCommand, TestCommandResult)>,
     after_sync_sender: mpsc::UnboundedSender<(TestCommand, LogIndex)>,
 }
@@ -159,30 +159,33 @@ impl CommandExecutor<TestCommand> for TestCE {
             return Err(ExecuteError("fail".to_owned()));
         }
 
-        let mut store = self.store.lock();
         debug!("{} execute cmd({})", self.server_id, cmd.id());
 
+        let keys = cmd
+            .keys
+            .iter()
+            .map(|k| k.to_be_bytes().to_vec())
+            .collect_vec();
         let result: TestCommandResult = match cmd.cmd_type {
-            TestCommandType::Get => cmd
-                .keys
-                .iter()
-                .filter_map(|key| {
-                    let key = key.to_be_bytes().to_vec();
-                    store
-                        .get(&key)
-                        .map(|v| u32::from_be_bytes(v.as_slice().try_into().unwrap()))
-                })
+            TestCommandType::Get => self
+                .store
+                .get_multi(TEST_TABLE, &keys)
+                .map_err(|e| ExecuteError(e.to_string()))?
+                .into_iter()
+                .flatten()
+                .map(|v| u32::from_be_bytes(v.as_slice().try_into().unwrap()))
                 .collect(),
-            TestCommandType::Put(ref v) => cmd
-                .keys
-                .iter()
-                .filter_map(|key| {
-                    let key = key.to_be_bytes().to_vec();
-                    store
-                        .insert(key, v.to_be_bytes().to_vec())
-                        .map(|v| u32::from_be_bytes(v.as_slice().try_into().unwrap()))
-                })
-                .collect(),
+            TestCommandType::Put(ref v) => {
+                let value = v.to_be_bytes().to_vec();
+                let wr_ops = keys
+                    .into_iter()
+                    .map(|key| WriteOperation::new_put(TEST_TABLE, key, value.clone()))
+                    .collect();
+                self.store
+                    .write_batch(wr_ops, true)
+                    .map_err(|e| ExecuteError(e.to_string()))?;
+                TestCommandResult::default()
+            }
         };
         self.exe_sender
             .send((cmd.clone(), result.clone()))
@@ -214,28 +217,28 @@ impl CommandExecutor<TestCommand> for TestCE {
         Ok(self.last_applied.load(Ordering::Relaxed))
     }
 
-    async fn snapshot(&self) -> Result<SnapshotProxy, Self::Error> {
-        let mut ss = MemorySnapshot::default();
-        let buf = bincode::serialize(&*self.store.lock()).unwrap();
-        ss.write_all(&buf).await.unwrap();
-        debug!("{} takes a snapshot", self.server_id);
-        Ok(SnapshotProxy::Memory(ss))
+    async fn snapshot(&self) -> Result<Snapshot, Self::Error> {
+        self.store
+            .get_snapshot("", &[TEST_TABLE])
+            .map_err(|e| ExecuteError(e.to_string()))
     }
 
-    async fn reset(&self, snapshot: Option<(SnapshotProxy, LogIndex)>) -> Result<(), Self::Error> {
+    async fn reset(&self, snapshot: Option<(Snapshot, LogIndex)>) -> Result<(), Self::Error> {
         let Some((mut snapshot, index)) = snapshot else {
             self.last_applied.store(0, Ordering::Relaxed);
-            self.store.lock().clear();
+            let ops = vec![WriteOperation::new_delete_range(TEST_TABLE, &[], &[0xff])];
+            self.store
+                .write_batch(ops, true)
+                .map_err(|e| ExecuteError(e.to_string()))?;
             return Ok(());
         };
         self.last_applied
             .store(index.numeric_cast(), Ordering::Relaxed);
         snapshot.rewind().unwrap();
-        let mut buffer = vec![0; snapshot.size().numeric_cast()];
-        snapshot.read_exact(&mut buffer).await.unwrap();
-        let mut store_w = self.store.lock();
-        *store_w = bincode::deserialize(buffer.as_slice()).unwrap();
-        debug!("{:?}", store_w);
+        self.store
+            .apply_snapshot(snapshot, &[TEST_TABLE])
+            .await
+            .unwrap();
         Ok(())
     }
 }
@@ -249,7 +252,7 @@ impl TestCE {
         Self {
             server_id,
             last_applied: Arc::new(AtomicU64::new(0)),
-            store: Arc::new(Mutex::new(HashMap::new())),
+            store: Arc::new(Engine::new(EngineType::Memory, &[TEST_TABLE]).unwrap()),
             exe_sender,
             after_sync_sender,
         }
@@ -260,7 +263,7 @@ impl TestCE {
 pub(crate) struct TestCESimple {
     server_id: ServerId,
     last_applied: Arc<AtomicU64>,
-    store: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
+    store: Arc<Engine>,
 }
 
 #[async_trait]
@@ -273,30 +276,33 @@ impl CommandExecutor<TestCommand> for TestCESimple {
             return Err(ExecuteError("fail".to_owned()));
         }
 
-        let mut store = self.store.lock();
         debug!("{} execute cmd({})", self.server_id, cmd.id());
 
+        let keys = cmd
+            .keys
+            .iter()
+            .map(|k| k.to_be_bytes().to_vec())
+            .collect_vec();
         let result: TestCommandResult = match cmd.cmd_type {
-            TestCommandType::Get => cmd
-                .keys
-                .iter()
-                .filter_map(|key| {
-                    let key = key.to_be_bytes().to_vec();
-                    store
-                        .get(&key)
-                        .map(|v| u32::from_be_bytes(v.as_slice().try_into().unwrap()))
-                })
+            TestCommandType::Get => self
+                .store
+                .get_multi(TEST_TABLE, &keys)
+                .map_err(|e| ExecuteError(e.to_string()))?
+                .into_iter()
+                .flatten()
+                .map(|v| u32::from_be_bytes(v.as_slice().try_into().unwrap()))
                 .collect(),
-            TestCommandType::Put(ref v) => cmd
-                .keys
-                .iter()
-                .filter_map(|key| {
-                    let key = key.to_be_bytes().to_vec();
-                    store
-                        .insert(key, v.to_be_bytes().to_vec())
-                        .map(|v| u32::from_be_bytes(v.as_slice().try_into().unwrap()))
-                })
-                .collect(),
+            TestCommandType::Put(ref v) => {
+                let value = v.to_be_bytes().to_vec();
+                let wr_ops = keys
+                    .into_iter()
+                    .map(|key| WriteOperation::new_put(TEST_TABLE, key, value.clone()))
+                    .collect();
+                self.store
+                    .write_batch(wr_ops, true)
+                    .map_err(|e| ExecuteError(e.to_string()))?;
+                TestCommandResult::default()
+            }
         };
         Ok(result)
     }
@@ -321,28 +327,28 @@ impl CommandExecutor<TestCommand> for TestCESimple {
         Ok(self.last_applied.load(Ordering::Relaxed))
     }
 
-    async fn snapshot(&self) -> Result<SnapshotProxy, Self::Error> {
-        let mut ss = MemorySnapshot::default();
-        let buf = bincode::serialize(&*self.store.lock()).unwrap();
-        ss.write_all(&buf).await.unwrap();
-        debug!("{} takes a snapshot", self.server_id);
-        Ok(SnapshotProxy::Memory(ss))
+    async fn snapshot(&self) -> Result<Snapshot, Self::Error> {
+        self.store
+            .get_snapshot("", &[TEST_TABLE])
+            .map_err(|e| ExecuteError(e.to_string()))
     }
 
-    async fn reset(&self, snapshot: Option<(SnapshotProxy, LogIndex)>) -> Result<(), Self::Error> {
+    async fn reset(&self, snapshot: Option<(Snapshot, LogIndex)>) -> Result<(), Self::Error> {
         let Some((mut snapshot, index)) = snapshot else {
             self.last_applied.store(0, Ordering::Relaxed);
-            self.store.lock().clear();
+            let ops = vec![WriteOperation::new_delete_range(TEST_TABLE, &[], &[0xff])];
+            self.store
+                .write_batch(ops, true)
+                .map_err(|e| ExecuteError(e.to_string()))?;
             return Ok(());
         };
         self.last_applied
             .store(index.numeric_cast(), Ordering::Relaxed);
         snapshot.rewind().unwrap();
-        let mut buffer = vec![0; snapshot.size().numeric_cast()];
-        snapshot.read_exact(&mut buffer).await.unwrap();
-        let mut store_w = self.store.lock();
-        *store_w = bincode::deserialize(buffer.as_slice()).unwrap();
-        debug!("{:?}", store_w);
+        self.store
+            .apply_snapshot(snapshot, &[TEST_TABLE])
+            .await
+            .unwrap();
         Ok(())
     }
 }
@@ -352,7 +358,7 @@ impl TestCESimple {
         Self {
             server_id,
             last_applied: Arc::new(AtomicU64::new(0)),
-            store: Arc::new(Mutex::new(HashMap::new())),
+            store: Arc::new(Engine::new(EngineType::Memory, &[TEST_TABLE]).unwrap()),
         }
     }
 }

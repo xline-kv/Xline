@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use engine::snapshot_api::SnapshotProxy;
+use engine::Snapshot;
 
 use super::{db::WriteOp, ExecuteError};
 
@@ -42,10 +42,10 @@ pub trait StorageApi: Send + Sync + 'static + std::fmt::Debug {
     /// # Errors
     ///
     /// if error occurs in storage, return `Err(error)`
-    async fn reset(&self, snapshot: Option<SnapshotProxy>) -> Result<(), ExecuteError>;
+    async fn reset(&self, snapshot: Option<Snapshot>) -> Result<(), ExecuteError>;
 
     /// Get the snapshot of the storage
-    fn get_snapshot(&self, snap_path: impl AsRef<Path>) -> Result<SnapshotProxy, ExecuteError>;
+    fn get_snapshot(&self, snap_path: impl AsRef<Path>) -> Result<Snapshot, ExecuteError>;
 
     /// Flush the operations to storage
     fn flush_ops(&self, ops: Vec<WriteOp>) -> Result<(), ExecuteError>;

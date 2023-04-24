@@ -20,4 +20,7 @@ pub enum EngineError {
     /// The Underlying Database Error
     #[error("The Underlying Database Error: {0}")]
     UnderlyingError(String),
+    /// The Snapshot is invalid
+    #[error("The Snapshot is invalid")]
+    InvalidSnapshot,
 }

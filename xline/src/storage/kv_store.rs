@@ -796,11 +796,11 @@ mod test {
     use utils::config::StorageConfig;
 
     use super::*;
-    use crate::{rpc::RequestOp, storage::db::DBProxy};
+    use crate::{rpc::RequestOp, storage::db::DB};
 
     #[tokio::test]
     async fn test_keys_only() -> Result<(), ExecuteError> {
-        let db = DBProxy::open(&StorageConfig::Memory)?;
+        let db = DB::open(&StorageConfig::Memory)?;
         let store = init_store(db).await?;
 
         let request = RangeRequest {
@@ -820,7 +820,7 @@ mod test {
 
     #[tokio::test]
     async fn test_range_empty() -> Result<(), ExecuteError> {
-        let db = DBProxy::open(&StorageConfig::Memory)?;
+        let db = DB::open(&StorageConfig::Memory)?;
         let store = init_store(db).await?;
 
         let request = RangeRequest {
@@ -838,7 +838,7 @@ mod test {
 
     #[tokio::test]
     async fn test_range_filter() -> Result<(), ExecuteError> {
-        let db = DBProxy::open(&StorageConfig::Memory)?;
+        let db = DB::open(&StorageConfig::Memory)?;
         let store = init_store(db).await?;
 
         let request = RangeRequest {
@@ -861,7 +861,7 @@ mod test {
 
     #[tokio::test]
     async fn test_range_sort() -> Result<(), ExecuteError> {
-        let db = DBProxy::open(&StorageConfig::Memory)?;
+        let db = DB::open(&StorageConfig::Memory)?;
         let store = init_store(db).await?;
         let keys = ["a", "b", "c", "d", "e"];
         let reversed_keys = ["e", "d", "c", "b", "a"];
@@ -906,7 +906,7 @@ mod test {
 
     #[tokio::test]
     async fn test_recover() -> Result<(), ExecuteError> {
-        let db = DBProxy::open(&StorageConfig::Memory)?;
+        let db = DB::open(&StorageConfig::Memory)?;
         let _store = init_store(Arc::clone(&db)).await?;
 
         let new_store = init_empty_store(db);
@@ -968,7 +968,7 @@ mod test {
             }
             .into(),
         );
-        let db = DBProxy::open(&StorageConfig::Memory)?;
+        let db = DB::open(&StorageConfig::Memory)?;
         let store = init_store(db).await?;
         let (_ignore, ops) = store.after_sync(&txn_req).await?;
         store.inner.db.flush_ops(ops)?;
@@ -995,7 +995,7 @@ mod test {
         }
     }
 
-    async fn init_store(db: Arc<DBProxy>) -> Result<KvStore<DBProxy>, ExecuteError> {
+    async fn init_store(db: Arc<DB>) -> Result<KvStore<DB>, ExecuteError> {
         let store = init_empty_store(db);
         let keys = vec!["a", "b", "c", "d", "e"];
         let vals = vec!["a", "b", "c", "d", "e"];
@@ -1015,7 +1015,7 @@ mod test {
         Ok(store)
     }
 
-    fn init_empty_store(db: Arc<DBProxy>) -> KvStore<DBProxy> {
+    fn init_empty_store(db: Arc<DB>) -> KvStore<DB> {
         let lease_collection = Arc::new(LeaseCollection::new(0));
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let index = Arc::new(Index::new());

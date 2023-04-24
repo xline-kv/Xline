@@ -289,7 +289,7 @@ where
                     vec![]
                 })
         };
-
+        // sync a new command
         self.watcher_map.write().insert(Arc::new(watcher));
 
         (initial_events, revision)

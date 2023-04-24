@@ -14,7 +14,7 @@ use std::{
 
 use async_trait::async_trait;
 use curp::{client::Client, server::Rpc, LogIndex, ProtocolServer, SnapshotAllocator, TxFilter};
-use engine::snapshot_api::{MemorySnapshot, SnapshotProxy};
+use engine::{Engine, EngineType, Snapshot};
 use futures::future::join_all;
 use itertools::Itertools;
 use parking_lot::Mutex;
@@ -45,9 +45,8 @@ struct MemorySnapshotAllocator;
 
 #[async_trait]
 impl SnapshotAllocator for MemorySnapshotAllocator {
-    async fn allocate_new_snapshot(&self) -> Result<SnapshotProxy, Box<dyn Error>> {
-        let snapshot = MemorySnapshot::default();
-        Ok(SnapshotProxy::Memory(snapshot))
+    async fn allocate_new_snapshot(&self) -> Result<Snapshot, Box<dyn Error>> {
+        Ok(Snapshot::new_for_receiving(EngineType::Memory)?)
     }
 }
 
@@ -94,7 +93,7 @@ pub struct CurpNode {
     pub addr: String,
     pub exe_rx: mpsc::UnboundedReceiver<(TestCommand, TestCommandResult)>,
     pub as_rx: mpsc::UnboundedReceiver<(TestCommand, LogIndex)>,
-    pub store: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
+    pub store: Arc<Engine>,
     pub rt: Runtime,
     pub switch: Arc<AtomicBool>,
     pub storage_path: String,

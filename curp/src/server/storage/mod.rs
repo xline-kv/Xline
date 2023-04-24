@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use engine::error::EngineError;
+use engine::EngineError;
 use thiserror::Error;
 
 use crate::{cmd::Command, log_entry::LogEntry, ServerId};

@@ -11,7 +11,7 @@ use tokio::{
     time::{self, Duration},
 };
 use utils::config::{default_range_retry_timeout, ClientTimeout, CurpConfig, StorageConfig};
-use xline::{client::Client, server::XlineServer, storage::db::DBProxy};
+use xline::{client::Client, server::XlineServer, storage::db::DB};
 
 /// Cluster
 pub struct Cluster {
@@ -74,7 +74,7 @@ impl Cluster {
                 path
             };
             #[allow(clippy::unwrap_used)]
-            let db = DBProxy::open(&StorageConfig::RocksDB(path.clone())).unwrap();
+            let db = DB::open(&StorageConfig::RocksDB(path.clone())).unwrap();
             tokio::spawn(async move {
                 let server = XlineServer::new(
                     name,
