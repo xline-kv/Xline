@@ -20,8 +20,11 @@ async fn test_snapshot_and_restore() -> Result<(), Box<dyn std::error::Error>> {
         cluster.start().await;
         let client = cluster.client().await;
         let _ignore = client.put(PutRequest::new("key", "value")).await?;
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        let mut maintenance_client = client.maintenance_client();
+        tokio::time::sleep(Duration::from_millis(100)).await; // TODO: use `propose_index` and remove this sleep after we finished our client.
+        let mut maintenance_client =
+            etcd_client::Client::connect(vec![cluster.addrs()["server0"].to_string()], None)
+                .await?
+                .maintenance_client();
         let mut stream = maintenance_client.snapshot().await?;
         let mut snapshot = tokio::fs::File::create(&snapshot_path).await?;
         while let Some(chunk) = stream.message().await? {
