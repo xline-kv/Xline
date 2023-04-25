@@ -1,10 +1,11 @@
-use std::{sync::Arc, time::Duration};
+use std::{pin::Pin, sync::Arc, time::Duration};
 
+use async_stream::{stream, try_stream};
 use clippy_utilities::Cast;
 use curp::{client::Client, cmd::ProposeId, error::ProposeError};
-use tokio::{sync::mpsc, time};
-use tokio_stream::{wrappers::ReceiverStream, StreamExt};
-use tracing::{debug, info, warn};
+use futures::stream::Stream;
+use tokio::time;
+use tracing::{debug, warn};
 use uuid::Uuid;
 
 use super::{
@@ -23,8 +24,6 @@ use crate::{
     storage::{storage_api::StorageApi, AuthStore, LeaseStore},
 };
 
-/// Default channel size
-const CHANNEL_SIZE: usize = 128;
 /// Default Lease Request Time
 const DEFAULT_LEASE_REQUEST_TIME: Duration = Duration::from_millis(500);
 
@@ -175,77 +174,50 @@ where
     async fn leader_keep_alive(
         &self,
         mut request_stream: tonic::Streaming<LeaseKeepAliveRequest>,
-    ) -> ReceiverStream<Result<LeaseKeepAliveResponse, tonic::Status>> {
-        let (response_tx, response_rx) = mpsc::channel(CHANNEL_SIZE);
-        let _hd = tokio::spawn({
-            let lease_storage = Arc::clone(&self.lease_storage);
-            async move {
-                while let Some(req_result) = request_stream.next().await {
-                    match req_result {
-                        Ok(keep_alive_req) => {
-                            debug!("Receive LeaseKeepAliveRequest {:?}", keep_alive_req);
-                            // TODO wait applied index
-                            let res = lease_storage
-                                .keep_alive(keep_alive_req.id)
-                                .map(|ttl| LeaseKeepAliveResponse {
-                                    id: keep_alive_req.id,
-                                    ttl,
-                                    ..LeaseKeepAliveResponse::default()
-                                })
-                                .map_err(|e| {
-                                    tonic::Status::invalid_argument(format!(
-                                        "Keep alive error: {e}",
-                                    ))
-                                });
-                            assert!(
-                                response_tx.send(res).await.is_ok(),
-                                "Command receiver dropped"
-                            );
-                        }
-                        Err(e) => {
-                            warn!("Receive LeaseKeepAliveRequest error {:?}", e);
-                            break;
-                        }
-                    }
-                }
+    ) -> Pin<Box<dyn Stream<Item = Result<LeaseKeepAliveResponse, tonic::Status>> + Send>> {
+        let lease_storage = Arc::clone(&self.lease_storage);
+        let stream = try_stream! {
+            while let Some(keep_alive_req) = request_stream.message().await? {
+                debug!("Receive LeaseKeepAliveRequest {:?}", keep_alive_req);
+                // TODO wait applied index
+                let ttl = lease_storage.keep_alive(keep_alive_req.id).map_err(|e| {
+                    tonic::Status::invalid_argument(format!("Keep alive error: {e}",))
+                })?;
+                yield LeaseKeepAliveResponse {
+                    id: keep_alive_req.id,
+                    ttl,
+                    ..LeaseKeepAliveResponse::default()
+                };
             }
-        });
-        ReceiverStream::new(response_rx)
+        };
+        Box::pin(stream)
     }
 
     /// Handle keep alive at follower
     async fn follower_keep_alive(
         &self,
         mut request_stream: tonic::Streaming<LeaseKeepAliveRequest>,
-    ) -> Result<ReceiverStream<Result<LeaseKeepAliveResponse, tonic::Status>>, tonic::Status> {
-        // TODO: refactor stream forward in a easy way
+    ) -> Result<
+        Pin<Box<dyn Stream<Item = Result<LeaseKeepAliveResponse, tonic::Status>> + Send>>,
+        tonic::Status,
+    > {
         let leader_addr = self.state.wait_leader().await?;
         let mut lease_client = LeaseClient::connect(format!("http://{leader_addr}"))
             .await
             .map_err(|_e| tonic::Status::internal("Connect to leader error: {e}"))?;
 
-        let (request_tx, request_rx) = mpsc::channel(CHANNEL_SIZE);
-        let (response_tx, response_rx) = mpsc::channel(CHANNEL_SIZE);
-
-        let _req_handle = tokio::spawn(async move {
-            while let Some(Ok(req)) = request_stream.next().await {
-                assert!(request_tx.send(req).await.is_ok(), "receiver dropped");
+        let redirect_stream = stream! {
+            while let Ok(Some(req)) = request_stream.message().await {
+                yield req;
             }
-            info!("redirect stream closed");
-        });
+        };
 
-        let _client_handle = tokio::spawn(async move {
-            let mut stream = lease_client
-                .lease_keep_alive(ReceiverStream::new(request_rx))
-                .await
-                .unwrap_or_else(|e| panic!("Stream redirect to leader failed: {e:?}"))
-                .into_inner();
-            while let Some(res) = stream.next().await {
-                assert!(response_tx.send(res).await.is_ok(), "receiver dropped");
-            }
-        });
+        let stream = lease_client
+            .lease_keep_alive(redirect_stream)
+            .await?
+            .into_inner();
 
-        Ok(ReceiverStream::new(response_rx))
+        Ok(Box::pin(stream))
     }
 }
 
@@ -303,7 +275,8 @@ where
     }
 
     ///Server streaming response type for the LeaseKeepAlive method.
-    type LeaseKeepAliveStream = ReceiverStream<Result<LeaseKeepAliveResponse, tonic::Status>>;
+    type LeaseKeepAliveStream =
+        Pin<Box<dyn Stream<Item = Result<LeaseKeepAliveResponse, tonic::Status>> + Send>>;
 
     /// LeaseKeepAlive keeps the lease alive by streaming keep alive requests from the client
     /// to the server and streaming keep alive responses from the server to the client.
@@ -313,12 +286,12 @@ where
     ) -> Result<tonic::Response<Self::LeaseKeepAliveStream>, tonic::Status> {
         debug!("Receive LeaseKeepAliveRequest {:?}", request);
         let request_stream = request.into_inner();
-        let response_stream = if self.is_leader() {
+        let stream = if self.is_leader() {
             self.leader_keep_alive(request_stream).await
         } else {
             self.follower_keep_alive(request_stream).await?
         };
-        Ok(tonic::Response::new(response_stream))
+        Ok(tonic::Response::new(stream))
     }
 
     /// LeaseTimeToLive retrieves lease information.
