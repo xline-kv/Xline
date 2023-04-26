@@ -128,7 +128,7 @@ where
 
         let mut ok_cnt: usize = 0;
         let mut execute_result: Option<C::ER> = None;
-        let superquorum = self.superquorum();
+        let superquorum = superquorum(self.connects.len());
         while let Some(resp_result) = rpcs.next().await {
             let resp = match resp_result {
                 Ok(resp) => resp.into_inner(),
@@ -520,18 +520,18 @@ where
     pub fn leader_rx(&self) -> broadcast::Receiver<ServerId> {
         self.state.read().leader_tx.subscribe()
     }
+}
 
-    /// Get the superquorum for curp protocol
-    /// Although curp can proceed with f + 1 available replicas, it needs f + 1 + (f + 1)/2 replicas
-    /// (for superquorum of witenesses) to use 1 RTT operations. With less than superquorum replicas,
-    /// clients must ask masters to commit operations in f + 1 replicas before returning result.(2 RTTs).
-    #[inline]
-    fn superquorum(&self) -> usize {
-        let fault_tolerance = self.connects.len().wrapping_div(2);
-        fault_tolerance
-            .wrapping_add(fault_tolerance.wrapping_add(1).wrapping_div(2))
-            .wrapping_add(1)
-    }
+/// Get the superquorum for curp protocol
+/// Although curp can proceed with f + 1 available replicas, it needs f + 1 + (f + 1)/2 replicas
+/// (for superquorum of witenesses) to use 1 RTT operations. With less than superquorum replicas,
+/// clients must ask masters to commit operations in f + 1 replicas before returning result.(2 RTTs).
+#[inline]
+fn superquorum(nodes: usize) -> usize {
+    let fault_tolerance = nodes.wrapping_div(2);
+    fault_tolerance
+        .wrapping_add(fault_tolerance.wrapping_add(1).wrapping_div(2))
+        .wrapping_add(1)
 }
 
 #[cfg(test)]
@@ -551,5 +551,13 @@ mod tests {
         state.set_leader("S3".to_owned());
         assert!(rx.recv().await.is_err());
         assert_eq!(rx.recv().await.unwrap().as_str(), "S3");
+    }
+
+    #[test]
+    fn superquorum_should_work() {
+        assert_eq!(superquorum(11), 9);
+        assert_eq!(superquorum(97), 73);
+        assert_eq!(superquorum(31), 24);
+        assert_eq!(superquorum(59), 45);
     }
 }

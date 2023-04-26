@@ -224,9 +224,8 @@ mod test {
 
     use clippy_utilities::NumericCast;
 
-    use crate::snapshot_api::SnapshotApi;
-
     use super::*;
+    use crate::snapshot_api::SnapshotApi;
     const TESTTABLES: [&'static str; 3] = ["kv", "lease", "auth"];
 
     #[test]
