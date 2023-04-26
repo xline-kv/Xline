@@ -15,9 +15,8 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
 };
 
-use crate::error::EngineError;
-
 use super::SnapshotApi;
+use crate::error::EngineError;
 
 /// Human readable format for `RocksEngine`
 #[derive(Debug, Default, Serialize, Deserialize)]
