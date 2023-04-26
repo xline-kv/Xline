@@ -16,7 +16,6 @@ use pbkdf2::{
     password_hash::{PasswordHash, PasswordVerifier},
     Pbkdf2,
 };
-use tokio::sync::mpsc;
 use utils::parking_lot_lock::RwLockMap;
 
 use super::{
@@ -45,7 +44,7 @@ use crate::{
     storage::{
         auth_store::backend::AuthStoreBackend,
         db::WriteOp,
-        lease_store::{Lease, LeaseMessage},
+        lease_store::{Lease, LeaseCollection},
         storage_api::StorageApi,
         ExecuteError,
     },
@@ -63,8 +62,8 @@ where
     enabled: AtomicBool,
     /// Revision
     revision: RevisionNumber,
-    /// Lease command sender
-    lease_cmd_tx: mpsc::Sender<LeaseMessage>,
+    /// Lease collection
+    lease_collection: Arc<LeaseCollection>,
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
     /// Permission cache
@@ -80,7 +79,7 @@ where
     /// New `AuthStore`
     #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
     pub(crate) fn new(
-        lease_cmd_tx: mpsc::Sender<LeaseMessage>,
+        lease_collection: Arc<LeaseCollection>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
         header_gen: Arc<HeaderGenerator>,
         storage: Arc<S>,
@@ -90,7 +89,7 @@ where
             backend,
             enabled: AtomicBool::new(false),
             revision: RevisionNumber::default(),
-            lease_cmd_tx,
+            lease_collection,
             header_gen,
             permission_cache: RwLock::new(PermissionCache::new()),
             token_manager: key_pair.map(|(encoding_key, decoding_key)| {
@@ -100,13 +99,8 @@ where
     }
 
     /// Get Lease by lease id
-    async fn get_lease(&self, lease_id: i64) -> Option<Lease> {
-        let (detach, rx) = LeaseMessage::look_up(lease_id);
-        assert!(
-            self.lease_cmd_tx.send(detach).await.is_ok(),
-            "lease_cmd_tx is closed"
-        );
-        rx.await.unwrap_or_else(|_e| panic!("res sender is closed"))
+    fn look_up(&self, lease_id: i64) -> Option<Lease> {
+        self.lease_collection.look_up(lease_id)
     }
 
     /// Get enabled of Auth store
@@ -921,10 +915,7 @@ where
     }
 
     /// check if the request is permitted
-    pub(crate) async fn check_permission(
-        &self,
-        wrapper: &RequestWithToken,
-    ) -> Result<(), ExecuteError> {
+    pub(crate) fn check_permission(&self, wrapper: &RequestWithToken) -> Result<(), ExecuteError> {
         if !self.is_enabled() {
             return Ok(());
         }
@@ -951,17 +942,16 @@ where
                     self.check_range_permission(&username, range_req)?;
                 }
                 RequestWrapper::PutRequest(ref put_req) => {
-                    self.check_put_permission(&username, put_req).await?;
+                    self.check_put_permission(&username, put_req)?;
                 }
                 RequestWrapper::DeleteRangeRequest(ref del_range_req) => {
                     self.check_delete_permission(&username, del_range_req)?;
                 }
                 RequestWrapper::TxnRequest(ref txn_req) => {
-                    self.check_txn_permission(&username, txn_req).await?;
+                    self.check_txn_permission(&username, txn_req)?;
                 }
                 RequestWrapper::LeaseRevokeRequest(ref lease_revoke_req) => {
-                    self.check_lease_revoke_permission(&username, lease_revoke_req)
-                        .await?;
+                    self.check_lease_revoke_permission(&username, lease_revoke_req)?;
                 }
                 RequestWrapper::AuthUserGetRequest(ref user_get_req) => {
                     self.check_admin_permission(&username).map_or_else(
@@ -1004,15 +994,11 @@ where
     }
 
     /// check if put request is permitted
-    async fn check_put_permission(
-        &self,
-        username: &str,
-        req: &PutRequest,
-    ) -> Result<(), ExecuteError> {
+    fn check_put_permission(&self, username: &str, req: &PutRequest) -> Result<(), ExecuteError> {
         if req.prev_kv {
             self.check_op_permission(username, &req.key, &[], Type::Read)?;
         }
-        self.check_lease(username, req.lease).await?;
+        self.check_lease(username, req.lease)?;
         self.check_op_permission(username, &req.key, &[], Type::Write)
     }
 
@@ -1029,11 +1015,7 @@ where
     }
 
     /// check if txn request is permitted
-    async fn check_txn_permission(
-        &self,
-        username: &str,
-        req: &TxnRequest,
-    ) -> Result<(), ExecuteError> {
+    fn check_txn_permission(&self, username: &str, req: &TxnRequest) -> Result<(), ExecuteError> {
         let mut check_queue = VecDeque::new();
         let req = RequestOp {
             request: Some(Request::RequestTxn(req.clone())),
@@ -1045,7 +1027,7 @@ where
                     self.check_range_permission(username, range_req)?;
                 }
                 Some(Request::RequestPut(ref put_req)) => {
-                    self.check_put_permission(username, put_req).await?;
+                    self.check_put_permission(username, put_req)?;
                 }
                 Some(Request::RequestDeleteRange(ref del_range_req)) => {
                     self.check_delete_permission(username, del_range_req)?;
@@ -1070,17 +1052,17 @@ where
     }
 
     /// check if lease revoke request is permitted
-    async fn check_lease_revoke_permission(
+    fn check_lease_revoke_permission(
         &self,
         username: &str,
         req: &LeaseRevokeRequest,
     ) -> Result<(), ExecuteError> {
-        self.check_lease(username, req.id).await
+        self.check_lease(username, req.id)
     }
 
     /// check if user can revoke lease
-    async fn check_lease(&self, username: &str, lease_id: i64) -> Result<(), ExecuteError> {
-        let lease = self.get_lease(lease_id).await;
+    fn check_lease(&self, username: &str, lease_id: i64) -> Result<(), ExecuteError> {
+        let lease = self.look_up(lease_id);
         if let Some(lease) = lease {
             let keys = lease.keys();
             for key in keys {
@@ -1397,8 +1379,8 @@ mod test {
     fn init_empty_store(db: Arc<DBProxy>) -> AuthStore<DBProxy> {
         let key_pair = test_key_pair();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
-        let (lease_cmd_tx, _) = mpsc::channel(1);
-        AuthStore::new(lease_cmd_tx, key_pair, header_gen, db)
+        let lease_collection = Arc::new(LeaseCollection::new());
+        AuthStore::new(lease_collection, key_pair, header_gen, db)
     }
 
     fn exe_and_sync(

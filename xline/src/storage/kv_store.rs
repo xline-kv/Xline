@@ -12,7 +12,7 @@ use tracing::{debug, warn};
 use super::{
     index::{Index, IndexOperate},
     kvwatcher::KvWatcher,
-    lease_store::LeaseMessage,
+    lease_store::LeaseCollection,
     storage_api::StorageApi,
     Revision,
 };
@@ -62,8 +62,8 @@ where
     header_gen: Arc<HeaderGenerator>,
     /// KV update sender
     kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
-    /// Lease command sender
-    lease_cmd_tx: mpsc::Sender<LeaseMessage>,
+    /// Lease collection
+    lease_collection: Arc<LeaseCollection>,
 }
 
 impl<DB> KvStore<DB>
@@ -72,7 +72,7 @@ where
 {
     /// New `KvStore`
     pub(crate) fn new(
-        lease_cmd_tx: mpsc::Sender<LeaseMessage>,
+        lease_collection: Arc<LeaseCollection>,
         header_gen: Arc<HeaderGenerator>,
         storage: Arc<DB>,
         index: Arc<Index>,
@@ -80,7 +80,7 @@ where
         let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
         let inner = Arc::new(KvStoreBackend::new(
             kv_update_tx,
-            lease_cmd_tx,
+            lease_collection,
             header_gen,
             storage,
             index,
@@ -121,8 +121,8 @@ where
     }
 
     /// Recover data from persistent storage
-    pub(crate) async fn recover(&self) -> Result<(), ExecuteError> {
-        self.inner.recover_from_current_db().await
+    pub(crate) fn recover(&self) -> Result<(), ExecuteError> {
+        self.inner.recover_from_current_db()
     }
 }
 
@@ -133,7 +133,7 @@ where
     /// New `KvStoreBackend`
     pub(crate) fn new(
         kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
-        lease_cmd_tx: mpsc::Sender<LeaseMessage>,
+        lease_collection: Arc<LeaseCollection>,
         header_gen: Arc<HeaderGenerator>,
         db: Arc<DB>,
         index: Arc<Index>,
@@ -144,7 +144,7 @@ where
             revision: header_gen.revision_arc(),
             header_gen,
             kv_update_tx,
-            lease_cmd_tx,
+            lease_collection,
         }
     }
 
@@ -309,37 +309,22 @@ where
     }
 
     /// Send get lease to lease store
-    async fn get_lease(&self, key: &[u8]) -> i64 {
-        let (get_lease, rx) = LeaseMessage::get_lease(key);
-        assert!(
-            self.lease_cmd_tx.send(get_lease).await.is_ok(),
-            "lease_cmd_rx is closed"
-        );
-        rx.await.unwrap_or_else(|_e| panic!("res sender is closed"))
+    fn get_lease(&self, key: &[u8]) -> i64 {
+        self.lease_collection.get_lease(key)
     }
 
     /// Send detach to lease store
-    async fn detach(&self, lease_id: i64, key: impl Into<Vec<u8>>) -> Result<(), ExecuteError> {
-        let (detach, rx) = LeaseMessage::detach(lease_id, key);
-        assert!(
-            self.lease_cmd_tx.send(detach).await.is_ok(),
-            "lease_cmd_rx is closed"
-        );
-        rx.await.unwrap_or_else(|_e| panic!("res sender is closed"))
+    fn detach(&self, lease_id: i64, key: impl AsRef<[u8]>) -> Result<(), ExecuteError> {
+        self.lease_collection.detach(lease_id, key.as_ref())
     }
 
     /// Send attach to lease store
-    async fn attach(&self, lease_id: i64, key: impl Into<Vec<u8>>) -> Result<(), ExecuteError> {
-        let (attach, rx) = LeaseMessage::attach(lease_id, key);
-        assert!(
-            self.lease_cmd_tx.send(attach).await.is_ok(),
-            "lease_cmd_rx is closed"
-        );
-        rx.await.unwrap_or_else(|_e| panic!("res sender is closed"))
+    fn attach(&self, lease_id: i64, key: impl Into<Vec<u8>>) -> Result<(), ExecuteError> {
+        self.lease_collection.attach(lease_id, key.into())
     }
 
     /// Recover data from current db
-    async fn recover_from_current_db(&self) -> Result<(), ExecuteError> {
+    fn recover_from_current_db(&self) -> Result<(), ExecuteError> {
         let mut key_to_lease: HashMap<Vec<u8>, i64> = HashMap::new();
         let kvs = self.db.get_all(KV_TABLE)?;
 
@@ -369,7 +354,7 @@ where
         }
 
         for (key, lease_id) in key_to_lease {
-            self.attach(lease_id, key).await?;
+            self.attach(lease_id, key)?;
         }
 
         // compact Lock free
@@ -624,16 +609,11 @@ where
                 debug!("sync range request: {:?}", req);
                 (Vec::new(), Vec::new())
             }
-            RequestWrapper::PutRequest(ref req) => {
-                self.sync_put_request(req, next_revision, 0).await?
-            }
+            RequestWrapper::PutRequest(ref req) => self.sync_put_request(req, next_revision, 0)?,
             RequestWrapper::DeleteRangeRequest(ref req) => {
-                self.sync_delete_range_request(req, next_revision, 0)
-                    .await?
+                self.sync_delete_range_request(req, next_revision, 0)?
             }
-            RequestWrapper::TxnRequest(ref req) => {
-                self.sync_txn_request(req, next_revision).await?
-            }
+            RequestWrapper::TxnRequest(ref req) => self.sync_txn_request(req, next_revision)?,
             _ => {
                 unreachable!("only kv requests can be sent to kv store");
             }
@@ -643,7 +623,7 @@ where
     }
 
     /// Sync `TxnRequest` and return if kvstore is changed
-    async fn sync_txn_request(
+    fn sync_txn_request(
         &self,
         req: &TxnRequest,
         revision: i64,
@@ -656,12 +636,10 @@ where
             let (mut ops, mut events) = match request {
                 Request::RequestRange(_) => (Vec::new(), Vec::new()),
                 Request::RequestPut(ref put_req) => {
-                    self.sync_put_request(put_req, revision, sub_revision)
-                        .await?
+                    self.sync_put_request(put_req, revision, sub_revision)?
                 }
                 Request::RequestDeleteRange(del_req) => {
-                    self.sync_delete_range_request(&del_req, revision, sub_revision)
-                        .await?
+                    self.sync_delete_range_request(&del_req, revision, sub_revision)?
                 }
                 Request::RequestTxn(txn_req) => {
                     let success = txn_req
@@ -685,7 +663,7 @@ where
     }
 
     /// Sync `PutRequest` and return if kvstore is changed
-    async fn sync_put_request(
+    fn sync_put_request(
         &self,
         req: &PutRequest,
         revision: i64,
@@ -715,15 +693,13 @@ where
             }
         }
 
-        let old_lease = self.get_lease(&kv.key).await;
+        let old_lease = self.get_lease(&kv.key);
         if old_lease != 0 {
             self.detach(old_lease, kv.key.as_slice())
-                .await
                 .unwrap_or_else(|e| warn!("Failed to detach lease from a key, error: {:?}", e));
         }
         if req.lease != 0 {
             self.attach(req.lease, kv.key.as_slice())
-                .await // already checked, lease is not 0
                 .unwrap_or_else(|e| panic!("unexpected error from lease Attach: {e}"));
         }
         ops.push(WriteOp::PutKeyValue(
@@ -791,7 +767,7 @@ where
     }
 
     /// Sync `DeleteRangeRequest` and return if kvstore is changed
-    async fn sync_delete_range_request(
+    fn sync_delete_range_request(
         &self,
         req: &DeleteRangeRequest,
         revision: i64,
@@ -805,9 +781,8 @@ where
         let (mut del_ops, prev_kvs) = self.mark_deletions(&revisions)?;
         ops.append(&mut del_ops);
         for kv in &prev_kvs {
-            let lease_id = self.get_lease(&kv.key).await;
+            let lease_id = self.get_lease(&kv.key);
             self.detach(lease_id, kv.key.as_slice())
-                .await
                 .unwrap_or_else(|e| warn!("Failed to detach lease from a key, error: {:?}", e));
         }
         let events = Self::new_deletion_events(revision, prev_kvs);
@@ -944,7 +919,7 @@ mod test {
         let res = new_store.inner.handle_range_request(&range_req)?;
         assert_eq!(res.kvs.len(), 0);
 
-        new_store.inner.recover_from_current_db().await?;
+        new_store.inner.recover_from_current_db()?;
 
         let res = new_store.inner.handle_range_request(&range_req)?;
         assert_eq!(res.kvs.len(), 1);
@@ -1041,14 +1016,9 @@ mod test {
     }
 
     fn init_empty_store(db: Arc<DBProxy>) -> KvStore<DBProxy> {
+        let lease_collection = Arc::new(LeaseCollection::new());
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
-        let (lease_cmd_tx, mut lease_cmd_rx) = mpsc::channel(128);
         let index = Arc::new(Index::new());
-        let _handle = tokio::spawn(async move {
-            while let Some(LeaseMessage::GetLease(tx, _)) = lease_cmd_rx.recv().await {
-                assert!(tx.send(0).is_ok());
-            }
-        });
-        KvStore::new(lease_cmd_tx, header_gen, db, index)
+        KvStore::new(lease_collection, header_gen, db, index)
     }
 }
