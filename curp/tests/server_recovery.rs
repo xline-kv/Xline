@@ -280,7 +280,10 @@ async fn old_leader_will_discard_spec_exe_cmds() {
     sleep_millis(100).await;
     let leader1_store = Arc::clone(&group.get_node(&leader1).store);
     leader1_store.map_lock(|store_l| {
-        assert_eq!(*store_l, HashMap::from_iter([(0, 1)]));
+        assert_eq!(
+            *store_l,
+            HashMap::from_iter([(0u32.to_be_bytes().to_vec(), 1u32.to_be_bytes().to_vec())])
+        );
     });
 
     // 3: recover all others and disable leader, a new leader will be elected
@@ -297,7 +300,10 @@ async fn old_leader_will_discard_spec_exe_cmds() {
     group.enable_node(&leader1);
     sleep_secs(1).await;
     leader1_store.map_lock(|store_l| {
-        assert_eq!(*store_l, HashMap::from_iter([(0, 0)]));
+        assert_eq!(
+            *store_l,
+            HashMap::from_iter([(0u32.to_be_bytes().to_vec(), 0u32.to_be_bytes().to_vec())])
+        );
     });
 
     // 5: the client should also get the original state

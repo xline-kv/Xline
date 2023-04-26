@@ -82,7 +82,7 @@ pub struct CurpNode {
     pub addr: String,
     pub exe_rx: mpsc::UnboundedReceiver<(TestCommand, TestCommandResult)>,
     pub as_rx: mpsc::UnboundedReceiver<(TestCommand, LogIndex)>,
-    pub store: Arc<Mutex<HashMap<u32, u32>>>,
+    pub store: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
     pub rt: Runtime,
     pub switch: Arc<AtomicBool>,
     pub storage_path: String,

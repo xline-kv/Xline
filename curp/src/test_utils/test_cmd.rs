@@ -135,7 +135,7 @@ impl ConflictCheck for TestCommand {
 pub(crate) struct TestCE {
     server_id: ServerId,
     last_applied: Arc<AtomicU64>,
-    pub(crate) store: Arc<Mutex<HashMap<u32, u32>>>,
+    pub(crate) store: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
     exe_sender: mpsc::UnboundedSender<(TestCommand, TestCommandResult)>,
     after_sync_sender: mpsc::UnboundedSender<(TestCommand, LogIndex)>,
 }
@@ -166,15 +166,24 @@ impl CommandExecutor<TestCommand> for TestCE {
             TestCommandType::Get => cmd
                 .keys
                 .iter()
-                .filter_map(|key| store.get(key).copied())
+                .filter_map(|key| {
+                    let key = key.to_be_bytes().to_vec();
+                    store
+                        .get(&key)
+                        .map(|v| u32::from_be_bytes(v.as_slice().try_into().unwrap()))
+                })
                 .collect(),
-            TestCommandType::Put(v) => cmd
+            TestCommandType::Put(ref v) => cmd
                 .keys
                 .iter()
-                .filter_map(|key| store.insert(key.to_owned(), v))
+                .filter_map(|key| {
+                    let key = key.to_be_bytes().to_vec();
+                    store
+                        .insert(key, v.to_be_bytes().to_vec())
+                        .map(|v| u32::from_be_bytes(v.as_slice().try_into().unwrap()))
+                })
                 .collect(),
         };
-
         self.exe_sender
             .send((cmd.clone(), result.clone()))
             .expect("failed to send exe msg");
@@ -251,7 +260,7 @@ impl TestCE {
 pub(crate) struct TestCESimple {
     server_id: ServerId,
     last_applied: Arc<AtomicU64>,
-    store: Arc<Mutex<HashMap<u32, u32>>>,
+    store: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
 }
 
 #[async_trait]
@@ -271,12 +280,22 @@ impl CommandExecutor<TestCommand> for TestCESimple {
             TestCommandType::Get => cmd
                 .keys
                 .iter()
-                .filter_map(|key| store.get(key).copied())
+                .filter_map(|key| {
+                    let key = key.to_be_bytes().to_vec();
+                    store
+                        .get(&key)
+                        .map(|v| u32::from_be_bytes(v.as_slice().try_into().unwrap()))
+                })
                 .collect(),
-            TestCommandType::Put(v) => cmd
+            TestCommandType::Put(ref v) => cmd
                 .keys
                 .iter()
-                .filter_map(|key| store.insert(key.to_owned(), v))
+                .filter_map(|key| {
+                    let key = key.to_be_bytes().to_vec();
+                    store
+                        .insert(key, v.to_be_bytes().to_vec())
+                        .map(|v| u32::from_be_bytes(v.as_slice().try_into().unwrap()))
+                })
                 .collect(),
         };
         Ok(result)
