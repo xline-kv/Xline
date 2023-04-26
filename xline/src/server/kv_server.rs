@@ -105,13 +105,12 @@ where
     }
 
     /// Execute `RangeRequest` in current node
-    async fn serializable_range(
+    fn serializable_range(
         &self,
         wrapper: &RequestWithToken,
     ) -> Result<tonic::Response<RangeResponse>, tonic::Status> {
         self.auth_storage
             .check_permission(wrapper)
-            .await
             .map_err(|err| tonic::Status::invalid_argument(err.to_string()))?;
         let cmd_res = self
             .kv_storage
@@ -399,7 +398,7 @@ where
         if !is_serializable {
             self.wait_read_state(&cmd).await?;
         }
-        self.serializable_range(cmd.request()).await
+        self.serializable_range(cmd.request())
     }
 
     /// Put puts the given key into the key-value store.
