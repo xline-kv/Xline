@@ -1,24 +1,17 @@
 /// Lease
 mod lease;
+/// Lease related structs collection
+mod lease_collection;
 /// Lease heap
 mod lease_queue;
-/// Lease cmd, used by other storages
-mod message;
 
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{sync::Arc, time::Duration};
 
-use clippy_utilities::Cast;
 use log::debug;
-use parking_lot::RwLock;
 use prost::Message;
 use tokio::sync::mpsc;
 
-use self::lease_queue::LeaseQueue;
-pub(crate) use self::{lease::Lease, message::LeaseMessage};
+pub(crate) use self::{lease::Lease, lease_collection::LeaseCollection};
 use super::{
     db::WriteOp,
     index::{Index, IndexOperate},
@@ -43,8 +36,6 @@ use crate::{
 pub(crate) const LEASE_TABLE: &str = "lease";
 /// Max lease ttl
 const MAX_LEASE_TTL: i64 = 9_000_000_000;
-/// Min lease ttl
-const MIN_LEASE_TTL: i64 = 1; // TODO: this num should calculated by election ticks and heartbeat
 
 /// Lease store
 #[derive(Debug)]
@@ -56,133 +47,14 @@ where
     inner: Arc<LeaseStoreBackend<DB>>,
 }
 
-/// Collection of lease related data
-#[derive(Debug)]
-struct LeaseCollection {
-    /// lease id to lease
-    lease_map: HashMap<i64, Lease>,
-    /// key to lease id
-    item_map: HashMap<Vec<u8>, i64>,
-    /// lease queue
-    expired_queue: LeaseQueue,
-}
-
-impl LeaseCollection {
-    /// New `LeaseCollection`
-    fn new() -> Self {
-        Self {
-            lease_map: HashMap::new(),
-            item_map: HashMap::new(),
-            expired_queue: LeaseQueue::new(),
-        }
-    }
-
-    /// Find expired leases
-    fn find_expired_leases(&mut self) -> Vec<i64> {
-        let mut expired_leases = vec![];
-        while let Some(expiry) = self.expired_queue.peek() {
-            if *expiry <= Instant::now() {
-                #[allow(clippy::unwrap_used)] // queue.peek() returns Some
-                let id = self.expired_queue.pop().unwrap();
-                if self.lease_map.contains_key(&id) {
-                    expired_leases.push(id);
-                }
-            } else {
-                break;
-            }
-        }
-        expired_leases
-    }
-
-    /// Renew lease
-    fn renew(&mut self, lease_id: i64) -> Result<i64, ExecuteError> {
-        self.lease_map.get_mut(&lease_id).map_or_else(
-            || Err(ExecuteError::lease_not_found(lease_id)),
-            |lease| {
-                if lease.expired() {
-                    return Err(ExecuteError::lease_expired(lease_id));
-                }
-                let expiry = lease.refresh(Duration::default());
-                let _ignore = self.expired_queue.update(lease_id, expiry);
-                Ok(lease.ttl().as_secs().cast())
-            },
-        )
-    }
-
-    /// Attach key to lease
-    fn attach(&mut self, lease_id: i64, key: Vec<u8>) -> Result<(), ExecuteError> {
-        self.lease_map.get_mut(&lease_id).map_or_else(
-            || Err(ExecuteError::lease_not_found(lease_id)),
-            |lease| {
-                lease.insert_key(key.clone());
-                let _ignore = self.item_map.insert(key, lease_id);
-                Ok(())
-            },
-        )
-    }
-
-    /// Detach key from lease
-    fn detach(&mut self, lease_id: i64, key: &[u8]) -> Result<(), ExecuteError> {
-        self.lease_map.get_mut(&lease_id).map_or_else(
-            || Err(ExecuteError::lease_not_found(lease_id)),
-            |lease| {
-                lease.remove_key(key);
-                let _ignore = self.item_map.remove(key);
-                Ok(())
-            },
-        )
-    }
-
-    /// Check if a lease exists
-    fn contains_lease(&self, lease_id: i64) -> bool {
-        self.lease_map.contains_key(&lease_id)
-    }
-
-    /// Grant a lease
-    fn grant(&mut self, lease_id: i64, ttl: i64, is_leader: bool) -> PbLease {
-        let mut lease = Lease::new(lease_id, ttl.max(MIN_LEASE_TTL).cast());
-        if is_leader {
-            let expiry = lease.refresh(Duration::ZERO);
-            let _ignore = self.expired_queue.insert(lease_id, expiry);
-        } else {
-            lease.forever();
-        }
-        let _ignore = self.lease_map.insert(lease_id, lease.clone());
-        PbLease {
-            id: lease.id(),
-            ttl: lease.ttl().as_secs().cast(),
-            remaining_ttl: lease.remaining_ttl().as_secs().cast(),
-        }
-    }
-
-    /// Revokes a lease
-    fn revoke(&mut self, lease_id: i64) -> Option<Lease> {
-        self.lease_map.remove(&lease_id)
-    }
-
-    /// Demote current node
-    fn demote(&mut self) {
-        self.lease_map.values_mut().for_each(Lease::forever);
-        self.expired_queue.clear();
-    }
-
-    /// Promote current node
-    fn promote(&mut self, extend: Duration) {
-        for lease in self.lease_map.values_mut() {
-            let expiry = lease.refresh(extend);
-            let _ignore = self.expired_queue.insert(lease.id(), expiry);
-        }
-    }
-}
-
 /// Lease store inner
 #[derive(Debug)]
-pub(crate) struct LeaseStoreBackend<DB>
+struct LeaseStoreBackend<DB>
 where
     DB: StorageApi,
 {
     /// lease collection
-    lease_collection: RwLock<LeaseCollection>,
+    lease_collection: Arc<LeaseCollection>,
     /// Db to store lease
     db: Arc<DB>,
     /// Key to revision index
@@ -204,51 +76,23 @@ where
     /// New `LeaseStore`
     #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
     pub(crate) fn new(
-        mut lease_cmd_rx: mpsc::Receiver<LeaseMessage>,
+        lease_collection: Arc<LeaseCollection>,
         state: Arc<State>,
         header_gen: Arc<HeaderGenerator>,
         db: Arc<DB>,
         index: Arc<Index>,
         kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
     ) -> Self {
-        let inner = Arc::new(LeaseStoreBackend::new(
-            state,
-            header_gen,
-            db,
-            index,
-            kv_update_tx,
-        ));
-        let _handle = tokio::spawn({
-            let inner = Arc::clone(&inner);
-            async move {
-                while let Some(lease_msg) = lease_cmd_rx.recv().await {
-                    match lease_msg {
-                        LeaseMessage::Attach(tx, lease_id, key) => {
-                            assert!(
-                                tx.send(inner.attach(lease_id, key)).is_ok(),
-                                "receiver is closed"
-                            );
-                        }
-                        LeaseMessage::Detach(tx, lease_id, key) => {
-                            assert!(
-                                tx.send(inner.detach(lease_id, &key)).is_ok(),
-                                "receiver is closed"
-                            );
-                        }
-                        LeaseMessage::GetLease(tx, key) => {
-                            assert!(tx.send(inner.get_lease(&key)).is_ok(), "receiver is closed");
-                        }
-                        LeaseMessage::LookUp(tx, lease_id) => {
-                            assert!(
-                                tx.send(inner.look_up(lease_id)).is_ok(),
-                                "receiver is closed"
-                            );
-                        }
-                    }
-                }
-            }
-        });
-        Self { inner }
+        Self {
+            inner: Arc::new(LeaseStoreBackend::new(
+                lease_collection,
+                state,
+                header_gen,
+                db,
+                index,
+                kv_update_tx,
+            )),
+        }
     }
 
     /// execute a lease request
@@ -284,31 +128,20 @@ where
 
     /// Get all leases
     pub(crate) fn leases(&self) -> Vec<Lease> {
-        let mut leases = self
-            .inner
-            .lease_collection
-            .read()
-            .lease_map
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
-        leases.sort_by_key(Lease::remaining);
-        leases
+        self.inner.lease_collection.leases()
     }
 
     /// Find expired leases
     pub(crate) fn find_expired_leases(&self) -> Vec<i64> {
-        self.inner.lease_collection.write().find_expired_leases()
+        self.inner.lease_collection.find_expired_leases()
     }
 
     /// Get keys attached to a lease
     pub(crate) fn get_keys(&self, lease_id: i64) -> Vec<Vec<u8>> {
         self.inner
             .lease_collection
-            .read()
-            .lease_map
-            .get(&lease_id)
-            .map(Lease::keys)
+            .look_up(lease_id)
+            .map(|l| l.keys())
             .unwrap_or_default()
     }
 
@@ -317,7 +150,7 @@ where
         if !self.is_leader() {
             return Err(ExecuteError::lease_not_leader());
         }
-        self.inner.lease_collection.write().renew(lease_id)
+        self.inner.lease_collection.renew(lease_id)
     }
 
     /// Generate `ResponseHeader`
@@ -327,12 +160,12 @@ where
 
     /// Demote current node
     pub(crate) fn demote(&self) {
-        self.inner.lease_collection.write().demote();
+        self.inner.lease_collection.demote();
     }
 
     /// Promote current node
     pub(crate) fn promote(&self, extend: Duration) {
-        self.inner.lease_collection.write().promote(extend);
+        self.inner.lease_collection.promote(extend);
     }
 
     /// Recover data form persistent storage
@@ -346,7 +179,8 @@ where
     DB: StorageApi,
 {
     /// New `LeaseStoreBackend`
-    pub(crate) fn new(
+    fn new(
+        lease_collection: Arc<LeaseCollection>,
         state: Arc<State>,
         header_gen: Arc<HeaderGenerator>,
         db: Arc<DB>,
@@ -354,7 +188,7 @@ where
         kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
     ) -> Self {
         Self {
-            lease_collection: RwLock::new(LeaseCollection::new()),
+            lease_collection,
             db,
             state,
             revision: header_gen.revision_arc(),
@@ -369,43 +203,26 @@ where
         self.state.is_leader()
     }
 
-    /// Attach key to lease
-    pub(crate) fn attach(&self, lease_id: i64, key: Vec<u8>) -> Result<(), ExecuteError> {
-        self.lease_collection.write().attach(lease_id, key)
-    }
-
     /// Detach key from lease
-    pub(crate) fn detach(&self, lease_id: i64, key: &[u8]) -> Result<(), ExecuteError> {
-        self.lease_collection.write().detach(lease_id, key)
+    fn detach(&self, lease_id: i64, key: &[u8]) -> Result<(), ExecuteError> {
+        self.lease_collection.detach(lease_id, key)
     }
 
     /// Get lease id by given key
-    pub(crate) fn get_lease(&self, key: &[u8]) -> i64 {
-        self.lease_collection
-            .read()
-            .item_map
-            .get(key)
-            .copied()
-            .unwrap_or(0)
+    fn get_lease(&self, key: &[u8]) -> i64 {
+        self.lease_collection.get_lease(key)
     }
 
     /// Get lease by id
-    pub(crate) fn look_up(&self, lease_id: i64) -> Option<Lease> {
-        self.lease_collection
-            .read()
-            .lease_map
-            .get(&lease_id)
-            .cloned()
+    fn look_up(&self, lease_id: i64) -> Option<Lease> {
+        self.lease_collection.look_up(lease_id)
     }
 
     /// Recover data form persistent storage
     fn recover_from_current_db(&self) -> Result<(), ExecuteError> {
         let leases = self.get_all()?;
         for lease in leases {
-            let _ignore = self
-                .lease_collection
-                .write()
-                .grant(lease.id, lease.ttl, false);
+            let _ignore = self.lease_collection.grant(lease.id, lease.ttl, false);
         }
         Ok(())
     }
@@ -442,7 +259,7 @@ where
         if req.ttl > MAX_LEASE_TTL {
             return Err(ExecuteError::lease_ttl_too_large(req.ttl));
         }
-        if self.lease_collection.read().contains_lease(req.id) {
+        if self.lease_collection.contains_lease(req.id) {
             return Err(ExecuteError::lease_already_exists(req.id));
         }
 
@@ -459,7 +276,7 @@ where
         &self,
         req: &LeaseRevokeRequest,
     ) -> Result<LeaseRevokeResponse, ExecuteError> {
-        if self.lease_collection.read().contains_lease(req.id) {
+        if self.lease_collection.contains_lease(req.id) {
             Ok(LeaseRevokeResponse {
                 header: Some(self.header_gen.gen_header_without_revision()),
             })
@@ -492,7 +309,6 @@ where
     fn sync_lease_grant_request(&self, req: &LeaseGrantRequest) -> Vec<WriteOp> {
         let lease = self
             .lease_collection
-            .write()
             .grant(req.id, req.ttl, self.is_leader());
         vec![WriteOp::PutLease(lease)]
     }
@@ -519,13 +335,13 @@ where
         let mut ops = Vec::new();
         ops.push(WriteOp::DeleteLease(req.id));
 
-        let keys = match self.lease_collection.read().lease_map.get(&req.id) {
+        let keys = match self.lease_collection.look_up(req.id) {
             Some(l) => l.keys(),
             None => return Err(ExecuteError::lease_not_found(req.id)),
         };
 
         if keys.is_empty() {
-            let _ignore = self.lease_collection.write().revoke(req.id);
+            let _ignore = self.lease_collection.revoke(req.id);
             return Ok(Vec::new());
         }
 
@@ -586,7 +402,7 @@ where
             })
             .collect();
 
-        let _ignore = self.lease_collection.write().revoke(req.id);
+        let _ignore = self.lease_collection.revoke(req.id);
         assert!(
             self.kv_update_tx.send((revision, updates)).await.is_ok(),
             "Failed to send updates to KV watcher"
@@ -617,9 +433,9 @@ mod test {
         assert_eq!(lo.ttl(), Duration::from_secs(10));
         assert_eq!(lease_store.leases().len(), 1);
 
-        let attach_non_existing_lease = lease_store.inner.attach(0, "key".into());
+        let attach_non_existing_lease = lease_store.inner.lease_collection.attach(0, "key".into());
         assert!(attach_non_existing_lease.is_err());
-        let attach_existing_lease = lease_store.inner.attach(1, "key".into());
+        let attach_existing_lease = lease_store.inner.lease_collection.attach(1, "key".into());
         assert!(attach_existing_lease.is_ok());
         lease_store.inner.detach(1, "key".as_bytes())?;
 
@@ -638,7 +454,7 @@ mod test {
 
         let req1 = RequestWithToken::new(LeaseGrantRequest { ttl: 10, id: 1 }.into());
         let _ignore1 = exe_and_sync_req(&store, &req1).await?;
-        store.inner.attach(1, "key".into())?;
+        store.inner.lease_collection.attach(1, "key".into())?;
 
         let new_store = init_store(db);
         assert!(new_store.look_up(1).is_none());
@@ -656,12 +472,12 @@ mod test {
     }
 
     fn init_store(db: Arc<DBProxy>) -> LeaseStore<DBProxy> {
-        let (_, lease_cmd_rx) = mpsc::channel(1);
+        let lease_collection = Arc::new(LeaseCollection::new());
         let (kv_update_tx, _) = mpsc::channel(1);
         let state = Arc::new(State::default());
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let index = Arc::new(Index::new());
-        LeaseStore::new(lease_cmd_rx, state, header_gen, db, index, kv_update_tx)
+        LeaseStore::new(lease_collection, state, header_gen, db, index, kv_update_tx)
     }
 
     async fn exe_and_sync_req(

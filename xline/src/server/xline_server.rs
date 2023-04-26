@@ -10,10 +10,7 @@ use std::{
 use anyhow::Result;
 use curp::{client::Client, server::Rpc, ProtocolServer};
 use jsonwebtoken::{DecodingKey, EncodingKey};
-use tokio::{
-    net::TcpListener,
-    sync::{broadcast, mpsc},
-};
+use tokio::{net::TcpListener, sync::broadcast};
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
 use tracing::info;
@@ -40,14 +37,12 @@ use crate::{
     state::State,
     storage::{
         index::Index,
+        lease_store::LeaseCollection,
         snapshot_allocator::{MemorySnapshotAllocator, RocksSnapshotAllocator},
         storage_api::StorageApi,
         AuthStore, KvStore, LeaseStore,
     },
 };
-
-/// Default channel size
-const CHANNEL_SIZE: usize = 128;
 
 /// Rpc Server of curp protocol
 type CurpServer = Rpc<Command>;
@@ -127,17 +122,17 @@ where
         let leader_id = is_leader.then(|| name.clone());
         let state = Arc::new(State::new(name, leader_id, all_members.clone()));
         let curp_config = Arc::new(curp_config);
-        let (lease_cmd_tx, lease_cmd_rx) = mpsc::channel(CHANNEL_SIZE);
+        let lease_collection = Arc::new(LeaseCollection::new());
         let index = Arc::new(Index::new());
 
         let kv_storage = Arc::new(KvStore::new(
-            lease_cmd_tx.clone(),
+            Arc::clone(&lease_collection),
             Arc::clone(&header_gen),
             Arc::clone(&persistent),
             Arc::clone(&index),
         ));
         let lease_storage = Arc::new(LeaseStore::new(
-            lease_cmd_rx,
+            Arc::clone(&lease_collection),
             Arc::clone(&state),
             Arc::clone(&header_gen),
             Arc::clone(&persistent),
@@ -145,7 +140,7 @@ where
             kv_storage.kv_update_tx(),
         ));
         let auth_storage = Arc::new(AuthStore::new(
-            lease_cmd_tx,
+            lease_collection,
             key_pair,
             Arc::clone(&header_gen),
             Arc::clone(&persistent),
@@ -208,7 +203,7 @@ where
     pub async fn start(&self, addr: SocketAddr) -> Result<()> {
         // lease storage must recover before kv storage
         self.lease_storage.recover()?;
-        self.kv_storage.recover().await?;
+        self.kv_storage.recover()?;
         self.auth_storage.recover()?;
         let (
             kv_server,
@@ -247,7 +242,7 @@ where
     {
         // lease storage must recover before kv storage
         self.lease_storage.recover()?;
-        self.kv_storage.recover().await?;
+        self.kv_storage.recover()?;
         self.auth_storage.recover()?;
         let (
             kv_server,

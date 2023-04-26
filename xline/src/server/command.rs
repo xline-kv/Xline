@@ -250,7 +250,7 @@ where
 
     async fn execute(&self, cmd: &Command) -> Result<CommandResponse, ExecuteError> {
         let wrapper = cmd.request();
-        self.auth_storage.check_permission(wrapper).await?;
+        self.auth_storage.check_permission(wrapper)?;
         match wrapper.request.backend() {
             RequestBackend::Kv => self.kv_storage.execute(wrapper),
             RequestBackend::Auth => self.auth_storage.execute(wrapper),
@@ -268,7 +268,7 @@ where
         let mut res = SyncResponse::new(-1);
         if need_run {
             let wrapper = cmd.request();
-            self.auth_storage.check_permission(wrapper).await?;
+            self.auth_storage.check_permission(wrapper)?;
             let (sync_res, mut wr_ops) = match wrapper.request.backend() {
                 RequestBackend::Kv => self.kv_storage.after_sync(wrapper).await?,
                 RequestBackend::Auth => self.auth_storage.after_sync(wrapper)?,
