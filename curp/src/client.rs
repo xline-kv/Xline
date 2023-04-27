@@ -11,10 +11,8 @@ use crate::{
     cmd::{Command, ProposeId},
     error::ProposeError,
     rpc::{
-        self,
-        connect::ConnectApi,
-        FetchLeaderRequest, FetchReadStateRequest, ProposeRequest, ReadState as PbReadState,
-        SyncError, SyncResult, WaitSyncedRequest,
+        self, connect::ConnectApi, FetchLeaderRequest, FetchReadStateRequest, ProposeRequest,
+        ReadState as PbReadState, SyncError, SyncResult, WaitSyncedRequest,
     },
     LogIndex, ServerId,
 };

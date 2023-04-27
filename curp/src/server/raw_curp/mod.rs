@@ -142,7 +142,7 @@ struct Context<C: Command> {
     /// Election tick
     election_tick: AtomicU8,
     /// Tx to send cmds to execute and do after sync
-    cmd_tx: Box<dyn CEEventTxApi<C>>,
+    cmd_tx: Arc<dyn CEEventTxApi<C>>,
     /// Followers sync event trigger
     sync_events: HashMap<ServerId, Arc<Event>>,
     /// Become leader event
@@ -577,7 +577,7 @@ impl<C: 'static + Command> RawCurp<C> {
         spec_pool: SpecPoolRef<C>,
         uncommitted_pool: UncommittedPoolRef<C>,
         cfg: Arc<CurpConfig>,
-        cmd_tx: Box<dyn CEEventTxApi<C>>,
+        cmd_tx: Arc<dyn CEEventTxApi<C>>,
         sync_events: HashMap<ServerId, Arc<Event>>,
         log_tx: mpsc::UnboundedSender<LogEntry<C>>,
     ) -> Self {
@@ -625,7 +625,7 @@ impl<C: 'static + Command> RawCurp<C> {
         spec_pool: SpecPoolRef<C>,
         uncommitted_pool: UncommittedPoolRef<C>,
         cfg: &Arc<CurpConfig>,
-        cmd_tx: Box<dyn CEEventTxApi<C>>,
+        cmd_tx: Arc<dyn CEEventTxApi<C>>,
         sync_event: HashMap<ServerId, Arc<Event>>,
         log_tx: mpsc::UnboundedSender<LogEntry<C>>,
         voted_for: Option<(u64, ServerId)>,
