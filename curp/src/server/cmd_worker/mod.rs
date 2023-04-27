@@ -57,7 +57,7 @@ impl<C: Command> Debug for CEEvent<C> {
 
 /// Worker that execute commands
 async fn cmd_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
-    cmd_rx: TaskRx<C>,
+    cmd_rx: impl TaskRxApi<C>,
     done_tx: flume::Sender<(Task<C>, bool)>,
     curp: Arc<RawCurp<C>>,
     ce: Arc<CE>,
@@ -129,7 +129,7 @@ async fn cmd_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
 
 /// Worker that execute `after_sync`
 async fn as_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
-    as_task_rx: TaskRx<C>,
+    as_task_rx: impl TaskRxApi<C>,
     done_tx: flume::Sender<(Task<C>, bool)>,
     curp: Arc<RawCurp<C>>,
     ce: Arc<CE>,

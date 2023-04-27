@@ -46,7 +46,7 @@ impl<C: 'static + Command> RawCurp<C> {
             spec_pool,
             uncommitted_pool,
             Arc::new(CurpConfig::default()),
-            Box::new(exe_tx),
+            Arc::new(exe_tx),
             sync_events,
             log_tx,
         )
