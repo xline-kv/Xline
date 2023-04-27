@@ -17,7 +17,7 @@ use utils::config::CurpConfig;
 
 use super::{
     cmd_board::{CmdBoardRef, CommandBoard},
-    cmd_worker::{conflict_checked_mpmc, start_bg_workers, CEEventTx},
+    cmd_worker::{conflict_checked_mpmc, start_bg_workers},
     gc::run_gc_tasks,
     raw_curp::{AppendEntries, RawCurp, UncommittedPool, Vote},
     spec_pool::{SpecPoolRef, SpeculativePool},
@@ -97,7 +97,7 @@ pub(super) struct CurpNode<C: Command> {
     /// Shutdown trigger
     shutdown_trigger: Arc<Event>,
     /// CE event tx,
-    ce_event_tx: CEEventTx<C>,
+    ce_event_tx: Arc<dyn CEEventTxApi<C>>,
     /// Storage
     storage: Arc<dyn StorageApi<Command = C>>,
     /// Snapshot allocator
@@ -429,7 +429,7 @@ impl<C: 'static + Command> CurpNode<C> {
             .last_applied()
             .map_err(|e| CurpError::Internal(format!("get applied index error, {e}")))?;
         let (ce_event_tx, task_rx, as_rx, done_tx) = conflict_checked_mpmc::channel();
-
+        let ce_event_tx: Arc<dyn CEEventTxApi<C>> = Arc::new(ce_event_tx);
         let storage = Arc::new(RocksDBStorage::new(&curp_cfg.data_dir)?);
 
         // create curp state machine
@@ -443,7 +443,7 @@ impl<C: 'static + Command> CurpNode<C> {
                 Arc::clone(&spec_pool),
                 uncommitted_pool,
                 Arc::clone(&curp_cfg),
-                Box::new(ce_event_tx.clone()),
+                Arc::clone(&ce_event_tx),
                 sync_events,
                 log_tx,
             ))
@@ -462,7 +462,7 @@ impl<C: 'static + Command> CurpNode<C> {
                 Arc::clone(&spec_pool),
                 uncommitted_pool,
                 &curp_cfg,
-                Box::new(ce_event_tx.clone()),
+                Arc::clone(&ce_event_tx),
                 sync_events,
                 log_tx,
                 voted_for,
