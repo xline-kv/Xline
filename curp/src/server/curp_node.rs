@@ -279,7 +279,7 @@ impl<C: 'static + Command> CurpNode<C> {
     /// Tick periodically
     async fn election_task(
         curp: Arc<RawCurp<C>>,
-        connects: HashMap<ServerId, Arc<impl ConnectApi>>,
+        connects: HashMap<ServerId, Arc<impl ConnectApi + ?Sized>>,
     ) {
         let heartbeat_interval = curp.cfg().heartbeat_interval;
         // wait for some random time before tick starts to minimize vote split possibility
@@ -301,7 +301,7 @@ impl<C: 'static + Command> CurpNode<C> {
     /// Responsible for bringing up `sync_follower_task` when self becomes leader
     async fn sync_follower_daemon(
         curp: Arc<RawCurp<C>>,
-        connect: Arc<impl ConnectApi>,
+        connect: Arc<impl ConnectApi + ?Sized>,
         sync_event: Arc<Event>,
     ) {
         let leader_event = curp.leader_event();
@@ -321,7 +321,7 @@ impl<C: 'static + Command> CurpNode<C> {
     /// Leader use this task to keep a follower up-to-date, will return if self is no longer leader
     async fn sync_follower_task(
         curp: Arc<RawCurp<C>>,
-        connect: Arc<impl ConnectApi>,
+        connect: Arc<impl ConnectApi + ?Sized>,
         sync_event: Arc<Event>,
     ) {
         let mut hb_opt = false;
@@ -527,7 +527,7 @@ impl<C: 'static + Command> CurpNode<C> {
     /// Candidate broadcasts votes
     async fn bcast_vote(
         curp: &RawCurp<C>,
-        connects: &HashMap<ServerId, Arc<impl ConnectApi>>,
+        connects: &HashMap<ServerId, Arc<impl ConnectApi + ?Sized>>,
         vote: Vote,
     ) {
         debug!("{} broadcasts votes to all servers", curp.id());
@@ -583,7 +583,7 @@ impl<C: 'static + Command> CurpNode<C> {
     /// Send `append_entries` request
     #[allow(clippy::integer_arithmetic)] // won't overflow
     async fn send_ae(
-        connect: &impl ConnectApi,
+        connect: &(impl ConnectApi + ?Sized),
         curp: &RawCurp<C>,
         ae: AppendEntries<C>,
     ) -> Result<(), SendAEError> {
@@ -623,7 +623,7 @@ impl<C: 'static + Command> CurpNode<C> {
 
     /// Send snapshot
     async fn send_snapshot(
-        connect: &impl ConnectApi,
+        connect: &(impl ConnectApi + ?Sized),
         curp: &RawCurp<C>,
         snapshot: Snapshot,
     ) -> Result<(), SendSnapshotError> {
