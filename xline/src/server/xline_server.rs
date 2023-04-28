@@ -24,7 +24,7 @@ use super::{
     lease_server::LeaseServer,
     lock_server::LockServer,
     maintenance::MaintenanceServer,
-    watch_server::WatchServer,
+    watch_server::{WatchServer, CHANNEL_SIZE},
 };
 use crate::{
     header_gen::HeaderGenerator,
@@ -37,6 +37,7 @@ use crate::{
     state::State,
     storage::{
         index::Index,
+        kvwatcher::{watcher, KvWatcher},
         lease_store::LeaseCollection,
         snapshot_allocator::{MemorySnapshotAllocator, RocksSnapshotAllocator},
         storage_api::StorageApi,
@@ -61,6 +62,8 @@ where
     auth_storage: Arc<AuthStore<S>>,
     /// Lease storage
     lease_storage: Arc<LeaseStore<S>>,
+    /// Watcher
+    watcher: Arc<KvWatcher<S>>,
     /// persistent storage
     persistent: Arc<S>,
     /// Consensus client
@@ -124,8 +127,9 @@ where
         let curp_config = Arc::new(curp_config);
         let lease_collection = Arc::new(LeaseCollection::new());
         let index = Arc::new(Index::new());
-
+        let (kv_update_tx, kv_update_rx) = tokio::sync::mpsc::channel(CHANNEL_SIZE);
         let kv_storage = Arc::new(KvStore::new(
+            kv_update_tx.clone(),
             Arc::clone(&lease_collection),
             Arc::clone(&header_gen),
             Arc::clone(&persistent),
@@ -137,7 +141,7 @@ where
             Arc::clone(&header_gen),
             Arc::clone(&persistent),
             index,
-            kv_storage.kv_update_tx(),
+            kv_update_tx,
         ));
         let auth_storage = Arc::new(AuthStore::new(
             lease_collection,
@@ -145,6 +149,7 @@ where
             Arc::clone(&header_gen),
             Arc::clone(&persistent),
         ));
+        let watcher = watcher(Arc::clone(&kv_storage), kv_update_rx);
         let client = Arc::new(Client::<Command>::new(all_members.clone(), client_timeout).await);
         let index_barrier = Arc::new(IndexBarrier::new());
         let id_barrier = Arc::new(IdBarrier::new());
@@ -153,6 +158,7 @@ where
             kv_storage,
             auth_storage,
             lease_storage,
+            watcher,
             persistent,
             client,
             curp_cfg: curp_config,
@@ -376,7 +382,7 @@ where
                 Arc::clone(&self.client),
                 self.id(),
             ),
-            WatchServer::new(self.kv_storage.kv_watcher()),
+            WatchServer::new(Arc::clone(&self.watcher)),
             MaintenanceServer::new(Arc::clone(&self.persistent), Arc::clone(&self.header_gen)),
             curp_server,
         )
