@@ -49,9 +49,9 @@ where
         ST: Stream<Item = Result<WatchRequest, tonic::Status>> + Unpin,
         W: KvWatcherOps,
     {
-        let (event_tx, event_rx) = mpsc::channel(CHANNEL_SIZE);
+        let (event_tx, mut event_rx) = mpsc::channel(CHANNEL_SIZE);
         let (stop_tx, stop_rx) = flume::bounded(0);
-        let mut watch_handle = WatchHandle::new(kv_watcher, res_tx, event_rx, event_tx, stop_tx);
+        let mut watch_handle = WatchHandle::new(kv_watcher, res_tx, event_tx, stop_tx);
         loop {
             tokio::select! {
                 req = req_rx.next() => {
@@ -70,7 +70,7 @@ where
                         break;
                     }
                 }
-                event = watch_handle.event_rx.recv() => {
+                event = event_rx.recv() => {
                     if let Some(event) = event {
                         watch_handle.handle_watch_event(event).await;
                     } else {
@@ -95,8 +95,6 @@ where
     kv_watcher: Arc<W>,
     /// `WatchResponse` Sender
     response_tx: mpsc::Sender<Result<WatchResponse, tonic::Status>>,
-    /// Event receiver
-    event_rx: mpsc::Receiver<WatchEvent>,
     /// Event sender
     event_tx: mpsc::Sender<WatchEvent>,
     /// Watch ID to watcher map
@@ -115,14 +113,12 @@ where
     fn new(
         kv_watcher: Arc<W>,
         response_tx: mpsc::Sender<Result<WatchResponse, tonic::Status>>,
-        event_rx: mpsc::Receiver<WatchEvent>,
         event_tx: mpsc::Sender<WatchEvent>,
         stop_tx: flume::Sender<()>,
     ) -> Self {
         Self {
             kv_watcher,
             response_tx,
-            event_rx,
             event_tx,
             active_watch_ids: HashSet::new(),
             next_id: 1, // watch_id starts from 1, 0 means auto-generating
@@ -207,6 +203,7 @@ where
                 });
             }
         }
+        self.kv_watcher.sync_done();
     }
 
     /// Handle `WatchCancelRequest`
@@ -214,7 +211,6 @@ where
         let watch_id = req.watch_id;
         let result = if self.active_watch_ids.remove(&watch_id) {
             let revision = self.kv_watcher.cancel(watch_id);
-            let _prev = self.active_watch_ids.remove(&watch_id);
             let response = WatchResponse {
                 header: Some(ResponseHeader {
                     revision,
@@ -336,6 +332,7 @@ mod test {
             .times(1)
             .return_const((vec![], 0));
         let _ = mock_watcher.expect_cancel().times(1).returning(move |_| 0);
+        let _ = mock_watcher.expect_sync_done().times(1).return_const(());
         let watcher = Arc::new(mock_watcher);
         let handle = tokio::spawn(WatchServer::<DB<MemoryEngine>>::task(
             Arc::clone(&watcher),

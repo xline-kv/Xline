@@ -1,9 +1,13 @@
 use std::{
     collections::{HashMap, HashSet},
     hash::Hash,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 
+use clippy_utilities::OverflowArithmetic;
 use futures::{stream::FuturesUnordered, StreamExt};
 use log::warn;
 use parking_lot::RwLock;
@@ -116,6 +120,10 @@ where
     storage: Arc<KvStoreBackend<S>>,
     /// Watch indexes
     watcher_map: RwLock<WatcherMap>,
+    /// Syncing flag
+    syncing: AtomicBool,
+    /// Syncing notify
+    syncing_notify: Arc<event_listener::Event>,
 }
 
 /// Store all watchers
@@ -210,6 +218,9 @@ pub(crate) trait KvWatcherOps {
 
     /// Cancel a watch from KV store
     fn cancel(&self, id: WatchId) -> i64;
+
+    /// Mark as syncing done and notify
+    fn sync_done(&self);
 }
 
 impl<S> KvWatcherOps for KvWatcher<S>
@@ -233,6 +244,11 @@ where
     fn cancel(&self, id: WatchId) -> i64 {
         self.inner.cancel(id)
     }
+
+    /// Mark as syncing done and notify
+    fn sync_done(&self) {
+        self.inner.sync_done();
+    }
 }
 
 impl<S> KvWatcherInner<S>
@@ -244,33 +260,61 @@ where
         Self {
             storage,
             watcher_map: RwLock::new(WatcherMap::new()),
+            syncing: AtomicBool::new(false),
+            syncing_notify: Arc::new(event_listener::Event::new()),
+        }
+    }
+
+    /// Is there a watcher that is syncing
+    fn is_syncing(&self) -> bool {
+        self.syncing.load(Ordering::SeqCst)
+    }
+
+    /// Mark current state as syncing
+    fn start_syncing(&self) {
+        self.syncing.store(true, Ordering::SeqCst);
+    }
+
+    /// Mark as syncing done and notify
+    fn sync_done(&self) {
+        self.syncing.store(false, Ordering::SeqCst);
+        self.syncing_notify.notify(1);
+    }
+
+    /// If current state is syncing, wait until it is done
+    async fn wait_syncing(&self) {
+        while self.is_syncing() {
+            self.syncing_notify.listen().await;
         }
     }
 
     /// Create a watch to KV store
     fn watch(
         &self,
-        id: WatchId,
+        watch_id: WatchId,
         key_range: KeyRange,
         start_rev: i64,
         filters: Vec<i32>,
         event_tx: mpsc::Sender<WatchEvent>,
     ) -> (Vec<Event>, i64) {
-        let watcher = Watcher::new(key_range.clone(), id, start_rev, filters, event_tx);
-
-        let revision = self.storage.revision();
-        // TODO: handle racing that new event is generated before watcher is registered
+        self.start_syncing();
+        let mut revision = self.storage.revision();
         let initial_events = if start_rev == 0 {
             vec![]
         } else {
-            self.storage
-                .get_event_from_revision(key_range, start_rev)
+            let (rev, events) = self
+                .storage
+                .get_events_from_revision(key_range.clone(), start_rev)
                 .unwrap_or_else(|e| {
                     warn!("failed to get initial events for watcher: {:?}", e);
-                    vec![]
-                })
+                    (0, vec![])
+                });
+            if !events.is_empty() {
+                revision = rev.overflow_add(1);
+            }
+            events
         };
-
+        let watcher = Watcher::new(key_range, watch_id, revision, filters, event_tx);
         self.watcher_map.write().insert(Arc::new(watcher));
 
         (initial_events, revision)
@@ -285,6 +329,7 @@ where
 
     /// Handle KV store updates
     async fn handle_kv_updates(&self, (revision, all_events): (i64, Vec<Event>)) {
+        self.wait_syncing().await;
         let watcher_events = self.watcher_map.map_read(|watcher_map_r| {
             let mut watcher_events: HashMap<Arc<Watcher>, Vec<Event>> = HashMap::new();
             for event in all_events {
@@ -349,5 +394,96 @@ impl WatchEvent {
     /// Take events
     pub(crate) fn take_events(&mut self) -> Vec<Event> {
         std::mem::take(&mut self.events)
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    use std::{collections::BTreeMap, time::Duration};
+
+    use tokio::time::timeout;
+    use utils::config::StorageConfig;
+
+    use crate::{
+        header_gen::HeaderGenerator,
+        rpc::{PutRequest, RequestWithToken},
+        storage::{db::DBProxy, index::Index, lease_store::LeaseMessage, KvStore},
+    };
+
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    async fn it_works() {
+        let (store, db) = init_empty_store();
+        let mut map = BTreeMap::new();
+        let handle = tokio::spawn({
+            let store = Arc::clone(&store);
+            async move {
+                for i in 0..100_u8 {
+                    let req = RequestWithToken::new(
+                        PutRequest {
+                            key: "foo".into(),
+                            value: vec![i],
+                            ..Default::default()
+                        }
+                        .into(),
+                    );
+                    let (_res, ops) = store.after_sync(&req).await.unwrap();
+                    db.flush_ops(ops).unwrap();
+                }
+            }
+        });
+        tokio::time::sleep(std::time::Duration::from_micros(500)).await;
+        let watcher = store.kv_watcher();
+        let (event_tx, mut event_rx) = mpsc::channel(128);
+        let (events, _revision) =
+            watcher.watch(123, KeyRange::new_one_key("foo"), 1, vec![], event_tx);
+        // send events to client
+        watcher.sync_done();
+        for event in events {
+            let val = event.kv.as_ref().unwrap().value[0];
+            let e = map.entry(val).or_insert(0);
+            *e += 1;
+        }
+
+        while let Some(event) = timeout(Duration::from_secs(1), event_rx.recv())
+            .await
+            .unwrap()
+        {
+            let val = event.events.first().unwrap().kv.as_ref().unwrap().value[0];
+            let e = map.entry(val).or_insert(0);
+            *e += 1;
+            if val == 99 {
+                break;
+            }
+        }
+
+        assert_eq!(map.len(), 100);
+        for count in map.values() {
+            assert_eq!(*count, 1);
+        }
+        handle.abort();
+    }
+
+    fn init_empty_store() -> (Arc<KvStore<DBProxy>>, Arc<DBProxy>) {
+        let db = DBProxy::open(&StorageConfig::Memory).unwrap();
+        let header_gen = Arc::new(HeaderGenerator::new(0, 0));
+        let (lease_cmd_tx, mut lease_cmd_rx) = mpsc::channel(128);
+        let index = Arc::new(Index::new());
+        let _handle = tokio::spawn(async move {
+            while let Some(LeaseMessage::GetLease(tx, _)) = lease_cmd_rx.recv().await {
+                assert!(tx.send(0).is_ok());
+            }
+        });
+        (
+            Arc::new(KvStore::new(
+                lease_cmd_tx,
+                header_gen,
+                Arc::clone(&db),
+                index,
+            )),
+            db,
+        )
     }
 }

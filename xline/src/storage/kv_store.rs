@@ -421,14 +421,15 @@ where
     }
 
     /// Get `KeyValue` start from a revision and convert to `Event`
-    pub(crate) fn get_event_from_revision(
+    pub(crate) fn get_events_from_revision(
         &self,
         key_range: KeyRange,
         revision: i64,
-    ) -> Result<Vec<Event>, ExecuteError> {
+    ) -> Result<(i64, Vec<Event>), ExecuteError> {
         let revisions =
             self.index
                 .get_from_rev(key_range.range_start(), key_range.range_end(), revision);
+        let last_rev = revisions.last().map_or(0, Revision::revision);
         let events = self
             .get_values(&revisions)?
             .into_iter()
@@ -449,7 +450,7 @@ where
                 event
             })
             .collect();
-        Ok(events)
+        Ok((last_rev, events))
     }
 }
 
