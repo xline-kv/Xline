@@ -414,7 +414,7 @@ mod test {
     use super::*;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
-    async fn it_works() {
+    async fn watcher_should_get_all_events() {
         let (store, db) = init_empty_store();
         let mut map = BTreeMap::new();
         let handle = tokio::spawn({
@@ -429,8 +429,9 @@ mod test {
                         }
                         .into(),
                     );
-                    let (_res, ops) = store.after_sync(&req).await.unwrap();
+                    let (sync_res, ops) = store.after_sync(&req).await.unwrap();
                     db.flush_ops(ops).unwrap();
+                    store.mark_index_available(sync_res.revision());
                 }
             }
         });

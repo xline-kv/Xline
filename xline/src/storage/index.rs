@@ -24,7 +24,7 @@ impl Index {
     /// Filter out `KeyRevision` that is less than one revision and convert to `Revision`
     fn filter_revision(revs: &[KeyRevision], revision: i64) -> Vec<Revision> {
         revs.iter()
-            .filter(|rev| rev.mod_revision >= revision)
+            .filter(|rev| rev.mod_revision >= revision && rev.available)
             .map(KeyRevision::as_revision)
             .collect()
     }
@@ -33,7 +33,7 @@ impl Index {
     fn get_revision(revs: &[KeyRevision], revision: i64) -> Option<Revision> {
         // TODO: handle future revision
         let rev = if revision <= 0 {
-            revs.last()
+            revs.iter().rev().find(|kr| kr.available)
         } else {
             let idx = match revs.binary_search_by(|rev| rev.mod_revision.cmp(&revision)) {
                 Ok(idx) => idx,
@@ -48,6 +48,16 @@ impl Index {
         };
         rev.filter(|kr| !kr.is_deleted())
             .map(KeyRevision::as_revision)
+    }
+
+    /// Mark the `KeyRevision` as available
+    pub(crate) fn mark_available(&self, revision: i64) {
+        let mut index = self.index.lock();
+        for revs in index.values_mut() {
+            if let Some(rev) = revs.iter_mut().find(|rev| rev.mod_revision == revision) {
+                rev.available = true;
+            }
+        }
     }
 }
 
@@ -214,15 +224,30 @@ impl IndexOperate for Index {
         create_revision: i64,
         version: i64,
     ) {
-        let mut index = self.index.lock();
-        let new_rev = KeyRevision::new(create_revision, version, revision, sub_revision);
-        index.entry(key).or_insert_with(Vec::new).push(new_rev);
+        let mut new_rev = KeyRevision::new(create_revision, version, revision, sub_revision);
+        new_rev.available = true;
+        self.index
+            .lock()
+            .entry(key)
+            .or_insert_with(Vec::new)
+            .push(new_rev);
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+
+    fn new_available_key_revision(
+        create_revision: i64,
+        version: i64,
+        revision: i64,
+        sub_revision: i64,
+    ) -> KeyRevision {
+        let mut rev = KeyRevision::new(create_revision, version, revision, sub_revision);
+        rev.available = true;
+        rev
+    }
 
     fn init_and_test_insert() -> Index {
         let index = Index::new();
@@ -231,14 +256,18 @@ mod test {
         index.insert_or_update_revision(b"key", 2, 2);
         index.insert_or_update_revision(b"key", 3, 1);
 
+        index.mark_available(1);
+        index.mark_available(2);
+        index.mark_available(3);
+
         assert_eq!(
             *index.index.lock(),
             BTreeMap::from_iter(vec![(
                 b"key".to_vec(),
                 vec![
-                    KeyRevision::new(1, 1, 1, 3),
-                    KeyRevision::new(1, 2, 2, 2),
-                    KeyRevision::new(1, 3, 3, 1),
+                    new_available_key_revision(1, 1, 1, 3),
+                    new_available_key_revision(1, 2, 2, 2),
+                    new_available_key_revision(1, 3, 3, 1),
                 ]
             ),])
         );
@@ -269,9 +298,9 @@ mod test {
             BTreeMap::from_iter(vec![(
                 b"key".to_vec(),
                 vec![
-                    KeyRevision::new(1, 1, 1, 3),
-                    KeyRevision::new(1, 2, 2, 2),
-                    KeyRevision::new(1, 3, 3, 1),
+                    new_available_key_revision(1, 1, 1, 3),
+                    new_available_key_revision(1, 2, 2, 2),
+                    new_available_key_revision(1, 3, 3, 1),
                     KeyRevision::new_deletion(4, 0),
                 ]
             ),])
@@ -287,10 +316,16 @@ mod test {
         assert_eq!(
             *index.index.lock(),
             BTreeMap::from_iter(vec![
-                (b"foo".to_vec(), vec![KeyRevision::new(4, 1, 4, 0)]),
+                (
+                    b"foo".to_vec(),
+                    vec![new_available_key_revision(4, 1, 4, 0)]
+                ),
                 (
                     b"key".to_vec(),
-                    vec![KeyRevision::new(2, 1, 2, 0), KeyRevision::new(2, 2, 3, 0)]
+                    vec![
+                        new_available_key_revision(2, 1, 2, 0),
+                        new_available_key_revision(2, 2, 3, 0)
+                    ],
                 ),
             ])
         );
