@@ -11,7 +11,6 @@ use tracing::{debug, warn};
 
 use super::{
     index::{Index, IndexOperate},
-    kvwatcher::{watcher, KvWatcher},
     lease_store::LeaseCollection,
     storage_api::StorageApi,
     Revision,
@@ -31,24 +30,10 @@ use crate::{
 
 /// KV table name
 pub(crate) const KV_TABLE: &str = "kv";
-/// Default channel size
-const CHANNEL_SIZE: usize = 128;
 
 /// KV store
 #[derive(Debug)]
 pub(crate) struct KvStore<DB>
-where
-    DB: StorageApi,
-{
-    /// KV store Backend
-    inner: Arc<KvStoreBackend<DB>>,
-    /// KV watcher
-    kv_watcher: Arc<KvWatcher<DB>>,
-}
-
-/// KV store inner
-#[derive(Debug)]
-pub(crate) struct KvStoreBackend<DB>
 where
     DB: StorageApi,
 {
@@ -70,32 +55,12 @@ impl<DB> KvStore<DB>
 where
     DB: StorageApi,
 {
-    /// New `KvStore`
-    pub(crate) fn new(
-        lease_collection: Arc<LeaseCollection>,
-        header_gen: Arc<HeaderGenerator>,
-        storage: Arc<DB>,
-        index: Arc<Index>,
-    ) -> Self {
-        let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
-        let inner = Arc::new(KvStoreBackend::new(
-            kv_update_tx,
-            lease_collection,
-            header_gen,
-            storage,
-            index,
-        ));
-        let kv_watcher = watcher(Arc::clone(&inner), kv_update_rx);
-        Self { inner, kv_watcher }
-    }
-
     /// execute a kv request
     pub(crate) fn execute(
         &self,
         request: &RequestWithToken,
     ) -> Result<CommandResponse, ExecuteError> {
-        self.inner
-            .handle_kv_requests(&request.request)
+        self.handle_kv_requests(&request.request)
             .map(CommandResponse::new)
     }
 
@@ -104,33 +69,56 @@ where
         &self,
         request: &RequestWithToken,
     ) -> Result<(SyncResponse, Vec<WriteOp>), ExecuteError> {
-        self.inner
-            .sync_request(&request.request)
+        self.sync_request(&request.request)
             .await
             .map(|(rev, ops)| (SyncResponse::new(rev), ops))
     }
 
-    /// Get KV watcher
-    pub(crate) fn kv_watcher(&self) -> Arc<KvWatcher<DB>> {
-        Arc::clone(&self.kv_watcher)
-    }
-
-    /// Get KV update tx
-    pub(crate) fn kv_update_tx(&self) -> mpsc::Sender<(i64, Vec<Event>)> {
-        self.inner.kv_update_tx.clone()
-    }
-
     /// Recover data from persistent storage
     pub(crate) fn recover(&self) -> Result<(), ExecuteError> {
-        self.inner.recover_from_current_db()
+        let mut key_to_lease: HashMap<Vec<u8>, i64> = HashMap::new();
+        let kvs = self.db.get_all(KV_TABLE)?;
+
+        let current_rev = kvs
+            .last()
+            .map_or(1, |pair| Revision::decode(&pair.0).revision());
+        self.revision.set(current_rev);
+
+        for (key, value) in kvs {
+            let rev = Revision::decode(key.as_slice());
+            let kv = KeyValue::decode(value.as_slice())
+                .unwrap_or_else(|e| panic!("decode kv error: {e:?}"));
+
+            if kv.lease == 0 {
+                let _ignore = key_to_lease.remove(&kv.key);
+            } else {
+                let _ignore = key_to_lease.insert(kv.key.clone(), kv.lease);
+            }
+
+            self.index.restore(
+                kv.key,
+                rev.revision(),
+                rev.sub_revision(),
+                kv.create_revision,
+                kv.version,
+            );
+        }
+
+        for (key, lease_id) in key_to_lease {
+            self.attach(lease_id, key)?;
+        }
+
+        // compact Lock free
+
+        Ok(())
     }
 }
 
-impl<DB> KvStoreBackend<DB>
+impl<DB> KvStore<DB>
 where
     DB: StorageApi,
 {
-    /// New `KvStoreBackend`
+    /// New `KvStore`
     pub(crate) fn new(
         kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
         lease_collection: Arc<LeaseCollection>,
@@ -322,53 +310,14 @@ where
     fn attach(&self, lease_id: i64, key: impl Into<Vec<u8>>) -> Result<(), ExecuteError> {
         self.lease_collection.attach(lease_id, key.into())
     }
-
-    /// Recover data from current db
-    fn recover_from_current_db(&self) -> Result<(), ExecuteError> {
-        let mut key_to_lease: HashMap<Vec<u8>, i64> = HashMap::new();
-        let kvs = self.db.get_all(KV_TABLE)?;
-
-        let current_rev = kvs
-            .last()
-            .map_or(1, |pair| Revision::decode(&pair.0).revision());
-        self.revision.set(current_rev);
-
-        for (key, value) in kvs {
-            let rev = Revision::decode(key.as_slice());
-            let kv = KeyValue::decode(value.as_slice())
-                .unwrap_or_else(|e| panic!("decode kv error: {e:?}"));
-
-            if kv.lease == 0 {
-                let _ignore = key_to_lease.remove(&kv.key);
-            } else {
-                let _ignore = key_to_lease.insert(kv.key.clone(), kv.lease);
-            }
-
-            self.index.restore(
-                kv.key,
-                rev.revision(),
-                rev.sub_revision(),
-                kv.create_revision,
-                kv.version,
-            );
-        }
-
-        for (key, lease_id) in key_to_lease {
-            self.attach(lease_id, key)?;
-        }
-
-        // compact Lock free
-
-        Ok(())
-    }
 }
 
 /// db operations
-impl<DB> KvStoreBackend<DB>
+impl<DB> KvStore<DB>
 where
     DB: StorageApi,
 {
-    /// Get `KeyValue` from the `KvStoreBackend`
+    /// Get `KeyValue` from the `KvStore`
     fn get_values(&self, revisions: &[Revision]) -> Result<Vec<KeyValue>, ExecuteError> {
         let revisions = revisions
             .iter()
@@ -454,7 +403,7 @@ where
 }
 
 /// handle and sync kv requests
-impl<DB> KvStoreBackend<DB>
+impl<DB> KvStore<DB>
 where
     DB: StorageApi,
 {
@@ -796,7 +745,12 @@ mod test {
     use utils::config::StorageConfig;
 
     use super::*;
-    use crate::{rpc::RequestOp, storage::db::DB};
+    use crate::{
+        rpc::RequestOp,
+        storage::{db::DB, kvwatcher::watcher},
+    };
+
+    const CHANNEL_SIZE: usize = 128;
 
     #[tokio::test]
     async fn test_keys_only() -> Result<(), ExecuteError> {
@@ -809,7 +763,7 @@ mod test {
             keys_only: true,
             ..Default::default()
         };
-        let response = store.inner.handle_range_request(&request)?;
+        let response = store.handle_range_request(&request)?;
         assert_eq!(response.kvs.len(), 5);
         for kv in response.kvs {
             assert!(kv.value.is_empty());
@@ -829,7 +783,7 @@ mod test {
             keys_only: true,
             ..Default::default()
         };
-        let response = store.inner.handle_range_request(&request)?;
+        let response = store.handle_range_request(&request)?;
         assert_eq!(response.kvs.len(), 0);
         assert_eq!(response.count, 0);
 
@@ -850,7 +804,7 @@ mod test {
             min_mod_revision: 2,
             ..Default::default()
         };
-        let response = store.inner.handle_range_request(&request)?;
+        let response = store.handle_range_request(&request)?;
         assert_eq!(response.count, 5);
         assert_eq!(response.kvs.len(), 2);
         assert_eq!(response.kvs[0].create_revision, 2);
@@ -873,7 +827,7 @@ mod test {
                 SortTarget::Mod,
                 SortTarget::Value,
             ] {
-                let response = store.inner.handle_range_request(&sort_req(order, target))?;
+                let response = store.handle_range_request(&sort_req(order, target))?;
                 assert_eq!(response.count, 5);
                 assert_eq!(response.kvs.len(), 5);
                 let expected = match order {
@@ -889,9 +843,7 @@ mod test {
             }
         }
         for order in [SortOrder::Ascend, SortOrder::Descend, SortOrder::None] {
-            let response = store
-                .inner
-                .handle_range_request(&sort_req(order, SortTarget::Version))?;
+            let response = store.handle_range_request(&sort_req(order, SortTarget::Version))?;
             assert_eq!(response.count, 5);
             assert_eq!(response.kvs.len(), 5);
             let is_identical = response
@@ -916,12 +868,12 @@ mod test {
             range_end: vec![],
             ..Default::default()
         };
-        let res = new_store.inner.handle_range_request(&range_req)?;
+        let res = new_store.handle_range_request(&range_req)?;
         assert_eq!(res.kvs.len(), 0);
 
-        new_store.inner.recover_from_current_db()?;
+        new_store.recover()?;
 
-        let res = new_store.inner.handle_range_request(&range_req)?;
+        let res = new_store.handle_range_request(&range_req)?;
         assert_eq!(res.kvs.len(), 1);
         assert_eq!(res.kvs[0].key, b"a");
 
@@ -971,13 +923,13 @@ mod test {
         let db = DB::open(&StorageConfig::Memory)?;
         let store = init_store(db).await?;
         let (_ignore, ops) = store.after_sync(&txn_req).await?;
-        store.inner.db.flush_ops(ops)?;
+        store.db.flush_ops(ops)?;
         let request = RangeRequest {
             key: "success".into(),
             range_end: vec![],
             ..Default::default()
         };
-        let response = store.inner.handle_range_request(&request)?;
+        let response = store.handle_range_request(&request)?;
         assert_eq!(response.count, 1);
         assert_eq!(response.kvs.len(), 1);
         assert_eq!(response.kvs[0].value, "1".as_bytes());
@@ -995,7 +947,7 @@ mod test {
         }
     }
 
-    async fn init_store(db: Arc<DB>) -> Result<KvStore<DB>, ExecuteError> {
+    async fn init_store(db: Arc<DB>) -> Result<Arc<KvStore<DB>>, ExecuteError> {
         let store = init_empty_store(db);
         let keys = vec!["a", "b", "c", "d", "e"];
         let vals = vec!["a", "b", "c", "d", "e"];
@@ -1010,15 +962,24 @@ mod test {
             );
             let _cmd_res = store.execute(&req)?;
             let (_sync_res, ops) = store.after_sync(&req).await?;
-            store.inner.db.flush_ops(ops)?;
+            store.db.flush_ops(ops)?;
         }
         Ok(store)
     }
 
-    fn init_empty_store(db: Arc<DB>) -> KvStore<DB> {
+    fn init_empty_store(db: Arc<DB>) -> Arc<KvStore<DB>> {
+        let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
         let lease_collection = Arc::new(LeaseCollection::new(0));
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let index = Arc::new(Index::new());
-        KvStore::new(lease_collection, header_gen, db, index)
+        let storage = Arc::new(KvStore::new(
+            kv_update_tx,
+            lease_collection,
+            header_gen,
+            db,
+            index,
+        ));
+        let _watcher = watcher(Arc::clone(&storage), kv_update_rx);
+        storage
     }
 }

@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 use utils::parking_lot_lock::RwLockMap;
 
 use super::storage_api::StorageApi;
-use crate::{rpc::Event, server::command::KeyRange, storage::kv_store::KvStoreBackend};
+use crate::{rpc::Event, server::command::KeyRange, storage::kv_store::KvStore};
 
 /// Watch ID
 pub(crate) type WatchId = i64;
@@ -122,7 +122,7 @@ where
     S: StorageApi,
 {
     /// KV storage
-    storage: Arc<KvStoreBackend<S>>,
+    storage: Arc<KvStore<S>>,
     /// Watch indexes
     watcher_map: RwLock<WatcherMap>,
 }
@@ -184,8 +184,8 @@ impl WatcherMap {
 }
 
 /// Boot up a watcher task and return an `Arc<KvWatcher<S>>`
-pub(super) fn watcher<S: StorageApi>(
-    storage: Arc<KvStoreBackend<S>>,
+pub(crate) fn watcher<S: StorageApi>(
+    storage: Arc<KvStore<S>>,
     mut kv_update_rx: mpsc::Receiver<(i64, Vec<Event>)>,
 ) -> Arc<KvWatcher<S>> {
     let kv_watcher = Arc::new(KvWatcher::new(storage));
@@ -262,7 +262,7 @@ where
     S: StorageApi,
 {
     /// New `KvWatchInner`
-    fn new(storage: Arc<KvStoreBackend<S>>) -> Self {
+    fn new(storage: Arc<KvStore<S>>) -> Self {
         Self {
             storage,
             watcher_map: RwLock::new(WatcherMap::new()),
