@@ -74,7 +74,6 @@ where
     DB: StorageApi,
 {
     /// New `LeaseStore`
-    #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
     pub(crate) fn new(
         lease_collection: Arc<LeaseCollection>,
         state: Arc<State>,

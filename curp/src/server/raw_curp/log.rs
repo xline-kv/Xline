@@ -422,15 +422,15 @@ mod tests {
 
     #[test]
     fn get_from_should_success() {
-        let log_entry = LogEntry::new(0, 0, Arc::new(TestCommand::default()));
-        let log_entry_size = serialized_size(&log_entry).unwrap();
-        // println!("log_entry_size = {log_entry_size}");
         let (tx, _rx) = mpsc::unbounded_channel();
         let mut log =
             Log::<TestCommand>::new(tx, default_batch_max_size(), default_log_entries_cap());
 
+        let _res = log.push_cmd(1, Arc::new(TestCommand::default()));
+        let log_entry_size = log.batch_index[1];
+
         let _res = repeat(TestCommand::default())
-            .take(10)
+            .take(9)
             .map(|cmd| log.push_cmd(1, Arc::new(cmd)).unwrap())
             .collect::<Vec<u64>>();
 
@@ -452,9 +452,10 @@ mod tests {
         assert_eq!(
             bound_2,
             3..7,
-            "batch_index = {:?}, batch = {}",
+            "batch_index = {:?}, batch = {}, log_entry_size = {}",
             log.batch_index,
-            log.batch_limit
+            log.batch_limit,
+            log_entry_size
         );
         assert!(log.has_next_batch(7));
         assert!(!log.has_next_batch(8));
@@ -464,9 +465,10 @@ mod tests {
         assert_eq!(
             bound_3,
             3..8,
-            "batch_index = {:?}, batch = {}",
+            "batch_index = {:?}, batch = {}, log_entry_size = {}",
             log.batch_index,
-            log.batch_limit
+            log.batch_limit,
+            log_entry_size
         );
         assert!(log.has_next_batch(5));
         assert!(!log.has_next_batch(6));
@@ -476,9 +478,10 @@ mod tests {
         assert_eq!(
             bound_4,
             3..10,
-            "batch_index = {:?}, batch = {}",
+            "batch_index = {:?}, batch = {}, log_entry_size = {}",
             log.batch_index,
-            log.batch_limit
+            log.batch_limit,
+            log_entry_size
         );
         assert!(!log.has_next_batch(1));
         assert!(!log.has_next_batch(5));
@@ -488,21 +491,20 @@ mod tests {
         assert_eq!(
             bound_5,
             3..3,
-            "batch_index = {:?}, batch = {}",
+            "batch_index = {:?}, batch = {}, log_entry_size = {}",
             log.batch_index,
-            log.batch_limit
+            log.batch_limit,
+            log_entry_size
         );
         assert!(log.has_next_batch(10));
     }
 
     #[test]
     fn recover_log_should_success() {
-        let entry_size =
-            serialized_size(&LogEntry::new(0, 0, Arc::new(TestCommand::default()))).unwrap();
         let entries = repeat(Arc::new(TestCommand::default()))
             .enumerate()
             .take(10)
-            .map(|(idx, cmd)| LogEntry::new((idx + 1).numeric_cast(), 0, cmd))
+            .map(|(idx, cmd)| LogEntry::new((idx + 1).numeric_cast(), 1, cmd))
             .collect::<Vec<LogEntry<TestCommand>>>();
         let (tx, _rx) = mpsc::unbounded_channel();
         let mut log =
@@ -512,11 +514,18 @@ mod tests {
         assert_eq!(log.entries.len(), 10);
         assert_eq!(log.batch_index.len(), 11);
         assert_eq!(log.batch_index[0], 0);
+        let entry_size = log.batch_index[1];
 
-        log.batch_index
-            .iter()
-            .enumerate()
-            .for_each(|(idx, &size)| assert_eq!(size, entry_size * idx.numeric_cast::<u64>()));
+        log.batch_index.iter().enumerate().for_each(|(idx, &size)| {
+            assert_eq!(
+                size,
+                entry_size * idx.numeric_cast::<u64>(),
+                "batch_index = {:?}, batch = {}, entry_size = {}",
+                log.batch_index,
+                log.batch_limit,
+                entry_size
+            );
+        });
     }
 
     #[test]
