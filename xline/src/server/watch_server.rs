@@ -1,5 +1,6 @@
 use std::{collections::HashSet, sync::Arc};
 
+use event_listener::Event;
 use tokio::sync::mpsc;
 use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
 use tracing::{debug, warn};
@@ -54,10 +55,15 @@ where
         ST: Stream<Item = Result<WatchRequest, tonic::Status>> + Unpin,
         W: KvWatcherOps,
     {
-        let (event_tx, event_rx) = mpsc::channel(CHANNEL_SIZE);
-        let (stop_tx, stop_rx) = flume::bounded(0);
-        let mut watch_handle =
-            WatchHandle::new(kv_watcher, res_tx, event_rx, event_tx, stop_tx, next_id_gen);
+        let (event_tx, mut event_rx) = mpsc::channel(CHANNEL_SIZE);
+        let stop_notify = Arc::new(Event::new());
+        let mut watch_handle = WatchHandle::new(
+            kv_watcher,
+            res_tx,
+            event_tx,
+            Arc::clone(&stop_notify),
+            next_id_gen,
+        );
         loop {
             tokio::select! {
                 req = req_rx.next() => {
@@ -76,14 +82,14 @@ where
                         break;
                     }
                 }
-                event = watch_handle.event_rx.recv() => {
+                event = event_rx.recv() => {
                     if let Some(event) = event {
                         watch_handle.handle_watch_event(event).await;
                     } else {
                         panic!("Watch event sender is closed");
                     }
                 }
-                _ = stop_rx.recv_async() => {
+                _ = stop_notify.listen() => {
                     break;
                 }
             }
@@ -101,16 +107,14 @@ where
     kv_watcher: Arc<W>,
     /// `WatchResponse` Sender
     response_tx: mpsc::Sender<Result<WatchResponse, tonic::Status>>,
-    /// Event receiver
-    event_rx: mpsc::Receiver<WatchEvent>,
     /// Event sender
     event_tx: mpsc::Sender<WatchEvent>,
     /// Watch ID to watcher map
     active_watch_ids: HashSet<WatchId>,
     /// Next available `WatchId`
     next_id_gen: Arc<WatchIdGenerator>,
-    /// Stop tx
-    stop_tx: flume::Sender<()>,
+    /// Stop Event
+    stop_notify: Arc<Event>,
 }
 
 impl<W> WatchHandle<W>
@@ -121,19 +125,17 @@ where
     fn new(
         kv_watcher: Arc<W>,
         response_tx: mpsc::Sender<Result<WatchResponse, tonic::Status>>,
-        event_rx: mpsc::Receiver<WatchEvent>,
         event_tx: mpsc::Sender<WatchEvent>,
-        stop_tx: flume::Sender<()>,
+        stop_notify: Arc<Event>,
         next_id_gen: Arc<WatchIdGenerator>,
     ) -> Self {
         Self {
             kv_watcher,
             response_tx,
-            event_rx,
             event_tx,
             active_watch_ids: HashSet::new(),
             next_id_gen,
-            stop_tx,
+            stop_notify,
         }
     }
 
@@ -162,21 +164,22 @@ where
                 req.watch_id
             )));
             if self.response_tx.send(result).await.is_err() {
-                self.stop_tx.send(()).unwrap_or_else(|e| {
-                    warn!("failed to send stop signal: {}", e);
-                });
+                self.stop_notify.notify(1);
             }
             return;
         };
 
         let key_range = KeyRange::new(req.key, req.range_end);
-        let (events, revision) = self.kv_watcher.watch(
-            watch_id,
-            key_range,
-            req.start_revision,
-            req.filters,
-            self.event_tx.clone(),
-        );
+        let (events, revision) = self
+            .kv_watcher
+            .watch(
+                watch_id,
+                key_range,
+                req.start_revision,
+                req.filters,
+                self.event_tx.clone(),
+            )
+            .await;
         assert!(
             self.active_watch_ids.insert(watch_id),
             "WatchId {watch_id} already exists in watcher_map",
@@ -192,9 +195,7 @@ where
             ..WatchResponse::default()
         };
         if self.response_tx.send(Ok(response)).await.is_err() {
-            self.stop_tx.send(()).unwrap_or_else(|e| {
-                warn!("failed to send stop signal: {}", e);
-            });
+            self.stop_notify.notify(1);
         }
         // send initial events
         if !events.is_empty() {
@@ -208,9 +209,7 @@ where
                 ..WatchResponse::default()
             };
             if self.response_tx.send(Ok(event_response)).await.is_err() {
-                self.stop_tx.send(()).unwrap_or_else(|e| {
-                    warn!("failed to send stop signal: {}", e);
-                });
+                self.stop_notify.notify(1);
             }
         }
     }
@@ -238,9 +237,7 @@ where
             )))
         };
         if self.response_tx.send(result).await.is_err() {
-            self.stop_tx.send(()).unwrap_or_else(|e| {
-                warn!("failed to send stop signal: {}", e);
-            });
+            self.stop_notify.notify(1);
         }
     }
 
@@ -278,9 +275,7 @@ where
             ..WatchResponse::default()
         };
         if self.response_tx.send(Ok(response)).await.is_err() {
-            self.stop_tx.send(()).unwrap_or_else(|e| {
-                warn!("failed to send stop signal: {}", e);
-            });
+            self.stop_notify.notify(1);
         }
     }
 }
