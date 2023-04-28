@@ -102,16 +102,6 @@ pub(crate) struct KvWatcher<S>
 where
     S: StorageApi,
 {
-    /// Inner data
-    inner: Arc<KvWatcherInner<S>>,
-}
-
-/// KV watcher inner data
-#[derive(Debug)]
-struct KvWatcherInner<S>
-where
-    S: StorageApi,
-{
     /// KV storage
     storage: Arc<KvStoreBackend<S>>,
     /// Watch indexes
@@ -174,24 +164,19 @@ impl WatcherMap {
     }
 }
 
-impl<S> KvWatcher<S>
-where
-    S: StorageApi,
-{
-    /// New `KvWatcher`
-    pub(super) fn new(
-        storage: Arc<KvStoreBackend<S>>,
-        mut kv_update_rx: mpsc::Receiver<(i64, Vec<Event>)>,
-    ) -> Self {
-        let inner = Arc::new(KvWatcherInner::new(storage));
-        let inner_clone = Arc::clone(&inner);
-        let _handle = tokio::spawn(async move {
-            while let Some(updates) = kv_update_rx.recv().await {
-                inner_clone.handle_kv_updates(updates).await;
-            }
-        });
-        Self { inner }
-    }
+/// Boot up a watcher task and return an `Arc<KvWatcher<S>>`
+pub(super) fn watcher<S: StorageApi>(
+    storage: Arc<KvStoreBackend<S>>,
+    mut kv_update_rx: mpsc::Receiver<(i64, Vec<Event>)>,
+) -> Arc<KvWatcher<S>> {
+    let kv_watcher = Arc::new(KvWatcher::new(storage));
+    let watcher = Arc::clone(&kv_watcher);
+    let _handle = tokio::spawn(async move {
+        while let Some(updates) = kv_update_rx.recv().await {
+            watcher.handle_kv_updates(updates).await;
+        }
+    });
+    kv_watcher
 }
 
 /// Operations of KV watcher
@@ -225,37 +210,6 @@ where
         filters: Vec<i32>,
         event_tx: mpsc::Sender<WatchEvent>,
     ) -> (Vec<Event>, i64) {
-        self.inner
-            .watch(id, key_range, start_rev, filters, event_tx)
-    }
-
-    /// Cancel a watch from KV store
-    fn cancel(&self, id: WatchId) -> i64 {
-        self.inner.cancel(id)
-    }
-}
-
-impl<S> KvWatcherInner<S>
-where
-    S: StorageApi,
-{
-    /// New `KvWatchInner`
-    fn new(storage: Arc<KvStoreBackend<S>>) -> Self {
-        Self {
-            storage,
-            watcher_map: RwLock::new(WatcherMap::new()),
-        }
-    }
-
-    /// Create a watch to KV store
-    fn watch(
-        &self,
-        id: WatchId,
-        key_range: KeyRange,
-        start_rev: i64,
-        filters: Vec<i32>,
-        event_tx: mpsc::Sender<WatchEvent>,
-    ) -> (Vec<Event>, i64) {
         let watcher = Watcher::new(key_range.clone(), id, start_rev, filters, event_tx);
 
         let revision = self.storage.revision();
@@ -277,10 +231,23 @@ where
     }
 
     /// Cancel a watch from KV store
-    fn cancel(&self, watch_id: WatchId) -> i64 {
+    fn cancel(&self, id: WatchId) -> i64 {
         let revision = self.storage.revision();
-        self.watcher_map.write().remove(watch_id);
+        self.watcher_map.write().remove(id);
         revision
+    }
+}
+
+impl<S> KvWatcher<S>
+where
+    S: StorageApi,
+{
+    /// New `KvWatchInner`
+    fn new(storage: Arc<KvStoreBackend<S>>) -> Self {
+        Self {
+            storage,
+            watcher_map: RwLock::new(WatcherMap::new()),
+        }
     }
 
     /// Handle KV store updates

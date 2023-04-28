@@ -11,7 +11,7 @@ use tracing::{debug, warn};
 
 use super::{
     index::{Index, IndexOperate},
-    kvwatcher::KvWatcher,
+    kvwatcher::{watcher, KvWatcher},
     lease_store::LeaseCollection,
     storage_api::StorageApi,
     Revision,
@@ -85,7 +85,7 @@ where
             storage,
             index,
         ));
-        let kv_watcher = Arc::new(KvWatcher::new(Arc::clone(&inner), kv_update_rx));
+        let kv_watcher = watcher(Arc::clone(&inner), kv_update_rx);
         Self { inner, kv_watcher }
     }
 
