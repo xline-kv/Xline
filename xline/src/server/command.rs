@@ -278,6 +278,7 @@ where
             res = sync_res;
         }
         self.persistent.flush_ops(ops)?;
+        self.kv_storage.mark_index_available(res.revision());
         self.id_barrier.trigger(cmd.id());
         self.index_barrier.trigger(index);
         Ok(res)
