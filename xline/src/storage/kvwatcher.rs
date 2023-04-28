@@ -205,9 +205,10 @@ where
 /// Operations of KV watcher
 #[allow(clippy::integer_arithmetic, clippy::indexing_slicing)] // Introduced by mockall::automock
 #[cfg_attr(test, mockall::automock)]
+#[async_trait::async_trait]
 pub(crate) trait KvWatcherOps {
     /// Create a watch to KV store
-    fn watch(
+    async fn watch(
         &self,
         id: WatchId,
         key_range: KeyRange,
@@ -223,12 +224,13 @@ pub(crate) trait KvWatcherOps {
     fn sync_done(&self);
 }
 
+#[async_trait::async_trait]
 impl<S> KvWatcherOps for KvWatcher<S>
 where
     S: StorageApi,
 {
     /// Create a watch to KV store
-    fn watch(
+    async fn watch(
         &self,
         id: WatchId,
         key_range: KeyRange,
@@ -238,6 +240,7 @@ where
     ) -> (Vec<Event>, i64) {
         self.inner
             .watch(id, key_range, start_rev, filters, event_tx)
+            .await
     }
 
     /// Cancel a watch from KV store
@@ -270,17 +273,6 @@ where
         self.syncing.load(Ordering::SeqCst)
     }
 
-    /// Mark current state as syncing
-    fn start_syncing(&self) {
-        self.syncing.store(true, Ordering::SeqCst);
-    }
-
-    /// Mark as syncing done and notify
-    fn sync_done(&self) {
-        self.syncing.store(false, Ordering::SeqCst);
-        self.syncing_notify.notify(1);
-    }
-
     /// If current state is syncing, wait until it is done
     async fn wait_syncing(&self) {
         while self.is_syncing() {
@@ -288,8 +280,35 @@ where
         }
     }
 
+    /// Mark current state as syncing
+    async fn start_syncing(&self) {
+        loop {
+            match self
+                .syncing
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+            {
+                Ok(_) => break,
+                Err(_) => {
+                    self.syncing_notify.listen().await;
+                }
+            }
+        }
+    }
+
+    /// Mark as syncing done and notify
+    fn sync_done(&self) {
+        if self
+            .syncing
+            .compare_exchange(true, false, Ordering::AcqRel, Ordering::Relaxed)
+            .is_err()
+        {
+            panic!("syncing is not started");
+        }
+        self.syncing_notify.notify(1);
+    }
+
     /// Create a watch to KV store
-    fn watch(
+    async fn watch(
         &self,
         watch_id: WatchId,
         key_range: KeyRange,
@@ -297,7 +316,7 @@ where
         filters: Vec<i32>,
         event_tx: mpsc::Sender<WatchEvent>,
     ) -> (Vec<Event>, i64) {
-        self.start_syncing();
+        self.start_syncing().await;
         let mut revision = self.storage.revision();
         let initial_events = if start_rev == 0 {
             vec![]
@@ -408,7 +427,7 @@ mod test {
     use crate::{
         header_gen::HeaderGenerator,
         rpc::{PutRequest, RequestWithToken},
-        storage::{db::DBProxy, index::Index, lease_store::LeaseMessage, KvStore},
+        storage::{db::DBProxy, index::Index, lease_store::LeaseCollection, KvStore},
     };
 
     use super::*;
@@ -438,8 +457,9 @@ mod test {
         tokio::time::sleep(std::time::Duration::from_micros(500)).await;
         let watcher = store.kv_watcher();
         let (event_tx, mut event_rx) = mpsc::channel(128);
-        let (events, _revision) =
-            watcher.watch(123, KeyRange::new_one_key("foo"), 1, vec![], event_tx);
+        let (events, _revision) = watcher
+            .watch(123, KeyRange::new_one_key("foo"), 1, vec![], event_tx)
+            .await;
         // send events to client
         watcher.sync_done();
         for event in events {
@@ -470,16 +490,11 @@ mod test {
     fn init_empty_store() -> (Arc<KvStore<DBProxy>>, Arc<DBProxy>) {
         let db = DBProxy::open(&StorageConfig::Memory).unwrap();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
-        let (lease_cmd_tx, mut lease_cmd_rx) = mpsc::channel(128);
+        let lease_collection = Arc::new(LeaseCollection::new(0));
         let index = Arc::new(Index::new());
-        let _handle = tokio::spawn(async move {
-            while let Some(LeaseMessage::GetLease(tx, _)) = lease_cmd_rx.recv().await {
-                assert!(tx.send(0).is_ok());
-            }
-        });
         (
             Arc::new(KvStore::new(
-                lease_cmd_tx,
+                lease_collection,
                 header_gen,
                 Arc::clone(&db),
                 index,

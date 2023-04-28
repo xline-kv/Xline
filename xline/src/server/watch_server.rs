@@ -1,6 +1,7 @@
 use std::{collections::HashSet, sync::Arc};
 
 use clippy_utilities::OverflowArithmetic;
+use event_listener::Event;
 use tokio::sync::mpsc;
 use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
 use tracing::{debug, warn};
@@ -50,8 +51,9 @@ where
         W: KvWatcherOps,
     {
         let (event_tx, mut event_rx) = mpsc::channel(CHANNEL_SIZE);
-        let (stop_tx, stop_rx) = flume::bounded(0);
-        let mut watch_handle = WatchHandle::new(kv_watcher, res_tx, event_tx, stop_tx);
+        let stop_notify = Arc::new(Event::new());
+        let mut watch_handle =
+            WatchHandle::new(kv_watcher, res_tx, event_tx, Arc::clone(&stop_notify));
         loop {
             tokio::select! {
                 req = req_rx.next() => {
@@ -77,7 +79,7 @@ where
                         panic!("Watch event sender is closed");
                     }
                 }
-                _ = stop_rx.recv_async() => {
+                _ = stop_notify.listen() => {
                     break;
                 }
             }
@@ -101,8 +103,8 @@ where
     active_watch_ids: HashSet<WatchId>,
     /// Next available `WatchId`
     next_id: WatchId,
-    /// Stop tx
-    stop_tx: flume::Sender<()>,
+    /// Stop Event
+    stop_notify: Arc<Event>,
 }
 
 impl<W> WatchHandle<W>
@@ -114,7 +116,7 @@ where
         kv_watcher: Arc<W>,
         response_tx: mpsc::Sender<Result<WatchResponse, tonic::Status>>,
         event_tx: mpsc::Sender<WatchEvent>,
-        stop_tx: flume::Sender<()>,
+        stop_notify: Arc<Event>,
     ) -> Self {
         Self {
             kv_watcher,
@@ -122,7 +124,7 @@ where
             event_tx,
             active_watch_ids: HashSet::new(),
             next_id: 1, // watch_id starts from 1, 0 means auto-generating
-            stop_tx,
+            stop_notify,
         }
     }
 
@@ -152,21 +154,22 @@ where
                 req.watch_id
             )));
             if self.response_tx.send(result).await.is_err() {
-                self.stop_tx.send(()).unwrap_or_else(|e| {
-                    warn!("failed to send stop signal: {}", e);
-                });
+                self.stop_notify.notify(1);
             }
             return;
         };
 
         let key_range = KeyRange::new(req.key, req.range_end);
-        let (events, revision) = self.kv_watcher.watch(
-            watch_id,
-            key_range,
-            req.start_revision,
-            req.filters,
-            self.event_tx.clone(),
-        );
+        let (events, revision) = self
+            .kv_watcher
+            .watch(
+                watch_id,
+                key_range,
+                req.start_revision,
+                req.filters,
+                self.event_tx.clone(),
+            )
+            .await;
         assert!(
             self.active_watch_ids.insert(watch_id),
             "WatchId {watch_id} already exists in watcher_map",
@@ -182,9 +185,7 @@ where
             ..WatchResponse::default()
         };
         if self.response_tx.send(Ok(response)).await.is_err() {
-            self.stop_tx.send(()).unwrap_or_else(|e| {
-                warn!("failed to send stop signal: {}", e);
-            });
+            self.stop_notify.notify(1);
         }
         // send initial events
         if !events.is_empty() {
@@ -198,9 +199,7 @@ where
                 ..WatchResponse::default()
             };
             if self.response_tx.send(Ok(event_response)).await.is_err() {
-                self.stop_tx.send(()).unwrap_or_else(|e| {
-                    warn!("failed to send stop signal: {}", e);
-                });
+                self.stop_notify.notify(1);
             }
         }
         self.kv_watcher.sync_done();
@@ -228,9 +227,7 @@ where
             )))
         };
         if self.response_tx.send(result).await.is_err() {
-            self.stop_tx.send(()).unwrap_or_else(|e| {
-                warn!("failed to send stop signal: {}", e);
-            });
+            self.stop_notify.notify(1);
         }
     }
 
@@ -268,9 +265,7 @@ where
             ..WatchResponse::default()
         };
         if self.response_tx.send(Ok(response)).await.is_err() {
-            self.stop_tx.send(()).unwrap_or_else(|e| {
-                warn!("failed to send stop signal: {}", e);
-            });
+            self.stop_notify.notify(1);
         }
     }
 }

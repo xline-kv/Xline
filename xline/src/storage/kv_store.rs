@@ -427,6 +427,7 @@ where
     }
 
     /// Get `KeyValue` start from a revision and convert to `Event`
+    /// Return the last event's revision and all events
     pub(crate) fn get_events_from_revision(
         &self,
         key_range: KeyRange,
