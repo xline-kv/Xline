@@ -112,6 +112,11 @@ where
 
         Ok(())
     }
+
+    /// Mark the `KeyRevision` in index as available
+    pub(crate) fn mark_index_available(&self, revision: i64) {
+        self.index.mark_available(revision);
+    }
 }
 
 impl<DB> KvStore<DB>
@@ -324,7 +329,7 @@ where
             .map(Revision::encode_to_vec)
             .collect::<Vec<Vec<u8>>>();
         let values = self.db.get_values(KV_TABLE, &revisions)?;
-        let kvs = values
+        let kvs: Vec<KeyValue> = values
             .into_iter()
             .flatten()
             .map(|v| KeyValue::decode(v.as_slice()))
@@ -332,6 +337,7 @@ where
             .map_err(|e| {
                 ExecuteError::DbError(format!("Failed to decode key-value from DB, error: {e}"))
             })?;
+        debug_assert_eq!(kvs.len(), revisions.len(), "index does not match with db");
         Ok(kvs)
     }
 
@@ -922,8 +928,9 @@ mod test {
         );
         let db = DB::open(&StorageConfig::Memory)?;
         let store = init_store(db).await?;
-        let (_ignore, ops) = store.after_sync(&txn_req).await?;
+        let (sync_res, ops) = store.after_sync(&txn_req).await?;
         store.db.flush_ops(ops)?;
+        store.mark_index_available(sync_res.revision());
         let request = RangeRequest {
             key: "success".into(),
             range_end: vec![],
@@ -935,6 +942,33 @@ mod test {
         assert_eq!(response.kvs[0].value, "1".as_bytes());
 
         Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    async fn test_kv_store_atomic() {
+        let db = DB::open(&StorageConfig::Memory).unwrap();
+        let store = Arc::new(init_store(Arc::clone(&db)).await.unwrap());
+        let _handle = tokio::spawn({
+            let store = Arc::clone(&store);
+            async move {
+                for i in 0..100_u8 {
+                    let req = RequestWithToken::new(
+                        PutRequest {
+                            key: "foo".into(),
+                            value: vec![i],
+                            ..Default::default()
+                        }
+                        .into(),
+                    );
+                    let (_res, ops) = store.after_sync(&req).await.unwrap();
+                    db.flush_ops(ops).unwrap();
+                }
+            }
+        });
+        tokio::time::sleep(std::time::Duration::from_micros(500)).await;
+        let revs = store.index.get_from_rev(b"foo", b"", 1);
+        let kvs = store.get_values(&revs).unwrap();
+        assert_eq!(kvs.len(), revs.len());
     }
 
     fn sort_req(sort_order: SortOrder, sort_target: SortTarget) -> RangeRequest {
@@ -961,8 +995,9 @@ mod test {
                 .into(),
             );
             let _cmd_res = store.execute(&req)?;
-            let (_sync_res, ops) = store.after_sync(&req).await?;
+            let (sync_res, ops) = store.after_sync(&req).await?;
             store.db.flush_ops(ops)?;
+            store.mark_index_available(sync_res.revision());
         }
         Ok(store)
     }
