@@ -451,9 +451,10 @@ mod tests {
         assert_eq!(
             bound_2,
             3..7,
-            "batch_index = {:?}, batch = {}",
+            "batch_index = {:?}, batch = {}, log_entry_size = {}",
             log.batch_index,
-            log.batch_limit
+            log.batch_limit,
+            log_entry_size
         );
         assert!(log.has_next_batch(7));
         assert!(!log.has_next_batch(8));
@@ -463,9 +464,10 @@ mod tests {
         assert_eq!(
             bound_3,
             3..8,
-            "batch_index = {:?}, batch = {}",
+            "batch_index = {:?}, batch = {}, log_entry_size = {}",
             log.batch_index,
-            log.batch_limit
+            log.batch_limit,
+            log_entry_size
         );
         assert!(log.has_next_batch(5));
         assert!(!log.has_next_batch(6));
@@ -475,9 +477,10 @@ mod tests {
         assert_eq!(
             bound_4,
             3..10,
-            "batch_index = {:?}, batch = {}",
+            "batch_index = {:?}, batch = {}, log_entry_size = {}",
             log.batch_index,
-            log.batch_limit
+            log.batch_limit,
+            log_entry_size
         );
         assert!(!log.has_next_batch(1));
         assert!(!log.has_next_batch(5));
@@ -487,9 +490,10 @@ mod tests {
         assert_eq!(
             bound_5,
             3..3,
-            "batch_index = {:?}, batch = {}",
+            "batch_index = {:?}, batch = {}, log_entry_size = {}",
             log.batch_index,
-            log.batch_limit
+            log.batch_limit,
+            log_entry_size
         );
         assert!(log.has_next_batch(10));
     }
