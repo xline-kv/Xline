@@ -9,14 +9,14 @@ use parking_lot::Mutex;
 #[derive(Debug)]
 pub(crate) struct IndexBarrier {
     /// Inner
-    inner: Mutex<IndexWaiterInner>,
+    inner: Mutex<IndexBarrierInner>,
 }
 
 impl IndexBarrier {
     /// Create a new index waiter
     pub(crate) fn new() -> Self {
         IndexBarrier {
-            inner: Mutex::new(IndexWaiterInner {
+            inner: Mutex::new(IndexBarrierInner {
                 last_trigger_index: 0,
                 waiters: BTreeMap::new(),
             }),
@@ -53,7 +53,7 @@ impl IndexBarrier {
 
 /// Inner of index waiter.
 #[derive(Debug)]
-struct IndexWaiterInner {
+struct IndexBarrierInner {
     /// The last index that the waiter has triggered.
     last_trigger_index: u64,
     /// Waiters of index.
