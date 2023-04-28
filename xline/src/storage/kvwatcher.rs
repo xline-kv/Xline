@@ -186,9 +186,10 @@ impl WatcherMap {
 /// Operations of KV watcher
 #[allow(clippy::integer_arithmetic, clippy::indexing_slicing)] // Introduced by mockall::automock
 #[cfg_attr(test, mockall::automock)]
+#[async_trait::async_trait]
 pub(crate) trait KvWatcherOps {
     /// Create a watch to KV store
-    fn watch(
+    async fn watch(
         &self,
         id: WatchId,
         key_range: KeyRange,
@@ -201,12 +202,13 @@ pub(crate) trait KvWatcherOps {
     fn cancel(&self, id: WatchId) -> i64;
 }
 
+#[async_trait::async_trait]
 impl<S> KvWatcherOps for KvWatcher<S>
 where
     S: StorageApi,
 {
     /// Create a watch to KV store
-    fn watch(
+    async fn watch(
         &self,
         id: WatchId,
         key_range: KeyRange,
