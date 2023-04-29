@@ -119,7 +119,7 @@ where
     }
 
     /// verify token
-    pub(crate) fn verify_token(&self, token: &str) -> Result<TokenClaims, ExecuteError> {
+    fn verify_token(&self, token: &str) -> Result<TokenClaims, ExecuteError> {
         match self.token_manager {
             Some(ref token_manager) => token_manager
                 .verify(token)
@@ -151,11 +151,7 @@ where
     }
 
     /// get user permissions
-    pub(crate) fn get_user_permissions(
-        &self,
-        user: &User,
-        skip_role: Option<&str>,
-    ) -> UserPermissions {
+    fn get_user_permissions(&self, user: &User, skip_role: Option<&str>) -> UserPermissions {
         let mut user_permission = UserPermissions::new();
         for role_name in &user.roles {
             if skip_role.map_or(false, |r| r == role_name) {

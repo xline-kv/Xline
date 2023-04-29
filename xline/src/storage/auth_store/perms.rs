@@ -20,17 +20,17 @@ const DEFAULT_TOKEN_TTL: u64 = 300;
 
 /// Claims of Token
 #[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct TokenClaims {
+pub(super) struct TokenClaims {
     /// Username
-    pub(crate) username: String,
+    pub(super) username: String,
     /// Revision
-    pub(crate) revision: i64,
+    pub(super) revision: i64,
     /// Expiration
     exp: u64,
 }
 
 /// Operations of token manager
-pub(crate) trait TokenOperate {
+pub(super) trait TokenOperate {
     /// Claims type
     type Claims;
 
@@ -45,7 +45,7 @@ pub(crate) trait TokenOperate {
 }
 
 /// `TokenManager` of Json Web Token.
-pub(crate) struct JwtTokenManager {
+pub(super) struct JwtTokenManager {
     /// The key used to sign the token.
     encoding_key: EncodingKey,
     /// The key used to verify the token.
@@ -103,16 +103,16 @@ impl TokenOperate for JwtTokenManager {
 
 /// Permissions if a user
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) struct UserPermissions {
+pub(super) struct UserPermissions {
     /// `MergedRange` has read permission
-    pub(crate) read: MergedRange<Vec<u8>>,
+    pub(super) read: MergedRange<Vec<u8>>,
     /// `MergedRange` has write permission
-    pub(crate) write: MergedRange<Vec<u8>>,
+    pub(super) write: MergedRange<Vec<u8>>,
 }
 
 impl UserPermissions {
     /// New `UserPermissions`
-    pub(crate) fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             read: MergedRange::new(),
             write: MergedRange::new(),
@@ -120,7 +120,7 @@ impl UserPermissions {
     }
 
     /// Insert a permission to `UserPermissions`
-    pub(crate) fn insert(&mut self, perm: Permission) {
+    pub(super) fn insert(&mut self, perm: Permission) {
         let range = KeyRange::new(perm.key, perm.range_end).unpack();
         #[allow(clippy::unwrap_used)] // safe unwrap
         match Type::from_i32(perm.perm_type).unwrap() {
@@ -140,11 +140,11 @@ impl UserPermissions {
 
 /// Permissions cache
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PermissionCache {
+pub(super) struct PermissionCache {
     /// Permissions of users
-    pub(crate) user_permissions: HashMap<String, UserPermissions>,
+    pub(super) user_permissions: HashMap<String, UserPermissions>,
     /// Role to users map
-    pub(crate) role_to_users_map: HashMap<String, Vec<String>>,
+    pub(super) role_to_users_map: HashMap<String, Vec<String>>,
 }
 
 impl PermissionCache {
