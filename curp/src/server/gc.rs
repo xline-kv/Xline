@@ -1,4 +1,4 @@
-use std::{collections::HashSet, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use utils::parking_lot_lock::MutexMap;
 
@@ -13,9 +13,15 @@ pub(super) fn run_gc_tasks<C: Command + 'static>(
     cmd_board: CmdBoardRef<C>,
     spec: SpecPoolRef<C>,
     gc_interval: Duration,
+    shutdown_trigger: Arc<event_listener::Event>,
 ) {
-    let _spec_pool_gc = tokio::spawn(gc_spec_pool(spec, gc_interval));
-    let _cmd_board_gc = tokio::spawn(gc_cmd_board(cmd_board, gc_interval));
+    let spec_pool_gc = tokio::spawn(gc_spec_pool(spec, gc_interval));
+    let cmd_board_gc = tokio::spawn(gc_cmd_board(cmd_board, gc_interval));
+    let _ig = tokio::spawn(async move {
+        shutdown_trigger.listen().await;
+        spec_pool_gc.abort();
+        cmd_board_gc.abort();
+    });
 }
 
 /// Cleanup spec pool
