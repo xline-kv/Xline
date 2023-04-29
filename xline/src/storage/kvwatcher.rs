@@ -242,7 +242,7 @@ impl<S> KvWatcher<S>
 where
     S: StorageApi,
 {
-    /// New `KvWatchInner`
+    /// New `KvWatcher`
     fn new(storage: Arc<KvStore<S>>) -> Self {
         Self {
             storage,
