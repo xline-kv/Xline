@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
+use async_stream::stream;
 use clippy_utilities::OverflowArithmetic;
 use curp::{client::Client, cmd::ProposeId, error::ProposeError};
 use etcd_client::EventType;
-use tokio::sync::mpsc;
-use tokio_stream::wrappers::ReceiverStream;
 use tracing::debug;
 use uuid::Uuid;
 
@@ -189,22 +188,17 @@ impl LockServer {
             let (cmd_res, _sync_res) = self.propose(get_req, token.cloned(), false).await?;
             let response = Into::<RangeResponse>::into(cmd_res.decode());
             let last_key = match response.kvs.first() {
-                Some(kv) => kv.key.as_slice(),
+                Some(kv) => kv.key.clone(),
                 None => return Ok(()),
             };
-
-            let (request_sender, request_receiver) = mpsc::channel(100);
-            let request_stream = ReceiverStream::new(request_receiver);
-            request_sender
-                .send(WatchRequest {
+            let request_stream = stream! {
+                yield WatchRequest {
                     request_union: Some(RequestUnion::CreateRequest(WatchCreateRequest {
-                        key: last_key.to_vec(),
+                        key: last_key,
                         ..Default::default()
                     })),
-                })
-                .await
-                .unwrap_or_else(|e| panic!("failed to send watch request: {e}"));
-
+                };
+            };
             let mut response_stream = watch_client.watch(request_stream).await?.into_inner();
             while let Some(watch_res) = response_stream.message().await? {
                 #[allow(clippy::as_conversions)] // this cast is always safe
