@@ -1,10 +1,10 @@
-use std::sync::Arc;
+use std::{pin::Pin, sync::Arc};
 
+use async_stream::try_stream;
 use clippy_utilities::{Cast, OverflowArithmetic};
 use engine::snapshot_api::SnapshotApi;
+use futures::stream::Stream;
 use sha2::{Digest, Sha256};
-use tokio::sync::mpsc;
-use tokio_stream::wrappers::ReceiverStream;
 use tracing::error;
 
 use crate::{
@@ -98,7 +98,8 @@ where
         ))
     }
 
-    type SnapshotStream = ReceiverStream<Result<SnapshotResponse, tonic::Status>>;
+    type SnapshotStream =
+        Pin<Box<dyn Stream<Item = Result<SnapshotResponse, tonic::Status>> + Send>>;
 
     async fn snapshot(
         &self,
@@ -111,8 +112,8 @@ where
         })?;
 
         let header = self.header_gen.gen_header();
-        let (tx, rx) = mpsc::channel(1);
-        let _ig = tokio::spawn(async move {
+
+        let stream = try_stream! {
             if let Err(e) = snapshot.rewind() {
                 error!("snapshot rewind failed, {e}");
                 return;
@@ -124,15 +125,7 @@ where
                 let buf_size = std::cmp::min(MAINTENANCE_SNAPSHOT_CHUNK_SIZE, remain_size);
                 let mut buf = vec![0; buf_size.cast()];
                 remain_size = remain_size.overflow_sub(buf_size);
-                if snapshot.read_exact(&mut buf).await.is_err() {
-                    if let Err(e) = tx
-                        .send(Err(tonic::Status::internal("snapshot read failed")))
-                        .await
-                    {
-                        error!("snapshot send failed, {e}");
-                    }
-                    return;
-                }
+                snapshot.read_exact(&mut buf).await.map_err(|_e| {tonic::Status::internal("snapshot read failed")})?;
                 // etcd client will use the size of the snapshot to determine whether checksum is included,
                 // and the check method size % 512 == sha256.size, So we need to pad snapshots to multiples
                 // of 512 bytes
@@ -141,32 +134,24 @@ where
                     buf.append(&mut vec![0; padding.cast()]);
                 }
                 checksum_gen.update(&buf);
-                let resp: SnapshotResponse = SnapshotResponse {
+                yield SnapshotResponse {
                     header: Some(header.clone()),
                     remaining_bytes: remain_size,
                     blob: buf,
                 };
-                if let Err(e) = tx.send(Ok(resp)).await {
-                    error!("snapshot send failed, {e}");
-                    return;
-                }
             }
             let checksum = checksum_gen.finalize().to_vec();
-            let resp = SnapshotResponse {
+            yield SnapshotResponse {
                 header: Some(header),
                 remaining_bytes: 0,
                 blob: checksum,
             };
-            if let Err(e) = tx.send(Ok(resp)).await {
-                error!("snapshot send failed, {e}");
-                return;
-            }
             if let Err(e) = snapshot.clean().await {
                 error!("snapshot clean failed, {e}");
             }
-        });
+        };
 
-        Ok(tonic::Response::new(ReceiverStream::new(rx)))
+        Ok(tonic::Response::new(Box::pin(stream)))
     }
 
     async fn move_leader(
