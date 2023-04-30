@@ -46,11 +46,6 @@ impl ExecuteError {
         Self::LeaseError(format!("lease {lease_id} already exists"))
     }
 
-    /// Lease current node is not leader
-    pub(crate) fn lease_not_leader() -> Self {
-        Self::LeaseError("current node is not leader".to_owned())
-    }
-
     /// Auth is not enabled
     pub(crate) fn auth_not_enabled() -> Self {
         Self::AuthError("auth is not enabled".to_owned())

@@ -176,13 +176,17 @@ where
         mut request_stream: tonic::Streaming<LeaseKeepAliveRequest>,
     ) -> Pin<Box<dyn Stream<Item = Result<LeaseKeepAliveResponse, tonic::Status>> + Send>> {
         let lease_storage = Arc::clone(&self.lease_storage);
+        let state = Arc::clone(&self.state);
         let stream = try_stream! {
             while let Some(keep_alive_req) = request_stream.message().await? {
                 debug!("Receive LeaseKeepAliveRequest {:?}", keep_alive_req);
                 // TODO wait applied index
-                let ttl = lease_storage.keep_alive(keep_alive_req.id).map_err(|e| {
-                    tonic::Status::invalid_argument(format!("Keep alive error: {e}",))
-                })?;
+                let ttl = if state.is_leader() {
+                    lease_storage.keep_alive(keep_alive_req.id).map_err(|e| {
+                        tonic::Status::invalid_argument(format!("Keep alive error: {e}",))})
+                } else {
+                    Err(tonic::Status::invalid_argument("current node is not a leader"))
+                }?;
                 yield LeaseKeepAliveResponse {
                     id: keep_alive_req.id,
                     ttl,
