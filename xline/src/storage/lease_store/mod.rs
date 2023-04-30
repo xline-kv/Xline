@@ -42,16 +42,6 @@ pub(crate) struct LeaseStore<DB>
 where
     DB: StorageApi,
 {
-    /// Lease store Backend
-    inner: Arc<LeaseStoreBackend<DB>>,
-}
-
-/// Lease store inner
-#[derive(Debug)]
-struct LeaseStoreBackend<DB>
-where
-    DB: StorageApi,
-{
     /// lease collection
     lease_collection: Arc<LeaseCollection>,
     /// Db to store lease
@@ -80,111 +70,6 @@ where
         kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
     ) -> Self {
         Self {
-            inner: Arc::new(LeaseStoreBackend::new(
-                lease_collection,
-                state,
-                header_gen,
-                db,
-                index,
-                kv_update_tx,
-            )),
-        }
-    }
-
-    /// execute a lease request
-    pub(crate) fn execute(
-        &self,
-        request: &RequestWithToken,
-    ) -> Result<CommandResponse, ExecuteError> {
-        self.inner
-            .handle_lease_requests(&request.request)
-            .map(CommandResponse::new)
-    }
-
-    /// sync a lease request
-    pub(crate) async fn after_sync(
-        &self,
-        request: &RequestWithToken,
-        revision: i64,
-    ) -> Result<(SyncResponse, Vec<WriteOp>), ExecuteError> {
-        self.inner
-            .sync_request(&request.request, revision)
-            .await
-            .map(|(rev, ops)| (SyncResponse::new(rev), ops))
-    }
-
-    /// Check if the node is leader
-    fn is_leader(&self) -> bool {
-        self.inner.is_leader()
-    }
-
-    /// Get lease by id
-    pub(crate) fn look_up(&self, lease_id: i64) -> Option<Lease> {
-        self.inner.look_up(lease_id)
-    }
-
-    /// Get all leases
-    pub(crate) fn leases(&self) -> Vec<Lease> {
-        self.inner.lease_collection.leases()
-    }
-
-    /// Find expired leases
-    pub(crate) fn find_expired_leases(&self) -> Vec<i64> {
-        self.inner.lease_collection.find_expired_leases()
-    }
-
-    /// Get keys attached to a lease
-    pub(crate) fn get_keys(&self, lease_id: i64) -> Vec<Vec<u8>> {
-        self.inner
-            .lease_collection
-            .look_up(lease_id)
-            .map(|l| l.keys())
-            .unwrap_or_default()
-    }
-
-    /// Keep alive a lease
-    pub(crate) fn keep_alive(&self, lease_id: i64) -> Result<i64, ExecuteError> {
-        if !self.is_leader() {
-            return Err(ExecuteError::lease_not_leader());
-        }
-        self.inner.lease_collection.renew(lease_id)
-    }
-
-    /// Generate `ResponseHeader`
-    pub(crate) fn gen_header(&self) -> ResponseHeader {
-        self.inner.header_gen.gen_header()
-    }
-
-    /// Demote current node
-    pub(crate) fn demote(&self) {
-        self.inner.lease_collection.demote();
-    }
-
-    /// Promote current node
-    pub(crate) fn promote(&self, extend: Duration) {
-        self.inner.lease_collection.promote(extend);
-    }
-
-    /// Recover data form persistent storage
-    pub(crate) fn recover(&self) -> Result<(), ExecuteError> {
-        self.inner.recover_from_current_db()
-    }
-}
-
-impl<DB> LeaseStoreBackend<DB>
-where
-    DB: StorageApi,
-{
-    /// New `LeaseStoreBackend`
-    fn new(
-        lease_collection: Arc<LeaseCollection>,
-        state: Arc<State>,
-        header_gen: Arc<HeaderGenerator>,
-        db: Arc<DB>,
-        index: Arc<Index>,
-        kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
-    ) -> Self {
-        Self {
             lease_collection,
             db,
             index,
@@ -194,6 +79,83 @@ where
         }
     }
 
+    /// execute a lease request
+    pub(crate) fn execute(
+        &self,
+        request: &RequestWithToken,
+    ) -> Result<CommandResponse, ExecuteError> {
+        self.handle_lease_requests(&request.request)
+            .map(CommandResponse::new)
+    }
+
+    /// sync a lease request
+    pub(crate) async fn after_sync(
+        &self,
+        request: &RequestWithToken,
+        revision: i64,
+    ) -> Result<(SyncResponse, Vec<WriteOp>), ExecuteError> {
+        self.sync_request(&request.request, revision)
+            .await
+            .map(|(rev, ops)| (SyncResponse::new(rev), ops))
+    }
+
+    /// Get lease by id
+    pub(crate) fn look_up(&self, lease_id: i64) -> Option<Lease> {
+        self.lease_collection.look_up(lease_id)
+    }
+
+    /// Get all leases
+    pub(crate) fn leases(&self) -> Vec<Lease> {
+        self.lease_collection.leases()
+    }
+
+    /// Find expired leases
+    pub(crate) fn find_expired_leases(&self) -> Vec<i64> {
+        self.lease_collection.find_expired_leases()
+    }
+
+    /// Get keys attached to a lease
+    pub(crate) fn get_keys(&self, lease_id: i64) -> Vec<Vec<u8>> {
+        self.lease_collection
+            .look_up(lease_id)
+            .map(|l| l.keys())
+            .unwrap_or_default()
+    }
+
+    /// Keep alive a lease
+    pub(crate) fn keep_alive(&self, lease_id: i64) -> Result<i64, ExecuteError> {
+        self.lease_collection.renew(lease_id)
+    }
+
+    /// Generate `ResponseHeader`
+    pub(crate) fn gen_header(&self) -> ResponseHeader {
+        self.header_gen.gen_header()
+    }
+
+    /// Demote current node
+    pub(crate) fn demote(&self) {
+        self.lease_collection.demote();
+    }
+
+    /// Promote current node
+    pub(crate) fn promote(&self, extend: Duration) {
+        self.lease_collection.promote(extend);
+    }
+
+    /// Recover data form persistent storage
+    pub(crate) fn recover(&self) -> Result<(), ExecuteError> {
+        let leases = self.get_all()?;
+        for lease in leases {
+            let _ignore = self.lease_collection.grant(lease.id, lease.ttl, false);
+        }
+        Ok(())
+    }
+}
+
+impl<DB> LeaseStore<DB>
+where
+    DB: StorageApi,
+{
     /// Check if the node is leader
     fn is_leader(&self) -> bool {
         self.state.is_leader()
@@ -207,20 +169,6 @@ where
     /// Get lease id by given key
     fn get_lease(&self, key: &[u8]) -> i64 {
         self.lease_collection.get_lease(key)
-    }
-
-    /// Get lease by id
-    fn look_up(&self, lease_id: i64) -> Option<Lease> {
-        self.lease_collection.look_up(lease_id)
-    }
-
-    /// Recover data form persistent storage
-    fn recover_from_current_db(&self) -> Result<(), ExecuteError> {
-        let leases = self.get_all()?;
-        for lease in leases {
-            let _ignore = self.lease_collection.grant(lease.id, lease.ttl, false);
-        }
-        Ok(())
     }
 
     /// Handle lease requests
@@ -421,7 +369,7 @@ mod test {
     async fn test_lease_storage() -> Result<(), Box<dyn Error>> {
         let db = DB::open(&StorageConfig::Memory)?;
         let lease_store = init_store(db);
-        let revision_gen = lease_store.inner.header_gen.revision_arc();
+        let revision_gen = lease_store.header_gen.revision_arc();
 
         let req1 = RequestWithToken::new(LeaseGrantRequest { ttl: 10, id: 1 }.into());
         let _ignore1 = exe_and_sync_req(&lease_store, &req1, -1).await?;
@@ -431,11 +379,11 @@ mod test {
         assert_eq!(lo.ttl(), Duration::from_secs(10));
         assert_eq!(lease_store.leases().len(), 1);
 
-        let attach_non_existing_lease = lease_store.inner.lease_collection.attach(0, "key".into());
+        let attach_non_existing_lease = lease_store.lease_collection.attach(0, "key".into());
         assert!(attach_non_existing_lease.is_err());
-        let attach_existing_lease = lease_store.inner.lease_collection.attach(1, "key".into());
+        let attach_existing_lease = lease_store.lease_collection.attach(1, "key".into());
         assert!(attach_existing_lease.is_ok());
-        lease_store.inner.detach(1, "key".as_bytes())?;
+        lease_store.detach(1, "key".as_bytes())?;
 
         let req2 = RequestWithToken::new(LeaseRevokeRequest { id: 1 }.into());
         let _ignore2 = exe_and_sync_req(&lease_store, &req2, revision_gen.next()).await?;
@@ -452,11 +400,11 @@ mod test {
 
         let req1 = RequestWithToken::new(LeaseGrantRequest { ttl: 10, id: 1 }.into());
         let _ignore1 = exe_and_sync_req(&store, &req1, -1).await?;
-        store.inner.lease_collection.attach(1, "key".into())?;
+        store.lease_collection.attach(1, "key".into())?;
 
         let new_store = init_store(db);
         assert!(new_store.look_up(1).is_none());
-        new_store.inner.recover_from_current_db()?;
+        new_store.recover()?;
 
         let lease1 = store.look_up(1).unwrap();
         let lease2 = new_store.look_up(1).unwrap();
@@ -485,7 +433,7 @@ mod test {
     ) -> Result<ResponseWrapper, ExecuteError> {
         let cmd_res = ls.execute(req)?;
         let (_ignore, ops) = ls.after_sync(req, revision).await?;
-        ls.inner.db.flush_ops(ops)?;
+        ls.db.flush_ops(ops)?;
         Ok(cmd_res.decode())
     }
 }
