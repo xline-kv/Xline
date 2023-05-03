@@ -2,15 +2,15 @@ use prost::bytes::{Buf, BufMut};
 
 /// Revision of a key
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub(crate) struct KeyRevision {
+pub(super) struct KeyRevision {
     /// Last creation revision
-    pub(crate) create_revision: i64,
+    pub(super) create_revision: i64,
     /// Number of modification since last creation
-    pub(crate) version: i64,
+    pub(super) version: i64,
     /// Last modification revision
-    pub(crate) mod_revision: i64,
+    pub(super) mod_revision: i64,
     /// Sub revision in one transaction
-    pub(crate) sub_revision: i64,
+    pub(super) sub_revision: i64,
     /// Available flag
     /// true means this revision has been already written to storage
     pub(crate) available: bool,
