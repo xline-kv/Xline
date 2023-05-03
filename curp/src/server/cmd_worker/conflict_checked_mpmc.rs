@@ -172,19 +172,16 @@ struct Filter<C> {
     next_id: u64,
     /// Send task to users
     filter_tx: flume::Sender<Task<C>>,
-    /// Send task to `as_worker`
-    as_tx: flume::Sender<Task<C>>,
 }
 
 impl<C: Command> Filter<C> {
     /// Create a new filter that checks conflict in between msgs
-    fn new(filter_tx: flume::Sender<Task<C>>, as_tx: flume::Sender<Task<C>>) -> Self {
+    fn new(filter_tx: flume::Sender<Task<C>>) -> Self {
         Self {
             cmd_vid: HashMap::new(),
             vs: HashMap::new(),
             next_id: 0,
             filter_tx,
-            as_tx,
         }
     }
 
@@ -315,7 +312,7 @@ impl<C: Command> Filter<C> {
                         vid,
                         inner: Cart::new(TaskType::AS(Arc::clone(cmd), index)),
                     };
-                    if let Err(e) = self.as_tx.send(task) {
+                    if let Err(e) = self.filter_tx.send(task) {
                         error!("failed to send task through filter, {e}");
                     }
                     false
@@ -474,19 +471,16 @@ impl<C: Command> Filter<C> {
 pub(in crate::server) fn channel<C: 'static + Command>() -> (
     CEEventTx<C>,
     flume::Receiver<Task<C>>,
-    flume::Receiver<Task<C>>,
     flume::Sender<(Task<C>, bool)>,
 ) {
     // recv from user, insert it into filter
     let (send_tx, filter_rx) = flume::unbounded();
     // recv from filter, pass the msg to user
     let (filter_tx, recv_rx) = flume::unbounded();
-    // recv from filter, pass the msg to user
-    let (as_tx, as_rx) = flume::unbounded();
     // recv from user to mark a msg done
     let (done_tx, done_rx) = flume::unbounded::<(Task<C>, bool)>();
     let _ig = tokio::spawn(async move {
-        let mut filter = Filter::new(filter_tx, as_tx);
+        let mut filter = Filter::new(filter_tx);
         #[allow(clippy::integer_arithmetic, clippy::pattern_type_mismatch)]
         // tokio internal triggers
         loop {
@@ -505,5 +499,5 @@ pub(in crate::server) fn channel<C: 'static + Command>() -> (
             }
         }
     });
-    (CEEventTx(send_tx), recv_rx, as_rx, done_tx)
+    (CEEventTx(send_tx), recv_rx, done_tx)
 }
