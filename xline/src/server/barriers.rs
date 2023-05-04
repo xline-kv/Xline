@@ -13,12 +13,12 @@ pub(crate) struct IndexBarrier {
 }
 
 impl IndexBarrier {
-    /// Create a new index waiter
+    /// Create a new index barrier
     pub(crate) fn new() -> Self {
         IndexBarrier {
             inner: Mutex::new(IndexBarrierInner {
                 last_trigger_index: 0,
-                waiters: BTreeMap::new(),
+                barriers: BTreeMap::new(),
             }),
         }
     }
@@ -31,7 +31,7 @@ impl IndexBarrier {
                 return;
             }
             inner_l
-                .waiters
+                .barriers
                 .entry(index)
                 .or_insert_with(Event::new)
                 .listen()
@@ -39,46 +39,46 @@ impl IndexBarrier {
         listener.await;
     }
 
-    /// Trigger all waiters whose index is less than or equal to the given index.
+    /// Trigger all barriers whose index is less than or equal to the given index.
     pub(crate) fn trigger(&self, index: u64) {
         let mut inner_l = self.inner.lock();
         inner_l.last_trigger_index = index;
-        let mut split_waiters = inner_l.waiters.split_off(&(index.overflow_add(1)));
-        std::mem::swap(&mut inner_l.waiters, &mut split_waiters);
-        for (_, waiter) in split_waiters {
-            waiter.notify(usize::MAX);
+        let mut split_barriers = inner_l.barriers.split_off(&(index.overflow_add(1)));
+        std::mem::swap(&mut inner_l.barriers, &mut split_barriers);
+        for (_, barrier) in split_barriers {
+            barrier.notify(usize::MAX);
         }
     }
 }
 
-/// Inner of index waiter.
+/// Inner of index barrier.
 #[derive(Debug)]
 struct IndexBarrierInner {
-    /// The last index that the waiter has triggered.
+    /// The last index that the barrier has triggered.
     last_trigger_index: u64,
-    /// Waiters of index.
-    waiters: BTreeMap<u64, Event>,
+    /// Barrier of index.
+    barriers: BTreeMap<u64, Event>,
 }
 
-/// Waiter for id
+/// Barrier for id
 #[derive(Debug)]
 pub(crate) struct IdBarrier {
-    /// Waiters of id
-    waiters: Mutex<HashMap<ProposeId, Event>>,
+    /// Barriers of id
+    barriers: Mutex<HashMap<ProposeId, Event>>,
 }
 
 impl IdBarrier {
-    /// Create a new id waiter
+    /// Create a new id barrier
     pub(crate) fn new() -> Self {
         Self {
-            waiters: Mutex::new(HashMap::new()),
+            barriers: Mutex::new(HashMap::new()),
         }
     }
 
     /// Wait for the id until it is triggered.
     pub(crate) async fn wait(&self, id: ProposeId) {
         let listener = self
-            .waiters
+            .barriers
             .lock()
             .entry(id)
             .or_insert_with(Event::new)
@@ -86,9 +86,9 @@ impl IdBarrier {
         listener.await;
     }
 
-    /// Trigger the waiter of the given id.
+    /// Trigger the barrier of the given id.
     pub(crate) fn trigger(&self, id: &ProposeId) {
-        if let Some(event) = self.waiters.lock().remove(id) {
+        if let Some(event) = self.barriers.lock().remove(id) {
             event.notify(usize::MAX);
         }
     }
@@ -104,41 +104,41 @@ mod test {
     use super::*;
 
     #[tokio::test]
-    async fn test_id_waiter() {
-        let id_waiter = Arc::new(IdBarrier::new());
-        let waiters = (0..5)
+    async fn test_id_barrier() {
+        let id_barrier = Arc::new(IdBarrier::new());
+        let barriers = (0..5)
             .map(|i| {
-                let id_waiter = Arc::clone(&id_waiter);
+                let id_barrier = Arc::clone(&id_barrier);
                 tokio::spawn(async move {
-                    id_waiter.wait(ProposeId::new(i.to_string())).await;
+                    id_barrier.wait(ProposeId::new(i.to_string())).await;
                 })
             })
             .collect::<Vec<_>>();
         sleep(Duration::from_millis(10)).await;
         for i in 0..5 {
-            id_waiter.trigger(&ProposeId::new(i.to_string()));
+            id_barrier.trigger(&ProposeId::new(i.to_string()));
         }
-        timeout(Duration::from_millis(100), join_all(waiters))
+        timeout(Duration::from_millis(100), join_all(barriers))
             .await
             .unwrap();
     }
 
     #[tokio::test]
-    async fn test_index_waiter() {
-        let index_waiter = Arc::new(IndexBarrier::new());
-        let waiters = (0..5).map(|i| {
-            let id_waiter = Arc::clone(&index_waiter);
+    async fn test_index_barrier() {
+        let index_barrier = Arc::new(IndexBarrier::new());
+        let barriers = (0..5).map(|i| {
+            let id_barrier = Arc::clone(&index_barrier);
             tokio::spawn(async move {
-                id_waiter.wait(i).await;
+                id_barrier.wait(i).await;
             })
         });
-        index_waiter.trigger(5);
+        index_barrier.trigger(5);
 
-        timeout(Duration::from_millis(100), index_waiter.wait(3))
+        timeout(Duration::from_millis(100), index_barrier.wait(3))
             .await
             .unwrap();
 
-        timeout(Duration::from_millis(100), join_all(waiters))
+        timeout(Duration::from_millis(100), join_all(barriers))
             .await
             .unwrap();
     }
