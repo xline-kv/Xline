@@ -50,6 +50,7 @@ where
     }
 }
 
+#[async_trait::async_trait]
 impl<S> StorageApi for DB<S>
 where
     S: StorageEngine,
@@ -95,10 +96,11 @@ where
             .map_err(|e| ExecuteError::DbError(format!("Failed to get snapshot, error: {e}")))
     }
 
-    fn reset(&self, snapshot: Option<SnapshotProxy>) -> Result<(), ExecuteError> {
+    async fn reset(&self, snapshot: Option<SnapshotProxy>) -> Result<(), ExecuteError> {
         if let Some(snap) = snapshot {
             self.engine
                 .apply_snapshot(snap, &XLINE_TABLES)
+                .await
                 .map_err(|e| ExecuteError::DbError(format!("Failed to reset database, error: {e}")))
         } else {
             let start = vec![];
@@ -203,6 +205,7 @@ pub enum DBProxy {
     RocksDB(DB<RocksEngine>),
 }
 
+#[async_trait::async_trait]
 impl StorageApi for DBProxy {
     fn get_values<K>(
         &self,
@@ -242,10 +245,10 @@ impl StorageApi for DBProxy {
         }
     }
 
-    fn reset(&self, snapshot: Option<SnapshotProxy>) -> Result<(), ExecuteError> {
+    async fn reset(&self, snapshot: Option<SnapshotProxy>) -> Result<(), ExecuteError> {
         match *self {
-            DBProxy::MemDB(ref inner_db) => inner_db.reset(snapshot),
-            DBProxy::RocksDB(ref inner_db) => inner_db.reset(snapshot),
+            DBProxy::MemDB(ref inner_db) => inner_db.reset(snapshot).await,
+            DBProxy::RocksDB(ref inner_db) => inner_db.reset(snapshot).await,
         }
     }
 
@@ -314,8 +317,8 @@ mod test {
     use engine::snapshot_api::SnapshotApi;
 
     use super::*;
-    #[test]
-    fn test_reset() -> Result<(), ExecuteError> {
+    #[tokio::test]
+    async fn test_reset() -> Result<(), ExecuteError> {
         let data_dir = PathBuf::from("/tmp/test_reset");
         let db = DBProxy::open(&StorageConfig::RocksDB(data_dir.clone()))?;
 
@@ -326,7 +329,7 @@ mod test {
         let res = db.get_value(KV_TABLE, &key)?;
         assert_eq!(res, Some("value1".as_bytes().to_vec()));
 
-        db.reset(None)?;
+        db.reset(None).await?;
 
         let res = db.get_values(KV_TABLE, &[&key])?;
         assert_eq!(res, vec![None]);
@@ -337,8 +340,8 @@ mod test {
         Ok(())
     }
 
-    #[test]
-    fn test_db_snapshot() -> Result<(), ExecuteError> {
+    #[tokio::test]
+    async fn test_db_snapshot() -> Result<(), ExecuteError> {
         let dir = PathBuf::from("/tmp/test_db_snapshot");
         let origin_db_path = dir.join("origin_db");
         let new_db_path = dir.join("new_db");
@@ -353,7 +356,7 @@ mod test {
         let snapshot = origin_db.get_snapshot(snapshot_path)?;
 
         let new_db = DBProxy::open(&StorageConfig::RocksDB(new_db_path))?;
-        new_db.reset(Some(snapshot))?;
+        new_db.reset(Some(snapshot)).await?;
 
         let res = new_db.get_values(KV_TABLE, &[&key])?;
         assert_eq!(res, vec![Some("value1".as_bytes().to_vec())]);
@@ -362,8 +365,8 @@ mod test {
         Ok(())
     }
 
-    #[test]
-    fn test_db_snapshot_wrong_type() -> Result<(), ExecuteError> {
+    #[tokio::test]
+    async fn test_db_snapshot_wrong_type() -> Result<(), ExecuteError> {
         let dir = PathBuf::from("/tmp/test_db_snapshot_wrong_type");
         let db_path = dir.join("db");
         let snapshot_path = dir.join("snapshot");
@@ -371,7 +374,7 @@ mod test {
         let mem_db = DBProxy::open(&StorageConfig::Memory)?;
 
         let rocks_snap = rocks_db.get_snapshot(snapshot_path)?;
-        let res = mem_db.reset(Some(rocks_snap));
+        let res = mem_db.reset(Some(rocks_snap)).await;
         assert!(res.is_err());
 
         std::fs::remove_dir_all(dir).unwrap();

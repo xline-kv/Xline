@@ -108,7 +108,7 @@ pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
     ///
     /// # Errors
     /// Return `EngineError` if met some errors when applying the snapshot
-    fn apply_snapshot(
+    async fn apply_snapshot(
         &self,
         snapshot: SnapshotProxy,
         tables: &[&'static str],

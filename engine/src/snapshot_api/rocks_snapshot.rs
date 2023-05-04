@@ -395,11 +395,7 @@ impl SnapshotApi for RocksSnapshot {
 
     #[inline]
     async fn clean(&mut self) -> std::io::Result<()> {
-        for snap_file in &self.snap_files {
-            let path = self.dir.join(&snap_file.filename);
-            tokio::fs::remove_file(path).await?;
-        }
-        Ok(())
+        tokio::fs::remove_dir_all(&self.dir).await
     }
 }
 

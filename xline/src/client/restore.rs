@@ -34,7 +34,8 @@ pub async fn restore(
     }
 
     let restore_rocks_engine = RocksEngine::new(data_dir, &XLINE_TABLES)?;
-    restore_rocks_engine.apply_snapshot(SnapshotProxy::Rocks(rocks_snapshot), &XLINE_TABLES)?;
-    tokio::fs::remove_dir_all(tmp_path).await?;
+    restore_rocks_engine
+        .apply_snapshot(SnapshotProxy::Rocks(rocks_snapshot), &XLINE_TABLES)
+        .await?;
     Ok(())
 }

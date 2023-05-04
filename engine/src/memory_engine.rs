@@ -131,7 +131,7 @@ impl StorageEngine for MemoryEngine {
     }
 
     #[inline]
-    fn apply_snapshot(
+    async fn apply_snapshot(
         &self,
         snapshot: SnapshotProxy,
         _tables: &[&'static str],
@@ -264,7 +264,10 @@ mod test {
         new_snapshot.write_all(&buf).await.unwrap();
 
         let engine_2 = MemoryEngine::new(&TESTTABLES).unwrap();
-        assert!(engine_2.apply_snapshot(new_snapshot, &TESTTABLES).is_ok());
+        assert!(engine_2
+            .apply_snapshot(new_snapshot, &TESTTABLES)
+            .await
+            .is_ok());
 
         let value = engine_2.get("kv", "key").unwrap();
         assert_eq!(value, Some("value".into()));
