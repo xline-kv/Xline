@@ -11,14 +11,13 @@ use utils::parking_lot_lock::RwLockMap;
 use super::{lease_queue::LeaseQueue, Lease};
 use crate::{rpc::PbLease, storage::ExecuteError};
 
-/// Min lease ttl
-const MIN_LEASE_TTL: i64 = 1; // TODO: this num should calculated by election ticks and heartbeat
-
 /// Collection of lease related data
 #[derive(Debug)]
 pub(crate) struct LeaseCollection {
     /// Inner data of `LeaseCollection`
     inner: RwLock<LeaseCollectionInner>,
+    /// Min lease ttl
+    min_ttl: i64,
 }
 
 #[derive(Debug)]
@@ -34,13 +33,14 @@ struct LeaseCollectionInner {
 
 impl LeaseCollection {
     /// New `LeaseCollection`
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(min_ttl: i64) -> Self {
         Self {
             inner: RwLock::new(LeaseCollectionInner {
                 lease_map: HashMap::new(),
                 item_map: HashMap::new(),
                 expired_queue: LeaseQueue::new(),
             }),
+            min_ttl,
         }
     }
 
@@ -132,7 +132,7 @@ impl LeaseCollection {
 
     /// Grant a lease
     pub(crate) fn grant(&self, lease_id: i64, ttl: i64, is_leader: bool) -> PbLease {
-        let mut lease = Lease::new(lease_id, ttl.max(MIN_LEASE_TTL).cast());
+        let mut lease = Lease::new(lease_id, ttl.max(self.min_ttl).cast());
         self.inner.map_write(|mut inner| {
             if is_leader {
                 let expiry = lease.refresh(Duration::ZERO);
@@ -172,5 +172,18 @@ impl LeaseCollection {
         for (lease_id, expiry) in pairs {
             let _ignore = inner.expired_queue.insert(lease_id, expiry);
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    #[test]
+    fn test_grant_less_than_min_ttl() {
+        let c = LeaseCollection::new(3);
+        c.grant(1, 2, false);
+        let l = c.look_up(1);
+        assert!(l.is_some());
+        assert_eq!(l.unwrap().ttl(), Duration::from_secs(3));
     }
 }

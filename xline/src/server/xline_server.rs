@@ -8,6 +8,7 @@ use std::{
 };
 
 use anyhow::Result;
+use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{client::Client, server::Rpc, ProtocolServer};
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use tokio::{net::TcpListener, sync::broadcast};
@@ -122,7 +123,14 @@ where
         let leader_id = is_leader.then(|| name.clone());
         let state = Arc::new(State::new(name, leader_id, all_members.clone()));
         let curp_config = Arc::new(curp_config);
-        let lease_collection = Arc::new(LeaseCollection::new());
+        // The ttl of a lease should larger than the 3/2 of a election timeout
+        let min_ttl =
+            3 * curp_config.heartbeat_interval * curp_config.candidate_timeout_ticks.cast() / 2;
+        // Safe ceiling
+        let min_ttl_secs = min_ttl
+            .as_secs()
+            .overflow_add((min_ttl.subsec_nanos() > 0).cast());
+        let lease_collection = Arc::new(LeaseCollection::new(min_ttl_secs.cast()));
         let index = Arc::new(Index::new());
 
         let kv_storage = Arc::new(KvStore::new(

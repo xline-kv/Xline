@@ -1379,7 +1379,7 @@ mod test {
     fn init_empty_store(db: Arc<DBProxy>) -> AuthStore<DBProxy> {
         let key_pair = test_key_pair();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
-        let lease_collection = Arc::new(LeaseCollection::new());
+        let lease_collection = Arc::new(LeaseCollection::new(0));
         AuthStore::new(lease_collection, key_pair, header_gen, db)
     }
 
