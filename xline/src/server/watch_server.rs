@@ -1,6 +1,5 @@
 use std::{collections::HashSet, sync::Arc};
 
-use clippy_utilities::OverflowArithmetic;
 use event_listener::Event;
 use tokio::sync::mpsc;
 use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
@@ -13,7 +12,7 @@ use crate::{
         WatchResponse,
     },
     storage::{
-        kvwatcher::{KvWatcher, KvWatcherOps, WatchEvent, WatchId},
+        kvwatcher::{KvWatcher, KvWatcherOps, WatchEvent, WatchId, WatchIdGenerator},
         storage_api::StorageApi,
     },
 };
@@ -29,6 +28,8 @@ where
 {
     /// KV watcher
     watcher: Arc<KvWatcher<S>>,
+    /// Watch ID generator
+    next_id_gen: Arc<WatchIdGenerator>,
 }
 
 impl<S> WatchServer<S>
@@ -37,12 +38,16 @@ where
 {
     /// New `WatchServer`
     pub(crate) fn new(watcher: Arc<KvWatcher<S>>) -> Self {
-        Self { watcher }
+        Self {
+            watcher,
+            next_id_gen: Arc::new(WatchIdGenerator::new(1)), // watch_id starts from 1, 0 means auto-generating
+        }
     }
 
     /// bg task for handle watch connection
     #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
     async fn task<ST, W>(
+        next_id_gen: Arc<WatchIdGenerator>,
         kv_watcher: Arc<W>,
         res_tx: mpsc::Sender<Result<WatchResponse, tonic::Status>>,
         mut req_rx: ST,
@@ -52,8 +57,13 @@ where
     {
         let (event_tx, mut event_rx) = mpsc::channel(CHANNEL_SIZE);
         let stop_notify = Arc::new(Event::new());
-        let mut watch_handle =
-            WatchHandle::new(kv_watcher, res_tx, event_tx, Arc::clone(&stop_notify));
+        let mut watch_handle = WatchHandle::new(
+            kv_watcher,
+            res_tx,
+            event_tx,
+            Arc::clone(&stop_notify),
+            next_id_gen,
+        );
         loop {
             tokio::select! {
                 req = req_rx.next() => {
@@ -102,7 +112,7 @@ where
     /// Watch ID to watcher map
     active_watch_ids: HashSet<WatchId>,
     /// Next available `WatchId`
-    next_id: WatchId,
+    next_id_gen: Arc<WatchIdGenerator>,
     /// Stop Event
     stop_notify: Arc<Event>,
 }
@@ -117,13 +127,14 @@ where
         response_tx: mpsc::Sender<Result<WatchResponse, tonic::Status>>,
         event_tx: mpsc::Sender<WatchEvent>,
         stop_notify: Arc<Event>,
+        next_id_gen: Arc<WatchIdGenerator>,
     ) -> Self {
         Self {
             kv_watcher,
             response_tx,
             event_tx,
             active_watch_ids: HashSet::new(),
-            next_id: 1, // watch_id starts from 1, 0 means auto-generating
+            next_id_gen,
             stop_notify,
         }
     }
@@ -133,8 +144,7 @@ where
         // 0 means auto-generate
         if watch_id == 0 {
             loop {
-                let next = self.next_id;
-                self.next_id = self.next_id.overflow_add(1);
+                let next = self.next_id_gen.next();
                 if !self.active_watch_ids.contains(&next) {
                     break Some(next);
                 }
@@ -301,7 +311,12 @@ where
         debug!("Receive Watch Connection {:?}", request);
         let req_stream = request.into_inner();
         let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
-        let _hd = tokio::spawn(Self::task(Arc::clone(&self.watcher), tx, req_stream));
+        let _hd = tokio::spawn(Self::task(
+            Arc::clone(&self.next_id_gen),
+            Arc::clone(&self.watcher),
+            tx,
+            req_stream,
+        ));
         Ok(tonic::Response::new(ReceiverStream::new(rx)))
     }
 }
@@ -309,7 +324,10 @@ where
 #[cfg(test)]
 mod test {
 
+    use std::collections::HashMap;
+
     use engine::memory_engine::MemoryEngine;
+    use parking_lot::Mutex;
 
     use super::*;
     use crate::storage::{db::DB, kvwatcher::MockKvWatcherOps};
@@ -329,7 +347,9 @@ mod test {
         let _ = mock_watcher.expect_cancel().times(1).returning(move |_| 0);
         let _ = mock_watcher.expect_sync_done().times(1).return_const(());
         let watcher = Arc::new(mock_watcher);
+        let next_id = Arc::new(WatchIdGenerator::new(1));
         let handle = tokio::spawn(WatchServer::<DB<MemoryEngine>>::task(
+            next_id,
             Arc::clone(&watcher),
             res_tx,
             req_stream,
@@ -348,6 +368,64 @@ mod test {
         }
         drop(req_tx);
         tokio::time::timeout(std::time::Duration::from_secs(3), handle).await??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[allow(clippy::similar_names)] // use num as suffix
+    async fn test_multi_watch_handle() -> Result<(), Box<dyn std::error::Error>> {
+        let mut mock_watcher = MockKvWatcherOps::new();
+        let collection = Arc::new(Mutex::new(HashMap::new()));
+        let collection_c = Arc::clone(&collection);
+        let _ = mock_watcher.expect_watch().times(2).returning({
+            move |x, _, _, _, _| {
+                let mut c = collection_c.lock();
+                let e = c.entry(x).or_insert(0);
+                *e += 1;
+                (vec![], 0)
+            }
+        });
+        let _ = mock_watcher.expect_cancel().returning(move |_| 0);
+        let kv_watcher = Arc::new(mock_watcher);
+        let next_id_gen = Arc::new(WatchIdGenerator::new(1));
+
+        let (req_tx1, req_rx1) = mpsc::channel(CHANNEL_SIZE);
+        let (res_tx1, _res_rx1) = mpsc::channel(CHANNEL_SIZE);
+        let req_stream1: ReceiverStream<Result<WatchRequest, tonic::Status>> =
+            ReceiverStream::new(req_rx1);
+        let handle1 = tokio::spawn(WatchServer::<DB<MemoryEngine>>::task(
+            Arc::clone(&next_id_gen),
+            Arc::clone(&kv_watcher),
+            res_tx1,
+            req_stream1,
+        ));
+
+        let (req_tx2, req_rx2) = mpsc::channel(CHANNEL_SIZE);
+        let (res_tx2, _res_rx2) = mpsc::channel(CHANNEL_SIZE);
+        let req_stream2: ReceiverStream<Result<WatchRequest, tonic::Status>> =
+            ReceiverStream::new(req_rx2);
+        let handle2 = tokio::spawn(WatchServer::<DB<MemoryEngine>>::task(
+            next_id_gen,
+            kv_watcher,
+            res_tx2,
+            req_stream2,
+        ));
+
+        let w_req = WatchRequest {
+            request_union: Some(RequestUnion::CreateRequest(WatchCreateRequest {
+                key: vec![0],
+                range_end: vec![0],
+                ..Default::default()
+            })),
+        };
+        req_tx1.send(Ok(w_req.clone())).await?;
+        req_tx2.send(Ok(w_req.clone())).await?;
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        for count in collection.lock().values() {
+            assert_eq!(*count, 1);
+        }
+        handle1.abort();
+        handle2.abort();
         Ok(())
     }
 }

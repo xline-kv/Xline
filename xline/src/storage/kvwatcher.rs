@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     hash::Hash,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicI64, Ordering},
         Arc,
     },
 };
@@ -19,6 +19,22 @@ use crate::{rpc::Event, server::command::KeyRange, storage::kv_store::KvStoreBac
 
 /// Watch ID
 pub(crate) type WatchId = i64;
+
+/// Watch ID generator
+#[derive(Debug)]
+pub(crate) struct WatchIdGenerator(AtomicI64);
+
+impl WatchIdGenerator {
+    /// Create a new revision
+    pub(crate) fn new(rev: i64) -> Self {
+        Self(AtomicI64::new(rev))
+    }
+
+    /// Get the next revision number
+    pub(crate) fn next(&self) -> i64 {
+        self.0.fetch_add(1, Ordering::AcqRel).wrapping_add(1)
+    }
+}
 
 /// Watcher
 #[derive(Debug)]
