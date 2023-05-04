@@ -398,8 +398,9 @@ async fn recovery_after_compaction() {
     {
         let node = group.nodes.get_mut(&node_id).unwrap();
         let store = node.store.lock();
-        for i in 0..50 {
-            assert_eq!(store[&i], i);
+        for i in 0..50_u32 {
+            let kv = i.to_be_bytes().to_vec();
+            assert_eq!(store[&kv], kv);
         }
     }
 

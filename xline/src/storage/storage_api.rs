@@ -5,6 +5,7 @@ use engine::snapshot_api::SnapshotProxy;
 use super::{db::WriteOp, ExecuteError};
 
 /// The Stable Storage Api
+#[async_trait::async_trait]
 pub trait StorageApi: Send + Sync + 'static + std::fmt::Debug {
     /// Get values by keys from storage
     ///
@@ -41,7 +42,7 @@ pub trait StorageApi: Send + Sync + 'static + std::fmt::Debug {
     /// # Errors
     ///
     /// if error occurs in storage, return `Err(error)`
-    fn reset(&self, snapshot: Option<SnapshotProxy>) -> Result<(), ExecuteError>;
+    async fn reset(&self, snapshot: Option<SnapshotProxy>) -> Result<(), ExecuteError>;
 
     /// Get the snapshot of the storage
     fn get_snapshot(&self, snap_path: impl AsRef<Path>) -> Result<SnapshotProxy, ExecuteError>;

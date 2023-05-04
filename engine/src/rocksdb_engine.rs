@@ -14,7 +14,7 @@ use rocksdb::{
 use crate::{
     engine_api::{StorageEngine, WriteOperation},
     error::EngineError,
-    snapshot_api::{RocksSnapshot, SnapshotProxy},
+    snapshot_api::{RocksSnapshot, SnapshotApi, SnapshotProxy},
 };
 
 /// Translate a `RocksError` into a `EngineError`
@@ -182,12 +182,12 @@ impl StorageEngine for RocksEngine {
     }
 
     #[inline]
-    fn apply_snapshot(
+    async fn apply_snapshot(
         &self,
         snapshot: SnapshotProxy,
         tables: &[&'static str],
     ) -> Result<(), EngineError> {
-        let SnapshotProxy::Rocks(snapshot) = snapshot else {
+        let SnapshotProxy::Rocks(mut snapshot) = snapshot else {
            return  Err(EngineError::UnderlyingError("snapshot type mismatch".to_owned()));
         };
         for cf_name in tables {
@@ -200,6 +200,7 @@ impl StorageEngine for RocksEngine {
                     .ingest_external_file_cf(&cf_handle, vec![file_path])?;
             }
         }
+        snapshot.clean().await?;
         Ok(())
     }
 }
@@ -352,6 +353,7 @@ mod test {
         let engine_2 = RocksEngine::new(&recover_data_dir, &TESTTABLES).unwrap();
         assert!(engine_2
             .apply_snapshot(received_snapshot, &TESTTABLES)
+            .await
             .is_ok());
 
         let value = engine_2.get("kv", "key").unwrap();

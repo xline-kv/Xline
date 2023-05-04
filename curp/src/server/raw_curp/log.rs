@@ -303,6 +303,7 @@ impl<C: 'static + Command> Log<C> {
             .entries
             .front()
             .map_or(false, |e| e.index <= compact_from)
+            & self.batch_index.front().is_some()
         {
             let e = self.entries.pop_front().unwrap();
             let _ig_i = self.batch_index.pop_front().unwrap();

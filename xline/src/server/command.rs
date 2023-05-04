@@ -291,7 +291,7 @@ where
         } else {
             None
         };
-        self.persistent.reset(s)
+        self.persistent.reset(s).await
     }
 
     async fn snapshot(&self) -> Result<SnapshotProxy, Self::Error> {
