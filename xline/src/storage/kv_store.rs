@@ -1016,7 +1016,7 @@ mod test {
     }
 
     fn init_empty_store(db: Arc<DBProxy>) -> KvStore<DBProxy> {
-        let lease_collection = Arc::new(LeaseCollection::new());
+        let lease_collection = Arc::new(LeaseCollection::new(0));
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let index = Arc::new(Index::new());
         KvStore::new(lease_collection, header_gen, db, index)

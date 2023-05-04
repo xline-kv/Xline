@@ -472,7 +472,7 @@ mod test {
     }
 
     fn init_store(db: Arc<DBProxy>) -> LeaseStore<DBProxy> {
-        let lease_collection = Arc::new(LeaseCollection::new());
+        let lease_collection = Arc::new(LeaseCollection::new(0));
         let (kv_update_tx, _) = mpsc::channel(1);
         let state = Arc::new(State::default());
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
