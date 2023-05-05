@@ -483,35 +483,18 @@ impl<C: 'static + Command> CurpNode<C> {
             Arc::clone(&cmd_board),
             Arc::clone(&spec_pool),
             curp_cfg.gc_interval,
+            Arc::clone(&shutdown_trigger),
         );
 
-        let curp_c = Arc::clone(&curp);
-        let shutdown_trigger_c = Arc::clone(&shutdown_trigger);
-        let storage_c = Arc::clone(&storage);
-        let _ig = tokio::spawn(async move {
-            // establish connection with other servers
-            let connects = rpc::connect(others.clone(), tx_filter).await;
-            let election_task =
-                tokio::spawn(Self::election_task(Arc::clone(&curp_c), connects.clone()));
-            let sync_task_daemons = connects
-                .into_iter()
-                .map(|(server_id, connect)| {
-                    tokio::spawn(Self::sync_follower_daemon(
-                        Arc::clone(&curp_c),
-                        connect,
-                        curp_c.sync_event(&server_id),
-                    ))
-                })
-                .collect_vec();
-
-            let log_persist_task = tokio::spawn(Self::log_persist_task(log_rx, storage_c));
-            shutdown_trigger_c.listen().await;
-            election_task.abort();
-            for sync_task in sync_task_daemons {
-                sync_task.abort();
-            }
-            log_persist_task.abort();
-        });
+        Self::run_bg_tasks(
+            Arc::clone(&curp),
+            Arc::clone(&storage),
+            others.clone(),
+            Arc::clone(&shutdown_trigger),
+            tx_filter,
+            log_rx,
+        )
+        .await;
 
         Ok(Self {
             curp,
@@ -522,6 +505,40 @@ impl<C: 'static + Command> CurpNode<C> {
             storage,
             snapshot_allocator: Box::new(snapshot_allocator),
         })
+    }
+
+    /// Run background tasks for Curp server
+    async fn run_bg_tasks(
+        curp: Arc<RawCurp<C>>,
+        storage: Arc<impl StorageApi<Command = C> + 'static>,
+        others: HashMap<ServerId, String>,
+        shutdown_trigger: Arc<Event>,
+        tx_filter: Option<Box<dyn TxFilter>>,
+        log_rx: tokio::sync::mpsc::UnboundedReceiver<LogEntry<C>>,
+    ) {
+        let connects = rpc::connect(others.clone(), tx_filter).await;
+        let election_task = tokio::spawn(Self::election_task(Arc::clone(&curp), connects.clone()));
+        let sync_task_daemons = connects
+            .into_iter()
+            .map(|(server_id, connect)| {
+                tokio::spawn(Self::sync_follower_daemon(
+                    Arc::clone(&curp),
+                    connect,
+                    curp.sync_event(&server_id),
+                ))
+            })
+            .collect_vec();
+
+        let log_persist_task = tokio::spawn(Self::log_persist_task(log_rx, storage));
+
+        let _ig = tokio::spawn(async move {
+            shutdown_trigger.listen().await;
+            election_task.abort();
+            for sync_task in sync_task_daemons {
+                sync_task.abort();
+            }
+            log_persist_task.abort();
+        });
     }
 
     /// Candidate broadcasts votes

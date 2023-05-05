@@ -424,7 +424,7 @@ mod tests {
     fn get_from_should_success() {
         let log_entry = LogEntry::new(0, 0, Arc::new(TestCommand::default()));
         let log_entry_size = serialized_size(&log_entry).unwrap();
-
+        // println!("log_entry_size = {log_entry_size}");
         let (tx, _rx) = mpsc::unbounded_channel();
         let mut log =
             Log::<TestCommand>::new(tx, default_batch_max_size(), default_log_entries_cap());
@@ -439,9 +439,10 @@ mod tests {
         assert_eq!(
             bound_1,
             3..5,
-            "batch_index = {:?}, batch = {}",
+            "batch_index = {:?}, batch = {}, log_entry_size = {}",
             log.batch_index,
-            log.batch_limit
+            log.batch_limit,
+            log_entry_size
         );
         assert!(log.has_next_batch(8));
         assert!(!log.has_next_batch(9));
