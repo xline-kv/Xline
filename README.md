@@ -65,9 +65,8 @@ details of the deployment is shown below.
 We compared the performance with two different workloads. One is 1 key case, the
 other is 100K key space case. Here's the test result.
 
-![1 key test](./img/1-key-perf.png)
+![xline key perf](./img/xline-key-perf.png)
 
-![100k_key_test](./img/100k-key-perf.png)
 
 It's easy to tell Xline has a better performance than Etcd in a geo-distributed
 multi-cluster environment.
