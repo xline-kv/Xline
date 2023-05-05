@@ -1,19 +1,32 @@
 # ChangeLog
 
+## v0.4.0
+
+### Features
+1. Introduce batching mechanism to improve network bandwidth utilization
+2. Implement the snapshot feature for CURP consensus protocol,
+3. Implement the snapshot relevant API，which is compatible with etcdctl. The rest of other APIs in etcdctl maintenance will be implemented in the future.
+
+### Fix Bugs
+1. Fix a bug that commands will execute out of order in some concurrent cases (issue #197）, resolve in the pr #195
+2. Fix a bug that the gc task will panic during benchmark(issue #206), resolve in the pr #210
+3. Fix a bug that the lock feature will work abnormally in some cases(issue #209), resolve in the pr #212
+4. Fix a bug that some concurrent put requests will get wrong revisions (issue #209), resolve in the pr #238 
+
 ## v0.3.0
 
-### Features:
+### Features
 * Implement a persistent storage layer to enable durability, including:
   * Implement a storage engine layer to abstract the concrete storage engine, like `rocksdb`,
     and enable upper layer storage function (#185, #187)
   * Enable recover loggic for `curp` and `xline` (#194, #184)
 
-### Fix Bugs:
+### Fix Bugs
 * Fix concurrent cmd order bug (#197)
 
 ## v0.2.0
 
-### Features:
+### Features
 * Enable Xline to boot up from the config file `xline_server.conf` (#145)
 * Support ETCD APIs, like the lease api and the lock api  (#142, #153)
 * Enable the recovery mechanism in CURP module (#146)
