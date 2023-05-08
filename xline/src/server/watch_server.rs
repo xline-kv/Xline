@@ -12,7 +12,7 @@ use crate::{
         WatchResponse,
     },
     storage::{
-        kvwatcher::{KvWatcher, KvWatcherOps, WatchEvent, WatchId, WatchIdGenerator},
+        kvwatcher::{KvWatcher, KvWatcherOps, WatchId, WatchIdGenerator},
         storage_api::StorageApi,
     },
 };
@@ -55,15 +55,10 @@ where
         ST: Stream<Item = Result<WatchRequest, tonic::Status>> + Unpin,
         W: KvWatcherOps,
     {
-        let (event_tx, mut event_rx) = mpsc::channel(CHANNEL_SIZE);
         let stop_notify = Arc::new(Event::new());
-        let mut watch_handle = WatchHandle::new(
-            kv_watcher,
-            res_tx,
-            event_tx,
-            Arc::clone(&stop_notify),
-            next_id_gen,
-        );
+        let mut watch_handle =
+            WatchHandle::new(kv_watcher, res_tx, Arc::clone(&stop_notify), next_id_gen);
+
         loop {
             tokio::select! {
                 req = req_rx.next() => {
@@ -80,13 +75,6 @@ where
                     } else {
                         warn!("Watch client closes connection");
                         break;
-                    }
-                }
-                event = event_rx.recv() => {
-                    if let Some(event) = event {
-                        watch_handle.handle_watch_event(event).await;
-                    } else {
-                        panic!("Watch event sender is closed");
                     }
                 }
                 _ = stop_notify.listen() => {
@@ -107,8 +95,6 @@ where
     kv_watcher: Arc<W>,
     /// `WatchResponse` Sender
     response_tx: mpsc::Sender<Result<WatchResponse, tonic::Status>>,
-    /// Event sender
-    event_tx: mpsc::Sender<WatchEvent>,
     /// Watch ID to watcher map
     active_watch_ids: HashSet<WatchId>,
     /// Next available `WatchId`
@@ -125,14 +111,12 @@ where
     fn new(
         kv_watcher: Arc<W>,
         response_tx: mpsc::Sender<Result<WatchResponse, tonic::Status>>,
-        event_tx: mpsc::Sender<WatchEvent>,
         stop_notify: Arc<Event>,
         next_id_gen: Arc<WatchIdGenerator>,
     ) -> Self {
         Self {
             kv_watcher,
             response_tx,
-            event_tx,
             active_watch_ids: HashSet::new(),
             next_id_gen,
             stop_notify,
@@ -177,7 +161,8 @@ where
                 key_range,
                 req.start_revision,
                 req.filters,
-                self.event_tx.clone(),
+                Arc::clone(&self.stop_notify),
+                self.response_tx.clone(),
             )
             .await;
         assert!(
@@ -255,27 +240,6 @@ where
                     panic!("Don't support ProgressRequest yet");
                 }
             }
-        }
-    }
-
-    /// Handle watch event
-    async fn handle_watch_event(&mut self, mut event: WatchEvent) {
-        let watch_id = event.watch_id();
-        let events = event.take_events();
-        if events.is_empty() {
-            return;
-        }
-        let response = WatchResponse {
-            header: Some(ResponseHeader {
-                revision: event.revision(),
-                ..ResponseHeader::default()
-            }),
-            watch_id,
-            events,
-            ..WatchResponse::default()
-        };
-        if self.response_tx.send(Ok(response)).await.is_err() {
-            self.stop_notify.notify(1);
         }
     }
 }
@@ -378,7 +342,7 @@ mod test {
         let collection = Arc::new(Mutex::new(HashMap::new()));
         let collection_c = Arc::clone(&collection);
         let _ = mock_watcher.expect_watch().times(2).returning({
-            move |x, _, _, _, _| {
+            move |x, _, _, _, _, _| {
                 let mut c = collection_c.lock();
                 let e = c.entry(x).or_insert(0);
                 *e += 1;

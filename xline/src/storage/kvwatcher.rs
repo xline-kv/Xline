@@ -15,7 +15,11 @@ use tokio::sync::mpsc;
 use utils::parking_lot_lock::RwLockMap;
 
 use super::storage_api::StorageApi;
-use crate::{rpc::Event, server::command::KeyRange, storage::kv_store::KvStoreBackend};
+use crate::{
+    rpc::{Event, ResponseHeader, WatchResponse},
+    server::command::KeyRange,
+    storage::kv_store::KvStoreBackend,
+};
 
 /// Watch ID
 pub(crate) type WatchId = i64;
@@ -47,8 +51,10 @@ struct Watcher {
     start_rev: i64,
     /// Event filters
     filters: Vec<i32>,
+    /// Stop notify
+    stop_notify: Arc<event_listener::Event>,
     /// Sender of watch event
-    event_tx: mpsc::Sender<WatchEvent>,
+    res_tx: mpsc::Sender<Result<WatchResponse, tonic::Status>>,
 }
 
 impl PartialEq for Watcher {
@@ -72,14 +78,16 @@ impl Watcher {
         watch_id: WatchId,
         start_rev: i64,
         filters: Vec<i32>,
-        event_tx: mpsc::Sender<WatchEvent>,
+        stop_notify: Arc<event_listener::Event>,
+        res_tx: mpsc::Sender<Result<WatchResponse, tonic::Status>>,
     ) -> Self {
         Self {
             key_range,
             watch_id,
             start_rev,
             filters,
-            event_tx,
+            stop_notify,
+            res_tx,
         }
     }
 
@@ -104,15 +112,23 @@ impl Watcher {
             return;
         }
         events.retain(|event| self.filters.iter().all(|filter| filter != &event.r#type));
-        let watch_event = WatchEvent {
-            id: self.watch_id(),
+
+        let watch_id = self.watch_id();
+        if events.is_empty() {
+            return;
+        }
+        let response = WatchResponse {
+            header: Some(ResponseHeader {
+                revision,
+                ..ResponseHeader::default()
+            }),
+            watch_id,
             events,
-            revision,
+            ..WatchResponse::default()
         };
-        assert!(
-            self.event_tx.send(watch_event).await.is_ok(),
-            "WatchEvent receiver is closed"
-        );
+        if self.res_tx.send(Ok(response)).await.is_err() {
+            self.stop_notify.notify(1);
+        }
     }
 }
 
@@ -230,7 +246,8 @@ pub(crate) trait KvWatcherOps {
         key_range: KeyRange,
         start_rev: i64,
         filters: Vec<i32>,
-        event_tx: mpsc::Sender<WatchEvent>,
+        stop_notify: Arc<event_listener::Event>,
+        res_tx: mpsc::Sender<Result<WatchResponse, tonic::Status>>,
     ) -> (Vec<Event>, i64);
 
     /// Cancel a watch from KV store
@@ -252,10 +269,11 @@ where
         key_range: KeyRange,
         start_rev: i64,
         filters: Vec<i32>,
-        event_tx: mpsc::Sender<WatchEvent>,
+        stop_notify: Arc<event_listener::Event>,
+        res_tx: mpsc::Sender<Result<WatchResponse, tonic::Status>>,
     ) -> (Vec<Event>, i64) {
         self.inner
-            .watch(id, key_range, start_rev, filters, event_tx)
+            .watch(id, key_range, start_rev, filters, stop_notify, res_tx)
             .await
     }
 
@@ -330,7 +348,8 @@ where
         key_range: KeyRange,
         start_rev: i64,
         filters: Vec<i32>,
-        event_tx: mpsc::Sender<WatchEvent>,
+        stop_notify: Arc<event_listener::Event>,
+        res_tx: mpsc::Sender<Result<WatchResponse, tonic::Status>>,
     ) -> (Vec<Event>, i64) {
         self.start_syncing().await;
         let mut revision = self.storage.revision();
@@ -349,7 +368,7 @@ where
             }
             events
         };
-        let watcher = Watcher::new(key_range, watch_id, revision, filters, event_tx);
+        let watcher = Watcher::new(key_range, watch_id, revision, filters, stop_notify, res_tx);
         self.watcher_map.write().insert(Arc::new(watcher));
 
         (initial_events, revision)
@@ -404,34 +423,6 @@ where
     }
 }
 
-/// Watch Event
-#[derive(Debug)]
-pub(crate) struct WatchEvent {
-    /// Watch ID
-    id: WatchId,
-    /// Events to be sent
-    events: Vec<Event>,
-    /// Revision when this event is generated
-    revision: i64,
-}
-
-impl WatchEvent {
-    /// Get revision
-    pub(crate) fn revision(&self) -> i64 {
-        self.revision
-    }
-
-    /// Get `WatchId`
-    pub(crate) fn watch_id(&self) -> WatchId {
-        self.id
-    }
-
-    /// Take events
-    pub(crate) fn take_events(&mut self) -> Vec<Event> {
-        std::mem::take(&mut self.events)
-    }
-}
-
 #[cfg(test)]
 mod test {
 
@@ -472,9 +463,17 @@ mod test {
         });
         tokio::time::sleep(std::time::Duration::from_micros(500)).await;
         let watcher = store.kv_watcher();
-        let (event_tx, mut event_rx) = mpsc::channel(128);
+        let stop_notify = Arc::new(event_listener::Event::new());
+        let (res_tx, mut res_rx) = mpsc::channel(1);
         let (events, _revision) = watcher
-            .watch(123, KeyRange::new_one_key("foo"), 1, vec![], event_tx)
+            .watch(
+                123,
+                KeyRange::new_one_key("foo"),
+                1,
+                vec![],
+                stop_notify,
+                res_tx,
+            )
             .await;
         // send events to client
         watcher.sync_done();
@@ -484,11 +483,19 @@ mod test {
             *e += 1;
         }
 
-        while let Some(event) = timeout(Duration::from_secs(1), event_rx.recv())
+        while let Some(event) = timeout(Duration::from_secs(1), res_rx.recv())
             .await
             .unwrap()
         {
-            let val = event.events.first().unwrap().kv.as_ref().unwrap().value[0];
+            let val = event
+                .unwrap()
+                .events
+                .first()
+                .unwrap()
+                .kv
+                .as_ref()
+                .unwrap()
+                .value[0];
             let e = map.entry(val).or_insert(0);
             *e += 1;
             if val == 99 {
