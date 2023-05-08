@@ -747,7 +747,7 @@ mod test {
     use super::*;
     use crate::{
         rpc::RequestOp,
-        storage::{db::DB, kvwatcher::watcher},
+        storage::{db::DB, kvwatcher::KvWatcher},
     };
 
     const CHANNEL_SIZE: usize = 128;
@@ -979,7 +979,7 @@ mod test {
             db,
             index,
         ));
-        let _watcher = watcher(Arc::clone(&storage), kv_update_rx);
+        let _watcher = KvWatcher::new_arc(Arc::clone(&storage), kv_update_rx);
         storage
     }
 }

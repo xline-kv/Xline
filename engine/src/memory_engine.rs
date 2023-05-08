@@ -11,8 +11,10 @@ use parking_lot::RwLock;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::{
-    api::engine_api::{StorageEngine, WriteOperation},
-    api::snapshot_api::SnapshotApi,
+    api::{
+        engine_api::{StorageEngine, WriteOperation},
+        snapshot_api::SnapshotApi,
+    },
     error::EngineError,
 };
 
