@@ -1,9 +1,10 @@
 use std::path::{Path, PathBuf};
 
 use crate::{
-    error::EngineError, memory_engine::MemoryEngine, memory_engine::MemorySnapshot,
-    rocksdb_engine::RocksEngine, rocksdb_engine::RocksSnapshot, SnapshotApi, StorageEngine,
-    WriteOperation,
+    error::EngineError,
+    memory_engine::{MemoryEngine, MemorySnapshot},
+    rocksdb_engine::{RocksEngine, RocksSnapshot},
+    SnapshotApi, StorageEngine, WriteOperation,
 };
 
 #[derive(Debug)]
@@ -184,9 +185,8 @@ mod test {
 
     use clippy_utilities::NumericCast;
 
-    use crate::api::snapshot_api::SnapshotApi;
-
     use super::*;
+    use crate::api::snapshot_api::SnapshotApi;
 
     const TESTTABLES: [&'static str; 3] = ["kv", "lease", "auth"];
 

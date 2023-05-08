@@ -38,7 +38,7 @@ use crate::{
     state::State,
     storage::{
         index::Index,
-        kvwatcher::{watcher, KvWatcher},
+        kvwatcher::KvWatcher,
         lease_store::LeaseCollection,
         snapshot_allocator::{MemorySnapshotAllocator, RocksSnapshotAllocator},
         storage_api::StorageApi,
@@ -157,7 +157,7 @@ where
             Arc::clone(&header_gen),
             Arc::clone(&persistent),
         ));
-        let watcher = watcher(Arc::clone(&kv_storage), kv_update_rx);
+        let watcher = KvWatcher::new_arc(Arc::clone(&kv_storage), kv_update_rx);
         let client = Arc::new(Client::<Command>::new(all_members.clone(), client_timeout).await);
         let index_barrier = Arc::new(IndexBarrier::new());
         let id_barrier = Arc::new(IdBarrier::new());

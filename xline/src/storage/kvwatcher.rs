@@ -183,21 +183,6 @@ impl WatcherMap {
     }
 }
 
-/// Boot up a watcher task and return an `Arc<KvWatcher<S>>`
-pub(crate) fn watcher<S: StorageApi>(
-    storage: Arc<KvStore<S>>,
-    mut kv_update_rx: mpsc::Receiver<(i64, Vec<Event>)>,
-) -> Arc<KvWatcher<S>> {
-    let kv_watcher = Arc::new(KvWatcher::new(storage));
-    let watcher = Arc::clone(&kv_watcher);
-    let _handle = tokio::spawn(async move {
-        while let Some(updates) = kv_update_rx.recv().await {
-            watcher.handle_kv_updates(updates).await;
-        }
-    });
-    kv_watcher
-}
-
 /// Operations of KV watcher
 #[allow(clippy::integer_arithmetic, clippy::indexing_slicing)] // Introduced by mockall::automock
 #[cfg_attr(test, mockall::automock)]
@@ -261,12 +246,22 @@ impl<S> KvWatcher<S>
 where
     S: StorageApi,
 {
-    /// New `KvWatcher`
-    fn new(storage: Arc<KvStore<S>>) -> Self {
-        Self {
+    /// Create a new `Arc<KvWatcher>`
+    pub(crate) fn new_arc(
+        storage: Arc<KvStore<S>>,
+        mut kv_update_rx: mpsc::Receiver<(i64, Vec<Event>)>,
+    ) -> Arc<Self> {
+        let kv_watcher = Arc::new(Self {
             storage,
             watcher_map: RwLock::new(WatcherMap::new()),
-        }
+        });
+        let watcher = Arc::clone(&kv_watcher);
+        let _handle = tokio::spawn(async move {
+            while let Some(updates) = kv_update_rx.recv().await {
+                watcher.handle_kv_updates(updates).await;
+            }
+        });
+        kv_watcher
     }
 
     /// Handle KV store updates

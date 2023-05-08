@@ -1,11 +1,9 @@
 use std::{
     cmp::Ordering,
     fs, io,
-    io::Cursor,
-    io::{Error as IoError, ErrorKind},
+    io::{Cursor, Error as IoError, ErrorKind},
     iter::repeat,
-    path::Path,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -21,8 +19,10 @@ use tokio::{
 };
 
 use crate::{
-    api::engine_api::{StorageEngine, WriteOperation},
-    api::snapshot_api::SnapshotApi,
+    api::{
+        engine_api::{StorageEngine, WriteOperation},
+        snapshot_api::SnapshotApi,
+    },
     error::EngineError,
 };
 

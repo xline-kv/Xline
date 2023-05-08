@@ -4,9 +4,8 @@ use clippy_utilities::Cast;
 use engine::{Engine, EngineType, Snapshot, SnapshotApi, StorageEngine};
 use tokio::io::AsyncReadExt;
 
-use crate::{server::MAINTENANCE_SNAPSHOT_CHUNK_SIZE, storage::db::XLINE_TABLES};
-
 use super::errors::ClientError;
+use crate::{server::MAINTENANCE_SNAPSHOT_CHUNK_SIZE, storage::db::XLINE_TABLES};
 
 /// Restore snapshot to data dir
 /// # Errors
