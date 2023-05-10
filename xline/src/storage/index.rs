@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use clippy_utilities::OverflowArithmetic;
+use itertools::Itertools;
 use parking_lot::Mutex;
 
 use super::revision::{KeyRevision, Revision};
@@ -75,7 +76,7 @@ impl Index {
     }
 
     /// Mark the `KeyRevision` as available
-    pub(crate) fn mark_available(&self, revision: i64) {
+    pub(super) fn mark_available(&self, revision: i64) {
         let mut inner = self.inner.lock();
         let Some(keys) = inner.unavailable_cache.remove(&revision) else {
             return;
@@ -164,11 +165,13 @@ impl IndexOperate for Index {
                 .index
                 .values()
                 .flat_map(|revs| Self::filter_revision(revs, revision))
+                .sorted()
                 .collect(),
             RangeType::Range => inner
                 .index
                 .range(KeyRange::new(key, range_end))
                 .flat_map(|(_k, revs)| Self::filter_revision(revs, revision))
+                .sorted()
                 .collect(),
         }
     }
@@ -289,15 +292,12 @@ impl IndexOperate for Index {
 mod test {
     use super::*;
 
-    fn new_available_key_revision(
-        create_revision: i64,
-        version: i64,
-        revision: i64,
-        sub_revision: i64,
-    ) -> KeyRevision {
-        let mut rev = KeyRevision::new(create_revision, version, revision, sub_revision);
-        rev.available = true;
-        rev
+    #[allow(clippy::multiple_inherent_impl)] // just for test
+    impl KeyRevision {
+        fn mark_available(mut self) -> Self {
+            self.available = true;
+            self
+        }
     }
 
     fn init_and_test_insert() -> Index {
@@ -306,21 +306,35 @@ mod test {
         index.insert_or_update_revision(b"key", 1, 3);
         index.insert_or_update_revision(b"key", 2, 2);
         index.insert_or_update_revision(b"key", 3, 1);
+        index.insert_or_update_revision(b"foo", 4, 5);
+        index.insert_or_update_revision(b"bar", 5, 4);
 
         index.mark_available(1);
         index.mark_available(2);
         index.mark_available(3);
+        index.mark_available(4);
+        index.mark_available(5);
 
         assert_eq!(
             index.inner.lock().index,
-            BTreeMap::from_iter(vec![(
-                b"key".to_vec(),
-                vec![
-                    new_available_key_revision(1, 1, 1, 3),
-                    new_available_key_revision(1, 2, 2, 2),
-                    new_available_key_revision(1, 3, 3, 1),
-                ]
-            ),])
+            BTreeMap::from_iter(vec![
+                (
+                    b"key".to_vec(),
+                    vec![
+                        KeyRevision::new(1, 1, 1, 3).mark_available(),
+                        KeyRevision::new(1, 2, 2, 2).mark_available(),
+                        KeyRevision::new(1, 3, 3, 1).mark_available(),
+                    ]
+                ),
+                (
+                    b"foo".to_vec(),
+                    vec![KeyRevision::new(4, 1, 4, 5).mark_available()]
+                ),
+                (
+                    b"bar".to_vec(),
+                    vec![KeyRevision::new(5, 1, 5, 4).mark_available()]
+                )
+            ])
         );
 
         index
@@ -335,26 +349,67 @@ mod test {
             index.get_from_rev(b"key", b"", 2),
             vec![Revision::new(2, 2), Revision::new(3, 1)]
         );
+        assert_eq!(
+            index.get_from_rev(b"a", b"g", 3),
+            vec![Revision::new(4, 5), Revision::new(5, 4)]
+        );
+        assert_eq!(
+            index.get_from_rev(b"\0", b"\0", 3),
+            vec![
+                Revision::new(3, 1),
+                Revision::new(4, 5),
+                Revision::new(5, 4)
+            ]
+        );
     }
 
     #[test]
     fn test_delete() {
         let index = init_and_test_insert();
         assert_eq!(
-            index.delete(b"key", b"", 4, 0),
-            vec![(Revision::new(3, 1), Revision::new(4, 0))]
+            index.delete(b"key", b"", 6, 0),
+            vec![(Revision::new(3, 1), Revision::new(6, 0))]
         );
+        index.mark_available(6);
+
+        assert_eq!(
+            index.delete(b"a", b"g", 7, 0),
+            vec![
+                (Revision::new(5, 4), Revision::new(7, 0)),
+                (Revision::new(4, 5), Revision::new(7, 1)),
+            ]
+        );
+        index.mark_available(7);
+
+        assert_eq!(index.delete(b"\0", b"\0", 8, 0), vec![]);
+
         assert_eq!(
             index.inner.lock().index,
-            BTreeMap::from_iter(vec![(
-                b"key".to_vec(),
-                vec![
-                    new_available_key_revision(1, 1, 1, 3),
-                    new_available_key_revision(1, 2, 2, 2),
-                    new_available_key_revision(1, 3, 3, 1),
-                    KeyRevision::new_deletion(4, 0),
-                ]
-            ),])
+            BTreeMap::from_iter(vec![
+                (
+                    b"key".to_vec(),
+                    vec![
+                        KeyRevision::new(1, 1, 1, 3).mark_available(),
+                        KeyRevision::new(1, 2, 2, 2).mark_available(),
+                        KeyRevision::new(1, 3, 3, 1).mark_available(),
+                        KeyRevision::new_deletion(6, 0).mark_available()
+                    ]
+                ),
+                (
+                    b"foo".to_vec(),
+                    vec![
+                        KeyRevision::new(4, 1, 4, 5).mark_available(),
+                        KeyRevision::new_deletion(7, 1).mark_available()
+                    ]
+                ),
+                (
+                    b"bar".to_vec(),
+                    vec![
+                        KeyRevision::new(5, 1, 5, 4).mark_available(),
+                        KeyRevision::new_deletion(7, 0).mark_available()
+                    ]
+                )
+            ])
         );
     }
 
@@ -369,13 +424,13 @@ mod test {
             BTreeMap::from_iter(vec![
                 (
                     b"foo".to_vec(),
-                    vec![new_available_key_revision(4, 1, 4, 0)]
+                    vec![KeyRevision::new(4, 1, 4, 0).mark_available()]
                 ),
                 (
                     b"key".to_vec(),
                     vec![
-                        new_available_key_revision(2, 1, 2, 0),
-                        new_available_key_revision(2, 2, 3, 0)
+                        KeyRevision::new(2, 1, 2, 0).mark_available(),
+                        KeyRevision::new(2, 2, 3, 0).mark_available(),
                     ],
                 ),
             ])

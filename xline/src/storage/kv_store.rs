@@ -968,7 +968,11 @@ mod test {
         tokio::time::sleep(std::time::Duration::from_micros(500)).await;
         let revs = store.index.get_from_rev(b"foo", b"", 1);
         let kvs = store.get_values(&revs).unwrap();
-        assert_eq!(kvs.len(), revs.len());
+        assert_eq!(
+            kvs.len(),
+            revs.len(),
+            "kvs.len() != revs.len(), maybe some operations already inserted into index, but not flushed to db"
+        );
     }
 
     fn sort_req(sort_order: SortOrder, sort_target: SortTarget) -> RangeRequest {
