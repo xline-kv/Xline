@@ -202,7 +202,7 @@ pub(crate) trait KvWatcherOps {
     );
 
     /// Cancel a watch from KV store
-    fn cancel(&self, id: WatchId) -> i64;
+    fn cancel(&self, id: WatchId);
 }
 
 #[async_trait::async_trait]
@@ -248,10 +248,8 @@ where
     }
 
     /// Cancel a watch from KV store
-    fn cancel(&self, id: WatchId) -> i64 {
-        let revision = self.storage.revision();
-        self.watcher_map.write().remove(id);
-        revision
+    fn cancel(&self, watch_id: WatchId) {
+        self.watcher_map.write().remove(watch_id);
     }
 }
 
