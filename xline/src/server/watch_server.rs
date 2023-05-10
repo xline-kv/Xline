@@ -207,13 +207,10 @@ where
     async fn handle_watch_cancel(&mut self, req: WatchCancelRequest) {
         let watch_id = req.watch_id;
         let result = if self.active_watch_ids.remove(&watch_id) {
-            let revision = self.kv_watcher.cancel(watch_id);
+            self.kv_watcher.cancel(watch_id);
             let _prev = self.active_watch_ids.remove(&watch_id);
             let response = WatchResponse {
-                header: Some(ResponseHeader {
-                    revision,
-                    ..ResponseHeader::default()
-                }),
+                header: Some(self.header_gen.gen_header()),
                 watch_id,
                 canceled: true,
                 ..WatchResponse::default()
@@ -275,7 +272,7 @@ where
 {
     fn drop(&mut self) {
         for watch_id in &self.active_watch_ids {
-            let _revision = self.kv_watcher.cancel(*watch_id);
+            self.kv_watcher.cancel(*watch_id);
         }
     }
 }
@@ -330,7 +327,7 @@ mod test {
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let mut mock_watcher = MockKvWatcherOps::new();
         let _ = mock_watcher.expect_watch().times(1).return_const(());
-        let _ = mock_watcher.expect_cancel().times(1).returning(move |_| 0);
+        let _ = mock_watcher.expect_cancel().times(1).return_const(());
         let watcher = Arc::new(mock_watcher);
         let next_id = Arc::new(WatchIdGenerator::new(1));
         let handle = tokio::spawn(WatchServer::<DB>::task(
@@ -370,7 +367,7 @@ mod test {
                 *e += 1;
             }
         });
-        let _ = mock_watcher.expect_cancel().returning(move |_| 0);
+        let _ = mock_watcher.expect_cancel().return_const(());
         let kv_watcher = Arc::new(mock_watcher);
         let next_id_gen = Arc::new(WatchIdGenerator::new(1));
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
