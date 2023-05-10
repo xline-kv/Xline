@@ -7,6 +7,7 @@ use tracing::{debug, warn};
 
 use super::command::KeyRange;
 use crate::{
+    header_gen::HeaderGenerator,
     rpc::{
         RequestUnion, ResponseHeader, Watch, WatchCancelRequest, WatchCreateRequest, WatchRequest,
         WatchResponse,
@@ -30,6 +31,8 @@ where
     watcher: Arc<KvWatcher<S>>,
     /// Watch ID generator
     next_id_gen: Arc<WatchIdGenerator>,
+    /// Header Generator
+    header_gen: Arc<HeaderGenerator>,
 }
 
 impl<S> WatchServer<S>
@@ -37,10 +40,11 @@ where
     S: StorageApi,
 {
     /// New `WatchServer`
-    pub(crate) fn new(watcher: Arc<KvWatcher<S>>) -> Self {
+    pub(crate) fn new(watcher: Arc<KvWatcher<S>>, header_gen: Arc<HeaderGenerator>) -> Self {
         Self {
             watcher,
             next_id_gen: Arc::new(WatchIdGenerator::new(1)), // watch_id starts from 1, 0 means auto-generating
+            header_gen,
         }
     }
 
@@ -51,6 +55,7 @@ where
         kv_watcher: Arc<W>,
         res_tx: mpsc::Sender<Result<WatchResponse, tonic::Status>>,
         mut req_rx: ST,
+        header_gen: Arc<HeaderGenerator>,
     ) where
         ST: Stream<Item = Result<WatchRequest, tonic::Status>> + Unpin,
         W: KvWatcherOps,
@@ -63,6 +68,7 @@ where
             event_tx,
             Arc::clone(&stop_notify),
             next_id_gen,
+            header_gen,
         );
         loop {
             tokio::select! {
@@ -115,6 +121,8 @@ where
     next_id_gen: Arc<WatchIdGenerator>,
     /// Stop Event
     stop_notify: Arc<Event>,
+    /// Header Generator
+    header_gen: Arc<HeaderGenerator>,
 }
 
 impl<W> WatchHandle<W>
@@ -128,6 +136,7 @@ where
         event_tx: mpsc::Sender<WatchEvent>,
         stop_notify: Arc<Event>,
         next_id_gen: Arc<WatchIdGenerator>,
+        header_gen: Arc<HeaderGenerator>,
     ) -> Self {
         Self {
             kv_watcher,
@@ -136,6 +145,7 @@ where
             active_watch_ids: HashSet::new(),
             next_id_gen,
             stop_notify,
+            header_gen,
         }
     }
 
@@ -170,47 +180,26 @@ where
         };
 
         let key_range = KeyRange::new(req.key, req.range_end);
-        let (events, revision) = self
-            .kv_watcher
-            .watch(
-                watch_id,
-                key_range,
-                req.start_revision,
-                req.filters,
-                self.event_tx.clone(),
-            )
-            .await;
+        self.kv_watcher.watch(
+            watch_id,
+            key_range,
+            req.start_revision,
+            req.filters,
+            self.event_tx.clone(),
+        );
         assert!(
             self.active_watch_ids.insert(watch_id),
             "WatchId {watch_id} already exists in watcher_map",
         );
 
         let response = WatchResponse {
-            header: Some(ResponseHeader {
-                revision,
-                ..ResponseHeader::default()
-            }),
+            header: Some(self.header_gen.gen_header()),
             watch_id,
             created: true,
             ..WatchResponse::default()
         };
         if self.response_tx.send(Ok(response)).await.is_err() {
             self.stop_notify.notify(1);
-        }
-        // send initial events
-        if !events.is_empty() {
-            let event_response = WatchResponse {
-                header: Some(ResponseHeader {
-                    revision,
-                    ..ResponseHeader::default()
-                }),
-                watch_id,
-                events,
-                ..WatchResponse::default()
-            };
-            if self.response_tx.send(Ok(event_response)).await.is_err() {
-                self.stop_notify.notify(1);
-            }
         }
     }
 
@@ -316,6 +305,7 @@ where
             Arc::clone(&self.watcher),
             tx,
             req_stream,
+            Arc::clone(&self.header_gen),
         ));
         Ok(tonic::Response::new(ReceiverStream::new(rx)))
     }
@@ -337,12 +327,9 @@ mod test {
         let (res_tx, mut res_rx) = mpsc::channel(CHANNEL_SIZE);
         let req_stream: ReceiverStream<Result<WatchRequest, tonic::Status>> =
             ReceiverStream::new(req_rx);
-
+        let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let mut mock_watcher = MockKvWatcherOps::new();
-        let _ = mock_watcher
-            .expect_watch()
-            .times(1)
-            .return_const((vec![], 0));
+        let _ = mock_watcher.expect_watch().times(1).return_const(());
         let _ = mock_watcher.expect_cancel().times(1).returning(move |_| 0);
         let watcher = Arc::new(mock_watcher);
         let next_id = Arc::new(WatchIdGenerator::new(1));
@@ -351,6 +338,7 @@ mod test {
             Arc::clone(&watcher),
             res_tx,
             req_stream,
+            header_gen,
         ));
         req_tx
             .send(Ok(WatchRequest {
@@ -380,12 +368,12 @@ mod test {
                 let mut c = collection_c.lock();
                 let e = c.entry(x).or_insert(0);
                 *e += 1;
-                (vec![], 0)
             }
         });
         let _ = mock_watcher.expect_cancel().returning(move |_| 0);
         let kv_watcher = Arc::new(mock_watcher);
         let next_id_gen = Arc::new(WatchIdGenerator::new(1));
+        let header_gen = Arc::new(HeaderGenerator::new(0, 0));
 
         let (req_tx1, req_rx1) = mpsc::channel(CHANNEL_SIZE);
         let (res_tx1, _res_rx1) = mpsc::channel(CHANNEL_SIZE);
@@ -396,6 +384,7 @@ mod test {
             Arc::clone(&kv_watcher),
             res_tx1,
             req_stream1,
+            Arc::clone(&header_gen),
         ));
 
         let (req_tx2, req_rx2) = mpsc::channel(CHANNEL_SIZE);
@@ -407,6 +396,7 @@ mod test {
             kv_watcher,
             res_tx2,
             req_stream2,
+            header_gen,
         ));
 
         let w_req = WatchRequest {

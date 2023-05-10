@@ -12,7 +12,7 @@ pub(crate) struct KeyRevision {
     /// Sub revision in one transaction
     pub(crate) sub_revision: i64,
     /// Available flag
-    // true means this revision is written to storage
+    /// true means this revision has been already written to storage
     pub(crate) available: bool,
 }
 
@@ -23,6 +23,20 @@ pub struct Revision {
     revision: i64,
     /// Sub revision in one transaction or range deletion
     sub_revision: i64,
+}
+
+impl Ord for Revision {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.revision
+            .cmp(&other.revision)
+            .then(self.sub_revision.cmp(&other.sub_revision))
+    }
+}
+
+impl PartialOrd for Revision {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl Revision {

@@ -390,7 +390,7 @@ where
                 Arc::clone(&self.client),
                 self.id(),
             ),
-            WatchServer::new(Arc::clone(&self.watcher)),
+            WatchServer::new(Arc::clone(&self.watcher), Arc::clone(&self.header_gen)),
             MaintenanceServer::new(Arc::clone(&self.persistent), Arc::clone(&self.header_gen)),
             curp_server,
         )
