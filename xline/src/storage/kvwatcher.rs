@@ -8,6 +8,7 @@ use std::{
 };
 
 use clippy_utilities::OverflowArithmetic;
+use itertools::Itertools;
 use log::warn;
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
@@ -132,9 +133,9 @@ where
 #[derive(Debug)]
 struct WatcherMap {
     /// All watchers
-    watchers: HashMap<WatchId, Arc<Watcher>>,
+    watchers: HashMap<WatchId, Watcher>,
     /// Index for watchers
-    index: HashMap<KeyRange, HashSet<Arc<Watcher>>>,
+    index: HashMap<KeyRange, HashSet<WatchId>>,
 }
 
 impl WatcherMap {
@@ -147,20 +148,18 @@ impl WatcherMap {
     }
 
     /// Insert a new watcher to the map and create. Internally, it will create a index for this watcher.
-    fn insert(&mut self, watcher: Arc<Watcher>) {
+    fn insert(&mut self, watcher: Watcher) {
         let key_range = watcher.key_range().clone();
         let watch_id = watcher.watch_id();
         assert!(
-            self.watchers
-                .insert(watch_id, Arc::clone(&watcher))
-                .is_none(),
+            self.watchers.insert(watch_id, watcher).is_none(),
             "can't insert a watcher twice"
         );
         assert!(
             self.index
                 .entry(key_range)
                 .or_insert_with(HashSet::new)
-                .insert(watcher),
+                .insert(watch_id),
             "can't insert a watcher twice"
         );
     }
@@ -175,7 +174,10 @@ impl WatcherMap {
                 .index
                 .get_mut(key_range)
                 .expect("no such watcher in index");
-            assert!(watchers.remove(&watcher), "no such watcher in index");
+            assert!(
+                watchers.remove(&watcher.watch_id()),
+                "no such watcher in index"
+            );
             watchers.is_empty()
         };
         if is_empty {
@@ -242,7 +244,7 @@ where
             watcher.notify((last_revision, initial_events));
             watcher.start_rev = last_revision.overflow_add(1);
         }
-        watcher_map_w.insert(Arc::new(watcher));
+        watcher_map_w.insert(watcher);
     }
 
     /// Cancel a watch from KV store
@@ -278,9 +280,9 @@ where
     /// Handle KV store updates
     fn handle_kv_updates(&self, (revision, all_events): (i64, Vec<Event>)) {
         self.watcher_map.map_read(|watcher_map_r| {
-            let mut watcher_events: HashMap<&Arc<Watcher>, Vec<Event>> = HashMap::new();
+            let mut watcher_events: HashMap<&Watcher, Vec<Event>> = HashMap::new();
             for event in all_events {
-                let watchers: HashSet<&Arc<Watcher>> = watcher_map_r
+                let watch_ids = watcher_map_r
                     .index
                     .iter()
                     .filter_map(|(k, v)| {
@@ -294,8 +296,12 @@ where
                         .then_some(v)
                     })
                     .flatten()
-                    .collect();
-                for watcher in watchers {
+                    .collect_vec();
+                for watch_id in watch_ids {
+                    let watcher = watcher_map_r
+                        .watchers
+                        .get(watch_id)
+                        .unwrap_or_else(|| panic!("watcher index and watchers doesn't match"));
                     if event
                         .kv
                         .as_ref()
