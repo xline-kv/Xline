@@ -53,7 +53,8 @@ We adopt a new consensus protocol named
 [CURP](https://www.usenix.org/system/files/nsdi19-park.pdf) to resolve the above
 issue. Please refer to the paper for a detailed description. The main benefit of
 the protocol is reducing 1 RTT when contention is not too high. As far as we
-know, Xline is the first product to use CURP.
+know, Xline is the first product to use CURP. For more protocol comparison, please
+refer to the [blog](https://xline.cloud/#/blog/2023-01-07-CURP%20%E2%80%94%20Revisit-the-Consensus-Protocol) 
 
 ## Performance Comparison
 
@@ -71,11 +72,18 @@ other is 100K key space case. Here's the test result.
 It's easy to tell Xline has a better performance than Etcd in a geo-distributed
 multi-cluster environment.
 
-## [Quick Start](./QUICK_START.md)
+## Quick Start
 
-## [Contribute Guide](./CONTRIBUTING.md)
+Read the document [QUICK_START.md](./QUICK_START.md) for more details.
 
-## [Code of Conduct](./CODE_OF_CONDUCT.md)
+## Contribute Guide
+
+Read the document [CONTRIBUTING.md](./CONTRIBUTING.md) for more details.
+
+## Code of Conduct
+
+Read the document [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) for more details.
+
 
 ## Roadmap
 
