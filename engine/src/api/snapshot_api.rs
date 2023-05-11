@@ -1,3 +1,5 @@
+use bytes::{Bytes, BytesMut};
+
 /// This trait is a abstraction of the snapshot, We can Read/Write the snapshot like a file.
 #[async_trait::async_trait]
 pub trait SnapshotApi: Send + Sync + std::fmt::Debug {
@@ -8,10 +10,10 @@ pub trait SnapshotApi: Send + Sync + std::fmt::Debug {
     fn rewind(&mut self) -> std::io::Result<()>;
 
     /// Read the snapshot to the given buffer
-    async fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()>;
+    async fn read_exact(&mut self, buf: &mut BytesMut) -> std::io::Result<()>;
 
     /// Write the given buffer to the snapshot
-    async fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()>;
+    async fn write_all(&mut self, buf: Bytes) -> std::io::Result<()>;
 
     /// Clean files of current snapshot
     async fn clean(&mut self) -> std::io::Result<()>;

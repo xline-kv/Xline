@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use bytes::{Bytes, BytesMut};
+
 use crate::{
     error::EngineError,
     memory_engine::{MemoryEngine, MemorySnapshot},
@@ -155,7 +157,7 @@ impl SnapshotApi for Snapshot {
     }
 
     #[inline]
-    async fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
+    async fn read_exact(&mut self, buf: &mut BytesMut) -> std::io::Result<()> {
         match *self {
             Snapshot::Memory(ref mut s) => s.read_exact(buf).await,
             Snapshot::Rocks(ref mut s) => s.read_exact(buf).await,
@@ -163,7 +165,7 @@ impl SnapshotApi for Snapshot {
     }
 
     #[inline]
-    async fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+    async fn write_all(&mut self, buf: Bytes) -> std::io::Result<()> {
         match *self {
             Snapshot::Memory(ref mut s) => s.write_all(buf).await,
             Snapshot::Rocks(ref mut s) => s.write_all(buf).await,
@@ -335,12 +337,12 @@ mod test {
             let put = WriteOperation::new_put("kv", "key2".into(), "value2".into());
             assert!(engine.write_batch(vec![put], false).is_ok());
 
-            let mut buf = vec![0u8; snapshot.size().numeric_cast()];
+            let mut buf = BytesMut::with_capacity(snapshot.size().numeric_cast());
             snapshot.read_exact(&mut buf).await.unwrap();
 
             buf.extend([0u8; 100]); // add some padding, will be ignored when receiving
 
-            received_snapshot.write_all(&buf).await.unwrap();
+            received_snapshot.write_all(buf.freeze()).await.unwrap();
 
             assert!(recover_engine
                 .apply_snapshot(received_snapshot, &TESTTABLES)

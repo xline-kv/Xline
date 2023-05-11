@@ -1,6 +1,7 @@
 use std::{pin::Pin, sync::Arc};
 
 use async_stream::try_stream;
+use bytes::BytesMut;
 use clippy_utilities::{Cast, OverflowArithmetic};
 use engine::SnapshotApi;
 use futures::stream::Stream;
@@ -123,7 +124,7 @@ where
             let mut checksum_gen = Sha256::new();
             while remain_size > 0 {
                 let buf_size = std::cmp::min(MAINTENANCE_SNAPSHOT_CHUNK_SIZE, remain_size);
-                let mut buf = vec![0; buf_size.cast()];
+                let mut buf = BytesMut::with_capacity(buf_size.cast());
                 remain_size = remain_size.overflow_sub(buf_size);
                 snapshot.read_exact(&mut buf).await.map_err(|_e| {tonic::Status::internal("snapshot read failed")})?;
                 // etcd client will use the size of the snapshot to determine whether checksum is included,
@@ -131,13 +132,13 @@ where
                 // of 512 bytes
                 let padding = MIN_PAGE_SIZE.overflow_sub(buf_size.overflow_rem(MIN_PAGE_SIZE));
                 if padding != 0 {
-                    buf.append(&mut vec![0; padding.cast()]);
+                    buf.extend_from_slice(&vec![0; padding.cast()]);
                 }
                 checksum_gen.update(&buf);
                 yield SnapshotResponse {
                     header: Some(header.clone()),
                     remaining_bytes: remain_size,
-                    blob: buf,
+                    blob: Vec::from(buf)
                 };
             }
             let checksum = checksum_gen.finalize().to_vec();
@@ -210,7 +211,7 @@ mod test {
             .get_snapshot(snapshot_path)
             .unwrap();
         let size = snap2.size().cast();
-        let mut snap2_data = vec![0; size];
+        let mut snap2_data = BytesMut::with_capacity(size);
         snap2.read_exact(&mut snap2_data).await.unwrap();
         let snap1_data = recv_data[..size].to_vec();
         assert_eq!(snap1_data, snap2_data);

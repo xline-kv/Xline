@@ -7,16 +7,15 @@ use std::{
     sync::Arc,
 };
 
+use bytes::{Buf, Bytes, BytesMut};
 use clippy_utilities::{NumericCast, OverflowArithmetic};
 use rocksdb::{
     Error as RocksError, IteratorMode, Options, SstFileWriter, WriteBatchWithTransaction,
     WriteOptions, DB,
 };
 use serde::{Deserialize, Serialize};
-use tokio::{
-    fs::File,
-    io::{AsyncReadExt, AsyncWriteExt},
-};
+use tokio::{fs::File, io::AsyncWriteExt};
+use tokio_util::io::read_buf;
 
 use crate::{
     api::{
@@ -386,13 +385,13 @@ impl RocksSnapshot {
     }
 
     /// Read data from the snapshot
-    async fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if buf.is_empty() {
+    async fn read(&mut self, buf: &mut BytesMut) -> io::Result<usize> {
+        if buf.capacity() == 0 {
             return Ok(0);
         }
 
         if self.meta.is_current {
-            let n = self.meta.data.read(buf).await?;
+            let n = read_buf(&mut self.meta.data, buf).await?;
             if n == 0 {
                 self.meta.is_current = false;
             } else {
@@ -401,7 +400,7 @@ impl RocksSnapshot {
         }
 
         while self.snap_file_idx < self.snap_files.len() {
-            let f = if let Some(ref mut f) = self.current_file {
+            let mut f = if let Some(ref mut f) = self.current_file {
                 f
             } else {
                 let path = self.current_file_path(false);
@@ -411,7 +410,7 @@ impl RocksSnapshot {
                     .as_mut()
                     .unwrap_or_else(|| unreachable!("current_file must be `Some` here"))
             };
-            let n = f.read(buf).await?;
+            let n = read_buf(&mut f, buf).await?;
             if n == 0 {
                 let _ignore = self.current_file.take();
                 self.snap_file_idx = self.snap_file_idx.overflow_add(1);
@@ -423,52 +422,54 @@ impl RocksSnapshot {
     }
 
     /// Write snapshot data
-    #[allow(clippy::indexing_slicing)] // safe indexing
-    async fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if buf.is_empty() {
-            return Ok(0);
-        }
-
-        let (mut next_buf, mut written_bytes) = (buf, 0);
+    async fn write(&mut self, buf: &mut Bytes) -> io::Result<()> {
         if self.meta.is_current {
-            let meta_len_bytes: [u8; 8] = next_buf[0..8]
-                .try_into()
-                .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
-            let meta_len = u64::from_le_bytes(meta_len_bytes);
+            if buf.len() < 8 {
+                return Err(io::Error::new(
+                    ErrorKind::UnexpectedEof,
+                    "cannot read meta length from buffer",
+                ));
+            }
+            let meta_len = buf.get_u64_le();
 
-            let meta_bytes: Vec<u8> = next_buf[8..meta_len.overflow_add(8).numeric_cast()]
-                .try_into()
-                .unwrap_or_else(|_e| unreachable!("infallible"));
+            if buf.len() < meta_len.numeric_cast() {
+                return Err(io::Error::new(
+                    ErrorKind::UnexpectedEof,
+                    "cannot read meta from buffer",
+                ));
+            };
+            let meta_bytes = buf.split_to(meta_len.numeric_cast());
             let meta = bincode::deserialize(&meta_bytes)
                 .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
 
             self.apply_snap_meta(meta);
             let mut data = Vec::new();
-            data.extend(meta_len_bytes);
+            data.extend(meta_len.to_le_bytes());
             data.extend(meta_bytes);
             *self.meta.data.get_mut() = data;
             self.meta.is_current = false;
-            written_bytes = written_bytes
-                .overflow_add(meta_len.numeric_cast())
-                .overflow_add(8);
-            next_buf = &next_buf[meta_len.overflow_add(8).numeric_cast()..];
         }
 
+        // the snap_file_idx has checked with while's pattern
+        // written_len is calculated by next_buf.len() so it must be less than next_buf's length
+        #[allow(clippy::indexing_slicing)]
         while self.snap_file_idx < self.snap_files.len() {
             let snap_file = &mut self.snap_files[self.snap_file_idx];
-            assert_ne!(snap_file.size, 0);
+            if snap_file.size == 0 {
+                return Err(io::Error::new(
+                    ErrorKind::Other,
+                    format!("snap file {} size is 0", snap_file.filename),
+                ));
+            }
             let left = snap_file.remain_size().numeric_cast();
-            let (write_len, switch, finished) = match next_buf.len().cmp(&left) {
+            let (write_len, switch, finished) = match buf.len().cmp(&left) {
                 Ordering::Greater => (left, true, false),
                 Ordering::Equal => (left, true, true),
-                Ordering::Less => (next_buf.len(), false, true),
+                Ordering::Less => (buf.len(), false, true),
             };
             snap_file.written_size = snap_file
                 .written_size
                 .overflow_add(write_len.numeric_cast());
-            written_bytes = written_bytes.overflow_add(write_len);
-
-            let buffer = &next_buf[0..write_len];
 
             let f = if let Some(ref mut f) = self.current_file {
                 f
@@ -480,10 +481,10 @@ impl RocksSnapshot {
                     .as_mut()
                     .unwrap_or_else(|| unreachable!("current_file must be `Some` here"))
             };
-            f.write_all(buffer).await?;
+            let buffer = buf.split_to(write_len);
+            f.write_all(&buffer).await?;
 
             if switch {
-                next_buf = &next_buf[write_len..];
                 let old = self.current_file.take();
                 if let Some(mut old_f) = old {
                     old_f.flush().await?;
@@ -497,7 +498,7 @@ impl RocksSnapshot {
                 break;
             }
         }
-        Ok(written_bytes)
+        Ok(())
     }
 }
 
@@ -522,23 +523,23 @@ impl SnapshotApi for RocksSnapshot {
     }
 
     #[inline]
-    #[allow(clippy::indexing_slicing)] // safe indexing
-    async fn read_exact(&mut self, mut buf: &mut [u8]) -> io::Result<()> {
-        while !buf.is_empty() {
+    async fn read_exact(&mut self, buf: &mut BytesMut) -> std::io::Result<()> {
+        while buf.len() < buf.capacity() {
+            // the return value of read function is not larger than the input buf's capacity.
             match self.read(buf).await {
-                Ok(0) => break,
                 Ok(n) => {
-                    let tmp = buf;
-                    buf = &mut tmp[n..];
+                    if 0 == n {
+                        break;
+                    }
                 }
                 Err(ref e) if e.kind() == ErrorKind::Interrupted => {}
                 Err(e) => return Err(e),
             }
         }
-        if buf.is_empty() {
+        if buf.len() == buf.capacity() {
             Ok(())
         } else {
-            Err(io::Error::new(
+            Err(std::io::Error::new(
                 ErrorKind::UnexpectedEof,
                 "failed to fill whole buffer",
             ))
@@ -546,19 +547,18 @@ impl SnapshotApi for RocksSnapshot {
     }
 
     #[inline]
-    #[allow(clippy::indexing_slicing)] // safe indexing
-    async fn write_all(&mut self, mut buf: &[u8]) -> io::Result<()> {
-        let mut written_size = 0;
-        while !buf.is_empty() {
-            let n = self.write(buf).await?;
-            written_size = written_size.overflow_add(n);
-            buf = &buf[n..];
-            if n == 0 {
+    async fn write_all(&mut self, mut buf: Bytes) -> std::io::Result<()> {
+        let buf_size = buf.remaining();
+        while buf.has_remaining() {
+            let prev_rem = buf.remaining();
+            self.write(&mut buf).await?;
+            if prev_rem == buf.remaining() {
+                let written_size = buf_size.overflow_sub(buf.remaining());
                 let size = self.size().numeric_cast();
                 if written_size == size {
                     break;
                 }
-                return Err(ErrorKind::WriteZero.into());
+                return Err(io::ErrorKind::WriteZero.into());
             }
         }
         Ok(())
