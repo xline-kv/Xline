@@ -1152,6 +1152,17 @@ mod test {
     };
 
     #[test]
+    fn test_token_assign_and_verify() {
+        let db = DB::open(&StorageConfig::Memory).unwrap();
+        let store = init_auth_store(db);
+        let current_revision = store.revision();
+        let token = store.assign("xline").unwrap();
+        let claim = store.verify_token(token.as_str()).unwrap();
+        assert_eq!(claim.revision, current_revision);
+        assert_eq!(claim.username, "xline");
+    }
+
+    #[test]
     fn test_role_grant_permission() -> Result<(), ExecuteError> {
         let db = DB::open(&StorageConfig::Memory)?;
         let store = init_auth_store(db);
