@@ -134,6 +134,7 @@
         clippy::unwrap_used,
         clippy::as_conversions,
         clippy::shadow_unrelated,
+        clippy::integer_arithmetic
     )
 )]
 
