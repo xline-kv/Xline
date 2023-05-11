@@ -6,9 +6,11 @@ use std::{
     sync::Arc,
 };
 
+use bytes::{Bytes, BytesMut};
 use clippy_utilities::NumericCast;
 use parking_lot::RwLock;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
+use tokio_util::io::read_buf;
 
 use crate::{
     api::{
@@ -189,13 +191,13 @@ impl SnapshotApi for MemorySnapshot {
     }
 
     #[inline]
-    async fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
-        self.data.read_exact(buf).await.map(drop)
+    async fn read_exact(&mut self, buf: &mut BytesMut) -> std::io::Result<()> {
+        read_buf(&mut self.data, buf).await.map(drop)
     }
 
     #[inline]
-    async fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
-        self.data.write_all(buf).await
+    async fn write_all(&mut self, buf: Bytes) -> std::io::Result<()> {
+        self.data.write_all(&buf).await
     }
 
     #[inline]

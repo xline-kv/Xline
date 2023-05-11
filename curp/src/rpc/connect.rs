@@ -2,6 +2,7 @@ use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
 
 use async_stream::stream;
 use async_trait::async_trait;
+use bytes::BytesMut;
 use clippy_utilities::NumericCast;
 use engine::SnapshotApi;
 use futures::Stream;
@@ -290,7 +291,7 @@ fn install_snapshot_stream(
         while offset < snapshot.size() {
             let len: u64 =
                 std::cmp::min(snapshot.size() - offset, SNAPSHOT_CHUNK_SIZE).numeric_cast();
-            let mut data = vec![0; len.numeric_cast()];
+            let mut data = BytesMut::with_capacity(len.numeric_cast());
             if let Err(e) = snapshot.read_exact(&mut data).await {
                 error!("read snapshot error, {e}");
                 break;
@@ -301,7 +302,7 @@ fn install_snapshot_stream(
                 last_included_index: meta.last_included_index,
                 last_included_term: meta.last_included_term,
                 offset,
-                data,
+                data: data.freeze(),
                 done: (offset + len) == snapshot.size(),
             };
 
@@ -329,6 +330,7 @@ impl Connect {
 
 #[cfg(test)]
 mod tests {
+    use bytes::Bytes;
     use engine::{EngineType, Snapshot as EngineSnapshot};
     use futures::{pin_mut, StreamExt};
     use tracing_test::traced_test;
@@ -342,7 +344,7 @@ mod tests {
         const SNAPSHOT_SIZE: u64 = 200 * 1024;
         let mut snapshot = EngineSnapshot::new_for_receiving(EngineType::Memory).unwrap();
         snapshot
-            .write_all(&mut vec![1; SNAPSHOT_SIZE.numeric_cast()])
+            .write_all(Bytes::from(vec![1; SNAPSHOT_SIZE.numeric_cast()]))
             .await
             .unwrap();
         let stream = install_snapshot_stream(

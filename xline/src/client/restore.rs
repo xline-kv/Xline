@@ -1,8 +1,9 @@
 use std::path::{Path, PathBuf};
 
+use bytes::BytesMut;
 use clippy_utilities::Cast;
 use engine::{Engine, EngineType, Snapshot, SnapshotApi, StorageEngine};
-use tokio::io::AsyncReadExt;
+use tokio_util::io::read_buf;
 
 use super::errors::ClientError;
 use crate::{server::MAINTENANCE_SNAPSHOT_CHUNK_SIZE, storage::db::XLINE_TABLES};
@@ -20,12 +21,12 @@ pub async fn restore(
     let mut snapshot_f = tokio::fs::File::open(snapshot_path).await?;
     let tmp_path = format!("/tmp/snapshot-{}", uuid::Uuid::new_v4());
     let mut rocks_snapshot = Snapshot::new_for_receiving(EngineType::Rocks((&tmp_path).into()))?;
-    let mut buf = vec![0; MAINTENANCE_SNAPSHOT_CHUNK_SIZE.cast()];
-    while let Ok(n) = snapshot_f.read(&mut buf).await {
+    let mut buf = BytesMut::with_capacity(MAINTENANCE_SNAPSHOT_CHUNK_SIZE.cast());
+    while let Ok(n) = read_buf(&mut snapshot_f, &mut buf).await {
         if n == 0 {
             break;
         }
-        rocks_snapshot.write_all(&buf[..n]).await?;
+        rocks_snapshot.write_all(buf.split().freeze()).await?;
     }
 
     let restore_rocks_engine = Engine::new(EngineType::Rocks(data_dir.into()), &XLINE_TABLES)?;

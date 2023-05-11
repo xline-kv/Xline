@@ -222,17 +222,15 @@ impl<C: 'static + Command> CurpNode<C> {
             ) {
                 return Ok(InstallSnapshotResponse::new(self.curp.term()));
             }
-            snapshot
-                .write_all(req.data.as_slice())
-                .await
-                .map_err(|err| {
-                    error!("can't write snapshot data, {err:?}");
-                    err
-                })?;
+            let req_data_len = req.data.len().numeric_cast::<u64>();
+            snapshot.write_all(req.data).await.map_err(|err| {
+                error!("can't write snapshot data, {err:?}");
+                err
+            })?;
             if req.done {
                 debug_assert_eq!(
                     snapshot.size(),
-                    req.offset + req.data.len().numeric_cast::<u64>(),
+                    req.offset + req_data_len,
                     "snapshot corrupted"
                 );
                 let meta = SnapshotMeta {
