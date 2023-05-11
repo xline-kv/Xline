@@ -748,6 +748,8 @@ where
 
 #[cfg(test)]
 mod test {
+    use std::time::Duration;
+
     use utils::config::StorageConfig;
 
     use super::*;
@@ -800,7 +802,13 @@ mod test {
             db,
             index,
         ));
-        let _watcher = KvWatcher::new_arc(Arc::clone(&storage), kv_update_rx);
+        let shutdown_trigger = Arc::new(event_listener::Event::new());
+        let _watcher = KvWatcher::new_arc(
+            Arc::clone(&storage),
+            kv_update_rx,
+            shutdown_trigger,
+            Duration::from_millis(10),
+        );
         storage
     }
 

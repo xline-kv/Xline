@@ -93,6 +93,10 @@ pub struct ClusterConfig {
     #[getset(get = "pub")]
     #[serde(with = "duration_format", default = "default_range_retry_timeout")]
     range_retry_timeout: Duration,
+    /// Sync victims interval
+    #[getset(get = "pub")]
+    #[serde(with = "duration_format", default = "default_sync_victims_interval")]
+    sync_victims_interval: Duration,
 }
 
 impl ClusterConfig {
@@ -106,6 +110,7 @@ impl ClusterConfig {
         curp: CurpConfig,
         client_timeout: ClientTimeout,
         range_retry_timeout: Duration,
+        sync_victims_interval: Duration,
     ) -> Self {
         Self {
             name,
@@ -114,6 +119,7 @@ impl ClusterConfig {
             curp_config: curp,
             client_timeout,
             range_retry_timeout,
+            sync_victims_interval,
         }
     }
 }
@@ -281,6 +287,13 @@ pub const fn default_cmd_workers() -> u8 {
 #[inline]
 pub const fn default_range_retry_timeout() -> Duration {
     Duration::from_secs(2)
+}
+
+/// default sync victims interval
+#[must_use]
+#[inline]
+pub const fn default_sync_victims_interval() -> Duration {
+    Duration::from_millis(10)
 }
 
 /// default gc interval
@@ -607,7 +620,9 @@ mod tests {
             r#"[cluster]
             name = 'node1'
             is_leader = true
-            range_retry_timeout = '3s'
+            range_retry_timeout = '3s'            
+            sync_victims_interval = '20ms'
+
 
             [cluster.members]
             node1 = '127.0.0.1:2379'
@@ -656,7 +671,7 @@ mod tests {
         );
 
         let range_retry_timeout = Duration::from_secs(3);
-
+        let sync_victims_interval = Duration::from_millis(20);
         assert_eq!(
             config.cluster,
             ClusterConfig::new(
@@ -669,7 +684,8 @@ mod tests {
                 true,
                 curp_config,
                 client_timeout,
-                range_retry_timeout
+                range_retry_timeout,
+                sync_victims_interval,
             )
         );
 
@@ -738,7 +754,8 @@ mod tests {
                 true,
                 CurpConfig::default(),
                 ClientTimeout::default(),
-                default_range_retry_timeout()
+                default_range_retry_timeout(),
+                default_sync_victims_interval()
             )
         );
 

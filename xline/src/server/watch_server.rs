@@ -185,6 +185,7 @@ where
             key_range,
             req.start_revision,
             req.filters,
+            Arc::clone(&self.stop_notify),
             self.event_tx.clone(),
         );
         assert!(
@@ -361,7 +362,7 @@ mod test {
         let collection = Arc::new(Mutex::new(HashMap::new()));
         let collection_c = Arc::clone(&collection);
         let _ = mock_watcher.expect_watch().times(2).returning({
-            move |x, _, _, _, _| {
+            move |x, _, _, _, _, _| {
                 let mut c = collection_c.lock();
                 let e = c.entry(x).or_insert(0);
                 *e += 1;

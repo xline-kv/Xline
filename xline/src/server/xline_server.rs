@@ -10,6 +10,7 @@ use std::{
 use anyhow::Result;
 use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{client::Client, server::Rpc, ProtocolServer};
+use event_listener::Event;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use tokio::{net::TcpListener, sync::broadcast};
 use tokio_stream::wrappers::TcpListenerStream;
@@ -86,6 +87,8 @@ where
     id_barrier: Arc<IdBarrier>,
     /// Range request retry timeout
     range_retry_timeout: Duration,
+    /// Shutdown trigger
+    shutdown_trigger: Arc<Event>,
 }
 
 impl<S> XlineServer<S>
@@ -111,6 +114,7 @@ where
         curp_config: CurpConfig,
         client_timeout: ClientTimeout,
         range_retry_timeout: Duration,
+        sync_victims_interval: Duration,
         storage_config: StorageConfig,
         persistent: Arc<S>,
     ) -> Self {
@@ -162,7 +166,13 @@ where
             Arc::clone(&persistent),
             Arc::clone(&auth_revision),
         ));
-        let watcher = KvWatcher::new_arc(Arc::clone(&kv_storage), kv_update_rx);
+        let shutdown_trigger = Arc::new(event_listener::Event::new());
+        let watcher = KvWatcher::new_arc(
+            Arc::clone(&kv_storage),
+            kv_update_rx,
+            Arc::clone(&shutdown_trigger),
+            sync_victims_interval,
+        );
         let client = Arc::new(Client::<Command>::new(all_members.clone(), client_timeout).await);
         let index_barrier = Arc::new(IndexBarrier::new());
         let id_barrier = Arc::new(IdBarrier::new());
@@ -182,6 +192,7 @@ where
             index_barrier,
             id_barrier,
             range_retry_timeout,
+            shutdown_trigger,
         }
     }
 
@@ -404,5 +415,15 @@ where
             MaintenanceServer::new(Arc::clone(&self.persistent), Arc::clone(&self.header_gen)),
             curp_server,
         )
+    }
+}
+
+impl<S> Drop for XlineServer<S>
+where
+    S: StorageApi,
+{
+    #[inline]
+    fn drop(&mut self) {
+        self.shutdown_trigger.notify(usize::MAX);
     }
 }
