@@ -68,8 +68,9 @@ where
     pub(crate) async fn after_sync(
         &self,
         request: &RequestWithToken,
+        revision: i64,
     ) -> Result<(SyncResponse, Vec<WriteOp>), ExecuteError> {
-        self.sync_request(&request.request)
+        self.sync_request(&request.request, revision)
             .await
             .map(|(rev, ops)| (SyncResponse::new(rev), ops))
     }
@@ -556,25 +557,25 @@ where
     async fn sync_request(
         &self,
         wrapper: &RequestWrapper,
+        revision: i64,
     ) -> Result<(i64, Vec<WriteOp>), ExecuteError> {
-        let next_revision = self.revision.next();
         #[allow(clippy::wildcard_enum_match_arm)] // only kv requests can be sent to kv store
         let (ops, events) = match *wrapper {
             RequestWrapper::RangeRequest(ref req) => {
                 debug!("sync range request: {:?}", req);
                 (Vec::new(), Vec::new())
             }
-            RequestWrapper::PutRequest(ref req) => self.sync_put_request(req, next_revision, 0)?,
+            RequestWrapper::PutRequest(ref req) => self.sync_put_request(req, revision, 0)?,
             RequestWrapper::DeleteRangeRequest(ref req) => {
-                self.sync_delete_range_request(req, next_revision, 0)?
+                self.sync_delete_range_request(req, revision, 0)?
             }
-            RequestWrapper::TxnRequest(ref req) => self.sync_txn_request(req, next_revision)?,
+            RequestWrapper::TxnRequest(ref req) => self.sync_txn_request(req, revision)?,
             _ => {
                 unreachable!("only kv requests can be sent to kv store");
             }
         };
-        self.notify_updates(next_revision, events).await;
-        Ok((next_revision, ops))
+        self.notify_updates(revision, events).await;
+        Ok((revision, ops))
     }
 
     /// Sync `TxnRequest` and return if kvstore is changed
@@ -747,12 +748,14 @@ where
 
 #[cfg(test)]
 mod test {
-
-    use tracing::info;
     use utils::config::StorageConfig;
 
     use super::*;
-    use crate::{rpc::RequestOp, storage::db::DB};
+    use crate::{
+        revision_number::RevisionNumber,
+        rpc::RequestOp,
+        storage::{db::DB, kvwatcher::KvWatcher},
+    };
 
     const CHANNEL_SIZE: usize = 128;
 
@@ -766,10 +769,11 @@ mod test {
         }
     }
 
-    async fn init_store(db: Arc<DB>) -> Result<Arc<KvStore<DB>>, ExecuteError> {
+    async fn init_store(db: Arc<DB>) -> Result<(Arc<KvStore<DB>>, RevisionNumber), ExecuteError> {
         let store = init_empty_store(db);
         let keys = vec!["a", "b", "c", "d", "e"];
         let vals = vec!["a", "b", "c", "d", "e"];
+        let revision = RevisionNumber::default();
         for (key, val) in keys.into_iter().zip(vals.into_iter()) {
             let req = RequestWithToken::new(
                 PutRequest {
@@ -779,23 +783,13 @@ mod test {
                 }
                 .into(),
             );
-            exe_as_and_flush(&store, &req).await?;
+            exe_as_and_flush(&store, &req, revision.next()).await?;
         }
-        Ok(store)
-    }
-
-    async fn exe_as_and_flush(
-        store: &Arc<KvStore<DB>>,
-        request: &RequestWithToken,
-    ) -> Result<(), ExecuteError> {
-        let (sync_res, ops) = store.after_sync(request).await?;
-        store.db.flush_ops(ops)?;
-        store.mark_index_available(sync_res.revision());
-        Ok(())
+        Ok((store, revision))
     }
 
     fn init_empty_store(db: Arc<DB>) -> Arc<KvStore<DB>> {
-        let (kv_update_tx, mut kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
+        let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
         let lease_collection = Arc::new(LeaseCollection::new(0));
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let index = Arc::new(Index::new());
@@ -806,18 +800,25 @@ mod test {
             db,
             index,
         ));
-        tokio::spawn(async move {
-            while let Some(update) = kv_update_rx.recv().await {
-                info!("kv update: {:?}", update);
-            }
-        });
+        let _watcher = KvWatcher::new_arc(Arc::clone(&storage), kv_update_rx);
         storage
+    }
+
+    async fn exe_as_and_flush(
+        store: &Arc<KvStore<DB>>,
+        request: &RequestWithToken,
+        revision: i64
+    ) -> Result<(), ExecuteError> {
+        let (sync_res, ops) = store.after_sync(request, revision).await?;
+        store.db.flush_ops(ops)?;
+        store.mark_index_available(sync_res.revision());
+        Ok(())
     }
 
     #[tokio::test]
     async fn test_keys_only() -> Result<(), ExecuteError> {
         let db = DB::open(&StorageConfig::Memory)?;
-        let store = init_store(db).await?;
+        let (store, _rev) = init_store(db).await?;
 
         let request = RangeRequest {
             key: vec![0],
@@ -837,7 +838,7 @@ mod test {
     #[tokio::test]
     async fn test_range_empty() -> Result<(), ExecuteError> {
         let db = DB::open(&StorageConfig::Memory)?;
-        let store = init_store(db).await?;
+        let (store, _rev) = init_store(db).await?;
 
         let request = RangeRequest {
             key: "x".into(),
@@ -855,7 +856,7 @@ mod test {
     #[tokio::test]
     async fn test_range_filter() -> Result<(), ExecuteError> {
         let db = DB::open(&StorageConfig::Memory)?;
-        let store = init_store(db).await?;
+        let (store, _rev) = init_store(db).await?;
 
         let request = RangeRequest {
             key: vec![0],
@@ -878,7 +879,7 @@ mod test {
     #[tokio::test]
     async fn test_range_sort() -> Result<(), ExecuteError> {
         let db = DB::open(&StorageConfig::Memory)?;
-        let store = init_store(db).await?;
+        let (store, _rev) = init_store(db).await?;
         let keys = ["a", "b", "c", "d", "e"];
         let reversed_keys = ["e", "d", "c", "b", "a"];
 
@@ -983,8 +984,8 @@ mod test {
             .into(),
         );
         let db = DB::open(&StorageConfig::Memory)?;
-        let store = init_store(db).await?;
-        exe_as_and_flush(&store, &txn_req).await?;
+        let (store, rev) = init_store(db).await?;
+        exe_as_and_flush(&store, &txn_req, rev.next()).await?;
         let request = RangeRequest {
             key: "success".into(),
             range_end: vec![],
@@ -1001,7 +1002,7 @@ mod test {
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn test_kv_store_index_available() {
         let db = DB::open(&StorageConfig::Memory).unwrap();
-        let store = Arc::new(init_store(Arc::clone(&db)).await.unwrap());
+        let (store, revision) = init_store(Arc::clone(&db)).await.unwrap();
         let handle = tokio::spawn({
             let store = Arc::clone(&store);
             async move {
@@ -1014,7 +1015,9 @@ mod test {
                         }
                         .into(),
                     );
-                    exe_as_and_flush(&store, &req).await.unwrap();
+                    exe_as_and_flush(&store, &req, revision.next())
+                        .await
+                        .unwrap();
                 }
             }
         });
@@ -1028,4 +1031,5 @@ mod test {
         );
         handle.await.unwrap();
     }
+
 }

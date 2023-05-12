@@ -163,9 +163,12 @@ async fn test_no_root_user_do_admin_ops() -> Result<(), Box<dyn Error>> {
     .await?;
 
     let result = user_client.user_add("u2", "123", None).await;
-    assert!(result.is_err());
+    assert!(
+        result.is_err(),
+        "normal user should not allow to add user when auth is enabled: {result:?}"
+    );
     let result = root_client.user_add("u2", "123", None).await;
-    assert!(result.is_ok());
+    assert!(result.is_ok(), "root user failed to add user: {result:?}");
 
     Ok(())
 }

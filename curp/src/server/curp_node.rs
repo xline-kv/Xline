@@ -409,7 +409,7 @@ impl<C: 'static + Command> CurpNode<C> {
         id: ServerId,
         is_leader: bool,
         others: HashMap<ServerId, String>,
-        cmd_executor: CE,
+        cmd_executor: Arc<CE>,
         snapshot_allocator: impl SnapshotAllocator + 'static,
         curp_cfg: Arc<CurpConfig>,
         tx_filter: Option<Box<dyn TxFilter>>,
@@ -426,7 +426,8 @@ impl<C: 'static + Command> CurpNode<C> {
         let last_applied = cmd_executor
             .last_applied()
             .map_err(|e| CurpError::Internal(format!("get applied index error, {e}")))?;
-        let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel();
+        let (ce_event_tx, task_rx, done_tx) =
+            conflict_checked_mpmc::channel(Arc::clone(&cmd_executor));
         let ce_event_tx: Arc<dyn CEEventTxApi<C>> = Arc::new(ce_event_tx);
         let storage = Arc::new(RocksDBStorage::new(&curp_cfg.data_dir)?);
 
@@ -470,7 +471,7 @@ impl<C: 'static + Command> CurpNode<C> {
         };
 
         start_cmd_workers(
-            cmd_executor,
+            &cmd_executor,
             Arc::clone(&curp),
             task_rx,
             done_tx,

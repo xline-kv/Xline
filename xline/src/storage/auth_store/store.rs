@@ -61,7 +61,7 @@ where
     /// Enabled
     enabled: AtomicBool,
     /// Revision
-    revision: RevisionNumber,
+    revision: Arc<RevisionNumber>,
     /// Lease collection
     lease_collection: Arc<LeaseCollection>,
     /// Header generator
@@ -83,12 +83,13 @@ where
         key_pair: Option<(EncodingKey, DecodingKey)>,
         header_gen: Arc<HeaderGenerator>,
         storage: Arc<S>,
+        revision: Arc<RevisionNumber>,
     ) -> Self {
         let backend = Arc::new(AuthStoreBackend::new(storage));
         Self {
             backend,
             enabled: AtomicBool::new(false),
-            revision: RevisionNumber::default(),
+            revision,
             lease_collection,
             header_gen,
             permission_cache: RwLock::new(PermissionCache::new()),
@@ -507,6 +508,7 @@ where
     pub(crate) fn after_sync<'a>(
         &self,
         request: &'a RequestWithToken,
+        revision: i64,
     ) -> Result<(SyncResponse, Vec<WriteOp<'a>>), ExecuteError> {
         #[allow(clippy::wildcard_enum_match_arm)]
         let ops = match request.request {
@@ -516,7 +518,7 @@ where
             }
             RequestWrapper::AuthDisableRequest(ref req) => {
                 debug!("Sync AuthDisableRequest {:?}", req);
-                self.sync_auth_disable_request(req)
+                self.sync_auth_disable_request(req, revision)
             }
             RequestWrapper::AuthStatusRequest(ref req) => {
                 debug!("Sync AuthStatusRequest {:?}", req);
@@ -524,7 +526,7 @@ where
             }
             RequestWrapper::AuthUserAddRequest(ref req) => {
                 debug!("Sync AuthUserAddRequest {:?}", req);
-                self.sync_user_add_request(req)
+                Self::sync_user_add_request(req, revision)
             }
             RequestWrapper::AuthUserGetRequest(ref req) => {
                 debug!("Sync AuthUserGetRequest {:?}", req);
@@ -536,23 +538,23 @@ where
             }
             RequestWrapper::AuthUserGrantRoleRequest(ref req) => {
                 debug!("Sync AuthUserGrantRoleRequest {:?}", req);
-                self.sync_user_grant_role_request(req)?
+                self.sync_user_grant_role_request(req, revision)?
             }
             RequestWrapper::AuthUserRevokeRoleRequest(ref req) => {
                 debug!("Sync AuthUserRevokeRoleRequest {:?}", req);
-                self.sync_user_revoke_role_request(req)?
+                self.sync_user_revoke_role_request(req, revision)?
             }
             RequestWrapper::AuthUserChangePasswordRequest(ref req) => {
                 debug!("Sync AuthUserChangePasswordRequest {:?}", req);
-                self.sync_user_change_password_request(req)?
+                self.sync_user_change_password_request(req, revision)?
             }
             RequestWrapper::AuthUserDeleteRequest(ref req) => {
                 debug!("Sync AuthUserDeleteRequest {:?}", req);
-                self.sync_user_delete_request(req)
+                self.sync_user_delete_request(req, revision)
             }
             RequestWrapper::AuthRoleAddRequest(ref req) => {
                 debug!("Sync AuthRoleAddRequest {:?}", req);
-                self.sync_role_add_request(req)
+                Self::sync_role_add_request(req, revision)
             }
             RequestWrapper::AuthRoleGetRequest(ref req) => {
                 debug!("Sync AuthRoleGetRequest {:?}", req);
@@ -560,11 +562,11 @@ where
             }
             RequestWrapper::AuthRoleGrantPermissionRequest(ref req) => {
                 debug!("Sync AuthRoleGrantPermissionRequest {:?}", req);
-                self.sync_role_grant_permission_request(req)?
+                self.sync_role_grant_permission_request(req, revision)?
             }
             RequestWrapper::AuthRoleRevokePermissionRequest(ref req) => {
                 debug!("Sync AuthRoleRevokePermissionRequest {:?}", req);
-                self.sync_role_revoke_permission_request(req)?
+                self.sync_role_revoke_permission_request(req, revision)?
             }
             RequestWrapper::AuthRoleListRequest(ref req) => {
                 debug!("Sync AuthRoleListRequest {:?}", req);
@@ -572,7 +574,7 @@ where
             }
             RequestWrapper::AuthRoleDeleteRequest(ref req) => {
                 debug!("Sync AuthRoleDeleteRequest {:?}", req);
-                self.sync_role_delete_request(req)?
+                self.sync_role_delete_request(req, revision)?
             }
             RequestWrapper::AuthenticateRequest(ref req) => {
                 debug!("Sync AuthenticateRequest {:?}", req);
@@ -582,7 +584,7 @@ where
                 unreachable!("Other request should not be sent to this store");
             }
         };
-        Ok((SyncResponse::new(self.header_gen.revision()), ops))
+        Ok((SyncResponse::new(revision), ops))
     }
 
     /// Sync `AuthEnableRequest` and return whether authstore is changed.
@@ -595,26 +597,27 @@ where
         }
         self.enabled.store(true, AtomicOrdering::Relaxed);
         self.create_permission_cache()?;
-        let rev = self.backend.get_revision()?;
-        self.revision.set(rev);
         Ok(vec![WriteOp::PutAuthEnable(true)])
     }
 
     /// Sync `AuthDisableRequest` and return whether authstore is changed.
-    fn sync_auth_disable_request<'a>(&self, _req: &'a AuthDisableRequest) -> Vec<WriteOp<'a>> {
+    fn sync_auth_disable_request<'a>(
+        &self,
+        _req: &'a AuthDisableRequest,
+        revision: i64,
+    ) -> Vec<WriteOp<'a>> {
         let mut ops = Vec::new();
         if !self.is_enabled() {
             return Vec::new();
         }
         self.enabled.store(false, AtomicOrdering::Relaxed);
-        let revision = self.revision.next();
         ops.push(WriteOp::PutAuthRevision(revision));
         ops.push(WriteOp::PutAuthEnable(false));
         ops
     }
 
     /// Sync `AuthUserAddRequest` and return whether authstore is changed.
-    fn sync_user_add_request<'a>(&self, req: &'a AuthUserAddRequest) -> Vec<WriteOp<'a>> {
+    fn sync_user_add_request(req: &AuthUserAddRequest, revision: i64) -> Vec<WriteOp> {
         let mut ops = Vec::new();
         let user = User {
             name: req.name.as_str().into(),
@@ -622,14 +625,17 @@ where
             options: req.options.clone(),
             roles: Vec::new(),
         };
-        let revision = self.revision.next();
         ops.push(WriteOp::PutAuthRevision(revision));
         ops.push(WriteOp::PutUser(user));
         ops
     }
 
     /// Sync `AuthUserDeleteRequest` and return whether authstore is changed.
-    fn sync_user_delete_request<'a>(&self, req: &'a AuthUserDeleteRequest) -> Vec<WriteOp<'a>> {
+    fn sync_user_delete_request<'a>(
+        &self,
+        req: &'a AuthUserDeleteRequest,
+        revision: i64,
+    ) -> Vec<WriteOp<'a>> {
         let mut ops = Vec::new();
         self.permission_cache.map_write(|mut cache| {
             let _ignore = cache.user_permissions.remove(&req.name);
@@ -639,7 +645,6 @@ where
                 };
             });
         });
-        let revision = self.revision.next();
         ops.push(WriteOp::PutAuthRevision(revision));
         ops.push(WriteOp::DeleteUser(req.name.as_str()));
         ops
@@ -649,11 +654,11 @@ where
     fn sync_user_change_password_request<'a>(
         &self,
         req: &'a AuthUserChangePasswordRequest,
+        revision: i64,
     ) -> Result<Vec<WriteOp<'a>>, ExecuteError> {
         let mut ops = Vec::new();
         let mut user = self.backend.get_user(&req.name)?;
         user.password = req.hashed_password.as_str().into();
-        let revision = self.revision.next();
         ops.push(WriteOp::PutAuthRevision(revision));
         ops.push(WriteOp::PutUser(user));
         Ok(ops)
@@ -663,6 +668,7 @@ where
     fn sync_user_grant_role_request<'a>(
         &self,
         req: &'a AuthUserGrantRoleRequest,
+        revision: i64,
     ) -> Result<Vec<WriteOp<'a>>, ExecuteError> {
         let mut ops = Vec::new();
         let mut user = self.backend.get_user(&req.user)?;
@@ -691,7 +697,6 @@ where
                     .push(req.user.clone());
             });
         }
-        let revision = self.revision.next();
         ops.push(WriteOp::PutAuthRevision(revision));
         ops.push(WriteOp::PutUser(user));
         Ok(ops)
@@ -701,6 +706,7 @@ where
     fn sync_user_revoke_role_request<'a>(
         &self,
         req: &'a AuthUserRevokeRoleRequest,
+        revision: i64,
     ) -> Result<Vec<WriteOp<'a>>, ExecuteError> {
         let mut ops = Vec::new();
         let mut user = self.backend.get_user(&req.name)?;
@@ -723,20 +729,18 @@ where
                 .user_permissions
                 .insert(req.name.clone(), user_permissions);
         });
-        let revision = self.revision.next();
         ops.push(WriteOp::PutAuthRevision(revision));
         ops.push(WriteOp::PutUser(user));
         Ok(ops)
     }
 
     /// Sync `AuthRoleAddRequest` and return whether authstore is changed.
-    fn sync_role_add_request<'a>(&self, req: &'a AuthRoleAddRequest) -> Vec<WriteOp<'a>> {
+    fn sync_role_add_request(req: &AuthRoleAddRequest, revision: i64) -> Vec<WriteOp> {
         let mut ops = Vec::new();
         let role = Role {
             name: req.name.as_str().into(),
             key_permission: Vec::new(),
         };
-        let revision = self.revision.next();
         ops.push(WriteOp::PutAuthRevision(revision));
         ops.push(WriteOp::PutRole(role));
         ops
@@ -746,11 +750,11 @@ where
     fn sync_role_delete_request<'a>(
         &self,
         req: &'a AuthRoleDeleteRequest,
+        revision: i64,
     ) -> Result<Vec<WriteOp<'a>>, ExecuteError> {
         let mut ops = Vec::new();
         let users = self.backend.get_all_users()?;
         let mut new_perms = HashMap::new();
-        let revision = self.revision.next();
         ops.push(WriteOp::PutAuthRevision(revision));
         ops.push(WriteOp::DeleteRole(req.role.as_str()));
         for mut user in users {
@@ -772,6 +776,7 @@ where
     fn sync_role_grant_permission_request<'a>(
         &self,
         req: &'a AuthRoleGrantPermissionRequest,
+        revision: i64,
     ) -> Result<Vec<WriteOp<'a>>, ExecuteError> {
         let mut ops = Vec::new();
         let mut role = self.backend.get_role(&req.name)?;
@@ -809,7 +814,6 @@ where
                 entry.insert(permission.clone());
             }
         });
-        let revision = self.revision.next();
         ops.push(WriteOp::PutAuthRevision(revision));
         ops.push(WriteOp::PutRole(role));
         Ok(ops)
@@ -819,6 +823,7 @@ where
     fn sync_role_revoke_permission_request<'a>(
         &self,
         req: &'a AuthRoleRevokePermissionRequest,
+        revision: i64,
     ) -> Result<Vec<WriteOp<'a>>, ExecuteError> {
         let mut ops = Vec::new();
         let mut role = self.backend.get_role(&req.role)?;
@@ -848,7 +853,6 @@ where
                     .insert(String::from_utf8_lossy(&user.name).to_string(), perms);
             }
         });
-        let revision = self.revision.next();
         ops.push(WriteOp::PutAuthRevision(revision));
         ops.push(WriteOp::PutRole(role));
         Ok(ops)
@@ -925,8 +929,9 @@ where
                 return Err(ExecuteError::token_not_provided());
             }
         };
-        if claims.revision < self.revision() {
-            return Err(ExecuteError::token_old_revision());
+        let cur_rev = self.revision();
+        if claims.revision < cur_rev {
+            return Err(ExecuteError::token_old_revision(claims.revision, cur_rev));
         }
         let username = claims.username;
         if Self::need_admin_permission(wrapper) {
@@ -1178,7 +1183,7 @@ mod test {
             }
             .into(),
         );
-        assert!(exe_and_sync(&store, &req).is_ok());
+        assert!(exe_and_sync(&store, &req, 6).is_ok());
         assert_eq!(
             store.permission_cache(),
             PermissionCache {
@@ -1210,7 +1215,7 @@ mod test {
             }
             .into(),
         );
-        assert!(exe_and_sync(&store, &req).is_ok());
+        assert!(exe_and_sync(&store, &req, 6).is_ok());
         assert_eq!(
             store.permission_cache(),
             PermissionCache {
@@ -1231,7 +1236,7 @@ mod test {
             }
             .into(),
         );
-        assert!(exe_and_sync(&store, &req).is_ok());
+        assert!(exe_and_sync(&store, &req, 6).is_ok());
         assert_eq!(
             store.permission_cache(),
             PermissionCache {
@@ -1252,7 +1257,7 @@ mod test {
             }
             .into(),
         );
-        assert!(exe_and_sync(&store, &req).is_ok());
+        assert!(exe_and_sync(&store, &req, 6).is_ok());
         assert_eq!(
             store.permission_cache(),
             PermissionCache {
@@ -1268,10 +1273,12 @@ mod test {
         let db = DB::open(&StorageConfig::Memory).unwrap();
         let store = init_auth_store(db);
         let revision = store.revision();
+        let rev_gen = Arc::clone(&store.revision);
         assert!(!store.is_enabled());
-
         let enable_req = RequestWithToken::new(AuthEnableRequest {}.into());
-        assert!(exe_and_sync(&store, &enable_req).is_err());
+
+        // AuthEnableRequest won't increase the auth revision, but AuthDisableRequest will
+        assert!(exe_and_sync(&store, &enable_req, store.revision()).is_err());
         let req_1 = RequestWithToken::new(
             AuthUserAddRequest {
                 name: "root".to_owned(),
@@ -1281,7 +1288,7 @@ mod test {
             }
             .into(),
         );
-        assert!(exe_and_sync(&store, &req_1).is_ok());
+        assert!(exe_and_sync(&store, &req_1, rev_gen.next()).is_ok());
 
         let req_2 = RequestWithToken::new(
             AuthRoleAddRequest {
@@ -1289,7 +1296,7 @@ mod test {
             }
             .into(),
         );
-        assert!(exe_and_sync(&store, &req_2).is_ok());
+        assert!(exe_and_sync(&store, &req_2, rev_gen.next()).is_ok());
 
         let req_3 = RequestWithToken::new(
             AuthUserGrantRoleRequest {
@@ -1298,17 +1305,16 @@ mod test {
             }
             .into(),
         );
-        assert!(exe_and_sync(&store, &req_3).is_ok());
+        assert!(exe_and_sync(&store, &req_3, rev_gen.next()).is_ok());
         assert_eq!(store.revision(), revision + 3);
 
-        // AuthEnableRequest won't increase the auth revision, but AuthDisableRequest will
-        assert!(exe_and_sync(&store, &enable_req).is_ok());
+        assert!(exe_and_sync(&store, &enable_req, -1).is_ok());
         assert_eq!(store.revision(), 8);
         assert!(store.is_enabled());
 
         let disable_req = RequestWithToken::new(AuthDisableRequest {}.into());
 
-        assert!(exe_and_sync(&store, &disable_req).is_ok());
+        assert!(exe_and_sync(&store, &disable_req, rev_gen.next()).is_ok());
         assert_eq!(store.revision(), revision + 4);
         assert!(!store.is_enabled());
     }
@@ -1329,13 +1335,14 @@ mod test {
 
     fn init_auth_store(db: Arc<DB>) -> AuthStore<DB> {
         let store = init_empty_store(db);
+        let rev = Arc::clone(&store.revision);
         let req1 = RequestWithToken::new(
             AuthRoleAddRequest {
                 name: "r".to_owned(),
             }
             .into(),
         );
-        assert!(exe_and_sync(&store, &req1).is_ok());
+        assert!(exe_and_sync(&store, &req1, rev.next()).is_ok());
         let req2 = RequestWithToken::new(
             AuthUserAddRequest {
                 name: "u".to_owned(),
@@ -1345,7 +1352,7 @@ mod test {
             }
             .into(),
         );
-        assert!(exe_and_sync(&store, &req2).is_ok());
+        assert!(exe_and_sync(&store, &req2, rev.next()).is_ok());
         let req3 = RequestWithToken::new(
             AuthUserGrantRoleRequest {
                 user: "u".to_owned(),
@@ -1353,7 +1360,7 @@ mod test {
             }
             .into(),
         );
-        assert!(exe_and_sync(&store, &req3).is_ok());
+        assert!(exe_and_sync(&store, &req3, rev.next()).is_ok());
         let req4 = RequestWithToken::new(
             AuthRoleGrantPermissionRequest {
                 name: "r".to_owned(),
@@ -1366,7 +1373,7 @@ mod test {
             }
             .into(),
         );
-        assert!(exe_and_sync(&store, &req4).is_ok());
+        assert!(exe_and_sync(&store, &req4, rev.next()).is_ok());
         assert_eq!(
             store.permission_cache(),
             PermissionCache {
@@ -1387,15 +1394,17 @@ mod test {
         let key_pair = test_key_pair();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let lease_collection = Arc::new(LeaseCollection::new(0));
-        AuthStore::new(lease_collection, key_pair, header_gen, db)
+        let rev = Arc::new(RevisionNumber::default());
+        AuthStore::new(lease_collection, key_pair, header_gen, db, rev)
     }
 
     fn exe_and_sync(
         store: &AuthStore<DB>,
         req: &RequestWithToken,
+        revision: i64,
     ) -> Result<(CommandResponse, SyncResponse), ExecuteError> {
         let cmd_res = store.execute(req)?;
-        let (sync_res, ops) = store.after_sync(req)?;
+        let (sync_res, ops) = store.after_sync(req, revision)?;
         store.backend.flush_ops(ops)?;
         Ok((cmd_res, sync_res))
     }

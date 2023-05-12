@@ -23,6 +23,9 @@ pub trait Command:
         + DeserializeOwned
         + ConflictCheck;
 
+    /// Prepare result
+    type PR: std::fmt::Debug + Send + Sync + Clone + Serialize + DeserializeOwned;
+
     /// Execution result
     type ER: std::fmt::Debug + Send + Sync + Clone + Serialize + DeserializeOwned;
 
@@ -34,6 +37,15 @@ pub trait Command:
 
     /// Get propose id
     fn id(&self) -> &ProposeId;
+
+    /// Prepare the command
+    #[inline]
+    fn prepare<E>(&self, e: &E) -> Result<Self::PR, E::Error>
+    where
+        E: CommandExecutor<Self> + Send + Sync,
+    {
+        <E as CommandExecutor<Self>>::prepare(e, self)
+    }
 
     /// Execute the command according to the executor
     #[inline]
@@ -51,11 +63,12 @@ pub trait Command:
         e: &E,
         index: LogIndex,
         need_run: bool,
+        prepare_res: Option<Self::PR>, // TODO: remove `need_run` and the option wrapper when issue 270 is closed
     ) -> Result<Self::ASR, E::Error>
     where
         E: CommandExecutor<Self> + Send + Sync,
     {
-        <E as CommandExecutor<Self>>::after_sync(e, self, index, need_run).await
+        <E as CommandExecutor<Self>>::after_sync(e, self, index, need_run, prepare_res).await
     }
 }
 
@@ -114,6 +127,9 @@ where
     /// Error type
     type Error: std::fmt::Debug + Send + Sync + Clone + std::error::Error;
 
+    /// Prepare the command
+    fn prepare(&self, cmd: &C) -> Result<C::PR, Self::Error>;
+
     /// Execute the command
     async fn execute(&self, cmd: &C) -> Result<C::ER, Self::Error>;
 
@@ -123,6 +139,7 @@ where
         cmd: &C,
         index: LogIndex,
         need_run: bool,
+        prepare_res: Option<C::PR>, // TODO: remove `need_run` and the option wrapper when issue 270 is closed
     ) -> Result<C::ASR, Self::Error>;
 
     /// Index of the last log entry that has been successfully applied to the command executor

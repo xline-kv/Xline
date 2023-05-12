@@ -384,6 +384,7 @@ mod test {
         let handle = tokio::spawn({
             let store = Arc::clone(&store);
             async move {
+                let mut revision = 2;
                 for i in 0..100_u8 {
                     let req = RequestWithToken::new(
                         PutRequest {
@@ -393,9 +394,10 @@ mod test {
                         }
                         .into(),
                     );
-                    let (sync_res, ops) = store.after_sync(&req).await.unwrap();
+                    let (sync_res, ops) = store.after_sync(&req, revision).await.unwrap();
                     db.flush_ops(ops).unwrap();
                     store.mark_index_available(sync_res.revision());
+                    revision += 1;
                 }
             }
         });

@@ -80,24 +80,24 @@ pub(crate) use self::{
 
 impl User {
     /// Check if user has the given role
-    pub(crate) fn has_role(&self, role: &str) -> bool {
+    pub(super) fn has_role(&self, role: &str) -> bool {
         self.roles.binary_search(&role.to_owned()).is_ok()
     }
 }
 
 /// Wrapper for requests
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub(crate) struct RequestWithToken {
+pub(super) struct RequestWithToken {
     /// token for authentication
-    pub(crate) token: Option<String>,
+    pub(super) token: Option<String>,
     /// Internal request
-    pub(crate) request: RequestWrapper,
+    pub(super) request: RequestWrapper,
 }
 
 /// Internal request
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[allow(clippy::enum_variant_names)] // in order to quickly implement trait by macro
-pub(crate) enum RequestWrapper {
+pub(super) enum RequestWrapper {
     /// `RangeRequest`
     RangeRequest(RangeRequest),
     /// `PutRequest`
@@ -151,7 +151,7 @@ pub(crate) enum RequestWrapper {
 /// Wrapper for responses
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[allow(clippy::enum_variant_names)] // in order to quickly implement trait by macro
-pub(crate) enum ResponseWrapper {
+pub(super) enum ResponseWrapper {
     /// `RangeResponse`
     RangeResponse(RangeResponse),
     /// `PutResponse`
@@ -204,7 +204,7 @@ pub(crate) enum ResponseWrapper {
 
 impl ResponseWrapper {
     /// Update response revision
-    pub(crate) fn update_revision(&mut self, revision: i64) {
+    pub(super) fn update_revision(&mut self, revision: i64) {
         let header = match *self {
             ResponseWrapper::RangeResponse(ref mut resp) => &mut resp.header,
             ResponseWrapper::PutResponse(ref mut resp) => &mut resp.header,
@@ -239,7 +239,7 @@ impl ResponseWrapper {
 
 /// Backend store of request
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum RequestBackend {
+pub(super) enum RequestBackend {
     /// Kv backend
     Kv,
     /// Auth backend
@@ -250,7 +250,7 @@ pub(crate) enum RequestBackend {
 
 impl RequestWrapper {
     /// Get the backend of the request
-    pub(crate) fn backend(&self) -> RequestBackend {
+    pub(super) fn backend(&self) -> RequestBackend {
         match *self {
             RequestWrapper::PutRequest(_)
             | RequestWrapper::RangeRequest(_)
@@ -281,7 +281,7 @@ impl RequestWrapper {
     }
 
     /// Check if this request is a auth read request
-    pub(crate) fn is_auth_read_request(&self) -> bool {
+    pub(super) fn is_auth_read_request(&self) -> bool {
         matches!(
             *self,
             RequestWrapper::AuthStatusRequest(_)
@@ -292,18 +292,36 @@ impl RequestWrapper {
         )
     }
 
+    /// Check whether this auth request should skip the revision or not
+    pub(super) fn skip_auth_revision(&self) -> bool {
+        self.is_auth_read_request()
+            || matches!(
+                *self,
+                RequestWrapper::AuthEnableRequest(_) | RequestWrapper::AuthenticateRequest(_)
+            )
+    }
+
+    /// Check whether the kv request or lease request should skip the revision or not
+    pub(super) fn skip_general_revision(&self) -> bool {
+        match self {
+            RequestWrapper::RangeRequest(_) | RequestWrapper::LeaseGrantRequest(_) => true,
+            RequestWrapper::TxnRequest(req) => req.is_read_only(),
+            _ => false,
+        }
+    }
+
     /// Check if this request is a auth request
-    pub(crate) fn is_auth_request(&self) -> bool {
+    pub(super) fn is_auth_request(&self) -> bool {
         self.backend() == RequestBackend::Auth
     }
 
     /// Check if this request is a kv request
-    pub(crate) fn is_kv_request(&self) -> bool {
+    pub(super) fn is_kv_request(&self) -> bool {
         self.backend() == RequestBackend::Kv
     }
 
     /// Check if this request is a lease request
-    pub(crate) fn is_lease_request(&self) -> bool {
+    pub(super) fn is_lease_request(&self) -> bool {
         self.backend() == RequestBackend::Lease
     }
 }
@@ -441,7 +459,7 @@ impl From<ResponseWrapper> for ResponseOp {
 
 impl RequestWithToken {
     /// New `RequestWithToken`
-    pub(crate) fn new(request: RequestWrapper) -> Self {
+    pub(super) fn new(request: RequestWrapper) -> Self {
         RequestWithToken {
             token: None,
             request,
@@ -449,10 +467,106 @@ impl RequestWithToken {
     }
 
     /// New `RequestWithToken` with token
-    pub(crate) fn new_with_token(request: RequestWrapper, token: String) -> Self {
+    pub(super) fn new_with_token(request: RequestWrapper, token: String) -> Self {
         RequestWithToken {
             token: Some(token),
             request,
         }
+    }
+}
+
+impl TxnRequest {
+    /// Checks whether a given `TxnRequest` is read-only or not.
+    fn is_read_only(&self) -> bool {
+        let read_only_checker = |req: &RequestOp| {
+            if let Some(ref request) = req.request {
+                match request {
+                    Request::RequestRange(_) => true,
+                    Request::RequestDeleteRange(_) | Request::RequestPut(_) => false,
+                    Request::RequestTxn(req) => req.is_read_only(),
+                }
+            } else {
+                true
+            }
+        };
+        self.success.iter().all(read_only_checker) && self.failure.iter().all(read_only_checker)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn txn_request_is_read_only_should_success() {
+        let read_only_txn_req = TxnRequest {
+            compare: vec![],
+            success: vec![RequestOp {
+                request: Some(Request::RequestRange(RangeRequest::default())),
+            }],
+            failure: vec![RequestOp {
+                request: Some(Request::RequestRange(RangeRequest::default())),
+            }],
+        };
+
+        assert!(read_only_txn_req.is_read_only());
+
+        let read_write_mixed_txn_req = TxnRequest {
+            compare: vec![],
+            success: vec![RequestOp {
+                request: Some(Request::RequestRange(RangeRequest::default())),
+            }],
+            failure: vec![RequestOp {
+                request: Some(Request::RequestPut(PutRequest::default())),
+            }],
+        };
+
+        assert!(!read_write_mixed_txn_req.is_read_only());
+
+        let read_only_nested_txn_req = TxnRequest {
+            compare: vec![],
+            success: vec![RequestOp {
+                request: Some(Request::RequestTxn(TxnRequest {
+                    compare: vec![],
+                    success: vec![RequestOp {
+                        request: Some(Request::RequestRange(RangeRequest::default())),
+                    }],
+                    failure: vec![],
+                })),
+            }],
+            failure: vec![RequestOp {
+                request: Some(Request::RequestRange(RangeRequest::default())),
+            }],
+        };
+
+        assert!(read_only_nested_txn_req.is_read_only());
+
+        let read_write_nested_txn_req = TxnRequest {
+            compare: vec![],
+            success: vec![RequestOp {
+                request: Some(Request::RequestTxn(TxnRequest {
+                    compare: vec![],
+                    success: vec![RequestOp {
+                        request: Some(Request::RequestTxn(TxnRequest {
+                            compare: vec![],
+                            success: vec![RequestOp {
+                                request: Some(Request::RequestRange(RangeRequest::default())),
+                            }],
+                            failure: vec![RequestOp {
+                                request: Some(Request::RequestPut(PutRequest::default())),
+                            }],
+                        })),
+                    }],
+                    failure: vec![RequestOp {
+                        request: Some(Request::RequestRange(RangeRequest::default())),
+                    }],
+                })),
+            }],
+            failure: vec![RequestOp {
+                request: Some(Request::RequestRange(RangeRequest::default())),
+            }],
+        };
+
+        assert!(!read_write_nested_txn_req.is_read_only());
     }
 }
