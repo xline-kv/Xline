@@ -102,13 +102,14 @@ pub(super) trait IndexOperate {
     fn get_from_rev(&self, key: &[u8], range_end: &[u8], revision: i64) -> Vec<Revision>;
 
     /// Mark keys as deleted and return latest revision before deletion and deletion revision
+    /// return all revision pairs and all keys in range
     fn delete(
         &self,
         key: &[u8],
         range_end: &[u8],
         revision: i64,
         sub_revision: i64,
-    ) -> Vec<(Revision, Revision)>;
+    ) -> (Vec<(Revision, Revision)>, Vec<Vec<u8>>);
 
     /// Insert or update `KeyRevision` of a key
     fn insert_or_update_revision(
@@ -183,7 +184,7 @@ impl IndexOperate for Index {
         range_end: &[u8],
         revision: i64,
         sub_revision: i64,
-    ) -> Vec<(Revision, Revision)> {
+    ) -> (Vec<(Revision, Revision)>, Vec<Vec<u8>>) {
         let mut inner = self.inner.lock();
 
         let (pairs, keys) = match RangeType::get_range_type(key, range_end) {
@@ -201,36 +202,32 @@ impl IndexOperate for Index {
                 };
                 (pairs, keys)
             }
-            RangeType::AllKeys => {
-                let pairs = inner
-                    .index
-                    .values_mut()
-                    .zip(0..)
-                    .filter_map(|(revs, i)| {
-                        Self::gen_del_revision(revs, revision, sub_revision.overflow_add(i))
-                    })
-                    .collect();
-                let keys = inner.index.keys().cloned().collect();
-                (pairs, keys)
-            }
-            RangeType::Range => {
-                let mut keys = vec![];
-                let pairs = inner
-                    .index
-                    .range_mut(KeyRange::new(key, range_end))
-                    .zip(0..)
-                    .filter_map(|((k, revs), i)| {
-                        keys.push(k.clone());
-                        Self::gen_del_revision(revs, revision, sub_revision.overflow_add(i))
-                    })
-                    .collect();
-                (pairs, keys)
-            }
+            RangeType::AllKeys => inner
+                .index
+                .iter_mut()
+                .zip(0..)
+                .filter_map(|((k, revs), i)| {
+                    Self::gen_del_revision(revs, revision, sub_revision.overflow_add(i))
+                        .map(|pair| (pair, k.clone()))
+                })
+                .unzip(),
+            RangeType::Range => inner
+                .index
+                .range_mut(KeyRange::new(key, range_end))
+                .zip(0..)
+                .filter_map(|((k, revs), i)| {
+                    Self::gen_del_revision(revs, revision, sub_revision.overflow_add(i))
+                        .map(|pair| (pair, k.clone()))
+                })
+                .unzip(),
         };
         if !keys.is_empty() {
-            assert!(inner.unavailable_cache.insert(revision, keys).is_none());
+            assert!(inner
+                .unavailable_cache
+                .insert(revision, keys.clone())
+                .is_none());
         }
-        pairs
+        (pairs, keys)
     }
 
     fn insert_or_update_revision(
@@ -367,22 +364,29 @@ mod test {
     #[test]
     fn test_delete() {
         let index = init_and_test_insert();
+
         assert_eq!(
             index.delete(b"key", b"", 6, 0),
-            vec![(Revision::new(3, 1), Revision::new(6, 0))]
+            (
+                vec![(Revision::new(3, 1), Revision::new(6, 0))],
+                vec![b"key".to_vec()]
+            )
         );
         index.mark_available(6);
 
         assert_eq!(
             index.delete(b"a", b"g", 7, 0),
-            vec![
-                (Revision::new(5, 4), Revision::new(7, 0)),
-                (Revision::new(4, 5), Revision::new(7, 1)),
-            ]
+            (
+                vec![
+                    (Revision::new(5, 4), Revision::new(7, 0)),
+                    (Revision::new(4, 5), Revision::new(7, 1)),
+                ],
+                vec![b"bar".to_vec(), b"foo".to_vec()]
+            )
         );
         index.mark_available(7);
 
-        assert_eq!(index.delete(b"\0", b"\0", 8, 0), vec![]);
+        assert_eq!(index.delete(b"\0", b"\0", 8, 0), (vec![], vec![]));
 
         assert_eq!(
             index.inner.lock().index,
