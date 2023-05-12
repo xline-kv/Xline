@@ -11,6 +11,7 @@ use clippy_utilities::OverflowArithmetic;
 use log::warn;
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
+use utils::parking_lot_lock::RwLockMap;
 
 use super::storage_api::StorageApi;
 use crate::{rpc::Event, server::command::KeyRange, storage::kv_store::KvStore};
@@ -276,42 +277,43 @@ where
 
     /// Handle KV store updates
     fn handle_kv_updates(&self, (revision, all_events): (i64, Vec<Event>)) {
-        let watcher_map_r = self.watcher_map.read();
-        let mut watcher_events: HashMap<&Arc<Watcher>, Vec<Event>> = HashMap::new();
-        for event in all_events {
-            let watchers: HashSet<&Arc<Watcher>> = watcher_map_r
-                .index
-                .iter()
-                .filter_map(|(k, v)| {
-                    k.contains_key(
-                        &event
-                            .kv
-                            .as_ref()
-                            .unwrap_or_else(|| panic!("Receive Event with empty kv"))
-                            .key,
-                    )
-                    .then_some(v)
-                })
-                .flatten()
-                .collect();
-            for watcher in watchers {
-                if event
-                    .kv
-                    .as_ref()
-                    .map_or(true, |kv| kv.mod_revision < watcher.start_rev)
-                {
-                    continue;
+        self.watcher_map.map_read(|watcher_map_r| {
+            let mut watcher_events: HashMap<&Arc<Watcher>, Vec<Event>> = HashMap::new();
+            for event in all_events {
+                let watchers: HashSet<&Arc<Watcher>> = watcher_map_r
+                    .index
+                    .iter()
+                    .filter_map(|(k, v)| {
+                        k.contains_key(
+                            &event
+                                .kv
+                                .as_ref()
+                                .unwrap_or_else(|| panic!("Receive Event with empty kv"))
+                                .key,
+                        )
+                        .then_some(v)
+                    })
+                    .flatten()
+                    .collect();
+                for watcher in watchers {
+                    if event
+                        .kv
+                        .as_ref()
+                        .map_or(true, |kv| kv.mod_revision < watcher.start_rev)
+                    {
+                        continue;
+                    }
+                    #[allow(clippy::indexing_slicing)]
+                    watcher_events
+                        .entry(watcher)
+                        .or_default()
+                        .push(event.clone());
                 }
-                #[allow(clippy::indexing_slicing)]
-                watcher_events
-                    .entry(watcher)
-                    .or_default()
-                    .push(event.clone());
             }
-        }
-        for (w, es) in watcher_events {
-            w.notify((revision, es));
-        }
+            for (w, es) in watcher_events {
+                w.notify((revision, es));
+            }
+        });
     }
 }
 
@@ -359,8 +361,25 @@ mod test {
 
     use super::*;
 
+    fn init_empty_store() -> (Arc<KvStore<DB>>, Arc<DB>, Arc<KvWatcher<DB>>) {
+        let db = DB::open(&StorageConfig::Memory).unwrap();
+        let header_gen = Arc::new(HeaderGenerator::new(0, 0));
+        let index = Arc::new(Index::new());
+        let lease_collection = Arc::new(LeaseCollection::new(0));
+        let (kv_update_tx, kv_update_rx) = mpsc::channel(128);
+        let store = Arc::new(KvStore::new(
+            kv_update_tx,
+            lease_collection,
+            header_gen,
+            Arc::clone(&db),
+            index,
+        ));
+        let kv_watcher = KvWatcher::new_arc(Arc::clone(&store), kv_update_rx);
+        (store, db, kv_watcher)
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
-    async fn it_works() {
+    async fn watch_should_not_lost_events() {
         let (store, db, kv_watcher) = init_empty_store();
         let mut map = BTreeMap::new();
         let handle = tokio::spawn({
@@ -404,22 +423,5 @@ mod test {
             assert_eq!(count, 1, "key {k} should be notified once");
         }
         handle.abort();
-    }
-
-    fn init_empty_store() -> (Arc<KvStore<DB>>, Arc<DB>, Arc<KvWatcher<DB>>) {
-        let db = DB::open(&StorageConfig::Memory).unwrap();
-        let header_gen = Arc::new(HeaderGenerator::new(0, 0));
-        let index = Arc::new(Index::new());
-        let lease_collection = Arc::new(LeaseCollection::new(0));
-        let (kv_update_tx, kv_update_rx) = mpsc::channel(128);
-        let store = Arc::new(KvStore::new(
-            kv_update_tx,
-            lease_collection,
-            header_gen,
-            Arc::clone(&db),
-            index,
-        ));
-        let kv_watcher = KvWatcher::new_arc(Arc::clone(&store), kv_update_rx);
-        (store, db, kv_watcher)
     }
 }

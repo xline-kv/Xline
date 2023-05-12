@@ -748,15 +748,71 @@ where
 #[cfg(test)]
 mod test {
 
+    use tracing::info;
     use utils::config::StorageConfig;
 
     use super::*;
-    use crate::{
-        rpc::RequestOp,
-        storage::{db::DB, kvwatcher::KvWatcher},
-    };
+    use crate::{rpc::RequestOp, storage::db::DB};
 
     const CHANNEL_SIZE: usize = 128;
+
+    fn sort_req(sort_order: SortOrder, sort_target: SortTarget) -> RangeRequest {
+        RangeRequest {
+            key: vec![0],
+            range_end: vec![0],
+            sort_order: sort_order as i32,
+            sort_target: sort_target as i32,
+            ..Default::default()
+        }
+    }
+
+    async fn init_store(db: Arc<DB>) -> Result<Arc<KvStore<DB>>, ExecuteError> {
+        let store = init_empty_store(db);
+        let keys = vec!["a", "b", "c", "d", "e"];
+        let vals = vec!["a", "b", "c", "d", "e"];
+        for (key, val) in keys.into_iter().zip(vals.into_iter()) {
+            let req = RequestWithToken::new(
+                PutRequest {
+                    key: key.into(),
+                    value: val.into(),
+                    ..Default::default()
+                }
+                .into(),
+            );
+            exe_as_and_flush(&store, &req).await?;
+        }
+        Ok(store)
+    }
+
+    async fn exe_as_and_flush(
+        store: &Arc<KvStore<DB>>,
+        request: &RequestWithToken,
+    ) -> Result<(), ExecuteError> {
+        let (sync_res, ops) = store.after_sync(request).await?;
+        store.db.flush_ops(ops)?;
+        store.mark_index_available(sync_res.revision());
+        Ok(())
+    }
+
+    fn init_empty_store(db: Arc<DB>) -> Arc<KvStore<DB>> {
+        let (kv_update_tx, mut kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
+        let lease_collection = Arc::new(LeaseCollection::new(0));
+        let header_gen = Arc::new(HeaderGenerator::new(0, 0));
+        let index = Arc::new(Index::new());
+        let storage = Arc::new(KvStore::new(
+            kv_update_tx,
+            lease_collection,
+            header_gen,
+            db,
+            index,
+        ));
+        tokio::spawn(async move {
+            while let Some(update) = kv_update_rx.recv().await {
+                info!("kv update: {:?}", update);
+            }
+        });
+        storage
+    }
 
     #[tokio::test]
     async fn test_keys_only() -> Result<(), ExecuteError> {
@@ -928,9 +984,7 @@ mod test {
         );
         let db = DB::open(&StorageConfig::Memory)?;
         let store = init_store(db).await?;
-        let (sync_res, ops) = store.after_sync(&txn_req).await?;
-        store.db.flush_ops(ops)?;
-        store.mark_index_available(sync_res.revision());
+        exe_as_and_flush(&store, &txn_req).await?;
         let request = RangeRequest {
             key: "success".into(),
             range_end: vec![],
@@ -945,10 +999,10 @@ mod test {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
-    async fn test_kv_store_atomic() {
+    async fn test_kv_store_index_available() {
         let db = DB::open(&StorageConfig::Memory).unwrap();
         let store = Arc::new(init_store(Arc::clone(&db)).await.unwrap());
-        let _handle = tokio::spawn({
+        let handle = tokio::spawn({
             let store = Arc::clone(&store);
             async move {
                 for i in 0..100_u8 {
@@ -960,12 +1014,11 @@ mod test {
                         }
                         .into(),
                     );
-                    let (_res, ops) = store.after_sync(&req).await.unwrap();
-                    db.flush_ops(ops).unwrap();
+                    exe_as_and_flush(&store, &req).await.unwrap();
                 }
             }
         });
-        tokio::time::sleep(std::time::Duration::from_micros(500)).await;
+        tokio::time::sleep(std::time::Duration::from_micros(50)).await;
         let revs = store.index.get_from_rev(b"foo", b"", 1);
         let kvs = store.get_values(&revs).unwrap();
         assert_eq!(
@@ -973,52 +1026,6 @@ mod test {
             revs.len(),
             "kvs.len() != revs.len(), maybe some operations already inserted into index, but not flushed to db"
         );
-    }
-
-    fn sort_req(sort_order: SortOrder, sort_target: SortTarget) -> RangeRequest {
-        RangeRequest {
-            key: vec![0],
-            range_end: vec![0],
-            sort_order: sort_order as i32,
-            sort_target: sort_target as i32,
-            ..Default::default()
-        }
-    }
-
-    async fn init_store(db: Arc<DB>) -> Result<Arc<KvStore<DB>>, ExecuteError> {
-        let store = init_empty_store(db);
-        let keys = vec!["a", "b", "c", "d", "e"];
-        let vals = vec!["a", "b", "c", "d", "e"];
-        for (key, val) in keys.into_iter().zip(vals.into_iter()) {
-            let req = RequestWithToken::new(
-                PutRequest {
-                    key: key.into(),
-                    value: val.into(),
-                    ..Default::default()
-                }
-                .into(),
-            );
-            let _cmd_res = store.execute(&req)?;
-            let (sync_res, ops) = store.after_sync(&req).await?;
-            store.db.flush_ops(ops)?;
-            store.mark_index_available(sync_res.revision());
-        }
-        Ok(store)
-    }
-
-    fn init_empty_store(db: Arc<DB>) -> Arc<KvStore<DB>> {
-        let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
-        let lease_collection = Arc::new(LeaseCollection::new(0));
-        let header_gen = Arc::new(HeaderGenerator::new(0, 0));
-        let index = Arc::new(Index::new());
-        let storage = Arc::new(KvStore::new(
-            kv_update_tx,
-            lease_collection,
-            header_gen,
-            db,
-            index,
-        ));
-        let _watcher = KvWatcher::new_arc(Arc::clone(&storage), kv_update_rx);
-        storage
+        handle.await.unwrap();
     }
 }

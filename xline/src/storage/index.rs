@@ -44,7 +44,6 @@ impl Index {
 
     /// Get specified or last `KeyRevision` if the key is not deleted, and convert to `Revision`
     fn get_revision(revs: &[KeyRevision], revision: i64) -> Option<Revision> {
-        // TODO: handle future revision
         let rev = if revision <= 0 {
             revs.iter().rev().find(|kr| kr.available)
         } else {
@@ -76,6 +75,8 @@ impl Index {
     }
 
     /// Mark the `KeyRevision` as available
+    /// # Panics
+    /// panic if keys in `unavailable_cache` does not match with `index`
     pub(super) fn mark_available(&self, revision: i64) {
         let mut inner = self.inner.lock();
         let Some(keys) = inner.unavailable_cache.remove(&revision) else {
@@ -83,7 +84,7 @@ impl Index {
         };
         for key in keys {
             let Some(revs) = inner.index.get_mut(&key) else {
-                panic!("key({key:?}) should exist in index");
+                unreachable!("key({key:?}) should exist in index");
             };
             if let Some(rev) = revs.iter_mut().find(|rev| rev.mod_revision == revision) {
                 rev.available = true;
