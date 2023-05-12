@@ -198,12 +198,18 @@ where
     }
 
     /// Validate range request before handle
-    fn check_range_request(req: &RangeRequest) -> Result<(), tonic::Status> {
+    fn check_range_request(req: &RangeRequest, current_revision: i64) -> Result<(), tonic::Status> {
         if req.key.is_empty() {
             return Err(tonic::Status::invalid_argument("key is not provided"));
         }
         if !SortOrder::is_valid(req.sort_order) || !SortTarget::is_valid(req.sort_target) {
             return Err(tonic::Status::invalid_argument("invalid sort option"));
+        }
+        if req.revision > current_revision {
+            return Err(tonic::Status::invalid_argument(format!(
+                "required revision {} is higher than current revision {}",
+                req.revision, current_revision
+            )));
         }
 
         Ok(())
@@ -234,7 +240,7 @@ where
     }
 
     /// Validate txn request before handle
-    fn check_txn_request(req: &TxnRequest) -> Result<(), tonic::Status> {
+    fn check_txn_request(req: &TxnRequest, current_revision: i64) -> Result<(), tonic::Status> {
         let opc = req
             .compare
             .len()
@@ -253,10 +259,10 @@ where
         for op in req.success.iter().chain(req.failure.iter()) {
             if let Some(ref request) = op.request {
                 match *request {
-                    Request::RequestRange(ref r) => Self::check_range_request(r),
+                    Request::RequestRange(ref r) => Self::check_range_request(r, current_revision),
                     Request::RequestPut(ref r) => Self::check_put_request(r),
                     Request::RequestDeleteRange(ref r) => Self::check_delete_range_request(r),
-                    Request::RequestTxn(ref r) => Self::check_txn_request(r),
+                    Request::RequestTxn(ref r) => Self::check_txn_request(r, current_revision),
                 }?;
             } else {
                 return Err(tonic::Status::invalid_argument("key not found"));
@@ -387,7 +393,7 @@ where
     ) -> Result<tonic::Response<RangeResponse>, tonic::Status> {
         debug!("Receive RangeRequest {:?}", request);
         let range_req = request.get_ref();
-        Self::check_range_request(range_req)?;
+        Self::check_range_request(range_req, self.kv_storage.revision())?;
         let is_serializable = range_req.serializable;
         let wrapper = match get_token(request.metadata()) {
             Some(token) => RequestWithToken::new_with_token(request.into_inner().into(), token),
@@ -463,7 +469,7 @@ where
         request: tonic::Request<TxnRequest>,
     ) -> Result<tonic::Response<TxnResponse>, tonic::Status> {
         debug!("Receive TxnRequest {:?}", request);
-        Self::check_txn_request(request.get_ref())?;
+        Self::check_txn_request(request.get_ref(), self.kv_storage.revision())?;
         let is_fast_path = false; // lock need revision of txn
         let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
 
@@ -542,7 +548,38 @@ mod test {
             ],
             failure: vec![],
         };
-        let result = KvServer::<DB>::check_txn_request(&txn_req);
+        let result = KvServer::<DB>::check_txn_request(&txn_req, 0);
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_future_revision() {
+        let current_revision = 10;
+        let range_request = RangeRequest {
+            key: b"foo".to_vec(),
+            revision: 20,
+            ..Default::default()
+        };
+        let expected_err_message = tonic::Status::invalid_argument(format!(
+            "required revision {} is higher than current revision {}",
+            range_request.revision, current_revision
+        ))
+        .to_string();
+        let message = KvServer::<DB>::check_range_request(&range_request, current_revision)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(message, expected_err_message);
+
+        let txn_req = TxnRequest {
+            compare: vec![],
+            success: vec![RequestOp {
+                request: Some(Request::RequestRange(range_request)),
+            }],
+            failure: vec![],
+        };
+        let message = KvServer::<DB>::check_txn_request(&txn_req, current_revision)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(message, expected_err_message);
     }
 }
