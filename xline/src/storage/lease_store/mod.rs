@@ -21,7 +21,6 @@ use super::{
 };
 use crate::{
     header_gen::HeaderGenerator,
-    revision_number::RevisionNumber,
     rpc::{
         Event, EventType, KeyValue, LeaseGrantRequest, LeaseGrantResponse, LeaseRevokeRequest,
         LeaseRevokeResponse, PbLease, RequestWithToken, RequestWrapper, ResponseHeader,
@@ -61,8 +60,6 @@ where
     index: Arc<Index>,
     /// Current node is leader or not
     state: Arc<State>,
-    /// Revision
-    revision: Arc<RevisionNumber>,
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
     /// KV update sender
@@ -108,9 +105,10 @@ where
     pub(crate) async fn after_sync(
         &self,
         request: &RequestWithToken,
+        revision: i64,
     ) -> Result<(SyncResponse, Vec<WriteOp>), ExecuteError> {
         self.inner
-            .sync_request(&request.request)
+            .sync_request(&request.request, revision)
             .await
             .map(|(rev, ops)| (SyncResponse::new(rev), ops))
     }
@@ -189,10 +187,9 @@ where
         Self {
             lease_collection,
             db,
-            state,
-            revision: header_gen.revision_arc(),
-            header_gen,
             index,
+            state,
+            header_gen,
             kv_update_tx,
         }
     }
@@ -288,6 +285,7 @@ where
     async fn sync_request(
         &self,
         wrapper: &RequestWrapper,
+        revision: i64,
     ) -> Result<(i64, Vec<WriteOp>), ExecuteError> {
         #[allow(clippy::wildcard_enum_match_arm)]
         let ops = match *wrapper {
@@ -297,11 +295,11 @@ where
             }
             RequestWrapper::LeaseRevokeRequest(ref req) => {
                 debug!("Sync LeaseRevokeRequest {:?}", req);
-                self.sync_lease_revoke_request(req).await?
+                self.sync_lease_revoke_request(req, revision).await?
             }
             _ => unreachable!("Other request should not be sent to this store"),
         };
-        Ok((self.header_gen.revision(), ops))
+        Ok((revision, ops))
     }
 
     /// Sync `LeaseGrantRequest`
@@ -330,6 +328,7 @@ where
     async fn sync_lease_revoke_request(
         &self,
         req: &LeaseRevokeRequest,
+        revision: i64,
     ) -> Result<Vec<WriteOp>, ExecuteError> {
         let mut ops = Vec::new();
         ops.push(WriteOp::DeleteLease(req.id));
@@ -344,7 +343,6 @@ where
             return Ok(Vec::new());
         }
 
-        let revision = self.revision.next();
         let (prev_keys, del_revs): (Vec<Vec<u8>>, Vec<Revision>) = keys
             .into_iter()
             .zip(0..)
@@ -423,9 +421,10 @@ mod test {
     async fn test_lease_storage() -> Result<(), Box<dyn Error>> {
         let db = DB::open(&StorageConfig::Memory)?;
         let lease_store = init_store(db);
+        let revision_gen = lease_store.inner.header_gen.revision_arc();
 
         let req1 = RequestWithToken::new(LeaseGrantRequest { ttl: 10, id: 1 }.into());
-        let _ignore1 = exe_and_sync_req(&lease_store, &req1).await?;
+        let _ignore1 = exe_and_sync_req(&lease_store, &req1, -1).await?;
 
         let lo = lease_store.look_up(1).unwrap();
         assert_eq!(lo.id(), 1);
@@ -439,7 +438,7 @@ mod test {
         lease_store.inner.detach(1, "key".as_bytes())?;
 
         let req2 = RequestWithToken::new(LeaseRevokeRequest { id: 1 }.into());
-        let _ignore2 = exe_and_sync_req(&lease_store, &req2).await?;
+        let _ignore2 = exe_and_sync_req(&lease_store, &req2, revision_gen.next()).await?;
         assert!(lease_store.look_up(1).is_none());
         assert!(lease_store.leases().is_empty());
 
@@ -452,7 +451,7 @@ mod test {
         let store = init_store(Arc::clone(&db));
 
         let req1 = RequestWithToken::new(LeaseGrantRequest { ttl: 10, id: 1 }.into());
-        let _ignore1 = exe_and_sync_req(&store, &req1).await?;
+        let _ignore1 = exe_and_sync_req(&store, &req1, -1).await?;
         store.inner.lease_collection.attach(1, "key".into())?;
 
         let new_store = init_store(db);
@@ -482,9 +481,10 @@ mod test {
     async fn exe_and_sync_req(
         ls: &LeaseStore<DB>,
         req: &RequestWithToken,
+        revision: i64,
     ) -> Result<ResponseWrapper, ExecuteError> {
         let cmd_res = ls.execute(req)?;
-        let (_ignore, ops) = ls.after_sync(req).await?;
+        let (_ignore, ops) = ls.after_sync(req, revision).await?;
         ls.inner.db.flush_ops(ops)?;
         Ok(cmd_res.decode())
     }

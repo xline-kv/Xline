@@ -91,6 +91,7 @@ where
         };
         let propose_id = self.generate_propose_id();
         let cmd = Self::command_from_request_wrapper(propose_id, wrapper);
+        #[allow(clippy::wildcard_enum_match_arm)]
         if use_fast_path {
             let cmd_res = self.client.propose(cmd).await.map_err(|err| {
                 if let ProposeError::ExecutionError(e) = err {
@@ -101,13 +102,15 @@ where
             })?;
             Ok((cmd_res, None))
         } else {
-            let (cmd_res, sync_res) = self.client.propose_indexed(cmd).await.map_err(|err| {
-                if let ProposeError::ExecutionError(e) = err {
-                    tonic::Status::invalid_argument(e)
-                } else {
-                    panic!("propose err {err:?}")
-                }
-            })?;
+            let (cmd_res, sync_res) =
+                self.client
+                    .propose_indexed(cmd)
+                    .await
+                    .map_err(|err| match err {
+                        ProposeError::ExecutionError(e) => tonic::Status::invalid_argument(e),
+                        ProposeError::SyncedError(e) => tonic::Status::unknown(e),
+                        _ => panic!("propose err {err:?}"),
+                    })?;
             Ok((cmd_res, Some(sync_res)))
         }
     }

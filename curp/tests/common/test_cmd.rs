@@ -109,6 +109,8 @@ impl TestCommand {
 impl Command for TestCommand {
     type K = u32;
 
+    type PR = i64;
+
     type ER = TestCommandResult;
 
     type ASR = LogIndex;
@@ -148,7 +150,11 @@ pub struct TestCE {
 impl CommandExecutor<TestCommand> for TestCE {
     type Error = ExecuteError;
 
-    async fn execute(&self, cmd: &TestCommand) -> Result<TestCommandResult, ExecuteError> {
+    fn prepare(&self, _cmd: &TestCommand) -> Result<i64, Self::Error> {
+        Ok(0)
+    }
+
+    async fn execute(&self, cmd: &TestCommand) -> Result<TestCommandResult, Self::Error> {
         sleep(cmd.exe_dur).await;
         if cmd.exe_should_fail {
             return Err(ExecuteError("fail".to_owned()));
@@ -194,6 +200,7 @@ impl CommandExecutor<TestCommand> for TestCE {
         cmd: &TestCommand,
         index: LogIndex,
         need_run: bool,
+        _prepare_res: Option<<TestCommand as Command>::PR>,
     ) -> Result<LogIndex, ExecuteError> {
         sleep(cmd.as_dur).await;
         if cmd.as_should_fail {

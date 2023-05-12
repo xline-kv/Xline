@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use super::barriers::{IdBarrier, IndexBarrier};
 use crate::{
+    revision_number::RevisionNumber,
     rpc::{RequestBackend, RequestWithToken, RequestWrapper, ResponseWrapper},
     storage::{db::WriteOp, storage_api::StorageApi, AuthStore, ExecuteError, KvStore, LeaseStore},
 };
@@ -198,7 +199,7 @@ impl RangeBounds<Vec<u8>> for KeyRange {
 }
 
 /// Command Executor
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct CommandExecutor<S>
 where
     S: StorageApi,
@@ -215,6 +216,10 @@ where
     index_barrier: Arc<IndexBarrier>,
     /// Barrier for propose id
     id_barrier: Arc<IdBarrier>,
+    /// Revision Number generator for KV request and Lease request
+    general_rev: Arc<RevisionNumber>,
+    /// Revision Number generator for Auth request
+    auth_rev: Arc<RevisionNumber>,
 }
 
 impl<S> CommandExecutor<S>
@@ -222,6 +227,7 @@ where
     S: StorageApi,
 {
     /// New `CommandExecutor`
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         kv_storage: Arc<KvStore<S>>,
         auth_storage: Arc<AuthStore<S>>,
@@ -229,6 +235,8 @@ where
         persistent: Arc<S>,
         index_barrier: Arc<IndexBarrier>,
         id_barrier: Arc<IdBarrier>,
+        general_rev: Arc<RevisionNumber>,
+        auth_rev: Arc<RevisionNumber>,
     ) -> Self {
         Self {
             kv_storage,
@@ -237,6 +245,8 @@ where
             persistent,
             index_barrier,
             id_barrier,
+            general_rev,
+            auth_rev,
         }
     }
 }
@@ -248,9 +258,30 @@ where
 {
     type Error = ExecuteError;
 
-    async fn execute(&self, cmd: &Command) -> Result<CommandResponse, ExecuteError> {
+    fn prepare(&self, cmd: &Command) -> Result<i64, Self::Error> {
         let wrapper = cmd.request();
         self.auth_storage.check_permission(wrapper)?;
+        let revision = match wrapper.request.backend() {
+            RequestBackend::Auth => {
+                if wrapper.request.skip_auth_revision() {
+                    -1
+                } else {
+                    self.auth_rev.next()
+                }
+            }
+            RequestBackend::Kv | RequestBackend::Lease => {
+                if wrapper.request.skip_general_revision() {
+                    -1
+                } else {
+                    self.general_rev.next()
+                }
+            }
+        };
+        Ok(revision)
+    }
+
+    async fn execute(&self, cmd: &Command) -> Result<CommandResponse, Self::Error> {
+        let wrapper = cmd.request();
         match wrapper.request.backend() {
             RequestBackend::Kv => self.kv_storage.execute(wrapper),
             RequestBackend::Auth => self.auth_storage.execute(wrapper),
@@ -263,16 +294,19 @@ where
         cmd: &Command,
         index: LogIndex,
         need_run: bool,
-    ) -> Result<SyncResponse, ExecuteError> {
+        revision: Option<i64>,
+    ) -> Result<SyncResponse, Self::Error> {
         let mut ops = vec![WriteOp::PutAppliedIndex(index)];
         let mut res = SyncResponse::new(-1);
         if need_run {
+            #[allow(clippy::unwrap_used)]
+            // safe unwrap in that prepare_res must be Some when need_run is true
+            let revision = revision.unwrap();
             let wrapper = cmd.request();
-            self.auth_storage.check_permission(wrapper)?;
             let (sync_res, mut wr_ops) = match wrapper.request.backend() {
-                RequestBackend::Kv => self.kv_storage.after_sync(wrapper).await?,
-                RequestBackend::Auth => self.auth_storage.after_sync(wrapper)?,
-                RequestBackend::Lease => self.lease_storage.after_sync(wrapper).await?,
+                RequestBackend::Kv => self.kv_storage.after_sync(wrapper, revision).await?,
+                RequestBackend::Auth => self.auth_storage.after_sync(wrapper, revision)?,
+                RequestBackend::Lease => self.lease_storage.after_sync(wrapper, revision).await?,
             };
             ops.append(&mut wr_ops);
             res = sync_res;
@@ -300,7 +334,7 @@ where
         self.persistent.get_snapshot(path)
     }
 
-    fn last_applied(&self) -> Result<LogIndex, ExecuteError> {
+    fn last_applied(&self) -> Result<LogIndex, Self::Error> {
         let Some(index_bytes) = self.persistent.get_value(META_TABLE, APPLIED_INDEX_KEY)? else {
             return Ok(0);
         };
@@ -425,6 +459,7 @@ impl SyncResponse {
 #[async_trait::async_trait]
 impl CurpCommand for Command {
     type K = KeyRange;
+    type PR = i64;
     type ER = CommandResponse;
     type ASR = SyncResponse;
 

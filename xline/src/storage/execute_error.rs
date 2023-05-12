@@ -131,7 +131,9 @@ impl ExecuteError {
     }
 
     /// Token is expired
-    pub(crate) fn token_old_revision() -> Self {
-        Self::AuthError("token's revision is older than current revision".to_owned())
+    pub(crate) fn token_old_revision(claim_rev: i64, cur_rev: i64) -> Self {
+        Self::AuthError(format!(
+            "token's revision {claim_rev} is older than current revision {cur_rev}"
+        ))
     }
 }

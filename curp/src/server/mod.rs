@@ -150,7 +150,7 @@ impl<C: Command + 'static> Rpc<C> {
             id,
             is_leader,
             others,
-            executor,
+            Arc::new(executor),
             snapshot_allocator,
             curp_cfg,
             tx_filter,

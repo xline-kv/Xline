@@ -30,6 +30,7 @@ use super::{
 use crate::{
     header_gen::HeaderGenerator,
     id_gen::IdGenerator,
+    revision_number::RevisionNumber,
     rpc::{
         AuthServer as RpcAuthServer, KvServer as RpcKvServer, LeaseServer as RpcLeaseServer,
         LockServer as RpcLockServer, MaintenanceServer as RpcMaintenanceServer,
@@ -77,6 +78,8 @@ where
     id_gen: Arc<IdGenerator>,
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
+    /// Auth revision
+    auth_revision: Arc<RevisionNumber>,
     /// Barrier for applied index
     index_barrier: Arc<IndexBarrier>,
     /// Barrier for propose id
@@ -122,6 +125,7 @@ where
         let peer_urls = all_members.values().map(String::as_str).collect::<Vec<_>>();
         let cluster_id = Self::calc_cluster_id(&peer_urls, "");
         let header_gen = Arc::new(HeaderGenerator::new(cluster_id, member_id));
+        let auth_revision = Arc::new(RevisionNumber::default());
         let id_gen = Arc::new(IdGenerator::new(member_id));
         let leader_id = is_leader.then(|| name.clone());
         let state = Arc::new(State::new(name, leader_id, all_members.clone()));
@@ -156,6 +160,7 @@ where
             key_pair,
             Arc::clone(&header_gen),
             Arc::clone(&persistent),
+            Arc::clone(&auth_revision),
         ));
         let watcher = KvWatcher::new_arc(Arc::clone(&kv_storage), kv_update_rx);
         let client = Arc::new(Client::<Command>::new(all_members.clone(), client_timeout).await);
@@ -173,6 +178,7 @@ where
             storage_cfg: storage_config,
             id_gen,
             header_gen,
+            auth_revision,
             index_barrier,
             id_barrier,
             range_retry_timeout,
@@ -326,6 +332,8 @@ where
                         Arc::clone(&self.persistent),
                         Arc::clone(&self.index_barrier),
                         Arc::clone(&self.id_barrier),
+                        self.header_gen.revision_arc(),
+                        Arc::clone(&self.auth_revision),
                     ),
                     MemorySnapshotAllocator,
                     Arc::clone(&self.curp_cfg),
@@ -345,6 +353,8 @@ where
                         Arc::clone(&self.persistent),
                         Arc::clone(&self.index_barrier),
                         Arc::clone(&self.id_barrier),
+                        self.header_gen.revision_arc(),
+                        Arc::clone(&self.auth_revision),
                     ),
                     RocksSnapshotAllocator,
                     Arc::clone(&self.curp_cfg),
