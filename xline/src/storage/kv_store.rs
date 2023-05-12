@@ -567,7 +567,7 @@ where
             }
             RequestWrapper::PutRequest(ref req) => self.sync_put_request(req, revision, 0)?,
             RequestWrapper::DeleteRangeRequest(ref req) => {
-                self.sync_delete_range_request(req, revision, 0)?
+                self.sync_delete_range_request(req, revision, 0)
             }
             RequestWrapper::TxnRequest(ref req) => self.sync_txn_request(req, revision)?,
             _ => {
@@ -595,7 +595,7 @@ where
                     self.sync_put_request(put_req, revision, sub_revision)?
                 }
                 Request::RequestDeleteRange(del_req) => {
-                    self.sync_delete_range_request(&del_req, revision, sub_revision)?
+                    self.sync_delete_range_request(&del_req, revision, sub_revision)
                 }
                 Request::RequestTxn(txn_req) => {
                     let success = txn_req
@@ -627,7 +627,6 @@ where
     ) -> Result<(Vec<WriteOp>, Vec<Event>), ExecuteError> {
         debug!("Sync PutRequest {:?}", req);
         let mut ops = Vec::new();
-        let prev_kv = self.get_range(&req.key, &[], 0)?.pop();
         let new_rev = self
             .index
             .insert_or_update_revision(&req.key, revision, sub_revision);
@@ -640,6 +639,7 @@ where
             lease: req.lease,
         };
         if req.ignore_lease || req.ignore_value {
+            let prev_kv = self.get_range(&req.key, &[], 0)?.pop();
             let prev = prev_kv.as_ref().ok_or_else(ExecuteError::key_not_found)?;
             if req.ignore_lease {
                 kv.lease = prev.lease;
@@ -666,18 +666,17 @@ where
             #[allow(clippy::as_conversions)] // This cast is always valid
             r#type: EventType::Put as i32,
             kv: Some(kv),
-            prev_kv,
+            prev_kv: None,
         };
         Ok((ops, vec![event]))
     }
 
     /// create events for a deletion
-    fn new_deletion_events(revision: i64, prev_kvs: Vec<KeyValue>) -> Vec<Event> {
-        prev_kvs
-            .into_iter()
-            .map(|prev| {
+    fn new_deletion_events(revision: i64, keys: Vec<Vec<u8>>) -> Vec<Event> {
+        keys.into_iter()
+            .map(|key| {
                 let kv = KeyValue {
-                    key: prev.key.clone(),
+                    key,
                     mod_revision: revision,
                     ..Default::default()
                 };
@@ -685,41 +684,30 @@ where
                     #[allow(clippy::as_conversions)] // This cast is always valid
                     r#type: EventType::Delete as i32,
                     kv: Some(kv),
-                    prev_kv: Some(prev),
+                    prev_kv: None,
                 }
             })
             .collect()
     }
 
     /// Mark deletion for keys
-    fn mark_deletions(
-        &self,
+    fn mark_deletions<'a>(
         revisions: &[(Revision, Revision)],
-    ) -> Result<(Vec<WriteOp>, Vec<KeyValue>), ExecuteError> {
-        let mut ops = Vec::new();
-        let prev_revisions = revisions
-            .iter()
-            .map(|&(prev_rev, _)| prev_rev)
-            .collect::<Vec<_>>();
-        let prev_kvs = self.get_values(&prev_revisions)?;
-        assert_eq!(
-            prev_kvs.len(),
-            revisions.len(),
-            "Index doesn't match with DB"
-        );
-        prev_kvs
-            .iter()
+        keys: &[Vec<u8>],
+    ) -> Vec<WriteOp<'a>> {
+        assert_eq!(keys.len(), revisions.len(), "Index doesn't match with DB");
+        keys.iter()
             .zip(revisions.iter())
-            .for_each(|(kv, &(_, new_rev))| {
+            .map(|(key, &(_, new_rev))| {
                 let del_kv = KeyValue {
-                    key: kv.key.clone(),
+                    key: key.clone(),
                     mod_revision: new_rev.revision(),
                     ..KeyValue::default()
                 };
                 let value = del_kv.encode_to_vec();
-                ops.push(WriteOp::PutKeyValue(new_rev, value));
-            });
-        Ok((ops, prev_kvs))
+                WriteOp::PutKeyValue(new_rev, value)
+            })
+            .collect()
     }
 
     /// Sync `DeleteRangeRequest` and return if kvstore is changed
@@ -728,21 +716,39 @@ where
         req: &DeleteRangeRequest,
         revision: i64,
         sub_revision: i64,
-    ) -> Result<(Vec<WriteOp>, Vec<Event>), ExecuteError> {
+    ) -> (Vec<WriteOp>, Vec<Event>) {
         debug!("Sync DeleteRangeRequest {:?}", req);
+        Self::delete_keys(
+            &self.index,
+            &self.lease_collection,
+            &req.key,
+            &req.range_end,
+            revision,
+            sub_revision,
+        )
+    }
+
+    /// Delete keys from index and detach them in lease collection, return all the write operations and events
+    pub(crate) fn delete_keys<'a>(
+        index: &Index,
+        lease_collection: &LeaseCollection,
+        key: &[u8],
+        range_end: &[u8],
+        revision: i64,
+        sub_revision: i64,
+    ) -> (Vec<WriteOp<'a>>, Vec<Event>) {
         let mut ops = Vec::new();
-        let revisions = self
-            .index
-            .delete(&req.key, &req.range_end, revision, sub_revision);
-        let (mut del_ops, prev_kvs) = self.mark_deletions(&revisions)?;
+        let (revisions, keys) = index.delete(key, range_end, revision, sub_revision);
+        let mut del_ops = Self::mark_deletions(&revisions, &keys);
         ops.append(&mut del_ops);
-        for kv in &prev_kvs {
-            let lease_id = self.get_lease(&kv.key);
-            self.detach(lease_id, kv.key.as_slice())
+        for k in &keys {
+            let lease_id = lease_collection.get_lease(k);
+            lease_collection
+                .detach(lease_id, k)
                 .unwrap_or_else(|e| warn!("Failed to detach lease from a key, error: {:?}", e));
         }
-        let events = Self::new_deletion_events(revision, prev_kvs);
-        Ok((ops, events))
+        let events = Self::new_deletion_events(revision, keys);
+        (ops, events)
     }
 }
 

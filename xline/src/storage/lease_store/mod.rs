@@ -18,22 +18,15 @@ use prost::Message;
 use tokio::sync::mpsc;
 
 pub(crate) use self::{lease::Lease, lease_collection::LeaseCollection};
-use super::{
-    db::WriteOp,
-    index::{Index, IndexOperate},
-    kv_store::KV_TABLE,
-    storage_api::StorageApi,
-    ExecuteError,
-};
+use super::{db::WriteOp, index::Index, storage_api::StorageApi, ExecuteError};
 use crate::{
     header_gen::HeaderGenerator,
     rpc::{
-        Event, EventType, KeyValue, LeaseGrantRequest, LeaseGrantResponse, LeaseRevokeRequest,
-        LeaseRevokeResponse, PbLease, RequestWithToken, RequestWrapper, ResponseHeader,
-        ResponseWrapper,
+        Event, LeaseGrantRequest, LeaseGrantResponse, LeaseRevokeRequest, LeaseRevokeResponse,
+        PbLease, RequestWithToken, RequestWrapper, ResponseHeader, ResponseWrapper,
     },
     server::command::{CommandResponse, SyncResponse},
-    storage::Revision,
+    storage::KvStore,
 };
 
 /// Lease table name
@@ -168,16 +161,6 @@ impl<DB> LeaseStore<DB>
 where
     DB: StorageApi,
 {
-    /// Detach key from lease
-    fn detach(&self, lease_id: i64, key: &[u8]) -> Result<(), ExecuteError> {
-        self.lease_collection.detach(lease_id, key)
-    }
-
-    /// Get lease id by given key
-    fn get_lease(&self, key: &[u8]) -> i64 {
-        self.lease_collection.get_lease(key)
-    }
-
     /// Handle lease requests
     fn handle_lease_requests(
         &self,
@@ -286,73 +269,31 @@ where
         revision: i64,
     ) -> Result<Vec<WriteOp>, ExecuteError> {
         let mut ops = Vec::new();
+        let mut updates = Vec::new();
         ops.push(WriteOp::DeleteLease(req.id));
 
-        let keys = match self.lease_collection.look_up(req.id) {
+        let del_keys = match self.lease_collection.look_up(req.id) {
             Some(l) => l.keys(),
             None => return Err(ExecuteError::lease_not_found(req.id)),
         };
 
-        if keys.is_empty() {
+        if del_keys.is_empty() {
             let _ignore = self.lease_collection.revoke(req.id);
             return Ok(Vec::new());
         }
 
-        let (prev_keys, del_revs): (Vec<Vec<u8>>, Vec<Revision>) = keys
-            .into_iter()
-            .zip(0..)
-            .map(|(key, sub_revision)| {
-                let (prev_rev, del_rev) = self
-                    .index
-                    .delete(&key, &[], revision, sub_revision)
-                    .pop()
-                    .unwrap_or_else(|| panic!("delete one key should return 1 result"));
-                (prev_rev.encode_to_vec(), del_rev)
-            })
-            .unzip();
-        let prev_kvs: Vec<KeyValue> = self
-            .db
-            .get_values(KV_TABLE, &prev_keys)?
-            .into_iter()
-            .flatten()
-            .map(|v| KeyValue::decode(v.as_slice()))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| {
-                ExecuteError::DbError(format!("Failed to decode key-value from DB, error: {e}"))
-            })?;
-        assert_eq!(prev_kvs.len(), del_revs.len());
-        for kv in &prev_kvs {
-            let lease_id = self.get_lease(&kv.key);
-            self.detach(lease_id, kv.key.as_slice())?;
+        for (key, sub_revision) in del_keys.iter().zip(0..) {
+            let (mut del_ops, mut del_event) = KvStore::<DB>::delete_keys(
+                &self.index,
+                &self.lease_collection,
+                key,
+                &[],
+                revision,
+                sub_revision,
+            );
+            ops.append(&mut del_ops);
+            updates.append(&mut del_event);
         }
-        prev_kvs
-            .iter()
-            .zip(del_revs.into_iter())
-            .for_each(|(kv, del_rev)| {
-                let del_kv = KeyValue {
-                    key: kv.key.clone(),
-                    mod_revision: del_rev.revision(),
-                    ..KeyValue::default()
-                };
-                ops.push(WriteOp::PutKeyValue(del_rev, del_kv.encode_to_vec()));
-            });
-
-        let updates = prev_kvs
-            .into_iter()
-            .map(|prev| {
-                let kv = KeyValue {
-                    key: prev.key.clone(),
-                    mod_revision: revision,
-                    ..Default::default()
-                };
-                Event {
-                    #[allow(clippy::as_conversions)] // This cast is always valid
-                    r#type: EventType::Delete as i32,
-                    kv: Some(kv),
-                    prev_kv: Some(prev),
-                }
-            })
-            .collect();
 
         let _ignore = self.lease_collection.revoke(req.id);
         assert!(
@@ -390,7 +331,7 @@ mod test {
         assert!(attach_non_existing_lease.is_err());
         let attach_existing_lease = lease_store.lease_collection.attach(1, "key".into());
         assert!(attach_existing_lease.is_ok());
-        lease_store.detach(1, "key".as_bytes())?;
+        lease_store.lease_collection.detach(1, "key".as_bytes())?;
 
         let req2 = RequestWithToken::new(LeaseRevokeRequest { id: 1 }.into());
         let _ignore2 = exe_and_sync_req(&lease_store, &req2, revision_gen.next()).await?;
