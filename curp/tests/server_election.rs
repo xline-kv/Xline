@@ -107,7 +107,8 @@ async fn propose_after_reelect() {
         client
             .propose(TestCommand::new_put(vec![0], 0))
             .await
-            .unwrap(),
+            .unwrap()
+            .0,
         vec![]
     );
     // wait for the cmd to be synced
@@ -118,7 +119,11 @@ async fn propose_after_reelect() {
 
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert_eq!(
-        client.propose(TestCommand::new_get(vec![0])).await.unwrap(),
+        client
+            .propose(TestCommand::new_get(vec![0]))
+            .await
+            .unwrap()
+            .0,
         vec![0]
     );
 

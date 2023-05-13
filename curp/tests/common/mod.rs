@@ -10,6 +10,7 @@ pub mod curp_group;
 pub mod test_cmd;
 
 pub const TEST_TABLE: &str = "test";
+pub const REVISION_TABLE: &str = "revision";
 
 pub fn init_logger() {
     if env::var("RUST_LOG").is_err() {

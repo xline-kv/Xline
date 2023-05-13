@@ -2,6 +2,8 @@
 
 use std::{sync::Arc, time::Duration};
 
+use clippy_utilities::NumericCast;
+use madsim::rand::{thread_rng, Rng};
 use utils::config::ClientTimeout;
 
 use crate::common::{
@@ -9,7 +11,6 @@ use crate::common::{
     init_logger, sleep_millis, sleep_secs,
     test_cmd::TestCommand,
 };
-
 mod common;
 
 #[tokio::test]
@@ -24,11 +25,11 @@ async fn basic_propose() {
             .propose(TestCommand::new_put(vec![0], 0))
             .await
             .unwrap(),
-        vec![]
+        (vec![], vec![])
     );
     assert_eq!(
         client.propose(TestCommand::new_get(vec![0])).await.unwrap(),
-        vec![0]
+        (vec![0], vec![1])
     );
 
     group.stop();
@@ -43,13 +44,13 @@ async fn synced_propose() {
     let cmd = TestCommand::new_get(vec![0]);
 
     let (er, index) = client.propose_indexed(cmd.clone()).await.unwrap();
-    assert_eq!(er, vec![]);
+    assert_eq!(er, (vec![], vec![]));
     assert_eq!(index, 1); // log[0] is a fake one
 
     for exe_rx in group.exe_rxs() {
         let (cmd1, er) = exe_rx.recv().await.unwrap();
         assert_eq!(cmd1, cmd);
-        assert_eq!(er, vec![]);
+        assert_eq!(er, (vec![], vec![]));
     }
 
     for as_rx in group.as_rxs() {
@@ -71,7 +72,7 @@ async fn exe_exact_n_times() {
     let cmd = TestCommand::new_get(vec![0]);
 
     let er = client.propose(cmd.clone()).await.unwrap();
-    assert_eq!(er, vec![]);
+    assert_eq!(er, (vec![], vec![]));
 
     for exe_rx in group.exe_rxs() {
         let (cmd1, er) = exe_rx.recv().await.unwrap();
@@ -81,7 +82,7 @@ async fn exe_exact_n_times() {
                 .is_err()
         );
         assert_eq!(cmd1, cmd);
-        assert_eq!(er, vec![]);
+        assert_eq!(er.0, vec![]);
     }
 
     for as_rx in group.as_rxs() {
@@ -182,9 +183,45 @@ async fn concurrent_cmd_order() {
     let client = group.new_client(ClientTimeout::default()).await;
 
     assert_eq!(
-        client.propose(TestCommand::new_get(vec![1])).await.unwrap(),
+        client
+            .propose(TestCommand::new_get(vec![1]))
+            .await
+            .unwrap()
+            .0,
         vec![2]
     );
+
+    group.stop();
+}
+
+/// This test case ensures that the issue 228 is fixed.
+#[tokio::test]
+async fn concurrent_cmd_order_should_have_correct_revision() {
+    init_logger();
+
+    let group = CurpGroup::new(3).await;
+    let client = group.new_client(ClientTimeout::default()).await;
+
+    let sample_range = 1..=1000;
+
+    for i in sample_range.clone() {
+        let rand_dur = Duration::from_millis(thread_rng().gen_range(0..500).numeric_cast());
+        let _er = client
+            .propose(TestCommand::new_put(vec![i], i).set_as_dur(rand_dur))
+            .await
+            .unwrap();
+    }
+
+    for i in sample_range {
+        assert_eq!(
+            client
+                .propose(TestCommand::new_get(vec![i]))
+                .await
+                .unwrap()
+                .1,
+            vec![i.numeric_cast::<i64>()]
+        )
+    }
 
     group.stop();
 }

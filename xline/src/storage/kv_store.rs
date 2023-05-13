@@ -807,7 +807,7 @@ mod test {
     async fn exe_as_and_flush(
         store: &Arc<KvStore<DB>>,
         request: &RequestWithToken,
-        revision: i64
+        revision: i64,
     ) -> Result<(), ExecuteError> {
         let (sync_res, ops) = store.after_sync(request, revision).await?;
         store.db.flush_ops(ops)?;
@@ -1031,5 +1031,4 @@ mod test {
         );
         handle.await.unwrap();
     }
-
 }
