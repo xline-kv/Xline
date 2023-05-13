@@ -258,7 +258,7 @@ where
 {
     type Error = ExecuteError;
 
-    fn prepare(&self, cmd: &Command) -> Result<i64, Self::Error> {
+    fn prepare(&self, cmd: &Command) -> Result<<Command as CurpCommand>::PR, Self::Error> {
         let wrapper = cmd.request();
         self.auth_storage.check_permission(wrapper)?;
         let revision = match wrapper.request.backend() {
@@ -280,7 +280,7 @@ where
         Ok(revision)
     }
 
-    async fn execute(&self, cmd: &Command) -> Result<CommandResponse, Self::Error> {
+    async fn execute(&self, cmd: &Command) -> Result<<Command as CurpCommand>::ER, Self::Error> {
         let wrapper = cmd.request();
         match wrapper.request.backend() {
             RequestBackend::Kv => self.kv_storage.execute(wrapper),
@@ -295,7 +295,7 @@ where
         index: LogIndex,
         need_run: bool,
         revision: Option<i64>,
-    ) -> Result<SyncResponse, Self::Error> {
+    ) -> Result<<Command as CurpCommand>::ASR, Self::Error> {
         let mut ops = vec![WriteOp::PutAppliedIndex(index)];
         let mut res = SyncResponse::new(-1);
         if need_run {

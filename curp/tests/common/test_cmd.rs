@@ -3,7 +3,7 @@ use std::{
     fmt::Display,
     io::{self, Cursor, Read, SeekFrom, Write},
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicI64, AtomicU64, Ordering},
         Arc,
     },
     time::Duration,
@@ -24,7 +24,7 @@ use thiserror::Error;
 use tokio::{sync::mpsc, time::sleep};
 use tracing::debug;
 
-use crate::common::TEST_TABLE;
+use crate::common::{REVISION_TABLE, TEST_TABLE};
 
 static NEXT_ID: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(1));
 
@@ -58,7 +58,7 @@ pub enum TestCommandType {
     Put(u32),
 }
 
-pub type TestCommandResult = Vec<u32>;
+pub type TestCommandResult = (Vec<u32>, Vec<i64>);
 
 impl TestCommand {
     pub fn new_get(keys: Vec<u32>) -> Self {
@@ -141,6 +141,7 @@ impl ConflictCheck for TestCommand {
 pub struct TestCE {
     server_id: String,
     last_applied: Arc<AtomicU64>,
+    revision: Arc<AtomicI64>,
     pub store: Arc<Engine>,
     exe_sender: mpsc::UnboundedSender<(TestCommand, TestCommandResult)>,
     after_sync_sender: mpsc::UnboundedSender<(TestCommand, LogIndex)>,
@@ -150,11 +151,19 @@ pub struct TestCE {
 impl CommandExecutor<TestCommand> for TestCE {
     type Error = ExecuteError;
 
-    fn prepare(&self, _cmd: &TestCommand) -> Result<i64, Self::Error> {
-        Ok(0)
+    fn prepare(&self, cmd: &TestCommand) -> Result<<TestCommand as Command>::PR, Self::Error> {
+        let rev = if let TestCommandType::Put(_) = cmd.cmd_type {
+            self.revision.fetch_add(1, Ordering::Relaxed)
+        } else {
+            -1
+        };
+        Ok(rev)
     }
 
-    async fn execute(&self, cmd: &TestCommand) -> Result<TestCommandResult, Self::Error> {
+    async fn execute(
+        &self,
+        cmd: &TestCommand,
+    ) -> Result<<TestCommand as Command>::ER, Self::Error> {
         sleep(cmd.exe_dur).await;
         if cmd.exe_should_fail {
             return Err(ExecuteError("fail".to_owned()));
@@ -168,14 +177,25 @@ impl CommandExecutor<TestCommand> for TestCE {
             .map(|k| k.to_be_bytes().to_vec())
             .collect_vec();
         let result: TestCommandResult = match cmd.cmd_type {
-            TestCommandType::Get => self
-                .store
-                .get_multi(TEST_TABLE, &keys)
-                .map_err(|e| ExecuteError(e.to_string()))?
-                .into_iter()
-                .flatten()
-                .map(|v| u32::from_be_bytes(v.as_slice().try_into().unwrap()))
-                .collect(),
+            TestCommandType::Get => {
+                let value = self
+                    .store
+                    .get_multi(TEST_TABLE, &keys)
+                    .map_err(|e| ExecuteError(e.to_string()))?
+                    .into_iter()
+                    .flatten()
+                    .map(|v| u32::from_be_bytes(v.as_slice().try_into().unwrap()))
+                    .collect();
+                let revision = self
+                    .store
+                    .get_multi(REVISION_TABLE, &keys)
+                    .map_err(|e| ExecuteError(e.to_string()))?
+                    .into_iter()
+                    .flatten()
+                    .map(|v| i64::from_be_bytes(v.as_slice().try_into().unwrap()))
+                    .collect_vec();
+                (value, revision)
+            }
             TestCommandType::Put(ref v) => {
                 let value = v.to_be_bytes().to_vec();
                 let wr_ops = keys
@@ -200,8 +220,8 @@ impl CommandExecutor<TestCommand> for TestCE {
         cmd: &TestCommand,
         index: LogIndex,
         need_run: bool,
-        _prepare_res: Option<<TestCommand as Command>::PR>,
-    ) -> Result<LogIndex, ExecuteError> {
+        revision: Option<<TestCommand as Command>::PR>,
+    ) -> Result<<TestCommand as Command>::ASR, Self::Error> {
         sleep(cmd.as_dur).await;
         if cmd.as_should_fail {
             return Err(ExecuteError("fail".to_owned()));
@@ -210,11 +230,35 @@ impl CommandExecutor<TestCommand> for TestCE {
             self.after_sync_sender
                 .send((cmd.clone(), index))
                 .expect("failed to send after sync msg");
+            if let TestCommandType::Put(_) = cmd.cmd_type {
+                let revision = revision.expect("revision should not be None");
+                debug!(
+                    "cmd {:?}-{} revision is {}",
+                    cmd.cmd_type,
+                    cmd.id(),
+                    revision
+                );
+                let wr_ops = cmd
+                    .keys
+                    .iter()
+                    .map(|key| {
+                        WriteOperation::new_put(
+                            REVISION_TABLE,
+                            key.to_be_bytes().to_vec(),
+                            revision.to_be_bytes().to_vec(),
+                        )
+                    })
+                    .collect();
+                self.store
+                    .write_batch(wr_ops, true)
+                    .map_err(|e| ExecuteError(e.to_string()))?;
+            }
         }
         self.last_applied.store(index, Ordering::Relaxed);
         debug!(
-            "{} after sync cmd({}), index: {index}",
+            "{} after sync cmd({:?} - {}), index: {index}",
             self.server_id,
+            cmd.cmd_type,
             cmd.id()
         );
         Ok(index)
@@ -259,7 +303,10 @@ impl TestCE {
         Self {
             server_id,
             last_applied: Arc::new(AtomicU64::new(0)),
-            store: Arc::new(Engine::new(EngineType::Memory, &[TEST_TABLE]).unwrap()),
+            revision: Arc::new(AtomicI64::new(1)),
+            store: Arc::new(
+                Engine::new(EngineType::Memory, &[TEST_TABLE, REVISION_TABLE]).unwrap(),
+            ),
             exe_sender,
             after_sync_sender,
         }

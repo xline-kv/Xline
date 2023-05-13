@@ -155,11 +155,14 @@ impl Display for ExecuteError {
 impl CommandExecutor<TestCommand> for TestCE {
     type Error = ExecuteError;
 
-    fn prepare(&self, _cmd: &TestCommand) -> Result<i64, Self::Error> {
+    fn prepare(&self, _cmd: &TestCommand) -> Result<<TestCommand as Command>::PR, Self::Error> {
         Ok(0)
     }
 
-    async fn execute(&self, cmd: &TestCommand) -> Result<TestCommandResult, Self::Error> {
+    async fn execute(
+        &self,
+        cmd: &TestCommand,
+    ) -> Result<<TestCommand as Command>::ER, Self::Error> {
         sleep(cmd.exe_dur).await;
         if cmd.exe_should_fail {
             return Err(ExecuteError("fail".to_owned()));
@@ -205,7 +208,7 @@ impl CommandExecutor<TestCommand> for TestCE {
         index: LogIndex,
         need_run: bool,
         _pre_exe_res: Option<<TestCommand as Command>::PR>,
-    ) -> Result<LogIndex, Self::Error> {
+    ) -> Result<<TestCommand as Command>::ASR, Self::Error> {
         sleep(cmd.as_dur).await;
         if cmd.as_should_fail {
             return Err(ExecuteError("fail".to_owned()));
@@ -277,11 +280,14 @@ pub(crate) struct TestCESimple {
 impl CommandExecutor<TestCommand> for TestCESimple {
     type Error = ExecuteError;
 
-    fn prepare(&self, _cmd: &TestCommand) -> Result<i64, Self::Error> {
+    fn prepare(&self, _cmd: &TestCommand) -> Result<<TestCommand as Command>::PR, Self::Error> {
         Ok(0)
     }
 
-    async fn execute(&self, cmd: &TestCommand) -> Result<TestCommandResult, Self::Error> {
+    async fn execute(
+        &self,
+        cmd: &TestCommand,
+    ) -> Result<<TestCommand as Command>::ER, Self::Error> {
         sleep(cmd.exe_dur).await;
         if cmd.exe_should_fail {
             return Err(ExecuteError("fail".to_owned()));
@@ -324,7 +330,7 @@ impl CommandExecutor<TestCommand> for TestCESimple {
         index: LogIndex,
         _need_run: bool,
         _pre_exe_res: Option<<TestCommand as Command>::PR>,
-    ) -> Result<LogIndex, Self::Error> {
+    ) -> Result<<TestCommand as Command>::ASR, Self::Error> {
         sleep(cmd.as_dur).await;
         if cmd.as_should_fail {
             return Err(ExecuteError("fail".to_owned()));
