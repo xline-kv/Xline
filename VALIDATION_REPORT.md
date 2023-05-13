@@ -4,26 +4,20 @@ Since the Xline is designed to be fully compatible with the ETCD, ETCD API compa
 
 Here is the compatibility test report.
 
-## ETCD KV Relevant APIs Tests
+## ETCD KV Relevant APIs/Commands Tests
 
-| API | etcdctl command | result |
+| API | client comand | result |
 | --- | --- | --- |
 | Range(RangeRequest) returns (RangeResponse) | etcdctl get  | passed |
 | DeleteRange(DeleteRangeRequest) returns (DeleteRangeResponse) | etcdctl del | passed |
 | Put(PutRequest) returns (PutResponse) | etcdctl put | passed |
 | Txn(TxnRequest) returns (TxnResponse) | etcdctl txn | passed |
 | Compact(CompactionRequest) returns (CompactionResponse) | etcdctl compaction | unimplemented (will cover in v0.3~v0.5) |
-
-
-## ETCD Watch API Test
-
-| API | etcdctl command | result |
-| --- | --- | --- |
 | Watch(stream WatchRequest) returns (stream WatchResponse)	| etcdctl watch | 	passed
 
-## ETCD Lease APIs Tests
+## ETCD Lease APIs/Commands Tests
 
-| API | etcdctl command | result |
+| API | client comand | result |
 | --- | --- | --- |
 | LeaseGrant(LeaseGrantRequest) returns (LeaseGrantResponse) |	etcdctl lease grant | passed |
 | LeaseRevoke(LeaseRevokeRequest) returns (LeaseRevokeResponse)	| etcdctl lease revoke | passed |
@@ -32,27 +26,40 @@ Here is the compatibility test report.
 | LeaseLeases(LeaseLeasesRequest) returns (LeaseLeasesResponse) |	etcdctl lease list |	passed |
 
 
-## ETCD Cluster APIs Tests
+## ETCD Cluster Maintenance APIs/Commands Tests
 
-ETCD cluster relevant APIs are yet to implement. We will cover them in the future version (v0.3.0 ~ v0.5.0)
+ETCD maintenance relevant APIs are yet to fully implement. We will cover them in the future version (v0.3.0 ~ v0.5.0)
 
-## ETCD Maintenance APIs Tests
+### ETCD Cluster APIs/Commands Tests
+| API | client comand | result |
+| --- | --- | --- |
+| MemberAdd(MemberAddRequest) returns (MemberAddResponse) |	etcdctl member add newMember --peer-urls=https://127.0.0.1:12345	| unimplemented (will cover in v0.3~v0.5) |
+| MemberRemove(MemberRemoveRequest) returns (MemberRemoveResponse) |	etcdctl member remove 2be1eb8f84b7f63e	| unimplemented (will cover in v0.3~v0.5) |
+| MemberUpdate(MemberUpdateRequest) returns (MemberUpdateResponse) |	etcdctl member update 2be1eb8f84b7f63e --peer-urls=https://127.0.0.1:11112	| unimplemented (will cover in v0.3~v0.5) |
+| MemberList(MemberListRequest) returns (MemberListResponse) |	etcdctl member list	| unimplemented (will cover in v0.3~v0.5) |
 
-ETCD maintenance relevant APIs are yet to implement. We will cover them in the future version (v0.3.0 ~ v0.5.0)
+
+### ETCD Snapshot APIs/Commands Tests 
+
+The status and restore relevant features doesn't compatible with the etcd client since the Xline snapshot metadata format is totally different from the etcd snapshot format. The status and restore subcommands can be executed via the `xlinectl`. The `xlinectl` is yet to complete.
+
+| API | client comand | result |
+| --- | --- | --- |
+| Snapshot(SnapshotRequest) returns (stream SnapshotResponse) |	etcdctl snapshot save snapshot.db	| passed |
 
 
-## ETCD Auth APIs Tests
+## ETCD Auth APIs/Commands Tests
 
-| API | etcdctl command | result |
+| API | client comand | result |
 | --- | --- | --- |
 | AuthEnable(AuthEnableRequest) returns (AuthEnableResponse) |	etcdctl auth enable	| passed |
 | AuthDisable(AuthDisableRequest) returns (AuthDisableResponse) |	etcdctl auth disable | passed |
 | AuthStatus(AuthStatusRequest) returns (AuthStatusResponse)	| etcdctl auth status |	passed |
 
 
-## ETCD User APIs Tests
+### ETCD User APIs/Commands Tests
 
-| API | etcdctl command | result |
+| API | client comand | result |
 | --- | --- | --- |
 | UserAdd(AuthUserAddRequest) returns (AuthUserAddResponse) |	etcdctl user add | passed |
 | UserGet(AuthUserGetRequest) returns (AuthUserGetResponse) |	etcdctl user get |	passed |
@@ -63,9 +70,9 @@ ETCD maintenance relevant APIs are yet to implement. We will cover them in the f
 | UserRevokeRole(AuthUserRevokeRoleRequest) returns (AuthUserRevokeRoleResponse)	| etcdctl user revoke-role |	passed |
 
 
-## ETCD Role APIs Tests
+### ETCD Role APIs/Commands Tests
 
-| API | etcdctl command | result |
+| API | client comand | result |
 | --- | --- | --- |
 | RoleAdd(AuthRoleAddRequest) returns (AuthRoleAddResponse)	| etcdctl role add |	passed |
 | RoleGet(AuthRoleGetRequest) returns (AuthRoleGetResponse) |	etcdctl role get  |	passed |

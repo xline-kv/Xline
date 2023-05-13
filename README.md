@@ -90,7 +90,7 @@ Read the document [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) for more details.
 - v0.1 ~ v0.2
     - Support all major ETCD APIs
     - Support configuration file
-    - Pass validation tests
+    - Pass validation tests (All the supported etcd APIs and their validation test results can be viewed in [VALIDATION_REPORT.md](./VALIDATION_REPORT.md))
 - v0.3 ~ v0.5
     - Enable persistent storage
     - Enable snapshot
@@ -99,7 +99,8 @@ Read the document [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) for more details.
 - v0.6 ~ v0.8
     - Enable to export metrics to some monitoring and alerting systems
     - Enable SSL/TLS certificates
-    - Provide clients implementing in different languages, like go, python
+    - Provide clients implementing in different languages, like go, python (not determined). \[Note: Although the Xline is etcd-compatible, we provide an Xline specific client SDK to users for better performance. Currently this SDK is only in Rust lang, and we plan to extend it to other languages\]
+
 - v1.0 ~
   - Enable chaos engineering to validate the system's stability
   - Integration with other CNCF components

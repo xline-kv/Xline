@@ -25,17 +25,21 @@ git clone https://github.com/datenlord/Xline
 cd Xline
 cargo build --release
 
+# compile lock client
+RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --bin lock_client --target x86_64-unknown-linux-gnu
+
 # build docker image
 cd scripts
 cp ../target/release/xline .
 cp ../target/release/benchmark .
+cp ../target/x86_64-unknown-linux-gnu/release/lock_client .
+cp ../xline/tests/{private,public}.pem .
+
 # you may need to add sudo before the command to make it work
 docker build . -t datenlord/xline:latest
 ```
 
 ## Start Xline servers
-
-**Note: this script will stop all the running docker containers**
 
 ``` bash
 ./scripts/quick_start.sh
@@ -53,9 +57,14 @@ docker exec node4 /bin/sh -c "/usr/local/bin/etcdctl --endpoints=\"http://172.20
 
 ## Benchmark
 
-**Note: this script will stop all the running docker containers**
 ```bash
 ./scripts/benchmark.sh
+```
+
+## Validation Test
+
+```bash
+./scripts/validation_test.sh
 ```
 
 # Directory Structure
@@ -65,4 +74,6 @@ docker exec node4 /bin/sh -c "/usr/local/bin/etcdctl --endpoints=\"http://172.20
 | benchmark      | a customized benchmark using CURP protocol based client |
 | curp           | the CURP protocol |
 | xline          | xline services |
+| engine         | persistent storage |
+| utils          | some utilities, like lock, config, etc. |
 | scripts        | the shell scripts for env deployment or benchmarking |
