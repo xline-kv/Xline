@@ -165,6 +165,9 @@ pub mod error;
 /// The command to be executed
 pub mod cmd;
 
+/// The callback trait to be invoked when leadership changes
+pub mod leader_change;
+
 /// Log Entry
 mod log_entry;
 

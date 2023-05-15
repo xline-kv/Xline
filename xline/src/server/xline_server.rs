@@ -12,10 +12,9 @@ use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{client::Client, server::Rpc, ProtocolServer};
 use event_listener::Event;
 use jsonwebtoken::{DecodingKey, EncodingKey};
-use tokio::{net::TcpListener, sync::broadcast};
+use tokio::net::TcpListener;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
-use tracing::info;
 use utils::config::{ClientTimeout, CurpConfig, ServerTimeout, StorageConfig};
 
 use super::{
@@ -57,8 +56,12 @@ pub struct XlineServer<S>
 where
     S: StorageApi,
 {
-    /// State of current node
-    state: Arc<State>,
+    /// Server id
+    id: String,
+    /// is leader
+    is_leader: bool,
+    /// all Members
+    all_members: HashMap<String, String>,
     /// Kv storage
     kv_storage: Arc<KvStore<S>>,
     /// Auth storage
@@ -120,6 +123,7 @@ where
         let url = all_members
             .get(&name)
             .unwrap_or_else(|| panic!("peer {} not found in peers {:?}", name, all_members.keys()));
+
         let ts = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_else(|e| panic!("SystemTime before UNIX EPOCH! {e}"))
@@ -130,8 +134,7 @@ where
         let header_gen = Arc::new(HeaderGenerator::new(cluster_id, member_id));
         let auth_revision = Arc::new(RevisionNumber::default());
         let id_gen = Arc::new(IdGenerator::new(member_id));
-        let leader_id = is_leader.then(|| name.clone());
-        let state = Arc::new(State::new(name, leader_id, all_members.clone()));
+
         let curp_config = Arc::new(curp_config);
         // The ttl of a lease should larger than the 3/2 of a election timeout
         let min_ttl =
@@ -152,11 +155,11 @@ where
         ));
         let lease_storage = Arc::new(LeaseStore::new(
             Arc::clone(&lease_collection),
-            Arc::clone(&state),
             Arc::clone(&header_gen),
             Arc::clone(&persistent),
             index,
             kv_update_tx,
+            is_leader,
         ));
         let auth_storage = Arc::new(AuthStore::new(
             lease_collection,
@@ -175,8 +178,11 @@ where
         let client = Arc::new(Client::<Command>::new(all_members.clone(), client_timeout).await);
         let index_barrier = Arc::new(IndexBarrier::new());
         let id_barrier = Arc::new(IdBarrier::new());
+
         Self {
-            state,
+            id: name,
+            is_leader,
+            all_members,
             kv_storage,
             auth_storage,
             lease_storage,
@@ -212,16 +218,6 @@ where
         }
         hasher.write(cluster_name.as_bytes());
         hasher.finish()
-    }
-
-    /// Server id
-    fn id(&self) -> String {
-        self.state.id().to_owned()
-    }
-
-    /// Check if current node is leader
-    fn is_leader(&self) -> bool {
-        self.state.is_leader()
     }
 
     /// Start `XlineServer`
@@ -295,29 +291,9 @@ where
             .await?)
     }
 
-    /// Leader change task
-    async fn leader_change_task(
-        mut rx: broadcast::Receiver<Option<String>>,
-        state: Arc<State>,
-        lease_storage: Arc<LeaseStore<S>>,
-    ) {
-        while let Ok(leader_id) = rx.recv().await {
-            info!("receive new leader_id: {leader_id:?}");
-            let leader_state_changed = state.set_leader_id(leader_id);
-            let is_leader = state.is_leader();
-            if leader_state_changed {
-                if is_leader {
-                    lease_storage.promote(Duration::from_secs(1)); // TODO: extend should be election timeout
-                } else {
-                    lease_storage.demote();
-                }
-            }
-        }
-    }
-
     /// Init `KvServer`, `LockServer`, `LeaseServer`, `WatchServer` and `CurpServer`
     /// for the Xline Server.
-    #[allow(clippy::type_complexity)] // it is easy to read
+    #[allow(clippy::type_complexity, clippy::too_many_lines)] // it is easy to read
     async fn init_servers(
         &self,
     ) -> (
@@ -329,12 +305,33 @@ where
         MaintenanceServer<S>,
         CurpServer,
     ) {
+        let state = State::new(Arc::clone(&self.lease_storage));
+
+        let others = self
+            .all_members
+            .iter()
+            .filter(|&(key, _value)| self.id.as_str() != key.as_str())
+            .map(|(id, addr)| (id.clone(), addr.clone()))
+            .collect();
+
+        let address = self
+            .all_members
+            .get(self.id.as_str())
+            .unwrap_or_else(|| {
+                panic!(
+                    "peer {} not found in peers {:?}",
+                    self.id.as_str(),
+                    self.all_members.keys()
+                )
+            })
+            .clone();
+
         let curp_server = match self.storage_cfg {
             StorageConfig::Memory => {
                 CurpServer::new(
-                    self.id(),
-                    self.is_leader(),
-                    self.state.others(),
+                    self.id.clone(),
+                    self.is_leader,
+                    others,
                     CommandExecutor::new(
                         Arc::clone(&self.kv_storage),
                         Arc::clone(&self.auth_storage),
@@ -346,6 +343,7 @@ where
                         Arc::clone(&self.auth_revision),
                     ),
                     MemorySnapshotAllocator,
+                    state,
                     Arc::clone(&self.curp_cfg),
                     None,
                 )
@@ -353,9 +351,9 @@ where
             }
             StorageConfig::RocksDB(_) => {
                 CurpServer::new(
-                    self.id(),
-                    self.is_leader(),
-                    self.state.others(),
+                    self.id.clone(),
+                    self.is_leader,
+                    others,
                     CommandExecutor::new(
                         Arc::clone(&self.kv_storage),
                         Arc::clone(&self.auth_storage),
@@ -367,6 +365,7 @@ where
                         Arc::clone(&self.auth_revision),
                     ),
                     RocksSnapshotAllocator,
+                    state,
                     Arc::clone(&self.curp_cfg),
                     None,
                 )
@@ -375,12 +374,6 @@ where
             #[allow(clippy::unimplemented)]
             _ => unimplemented!(),
         };
-        let _handle = tokio::spawn({
-            let state = Arc::clone(&self.state);
-            let lease_storage = Arc::clone(&self.lease_storage);
-            let rx = curp_server.leader_rx();
-            Self::leader_change_task(rx, state, lease_storage)
-        });
         (
             KvServer::new(
                 Arc::clone(&self.kv_storage),
@@ -389,26 +382,26 @@ where
                 Arc::clone(&self.id_barrier),
                 self.range_retry_timeout,
                 Arc::clone(&self.client),
-                self.id(),
+                self.id.clone(),
             ),
             LockServer::new(
                 Arc::clone(&self.client),
-                Arc::clone(&self.state),
                 Arc::clone(&self.id_gen),
-                self.id(),
+                self.id.clone(),
+                address,
             ),
             LeaseServer::new(
                 Arc::clone(&self.lease_storage),
                 Arc::clone(&self.auth_storage),
                 Arc::clone(&self.client),
-                self.id(),
-                Arc::clone(&self.state),
+                self.id.clone(),
                 Arc::clone(&self.id_gen),
+                self.all_members.clone(),
             ),
             AuthServer::new(
                 Arc::clone(&self.auth_storage),
                 Arc::clone(&self.client),
-                self.id(),
+                self.id.clone(),
             ),
             WatchServer::new(Arc::clone(&self.watcher), Arc::clone(&self.header_gen)),
             MaintenanceServer::new(Arc::clone(&self.persistent), Arc::clone(&self.header_gen)),

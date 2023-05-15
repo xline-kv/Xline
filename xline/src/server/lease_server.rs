@@ -1,4 +1,4 @@
-use std::{pin::Pin, sync::Arc, time::Duration};
+use std::{collections::HashMap, pin::Pin, sync::Arc, time::Duration};
 
 use async_stream::{stream, try_stream};
 use clippy_utilities::Cast;
@@ -20,7 +20,6 @@ use crate::{
         LeaseRevokeResponse, LeaseStatus, LeaseTimeToLiveRequest, LeaseTimeToLiveResponse,
         RequestWithToken, RequestWrapper,
     },
-    state::State,
     storage::{storage_api::StorageApi, AuthStore, LeaseStore},
 };
 
@@ -41,10 +40,10 @@ where
     client: Arc<Client<Command>>,
     /// Server name
     name: String,
-    /// State of current node
-    state: Arc<State>,
     /// Id generator
     id_gen: Arc<IdGenerator>,
+    /// Address of all members
+    all_members: HashMap<String, String>,
 }
 
 impl<S> LeaseServer<S>
@@ -57,16 +56,16 @@ where
         auth_storage: Arc<AuthStore<S>>,
         client: Arc<Client<Command>>,
         name: String,
-        state: Arc<State>,
         id_gen: Arc<IdGenerator>,
+        all_members: HashMap<String, String>,
     ) -> Arc<Self> {
         let lease_server = Arc::new(Self {
             lease_storage,
             auth_storage,
             client,
             name,
-            state,
             id_gen,
+            all_members,
         });
         let _h = tokio::spawn(Self::revoke_expired_leases_task(Arc::clone(&lease_server)));
         lease_server
@@ -76,7 +75,7 @@ where
     async fn revoke_expired_leases_task(lease_server: Arc<LeaseServer<S>>) {
         loop {
             // only leader will check expired lease
-            if lease_server.is_leader() {
+            if lease_server.lease_storage.is_primary() {
                 for id in lease_server.lease_storage.find_expired_leases() {
                     let _handle = tokio::spawn({
                         let s = Arc::clone(&lease_server);
@@ -97,9 +96,6 @@ where
                         }
                     });
                 }
-            } else {
-                let listener = lease_server.state.leader_listener();
-                listener.await;
             }
 
             time::sleep(DEFAULT_LEASE_REQUEST_TIME).await;
@@ -127,11 +123,6 @@ where
             vec![]
         };
         Command::new(keys, wrapper, propose_id)
-    }
-
-    /// Check if the node is leader
-    fn is_leader(&self) -> bool {
-        self.state.is_leader()
     }
 
     /// Propose request and get result with fast/slow path
@@ -176,12 +167,11 @@ where
         mut request_stream: tonic::Streaming<LeaseKeepAliveRequest>,
     ) -> Pin<Box<dyn Stream<Item = Result<LeaseKeepAliveResponse, tonic::Status>> + Send>> {
         let lease_storage = Arc::clone(&self.lease_storage);
-        let state = Arc::clone(&self.state);
         let stream = try_stream! {
             while let Some(keep_alive_req) = request_stream.message().await? {
                 debug!("Receive LeaseKeepAliveRequest {:?}", keep_alive_req);
                 // TODO wait applied index
-                let ttl = if state.is_leader() {
+                let ttl = if lease_storage.is_primary() {
                     lease_storage.keep_alive(keep_alive_req.id).map_err(|e| {
                         tonic::Status::invalid_argument(format!("Keep alive error: {e}",))})
                 } else {
@@ -201,11 +191,11 @@ where
     async fn follower_keep_alive(
         &self,
         mut request_stream: tonic::Streaming<LeaseKeepAliveRequest>,
+        leader_addr: &String,
     ) -> Result<
         Pin<Box<dyn Stream<Item = Result<LeaseKeepAliveResponse, tonic::Status>> + Send>>,
         tonic::Status,
     > {
-        let leader_addr = self.state.wait_leader().await?;
         let mut lease_client = LeaseClient::connect(format!("http://{leader_addr}"))
             .await
             .map_err(|_e| tonic::Status::internal("Connect to leader error: {e}"))?;
@@ -249,38 +239,13 @@ where
         let mut res: LeaseGrantResponse = res.decode().into();
         if let Some(sync_res) = sync_res {
             let revision = sync_res.revision();
-            debug!("Get revision {:?} for AuthStatusResponse", revision);
+            debug!("Get revision {:?} for LeaseGrantResponse", revision);
             if let Some(mut header) = res.header.as_mut() {
                 header.revision = revision;
             }
         }
         Ok(tonic::Response::new(res))
     }
-
-    /// LeaseRevoke revokes a lease. All keys attached to the lease will expire and be deleted.
-    async fn lease_revoke(
-        &self,
-        request: tonic::Request<LeaseRevokeRequest>,
-    ) -> Result<tonic::Response<LeaseRevokeResponse>, tonic::Status> {
-        debug!("Receive LeaseRevokeRequest {:?}", request);
-
-        let is_fast_path = true;
-        let (res, sync_res) = self.propose(request, is_fast_path).await?;
-
-        let mut res: LeaseRevokeResponse = res.decode().into();
-        if let Some(sync_res) = sync_res {
-            let revision = sync_res.revision();
-            debug!("Get revision {:?} for AuthStatusResponse", revision);
-            if let Some(mut header) = res.header.as_mut() {
-                header.revision = revision;
-            }
-        }
-        Ok(tonic::Response::new(res))
-    }
-
-    ///Server streaming response type for the LeaseKeepAlive method.
-    type LeaseKeepAliveStream =
-        Pin<Box<dyn Stream<Item = Result<LeaseKeepAliveResponse, tonic::Status>> + Send>>;
 
     /// LeaseKeepAlive keeps the lease alive by streaming keep alive requests from the client
     /// to the server and streaming keep alive responses from the server to the client.
@@ -290,47 +255,30 @@ where
     ) -> Result<tonic::Response<Self::LeaseKeepAliveStream>, tonic::Status> {
         debug!("Receive LeaseKeepAliveRequest {:?}", request);
         let request_stream = request.into_inner();
-        let stream = if self.is_leader() {
-            self.leader_keep_alive(request_stream).await
-        } else {
-            self.follower_keep_alive(request_stream).await?
+        let stream = loop {
+            if self.lease_storage.is_primary() {
+                break self.leader_keep_alive(request_stream).await;
+            }
+            let leader_id = self.client.get_leader_id().await;
+            // double check
+            if !self.lease_storage.is_primary() {
+                let leader_addr = self.all_members.get(&leader_id).unwrap_or_else(|| {
+                    panic!(
+                        "The address of leader {} not found in all_members {:?}",
+                        leader_id, self.all_members
+                    )
+                });
+                break self
+                    .follower_keep_alive(request_stream, leader_addr)
+                    .await?;
+            }
         };
         Ok(tonic::Response::new(stream))
     }
 
-    /// LeaseTimeToLive retrieves lease information.
-    async fn lease_time_to_live(
-        &self,
-        request: tonic::Request<LeaseTimeToLiveRequest>,
-    ) -> Result<tonic::Response<LeaseTimeToLiveResponse>, tonic::Status> {
-        debug!("Receive LeaseTimeToLiveRequest {:?}", request);
-        if self.is_leader() {
-            // TODO wait applied index
-            let time_to_live_req = request.into_inner();
-            let Some(lease) = self.lease_storage.look_up(time_to_live_req.id) else {
-                return Err(tonic::Status::not_found("Lease not found"));
-            };
-
-            let keys = time_to_live_req
-                .keys
-                .then(|| lease.keys())
-                .unwrap_or_default();
-            let res = LeaseTimeToLiveResponse {
-                header: Some(self.lease_storage.gen_header()),
-                id: time_to_live_req.id,
-                ttl: lease.remaining().as_secs().cast(),
-                granted_ttl: lease.ttl().as_secs().cast(),
-                keys,
-            };
-            Ok(tonic::Response::new(res))
-        } else {
-            let leader_addr = self.state.wait_leader().await?;
-            let mut lease_client = LeaseClient::connect(format!("http://{leader_addr}"))
-                .await
-                .map_err(|e| tonic::Status::internal(format!("Connect to leader error: {e}")))?;
-            lease_client.lease_time_to_live(request).await
-        }
-    }
+    ///Server streaming response type for the LeaseKeepAlive method.
+    type LeaseKeepAliveStream =
+        Pin<Box<dyn Stream<Item = Result<LeaseKeepAliveResponse, tonic::Status>> + Send>>;
 
     /// LeaseLeases lists all existing leases.
     async fn lease_leases(
@@ -349,5 +297,73 @@ where
             leases,
         };
         Ok(tonic::Response::new(res))
+    }
+
+    /// LeaseRevoke revokes a lease. All keys attached to the lease will expire and be deleted.
+    async fn lease_revoke(
+        &self,
+        request: tonic::Request<LeaseRevokeRequest>,
+    ) -> Result<tonic::Response<LeaseRevokeResponse>, tonic::Status> {
+        debug!("Receive LeaseRevokeRequest {:?}", request);
+
+        let is_fast_path = true;
+        let (res, sync_res) = self.propose(request, is_fast_path).await?;
+
+        let mut res: LeaseRevokeResponse = res.decode().into();
+        if let Some(sync_res) = sync_res {
+            let revision = sync_res.revision();
+            debug!("Get revision {:?} for LeaseRevokeResponse", revision);
+            if let Some(mut header) = res.header.as_mut() {
+                header.revision = revision;
+            }
+        }
+        Ok(tonic::Response::new(res))
+    }
+
+    /// LeaseTimeToLive retrieves lease information.
+    async fn lease_time_to_live(
+        &self,
+        request: tonic::Request<LeaseTimeToLiveRequest>,
+    ) -> Result<tonic::Response<LeaseTimeToLiveResponse>, tonic::Status> {
+        debug!("Receive LeaseTimeToLiveRequest {:?}", request);
+        loop {
+            #[allow(clippy::redundant_else)]
+            if self.lease_storage.is_primary() {
+                // TODO wait applied index
+                let time_to_live_req = request.into_inner();
+                let Some(lease) = self.lease_storage.look_up(time_to_live_req.id) else {
+                    return Err(tonic::Status::not_found("Lease not found"));
+                };
+
+                let keys = time_to_live_req
+                    .keys
+                    .then(|| lease.keys())
+                    .unwrap_or_default();
+                let res = LeaseTimeToLiveResponse {
+                    header: Some(self.lease_storage.gen_header()),
+                    id: time_to_live_req.id,
+                    ttl: lease.remaining().as_secs().cast(),
+                    granted_ttl: lease.ttl().as_secs().cast(),
+                    keys,
+                };
+                return Ok(tonic::Response::new(res));
+            } else {
+                let leader_id = self.client.get_leader_id().await;
+                let leader_addr = self.all_members.get(&leader_id).unwrap_or_else(|| {
+                    panic!(
+                        "The address of leader {} not found in all_members {:?}",
+                        leader_id, self.all_members
+                    )
+                });
+                if !self.lease_storage.is_primary() {
+                    let mut lease_client = LeaseClient::connect(format!("http://{leader_addr}"))
+                        .await
+                        .map_err(|e| {
+                            tonic::Status::internal(format!("Connect to leader error: {e}"))
+                        })?;
+                    return lease_client.lease_time_to_live(request).await;
+                }
+            }
+        }
     }
 }

@@ -20,7 +20,6 @@ use crate::{
         RequestWrapper, Response, ResponseHeader, SortOrder, SortTarget, TargetUnion, TxnRequest,
         TxnResponse, UnlockRequest, UnlockResponse, WatchClient, WatchCreateRequest, WatchRequest,
     },
-    state::State,
 };
 
 /// Default session ttl
@@ -28,30 +27,30 @@ const DEFAULT_SESSION_TTL: i64 = 60;
 
 /// Lock Server
 #[derive(Debug)]
-pub(crate) struct LockServer {
+pub(super) struct LockServer {
     /// Consensus client
     client: Arc<Client<Command>>,
-    /// State of current node
-    state: Arc<State>,
     /// Id Generator
     id_gen: Arc<IdGenerator>,
     /// Server name
     name: String,
+    /// Server address
+    address: String,
 }
 
 impl LockServer {
     /// New `LockServer`
-    pub(crate) fn new(
+    pub(super) fn new(
         client: Arc<Client<Command>>,
-        state: Arc<State>,
         id_gen: Arc<IdGenerator>,
         name: String,
+        address: String,
     ) -> Self {
         Self {
             client,
-            state,
             id_gen,
             name,
+            address,
         }
     }
 
@@ -169,8 +168,7 @@ impl LockServer {
         token: Option<&String>,
     ) -> Result<(), tonic::Status> {
         let rev = my_rev.overflow_sub(1);
-        let self_addr = self.state.self_address();
-        let mut watch_client = WatchClient::connect(format!("http://{self_addr}"))
+        let mut watch_client = WatchClient::connect(format!("http://{}", self.address))
             .await
             .map_err(|e| tonic::Status::internal(format!("Connect error: {e}")))?;
         loop {

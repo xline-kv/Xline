@@ -2,6 +2,7 @@
 
 use std::{env, io, time::Duration};
 
+use curp::leader_change::LeaderChange;
 use madsim::rand::{distributions::Alphanumeric, thread_rng, Rng};
 use thiserror::Error;
 use tracing_subscriber::fmt::time::{uptime, OffsetTime, Uptime};
@@ -11,6 +12,17 @@ pub mod test_cmd;
 
 pub const TEST_TABLE: &str = "test";
 pub const REVISION_TABLE: &str = "revision";
+
+#[derive(Default, Debug)]
+pub struct TestLeaderChange {}
+
+impl LeaderChange for TestLeaderChange {
+    fn on_follower(&self) {}
+
+    fn on_leader(&self) {}
+
+    fn update_leader(&self, id: Option<String>) {}
+}
 
 pub fn init_logger() {
     if env::var("RUST_LOG").is_err() {

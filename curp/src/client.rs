@@ -387,7 +387,8 @@ where
     }
 
     /// Get leader id from the state or fetch it from servers
-    async fn get_leader_id(&self) -> ServerId {
+    #[inline]
+    pub async fn get_leader_id(&self) -> ServerId {
         let notify = Arc::clone(&self.state.read().leader_notify);
         let retry_timeout = *self.timeout.retry_timeout();
         loop {
