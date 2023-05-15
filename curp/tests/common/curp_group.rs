@@ -30,6 +30,7 @@ use utils::config::{
 use crate::common::{
     random_id,
     test_cmd::{TestCE, TestCommand, TestCommandResult},
+    TestLeaderChange,
 };
 
 pub type ServerId = String;
@@ -171,6 +172,7 @@ impl CurpGroup {
                         listener,
                         ce,
                         MemorySnapshotAllocator,
+                        TestLeaderChange::default(),
                         Arc::new(
                             CurpConfigBuilder::default()
                                 .data_dir(PathBuf::from(storage_path_c))
@@ -310,6 +312,7 @@ impl CurpGroup {
                 listener,
                 ce,
                 MemorySnapshotAllocator,
+                TestLeaderChange::default(),
                 Arc::new(
                     CurpConfigBuilder::default()
                         .data_dir(PathBuf::from(storage_path))

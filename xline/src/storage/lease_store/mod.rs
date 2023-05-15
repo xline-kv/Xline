@@ -5,7 +5,13 @@ mod lease_collection;
 /// Lease heap
 mod lease_queue;
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use log::debug;
 use prost::Message;
@@ -27,7 +33,6 @@ use crate::{
         ResponseWrapper,
     },
     server::command::{CommandResponse, SyncResponse},
-    state::State,
     storage::Revision,
 };
 
@@ -48,12 +53,12 @@ where
     db: Arc<DB>,
     /// Key to revision index
     index: Arc<Index>,
-    /// Current node is leader or not
-    state: Arc<State>,
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
     /// KV update sender
     kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
+    /// Primary flag
+    is_primary: AtomicBool,
 }
 
 impl<DB> LeaseStore<DB>
@@ -63,19 +68,19 @@ where
     /// New `LeaseStore`
     pub(crate) fn new(
         lease_collection: Arc<LeaseCollection>,
-        state: Arc<State>,
         header_gen: Arc<HeaderGenerator>,
         db: Arc<DB>,
         index: Arc<Index>,
         kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
+        is_leader: bool,
     ) -> Self {
         Self {
             lease_collection,
             db,
             index,
-            state,
             header_gen,
             kv_update_tx,
+            is_primary: AtomicBool::new(is_leader),
         }
     }
 
@@ -135,10 +140,12 @@ where
     /// Demote current node
     pub(crate) fn demote(&self) {
         self.lease_collection.demote();
+        self.is_primary.store(false, Ordering::Release);
     }
 
     /// Promote current node
     pub(crate) fn promote(&self, extend: Duration) {
+        self.is_primary.store(true, Ordering::Release);
         self.lease_collection.promote(extend);
     }
 
@@ -150,17 +157,17 @@ where
         }
         Ok(())
     }
+
+    /// Check whether the current lease storage is primary or not
+    pub(crate) fn is_primary(&self) -> bool {
+        self.is_primary.load(Ordering::Relaxed)
+    }
 }
 
 impl<DB> LeaseStore<DB>
 where
     DB: StorageApi,
 {
-    /// Check if the node is leader
-    fn is_leader(&self) -> bool {
-        self.state.is_leader()
-    }
-
     /// Detach key from lease
     fn detach(&self, lease_id: i64, key: &[u8]) -> Result<(), ExecuteError> {
         self.lease_collection.detach(lease_id, key)
@@ -254,7 +261,7 @@ where
     fn sync_lease_grant_request(&self, req: &LeaseGrantRequest) -> Vec<WriteOp> {
         let lease = self
             .lease_collection
-            .grant(req.id, req.ttl, self.is_leader());
+            .grant(req.id, req.ttl, self.is_primary());
         vec![WriteOp::PutLease(lease)]
     }
 
@@ -420,10 +427,9 @@ mod test {
     fn init_store(db: Arc<DB>) -> LeaseStore<DB> {
         let lease_collection = Arc::new(LeaseCollection::new(0));
         let (kv_update_tx, _) = mpsc::channel(1);
-        let state = Arc::new(State::default());
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let index = Arc::new(Index::new());
-        LeaseStore::new(lease_collection, state, header_gen, db, index, kv_update_tx)
+        LeaseStore::new(lease_collection, header_gen, db, index, kv_update_tx, true)
     }
 
     async fn exe_and_sync_req(

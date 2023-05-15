@@ -26,6 +26,7 @@ use super::{
 use crate::{
     cmd::{Command, CommandExecutor},
     error::ProposeError,
+    leader_change::LeaderChange,
     log_entry::LogEntry,
     rpc::{
         self, connect::ConnectApi, AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest,
@@ -405,12 +406,14 @@ impl<C: 'static + Command> CurpNode<C> {
 impl<C: 'static + Command> CurpNode<C> {
     /// Create a new server instance
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn new<CE: CommandExecutor<C> + 'static>(
         id: ServerId,
         is_leader: bool,
         others: HashMap<ServerId, String>,
         cmd_executor: Arc<CE>,
         snapshot_allocator: impl SnapshotAllocator + 'static,
+        leader_change_cb: impl LeaderChange + 'static,
         curp_cfg: Arc<CurpConfig>,
         tx_filter: Option<Box<dyn TxFilter>>,
     ) -> Result<Self, CurpError> {
@@ -445,6 +448,7 @@ impl<C: 'static + Command> CurpNode<C> {
                 Arc::clone(&ce_event_tx),
                 sync_events,
                 log_tx,
+                leader_change_cb,
             ))
         } else {
             info!(
@@ -467,6 +471,7 @@ impl<C: 'static + Command> CurpNode<C> {
                 voted_for,
                 entries,
                 last_applied,
+                leader_change_cb,
             ))
         };
 
