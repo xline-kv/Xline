@@ -1,7 +1,7 @@
 use std::{
     cmp::Ordering,
     collections::HashMap,
-    io::{Cursor, Seek},
+    io::{Cursor, ErrorKind, Seek},
     path::Path,
     sync::Arc,
 };
@@ -192,7 +192,25 @@ impl SnapshotApi for MemorySnapshot {
 
     #[inline]
     async fn read_exact(&mut self, buf: &mut BytesMut) -> std::io::Result<()> {
-        read_buf(&mut self.data, buf).await.map(drop)
+        while buf.len() < buf.capacity() {
+            match read_buf(&mut self.data, buf).await {
+                Ok(n) => {
+                    if 0 == n {
+                        break;
+                    }
+                }
+                Err(ref e) if e.kind() == ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
+        if buf.len() == buf.capacity() {
+            Ok(())
+        } else {
+            Err(std::io::Error::new(
+                ErrorKind::UnexpectedEof,
+                "failed to fill whole buffer",
+            ))
+        }
     }
 
     #[inline]
