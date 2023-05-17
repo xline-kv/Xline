@@ -333,7 +333,11 @@ impl XlineServer {
                 Arc::clone(&self.cluster_info),
             ),
             AuthServer::new(auth_storage, client, self.cluster_info.self_id().clone()),
-            WatchServer::new(watcher, Arc::clone(&header_gen)),
+            WatchServer::new(
+                watcher,
+                Arc::clone(&header_gen),
+                *self.server_timeout.watch_progress_notify_interval(),
+            ),
             MaintenanceServer::new(persistent, header_gen),
             curp_server,
         ))
