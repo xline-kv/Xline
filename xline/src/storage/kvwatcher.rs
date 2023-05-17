@@ -272,10 +272,6 @@ impl WatcherMap {
                 .collect();
         };
     }
-
-    // fn is_synced_watcher(&self, watch_id: WatchId) -> bool {
-    //     self.watchers.get(&watch_id).is_some()
-    // }
 }
 
 /// Operations of KV watcher
@@ -363,10 +359,6 @@ where
     fn get_prev_kv(&self, kv: &KeyValue) -> Option<KeyValue> {
         self.storage.get_prev_kv(kv)
     }
-
-    // pub(crate) fn is_synced_watcher(&self, watch_id: WatchId) -> bool {
-    //     self.watcher_map.read().is_synced_watcher(watch_id)
-    // }
 }
 
 impl<S> KvWatcher<S>

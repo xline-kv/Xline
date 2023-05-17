@@ -129,9 +129,10 @@ use utils::{
         default_gc_interval, default_heartbeat_interval, default_log_entries_cap,
         default_log_level, default_propose_timeout, default_range_retry_timeout,
         default_retry_timeout, default_rotation, default_rpc_timeout,
-        default_server_wait_synced_timeout, default_sync_victims_interval, file_appender,
-        AuthConfig, ClientTimeout, ClusterConfig, CurpConfigBuilder, LevelConfig, LogConfig,
-        RotationConfig, ServerTimeout, StorageConfig, TraceConfig, XlineServerConfig,
+        default_server_wait_synced_timeout, default_sync_victims_interval,
+        default_watch_progress_notify_interval, file_appender, AuthConfig, ClientTimeout,
+        ClusterConfig, CurpConfigBuilder, LevelConfig, LogConfig, RotationConfig, ServerTimeout,
+        StorageConfig, TraceConfig, XlineServerConfig,
     },
     parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_rotation,
 };
@@ -219,9 +220,12 @@ struct ServerArgs {
     /// Range request retry timeout [default: 2s]
     #[clap(long, value_parser = parse_duration)]
     range_retry_timeout: Option<Duration>,
-    /// Sync victims interval [default: 10ms]
+    /// How often should the background task sync victim watchers [default: 10ms]
     #[clap(long,value_parser = parse_duration)]
     sync_victims_interval: Option<Duration>,
+    /// How often should watch progress notify send a response [default: 10m]
+    #[clap(long, value_parser = parse_duration)]
+    watch_progress_notify_interval: Option<Duration>,
     /// Storage engine
     #[clap(long)]
     storage_engine: String,
@@ -277,6 +281,8 @@ impl From<ServerArgs> for XlineServerConfig {
                 .unwrap_or_else(default_range_retry_timeout),
             args.sync_victims_interval
                 .unwrap_or_else(default_sync_victims_interval),
+            args.watch_progress_notify_interval
+                .unwrap_or_else(default_watch_progress_notify_interval),
         );
         let cluster = ClusterConfig::new(
             args.name,

@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
+    time::Duration,
 };
 
 use event_listener::Event;
@@ -36,6 +37,8 @@ where
     next_id_gen: Arc<WatchIdGenerator>,
     /// Header Generator
     header_gen: Arc<HeaderGenerator>,
+    /// Watch progress notify interval
+    watch_progress_notify_interval: Duration,
 }
 
 impl<S> WatchServer<S>
@@ -43,11 +46,16 @@ where
     S: StorageApi,
 {
     /// New `WatchServer`
-    pub(crate) fn new(watcher: Arc<KvWatcher<S>>, header_gen: Arc<HeaderGenerator>) -> Self {
+    pub(crate) fn new(
+        watcher: Arc<KvWatcher<S>>,
+        header_gen: Arc<HeaderGenerator>,
+        watch_progress_notify_interval: Duration,
+    ) -> Self {
         Self {
             watcher,
             next_id_gen: Arc::new(WatchIdGenerator::new(1)), // watch_id starts from 1, 0 means auto-generating
             header_gen,
+            watch_progress_notify_interval,
         }
     }
 
@@ -59,6 +67,7 @@ where
         res_tx: mpsc::Sender<Result<WatchResponse, tonic::Status>>,
         mut req_rx: ST,
         header_gen: Arc<HeaderGenerator>,
+        watch_progress_notify_interval: Duration,
     ) where
         ST: Stream<Item = Result<WatchRequest, tonic::Status>> + Unpin,
         W: KvWatcherOps,
@@ -73,7 +82,7 @@ where
             next_id_gen,
             header_gen,
         );
-        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));
+        let mut ticker = tokio::time::interval(watch_progress_notify_interval);
         loop {
             tokio::select! {
                 req = req_rx.next() => {
@@ -136,7 +145,7 @@ where
     ///
     /// `true` means the next tick should be notified
     ///
-    /// `false` means the next tick should be skiped
+    /// `false` means the next tick should be skipped
     progress: HashMap<WatchId, bool>,
 }
 
@@ -385,6 +394,7 @@ where
             tx,
             req_stream,
             Arc::clone(&self.header_gen),
+            self.watch_progress_notify_interval,
         ));
         Ok(tonic::Response::new(ReceiverStream::new(rx)))
     }
@@ -400,7 +410,7 @@ mod test {
 
     use parking_lot::Mutex;
     use tokio::time::{sleep, timeout};
-    use utils::config::StorageConfig;
+    use utils::config::{default_watch_progress_notify_interval, StorageConfig};
 
     use super::*;
     use crate::{
@@ -459,6 +469,7 @@ mod test {
             res_tx,
             req_stream,
             header_gen,
+            default_watch_progress_notify_interval(),
         ));
         req_tx
             .send(Ok(WatchRequest {
@@ -505,6 +516,7 @@ mod test {
             res_tx1,
             req_stream1,
             Arc::clone(&header_gen),
+            default_watch_progress_notify_interval(),
         ));
 
         let (req_tx2, req_rx2) = mpsc::channel(CHANNEL_SIZE);
@@ -517,6 +529,7 @@ mod test {
             res_tx2,
             req_stream2,
             header_gen,
+            default_watch_progress_notify_interval(),
         ));
 
         let w_req = WatchRequest {
@@ -582,6 +595,7 @@ mod test {
             res_tx,
             req_stream,
             Arc::clone(&header_gen),
+            default_watch_progress_notify_interval(),
         ));
 
         for _ in 0..4 {
@@ -618,6 +632,7 @@ mod test {
             res_tx,
             req_stream,
             header_gen,
+            Duration::from_millis(100),
         ));
         req_tx
             .send(Ok(WatchRequest {
@@ -631,7 +646,7 @@ mod test {
             .await?;
         let cnt = Arc::new(AtomicI32::new(0));
 
-        let _ignore = timeout(Duration::from_secs(5), {
+        let _ignore = timeout(Duration::from_secs(1), {
             let cnt = Arc::clone(&cnt);
             async move {
                 while let Some(Ok(res)) = res_rx.recv().await {
@@ -643,7 +658,7 @@ mod test {
         })
         .await;
         let c = cnt.load(Ordering::Acquire);
-        assert!(c >= 4);
+        assert!(c >= 9);
         drop(req_tx);
         handle.await.unwrap();
         Ok(())

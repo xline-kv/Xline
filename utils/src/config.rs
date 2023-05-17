@@ -304,6 +304,13 @@ pub const fn default_log_entries_cap() -> usize {
     5000
 }
 
+/// default watch progress notify interval
+#[must_use]
+#[inline]
+pub const fn default_watch_progress_notify_interval() -> Duration {
+    Duration::from_secs(600)
+}
+
 impl Default for CurpConfig {
     #[inline]
     fn default() -> Self {
@@ -385,16 +392,28 @@ pub struct ServerTimeout {
     #[getset(get = "pub")]
     #[serde(with = "duration_format", default = "default_sync_victims_interval")]
     sync_victims_interval: Duration,
+    /// Watch progress notify interval settings
+    #[getset(get = "pub")]
+    #[serde(
+        with = "duration_format",
+        default = "default_watch_progress_notify_interval"
+    )]
+    watch_progress_notify_interval: Duration,
 }
 
 impl ServerTimeout {
     /// Create a new server timeout
     #[must_use]
     #[inline]
-    pub fn new(range_retry_timeout: Duration, sync_victims_interval: Duration) -> Self {
+    pub fn new(
+        range_retry_timeout: Duration,
+        sync_victims_interval: Duration,
+        watch_progress_notify_interval: Duration,
+    ) -> Self {
         Self {
             range_retry_timeout,
             sync_victims_interval,
+            watch_progress_notify_interval,
         }
     }
 }
@@ -405,6 +424,7 @@ impl Default for ServerTimeout {
         Self {
             range_retry_timeout: default_range_retry_timeout(),
             sync_victims_interval: default_sync_victims_interval(),
+            watch_progress_notify_interval: default_watch_progress_notify_interval(),
         }
     }
 }
@@ -653,6 +673,7 @@ mod tests {
             [cluster.server_timeout]
             range_retry_timeout = '3s'
             sync_victims_interval = '20ms'
+            watch_progress_notify_interval = '1s'
 
             [cluster.members]
             node1 = '127.0.0.1:2379'
@@ -700,7 +721,11 @@ mod tests {
             Duration::from_secs(5),
         );
 
-        let server_timeout = ServerTimeout::new(Duration::from_secs(3), Duration::from_millis(20));
+        let server_timeout = ServerTimeout::new(
+            Duration::from_secs(3),
+            Duration::from_millis(20),
+            Duration::from_secs(1),
+        );
         assert_eq!(
             config.cluster,
             ClusterConfig::new(
