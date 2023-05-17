@@ -126,7 +126,7 @@ where
                 let buf_size = std::cmp::min(MAINTENANCE_SNAPSHOT_CHUNK_SIZE, remain_size);
                 let mut buf = BytesMut::with_capacity(buf_size.cast());
                 remain_size = remain_size.overflow_sub(buf_size);
-                snapshot.read_exact(&mut buf).await.map_err(|_e| {tonic::Status::internal("snapshot read failed")})?;
+                snapshot.read_buf_exact(&mut buf).await.map_err(|_e| {tonic::Status::internal("snapshot read failed")})?;
                 // etcd client will use the size of the snapshot to determine whether checksum is included,
                 // and the check method size % 512 == sha256.size, So we need to pad snapshots to multiples
                 // of 512 bytes
@@ -212,7 +212,7 @@ mod test {
             .unwrap();
         let size = snap2.size().cast();
         let mut snap2_data = BytesMut::with_capacity(size);
-        snap2.read_exact(&mut snap2_data).await.unwrap();
+        snap2.read_buf_exact(&mut snap2_data).await.unwrap();
         let snap1_data = recv_data[..size].to_vec();
         assert_eq!(snap1_data, snap2_data);
 

@@ -292,7 +292,7 @@ fn install_snapshot_stream(
             let len: u64 =
                 std::cmp::min(snapshot.size() - offset, SNAPSHOT_CHUNK_SIZE).numeric_cast();
             let mut data = BytesMut::with_capacity(len.numeric_cast());
-            if let Err(e) = snapshot.read_exact(&mut data).await {
+            if let Err(e) = snapshot.read_buf_exact(&mut data).await {
                 error!("read snapshot error, {e}");
                 break;
             }

@@ -157,10 +157,18 @@ impl SnapshotApi for Snapshot {
     }
 
     #[inline]
-    async fn read_exact(&mut self, buf: &mut BytesMut) -> std::io::Result<()> {
+    async fn read_buf(&mut self, buf: &mut BytesMut) -> std::io::Result<()> {
         match *self {
-            Snapshot::Memory(ref mut s) => s.read_exact(buf).await,
-            Snapshot::Rocks(ref mut s) => s.read_exact(buf).await,
+            Snapshot::Memory(ref mut s) => s.read_buf(buf).await,
+            Snapshot::Rocks(ref mut s) => s.read_buf(buf).await,
+        }
+    }
+
+    #[inline]
+    async fn read_buf_exact(&mut self, buf: &mut BytesMut) -> std::io::Result<()> {
+        match *self {
+            Snapshot::Memory(ref mut s) => s.read_buf_exact(buf).await,
+            Snapshot::Rocks(ref mut s) => s.read_buf_exact(buf).await,
         }
     }
 
@@ -338,7 +346,7 @@ mod test {
             assert!(engine.write_batch(vec![put], false).is_ok());
 
             let mut buf = BytesMut::with_capacity(snapshot.size().numeric_cast());
-            snapshot.read_exact(&mut buf).await.unwrap();
+            snapshot.read_buf_exact(&mut buf).await.unwrap();
 
             buf.extend([0u8; 100]); // add some padding, will be ignored when receiving
 

@@ -386,10 +386,6 @@ impl RocksSnapshot {
 
     /// Read data from the snapshot
     async fn read(&mut self, buf: &mut BytesMut) -> io::Result<usize> {
-        if buf.capacity() == 0 {
-            return Ok(0);
-        }
-
         if self.meta.is_current {
             let n = read_buf(&mut self.meta.data, buf).await?;
             if n == 0 {
@@ -523,27 +519,8 @@ impl SnapshotApi for RocksSnapshot {
     }
 
     #[inline]
-    async fn read_exact(&mut self, buf: &mut BytesMut) -> std::io::Result<()> {
-        while buf.len() < buf.capacity() {
-            // the return value of read function is not larger than the input buf's capacity.
-            match self.read(buf).await {
-                Ok(n) => {
-                    if 0 == n {
-                        break;
-                    }
-                }
-                Err(ref e) if e.kind() == ErrorKind::Interrupted => {}
-                Err(e) => return Err(e),
-            }
-        }
-        if buf.len() == buf.capacity() {
-            Ok(())
-        } else {
-            Err(std::io::Error::new(
-                ErrorKind::UnexpectedEof,
-                "failed to fill whole buffer",
-            ))
-        }
+    async fn read_buf(&mut self, buf: &mut BytesMut) -> std::io::Result<()> {
+        self.read(buf).await.map(|_n| ())
     }
 
     #[inline]
