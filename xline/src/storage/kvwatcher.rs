@@ -20,7 +20,11 @@ use tracing::debug;
 use utils::parking_lot_lock::RwLockMap;
 
 use super::storage_api::StorageApi;
-use crate::{rpc::Event, server::command::KeyRange, storage::kv_store::KvStore};
+use crate::{
+    rpc::{Event, KeyValue},
+    server::command::KeyRange,
+    storage::kv_store::KvStore,
+};
 
 /// Watch ID
 pub(crate) type WatchId = i64;
@@ -102,19 +106,8 @@ impl Watcher {
         &self.key_range
     }
 
-    /// Get start revision
-    fn start_rev(&self) -> i64 {
-        self.start_rev
-    }
-
-    /// Notify events
-    fn notify(
-        &mut self,
-        (revision, mut events): (i64, Vec<Event>),
-    ) -> Result<(), TrySendError<WatchEvent>> {
-        if revision < self.start_rev() {
-            return Ok(());
-        }
+    /// filter out events
+    fn filter_events(&self, mut events: Vec<Event>) -> Vec<Event> {
         events.retain(|event| {
             self.filters.iter().all(|filter| filter != &event.r#type)
                 && (event
@@ -122,10 +115,21 @@ impl Watcher {
                     .as_ref()
                     .map_or(false, |kv| kv.mod_revision >= self.start_rev))
         });
+        events
+    }
+
+    /// Notify all passed events, please filter out events before calling this method
+    fn notify(
+        &mut self,
+        (revision, events): (i64, Vec<Event>),
+    ) -> Result<(), TrySendError<WatchEvent>> {
+        if revision < self.start_rev {
+            return Ok(());
+        }
+        let events = self.filter_events(events);
         if events.is_empty() {
             return Ok(());
         }
-
         let watch_id = self.watch_id();
         debug!(
             watch_id,
@@ -288,6 +292,9 @@ pub(crate) trait KvWatcherOps {
 
     /// Cancel a watch from KV store
     fn cancel(&self, id: WatchId);
+
+    /// Get Prev `KeyValue` of a `KeyValue`
+    fn get_prev_kv(&self, kv: &KeyValue) -> Option<KeyValue>;
 }
 
 #[async_trait::async_trait]
@@ -348,6 +355,10 @@ where
     fn cancel(&self, watch_id: WatchId) {
         self.watcher_map.write().remove(watch_id);
     }
+
+    fn get_prev_kv(&self, kv: &KeyValue) -> Option<KeyValue> {
+        self.storage.get_prev_kv(kv)
+    }
 }
 
 impl<S> KvWatcher<S>
@@ -392,6 +403,7 @@ where
                 .map_write(|mut m| m.victims.drain().collect::<Vec<_>>());
             let mut new_victims = HashMap::new();
             for (mut watcher, res) in victims {
+                // needn't to filter updates and get prev_kv, because the watcher is already filtered before inserted into victims
                 if let Err(TrySendError::Full(watch_event)) = watcher.notify(res) {
                     assert!(
                         new_victims
@@ -564,20 +576,16 @@ mod test {
         let handle = tokio::spawn({
             let store = Arc::clone(&store);
             async move {
-                let mut revision = 2;
+                // let mut revision = 2;
                 for i in 0..100_u8 {
-                    let req = RequestWithToken::new(
-                        PutRequest {
-                            key: "foo".into(),
-                            value: vec![i],
-                            ..Default::default()
-                        }
-                        .into(),
-                    );
-                    let (sync_res, ops) = store.after_sync(&req, revision).await.unwrap();
-                    db.flush_ops(ops).unwrap();
-                    store.mark_index_available(sync_res.revision());
-                    revision += 1;
+                    put(
+                        store.as_ref(),
+                        db.as_ref(),
+                        "foo",
+                        vec![i],
+                        i.overflow_add(2).cast(),
+                    )
+                    .await;
                 }
             }
         });
@@ -633,8 +641,8 @@ mod test {
 
         let mut expect = 0;
         let handle = tokio::spawn(async move {
-            'outer: while let Some(watch_event) = event_rx.recv().await {
-                for event in watch_event.events {
+            'outer: while let Some(watch_events) = event_rx.recv().await {
+                for event in watch_events.events {
                     let val = event.kv.as_ref().unwrap().value[0];
                     assert_eq!(val, expect);
                     expect += 1;
@@ -645,18 +653,8 @@ mod test {
             }
         });
 
-        for i in 0..100u8 {
-            let req = RequestWithToken::new(
-                PutRequest {
-                    key: "foo".into(),
-                    value: vec![i],
-                    ..Default::default()
-                }
-                .into(),
-            );
-            let (sync_res, ops) = store.after_sync(&req, i.cast()).await.unwrap();
-            db.flush_ops(ops).unwrap();
-            store.mark_index_available(sync_res.revision());
+        for i in 0..100_u8 {
+            put(store.as_ref(), db.as_ref(), "foo", vec![i], i.cast()).await;
         }
         handle.await.unwrap();
     }
@@ -679,5 +677,25 @@ mod test {
         kv_watcher.cancel(1);
         assert!(kv_watcher.watcher_map.read().index.is_empty());
         assert!(kv_watcher.watcher_map.read().watchers.is_empty());
+    }
+
+    async fn put(
+        store: &KvStore<DB>,
+        db: &DB,
+        key: impl Into<Vec<u8>>,
+        value: impl Into<Vec<u8>>,
+        revision: i64,
+    ) {
+        let req = RequestWithToken::new(
+            PutRequest {
+                key: key.into(),
+                value: value.into(),
+                ..Default::default()
+            }
+            .into(),
+        );
+        let (sync_res, ops) = store.after_sync(&req, revision).await.unwrap();
+        db.flush_ops(ops).unwrap();
+        store.mark_index_available(sync_res.revision());
     }
 }
