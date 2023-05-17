@@ -240,7 +240,7 @@ impl SnapFile {
 #[derive(Debug, Default)]
 struct Meta {
     /// Meta data
-    data: Cursor<Vec<u8>>,
+    data: Cursor<Bytes>,
     /// when `is_current` is true, read from meta, otherwise read from files
     is_current: bool,
 }
@@ -249,7 +249,7 @@ impl Meta {
     /// new `Meta`
     fn new() -> Self {
         Self {
-            data: Cursor::new(Vec::new()),
+            data: Cursor::new(Bytes::new()),
             is_current: true,
         }
     }
@@ -364,10 +364,10 @@ impl RocksSnapshot {
             EngineError::UnderlyingError(format!("cannot serialize snapshot meta: {e}"))
         })?;
         let len = meta_bytes.len().numeric_cast::<u64>();
-        let mut data = Vec::new();
-        data.extend(len.to_le_bytes());
-        data.extend(meta_bytes);
-        self.meta.data = Cursor::new(data);
+        let mut meta_data = BytesMut::with_capacity(meta_bytes.len().overflow_add(8));
+        meta_data.extend_from_slice(&len.to_le_bytes());
+        meta_data.extend_from_slice(&meta_bytes);
+        *self.meta.data.get_mut() = meta_data.freeze();
         Ok(())
     }
 
@@ -426,23 +426,21 @@ impl RocksSnapshot {
                     "cannot read meta length from buffer",
                 ));
             }
-            let meta_len = buf.get_u64_le();
+            let meta_len = buf.as_ref().get_u64_le();
 
-            if buf.len() < meta_len.numeric_cast() {
+            if buf.len() < meta_len.numeric_cast::<usize>().overflow_add(8) {
                 return Err(io::Error::new(
                     ErrorKind::UnexpectedEof,
                     "cannot read meta from buffer",
                 ));
             };
-            let meta_bytes = buf.split_to(meta_len.numeric_cast());
-            let meta = bincode::deserialize(&meta_bytes)
+            let meta_data = buf.split_to(meta_len.numeric_cast::<usize>().overflow_add(8));
+            #[allow(clippy::indexing_slicing)]
+            let meta = bincode::deserialize(&meta_data[8..])
                 .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
 
             self.apply_snap_meta(meta);
-            let mut data = Vec::new();
-            data.extend(meta_len.to_le_bytes());
-            data.extend(meta_bytes);
-            *self.meta.data.get_mut() = data;
+            *self.meta.data.get_mut() = meta_data;
             self.meta.is_current = false;
         }
 
