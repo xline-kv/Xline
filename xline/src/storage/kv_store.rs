@@ -376,6 +376,13 @@ where
         Ok((kvs, total))
     }
 
+    /// Get previous `KeyValue` of a `KeyValue`
+    pub(crate) fn get_prev_kv(&self, kv: &KeyValue) -> Option<KeyValue> {
+        self.get_range(&kv.key, &[], kv.mod_revision.overflow_sub(1))
+            .ok()?
+            .pop()
+    }
+
     /// Get `KeyValue` start from a revision and convert to `Event`
     pub(crate) fn get_event_from_revision(
         &self,

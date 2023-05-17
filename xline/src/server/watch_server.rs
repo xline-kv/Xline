@@ -123,6 +123,8 @@ where
     stop_notify: Arc<Event>,
     /// Header Generator
     header_gen: Arc<HeaderGenerator>,
+    /// Previous KV status
+    prev_kv: HashSet<WatchId>,
 }
 
 impl<W> WatchHandle<W>
@@ -146,6 +148,7 @@ where
             next_id_gen,
             stop_notify,
             header_gen,
+            prev_kv: HashSet::new(),
         }
     }
 
@@ -188,9 +191,15 @@ where
             Arc::clone(&self.stop_notify),
             self.event_tx.clone(),
         );
+        if req.prev_kv {
+            assert!(
+                self.prev_kv.insert(watch_id),
+                "WatchId {watch_id} already exists in prev_kv",
+            );
+        }
         assert!(
             self.active_watch_ids.insert(watch_id),
-            "WatchId {watch_id} already exists in watcher_map",
+            "WatchId {watch_id} already exists in active_watch_ids",
         );
 
         let response = WatchResponse {
@@ -246,15 +255,26 @@ where
     }
 
     /// Handle watch event
-    async fn handle_watch_event(&mut self, mut event: WatchEvent) {
-        let watch_id = event.watch_id();
-        let events = event.take_events();
+    async fn handle_watch_event(&mut self, mut watch_event: WatchEvent) {
+        let mut events = watch_event.take_events();
         if events.is_empty() {
             return;
         }
+        let watch_id = watch_event.watch_id();
+        if self.prev_kv.contains(&watch_id) {
+            for ev in &mut events {
+                if !ev.is_create() {
+                    let kv = ev
+                        .kv
+                        .as_ref()
+                        .unwrap_or_else(|| panic!("event.kv can't be None"));
+                    ev.prev_kv = self.kv_watcher.get_prev_kv(kv);
+                }
+            }
+        }
         let response = WatchResponse {
             header: Some(ResponseHeader {
-                revision: event.revision(),
+                revision: watch_event.revision(),
                 ..ResponseHeader::default()
             }),
             watch_id,
@@ -311,13 +331,20 @@ where
 
 #[cfg(test)]
 mod test {
-
-    use std::collections::HashMap;
+    use std::{collections::HashMap, time::Duration};
 
     use parking_lot::Mutex;
+    use tokio::time::sleep;
+    use utils::config::StorageConfig;
 
     use super::*;
-    use crate::storage::{db::DB, kvwatcher::MockKvWatcherOps};
+    use crate::{
+        rpc::{PutRequest, RequestWithToken},
+        storage::{
+            db::DB, index::Index, kvwatcher::MockKvWatcherOps, lease_store::LeaseCollection,
+            KvStore,
+        },
+    };
 
     #[tokio::test]
     async fn test_watch_client_closes_connection() -> Result<(), Box<dyn std::error::Error>> {
@@ -406,12 +433,95 @@ mod test {
         };
         req_tx1.send(Ok(w_req.clone())).await?;
         req_tx2.send(Ok(w_req.clone())).await?;
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        sleep(Duration::from_secs(1)).await;
         for count in collection.lock().values() {
             assert_eq!(*count, 1);
         }
         handle1.abort();
         handle2.abort();
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_watch_prev_kv() {
+        let index = Arc::new(Index::new());
+        let db = DB::open(&StorageConfig::Memory).unwrap();
+        let header_gen = Arc::new(HeaderGenerator::new(0, 0));
+        let lease_collection = Arc::new(LeaseCollection::new(0));
+        let next_id_gen = Arc::new(WatchIdGenerator::new(1));
+        let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
+        let kv_store = Arc::new(KvStore::new(
+            kv_update_tx,
+            lease_collection,
+            Arc::clone(&header_gen),
+            Arc::clone(&db),
+            index,
+        ));
+        let shutdown_trigger = Arc::new(event_listener::Event::new());
+        let kv_watcher = KvWatcher::new_arc(
+            Arc::clone(&kv_store),
+            kv_update_rx,
+            shutdown_trigger,
+            Duration::from_millis(10),
+        );
+        put(&kv_store, &db, "foo", "old_bar", 2).await;
+        put(&kv_store, &db, "foo", "bar", 3).await;
+
+        let (req_tx, req_rx) = mpsc::channel(CHANNEL_SIZE);
+        let req_stream = ReceiverStream::new(req_rx);
+        let create_watch_req = move |watch_id: WatchId, prev_kv: bool| WatchRequest {
+            request_union: Some(RequestUnion::CreateRequest(WatchCreateRequest {
+                watch_id,
+                key: "foo".into(),
+                start_revision: 3,
+                prev_kv,
+                ..Default::default()
+            })),
+        };
+        req_tx.send(Ok(create_watch_req(1, false))).await.unwrap();
+        req_tx.send(Ok(create_watch_req(2, true))).await.unwrap();
+        let (res_tx, mut res_rx) = mpsc::channel(CHANNEL_SIZE);
+        let _hd = tokio::spawn(WatchServer::<DB>::task(
+            Arc::clone(&next_id_gen),
+            Arc::clone(&kv_watcher),
+            res_tx,
+            req_stream,
+            Arc::clone(&header_gen),
+        ));
+
+        for _ in 0..4 {
+            let watch_res = res_rx.recv().await.unwrap().unwrap();
+            if watch_res.events.is_empty() {
+                // WatchCreateResponse
+                continue;
+            }
+            let watch_id = watch_res.watch_id;
+            let has_prev = watch_res.events.first().unwrap().prev_kv.is_some();
+            if watch_id == 1 {
+                assert!(!has_prev);
+            } else {
+                assert!(has_prev);
+            }
+        }
+    }
+
+    async fn put(
+        store: &KvStore<DB>,
+        db: &DB,
+        key: impl Into<Vec<u8>>,
+        value: impl Into<Vec<u8>>,
+        revision: i64,
+    ) {
+        let req = RequestWithToken::new(
+            PutRequest {
+                key: key.into(),
+                value: value.into(),
+                ..Default::default()
+            }
+            .into(),
+        );
+        let (sync_res, ops) = store.after_sync(&req, revision).await.unwrap();
+        db.flush_ops(ops).unwrap();
+        store.mark_index_available(sync_res.revision());
     }
 }

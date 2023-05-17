@@ -475,6 +475,16 @@ impl RequestWithToken {
     }
 }
 
+impl Event {
+    pub(crate) fn is_create(&self) -> bool {
+        let kv = self
+            .kv
+            .as_ref()
+            .unwrap_or_else(|| panic!("kv must be Some"));
+        matches!(self.r#type(), EventType::Put) && kv.create_revision == kv.mod_revision
+    }
+}
+
 impl TxnRequest {
     /// Checks whether a given `TxnRequest` is read-only or not.
     fn is_read_only(&self) -> bool {
