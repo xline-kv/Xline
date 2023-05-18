@@ -602,5 +602,6 @@ mod test {
         };
         let res = engine.apply_snapshot(fake_snapshot, &["not_exist"]).await;
         assert!(res.is_err());
+        fs::remove_dir_all(dir).unwrap();
     }
 }
