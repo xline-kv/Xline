@@ -65,7 +65,6 @@ async fn cmd_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
     let (cb, sp, ucp) = (curp.cmd_board(), curp.spec_pool(), curp.uncommitted_pool());
     let id = curp.id();
     while let Ok(mut task) = dispatch_rx.recv().await {
-        #[allow(clippy::pattern_type_mismatch)] // can't get away with it
         let succeeded = match task.take() {
             TaskType::SpecExe(cmd, pre_err) => {
                 if let Some(err_msg) = pre_err {

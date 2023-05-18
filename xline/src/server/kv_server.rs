@@ -148,7 +148,7 @@ where
                     // TODO: remove this error matching when the issue 270 is closed.
                     // There is no point to handle `SyncedError` in fast path
                     ProposeError::SyncedError(e) => tonic::Status::unknown(e),
-                    _ => panic!("propose err {err:?}"),
+                    _ => unreachable!("propose err {err:?}"),
                 }
             })?;
             Ok((cmd_res, None))
@@ -160,7 +160,7 @@ where
                     .map_err(|err| match err {
                         ProposeError::ExecutionError(e) => tonic::Status::invalid_argument(e),
                         ProposeError::SyncedError(e) => tonic::Status::unknown(e),
-                        _ => panic!("propose err {err:?}"),
+                        _ => unreachable!("propose err {err:?}"),
                     })?;
             Ok((cmd_res, Some(sync_res)))
         }

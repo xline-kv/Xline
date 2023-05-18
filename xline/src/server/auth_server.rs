@@ -97,7 +97,7 @@ where
                 if let ProposeError::ExecutionError(e) = err {
                     tonic::Status::invalid_argument(e)
                 } else {
-                    panic!("propose err {err:?}")
+                    unreachable!("propose err {err:?}")
                 }
             })?;
             Ok((cmd_res, None))
@@ -109,7 +109,7 @@ where
                     .map_err(|err| match err {
                         ProposeError::ExecutionError(e) => tonic::Status::invalid_argument(e),
                         ProposeError::SyncedError(e) => tonic::Status::unknown(e),
-                        _ => panic!("propose err {err:?}"),
+                        _ => unreachable!("propose err {err:?}"),
                     })?;
             Ok((cmd_res, Some(sync_res)))
         }

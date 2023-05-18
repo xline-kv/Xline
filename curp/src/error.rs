@@ -52,18 +52,12 @@ pub enum ProposeError {
     /// Command syncing error
     #[error("syncing error {0}")]
     SyncedError(String),
-    /// Rpc error
+    /// Rpc Error reported by madsim
     #[error("rpc error: {0}")]
     RpcError(String),
-    /// Rpc status
-    #[error("rpc status: {0}")]
-    RpcStatus(String),
     /// Encode error
     #[error("encode error: {0}")]
     EncodeError(String),
-    /// Protocol error
-    #[error("protocol error {0}")]
-    ProtocolError(String),
 }
 
 impl From<tonic::transport::Error> for ProposeError {

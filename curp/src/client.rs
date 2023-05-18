@@ -445,7 +445,6 @@ where
     /// # Errors
     ///   `ProposeError::SyncedError` error met while syncing logs to followers
     ///   `ProposeError::RpcError` rpc error met, usually it's network error
-    ///   `ProposeError::ProtocolError` execution result is not got from the two requests
     ///
     /// # Panics
     ///   If leader index is out of bound of all the connections, panic
