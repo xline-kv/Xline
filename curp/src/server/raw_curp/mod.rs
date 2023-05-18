@@ -252,7 +252,7 @@ impl<C: 'static + Command> RawCurp<C> {
 
         self.ctx.sync_events.iter().for_each(|(id, event)| {
             let next = self.lst.get_next_index(id);
-            if log_w.has_next_batch(next) {
+            if next > log_w.base_index && log_w.has_next_batch(next) {
                 event.notify(1);
             }
         });
