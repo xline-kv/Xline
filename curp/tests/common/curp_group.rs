@@ -17,7 +17,7 @@ use curp::{client::Client, server::Rpc, LogIndex, ProtocolServer, SnapshotAlloca
 use engine::{Engine, EngineType, Snapshot};
 use futures::future::join_all;
 use itertools::Itertools;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use tokio::{net::TcpListener, runtime::Runtime, sync::mpsc};
 use tokio_stream::wrappers::TcpListenerStream;
 use tracing::debug;
@@ -41,6 +41,7 @@ pub mod proto {
 pub use proto::{protocol_client::ProtocolClient, ProposeRequest, ProposeResponse};
 
 use self::proto::{FetchLeaderRequest, FetchLeaderResponse};
+use super::LeaderInfo;
 
 struct MemorySnapshotAllocator;
 
@@ -107,7 +108,7 @@ pub struct CrashedCurpNode {
 }
 
 pub struct CurpGroup {
-    pub nodes: HashMap<ServerId, CurpNode>,
+    pub nodes: HashMap<ServerId, (CurpNode, Arc<RwLock<LeaderInfo>>)>,
     pub crashed_nodes: HashMap<ServerId, CrashedCurpNode>,
     pub all: HashMap<ServerId, String>,
 }
@@ -164,6 +165,8 @@ impl CurpGroup {
                 let id_c = id.clone();
                 let switch_c = Arc::clone(&switch);
                 let storage_path_c = storage_path.clone();
+                let leader_change_cb = TestLeaderChange::default();
+                let leader_change_arc = leader_change_cb.get_inner();
                 thread::spawn(move || {
                     handle.spawn(Rpc::run_from_listener(
                         id_c,
@@ -172,7 +175,7 @@ impl CurpGroup {
                         listener,
                         ce,
                         MemorySnapshotAllocator,
-                        TestLeaderChange::default(),
+                        leader_change_cb,
                         Arc::new(
                             CurpConfigBuilder::default()
                                 .data_dir(PathBuf::from(storage_path_c))
@@ -187,16 +190,19 @@ impl CurpGroup {
 
                 (
                     id.clone(),
-                    CurpNode {
-                        id,
-                        addr,
-                        exe_rx,
-                        as_rx,
-                        store,
-                        rt,
-                        switch,
-                        storage_path,
-                    },
+                    (
+                        CurpNode {
+                            id,
+                            addr,
+                            exe_rx,
+                            as_rx,
+                            store,
+                            rt,
+                            switch,
+                            storage_path,
+                        },
+                        leader_change_arc,
+                    ),
                 )
             })
             .collect();
@@ -211,14 +217,14 @@ impl CurpGroup {
     }
 
     pub fn get_node(&self, id: &ServerId) -> &CurpNode {
-        &self.nodes[id]
+        &self.nodes[id].0
     }
 
     pub async fn new_client(&self, timeout: ClientTimeout) -> Client<TestCommand> {
         let addrs = self
             .nodes
             .iter()
-            .map(|(id, node)| (id.clone(), node.addr.clone()))
+            .map(|(id, node)| (id.clone(), node.0.addr.clone()))
             .collect();
         Client::<TestCommand>::new(addrs, timeout).await
     }
@@ -226,20 +232,20 @@ impl CurpGroup {
     pub fn exe_rxs(
         &mut self,
     ) -> impl Iterator<Item = &mut mpsc::UnboundedReceiver<(TestCommand, TestCommandResult)>> {
-        self.nodes.values_mut().map(|node| &mut node.exe_rx)
+        self.nodes.values_mut().map(|node| &mut node.0.exe_rx)
     }
 
     pub fn as_rxs(
         &mut self,
     ) -> impl Iterator<Item = &mut mpsc::UnboundedReceiver<(TestCommand, LogIndex)>> {
-        self.nodes.values_mut().map(|node| &mut node.as_rx)
+        self.nodes.values_mut().map(|node| &mut node.0.as_rx)
     }
 
     pub fn stop(mut self) {
         let paths = self
             .nodes
             .values()
-            .map(|node| node.storage_path.clone())
+            .map(|node| node.0.storage_path.clone())
             .chain(
                 self.crashed_nodes
                     .values()
@@ -257,7 +263,7 @@ impl CurpGroup {
     }
 
     pub fn crash(&mut self, id: &ServerId) {
-        let node = self.nodes.remove(id).unwrap();
+        let (node, _state) = self.nodes.remove(id).unwrap();
         let crashed = CrashedCurpNode {
             id: node.id.clone(),
             addr: node.addr.clone(),
@@ -304,6 +310,8 @@ impl CurpGroup {
         let id_c = id.clone();
         let switch_c = Arc::clone(&switch);
         let storage_path = crashed.storage_path.clone();
+        let leader_change_cb = TestLeaderChange::default();
+        let leader_change_arc = leader_change_cb.get_inner();
         thread::spawn(move || {
             handle.spawn(Rpc::run_from_listener(
                 id_c,
@@ -312,7 +320,7 @@ impl CurpGroup {
                 listener,
                 ce,
                 MemorySnapshotAllocator,
-                TestLeaderChange::default(),
+                leader_change_cb,
                 Arc::new(
                     CurpConfigBuilder::default()
                         .data_dir(PathBuf::from(storage_path))
@@ -334,7 +342,7 @@ impl CurpGroup {
             switch,
             storage_path: crashed.storage_path,
         };
-        self.nodes.insert(id.clone(), new_node);
+        self.nodes.insert(id.clone(), (new_node, leader_change_arc));
     }
 
     pub async fn try_get_leader(&self) -> Option<(ServerId, u64)> {
@@ -402,12 +410,12 @@ impl CurpGroup {
     }
 
     pub fn disable_node(&self, id: &ServerId) {
-        let node = &self.nodes[id];
+        let node = &self.nodes[id].0;
         node.switch.store(false, Ordering::Relaxed);
     }
 
     pub fn enable_node(&self, id: &ServerId) {
-        let node = &self.nodes[id];
+        let node = &self.nodes[id].0;
         node.switch.store(true, Ordering::Relaxed);
     }
 
