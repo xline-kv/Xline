@@ -1,11 +1,20 @@
 #![allow(dead_code, unused)]
 
-use std::{env, io, time::Duration};
+use std::{
+    env, io,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use curp::leader_change::LeaderChange;
 use madsim::rand::{distributions::Alphanumeric, thread_rng, Rng};
+use parking_lot::RwLock;
 use thiserror::Error;
 use tracing_subscriber::fmt::time::{uptime, OffsetTime, Uptime};
+use utils::parking_lot_lock::RwLockMap;
 
 pub mod curp_group;
 pub mod test_cmd;
@@ -14,14 +23,30 @@ pub const TEST_TABLE: &str = "test";
 pub const REVISION_TABLE: &str = "revision";
 
 #[derive(Default, Debug)]
-pub struct TestLeaderChange {}
+pub struct TestLeaderChange {
+    inner: Arc<RwLock<LeaderInfo>>,
+}
+
+#[derive(Default, Debug)]
+pub struct LeaderInfo {
+    pub leader_id: Option<String>,
+    pub is_leader: bool,
+}
+
+impl TestLeaderChange {
+    pub(super) fn get_inner(&self) -> Arc<RwLock<LeaderInfo>> {
+        Arc::clone(&self.inner)
+    }
+}
 
 impl LeaderChange for TestLeaderChange {
-    fn on_follower(&self) {}
+    fn on_follower(&self) {
+        self.inner.map_write(|mut inner| inner.is_leader = false);
+    }
 
-    fn on_leader(&self) {}
-
-    fn update_leader(&self, id: Option<String>) {}
+    fn on_leader(&self) {
+        self.inner.map_write(|mut inner| inner.is_leader = true);
+    }
 }
 
 pub fn init_logger() {

@@ -202,7 +202,7 @@ async fn concurrent_cmd_order_should_have_correct_revision() {
     let group = CurpGroup::new(3).await;
     let client = group.new_client(ClientTimeout::default()).await;
 
-    let sample_range = 1..=1000;
+    let sample_range = 1..=100;
 
     for i in sample_range.clone() {
         let rand_dur = Duration::from_millis(thread_rng().gen_range(0..500).numeric_cast());

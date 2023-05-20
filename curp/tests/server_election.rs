@@ -4,7 +4,6 @@ use madsim::time::sleep;
 use utils::config::ClientTimeout;
 
 use crate::common::{curp_group::CurpGroup, init_logger, test_cmd::TestCommand};
-
 mod common;
 
 async fn wait_for_election() {
