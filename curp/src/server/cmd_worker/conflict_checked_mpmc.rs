@@ -404,7 +404,7 @@ impl<C: Command> Filter<C> {
                     let v = self.get_vertex_mut(vid);
                     match v.inner {
                         VertexInner::Cmd { ref mut as_st, .. } => {
-                            debug_assert!(matches!(*as_st, AsState::NotSynced));
+                            debug_assert!(matches!(*as_st, AsState::NotSynced), "the AsState of a speculatively executed cmd must be AsState::NotSynced while it's {:?}", *as_st);
                             *as_st = AsState::AfterSyncReady(index);
                         }
                         _ => unreachable!("impossible vertex type"),

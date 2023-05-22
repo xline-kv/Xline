@@ -188,7 +188,13 @@ impl<C: 'static + Command> Log<C> {
 
     /// Pack the cmd into a log entry and push it to the end of the log, return its index
     pub(super) fn push_cmd(&mut self, term: u64, cmd: Arc<C>) -> Result<LogIndex, bincode::Error> {
-        assert_eq!(self.batch_index.len(), self.entries.len() + 1);
+        assert_eq!(
+            self.batch_index.len(),
+            self.entries.len() + 1,
+            "The batch_index.len {} is not equal to the log entries.len {} + 1",
+            self.batch_index.len(),
+            self.entries.len()
+        );
 
         let index = self.last_log_index() + 1;
         let entry = LogEntry::new(index, term, cmd);
