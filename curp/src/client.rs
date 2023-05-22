@@ -76,7 +76,7 @@ impl State {
 
     /// Update to the newest term and reset local cache
     fn update_to_term(&mut self, term: u64) {
-        debug_assert!(self.term <= term);
+        debug_assert!(self.term <= term, "the client's term {} should not be greater than the given term {} when update the term", self.term, term);
         self.term = term;
         self.leader = None;
     }

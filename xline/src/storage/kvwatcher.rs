@@ -353,13 +353,12 @@ mod test {
     use tokio::time::timeout;
     use utils::config::StorageConfig;
 
+    use super::*;
     use crate::{
         header_gen::HeaderGenerator,
         rpc::{PutRequest, RequestWithToken},
         storage::{db::DB, index::Index, lease_store::LeaseCollection, KvStore},
     };
-
-    use super::*;
 
     fn init_empty_store() -> (Arc<KvStore<DB>>, Arc<DB>, Arc<KvWatcher<DB>>) {
         let db = DB::open(&StorageConfig::Memory).unwrap();
