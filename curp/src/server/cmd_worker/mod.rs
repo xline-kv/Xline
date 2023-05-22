@@ -105,7 +105,10 @@ async fn cmd_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
             #[allow(clippy::unwrap_used)]
             TaskType::Snapshot(meta, tx) => match ce.snapshot().await {
                 Ok(snapshot) => {
-                    debug_assert_eq!(ce.last_applied().unwrap(), meta.last_included_index); // sanity check
+                    debug_assert!(
+                        ce.last_applied().unwrap() <= meta.last_included_index,
+                        " the `last_as` should always be less than or equal to the `last_exe`"
+                    ); // sanity check
                     let snapshot = Snapshot::new(meta, snapshot);
                     debug!("{} takes a snapshot, {snapshot:?}", curp.id());
                     if tx.send(snapshot).is_err() {
