@@ -71,10 +71,27 @@ impl<C: 'static + Command> StorageApi for RocksDBStorage<C> {
     }
 }
 
+#[cfg(not(madsim))]
 impl<C> RocksDBStorage<C> {
     /// Create a new `RocksDBStorage`
     pub(in crate::server) fn new(dir: impl AsRef<Path>) -> Result<Self, StorageError> {
         let db = Engine::new(engine::EngineType::Rocks(dir.as_ref().into()), &[CF])?;
+        Ok(Self {
+            db,
+            phantom: PhantomData,
+        })
+    }
+}
+
+#[cfg(madsim)]
+impl<C> RocksDBStorage<C> {
+    /// Create a new `RocksDBStorage`
+    pub(in crate::server) fn new(dir: impl AsRef<Path>) -> Result<Self, StorageError> {
+        let dir = dir.as_ref().into();
+        let db = std::thread::spawn(move || Engine::new(engine::EngineType::Rocks(dir), &[CF]))
+            .join()
+            .unwrap()?;
+
         Ok(Self {
             db,
             phantom: PhantomData,
