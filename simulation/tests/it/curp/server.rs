@@ -6,12 +6,11 @@ use clippy_utilities::NumericCast;
 use madsim::rand::{thread_rng, Rng};
 use utils::config::ClientTimeout;
 
-use crate::common::{
+use crate::curp::{
     curp_group::{proto::propose_response::ExeResult, CurpGroup, ProposeRequest, ProposeResponse},
     init_logger, sleep_millis, sleep_secs,
     test_cmd::TestCommand,
 };
-mod common;
 
 #[tokio::test]
 async fn basic_propose() {

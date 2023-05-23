@@ -3,9 +3,7 @@ use std::time::Duration;
 use curp::{client::ReadState, cmd::Command};
 use utils::config::ClientTimeout;
 
-use crate::common::{curp_group::CurpGroup, init_logger, sleep_millis, test_cmd::TestCommand};
-
-mod common;
+use crate::curp::{curp_group::CurpGroup, init_logger, sleep_millis, test_cmd::TestCommand};
 
 #[tokio::test]
 async fn read_state() {

@@ -14,8 +14,6 @@ use crate::common::{
     TEST_TABLE,
 };
 
-mod common;
-
 #[tokio::test]
 async fn leader_crash_and_recovery() {
     init_logger();
