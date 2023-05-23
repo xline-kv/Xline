@@ -148,6 +148,11 @@
 
 pub use log_entry::LogIndex;
 pub use rpc::{connect::TxFilter, ProtocolServer};
+/// Expose for madsim simulation tests.
+pub use rpc::{
+    propose_response, protocol_client, FetchLeaderRequest, FetchLeaderResponse, ProposeRequest,
+    ProposeResponse,
+};
 pub use snapshot::SnapshotAllocator;
 
 /// Server Id

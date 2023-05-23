@@ -1,10 +1,16 @@
 use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
 use futures::TryStreamExt;
-use tokio::{net::TcpListener, sync::broadcast};
+#[cfg(not(madsim))]
+use tokio::net::TcpListener;
+use tokio::sync::broadcast;
+#[cfg(not(madsim))]
 use tokio_stream::wrappers::TcpListenerStream;
+#[cfg(not(madsim))]
 use tower::filter::FilterLayer;
-use tracing::{info, instrument};
+#[cfg(not(madsim))]
+use tracing::info;
+use tracing::instrument;
 use utils::{config::CurpConfig, tracing::Extract};
 
 use self::curp_node::{CurpError, CurpNode};
@@ -42,6 +48,7 @@ mod curp_node;
 mod storage;
 
 /// Default server serving port
+#[cfg(not(madsim))]
 static DEFAULT_SERVER_PORT: u16 = 12345;
 
 /// The Rpc Server to handle rpc requests
@@ -173,6 +180,7 @@ impl<C: Command + 'static> Rpc<C> {
     /// # Errors
     ///   `ServerError::ParsingError` if parsing failed for the local server address
     ///   `ServerError::RpcError` if any rpc related error met
+    #[cfg(not(madsim))]
     #[allow(clippy::too_many_arguments)]
     #[inline]
     pub async fn run<CE, U, UE>(
@@ -237,6 +245,7 @@ impl<C: Command + 'static> Rpc<C> {
     /// # Errors
     ///   `ServerError::ParsingError` if parsing failed for the local server address
     ///   `ServerError::RpcError` if any rpc related error met
+    #[cfg(not(madsim))]
     #[allow(clippy::too_many_arguments)]
     #[inline]
     pub async fn run_from_listener<CE, U, UE>(
@@ -283,6 +292,44 @@ impl<C: Command + 'static> Rpc<C> {
                 .serve_with_incoming(TcpListenerStream::new(listener))
                 .await?;
         }
+        Ok(())
+    }
+
+    /// Run a new rpc server on a specific addr, designed to be used in the tests
+    ///
+    /// # Errors
+    ///   `ServerError::ParsingError` if parsing failed for the local server address
+    ///   `ServerError::RpcError` if any rpc related error met
+    #[cfg(madsim)]
+    #[allow(clippy::too_many_arguments)]
+    #[inline]
+    pub async fn run_from_addr<CE>(
+        id: ServerId,
+        is_leader: bool,
+        others: HashMap<ServerId, String>,
+        addr: std::net::SocketAddr,
+        executor: CE,
+        snapshot_allocator: impl SnapshotAllocator + 'static,
+        curp_cfg: Arc<CurpConfig>,
+    ) -> Result<(), ServerError>
+    where
+        CE: 'static + CommandExecutor<C>,
+    {
+        let server = Self::new(
+            id,
+            is_leader,
+            others,
+            executor,
+            snapshot_allocator,
+            curp_cfg,
+            None,
+        )
+        .await;
+
+        tonic::transport::Server::builder()
+            .add_service(ProtocolServer::new(server))
+            .serve(addr)
+            .await?;
         Ok(())
     }
 

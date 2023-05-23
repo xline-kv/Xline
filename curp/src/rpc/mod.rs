@@ -8,10 +8,13 @@ pub(crate) use self::proto::{
     propose_response::ExeResult,
     protocol_server::Protocol,
     wait_synced_response::{Success, SyncResult as SyncResultRaw},
-    AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest, FetchLeaderResponse,
-    FetchReadStateRequest, FetchReadStateResponse, IdSet, InstallSnapshotRequest,
-    InstallSnapshotResponse, ProposeRequest, ProposeResponse, VoteRequest, VoteResponse,
+    AppendEntriesRequest, AppendEntriesResponse, FetchReadStateRequest, FetchReadStateResponse,
+    IdSet, InstallSnapshotRequest, InstallSnapshotResponse, VoteRequest, VoteResponse,
     WaitSyncedRequest, WaitSyncedResponse,
+};
+pub use self::proto::{
+    propose_response, protocol_client, FetchLeaderRequest, FetchLeaderResponse, ProposeRequest,
+    ProposeResponse,
 };
 use crate::{
     cmd::{Command, ProposeId},
@@ -34,7 +37,9 @@ pub(crate) use connect::connect;
     unused_qualifications,
     unreachable_pub,
     variant_size_differences,
-    missing_copy_implementations
+    missing_copy_implementations,
+    missing_docs,
+    trivial_casts
 )]
 mod proto {
     tonic::include_proto!("messagepb");
