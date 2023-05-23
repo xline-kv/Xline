@@ -20,15 +20,25 @@ event-listener = "2.5.2"
 futures = "0.3.21"
 itertools = "0.10.3"
 utils = { path = "../utils", version = "0.1.0", features = ["parking_lot"] }
-madsim = { version = "0.2.0-alpha.3", features = ["rpc", "logger", "macros"] }
+madsim = { git = "https://github.com/bsbds/madsim.git", package = "madsim" ,features = ["rpc", "logger", "macros"] }
 opentelemetry = "0.18.0"
 parking_lot = "0.12.1"
 prost = "0.10.3"
 serde = { version = "1.0.130", features = ["derive", "rc"] }
 thiserror = "1.0.31"
-tokio = { version = "1.19.0", features = ["rt-multi-thread"] }
-tokio-stream = { version = "0.1.9", features = ["net"] }
-tonic = "0.7.2"
+tokio = { git = "https://github.com/bsbds/madsim.git", package = "madsim-tokio", features = [
+    "rt",
+    "rt-multi-thread",
+    "fs",
+    "sync",
+    "macros",
+    "time",
+    "signal",
+] }
+tokio-stream = { git = "https://github.com/madsim-rs/tokio.git", rev = "ab251ad", features = [
+  "net",
+] }
+tonic = { git = "https://github.com/bsbds/madsim.git", package = "madsim-tonic" }
 tracing = { version = "0.1.34", features = ["std", "log", "attributes"] }
 tracing-opentelemetry = "0.18.0"
 flume = "0.10.14"
@@ -52,5 +62,5 @@ mockall = "0.11.3"
 once_cell = "1.17.0"
 
 [build-dependencies]
-tonic-build = "0.7.2"
+tonic-build = { git = "https://github.com/bsbds/madsim.git", package = "madsim-tonic-build" }
 prost-build = "0.10.3"
