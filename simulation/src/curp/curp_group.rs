@@ -13,13 +13,22 @@ use std::{
 };
 
 use async_trait::async_trait;
-use curp::{client::Client, server::Rpc, LogIndex, ProtocolServer, SnapshotAllocator, TxFilter};
+use curp::{
+    client::{Client, ReadState},
+    cmd::Command,
+    error::ProposeError,
+    server::Rpc,
+    FetchLeaderRequest, FetchLeaderResponse, LogIndex, ProtocolServer, SnapshotAllocator, TxFilter,
+};
 use engine::{Engine, EngineType, Snapshot};
 use futures::future::join_all;
 use itertools::Itertools;
+use madsim::{
+    runtime::{Handle, NodeHandle},
+    task::ToNodeId,
+};
 use parking_lot::Mutex;
-use tokio::{net::TcpListener, runtime::Runtime, sync::mpsc};
-use tokio_stream::wrappers::TcpListenerStream;
+use tokio::sync::{broadcast, mpsc};
 use tracing::debug;
 use utils::config::{
     default_candidate_timeout_ticks, default_cmd_workers, default_follower_timeout_ticks,
@@ -34,12 +43,9 @@ use super::{
 
 pub type ServerId = String;
 
-pub mod proto {
-    tonic::include_proto!("messagepb");
-}
-pub use proto::{protocol_client::ProtocolClient, ProposeRequest, ProposeResponse};
-
-use self::proto::{FetchLeaderRequest, FetchLeaderResponse};
+pub use curp::{
+    propose_response, protocol_client::ProtocolClient, ProposeRequest, ProposeResponse,
+};
 
 struct MemorySnapshotAllocator;
 
@@ -65,146 +71,111 @@ impl Error for NotReachable {
     }
 }
 
-#[derive(Debug)]
-struct TestTxFilter {
-    reachable: Arc<AtomicBool>,
-}
-
-impl TestTxFilter {
-    fn new(reachable: Arc<AtomicBool>) -> Self {
-        Self { reachable }
-    }
-}
-
-impl TxFilter for TestTxFilter {
-    fn filter(&self) -> Option<()> {
-        self.reachable.load(Ordering::Acquire).then_some(())
-    }
-
-    fn boxed_clone(&self) -> Box<dyn TxFilter> {
-        Box::new(Self {
-            reachable: Arc::clone(&self.reachable),
-        })
-    }
-}
-
 pub struct CurpNode {
     pub id: ServerId,
     pub addr: String,
+    pub handle: NodeHandle,
     pub exe_rx: mpsc::UnboundedReceiver<(TestCommand, TestCommandResult)>,
     pub as_rx: mpsc::UnboundedReceiver<(TestCommand, LogIndex)>,
-    pub store: Arc<Engine>,
-    pub rt: Runtime,
-    pub switch: Arc<AtomicBool>,
-    pub storage_path: String,
-}
-
-pub struct CrashedCurpNode {
-    pub id: ServerId,
-    pub addr: String,
+    pub store: Arc<Mutex<Option<Arc<Engine>>>>,
     pub storage_path: String,
 }
 
 pub struct CurpGroup {
     pub nodes: HashMap<ServerId, CurpNode>,
-    pub crashed_nodes: HashMap<ServerId, CrashedCurpNode>,
+    pub leader: Arc<Mutex<ServerId>>,
     pub all: HashMap<ServerId, String>,
+    pub client_node: NodeHandle,
 }
 
 impl CurpGroup {
     pub async fn new(n_nodes: usize) -> Self {
         assert!(n_nodes >= 3);
-        let listeners = join_all(
-            iter::repeat_with(|| async { TcpListener::bind("0.0.0.0:0").await.unwrap() })
-                .take(n_nodes),
-        )
-        .await;
-        let all = listeners
-            .iter()
-            .enumerate()
-            .map(|(i, listener)| (format!("S{i}"), listener.local_addr().unwrap().to_string()))
-            .collect_vec();
+        let handle = madsim::runtime::Handle::current();
+        let net = madsim::net::NetSim::current();
 
-        let nodes = listeners
+        let all: HashMap<ServerId, String> = (0..n_nodes)
+            .map(|x| (format!("S{x}"), format!("192.168.1.{}:12345", x + 1)))
+            .collect();
+
+        let leader = Arc::new(Mutex::new("S0".to_string()));
+
+        let nodes = (0..n_nodes)
             .into_iter()
-            .enumerate()
-            .map(|(i, listener)| {
+            .map(|i| {
                 let id = format!("S{i}");
-                let addr = listener.local_addr().unwrap().to_string();
+                let addr = format!("192.168.1.{}:12345", i + 1);
                 let storage_path = format!("/tmp/curp-{}", random_id());
 
                 let (exe_tx, exe_rx) = mpsc::unbounded_channel();
                 let (as_tx, as_rx) = mpsc::unbounded_channel();
-                let ce = TestCE::new(id.clone(), exe_tx, as_tx);
-                let store = Arc::clone(&ce.store);
+                let store = Arc::new(Mutex::new(None));
+
+                let leader = Arc::clone(&leader);
 
                 let mut others = all.clone();
-                others.remove(i);
+                others.remove(&id);
 
-                let rt = tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(2)
-                    .thread_name(format!("rt-{id}"))
-                    .enable_all()
-                    .build()
-                    .unwrap();
-                let handle = rt.handle().clone();
-
-                // create server switch
-                let switch = Arc::new(AtomicBool::new(true));
-                let switch_c = Arc::clone(&switch);
-                let reachable_layer = tower::filter::FilterLayer::new(move |req| {
-                    if switch_c.load(Ordering::Acquire) {
-                        Ok(req)
-                    } else {
-                        Err(NotReachable)
-                    }
-                });
-
+                let addr_c = addr.clone();
                 let id_c = id.clone();
-                let switch_c = Arc::clone(&switch);
                 let storage_path_c = storage_path.clone();
-                thread::spawn(move || {
-                    handle.spawn(Rpc::run_from_listener(
-                        id_c,
-                        i == 0,
-                        others.into_iter().collect(),
-                        listener,
-                        ce,
-                        MemorySnapshotAllocator,
-                        Arc::new(
-                            CurpConfigBuilder::default()
-                                .data_dir(PathBuf::from(storage_path_c))
-                                .log_entries_cap(10)
-                                .build()
-                                .unwrap(),
-                        ),
-                        Some(Box::new(TestTxFilter::new(Arc::clone(&switch_c)))),
-                        Some(reachable_layer),
-                    ));
-                });
+                let exe_tx_c = exe_tx.clone();
+                let as_tx_c = as_tx.clone();
+                let store_c = Arc::clone(&store);
 
+                let node_handle = handle
+                    .create_node()
+                    .name(format!("S{i}"))
+                    .ip(format!("192.168.1.{}", i + 1).parse().unwrap())
+                    .init(move || {
+                        let ce = TestCE::new(id_c.clone(), exe_tx_c.clone(), as_tx_c.clone());
+                        store_c.lock().replace(Arc::clone(&ce.store));
+                        let is_leader = *leader.lock() == id_c;
+
+                        Rpc::run_from_addr(
+                            id_c.clone(),
+                            is_leader,
+                            others.clone(),
+                            "0.0.0.0:12345".parse().unwrap(),
+                            ce,
+                            MemorySnapshotAllocator,
+                            Arc::new(
+                                CurpConfigBuilder::default()
+                                    .data_dir(PathBuf::from(storage_path_c.clone()))
+                                    .log_entries_cap(10)
+                                    .build()
+                                    .unwrap(),
+                            ),
+                        )
+                    })
+                    .build();
                 (
                     id.clone(),
                     CurpNode {
                         id,
                         addr,
+                        handle: node_handle,
                         exe_rx,
                         as_rx,
                         store,
-                        rt,
-                        switch,
                         storage_path,
                     },
                 )
             })
             .collect();
 
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        let client_node = handle
+            .create_node()
+            .name(format!("client"))
+            .ip(format!("192.168.2.1").parse().unwrap())
+            .build();
+        madsim::time::sleep(Duration::from_secs(20)).await;
         debug!("successfully start group");
         Self {
             nodes,
-            all: all.into_iter().collect(),
-            crashed_nodes: HashMap::new(),
+            leader,
+            all,
+            client_node,
         }
     }
 
@@ -212,13 +183,16 @@ impl CurpGroup {
         &self.nodes[id]
     }
 
-    pub async fn new_client(&self, timeout: ClientTimeout) -> Client<TestCommand> {
+    pub async fn new_client(&self, timeout: ClientTimeout) -> SimClient<TestCommand> {
         let addrs = self
             .nodes
             .iter()
             .map(|(id, node)| (id.clone(), node.addr.clone()))
             .collect();
-        Client::<TestCommand>::new(addrs, timeout).await
+        SimClient {
+            inner: Arc::new(Client::<TestCommand>::new(addrs, timeout).await),
+            handle: self.client_node.clone(),
+        }
     }
 
     pub fn exe_rxs(
@@ -233,132 +207,90 @@ impl CurpGroup {
         self.nodes.values_mut().map(|node| &mut node.as_rx)
     }
 
-    pub fn stop(mut self) {
+    pub async fn stop(mut self) {
+        let handle = madsim::runtime::Handle::current();
+
+        for node in self.nodes.values() {
+            handle.send_ctrl_c(node.handle.id());
+        }
+        handle.send_ctrl_c(self.client_node.id());
+        madsim::time::sleep(Duration::from_secs(10)).await;
+
+        // check all nodes are exited
+        for (name, node) in &self.nodes {
+            if !handle.is_exit(node.handle.id()) {
+                panic!("failed to graceful shutdown {name}");
+            }
+        }
+
         let paths = self
             .nodes
             .values()
             .map(|node| node.storage_path.clone())
-            .chain(
-                self.crashed_nodes
-                    .values()
-                    .map(|node| node.storage_path.clone()),
-            )
             .collect_vec();
-        thread::spawn(move || {
-            self.nodes.clear();
-        })
-        .join()
-        .unwrap();
         for path in paths {
             std::fs::remove_dir_all(path).unwrap();
         }
+
+        debug!("all nodes shutdowned");
     }
 
-    pub fn crash(&mut self, id: &ServerId) {
-        let node = self.nodes.remove(id).unwrap();
-        let crashed = CrashedCurpNode {
-            id: node.id.clone(),
-            addr: node.addr.clone(),
-            storage_path: node.storage_path.clone(),
-        };
-        self.crashed_nodes.insert(id.clone(), crashed);
-        thread::spawn(move || drop(node)).join().unwrap();
+    pub async fn crash(&mut self, id: &ServerId) {
+        let handle = madsim::runtime::Handle::current();
+        handle.kill(id);
+        madsim::time::sleep(Duration::from_secs(2)).await;
+        if !handle.is_exit(id) {
+            panic!("failed to crash node: {id}");
+        }
     }
 
     pub async fn restart(&mut self, id: &ServerId, is_leader: bool) {
-        let addr = self.all.get(id).unwrap().clone();
-        let listener = TcpListener::bind(&addr)
-            .await
-            .expect("can't restart because the original addr is taken");
-        let crashed = self.crashed_nodes.remove(id).expect("no such crashed node");
-
-        let (exe_tx, exe_rx) = mpsc::unbounded_channel();
-        let (as_tx, as_rx) = mpsc::unbounded_channel();
-        let ce = TestCE::new(id.clone(), exe_tx, as_tx);
-        let store = Arc::clone(&ce.store);
-
-        let mut others = self.all.clone();
-        others.remove(id);
-
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .thread_name(format!("rt-{id}"))
-            .enable_all()
-            .build()
-            .unwrap();
-        let handle = rt.handle().clone();
-
-        // create server switch
-        let switch = Arc::new(AtomicBool::new(true));
-        let switch_c = Arc::clone(&switch);
-        let reachable_layer = tower::filter::FilterLayer::new(move |req| {
-            if switch_c.load(Ordering::Relaxed) {
-                Ok(req)
-            } else {
-                Err(NotReachable)
-            }
-        });
-
-        let id_c = id.clone();
-        let switch_c = Arc::clone(&switch);
-        let storage_path = crashed.storage_path.clone();
-        thread::spawn(move || {
-            handle.spawn(Rpc::run_from_listener(
-                id_c,
-                is_leader,
-                others.into_iter().collect(),
-                listener,
-                ce,
-                MemorySnapshotAllocator,
-                Arc::new(
-                    CurpConfigBuilder::default()
-                        .data_dir(PathBuf::from(storage_path))
-                        .build()
-                        .unwrap(),
-                ),
-                Some(Box::new(TestTxFilter::new(Arc::clone(&switch_c)))),
-                Some(reachable_layer),
-            ));
-        });
-
-        let new_node = CurpNode {
-            id: id.clone(),
-            addr,
-            exe_rx,
-            as_rx,
-            store,
-            rt,
-            switch,
-            storage_path: crashed.storage_path,
-        };
-        self.nodes.insert(id.clone(), new_node);
+        let handle = madsim::runtime::Handle::current();
+        if is_leader {
+            *self.leader.lock() = id.clone();
+        } else {
+            *self.leader.lock() = "".to_string();
+        }
+        handle.restart(id);
     }
 
     pub async fn try_get_leader(&self) -> Option<(ServerId, u64)> {
+        debug!("trying to get leader");
         let mut leader = None;
         let mut max_term = 0;
-        for addr in self.all.values() {
-            let addr = format!("http://{}", addr);
-            let mut client = if let Ok(client) = ProtocolClient::connect(addr.clone()).await {
-                client
-            } else {
-                continue;
-            };
 
-            let FetchLeaderResponse { leader_id, term } =
-                if let Ok(resp) = client.fetch_leader(FetchLeaderRequest {}).await {
-                    resp.into_inner()
-                } else {
-                    continue;
-                };
-            if term > max_term {
-                max_term = term;
-                leader = leader_id;
-            } else if term == max_term && leader.is_none() {
-                leader = leader_id;
-            }
-        }
-        leader.map(|l| (l, max_term))
+        let all = self.all.clone();
+        let leader = self
+            .client_node
+            .spawn(async move {
+                for addr in all.values() {
+                    let addr = format!("http://{}", addr);
+                    tracing::warn!("connecing to : {}", addr);
+                    let mut client = if let Ok(client) = ProtocolClient::connect(addr.clone()).await
+                    {
+                        client
+                    } else {
+                        continue;
+                    };
+
+                    let FetchLeaderResponse { leader_id, term } =
+                        if let Ok(resp) = client.fetch_leader(FetchLeaderRequest {}).await {
+                            resp.into_inner()
+                        } else {
+                            continue;
+                        };
+                    if term > max_term {
+                        max_term = term;
+                        leader = leader_id;
+                    } else if term == max_term && leader.is_none() {
+                        leader = leader_id;
+                    }
+                }
+                leader.map(|l| (l, max_term))
+            })
+            .await
+            .unwrap();
+        leader
     }
 
     pub async fn get_leader(&self) -> (ServerId, u64) {
@@ -366,55 +298,139 @@ impl CurpGroup {
             if let Some(leader) = self.try_get_leader().await {
                 return leader;
             }
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            debug!("failed to get leader");
         }
         panic!("can't get leader");
     }
 
     // get latest term and ensure every working node has the same term
     pub async fn get_term_checked(&self) -> u64 {
-        let mut max_term = None;
-        for addr in self.all.values() {
-            let addr = format!("http://{}", addr);
-            let mut client = if let Ok(client) = ProtocolClient::connect(addr.clone()).await {
-                client
-            } else {
-                continue;
-            };
+        let all = self.all.clone();
+        self.client_node
+            .spawn(async move {
+                let mut max_term = None;
+                for addr in all.values() {
+                    let addr = format!("http://{}", addr);
+                    let mut client = if let Ok(client) = ProtocolClient::connect(addr.clone()).await
+                    {
+                        client
+                    } else {
+                        continue;
+                    };
 
-            let FetchLeaderResponse { leader_id, term } =
-                if let Ok(resp) = client.fetch_leader(FetchLeaderRequest {}).await {
-                    resp.into_inner()
-                } else {
-                    continue;
-                };
+                    let FetchLeaderResponse { leader_id, term } =
+                        if let Ok(resp) = client.fetch_leader(FetchLeaderRequest {}).await {
+                            resp.into_inner()
+                        } else {
+                            continue;
+                        };
 
-            if let Some(max_term) = max_term {
-                assert_eq!(max_term, term);
-            } else {
-                max_term = Some(term);
-            }
-        }
-        max_term.unwrap()
+                    if let Some(max_term) = max_term {
+                        assert_eq!(max_term, term);
+                    } else {
+                        max_term = Some(term);
+                    }
+                }
+                max_term.unwrap()
+            })
+            .await
+            .unwrap()
     }
 
+    // Disconnect the node from the network.
     pub fn disable_node(&self, id: &ServerId) {
-        let node = &self.nodes[id];
-        node.switch.store(false, Ordering::Relaxed);
+        let handle = madsim::runtime::Handle::current();
+        let net = madsim::net::NetSim::current();
+        let Some(node)  = handle.get_node(id) else { panic!("no node with name {id} in the simulator")};
+        net.clog_node(node.id());
     }
 
+    // Reconnect the node to the network.
     pub fn enable_node(&self, id: &ServerId) {
-        let node = &self.nodes[id];
-        node.switch.store(true, Ordering::Relaxed);
+        let handle = madsim::runtime::Handle::current();
+        let net = madsim::net::NetSim::current();
+        let Some(node)  = handle.get_node(id) else { panic!("no node with name {id} the simulator")};
+        net.unclog_node(node.id());
     }
 
-    pub async fn get_connect(&self, id: &ServerId) -> ProtocolClient<tonic::transport::Channel> {
+    pub async fn get_connect(&self, id: &ServerId) -> SimProtocalClient {
         let addr = self
             .all
             .iter()
             .find_map(|(node_id, addr)| (node_id == id).then_some(addr))
             .unwrap();
         let addr = format!("http://{}", addr);
-        ProtocolClient::connect(addr.clone()).await.unwrap()
+        SimProtocalClient {
+            addr,
+            handle: self.client_node.clone(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct SimProtocalClient {
+    addr: String,
+    handle: NodeHandle,
+}
+
+impl SimProtocalClient {
+    #[inline]
+    pub async fn propose(
+        &mut self,
+        cmd: impl tonic::IntoRequest<ProposeRequest> + 'static + Send,
+    ) -> Result<tonic::Response<ProposeResponse>, tonic::Status> {
+        let addr = self.addr.clone();
+        self.handle
+            .spawn(async move {
+                let mut client = ProtocolClient::connect(addr).await.unwrap();
+                client.propose(cmd).await
+            })
+            .await
+            .unwrap()
+    }
+}
+
+pub struct SimClient<C: Command> {
+    inner: Arc<Client<C>>,
+    handle: NodeHandle,
+}
+
+impl<C: Command + 'static> SimClient<C> {
+    #[inline]
+    pub async fn propose(&self, cmd: C) -> Result<C::ER, ProposeError> {
+        let inner = self.inner.clone();
+        self.handle
+            .spawn(async move { inner.propose(cmd).await })
+            .await
+            .unwrap()
+    }
+
+    #[inline]
+    pub async fn propose_indexed(&self, cmd: C) -> Result<(C::ER, C::ASR), ProposeError> {
+        let inner = self.inner.clone();
+        self.handle
+            .spawn(async move { inner.propose_indexed(cmd).await })
+            .await
+            .unwrap()
+    }
+
+    #[inline]
+    pub async fn fetch_read_state(&self, cmd: &C) -> Result<ReadState, ProposeError> {
+        let inner = self.inner.clone();
+        let cmd = cmd.clone();
+        self.handle
+            .spawn(async move { inner.fetch_read_state(&cmd).await })
+            .await
+            .unwrap()
+    }
+
+    #[inline]
+    pub fn leader(&self) -> Option<ServerId> {
+        self.inner.leader()
+    }
+
+    #[inline]
+    pub fn leader_rx(&self) -> broadcast::Receiver<ServerId> {
+        self.inner.leader_rx()
     }
 }

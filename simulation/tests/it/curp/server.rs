@@ -6,13 +6,13 @@ use clippy_utilities::NumericCast;
 use madsim::rand::{thread_rng, Rng};
 use utils::config::ClientTimeout;
 
-use crate::curp::{
-    curp_group::{proto::propose_response::ExeResult, CurpGroup, ProposeRequest, ProposeResponse},
+use xline_simulation::curp::{
+    curp_group::{propose_response::ExeResult, CurpGroup, ProposeRequest, ProposeResponse},
     init_logger, sleep_millis, sleep_secs,
     test_cmd::TestCommand,
 };
 
-#[tokio::test]
+#[madsim::test]
 async fn basic_propose() {
     init_logger();
 
@@ -31,10 +31,10 @@ async fn basic_propose() {
         (vec![0], vec![1])
     );
 
-    group.stop();
+    group.stop().await;
 }
 
-#[tokio::test]
+#[madsim::test]
 async fn synced_propose() {
     init_logger();
 
@@ -58,11 +58,11 @@ async fn synced_propose() {
         assert_eq!(index, 1);
     }
 
-    group.stop();
+    group.stop().await;
 }
 
 // Each command should be executed once and only once on each node
-#[tokio::test]
+#[madsim::test]
 async fn exe_exact_n_times() {
     init_logger();
 
@@ -76,7 +76,7 @@ async fn exe_exact_n_times() {
     for exe_rx in group.exe_rxs() {
         let (cmd1, er) = exe_rx.recv().await.unwrap();
         assert!(
-            tokio::time::timeout(Duration::from_millis(100), exe_rx.recv())
+            madsim::time::timeout(Duration::from_millis(100), exe_rx.recv())
                 .await
                 .is_err()
         );
@@ -87,7 +87,7 @@ async fn exe_exact_n_times() {
     for as_rx in group.as_rxs() {
         let (cmd1, index) = as_rx.recv().await.unwrap();
         assert!(
-            tokio::time::timeout(Duration::from_millis(100), as_rx.recv())
+            madsim::time::timeout(Duration::from_millis(100), as_rx.recv())
                 .await
                 .is_err()
         );
@@ -95,11 +95,11 @@ async fn exe_exact_n_times() {
         assert_eq!(index, 1);
     }
 
-    group.stop();
+    group.stop().await;
 }
 
 // To verify PR #86 is fixed
-#[tokio::test]
+#[madsim::test]
 async fn fast_round_is_slower_than_slow_round() {
     init_logger();
 
@@ -119,7 +119,7 @@ async fn fast_round_is_slower_than_slow_round() {
 
     // wait for the command to be synced to others
     // because followers never get the cmd from the client, it will mark the cmd done in spec pool instead of removing the cmd from it
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    madsim::time::sleep(Duration::from_secs(1)).await;
 
     // send propose to follower
     let follower_addr = group.all.keys().find(|&id| &leader != id).unwrap();
@@ -135,10 +135,10 @@ async fn fast_round_is_slower_than_slow_round() {
         .into_inner();
     assert!(resp.exe_result.is_none());
 
-    group.stop();
+    group.stop().await;
 }
 
-#[tokio::test]
+#[madsim::test]
 async fn concurrent_cmd_order() {
     init_logger();
 
@@ -151,7 +151,7 @@ async fn concurrent_cmd_order() {
     let mut leader_connect = group.get_connect(&leader).await;
 
     let mut c = leader_connect.clone();
-    tokio::spawn(async move {
+    madsim::task::spawn(async move {
         c.propose(ProposeRequest {
             command: bincode::serialize(&cmd0).unwrap(),
         })
@@ -190,11 +190,11 @@ async fn concurrent_cmd_order() {
         vec![2]
     );
 
-    group.stop();
+    group.stop().await;
 }
 
 /// This test case ensures that the issue 228 is fixed.
-#[tokio::test]
+#[madsim::test]
 async fn concurrent_cmd_order_should_have_correct_revision() {
     init_logger();
 
@@ -222,5 +222,5 @@ async fn concurrent_cmd_order_should_have_correct_revision() {
         )
     }
 
-    group.stop();
+    group.stop().await;
 }

@@ -3,16 +3,18 @@ use std::time::Duration;
 use curp::{client::ReadState, cmd::Command};
 use utils::config::ClientTimeout;
 
-use crate::curp::{curp_group::CurpGroup, init_logger, sleep_millis, test_cmd::TestCommand};
+use xline_simulation::curp::{
+    curp_group::CurpGroup, init_logger, sleep_millis, test_cmd::TestCommand,
+};
 
-#[tokio::test]
+#[madsim::test]
 async fn read_state() {
     init_logger();
     let group = CurpGroup::new(3).await;
     let put_client = group.new_client(ClientTimeout::default()).await;
     let put_cmd = TestCommand::new_put(vec![0], 0).set_exe_dur(Duration::from_millis(100));
     let put_id = put_cmd.id().clone();
-    tokio::spawn(async move {
+    madsim::task::spawn(async move {
         assert_eq!(put_client.propose(put_cmd).await.unwrap().0, vec![]);
     });
     let get_client = group.new_client(ClientTimeout::default()).await;
@@ -44,5 +46,5 @@ async fn read_state() {
             1, res
         );
     }
-    group.stop();
+    group.stop().await;
 }

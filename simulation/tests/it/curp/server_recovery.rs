@@ -7,14 +7,14 @@ use itertools::Itertools;
 use tracing::debug;
 use utils::config::ClientTimeout;
 
-use crate::common::{
+use xline_simulation::curp::{
     curp_group::{CurpGroup, ProposeRequest},
     init_logger, sleep_millis, sleep_secs,
     test_cmd::TestCommand,
     TEST_TABLE,
 };
 
-#[tokio::test]
+#[madsim::test]
 async fn leader_crash_and_recovery() {
     init_logger();
 
@@ -22,7 +22,7 @@ async fn leader_crash_and_recovery() {
     let client = group.new_client(ClientTimeout::default()).await;
 
     let leader = group.try_get_leader().await.unwrap().0;
-    group.crash(&leader);
+    group.crash(&leader).await;
 
     assert_eq!(
         client
@@ -56,10 +56,10 @@ async fn leader_crash_and_recovery() {
     let asr = old_leader.as_rx.recv().await.unwrap();
     assert_eq!(asr.1, 2);
 
-    group.stop();
+    group.stop().await;
 }
 
-#[tokio::test]
+#[madsim::test]
 async fn follower_crash_and_recovery() {
     init_logger();
 
@@ -73,7 +73,7 @@ async fn follower_crash_and_recovery() {
         .find(|&id| id != &leader)
         .unwrap()
         .clone();
-    group.crash(&follower);
+    group.crash(&follower).await;
 
     assert_eq!(
         client
@@ -93,7 +93,7 @@ async fn follower_crash_and_recovery() {
     );
 
     // let cmds to be synced
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    madsim::time::sleep(Duration::from_secs(2)).await;
 
     // restart follower
     group.restart(&follower, false).await;
@@ -109,10 +109,10 @@ async fn follower_crash_and_recovery() {
     let asr = follower.as_rx.recv().await.unwrap();
     assert_eq!(asr.1, 2);
 
-    group.stop();
+    group.stop().await;
 }
 
-#[tokio::test]
+#[madsim::test]
 async fn leader_and_follower_both_crash_and_recovery() {
     init_logger();
 
@@ -126,7 +126,7 @@ async fn leader_and_follower_both_crash_and_recovery() {
         .find(|&id| id != &leader)
         .unwrap()
         .clone();
-    group.crash(&follower);
+    group.crash(&follower).await;
 
     assert_eq!(
         client
@@ -146,8 +146,8 @@ async fn leader_and_follower_both_crash_and_recovery() {
     );
 
     // let cmds to be synced
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    group.crash(&leader);
+    madsim::time::sleep(Duration::from_secs(2)).await;
+    group.crash(&leader).await;
 
     // restart the original leader
     group.restart(&leader, false).await;
@@ -186,11 +186,11 @@ async fn leader_and_follower_both_crash_and_recovery() {
     let asr = follower.as_rx.recv().await.unwrap();
     assert_eq!(asr.1, 2);
 
-    group.stop();
+    group.stop().await;
 }
 
 // Leader should recover speculatively executed commands
-#[tokio::test]
+#[madsim::test]
 async fn new_leader_will_recover_spec_cmds_cond1() {
     init_logger();
 
@@ -208,7 +208,7 @@ async fn new_leader_will_recover_spec_cmds_cond1() {
         let mut connect = group.get_connect(id).await;
         connect.propose(req1.clone()).await.unwrap();
     }
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    madsim::time::sleep(Duration::from_secs(1)).await;
 
     // 2: disable leader1
     group.disable_node(&leader1);
@@ -236,10 +236,10 @@ async fn new_leader_will_recover_spec_cmds_cond1() {
         rx.recv().await;
     }
 
-    group.stop();
+    group.stop().await;
 }
 
-#[tokio::test]
+#[madsim::test]
 async fn new_leader_will_recover_spec_cmds_cond2() {
     init_logger();
 
@@ -275,11 +275,11 @@ async fn new_leader_will_recover_spec_cmds_cond2() {
         vec![0]
     );
 
-    group.stop();
+    group.stop().await;
 }
 
 // Old Leader should discard spec states
-#[tokio::test]
+#[madsim::test]
 async fn old_leader_will_discard_spec_exe_cmds() {
     init_logger();
 
@@ -308,7 +308,12 @@ async fn old_leader_will_discard_spec_exe_cmds() {
     leader1_connect.propose(req1).await.unwrap();
     sleep_millis(100).await;
     let leader1_store = Arc::clone(&group.get_node(&leader1).store);
-    let res = leader1_store.get_all(TEST_TABLE).unwrap();
+    let res = leader1_store
+        .lock()
+        .as_ref()
+        .unwrap()
+        .get_all(TEST_TABLE)
+        .unwrap();
     assert_eq!(
         res,
         vec![(0u32.to_be_bytes().to_vec(), 1u32.to_be_bytes().to_vec())]
@@ -327,7 +332,12 @@ async fn old_leader_will_discard_spec_exe_cmds() {
     // 4: recover the old leader, its state should be reverted to the original state
     group.enable_node(&leader1);
     sleep_secs(1).await;
-    let res = leader1_store.get_all(TEST_TABLE).unwrap();
+    let res = leader1_store
+        .lock()
+        .as_ref()
+        .unwrap()
+        .get_all(TEST_TABLE)
+        .unwrap();
     assert_eq!(
         res,
         vec![(0u32.to_be_bytes().to_vec(), 0u32.to_be_bytes().to_vec())]
@@ -343,10 +353,10 @@ async fn old_leader_will_discard_spec_exe_cmds() {
         vec![0]
     );
 
-    group.stop();
+    group.stop().await;
 }
 
-#[tokio::test]
+#[madsim::test]
 async fn all_crash_and_recovery() {
     init_logger();
 
@@ -372,7 +382,7 @@ async fn all_crash_and_recovery() {
 
     let all = group.all.keys().cloned().collect_vec();
     for node in &all {
-        group.crash(node);
+        group.crash(node).await;
     }
     sleep_secs(2).await;
     for node in &all {
@@ -404,10 +414,10 @@ async fn all_crash_and_recovery() {
         vec![1]
     );
 
-    group.stop();
+    group.stop().await;
 }
 
-#[tokio::test]
+#[madsim::test]
 async fn recovery_after_compaction() {
     init_logger();
 
@@ -420,7 +430,7 @@ async fn recovery_after_compaction() {
         .find(|&n| n != &leader)
         .unwrap()
         .to_owned();
-    group.crash(&node_id);
+    group.crash(&node_id).await;
 
     // since the log entries cap is set to 10, 50 commands will trigger log compactions
     for i in 0..50 {
@@ -443,10 +453,17 @@ async fn recovery_after_compaction() {
         let node = group.nodes.get_mut(&node_id).unwrap();
         for i in 0..50_u32 {
             let kv = i.to_be_bytes().to_vec();
-            let val = node.store.get(TEST_TABLE, &kv).unwrap().unwrap();
+            let val = node
+                .store
+                .lock()
+                .as_ref()
+                .unwrap()
+                .get(TEST_TABLE, &kv)
+                .unwrap()
+                .unwrap();
             assert_eq!(val, kv);
         }
     }
 
-    group.stop();
+    group.stop().await;
 }

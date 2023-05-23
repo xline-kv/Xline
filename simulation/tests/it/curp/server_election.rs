@@ -3,14 +3,14 @@ use std::time::Duration;
 use madsim::time::sleep;
 use utils::config::ClientTimeout;
 
-use crate::curp::{curp_group::CurpGroup, init_logger, test_cmd::TestCommand};
+use xline_simulation::curp::{curp_group::CurpGroup, init_logger, test_cmd::TestCommand};
 
 async fn wait_for_election() {
     sleep(Duration::from_secs(3)).await;
 }
 
 // Election
-#[tokio::test]
+#[madsim::test]
 async fn election() {
     init_logger();
 
@@ -24,7 +24,7 @@ async fn election() {
     let term1 = group.get_term_checked().await;
 
     // check after some time, the term and the leader is still not changed
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    madsim::time::sleep(Duration::from_secs(1)).await;
     let leader2 = group
         .try_get_leader()
         .await
@@ -36,11 +36,11 @@ async fn election() {
     assert_eq!(term1, term2);
     assert_eq!(leader1, leader2);
 
-    group.stop();
+    group.stop().await;
 }
 
 // Reelect after network failure
-#[tokio::test]
+#[madsim::test]
 async fn reelect() {
     init_logger();
 
@@ -92,10 +92,10 @@ async fn reelect() {
     let (_, final_term) = group.get_leader().await;
     assert!(final_term > term3);
 
-    group.stop();
+    group.stop().await;
 }
 
-#[tokio::test]
+#[madsim::test]
 async fn propose_after_reelect() {
     init_logger();
 
@@ -110,12 +110,12 @@ async fn propose_after_reelect() {
         vec![]
     );
     // wait for the cmd to be synced
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    madsim::time::sleep(Duration::from_secs(1)).await;
 
     let leader1 = group.get_leader().await.0;
     group.disable_node(&leader1);
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    madsim::time::sleep(Duration::from_secs(2)).await;
     assert_eq!(
         client
             .propose(TestCommand::new_get(vec![0]))
@@ -125,5 +125,5 @@ async fn propose_after_reelect() {
         vec![0]
     );
 
-    group.stop();
+    group.stop().await;
 }
