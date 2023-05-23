@@ -16,7 +16,7 @@ repository = "https://github.com/datenlord/Xline/tree/master/benchmark"
 
 [dependencies]
 xline = { path = "../xline" }
-tokio = "1.21.2"
+tokio = { git = "https://github.com/bsbds/madsim.git", package = "madsim-tokio" }
 anyhow = "1.0.66"
 clap = { version = "3.2.16", features = ["derive"] }
 rand = "0.8.5"

@@ -34,18 +34,21 @@ opentelemetry-contrib = { version = "0.10.0", features = [
 opentelemetry-jaeger = { version = "0.17.0", features = ["rt-tokio"] }
 parking_lot = "0.12.0"
 pbkdf2 = { version = "0.11.0", features = ["std"] }
-prost = "0.10.3"
+prost = "0.11"
 serde = { version = "1.0.137", features = ["derive"] }
 thiserror = "1.0.37"
-tokio = { version = "1.0", features = [
+tokio = { git = "https://github.com/bsbds/madsim.git", package = "madsim-tokio", features = [
+    "rt",
     "rt-multi-thread",
-    "time",
     "fs",
+    "sync",
     "macros",
-    "net",
+    "time",
 ] }
-tokio-stream = { version = "0.1.9", features = ["net"] }
-tonic = "0.7.2"
+tokio-stream = { git = "https://github.com/madsim-rs/tokio.git", rev = "ab251ad", features = [
+  "net",
+] }
+tonic = { git = "https://github.com/bsbds/madsim.git", package = "madsim-tonic" }
 tracing = "0.1.37"
 tracing-opentelemetry = "0.18.0"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
@@ -62,7 +65,7 @@ bytes = "1.4.0"
 tokio-util = { version = "0.7.8", features = ["io"] }
 
 [build-dependencies]
-tonic-build = "0.7.2"
+tonic-build = { git = "https://github.com/bsbds/madsim.git", package = "madsim-tonic-build" }
 
 [dev-dependencies]
 mockall = "0.11.3"
