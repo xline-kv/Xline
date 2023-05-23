@@ -34,7 +34,7 @@ opentelemetry-contrib = { version = "0.10.0", features = [
 opentelemetry-jaeger = { version = "0.17.0", features = ["rt-tokio"] }
 parking_lot = "0.12.0"
 pbkdf2 = { version = "0.11.0", features = ["std"] }
-prost = "0.10.3"
+prost = "0.11"
 serde = { version = "1.0.137", features = ["derive"] }
 thiserror = "1.0.37"
 tokio = { git = "https://github.com/bsbds/madsim.git", package = "madsim-tokio", features = [

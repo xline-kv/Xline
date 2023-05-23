@@ -103,7 +103,7 @@ impl CurpGroup {
         let nodes = (0..n_nodes)
             .into_iter()
             .map(|i| {
-                let id = format!("S{i}");
+                let id = "S{i}".to_string();
                 let addr = format!("192.168.1.{}:12345", i + 1);
                 let storage_path = format!("/tmp/curp-{}", random_id());
 
@@ -119,16 +119,14 @@ impl CurpGroup {
                 let addr_c = addr.clone();
                 let id_c = id.clone();
                 let storage_path_c = storage_path.clone();
-                let exe_tx_c = exe_tx.clone();
-                let as_tx_c = as_tx.clone();
                 let store_c = Arc::clone(&store);
 
                 let node_handle = handle
                     .create_node()
-                    .name(format!("S{i}"))
+                    .name("S{i}")
                     .ip(format!("192.168.1.{}", i + 1).parse().unwrap())
                     .init(move || {
-                        let ce = TestCE::new(id_c.clone(), exe_tx_c.clone(), as_tx_c.clone());
+                        let ce = TestCE::new(id_c.clone(), exe_tx.clone(), as_tx.clone());
                         store_c.lock().replace(Arc::clone(&ce.store));
                         let is_leader = *leader.lock() == id_c;
 
@@ -166,8 +164,8 @@ impl CurpGroup {
 
         let client_node = handle
             .create_node()
-            .name(format!("client"))
-            .ip(format!("192.168.2.1").parse().unwrap())
+            .name("client")
+            .ip("192.168.2.1".parse().unwrap())
             .build();
         madsim::time::sleep(Duration::from_secs(20)).await;
         debug!("successfully start group");

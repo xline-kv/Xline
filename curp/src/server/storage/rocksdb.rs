@@ -90,7 +90,11 @@ impl<C> RocksDBStorage<C> {
         let dir = dir.as_ref().into();
         let db = std::thread::spawn(move || Engine::new(engine::EngineType::Rocks(dir), &[CF]))
             .join()
-            .unwrap()?;
+            .map_err(|_e| {
+                StorageError::Internal(engine::EngineError::UnderlyingError(
+                    "Failed to join rocksdb main thread".into(),
+                ))
+            })??;
 
         Ok(Self {
             db,
