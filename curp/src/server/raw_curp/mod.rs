@@ -41,8 +41,8 @@ use super::cmd_worker::CEEventTxApi;
 use crate::{
     cmd::{Command, ProposeId},
     error::ProposeError,
-    leader_change::LeaderChange,
     log_entry::LogEntry,
+    role_change::RoleChange,
     rpc::{IdSet, ReadState},
     server::{cmd_board::CmdBoardRef, spec_pool::SpecPoolRef},
     snapshot::{Snapshot, SnapshotMeta},
@@ -149,7 +149,7 @@ struct Context<C: Command> {
     /// Become leader event
     leader_event: Arc<Event>,
     /// Leader change callback
-    leader_change_cb: Box<dyn LeaderChange>,
+    role_change: Box<dyn RoleChange>,
 }
 
 impl<C: Command> Debug for Context<C> {
@@ -583,7 +583,7 @@ impl<C: 'static + Command> RawCurp<C> {
         cmd_tx: Arc<dyn CEEventTxApi<C>>,
         sync_events: HashMap<ServerId, Arc<Event>>,
         log_tx: mpsc::UnboundedSender<LogEntry<C>>,
-        leader_change_cb: impl LeaderChange + 'static,
+        role_change: impl RoleChange + 'static,
     ) -> Self {
         let raw_curp = Self {
             st: RwLock::new(State::new(
@@ -609,7 +609,7 @@ impl<C: 'static + Command> RawCurp<C> {
                 cmd_tx,
                 sync_events,
                 leader_event: Arc::new(Event::new()),
-                leader_change_cb: Box::new(leader_change_cb),
+                role_change: Box::new(role_change),
             },
         };
         if is_leader {
@@ -636,7 +636,7 @@ impl<C: 'static + Command> RawCurp<C> {
         voted_for: Option<(u64, ServerId)>,
         entries: Vec<LogEntry<C>>,
         last_applied: LogIndex,
-        leader_change_cb: impl LeaderChange + 'static,
+        role_change: impl RoleChange + 'static,
     ) -> Self {
         let raw_curp = Self::new(
             id,
@@ -649,7 +649,7 @@ impl<C: 'static + Command> RawCurp<C> {
             cmd_tx,
             sync_event,
             log_tx,
-            leader_change_cb,
+            role_change,
         );
 
         if let Some((term, server_id)) = voted_for {
@@ -830,7 +830,7 @@ impl<C: 'static + Command> RawCurp<C> {
         st.leader_id = Some(self.id().clone());
         let _ig = self.ctx.leader_tx.send(Some(self.id().clone())).ok();
         self.ctx.leader_event.notify(usize::MAX);
-        self.ctx.leader_change_cb.on_leader();
+        self.ctx.role_change.on_election_win();
         debug!("{} becomes the leader", self.id());
     }
 
@@ -845,7 +845,7 @@ impl<C: 'static + Command> RawCurp<C> {
         }
         if st.role == Role::Leader {
             self.leader_retires();
-            self.ctx.leader_change_cb.on_follower();
+            self.ctx.role_change.on_calibrate();
         }
         st.term = term;
         st.role = Role::Follower;

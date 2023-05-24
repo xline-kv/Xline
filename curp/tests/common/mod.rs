@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 
-use curp::leader_change::LeaderChange;
+use curp::role_change::RoleChange;
 use madsim::rand::{distributions::Alphanumeric, thread_rng, Rng};
 use parking_lot::RwLock;
 use thiserror::Error;
@@ -23,29 +23,34 @@ pub const TEST_TABLE: &str = "test";
 pub const REVISION_TABLE: &str = "revision";
 
 #[derive(Default, Debug)]
-pub struct TestLeaderChange {
-    inner: Arc<RwLock<LeaderInfo>>,
+pub struct TestRoleChange {
+    pub inner: Arc<TestRoleChangeInner>,
 }
 
 #[derive(Default, Debug)]
-pub struct LeaderInfo {
-    pub leader_id: Option<String>,
-    pub is_leader: bool,
+pub struct TestRoleChangeInner {
+    is_leader: AtomicBool,
 }
 
-impl TestLeaderChange {
-    pub(super) fn get_inner(&self) -> Arc<RwLock<LeaderInfo>> {
+impl TestRoleChange {
+    pub fn get_inner_arc(&self) -> Arc<TestRoleChangeInner> {
         Arc::clone(&self.inner)
     }
 }
 
-impl LeaderChange for TestLeaderChange {
-    fn on_follower(&self) {
-        self.inner.map_write(|mut inner| inner.is_leader = false);
+impl RoleChange for TestRoleChange {
+    fn on_calibrate(&self) {
+        self.inner.is_leader.store(false, Ordering::Relaxed);
     }
 
-    fn on_leader(&self) {
-        self.inner.map_write(|mut inner| inner.is_leader = true);
+    fn on_election_win(&self) {
+        self.inner.is_leader.store(true, Ordering::Relaxed);
+    }
+}
+
+impl TestRoleChangeInner {
+    pub fn get_is_leader(&self) -> bool {
+        self.is_leader.load(Ordering::Relaxed)
     }
 }
 

@@ -8,7 +8,7 @@ use utils::config::{
 
 use super::*;
 use crate::{
-    leader_change::MockLeaderChange,
+    role_change::MockRoleChange,
     server::{
         cmd_board::CommandBoard,
         cmd_worker::{CEEventTxApi, MockCEEventTxApi},
@@ -40,11 +40,11 @@ impl<C: 'static + Command> RawCurp<C> {
             .map(|id| (id.clone(), Arc::new(Event::new())))
             .collect();
 
-        let leader_change_cb = {
-            let mut leader_change = MockLeaderChange::default();
-            leader_change.expect_on_follower().returning(|| {});
-            leader_change.expect_on_leader().returning(|| {});
-            leader_change
+        let role_change = {
+            let mut role_change = MockRoleChange::default();
+            role_change.expect_on_election_win().returning(|| {});
+            role_change.expect_on_calibrate().returning(|| {});
+            role_change
         };
 
         Self::new(
@@ -58,7 +58,7 @@ impl<C: 'static + Command> RawCurp<C> {
             Arc::new(exe_tx),
             sync_events,
             log_tx,
-            leader_change_cb,
+            role_change,
         )
     }
 

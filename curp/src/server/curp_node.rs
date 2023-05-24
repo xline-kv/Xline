@@ -26,8 +26,8 @@ use super::{
 use crate::{
     cmd::{Command, CommandExecutor},
     error::ProposeError,
-    leader_change::LeaderChange,
     log_entry::LogEntry,
+    role_change::RoleChange,
     rpc::{
         self, connect::ConnectApi, AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest,
         FetchLeaderResponse, FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,
@@ -413,7 +413,7 @@ impl<C: 'static + Command> CurpNode<C> {
         others: HashMap<ServerId, String>,
         cmd_executor: Arc<CE>,
         snapshot_allocator: impl SnapshotAllocator + 'static,
-        leader_change_cb: impl LeaderChange + 'static,
+        role_change: impl RoleChange + 'static,
         curp_cfg: Arc<CurpConfig>,
         tx_filter: Option<Box<dyn TxFilter>>,
     ) -> Result<Self, CurpError> {
@@ -448,7 +448,7 @@ impl<C: 'static + Command> CurpNode<C> {
                 Arc::clone(&ce_event_tx),
                 sync_events,
                 log_tx,
-                leader_change_cb,
+                role_change,
             ))
         } else {
             info!(
@@ -471,7 +471,7 @@ impl<C: 'static + Command> CurpNode<C> {
                 voted_for,
                 entries,
                 last_applied,
-                leader_change_cb,
+                role_change,
             ))
         };
 

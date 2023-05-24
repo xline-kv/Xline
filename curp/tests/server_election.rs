@@ -10,6 +10,30 @@ async fn wait_for_election() {
     sleep(Duration::from_secs(3)).await;
 }
 
+fn check_leader_state(group: &CurpGroup, leader: &String) {
+    let (_node, state) = group.nodes.get(leader).unwrap();
+    assert!(state.get_is_leader());
+}
+
+fn check_non_leader_state(group: &CurpGroup, group_size: usize, leader: &str) {
+    let majority: usize = group_size / 2 + 1;
+    let non_leader_node_cnt = group
+        .nodes
+        .iter()
+        .filter(|(id, _value)| id.as_str() != leader)
+        .filter(|(_id, (_node, state))| !state.get_is_leader())
+        .count();
+    assert!(
+        non_leader_node_cnt >= majority - 1,
+        "non_leader_node_cnt = {non_leader_node_cnt}, majority = {majority}"
+    );
+}
+
+fn check_role_state(group: &CurpGroup, group_size: usize, leader: &String) {
+    check_leader_state(group, leader);
+    check_non_leader_state(group, group_size, leader);
+}
+
 // Election
 #[tokio::test]
 async fn election() {
@@ -17,12 +41,14 @@ async fn election() {
 
     let group = CurpGroup::new(5).await;
     let leader0 = group.get_leader().await.0;
+    check_role_state(&group, 5, &leader0);
     group.disable_node(&leader0);
     wait_for_election().await;
 
     // check whether there is exact one leader in the group
     let leader1 = group.get_leader().await.0;
     let term1 = group.get_term_checked().await;
+    check_role_state(&group, 5, &leader0);
 
     // check after some time, the term and the leader is still not changed
     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -32,6 +58,7 @@ async fn election() {
         .expect("There should be one leader")
         .0;
     let term2 = group.get_term_checked().await;
+    check_role_state(&group, 5, &leader0);
 
     assert_ne!(leader0, leader1);
     assert_eq!(term1, term2);
@@ -50,7 +77,7 @@ async fn reelect() {
     // check whether there is exact one leader in the group
     let leader1 = group.get_leader().await.0;
     let term1 = group.get_term_checked().await;
-
+    check_role_state(&group, 5, &leader1);
     // disable leader 1
     group.disable_node(&leader1);
     println!("disable leader {leader1}");
@@ -58,6 +85,7 @@ async fn reelect() {
     // after some time, a new leader should be elected
     wait_for_election().await;
     let (leader2, term2) = group.get_leader().await;
+    check_role_state(&group, 5, &leader2);
 
     assert_ne!(term1, term2);
     assert_ne!(leader1, leader2);
@@ -69,6 +97,7 @@ async fn reelect() {
     // after some time, a new leader should be elected
     wait_for_election().await;
     let (leader3, term3) = group.get_leader().await;
+    check_role_state(&group, 5, &leader3);
 
     assert_ne!(term1, term3);
     assert_ne!(term2, term3);
@@ -90,7 +119,8 @@ async fn reelect() {
     group.enable_node(&leader3);
 
     wait_for_election().await;
-    let (_, final_term) = group.get_leader().await;
+    let (final_leader, final_term) = group.get_leader().await;
+    check_role_state(&group, 5, &final_leader);
     assert!(final_term > term3);
 
     group.stop();
@@ -114,6 +144,7 @@ async fn propose_after_reelect() {
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     let leader1 = group.get_leader().await.0;
+    check_role_state(&group, 5, &leader1);
     group.disable_node(&leader1);
 
     tokio::time::sleep(Duration::from_secs(2)).await;

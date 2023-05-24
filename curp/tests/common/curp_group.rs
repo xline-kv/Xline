@@ -30,7 +30,7 @@ use utils::config::{
 use crate::common::{
     random_id,
     test_cmd::{TestCE, TestCommand, TestCommandResult},
-    TestLeaderChange,
+    TestRoleChange,
 };
 
 pub type ServerId = String;
@@ -41,7 +41,7 @@ pub mod proto {
 pub use proto::{protocol_client::ProtocolClient, ProposeRequest, ProposeResponse};
 
 use self::proto::{FetchLeaderRequest, FetchLeaderResponse};
-use super::LeaderInfo;
+use super::TestRoleChangeInner;
 
 struct MemorySnapshotAllocator;
 
@@ -108,7 +108,7 @@ pub struct CrashedCurpNode {
 }
 
 pub struct CurpGroup {
-    pub nodes: HashMap<ServerId, (CurpNode, Arc<RwLock<LeaderInfo>>)>,
+    pub nodes: HashMap<ServerId, (CurpNode, Arc<TestRoleChangeInner>)>,
     pub crashed_nodes: HashMap<ServerId, CrashedCurpNode>,
     pub all: HashMap<ServerId, String>,
 }
@@ -165,8 +165,8 @@ impl CurpGroup {
                 let id_c = id.clone();
                 let switch_c = Arc::clone(&switch);
                 let storage_path_c = storage_path.clone();
-                let leader_change_cb = TestLeaderChange::default();
-                let leader_change_arc = leader_change_cb.get_inner();
+                let role_change_cb = TestRoleChange::default();
+                let role_change_arc = role_change_cb.get_inner_arc();
                 thread::spawn(move || {
                     handle.spawn(Rpc::run_from_listener(
                         id_c,
@@ -175,7 +175,7 @@ impl CurpGroup {
                         listener,
                         ce,
                         MemorySnapshotAllocator,
-                        leader_change_cb,
+                        role_change_cb,
                         Arc::new(
                             CurpConfigBuilder::default()
                                 .data_dir(PathBuf::from(storage_path_c))
@@ -201,7 +201,7 @@ impl CurpGroup {
                             switch,
                             storage_path,
                         },
-                        leader_change_arc,
+                        role_change_arc,
                     ),
                 )
             })
@@ -310,8 +310,8 @@ impl CurpGroup {
         let id_c = id.clone();
         let switch_c = Arc::clone(&switch);
         let storage_path = crashed.storage_path.clone();
-        let leader_change_cb = TestLeaderChange::default();
-        let leader_change_arc = leader_change_cb.get_inner();
+        let role_change_cb = TestRoleChange::default();
+        let role_change_arc = role_change_cb.get_inner_arc();
         thread::spawn(move || {
             handle.spawn(Rpc::run_from_listener(
                 id_c,
@@ -320,7 +320,7 @@ impl CurpGroup {
                 listener,
                 ce,
                 MemorySnapshotAllocator,
-                leader_change_cb,
+                role_change_cb,
                 Arc::new(
                     CurpConfigBuilder::default()
                         .data_dir(PathBuf::from(storage_path))
@@ -342,7 +342,7 @@ impl CurpGroup {
             switch,
             storage_path: crashed.storage_path,
         };
-        self.nodes.insert(id.clone(), (new_node, leader_change_arc));
+        self.nodes.insert(id.clone(), (new_node, role_change_arc));
     }
 
     pub async fn try_get_leader(&self) -> Option<(ServerId, u64)> {
