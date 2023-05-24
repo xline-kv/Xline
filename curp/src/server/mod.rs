@@ -11,7 +11,7 @@ use self::curp_node::{CurpError, CurpNode};
 use crate::{
     cmd::{Command, CommandExecutor},
     error::ServerError,
-    leader_change::LeaderChange,
+    role_change::RoleChange,
     rpc::{
         AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest, FetchLeaderResponse,
         FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,
@@ -144,7 +144,7 @@ impl<C: Command + 'static> Rpc<C> {
         others: HashMap<ServerId, String>,
         executor: CE,
         snapshot_allocator: impl SnapshotAllocator + 'static,
-        leader_change_cb: impl LeaderChange + 'static,
+        role_change: impl RoleChange + 'static,
         curp_cfg: Arc<CurpConfig>,
         tx_filter: Option<Box<dyn TxFilter>>,
     ) -> Self {
@@ -155,7 +155,7 @@ impl<C: Command + 'static> Rpc<C> {
             others,
             Arc::new(executor),
             snapshot_allocator,
-            leader_change_cb,
+            role_change,
             curp_cfg,
             tx_filter,
         )
@@ -186,7 +186,7 @@ impl<C: Command + 'static> Rpc<C> {
         server_port: Option<u16>,
         executor: CE,
         snapshot_allocator: impl SnapshotAllocator + 'static,
-        leader_change_cb: impl LeaderChange + 'static,
+        role_change: impl RoleChange + 'static,
         curp_cfg: Arc<CurpConfig>,
         tx_filter: Option<Box<dyn TxFilter>>,
         rx_filter: Option<FilterLayer<U>>,
@@ -209,7 +209,7 @@ impl<C: Command + 'static> Rpc<C> {
             others,
             executor,
             snapshot_allocator,
-            leader_change_cb,
+            role_change,
             curp_cfg,
             tx_filter,
         )
@@ -252,7 +252,7 @@ impl<C: Command + 'static> Rpc<C> {
         listener: TcpListener,
         executor: CE,
         snapshot_allocator: impl SnapshotAllocator + 'static,
-        leader_change_cb: impl LeaderChange + 'static,
+        role_change: impl RoleChange + 'static,
         curp_cfg: Arc<CurpConfig>,
         tx_filter: Option<Box<dyn TxFilter>>,
         rx_filter: Option<FilterLayer<U>>,
@@ -273,7 +273,7 @@ impl<C: Command + 'static> Rpc<C> {
             others,
             executor,
             snapshot_allocator,
-            leader_change_cb,
+            role_change,
             curp_cfg,
             tx_filter,
         )
