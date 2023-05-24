@@ -27,7 +27,7 @@ use utils::config::{
     default_server_wait_synced_timeout, ClientTimeout, CurpConfig, CurpConfigBuilder,
 };
 
-use crate::common::{
+use super::{
     random_id,
     test_cmd::{TestCE, TestCommand, TestCommandResult},
 };

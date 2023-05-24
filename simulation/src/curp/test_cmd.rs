@@ -24,7 +24,7 @@ use thiserror::Error;
 use tokio::{sync::mpsc, time::sleep};
 use tracing::debug;
 
-use crate::common::{REVISION_TABLE, TEST_TABLE};
+use super::{REVISION_TABLE, TEST_TABLE};
 
 static NEXT_ID: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(1));
 
