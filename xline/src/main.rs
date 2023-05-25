@@ -130,7 +130,7 @@ use utils::{
         default_retry_timeout, default_rotation, default_rpc_timeout,
         default_server_wait_synced_timeout, default_sync_victims_interval, file_appender,
         AuthConfig, ClientTimeout, ClusterConfig, CurpConfigBuilder, LevelConfig, LogConfig,
-        RotationConfig, StorageConfig, TraceConfig, XlineServerConfig,
+        RotationConfig, ServerTimeout, StorageConfig, TraceConfig, XlineServerConfig,
     },
     parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_rotation,
 };
@@ -271,20 +271,19 @@ impl From<ServerArgs> for XlineServerConfig {
                 .unwrap_or_else(default_retry_timeout),
         );
 
-        let range_retry_timeout = args
-            .range_retry_timeout
-            .unwrap_or_else(default_range_retry_timeout);
-        let sync_victims_interval = args
-            .sync_victims_interval
-            .unwrap_or_else(default_sync_victims_interval);
+        let server_timeout = ServerTimeout::new(
+            args.range_retry_timeout
+                .unwrap_or_else(default_range_retry_timeout),
+            args.sync_victims_interval
+                .unwrap_or_else(default_sync_victims_interval),
+        );
         let cluster = ClusterConfig::new(
             args.name,
             args.members,
             args.is_leader,
             curp_config,
             client_timeout,
-            range_retry_timeout,
-            sync_victims_interval,
+            server_timeout,
         );
         let log = LogConfig::new(args.log_file, args.log_rotate, args.log_level);
         let trace = TraceConfig::new(
@@ -437,8 +436,7 @@ async fn main() -> Result<()> {
         key_pair,
         cluster_config.curp_config().clone(),
         *cluster_config.client_timeout(),
-        *cluster_config.range_retry_timeout(),
-        *cluster_config.sync_victims_interval(),
+        *cluster_config.server_timeout(),
         config.storage().clone(),
         db_proxy,
     )

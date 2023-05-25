@@ -10,10 +10,7 @@ use tokio::{
     sync::broadcast::{self, Sender},
     time::{self, Duration},
 };
-use utils::config::{
-    default_range_retry_timeout, default_sync_victims_interval, ClientTimeout, CurpConfig,
-    StorageConfig,
-};
+use utils::config::{ClientTimeout, CurpConfig, ServerTimeout, StorageConfig};
 use xline::{client::Client, server::XlineServer, storage::db::DB};
 
 /// Cluster
@@ -89,8 +86,7 @@ impl Cluster {
                         ..Default::default()
                     },
                     ClientTimeout::default(),
-                    default_range_retry_timeout(),
-                    default_sync_victims_interval(),
+                    ServerTimeout::default(),
                     StorageConfig::Memory,
                     db,
                 )

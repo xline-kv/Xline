@@ -19,7 +19,7 @@ use crate::{
 };
 
 /// Default channel size
-pub(crate) const CHANNEL_SIZE: usize = 128;
+pub(crate) const CHANNEL_SIZE: usize = 1024;
 
 /// Watch Server
 #[derive(Debug)]

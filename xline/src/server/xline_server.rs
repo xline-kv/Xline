@@ -16,7 +16,7 @@ use tokio::{net::TcpListener, sync::broadcast};
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
 use tracing::info;
-use utils::config::{ClientTimeout, CurpConfig, StorageConfig};
+use utils::config::{ClientTimeout, CurpConfig, ServerTimeout, StorageConfig};
 
 use super::{
     auth_server::AuthServer,
@@ -113,8 +113,7 @@ where
         key_pair: Option<(EncodingKey, DecodingKey)>,
         curp_config: CurpConfig,
         client_timeout: ClientTimeout,
-        range_retry_timeout: Duration,
-        sync_victims_interval: Duration,
+        server_timeout: ServerTimeout,
         storage_config: StorageConfig,
         persistent: Arc<S>,
     ) -> Self {
@@ -171,7 +170,7 @@ where
             Arc::clone(&kv_storage),
             kv_update_rx,
             Arc::clone(&shutdown_trigger),
-            sync_victims_interval,
+            *server_timeout.sync_victims_interval(),
         );
         let client = Arc::new(Client::<Command>::new(all_members.clone(), client_timeout).await);
         let index_barrier = Arc::new(IndexBarrier::new());
@@ -191,7 +190,7 @@ where
             auth_revision,
             index_barrier,
             id_barrier,
-            range_retry_timeout,
+            range_retry_timeout: *server_timeout.range_retry_timeout(),
             shutdown_trigger,
         }
     }

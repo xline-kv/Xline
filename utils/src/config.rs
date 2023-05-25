@@ -89,14 +89,10 @@ pub struct ClusterConfig {
     #[getset(get = "pub")]
     #[serde(default = "ClientTimeout::default")]
     client_timeout: ClientTimeout,
-    /// Range request retry timeout settings
+    /// Xline server timeout settings
     #[getset(get = "pub")]
-    #[serde(with = "duration_format", default = "default_range_retry_timeout")]
-    range_retry_timeout: Duration,
-    /// Sync victims interval
-    #[getset(get = "pub")]
-    #[serde(with = "duration_format", default = "default_sync_victims_interval")]
-    sync_victims_interval: Duration,
+    #[serde(default = "ServerTimeout::default")]
+    server_timeout: ServerTimeout,
 }
 
 impl ClusterConfig {
@@ -109,8 +105,7 @@ impl ClusterConfig {
         is_leader: bool,
         curp: CurpConfig,
         client_timeout: ClientTimeout,
-        range_retry_timeout: Duration,
-        sync_victims_interval: Duration,
+        server_timeout: ServerTimeout,
     ) -> Self {
         Self {
             name,
@@ -118,8 +113,7 @@ impl ClusterConfig {
             is_leader,
             curp_config: curp,
             client_timeout,
-            range_retry_timeout,
-            sync_victims_interval,
+            server_timeout,
         }
     }
 }
@@ -380,6 +374,41 @@ impl Default for ClientTimeout {
     }
 }
 
+/// Xline server settings
+#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
+pub struct ServerTimeout {
+    /// Range request retry timeout settings
+    #[getset(get = "pub")]
+    #[serde(with = "duration_format", default = "default_range_retry_timeout")]
+    range_retry_timeout: Duration,
+    /// Sync victims interval
+    #[getset(get = "pub")]
+    #[serde(with = "duration_format", default = "default_sync_victims_interval")]
+    sync_victims_interval: Duration,
+}
+
+impl ServerTimeout {
+    /// Create a new server timeout
+    #[must_use]
+    #[inline]
+    pub fn new(range_retry_timeout: Duration, sync_victims_interval: Duration) -> Self {
+        Self {
+            range_retry_timeout,
+            sync_victims_interval,
+        }
+    }
+}
+
+impl Default for ServerTimeout {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            range_retry_timeout: default_range_retry_timeout(),
+            sync_victims_interval: default_sync_victims_interval(),
+        }
+    }
+}
+
 /// Storage Configuration
 #[allow(clippy::module_name_repetitions)]
 #[non_exhaustive]
@@ -620,9 +649,10 @@ mod tests {
             r#"[cluster]
             name = 'node1'
             is_leader = true
-            range_retry_timeout = '3s'            
-            sync_victims_interval = '20ms'
 
+            [cluster.server_timeout]
+            range_retry_timeout = '3s'
+            sync_victims_interval = '20ms'
 
             [cluster.members]
             node1 = '127.0.0.1:2379'
@@ -670,8 +700,7 @@ mod tests {
             Duration::from_secs(5),
         );
 
-        let range_retry_timeout = Duration::from_secs(3);
-        let sync_victims_interval = Duration::from_millis(20);
+        let server_timeout = ServerTimeout::new(Duration::from_secs(3), Duration::from_millis(20));
         assert_eq!(
             config.cluster,
             ClusterConfig::new(
@@ -684,8 +713,7 @@ mod tests {
                 true,
                 curp_config,
                 client_timeout,
-                range_retry_timeout,
-                sync_victims_interval,
+                server_timeout
             )
         );
 
@@ -754,8 +782,7 @@ mod tests {
                 true,
                 CurpConfig::default(),
                 ClientTimeout::default(),
-                default_range_retry_timeout(),
-                default_sync_victims_interval()
+                ServerTimeout::default()
             )
         );
 

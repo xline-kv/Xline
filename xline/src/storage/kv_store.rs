@@ -759,7 +759,7 @@ mod test {
         storage::{db::DB, kvwatcher::KvWatcher},
     };
 
-    const CHANNEL_SIZE: usize = 128;
+    const CHANNEL_SIZE: usize = 1024;
 
     fn sort_req(sort_order: SortOrder, sort_target: SortTarget) -> RangeRequest {
         RangeRequest {
