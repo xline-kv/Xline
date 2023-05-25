@@ -17,7 +17,7 @@ use super::{
 };
 use crate::{
     header_gen::HeaderGenerator,
-    revision_number::RevisionNumber,
+    revision_number::RevisionNumberGenerator,
     rpc::{
         Compare, CompareResult, CompareTarget, DeleteRangeRequest, DeleteRangeResponse, Event,
         EventType, KeyValue, PutRequest, PutResponse, RangeRequest, RangeResponse, Request,
@@ -42,7 +42,7 @@ where
     /// DB to store key value
     db: Arc<DB>,
     /// Revision
-    revision: Arc<RevisionNumber>,
+    revision: Arc<RevisionNumberGenerator>,
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
     /// KV update sender
@@ -754,7 +754,7 @@ mod test {
 
     use super::*;
     use crate::{
-        revision_number::RevisionNumber,
+        revision_number::RevisionNumberGenerator,
         rpc::RequestOp,
         storage::{db::DB, kvwatcher::KvWatcher},
     };
@@ -771,11 +771,13 @@ mod test {
         }
     }
 
-    async fn init_store(db: Arc<DB>) -> Result<(Arc<KvStore<DB>>, RevisionNumber), ExecuteError> {
+    async fn init_store(
+        db: Arc<DB>,
+    ) -> Result<(Arc<KvStore<DB>>, RevisionNumberGenerator), ExecuteError> {
         let store = init_empty_store(db);
         let keys = vec!["a", "b", "c", "d", "e"];
         let vals = vec!["a", "b", "c", "d", "e"];
-        let revision = RevisionNumber::default();
+        let revision = RevisionNumberGenerator::default();
         for (key, val) in keys.into_iter().zip(vals.into_iter()) {
             let req = RequestWithToken::new(
                 PutRequest {

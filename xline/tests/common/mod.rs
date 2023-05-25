@@ -81,7 +81,6 @@ impl Cluster {
                     name,
                     all_members,
                     is_leader,
-                    Self::test_key_pair(),
                     CurpConfig {
                         data_dir: path.join("curp"),
                         ..Default::default()
@@ -89,13 +88,13 @@ impl Cluster {
                     ClientTimeout::default(),
                     ServerTimeout::default(),
                     StorageConfig::Memory,
-                    db,
-                )
-                .await;
+                );
                 let signal = async {
                     let _ = rx.recv().await;
                 };
-                let result = server.start_from_listener_shutdown(listener, signal).await;
+                let result = server
+                    .start_from_listener_shutdown(listener, signal, db, Self::test_key_pair())
+                    .await;
                 if let Err(e) = result {
                     panic!("Server start error: {e}");
                 }

@@ -24,7 +24,7 @@ use super::{
 };
 use crate::{
     header_gen::HeaderGenerator,
-    revision_number::RevisionNumber,
+    revision_number::RevisionNumberGenerator,
     rpc::{
         AuthDisableRequest, AuthDisableResponse, AuthEnableRequest, AuthEnableResponse,
         AuthRoleAddRequest, AuthRoleAddResponse, AuthRoleDeleteRequest, AuthRoleDeleteResponse,
@@ -61,7 +61,7 @@ where
     /// Enabled
     enabled: AtomicBool,
     /// Revision
-    revision: Arc<RevisionNumber>,
+    revision: Arc<RevisionNumberGenerator>,
     /// Lease collection
     lease_collection: Arc<LeaseCollection>,
     /// Header generator
@@ -83,7 +83,7 @@ where
         key_pair: Option<(EncodingKey, DecodingKey)>,
         header_gen: Arc<HeaderGenerator>,
         storage: Arc<S>,
-        revision: Arc<RevisionNumber>,
+        revision: Arc<RevisionNumberGenerator>,
     ) -> Self {
         let backend = Arc::new(AuthStoreBackend::new(storage));
         Self {
@@ -1394,7 +1394,7 @@ mod test {
         let key_pair = test_key_pair();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let lease_collection = Arc::new(LeaseCollection::new(0));
-        let rev = Arc::new(RevisionNumber::default());
+        let rev = Arc::new(RevisionNumberGenerator::default());
         AuthStore::new(lease_collection, key_pair, header_gen, db, rev)
     }
 

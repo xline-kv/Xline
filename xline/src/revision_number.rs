@@ -2,9 +2,9 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 /// Revision number
 #[derive(Debug)]
-pub(crate) struct RevisionNumber(AtomicI64);
+pub(crate) struct RevisionNumberGenerator(AtomicI64);
 
-impl RevisionNumber {
+impl RevisionNumberGenerator {
     /// Create a new revision
     pub(crate) fn new(rev: i64) -> Self {
         Self(AtomicI64::new(rev))
@@ -26,9 +26,9 @@ impl RevisionNumber {
     }
 }
 
-impl Default for RevisionNumber {
+impl Default for RevisionNumberGenerator {
     #[inline]
     fn default() -> Self {
-        RevisionNumber::new(1)
+        RevisionNumberGenerator::new(1)
     }
 }

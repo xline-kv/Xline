@@ -434,16 +434,13 @@ async fn main() -> Result<()> {
         cluster_config.name().clone(),
         cluster_config.members().clone(),
         *cluster_config.is_leader(),
-        key_pair,
         cluster_config.curp_config().clone(),
         *cluster_config.client_timeout(),
         *cluster_config.server_timeout(),
         config.storage().clone(),
-        db_proxy,
-    )
-    .await;
+    );
     debug!("{:?}", server);
-    server.start(self_addr).await?;
+    server.start(self_addr, db_proxy, key_pair).await?;
     global::shutdown_tracer_provider();
     Ok(())
 }

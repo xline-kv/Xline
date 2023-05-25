@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use super::barriers::{IdBarrier, IndexBarrier};
 use crate::{
-    revision_number::RevisionNumber,
+    revision_number::RevisionNumberGenerator,
     rpc::{RequestBackend, RequestWithToken, RequestWrapper, ResponseWrapper},
     storage::{db::WriteOp, storage_api::StorageApi, AuthStore, ExecuteError, KvStore, LeaseStore},
 };
@@ -217,9 +217,9 @@ where
     /// Barrier for propose id
     id_barrier: Arc<IdBarrier>,
     /// Revision Number generator for KV request and Lease request
-    general_rev: Arc<RevisionNumber>,
+    general_rev: Arc<RevisionNumberGenerator>,
     /// Revision Number generator for Auth request
-    auth_rev: Arc<RevisionNumber>,
+    auth_rev: Arc<RevisionNumberGenerator>,
 }
 
 impl<S> CommandExecutor<S>
@@ -235,8 +235,8 @@ where
         persistent: Arc<S>,
         index_barrier: Arc<IndexBarrier>,
         id_barrier: Arc<IdBarrier>,
-        general_rev: Arc<RevisionNumber>,
-        auth_rev: Arc<RevisionNumber>,
+        general_rev: Arc<RevisionNumberGenerator>,
+        auth_rev: Arc<RevisionNumberGenerator>,
     ) -> Self {
         Self {
             kv_storage,
