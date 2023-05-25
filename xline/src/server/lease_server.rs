@@ -2,7 +2,7 @@ use std::{collections::HashMap, pin::Pin, sync::Arc, time::Duration};
 
 use async_stream::{stream, try_stream};
 use clippy_utilities::Cast;
-use curp::{client::Client, cmd::ProposeId, error::ProposeError};
+use curp::{client::Client, cmd::ProposeId, error::ProposeError, ServerId};
 use futures::stream::Stream;
 use tokio::time;
 use tracing::{debug, warn};
@@ -43,7 +43,7 @@ where
     /// Id generator
     id_gen: Arc<IdGenerator>,
     /// Address of all members
-    all_members: HashMap<String, String>,
+    all_members: HashMap<ServerId, String>,
 }
 
 impl<S> LeaseServer<S>
@@ -57,7 +57,7 @@ where
         client: Arc<Client<Command>>,
         name: String,
         id_gen: Arc<IdGenerator>,
-        all_members: HashMap<String, String>,
+        all_members: HashMap<ServerId, String>,
     ) -> Arc<Self> {
         let lease_server = Arc::new(Self {
             lease_storage,
@@ -260,10 +260,12 @@ where
                 break self.leader_keep_alive(request_stream).await;
             }
             let leader_id = self.client.get_leader_id().await;
-            // double check
+            // Given that a candidate server may become a leader when it won the election or
+            // a follower when it lost the election. Therefore we need to double check here.
+            // We can directly invoke leader_keep_alive when a candidate becomes a leader.
             if !self.lease_storage.is_primary() {
                 let leader_addr = self.all_members.get(&leader_id).unwrap_or_else(|| {
-                    panic!(
+                    unreachable!(
                         "The address of leader {} not found in all_members {:?}",
                         leader_id, self.all_members
                     )
@@ -327,7 +329,6 @@ where
     ) -> Result<tonic::Response<LeaseTimeToLiveResponse>, tonic::Status> {
         debug!("Receive LeaseTimeToLiveRequest {:?}", request);
         loop {
-            #[allow(clippy::redundant_else)]
             if self.lease_storage.is_primary() {
                 // TODO wait applied index
                 let time_to_live_req = request.into_inner();
@@ -347,22 +348,21 @@ where
                     keys,
                 };
                 return Ok(tonic::Response::new(res));
-            } else {
-                let leader_id = self.client.get_leader_id().await;
-                let leader_addr = self.all_members.get(&leader_id).unwrap_or_else(|| {
-                    panic!(
-                        "The address of leader {} not found in all_members {:?}",
-                        leader_id, self.all_members
-                    )
-                });
-                if !self.lease_storage.is_primary() {
-                    let mut lease_client = LeaseClient::connect(format!("http://{leader_addr}"))
-                        .await
-                        .map_err(|e| {
-                            tonic::Status::internal(format!("Connect to leader error: {e}"))
-                        })?;
-                    return lease_client.lease_time_to_live(request).await;
-                }
+            }
+            let leader_id = self.client.get_leader_id().await;
+            let leader_addr = self.all_members.get(&leader_id).unwrap_or_else(|| {
+                unreachable!(
+                    "The address of leader {} not found in all_members {:?}",
+                    leader_id, self.all_members
+                )
+            });
+            if !self.lease_storage.is_primary() {
+                let mut lease_client = LeaseClient::connect(format!("http://{leader_addr}"))
+                    .await
+                    .map_err(|e| {
+                        tonic::Status::internal(format!("Connect to leader error: {e}"))
+                    })?;
+                return lease_client.lease_time_to_live(request).await;
             }
         }
     }

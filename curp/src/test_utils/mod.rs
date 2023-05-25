@@ -17,7 +17,16 @@ use std::time::Duration;
 
 use madsim::rand::{distributions::Alphanumeric, thread_rng, Rng};
 
+use crate::role_change::MockRoleChange;
+
 pub(crate) mod test_cmd;
+
+pub(crate) fn mock_role_change() -> MockRoleChange {
+    let mut role_change = MockRoleChange::default();
+    role_change.expect_on_election_win().returning(|| {});
+    role_change.expect_on_calibrate().returning(|| {});
+    role_change
+}
 
 pub(crate) async fn sleep_millis(n: u64) {
     tokio::time::sleep(Duration::from_millis(n)).await;

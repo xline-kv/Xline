@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt::Debug};
 
-use curp::{client::Client as CurpClient, cmd::ProposeId};
+use curp::{client::Client as CurpClient, cmd::ProposeId, ServerId};
 use etcd_client::{
     AuthClient, Client as EtcdClient, KvClient, LeaseClient, LeaseKeepAliveStream, LeaseKeeper,
     LockClient, MaintenanceClient, WatchClient,
@@ -64,7 +64,7 @@ impl Client {
     /// If `EtcdClient::connect` fails.
     #[inline]
     pub async fn new(
-        all_members: HashMap<String, String>,
+        all_members: HashMap<ServerId, String>,
         use_curp_client: bool,
         timeout: ClientTimeout,
     ) -> Result<Self, ClientError> {

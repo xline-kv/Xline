@@ -8,19 +8,18 @@ use utils::config::{
 
 use super::*;
 use crate::{
-    role_change::MockRoleChange,
     server::{
         cmd_board::CommandBoard,
         cmd_worker::{CEEventTxApi, MockCEEventTxApi},
         raw_curp::UncommittedPool,
         spec_pool::SpeculativePool,
     },
-    test_utils::test_cmd::TestCommand,
+    test_utils::{mock_role_change, test_cmd::TestCommand},
     LogIndex,
 };
 
 // Hooks for tests
-impl<C: 'static + Command> RawCurp<C> {
+impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     fn role(&self) -> Role {
         self.st.read().role
     }
@@ -29,7 +28,7 @@ impl<C: 'static + Command> RawCurp<C> {
         self.log.read().commit_index
     }
 
-    pub(crate) fn new_test<Tx: CEEventTxApi<C>>(n: u64, exe_tx: Tx) -> Self {
+    pub(crate) fn new_test<Tx: CEEventTxApi<C>>(n: u64, exe_tx: Tx, role_change: RC) -> Self {
         let others: HashSet<ServerId> = (1..n).map(|i| format!("S{i}")).collect();
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
@@ -39,13 +38,6 @@ impl<C: 'static + Command> RawCurp<C> {
             .iter()
             .map(|id| (id.clone(), Arc::new(Event::new())))
             .collect();
-
-        let role_change = {
-            let mut role_change = MockRoleChange::default();
-            role_change.expect_on_election_win().returning(|| {});
-            role_change.expect_on_calibrate().returning(|| {});
-            role_change
-        };
 
         Self::new(
             "S0".to_owned(),
@@ -77,7 +69,7 @@ fn leader_handle_propose_will_succeed() {
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx.expect_send_sp_exe().returning(|_, _| {});
-        RawCurp::new_test(3, exe_tx)
+        RawCurp::new_test(3, exe_tx, mock_role_change())
     };
     let cmd = Arc::new(TestCommand::default());
     let ((leader_id, term), result) = curp.handle_propose(cmd);
@@ -92,7 +84,7 @@ fn leader_handle_propose_will_reject_conflicted() {
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx.expect_send_sp_exe().returning(|_, _| {});
-        RawCurp::new_test(3, exe_tx)
+        RawCurp::new_test(3, exe_tx, mock_role_change())
     };
 
     let cmd1 = Arc::new(TestCommand::new_put(vec![1], 0));
@@ -121,7 +113,7 @@ fn leader_handle_propose_will_reject_duplicated() {
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx.expect_send_sp_exe().returning(|_, _| {});
-        RawCurp::new_test(3, exe_tx)
+        RawCurp::new_test(3, exe_tx, mock_role_change())
     };
     let cmd = Arc::new(TestCommand::default());
     let ((leader_id, term), result) = curp.handle_propose(Arc::clone(&cmd));
@@ -143,7 +135,7 @@ fn follower_handle_propose_will_succeed() {
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(3, exe_tx))
+        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
     let cmd = Arc::new(TestCommand::new_get(vec![1]));
@@ -161,7 +153,7 @@ fn follower_handle_propose_will_reject_conflicted() {
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(3, exe_tx))
+        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
@@ -188,7 +180,7 @@ fn heartbeat_will_calibrate_term() {
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        RawCurp::new_test(3, exe_tx)
+        RawCurp::new_test(3, exe_tx, mock_role_change())
     };
 
     let result = curp.handle_append_entries_resp(&"S1".to_owned(), None, 1, false, 1);
@@ -202,7 +194,11 @@ fn heartbeat_will_calibrate_term() {
 #[traced_test]
 #[test]
 fn heartbeat_will_calibrate_next_index() {
-    let curp = RawCurp::new_test(3, MockCEEventTxApi::<TestCommand>::default());
+    let curp = RawCurp::new_test(
+        3,
+        MockCEEventTxApi::<TestCommand>::default(),
+        mock_role_change(),
+    );
 
     let result = curp.handle_append_entries_resp(&"S1".to_owned(), None, 0, false, 1);
     assert_eq!(result, Ok(false));
@@ -220,7 +216,7 @@ fn handle_ae_will_calibrate_term() {
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(3, exe_tx))
+        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
@@ -241,7 +237,7 @@ fn handle_ae_will_set_leader_id() {
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(3, exe_tx))
+        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
@@ -262,7 +258,7 @@ fn handle_ae_will_reject_wrong_term() {
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(3, exe_tx))
+        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
@@ -279,7 +275,7 @@ fn handle_ae_will_reject_wrong_log() {
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(3, exe_tx))
+        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
@@ -304,7 +300,7 @@ async fn follower_will_not_start_election_when_heartbeats_are_received() {
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(3, exe_tx))
+        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
@@ -334,7 +330,7 @@ async fn follower_or_candidate_will_start_election_if_timeout() {
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(3, exe_tx))
+        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
@@ -377,7 +373,7 @@ fn handle_vote_will_calibrate_term() {
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(3, exe_tx))
+        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
 
     let result = curp.handle_vote(1, "S1".to_owned(), 0, 0).unwrap();
@@ -395,7 +391,7 @@ fn handle_vote_will_reject_smaller_term() {
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(3, exe_tx))
+        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 2);
 
@@ -411,7 +407,7 @@ fn handle_vote_will_reject_outdated_candidate() {
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(3, exe_tx))
+        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
     let result = curp.handle_append_entries(
         1,
@@ -435,7 +431,7 @@ fn candidate_will_become_leader_after_election_succeeds() {
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(3, exe_tx))
+        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
@@ -463,7 +459,7 @@ fn vote_will_calibrate_candidate_term() {
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(3, exe_tx))
+        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
@@ -490,7 +486,7 @@ fn recover_from_spec_pools_will_pick_the_correct_cmds() {
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(5, exe_tx))
+        Arc::new(RawCurp::new_test(5, exe_tx, mock_role_change()))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
@@ -530,7 +526,7 @@ fn quorum() {
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(5, exe_tx))
+        Arc::new(RawCurp::new_test(5, exe_tx, mock_role_change()))
     };
     assert_eq!(curp.quorum(), 3);
     assert_eq!(curp.recover_quorum(), 2);

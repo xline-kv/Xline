@@ -88,9 +88,9 @@ enum SendSnapshotError {
 }
 
 /// `CurpNode` represents a single node of curp cluster
-pub(super) struct CurpNode<C: Command> {
+pub(super) struct CurpNode<C: Command, RC: RoleChange> {
     /// `RawCurp` state machine
-    curp: Arc<RawCurp<C>>,
+    curp: Arc<RawCurp<C, RC>>,
     /// The speculative cmd pool, shared with executor
     spec_pool: SpecPoolRef<C>,
     /// Cmd watch board for tracking the cmd sync results
@@ -106,7 +106,7 @@ pub(super) struct CurpNode<C: Command> {
 }
 
 // handlers
-impl<C: 'static + Command> CurpNode<C> {
+impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     /// Handle "propose" requests
     pub(super) async fn propose(&self, req: ProposeRequest) -> Result<ProposeResponse, CurpError> {
         let cmd: Arc<C> = Arc::new(req.cmd()?);
@@ -151,7 +151,6 @@ impl<C: 'static + Command> CurpNode<C> {
     }
 
     /// Handle `Vote` requests
-    #[allow(clippy::pedantic)] // need not return result, but to keep it consistent with rpc handler functions, we keep it this way
     pub(super) async fn vote(&self, req: VoteRequest) -> Result<VoteResponse, CurpError> {
         let result = self.curp.handle_vote(
             req.term,
@@ -274,10 +273,10 @@ impl<C: 'static + Command> CurpNode<C> {
 }
 
 /// Spawned tasks
-impl<C: 'static + Command> CurpNode<C> {
+impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     /// Tick periodically
     async fn election_task(
-        curp: Arc<RawCurp<C>>,
+        curp: Arc<RawCurp<C, RC>>,
         connects: HashMap<ServerId, Arc<impl ConnectApi + ?Sized>>,
     ) {
         let heartbeat_interval = curp.cfg().heartbeat_interval;
@@ -299,7 +298,7 @@ impl<C: 'static + Command> CurpNode<C> {
 
     /// Responsible for bringing up `sync_follower_task` when self becomes leader
     async fn sync_follower_daemon(
-        curp: Arc<RawCurp<C>>,
+        curp: Arc<RawCurp<C, RC>>,
         connect: Arc<impl ConnectApi + ?Sized>,
         sync_event: Arc<Event>,
     ) {
@@ -319,7 +318,7 @@ impl<C: 'static + Command> CurpNode<C> {
 
     /// Leader use this task to keep a follower up-to-date, will return if self is no longer leader
     async fn sync_follower_task(
-        curp: Arc<RawCurp<C>>,
+        curp: Arc<RawCurp<C, RC>>,
         connect: Arc<impl ConnectApi + ?Sized>,
         sync_event: Arc<Event>,
     ) {
@@ -403,17 +402,17 @@ impl<C: 'static + Command> CurpNode<C> {
 }
 
 // utils
-impl<C: 'static + Command> CurpNode<C> {
+impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     /// Create a new server instance
     #[inline]
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // TODO: remove this clippy lint when tx_filter is removed.(issue #143)
     pub(super) async fn new<CE: CommandExecutor<C> + 'static>(
         id: ServerId,
         is_leader: bool,
         others: HashMap<ServerId, String>,
         cmd_executor: Arc<CE>,
         snapshot_allocator: impl SnapshotAllocator + 'static,
-        role_change: impl RoleChange + 'static,
+        role_change: RC,
         curp_cfg: Arc<CurpConfig>,
         tx_filter: Option<Box<dyn TxFilter>>,
     ) -> Result<Self, CurpError> {
@@ -512,7 +511,7 @@ impl<C: 'static + Command> CurpNode<C> {
 
     /// Run background tasks for Curp server
     async fn run_bg_tasks(
-        curp: Arc<RawCurp<C>>,
+        curp: Arc<RawCurp<C, RC>>,
         storage: Arc<impl StorageApi<Command = C> + 'static>,
         others: HashMap<ServerId, String>,
         shutdown_trigger: Arc<Event>,
@@ -546,7 +545,7 @@ impl<C: 'static + Command> CurpNode<C> {
 
     /// Candidate broadcasts votes
     async fn bcast_vote(
-        curp: &RawCurp<C>,
+        curp: &RawCurp<C, RC>,
         connects: &HashMap<ServerId, Arc<impl ConnectApi + ?Sized>>,
         vote: Vote,
     ) {
@@ -604,7 +603,7 @@ impl<C: 'static + Command> CurpNode<C> {
     #[allow(clippy::integer_arithmetic)] // won't overflow
     async fn send_ae(
         connect: &(impl ConnectApi + ?Sized),
-        curp: &RawCurp<C>,
+        curp: &RawCurp<C, RC>,
         ae: AppendEntries<C>,
     ) -> Result<(), SendAEError> {
         let last_sent_index = (!ae.entries.is_empty())
@@ -644,7 +643,7 @@ impl<C: 'static + Command> CurpNode<C> {
     /// Send snapshot
     async fn send_snapshot(
         connect: &(impl ConnectApi + ?Sized),
-        curp: &RawCurp<C>,
+        curp: &RawCurp<C, RC>,
         snapshot: Snapshot,
     ) -> Result<(), SendSnapshotError> {
         let meta = snapshot.meta;
@@ -657,14 +656,14 @@ impl<C: 'static + Command> CurpNode<C> {
     }
 }
 
-impl<C: Command> Drop for CurpNode<C> {
+impl<C: Command, RC: RoleChange> Drop for CurpNode<C, RC> {
     #[inline]
     fn drop(&mut self) {
         self.shutdown_trigger.notify(usize::MAX);
     }
 }
 
-impl<C: Command> Debug for CurpNode<C> {
+impl<C: Command, RC: RoleChange> Debug for CurpNode<C, RC> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CurpNode")
             .field("raw_curp", &self.curp)
@@ -684,7 +683,7 @@ mod tests {
     use crate::{
         rpc::connect::MockConnectApi,
         server::cmd_worker::MockCEEventTxApi,
-        test_utils::{sleep_secs, test_cmd::TestCommand},
+        test_utils::{mock_role_change, sleep_secs, test_cmd::TestCommand},
     };
 
     #[traced_test]
@@ -693,6 +692,7 @@ mod tests {
         let curp = Arc::new(RawCurp::new_test(
             3,
             MockCEEventTxApi::<TestCommand>::default(),
+            mock_role_change(),
         ));
         let mut mock_connect1 = MockConnectApi::default();
         mock_connect1
@@ -716,7 +716,7 @@ mod tests {
             exe_tx
                 .expect_send_reset()
                 .returning(|_| oneshot::channel().1);
-            Arc::new(RawCurp::new_test(3, exe_tx))
+            Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
         };
         curp.handle_append_entries(1, "S2".to_owned(), 0, 0, vec![], 0)
             .unwrap();

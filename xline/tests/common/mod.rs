@@ -3,6 +3,7 @@ use std::{
     path::PathBuf,
 };
 
+use curp::ServerId;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use tokio::{
@@ -18,7 +19,7 @@ pub struct Cluster {
     /// listeners of members
     listeners: BTreeMap<usize, TcpListener>,
     /// address of members
-    all_members: HashMap<String, String>,
+    all_members: HashMap<ServerId, String>,
     /// Client of cluster
     client: Option<Client>,
     /// Stop sender
@@ -36,7 +37,7 @@ impl Cluster {
         for i in 0..size {
             listeners.insert(i, TcpListener::bind("0.0.0.0:0").await.unwrap());
         }
-        let all_members: HashMap<String, String> = listeners
+        let all_members: HashMap<ServerId, String> = listeners
             .iter()
             .map(|(i, l)| (format!("server{}", i), l.local_addr().unwrap().to_string()))
             .collect();
@@ -119,7 +120,7 @@ impl Cluster {
     }
 
     #[allow(dead_code)] // used in tests but get warning
-    pub fn addrs(&self) -> &HashMap<String, String> {
+    pub fn addrs(&self) -> &HashMap<ServerId, String> {
         &self.all_members
     }
 
