@@ -42,7 +42,9 @@ impl IndexBarrier {
     /// Trigger all barriers whose index is less than or equal to the given index.
     pub(crate) fn trigger(&self, index: u64) {
         let mut inner_l = self.inner.lock();
-        inner_l.last_trigger_index = index;
+        if inner_l.last_trigger_index < index {
+            inner_l.last_trigger_index = index;
+        }
         let mut split_barriers = inner_l.barriers.split_off(&(index.overflow_add(1)));
         std::mem::swap(&mut inner_l.barriers, &mut split_barriers);
         for (_, barrier) in split_barriers {
