@@ -114,6 +114,7 @@ use std::{collections::HashMap, env, path::PathBuf, time::Duration};
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
+use curp::ServerId;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use opentelemetry::{global, runtime::Tokio, sdk::propagation::TraceContextPropagator};
 use opentelemetry_contrib::trace::exporter::jaeger_json::JaegerJsonExporter;
@@ -145,7 +146,7 @@ struct ServerArgs {
     name: String,
     /// Cluster peers. eg: 192.168.x.x:8080 192.168.x.x:8080
     #[clap(long,value_parser = parse_members)]
-    members: HashMap<String, String>,
+    members: HashMap<ServerId, String>,
     /// If node is leader
     #[clap(long)]
     is_leader: bool,

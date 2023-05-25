@@ -486,11 +486,10 @@ impl CurpCommand for Command {
 
 #[cfg(test)]
 mod test {
+    use super::*;
     use crate::rpc::{
         AuthEnableRequest, AuthStatusRequest, LeaseGrantRequest, LeaseRevokeRequest, PutRequest,
     };
-
-    use super::*;
 
     #[test]
     fn test_key_range_conflict() {

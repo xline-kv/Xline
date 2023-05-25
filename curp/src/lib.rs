@@ -151,7 +151,7 @@ pub use rpc::{connect::TxFilter, ProtocolServer};
 pub use snapshot::SnapshotAllocator;
 
 /// Server Id
-pub(crate) type ServerId = String;
+pub type ServerId = String;
 
 /// Client side, sending requests and determining requests' state
 pub mod client;

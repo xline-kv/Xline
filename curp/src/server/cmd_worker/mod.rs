@@ -14,6 +14,7 @@ use self::conflict_checked_mpmc::Task;
 use super::raw_curp::RawCurp;
 use crate::{
     cmd::{Command, CommandExecutor},
+    role_change::RoleChange,
     server::cmd_worker::conflict_checked_mpmc::TaskType,
     snapshot::{Snapshot, SnapshotMeta},
     LogIndex,
@@ -60,10 +61,14 @@ impl<C: Command> Debug for CEEvent<C> {
 }
 
 /// Worker that execute commands
-async fn cmd_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
+async fn cmd_worker<
+    C: Command + 'static,
+    CE: 'static + CommandExecutor<C>,
+    RC: RoleChange + 'static,
+>(
     dispatch_rx: impl TaskRxApi<C>,
     done_tx: flume::Sender<(Task<C>, bool)>,
-    curp: Arc<RawCurp<C>>,
+    curp: Arc<RawCurp<C, RC>>,
     ce: Arc<CE>,
 ) {
     let (cb, sp, ucp) = (curp.cmd_board(), curp.spec_pool(), curp.uncommitted_pool());
@@ -232,9 +237,13 @@ impl<C: Command + 'static> TaskRxApi<C> for TaskRx<C> {
 }
 
 /// Run cmd execute workers. Each cmd execute worker will continually fetch task to perform from `task_rx`.
-pub(super) fn start_cmd_workers<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
+pub(super) fn start_cmd_workers<
+    C: Command + 'static,
+    CE: 'static + CommandExecutor<C>,
+    RC: RoleChange + 'static,
+>(
     cmd_executor: &Arc<CE>,
-    curp: Arc<RawCurp<C>>,
+    curp: Arc<RawCurp<C, RC>>,
     task_rx: flume::Receiver<Task<C>>,
     done_tx: flume::Sender<(Task<C>, bool)>,
     shutdown_trigger: Arc<event_listener::Event>,
@@ -268,7 +277,7 @@ mod tests {
     use crate::{
         log_entry::LogEntry,
         test_utils::{
-            sleep_millis, sleep_secs,
+            mock_role_change, sleep_millis, sleep_secs,
             test_cmd::{TestCE, TestCommand},
         },
     };
@@ -283,7 +292,11 @@ mod tests {
         let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel(Arc::clone(&ce));
         start_cmd_workers(
             &ce,
-            Arc::new(RawCurp::new_test(3, ce_event_tx.clone())),
+            Arc::new(RawCurp::new_test(
+                3,
+                ce_event_tx.clone(),
+                mock_role_change(),
+            )),
             task_rx,
             done_tx,
             Arc::new(event_listener::Event::new()),
@@ -308,7 +321,11 @@ mod tests {
         let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel(Arc::clone(&ce));
         start_cmd_workers(
             &ce,
-            Arc::new(RawCurp::new_test(3, ce_event_tx.clone())),
+            Arc::new(RawCurp::new_test(
+                3,
+                ce_event_tx.clone(),
+                mock_role_change(),
+            )),
             task_rx,
             done_tx,
             Arc::new(event_listener::Event::new()),
@@ -338,7 +355,11 @@ mod tests {
         let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel(Arc::clone(&ce));
         start_cmd_workers(
             &ce,
-            Arc::new(RawCurp::new_test(3, ce_event_tx.clone())),
+            Arc::new(RawCurp::new_test(
+                3,
+                ce_event_tx.clone(),
+                mock_role_change(),
+            )),
             task_rx,
             done_tx,
             Arc::new(event_listener::Event::new()),
@@ -372,7 +393,11 @@ mod tests {
         let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel(Arc::clone(&ce));
         start_cmd_workers(
             &ce,
-            Arc::new(RawCurp::new_test(3, ce_event_tx.clone())),
+            Arc::new(RawCurp::new_test(
+                3,
+                ce_event_tx.clone(),
+                mock_role_change(),
+            )),
             task_rx,
             done_tx,
             Arc::new(event_listener::Event::new()),
@@ -396,7 +421,11 @@ mod tests {
         let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel(Arc::clone(&ce));
         start_cmd_workers(
             &ce,
-            Arc::new(RawCurp::new_test(3, ce_event_tx.clone())),
+            Arc::new(RawCurp::new_test(
+                3,
+                ce_event_tx.clone(),
+                mock_role_change(),
+            )),
             task_rx,
             done_tx,
             Arc::new(event_listener::Event::new()),
@@ -423,7 +452,11 @@ mod tests {
         let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel(Arc::clone(&ce));
         start_cmd_workers(
             &ce,
-            Arc::new(RawCurp::new_test(3, ce_event_tx.clone())),
+            Arc::new(RawCurp::new_test(
+                3,
+                ce_event_tx.clone(),
+                mock_role_change(),
+            )),
             task_rx,
             done_tx,
             Arc::new(event_listener::Event::new()),
@@ -461,7 +494,11 @@ mod tests {
         let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel(Arc::clone(&ce));
         start_cmd_workers(
             &ce,
-            Arc::new(RawCurp::new_test(3, ce_event_tx.clone())),
+            Arc::new(RawCurp::new_test(
+                3,
+                ce_event_tx.clone(),
+                mock_role_change(),
+            )),
             task_rx,
             done_tx,
             Arc::new(event_listener::Event::new()),
@@ -495,7 +532,7 @@ mod tests {
         let (as_tx, mut _as_rx) = mpsc::unbounded_channel();
         let ce1 = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
         let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel(Arc::clone(&ce1));
-        let curp = RawCurp::new_test(3, ce_event_tx.clone());
+        let curp = RawCurp::new_test(3, ce_event_tx.clone(), mock_role_change());
         curp.handle_append_entries(
             1,
             "S3".to_owned(),
@@ -533,7 +570,11 @@ mod tests {
         let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel(Arc::clone(&ce2));
         start_cmd_workers(
             &ce2,
-            Arc::new(RawCurp::new_test(3, ce_event_tx.clone())),
+            Arc::new(RawCurp::new_test(
+                3,
+                ce_event_tx.clone(),
+                mock_role_change(),
+            )),
             task_rx,
             done_tx,
             Arc::new(event_listener::Event::new()),

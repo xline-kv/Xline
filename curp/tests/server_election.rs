@@ -11,8 +11,8 @@ async fn wait_for_election() {
 }
 
 fn check_leader_state(group: &CurpGroup, leader: &String) {
-    let (_node, state) = group.nodes.get(leader).unwrap();
-    assert!(state.get_is_leader());
+    let node = group.nodes.get(leader).unwrap();
+    assert!(node.role_change_arc.get_is_leader());
 }
 
 fn check_non_leader_state(group: &CurpGroup, group_size: usize, leader: &str) {
@@ -20,8 +20,7 @@ fn check_non_leader_state(group: &CurpGroup, group_size: usize, leader: &str) {
     let non_leader_node_cnt = group
         .nodes
         .iter()
-        .filter(|(id, _value)| id.as_str() != leader)
-        .filter(|(_id, (_node, state))| !state.get_is_leader())
+        .filter(|(id, node)| id.as_str() != leader && !node.role_change_arc.get_is_leader())
         .count();
     assert!(
         non_leader_node_cnt >= majority - 1,

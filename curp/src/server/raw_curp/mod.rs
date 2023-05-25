@@ -63,7 +63,7 @@ type UncommittedPoolRef<C> = Arc<Mutex<UncommittedPool<C>>>;
 
 /// The curp state machine
 #[derive(Debug)]
-pub(super) struct RawCurp<C: Command> {
+pub(super) struct RawCurp<C: Command, RC: RoleChange> {
     /// Curp state
     st: RwLock<State>,
     /// Additional leader state
@@ -73,7 +73,7 @@ pub(super) struct RawCurp<C: Command> {
     /// Curp logs
     log: RwLock<Log<C>>,
     /// Relevant context
-    ctx: Context<C>,
+    ctx: Context<C, RC>,
 }
 
 /// Actions of syncing
@@ -125,7 +125,7 @@ enum Role {
 }
 
 /// Relevant context for Curp
-struct Context<C: Command> {
+struct Context<C: Command, RC: RoleChange> {
     /// Id of the server
     id: ServerId,
     /// Other server ids
@@ -149,10 +149,10 @@ struct Context<C: Command> {
     /// Become leader event
     leader_event: Arc<Event>,
     /// Leader change callback
-    role_change: Box<dyn RoleChange>,
+    role_change: RC,
 }
 
-impl<C: Command> Debug for Context<C> {
+impl<C: Command, R: RoleChange> Debug for Context<C, R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Context")
             .field("id", &self.id)
@@ -167,7 +167,7 @@ impl<C: Command> Debug for Context<C> {
 }
 
 // Tick
-impl<C: 'static + Command> RawCurp<C> {
+impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     /// Tick
     pub(super) fn tick_election(&self) -> Option<Vote> {
         let timeout = {
@@ -189,7 +189,7 @@ impl<C: 'static + Command> RawCurp<C> {
 }
 
 // Curp handlers
-impl<C: 'static + Command> RawCurp<C> {
+impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     /// Handle `propose` request
     /// Return `((leader_id, term), Ok(spec_executed))` if the proposal succeeds, `Ok(true)` if leader speculatively executed the command
     /// Return `((leader_id, term), Err(ProposeError))` if the cmd cannot be speculatively executed or is duplicated
@@ -569,7 +569,7 @@ impl<C: 'static + Command> RawCurp<C> {
 }
 
 /// Other small public interface
-impl<C: 'static + Command> RawCurp<C> {
+impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     /// Create a new `RawCurp`
     #[allow(clippy::too_many_arguments)] // only called once
     pub(super) fn new(
@@ -583,7 +583,7 @@ impl<C: 'static + Command> RawCurp<C> {
         cmd_tx: Arc<dyn CEEventTxApi<C>>,
         sync_events: HashMap<ServerId, Arc<Event>>,
         log_tx: mpsc::UnboundedSender<LogEntry<C>>,
-        role_change: impl RoleChange + 'static,
+        role_change: RC,
     ) -> Self {
         let raw_curp = Self {
             st: RwLock::new(State::new(
@@ -609,7 +609,7 @@ impl<C: 'static + Command> RawCurp<C> {
                 cmd_tx,
                 sync_events,
                 leader_event: Arc::new(Event::new()),
-                role_change: Box::new(role_change),
+                role_change,
             },
         };
         if is_leader {
@@ -636,7 +636,7 @@ impl<C: 'static + Command> RawCurp<C> {
         voted_for: Option<(u64, ServerId)>,
         entries: Vec<LogEntry<C>>,
         last_applied: LogIndex,
-        role_change: impl RoleChange + 'static,
+        role_change: RC,
     ) -> Self {
         let raw_curp = Self::new(
             id,
@@ -790,7 +790,7 @@ impl<C: 'static + Command> RawCurp<C> {
 
 // Utils
 // Don't grab lock in the following functions(except cb or sp's lock)
-impl<C: 'static + Command> RawCurp<C> {
+impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     /// Server becomes a candidate
     fn become_candidate(&self, st: &mut State, cst: &mut CandidateState<C>, log: &Log<C>) -> Vote {
         let prev_role = st.role;

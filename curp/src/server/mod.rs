@@ -48,13 +48,13 @@ static DEFAULT_SERVER_PORT: u16 = 12345;
 /// The Rpc Server to handle rpc requests
 /// This Wrapper is introduced due to the `MadSim` rpc lib
 #[derive(Clone, Debug)]
-pub struct Rpc<C: Command + 'static> {
+pub struct Rpc<C: Command + 'static, RC: RoleChange + 'static> {
     /// The inner server is wrapped in an Arc so that its state can be shared while cloning the rpc wrapper
-    inner: Arc<CurpNode<C>>,
+    inner: Arc<CurpNode<C, RC>>,
 }
 
 #[tonic::async_trait]
-impl<C: 'static + Command> crate::rpc::Protocol for Rpc<C> {
+impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::Protocol for Rpc<C, RC> {
     #[instrument(skip_all, name = "curp_propose")]
     async fn propose(
         &self,
@@ -131,7 +131,7 @@ impl<C: 'static + Command> crate::rpc::Protocol for Rpc<C> {
     }
 }
 
-impl<C: Command + 'static> Rpc<C> {
+impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
     /// New `Rpc`
     ///
     /// # Panics
@@ -144,7 +144,7 @@ impl<C: Command + 'static> Rpc<C> {
         others: HashMap<ServerId, String>,
         executor: CE,
         snapshot_allocator: impl SnapshotAllocator + 'static,
-        role_change: impl RoleChange + 'static,
+        role_change: RC,
         curp_cfg: Arc<CurpConfig>,
         tx_filter: Option<Box<dyn TxFilter>>,
     ) -> Self {
@@ -186,7 +186,7 @@ impl<C: Command + 'static> Rpc<C> {
         server_port: Option<u16>,
         executor: CE,
         snapshot_allocator: impl SnapshotAllocator + 'static,
-        role_change: impl RoleChange + 'static,
+        role_change: RC,
         curp_cfg: Arc<CurpConfig>,
         tx_filter: Option<Box<dyn TxFilter>>,
         rx_filter: Option<FilterLayer<U>>,
@@ -252,7 +252,7 @@ impl<C: Command + 'static> Rpc<C> {
         listener: TcpListener,
         executor: CE,
         snapshot_allocator: impl SnapshotAllocator + 'static,
-        role_change: impl RoleChange + 'static,
+        role_change: RC,
         curp_cfg: Arc<CurpConfig>,
         tx_filter: Option<Box<dyn TxFilter>>,
         rx_filter: Option<FilterLayer<U>>,

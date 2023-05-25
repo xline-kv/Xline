@@ -46,7 +46,7 @@ async fn leader_crash_and_recovery() {
     // restart the original leader
     sleep_secs(3).await;
     group.restart(&leader, false).await;
-    let (old_leader, _state) = group.nodes.get_mut(&leader).unwrap();
+    let old_leader = group.nodes.get_mut(&leader).unwrap();
 
     let (_cmd, er) = old_leader.exe_rx.recv().await.unwrap();
     assert_eq!(er.0, vec![]);
@@ -99,7 +99,7 @@ async fn follower_crash_and_recovery() {
 
     // restart follower
     group.restart(&follower, false).await;
-    let (follower, _state) = group.nodes.get_mut(&follower).unwrap();
+    let follower = group.nodes.get_mut(&follower).unwrap();
 
     let (_cmd, er) = follower.exe_rx.recv().await.unwrap();
     assert_eq!(er.0, vec![]);
@@ -162,7 +162,7 @@ async fn leader_and_follower_both_crash_and_recovery() {
             .0,
         vec![0]
     );
-    let (old_leader, _state) = group.nodes.get_mut(&leader).unwrap();
+    let old_leader = group.nodes.get_mut(&leader).unwrap();
 
     let (_cmd, er) = old_leader.exe_rx.recv().await.unwrap();
     assert_eq!(er.0, vec![]);
@@ -176,7 +176,7 @@ async fn leader_and_follower_both_crash_and_recovery() {
 
     // restart follower
     group.restart(&follower, false).await;
-    let (follower, _state) = group.nodes.get_mut(&follower).unwrap();
+    let follower = group.nodes.get_mut(&follower).unwrap();
 
     let (_cmd, er) = follower.exe_rx.recv().await.unwrap();
     assert_eq!(er.0, vec![]);
@@ -297,8 +297,8 @@ async fn old_leader_will_discard_spec_exe_cmds() {
 
     // 1: disable all others to prevent the cmd1 to be synced
     let leader1 = group.get_leader().await.0;
-    for node in group.nodes.values().filter(|node| node.0.id != leader1) {
-        group.disable_node(&node.0.id);
+    for node in group.nodes.values().filter(|node| node.id != leader1) {
+        group.disable_node(&node.id);
     }
 
     // 2: send the cmd1 to the leader, it should be speculatively executed
@@ -319,8 +319,8 @@ async fn old_leader_will_discard_spec_exe_cmds() {
     // 3: recover all others and disable leader, a new leader will be elected
     group.disable_node(&leader1);
     sleep_millis(100).await;
-    for node in group.nodes.values().filter(|node| node.0.id != leader1) {
-        group.enable_node(&node.0.id);
+    for node in group.nodes.values().filter(|node| node.id != leader1) {
+        group.enable_node(&node.id);
     }
     sleep_secs(3).await;
     let leader2 = group.get_leader().await.0;
@@ -442,7 +442,7 @@ async fn recovery_after_compaction() {
     sleep_secs(3).await;
 
     {
-        let (node, _state) = group.nodes.get_mut(&node_id).unwrap();
+        let node = group.nodes.get_mut(&node_id).unwrap();
         for i in 0..50_u32 {
             let kv = i.to_be_bytes().to_vec();
             let val = node.store.get(TEST_TABLE, &kv).unwrap().unwrap();

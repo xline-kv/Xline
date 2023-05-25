@@ -99,6 +99,7 @@ pub struct CurpNode {
     pub rt: Runtime,
     pub switch: Arc<AtomicBool>,
     pub storage_path: String,
+    pub role_change_arc: Arc<TestRoleChangeInner>,
 }
 
 pub struct CrashedCurpNode {
@@ -108,7 +109,7 @@ pub struct CrashedCurpNode {
 }
 
 pub struct CurpGroup {
-    pub nodes: HashMap<ServerId, (CurpNode, Arc<TestRoleChangeInner>)>,
+    pub nodes: HashMap<ServerId, CurpNode>,
     pub crashed_nodes: HashMap<ServerId, CrashedCurpNode>,
     pub all: HashMap<ServerId, String>,
 }
@@ -190,19 +191,17 @@ impl CurpGroup {
 
                 (
                     id.clone(),
-                    (
-                        CurpNode {
-                            id,
-                            addr,
-                            exe_rx,
-                            as_rx,
-                            store,
-                            rt,
-                            switch,
-                            storage_path,
-                        },
+                    CurpNode {
+                        id,
+                        addr,
+                        exe_rx,
+                        as_rx,
+                        store,
+                        rt,
+                        switch,
+                        storage_path,
                         role_change_arc,
-                    ),
+                    },
                 )
             })
             .collect();
@@ -217,14 +216,14 @@ impl CurpGroup {
     }
 
     pub fn get_node(&self, id: &ServerId) -> &CurpNode {
-        &self.nodes[id].0
+        &self.nodes[id]
     }
 
     pub async fn new_client(&self, timeout: ClientTimeout) -> Client<TestCommand> {
         let addrs = self
             .nodes
             .iter()
-            .map(|(id, node)| (id.clone(), node.0.addr.clone()))
+            .map(|(id, node)| (id.clone(), node.addr.clone()))
             .collect();
         Client::<TestCommand>::new(addrs, timeout).await
     }
@@ -232,20 +231,20 @@ impl CurpGroup {
     pub fn exe_rxs(
         &mut self,
     ) -> impl Iterator<Item = &mut mpsc::UnboundedReceiver<(TestCommand, TestCommandResult)>> {
-        self.nodes.values_mut().map(|node| &mut node.0.exe_rx)
+        self.nodes.values_mut().map(|node| &mut node.exe_rx)
     }
 
     pub fn as_rxs(
         &mut self,
     ) -> impl Iterator<Item = &mut mpsc::UnboundedReceiver<(TestCommand, LogIndex)>> {
-        self.nodes.values_mut().map(|node| &mut node.0.as_rx)
+        self.nodes.values_mut().map(|node| &mut node.as_rx)
     }
 
     pub fn stop(mut self) {
         let paths = self
             .nodes
             .values()
-            .map(|node| node.0.storage_path.clone())
+            .map(|node| node.storage_path.clone())
             .chain(
                 self.crashed_nodes
                     .values()
@@ -263,7 +262,7 @@ impl CurpGroup {
     }
 
     pub fn crash(&mut self, id: &ServerId) {
-        let (node, _state) = self.nodes.remove(id).unwrap();
+        let node = self.nodes.remove(id).unwrap();
         let crashed = CrashedCurpNode {
             id: node.id.clone(),
             addr: node.addr.clone(),
@@ -341,8 +340,9 @@ impl CurpGroup {
             rt,
             switch,
             storage_path: crashed.storage_path,
+            role_change_arc,
         };
-        self.nodes.insert(id.clone(), (new_node, role_change_arc));
+        self.nodes.insert(id.clone(), new_node);
     }
 
     pub async fn try_get_leader(&self) -> Option<(ServerId, u64)> {
@@ -410,12 +410,12 @@ impl CurpGroup {
     }
 
     pub fn disable_node(&self, id: &ServerId) {
-        let node = &self.nodes[id].0;
+        let node = &self.nodes[id];
         node.switch.store(false, Ordering::Relaxed);
     }
 
     pub fn enable_node(&self, id: &ServerId) {
-        let node = &self.nodes[id].0;
+        let node = &self.nodes[id];
         node.switch.store(true, Ordering::Relaxed);
     }
 

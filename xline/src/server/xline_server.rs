@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::Result;
 use clippy_utilities::{Cast, OverflowArithmetic};
-use curp::{client::Client, server::Rpc, ProtocolServer};
+use curp::{client::Client, server::Rpc, ProtocolServer, ServerId};
 use event_listener::Event;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use tokio::net::TcpListener;
@@ -48,7 +48,7 @@ use crate::{
 };
 
 /// Rpc Server of curp protocol
-type CurpServer = Rpc<Command>;
+type CurpServer<S> = Rpc<Command, State<S>>;
 
 /// Xline server
 #[derive(Debug)]
@@ -61,7 +61,7 @@ where
     /// is leader
     is_leader: bool,
     /// all Members
-    all_members: HashMap<String, String>,
+    all_members: HashMap<ServerId, String>,
     /// Kv storage
     kv_storage: Arc<KvStore<S>>,
     /// Auth storage
@@ -111,7 +111,7 @@ where
     #[allow(clippy::too_many_arguments)] // TODO: refactor this use builder pattern, or just pass a reference of config
     pub async fn new(
         name: String,
-        all_members: HashMap<String, String>,
+        all_members: HashMap<ServerId, String>,
         is_leader: bool,
         key_pair: Option<(EncodingKey, DecodingKey)>,
         curp_config: CurpConfig,
@@ -120,21 +120,8 @@ where
         storage_config: StorageConfig,
         persistent: Arc<S>,
     ) -> Self {
-        let url = all_members
-            .get(&name)
-            .unwrap_or_else(|| panic!("peer {} not found in peers {:?}", name, all_members.keys()));
-
-        let ts = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or_else(|e| panic!("SystemTime before UNIX EPOCH! {e}"))
-            .as_secs();
-        let member_id = Self::calc_member_id(url, "", ts);
-        let peer_urls = all_members.values().map(String::as_str).collect::<Vec<_>>();
-        let cluster_id = Self::calc_cluster_id(&peer_urls, "");
-        let header_gen = Arc::new(HeaderGenerator::new(cluster_id, member_id));
+        let (header_gen, id_gen) = Self::construct_generator(name.as_str(), &all_members);
         let auth_revision = Arc::new(RevisionNumber::default());
-        let id_gen = Arc::new(IdGenerator::new(member_id));
-
         let curp_config = Arc::new(curp_config);
         // The ttl of a lease should larger than the 3/2 of a election timeout
         let min_ttl =
@@ -199,6 +186,29 @@ where
             range_retry_timeout: *server_timeout.range_retry_timeout(),
             shutdown_trigger,
         }
+    }
+
+    /// Construct a header generator
+    #[inline]
+    fn construct_generator(
+        name: &str,
+        all_members: &HashMap<ServerId, String>,
+    ) -> (Arc<HeaderGenerator>, Arc<IdGenerator>) {
+        let url = all_members
+            .get(name)
+            .unwrap_or_else(|| panic!("peer {} not found in peers {:?}", name, all_members.keys()));
+
+        let ts = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_else(|e| panic!("SystemTime before UNIX EPOCH! {e}"))
+            .as_secs();
+        let member_id = Self::calc_member_id(url, "", ts);
+        let peer_urls = all_members.values().map(String::as_str).collect::<Vec<_>>();
+        let cluster_id = Self::calc_cluster_id(&peer_urls, "");
+        (
+            Arc::new(HeaderGenerator::new(cluster_id, member_id)),
+            Arc::new(IdGenerator::new(member_id)),
+        )
     }
 
     /// calculate member id
@@ -303,10 +313,8 @@ where
         AuthServer<S>,
         WatchServer<S>,
         MaintenanceServer<S>,
-        CurpServer,
+        CurpServer<S>,
     ) {
-        let state = State::new(Arc::clone(&self.lease_storage));
-
         let others = self
             .all_members
             .iter()
@@ -343,7 +351,7 @@ where
                         Arc::clone(&self.auth_revision),
                     ),
                     MemorySnapshotAllocator,
-                    state,
+                    State::new(Arc::clone(&self.lease_storage)),
                     Arc::clone(&self.curp_cfg),
                     None,
                 )
@@ -365,7 +373,7 @@ where
                         Arc::clone(&self.auth_revision),
                     ),
                     RocksSnapshotAllocator,
-                    state,
+                    State::new(Arc::clone(&self.lease_storage)),
                     Arc::clone(&self.curp_cfg),
                     None,
                 )
