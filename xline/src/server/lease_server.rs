@@ -43,7 +43,7 @@ where
     /// Id generator
     id_gen: Arc<IdGenerator>,
     /// Address of all members
-    all_members: HashMap<ServerId, String>,
+    all_members: Arc<HashMap<ServerId, String>>,
 }
 
 impl<S> LeaseServer<S>
@@ -57,7 +57,7 @@ where
         client: Arc<Client<Command>>,
         name: String,
         id_gen: Arc<IdGenerator>,
-        all_members: HashMap<ServerId, String>,
+        all_members: Arc<HashMap<ServerId, String>>,
     ) -> Arc<Self> {
         let lease_server = Arc::new(Self {
             lease_storage,

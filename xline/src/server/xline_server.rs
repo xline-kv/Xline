@@ -61,7 +61,7 @@ pub struct XlineServer {
     /// is leader
     is_leader: bool,
     /// all Members
-    all_members: HashMap<ServerId, String>,
+    all_members: Arc<HashMap<ServerId, String>>,
     /// Curp server timeout
     curp_cfg: Arc<CurpConfig>,
     /// Client timeout
@@ -84,7 +84,7 @@ impl XlineServer {
     #[must_use]
     pub fn new(
         name: String,
-        all_members: HashMap<ServerId, String>,
+        all_members: Arc<HashMap<ServerId, String>>,
         is_leader: bool,
         curp_config: CurpConfig,
         client_timeout: ClientTimeout,
@@ -319,8 +319,9 @@ impl XlineServer {
                 &auth_revision_gen,
                 key_pair,
             )?;
-        let client =
-            Arc::new(Client::<Command>::new(self.all_members.clone(), self.client_timeout).await);
+        let client = Arc::new(
+            Client::<Command>::new(Arc::clone(&self.all_members), self.client_timeout).await,
+        );
         let index_barrier = Arc::new(IndexBarrier::new());
         let id_barrier = Arc::new(IdBarrier::new());
 
@@ -358,7 +359,7 @@ impl XlineServer {
                 Arc::clone(&client),
                 self.id.clone(),
                 Arc::clone(&id_gen),
-                self.all_members.clone(),
+                Arc::clone(&self.all_members),
             ),
             AuthServer::new(
                 Arc::clone(&auth_storage),
@@ -390,11 +391,13 @@ impl XlineServer {
         storage_cfg: &StorageConfig,
         curp_cfg: Arc<CurpConfig>,
     ) -> CurpServer<S> {
-        let others = all_members
-            .iter()
-            .filter(|&(key, _value)| id.as_str() != key.as_str())
-            .map(|(server_id, addr)| (server_id.clone(), addr.clone()))
-            .collect();
+        let others = Arc::new(
+            all_members
+                .iter()
+                .filter(|&(key, _value)| id.as_str() != key.as_str())
+                .map(|(server_id, addr)| (server_id.clone(), addr.clone()))
+                .collect(),
+        );
 
         match *storage_cfg {
             StorageConfig::Memory => {

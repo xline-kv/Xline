@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     path::PathBuf,
+    sync::Arc,
 };
 
 use curp::ServerId;
@@ -19,7 +20,7 @@ pub struct Cluster {
     /// listeners of members
     listeners: BTreeMap<usize, TcpListener>,
     /// address of members
-    all_members: HashMap<ServerId, String>,
+    all_members: Arc<HashMap<ServerId, String>>,
     /// Client of cluster
     client: Option<Client>,
     /// Stop sender
@@ -37,10 +38,12 @@ impl Cluster {
         for i in 0..size {
             listeners.insert(i, TcpListener::bind("0.0.0.0:0").await.unwrap());
         }
-        let all_members: HashMap<ServerId, String> = listeners
-            .iter()
-            .map(|(i, l)| (format!("server{}", i), l.local_addr().unwrap().to_string()))
-            .collect();
+        let all_members = Arc::new(
+            listeners
+                .iter()
+                .map(|(i, l)| (format!("server{}", i), l.local_addr().unwrap().to_string()))
+                .collect(),
+        );
 
         Self {
             listeners,
@@ -108,11 +111,15 @@ impl Cluster {
     /// Create or get the client with the specified index
     pub(crate) async fn client(&mut self) -> &mut Client {
         if self.client.is_none() {
-            let client = Client::new(self.all_members.clone(), true, ClientTimeout::default())
-                .await
-                .unwrap_or_else(|e| {
-                    panic!("Client connect error: {:?}", e);
-                });
+            let client = Client::new(
+                Arc::clone(&self.all_members),
+                true,
+                ClientTimeout::default(),
+            )
+            .await
+            .unwrap_or_else(|e| {
+                panic!("Client connect error: {:?}", e);
+            });
             self.client = Some(client);
         }
         self.client.as_mut().unwrap()

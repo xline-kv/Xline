@@ -172,7 +172,7 @@ impl CurpGroup {
                     handle.spawn(Rpc::run_from_listener(
                         id_c,
                         i == 0,
-                        others.into_iter().collect(),
+                        Arc::new(others.into_iter().collect()),
                         listener,
                         ce,
                         MemorySnapshotAllocator,
@@ -225,7 +225,7 @@ impl CurpGroup {
             .iter()
             .map(|(id, node)| (id.clone(), node.addr.clone()))
             .collect();
-        Client::<TestCommand>::new(addrs, timeout).await
+        Client::<TestCommand>::new(Arc::new(addrs), timeout).await
     }
 
     pub fn exe_rxs(
@@ -315,7 +315,7 @@ impl CurpGroup {
             handle.spawn(Rpc::run_from_listener(
                 id_c,
                 is_leader,
-                others.into_iter().collect(),
+                Arc::new(others.into_iter().collect()),
                 listener,
                 ce,
                 MemorySnapshotAllocator,

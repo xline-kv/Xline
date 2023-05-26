@@ -141,7 +141,7 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
     pub async fn new<CE: CommandExecutor<C> + 'static>(
         id: ServerId,
         is_leader: bool,
-        others: HashMap<ServerId, String>,
+        others: Arc<HashMap<ServerId, String>>,
         executor: CE,
         snapshot_allocator: impl SnapshotAllocator + 'static,
         role_change: RC,
@@ -182,7 +182,7 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
     pub async fn run<CE, U, UE>(
         id: ServerId,
         is_leader: bool,
-        others: HashMap<ServerId, String>,
+        others: Arc<HashMap<ServerId, String>>,
         server_port: Option<u16>,
         executor: CE,
         snapshot_allocator: impl SnapshotAllocator + 'static,
@@ -248,7 +248,7 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
     pub async fn run_from_listener<CE, U, UE>(
         id: ServerId,
         is_leader: bool,
-        others: HashMap<ServerId, String>,
+        others: Arc<HashMap<ServerId, String>>,
         listener: TcpListener,
         executor: CE,
         snapshot_allocator: impl SnapshotAllocator + 'static,

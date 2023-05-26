@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Debug};
+use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
 use curp::{client::Client as CurpClient, cmd::ProposeId, ServerId};
 use etcd_client::{
@@ -64,7 +64,7 @@ impl Client {
     /// If `EtcdClient::connect` fails.
     #[inline]
     pub async fn new(
-        all_members: HashMap<ServerId, String>,
+        all_members: Arc<HashMap<ServerId, String>>,
         use_curp_client: bool,
         timeout: ClientTimeout,
     ) -> Result<Self, ClientError> {

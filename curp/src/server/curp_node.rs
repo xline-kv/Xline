@@ -409,7 +409,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     pub(super) async fn new<CE: CommandExecutor<C> + 'static>(
         id: ServerId,
         is_leader: bool,
-        others: HashMap<ServerId, String>,
+        others: Arc<HashMap<ServerId, String>>,
         cmd_executor: Arc<CE>,
         snapshot_allocator: impl SnapshotAllocator + 'static,
         role_change: RC,
@@ -491,7 +491,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         Self::run_bg_tasks(
             Arc::clone(&curp),
             Arc::clone(&storage),
-            others.clone(),
+            others,
             Arc::clone(&shutdown_trigger),
             tx_filter,
             log_rx,
@@ -513,12 +513,12 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     async fn run_bg_tasks(
         curp: Arc<RawCurp<C, RC>>,
         storage: Arc<impl StorageApi<Command = C> + 'static>,
-        others: HashMap<ServerId, String>,
+        others: Arc<HashMap<ServerId, String>>,
         shutdown_trigger: Arc<Event>,
         tx_filter: Option<Box<dyn TxFilter>>,
         log_rx: tokio::sync::mpsc::UnboundedReceiver<LogEntry<C>>,
     ) {
-        let connects = rpc::connect(others.clone(), tx_filter).await;
+        let connects = rpc::connect(others, tx_filter).await;
         let election_task = tokio::spawn(Self::election_task(Arc::clone(&curp), connects.clone()));
         let sync_task_daemons = connects
             .into_iter()
