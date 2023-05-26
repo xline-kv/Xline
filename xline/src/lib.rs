@@ -147,7 +147,9 @@ mod id_gen;
 /// Revision number
 mod revision_number;
 /// rpc definition module
-mod rpc;
+mod rpc {
+    pub use xlineapi::*;
+}
 /// Xline server
 pub mod server;
 /// State of current node

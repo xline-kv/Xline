@@ -169,7 +169,7 @@ mod leasepb {
 use serde::{Deserialize, Serialize};
 
 pub use self::etcdserverpb::range_request::{SortOrder, SortTarget};
-pub(crate) use self::{
+pub use self::{
     authpb::{permission::Type, Permission, Role, User},
     etcdserverpb::{
         auth_server::{Auth, AuthServer},
@@ -214,24 +214,24 @@ pub(crate) use self::{
 
 impl User {
     /// Check if user has the given role
-    pub(super) fn has_role(&self, role: &str) -> bool {
+    pub fn has_role(&self, role: &str) -> bool {
         self.roles.binary_search(&role.to_owned()).is_ok()
     }
 }
 
 /// Wrapper for requests
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub(super) struct RequestWithToken {
+pub struct RequestWithToken {
     /// token for authentication
-    pub(super) token: Option<String>,
+    pub token: Option<String>,
     /// Internal request
-    pub(super) request: RequestWrapper,
+    pub request: RequestWrapper,
 }
 
 /// Internal request
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[allow(clippy::enum_variant_names)] // in order to quickly implement trait by macro
-pub(super) enum RequestWrapper {
+pub enum RequestWrapper {
     /// `RangeRequest`
     RangeRequest(RangeRequest),
     /// `PutRequest`
@@ -285,7 +285,7 @@ pub(super) enum RequestWrapper {
 /// Wrapper for responses
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[allow(clippy::enum_variant_names)] // in order to quickly implement trait by macro
-pub(super) enum ResponseWrapper {
+pub enum ResponseWrapper {
     /// `RangeResponse`
     RangeResponse(RangeResponse),
     /// `PutResponse`
@@ -338,7 +338,7 @@ pub(super) enum ResponseWrapper {
 
 impl ResponseWrapper {
     /// Update response revision
-    pub(super) fn update_revision(&mut self, revision: i64) {
+    pub fn update_revision(&mut self, revision: i64) {
         let header = match *self {
             ResponseWrapper::RangeResponse(ref mut resp) => &mut resp.header,
             ResponseWrapper::PutResponse(ref mut resp) => &mut resp.header,
@@ -373,7 +373,7 @@ impl ResponseWrapper {
 
 /// Backend store of request
 #[derive(Debug, PartialEq, Eq)]
-pub(super) enum RequestBackend {
+pub enum RequestBackend {
     /// Kv backend
     Kv,
     /// Auth backend
@@ -384,7 +384,7 @@ pub(super) enum RequestBackend {
 
 impl RequestWrapper {
     /// Get the backend of the request
-    pub(super) fn backend(&self) -> RequestBackend {
+    pub fn backend(&self) -> RequestBackend {
         match *self {
             RequestWrapper::PutRequest(_)
             | RequestWrapper::RangeRequest(_)
@@ -415,7 +415,7 @@ impl RequestWrapper {
     }
 
     /// Check if this request is a auth read request
-    pub(super) fn is_auth_read_request(&self) -> bool {
+    pub fn is_auth_read_request(&self) -> bool {
         matches!(
             *self,
             RequestWrapper::AuthStatusRequest(_)
@@ -427,7 +427,7 @@ impl RequestWrapper {
     }
 
     /// Check whether this auth request should skip the revision or not
-    pub(super) fn skip_auth_revision(&self) -> bool {
+    pub fn skip_auth_revision(&self) -> bool {
         self.is_auth_read_request()
             || matches!(
                 *self,
@@ -436,7 +436,7 @@ impl RequestWrapper {
     }
 
     /// Check whether the kv request or lease request should skip the revision or not
-    pub(super) fn skip_general_revision(&self) -> bool {
+    pub fn skip_general_revision(&self) -> bool {
         match self {
             RequestWrapper::RangeRequest(_) | RequestWrapper::LeaseGrantRequest(_) => true,
             RequestWrapper::TxnRequest(req) => req.is_read_only(),
@@ -445,17 +445,17 @@ impl RequestWrapper {
     }
 
     /// Check if this request is a auth request
-    pub(super) fn is_auth_request(&self) -> bool {
+    pub fn is_auth_request(&self) -> bool {
         self.backend() == RequestBackend::Auth
     }
 
     /// Check if this request is a kv request
-    pub(super) fn is_kv_request(&self) -> bool {
+    pub fn is_kv_request(&self) -> bool {
         self.backend() == RequestBackend::Kv
     }
 
     /// Check if this request is a lease request
-    pub(super) fn is_lease_request(&self) -> bool {
+    pub fn is_lease_request(&self) -> bool {
         self.backend() == RequestBackend::Lease
     }
 }
@@ -593,7 +593,7 @@ impl From<ResponseWrapper> for ResponseOp {
 
 impl RequestWithToken {
     /// New `RequestWithToken`
-    pub(super) fn new(request: RequestWrapper) -> Self {
+    pub fn new(request: RequestWrapper) -> Self {
         RequestWithToken {
             token: None,
             request,
@@ -601,7 +601,7 @@ impl RequestWithToken {
     }
 
     /// New `RequestWithToken` with token
-    pub(super) fn new_with_token(request: RequestWrapper, token: String) -> Self {
+    pub fn new_with_token(request: RequestWrapper, token: String) -> Self {
         RequestWithToken {
             token: Some(token),
             request,
@@ -610,7 +610,7 @@ impl RequestWithToken {
 }
 
 impl Event {
-    pub(crate) fn is_create(&self) -> bool {
+    pub fn is_create(&self) -> bool {
         let kv = self
             .kv
             .as_ref()
