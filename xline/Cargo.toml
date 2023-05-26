@@ -24,6 +24,7 @@ jsonwebtoken = "8.1.1"
 itertools = "0.10.3"
 utils = { path = "../utils", features = ["parking_lot"] }
 engine = { path = "../engine" }
+xlineapi = { path = "../xlineapi" }
 log = "0.4.17"
 merged_range = "0.1.0"
 opentelemetry = { version = "0.18.0", features = ["rt-tokio"] }
