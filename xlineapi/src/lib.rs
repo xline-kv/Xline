@@ -146,6 +146,8 @@
     )
 )]
 
+pub mod etcd_convert;
+
 mod etcdserverpb {
     tonic::include_proto!("etcdserverpb");
 }
