@@ -55,7 +55,7 @@ impl RangeType {
 
 /// Key Range for Command
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
-pub(crate) struct KeyRange {
+pub struct KeyRange {
     /// Start of range
     key: Bound<Vec<u8>>,
     /// End of range
@@ -64,7 +64,8 @@ pub(crate) struct KeyRange {
 
 impl KeyRange {
     /// New `KeyRange`
-    pub(crate) fn new(start: impl Into<Vec<u8>>, end: impl Into<Vec<u8>>) -> Self {
+    #[inline]
+    pub fn new(start: impl Into<Vec<u8>>, end: impl Into<Vec<u8>>) -> Self {
         let key_vec = start.into();
         let range_end_vec = end.into();
         let range_end = match range_end_vec.as_slice() {
@@ -80,7 +81,12 @@ impl KeyRange {
     }
 
     /// New `KeyRange` only contains one key
-    pub(crate) fn new_one_key(key: impl Into<Vec<u8>>) -> Self {
+    ///
+    /// # Panics
+    ///
+    /// Will panic if key is equal to `UNBOUNDED`
+    #[inline]
+    pub fn new_one_key(key: impl Into<Vec<u8>>) -> Self {
         let key_vec = key.into();
         assert!(key_vec.as_slice() != UNBOUNDED);
         Self {
@@ -90,7 +96,9 @@ impl KeyRange {
     }
 
     /// Return if `KeyRange` is conflicted with another
-    pub(crate) fn is_conflicted(&self, other: &Self) -> bool {
+    #[must_use]
+    #[inline]
+    pub fn is_conflicted(&self, other: &Self) -> bool {
         // s1 < s2 ?
         if match (self.start_bound(), other.start_bound()) {
             (Bound::Included(s1), Bound::Included(s2)) => {
@@ -129,7 +137,9 @@ impl KeyRange {
     }
 
     /// Check if `KeyRange` contains a key
-    pub(crate) fn contains_key(&self, key: &[u8]) -> bool {
+    #[must_use]
+    #[inline]
+    pub fn contains_key(&self, key: &[u8]) -> bool {
         (match self.start_bound() {
             Bound::Included(start) => start.as_slice() <= key,
             Bound::Excluded(start) => start.as_slice() < key,
@@ -144,7 +154,9 @@ impl KeyRange {
     /// Get end of range with prefix
     /// User will provide a start key when prefix is true, we need calculate the end key of `KeyRange`
     #[allow(clippy::indexing_slicing)] // end[i] is always valid
-    pub(crate) fn get_prefix(key: &[u8]) -> Vec<u8> {
+    #[must_use]
+    #[inline]
+    pub fn get_prefix(key: &[u8]) -> Vec<u8> {
         let mut end = key.to_vec();
         for i in (0..key.len()).rev() {
             if key[i] < 0xFF {
@@ -158,12 +170,16 @@ impl KeyRange {
     }
 
     /// unpack `KeyRange` to tuple
-    pub(crate) fn unpack(self) -> (Bound<Vec<u8>>, Bound<Vec<u8>>) {
+    #[must_use]
+    #[inline]
+    pub fn unpack(self) -> (Bound<Vec<u8>>, Bound<Vec<u8>>) {
         (self.key, self.range_end)
     }
 
     /// start key of `KeyRange`
-    pub(crate) fn range_start(&self) -> &[u8] {
+    #[must_use]
+    #[inline]
+    pub fn range_start(&self) -> &[u8] {
         match self.key {
             Bound::Included(ref k) => k.as_slice(),
             Bound::Excluded(_) => unreachable!("KeyRange::start_bound() cannot be Excluded"),
@@ -172,7 +188,9 @@ impl KeyRange {
     }
 
     /// end key of `KeyRange`
-    pub(crate) fn range_end(&self) -> &[u8] {
+    #[must_use]
+    #[inline]
+    pub fn range_end(&self) -> &[u8] {
         match self.range_end {
             Bound::Included(_) => &[],
             Bound::Excluded(ref k) => k.as_slice(),
@@ -182,6 +200,7 @@ impl KeyRange {
 }
 
 impl RangeBounds<Vec<u8>> for KeyRange {
+    #[inline]
     fn start_bound(&self) -> Bound<&Vec<u8>> {
         match self.key {
             Bound::Unbounded => Bound::Unbounded,
@@ -189,6 +208,7 @@ impl RangeBounds<Vec<u8>> for KeyRange {
             Bound::Excluded(_) => unreachable!("KeyRange::start_bound() cannot be Excluded"),
         }
     }
+    #[inline]
     fn end_bound(&self) -> Bound<&Vec<u8>> {
         match self.range_end {
             Bound::Unbounded => Bound::Unbounded,
@@ -359,7 +379,7 @@ where
 
 /// Command to run consensus protocol
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub(crate) struct Command {
+pub struct Command {
     /// Keys of request
     keys: Vec<KeyRange>,
     /// Request data
@@ -369,6 +389,7 @@ pub(crate) struct Command {
 }
 
 impl ConflictCheck for Command {
+    #[inline]
     fn is_conflict(&self, other: &Self) -> bool {
         if self.id == other.id {
             return true;
@@ -414,6 +435,7 @@ impl ConflictCheck for Command {
 }
 
 impl ConflictCheck for KeyRange {
+    #[inline]
     fn is_conflict(&self, other: &Self) -> bool {
         self.is_conflicted(other)
     }
@@ -421,49 +443,57 @@ impl ConflictCheck for KeyRange {
 
 impl Command {
     /// New `Command`
-    pub(crate) fn new(keys: Vec<KeyRange>, request: RequestWithToken, id: ProposeId) -> Self {
+    #[must_use]
+    #[inline]
+    pub fn new(keys: Vec<KeyRange>, request: RequestWithToken, id: ProposeId) -> Self {
         Self { keys, request, id }
     }
 
     /// get request
-    pub(crate) fn request(&self) -> &RequestWithToken {
+    #[must_use]
+    #[inline]
+    pub fn request(&self) -> &RequestWithToken {
         &self.request
     }
 }
 
 /// Command to run consensus protocol
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub(crate) struct CommandResponse {
+pub struct CommandResponse {
     /// Response data
     response: ResponseWrapper,
 }
 
 impl CommandResponse {
     /// New `ResponseOp` from `CommandResponse`
-    pub(crate) fn new(response: ResponseWrapper) -> Self {
+    #[inline]
+    pub fn new(response: ResponseWrapper) -> Self {
         Self { response }
     }
 
     /// Decode `CommandResponse` and get `ResponseOp`
-    pub(crate) fn decode(self) -> ResponseWrapper {
+    #[inline]
+    pub fn decode(self) -> ResponseWrapper {
         self.response
     }
 }
 
 /// Sync Response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct SyncResponse {
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+pub struct SyncResponse {
     /// Revision of this request
     revision: i64,
 }
 impl SyncResponse {
     /// New `SyncRequest`
-    pub(crate) fn new(revision: i64) -> Self {
+    #[inline]
+    pub fn new(revision: i64) -> Self {
         Self { revision }
     }
 
     /// Get revision field
-    pub(crate) fn revision(&self) -> i64 {
+    #[inline]
+    pub fn revision(self) -> i64 {
         self.revision
     }
 }
@@ -475,10 +505,12 @@ impl CurpCommand for Command {
     type ER = CommandResponse;
     type ASR = SyncResponse;
 
+    #[inline]
     fn keys(&self) -> &[Self::K] {
         self.keys.as_slice()
     }
 
+    #[inline]
     fn id(&self) -> &ProposeId {
         &self.id
     }
