@@ -8,6 +8,7 @@ pull_request_rules:
       - check-success=Format
       - check-success=Test
       - check-success=Clippy
+      - check-success=Commit-message-check
       - check-success=Coverage
       - check-success=Validation
       - status-success="codecov/patch"
