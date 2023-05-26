@@ -168,7 +168,7 @@ impl CommandRunner {
         let mut clients = Vec::with_capacity(self.args.clients);
         for _ in 0..self.args.clients {
             let client = Client::new(
-                self.args.endpoints.clone(),
+                self.args.endpoints.clone().into(),
                 self.args.use_curp,
                 ClientTimeout::new(
                     Duration::from_secs(10),

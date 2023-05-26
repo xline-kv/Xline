@@ -38,18 +38,22 @@ pub trait TxFilter: Send + Sync + Debug {
 
 /// Convert a vec of addr string to a vec of `Connect`
 pub(crate) async fn connect(
-    addrs: HashMap<ServerId, String>,
+    addrs: Arc<HashMap<ServerId, String>>,
     tx_filter: Option<Box<dyn TxFilter>>,
 ) -> HashMap<ServerId, Arc<dyn ConnectApi>> {
-    futures::future::join_all(addrs.into_iter().map(|(id, mut addr)| async move {
+    futures::future::join_all(addrs.iter().map(|(id, addr)| async move {
         // Addrs must start with "http" to communicate with the server
-        if !addr.starts_with("http://") {
-            addr.insert_str(0, "http://");
-        }
+        let addr = if addr.starts_with("http://") {
+            addr.clone()
+        } else {
+            let mut prefix = "http://".to_owned();
+            prefix.push_str(addr.as_str());
+            prefix
+        };
         (
-            id,
+            id.clone(),
             addr.clone(),
-            ProtocolClient::connect(addr.clone()).await,
+            ProtocolClient::connect(addr).await,
         )
     }))
     .await
