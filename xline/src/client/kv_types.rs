@@ -97,6 +97,7 @@ impl PutRequest {
 }
 
 impl From<PutRequest> for crate::rpc::PutRequest {
+    #[inline]
     fn from(req: PutRequest) -> Self {
         req.inner
     }
@@ -336,6 +337,7 @@ impl RangeRequest {
 }
 
 impl From<RangeRequest> for crate::rpc::RangeRequest {
+    #[inline]
     fn from(req: RangeRequest) -> Self {
         req.inner
     }
@@ -423,6 +425,7 @@ impl DeleteRangeRequest {
 }
 
 impl From<DeleteRangeRequest> for crate::rpc::DeleteRangeRequest {
+    #[inline]
     fn from(req: DeleteRangeRequest) -> Self {
         req.inner
     }
@@ -472,6 +475,7 @@ impl LeaseGrantRequest {
 }
 
 impl From<LeaseGrantRequest> for crate::rpc::LeaseGrantRequest {
+    #[inline]
     fn from(req: LeaseGrantRequest) -> Self {
         req.inner
     }
@@ -503,6 +507,7 @@ impl LeaseRevokeRequest {
 }
 
 impl From<LeaseRevokeRequest> for crate::rpc::LeaseRevokeRequest {
+    #[inline]
     fn from(req: LeaseRevokeRequest) -> Self {
         req.inner
     }
@@ -534,6 +539,7 @@ impl LeaseKeepAliveRequest {
 }
 
 impl From<LeaseKeepAliveRequest> for crate::rpc::LeaseKeepAliveRequest {
+    #[inline]
     fn from(req: LeaseKeepAliveRequest) -> Self {
         req.inner
     }
@@ -583,6 +589,7 @@ impl LeaseTimeToLiveRequest {
 }
 
 impl From<LeaseTimeToLiveRequest> for crate::rpc::LeaseTimeToLiveRequest {
+    #[inline]
     fn from(req: LeaseTimeToLiveRequest) -> Self {
         req.inner
     }

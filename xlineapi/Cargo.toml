@@ -14,6 +14,7 @@ keywords = ["RPC", "Interfaces"]
 tonic = "0.7.2"
 prost = "0.10.3"
 serde = { version = "1.0.137", features = ["derive"] }
+etcd-client = "0.10.1"
 
 [build-dependencies]
 tonic-build = "0.7.2"
