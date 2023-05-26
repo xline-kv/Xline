@@ -96,3 +96,19 @@ jobs:
         with:
           command: clippy
           args: --all-targets --all-features -- -D warnings
+
+  commit:
+    name: Commit-message-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - run: git show-ref
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions-rs/install@v0.1
+        with:
+          crate: git-cz
+          version: latest
+      - name: Validate commit messages
+        run: git-cz check ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
