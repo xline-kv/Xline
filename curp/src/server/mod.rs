@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Debug, sync::Arc};
+use std::{fmt::Debug, sync::Arc};
 
 use futures::TryStreamExt;
 use tokio::{net::TcpListener, sync::broadcast};
@@ -11,6 +11,7 @@ use self::curp_node::{CurpError, CurpNode};
 use crate::{
     cmd::{Command, CommandExecutor},
     error::ServerError,
+    members::ClusterMember,
     role_change::RoleChange,
     rpc::{
         AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest, FetchLeaderResponse,
@@ -137,22 +138,19 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
     /// # Panics
     /// Panic if storage creation failed
     #[inline]
-    #[allow(clippy::too_many_arguments)]
     pub async fn new<CE: CommandExecutor<C> + 'static>(
-        id: ServerId,
+        cluster_info: Arc<ClusterMember>,
         is_leader: bool,
-        others: Arc<HashMap<ServerId, String>>,
         executor: CE,
-        snapshot_allocator: impl SnapshotAllocator + 'static,
+        snapshot_allocator: Box<dyn SnapshotAllocator>,
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
         tx_filter: Option<Box<dyn TxFilter>>,
     ) -> Self {
         #[allow(clippy::panic)]
         let curp_node = match CurpNode::new(
-            id,
+            cluster_info,
             is_leader,
-            others,
             Arc::new(executor),
             snapshot_allocator,
             role_change,
@@ -180,12 +178,11 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
     #[allow(clippy::too_many_arguments)]
     #[inline]
     pub async fn run<CE, U, UE>(
-        id: ServerId,
+        cluster_info: Arc<ClusterMember>,
         is_leader: bool,
-        others: Arc<HashMap<ServerId, String>>,
         server_port: Option<u16>,
         executor: CE,
-        snapshot_allocator: impl SnapshotAllocator + 'static,
+        snapshot_allocator: Box<dyn SnapshotAllocator>,
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
         tx_filter: Option<Box<dyn TxFilter>>,
@@ -202,11 +199,11 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
         UE: 'static + Send + Sync + std::error::Error,
     {
         let port = server_port.unwrap_or(DEFAULT_SERVER_PORT);
+        let id = cluster_info.self_id();
         info!("RPC server {id} started, listening on port {port}");
         let server = Self::new(
-            id,
+            cluster_info,
             is_leader,
-            others,
             executor,
             snapshot_allocator,
             role_change,
@@ -246,12 +243,11 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
     #[allow(clippy::too_many_arguments)]
     #[inline]
     pub async fn run_from_listener<CE, U, UE>(
-        id: ServerId,
+        cluster_info: Arc<ClusterMember>,
         is_leader: bool,
-        others: Arc<HashMap<ServerId, String>>,
         listener: TcpListener,
         executor: CE,
-        snapshot_allocator: impl SnapshotAllocator + 'static,
+        snapshot_allocator: Box<dyn SnapshotAllocator>,
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
         tx_filter: Option<Box<dyn TxFilter>>,
@@ -268,9 +264,8 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
         UE: 'static + Send + Sync + std::error::Error,
     {
         let server = Self::new(
-            id,
+            cluster_info,
             is_leader,
-            others,
             executor,
             snapshot_allocator,
             role_change,

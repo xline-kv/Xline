@@ -32,7 +32,7 @@ pub(super) struct LockServer {
     client: Arc<Client<Command>>,
     /// Id Generator
     id_gen: Arc<IdGenerator>,
-    /// Server name
+    /// Cluster information
     name: String,
     /// Server address
     address: String,

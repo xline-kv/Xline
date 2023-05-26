@@ -1,8 +1,8 @@
-use std::{collections::HashMap, pin::Pin, sync::Arc, time::Duration};
+use std::{pin::Pin, sync::Arc, time::Duration};
 
 use async_stream::{stream, try_stream};
 use clippy_utilities::Cast;
-use curp::{client::Client, cmd::ProposeId, error::ProposeError, ServerId};
+use curp::{client::Client, cmd::ProposeId, error::ProposeError, members::ClusterMember};
 use futures::stream::Stream;
 use tokio::time;
 use tracing::{debug, warn};
@@ -38,12 +38,10 @@ where
     auth_storage: Arc<AuthStore<S>>,
     /// Consensus client
     client: Arc<Client<Command>>,
-    /// Server name
-    name: String,
     /// Id generator
     id_gen: Arc<IdGenerator>,
-    /// Address of all members
-    all_members: Arc<HashMap<ServerId, String>>,
+    /// cluster infomation
+    cluster_info: Arc<ClusterMember>,
 }
 
 impl<S> LeaseServer<S>
@@ -55,17 +53,15 @@ where
         lease_storage: Arc<LeaseStore<S>>,
         auth_storage: Arc<AuthStore<S>>,
         client: Arc<Client<Command>>,
-        name: String,
         id_gen: Arc<IdGenerator>,
-        all_members: Arc<HashMap<ServerId, String>>,
+        cluster_info: Arc<ClusterMember>,
     ) -> Arc<Self> {
         let lease_server = Arc::new(Self {
             lease_storage,
             auth_storage,
             client,
-            name,
             id_gen,
-            all_members,
+            cluster_info,
         });
         let _h = tokio::spawn(Self::revoke_expired_leases_task(Arc::clone(&lease_server)));
         lease_server
@@ -104,7 +100,11 @@ where
 
     /// Generate propose id
     fn generate_propose_id(&self) -> ProposeId {
-        ProposeId::new(format!("{}-{}", self.name, Uuid::new_v4()))
+        ProposeId::new(format!(
+            "{}-{}",
+            self.cluster_info.self_id(),
+            Uuid::new_v4()
+        ))
     }
 
     /// Generate `Command` proposal from `Request`
@@ -191,7 +191,7 @@ where
     async fn follower_keep_alive(
         &self,
         mut request_stream: tonic::Streaming<LeaseKeepAliveRequest>,
-        leader_addr: &String,
+        leader_addr: &str,
     ) -> Result<
         Pin<Box<dyn Stream<Item = Result<LeaseKeepAliveResponse, tonic::Status>> + Send>>,
         tonic::Status,
@@ -264,10 +264,10 @@ where
             // a follower when it lost the election. Therefore we need to double check here.
             // We can directly invoke leader_keep_alive when a candidate becomes a leader.
             if !self.lease_storage.is_primary() {
-                let leader_addr = self.all_members.get(&leader_id).unwrap_or_else(|| {
+                let leader_addr = self.cluster_info.address(&leader_id).unwrap_or_else(|| {
                     unreachable!(
                         "The address of leader {} not found in all_members {:?}",
-                        leader_id, self.all_members
+                        leader_id, self.cluster_info
                     )
                 });
                 break self
@@ -350,10 +350,10 @@ where
                 return Ok(tonic::Response::new(res));
             }
             let leader_id = self.client.get_leader_id().await;
-            let leader_addr = self.all_members.get(&leader_id).unwrap_or_else(|| {
+            let leader_addr = self.cluster_info.address(&leader_id).unwrap_or_else(|| {
                 unreachable!(
                     "The address of leader {} not found in all_members {:?}",
-                    leader_id, self.all_members
+                    leader_id, self.cluster_info
                 )
             });
             if !self.lease_storage.is_primary() {

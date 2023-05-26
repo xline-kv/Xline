@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use curp::ServerId;
+use curp::{members::ClusterMember, ServerId};
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use tokio::{
@@ -20,7 +20,7 @@ pub struct Cluster {
     /// listeners of members
     listeners: BTreeMap<usize, TcpListener>,
     /// address of members
-    all_members: Arc<HashMap<ServerId, String>>,
+    all_members: HashMap<ServerId, String>,
     /// Client of cluster
     client: Option<Client>,
     /// Stop sender
@@ -38,12 +38,10 @@ impl Cluster {
         for i in 0..size {
             listeners.insert(i, TcpListener::bind("0.0.0.0:0").await.unwrap());
         }
-        let all_members = Arc::new(
-            listeners
-                .iter()
-                .map(|(i, l)| (format!("server{}", i), l.local_addr().unwrap().to_string()))
-                .collect(),
-        );
+        let all_members = listeners
+            .iter()
+            .map(|(i, l)| (format!("server{}", i), l.local_addr().unwrap().to_string()))
+            .collect();
 
         Self {
             listeners,
@@ -69,7 +67,6 @@ impl Cluster {
             let is_leader = i == 0;
             let mut rx = stop_tx.subscribe();
             let listener = self.listeners.remove(&i).unwrap();
-            let all_members = self.all_members.clone();
             let path = if let Some(path) = self.paths.get(i) {
                 path.clone()
             } else {
@@ -78,11 +75,11 @@ impl Cluster {
                 path
             };
             #[allow(clippy::unwrap_used)]
-            let db = DB::open(&StorageConfig::RocksDB(path.clone())).unwrap();
+            let db: Arc<DB> = DB::open(&StorageConfig::RocksDB(path.clone())).unwrap();
+            let cluster_info = ClusterMember::new(self.all_members.clone(), name.clone());
             tokio::spawn(async move {
                 let server = XlineServer::new(
-                    name,
-                    all_members,
+                    cluster_info.into(),
                     is_leader,
                     CurpConfig {
                         data_dir: path.join("curp"),
@@ -111,15 +108,11 @@ impl Cluster {
     /// Create or get the client with the specified index
     pub(crate) async fn client(&mut self) -> &mut Client {
         if self.client.is_none() {
-            let client = Client::new(
-                Arc::clone(&self.all_members),
-                true,
-                ClientTimeout::default(),
-            )
-            .await
-            .unwrap_or_else(|e| {
-                panic!("Client connect error: {:?}", e);
-            });
+            let client = Client::new(self.all_members.clone(), true, ClientTimeout::default())
+                .await
+                .unwrap_or_else(|e| {
+                    panic!("Client connect error: {:?}", e);
+                });
             self.client = Some(client);
         }
         self.client.as_mut().unwrap()

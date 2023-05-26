@@ -98,7 +98,7 @@ where
 {
     /// Create a new protocol client based on the addresses
     #[inline]
-    pub async fn new(addrs: Arc<HashMap<ServerId, String>>, timeout: ClientTimeout) -> Self {
+    pub async fn new(addrs: HashMap<ServerId, String>, timeout: ClientTimeout) -> Self {
         Self {
             state: RwLock::new(State::new()),
             connects: rpc::connect(addrs, None).await,

@@ -29,19 +29,21 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     pub(crate) fn new_test<Tx: CEEventTxApi<C>>(n: u64, exe_tx: Tx, role_change: RC) -> Self {
-        let others: HashSet<ServerId> = (1..n).map(|i| format!("S{i}")).collect();
+        let all_members: HashMap<ServerId, String> =
+            (0..n).map(|i| (format!("S{i}"), format!("S{i}"))).collect();
+        let cluster_info = Arc::new(ClusterMember::new(all_members, "S0".to_owned()));
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
         let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
         let (log_tx, _log_rx) = mpsc::unbounded_channel();
-        let sync_events = others
+        let sync_events = cluster_info
+            .peers_id()
             .iter()
             .map(|id| (id.clone(), Arc::new(Event::new())))
             .collect();
 
         Self::new(
-            "S0".to_owned(),
-            others,
+            cluster_info,
             true,
             cmd_board,
             spec_pool,
