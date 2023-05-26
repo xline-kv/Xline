@@ -114,7 +114,7 @@ use std::{collections::HashMap, env, path::PathBuf, time::Duration};
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
-use curp::ServerId;
+use curp::{members::ClusterMember, ServerId};
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use opentelemetry::{global, runtime::Tokio, sdk::propagation::TraceContextPropagator};
 use opentelemetry_contrib::trace::exporter::jaeger_json::JaegerJsonExporter;
@@ -429,10 +429,13 @@ async fn main() -> Result<()> {
     debug!("server_addr = {:?}", self_addr);
     debug!("cluster_peers = {:?}", cluster_config.members());
 
+    let name = cluster_config.name().clone();
+    let all_members = cluster_config.members().clone();
+    let cluster_info = ClusterMember::new(all_members, name);
+
     let db_proxy = DB::open(storage_config)?;
     let server = XlineServer::new(
-        cluster_config.name().clone(),
-        cluster_config.members().clone().into(),
+        cluster_info.into(),
         *cluster_config.is_leader(),
         cluster_config.curp_config().clone(),
         *cluster_config.client_timeout(),

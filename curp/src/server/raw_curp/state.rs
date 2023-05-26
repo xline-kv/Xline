@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 use madsim::rand::{thread_rng, Rng};
 use parking_lot::{Mutex, MutexGuard};
@@ -97,7 +94,7 @@ impl State {
 
 impl LeaderState {
     /// Create a `LeaderState`
-    pub(super) fn new(others: &HashSet<ServerId>) -> Self {
+    pub(super) fn new(others: &[ServerId]) -> Self {
         Self {
             statuses: others
                 .iter()

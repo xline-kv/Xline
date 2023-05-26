@@ -159,6 +159,9 @@ pub mod client;
 /// Server side, handling request and sync requests to the log
 pub mod server;
 
+/// Cluster members information
+pub mod members;
+
 /// Error types
 pub mod error;
 

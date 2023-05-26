@@ -11,7 +11,7 @@
 
 use std::{
     cmp::min,
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fmt::Debug,
     sync::{
         atomic::{AtomicU8, Ordering},
@@ -42,6 +42,7 @@ use crate::{
     cmd::{Command, ProposeId},
     error::ProposeError,
     log_entry::LogEntry,
+    members::ClusterMember,
     role_change::RoleChange,
     rpc::{IdSet, ReadState},
     server::{cmd_board::CmdBoardRef, spec_pool::SpecPoolRef},
@@ -126,10 +127,8 @@ enum Role {
 
 /// Relevant context for Curp
 struct Context<C: Command, RC: RoleChange> {
-    /// Id of the server
-    id: ServerId,
-    /// Other server ids
-    others: HashSet<ServerId>,
+    /// Cluster information
+    cluster_info: Arc<ClusterMember>,
     /// Config
     cfg: Arc<CurpConfig>,
     /// Cmd board for tracking the cmd sync results
@@ -155,8 +154,7 @@ struct Context<C: Command, RC: RoleChange> {
 impl<C: Command, R: RoleChange> Debug for Context<C, R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Context")
-            .field("id", &self.id)
-            .field("others", &self.others)
+            .field("id", &self.cluster_info)
             .field("config", &self.cfg)
             .field("cb", &self.cb)
             .field("sp", &self.sp)
@@ -492,7 +490,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         self.become_leader(&mut st_w);
 
         // update next_index for each follower
-        for other in &self.ctx.others {
+        for other in &self.ctx.cluster_info.peers_id() {
             self.lst.update_next_index(other, last_log_index + 1); // iter from the end to front is more likely to match the follower
         }
         if prev_last_log_index < last_log_index {
@@ -573,8 +571,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     /// Create a new `RawCurp`
     #[allow(clippy::too_many_arguments)] // only called once
     pub(super) fn new(
-        id: ServerId,
-        others: HashSet<ServerId>,
+        cluster_info: Arc<ClusterMember>,
         is_leader: bool,
         cmd_board: CmdBoardRef<C>,
         spec_pool: SpecPoolRef<C>,
@@ -594,12 +591,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 cfg.follower_timeout_ticks,
                 cfg.candidate_timeout_ticks,
             )),
-            lst: LeaderState::new(&others),
+            lst: LeaderState::new(&cluster_info.peers_id()),
             cst: Mutex::new(CandidateState::new()),
             log: RwLock::new(Log::new(log_tx, cfg.batch_max_size, cfg.log_entries_cap)),
             ctx: Context {
-                id,
-                others,
+                cluster_info,
                 cb: cmd_board,
                 sp: spec_pool,
                 ucp: uncommitted_pool,
@@ -623,8 +619,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     /// `is_leader` will only take effect when all servers start from a fresh state
     #[allow(clippy::too_many_arguments)] // only called once
     pub(super) fn recover_from(
-        id: ServerId,
-        others: HashSet<ServerId>,
+        cluster_info: Arc<ClusterMember>,
         is_leader: bool,
         cmd_board: CmdBoardRef<C>,
         spec_pool: SpecPoolRef<C>,
@@ -639,8 +634,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         role_change: RC,
     ) -> Self {
         let raw_curp = Self::new(
-            id,
-            others,
+            cluster_info,
             is_leader,
             cmd_board,
             spec_pool,
@@ -683,7 +677,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
     /// Get self's id
     pub(super) fn id(&self) -> &ServerId {
-        &self.ctx.id
+        self.ctx.cluster_info.self_id()
     }
 
     /// Get a rx for leader changes
@@ -877,7 +871,8 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
         let replicated_cnt: u64 = self
             .ctx
-            .others
+            .cluster_info
+            .peers_id()
             .iter()
             .filter(|&id| self.lst.get_match_index(id) >= i)
             .count()
@@ -968,7 +963,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
     /// Get quorum: the smallest number of servers who must be online for the cluster to work
     fn quorum(&self) -> u64 {
-        (self.ctx.others.len() / 2 + 1).numeric_cast()
+        (self.ctx.cluster_info.peers_len() / 2 + 1).numeric_cast()
     }
 
     /// Get `recover_quorum`: the smallest number of servers who must contain a command in speculative pool for it to be recovered

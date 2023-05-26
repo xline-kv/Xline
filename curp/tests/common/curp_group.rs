@@ -13,7 +13,10 @@ use std::{
 };
 
 use async_trait::async_trait;
-use curp::{client::Client, server::Rpc, LogIndex, ProtocolServer, SnapshotAllocator, TxFilter};
+use curp::{
+    client::Client, members::ClusterMember, server::Rpc, LogIndex, ProtocolServer,
+    SnapshotAllocator, TxFilter,
+};
 use engine::{Engine, EngineType, Snapshot};
 use futures::future::join_all;
 use itertools::Itertools;
@@ -122,11 +125,11 @@ impl CurpGroup {
                 .take(n_nodes),
         )
         .await;
-        let all = listeners
+        let all: HashMap<ServerId, String> = listeners
             .iter()
             .enumerate()
             .map(|(i, listener)| (format!("S{i}"), listener.local_addr().unwrap().to_string()))
-            .collect_vec();
+            .collect();
 
         let nodes = listeners
             .into_iter()
@@ -141,8 +144,7 @@ impl CurpGroup {
                 let ce = TestCE::new(id.clone(), exe_tx, as_tx);
                 let store = Arc::clone(&ce.store);
 
-                let mut others = all.clone();
-                others.remove(i);
+                let cluster_info = Arc::new(ClusterMember::new(all.clone(), id.clone()));
 
                 let rt = tokio::runtime::Builder::new_multi_thread()
                     .worker_threads(2)
@@ -170,12 +172,11 @@ impl CurpGroup {
                 let role_change_arc = role_change_cb.get_inner_arc();
                 thread::spawn(move || {
                     handle.spawn(Rpc::run_from_listener(
-                        id_c,
+                        cluster_info,
                         i == 0,
-                        Arc::new(others.into_iter().collect()),
                         listener,
                         ce,
-                        MemorySnapshotAllocator,
+                        Box::new(MemorySnapshotAllocator),
                         role_change_cb,
                         Arc::new(
                             CurpConfigBuilder::default()
@@ -210,7 +211,7 @@ impl CurpGroup {
         debug!("successfully start group");
         Self {
             nodes,
-            all: all.into_iter().collect(),
+            all,
             crashed_nodes: HashMap::new(),
         }
     }
@@ -220,12 +221,7 @@ impl CurpGroup {
     }
 
     pub async fn new_client(&self, timeout: ClientTimeout) -> Client<TestCommand> {
-        let addrs = self
-            .nodes
-            .iter()
-            .map(|(id, node)| (id.clone(), node.addr.clone()))
-            .collect();
-        Client::<TestCommand>::new(Arc::new(addrs), timeout).await
+        Client::<TestCommand>::new(self.all.clone(), timeout).await
     }
 
     pub fn exe_rxs(
@@ -284,8 +280,7 @@ impl CurpGroup {
         let ce = TestCE::new(id.clone(), exe_tx, as_tx);
         let store = Arc::clone(&ce.store);
 
-        let mut others = self.all.clone();
-        others.remove(id);
+        let cluster_info = Arc::new(ClusterMember::new(self.all.clone(), id.clone()));
 
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -313,12 +308,11 @@ impl CurpGroup {
         let role_change_arc = role_change_cb.get_inner_arc();
         thread::spawn(move || {
             handle.spawn(Rpc::run_from_listener(
-                id_c,
+                cluster_info,
                 is_leader,
-                Arc::new(others.into_iter().collect()),
                 listener,
                 ce,
-                MemorySnapshotAllocator,
+                Box::new(MemorySnapshotAllocator),
                 role_change_cb,
                 Arc::new(
                     CurpConfigBuilder::default()

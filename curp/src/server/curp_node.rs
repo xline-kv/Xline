@@ -27,6 +27,7 @@ use crate::{
     cmd::{Command, CommandExecutor},
     error::ProposeError,
     log_entry::LogEntry,
+    members::ClusterMember,
     role_change::RoleChange,
     rpc::{
         self, connect::ConnectApi, AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest,
@@ -405,21 +406,21 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
 impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     /// Create a new server instance
     #[inline]
-    #[allow(clippy::too_many_arguments)] // TODO: remove this clippy lint when tx_filter is removed.(issue #143)
     pub(super) async fn new<CE: CommandExecutor<C> + 'static>(
-        id: ServerId,
+        cluster_info: Arc<ClusterMember>,
         is_leader: bool,
-        others: Arc<HashMap<ServerId, String>>,
         cmd_executor: Arc<CE>,
-        snapshot_allocator: impl SnapshotAllocator + 'static,
+        snapshot_allocator: Box<dyn SnapshotAllocator>,
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
         tx_filter: Option<Box<dyn TxFilter>>,
     ) -> Result<Self, CurpError> {
-        let sync_events = others
-            .keys()
+        let sync_events = cluster_info
+            .peers_id()
+            .iter()
             .map(|server_id| (server_id.clone(), Arc::new(Event::new())))
             .collect();
+
         let (log_tx, log_rx) = mpsc::unbounded_channel();
         let shutdown_trigger = Arc::new(Event::new());
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
@@ -435,10 +436,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
 
         // create curp state machine
         let (voted_for, entries) = storage.recover().await?;
+        let id = cluster_info.self_id();
         let curp = if voted_for.is_none() && entries.is_empty() {
             Arc::new(RawCurp::new(
-                id,
-                others.keys().cloned().collect(),
+                Arc::clone(&cluster_info),
                 is_leader,
                 Arc::clone(&cmd_board),
                 Arc::clone(&spec_pool),
@@ -457,8 +458,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                 entries.last()
             );
             Arc::new(RawCurp::recover_from(
-                id,
-                others.keys().cloned().collect(),
+                Arc::clone(&cluster_info),
                 is_leader,
                 Arc::clone(&cmd_board),
                 Arc::clone(&spec_pool),
@@ -491,7 +491,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         Self::run_bg_tasks(
             Arc::clone(&curp),
             Arc::clone(&storage),
-            others,
+            cluster_info,
             Arc::clone(&shutdown_trigger),
             tx_filter,
             log_rx,
@@ -505,7 +505,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
             shutdown_trigger,
             ce_event_tx,
             storage,
-            snapshot_allocator: Box::new(snapshot_allocator),
+            snapshot_allocator,
         })
     }
 
@@ -513,12 +513,12 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     async fn run_bg_tasks(
         curp: Arc<RawCurp<C, RC>>,
         storage: Arc<impl StorageApi<Command = C> + 'static>,
-        others: Arc<HashMap<ServerId, String>>,
+        cluster_info: Arc<ClusterMember>,
         shutdown_trigger: Arc<Event>,
         tx_filter: Option<Box<dyn TxFilter>>,
         log_rx: tokio::sync::mpsc::UnboundedReceiver<LogEntry<C>>,
     ) {
-        let connects = rpc::connect(others, tx_filter).await;
+        let connects = rpc::connect(cluster_info.peers(), tx_filter).await;
         let election_task = tokio::spawn(Self::election_task(Arc::clone(&curp), connects.clone()));
         let sync_task_daemons = connects
             .into_iter()
