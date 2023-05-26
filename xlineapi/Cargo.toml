@@ -12,6 +12,8 @@ keywords = ["RPC", "Interfaces"]
 
 [dependencies]
 tonic = "0.7.2"
+prost = "0.10.3"
+serde = { version = "1.0.137", features = ["derive"] }
 
 [build-dependencies]
 tonic-build = "0.7.2"
