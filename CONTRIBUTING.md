@@ -130,7 +130,7 @@ submitting the PR, and make sure there are no problems. Otherwise, the submitted
 Ensure that all tests are passed after code changes.
 
 ```rust
-cargo test 
+cargo test
 ```
 
 Make sure there is no violation of clippy rules. Sometimes we need to allow
@@ -138,7 +138,7 @@ certain rules, so make sure there is a good reason. You can allow them like :
 `#[allow(clippy::as_conversions)]`.
 
 ```rust
-cargo clippy --all-features --all-targets -- -D warnings 
+cargo clippy --all-features --all-targets -- -D warnings
 ```
 
 Check the code format.
@@ -163,8 +163,8 @@ can add corresponding unit tests according to the situation.).
 
 #### Integration tests
 
-Integration tests go in the `xline/tests` and the `curp/tests`. The best strategy 
-for writing a new integration test is to look at existing integration tests in the 
+Integration tests go in the `xline/tests` and the `curp/tests`. The best strategy
+for writing a new integration test is to look at existing integration tests in the
 crate and follow the style.
 
 #### Documentation tests
@@ -194,42 +194,11 @@ notes about [commit squashing](#commit-squashing)).
 
 #### Commit message guidelines
 
-A good commit message should describe what changed and why.
+A good commit message should describe what changed and why. The Xline project
+uses conventional commits to automatically generating CHANGELOGs.
 
-1. The first line should:
-   * contain a short description of the change (preferably 50 characters or less,
-      and no more than 72 characters)
-   * be entirely in lowercase with the exception of proper nouns, acronyms, and
-      the words that refer to code, like function/variable names
-2. Keep the second line blank.
-3. Wrap all other lines at 72 columns (except for long URLs).
-4. If your patch fixes an open issue, you can add a reference to it at the end
-   of the log. Use the `Fixes: #` prefix and the issue number. For other
-   references use `Refs: #`. `Refs` may include multiple issues, separated by a
-   comma.
+Read the [docs](https://www.conventionalcommits.org) for more details.
 
-   Examples:
-
-   * `Fixes: #1337`
-   * `Refs: #1234`
-
-Sample complete commit message:
-
-```txt
-explain the commit in one line
-
-Body of commit message is a few lines of text, explaining things
-in more detail, possibly giving some background about the issue
-being fixed, etc.
-
-The body of the commit message can be several paragraphs, and
-please do proper word-wrap and keep columns shorter than about
-72 characters or so. That way, `git log` will show things
-nicely even when it is indented.
-
-Fixes: #1337
-Refs: #453, #154
-```
 
 ### Opening the Pull Request
 
