@@ -62,13 +62,12 @@ pub trait Command:
         &self,
         e: &E,
         index: LogIndex,
-        need_run: bool,
-        prepare_res: Option<Self::PR>, // TODO: remove `need_run` and the option wrapper when issue 270 is closed
+        prepare_res: Option<Self::PR>,
     ) -> Result<Self::ASR, E::Error>
     where
         E: CommandExecutor<Self> + Send + Sync,
     {
-        <E as CommandExecutor<Self>>::after_sync(e, self, index, need_run, prepare_res).await
+        <E as CommandExecutor<Self>>::after_sync(e, self, index, prepare_res).await
     }
 }
 
@@ -138,8 +137,7 @@ where
         &self,
         cmd: &C,
         index: LogIndex,
-        need_run: bool,
-        prepare_res: Option<C::PR>, // TODO: remove `need_run` and the option wrapper when issue 270 is closed
+        prepare_res: Option<C::PR>,
     ) -> Result<C::ASR, Self::Error>;
 
     /// Index of the last log entry that has been successfully applied to the command executor

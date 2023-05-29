@@ -211,7 +211,6 @@ impl CommandExecutor<TestCommand> for TestCE {
         &self,
         cmd: &TestCommand,
         index: LogIndex,
-        need_run: bool,
         _pre_exe_res: Option<<TestCommand as Command>::PR>,
     ) -> Result<<TestCommand as Command>::ASR, Self::Error> {
         sleep(cmd.as_dur).await;
@@ -220,11 +219,9 @@ impl CommandExecutor<TestCommand> for TestCE {
         }
         self.last_applied
             .store(index.numeric_cast(), Ordering::Relaxed);
-        if need_run {
-            self.after_sync_sender
-                .send((cmd.clone(), index))
-                .expect("failed to send after sync msg");
-        }
+        self.after_sync_sender
+            .send((cmd.clone(), index))
+            .expect("failed to send after sync msg");
         Ok(index)
     }
 
@@ -338,7 +335,6 @@ impl CommandExecutor<TestCommand> for TestCESimple {
         &self,
         cmd: &TestCommand,
         index: LogIndex,
-        _need_run: bool,
         _pre_exe_res: Option<<TestCommand as Command>::PR>,
     ) -> Result<<TestCommand as Command>::ASR, Self::Error> {
         sleep(cmd.as_dur).await;

@@ -313,24 +313,19 @@ where
         &self,
         cmd: &Command,
         index: LogIndex,
-        need_run: bool,
         revision: Option<i64>,
     ) -> Result<<Command as CurpCommand>::ASR, Self::Error> {
         let mut ops = vec![WriteOp::PutAppliedIndex(index)];
-        let mut res = SyncResponse::new(-1);
-        if need_run {
-            #[allow(clippy::unwrap_used)]
-            // safe unwrap in that prepare_res must be Some when need_run is true
-            let revision = revision.unwrap();
-            let wrapper = cmd.request();
-            let (sync_res, mut wr_ops) = match wrapper.request.backend() {
-                RequestBackend::Kv => self.kv_storage.after_sync(wrapper, revision).await?,
-                RequestBackend::Auth => self.auth_storage.after_sync(wrapper, revision)?,
-                RequestBackend::Lease => self.lease_storage.after_sync(wrapper, revision).await?,
-            };
-            ops.append(&mut wr_ops);
-            res = sync_res;
-        }
+        #[allow(clippy::unwrap_used)]
+        // TODO: is there really need an option?
+        let revision = revision.unwrap();
+        let wrapper = cmd.request();
+        let (res, mut wr_ops) = match wrapper.request.backend() {
+            RequestBackend::Kv => self.kv_storage.after_sync(wrapper, revision).await?,
+            RequestBackend::Auth => self.auth_storage.after_sync(wrapper, revision)?,
+            RequestBackend::Lease => self.lease_storage.after_sync(wrapper, revision).await?,
+        };
+        ops.append(&mut wr_ops);
         self.persistent.flush_ops(ops)?;
         self.kv_storage.mark_index_available(res.revision());
         self.id_barrier.trigger(cmd.id());

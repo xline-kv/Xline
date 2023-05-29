@@ -86,19 +86,12 @@ async fn cmd_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
                 }
             }
             TaskType::AS(ref cmd, index, prepare) => {
-                let need_run = cb
-                    .read()
-                    .er_buffer
-                    .get(cmd.id())
-                    .map_or(false, Result::is_ok);
                 let asr = ce
-                    .after_sync(cmd.as_ref(), index, need_run, prepare)
+                    .after_sync(cmd.as_ref(), index, prepare)
                     .await
                     .map_err(|e| e.to_string());
                 let asr_ok = asr.is_ok();
-                if need_run {
-                    cb.write().insert_asr(cmd.id(), asr);
-                }
+                cb.write().insert_asr(cmd.id(), asr);
                 sp.lock().remove(cmd.id());
                 let _ig = ucp.lock().remove(cmd.id());
                 debug!("{id} cmd({}) after sync is called", cmd.id());
