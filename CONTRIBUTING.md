@@ -159,7 +159,9 @@ existing, broken functionality. In both of these cases, the pull request should
 include one or more tests to ensure that Xline does not regress in the future.
 There are two ways to write tests: integration tests and documentation tests
 (In most cases, Xline needs end-to-end integration testing, and contributors
-can add corresponding unit tests according to the situation.).
+can add corresponding unit tests according to the situation. Since all #[test]-related
+code should be excluded from coverage, please use the [coverage-helper](https://github.com/taiki-e/coverage-helper)
+cate to write unit tests.)
 
 #### Integration tests
 
@@ -199,6 +201,9 @@ uses conventional commits to automatically generating CHANGELOGs.
 
 Read the [docs](https://www.conventionalcommits.org) for more details.
 
+Note: Currently, the scope in the commit message is optional. Different projects
+may have different scopes. In order to standardize the scope range, Xline currently
+defines four scopes: curp, xline, persistent, and test.
 
 ### Opening the Pull Request
 
