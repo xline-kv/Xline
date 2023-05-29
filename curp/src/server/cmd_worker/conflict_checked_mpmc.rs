@@ -326,7 +326,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                     AsState::NotSynced(prepare) | AsState::AfterSyncReady(_, prepare),
                 ) => {
                     assert!(prepare.is_none(), "The prepare result of a given cmd can only be calculated when exe_state change from ExecuteReady to Executing");
-                    let prepare_err = match self.cmd_executor.prepare(cmd,index) {
+                    let prepare_err = match self.cmd_executor.prepare(cmd, index) {
                         Ok(pre_res) => {
                             as_st.set_prepare_result(pre_res);
                             None
@@ -336,14 +336,14 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                     *exe_st = ExeState::Executing(index);
                     let task = Task {
                         vid,
-                        inner: Cart::new(TaskType::SpecExe(Arc::clone(cmd),index, prepare_err)),
+                        inner: Cart::new(TaskType::SpecExe(Arc::clone(cmd), index, prepare_err)),
                     };
                     if let Err(e) = self.filter_tx.send(task) {
                         error!("failed to send task through filter, {e}");
                     }
                     false
                 }
-                (ExeState::Executed(_), AsState::AfterSyncReady(index, prepare)) => {
+                (ExeState::Executed(true), AsState::AfterSyncReady(index, prepare)) => {
                     *as_st = AsState::AfterSyncing;
                     let task = Task {
                         vid,
@@ -354,8 +354,9 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                     }
                     false
                 }
-                (ExeState::Executed(_), AsState::AfterSynced) => true,
-                (ExeState::Executing(_) | ExeState::Executed(_), AsState::NotSynced(_)) // TODO: 000
+                (ExeState::Executed(false), AsState::AfterSyncReady(_, _))
+                | (ExeState::Executed(_), AsState::AfterSynced) => true,
+                (ExeState::Executing(_) | ExeState::Executed(_), AsState::NotSynced(_))
                 | (ExeState::Executing(_), AsState::AfterSyncReady(_, _) | AsState::AfterSyncing)
                 | (ExeState::Executed(true), AsState::AfterSyncing) => false,
                 (exe_st, as_st) => {

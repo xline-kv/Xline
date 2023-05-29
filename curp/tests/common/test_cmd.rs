@@ -224,40 +224,37 @@ impl CommandExecutor<TestCommand> for TestCE {
         &self,
         cmd: &TestCommand,
         index: LogIndex,
-        need_run: bool,
         revision: Option<<TestCommand as Command>::PR>,
     ) -> Result<<TestCommand as Command>::ASR, Self::Error> {
         sleep(cmd.as_dur).await;
         if cmd.as_should_fail {
             return Err(ExecuteError("fail".to_owned()));
         }
-        if need_run {
-            self.after_sync_sender
-                .send((cmd.clone(), index))
-                .expect("failed to send after sync msg");
-            if let TestCommandType::Put(_) = cmd.cmd_type {
-                let revision = revision.expect("revision should not be None");
-                debug!(
-                    "cmd {:?}-{} revision is {}",
-                    cmd.cmd_type,
-                    cmd.id(),
-                    revision
-                );
-                let wr_ops = cmd
-                    .keys
-                    .iter()
-                    .map(|key| {
-                        WriteOperation::new_put(
-                            REVISION_TABLE,
-                            key.to_be_bytes().to_vec(),
-                            revision.to_be_bytes().to_vec(),
-                        )
-                    })
-                    .collect();
-                self.store
-                    .write_batch(wr_ops, true)
-                    .map_err(|e| ExecuteError(e.to_string()))?;
-            }
+        self.after_sync_sender
+            .send((cmd.clone(), index))
+            .expect("failed to send after sync msg");
+        if let TestCommandType::Put(_) = cmd.cmd_type {
+            let revision = revision.expect("revision should not be None");
+            debug!(
+                "cmd {:?}-{} revision is {}",
+                cmd.cmd_type,
+                cmd.id(),
+                revision
+            );
+            let wr_ops = cmd
+                .keys
+                .iter()
+                .map(|key| {
+                    WriteOperation::new_put(
+                        REVISION_TABLE,
+                        key.to_be_bytes().to_vec(),
+                        revision.to_be_bytes().to_vec(),
+                    )
+                })
+                .collect();
+            self.store
+                .write_batch(wr_ops, true)
+                .map_err(|e| ExecuteError(e.to_string()))?;
         }
         self.last_applied.store(index, Ordering::Relaxed);
         debug!(
