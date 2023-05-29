@@ -25,7 +25,7 @@ pub(super) mod conflict_checked_mpmc;
 /// Event for command executor
 pub(super) enum CEEvent<C> {
     /// The cmd is ready for speculative execution
-    SpecExeReady(Arc<C>),
+    SpecExeReady(Arc<C>, LogIndex),
     /// The cmd is ready for after sync
     ASReady(Arc<C>, LogIndex),
     /// Reset the command executor, send(()) when finishes
@@ -37,7 +37,11 @@ pub(super) enum CEEvent<C> {
 impl<C: Command> Debug for CEEvent<C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match *self {
-            Self::SpecExeReady(ref cmd) => f.debug_tuple("SpecExeReady").field(cmd.id()).finish(),
+            Self::SpecExeReady(ref cmd, ref index) => f
+                .debug_tuple("SpecExeReady")
+                .field(cmd.id())
+                .field(index)
+                .finish(),
             Self::ASReady(ref cmd, ref index) => f
                 .debug_tuple("ASReady")
                 .field(cmd.id())
@@ -66,12 +70,15 @@ async fn cmd_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
     let id = curp.id();
     while let Ok(mut task) = dispatch_rx.recv().await {
         let succeeded = match task.take() {
-            TaskType::SpecExe(cmd, pre_err) => {
+            TaskType::SpecExe(cmd, index, pre_err) => {
                 if let Some(err_msg) = pre_err {
                     cb.write().insert_er(cmd.id(), Err(err_msg));
                     false
                 } else {
-                    let er = ce.execute(cmd.as_ref()).await.map_err(|e| e.to_string());
+                    let er = ce
+                        .execute(cmd.as_ref(), index)
+                        .await
+                        .map_err(|e| e.to_string());
                     let er_ok = er.is_ok();
                     debug!("{id} cmd({}) is speculatively executed", cmd.id());
                     cb.write().insert_er(cmd.id(), er);
@@ -164,7 +171,7 @@ struct TaskRx<C: Command>(flume::Receiver<Task<C>>);
 #[cfg_attr(test, automock)]
 pub(super) trait CEEventTxApi<C: Command + 'static>: Send + Sync + 'static {
     /// Send cmd to background cmd worker for speculative execution
-    fn send_sp_exe(&self, cmd: Arc<C>);
+    fn send_sp_exe(&self, cmd: Arc<C>, index: LogIndex);
 
     /// Send after sync event to the background cmd worker so that after sync can be called
     fn send_after_sync(&self, cmd: Arc<C>, index: LogIndex);
@@ -177,8 +184,8 @@ pub(super) trait CEEventTxApi<C: Command + 'static>: Send + Sync + 'static {
 }
 
 impl<C: Command + 'static> CEEventTxApi<C> for CEEventTx<C> {
-    fn send_sp_exe(&self, cmd: Arc<C>) {
-        let event = CEEvent::SpecExeReady(cmd);
+    fn send_sp_exe(&self, cmd: Arc<C>, index: LogIndex) {
+        let event = CEEvent::SpecExeReady(cmd, index);
         if let Err(e) = self.0.send(event) {
             error!("failed to send cmd exe event to background cmd worker, {e}");
         }
@@ -286,7 +293,7 @@ mod tests {
 
         let cmd = Arc::new(TestCommand::default());
 
-        ce_event_tx.send_sp_exe(Arc::clone(&cmd));
+        ce_event_tx.send_sp_exe(Arc::clone(&cmd), 1);
         assert_eq!(er_rx.recv().await.unwrap().1, vec![]);
 
         ce_event_tx.send_after_sync(Arc::clone(&cmd), 1);
@@ -312,7 +319,7 @@ mod tests {
         let begin = Instant::now();
         let cmd = Arc::new(TestCommand::default().set_exe_dur(Duration::from_secs(1)));
 
-        ce_event_tx.send_sp_exe(Arc::clone(&cmd));
+        ce_event_tx.send_sp_exe(Arc::clone(&cmd), 1);
 
         // at 500ms, sync has completed, call after sync, then needs_as will be updated
         sleep_millis(500).await;
@@ -345,7 +352,7 @@ mod tests {
                 .set_exe_should_fail(),
         );
 
-        ce_event_tx.send_sp_exe(Arc::clone(&cmd));
+        ce_event_tx.send_sp_exe(Arc::clone(&cmd), 1);
 
         // at 500ms, sync has completed
         sleep_millis(500).await;
@@ -426,8 +433,8 @@ mod tests {
 
         let cmd1 = Arc::new(TestCommand::new_put(vec![1], 1));
         let cmd2 = Arc::new(TestCommand::new_get(vec![1]));
-        ce_event_tx.send_sp_exe(Arc::clone(&cmd1));
-        ce_event_tx.send_sp_exe(Arc::clone(&cmd2));
+        ce_event_tx.send_sp_exe(Arc::clone(&cmd1), 1);
+        ce_event_tx.send_sp_exe(Arc::clone(&cmd2), 2);
 
         // cmd1 exe done
         assert_eq!(er_rx.recv().await.unwrap().1, vec![]);
@@ -465,8 +472,8 @@ mod tests {
         let cmd1 =
             Arc::new(TestCommand::new_put(vec![1], 1).set_exe_dur(Duration::from_millis(50)));
         let cmd2 = Arc::new(TestCommand::new_get(vec![1]));
-        ce_event_tx.send_sp_exe(Arc::clone(&cmd1));
-        ce_event_tx.send_sp_exe(Arc::clone(&cmd2));
+        ce_event_tx.send_sp_exe(Arc::clone(&cmd1), 1);
+        ce_event_tx.send_sp_exe(Arc::clone(&cmd2), 2);
 
         assert_eq!(er_rx.recv().await.unwrap().1, vec![]);
 

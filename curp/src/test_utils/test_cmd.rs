@@ -155,13 +155,18 @@ impl Display for ExecuteError {
 impl CommandExecutor<TestCommand> for TestCE {
     type Error = ExecuteError;
 
-    fn prepare(&self, _cmd: &TestCommand) -> Result<<TestCommand as Command>::PR, Self::Error> {
+    fn prepare(
+        &self,
+        _cmd: &TestCommand,
+        _index: LogIndex,
+    ) -> Result<<TestCommand as Command>::PR, Self::Error> {
         Ok(0)
     }
 
     async fn execute(
         &self,
         cmd: &TestCommand,
+        _index: LogIndex,
     ) -> Result<<TestCommand as Command>::ER, Self::Error> {
         sleep(cmd.exe_dur).await;
         if cmd.exe_should_fail {
@@ -280,13 +285,18 @@ pub(crate) struct TestCESimple {
 impl CommandExecutor<TestCommand> for TestCESimple {
     type Error = ExecuteError;
 
-    fn prepare(&self, _cmd: &TestCommand) -> Result<<TestCommand as Command>::PR, Self::Error> {
+    fn prepare(
+        &self,
+        _cmd: &TestCommand,
+        _index: LogIndex,
+    ) -> Result<<TestCommand as Command>::PR, Self::Error> {
         Ok(0)
     }
 
     async fn execute(
         &self,
         cmd: &TestCommand,
+        _index: LogIndex,
     ) -> Result<<TestCommand as Command>::ER, Self::Error> {
         sleep(cmd.exe_dur).await;
         if cmd.exe_should_fail {
