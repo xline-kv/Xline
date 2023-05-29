@@ -598,6 +598,8 @@ impl XlineServerConfig {
 
 #[cfg(test)]
 mod tests {
+    use coverage_helper::test;
+
     use super::*;
 
     #[allow(clippy::unwrap_used)]

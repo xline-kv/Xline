@@ -533,6 +533,8 @@ fn superquorum(nodes: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use coverage_helper::test;
+
     use super::*;
 
     #[allow(clippy::unwrap_used)]

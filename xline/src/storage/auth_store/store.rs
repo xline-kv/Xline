@@ -1140,6 +1140,7 @@ where
 mod test {
     use std::collections::HashMap;
 
+    use coverage_helper::test;
     use merged_range::MergedRange;
     use utils::config::StorageConfig;
 

@@ -291,6 +291,8 @@ impl IndexOperate for Index {
 
 #[cfg(test)]
 mod test {
+    use coverage_helper::test;
+
     use super::*;
 
     #[allow(clippy::multiple_inherent_impl)] // just for test

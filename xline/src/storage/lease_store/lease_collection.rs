@@ -177,7 +177,10 @@ impl LeaseCollection {
 
 #[cfg(test)]
 mod test {
+    use coverage_helper::test;
+
     use super::*;
+
     #[test]
     fn test_grant_less_than_min_ttl() {
         let c = LeaseCollection::new(3);

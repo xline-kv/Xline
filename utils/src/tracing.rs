@@ -81,6 +81,7 @@ impl Inject for tonic::metadata::MetadataMap {
 #[cfg(test)]
 mod test {
 
+    use coverage_helper::test;
     use opentelemetry::{
         sdk::propagation::TraceContextPropagator,
         trace::{TraceContextExt, TraceId},

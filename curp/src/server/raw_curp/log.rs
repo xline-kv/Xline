@@ -323,6 +323,7 @@ impl<C: 'static + Command> Log<C> {
 mod tests {
     use std::{iter::repeat, ops::Index, sync::Arc};
 
+    use coverage_helper::test;
     use utils::config::{default_batch_max_size, default_log_entries_cap};
 
     use super::*;

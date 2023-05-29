@@ -114,7 +114,10 @@ impl KeyRevision {
 #[cfg(test)]
 mod test {
 
+    use coverage_helper::test;
+
     use super::*;
+
     #[test]
     fn test_revision_encode_to_vec() {
         let revision = Revision::new(1, 2);

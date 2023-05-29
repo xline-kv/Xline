@@ -68,6 +68,8 @@ impl<T, R> RwLockMap<T, R> for RwLock<T> {
 mod test {
     use std::error::Error;
 
+    use coverage_helper::test;
+
     use super::*;
 
     #[test]

@@ -52,7 +52,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod test {
+    use coverage_helper::test;
+
     use super::*;
+
     #[test]
     fn it_works() {
         let args: ClientArgs = ClientArgs::parse_from([

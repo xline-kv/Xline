@@ -123,6 +123,7 @@ clippy::unused_rounding
 #![allow(
 clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
 )]
+#![cfg_attr(coverage_nightly, feature(no_coverage))]
 #![cfg_attr(
     test,
     allow(

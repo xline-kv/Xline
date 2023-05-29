@@ -49,6 +49,8 @@ impl LeaseQueue {
 mod test {
     use std::time::Duration;
 
+    use coverage_helper::test;
+
     use super::*;
     #[test]
     fn test_lease_heap() {

@@ -124,6 +124,8 @@
 #![allow(
     clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
 )]
+#![cfg_attr(coverage_nightly, feature(no_coverage))]
+
 // When we use rust version 1.65 or later, refactor this with GAT
 
 use std::{collections::HashMap, time::Duration};
@@ -304,6 +306,8 @@ pub fn parse_batch_bytes(s: &str) -> Result<u64, ConfigParseError> {
 
 #[cfg(test)]
 mod test {
+    use coverage_helper::test;
+
     use super::*;
 
     #[allow(clippy::unwrap_used)]

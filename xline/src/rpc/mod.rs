@@ -495,6 +495,8 @@ impl TxnRequest {
 
 #[cfg(test)]
 mod test {
+    use coverage_helper::test;
+
     use super::*;
 
     #[test]

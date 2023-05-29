@@ -194,6 +194,7 @@ mod test {
     use std::iter::{repeat, zip};
 
     use clippy_utilities::NumericCast;
+    use coverage_helper::test;
 
     use super::*;
     use crate::api::snapshot_api::SnapshotApi;

@@ -43,7 +43,10 @@ impl IdGenerator {
 
 #[cfg(test)]
 mod test {
+    use coverage_helper::test;
+
     use super::*;
+
     #[test]
     fn test_id_generator() {
         let id_gen = IdGenerator::new(0);

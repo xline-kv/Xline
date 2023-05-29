@@ -54,6 +54,8 @@ impl<T, R> RwLockMap<T, R> for RwLock<T> {
 
 #[cfg(test)]
 mod test {
+    use coverage_helper::test;
+
     use super::*;
 
     #[test]

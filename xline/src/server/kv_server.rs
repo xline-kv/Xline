@@ -510,6 +510,8 @@ where
 #[cfg(test)]
 mod test {
 
+    use coverage_helper::test;
+
     use super::*;
     use crate::storage::db::DB;
 
