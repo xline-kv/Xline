@@ -12,20 +12,21 @@ env:
 
 jobs:
   coverage:
-    name: Coverage
     runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
     steps:
-      - uses: actions/checkout@v2
-      - run: sudo bash ./.github/scripts/install_deps.sh
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: default
-          toolchain: ${{ env.CI_RUST_TOOLCHAIN }}
-          override: true
-          components: llvm-tools-preview
+      - uses: actions/checkout@v3
       - uses: Swatinem/rust-cache@v2
-      - run: CI=yes ./scripts/coverage.sh
-      - name: Upload coverage report
+      - run: sudo bash ./.github/scripts/install_deps.sh
+      - name: Install Rust
+        run: rustup update stable
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Generate code coverage
+        run: cargo llvm-cov --all-features --lib --workspace --codecov --output-path lcov.info
+      - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
         with:
-          files: ./coverage/xline_cov.lcovrc,./coverage/curp_cov.lcovrc,./coverage/utils_cov.lcovrc
+          files: lcov.info
+          fail_ci_if_error: true
