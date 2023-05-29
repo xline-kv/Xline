@@ -151,7 +151,11 @@ pub struct TestCE {
 impl CommandExecutor<TestCommand> for TestCE {
     type Error = ExecuteError;
 
-    fn prepare(&self, cmd: &TestCommand) -> Result<<TestCommand as Command>::PR, Self::Error> {
+    fn prepare(
+        &self,
+        cmd: &TestCommand,
+        _index: LogIndex,
+    ) -> Result<<TestCommand as Command>::PR, Self::Error> {
         let rev = if let TestCommandType::Put(_) = cmd.cmd_type {
             self.revision.fetch_add(1, Ordering::Relaxed)
         } else {
@@ -163,6 +167,7 @@ impl CommandExecutor<TestCommand> for TestCE {
     async fn execute(
         &self,
         cmd: &TestCommand,
+        _index: LogIndex,
     ) -> Result<<TestCommand as Command>::ER, Self::Error> {
         sleep(cmd.exe_dur).await;
         if cmd.exe_should_fail {

@@ -247,7 +247,7 @@ impl<C: 'static + Command> RawCurp<C> {
 
         if !conflict {
             log_w.last_exe = index;
-            self.ctx.cmd_tx.send_sp_exe(cmd);
+            self.ctx.cmd_tx.send_sp_exe(cmd, index);
         }
 
         self.ctx.sync_events.iter().for_each(|(id, event)| {
@@ -280,7 +280,7 @@ impl<C: 'static + Command> RawCurp<C> {
         leader_commit: LogIndex,
     ) -> Result<u64, (u64, LogIndex)> {
         debug!(
-            "{} received append_entries from {}: term({}), commit({}), prev_log_index({}), prev_log_term({}), {} entries", 
+            "{} received append_entries from {}: term({}), commit({}), prev_log_index({}), prev_log_term({}), {} entries",
             self.id(), leader_id, term, leader_commit, prev_log_index, prev_log_term, entries.len()
         );
 

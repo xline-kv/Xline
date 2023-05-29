@@ -57,7 +57,7 @@ pub(in crate::server) struct Task<C: Command> {
 /// Task Type
 pub(super) enum TaskType<C: Command> {
     /// Execute a cmd
-    SpecExe(Arc<C>, Option<String>),
+    SpecExe(Arc<C>, LogIndex, Option<String>),
     /// After sync a cmd
     AS(Arc<C>, LogIndex, Option<C::PR>),
     /// Reset the CE
@@ -130,9 +130,9 @@ enum VertexInner<C: Command> {
 #[derive(Debug, Clone, Copy)]
 enum ExeState {
     /// Is ready to execute
-    ExecuteReady,
+    ExecuteReady(LogIndex),
     /// Executing
-    Executing,
+    Executing(LogIndex),
     /// Has been executed, and the result
     Executed(bool),
 }
@@ -234,7 +234,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                 ref mut as_st,
                 ..
             } => {
-                if matches!(*exe_st, ExeState::Executing)
+                if matches!(*exe_st, ExeState::Executing(_))
                     && !matches!(*as_st, AsState::AfterSyncing)
                 {
                     *exe_st = ExeState::Executed(succeeded);
@@ -322,21 +322,21 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                 ref mut as_st,
             } => match (*exe_st, as_st.clone()) {
                 (
-                    ExeState::ExecuteReady,
+                    ExeState::ExecuteReady(index),
                     AsState::NotSynced(prepare) | AsState::AfterSyncReady(_, prepare),
                 ) => {
                     assert!(prepare.is_none(), "The prepare result of a given cmd can only be calculated when exe_state change from ExecuteReady to Executing");
-                    let prepare_err = match self.cmd_executor.prepare(cmd) {
+                    let prepare_err = match self.cmd_executor.prepare(cmd,index) {
                         Ok(pre_res) => {
                             as_st.set_prepare_result(pre_res);
                             None
                         }
                         Err(err) => Some(err.to_string()),
                     };
-                    *exe_st = ExeState::Executing;
+                    *exe_st = ExeState::Executing(index);
                     let task = Task {
                         vid,
-                        inner: Cart::new(TaskType::SpecExe(Arc::clone(cmd), prepare_err)),
+                        inner: Cart::new(TaskType::SpecExe(Arc::clone(cmd),index, prepare_err)),
                     };
                     if let Err(e) = self.filter_tx.send(task) {
                         error!("failed to send task through filter, {e}");
@@ -355,8 +355,8 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                     false
                 }
                 (ExeState::Executed(_), AsState::AfterSynced) => true,
-                (ExeState::Executing | ExeState::Executed(_), AsState::NotSynced(_))
-                | (ExeState::Executing, AsState::AfterSyncReady(_, _) | AsState::AfterSyncing)
+                (ExeState::Executing(_) | ExeState::Executed(_), AsState::NotSynced(_)) // TODO: 000
+                | (ExeState::Executing(_), AsState::AfterSyncReady(_, _) | AsState::AfterSyncing)
                 | (ExeState::Executed(true), AsState::AfterSyncing) => false,
                 (exe_st, as_st) => {
                     unreachable!("no such exe and as state can be reached: {exe_st:?}, {as_st:?}")
@@ -415,7 +415,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
     fn handle_event(&mut self, event: CEEvent<C>) {
         debug!("new ce event: {event:?}");
         let vid = match event {
-            CEEvent::SpecExeReady(cmd) => {
+            CEEvent::SpecExeReady(cmd, index) => {
                 let new_vid = self.next_vertex_id();
                 assert!(
                     self.cmd_vid.insert(cmd.id().clone(), new_vid).is_none(),
@@ -426,7 +426,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                     predecessor_cnt: 0,
                     inner: VertexInner::Cmd {
                         cmd,
-                        exe_st: ExeState::ExecuteReady,
+                        exe_st: ExeState::ExecuteReady(index),
                         as_st: AsState::NotSynced(None),
                     },
                 };
@@ -460,7 +460,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                         predecessor_cnt: 0,
                         inner: VertexInner::Cmd {
                             cmd,
-                            exe_st: ExeState::ExecuteReady,
+                            exe_st: ExeState::ExecuteReady(index),
                             as_st: AsState::AfterSyncReady(index, None),
                         },
                     };

@@ -40,20 +40,20 @@ pub trait Command:
 
     /// Prepare the command
     #[inline]
-    fn prepare<E>(&self, e: &E) -> Result<Self::PR, E::Error>
+    fn prepare<E>(&self, e: &E, index: LogIndex) -> Result<Self::PR, E::Error>
     where
         E: CommandExecutor<Self> + Send + Sync,
     {
-        <E as CommandExecutor<Self>>::prepare(e, self)
+        <E as CommandExecutor<Self>>::prepare(e, self, index)
     }
 
     /// Execute the command according to the executor
     #[inline]
-    async fn execute<E>(&self, e: &E) -> Result<Self::ER, E::Error>
+    async fn execute<E>(&self, e: &E, index: LogIndex) -> Result<Self::ER, E::Error>
     where
         E: CommandExecutor<Self> + Send + Sync,
     {
-        <E as CommandExecutor<Self>>::execute(e, self).await
+        <E as CommandExecutor<Self>>::execute(e, self, index).await
     }
 
     /// Execute the command after_sync callback
@@ -128,10 +128,10 @@ where
     type Error: std::fmt::Debug + Send + Sync + Clone + std::error::Error;
 
     /// Prepare the command
-    fn prepare(&self, cmd: &C) -> Result<C::PR, Self::Error>;
+    fn prepare(&self, cmd: &C, index: LogIndex) -> Result<C::PR, Self::Error>;
 
     /// Execute the command
-    async fn execute(&self, cmd: &C) -> Result<C::ER, Self::Error>;
+    async fn execute(&self, cmd: &C, index: LogIndex) -> Result<C::ER, Self::Error>;
 
     /// Execute the after_sync callback
     async fn after_sync(

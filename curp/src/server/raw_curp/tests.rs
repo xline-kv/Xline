@@ -66,7 +66,7 @@ impl<C: 'static + Command> RawCurp<C> {
 fn leader_handle_propose_will_succeed() {
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        exe_tx.expect_send_sp_exe().returning(|_| {});
+        exe_tx.expect_send_sp_exe().returning(|_, _| {});
         RawCurp::new_test(3, exe_tx)
     };
     let cmd = Arc::new(TestCommand::default());
@@ -81,7 +81,7 @@ fn leader_handle_propose_will_succeed() {
 fn leader_handle_propose_will_reject_conflicted() {
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        exe_tx.expect_send_sp_exe().returning(|_| {});
+        exe_tx.expect_send_sp_exe().returning(|_, _| {});
         RawCurp::new_test(3, exe_tx)
     };
 
@@ -110,7 +110,7 @@ fn leader_handle_propose_will_reject_conflicted() {
 fn leader_handle_propose_will_reject_duplicated() {
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        exe_tx.expect_send_sp_exe().returning(|_| {});
+        exe_tx.expect_send_sp_exe().returning(|_, _| {});
         RawCurp::new_test(3, exe_tx)
     };
     let cmd = Arc::new(TestCommand::default());

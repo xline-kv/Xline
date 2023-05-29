@@ -258,9 +258,17 @@ where
 {
     type Error = ExecuteError;
 
-    fn prepare(&self, cmd: &Command) -> Result<<Command as CurpCommand>::PR, Self::Error> {
+    fn prepare(
+        &self,
+        cmd: &Command,
+        index: LogIndex,
+    ) -> Result<<Command as CurpCommand>::PR, Self::Error> {
         let wrapper = cmd.request();
-        self.auth_storage.check_permission(wrapper)?;
+        if let Err(e) = self.auth_storage.check_permission(wrapper) {
+            self.id_barrier.trigger(cmd.id());
+            self.index_barrier.trigger(index);
+            return Err(e);
+        }
         let revision = match wrapper.request.backend() {
             RequestBackend::Auth => {
                 if wrapper.request.skip_auth_revision() {
@@ -280,12 +288,24 @@ where
         Ok(revision)
     }
 
-    async fn execute(&self, cmd: &Command) -> Result<<Command as CurpCommand>::ER, Self::Error> {
+    async fn execute(
+        &self,
+        cmd: &Command,
+        index: LogIndex,
+    ) -> Result<<Command as CurpCommand>::ER, Self::Error> {
         let wrapper = cmd.request();
-        match wrapper.request.backend() {
+        let res = match wrapper.request.backend() {
             RequestBackend::Kv => self.kv_storage.execute(wrapper),
             RequestBackend::Auth => self.auth_storage.execute(wrapper),
             RequestBackend::Lease => self.lease_storage.execute(wrapper),
+        };
+        match res {
+            Ok(res) => Ok(res),
+            Err(e) => {
+                self.id_barrier.trigger(cmd.id());
+                self.index_barrier.trigger(index);
+                Err(e)
+            }
         }
     }
 
