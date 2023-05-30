@@ -224,7 +224,7 @@ impl CommandExecutor<TestCommand> for TestCE {
         &self,
         cmd: &TestCommand,
         index: LogIndex,
-        revision: Option<<TestCommand as Command>::PR>,
+        revision: <TestCommand as Command>::PR,
     ) -> Result<<TestCommand as Command>::ASR, Self::Error> {
         sleep(cmd.as_dur).await;
         if cmd.as_should_fail {
@@ -234,7 +234,6 @@ impl CommandExecutor<TestCommand> for TestCE {
             .send((cmd.clone(), index))
             .expect("failed to send after sync msg");
         if let TestCommandType::Put(_) = cmd.cmd_type {
-            let revision = revision.expect("revision should not be None");
             debug!(
                 "cmd {:?}-{} revision is {}",
                 cmd.cmd_type,

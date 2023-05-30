@@ -59,7 +59,7 @@ pub(super) enum TaskType<C: Command> {
     /// Execute a cmd
     SpecExe(Arc<C>, LogIndex, Option<String>),
     /// After sync a cmd
-    AS(Arc<C>, LogIndex, Option<C::PR>),
+    AS(Arc<C>, LogIndex, C::PR),
     /// Reset the CE
     Reset(Option<Snapshot>, oneshot::Sender<()>),
     /// Snapshot
@@ -345,6 +345,9 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                 }
                 (ExeState::Executed(true), AsState::AfterSyncReady(index, prepare)) => {
                     *as_st = AsState::AfterSyncing;
+                    let Some(prepare) = prepare else {
+                        unreachable!("prepare always exists when exe_state is Executed(true)");
+                    };
                     let task = Task {
                         vid,
                         inner: Cart::new(TaskType::AS(Arc::clone(cmd), index, prepare)),

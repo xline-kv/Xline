@@ -62,7 +62,7 @@ pub trait Command:
         &self,
         e: &E,
         index: LogIndex,
-        prepare_res: Option<Self::PR>,
+        prepare_res: Self::PR,
     ) -> Result<Self::ASR, E::Error>
     where
         E: CommandExecutor<Self> + Send + Sync,
@@ -137,7 +137,7 @@ where
         &self,
         cmd: &C,
         index: LogIndex,
-        prepare_res: Option<C::PR>,
+        prepare_res: C::PR,
     ) -> Result<C::ASR, Self::Error>;
 
     /// Index of the last log entry that has been successfully applied to the command executor
