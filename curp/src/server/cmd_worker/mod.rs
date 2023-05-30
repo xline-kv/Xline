@@ -71,19 +71,24 @@ async fn cmd_worker<C: Command + 'static, CE: 'static + CommandExecutor<C>>(
     while let Ok(mut task) = dispatch_rx.recv().await {
         let succeeded = match task.take() {
             TaskType::SpecExe(cmd, index, pre_err) => {
-                if let Some(err_msg) = pre_err {
-                    cb.write().insert_er(cmd.id(), Err(err_msg));
-                    false
+                let er = if let Some(err_msg) = pre_err {
+                    Err(err_msg)
                 } else {
-                    let er = ce
-                        .execute(cmd.as_ref(), index)
+                    ce.execute(cmd.as_ref(), index)
                         .await
-                        .map_err(|e| e.to_string());
-                    let er_ok = er.is_ok();
-                    debug!("{id} cmd({}) is speculatively executed", cmd.id());
-                    cb.write().insert_er(cmd.id(), er);
-                    er_ok
+                        .map_err(|e| e.to_string())
+                };
+                let er_ok = er.is_ok();
+                cb.write().insert_er(cmd.id(), er);
+                if !er_ok {
+                    sp.lock().remove(cmd.id());
+                    let _ig = ucp.lock().remove(cmd.id());
                 }
+                debug!(
+                    "{id} cmd({}) is speculatively executed, exe status: {er_ok}",
+                    cmd.id()
+                );
+                er_ok
             }
             TaskType::AS(ref cmd, index, prepare) => {
                 let asr = ce
