@@ -365,6 +365,7 @@ where
             let wait_future = async move {
                 match rd_state {
                     ReadState::Ids(ids) => {
+                        debug!(?ids, "Range wait for command ids");
                         let fus = ids
                             .into_iter()
                             .map(|id| self.id_barrier.wait(id))
@@ -372,6 +373,7 @@ where
                         let _ignore = join_all(fus).await;
                     }
                     ReadState::CommitIndex(index) => {
+                        debug!(?index, "Range wait for commit index");
                         self.index_barrier.wait(index).await;
                     }
                     _ => unreachable!(),
