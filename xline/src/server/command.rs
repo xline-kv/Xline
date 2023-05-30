@@ -483,3 +483,93 @@ impl CurpCommand for Command {
         &self.id
     }
 }
+
+#[cfg(test)]
+mod test {
+    use crate::rpc::{
+        AuthEnableRequest, AuthStatusRequest, LeaseGrantRequest, LeaseRevokeRequest, PutRequest,
+    };
+
+    use super::*;
+
+    #[test]
+    fn test_key_range_conflict() {
+        let kr1 = KeyRange::new("a", "e");
+        let kr2 = KeyRange::new_one_key("c");
+        let kr3 = KeyRange::new_one_key("z");
+        assert!(kr1.is_conflict(&kr2));
+        assert!(!kr1.is_conflict(&kr3));
+    }
+
+    #[test]
+    fn test_key_range_prefix() {
+        assert_eq!(KeyRange::get_prefix(b"key"), b"kez");
+        assert_eq!(KeyRange::get_prefix(b"z"), b"\x7b");
+        assert_eq!(KeyRange::get_prefix(&[255]), b"\0");
+    }
+
+    #[test]
+    fn test_key_range_contains() {
+        let kr1 = KeyRange::new("a", "e");
+        assert!(kr1.contains_key(b"b"));
+        assert!(!kr1.contains_key(b"e"));
+        let kr2 = KeyRange::new_one_key("c");
+        assert!(kr2.contains_key(b"c"));
+        assert!(!kr2.contains_key(b"d"));
+        let kr3 = KeyRange::new("c", [0]);
+        assert!(kr3.contains_key(b"d"));
+        assert!(!kr3.contains_key(b"a"));
+        let kr4 = KeyRange::new([0], "e");
+        assert!(kr4.contains_key(b"d"));
+        assert!(!kr4.contains_key(b"e"));
+    }
+
+    #[test]
+    fn test_command_conflict() {
+        let cmd1 = Command::new(
+            vec![KeyRange::new("a", "e")],
+            RequestWithToken::new(RequestWrapper::PutRequest(PutRequest::default())),
+            ProposeId::new("id".to_owned()),
+        );
+        let cmd2 = Command::new(
+            vec![],
+            RequestWithToken::new(RequestWrapper::AuthStatusRequest(
+                AuthStatusRequest::default(),
+            )),
+            ProposeId::new("id".to_owned()),
+        );
+        let cmd3 = Command::new(
+            vec![KeyRange::new("c", "g")],
+            RequestWithToken::new(RequestWrapper::PutRequest(PutRequest::default())),
+            ProposeId::new("id2".to_owned()),
+        );
+        let cmd4 = Command::new(
+            vec![],
+            RequestWithToken::new(RequestWrapper::AuthEnableRequest(
+                AuthEnableRequest::default(),
+            )),
+            ProposeId::new("id3".to_owned()),
+        );
+        let cmd5 = Command::new(
+            vec![],
+            RequestWithToken::new(RequestWrapper::LeaseGrantRequest(LeaseGrantRequest {
+                ttl: 1,
+                id: 1,
+            })),
+            ProposeId::new("id3".to_owned()),
+        );
+        let cmd6 = Command::new(
+            vec![],
+            RequestWithToken::new(RequestWrapper::LeaseRevokeRequest(LeaseRevokeRequest {
+                id: 1,
+            })),
+            ProposeId::new("id3".to_owned()),
+        );
+
+        assert!(cmd1.is_conflict(&cmd2)); // id
+        assert!(cmd1.is_conflict(&cmd3)); // keys
+        assert!(!cmd2.is_conflict(&cmd3)); // auth read and kv
+        assert!(cmd2.is_conflict(&cmd4)); // auth and auth
+        assert!(cmd5.is_conflict(&cmd6)); // lease id
+    }
+}
