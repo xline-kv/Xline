@@ -313,12 +313,9 @@ where
         &self,
         cmd: &Command,
         index: LogIndex,
-        revision: Option<i64>,
+        revision: i64,
     ) -> Result<<Command as CurpCommand>::ASR, Self::Error> {
         let mut ops = vec![WriteOp::PutAppliedIndex(index)];
-        #[allow(clippy::unwrap_used)]
-        // TODO: is there really need an option?
-        let revision = revision.unwrap();
         let wrapper = cmd.request();
         let (res, mut wr_ops) = match wrapper.request.backend() {
             RequestBackend::Kv => self.kv_storage.after_sync(wrapper, revision).await?,

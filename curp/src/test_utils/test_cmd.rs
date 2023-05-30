@@ -211,7 +211,7 @@ impl CommandExecutor<TestCommand> for TestCE {
         &self,
         cmd: &TestCommand,
         index: LogIndex,
-        _pre_exe_res: Option<<TestCommand as Command>::PR>,
+        _pre_exe_res: <TestCommand as Command>::PR,
     ) -> Result<<TestCommand as Command>::ASR, Self::Error> {
         sleep(cmd.as_dur).await;
         if cmd.as_should_fail {
@@ -335,7 +335,7 @@ impl CommandExecutor<TestCommand> for TestCESimple {
         &self,
         cmd: &TestCommand,
         index: LogIndex,
-        _pre_exe_res: Option<<TestCommand as Command>::PR>,
+        _pre_exe_res: <TestCommand as Command>::PR,
     ) -> Result<<TestCommand as Command>::ASR, Self::Error> {
         sleep(cmd.as_dur).await;
         if cmd.as_should_fail {
