@@ -174,11 +174,13 @@ pub use self::etcdserverpb::range_request::{SortOrder, SortTarget};
 pub use self::{
     authpb::{permission::Type, Permission, Role, User},
     etcdserverpb::{
+        auth_client::AuthClient,
         auth_server::{Auth, AuthServer},
         compare::{CompareResult, CompareTarget, TargetUnion},
         kv_server::{Kv, KvServer},
         lease_client::LeaseClient,
         lease_server::{Lease, LeaseServer},
+        maintenance_client::MaintenanceClient,
         maintenance_server::{Maintenance, MaintenanceServer},
         request_op::Request,
         response_op::Response,
