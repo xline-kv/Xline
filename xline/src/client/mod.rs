@@ -68,11 +68,12 @@ impl Client {
         use_curp_client: bool,
         timeout: ClientTimeout,
     ) -> Result<Self, ClientError> {
+        let name = String::from("client");
         let etcd_client =
             EtcdClient::connect(all_members.values().cloned().collect_vec(), None).await?;
-        let curp_client = CurpClient::new(all_members, timeout).await;
+        let curp_client = CurpClient::new(name.clone(), all_members, timeout).await;
         Ok(Self {
-            name: String::from("client"),
+            name,
             curp_client,
             etcd_client,
             use_curp_client,

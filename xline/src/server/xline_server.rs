@@ -277,7 +277,12 @@ impl XlineServer {
                 key_pair,
             )?;
         let client = Arc::new(
-            Client::<Command>::new(self.cluster_info.all_members(), self.client_timeout).await,
+            Client::<Command>::new(
+                self.cluster_info.self_id().clone(),
+                self.cluster_info.all_members(),
+                self.client_timeout,
+            )
+            .await,
         );
         let index_barrier = Arc::new(IndexBarrier::new());
         let id_barrier = Arc::new(IdBarrier::new());
