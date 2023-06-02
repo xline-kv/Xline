@@ -1,0 +1,31 @@
+[package]
+name = "xline-client"
+version = "0.1.0"
+edition = "2021"
+authors = ["DatenLord <dev@datenlord.io>"]
+description = "Client for Xline"
+license = "Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/datenlord/Xline/tree/master/xline-client"
+categories = ["Client"]
+keywords = ["Client", "Xline", "RPC"]
+
+[dependencies]
+curp = { path = "../curp" }
+xline = { path = "../xline" }
+utils = { path = "../utils", features = ["parking_lot"] }
+xlineapi = { path = "../xlineapi" }
+tonic = "0.7.2"
+itertools = "0.10.3"
+uuid = { version = "1.1.2", features = ["v4"] }
+thiserror = "1.0.37"
+tower = { version = "0.4", features = ["discover"] }
+tokio = { version = "1.0", features = ["sync"] }
+futures = "0.3.25"
+clippy-utilities = "0.1.0"
+async-stream = "0.3.5"
+pbkdf2 = { version = "0.11.0", features = ["std"] }
+http = "0.2.9"
+
+[dev-dependencies]
+rand = "0.8.5"
