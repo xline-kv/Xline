@@ -19,6 +19,8 @@ use crate::{
 
 /// Protocol client
 pub struct Client<C: Command> {
+    /// client id
+    id: ServerId,
     /// Current leader and term
     state: RwLock<State>,
     /// All servers's `Connect`
@@ -60,7 +62,7 @@ impl State {
         }
     }
 
-    /// Set the leader and notify a waiter
+    /// Set the leader and notify all the waiters
     fn set_leader(&mut self, id: ServerId) {
         debug!("client update its leader to {id}");
         self.leader = Some(id);
@@ -91,8 +93,13 @@ where
 {
     /// Create a new protocol client based on the addresses
     #[inline]
-    pub async fn new(addrs: HashMap<ServerId, String>, timeout: ClientTimeout) -> Self {
+    pub async fn new(
+        self_id: ServerId,
+        addrs: HashMap<ServerId, String>,
+        timeout: ClientTimeout,
+    ) -> Self {
         Self {
+            id: self_id,
             state: RwLock::new(State::new()),
             connects: rpc::connect(addrs, None).await,
             timeout,
@@ -500,10 +507,27 @@ where
         }
     }
 
-    /// Get the current leader.
+    /// Fetch the current leader id and term from the curp server where is on the same node.
     #[inline]
-    pub fn leader(&self) -> Option<ServerId> {
-        self.state.read().leader.clone()
+    async fn fetch_local_leader_info(&self) -> Result<(Option<ServerId>, u64), ProposeError> {
+        let resp = self
+            .connects
+            .get(self.id.as_str())
+            .unwrap_or_else(|| unreachable!("self id {} not found", self.id.as_str()))
+            .fetch_leader(FetchLeaderRequest::new(), *self.timeout.retry_timeout())
+            .await?
+            .into_inner();
+
+        Ok((resp.leader_id, resp.term))
+    }
+
+    /// Fetch the current leader id without cache
+    #[inline]
+    pub async fn get_leader_id_from_curp(&self) -> ServerId {
+        if let Ok((Some(leader_id), _term)) = self.fetch_local_leader_info().await {
+            return leader_id;
+        }
+        self.fetch_leader().await
     }
 }
 
