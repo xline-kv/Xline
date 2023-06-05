@@ -610,11 +610,8 @@ impl RequestWithToken {
     }
 
     /// New `RequestWithToken` with token
-    pub fn new_with_token(request: RequestWrapper, token: String) -> Self {
-        RequestWithToken {
-            token: Some(token),
-            request,
-        }
+    pub fn new_with_token(request: RequestWrapper, token: Option<String>) -> Self {
+        RequestWithToken { token, request }
     }
 }
 

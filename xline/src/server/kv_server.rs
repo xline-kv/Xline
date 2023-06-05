@@ -134,10 +134,8 @@ where
     where
         T: Into<RequestWrapper> + Debug,
     {
-        let wrapper = match get_token(request.metadata()) {
-            Some(token) => RequestWithToken::new_with_token(request.into_inner().into(), token),
-            None => RequestWithToken::new(request.into_inner().into()),
-        };
+        let token = get_token(request.metadata());
+        let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
         let propose_id = self.generate_propose_id();
         let cmd = Self::command_from_request_wrapper(propose_id, wrapper);
         #[allow(clippy::wildcard_enum_match_arm)]
@@ -402,10 +400,8 @@ where
         let range_req = request.get_ref();
         Self::check_range_request(range_req, self.kv_storage.revision())?;
         let is_serializable = range_req.serializable;
-        let wrapper = match get_token(request.metadata()) {
-            Some(token) => RequestWithToken::new_with_token(request.into_inner().into(), token),
-            None => RequestWithToken::new(request.into_inner().into()),
-        };
+        let token = get_token(request.metadata());
+        let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
         let propose_id = self.generate_propose_id();
         let cmd = Self::command_from_request_wrapper(propose_id, wrapper);
         if !is_serializable {
