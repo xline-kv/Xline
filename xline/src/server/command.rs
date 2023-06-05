@@ -526,12 +526,14 @@ pub struct CommandResponse {
 impl CommandResponse {
     /// New `ResponseOp` from `CommandResponse`
     #[inline]
+    #[must_use]
     pub fn new(response: ResponseWrapper) -> Self {
         Self { response }
     }
 
     /// Decode `CommandResponse` and get `ResponseOp`
     #[inline]
+    #[must_use]
     pub fn decode(self) -> ResponseWrapper {
         self.response
     }
@@ -546,12 +548,14 @@ pub struct SyncResponse {
 impl SyncResponse {
     /// New `SyncRequest`
     #[inline]
+    #[must_use]
     pub fn new(revision: i64) -> Self {
         Self { revision }
     }
 
     /// Get revision field
     #[inline]
+    #[must_use]
     pub fn revision(self) -> i64 {
         self.revision
     }
