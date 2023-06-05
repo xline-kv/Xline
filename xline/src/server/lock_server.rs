@@ -89,10 +89,7 @@ impl LockServer {
     where
         T: Into<RequestWrapper>,
     {
-        let wrapper = match token {
-            Some(token) => RequestWithToken::new_with_token(request.into(), token),
-            None => RequestWithToken::new(request.into()),
-        };
+        let wrapper = RequestWithToken::new_with_token(request.into(), token);
         let propose_id = self.generate_propose_id();
         let cmd = Self::command_from_request_wrapper(propose_id, wrapper);
         if use_fast_path {
