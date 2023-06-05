@@ -28,4 +28,5 @@ pbkdf2 = { version = "0.11.0", features = ["std"] }
 http = "0.2.9"
 
 [dev-dependencies]
+xline-test-utils = { path = "../xline-test-utils" }
 rand = "0.8.5"
