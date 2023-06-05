@@ -1,4 +1,7 @@
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use event_listener::Event;
 use tokio::sync::mpsc;
@@ -70,6 +73,7 @@ where
             next_id_gen,
             header_gen,
         );
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));
         loop {
             tokio::select! {
                 req = req_rx.next() => {
@@ -94,6 +98,9 @@ where
                     } else {
                         panic!("Watch event sender is closed");
                     }
+                }
+                _ = ticker.tick() => {
+                    watch_handle.handle_tick_progress().await;
                 }
                 _ = stop_notify.listen() => {
                     break;
@@ -125,6 +132,12 @@ where
     header_gen: Arc<HeaderGenerator>,
     /// Previous KV status
     prev_kv: HashSet<WatchId>,
+    /// Progress status
+    ///
+    /// `true` means the next tick should be notified
+    ///
+    /// `false` means the next tick should be skiped
+    progress: HashMap<WatchId, bool>,
 }
 
 impl<W> WatchHandle<W>
@@ -149,6 +162,7 @@ where
             stop_notify,
             header_gen,
             prev_kv: HashSet::new(),
+            progress: HashMap::new(),
         }
     }
 
@@ -195,6 +209,12 @@ where
             assert!(
                 self.prev_kv.insert(watch_id),
                 "WatchId {watch_id} already exists in prev_kv",
+            );
+        }
+        if req.progress_notify {
+            assert!(
+                self.progress.insert(watch_id, true).is_none(),
+                "WatchId {watch_id} already exists in progress",
             );
         }
         assert!(
@@ -248,7 +268,7 @@ where
                     self.handle_watch_cancel(req).await;
                 }
                 RequestUnion::ProgressRequest(_req) => {
-                    panic!("Don't support ProgressRequest yet");
+                    self.handle_watch_progress().await;
                 }
             }
         }
@@ -283,6 +303,47 @@ where
         };
         if self.response_tx.send(Ok(response)).await.is_err() {
             self.stop_notify.notify(1);
+        }
+        if let Some(progress) = self.progress.get_mut(&watch_id) {
+            *progress = false;
+        }
+    }
+
+    /// Handle progress for request
+    async fn handle_watch_progress(&mut self) {
+        if self
+            .response_tx
+            .send(Ok(WatchResponse {
+                header: Some(self.header_gen.gen_header()),
+                watch_id: -1,
+                ..Default::default()
+            }))
+            .await
+            .is_err()
+        {
+            self.stop_notify.notify(1);
+        }
+    }
+
+    /// Handle progress from tick
+    async fn handle_tick_progress(&mut self) {
+        for (watch_id, progress) in &mut self.progress {
+            if *progress {
+                if self
+                    .response_tx
+                    .send(Ok(WatchResponse {
+                        header: Some(self.header_gen.gen_header()),
+                        watch_id: *watch_id,
+                        ..Default::default()
+                    }))
+                    .await
+                    .is_err()
+                {
+                    self.stop_notify.notify(1);
+                }
+            } else {
+                *progress = true;
+            }
         }
     }
 }
@@ -331,10 +392,14 @@ where
 
 #[cfg(test)]
 mod test {
-    use std::{collections::HashMap, time::Duration};
+    use std::{
+        collections::HashMap,
+        sync::atomic::{AtomicI32, Ordering},
+        time::Duration,
+    };
 
     use parking_lot::Mutex;
-    use tokio::time::sleep;
+    use tokio::time::{sleep, timeout};
     use utils::config::StorageConfig;
 
     use super::*;
@@ -345,6 +410,36 @@ mod test {
             KvStore,
         },
     };
+
+    impl WatchResponse {
+        fn is_progress_notify(&self) -> bool {
+            self.events.is_empty()
+                && !self.canceled
+                && !self.created
+                && self.compact_revision == 0
+                && self.header.as_ref().map_or(false, |h| h.revision != 0)
+        }
+    }
+
+    async fn put(
+        store: &KvStore<DB>,
+        db: &DB,
+        key: impl Into<Vec<u8>>,
+        value: impl Into<Vec<u8>>,
+        revision: i64,
+    ) {
+        let req = RequestWithToken::new(
+            PutRequest {
+                key: key.into(),
+                value: value.into(),
+                ..Default::default()
+            }
+            .into(),
+        );
+        let (sync_res, ops) = store.after_sync(&req, revision).await.unwrap();
+        db.flush_ops(ops).unwrap();
+        store.mark_index_available(sync_res.revision());
+    }
 
     #[tokio::test]
     async fn test_watch_client_closes_connection() -> Result<(), Box<dyn std::error::Error>> {
@@ -378,7 +473,7 @@ mod test {
             assert!(res.created);
         }
         drop(req_tx);
-        tokio::time::timeout(std::time::Duration::from_secs(3), handle).await??;
+        timeout(Duration::from_secs(3), handle).await??;
         Ok(())
     }
 
@@ -505,23 +600,52 @@ mod test {
         }
     }
 
-    async fn put(
-        store: &KvStore<DB>,
-        db: &DB,
-        key: impl Into<Vec<u8>>,
-        value: impl Into<Vec<u8>>,
-        revision: i64,
-    ) {
-        let req = RequestWithToken::new(
-            PutRequest {
-                key: key.into(),
-                value: value.into(),
-                ..Default::default()
+    #[tokio::test]
+    async fn test_watch_progress() -> Result<(), Box<dyn std::error::Error>> {
+        let (req_tx, req_rx) = mpsc::channel(CHANNEL_SIZE);
+        let (res_tx, mut res_rx) = mpsc::channel(CHANNEL_SIZE);
+        let req_stream: ReceiverStream<Result<WatchRequest, tonic::Status>> =
+            ReceiverStream::new(req_rx);
+        let header_gen = Arc::new(HeaderGenerator::new(0, 0));
+        let mut mock_watcher = MockKvWatcherOps::new();
+        let _ = mock_watcher.expect_watch().times(1).return_const(());
+        let _ = mock_watcher.expect_cancel().times(1).return_const(());
+        let watcher = Arc::new(mock_watcher);
+        let next_id = Arc::new(WatchIdGenerator::new(1));
+        let handle = tokio::spawn(WatchServer::<DB>::task(
+            next_id,
+            Arc::clone(&watcher),
+            res_tx,
+            req_stream,
+            header_gen,
+        ));
+        req_tx
+            .send(Ok(WatchRequest {
+                request_union: Some(RequestUnion::CreateRequest(WatchCreateRequest {
+                    key: "foo".into(),
+                    progress_notify: true,
+                    watch_id: 1,
+                    ..Default::default()
+                })),
+            }))
+            .await?;
+        let cnt = Arc::new(AtomicI32::new(0));
+
+        let _ignore = timeout(Duration::from_secs(5), {
+            let cnt = Arc::clone(&cnt);
+            async move {
+                while let Some(Ok(res)) = res_rx.recv().await {
+                    if res.is_progress_notify() {
+                        cnt.fetch_add(1, Ordering::Release);
+                    }
+                }
             }
-            .into(),
-        );
-        let (sync_res, ops) = store.after_sync(&req, revision).await.unwrap();
-        db.flush_ops(ops).unwrap();
-        store.mark_index_available(sync_res.revision());
+        })
+        .await;
+        let c = cnt.load(Ordering::Acquire);
+        assert!(c >= 4);
+        drop(req_tx);
+        handle.await.unwrap();
+        Ok(())
     }
 }
