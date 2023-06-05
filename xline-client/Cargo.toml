@@ -26,6 +26,7 @@ clippy-utilities = "0.1.0"
 async-stream = "0.3.5"
 pbkdf2 = { version = "0.11.0", features = ["std"] }
 http = "0.2.9"
+getrandom = "0.2"
 
 [dev-dependencies]
 xline-test-utils = { path = "../xline-test-utils" }
