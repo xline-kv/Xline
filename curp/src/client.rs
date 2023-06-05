@@ -19,8 +19,8 @@ use crate::{
 
 /// Protocol client
 pub struct Client<C: Command> {
-    /// client id
-    id: ServerId,
+    /// local server id. Only use in an inner client.
+    local_server_id: Option<ServerId>,
     /// Current leader and term
     state: RwLock<State>,
     /// All servers's `Connect`
@@ -94,12 +94,12 @@ where
     /// Create a new protocol client based on the addresses
     #[inline]
     pub async fn new(
-        self_id: ServerId,
+        self_id: Option<ServerId>,
         addrs: HashMap<ServerId, String>,
         timeout: ClientTimeout,
     ) -> Self {
         Self {
-            id: self_id,
+            local_server_id: self_id,
             state: RwLock::new(State::new()),
             connects: rpc::connect(addrs, None).await,
             timeout,
@@ -508,17 +508,21 @@ where
     }
 
     /// Fetch the current leader id and term from the curp server where is on the same node.
+    /// Note that this method should not be invoked by an outside client.
     #[inline]
     async fn fetch_local_leader_info(&self) -> Result<(Option<ServerId>, u64), ProposeError> {
-        let resp = self
-            .connects
-            .get(self.id.as_str())
-            .unwrap_or_else(|| unreachable!("self id {} not found", self.id.as_str()))
-            .fetch_leader(FetchLeaderRequest::new(), *self.timeout.retry_timeout())
-            .await?
-            .into_inner();
-
-        Ok((resp.leader_id, resp.term))
+        if let Some(ref local_server) = self.local_server_id {
+            let resp = self
+                .connects
+                .get(local_server)
+                .unwrap_or_else(|| unreachable!("self id {} not found", local_server))
+                .fetch_leader(FetchLeaderRequest::new(), *self.timeout.retry_timeout())
+                .await?
+                .into_inner();
+            Ok((resp.leader_id, resp.term))
+        } else {
+            unreachable!("The outer client shouldn't invoke fetch_local_leader_info");
+        }
     }
 
     /// Fetch the current leader id without cache

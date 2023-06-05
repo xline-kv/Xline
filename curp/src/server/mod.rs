@@ -5,10 +5,14 @@ use tokio::{net::TcpListener, sync::broadcast};
 use tokio_stream::wrappers::TcpListenerStream;
 use tower::filter::FilterLayer;
 use tracing::{info, instrument};
-use utils::{config::CurpConfig, tracing::Extract};
+use utils::{
+    config::{ClientTimeout, CurpConfig},
+    tracing::Extract,
+};
 
 use self::curp_node::{CurpError, CurpNode};
 use crate::{
+    client::Client,
     cmd::{Command, CommandExecutor},
     error::ServerError,
     members::ClusterMember,
@@ -294,6 +298,12 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
     #[must_use]
     pub fn leader_rx(&self) -> broadcast::Receiver<Option<ServerId>> {
         self.inner.leader_rx()
+    }
+
+    /// Get an inner client
+    #[inline]
+    pub async fn inner_client(&self, client_timeout: ClientTimeout) -> Client<C> {
+        self.inner.inner_client(client_timeout).await
     }
 }
 

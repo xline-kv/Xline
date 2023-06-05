@@ -29,7 +29,7 @@ use tracing::{
     log::{log_enabled, Level},
 };
 use utils::{
-    config::CurpConfig,
+    config::{ClientTimeout, CurpConfig},
     parking_lot_lock::{MutexMap, RwLockMap},
 };
 
@@ -39,6 +39,7 @@ use self::{
 };
 use super::cmd_worker::CEEventTxApi;
 use crate::{
+    client::Client,
     cmd::{Command, ProposeId},
     error::ProposeError,
     log_entry::LogEntry,
@@ -613,6 +614,16 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             raw_curp.become_leader(&mut st_w);
         }
         raw_curp
+    }
+
+    /// get curp inner client
+    pub(crate) async fn inner_client(&self, timeout: ClientTimeout) -> Client<C> {
+        Client::<C>::new(
+            Some(self.id().clone()),
+            self.ctx.cluster_info.all_members(),
+            timeout,
+        )
+        .await
     }
 
     /// Create a new `RawCurp`

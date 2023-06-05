@@ -221,7 +221,7 @@ impl CurpGroup {
     }
 
     pub async fn new_client(&self, timeout: ClientTimeout) -> Client<TestCommand> {
-        Client::<TestCommand>::new("S0".to_owned(), self.all.clone(), timeout).await
+        Client::<TestCommand>::new(None, self.all.clone(), timeout).await
     }
 
     pub fn exe_rxs(

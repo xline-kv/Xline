@@ -349,7 +349,7 @@ where
                 };
                 return Ok(tonic::Response::new(res));
             }
-            let leader_id = self.client.get_leader_id().await;
+            let leader_id = self.client.get_leader_id_from_curp().await;
             let leader_addr = self.cluster_info.address(&leader_id).unwrap_or_else(|| {
                 unreachable!(
                     "The address of leader {} not found in all_members {:?}",
