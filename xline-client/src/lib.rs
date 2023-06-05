@@ -171,6 +171,8 @@ use crate::{
 pub mod clients;
 /// Error.
 pub mod error;
+/// Request types
+pub mod types;
 
 /// Xline client
 #[derive(Clone, Debug)]
