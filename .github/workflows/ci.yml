@@ -98,7 +98,7 @@ jobs:
           args: --all-targets --all-features -- -D warnings
 
   commit:
-    name: Commit-message-check
+    name: Commit Message Validation
     runs-on: ubuntu-latest
     if: ${{ github.event_name != 'schedule' }}
     steps:

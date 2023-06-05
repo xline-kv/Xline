@@ -48,3 +48,12 @@ jobs:
           asset_path: ./target/release/xline
           asset_name: xline-linux-amd64
           asset_content_type: application/octet-stream
+
+  milestone:
+    name: Close the Relevant Milestone
+    uses: adlerhsieh/prepare-release@v0.1.2
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO_OWNER: 'datenlord'
+      REPO: 'Xline'
+      IGNORE_MILESTONE_NOT_FOUND: false
