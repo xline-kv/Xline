@@ -2,9 +2,7 @@ use std::{future::Future, net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use clippy_utilities::{Cast, OverflowArithmetic};
-use curp::{
-    client::Client, members::ClusterMember, server::Rpc, ProtocolServer, SnapshotAllocator,
-};
+use curp::{members::ClusterMember, server::Rpc, ProtocolServer, SnapshotAllocator};
 use event_listener::Event;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use tokio::net::TcpListener;
@@ -276,14 +274,7 @@ impl XlineServer {
                 Arc::clone(&auth_revision_gen),
                 key_pair,
             )?;
-        let client = Arc::new(
-            Client::<Command>::new(
-                self.cluster_info.self_id().clone(),
-                self.cluster_info.all_members(),
-                self.client_timeout,
-            )
-            .await,
-        );
+
         let index_barrier = Arc::new(IndexBarrier::new());
         let id_barrier = Arc::new(IdBarrier::new());
 
@@ -304,6 +295,19 @@ impl XlineServer {
             #[allow(clippy::unimplemented)]
             _ => unimplemented!(),
         };
+
+        let curp_server = CurpServer::new(
+            Arc::clone(&self.cluster_info),
+            self.is_leader,
+            ce,
+            snapshot_allocator,
+            state,
+            Arc::clone(&self.curp_cfg),
+            None,
+        )
+        .await;
+
+        let client = Arc::new(curp_server.inner_client(self.client_timeout).await);
 
         Ok((
             KvServer::new(
@@ -331,16 +335,7 @@ impl XlineServer {
             AuthServer::new(auth_storage, client, self.cluster_info.self_id().clone()),
             WatchServer::new(watcher, Arc::clone(&header_gen)),
             MaintenanceServer::new(persistent, header_gen),
-            CurpServer::new(
-                Arc::clone(&self.cluster_info),
-                self.is_leader,
-                ce,
-                snapshot_allocator,
-                state,
-                Arc::clone(&self.curp_cfg),
-                None,
-            )
-            .await,
+            curp_server,
         ))
     }
 }
