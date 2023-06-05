@@ -1,0 +1,161 @@
+use crate::error::{ClientError, Result};
+use futures::channel::mpsc::Sender;
+
+/// The lease keep alive handle.
+#[derive(Debug)]
+pub struct LeaseKeeper {
+    /// lease id
+    id: i64,
+    /// sender to send keep alive request
+    sender: Sender<xlineapi::LeaseKeepAliveRequest>,
+}
+
+impl LeaseKeeper {
+    /// Creates a new `LeaseKeeper`.
+    #[inline]
+    #[must_use]
+    pub fn new(id: i64, sender: Sender<xlineapi::LeaseKeepAliveRequest>) -> Self {
+        Self { id, sender }
+    }
+
+    /// The lease id which user want to keep alive.
+    #[inline]
+    #[must_use]
+    pub const fn id(&self) -> i64 {
+        self.id
+    }
+
+    /// Sends a keep alive request and receive response
+    ///
+    /// # Errors
+    ///
+    /// If the sender fails to send
+    #[inline]
+    pub fn keep_alive(&mut self) -> Result<()> {
+        self.sender
+            .try_send(LeaseKeepAliveRequest::new(self.id).into())
+            .map_err(|e| ClientError::LeaseError(e.to_string()))
+    }
+}
+
+/// Request for `LeaseGrant`
+#[derive(Debug)]
+pub struct LeaseGrantRequest {
+    /// Inner request
+    pub(crate) inner: xlineapi::LeaseGrantRequest,
+}
+
+impl LeaseGrantRequest {
+    /// New `LeaseGrantRequest`
+    #[inline]
+    #[must_use]
+    pub fn new(ttl: i64) -> Self {
+        Self {
+            inner: xlineapi::LeaseGrantRequest {
+                ttl,
+                ..Default::default()
+            },
+        }
+    }
+
+    /// Set `id`
+    #[inline]
+    #[must_use]
+    pub fn with_id(mut self, id: i64) -> Self {
+        self.inner.id = id;
+        self
+    }
+}
+
+impl From<LeaseGrantRequest> for xlineapi::LeaseGrantRequest {
+    #[inline]
+    fn from(req: LeaseGrantRequest) -> Self {
+        req.inner
+    }
+}
+
+/// Request for `LeaseRevoke`
+#[derive(Debug)]
+pub struct LeaseRevokeRequest {
+    /// Inner request
+    pub(crate) inner: xlineapi::LeaseRevokeRequest,
+}
+
+impl LeaseRevokeRequest {
+    /// New `LeaseRevokeRequest`
+    #[inline]
+    #[must_use]
+    pub fn new(id: i64) -> Self {
+        Self {
+            inner: xlineapi::LeaseRevokeRequest { id },
+        }
+    }
+}
+
+impl From<LeaseRevokeRequest> for xlineapi::LeaseRevokeRequest {
+    #[inline]
+    fn from(req: LeaseRevokeRequest) -> Self {
+        req.inner
+    }
+}
+
+/// Request for `LeaseKeepAlive`
+#[derive(Debug)]
+pub struct LeaseKeepAliveRequest {
+    /// Inner request
+    pub(crate) inner: xlineapi::LeaseKeepAliveRequest,
+}
+
+impl LeaseKeepAliveRequest {
+    /// New `LeaseKeepAliveRequest`
+    #[inline]
+    #[must_use]
+    pub fn new(id: i64) -> Self {
+        Self {
+            inner: xlineapi::LeaseKeepAliveRequest { id },
+        }
+    }
+}
+
+impl From<LeaseKeepAliveRequest> for xlineapi::LeaseKeepAliveRequest {
+    #[inline]
+    fn from(req: LeaseKeepAliveRequest) -> Self {
+        req.inner
+    }
+}
+
+/// Request for `LeaseTimeToLive`
+#[derive(Debug)]
+pub struct LeaseTimeToLiveRequest {
+    /// Inner request
+    pub(crate) inner: xlineapi::LeaseTimeToLiveRequest,
+}
+
+impl LeaseTimeToLiveRequest {
+    /// New `LeaseTimeToLiveRequest`
+    #[inline]
+    #[must_use]
+    pub fn new(id: i64) -> Self {
+        Self {
+            inner: xlineapi::LeaseTimeToLiveRequest {
+                id,
+                ..Default::default()
+            },
+        }
+    }
+
+    /// Set `keys`
+    #[inline]
+    #[must_use]
+    pub fn with_keys(mut self, keys: bool) -> Self {
+        self.inner.keys = keys;
+        self
+    }
+}
+
+impl From<LeaseTimeToLiveRequest> for xlineapi::LeaseTimeToLiveRequest {
+    #[inline]
+    fn from(req: LeaseTimeToLiveRequest) -> Self {
+        req.inner
+    }
+}

@@ -171,6 +171,8 @@ use crate::{
 pub mod clients;
 /// Error.
 pub mod error;
+/// Lease Id generator
+pub mod lease_gen;
 /// Request types
 pub mod types;
 
@@ -209,6 +211,7 @@ impl Client {
         let name = String::from("client");
         let channel = Self::build_channel(&all_members).await?;
         let curp_client = Arc::new(CurpClient::new(None, all_members, options.curp_timeout).await);
+        let id_gen = Arc::new(lease_gen::LeaseIdGenerator::new());
 
         let token = match options.user {
             Some((username, password)) => {
@@ -233,6 +236,7 @@ impl Client {
             Arc::clone(&curp_client),
             channel.clone(),
             token.clone(),
+            id_gen,
         );
         let lock = LockClient::new(
             name.clone(),
