@@ -3,13 +3,12 @@
 use std::{sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
+use curp_test_utils::{init_logger, sleep_millis, sleep_secs, test_cmd::TestCommand};
 use madsim::rand::{thread_rng, Rng};
 use utils::config::ClientTimeout;
 
-use crate::common::{
-    curp_group::{proto::propose_response::ExeResult, CurpGroup, ProposeRequest, ProposeResponse},
-    init_logger, sleep_millis, sleep_secs,
-    test_cmd::TestCommand,
+use crate::common::curp_group::{
+    proto::propose_response::ExeResult, CurpGroup, ProposeRequest, ProposeResponse,
 };
 mod common;
 

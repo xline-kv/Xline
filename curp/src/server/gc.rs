@@ -82,8 +82,8 @@ mod tests {
             gc::gc_cmd_board,
             spec_pool::{SpecPoolRef, SpeculativePool},
         },
-        test_utils::{sleep_secs, test_cmd::TestCommand},
     };
+    use curp_test_utils::{sleep_secs, test_cmd::TestCommand};
 
     #[tokio::test]
     async fn cmd_board_gc_test() {
@@ -94,12 +94,12 @@ mod tests {
         board
             .write()
             .er_buffer
-            .insert(ProposeId::new("1".to_owned()), Ok(vec![]));
+            .insert(ProposeId::new("1".to_owned()), Ok((vec![], vec![])));
         tokio::time::sleep(Duration::from_millis(100)).await;
         board
             .write()
             .er_buffer
-            .insert(ProposeId::new("2".to_owned()), Ok(vec![]));
+            .insert(ProposeId::new("2".to_owned()), Ok((vec![], vec![])));
         board
             .write()
             .asr_buffer
@@ -115,7 +115,7 @@ mod tests {
         board
             .write()
             .er_buffer
-            .insert(ProposeId::new("3".to_owned()), Ok(vec![]));
+            .insert(ProposeId::new("3".to_owned()), Ok((vec![], vec![])));
         board
             .write()
             .asr_buffer
