@@ -161,9 +161,13 @@ mod api;
 mod error;
 /// Memory Storage Engine, it's test only
 mod memory_engine;
+#[cfg(madsim)]
+/// Mock `RocksDB` Storage Engine
+mod mock_rocksdb_engine;
 /// Snapshot Trait Definition And Implementation
 mod proxy;
 /// `RocksDB` Storage Engine
+#[cfg(not(madsim))]
 mod rocksdb_engine;
 
 pub use crate::{

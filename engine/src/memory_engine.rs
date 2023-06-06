@@ -42,6 +42,15 @@ impl MemoryEngine {
             inner: Arc::new(RwLock::new(inner)),
         }
     }
+
+    /// New `MemoryEngine`
+    #[cfg(madsim)]
+    #[inline]
+    pub(crate) fn new_from_db(db: HashMap<String, HashMap<Vec<u8>, Vec<u8>>>) -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(db)),
+        }
+    }
 }
 
 #[async_trait::async_trait]
