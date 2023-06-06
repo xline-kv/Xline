@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use engine::Snapshot;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::log_entry::LogIndex;
+use crate::LogIndex;
 
 /// Command to execute on the server side
 #[async_trait]

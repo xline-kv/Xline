@@ -1,6 +1,8 @@
-use std::{error::Error, fmt::Debug};
+#[allow(clippy::module_name_repetitions)] // it's re-exported in lib
+pub use curp_external_api::snapshot::SnapshotAllocator;
 
-use async_trait::async_trait;
+use std::fmt::Debug;
+
 use engine::Snapshot as EngineSnapshot;
 
 /// Snapshot
@@ -31,12 +33,4 @@ pub(crate) struct SnapshotMeta {
     pub(crate) last_included_index: u64,
     /// Last included term
     pub(crate) last_included_term: u64,
-}
-
-/// The snapshot allocation is handled by the upper-level application
-#[allow(clippy::module_name_repetitions)] // it's re-exported in lib
-#[async_trait]
-pub trait SnapshotAllocator: Send + Sync {
-    /// Allocate a new snapshot
-    async fn allocate_new_snapshot(&self) -> Result<EngineSnapshot, Box<dyn Error>>;
 }

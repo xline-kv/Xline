@@ -20,6 +20,7 @@ event-listener = "2.5.2"
 futures = "0.3.21"
 itertools = "0.10.3"
 utils = { path = "../utils", version = "0.1.0", features = ["parking_lot"] }
+curp-external-api = { path = "../curp-external-api" }
 madsim = { version = "0.2.0-alpha.3", features = ["rpc", "logger", "macros"] }
 opentelemetry = "0.18.0"
 parking_lot = "0.12.1"
