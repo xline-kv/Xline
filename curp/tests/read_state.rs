@@ -1,9 +1,10 @@
 use std::time::Duration;
 
 use curp::{client::ReadState, cmd::Command};
+use curp_test_utils::{init_logger, sleep_millis, test_cmd::TestCommand};
 use utils::config::ClientTimeout;
 
-use crate::common::{curp_group::CurpGroup, init_logger, sleep_millis, test_cmd::TestCommand};
+use crate::common::curp_group::CurpGroup;
 
 mod common;
 

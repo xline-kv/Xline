@@ -2,17 +2,13 @@
 
 use std::{sync::Arc, time::Duration};
 
+use curp_test_utils::{init_logger, sleep_millis, sleep_secs, test_cmd::TestCommand, TEST_TABLE};
 use engine::StorageEngine;
 use itertools::Itertools;
 use tracing::debug;
 use utils::config::ClientTimeout;
 
-use crate::common::{
-    curp_group::{CurpGroup, ProposeRequest},
-    init_logger, sleep_millis, sleep_secs,
-    test_cmd::TestCommand,
-    TEST_TABLE,
-};
+use crate::common::curp_group::{CurpGroup, ProposeRequest};
 
 mod common;
 

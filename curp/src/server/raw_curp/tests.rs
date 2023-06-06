@@ -14,9 +14,9 @@ use crate::{
         raw_curp::UncommittedPool,
         spec_pool::SpeculativePool,
     },
-    test_utils::{mock_role_change, test_cmd::TestCommand},
     LogIndex,
 };
+use curp_test_utils::{mock_role_change, test_cmd::TestCommand};
 
 // Hooks for tests
 impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {

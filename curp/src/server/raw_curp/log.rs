@@ -326,7 +326,7 @@ mod tests {
     use utils::config::{default_batch_max_size, default_log_entries_cap};
 
     use super::*;
-    use crate::test_utils::test_cmd::TestCommand;
+    use curp_test_utils::test_cmd::TestCommand;
 
     // impl index for test is handy
     impl<C: 'static + Command> Index<usize> for Log<C> {

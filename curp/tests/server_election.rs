@@ -1,9 +1,10 @@
 use std::time::Duration;
 
+use curp_test_utils::{init_logger, test_cmd::TestCommand};
 use madsim::time::sleep;
 use utils::config::ClientTimeout;
 
-use crate::common::{curp_group::CurpGroup, init_logger, test_cmd::TestCommand};
+use crate::common::curp_group::CurpGroup;
 mod common;
 
 async fn wait_for_election() {

@@ -17,6 +17,11 @@ use curp::{
     client::Client, members::ClusterMember, server::Rpc, LogIndex, ProtocolServer,
     SnapshotAllocator, TxFilter,
 };
+use curp_test_utils::{
+    random_id,
+    test_cmd::{TestCE, TestCommand, TestCommandResult},
+    TestRoleChange, TestRoleChangeInner,
+};
 use engine::{Engine, EngineType, Snapshot};
 use futures::future::join_all;
 use itertools::Itertools;
@@ -30,12 +35,6 @@ use utils::config::{
     default_server_wait_synced_timeout, ClientTimeout, CurpConfig, CurpConfigBuilder,
 };
 
-use crate::common::{
-    random_id,
-    test_cmd::{TestCE, TestCommand, TestCommandResult},
-    TestRoleChange,
-};
-
 pub type ServerId = String;
 
 pub mod proto {
@@ -44,7 +43,6 @@ pub mod proto {
 pub use proto::{protocol_client::ProtocolClient, ProposeRequest, ProposeResponse};
 
 use self::proto::{FetchLeaderRequest, FetchLeaderResponse};
-use super::TestRoleChangeInner;
 
 struct MemorySnapshotAllocator;
 

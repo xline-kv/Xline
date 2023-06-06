@@ -687,11 +687,8 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::{
-        rpc::connect::MockConnectApi,
-        server::cmd_worker::MockCEEventTxApi,
-        test_utils::{mock_role_change, sleep_secs, test_cmd::TestCommand},
-    };
+    use crate::{rpc::connect::MockConnectApi, server::cmd_worker::MockCEEventTxApi};
+    use curp_test_utils::{mock_role_change, sleep_secs, test_cmd::TestCommand};
 
     #[traced_test]
     #[tokio::test]

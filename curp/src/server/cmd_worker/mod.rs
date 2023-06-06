@@ -274,12 +274,10 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::{
-        log_entry::LogEntry,
-        test_utils::{
-            mock_role_change, sleep_millis, sleep_secs,
-            test_cmd::{TestCE, TestCommand},
-        },
+    use crate::log_entry::LogEntry;
+    use curp_test_utils::{
+        mock_role_change, sleep_millis, sleep_secs,
+        test_cmd::{TestCE, TestCommand},
     };
 
     // This should happen in fast path in most cases
@@ -305,7 +303,7 @@ mod tests {
         let cmd = Arc::new(TestCommand::default());
 
         ce_event_tx.send_sp_exe(Arc::clone(&cmd), 1);
-        assert_eq!(er_rx.recv().await.unwrap().1, vec![]);
+        assert_eq!(er_rx.recv().await.unwrap().1 .1, vec![]);
 
         ce_event_tx.send_after_sync(Arc::clone(&cmd), 1);
         assert_eq!(as_rx.recv().await.unwrap().1, 1);
@@ -407,7 +405,7 @@ mod tests {
 
         ce_event_tx.send_after_sync(Arc::clone(&cmd), 1);
 
-        assert_eq!(er_rx.recv().await.unwrap().1, vec![]);
+        assert_eq!(er_rx.recv().await.unwrap().1 .1, vec![]);
         assert_eq!(as_rx.recv().await.unwrap().1, 1);
     }
 
@@ -468,7 +466,7 @@ mod tests {
         ce_event_tx.send_sp_exe(Arc::clone(&cmd2), 2);
 
         // cmd1 exe done
-        assert_eq!(er_rx.recv().await.unwrap().1, vec![]);
+        assert_eq!(er_rx.recv().await.unwrap().1 .1, vec![]);
 
         sleep_millis(100).await;
 
@@ -480,7 +478,7 @@ mod tests {
         ce_event_tx.send_after_sync(Arc::clone(&cmd1), 1);
         ce_event_tx.send_after_sync(Arc::clone(&cmd2), 2);
 
-        assert_eq!(er_rx.recv().await.unwrap().1, vec![1]);
+        assert_eq!(er_rx.recv().await.unwrap().1 .1, vec![1]);
         assert_eq!(as_rx.recv().await.unwrap().1, 1);
         assert_eq!(as_rx.recv().await.unwrap().1, 2);
     }
@@ -510,14 +508,14 @@ mod tests {
         ce_event_tx.send_sp_exe(Arc::clone(&cmd1), 1);
         ce_event_tx.send_sp_exe(Arc::clone(&cmd2), 2);
 
-        assert_eq!(er_rx.recv().await.unwrap().1, vec![]);
+        assert_eq!(er_rx.recv().await.unwrap().1 .1, vec![]);
 
         ce_event_tx.send_reset(None);
 
         let cmd3 = Arc::new(TestCommand::new_get(vec![1]));
         ce_event_tx.send_after_sync(cmd3, 1);
 
-        assert_eq!(er_rx.recv().await.unwrap().1, vec![]);
+        assert_eq!(er_rx.recv().await.unwrap().1 .1, vec![]);
 
         // there will be only one after sync results
         assert!(as_rx.recv().await.is_some());
@@ -584,6 +582,6 @@ mod tests {
 
         let cmd2 = Arc::new(TestCommand::new_get(vec![1]));
         ce_event_tx.send_after_sync(Arc::clone(&cmd2), 2);
-        assert_eq!(er_rx.recv().await.unwrap().1, vec![1]);
+        assert_eq!(er_rx.recv().await.unwrap().1 .1, vec![1]);
     }
 }

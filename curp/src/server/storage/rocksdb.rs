@@ -89,7 +89,7 @@ mod tests {
     use tokio::fs::remove_dir_all;
 
     use super::*;
-    use crate::test_utils::{random_id, sleep_secs, test_cmd::TestCommand};
+    use curp_test_utils::{random_id, sleep_secs, test_cmd::TestCommand};
 
     #[tokio::test]
     async fn create_and_recover() -> Result<(), Box<dyn Error>> {

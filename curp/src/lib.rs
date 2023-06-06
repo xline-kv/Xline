@@ -183,6 +183,3 @@ mod rpc;
 
 /// Snapshot
 mod snapshot;
-
-#[cfg(test)]
-pub(crate) mod test_utils;
