@@ -2,8 +2,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-/// Log Index
-pub type LogIndex = u64;
+use curp_external_api::LogIndex;
 
 /// Log entry
 #[derive(Debug, Clone, Serialize, Deserialize)]

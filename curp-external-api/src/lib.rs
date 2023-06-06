@@ -1,4 +1,4 @@
-//! CURP
+//! CURP Extend Interface
 #![deny(
     // The following are allowed by default lints according to
     // https://doc.rust-lang.org/rustc/lints/listing/allowed-by-default.html
@@ -121,68 +121,13 @@
     clippy::unused_peekable,
     clippy::unused_rounding
 )]
-#![allow(
-    clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
-)]
-#![cfg_attr(
-    test,
-    allow(
-        clippy::integer_arithmetic,
-        clippy::indexing_slicing,
-        unused_results,
-        clippy::unwrap_used,
-        clippy::str_to_string,
-        clippy::panic,
-        clippy::wildcard_enum_match_arm,
-        clippy::match_wildcard_for_single_variants,
-        clippy::all,
-        clippy::as_conversions,
-        clippy::cast_possible_truncation,
-        clippy::cast_lossless,
-        clippy::unwrap_in_result,
-        clippy::expect_used,
-        clippy::shadow_unrelated,
-        dead_code
-    )
-)]
 
-pub use curp_external_api::LogIndex;
-pub use rpc::{connect::TxFilter, ProtocolServer};
-pub use snapshot::SnapshotAllocator;
-
-/// Server Id
-pub type ServerId = String;
-
-/// Client side, sending requests and determining requests' state
-pub mod client;
-
-/// Server side, handling request and sync requests to the log
-pub mod server;
-
-/// Cluster members information
-pub mod members;
-
-/// Error types
-pub mod error;
+/// Log Index
+pub type LogIndex = u64;
 
 /// The command to be executed
-pub mod cmd {
-    pub use curp_external_api::cmd::*;
-}
-
-/// The callback trait to be invoked when the curp role changes
-pub mod role_change {
-    pub use curp_external_api::role_change::*;
-}
-
-/// Log Entry
-mod log_entry;
-
-/// Protobuf generated types that are used in RPC
-mod rpc;
-
+pub mod cmd;
+/// The command to be executed
+pub mod role_change;
 /// Snapshot
-mod snapshot;
-
-#[cfg(test)]
-pub(crate) mod test_utils;
+pub mod snapshot;
