@@ -27,19 +27,9 @@ use crate::{
 /// Install snapshot chunk size: 64KB
 const SNAPSHOT_CHUNK_SIZE: u64 = 64 * 1024;
 
-/// Connect will call filter(request) before it sends out a request
-pub trait TxFilter: Send + Sync + Debug {
-    /// Filter request
-    // TODO: add request as a parameter
-    fn filter(&self) -> Option<()>;
-    /// Clone self
-    fn boxed_clone(&self) -> Box<dyn TxFilter>;
-}
-
 /// Convert a vec of addr string to a vec of `Connect`
 pub(crate) async fn connect(
     addrs: HashMap<ServerId, String>,
-    tx_filter: Option<Box<dyn TxFilter>>,
 ) -> HashMap<ServerId, Arc<dyn ConnectApi>> {
     futures::future::join_all(addrs.into_iter().map(|(id, mut addr)| async move {
         // Addrs must start with "http" to communicate with the server
@@ -60,7 +50,6 @@ pub(crate) async fn connect(
             id: id.clone(),
             rpc_connect: RwLock::new(conn),
             addr,
-            tx_filter: tx_filter.as_ref().map(|f| f.boxed_clone()),
         });
         (id, connect)
     })
@@ -140,8 +129,6 @@ pub(crate) struct Connect {
     rpc_connect: RwLock<Result<ProtocolClient<tonic::transport::Channel>, tonic::transport::Error>>,
     /// The addr used to connect if failing met
     addr: String,
-    /// The injected filter
-    tx_filter: Option<Box<dyn TxFilter>>,
 }
 
 #[async_trait]
@@ -179,8 +166,6 @@ impl ConnectApi for Connect {
         request: ProposeRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<ProposeResponse>, ProposeError> {
-        self.filter()?;
-
         let mut client = self.get().await?;
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
@@ -195,8 +180,6 @@ impl ConnectApi for Connect {
         request: WaitSyncedRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<WaitSyncedResponse>, ProposeError> {
-        self.filter()?;
-
         let mut client = self.get().await?;
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
@@ -210,8 +193,6 @@ impl ConnectApi for Connect {
         request: AppendEntriesRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<AppendEntriesResponse>, ProposeError> {
-        self.filter()?;
-
         let mut client = self.get().await?;
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
@@ -224,8 +205,6 @@ impl ConnectApi for Connect {
         request: VoteRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<VoteResponse>, ProposeError> {
-        self.filter()?;
-
         let mut client = self.get().await?;
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
@@ -238,8 +217,6 @@ impl ConnectApi for Connect {
         request: FetchLeaderRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<FetchLeaderResponse>, ProposeError> {
-        self.filter()?;
-
         let mut client = self.get().await?;
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
@@ -252,7 +229,6 @@ impl ConnectApi for Connect {
         leader_id: ServerId,
         snapshot: Snapshot,
     ) -> Result<tonic::Response<InstallSnapshotResponse>, ProposeError> {
-        self.filter()?;
         let stream = install_snapshot_stream(term, leader_id, snapshot);
         let mut client = self.get().await?;
         client.install_snapshot(stream).await.map_err(Into::into)
@@ -264,8 +240,6 @@ impl ConnectApi for Connect {
         request: FetchReadStateRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<FetchReadStateResponse>, ProposeError> {
-        self.filter()?;
-
         let mut client = self.get().await?;
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
@@ -312,19 +286,6 @@ fn install_snapshot_stream(
         if let Err(e) = snapshot.clean().await {
             error!("snapshot clean error, {e}");
         }
-    }
-}
-
-impl Connect {
-    /// Filter requests
-    // TODO: add request as input
-    fn filter(&self) -> Result<(), ProposeError> {
-        self.tx_filter.as_ref().map_or(Ok(()), |f| {
-            f.filter().map_or_else(
-                || Err(ProposeError::RpcError("unreachable".to_owned())),
-                |_| Ok(()),
-            )
-        })
     }
 }
 

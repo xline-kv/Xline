@@ -7,8 +7,6 @@ use tokio::sync::broadcast;
 #[cfg(not(madsim))]
 use tokio_stream::wrappers::TcpListenerStream;
 #[cfg(not(madsim))]
-use tower::filter::FilterLayer;
-#[cfg(not(madsim))]
 use tracing::info;
 use tracing::instrument;
 use utils::{
@@ -29,7 +27,7 @@ use crate::{
         InstallSnapshotResponse, ProposeRequest, ProposeResponse, ProtocolServer, VoteRequest,
         VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
-    ServerId, SnapshotAllocator, TxFilter,
+    ServerId, SnapshotAllocator,
 };
 
 /// Command worker to do execution and after sync
@@ -156,7 +154,6 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
         snapshot_allocator: Box<dyn SnapshotAllocator>,
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
-        tx_filter: Option<Box<dyn TxFilter>>,
     ) -> Self {
         #[allow(clippy::panic)]
         let curp_node = match CurpNode::new(
@@ -166,7 +163,6 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
             snapshot_allocator,
             role_change,
             curp_cfg,
-            tx_filter,
         )
         .await
         {
@@ -189,7 +185,7 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
     #[cfg(not(madsim))]
     #[allow(clippy::too_many_arguments)]
     #[inline]
-    pub async fn run<CE, U, UE>(
+    pub async fn run<CE>(
         cluster_info: Arc<ClusterMember>,
         is_leader: bool,
         server_port: Option<u16>,
@@ -197,18 +193,9 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
         snapshot_allocator: Box<dyn SnapshotAllocator>,
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
-        tx_filter: Option<Box<dyn TxFilter>>,
-        rx_filter: Option<FilterLayer<U>>,
     ) -> Result<(), ServerError>
     where
         CE: 'static + CommandExecutor<C>,
-        U: 'static
-            + Send
-            + Clone
-            + FnMut(
-                tonic::codegen::http::Request<tonic::transport::Body>,
-            ) -> Result<tonic::codegen::http::Request<tonic::transport::Body>, UE>,
-        UE: 'static + Send + Sync + std::error::Error,
     {
         let port = server_port.unwrap_or(DEFAULT_SERVER_PORT);
         let id = cluster_info.self_id();
@@ -220,30 +207,18 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
             snapshot_allocator,
             role_change,
             curp_cfg,
-            tx_filter,
         )
         .await;
 
-        if let Some(f) = rx_filter {
-            tonic::transport::Server::builder()
-                .layer(f)
-                .add_service(ProtocolServer::new(server))
-                .serve(
-                    format!("0.0.0.0:{port}")
-                        .parse()
-                        .map_err(|e| ServerError::ParsingError(format!("{e}")))?,
-                )
-                .await?;
-        } else {
-            tonic::transport::Server::builder()
-                .add_service(ProtocolServer::new(server))
-                .serve(
-                    format!("0.0.0.0:{port}")
-                        .parse()
-                        .map_err(|e| ServerError::ParsingError(format!("{e}")))?,
-                )
-                .await?;
-        }
+        tonic::transport::Server::builder()
+            .add_service(ProtocolServer::new(server))
+            .serve(
+                format!("0.0.0.0:{port}")
+                    .parse()
+                    .map_err(|e| ServerError::ParsingError(format!("{e}")))?,
+            )
+            .await?;
+
         Ok(())
     }
 
@@ -255,7 +230,7 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
     #[cfg(not(madsim))]
     #[allow(clippy::too_many_arguments)]
     #[inline]
-    pub async fn run_from_listener<CE, U, UE>(
+    pub async fn run_from_listener<CE>(
         cluster_info: Arc<ClusterMember>,
         is_leader: bool,
         listener: TcpListener,
@@ -263,18 +238,9 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
         snapshot_allocator: Box<dyn SnapshotAllocator>,
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
-        tx_filter: Option<Box<dyn TxFilter>>,
-        rx_filter: Option<FilterLayer<U>>,
     ) -> Result<(), ServerError>
     where
         CE: 'static + CommandExecutor<C>,
-        U: 'static
-            + Send
-            + Clone
-            + FnMut(
-                tonic::codegen::http::Request<tonic::transport::Body>,
-            ) -> Result<tonic::codegen::http::Request<tonic::transport::Body>, UE>,
-        UE: 'static + Send + Sync + std::error::Error,
     {
         let server = Self::new(
             cluster_info,
@@ -283,22 +249,14 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
             snapshot_allocator,
             role_change,
             curp_cfg,
-            tx_filter,
         )
         .await;
 
-        if let Some(f) = rx_filter {
-            tonic::transport::Server::builder()
-                .layer(f)
-                .add_service(ProtocolServer::new(server))
-                .serve_with_incoming(TcpListenerStream::new(listener))
-                .await?;
-        } else {
-            tonic::transport::Server::builder()
-                .add_service(ProtocolServer::new(server))
-                .serve_with_incoming(TcpListenerStream::new(listener))
-                .await?;
-        }
+        tonic::transport::Server::builder()
+            .add_service(ProtocolServer::new(server))
+            .serve_with_incoming(TcpListenerStream::new(listener))
+            .await?;
+
         Ok(())
     }
 
@@ -329,7 +287,6 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
             snapshot_allocator,
             role_change,
             curp_cfg,
-            None,
         )
         .await;
 

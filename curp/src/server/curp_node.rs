@@ -38,7 +38,7 @@ use crate::{
     },
     server::{cmd_worker::CEEventTxApi, raw_curp::SyncAction, storage::rocksdb::RocksDBStorage},
     snapshot::{Snapshot, SnapshotMeta},
-    ServerId, SnapshotAllocator, TxFilter,
+    ServerId, SnapshotAllocator,
 };
 
 /// Curp error
@@ -420,7 +420,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         snapshot_allocator: Box<dyn SnapshotAllocator>,
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
-        tx_filter: Option<Box<dyn TxFilter>>,
     ) -> Result<Self, CurpError> {
         let sync_events = cluster_info
             .peers_id()
@@ -500,7 +499,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
             Arc::clone(&storage),
             cluster_info,
             Arc::clone(&shutdown_trigger),
-            tx_filter,
             log_rx,
         )
         .await;
@@ -522,10 +520,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         storage: Arc<impl StorageApi<Command = C> + 'static>,
         cluster_info: Arc<ClusterMember>,
         shutdown_trigger: Arc<Event>,
-        tx_filter: Option<Box<dyn TxFilter>>,
         log_rx: tokio::sync::mpsc::UnboundedReceiver<LogEntry<C>>,
     ) {
-        let connects = rpc::connect(cluster_info.peers(), tx_filter).await;
+        let connects = rpc::connect(cluster_info.peers()).await;
         let election_task = tokio::spawn(Self::election_task(Arc::clone(&curp), connects.clone()));
         let sync_task_daemons = connects
             .into_iter()

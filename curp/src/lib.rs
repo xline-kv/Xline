@@ -157,7 +157,7 @@
 )]
 
 pub use curp_external_api::LogIndex;
-pub use rpc::{connect::TxFilter, ProtocolServer};
+pub use rpc::ProtocolServer;
 /// Expose for madsim simulation tests.
 pub use rpc::{
     propose_response, protocol_client, FetchLeaderRequest, FetchLeaderResponse, ProposeRequest,

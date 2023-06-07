@@ -101,7 +101,7 @@ where
         Self {
             local_server_id: self_id,
             state: RwLock::new(State::new()),
-            connects: rpc::connect(addrs, None).await,
+            connects: rpc::connect(addrs).await,
             timeout,
             phantom: PhantomData,
         }
