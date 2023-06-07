@@ -204,7 +204,7 @@ pub use self::{
         MoveLeaderResponse, PutRequest, PutResponse, RangeRequest, RangeResponse, RequestOp,
         ResponseHeader, ResponseOp, SnapshotRequest, SnapshotResponse, StatusRequest,
         StatusResponse, TxnRequest, TxnResponse, WatchCancelRequest, WatchCreateRequest,
-        WatchRequest, WatchResponse,
+        WatchProgressRequest, WatchRequest, WatchResponse,
     },
     leasepb::Lease as PbLease,
     mvccpb::{event::EventType, Event, KeyValue},
