@@ -182,7 +182,7 @@ use serde::{Deserialize, Serialize};
 
 pub use self::etcdserverpb::range_request::{SortOrder, SortTarget};
 pub use self::{
-    authpb::{permission::Type, Permission, Role, User},
+    authpb::{permission::Type, Permission, Role, User, UserAddOptions},
     etcdserverpb::{
         auth_client::AuthClient,
         auth_server::{Auth, AuthServer},
