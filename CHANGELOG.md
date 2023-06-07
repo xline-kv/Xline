@@ -1,5 +1,28 @@
 # ChangeLog
 
+## v0.4.1
+
+### Features
+* Add watch progress notify mechanism (issue #309), resolve in pr #278
+
+
+### Fix Bugs
+- Fix a bug #285 that command workers will panic in the integration tests, resolve in pr #286.
+- Fix a bug #291 that the integration test case `test_kv_authorization` will block in some rare situations, resolve in pr #292
+- Fix a bug #252 that the xline client watch work abnormally after terminating it by sending it a SIGINT signal, resolve in pr #255
+- Fix bugs #284 and #303 that the integration test case `test_lock_timeout` will panic and the lock validation test will block, resolve in pr #312
+
+
+### Refactors
+* Refactor `XlineServer` to break some giant structures and methods into smaller ones, improving the readability(issue #293), resolve in pr #294
+* Refactor curp fast read implementation(issue #270), resolve in pr #297
+* Improve the read and write logic for the `RocksSnapshot` (issue #263), resolve in pr #264
+* Refactor the watch server's implementation(issue #253), resolve in pr #262, #268, #278
+* Refactor the kv server's implementation(issue #250), resolve in pr #260
+* Refactor the lease server's implementation(issue #251), resolve in pr #276
+* Using a better way to generate stream(issue #248), resolve in pr #249
+
+
 ## v0.4.0
 
 ### Features
@@ -11,7 +34,7 @@
 1. Fix a bug that commands will execute out of order in some concurrent cases (issue #197）, resolve in the pr #195
 2. Fix a bug that the gc task will panic during benchmark(issue #206), resolve in the pr #210
 3. Fix a bug that the lock feature will work abnormally in some cases(issue #209), resolve in the pr #212
-4. Fix a bug that some concurrent put requests will get wrong revisions (issue #209), resolve in the pr #238 
+4. Fix a bug that some concurrent put requests will get wrong revisions (issue #209), resolve in the pr #238
 
 ## v0.3.0
 
