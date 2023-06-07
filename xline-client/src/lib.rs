@@ -209,8 +209,23 @@ impl Client {
         let name = String::from("client");
         let channel = Self::build_channel(&all_members).await?;
         let curp_client = Arc::new(CurpClient::new(None, all_members, options.curp_timeout).await);
-        // TODO: use token when auth client is implemented
-        let token = None;
+
+        let token = match options.user {
+            Some((username, password)) => {
+                let mut tmp_auth = AuthClient::new(
+                    name.clone(),
+                    Arc::clone(&curp_client),
+                    channel.clone(),
+                    None,
+                );
+                let resp = tmp_auth
+                    .authenticate(types::auth::AuthenticateRequest::new(username, password))
+                    .await?;
+
+                Some(resp.token)
+            }
+            None => None,
+        };
 
         let kv = KvClient::new(name.clone(), Arc::clone(&curp_client), token.clone());
         let lease = LeaseClient::new(

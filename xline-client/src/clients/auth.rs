@@ -1,13 +1,32 @@
-// TODO: Remove these when the placeholder is implemented.
-#![allow(dead_code)]
-
 use std::sync::Arc;
 
-use curp::client::Client as CurpClient;
+use curp::{client::Client as CurpClient, cmd::ProposeId};
+use pbkdf2::{
+    password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
+    Pbkdf2,
+};
 use tonic::transport::Channel;
+use uuid::Uuid;
 use xline::server::Command;
+use xlineapi::{
+    AuthDisableResponse, AuthEnableResponse, AuthRoleAddResponse, AuthRoleDeleteResponse,
+    AuthRoleGetResponse, AuthRoleGrantPermissionResponse, AuthRoleListResponse,
+    AuthRoleRevokePermissionResponse, AuthStatusResponse, AuthUserAddResponse,
+    AuthUserChangePasswordResponse, AuthUserDeleteResponse, AuthUserGetResponse,
+    AuthUserGrantRoleResponse, AuthUserListResponse, AuthUserRevokeRoleResponse,
+    AuthenticateResponse, RequestWithToken, RequestWrapper, ResponseWrapper,
+};
 
-use crate::AuthService;
+use crate::{
+    error::{ClientError, Result},
+    types::auth::{
+        AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGetRequest,
+        AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest, AuthUserAddRequest,
+        AuthUserChangePasswordRequest, AuthUserDeleteRequest, AuthUserGetRequest,
+        AuthUserGrantRoleRequest, AuthUserRevokeRoleRequest, AuthenticateRequest,
+    },
+    AuthService,
+};
 
 /// Client for Auth operations.
 #[derive(Clone, Debug)]
@@ -40,5 +59,274 @@ impl AuthClient {
             )),
             token,
         }
+    }
+
+    /// Enables authentication.
+    ///
+    /// # Errors
+    ///
+    /// If request fails to send
+    #[inline]
+    pub async fn auth_enable(&self) -> Result<AuthEnableResponse> {
+        self.handle_req(xlineapi::AuthEnableRequest {}, false).await
+    }
+
+    /// Disables authentication.
+    ///
+    /// # Errors
+    ///
+    /// If request fails to send
+    #[inline]
+    pub async fn auth_disable(&self) -> Result<AuthDisableResponse> {
+        self.handle_req(xlineapi::AuthDisableRequest {}, false)
+            .await
+    }
+
+    /// Get auth status.
+    ///
+    /// # Errors
+    ///
+    /// If request fails to send
+    #[inline]
+    pub async fn auth_status(&self) -> Result<AuthStatusResponse> {
+        self.handle_req(xlineapi::AuthStatusRequest {}, true).await
+    }
+
+    /// Get token through authenticate
+    ///
+    /// # Errors
+    ///
+    /// If request fails to send
+    #[inline]
+    pub async fn authenticate(
+        &mut self,
+        request: AuthenticateRequest,
+    ) -> Result<AuthenticateResponse> {
+        Ok(self
+            .auth_client
+            .authenticate(xlineapi::AuthenticateRequest::from(request))
+            .await?
+            .into_inner())
+    }
+
+    /// Add an user.
+    ///
+    /// # Errors
+    ///
+    /// If request fails to send
+    #[inline]
+    pub async fn user_add(&self, mut request: AuthUserAddRequest) -> Result<AuthUserAddResponse> {
+        if request.inner.name.is_empty() {
+            return Err(ClientError::InvalidArgs(String::from("user name is empty")));
+        }
+        let need_password = request
+            .inner
+            .options
+            .as_ref()
+            .map_or(true, |o| !o.no_password);
+        if need_password && request.inner.password.is_empty() {
+            return Err(ClientError::InvalidArgs(String::from(
+                "password is required but not provided",
+            )));
+        }
+        let hashed_password = Self::hash_password(request.inner.password.as_bytes());
+        request.inner.hashed_password = hashed_password;
+        request.inner.password = String::new();
+        self.handle_req(request.inner, false).await
+    }
+
+    /// Gets the user info by the user name.
+    ///
+    /// # Errors
+    ///
+    /// If request fails to send
+    #[inline]
+    pub async fn user_get(&self, request: AuthUserGetRequest) -> Result<AuthUserGetResponse> {
+        self.handle_req(request.inner, true).await
+    }
+
+    /// Lists all users.
+    ///
+    /// # Errors
+    ///
+    /// If request fails to send
+    #[inline]
+    pub async fn user_list(&self) -> Result<AuthUserListResponse> {
+        self.handle_req(xlineapi::AuthUserListRequest {}, true)
+            .await
+    }
+
+    /// Deletes the given key from the key-value store.
+    ///
+    /// # Errors
+    ///
+    /// If request fails to send
+    #[inline]
+    pub async fn user_delete(
+        &self,
+        request: AuthUserDeleteRequest,
+    ) -> Result<AuthUserDeleteResponse> {
+        self.handle_req(request.inner, false).await
+    }
+
+    /// Change password for an user.
+    ///
+    /// # Errors
+    ///
+    /// If request fails to send
+    #[inline]
+    pub async fn user_change_password(
+        &self,
+        mut request: AuthUserChangePasswordRequest,
+    ) -> Result<AuthUserChangePasswordResponse> {
+        if request.inner.password.is_empty() {
+            return Err(ClientError::InvalidArgs(String::from("role name is empty")));
+        }
+        let hashed_password = Self::hash_password(request.inner.password.as_bytes());
+        request.inner.hashed_password = hashed_password;
+        request.inner.password = String::new();
+        self.handle_req(request.inner, false).await
+    }
+
+    /// Grant role for an user.
+    ///
+    /// # Errors
+    ///
+    /// If request fails to send
+    #[inline]
+    pub async fn user_grant_role(
+        &self,
+        request: AuthUserGrantRoleRequest,
+    ) -> Result<AuthUserGrantRoleResponse> {
+        self.handle_req(request.inner, false).await
+    }
+
+    /// Revoke role for an user.
+    ///
+    /// # Errors
+    ///
+    /// If request fails to send
+    #[inline]
+    pub async fn user_revoke_role(
+        &self,
+        request: AuthUserRevokeRoleRequest,
+    ) -> Result<AuthUserRevokeRoleResponse> {
+        self.handle_req(request.inner, false).await
+    }
+
+    /// Adds role.
+    ///
+    /// # Errors
+    ///
+    /// If request fails to send
+    #[inline]
+    pub async fn role_add(&self, request: AuthRoleAddRequest) -> Result<AuthRoleAddResponse> {
+        if request.inner.name.is_empty() {
+            return Err(ClientError::InvalidArgs(String::from("role name is empty")));
+        }
+        self.handle_req(request.inner, false).await
+    }
+
+    /// Gets role.
+    ///
+    /// # Errors
+    ///
+    /// If request fails to send
+    #[inline]
+    pub async fn role_get(&self, request: AuthRoleGetRequest) -> Result<AuthRoleGetResponse> {
+        self.handle_req(request.inner, true).await
+    }
+
+    /// Lists role.
+    ///
+    /// # Errors
+    ///
+    /// If request fails to send
+    #[inline]
+    pub async fn role_list(&self) -> Result<AuthRoleListResponse> {
+        self.handle_req(xlineapi::AuthRoleListRequest {}, true)
+            .await
+    }
+
+    /// Deletes role.
+    ///
+    /// # Errors
+    ///
+    /// If request fails to send
+    #[inline]
+    pub async fn role_delete(
+        &self,
+        request: AuthRoleDeleteRequest,
+    ) -> Result<AuthRoleDeleteResponse> {
+        self.handle_req(request.inner, false).await
+    }
+
+    /// Grants role permission.
+    ///
+    /// # Errors
+    ///
+    /// If request fails to send
+    #[inline]
+    pub async fn role_grant_permission(
+        &self,
+        request: AuthRoleGrantPermissionRequest,
+    ) -> Result<AuthRoleGrantPermissionResponse> {
+        if request.inner.perm.is_none() {
+            return Err(ClientError::InvalidArgs(String::from(
+                "Permission not given",
+            )));
+        }
+        self.handle_req(request.inner, false).await
+    }
+
+    /// Revokes role permission.
+    ///
+    /// # Errors
+    ///
+    /// If request fails to send
+    #[inline]
+    pub async fn role_revoke_permission(
+        &self,
+        request: AuthRoleRevokePermissionRequest,
+    ) -> Result<AuthRoleRevokePermissionResponse> {
+        self.handle_req(request.inner, false).await
+    }
+
+    /// Send request using fast path
+    async fn handle_req<Req: Into<RequestWrapper>, Res: From<ResponseWrapper>>(
+        &self,
+        request: Req,
+        use_fast_path: bool,
+    ) -> Result<Res> {
+        let propose_id = self.generate_propose_id();
+        let request = RequestWithToken::new_with_token(request.into(), self.token.clone());
+        let cmd = Command::new(vec![], request, propose_id);
+
+        let res_wrapper = if use_fast_path {
+            let cmd_res = self.curp_client.propose(cmd).await?;
+            cmd_res.decode()
+        } else {
+            let (cmd_res, sync_res) = self.curp_client.propose_indexed(cmd).await?;
+            let mut res_wrapper = cmd_res.decode();
+            res_wrapper.update_revision(sync_res.revision());
+            res_wrapper
+        };
+
+        Ok(res_wrapper.into())
+    }
+
+    /// Generate hash of the password
+    fn hash_password(password: &[u8]) -> String {
+        let salt = SaltString::generate(&mut OsRng);
+        #[allow(clippy::panic)] // This doesn't seems to be fallible
+        let hashed_password = Pbkdf2
+            .hash_password(password, salt.as_ref())
+            .unwrap_or_else(|e| panic!("Failed to hash password: {e}"));
+        hashed_password.to_string()
+    }
+
+    /// Generate a new `ProposeId`
+    fn generate_propose_id(&self) -> ProposeId {
+        ProposeId::new(format!("{}-{}", self.name, Uuid::new_v4()))
     }
 }
