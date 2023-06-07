@@ -1,3 +1,14 @@
 [workspace]
 
-members = ["xline", "curp", "benchmark", "utils", "engine", "xlineapi", "curp-external-api", "curp-test-utils", "xline-client"]
+members = [
+  "xline",
+  "curp",
+  "benchmark",
+  "utils",
+  "engine",
+  "xlineapi",
+  "curp-external-api",
+  "curp-test-utils",
+  "xline-client",
+  "simulation",
+]

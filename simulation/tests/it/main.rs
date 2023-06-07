@@ -1,0 +1,3 @@
+#![cfg(madsim)]
+
+mod curp;
