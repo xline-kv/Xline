@@ -1,3 +1,3 @@
 #![cfg(madsim)]
 
-pub mod curp;
+pub mod curp_group;

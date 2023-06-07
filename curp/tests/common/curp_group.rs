@@ -117,7 +117,7 @@ pub struct CurpGroup {
 
 impl CurpGroup {
     pub async fn new(n_nodes: usize) -> Self {
-        assert!(n_nodes >= 3);
+        assert!(n_nodes >= 3, "the number of nodes must >= 3");
         let listeners = join_all(
             iter::repeat_with(|| async { TcpListener::bind("0.0.0.0:0").await.unwrap() })
                 .take(n_nodes),
