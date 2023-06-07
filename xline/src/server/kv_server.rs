@@ -585,4 +585,34 @@ mod test {
             .to_string();
         assert_eq!(message, expected_err_message);
     }
+
+    #[tokio::test]
+    async fn test_compact_invalid_revision() {
+        let compact_request = CompactionRequest {
+            revision: 10,
+            ..Default::default()
+        };
+
+        let expected_err_message = tonic::Status::invalid_argument(format!(
+            "required revision {} is higher than current revision {}",
+            compact_request.revision, 8
+        ))
+        .to_string();
+
+        let message = KvServer::<DB>::check_compact_request(&compact_request, 3, 8)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(message, expected_err_message);
+
+        let expected_err_message = tonic::Status::invalid_argument(format!(
+            "required revision {} has been compacted, compacted revision is {}",
+            compact_request.revision, 13
+        ))
+        .to_string();
+
+        let message = KvServer::<DB>::check_compact_request(&compact_request, 13, 18)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(message, expected_err_message);
+    }
 }

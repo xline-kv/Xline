@@ -144,6 +144,7 @@ impl StorageApi for DB {
                     lease.id.encode_to_vec(),
                     lease.encode_to_vec(),
                 ),
+                WriteOp::DeleteKeyValue(rev) => WriteOperation::new_delete(KV_TABLE, rev),
                 WriteOp::DeleteLease(lease_id) => {
                     let key = del_lease_key_buffer.get(&lease_id).unwrap_or_else(|| {
                         panic!("lease_id({lease_id}) is not in del_lease_key_buffer")
@@ -194,6 +195,8 @@ pub enum WriteOp<'a> {
     PutAppliedIndex(u64),
     /// Put a lease to lease table
     PutLease(PbLease),
+    /// Delete a key-value pair from kv table
+    DeleteKeyValue(&'a [u8]),
     /// Delete a lease from lease table
     DeleteLease(i64),
     /// Put a auth enable flag to auth table

@@ -470,7 +470,7 @@ pub mod level_format {
     use crate::parse_log_level;
 
     /// deserializes a cluster duration
-    #[allow(single_use_lifetimes)] // TODO: Think is it necessary to allow this clippy??
+    #[allow(single_use_lifetimes)]
     pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<LevelConfig, D::Error>
     where
         D: Deserializer<'de>,
