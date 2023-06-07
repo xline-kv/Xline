@@ -303,7 +303,6 @@ impl XlineServer {
             snapshot_allocator,
             state,
             Arc::clone(&self.curp_cfg),
-            None,
         )
         .await;
 
