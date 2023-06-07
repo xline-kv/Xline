@@ -13,8 +13,8 @@ use super::command::KeyRange;
 use crate::{
     header_gen::HeaderGenerator,
     rpc::{
-        RequestUnion, ResponseHeader, Watch, WatchCancelRequest, WatchCreateRequest, WatchRequest,
-        WatchResponse,
+        RequestUnion, ResponseHeader, Watch, WatchCancelRequest, WatchCreateRequest,
+        WatchProgressRequest, WatchRequest, WatchResponse,
     },
     storage::{
         kvwatcher::{KvWatcher, KvWatcherOps, WatchEvent, WatchId, WatchIdGenerator},
@@ -276,8 +276,8 @@ where
                 RequestUnion::CancelRequest(req) => {
                     self.handle_watch_cancel(req).await;
                 }
-                RequestUnion::ProgressRequest(_req) => {
-                    self.handle_watch_progress().await;
+                RequestUnion::ProgressRequest(req) => {
+                    self.handle_watch_progress(req).await;
                 }
             }
         }
@@ -319,7 +319,7 @@ where
     }
 
     /// Handle progress for request
-    async fn handle_watch_progress(&mut self) {
+    async fn handle_watch_progress(&mut self, _req: WatchProgressRequest) {
         if self
             .response_tx
             .send(Ok(WatchResponse {
@@ -414,21 +414,19 @@ mod test {
 
     use super::*;
     use crate::{
-        rpc::{PutRequest, RequestWithToken},
+        rpc::{PutRequest, RequestWithToken, WatchProgressRequest},
         storage::{
             db::DB, index::Index, kvwatcher::MockKvWatcherOps, lease_store::LeaseCollection,
             KvStore,
         },
     };
 
-    impl WatchResponse {
-        fn is_progress_notify(&self) -> bool {
-            self.events.is_empty()
-                && !self.canceled
-                && !self.created
-                && self.compact_revision == 0
-                && self.header.as_ref().map_or(false, |h| h.revision != 0)
-        }
+    fn is_progress_notify(wr: &WatchResponse) -> bool {
+        wr.events.is_empty()
+            && !wr.canceled
+            && !wr.created
+            && wr.compact_revision == 0
+            && wr.header.as_ref().map_or(false, |h| h.revision != 0)
     }
 
     async fn put(
@@ -644,13 +642,18 @@ mod test {
                 })),
             }))
             .await?;
+        req_tx
+            .send(Ok(WatchRequest {
+                request_union: Some(RequestUnion::ProgressRequest(WatchProgressRequest {})),
+            }))
+            .await?;
         let cnt = Arc::new(AtomicI32::new(0));
 
         let _ignore = timeout(Duration::from_secs(1), {
             let cnt = Arc::clone(&cnt);
             async move {
                 while let Some(Ok(res)) = res_rx.recv().await {
-                    if res.is_progress_notify() {
+                    if is_progress_notify(&res) {
                         cnt.fetch_add(1, Ordering::Release);
                     }
                 }

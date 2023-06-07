@@ -36,6 +36,30 @@ kv_validation() {
     echo "kv validation test passed"
 }
 
+watch_progress_validation() {
+    expect << EOF
+    spawn ${ETCDCTL} watch -i
+    send "watch foo\r"
+    send "progress\r"
+    expect {
+        -timeout 3
+        "progress notify" {
+            exit 0
+        }
+        timeout {
+            exit 1
+        }
+    }
+    expect eof
+EOF
+    if [ $? -eq 0 ]; then
+        echo "command run success"
+    else
+        echo "watch_progress_validation run failed"
+        exit 1
+    fi
+}
+
 # validate watch requests
 watch_validation() {
     echo "watch validation test running..."
@@ -56,6 +80,7 @@ watch_validation() {
     sleep 0.1 # wait watch
     run_with_expect "${ETCDCTL} put watch_key value" "OK"
     run_with_expect "${ETCDCTL} del watch_key" "1"
+    watch_progress_validation
     echo "watch validation test passed"
 }
 

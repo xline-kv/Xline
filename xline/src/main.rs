@@ -223,7 +223,7 @@ struct ServerArgs {
     /// How often should the background task sync victim watchers [default: 10ms]
     #[clap(long,value_parser = parse_duration)]
     sync_victims_interval: Option<Duration>,
-    /// How often should watch progress notify send a response [default: 10m]
+    /// How often should watch progress notify send a response [default: 600s]
     #[clap(long, value_parser = parse_duration)]
     watch_progress_notify_interval: Option<Duration>,
     /// Storage engine
