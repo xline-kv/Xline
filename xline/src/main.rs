@@ -312,6 +312,7 @@ fn init_subscriber(
     let log_file_layer = tracing_subscriber::fmt::layer()
         .event_format(format().compact())
         .with_writer(non_blocking)
+        .with_ansi(false)
         .with_filter(*log_config.level());
 
     let jaeger_level = *trace_config.jaeger_level();
