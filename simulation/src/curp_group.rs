@@ -66,7 +66,6 @@ impl CurpGroup {
         let leader = Arc::new(Mutex::new("S0".to_string()));
 
         let nodes = (0..n_nodes)
-            .into_iter()
             .map(|i| {
                 let id = format!("S{i}");
                 let addr = format!("192.168.1.{}:12345", i + 1);
@@ -226,8 +225,7 @@ impl CurpGroup {
         let mut max_term = 0;
 
         let all = self.all.clone();
-        let leader = self
-            .client_node
+        self.client_node
             .spawn(async move {
                 for addr in all.values() {
                     let addr = format!("http://{}", addr);
@@ -255,8 +253,7 @@ impl CurpGroup {
                 leader.map(|l| (l, max_term))
             })
             .await
-            .unwrap();
-        leader
+            .unwrap()
     }
 
     pub async fn get_leader(&self) -> (ServerId, u64) {

@@ -4,8 +4,7 @@ use curp_test_utils::{init_logger, test_cmd::TestCommand};
 use madsim::time::sleep;
 use utils::config::ClientTimeout;
 
-use crate::common::curp_group::CurpGroup;
-mod common;
+use simulation::curp_group::CurpGroup;
 
 async fn wait_for_election() {
     sleep(Duration::from_secs(3)).await;
@@ -35,7 +34,7 @@ fn check_role_state(group: &CurpGroup, group_size: usize, leader: &String) {
 }
 
 // Election
-#[tokio::test]
+#[madsim::test]
 async fn election() {
     init_logger();
 
@@ -51,7 +50,7 @@ async fn election() {
     check_role_state(&group, 5, &leader0);
 
     // check after some time, the term and the leader is still not changed
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    madsim::time::sleep(Duration::from_secs(1)).await;
     let leader2 = group
         .try_get_leader()
         .await
@@ -64,11 +63,11 @@ async fn election() {
     assert_eq!(term1, term2);
     assert_eq!(leader1, leader2);
 
-    group.stop();
+    group.stop().await;
 }
 
 // Reelect after network failure
-#[tokio::test]
+#[madsim::test]
 async fn reelect() {
     init_logger();
 
@@ -123,10 +122,10 @@ async fn reelect() {
     check_role_state(&group, 5, &final_leader);
     assert!(final_term > term3);
 
-    group.stop();
+    group.stop().await;
 }
 
-#[tokio::test]
+#[madsim::test]
 async fn propose_after_reelect() {
     init_logger();
 
@@ -141,13 +140,13 @@ async fn propose_after_reelect() {
         vec![]
     );
     // wait for the cmd to be synced
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    madsim::time::sleep(Duration::from_secs(1)).await;
 
     let leader1 = group.get_leader().await.0;
     check_role_state(&group, 5, &leader1);
     group.disable_node(&leader1);
 
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    madsim::time::sleep(Duration::from_secs(2)).await;
     assert_eq!(
         client
             .propose(TestCommand::new_get(vec![0]))
@@ -157,5 +156,5 @@ async fn propose_after_reelect() {
         vec![0]
     );
 
-    group.stop();
+    group.stop().await;
 }
