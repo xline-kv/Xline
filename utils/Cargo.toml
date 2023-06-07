@@ -20,13 +20,13 @@ parking_lot = ["dep:parking_lot"]
 
 [dependencies]
 parking_lot = { version = "0.12.1", optional = true }
-tokio = { version = "1.23.0", features = [
-    "sync",
-    "macros",
-    "rt-multi-thread",
+tokio = { version = "0.2", package = "madsim-tokio", features = [
+  "sync",
+  "macros",
+  "rt-multi-thread",
 ], optional = true }
 async-trait = { version = "0.1.60", optional = true }
-tonic = "0.7.2"
+tonic = { version = "0.2", package = "madsim-tonic" }
 opentelemetry = "0.18.0"
 tracing = "0.1.37"
 tracing-opentelemetry = "0.18.0"
