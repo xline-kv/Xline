@@ -455,11 +455,6 @@ impl RequestWrapper {
     pub fn is_kv_request(&self) -> bool {
         self.backend() == RequestBackend::Kv
     }
-
-    /// Check if this request is a lease request
-    pub fn is_lease_request(&self) -> bool {
-        self.backend() == RequestBackend::Lease
-    }
 }
 
 /// impl `From` trait for all request types

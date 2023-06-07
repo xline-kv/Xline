@@ -1,4 +1,5 @@
 use std::{
+    collections::{HashSet, VecDeque},
     ops::{Bound, RangeBounds},
     sync::Arc,
 };
@@ -16,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use super::barriers::{IdBarrier, IndexBarrier};
 use crate::{
     revision_number::RevisionNumberGenerator,
-    rpc::{RequestBackend, RequestWithToken, RequestWrapper, ResponseWrapper},
+    rpc::{Request, RequestBackend, RequestWithToken, RequestWrapper, ResponseWrapper},
     storage::{db::WriteOp, storage_api::StorageApi, AuthStore, ExecuteError, KvStore, LeaseStore},
 };
 
@@ -388,6 +389,65 @@ pub struct Command {
     id: ProposeId,
 }
 
+/// get all lease ids in the request wrapper
+fn get_lease_ids(wrapper: &RequestWrapper) -> HashSet<i64> {
+    match *wrapper {
+        RequestWrapper::LeaseGrantRequest(ref req) => HashSet::from_iter(vec![req.id]),
+        RequestWrapper::LeaseRevokeRequest(ref req) => HashSet::from_iter(vec![req.id]),
+        RequestWrapper::PutRequest(ref req) if req.lease != 0 => {
+            HashSet::from_iter(vec![req.lease])
+        }
+        RequestWrapper::TxnRequest(ref txn_req) => {
+            let mut lease_ids = HashSet::new();
+            let mut reqs = txn_req
+                .success
+                .iter()
+                .chain(txn_req.failure.iter())
+                .filter_map(|op| op.request.as_ref())
+                .collect::<VecDeque<_>>();
+            while let Some(req) = reqs.pop_front() {
+                match *req {
+                    Request::RequestPut(ref req) => {
+                        if req.lease != 0 {
+                            let _ignore = lease_ids.insert(req.lease);
+                        }
+                    }
+                    Request::RequestTxn(ref req) => reqs.extend(
+                        &mut req
+                            .success
+                            .iter()
+                            .chain(req.failure.iter())
+                            .filter_map(|op| op.request.as_ref()),
+                    ),
+                    Request::RequestRange(_) | Request::RequestDeleteRange(_) => {}
+                }
+            }
+            lease_ids
+        }
+        RequestWrapper::PutRequest(_)
+        | RequestWrapper::RangeRequest(_)
+        | RequestWrapper::DeleteRangeRequest(_)
+        | RequestWrapper::CompactionRequest(_)
+        | RequestWrapper::AuthEnableRequest(_)
+        | RequestWrapper::AuthDisableRequest(_)
+        | RequestWrapper::AuthStatusRequest(_)
+        | RequestWrapper::AuthRoleAddRequest(_)
+        | RequestWrapper::AuthRoleDeleteRequest(_)
+        | RequestWrapper::AuthRoleGetRequest(_)
+        | RequestWrapper::AuthRoleGrantPermissionRequest(_)
+        | RequestWrapper::AuthRoleListRequest(_)
+        | RequestWrapper::AuthRoleRevokePermissionRequest(_)
+        | RequestWrapper::AuthUserAddRequest(_)
+        | RequestWrapper::AuthUserChangePasswordRequest(_)
+        | RequestWrapper::AuthUserDeleteRequest(_)
+        | RequestWrapper::AuthUserGetRequest(_)
+        | RequestWrapper::AuthUserGrantRoleRequest(_)
+        | RequestWrapper::AuthUserListRequest(_)
+        | RequestWrapper::AuthUserRevokeRoleRequest(_)
+        | RequestWrapper::AuthenticateRequest(_) => HashSet::new(),
+    }
+}
+
 impl ConflictCheck for Command {
     #[inline]
     fn is_conflict(&self, other: &Self) -> bool {
@@ -408,29 +468,15 @@ impl ConflictCheck for Command {
         if (this_req.is_auth_request()) || (other_req.is_auth_request()) {
             return true;
         }
-
-        if (this_req.is_lease_request()) && (other_req.is_lease_request()) {
-            #[allow(clippy::wildcard_enum_match_arm)]
-            let lease_id1 = match *this_req {
-                RequestWrapper::LeaseGrantRequest(ref req) => req.id,
-                RequestWrapper::LeaseRevokeRequest(ref req) => req.id,
-                _ => unreachable!("other request can not in this match"),
-            };
-            #[allow(clippy::wildcard_enum_match_arm)]
-            let lease_id2 = match *other_req {
-                RequestWrapper::LeaseGrantRequest(ref req) => req.id,
-                RequestWrapper::LeaseRevokeRequest(ref req) => req.id,
-                _ => unreachable!("other request can not in this match"),
-            };
-            if lease_id1 == lease_id2 {
-                return true;
-            }
-        }
-
-        self.keys()
+        let this_lease_ids = get_lease_ids(this_req);
+        let other_lease_ids = get_lease_ids(other_req);
+        let lease_conflict = !this_lease_ids.is_disjoint(&other_lease_ids);
+        let key_conflict = self
+            .keys()
             .iter()
             .cartesian_product(other.keys().iter())
-            .any(|(k1, k2)| k1.is_conflicted(k2))
+            .any(|(k1, k2)| k1.is_conflicted(k2));
+        lease_conflict || key_conflict
     }
 }
 
@@ -521,6 +567,7 @@ mod test {
     use super::*;
     use crate::rpc::{
         AuthEnableRequest, AuthStatusRequest, LeaseGrantRequest, LeaseRevokeRequest, PutRequest,
+        RequestOp, TxnRequest,
     };
 
     #[test]
@@ -597,6 +644,44 @@ mod test {
             ProposeId::new("id3".to_owned()),
         );
 
+        let lease_grant_cmd = Command::new(
+            vec![],
+            RequestWithToken::new(RequestWrapper::LeaseGrantRequest(LeaseGrantRequest {
+                ttl: 1,
+                id: 123,
+            })),
+            ProposeId::new("id4".to_owned()),
+        );
+        let put_with_lease_cmd = Command::new(
+            vec![KeyRange::new_one_key("foo")],
+            RequestWithToken::new(RequestWrapper::PutRequest(PutRequest {
+                key: b"key".to_vec(),
+                value: b"value".to_vec(),
+                lease: 123,
+                ..Default::default()
+            })),
+            ProposeId::new("id5".to_owned()),
+        );
+        let txn_with_lease_id_cmd = Command::new(
+            vec![KeyRange::new_one_key("key")],
+            RequestWithToken::new(RequestWrapper::TxnRequest(TxnRequest {
+                compare: vec![],
+                success: vec![RequestOp {
+                    request: Some(Request::RequestPut(PutRequest {
+                        key: b"key".to_vec(),
+                        value: b"value".to_vec(),
+                        lease: 123,
+                        ..Default::default()
+                    })),
+                }],
+                failure: vec![],
+            })),
+            ProposeId::new("id6".to_owned()),
+        );
+
+        assert!(lease_grant_cmd.is_conflict(&put_with_lease_cmd)); // lease id
+        assert!(lease_grant_cmd.is_conflict(&txn_with_lease_id_cmd)); // lease id
+        assert!(put_with_lease_cmd.is_conflict(&txn_with_lease_id_cmd)); // lease id
         assert!(cmd1.is_conflict(&cmd2)); // id
         assert!(cmd1.is_conflict(&cmd3)); // keys
         assert!(!cmd2.is_conflict(&cmd3)); // auth read and kv
