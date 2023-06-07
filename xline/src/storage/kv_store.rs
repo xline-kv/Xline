@@ -316,6 +316,23 @@ where
     fn attach(&self, lease_id: i64, key: impl Into<Vec<u8>>) -> Result<(), ExecuteError> {
         self.lease_collection.attach(lease_id, key.into())
     }
+
+    /// Compact kv storage
+    #[allow(dead_code)]
+    fn compact(&self, at_rev: i64) -> Result<(), ExecuteError> {
+        let compacted_rev = self
+            .index
+            .compact(at_rev)
+            .into_iter()
+            .map(|key_rev| key_rev.as_revision().encode_to_vec())
+            .collect::<Vec<Vec<_>>>();
+        let mut ops = Vec::new();
+        compacted_rev
+            .iter()
+            .for_each(|rev| ops.push(WriteOp::DeleteKeyValue(rev.as_ref())));
+        self.db.flush_ops(ops)?;
+        Ok(())
+    }
 }
 
 /// db operations
@@ -1044,5 +1061,102 @@ mod test {
             "kvs.len() != revs.len(), maybe some operations already inserted into index, but not flushed to db"
         );
         handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_compaction() -> Result<(), ExecuteError> {
+        let db = DB::open(&StorageConfig::Memory)?;
+        let store = init_empty_store(db);
+        let revision = RevisionNumberGenerator::default();
+        // sample requests: (a, 1) (b, 2) (a, 3) (del a)
+        // their revisions:     2      3      4       5
+        let requests = vec![
+            RequestWithToken::new(
+                PutRequest {
+                    key: "a".into(),
+                    value: "1".into(),
+                    ..Default::default()
+                }
+                .into(),
+            ),
+            RequestWithToken::new(
+                PutRequest {
+                    key: "b".into(),
+                    value: "2".into(),
+                    ..Default::default()
+                }
+                .into(),
+            ),
+            RequestWithToken::new(
+                PutRequest {
+                    key: "a".into(),
+                    value: "3".into(),
+                    ..Default::default()
+                }
+                .into(),
+            ),
+            RequestWithToken::new(
+                DeleteRangeRequest {
+                    key: "a".into(),
+                    ..Default::default()
+                }
+                .into(),
+            ),
+        ];
+
+        for req in requests {
+            exe_as_and_flush(&store, &req, revision.next())
+                .await
+                .unwrap();
+        }
+
+        store.compact(3)?;
+        assert_eq!(
+            store.get_range(b"a", b"", 2).unwrap().len(),
+            1,
+            "(a, 1) should not be removed"
+        );
+        assert_eq!(
+            store.get_range(b"b", b"", 3).unwrap().len(),
+            1,
+            "(b, 2) should not be removed"
+        );
+
+        store.compact(4)?;
+        assert!(
+            store.get_range(b"a", b"", 2).unwrap().is_empty(),
+            "(a, 1) should be removed"
+        );
+        assert_eq!(
+            store.get_range(b"b", b"", 3).unwrap().len(),
+            1,
+            "(b, 2) should not be removed"
+        );
+        assert_eq!(
+            store.get_range(b"a", b"", 4).unwrap().len(),
+            1,
+            "(a, 3) should not be removed"
+        );
+
+        store.compact(5)?;
+        assert!(
+            store.get_range(b"a", b"", 2).unwrap().is_empty(),
+            "(a, 1) should be removed"
+        );
+        assert_eq!(
+            store.get_range(b"b", b"", 3).unwrap().len(),
+            1,
+            "(b, 2) should not be removed"
+        );
+        assert!(
+            store.get_range(b"a", b"", 4).unwrap().is_empty(),
+            "(a, 3) should be removed"
+        );
+        assert!(
+            store.get_range(b"a", b"", 5).unwrap().is_empty(),
+            "(a, 4) should be removed"
+        );
+
+        Ok(())
     }
 }
