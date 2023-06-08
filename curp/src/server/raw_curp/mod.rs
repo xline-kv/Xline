@@ -239,19 +239,20 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         });
         let mut log_w = self.log.write();
 
-        let index = match log_w.push_cmd(st_r.term, Arc::clone(&cmd)) {
-            Ok(index) => {
-                debug!("{} gets new log[{index}]", self.id());
-                index
+        let entry = match log_w.push_cmd(st_r.term, cmd) {
+            Ok(entry) => {
+                debug!("{} gets new log[{}]", self.id(), entry.index);
+                entry
             }
             Err(e) => {
                 return (info, Err(e.into()));
             }
         };
 
+        let index = entry.index;
         if !conflict {
             log_w.last_exe = index;
-            self.ctx.cmd_tx.send_sp_exe(cmd, index);
+            self.ctx.cmd_tx.send_sp_exe(entry);
         }
 
         self.ctx.sync_events.iter().for_each(|(id, event)| {
@@ -953,14 +954,14 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             let _ig_sync = cb_w.sync.insert(cmd.id().clone()); // may have been inserted before
             let _ig_spec = sp_l.insert(Arc::clone(&cmd)); // may have been inserted before
             #[allow(clippy::expect_used)]
-            let index = log
-                .push_cmd(term, Arc::clone(&cmd))
+            let entry = log
+                .push_cmd(term, cmd)
                 .expect("cmd {cmd:?} cannot be serialized");
             debug!(
                 "{} recovers speculatively executed cmd({}) in log[{}]",
                 self.id(),
-                cmd.id(),
-                index,
+                entry.cmd.id(),
+                entry.index,
             );
         }
     }
@@ -974,7 +975,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                     log.last_log_index()
                 )
             });
-            self.ctx.cmd_tx.send_after_sync(Arc::clone(&entry.cmd), i);
+            self.ctx.cmd_tx.send_after_sync(Arc::clone(entry));
             log.last_as = i;
             if log.last_exe < log.last_as {
                 log.last_exe = log.last_as;
