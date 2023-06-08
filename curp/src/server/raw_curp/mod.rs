@@ -111,7 +111,7 @@ pub(super) struct AppendEntries<C> {
     /// Leader's commit index
     pub(super) leader_commit: LogIndex,
     /// New entries to be appended to the follower
-    pub(super) entries: Vec<LogEntry<C>>,
+    pub(super) entries: Vec<Arc<LogEntry<C>>>,
 }
 
 /// Curp Role
@@ -590,7 +590,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         cfg: Arc<CurpConfig>,
         cmd_tx: Arc<dyn CEEventTxApi<C>>,
         sync_events: HashMap<ServerId, Arc<Event>>,
-        log_tx: mpsc::UnboundedSender<LogEntry<C>>,
+        log_tx: mpsc::UnboundedSender<Arc<LogEntry<C>>>,
         role_change: RC,
     ) -> Self {
         let raw_curp = Self {
@@ -638,7 +638,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         cfg: &Arc<CurpConfig>,
         cmd_tx: Arc<dyn CEEventTxApi<C>>,
         sync_event: HashMap<ServerId, Arc<Event>>,
-        log_tx: mpsc::UnboundedSender<LogEntry<C>>,
+        log_tx: mpsc::UnboundedSender<Arc<LogEntry<C>>>,
         voted_for: Option<(u64, ServerId)>,
         entries: Vec<LogEntry<C>>,
         last_applied: LogIndex,

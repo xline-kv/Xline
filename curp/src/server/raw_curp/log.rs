@@ -38,7 +38,7 @@ pub(super) struct Log<C: Command> {
     /// Index of highest log entry sent to speculatively exe. `last_exe` should always be greater than or equal to `last_as`.
     pub(super) last_exe: LogIndex,
     /// Tx to send log entries to persist task
-    log_tx: mpsc::UnboundedSender<LogEntry<C>>,
+    log_tx: mpsc::UnboundedSender<Arc<LogEntry<C>>>,
     /// Entries to keep in memory
     entries_cap: usize,
 }
@@ -47,7 +47,7 @@ pub(super) struct Log<C: Command> {
 #[derive(Debug)]
 struct LogEntryVecDeque<C: Command> {
     /// A VecDeque to store log entries, it will be serialized and persisted
-    entries: VecDeque<LogEntry<C>>,
+    entries: VecDeque<Arc<LogEntry<C>>>,
     /// The sum of serialized size of previous log entries
     /// batch_index[i+1] = batch_index[i] + size(entries[i])
     batch_index: VecDeque<u64>,
@@ -76,7 +76,7 @@ impl<C: Command> LogEntryVecDeque<C> {
     }
 
     /// push a log entry into the back of queue
-    fn push_back(&mut self, entry: LogEntry<C>) -> Result<(), bincode::Error> {
+    fn push_back(&mut self, entry: Arc<LogEntry<C>>) -> Result<(), bincode::Error> {
         let entry_size = serialized_size(&entry)?;
 
         self.entries.push_back(entry);
@@ -89,7 +89,7 @@ impl<C: Command> LogEntryVecDeque<C> {
     }
 
     /// pop a log entry from the front of queue
-    fn pop_front(&mut self) -> Option<LogEntry<C>> {
+    fn pop_front(&mut self) -> Option<Arc<LogEntry<C>>> {
         if self.entries.front().is_some() {
             _ = self.batch_index.pop_front();
             self.entries.pop_front()
@@ -111,7 +111,7 @@ impl<C: Command> LogEntryVecDeque<C> {
             }
         }
 
-        self.entries = VecDeque::from(entries);
+        self.entries = entries.into_iter().map(Arc::new).collect();
         self.batch_index = batch_index;
     }
 
@@ -134,7 +134,7 @@ impl<C: Command> LogEntryVecDeque<C> {
     }
 
     /// Get a range of log entry
-    fn get_from(&self, left: usize) -> Vec<LogEntry<C>> {
+    fn get_from(&self, left: usize) -> Vec<Arc<LogEntry<C>>> {
         let range = self.get_range_by_batch(left);
         self.entries.range(range).cloned().collect_vec()
     }
@@ -153,7 +153,7 @@ impl<C: Command> LogEntryVecDeque<C> {
 }
 
 impl<C: Command> std::ops::Deref for LogEntryVecDeque<C> {
-    type Target = VecDeque<LogEntry<C>>;
+    type Target = VecDeque<Arc<LogEntry<C>>>;
 
     fn deref(&self) -> &Self::Target {
         &self.entries
@@ -176,7 +176,7 @@ impl<C: Command> Debug for Log<C> {
 impl<C: 'static + Command> Log<C> {
     /// Create a new log
     pub(super) fn new(
-        log_tx: mpsc::UnboundedSender<LogEntry<C>>,
+        log_tx: mpsc::UnboundedSender<Arc<LogEntry<C>>>,
         batch_limit: u64,
         entries_cap: usize,
     ) -> Self {
@@ -219,7 +219,7 @@ impl<C: 'static + Command> Log<C> {
     /// Get log entry
     pub(super) fn get(&self, i: LogIndex) -> Option<&LogEntry<C>> {
         (i > self.base_index)
-            .then(|| self.entries.get(self.li_to_pi(i)))
+            .then(|| self.entries.get(self.li_to_pi(i)).map(AsRef::as_ref))
             .flatten()
     }
 
@@ -242,6 +242,7 @@ impl<C: 'static + Command> Log<C> {
         // append log entries, will erase inconsistencies
         let mut li = prev_log_index;
         for entry in entries {
+            let entry = Arc::new(entry);
             li += 1;
             let pi = self.li_to_pi(li);
             if self
@@ -255,7 +256,7 @@ impl<C: 'static + Command> Log<C> {
             self.entries.truncate(pi);
             #[allow(clippy::expect_used)] // It's safe to expect here.
             self.entries
-                .push_back(entry.clone())
+                .push_back(Arc::clone(&entry))
                 .expect("log entry {entry:?} cannot be serialized");
 
             self.send_persist(entry);
@@ -265,7 +266,7 @@ impl<C: 'static + Command> Log<C> {
     }
 
     /// Send log entries to persist task
-    pub(super) fn send_persist(&self, entry: LogEntry<C>) {
+    pub(super) fn send_persist(&self, entry: Arc<LogEntry<C>>) {
         if let Err(err) = self.log_tx.send(entry) {
             error!("failed to send log to persist, {err}");
         }
@@ -285,9 +286,9 @@ impl<C: 'static + Command> Log<C> {
     /// Pack the cmd into a log entry and push it to the end of the log, return its index
     pub(super) fn push_cmd(&mut self, term: u64, cmd: Arc<C>) -> Result<LogIndex, bincode::Error> {
         let index = self.last_log_index() + 1;
-        let entry = LogEntry::new(index, term, cmd);
+        let entry = Arc::new(LogEntry::new(index, term, cmd));
 
-        self.entries.push_back(entry.clone())?;
+        self.entries.push_back(Arc::clone(&entry))?;
         self.send_persist(entry);
         Ok(self.last_log_index())
     }
@@ -299,7 +300,7 @@ impl<C: 'static + Command> Log<C> {
     }
 
     /// Get a range of log entry
-    pub(super) fn get_from(&self, li: LogIndex) -> Vec<LogEntry<C>> {
+    pub(super) fn get_from(&self, li: LogIndex) -> Vec<Arc<LogEntry<C>>> {
         let left_bound = self.li_to_pi(li);
         self.entries.get_from(left_bound)
     }
