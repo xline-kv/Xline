@@ -51,7 +51,7 @@ jobs:
 
       - name: Close the Relevant Milestone
         id: close-milestone
-        uses: adlerhsieh/prepare-release@v0.1.2
+        uses: adlerhsieh/prepare-release@0.1.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO_OWNER: 'datenlord'
