@@ -12,3 +12,12 @@ members = [
   "xline-client",
   "simulation",
 ]
+
+# TODO: We should remove it when the madsim updates its release (v0.2.23) in the crate.io
+# TODO: We also should include the original crate's version of madsim packages
+[patch.crates-io]
+madsim = { git = "https://github.com/madsim-rs/madsim.git", rev = "6753d73", package = "madsim" }
+tokio = { git = "https://github.com/madsim-rs/madsim.git", rev = "6753d73", package = "madsim-tokio" }
+tonic = { git = "https://github.com/madsim-rs/madsim.git", rev = "6753d73", package = "madsim-tonic" }
+etcd-client = { git = "https://github.com/madsim-rs/madsim.git", rev = "6753d73", package = "madsim-etcd-client" }
+tonic-build = { git = "https://github.com/madsim-rs/madsim.git", rev = "6753d73", package = "madsim-tonic-build" }
