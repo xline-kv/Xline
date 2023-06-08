@@ -217,9 +217,9 @@ impl<C: 'static + Command> Log<C> {
     }
 
     /// Get log entry
-    pub(super) fn get(&self, i: LogIndex) -> Option<&LogEntry<C>> {
+    pub(super) fn get(&self, i: LogIndex) -> Option<&Arc<LogEntry<C>>> {
         (i > self.base_index)
-            .then(|| self.entries.get(self.li_to_pi(i)).map(AsRef::as_ref))
+            .then(|| self.entries.get(self.li_to_pi(i)))
             .flatten()
     }
 
@@ -284,13 +284,17 @@ impl<C: 'static + Command> Log<C> {
     }
 
     /// Pack the cmd into a log entry and push it to the end of the log, return its index
-    pub(super) fn push_cmd(&mut self, term: u64, cmd: Arc<C>) -> Result<LogIndex, bincode::Error> {
+    pub(super) fn push_cmd(
+        &mut self,
+        term: u64,
+        cmd: Arc<C>,
+    ) -> Result<Arc<LogEntry<C>>, bincode::Error> {
         let index = self.last_log_index() + 1;
         let entry = Arc::new(LogEntry::new(index, term, cmd));
 
         self.entries.push_back(Arc::clone(&entry))?;
-        self.send_persist(entry);
-        Ok(self.last_log_index())
+        self.send_persist(Arc::clone(&entry));
+        Ok(entry)
     }
 
     /// check whether the log entry range [li,..) exceeds the batch limit or not
@@ -487,7 +491,7 @@ mod tests {
         let _res = repeat(Arc::clone(&test_cmd))
             .take(10)
             .map(|cmd| log.push_cmd(1, cmd).unwrap())
-            .collect::<Vec<u64>>();
+            .collect::<Vec<_>>();
         let log_entry_size = log.entries.batch_index[1];
 
         set_batch_limit(&mut log, 3 * log_entry_size - 1);

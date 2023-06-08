@@ -68,7 +68,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     pub(crate) fn push_cmd(&self, cmd: Arc<C>) -> LogIndex {
         let st_r = self.st.read();
         let mut log_w = self.log.write();
-        log_w.push_cmd(st_r.term, cmd).unwrap()
+        log_w.push_cmd(st_r.term, cmd).unwrap().index
     }
 }
 
@@ -78,7 +78,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 fn leader_handle_propose_will_succeed() {
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        exe_tx.expect_send_sp_exe().returning(|_, _| {});
+        exe_tx.expect_send_sp_exe().returning(|_| {});
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
     let cmd = Arc::new(TestCommand::default());
@@ -93,7 +93,7 @@ fn leader_handle_propose_will_succeed() {
 fn leader_handle_propose_will_reject_conflicted() {
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        exe_tx.expect_send_sp_exe().returning(|_, _| {});
+        exe_tx.expect_send_sp_exe().returning(|_| {});
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
 
@@ -122,7 +122,7 @@ fn leader_handle_propose_will_reject_conflicted() {
 fn leader_handle_propose_will_reject_duplicated() {
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        exe_tx.expect_send_sp_exe().returning(|_, _| {});
+        exe_tx.expect_send_sp_exe().returning(|_| {});
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
     let cmd = Arc::new(TestCommand::default());
@@ -558,7 +558,7 @@ fn leader_retires_after_log_compact_will_succeed() {
 fn leader_retires_should_cleanup() {
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        exe_tx.expect_send_sp_exe().returning(|_, _| {});
+        exe_tx.expect_send_sp_exe().returning(|_| {});
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
 

@@ -16,8 +16,8 @@ use self::cart::Cart;
 use super::{CEEvent, CEEventTx};
 use crate::{
     cmd::{Command, CommandExecutor, ProposeId},
+    log_entry::LogEntry,
     snapshot::{Snapshot, SnapshotMeta},
-    LogIndex,
 };
 
 /// Cart
@@ -57,9 +57,9 @@ pub(in crate::server) struct Task<C: Command> {
 /// Task Type
 pub(super) enum TaskType<C: Command> {
     /// Execute a cmd
-    SpecExe(Arc<C>, LogIndex, Option<C::Error>),
+    SpecExe(Arc<LogEntry<C>>, Option<C::Error>),
     /// After sync a cmd
-    AS(Arc<C>, LogIndex, C::PR),
+    AS(Arc<LogEntry<C>>, C::PR),
     /// Reset the CE
     Reset(Option<Snapshot>, oneshot::Sender<()>),
     /// Snapshot
@@ -90,9 +90,10 @@ impl<C: Command> Vertex<C> {
         #[allow(clippy::pattern_type_mismatch)]
         // it seems it's impossible to get away with this lint
         match (&self.inner, &other.inner) {
-            (VertexInner::Cmd { cmd: cmd1, .. }, VertexInner::Cmd { cmd: cmd2, .. }) => {
-                cmd1.is_conflict(cmd2.as_ref())
-            }
+            (
+                VertexInner::Entry { entry: entry1, .. },
+                VertexInner::Entry { entry: entry2, .. },
+            ) => entry1.cmd.is_conflict(entry2.cmd.as_ref()),
             _ => true,
         }
     }
@@ -101,10 +102,10 @@ impl<C: Command> Vertex<C> {
 /// Vertex inner
 #[derive(Debug)]
 enum VertexInner<C: Command> {
-    /// A cmd vertex
-    Cmd {
-        /// Cmd
-        cmd: Arc<C>,
+    /// A entry vertex
+    Entry {
+        /// Entry
+        entry: Arc<LogEntry<C>>,
         /// Execution state
         exe_st: ExeState,
         /// After sync state
@@ -130,9 +131,9 @@ enum VertexInner<C: Command> {
 #[derive(Debug, Clone, Copy)]
 enum ExeState {
     /// Is ready to execute
-    ExecuteReady(LogIndex),
+    ExecuteReady,
     /// Executing
-    Executing(LogIndex),
+    Executing,
     /// Has been executed, and the result
     Executed(bool),
 }
@@ -143,7 +144,7 @@ enum AsState<C: Command> {
     /// Not Synced yet
     NotSynced(Option<C::PR>),
     /// Is ready to do after sync
-    AfterSyncReady(LogIndex, Option<C::PR>),
+    AfterSyncReady(Option<C::PR>),
     /// Is doing after syncing
     AfterSyncing,
     /// Has been after synced
@@ -155,7 +156,7 @@ impl<C: Command> AsState<C> {
     #[inline]
     fn set_prepare_result(&mut self, res: C::PR) {
         match *self {
-            Self::NotSynced(ref mut pre_res) | Self::AfterSyncReady(_, ref mut pre_res) => {
+            Self::NotSynced(ref mut pre_res) | Self::AfterSyncReady(ref mut pre_res) => {
                 *pre_res = Some(res);
             }
             Self::AfterSyncing | Self::AfterSynced => {
@@ -229,12 +230,12 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
     fn progress(&mut self, vid: u64, succeeded: bool) {
         let v = self.get_vertex_mut(vid);
         match v.inner {
-            VertexInner::Cmd {
+            VertexInner::Entry {
                 ref mut exe_st,
                 ref mut as_st,
                 ..
             } => {
-                if matches!(*exe_st, ExeState::Executing(_))
+                if matches!(*exe_st, ExeState::Executing)
                     && !matches!(*as_st, AsState::AfterSyncing)
                 {
                     *exe_st = ExeState::Executed(succeeded);
@@ -284,8 +285,8 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                 .vs
                 .remove(&vid)
                 .expect("no such vertex in conflict graph");
-            if let VertexInner::Cmd { ref cmd, .. } = v.inner {
-                assert!(self.cmd_vid.remove(cmd.id()).is_some(), "no such cmd");
+            if let VertexInner::Entry { ref entry, .. } = v.inner {
+                assert!(self.cmd_vid.remove(entry.cmd.id()).is_some(), "no such cmd");
             }
             self.update_successors(&v);
         }
@@ -305,7 +306,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
 
     /// Update the vertex, see if it can progress
     /// Return true if it can be removed
-    #[allow(clippy::expect_used)]
+    #[allow(clippy::expect_used, clippy::too_many_lines)] // TODO: split this function
     fn update_vertex(&mut self, vid: u64) -> bool {
         let v = self
             .vs
@@ -316,51 +317,52 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
             return false;
         }
         match v.inner {
-            VertexInner::Cmd {
-                ref cmd,
+            VertexInner::Entry {
+                ref entry,
                 ref mut exe_st,
                 ref mut as_st,
             } => match (*exe_st, as_st.clone()) {
                 (
-                    ExeState::ExecuteReady(index),
-                    AsState::NotSynced(prepare) | AsState::AfterSyncReady(_, prepare),
+                    ExeState::ExecuteReady,
+                    AsState::NotSynced(prepare) | AsState::AfterSyncReady(prepare),
                 ) => {
                     assert!(prepare.is_none(), "The prepare result of a given cmd can only be calculated when exe_state change from ExecuteReady to Executing");
-                    let prepare_err = match self.cmd_executor.prepare(cmd, index) {
-                        Ok(pre_res) => {
-                            as_st.set_prepare_result(pre_res);
-                            None
-                        }
-                        Err(err) => Some(err),
-                    };
-                    *exe_st = ExeState::Executing(index);
+                    let prepare_err =
+                        match self.cmd_executor.prepare(entry.cmd.as_ref(), entry.index) {
+                            Ok(pre_res) => {
+                                as_st.set_prepare_result(pre_res);
+                                None
+                            }
+                            Err(err) => Some(err),
+                        };
+                    *exe_st = ExeState::Executing;
                     let task = Task {
                         vid,
-                        inner: Cart::new(TaskType::SpecExe(Arc::clone(cmd), index, prepare_err)),
+                        inner: Cart::new(TaskType::SpecExe(Arc::clone(entry), prepare_err)),
                     };
                     if let Err(e) = self.filter_tx.send(task) {
                         error!("failed to send task through filter, {e}");
                     }
                     false
                 }
-                (ExeState::Executed(true), AsState::AfterSyncReady(index, prepare)) => {
+                (ExeState::Executed(true), AsState::AfterSyncReady(prepare)) => {
                     *as_st = AsState::AfterSyncing;
                     let Some(prepare) = prepare else {
                         unreachable!("prepare always exists when exe_state is Executed(true)");
                     };
                     let task = Task {
                         vid,
-                        inner: Cart::new(TaskType::AS(Arc::clone(cmd), index, prepare)),
+                        inner: Cart::new(TaskType::AS(Arc::clone(entry), prepare)),
                     };
                     if let Err(e) = self.filter_tx.send(task) {
                         error!("failed to send task through filter, {e}");
                     }
                     false
                 }
-                (ExeState::Executed(false), AsState::AfterSyncReady(_, _))
+                (ExeState::Executed(false), AsState::AfterSyncReady(_))
                 | (ExeState::Executed(_), AsState::AfterSynced) => true,
-                (ExeState::Executing(_) | ExeState::Executed(_), AsState::NotSynced(_))
-                | (ExeState::Executing(_), AsState::AfterSyncReady(_, _) | AsState::AfterSyncing)
+                (ExeState::Executing | ExeState::Executed(_), AsState::NotSynced(_))
+                | (ExeState::Executing, AsState::AfterSyncReady(_) | AsState::AfterSyncing)
                 | (ExeState::Executed(true), AsState::AfterSyncing) => false,
                 (exe_st, as_st) => {
                     unreachable!("no such exe and as state can be reached: {exe_st:?}, {as_st:?}")
@@ -419,31 +421,33 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
     fn handle_event(&mut self, event: CEEvent<C>) {
         debug!("new ce event: {event:?}");
         let vid = match event {
-            CEEvent::SpecExeReady(cmd, index) => {
+            CEEvent::SpecExeReady(entry) => {
                 let new_vid = self.next_vertex_id();
                 assert!(
-                    self.cmd_vid.insert(cmd.id().clone(), new_vid).is_none(),
+                    self.cmd_vid
+                        .insert(entry.cmd.id().clone(), new_vid)
+                        .is_none(),
                     "cannot insert a cmd twice"
                 );
                 let new_v = Vertex {
                     successors: HashSet::new(),
                     predecessor_cnt: 0,
-                    inner: VertexInner::Cmd {
-                        cmd,
-                        exe_st: ExeState::ExecuteReady(index),
+                    inner: VertexInner::Entry {
+                        exe_st: ExeState::ExecuteReady,
                         as_st: AsState::NotSynced(None),
+                        entry,
                     },
                 };
                 self.insert_new_vertex(new_vid, new_v);
                 new_vid
             }
-            CEEvent::ASReady(cmd, index) => {
-                if let Some(vid) = self.cmd_vid.get(cmd.id()).copied() {
+            CEEvent::ASReady(entry) => {
+                if let Some(vid) = self.cmd_vid.get(entry.cmd.id()).copied() {
                     let v = self.get_vertex_mut(vid);
                     match v.inner {
-                        VertexInner::Cmd { ref mut as_st, .. } => {
+                        VertexInner::Entry { ref mut as_st, .. } => {
                             if let AsState::NotSynced(ref mut prepare) = *as_st {
-                                *as_st = AsState::AfterSyncReady(index, prepare.take());
+                                *as_st = AsState::AfterSyncReady(prepare.take());
                             } else {
                                 unreachable!(
                                     "after sync state should be AsState::NotSynced but found {as_st:?}"
@@ -456,16 +460,18 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                 } else {
                     let new_vid = self.next_vertex_id();
                     assert!(
-                        self.cmd_vid.insert(cmd.id().clone(), new_vid).is_none(),
+                        self.cmd_vid
+                            .insert(entry.cmd.id().clone(), new_vid)
+                            .is_none(),
                         "cannot insert a cmd twice"
                     );
                     let new_v = Vertex {
                         successors: HashSet::new(),
                         predecessor_cnt: 0,
-                        inner: VertexInner::Cmd {
-                            cmd,
-                            exe_st: ExeState::ExecuteReady(index),
-                            as_st: AsState::AfterSyncReady(index, None),
+                        inner: VertexInner::Entry {
+                            exe_st: ExeState::ExecuteReady,
+                            as_st: AsState::AfterSyncReady(None),
+                            entry,
                         },
                     };
                     self.insert_new_vertex(new_vid, new_v);
