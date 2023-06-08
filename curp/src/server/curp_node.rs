@@ -388,11 +388,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
 
     /// Log persist task
     pub(super) async fn log_persist_task(
-        mut log_rx: mpsc::UnboundedReceiver<LogEntry<C>>,
+        mut log_rx: mpsc::UnboundedReceiver<Arc<LogEntry<C>>>,
         storage: Arc<dyn StorageApi<Command = C>>,
     ) {
         while let Some(e) = log_rx.recv().await {
-            if let Err(err) = storage.put_log_entry(e).await {
+            if let Err(err) = storage.put_log_entry(e.as_ref()).await {
                 error!("storage error, {err}");
             }
         }
@@ -511,7 +511,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         storage: Arc<impl StorageApi<Command = C> + 'static>,
         cluster_info: Arc<ClusterMember>,
         shutdown_trigger: Arc<Event>,
-        log_rx: tokio::sync::mpsc::UnboundedReceiver<LogEntry<C>>,
+        log_rx: tokio::sync::mpsc::UnboundedReceiver<Arc<LogEntry<C>>>,
     ) {
         let connects = rpc::connect(cluster_info.peers()).await;
         let election_task = tokio::spawn(Self::election_task(Arc::clone(&curp), connects.clone()));

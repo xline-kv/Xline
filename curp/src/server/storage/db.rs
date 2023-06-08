@@ -34,8 +34,8 @@ impl<C: 'static + Command> StorageApi for DB<C> {
         Ok(())
     }
 
-    async fn put_log_entry(&self, entry: LogEntry<Self::Command>) -> Result<(), StorageError> {
-        let bytes = bincode::serialize(&entry)?;
+    async fn put_log_entry(&self, entry: &LogEntry<Self::Command>) -> Result<(), StorageError> {
+        let bytes = bincode::serialize(entry)?;
         let op = WriteOperation::new_put(CF, entry.index.to_be_bytes().to_vec(), bytes);
         self.db.write_batch(vec![op], false)?;
 
@@ -110,9 +110,9 @@ mod tests {
             let entry0 = LogEntry::new(1, 3, Arc::new(TestCommand::default()));
             let entry1 = LogEntry::new(2, 3, Arc::new(TestCommand::default()));
             let entry2 = LogEntry::new(3, 3, Arc::new(TestCommand::default()));
-            s.put_log_entry(entry0).await?;
-            s.put_log_entry(entry1).await?;
-            s.put_log_entry(entry2).await?;
+            s.put_log_entry(&entry0).await?;
+            s.put_log_entry(&entry1).await?;
+            s.put_log_entry(&entry2).await?;
             sleep_secs(2).await;
         }
 

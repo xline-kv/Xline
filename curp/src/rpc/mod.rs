@@ -231,7 +231,7 @@ impl AppendEntriesRequest {
         leader_id: ServerId,
         prev_log_index: LogIndex,
         prev_log_term: u64,
-        entries: Vec<LogEntry<C>>,
+        entries: Vec<Arc<LogEntry<C>>>,
         leader_commit: LogIndex,
     ) -> bincode::Result<Self> {
         Ok(Self {

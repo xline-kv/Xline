@@ -25,7 +25,7 @@ pub(super) trait StorageApi: Send + Sync {
     async fn flush_voted_for(&self, term: u64, voted_for: ServerId) -> Result<(), StorageError>;
 
     /// Put log entries in storage
-    async fn put_log_entry(&self, entry: LogEntry<Self::Command>) -> Result<(), StorageError>;
+    async fn put_log_entry(&self, entry: &LogEntry<Self::Command>) -> Result<(), StorageError>;
 
     /// Recover from persisted storage
     /// Return `voted_for` and all log entries
