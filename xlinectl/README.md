@@ -156,6 +156,46 @@ foo2
 bar2
 ```
 
+### DELETE
+Deletes the key or a range of keys
+
+#### Usage
+
+```bash
+delete [options] <key> [range_end]
+```
+
+#### Options
+- prefix -- delete keys with matching prefix
+- prev_kv -- return deleted key-value pairs
+- from_key -- delete keys that are greater than or equal to the given key using byte compare
+
+#### Output
+
+```
+<number_of_keys_deleted>
+[prev_key]
+[prev_value]
+...
+```
+
+#### Examples
+
+```bash
+./xlinectl put foo bar
+# delete the key `foo`
+./xlinectl delete foo
+1
+
+./xlinectl put foo bar
+./xlinectl put foo1 bar1
+./xlinectl put foo2 bar2
+# delete all keys prefixed with `foo`
+./xlinectl delete foo --prefix
+3
+
+```
+
 ### TXN
 
 ### WATCH
