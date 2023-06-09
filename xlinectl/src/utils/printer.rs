@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use xlineapi::{KeyValue, PutResponse, RangeResponse, ResponseHeader};
+use xlineapi::{DeleteRangeResponse, KeyValue, PutResponse, RangeResponse, ResponseHeader};
 
 /// The global printer type config
 static PRINTER_TYPE: OnceLock<PrinterType> = OnceLock::new();
@@ -64,6 +64,25 @@ impl Printer for RangeResponse {
             FieldPrinter::kv(kv);
         }
         println!("more: {}, count: {}", self.more, self.count);
+    }
+}
+
+impl Printer for DeleteRangeResponse {
+    fn simple(&self) {
+        println!("{}", self.deleted);
+        for kv in &self.prev_kvs {
+            SimplePrinter::utf8(&kv.key);
+            SimplePrinter::utf8(&kv.value);
+        }
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        println!("kvs:");
+        for kv in &self.prev_kvs {
+            FieldPrinter::kv(kv);
+        }
+        println!("deleted: {}", self.deleted);
     }
 }
 
