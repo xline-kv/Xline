@@ -6,3 +6,5 @@ pub(crate) mod get;
 pub(crate) mod lease;
 /// Put command
 pub(crate) mod put;
+/// Snapshot command
+pub(crate) mod snapshot;
