@@ -203,14 +203,139 @@ delete [options] <key> [range_end]
 ### LEASE
 
 ### LEASE GRANT
+Create a lease with a given TTL
+
+#### Usage
+```bash
+grant <ttl>
+```
+
+#### Output
+
+```
+<lease_id>
+```
+
+#### Examples
+```bash
+# create a new lease with 100s TTL
+./xlinectl lease grant 100
+8927807922788821579
+```
 
 ### LEASE REVOKE
+Revoke a lease
+
+#### Usage
+
+```bash
+revoke <leaseId>
+```
+#### Output
+
+```
+Revoked
+```
+
+#### Examples
+```bash
+./xlinectl lease grant 100
+8927807922788821579
+# Revoke a lease with leaseId 123
+./xlinectl lease revoke 8927807922788821579
+Revoked
+```
 
 ### LEASE TIMETOLIVE
+Get lease ttl information
+
+#### Usage
+
+```bash
+timetolive <leaseId>
+```
+
+#### Output
+
+```
+<TTL>
+```
+
+#### Examples
+
+```bash
+./xlinectl lease grant 100
+8927807922788821579
+# Get the TTL of a lease with leaseId 123
+./xlinectl lease timetolive 8927807922788821579
+93
+```
 
 ### LEASE LIST
+List all active leases
+
+#### Usage
+
+```bash
+list
+```
+
+#### Output
+
+```
+<lease0>
+<lease1>
+...
+```
+
+#### Examples
+```bash
+./xlinectl lease grant 100
+8927807922788821579
+./xlinectl lease grant 100
+6334008358021467690
+
+# List all leases
+./xlinectl lease list
+8927807922788821579
+6334008358021467690
+```
 
 ### LEASE KEEP-ALIVE
+lease keep alive periodically
+
+#### Usage
+
+```bash
+keep_alive [options] <leaseId>
+```
+
+#### Options
+- once -- keep alive once
+
+#### Output
+
+```
+<TTL>
+```
+
+#### Examples
+
+```bash
+./xlinectl lease grant 100
+8927807922788821579
+# keep alive forever with leaseId 123 until the process receive `SIGINT`, each time print the TTL
+./xlinectl lease keep_alive 8927807922788821579
+100
+100
+...
+```
+
+```bash
+# renew the lease ttl only once
+./xlinectl lease keep_alive 123 --once
+100
+```
 
 ## Cluster maintenance commands
 
