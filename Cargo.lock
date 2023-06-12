@@ -3508,6 +3508,7 @@ dependencies = [
  "itertools",
  "thiserror",
  "tokio",
+ "tonic",
  "utils",
  "xline-client",
  "xlineapi",

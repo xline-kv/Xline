@@ -1,6 +1,9 @@
 use std::sync::OnceLock;
 
-use xlineapi::{DeleteRangeResponse, KeyValue, PutResponse, RangeResponse, ResponseHeader};
+use xlineapi::{
+    DeleteRangeResponse, KeyValue, LeaseGrantResponse, LeaseKeepAliveResponse, LeaseLeasesResponse,
+    LeaseRevokeResponse, LeaseTimeToLiveResponse, PutResponse, RangeResponse, ResponseHeader,
+};
 
 /// The global printer type config
 static PRINTER_TYPE: OnceLock<PrinterType> = OnceLock::new();
@@ -86,6 +89,72 @@ impl Printer for DeleteRangeResponse {
     }
 }
 
+impl Printer for LeaseGrantResponse {
+    fn simple(&self) {
+        println!("{}", self.id);
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        println!("lease id: {}, granted ttl: {}", self.id, self.ttl);
+    }
+}
+
+impl Printer for LeaseKeepAliveResponse {
+    fn simple(&self) {
+        println!("{}", self.ttl);
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        println!("lease id: {} keepalived with TTL: {}", self.id, self.ttl);
+    }
+}
+
+impl Printer for LeaseLeasesResponse {
+    fn simple(&self) {
+        for lease in &self.leases {
+            println!("{}", lease.id);
+        }
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        for lease in &self.leases {
+            println!("lease: {}", lease.id);
+        }
+    }
+}
+
+impl Printer for LeaseRevokeResponse {
+    fn simple(&self) {
+        println!("Revoked");
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        println!("Revoked");
+    }
+}
+
+impl Printer for LeaseTimeToLiveResponse {
+    fn simple(&self) {
+        println!("{}", self.ttl);
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        println!(
+            "lease id: {}, ttl: {}, granted_ttl: {}",
+            self.id, self.ttl, self.granted_ttl
+        );
+
+        for key in &self.keys {
+            FieldPrinter::key(key);
+        }
+    }
+}
+
 /// Simple Printer of common response types
 struct SimplePrinter;
 
@@ -99,6 +168,7 @@ impl SimplePrinter {
 /// Field Printer of common response types
 struct FieldPrinter;
 
+#[allow(dead_code)]
 impl FieldPrinter {
     /// Response header printer
     fn header(header: Option<&ResponseHeader>) {
@@ -108,6 +178,16 @@ impl FieldPrinter {
             "cluster_id: {}, member_id: {}, revision: {}, raft_term: {}",
             header.cluster_id, header.member_id, header.revision, header.raft_term
         );
+    }
+
+    /// Response key printer
+    pub(crate) fn key(key: &[u8]) {
+        println!("key: {}", String::from_utf8_lossy(key));
+    }
+
+    /// Response value printer
+    pub(crate) fn value(value: &[u8]) {
+        println!("value: {}", String::from_utf8_lossy(value));
     }
 
     /// Response key-value printer
