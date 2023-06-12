@@ -340,6 +340,30 @@ keep_alive [options] <leaseId>
 ## Cluster maintenance commands
 
 ### SNAPSHOT
+Get snapshots of xline nodes
+
+### SNAPSHOT SAVE
+Save snapshot to file
+
+#### Usage
+
+```bash
+snapshot save <filename>
+```
+
+#### Output
+
+```
+snapshot saved to: <filename>
+```
+
+#### Examples
+
+```bash
+# Save snapshot to /tmp/foo
+./xlinectl snapshot save /tmp/foo.snapshot
+snapshot saved to: /tmp/foo.snapshot
+```
 
 ## Concurrency commands
 
