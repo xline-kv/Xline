@@ -29,7 +29,7 @@ jobs:
           cd scripts
           cp ../target/release/{xline,benchmark} .
           cp ../target/x86_64-unknown-linux-gnu/release/lock_client .
-          cp ../xline/tests/{private,public}.pem .
+          cp ../xline-test-utils/{private,public}.pem .
           docker build . -t datenlord/xline:latest
           docker pull gcr.io/etcd-development/etcd:v3.5.5
           bash ./validation_test.sh

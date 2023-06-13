@@ -1,0 +1,25 @@
+[package]
+name = "xline-test-utils"
+version = "0.1.0"
+edition = "2021"
+authors = ["DatenLord <dev@datenlord.io>"]
+repository = "https://github.com/datenlord/Xline/tree/master/xline-test-utils"
+description = "Test utils for Xline"
+categories = ["Test"]
+keywords = ["Test", "Utils"]
+license = "Apache-2.0"
+readme = "README.md"
+
+[dependencies]
+curp = { path = "../curp" }
+xline = { path = "../xline" }
+utils = { path = "../utils", features = ["parking_lot"] }
+jsonwebtoken = "8.1.1"
+rand = "0.8.5"
+tokio = { version = "1.0", features = [
+    "rt-multi-thread",
+    "time",
+    "fs",
+    "macros",
+    "net",
+] }

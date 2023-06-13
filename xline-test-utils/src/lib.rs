@@ -33,7 +33,7 @@ pub struct Cluster {
 
 impl Cluster {
     /// New `Cluster`
-    pub(crate) async fn new(size: usize) -> Self {
+    pub async fn new(size: usize) -> Self {
         let mut listeners = BTreeMap::new();
         for i in 0..size {
             listeners.insert(i, TcpListener::bind("0.0.0.0:0").await.unwrap());
@@ -53,13 +53,12 @@ impl Cluster {
         }
     }
 
-    #[allow(dead_code)] // used in tests but get warning
-    pub(crate) fn set_paths(&mut self, paths: Vec<PathBuf>) {
+    pub fn set_paths(&mut self, paths: Vec<PathBuf>) {
         self.paths = paths;
     }
 
     /// Start `Cluster`
-    pub(crate) async fn start(&mut self) {
+    pub async fn start(&mut self) {
         let (stop_tx, _) = broadcast::channel(1);
 
         for i in 0..self.size {
@@ -74,7 +73,6 @@ impl Cluster {
                 self.paths.push(path.clone());
                 path
             };
-            #[allow(clippy::unwrap_used)]
             let db: Arc<DB> = DB::open(&StorageConfig::RocksDB(path.clone())).unwrap();
             let cluster_info = ClusterMember::new(self.all_members.clone(), name.clone());
             tokio::spawn(async move {
@@ -106,7 +104,7 @@ impl Cluster {
     }
 
     /// Create or get the client with the specified index
-    pub(crate) async fn client(&mut self) -> &mut Client {
+    pub async fn client(&mut self) -> &mut Client {
         if self.client.is_none() {
             let client = Client::new(self.all_members.clone(), true, ClientTimeout::default())
                 .await
@@ -118,7 +116,6 @@ impl Cluster {
         self.client.as_mut().unwrap()
     }
 
-    #[allow(dead_code)] // used in tests but get warning
     pub fn addrs(&self) -> &HashMap<ServerId, String> {
         &self.all_members
     }

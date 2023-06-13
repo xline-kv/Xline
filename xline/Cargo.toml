@@ -68,3 +68,4 @@ tonic-build = { version = "0.2", package = "madsim-tonic-build" }
 [dev-dependencies]
 mockall = "0.11.3"
 rand = "0.8.5"
+xline-test-utils = { path = "../xline-test-utils" }

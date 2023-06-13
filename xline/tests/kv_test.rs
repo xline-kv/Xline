@@ -1,5 +1,3 @@
-mod common;
-
 use std::{error::Error, time::Duration};
 
 use etcd_client::Client;
@@ -7,7 +5,7 @@ use xline::client::kv_types::{
     DeleteRangeRequest, PutRequest, RangeRequest, SortOrder, SortTarget,
 };
 
-use crate::common::Cluster;
+use xline_test_utils::Cluster;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 async fn test_kv_put() -> Result<(), Box<dyn Error>> {
