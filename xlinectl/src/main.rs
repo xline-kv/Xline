@@ -159,7 +159,7 @@ use ext_utils::config::ClientConfig;
 use xline_client::{Client, ClientOptions};
 
 use crate::{
-    command::{auth, delete, get, lease, put, role, snapshot, txn, user, watch},
+    command::{auth, delete, get, lease, lock, put, role, snapshot, txn, user, watch},
     utils::{
         parser::parse_user,
         printer::{set_printer_type, PrinterType},
@@ -240,6 +240,7 @@ fn cli() -> Command {
         .subcommand(role::command())
         .subcommand(txn::command())
         .subcommand(watch::command())
+        .subcommand(lock::command())
 }
 
 #[tokio::main]
@@ -268,6 +269,7 @@ async fn main() -> Result<()> {
     set_printer_type(printer_type);
 
     let mut client = Client::connect(endpoints, options).await?;
-    handle_matches!(matches, client, { get, put, delete, txn, lease, snapshot, auth, user, role, watch });
+    handle_matches!(matches, client, { get, put, delete, txn, lease, snapshot, auth, user, role, watch, lock });
+
     Ok(())
 }

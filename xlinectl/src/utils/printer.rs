@@ -7,8 +7,8 @@ use xlineapi::{
     AuthUserChangePasswordResponse, AuthUserDeleteResponse, AuthUserGetResponse,
     AuthUserGrantRoleResponse, AuthUserListResponse, AuthUserRevokeRoleResponse,
     DeleteRangeResponse, KeyValue, LeaseGrantResponse, LeaseKeepAliveResponse, LeaseLeasesResponse,
-    LeaseRevokeResponse, LeaseTimeToLiveResponse, PutResponse, RangeResponse, ResponseHeader,
-    TxnResponse, WatchResponse,
+    LeaseRevokeResponse, LeaseTimeToLiveResponse, LockResponse, PutResponse, RangeResponse,
+    ResponseHeader, TxnResponse, WatchResponse,
 };
 
 /// The global printer type config
@@ -463,6 +463,17 @@ fn event_type(event: i32) -> String {
         _ => "UNKNOWN",
     }
     .to_owned()
+}
+
+impl Printer for LockResponse {
+    fn simple(&self) {
+        SimplePrinter::utf8(&self.key);
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        FieldPrinter::key(&self.key);
+    }
 }
 
 /// Simple Printer of common response types

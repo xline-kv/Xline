@@ -6,6 +6,8 @@ pub(crate) mod delete;
 pub(crate) mod get;
 /// Lease command
 pub(crate) mod lease;
+/// Lock command
+pub(crate) mod lock;
 /// Put command
 pub(crate) mod put;
 /// Role command

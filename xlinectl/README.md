@@ -492,7 +492,20 @@ snapshot saved to: /tmp/foo.snapshot
 ## Concurrency commands
 
 ### LOCK
+Acquire a lock, which will return a unique key that exists so long as the lock is held.
 
+#### Usage
+
+```bash
+lock <lockname>
+```
+
+#### Examples
+
+```bash
+# Hold a lock named foo until `SIGINT` is received
+./xlinectl lock foo
+```
 ## Authentication commands
 
 ### AUTH

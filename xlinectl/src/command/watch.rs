@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn valid() {
-        let testcases = vec![
+        let test_cases = vec![
             TestCase::new(
                 vec!["watch", "key1", "key11"],
                 Some(WatchRequest::new("key1").with_range_end("key11")),
@@ -212,7 +212,7 @@ mod tests {
             ),
         ];
 
-        for case in testcases {
+        for case in test_cases {
             case.run_test();
         }
     }
