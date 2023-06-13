@@ -1,8 +1,9 @@
 use std::sync::OnceLock;
 
 use xlineapi::{
-    DeleteRangeResponse, KeyValue, LeaseGrantResponse, LeaseKeepAliveResponse, LeaseLeasesResponse,
-    LeaseRevokeResponse, LeaseTimeToLiveResponse, PutResponse, RangeResponse, ResponseHeader,
+    AuthDisableResponse, AuthEnableResponse, AuthStatusResponse, DeleteRangeResponse, KeyValue,
+    LeaseGrantResponse, LeaseKeepAliveResponse, LeaseLeasesResponse, LeaseRevokeResponse,
+    LeaseTimeToLiveResponse, PutResponse, RangeResponse, ResponseHeader,
 };
 
 /// The global printer type config
@@ -152,6 +153,45 @@ impl Printer for LeaseTimeToLiveResponse {
         for key in &self.keys {
             FieldPrinter::key(key);
         }
+    }
+}
+
+impl Printer for AuthEnableResponse {
+    fn simple(&self) {
+        println!("Authentication enabled");
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        println!("Authentication enabled");
+    }
+}
+
+impl Printer for AuthDisableResponse {
+    fn simple(&self) {
+        println!("Authentication disabled");
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        println!("Authentication disabled");
+    }
+}
+
+impl Printer for AuthStatusResponse {
+    fn simple(&self) {
+        println!(
+            "enabled: {}, revision: {}",
+            self.enabled, self.auth_revision
+        );
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        println!(
+            "enabled: {}, revision: {}",
+            self.enabled, self.auth_revision
+        );
     }
 }
 

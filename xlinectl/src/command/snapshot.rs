@@ -1,6 +1,4 @@
-use std::fs::File;
-use std::io::Write;
-use std::path::PathBuf;
+use std::{fs::File, io::Write, path::PathBuf};
 
 use clap::{arg, ArgMatches, Command};
 use xline_client::{error::Result, Client};

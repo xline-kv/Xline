@@ -372,6 +372,68 @@ snapshot saved to: /tmp/foo.snapshot
 ## Authentication commands
 
 ### AUTH
+Manage authentication
+
+### AUTH ENABLE
+Enable authentication
+
+#### Usage
+
+```bash
+auth enable
+```
+
+#### Output
+
+```
+Authentication enabled
+```
+
+#### Examples
+```bash
+./xlinectl user add root rootpw
+./xlienctl user grant-role root root
+# Enable authentication
+./xlinectl auth enable
+Authentication enabled
+```
+
+### AUTH DISABLE
+Disable authentication
+
+#### Usage
+
+```bash
+auth disable
+```
+
+#### Output
+
+```
+Authentication disabled
+```
+
+#### Examples
+```bash
+# Disable authentication
+./xlinectl --user root:root auth disable
+Authentication disabled
+```
+
+### AUTH STATUS
+Status of authentication
+
+#### Usage
+
+```bash
+auth status
+```
+
+#### Examples
+```bash
+# Check the status of authentication
+./xlinectl auth status
+```
 
 ### ROLE
 
