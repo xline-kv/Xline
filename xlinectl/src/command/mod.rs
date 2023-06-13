@@ -10,3 +10,5 @@ pub(crate) mod lease;
 pub(crate) mod put;
 /// Snapshot command
 pub(crate) mod snapshot;
+/// User command
+pub(crate) mod user;

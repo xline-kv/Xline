@@ -1,9 +1,12 @@
 use std::sync::OnceLock;
 
 use xlineapi::{
-    AuthDisableResponse, AuthEnableResponse, AuthStatusResponse, DeleteRangeResponse, KeyValue,
-    LeaseGrantResponse, LeaseKeepAliveResponse, LeaseLeasesResponse, LeaseRevokeResponse,
-    LeaseTimeToLiveResponse, PutResponse, RangeResponse, ResponseHeader,
+    AuthDisableResponse, AuthEnableResponse, AuthRoleGetResponse, AuthStatusResponse,
+    AuthUserAddResponse, AuthUserChangePasswordResponse, AuthUserDeleteResponse,
+    AuthUserGetResponse, AuthUserGrantRoleResponse, AuthUserListResponse,
+    AuthUserRevokeRoleResponse, DeleteRangeResponse, KeyValue, LeaseGrantResponse,
+    LeaseKeepAliveResponse, LeaseLeasesResponse, LeaseRevokeResponse, LeaseTimeToLiveResponse,
+    PutResponse, RangeResponse, ResponseHeader,
 };
 
 /// The global printer type config
@@ -195,6 +198,106 @@ impl Printer for AuthStatusResponse {
     }
 }
 
+impl Printer for AuthUserAddResponse {
+    fn simple(&self) {
+        println!("User added");
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        println!("User added");
+    }
+}
+
+impl Printer for AuthUserDeleteResponse {
+    fn simple(&self) {
+        println!("User deleted");
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        println!("User deleted");
+    }
+}
+
+impl Printer for AuthUserGetResponse {
+    fn simple(&self) {
+        for role in &self.roles {
+            println!("{role}");
+        }
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        println!("Roles: ");
+        for role in &self.roles {
+            print!("{role}");
+        }
+    }
+}
+
+impl Printer for AuthRoleGetResponse {
+    fn simple(&self) {}
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        for perm in &self.perm {
+            println!("perm type: {}", perm.perm_type);
+            FieldPrinter::key(&perm.key);
+            FieldPrinter::range_end(&perm.range_end);
+        }
+    }
+}
+
+impl Printer for AuthUserGrantRoleResponse {
+    fn simple(&self) {
+        println!("Role granted");
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        println!("Role granted");
+    }
+}
+
+impl Printer for AuthUserListResponse {
+    fn simple(&self) {
+        for user in &self.users {
+            println!("{user}");
+        }
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        println!("Users:");
+        for user in &self.users {
+            println!("{user}");
+        }
+    }
+}
+
+impl Printer for AuthUserChangePasswordResponse {
+    fn simple(&self) {
+        println!("Password updated");
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        println!("Password updated");
+    }
+}
+
+impl Printer for AuthUserRevokeRoleResponse {
+    fn simple(&self) {
+        println!("Role revoked");
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        println!("Role revoked");
+    }
+}
+
 /// Simple Printer of common response types
 struct SimplePrinter;
 
@@ -222,6 +325,11 @@ impl FieldPrinter {
     /// Response key printer
     pub(crate) fn key(key: &[u8]) {
         println!("key: {}", String::from_utf8_lossy(key));
+    }
+
+    /// Response key printer
+    pub(crate) fn range_end(range_end: &[u8]) {
+        println!("range_end: {}", String::from_utf8_lossy(range_end));
     }
 
     #[allow(dead_code)]
