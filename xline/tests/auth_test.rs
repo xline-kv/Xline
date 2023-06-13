@@ -1,11 +1,9 @@
-mod common;
-
 use std::error::Error;
 
 use etcd_client::{AuthClient, ConnectOptions, GetOptions, Permission, PermissionType};
 use xline::client::kv_types::{PutRequest, RangeRequest};
 
-use crate::common::Cluster;
+use xline_test_utils::Cluster;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 async fn test_auth_empty_user_get() -> Result<(), Box<dyn Error>> {

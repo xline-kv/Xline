@@ -1,13 +1,11 @@
 use std::{path::PathBuf, time::Duration};
 
-use common::Cluster;
 use tokio::io::AsyncWriteExt;
 use xline::client::{
     kv_types::{PutRequest, RangeRequest},
     restore::restore,
 };
-
-mod common;
+use xline_test_utils::Cluster;
 
 #[tokio::test]
 async fn test_snapshot_and_restore() -> Result<(), Box<dyn std::error::Error>> {

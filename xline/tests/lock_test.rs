@@ -1,10 +1,8 @@
-mod common;
-
 use std::{error::Error, time::Duration};
 
-use common::Cluster;
 use etcd_client::LockOptions;
 use tokio::time::{self, timeout};
+use xline_test_utils::Cluster;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 async fn test_lock() -> Result<(), Box<dyn Error>> {

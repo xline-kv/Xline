@@ -33,7 +33,7 @@ cd scripts
 cp ../target/release/xline .
 cp ../target/release/benchmark .
 cp ../target/x86_64-unknown-linux-gnu/release/lock_client .
-cp ../xline/tests/{private,public}.pem .
+cp ../xline-test-utils/{private,public}.pem .
 
 # you may need to add sudo before the command to make it work
 docker build . -t datenlord/xline:latest

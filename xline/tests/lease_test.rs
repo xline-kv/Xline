@@ -1,11 +1,9 @@
-mod common;
-
 use std::{error::Error, time::Duration};
 
 use tracing::info;
 use xline::client::kv_types::{LeaseGrantRequest, PutRequest, RangeRequest};
 
-use crate::common::Cluster;
+use xline_test_utils::Cluster;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 async fn test_lease_expired() -> Result<(), Box<dyn Error>> {

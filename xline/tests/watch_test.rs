@@ -1,11 +1,9 @@
-mod common;
-
 use std::error::Error;
 
 use etcd_client::EventType;
 use xline::client::kv_types::{DeleteRangeRequest, PutRequest};
 
-use crate::common::Cluster;
+use xline_test_utils::Cluster;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 async fn test_watch() -> Result<(), Box<dyn Error>> {
