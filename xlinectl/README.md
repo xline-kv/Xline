@@ -452,15 +452,162 @@ auth status
 ### USER
 
 ### USER ADD
+Add a new user
+
+#### Usage
+
+```bash
+add [options] <name> [password]
+```
+
+#### Options
+- no_password -- Create without password
+
+#### Output
+
+```
+User added
+```
+
+#### Examples
+```bash
+# Add a new user with a specified password
+./xlinectl --user=root:root user add foo bar
+User added
+
+# Add a new user without a password
+./xlinectl --user=root:root user add foo1 --no_password
+User added
+```
 
 ### USER GET
+Get a new user
 
-### USER DELETE
+#### Usage
+
+```bash
+get [options] <name>
+```
+
+#### Options
+- detail -- Show permissions of roles granted to the user
+
+#### Output
+
+```
+<role0>
+<role1>
+...
+```
+
+#### Examples
+```bash
+./etcdctl --user=root:root user grant_role foo role0
+./etcdctl --user=root:root user grant_role foo role1
+# Get a user named `foo`
+./xlinectl --user=root:root user get foo
+role0
+role1
+```
 
 ### USER LIST
+List all users
+
+#### Usage
+
+```bash
+list
+```
+
+#### Output
+
+```
+<user0>
+<user1>
+...
+```
+
+#### Examples
+```bash
+./xlinectl --user=root:root user add foo bar
+./xlinectl --user=root:root user add foo1 bar1
+# List all users
+./xlinectl --user=root:root user list
+foo
+foo1
+```
 
 ### USER PASSWD
+Change the password of a user
+
+#### Usage
+
+```bash
+passwd <name> <password>
+```
+
+#### Output
+
+```
+Password updated
+```
+
+#### Examples
+
+```bash
+# Change the password of user `foo` to `bar`
+./xlinectl --user=root:root user passwd foo bar
+Password updated
+```
 
 ### USER GRANT-ROLE
+Grant role to a user
+
+#### Usage
+
+```bash
+grant_role <name> <role>
+```
+
+#### Output
+
+```
+Role granted
+```
+
+#### Examples
+
+```bash
+./xlinectl --user=root:root user add foo
+./xlinectl --user=root:root role add bar
+# Grant `bar` role to the user `foo`
+./xlinectl --user=root:root grant_role foo bar
+Role granted
+```
 
 ### USER REVOKE-ROLE
+Revoke role from a user
+
+#### Usage
+
+```bash
+revoke_role <name> <role>
+```
+
+#### Output
+
+```
+Role revoked
+```
+
+#### Examples
+
+```bash
+./xlinectl --user=root:root user add foo
+./xlinectl --user=root:root role add bar
+./xlinectl --user=root:root grant_role foo bar
+
+# Revoke 'bar' role from the user 'foo'
+./xlinectl --user=root:root revoke_role foo bar
+Role revoked
+```

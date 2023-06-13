@@ -36,7 +36,7 @@ impl From<AuthenticateRequest> for xlineapi::AuthenticateRequest {
 }
 
 /// Request for `Authenticate`
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct AuthUserAddRequest {
     /// Inner request
     pub(crate) inner: xlineapi::AuthUserAddRequest,
@@ -73,7 +73,7 @@ impl From<AuthUserAddRequest> for xlineapi::AuthUserAddRequest {
 }
 
 /// Request for `AuthUserGet`
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct AuthUserGetRequest {
     /// Inner request
     pub(crate) inner: xlineapi::AuthUserGetRequest,
@@ -99,7 +99,7 @@ impl From<AuthUserGetRequest> for xlineapi::AuthUserGetRequest {
 }
 
 /// Request for `AuthUserDelete`
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct AuthUserDeleteRequest {
     /// Inner request
     pub(crate) inner: xlineapi::AuthUserDeleteRequest,
@@ -125,7 +125,7 @@ impl From<AuthUserDeleteRequest> for xlineapi::AuthUserDeleteRequest {
 }
 
 /// Request for `AuthUserChangePassword`
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct AuthUserChangePasswordRequest {
     /// Inner request
     pub(crate) inner: xlineapi::AuthUserChangePasswordRequest,
@@ -153,7 +153,7 @@ impl From<AuthUserChangePasswordRequest> for xlineapi::AuthUserChangePasswordReq
 }
 
 /// Request for `AuthUserGrantRole`
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct AuthUserGrantRoleRequest {
     /// Inner request
     pub(crate) inner: xlineapi::AuthUserGrantRoleRequest,
@@ -183,7 +183,7 @@ impl From<AuthUserGrantRoleRequest> for xlineapi::AuthUserGrantRoleRequest {
 }
 
 /// Request for `AuthUserRevokeRole`
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct AuthUserRevokeRoleRequest {
     /// Inner request
     pub(crate) inner: xlineapi::AuthUserRevokeRoleRequest,
