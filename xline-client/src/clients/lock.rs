@@ -378,7 +378,6 @@ struct LockFuture<'a> {
     /// The inner lock future
     lock_inner: Pin<&'a mut (dyn Future<Output = Result<LockResponse>> + Send)>,
 }
-
 impl std::fmt::Debug for LockFuture<'_> {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

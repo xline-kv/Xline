@@ -2,7 +2,7 @@
 const DEFAULT_SESSION_TTL: i64 = 60;
 
 /// Request for `Lock`
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct LockRequest {
     /// The inner request
     pub(crate) inner: xlineapi::LockRequest,
