@@ -1,3 +1,5 @@
+/// Auth command
+pub(crate) mod auth;
 /// Delete command
 pub(crate) mod delete;
 /// Get command
