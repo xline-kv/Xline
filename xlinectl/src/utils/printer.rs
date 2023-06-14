@@ -1,12 +1,13 @@
 use std::sync::OnceLock;
 
 use xlineapi::{
-    AuthDisableResponse, AuthEnableResponse, AuthRoleGetResponse, AuthStatusResponse,
-    AuthUserAddResponse, AuthUserChangePasswordResponse, AuthUserDeleteResponse,
-    AuthUserGetResponse, AuthUserGrantRoleResponse, AuthUserListResponse,
-    AuthUserRevokeRoleResponse, DeleteRangeResponse, KeyValue, LeaseGrantResponse,
-    LeaseKeepAliveResponse, LeaseLeasesResponse, LeaseRevokeResponse, LeaseTimeToLiveResponse,
-    PutResponse, RangeResponse, ResponseHeader,
+    AuthDisableResponse, AuthEnableResponse, AuthRoleAddResponse, AuthRoleDeleteResponse,
+    AuthRoleGetResponse, AuthRoleGrantPermissionResponse, AuthRoleListResponse,
+    AuthRoleRevokePermissionResponse, AuthStatusResponse, AuthUserAddResponse,
+    AuthUserChangePasswordResponse, AuthUserDeleteResponse, AuthUserGetResponse,
+    AuthUserGrantRoleResponse, AuthUserListResponse, AuthUserRevokeRoleResponse,
+    DeleteRangeResponse, KeyValue, LeaseGrantResponse, LeaseKeepAliveResponse, LeaseLeasesResponse,
+    LeaseRevokeResponse, LeaseTimeToLiveResponse, PutResponse, RangeResponse, ResponseHeader,
 };
 
 /// The global printer type config
@@ -237,16 +238,37 @@ impl Printer for AuthUserGetResponse {
 }
 
 impl Printer for AuthRoleGetResponse {
-    fn simple(&self) {}
+    fn simple(&self) {
+        for perm in &self.perm {
+            println!("Permission: {}", perm_type(perm.perm_type));
+            SimplePrinter::utf8(&perm.key);
+            if !perm.range_end.is_empty() {
+                SimplePrinter::utf8(&perm.range_end);
+            }
+        }
+    }
 
     fn field(&self) {
         FieldPrinter::header(self.header.as_ref());
         for perm in &self.perm {
-            println!("perm type: {}", perm.perm_type);
+            println!("perm type: {}", perm_type(perm.perm_type));
             FieldPrinter::key(&perm.key);
-            FieldPrinter::range_end(&perm.range_end);
+            if !perm.range_end.is_empty() {
+                FieldPrinter::range_end(&perm.range_end);
+            }
         }
     }
+}
+
+/// Convert perm type to string
+fn perm_type(perm: i32) -> String {
+    match perm {
+        0 => "Read",
+        1 => "Write",
+        2 => "ReadWrite",
+        _ => "Unknown",
+    }
+    .to_owned()
 }
 
 impl Printer for AuthUserGrantRoleResponse {
@@ -295,6 +317,65 @@ impl Printer for AuthUserRevokeRoleResponse {
     fn field(&self) {
         FieldPrinter::header(self.header.as_ref());
         println!("Role revoked");
+    }
+}
+
+impl Printer for AuthRoleAddResponse {
+    fn simple(&self) {
+        println!("Role added");
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        println!("Role added");
+    }
+}
+
+impl Printer for AuthRoleDeleteResponse {
+    fn simple(&self) {
+        println!("Role deleted");
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        println!("Role deleted");
+    }
+}
+
+impl Printer for AuthRoleGrantPermissionResponse {
+    fn simple(&self) {
+        println!("Permission granted");
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        println!("Permission granted");
+    }
+}
+
+impl Printer for AuthRoleListResponse {
+    fn simple(&self) {
+        for role in &self.roles {
+            println!("{role}");
+        }
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        for role in &self.roles {
+            println!("{role}");
+        }
+    }
+}
+
+impl Printer for AuthRoleRevokePermissionResponse {
+    fn simple(&self) {
+        println!("Permission revoked");
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        println!("Permission revoked");
     }
 }
 

@@ -436,18 +436,165 @@ auth status
 ```
 
 ### ROLE
+Role related commands
 
 ### ROLE ADD
+Create a new role
+
+#### Usage
+
+```bash
+add <name>
+```
+
+#### Output
+
+```
+Role added
+```
+
+#### Examples
+
+```bash
+# add a new role named 'foo'
+./xlinectl --user=root:root role add foo
+Role added
+```
 
 ### ROLE GET
+List role information
+
+#### Usage
+
+```bash
+get <name>
+```
+
+#### Output
+
+```
+Permmision: <perm_type0>
+<key0>
+[range_end0]
+Permmision: <perm_type1>
+<key1>
+[range_end1]
+...
+```
+
+#### Examples
+
+```bash
+./xlinectl --user=root:root grant_perm foo Read key
+./xlinectl --user=root:root grant_perm foo ReadWrite key1
+# Get role named 'foo'
+./xlinectl --user=root:root role get foo
+Permission: Read
+key
+Permission: Read
+key1
+```
 
 ### ROLE DELETE
+Delete a role
+
+#### Usage
+
+```bash
+delete <name>
+```
+
+#### Output
+
+```
+Role deleted
+```
+
+#### Examples
+```bash
+./xlinectl --user=root:root role add foo
+# delete the role named `foo`
+./xlinectl --user=root:root role delete foo
+Role deleted
+```
 
 ### ROLE LIST
+List all roles
+
+#### Usage
+
+```bash
+list
+```
+
+#### Output
+
+```
+<role0>
+<role1>
+...
+```
+
+#### Examples
+
+```bash
+./xlinectl --user=root:root role add foo
+./xlinectl --user=root:root role add foo1
+# list all roles
+./xlinectl --user=root:root role list
+foo
+foo1
+```
 
 ### ROLE GRANT-PERMISSION
+Grant permission to a role, including Read, Write or ReadWrite
+
+#### Usage
+
+```bash
+grant_perm [options] <name> <perm_type> <key> [range_end]
+```
+
+#### Options
+- prefix -- Get keys with matching prefix
+- from_key -- Get keys that are greater than or equal to the given key using byte compare (conflicts with `range_end`)
+
+#### Output
+
+```
+Permission granted
+```
+
+#### Examples
+
+```bash
+# Grant read permission to role 'foo' for key 'bar' with read permission
+./xlinectl --user=root:root role grant_perm foo READ bar
+Permission granted
+```
 
 ### ROLE REVOKE-PERMISSION
+Revoke permission from a role
+
+#### Usage
+
+```bash
+revoke_perm <name> <key> [range_end]
+```
+
+#### Output
+
+```
+Permission revoked
+```
+
+#### Examples
+
+```bash
+# Revoke permission from role 'foo' for the range from 'bar' to 'bar2'
+./xlinectl --user=root:root role revoke_perm foo bar bar2
+Permission revoked
+```
 
 ### USER
 
@@ -502,8 +649,8 @@ get [options] <name>
 
 #### Examples
 ```bash
-./etcdctl --user=root:root user grant_role foo role0
-./etcdctl --user=root:root user grant_role foo role1
+./xlinectl --user=root:root user grant_role foo role0
+./xlinectl --user=root:root user grant_role foo role1
 # Get a user named `foo`
 ./xlinectl --user=root:root user get foo
 role0
