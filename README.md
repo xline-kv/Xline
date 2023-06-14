@@ -74,7 +74,7 @@ multi-cluster environment.
 
 ## Quick Start
 
-Read the document [QUICK_START.md](./QUICK_START.md) for more details.
+Read the document [QUICK_START.md](doc/quick-start/README.md) for more details.
 
 ## Contribute Guide
 
