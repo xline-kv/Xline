@@ -213,7 +213,7 @@ impl From<AuthUserRevokeRoleRequest> for xlineapi::AuthUserRevokeRoleRequest {
 }
 
 /// Request for `AuthRoleAdd`
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct AuthRoleAddRequest {
     /// Inner request
     pub(crate) inner: xlineapi::AuthRoleAddRequest,
@@ -239,7 +239,7 @@ impl From<AuthRoleAddRequest> for xlineapi::AuthRoleAddRequest {
 }
 
 /// Request for `AuthRoleGet`
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct AuthRoleGetRequest {
     /// Inner request
     pub(crate) inner: xlineapi::AuthRoleGetRequest,
@@ -265,7 +265,7 @@ impl From<AuthRoleGetRequest> for xlineapi::AuthRoleGetRequest {
 }
 
 /// Request for `AuthRoleDelete`
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct AuthRoleDeleteRequest {
     /// Inner request
     pub(crate) inner: xlineapi::AuthRoleDeleteRequest,
@@ -291,7 +291,7 @@ impl From<AuthRoleDeleteRequest> for xlineapi::AuthRoleDeleteRequest {
 }
 
 /// Request for `AuthRoleGrantPermission`
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct AuthRoleGrantPermissionRequest {
     /// Inner request
     pub(crate) inner: xlineapi::AuthRoleGrantPermissionRequest,
@@ -321,7 +321,7 @@ impl From<AuthRoleGrantPermissionRequest> for xlineapi::AuthRoleGrantPermissionR
 }
 
 /// Request for `AuthRoleRevokePermission`
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct AuthRoleRevokePermissionRequest {
     /// Inner request
     pub(crate) inner: xlineapi::AuthRoleRevokePermissionRequest,

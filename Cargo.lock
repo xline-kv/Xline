@@ -3513,6 +3513,7 @@ dependencies = [
  "tokio",
  "tonic",
  "utils",
+ "xline",
  "xline-client",
  "xlineapi",
 ]
