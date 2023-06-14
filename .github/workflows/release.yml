@@ -48,12 +48,26 @@ jobs:
           asset_path: ./target/release/xline
           asset_name: xline-linux-amd64
           asset_content_type: application/octet-stream
-
-      - name: Close the Relevant Milestone
-        id: close-milestone
-        uses: adlerhsieh/prepare-release@0.1.2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO_OWNER: 'datenlord'
-          REPO: 'Xline'
-          IGNORE_MILESTONE_NOT_FOUND: false
+      - run: |
+          mv ./target/release/xline ./scripts
+          mv ./target/release/benchmark ./scripts
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+      - name: Login to DockerHub
+        uses: docker/login-action@v1
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Generate App Version
+        run: echo APP_VERSION=`git describe --tags --always` >> $GITHUB_ENV
+      - name: Build and push
+        id: docker_build
+        uses: docker/build-push-action@v2
+        with:
+          push: true
+          context: ./scripts
+          tags: |
+            datenlord/xline:latest
+            datenlord/xline:${{ env.APP_VERSION }}
