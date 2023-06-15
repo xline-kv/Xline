@@ -87,9 +87,6 @@ git clone https://github.com/datenlord/Xline
 # compile Xline
 cd Xline
 cargo build --release
-
-# compile lock client for validation
-RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --bin lock_client
 ```
 
 # Directory Structure
