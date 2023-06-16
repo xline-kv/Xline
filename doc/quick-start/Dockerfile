@@ -14,10 +14,11 @@ FROM debian:bullseye-slim
 
 RUN set -eux && \
   apt-get update && \
-  apt-get install -y iproute2 iputils-ping && \
+  apt-get install -y iproute2 iputils-ping procps && \
   rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/target/release/xline /usr/local/bin
 COPY --from=builder /build/target/release/benchmark /usr/local/bin
+COPY --from=builder /build/target/release/lock_client /usr/local/bin
 
 CMD ["/usr/local/bin/xline"]
