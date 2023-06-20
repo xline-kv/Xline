@@ -4,7 +4,7 @@ on:
   workflow_dispatch: {}
 
 env:
-  CI_RUST_TOOLCHAIN: 1.67.1
+  CI_RUST_TOOLCHAIN: 1.70.0
 
 jobs:
   docker:
