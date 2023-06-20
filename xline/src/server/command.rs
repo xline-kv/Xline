@@ -89,7 +89,10 @@ impl KeyRange {
     #[inline]
     pub fn new_one_key(key: impl Into<Vec<u8>>) -> Self {
         let key_vec = key.into();
-        assert!(key_vec.as_slice() != UNBOUNDED);
+        assert!(
+            key_vec.as_slice() != UNBOUNDED,
+            "Unbounded key is not allowed: {key_vec:?}",
+        );
         Self {
             key: Bound::Included(key_vec.clone()),
             range_end: Bound::Included(key_vec),

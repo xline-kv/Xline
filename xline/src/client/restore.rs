@@ -14,9 +14,9 @@ use crate::{server::MAINTENANCE_SNAPSHOT_CHUNK_SIZE, storage::db::XLINE_TABLES};
 /// return `ClientError::EngineError` if meet engine errors
 #[inline]
 #[allow(clippy::indexing_slicing)] // safe operation
-pub async fn restore(
-    snapshot_path: impl AsRef<Path>,
-    data_dir: impl Into<PathBuf>,
+pub async fn restore<P: AsRef<Path>, D: Into<PathBuf>>(
+    snapshot_path: P,
+    data_dir: D,
 ) -> Result<(), ClientError> {
     let mut snapshot_f = tokio::fs::File::open(snapshot_path).await?;
     let tmp_path = format!("/tmp/snapshot-{}", uuid::Uuid::new_v4());

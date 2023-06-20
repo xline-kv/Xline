@@ -222,10 +222,13 @@ impl IndexOperate for Index {
                 .unzip(),
         };
         if !keys.is_empty() {
-            assert!(inner
-                .unavailable_cache
-                .insert(revision, keys.clone())
-                .is_none());
+            assert!(
+                inner
+                    .unavailable_cache
+                    .insert(revision, keys.clone())
+                    .is_none(),
+                "revision {revision} is already in the unavailable cache",
+            );
         }
         (pairs, keys)
     }

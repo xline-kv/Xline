@@ -262,7 +262,10 @@ impl WatcherMap {
                 watch_ids.is_empty()
             };
             if is_empty {
-                assert!(self.index.remove(key_range).is_some());
+                assert!(
+                    self.index.remove(key_range).is_some(),
+                    "watch_ids should exist"
+                );
             }
         } else {
             self.victims = self
