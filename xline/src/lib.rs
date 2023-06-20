@@ -119,7 +119,17 @@
     clippy::unnecessary_safety_comment,
     clippy::unnecessary_safety_doc,
     clippy::unused_peekable,
-    clippy::unused_rounding
+    clippy::unused_rounding,
+
+    // The followings are selected restriction lints from rust 1.68.0 to 1.70.0
+    // clippy::allow_attributes, still unstable
+    clippy::impl_trait_in_params,
+    clippy::let_underscore_untyped,
+    clippy::missing_assert_message,
+    clippy::multiple_unsafe_ops_per_block,
+    clippy::semicolon_inside_block,
+    // clippy::semicolon_outside_block, already used `semicolon_inside_block`
+    clippy::tests_outside_test_module
 )]
 #![allow(
     clippy::panic, // allow debug_assert, panic in production code
