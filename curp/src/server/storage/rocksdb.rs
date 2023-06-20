@@ -89,11 +89,11 @@ mod tests {
     use tokio::fs::remove_dir_all;
 
     use super::*;
-    use curp_test_utils::{random_id, sleep_secs, test_cmd::TestCommand};
+    use curp_test_utils::{sleep_secs, test_cmd::TestCommand};
 
     #[tokio::test]
     async fn create_and_recover() -> Result<(), Box<dyn Error>> {
-        let db_dir = format!("/tmp/curp-{}", random_id());
+        let db_dir = tempfile::tempdir().unwrap().into_path();
 
         {
             let s = RocksDBStorage::<TestCommand>::new(&db_dir)?;

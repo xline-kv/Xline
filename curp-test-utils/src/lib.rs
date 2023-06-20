@@ -74,11 +74,3 @@ pub async fn sleep_millis(n: u64) {
 pub async fn sleep_secs(n: u64) {
     tokio::time::sleep(Duration::from_secs(n)).await;
 }
-
-pub fn random_id() -> String {
-    thread_rng()
-        .sample_iter(&Alphanumeric)
-        .take(8)
-        .map(char::from)
-        .collect()
-}
