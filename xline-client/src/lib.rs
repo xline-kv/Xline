@@ -387,7 +387,7 @@ where
     #[inline]
     fn call(&mut self, mut request: Request<Body>) -> Self::Future {
         if let Some(token) = self.token.as_ref() {
-            let _ = request
+            let _: Option<HeaderValue> = request
                 .headers_mut()
                 .insert(AUTHORIZATION, token.as_ref().clone());
         }

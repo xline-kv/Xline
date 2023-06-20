@@ -144,7 +144,7 @@ impl<C: Command> CommandBoard<C> {
                     (Some(er), Some(asr)) => return (er.clone(), Some(asr.clone())),
                     _ => {}
                 }
-            };
+            }
             let listener = cb.write().asr_listener(id);
             listener.await;
         }

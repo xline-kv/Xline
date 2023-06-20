@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    fmt::Write as _,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -67,30 +68,20 @@ impl Stats {
     }
 
     /// Summary of stats
+    #[allow(clippy::let_underscore_must_use)] // the writeln! will not fail thus always return an Ok
     pub fn summary(&self) -> String {
         let mut s = String::from("\nSummary:\n");
-        s.push_str(&format!(
-            "  Total:        {:.4} secs\n",
-            self.total.as_secs_f64()
-        ));
-        s.push_str(&format!(
-            "  Slowest:      {:.4} secs\n",
-            self.slowest.as_secs_f64()
-        ));
-        s.push_str(&format!(
-            "  Fastest:      {:.4} secs\n",
-            self.fastest.as_secs_f64()
-        ));
-        s.push_str(&format!(
-            "  Average:      {:.4} secs\n",
-            self.avg.as_secs_f64()
-        ));
-        s.push_str(&format!("  Requests/sec: {:.2}\n", self.qps));
+        _ = writeln!(s, "  Total:        {:.4} secs", self.total.as_secs_f64());
+        _ = writeln!(s, "  Slowest:      {:.4} secs", self.slowest.as_secs_f64());
+        _ = writeln!(s, "  Fastest:      {:.4} secs", self.fastest.as_secs_f64());
+        _ = writeln!(s, "  Average:      {:.4} secs", self.avg.as_secs_f64());
+        _ = writeln!(s, "  Requests/sec: {:.2}", self.qps);
         s
     }
 
     /// Calculate the histogram from the latencies.
     #[allow(clippy::indexing_slicing)]
+    #[allow(clippy::let_underscore_must_use)] // the writeln! will not fail thus always return an Ok
     pub fn histogram(&self) -> String {
         let size = 10;
         let mut buckets = Vec::with_capacity(size);
@@ -112,12 +103,13 @@ impl Stats {
         let mut s = String::from("\nResponse time histogram:\n");
         for i in 0..size {
             let bar_len = counts[i].overflow_mul(40).overflow_div(max);
-            s.push_str(&format!(
-                "  {:.4}\t[{}]\t| {}\n",
+            _ = writeln!(
+                s,
+                "  {:.4}\t[{}]\t| {}",
                 buckets[i].as_secs_f64(),
                 counts[i],
                 "∎".repeat(bar_len)
-            ));
+            );
         }
         s
     }
@@ -208,7 +200,7 @@ impl CommandRunner {
             let tx_clone = tx.clone();
             let handle = tokio::spawn(async move {
                 let mut key = vec![0u8; key_size];
-                let _ = c.wait().await;
+                _ = c.wait().await;
                 loop {
                     let idx = count_clone.fetch_add(1, Ordering::Relaxed);
                     if idx >= total {
@@ -268,7 +260,7 @@ impl CommandRunner {
             });
         }
         let mut stats = Stats::new();
-        let _ = barrier.wait().await;
+        _ = barrier.wait().await;
         debug!("Collecting benchmark results...");
         let start = Instant::now();
         while let Some(result) = rx.recv().await {
