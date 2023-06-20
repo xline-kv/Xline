@@ -10,7 +10,6 @@ use curp::{
     FetchLeaderRequest, FetchLeaderResponse, LogIndex, SnapshotAllocator,
 };
 use curp_test_utils::{
-    random_id,
     test_cmd::{TestCE, TestCommand, TestCommandResult},
     TestRoleChange, TestRoleChangeInner,
 };
@@ -44,7 +43,7 @@ pub struct CurpNode {
     pub exe_rx: mpsc::UnboundedReceiver<(TestCommand, TestCommandResult)>,
     pub as_rx: mpsc::UnboundedReceiver<(TestCommand, LogIndex)>,
     pub store: Arc<Mutex<Option<Arc<Engine>>>>,
-    pub storage_path: String,
+    pub storage_path: PathBuf,
     pub role_change_arc: Arc<TestRoleChangeInner>,
 }
 
@@ -71,7 +70,7 @@ impl CurpGroup {
             .map(|i| {
                 let id = format!("S{i}");
                 let addr = format!("192.168.1.{}:12345", i + 1);
-                let storage_path = format!("/tmp/curp-{}", random_id());
+                let storage_path = tempfile::tempdir().unwrap().into_path();
 
                 let (exe_tx, exe_rx) = mpsc::unbounded_channel();
                 let (as_tx, as_rx) = mpsc::unbounded_channel();
@@ -107,7 +106,7 @@ impl CurpGroup {
                             },
                             Arc::new(
                                 CurpConfigBuilder::default()
-                                    .data_dir(PathBuf::from(storage_path_c.clone()))
+                                    .data_dir(storage_path_c.clone())
                                     .log_entries_cap(10)
                                     .build()
                                     .unwrap(),

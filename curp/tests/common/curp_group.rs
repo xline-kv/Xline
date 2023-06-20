@@ -18,7 +18,6 @@ use curp::{
     SnapshotAllocator, TxFilter,
 };
 use curp_test_utils::{
-    random_id,
     test_cmd::{TestCE, TestCommand, TestCommandResult},
     TestRoleChange, TestRoleChangeInner,
 };
@@ -99,14 +98,14 @@ pub struct CurpNode {
     pub store: Arc<Engine>,
     pub rt: Runtime,
     pub switch: Arc<AtomicBool>,
-    pub storage_path: String,
+    pub storage_path: PathBuf,
     pub role_change_arc: Arc<TestRoleChangeInner>,
 }
 
 pub struct CrashedCurpNode {
     pub id: ServerId,
     pub addr: String,
-    pub storage_path: String,
+    pub storage_path: PathBuf,
 }
 
 pub struct CurpGroup {
@@ -135,7 +134,7 @@ impl CurpGroup {
             .map(|(i, listener)| {
                 let id = format!("S{i}");
                 let addr = listener.local_addr().unwrap().to_string();
-                let storage_path = format!("/tmp/curp-{}", random_id());
+                let storage_path = tempfile::tempdir().unwrap().into_path();
 
                 let (exe_tx, exe_rx) = mpsc::unbounded_channel();
                 let (as_tx, as_rx) = mpsc::unbounded_channel();
@@ -178,7 +177,7 @@ impl CurpGroup {
                         role_change_cb,
                         Arc::new(
                             CurpConfigBuilder::default()
-                                .data_dir(PathBuf::from(storage_path_c))
+                                .data_dir(storage_path_c)
                                 .log_entries_cap(10)
                                 .build()
                                 .unwrap(),
@@ -314,7 +313,7 @@ impl CurpGroup {
                 role_change_cb,
                 Arc::new(
                     CurpConfigBuilder::default()
-                        .data_dir(PathBuf::from(storage_path))
+                        .data_dir(storage_path)
                         .build()
                         .unwrap(),
                 ),
