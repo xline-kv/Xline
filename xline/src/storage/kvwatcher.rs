@@ -576,10 +576,20 @@ mod test {
     async fn watch_should_not_lost_events() {
         let (store, db, kv_watcher) = init_empty_store();
         let mut map = BTreeMap::new();
+        let (event_tx, mut event_rx) = mpsc::channel(128);
+        let stop_notify = Arc::new(event_listener::Event::new());
+        kv_watcher.watch(
+            123,
+            KeyRange::new_one_key("foo"),
+            10,
+            vec![],
+            stop_notify,
+            event_tx,
+        );
+        sleep(Duration::from_micros(50)).await;
         let handle = tokio::spawn({
             let store = Arc::clone(&store);
             async move {
-                // let mut revision = 2;
                 for i in 0..100_u8 {
                     put(
                         store.as_ref(),
@@ -592,17 +602,6 @@ mod test {
                 }
             }
         });
-        sleep(Duration::from_micros(500)).await;
-        let (event_tx, mut event_rx) = mpsc::channel(128);
-        let stop_notify = Arc::new(event_listener::Event::new());
-        kv_watcher.watch(
-            123,
-            KeyRange::new_one_key("foo"),
-            1,
-            vec![],
-            stop_notify,
-            event_tx,
-        );
 
         'outer: while let Some(event_batch) = timeout(Duration::from_secs(3), event_rx.recv())
             .await
@@ -618,8 +617,8 @@ mod test {
                 }
             }
         }
-
-        assert_eq!(map.len(), 100);
+        // The length of the map should be 1 + total_val_number - (start_rev - 1) = 1 + 100 - (10 - 1) = 92
+        assert_eq!(map.len(), 92);
         for (k, count) in map {
             assert_eq!(count, 1, "key {k} should be notified once");
         }
