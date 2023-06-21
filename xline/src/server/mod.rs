@@ -17,6 +17,8 @@ mod watch_server;
 /// Xline server
 mod xline_server;
 
-pub use self::command::{Command, KeyRange};
 pub(crate) use self::maintenance::MAINTENANCE_SNAPSHOT_CHUNK_SIZE;
-pub use self::xline_server::XlineServer;
+pub use self::{
+    command::{Command, KeyRange},
+    xline_server::XlineServer,
+};

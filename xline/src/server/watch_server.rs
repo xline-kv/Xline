@@ -83,6 +83,8 @@ where
             header_gen,
         );
         let mut ticker = tokio::time::interval(watch_progress_notify_interval);
+        let stop_listener = stop_notify.listen();
+        tokio::pin!(stop_listener);
         loop {
             tokio::select! {
                 req = req_rx.next() => {
@@ -111,7 +113,9 @@ where
                 _ = ticker.tick() => {
                     watch_handle.handle_tick_progress().await;
                 }
-                _ = stop_notify.listen() => {
+                // To ensure that each iteration invokes the same `stop_listener` and keeps
+                // events losing due to the cancellation of `stop_listener` at bay.
+                _ = &mut stop_listener => {
                     break;
                 }
             }
@@ -664,6 +668,51 @@ mod test {
         assert!(c >= 9);
         drop(req_tx);
         handle.await.unwrap();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn watch_task_should_be_terminated_when_response_tx_is_closed(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (req_tx, req_rx) = mpsc::channel(CHANNEL_SIZE);
+        let (res_tx, res_rx) = mpsc::channel(CHANNEL_SIZE);
+        let req_stream: ReceiverStream<Result<WatchRequest, tonic::Status>> =
+            ReceiverStream::new(req_rx);
+        let header_gen = Arc::new(HeaderGenerator::new(0, 0));
+        let mut mock_watcher = MockKvWatcherOps::new();
+        let _ = mock_watcher.expect_watch().times(1).return_const(());
+        let _ = mock_watcher.expect_cancel().times(1).return_const(());
+        let watcher = Arc::new(mock_watcher);
+        let next_id = Arc::new(WatchIdGenerator::new(1));
+        let handle = tokio::spawn(WatchServer::<DB>::task(
+            next_id,
+            Arc::clone(&watcher),
+            res_tx,
+            req_stream,
+            header_gen,
+            Duration::from_millis(100),
+        ));
+
+        req_tx
+            .send(Ok(WatchRequest {
+                request_union: Some(RequestUnion::CreateRequest(WatchCreateRequest {
+                    key: "foo".into(),
+                    progress_notify: true,
+                    watch_id: 1,
+                    ..Default::default()
+                })),
+            }))
+            .await?;
+
+        drop(res_rx);
+
+        req_tx
+            .send(Ok(WatchRequest {
+                request_union: Some(RequestUnion::ProgressRequest(WatchProgressRequest {})),
+            }))
+            .await?;
+
+        assert!(timeout(Duration::from_secs(10), handle).await.is_ok());
         Ok(())
     }
 }
