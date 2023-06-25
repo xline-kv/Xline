@@ -36,6 +36,11 @@ jobs:
   check:
     name: Check
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        config:
+          - { name: "Check", args: "", rustflags: "" }
+          - { name: "CheckMadsim", args: "--package=simulation", rustflags: "--cfg madsim" }
     steps:
       - uses: actions/checkout@v2
       - run: sudo bash ./.github/scripts/install_deps.sh
@@ -45,9 +50,13 @@ jobs:
           toolchain: ${{ env.CI_RUST_TOOLCHAIN }}
           override: true
       - uses: Swatinem/rust-cache@v2
-      - uses: actions-rs/cargo@v1
+      - name: ${{ matrix.config.name }}
+        uses: actions-rs/cargo@v1
         with:
           command: check
+          args: ${{ matrix.config.args }}
+        env:
+          RUSTFLAGS: ${{ matrix.config.rustflags }}
 
   fmt:
     name: Format
@@ -67,6 +76,11 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        config:
+          - { name: "Test", args: "", rustflags: "" }
+          - { name: "TestMadsim", args: "--package=simulation", rustflags: "--cfg madsim" }
     steps:
       - uses: actions/checkout@v2
       - run: sudo bash ./.github/scripts/install_deps.sh
@@ -76,13 +90,22 @@ jobs:
           toolchain: ${{ env.CI_RUST_TOOLCHAIN }}
           override: true
       - uses: Swatinem/rust-cache@v2
-      - uses: actions-rs/cargo@v1
+      - name: ${{ matrix.config.name }}
+        uses: actions-rs/cargo@v1
         with:
           command: test
+          args: ${{ matrix.config.args }}
+        env:
+          RUSTFLAGS: ${{ matrix.config.rustflags }}
 
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        config:
+          - { name: "Clippy", args: "--all-targets --all-features -- -D warnings", rustflags: "" }
+          - { name: "ClippyMadsim", args: "--package=simulation --all-targets --all-features -- -D warnings", rustflags: "--cfg madsim" }
     steps:
       - uses: actions/checkout@v2
       - run: sudo bash ./.github/scripts/install_deps.sh
@@ -92,10 +115,13 @@ jobs:
           toolchain: ${{ env.CI_RUST_TOOLCHAIN }}
           override: true
       - uses: Swatinem/rust-cache@v2
-      - uses: actions-rs/cargo@v1
+      - name: ${{ matrix.config.name }}
+        uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: --all-targets --all-features -- -D warnings
+          args: ${{ matrix.config.args }}
+        env:
+          RUSTFLAGS: ${{ matrix.config.rustflags }}
 
   commit:
     name: Commit Message Validation
