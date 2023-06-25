@@ -7,27 +7,15 @@ on:
 
 env:
   CI_RUST_TOOLCHAIN: 1.70.0
+  REGISTRY_IMAGE: datenlord/xline
 
 jobs:
-  build:
-    name: Upload Release Asset
+  create_release:
+    name: Create Release
     runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
     steps:
-      - uses: actions/checkout@v2
-      - name: Install Dependencies
-        run: sudo bash ./.github/scripts/install_deps.sh
-      - name: Install Rust Toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: default
-          toolchain: ${{ env.CI_RUST_TOOLCHAIN }}
-          override: true
-      - uses: Swatinem/rust-cache@v2
-      - name: Build Xline
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: --release
       - name: Create Release
         id: create_release
         uses: actions/create-release@v1.0.0
@@ -38,36 +26,137 @@ jobs:
           release_name: Release ${{ github.ref }}
           draft: false
           prerelease: false
-      - name: Upload Release Asset
+
+  publish_release:
+    name: Publish Release
+    needs: create_release
+    runs-on: ${{ matrix.job.os }}
+    outputs:
+      app_version: ${{ steps.generate_app_version.outputs.app_version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          - os: ubuntu-latest
+            platform: linux/amd64
+            target: x86_64-unknown-linux-gnu
+            cross_image: x86_64-linux-gnu
+          - os: ubuntu-latest
+            platform: linux/arm64
+            target: aarch64-unknown-linux-gnu
+            cross_image: aarch64-linux-gnu
+          - os: macos-latest
+            platform: darwin/amd64
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            platform: darwin/arm64
+            target: aarch64-apple-darwin
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Generate App Version
+        id: generate_app_version
+        run: echo app_version=`git describe --tags --always` >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        if: matrix.job.cross_image
+        uses: docker/setup-buildx-action@v1
+
+      - name: Setup Custom Image for ${{ matrix.job.cross_image }}
+        if: matrix.job.cross_image
+        uses: docker/build-push-action@v2
+        with:
+          context: .github/scripts
+          file: .github/scripts/Dockerfile.${{ matrix.job.target }}
+          tags: ${{ matrix.job.cross_image }}:latest
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install Packages (macOS)
+        if: matrix.job.os == 'macos-latest'
+        run: |
+          .github/scripts/install_macos_deps.sh
+
+      - name: Install Toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.CI_RUST_TOOLCHAIN }}
+          target: ${{ matrix.job.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: '${{ matrix.job.target }}'
+
+      - name: Install cross
+        uses: baptiste0928/cargo-install@v2
+        with:
+          crate: cross
+          cache-key: '${{ matrix.job.target }}'
+
+      - name: Build Xline Binary
+        run: |
+          cross build --target ${{ matrix.job.target }} --release
+
+      - name: Upload Asset
         id: upload-release-asset
-        uses: actions/upload-release-asset@v1.0.1
+        uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./target/release/xline
-          asset_name: xline-linux-amd64
+          upload_url: ${{ needs.create_release.outputs.upload_url }}
+          asset_path: ./target/${{ matrix.job.target }}/release/xline
+          asset_name: xline-${{ matrix.job.target }}
           asset_content_type: application/octet-stream
-      - run: |
-          mv ./target/release/xline ./scripts
-          mv ./target/release/benchmark ./scripts
+
+      # Build docker image across multiple runners
+      - name: Move Cross-compiled Binary
+        if: startsWith(matrix.job.platform, 'linux/')
+        run: |
+          mv ./target/${{ matrix.job.target }}/release/xline ./scripts
+          mv ./target/${{ matrix.job.target }}/release/benchmark ./scripts
+
       - name: Set up QEMU
+        if: startsWith(matrix.job.platform, 'linux/')
         uses: docker/setup-qemu-action@v1
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v1
+
       - name: Login to DockerHub
-        uses: docker/login-action@v1
+        if: startsWith(matrix.job.platform, 'linux/')
+        uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Generate App Version
-        run: echo APP_VERSION=`git describe --tags --always` >> $GITHUB_ENV
-      - name: Build and push
-        id: docker_build
-        uses: docker/build-push-action@v2
+
+      - name: Build Docker Image
+        if: startsWith(matrix.job.platform, 'linux/')
+        id: build_image
+        uses: docker/build-push-action@v4
         with:
-          push: true
           context: ./scripts
-          tags: |
-            datenlord/xline:latest
-            datenlord/xline:${{ env.APP_VERSION }}
+          platforms: ${{ matrix.job.platform }}
+          outputs: type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export Digest
+        if: startsWith(matrix.job.platform, 'linux/')
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build_image.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload Digest
+        uses: actions/upload-artifact@v3
+        if: startsWith(matrix.job.platform, 'linux/')
+        with:
+          name: digests
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge_image:
+    needs: publish_release
+    uses: ./.github/workflows/merge_image.yml
+    secrets: inherit
+    with:
+      app_version: ${{ needs.publish_release.outputs.app_version }}
