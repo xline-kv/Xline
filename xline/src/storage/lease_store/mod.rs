@@ -6,6 +6,7 @@ mod lease_collection;
 mod lease_queue;
 
 use std::{
+    collections::HashSet,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -14,6 +15,7 @@ use std::{
 };
 
 use log::debug;
+use parking_lot::RwLock;
 use prost::Message;
 use tokio::sync::mpsc;
 
@@ -53,6 +55,10 @@ where
     kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
     /// Primary flag
     is_primary: AtomicBool,
+    /// cache unsynced lease id
+    unsynced_cache: Arc<RwLock<HashSet<i64>>>,
+    /// notify sync event
+    sync_event: event_listener::Event,
 }
 
 impl<DB> LeaseStore<DB>
@@ -75,6 +81,8 @@ where
             header_gen,
             kv_update_tx,
             is_primary: AtomicBool::new(is_leader),
+            unsynced_cache: Arc::new(RwLock::new(HashSet::new())),
+            sync_event: event_listener::Event::new(),
         }
     }
 
@@ -156,6 +164,33 @@ where
     pub(crate) fn is_primary(&self) -> bool {
         self.is_primary.load(Ordering::Relaxed)
     }
+
+    /// Make lease synced, remove it from `unsynced_cache`
+    pub(crate) fn mark_lease_synced(&self, wrapper: &RequestWrapper) {
+        #[allow(clippy::wildcard_enum_match_arm)] // only the following two type are allowed
+        let lease_id = match *wrapper {
+            RequestWrapper::LeaseGrantRequest(ref req) => req.id,
+            RequestWrapper::LeaseRevokeRequest(ref req) => req.id,
+            _ => {
+                return;
+            }
+        };
+
+        _ = self.unsynced_cache.write().remove(&lease_id);
+        self.sync_event.notify(usize::MAX);
+    }
+
+    /// Wait for the lease id to be removed from the cache
+    pub(crate) async fn wait_synced(&self, lease_id: i64) {
+        loop {
+            let contains_id = self.unsynced_cache.read().contains(&lease_id);
+            if contains_id {
+                self.sync_event.listen().await;
+            } else {
+                break;
+            }
+        }
+    }
 }
 
 impl<DB> LeaseStore<DB>
@@ -202,6 +237,8 @@ where
             return Err(ExecuteError::lease_already_exists(req.id));
         }
 
+        _ = self.unsynced_cache.write().insert(req.id);
+
         Ok(LeaseGrantResponse {
             header: Some(self.header_gen.gen_header_without_revision()),
             id: req.id,
@@ -216,6 +253,8 @@ where
         req: &LeaseRevokeRequest,
     ) -> Result<LeaseRevokeResponse, ExecuteError> {
         if self.lease_collection.contains_lease(req.id) {
+            _ = self.unsynced_cache.write().insert(req.id);
+
             Ok(LeaseRevokeResponse {
                 header: Some(self.header_gen.gen_header_without_revision()),
             })
