@@ -17,8 +17,8 @@ use crate::{
     rpc::{
         Lease, LeaseClient, LeaseGrantRequest, LeaseGrantResponse, LeaseKeepAliveRequest,
         LeaseKeepAliveResponse, LeaseLeasesRequest, LeaseLeasesResponse, LeaseRevokeRequest,
-        LeaseRevokeResponse, LeaseStatus, LeaseTimeToLiveRequest, LeaseTimeToLiveResponse,
-        RequestWithToken, RequestWrapper,
+        LeaseRevokeResponse, LeaseTimeToLiveRequest, LeaseTimeToLiveResponse, RequestWithToken,
+        RequestWrapper,
     },
     storage::{storage_api::StorageApi, AuthStore, LeaseStore},
 };
@@ -286,16 +286,18 @@ where
         request: tonic::Request<LeaseLeasesRequest>,
     ) -> Result<tonic::Response<LeaseLeasesResponse>, tonic::Status> {
         debug!("Receive LeaseLeasesRequest {:?}", request);
-        let leases = self
-            .lease_storage
-            .leases()
-            .into_iter()
-            .map(|lease| LeaseStatus { id: lease.id() })
-            .collect();
-        let res = LeaseLeasesResponse {
-            header: Some(self.lease_storage.gen_header()),
-            leases,
-        };
+
+        let is_fast_path = true;
+        let (res, sync_res) = self.propose(request, is_fast_path).await?;
+
+        let mut res: LeaseLeasesResponse = res.decode().into();
+        if let Some(sync_res) = sync_res {
+            let revision = sync_res.revision();
+            debug!("Get revision {:?} for LeaseLeasesResponse", revision);
+            if let Some(mut header) = res.header.as_mut() {
+                header.revision = revision;
+            }
+        }
         Ok(tonic::Response::new(res))
     }
 
