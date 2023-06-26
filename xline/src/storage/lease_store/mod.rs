@@ -22,8 +22,9 @@ use super::{db::WriteOp, index::Index, storage_api::StorageApi, ExecuteError};
 use crate::{
     header_gen::HeaderGenerator,
     rpc::{
-        Event, LeaseGrantRequest, LeaseGrantResponse, LeaseRevokeRequest, LeaseRevokeResponse,
-        PbLease, RequestWithToken, RequestWrapper, ResponseHeader, ResponseWrapper,
+        Event, LeaseGrantRequest, LeaseGrantResponse, LeaseLeasesRequest, LeaseLeasesResponse,
+        LeaseRevokeRequest, LeaseRevokeResponse, LeaseStatus, PbLease, RequestWithToken,
+        RequestWrapper, ResponseHeader, ResponseWrapper,
     },
     server::command::{CommandResponse, SyncResponse},
     storage::KvStore,
@@ -177,6 +178,10 @@ where
                 debug!("Receive LeaseRevokeRequest {:?}", req);
                 self.handle_lease_revoke_request(req).map(Into::into)
             }
+            RequestWrapper::LeaseLeasesRequest(ref req) => {
+                debug!("Receive LeaseLeasesRequest {:?}", req);
+                Ok(self.handle_lease_leases_request(req).into())
+            }
             _ => unreachable!("Other request should not be sent to this store"),
         };
         res
@@ -219,6 +224,20 @@ where
         }
     }
 
+    /// Handle `LeaseRevokeRequest`
+    fn handle_lease_leases_request(&self, _req: &LeaseLeasesRequest) -> LeaseLeasesResponse {
+        let leases = self
+            .leases()
+            .into_iter()
+            .map(|lease| LeaseStatus { id: lease.id() })
+            .collect();
+
+        LeaseLeasesResponse {
+            header: Some(self.header_gen.gen_header_without_revision()),
+            leases,
+        }
+    }
+
     /// Sync `RequestWithToken`
     async fn sync_request(
         &self,
@@ -234,6 +253,10 @@ where
             RequestWrapper::LeaseRevokeRequest(ref req) => {
                 debug!("Sync LeaseRevokeRequest {:?}", req);
                 self.sync_lease_revoke_request(req, revision).await?
+            }
+            RequestWrapper::LeaseLeasesRequest(ref req) => {
+                debug!("Sync LeaseLeasesRequest {:?}", req);
+                vec![]
             }
             _ => unreachable!("Other request should not be sent to this store"),
         };
