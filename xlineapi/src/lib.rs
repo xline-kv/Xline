@@ -294,6 +294,8 @@ pub enum RequestWrapper {
     LeaseGrantRequest(LeaseGrantRequest),
     /// `LeaseRevokeRequest`
     LeaseRevokeRequest(LeaseRevokeRequest),
+    /// `LeaseLeasesRequest`
+    LeaseLeasesRequest(LeaseLeasesRequest),
 }
 
 /// Wrapper for responses
@@ -348,6 +350,8 @@ pub enum ResponseWrapper {
     LeaseGrantResponse(LeaseGrantResponse),
     /// `LeaseRevokeResponse`
     LeaseRevokeResponse(LeaseRevokeResponse),
+    /// `LeaseLeasesResponse`
+    LeaseLeasesResponse(LeaseLeasesResponse),
 }
 
 impl ResponseWrapper {
@@ -378,6 +382,7 @@ impl ResponseWrapper {
             ResponseWrapper::AuthenticateResponse(ref mut resp) => &mut resp.header,
             ResponseWrapper::LeaseGrantResponse(ref mut resp) => &mut resp.header,
             ResponseWrapper::LeaseRevokeResponse(ref mut resp) => &mut resp.header,
+            ResponseWrapper::LeaseLeasesResponse(ref mut resp) => &mut resp.header,
         };
         if let Some(ref mut header) = *header {
             header.revision = revision;
@@ -422,9 +427,9 @@ impl RequestWrapper {
             | RequestWrapper::AuthUserListRequest(_)
             | RequestWrapper::AuthUserRevokeRoleRequest(_)
             | RequestWrapper::AuthenticateRequest(_) => RequestBackend::Auth,
-            RequestWrapper::LeaseGrantRequest(_) | RequestWrapper::LeaseRevokeRequest(_) => {
-                RequestBackend::Lease
-            }
+            RequestWrapper::LeaseGrantRequest(_)
+            | RequestWrapper::LeaseRevokeRequest(_)
+            | RequestWrapper::LeaseLeasesRequest(_) => RequestBackend::Lease,
         }
     }
 
@@ -466,6 +471,17 @@ impl RequestWrapper {
     /// Check if this request is a kv request
     pub fn is_kv_request(&self) -> bool {
         self.backend() == RequestBackend::Kv
+    }
+
+    pub fn is_lease_read_request(&self) -> bool {
+        matches!(*self, RequestWrapper::LeaseLeasesRequest(_))
+    }
+
+    pub fn is_lease_write_request(&self) -> bool {
+        matches!(
+            *self,
+            RequestWrapper::LeaseGrantRequest(_) | RequestWrapper::LeaseRevokeRequest(_)
+        )
     }
 }
 
@@ -537,7 +553,8 @@ impl_from_requests!(
     AuthUserRevokeRoleRequest,
     AuthenticateRequest,
     LeaseGrantRequest,
-    LeaseRevokeRequest
+    LeaseRevokeRequest,
+    LeaseLeasesRequest
 );
 
 impl_from_responses!(
@@ -564,7 +581,8 @@ impl_from_responses!(
     AuthUserRevokeRoleResponse,
     AuthenticateResponse,
     LeaseGrantResponse,
-    LeaseRevokeResponse
+    LeaseRevokeResponse,
+    LeaseLeasesResponse
 );
 
 impl From<RequestOp> for RequestWrapper {

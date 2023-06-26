@@ -447,7 +447,8 @@ fn get_lease_ids(wrapper: &RequestWrapper) -> HashSet<i64> {
         | RequestWrapper::AuthUserGrantRoleRequest(_)
         | RequestWrapper::AuthUserListRequest(_)
         | RequestWrapper::AuthUserRevokeRoleRequest(_)
-        | RequestWrapper::AuthenticateRequest(_) => HashSet::new(),
+        | RequestWrapper::AuthenticateRequest(_)
+        | RequestWrapper::LeaseLeasesRequest(_) => HashSet::new(),
     }
 }
 
@@ -471,6 +472,14 @@ impl ConflictCheck for Command {
         if (this_req.is_auth_request()) || (other_req.is_auth_request()) {
             return true;
         }
+
+        // Lease leases request is conflict with Lease grant and revoke requests
+        if (this_req.is_lease_read_request() && other_req.is_lease_write_request())
+            || (this_req.is_lease_write_request() && other_req.is_lease_read_request())
+        {
+            return true;
+        }
+
         let this_lease_ids = get_lease_ids(this_req);
         let other_lease_ids = get_lease_ids(other_req);
         let lease_conflict = !this_lease_ids.is_disjoint(&other_lease_ids);
@@ -569,8 +578,8 @@ impl CurpCommand for Command {
 mod test {
     use super::*;
     use crate::rpc::{
-        AuthEnableRequest, AuthStatusRequest, LeaseGrantRequest, LeaseRevokeRequest, PutRequest,
-        RequestOp, TxnRequest,
+        AuthEnableRequest, AuthStatusRequest, LeaseGrantRequest, LeaseLeasesRequest,
+        LeaseRevokeRequest, PutRequest, RequestOp, TxnRequest,
     };
 
     #[test]
@@ -681,6 +690,11 @@ mod test {
             })),
             ProposeId::new("id6".to_owned()),
         );
+        let lease_leases_cmd = Command::new(
+            vec![],
+            RequestWithToken::new(RequestWrapper::LeaseLeasesRequest(LeaseLeasesRequest {})),
+            ProposeId::new("id4".to_owned()),
+        );
 
         assert!(lease_grant_cmd.is_conflict(&put_with_lease_cmd)); // lease id
         assert!(lease_grant_cmd.is_conflict(&txn_with_lease_id_cmd)); // lease id
@@ -690,5 +704,7 @@ mod test {
         assert!(!cmd2.is_conflict(&cmd3)); // auth read and kv
         assert!(cmd2.is_conflict(&cmd4)); // auth and auth
         assert!(cmd5.is_conflict(&cmd6)); // lease id
+        assert!(lease_leases_cmd.is_conflict(&cmd5)); // lease read and write
+        assert!(cmd6.is_conflict(&lease_leases_cmd)); // lease read and write
     }
 }
