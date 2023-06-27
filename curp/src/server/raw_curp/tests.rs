@@ -509,7 +509,7 @@ fn recover_from_spec_pools_will_pick_the_correct_cmds() {
         ("S4".to_owned(), vec![]),
     ]);
 
-    curp.recover_from_spec_pools(&mut *curp.st.write(), &mut *curp.log.write(), spec_pools);
+    curp.recover_from_spec_pools(&mut *curp.st.write(), &mut *curp.log.write(), &spec_pools);
 
     curp.log.map_read(|log_r| {
         assert_eq!(log_r[1].cmd.id(), cmd0.id());

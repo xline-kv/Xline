@@ -22,7 +22,7 @@ use std::{
 use clippy_utilities::NumericCast;
 use event_listener::Event;
 use itertools::Itertools;
-use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
+use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::{
     debug, error,
@@ -181,12 +181,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         if tick < timeout {
             return None;
         }
-
-        self.become_candidate(
-            &mut self.st.write(),
-            &mut self.cst.lock(),
-            self.log.upgradable_read(),
-        )
+        let vote =
+            self.become_candidate(&mut self.st.write(), &mut self.cst.lock(), &self.log.read());
+        Some(vote)
     }
 }
 
@@ -261,14 +258,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 event.notify(1);
             }
         });
-
-        // check if commit_index needs to be updated
-        if self.can_update_commit_index_to(&log_w, index, self.term()) && index > log_w.commit_index
-        {
-            log_w.commit_index = index;
-            debug!("{} updates commit index to {index}", self.id());
-            self.apply(&mut *log_w);
-        }
 
         (
             info,
@@ -496,7 +485,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         let mut log_w = self.log.write();
 
         let prev_last_log_index = log_w.last_log_index();
-        self.recover_from_spec_pools(&mut st_w, &mut log_w, spec_pools);
+        self.recover_from_spec_pools(&mut st_w, &mut log_w, &spec_pools);
         let last_log_index = log_w.last_log_index();
 
         self.become_leader(&mut st_w);
@@ -808,12 +797,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 // Don't grab lock in the following functions(except cb or sp's lock)
 impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     /// Server becomes a candidate
-    fn become_candidate(
-        &self,
-        st: &mut State,
-        cst: &mut CandidateState<C>,
-        mut log: RwLockUpgradableReadGuard<'_, Log<C>>,
-    ) -> Option<Vote> {
+    fn become_candidate(&self, st: &mut State, cst: &mut CandidateState<C>, log: &Log<C>) -> Vote {
         let prev_role = st.role;
         assert!(prev_role != Role::Leader, "leader can't start election");
 
@@ -828,6 +812,8 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             .ctx
             .sp
             .map_lock(|sp| sp.pool.values().cloned().collect());
+        cst.votes_received = 1;
+        cst.sps = HashMap::from([(self.id().clone(), self_sp)]);
 
         if prev_role == Role::Follower {
             debug!("Follower {} starts election", self.id());
@@ -835,36 +821,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             debug!("Candidate {} restarts election", self.id());
         }
 
-        // vote to self
-        let election_ends = {
-            debug!("{}'s vote is granted by server {}", self.id(), self.id());
-            cst.votes_received = 1;
-            cst.sps = HashMap::from([(self.id().clone(), self_sp)]);
-
-            let min_granted = self.quorum();
-            if cst.votes_received < min_granted {
-                false
-            } else {
-                // single node cluster
-                // vote is granted by the majority of servers, can become leader
-                let spec_pools = cst.sps.drain().collect();
-                let mut log_w = RwLockUpgradableReadGuard::upgrade(log);
-                self.recover_from_spec_pools(st, &mut log_w, spec_pools);
-                log = RwLockWriteGuard::downgrade_to_upgradable(log_w);
-                self.become_leader(st);
-                true
-            }
-        };
-
-        if election_ends {
-            None
-        } else {
-            Some(Vote {
-                term: st.term,
-                candidate_id: self.id().clone(),
-                last_log_index: log.last_log_index(),
-                last_log_term: log.last_log_term(),
-            })
+        Vote {
+            term: st.term,
+            candidate_id: self.id().clone(),
+            last_log_index: log.last_log_index(),
+            last_log_term: log.last_log_term(),
         }
     }
 
@@ -935,7 +896,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         &self,
         st: &mut State,
         log: &mut Log<C>,
-        spec_pools: HashMap<ServerId, Vec<Arc<C>>>,
+        spec_pools: &HashMap<ServerId, Vec<Arc<C>>>,
     ) {
         if log_enabled!(Level::Debug) {
             let debug_sps: HashMap<ServerId, String> = spec_pools
@@ -949,7 +910,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         }
 
         let mut cmd_cnt: HashMap<ProposeId, (Arc<C>, u64)> = HashMap::new();
-        for cmd in spec_pools.into_values().flatten() {
+        for cmd in spec_pools.values().flatten().cloned() {
             let entry = cmd_cnt.entry(cmd.id().clone()).or_insert((cmd, 0));
             entry.1 += 1;
         }
