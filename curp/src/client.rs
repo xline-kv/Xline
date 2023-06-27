@@ -109,11 +109,12 @@ where
 
     /// The fast round of Curp protocol
     /// It broadcast the requests to all the curp servers.
-    #[instrument(skip(self))]
+    #[instrument(skip_all)]
     async fn fast_round(
         &self,
         cmd_arc: Arc<C>,
     ) -> Result<(Option<<C as Command>::ER>, bool), ProposeError> {
+        debug!("fast round for cmd({}) started", cmd_arc.id());
         let req = ProposeRequest::new(cmd_arc.as_ref())?;
         let mut rpcs: FuturesUnordered<_> = self
             .connects
@@ -181,7 +182,7 @@ where
                 },
             )??;
             if (ok_cnt >= superquorum) && execute_result.is_some() {
-                debug!("fast round succeeds");
+                debug!("fast round for cmd({}) succeed", cmd_arc.id());
                 return Ok((execute_result, true));
             }
         }
@@ -189,11 +190,12 @@ where
     }
 
     /// The slow round of Curp protocol
-    #[instrument(skip(self))]
+    #[instrument(skip_all)]
     async fn slow_round(
         &self,
         cmd: Arc<C>,
     ) -> Result<(<C as Command>::ASR, <C as Command>::ER), ProposeError> {
+        debug!("slow round for cmd({}) started", cmd.id());
         let retry_timeout = *self.timeout.retry_timeout();
         loop {
             // fetch leader id
@@ -409,6 +411,7 @@ where
     ///   If leader index is out of bound of all the connections, panic
     #[inline]
     #[allow(clippy::too_many_lines)] // FIXME: split to smaller functions
+    #[instrument(skip_all, fields(cmd_id=%cmd.id()))]
     pub async fn propose(&self, cmd: C) -> Result<C::ER, ProposeError> {
         let cmd_arc = Arc::new(cmd);
         let fast_round = self.fast_round(Arc::clone(&cmd_arc));
@@ -451,6 +454,7 @@ where
     ///   If leader index is out of bound of all the connections, panic
     #[inline]
     #[allow(clippy::else_if_without_else)] // the else is redundant
+    #[instrument(skip_all, fields(cmd_id=%cmd.id()))]
     pub async fn propose_indexed(&self, cmd: C) -> Result<(C::ER, C::ASR), ProposeError> {
         let cmd_arc = Arc::new(cmd);
         let fast_round = self.fast_round(Arc::clone(&cmd_arc));

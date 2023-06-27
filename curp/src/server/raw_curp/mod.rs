@@ -22,7 +22,7 @@ use std::{
 use clippy_utilities::NumericCast;
 use event_listener::Event;
 use itertools::Itertools;
-use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
+use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::{
     debug, error,
@@ -812,7 +812,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         &self,
         st: &mut State,
         cst: &mut CandidateState<C>,
-        mut log: RwLockUpgradableReadGuard<'_, Log<C>>,
+        log: RwLockUpgradableReadGuard<'_, Log<C>>,
     ) -> Option<Vote> {
         let prev_role = st.role;
         assert!(prev_role != Role::Leader, "leader can't start election");
@@ -836,35 +836,24 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         }
 
         // vote to self
-        let election_ends = {
-            debug!("{}'s vote is granted by server {}", self.id(), self.id());
-            cst.votes_received = 1;
-            cst.sps = HashMap::from([(self.id().clone(), self_sp)]);
-
-            let min_granted = self.quorum();
-            if cst.votes_received < min_granted {
-                false
-            } else {
-                // single node cluster
-                // vote is granted by the majority of servers, can become leader
-                let spec_pools = cst.sps.drain().collect();
-                let mut log_w = RwLockUpgradableReadGuard::upgrade(log);
-                self.recover_from_spec_pools(st, &mut log_w, spec_pools);
-                log = RwLockWriteGuard::downgrade_to_upgradable(log_w);
-                self.become_leader(st);
-                true
-            }
-        };
-
-        if election_ends {
-            None
-        } else {
+        debug!("{}'s vote is granted by server {}", self.id(), self.id());
+        cst.votes_received = 1;
+        cst.sps = HashMap::from([(self.id().clone(), self_sp)]);
+        if cst.votes_received < self.quorum() {
             Some(Vote {
                 term: st.term,
                 candidate_id: self.id().clone(),
                 last_log_index: log.last_log_index(),
                 last_log_term: log.last_log_term(),
             })
+        } else {
+            // single node cluster
+            // vote is granted by the majority of servers, can become leader
+            let spec_pools = cst.sps.drain().collect();
+            let mut log_w = RwLockUpgradableReadGuard::upgrade(log);
+            self.recover_from_spec_pools(st, &mut log_w, spec_pools);
+            self.become_leader(st);
+            None
         }
     }
 
@@ -945,7 +934,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                     (id.clone(), sp.join(","))
                 })
                 .collect();
-            debug!("{} collected spec pools:\n{debug_sps:#?}", self.id());
+            debug!("{} collected spec pools: {debug_sps:?}", self.id());
         }
 
         let mut cmd_cnt: HashMap<ProposeId, (Arc<C>, u64)> = HashMap::new();
