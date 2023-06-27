@@ -400,6 +400,74 @@ mod test {
         assert!(lease_store.look_up(1).is_none());
         assert!(lease_store.leases().is_empty());
 
+        let req3 = RequestWithToken::new(LeaseGrantRequest { ttl: 10, id: 3 }.into());
+        let req4 = RequestWithToken::new(LeaseGrantRequest { ttl: 10, id: 4 }.into());
+        let req5 = RequestWithToken::new(LeaseRevokeRequest { id: 3 }.into());
+        let req6 = RequestWithToken::new(LeaseLeasesRequest {}.into());
+        let _ignore3 = exe_and_sync_req(&lease_store, &req3, -1).await?;
+        let _ignore4 = exe_and_sync_req(&lease_store, &req4, -1).await?;
+        let resp_1 = exe_and_sync_req(&lease_store, &req6, -1).await?;
+
+        let ResponseWrapper::LeaseLeasesResponse(leases_1) = resp_1 else { panic!("wrong response type: {resp_1:?}"); };
+        assert_eq!(leases_1.leases[0].id, 3);
+        assert_eq!(leases_1.leases[1].id, 4);
+
+        let _ignore5 = exe_and_sync_req(&lease_store, &req5, -1).await?;
+        let resp_2 = exe_and_sync_req(&lease_store, &req6, -1).await?;
+        let ResponseWrapper::LeaseLeasesResponse(leases_2) = resp_2 else { panic!("wrong response type: {resp_2:?}"); };
+        assert_eq!(leases_2.leases[0].id, 4);
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    async fn test_lease_sync() -> Result<(), Box<dyn Error>> {
+        let db = DB::open(&StorageConfig::Memory)?;
+        let lease_store = init_store(db);
+        let wait_duration = Duration::from_millis(1);
+
+        let req1 = RequestWithToken::new(LeaseGrantRequest { ttl: 10, id: 1 }.into());
+        let _ignore1 = lease_store.execute(&req1)?;
+
+        assert!(
+            tokio::time::timeout(wait_duration, lease_store.wait_synced(1))
+                .await
+                .is_err(),
+            "the future should block until the lease is synced"
+        );
+
+        let (_ignore, ops) = lease_store.after_sync(&req1, -1).await?;
+        lease_store.db.flush_ops(ops)?;
+        lease_store.mark_lease_synced(&req1.request);
+
+        assert!(
+            tokio::time::timeout(wait_duration, lease_store.wait_synced(1))
+                .await
+                .is_ok(),
+            "the future should complete immediately after the lease is synced"
+        );
+
+        let req2 = RequestWithToken::new(LeaseRevokeRequest { id: 1 }.into());
+        let _ignore2 = lease_store.execute(&req2)?;
+
+        assert!(
+            tokio::time::timeout(wait_duration, lease_store.wait_synced(1))
+                .await
+                .is_err(),
+            "the future should block until the lease is synced"
+        );
+
+        let (_ignore, ops) = lease_store.after_sync(&req2, -1).await?;
+        lease_store.db.flush_ops(ops)?;
+        lease_store.mark_lease_synced(&req2.request);
+
+        assert!(
+            tokio::time::timeout(wait_duration, lease_store.wait_synced(1))
+                .await
+                .is_ok(),
+            "the future should complete immediately after the lease is synced"
+        );
+
         Ok(())
     }
 
