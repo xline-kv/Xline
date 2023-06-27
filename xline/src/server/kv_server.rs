@@ -140,9 +140,14 @@ where
         let cmd = Self::command_from_request_wrapper(propose_id, wrapper);
         #[allow(clippy::wildcard_enum_match_arm)]
         if use_fast_path {
-            let cmd_res = self.client.propose(cmd).await.map_err(|err| match err {
-                ProposeError::ExecutionError(e) => tonic::Status::invalid_argument(e),
-                _ => unreachable!("propose err {err:?}"),
+            let cmd_res = self.client.propose(cmd).await.map_err(|err| {
+                match err {
+                    ProposeError::ExecutionError(e) => tonic::Status::invalid_argument(e),
+                    // TODO: remove this error matching when the issue 270 is closed.
+                    // There is no point to handle `SyncedError` in fast path
+                    ProposeError::SyncedError(e) => tonic::Status::unknown(e),
+                    _ => unreachable!("propose err {err:?}"),
+                }
             })?;
             Ok((cmd_res, None))
         } else {
