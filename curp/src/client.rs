@@ -553,6 +553,7 @@ mod tests {
 
     #[test]
     fn superquorum_should_work() {
+        assert_eq!(superquorum(1), 1);
         assert_eq!(superquorum(11), 9);
         assert_eq!(superquorum(97), 73);
         assert_eq!(superquorum(31), 24);
