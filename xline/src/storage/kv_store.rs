@@ -426,15 +426,25 @@ where
         &self,
         wrapper: &RequestWrapper,
     ) -> Result<ResponseWrapper, ExecuteError> {
-        debug!("Execute {:?}", wrapper);
+        debug!("Receive request {:?}", wrapper);
         #[allow(clippy::wildcard_enum_match_arm)]
         let res = match *wrapper {
-            RequestWrapper::RangeRequest(ref req) => self.handle_range_request(req).map(Into::into),
-            RequestWrapper::PutRequest(ref req) => self.handle_put_request(req).map(Into::into),
+            RequestWrapper::RangeRequest(ref req) => {
+                debug!("Receive RangeRequest {:?}", req);
+                self.handle_range_request(req).map(Into::into)
+            }
+            RequestWrapper::PutRequest(ref req) => {
+                debug!("Receive PutRequest {:?}", req);
+                self.handle_put_request(req).map(Into::into)
+            }
             RequestWrapper::DeleteRangeRequest(ref req) => {
+                debug!("Receive DeleteRangeRequest {:?}", req);
                 self.handle_delete_range_request(req).map(Into::into)
             }
-            RequestWrapper::TxnRequest(ref req) => self.handle_txn_request(req).map(Into::into),
+            RequestWrapper::TxnRequest(ref req) => {
+                debug!("Receive TxnRequest {:?}", req);
+                self.handle_txn_request(req).map(Into::into)
+            }
             _ => unreachable!("Other request should not be sent to this store"),
         };
         res
@@ -442,6 +452,7 @@ where
 
     /// Handle `RangeRequest`
     fn handle_range_request(&self, req: &RangeRequest) -> Result<RangeResponse, ExecuteError> {
+        debug!("handle_range_request kvs");
         let storage_fetch_limit = if (req.sort_order() != SortOrder::None)
             || (req.max_mod_revision != 0)
             || (req.min_mod_revision != 0)
@@ -491,6 +502,7 @@ where
 
     /// Handle `PutRequest`
     fn handle_put_request(&self, req: &PutRequest) -> Result<PutResponse, ExecuteError> {
+        debug!("handle_put_request");
         let mut response = PutResponse {
             header: Some(self.header_gen.gen_header_without_revision()),
             ..Default::default()
@@ -513,6 +525,7 @@ where
         req: &DeleteRangeRequest,
     ) -> Result<DeleteRangeResponse, ExecuteError> {
         let prev_kvs = self.get_range(&req.key, &req.range_end, 0)?;
+        debug!("handle_delete_range_request prev_kvs {:?}", prev_kvs);
         let mut response = DeleteRangeResponse {
             header: Some(self.header_gen.gen_header_without_revision()),
             ..DeleteRangeResponse::default()
@@ -553,10 +566,12 @@ where
         wrapper: &RequestWrapper,
         revision: i64,
     ) -> Result<(i64, Vec<WriteOp>), ExecuteError> {
-        debug!("After Sync {:?} with revision {}", wrapper, revision);
         #[allow(clippy::wildcard_enum_match_arm)] // only kv requests can be sent to kv store
         let (ops, events) = match *wrapper {
-            RequestWrapper::RangeRequest(_) => (Vec::new(), Vec::new()),
+            RequestWrapper::RangeRequest(ref req) => {
+                debug!("sync range request: {:?}", req);
+                (Vec::new(), Vec::new())
+            }
             RequestWrapper::PutRequest(ref req) => self.sync_put_request(req, revision, 0)?,
             RequestWrapper::DeleteRangeRequest(ref req) => {
                 self.sync_delete_range_request(req, revision, 0)
@@ -617,6 +632,7 @@ where
         revision: i64,
         sub_revision: i64,
     ) -> Result<(Vec<WriteOp>, Vec<Event>), ExecuteError> {
+        debug!("Sync PutRequest {:?}", req);
         let mut ops = Vec::new();
         let new_rev = self
             .index
@@ -708,6 +724,7 @@ where
         revision: i64,
         sub_revision: i64,
     ) -> (Vec<WriteOp>, Vec<Event>) {
+        debug!("Sync DeleteRangeRequest {:?}", req);
         Self::delete_keys(
             &self.index,
             &self.lease_collection,
