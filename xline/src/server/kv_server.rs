@@ -125,7 +125,7 @@ where
     }
 
     /// Propose request and get result with fast/slow path
-    #[instrument(skip(self))]
+    #[instrument(skip(self, request))]
     async fn propose<T>(
         &self,
         request: tonic::Request<T>,
@@ -386,13 +386,13 @@ where
     S: StorageApi,
 {
     /// Range gets the keys in the range from the key-value store.
-    #[instrument(skip(self))]
+    #[instrument(skip_all)]
     async fn range(
         &self,
         request: tonic::Request<RangeRequest>,
     ) -> Result<tonic::Response<RangeResponse>, tonic::Status> {
-        debug!("Receive RangeRequest {:?}", request);
         let range_req = request.get_ref();
+        debug!("Receive grpc request: {:?}", range_req);
         Self::check_range_request(range_req, self.kv_storage.revision())?;
         let is_serializable = range_req.serializable;
         let token = get_token(request.metadata());
@@ -408,13 +408,14 @@ where
     /// Put puts the given key into the key-value store.
     /// A put request increments the revision of the key-value store
     /// and generates one event in the event history.
-    #[instrument(skip(self))]
+    #[instrument(skip_all)]
     async fn put(
         &self,
         request: tonic::Request<PutRequest>,
     ) -> Result<tonic::Response<PutResponse>, tonic::Status> {
-        debug!("Receive PutRequest {:?}", request);
-        Self::check_put_request(request.get_ref())?;
+        let put_req: &PutRequest = request.get_ref();
+        debug!("Receive grpc request: {:?}", put_req);
+        Self::check_put_request(put_req)?;
         let is_fast_path = true;
         let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
 
@@ -434,13 +435,14 @@ where
     /// DeleteRange deletes the given range from the key-value store.
     /// A delete request increments the revision of the key-value store
     /// and generates a delete event in the event history for every deleted key.
-    #[instrument(skip(self))]
+    #[instrument(skip_all)]
     async fn delete_range(
         &self,
         request: tonic::Request<DeleteRangeRequest>,
     ) -> Result<tonic::Response<DeleteRangeResponse>, tonic::Status> {
-        debug!("Receive DeleteRangeRequest {:?}", request);
-        Self::check_delete_range_request(request.get_ref())?;
+        let delete_range_req = request.get_ref();
+        debug!("Receive grpc request: {:?}", delete_range_req);
+        Self::check_delete_range_request(delete_range_req)?;
         let is_fast_path = true;
         let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
 
@@ -461,13 +463,14 @@ where
     /// A txn request increments the revision of the key-value store
     /// and generates events with the same revision for every completed request.
     /// It is not allowed to modify the same key several times within one txn.
-    #[instrument(skip(self))]
+    #[instrument(skip_all)]
     async fn txn(
         &self,
         request: tonic::Request<TxnRequest>,
     ) -> Result<tonic::Response<TxnResponse>, tonic::Status> {
-        debug!("Receive TxnRequest {:?}", request);
-        Self::check_txn_request(request.get_ref(), self.kv_storage.revision())?;
+        let txn_req = request.get_ref();
+        debug!("Receive grpc request: {:?}", txn_req);
+        Self::check_txn_request(txn_req, self.kv_storage.revision())?;
         let is_fast_path = false; // lock need revision of txn
         let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
 
@@ -487,12 +490,13 @@ where
     /// Compact compacts the event history in the etcd key-value store. The key-value
     /// store should be periodically compacted or the event history will continue to grow
     /// indefinitely.
-    #[instrument(skip(self))]
+    #[instrument(skip_all)]
     async fn compact(
         &self,
         request: tonic::Request<CompactionRequest>,
     ) -> Result<tonic::Response<CompactionResponse>, tonic::Status> {
-        debug!("Receive CompactionRequest {:?}", request);
+        let compact_req = request.get_ref();
+        debug!("Receive grpc request: {:?}", compact_req);
         Err(tonic::Status::new(
             tonic::Code::Unimplemented,
             "Not Implemented".to_owned(),
