@@ -109,12 +109,11 @@ where
 
     /// The fast round of Curp protocol
     /// It broadcast the requests to all the curp servers.
-    #[instrument(skip_all)]
+    #[instrument(skip(self))]
     async fn fast_round(
         &self,
         cmd_arc: Arc<C>,
     ) -> Result<(Option<<C as Command>::ER>, bool), ProposeError> {
-        debug!("fast round for cmd({}) started", cmd_arc.id());
         let req = ProposeRequest::new(cmd_arc.as_ref())?;
         let mut rpcs: FuturesUnordered<_> = self
             .connects
@@ -182,7 +181,7 @@ where
                 },
             )??;
             if (ok_cnt >= superquorum) && execute_result.is_some() {
-                debug!("fast round for cmd({}) succeed", cmd_arc.id());
+                debug!("fast round succeeds");
                 return Ok((execute_result, true));
             }
         }
@@ -190,12 +189,11 @@ where
     }
 
     /// The slow round of Curp protocol
-    #[instrument(skip_all)]
+    #[instrument(skip(self))]
     async fn slow_round(
         &self,
         cmd: Arc<C>,
     ) -> Result<(<C as Command>::ASR, <C as Command>::ER), ProposeError> {
-        debug!("slow round for cmd({}) started", cmd.id());
         let retry_timeout = *self.timeout.retry_timeout();
         loop {
             // fetch leader id

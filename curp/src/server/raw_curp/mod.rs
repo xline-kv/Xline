@@ -945,7 +945,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                     (id.clone(), sp.join(","))
                 })
                 .collect();
-            debug!("{} collected spec pools: {debug_sps:?}", self.id());
+            debug!("{} collected spec pools:\n{debug_sps:#?}", self.id());
         }
 
         let mut cmd_cnt: HashMap<ProposeId, (Arc<C>, u64)> = HashMap::new();
