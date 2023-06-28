@@ -2,7 +2,7 @@ use xline::server::KeyRange;
 use xlineapi::{CompareResult, CompareTarget, SortOrder, SortTarget, TargetUnion};
 
 /// Request for `Put`
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct PutRequest {
     /// inner request
     inner: xlineapi::PutRequest,
@@ -104,7 +104,7 @@ impl From<PutRequest> for xlineapi::PutRequest {
 }
 
 /// Request for `Range`
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct RangeRequest {
     /// Inner request
     inner: xlineapi::RangeRequest,
