@@ -1,0 +1,22 @@
+[package]
+name = "xlinectl"
+version = "0.1.0"
+edition = "2021"
+authors = ["DatenLord <dev@datenlord.io>"]
+repository = "https://github.com/xline-kv/Xline/tree/master/xlinectl"
+description = "Command line client for Xline"
+license = "Apache-2.0"
+readme = "README.md"
+categories = ["Client"]
+keywords = ["Client", "CommandLine"]
+
+[dependencies]
+xline-client = { path = "../xline-client" }
+xlineapi = { path = "../xlineapi" }
+utils = { path = "../utils" }
+clap = { version = "4.3.2", features = ["derive", "string"] }
+tokio = { version = "1", features = ["rt"] }
+itertools = "0.10.5"
+async-trait = "0.1.68"
+thiserror = "1.0.37"
+anyhow = "1.0"

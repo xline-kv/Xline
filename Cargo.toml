@@ -12,5 +12,6 @@ members = [
   "xline-client",
   "simulation",
   "xline-test-utils",
-  "test-macros"
+  "test-macros",
+  "xlinectl",
 ]
