@@ -1,7 +1,7 @@
 fail_fast: false
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v2.3.0
+    rev: v4.4.0
     hooks:
       - id: no-commit-to-branch
       - id: check-byte-order-marker
@@ -14,7 +14,7 @@ repos:
       - id: mixed-line-ending
       - id: trailing-whitespace
   - repo: https://github.com/psf/black
-    rev: 19.3b0
+    rev: 23.3.0
     hooks:
       - id: black
   - repo: local
@@ -47,3 +47,15 @@ repos:
         language: rust
         files: \.rs$
         pass_filenames: false
+      - id: conventional-commit-msg-validation
+        name: commit message conventional validation
+        language: pygrep
+        entry: '^(breaking|build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test){1}(\([\w\-\.]+\))?(!)?: ([\w `])+([\s\S]*)'
+        args: [--multiline, --negate]
+        stages: [commit-msg]
+      - id: commit-msg-needs-to-be-signed-off
+        name: commit message needs to be signed off
+        language: pygrep
+        entry: '^Signed-off-by:'
+        args: [--multiline, --negate]
+        stages: [commit-msg]
