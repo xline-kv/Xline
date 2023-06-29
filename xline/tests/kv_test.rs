@@ -1,6 +1,7 @@
 use std::{error::Error, time::Duration};
 
 use etcd_client::Client;
+use test_macros::abort_on_panic;
 use xline::client::kv_types::{
     DeleteRangeRequest, PutRequest, RangeRequest, SortOrder, SortTarget,
 };
@@ -8,6 +9,7 @@ use xline::client::kv_types::{
 use xline_test_utils::Cluster;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+#[abort_on_panic]
 async fn test_kv_put() -> Result<(), Box<dyn Error>> {
     struct TestCase {
         req: PutRequest,
@@ -42,6 +44,7 @@ async fn test_kv_put() -> Result<(), Box<dyn Error>> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+#[abort_on_panic]
 async fn test_kv_get() -> Result<(), Box<dyn Error>> {
     struct TestCase<'a> {
         req: RangeRequest,
@@ -158,6 +161,7 @@ async fn test_kv_get() -> Result<(), Box<dyn Error>> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+#[abort_on_panic]
 async fn test_range_redirect() -> Result<(), Box<dyn Error>> {
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;
@@ -174,6 +178,7 @@ async fn test_range_redirect() -> Result<(), Box<dyn Error>> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+#[abort_on_panic]
 async fn test_kv_delete() -> Result<(), Box<dyn Error>> {
     struct TestCase<'a> {
         req: DeleteRangeRequest,

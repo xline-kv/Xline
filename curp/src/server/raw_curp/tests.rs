@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use test_macros::abort_on_panic;
 use tokio::{sync::oneshot, time::sleep};
 use tracing_test::traced_test;
 use utils::config::{
@@ -296,6 +297,7 @@ fn handle_ae_will_reject_wrong_log() {
 
 #[traced_test]
 #[tokio::test]
+#[abort_on_panic]
 async fn follower_will_not_start_election_when_heartbeats_are_received() {
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
@@ -326,6 +328,7 @@ async fn follower_will_not_start_election_when_heartbeats_are_received() {
 
 #[traced_test]
 #[tokio::test]
+#[abort_on_panic]
 async fn follower_or_candidate_will_start_election_if_timeout() {
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();

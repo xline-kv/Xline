@@ -185,7 +185,6 @@ async fn leader_and_follower_both_crash_and_recovery() {
     group.stop().await;
 }
 
-// Leader should recover speculatively executed commands
 #[madsim::test]
 async fn new_leader_will_recover_spec_cmds_cond1() {
     init_logger();

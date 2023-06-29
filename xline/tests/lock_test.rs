@@ -1,10 +1,12 @@
 use std::{error::Error, time::Duration};
 
 use etcd_client::LockOptions;
+use test_macros::abort_on_panic;
 use tokio::time::{self, timeout};
 use xline_test_utils::Cluster;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+#[abort_on_panic]
 async fn test_lock() -> Result<(), Box<dyn Error>> {
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;
@@ -32,6 +34,7 @@ async fn test_lock() -> Result<(), Box<dyn Error>> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+#[abort_on_panic]
 async fn test_lock_timeout() -> Result<(), Box<dyn Error>> {
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;

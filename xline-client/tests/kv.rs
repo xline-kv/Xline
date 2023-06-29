@@ -1,5 +1,6 @@
 //! The following tests are originally from `etcd-client`
 use common::get_cluster_client;
+use test_macros::abort_on_panic;
 use xline_client::{
     clients::kv::{Compare, DeleteRangeRequest, PutRequest, RangeRequest, Txn, TxnOp},
     error::Result,
@@ -9,6 +10,7 @@ use xlineapi::CompareResult;
 mod common;
 
 #[tokio::test]
+#[abort_on_panic]
 async fn test_put() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await?;
     let mut client = client.kv_client();
@@ -42,6 +44,7 @@ async fn test_put() -> Result<()> {
 }
 
 #[tokio::test]
+#[abort_on_panic]
 async fn test_get() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await?;
     let mut client = client.kv_client();
@@ -92,6 +95,7 @@ async fn test_get() -> Result<()> {
 }
 
 #[tokio::test]
+#[abort_on_panic]
 async fn test_delete() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await?;
     let mut client = client.kv_client();
@@ -165,6 +169,7 @@ async fn test_delete() -> Result<()> {
 }
 
 #[tokio::test]
+#[abort_on_panic]
 async fn test_txn() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await?;
     let mut client = client.kv_client();

@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use curp::{client::ReadState, cmd::Command};
 use curp_test_utils::{init_logger, sleep_millis, test_cmd::TestCommand};
+use test_macros::abort_on_panic;
 use utils::config::ClientTimeout;
 
 use crate::common::curp_group::CurpGroup;
@@ -9,6 +10,7 @@ use crate::common::curp_group::CurpGroup;
 mod common;
 
 #[tokio::test]
+#[abort_on_panic]
 async fn read_state() {
     init_logger();
     let group = CurpGroup::new(3).await;

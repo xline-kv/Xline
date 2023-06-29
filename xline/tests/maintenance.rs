@@ -1,5 +1,6 @@
 use std::{path::PathBuf, time::Duration};
 
+use test_macros::abort_on_panic;
 use tokio::io::AsyncWriteExt;
 use xline::client::{
     kv_types::{PutRequest, RangeRequest},
@@ -8,6 +9,7 @@ use xline::client::{
 use xline_test_utils::Cluster;
 
 #[tokio::test]
+#[abort_on_panic]
 async fn test_snapshot_and_restore() -> Result<(), Box<dyn std::error::Error>> {
     let dir = PathBuf::from("/tmp/test_snapshot_and_restore");
     tokio::fs::create_dir_all(&dir).await?;

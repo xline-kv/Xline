@@ -65,9 +65,12 @@ where
 
 #[cfg(test)]
 mod test {
+    use test_macros::abort_on_panic;
+
     use super::*;
 
     #[tokio::test]
+    #[abort_on_panic]
     async fn mutex_map_works() {
         let mu = Mutex::new(1);
         mu.map_lock(|mut g| {
@@ -79,6 +82,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[abort_on_panic]
     async fn rwlock_map_works() {
         let mu = RwLock::new(1);
         mu.map_write(|mut g| {

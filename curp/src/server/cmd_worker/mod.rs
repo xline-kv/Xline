@@ -279,10 +279,12 @@ mod tests {
         mock_role_change, sleep_millis, sleep_secs,
         test_cmd::{TestCE, TestCommand},
     };
+    use test_macros::abort_on_panic;
 
     // This should happen in fast path in most cases
     #[traced_test]
     #[tokio::test]
+    #[abort_on_panic]
     async fn fast_path_normal() {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
@@ -312,6 +314,7 @@ mod tests {
     // When the execution takes more time than sync, `as` should be called after exe has finished
     #[traced_test]
     #[tokio::test]
+    #[abort_on_panic]
     async fn fast_path_cond1() {
         let (er_tx, _er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
@@ -346,6 +349,7 @@ mod tests {
     // When the execution takes more time than sync and fails, after sync should not be called
     #[traced_test]
     #[tokio::test]
+    #[abort_on_panic]
     async fn fast_path_cond2() {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
@@ -384,6 +388,7 @@ mod tests {
     // This should happen in slow path in most cases
     #[traced_test]
     #[tokio::test]
+    #[abort_on_panic]
     async fn slow_path_normal() {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
@@ -412,6 +417,7 @@ mod tests {
     // When exe fails
     #[traced_test]
     #[tokio::test]
+    #[abort_on_panic]
     async fn slow_path_exe_fails() {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
@@ -443,6 +449,7 @@ mod tests {
     // If cmd1 and cmd2 conflict, order will be (cmd1 exe) -> (cmd1 as) -> (cmd2 exe) -> (cmd2 as)
     #[traced_test]
     #[tokio::test]
+    #[abort_on_panic]
     async fn conflict_cmd_order() {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
@@ -485,6 +492,7 @@ mod tests {
 
     #[traced_test]
     #[tokio::test]
+    #[abort_on_panic]
     async fn reset_will_wipe_all_states_and_outdated_cmds() {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
@@ -524,6 +532,7 @@ mod tests {
 
     #[traced_test]
     #[tokio::test]
+    #[abort_on_panic]
     async fn test_snapshot() {
         // ce1
         let (er_tx, mut _er_rx) = mpsc::unbounded_channel();

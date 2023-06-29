@@ -178,6 +178,7 @@ where
 mod test {
     use std::{error::Error, path::PathBuf};
 
+    use test_macros::abort_on_panic;
     use tokio_stream::StreamExt;
     use utils::config::StorageConfig;
 
@@ -185,6 +186,7 @@ mod test {
     use crate::storage::db::DB;
 
     #[tokio::test]
+    #[abort_on_panic]
     async fn test_snapshot_rpc() -> Result<(), Box<dyn Error>> {
         let dir = PathBuf::from("/tmp/test_snapshot_rpc");
         let db_path = dir.join("db");

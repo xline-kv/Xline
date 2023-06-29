@@ -294,6 +294,7 @@ mod tests {
     use bytes::Bytes;
     use engine::{EngineType, Snapshot as EngineSnapshot};
     use futures::{pin_mut, StreamExt};
+    use test_macros::abort_on_panic;
     use tracing_test::traced_test;
 
     use super::*;
@@ -301,6 +302,7 @@ mod tests {
 
     #[traced_test]
     #[tokio::test]
+    #[abort_on_panic]
     async fn test_install_snapshot_stream() {
         const SNAPSHOT_SIZE: u64 = 200 * 1024;
         let mut snapshot = EngineSnapshot::new_for_receiving(EngineType::Memory).unwrap();

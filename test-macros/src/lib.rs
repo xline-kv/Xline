@@ -9,7 +9,7 @@ pub fn abort_on_panic(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let panic_hook: Stmt = syn::parse_quote! {
         std::panic::set_hook(Box::new(|info| {
             let stacktrace = std::backtrace::Backtrace::force_capture();
-            println!("Got panic. @info:{}\n@stackTrace:{}", info, stacktrace);
+            println!("Got panic.\n@info:\n{}\n@stackTrace:\n{}", info, stacktrace);
             std::process::abort();
         }));
     };

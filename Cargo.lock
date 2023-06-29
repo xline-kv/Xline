@@ -32,10 +32,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "anstyle"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a30da5c5f2d5e72842e00bcb57657162cdabef0931f40e2deb9b4140440cecd"
+
+[[package]]
 name = "anyhow"
 version = "1.0.68"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2cb2f989d18dd141ab8ae82f64d1a8cdd37e0840f73a406896cf5e99502fab61"
+
+[[package]]
+name = "assert_cmd"
+version = "2.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86d6b683edf8d1119fe420a94f8a7e389239666aa72e65495d91c00462510151"
+dependencies = [
+ "anstyle",
+ "bstr",
+ "doc-comment",
+ "predicates 3.0.3",
+ "predicates-core",
+ "predicates-tree",
+ "wait-timeout",
+]
 
 [[package]]
 name = "async-channel"
@@ -226,6 +247,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
 dependencies = [
  "generic-array",
+]
+
+[[package]]
+name = "bstr"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a246e68bb43f6cd9db24bea052a53e40405417c5fb372e3d1a8a7f770a564ef5"
+dependencies = [
+ "memchr",
+ "once_cell",
+ "regex-automata",
+ "serde",
 ]
 
 [[package]]
@@ -456,6 +489,7 @@ dependencies = [
  "prost-build",
  "serde",
  "tempfile",
+ "test-macros",
  "thiserror",
  "tokio-stream 0.1.12 (git+https://github.com/madsim-rs/tokio.git?rev=ab251ad)",
  "tower",
@@ -630,6 +664,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "doc-comment"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fea41bba32d969b513997752735605054bc0dfa92b4c56bf1189f2e174be7a10"
+
+[[package]]
 name = "downcast"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -665,6 +705,7 @@ dependencies = [
  "parking_lot",
  "rocksdb",
  "serde",
+ "test-macros",
  "thiserror",
  "tokio-util",
 ]
@@ -1385,7 +1426,7 @@ dependencies = [
  "fragile",
  "lazy_static",
  "mockall_derive",
- "predicates",
+ "predicates 2.1.5",
  "predicates-tree",
 ]
 
@@ -1759,6 +1800,18 @@ dependencies = [
  "normalize-line-endings",
  "predicates-core",
  "regex",
+]
+
+[[package]]
+name = "predicates"
+version = "3.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09963355b9f467184c04017ced4a2ba2d75cbcb4e7462690d388233253d4b1a9"
+dependencies = [
+ "anstyle",
+ "difflib",
+ "itertools",
+ "predicates-core",
 ]
 
 [[package]]
@@ -2287,6 +2340,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3369f5ac52d5eb6ab48c6b4ffdc8efbcad6b89c765749064ba298f2c68a16a76"
 
 [[package]]
+name = "test-macros"
+version = "0.1.0"
+dependencies = [
+ "assert_cmd",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "textwrap"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2731,6 +2795,7 @@ dependencies = [
  "opentelemetry-jaeger",
  "parking_lot",
  "serde",
+ "test-macros",
  "thiserror",
  "toml 0.5.10",
  "tracing",
@@ -2765,6 +2830,15 @@ name = "version_check"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
+
+[[package]]
+name = "wait-timeout"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f200f5b12eb75f8c1ed65abd4b2db8a6e1b138a20de009dacee265a2498f3f6"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "want"
@@ -3079,6 +3153,7 @@ dependencies = [
  "rand",
  "serde",
  "sha2",
+ "test-macros",
  "thiserror",
  "tokio-stream 0.1.12 (git+https://github.com/madsim-rs/tokio.git?rev=ab251ad)",
  "tokio-util",
@@ -3107,6 +3182,7 @@ dependencies = [
  "madsim-tonic",
  "pbkdf2",
  "rand",
+ "test-macros",
  "thiserror",
  "tower",
  "utils",

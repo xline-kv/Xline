@@ -6,7 +6,7 @@ description = "Macros for test configurations"
 keywords = ["Test", "Macros"]
 license = "Apache-2.0"
 readme = "README.md"
-repository = "https://github.com/datenlord/Xline/tree/master/test-macros"
+repository = "https://github.com/xline-kv/Xline/tree/master/test-macros"
 version = "0.1.0"
 edition = "2021"
 

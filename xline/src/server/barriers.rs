@@ -101,11 +101,13 @@ mod test {
     use std::{sync::Arc, time::Duration};
 
     use futures::future::join_all;
+    use test_macros::abort_on_panic;
     use tokio::time::{sleep, timeout};
 
     use super::*;
 
     #[tokio::test]
+    #[abort_on_panic]
     async fn test_id_barrier() {
         let id_barrier = Arc::new(IdBarrier::new());
         let barriers = (0..5)
@@ -126,6 +128,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[abort_on_panic]
     async fn test_index_barrier() {
         let index_barrier = Arc::new(IndexBarrier::new());
         let barriers = (0..5).map(|i| {

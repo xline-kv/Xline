@@ -551,10 +551,13 @@ impl SnapshotApi for RocksSnapshot {
 
 #[cfg(test)]
 mod test {
+    use test_macros::abort_on_panic;
+
     use super::*;
 
     static TEST_TABLES: [&str; 3] = ["t1", "t2", "t3"];
     #[tokio::test]
+    #[abort_on_panic]
     async fn test_rocks_errors() {
         let dir = PathBuf::from("/tmp/test_rocks_errors");
         let engine_path = dir.join("engine");

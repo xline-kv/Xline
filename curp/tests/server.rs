@@ -5,6 +5,7 @@ use std::{sync::Arc, time::Duration};
 use clippy_utilities::NumericCast;
 use curp_test_utils::{init_logger, sleep_millis, sleep_secs, test_cmd::TestCommand};
 use madsim::rand::{thread_rng, Rng};
+use test_macros::abort_on_panic;
 use utils::config::ClientTimeout;
 
 use crate::common::curp_group::{
@@ -13,6 +14,7 @@ use crate::common::curp_group::{
 mod common;
 
 #[tokio::test]
+#[abort_on_panic]
 async fn basic_propose() {
     init_logger();
 
@@ -35,6 +37,7 @@ async fn basic_propose() {
 }
 
 #[tokio::test]
+#[abort_on_panic]
 async fn synced_propose() {
     init_logger();
 
@@ -63,6 +66,7 @@ async fn synced_propose() {
 
 // Each command should be executed once and only once on each node
 #[tokio::test]
+#[abort_on_panic]
 async fn exe_exact_n_times() {
     init_logger();
 
@@ -100,6 +104,7 @@ async fn exe_exact_n_times() {
 
 // To verify PR #86 is fixed
 #[tokio::test]
+#[abort_on_panic]
 async fn fast_round_is_slower_than_slow_round() {
     init_logger();
 
@@ -139,6 +144,7 @@ async fn fast_round_is_slower_than_slow_round() {
 }
 
 #[tokio::test]
+#[abort_on_panic]
 async fn concurrent_cmd_order() {
     init_logger();
 
@@ -195,6 +201,7 @@ async fn concurrent_cmd_order() {
 
 /// This test case ensures that the issue 228 is fixed.
 #[tokio::test]
+#[abort_on_panic]
 async fn concurrent_cmd_order_should_have_correct_revision() {
     init_logger();
 
