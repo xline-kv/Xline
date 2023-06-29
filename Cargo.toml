@@ -12,6 +12,7 @@ members = [
   "xline-client",
   "simulation",
   "xline-test-utils",
+  "test-macros"
 ]
 
 # TODO: We should remove it when the madsim updates its release (v0.2.23) in the crate.io
