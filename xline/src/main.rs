@@ -136,7 +136,7 @@
     clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
 )]
 
-use std::{collections::HashMap, env, path::PathBuf, time::Duration};
+use std::{collections::HashMap, env, net::ToSocketAddrs, path::PathBuf, time::Duration};
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
@@ -447,7 +447,7 @@ async fn main() -> Result<()> {
     )
     .await;
 
-    let self_addr = cluster_config
+    let self_addr_string = cluster_config
         .members()
         .get(cluster_config.name())
         .ok_or_else(|| {
@@ -455,8 +455,11 @@ async fn main() -> Result<()> {
                 "node name {} not found in cluster peers",
                 cluster_config.name()
             )
-        })?
-        .parse()?;
+        })?;
+    let self_addr = self_addr_string
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| anyhow!("failed to resolve self address {}", self_addr_string))?;
 
     debug!("name = {:?}", cluster_config.name());
     debug!("server_addr = {:?}", self_addr);
