@@ -215,9 +215,11 @@ mod test {
     use std::path::PathBuf;
 
     use engine::SnapshotApi;
+    use test_macros::abort_on_panic;
 
     use super::*;
     #[tokio::test]
+    #[abort_on_panic]
     async fn test_reset() -> Result<(), ExecuteError> {
         let data_dir = PathBuf::from("/tmp/test_reset");
         let db = DB::open(&StorageConfig::RocksDB(data_dir.clone()))?;
@@ -241,6 +243,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[abort_on_panic]
     async fn test_db_snapshot() -> Result<(), ExecuteError> {
         let dir = PathBuf::from("/tmp/test_db_snapshot");
         let origin_db_path = dir.join("origin_db");
@@ -266,6 +269,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[abort_on_panic]
     async fn test_db_snapshot_wrong_type() -> Result<(), ExecuteError> {
         let dir = PathBuf::from("/tmp/test_db_snapshot_wrong_type");
         let db_path = dir.join("db");
@@ -282,6 +286,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[abort_on_panic]
     async fn test_get_snapshot() -> Result<(), ExecuteError> {
         let dir = PathBuf::from("/tmp/test_get_snapshot");
         let data_path = dir.join("data");
@@ -296,6 +301,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[abort_on_panic]
     async fn test_db_write_ops() {
         let db = DB::open(&StorageConfig::Memory).unwrap();
         let lease = PbLease {

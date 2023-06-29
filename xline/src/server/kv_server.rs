@@ -505,6 +505,7 @@ where
 
 #[cfg(test)]
 mod test {
+    use test_macros::abort_on_panic;
 
     use super::*;
     use crate::storage::db::DB;
@@ -554,6 +555,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[abort_on_panic]
     async fn test_future_revision() {
         let current_revision = 10;
         let range_request = RangeRequest {

@@ -28,3 +28,6 @@ tokio = { version = "0.2", package = "madsim-tokio", features = [
 ] }
 bytes = "1.4.0"
 tokio-util = { version = "0.7.8", features = ["io"] }
+
+[dev-dependencies]
+test-macros = { path = "../test-macros" }

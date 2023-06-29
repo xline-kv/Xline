@@ -538,6 +538,7 @@ mod test {
     use std::{collections::BTreeMap, time::Duration};
 
     use clippy_utilities::Cast;
+    use test_macros::abort_on_panic;
     use tokio::time::{sleep, timeout};
     use utils::config::StorageConfig;
 
@@ -573,6 +574,7 @@ mod test {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    #[abort_on_panic]
     async fn watch_should_not_lost_events() {
         let (store, db, kv_watcher) = init_empty_store();
         let mut map = BTreeMap::new();
@@ -626,6 +628,7 @@ mod test {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    #[abort_on_panic]
     async fn test_victim() {
         let (store, db, kv_watcher) = init_empty_store();
         // response channel with capacity 1, so it will be full easily, then we can trigger victim
@@ -662,6 +665,7 @@ mod test {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    #[abort_on_panic]
     async fn test_cancel_watcher() {
         let (_store, _db, kv_watcher) = init_empty_store();
         let (event_tx, _event_rx) = mpsc::channel(1);

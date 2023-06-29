@@ -73,6 +73,7 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use parking_lot::{Mutex, RwLock};
+    use test_macros::abort_on_panic;
 
     use super::*;
     use crate::{
@@ -86,6 +87,7 @@ mod tests {
     use curp_test_utils::{sleep_secs, test_cmd::TestCommand};
 
     #[tokio::test]
+    #[abort_on_panic]
     async fn cmd_board_gc_test() {
         let board: CmdBoardRef<TestCommand> = Arc::new(RwLock::new(CommandBoard::new()));
         tokio::spawn(gc_cmd_board(Arc::clone(&board), Duration::from_millis(500)));
@@ -137,6 +139,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[abort_on_panic]
     async fn spec_gc_test() {
         let spec: SpecPoolRef<TestCommand> = Arc::new(Mutex::new(SpeculativePool::new()));
         tokio::spawn(gc_spec_pool(Arc::clone(&spec), Duration::from_millis(500)));
@@ -169,6 +172,7 @@ mod tests {
 
     // To verify #206 is fixed
     #[tokio::test]
+    #[abort_on_panic]
     async fn spec_gc_will_not_panic() {
         let spec: SpecPoolRef<TestCommand> = Arc::new(Mutex::new(SpeculativePool::new()));
 

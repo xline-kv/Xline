@@ -370,12 +370,14 @@ where
 mod test {
     use std::{error::Error, time::Duration};
 
+    use test_macros::abort_on_panic;
     use utils::config::StorageConfig;
 
     use super::*;
     use crate::storage::db::DB;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    #[abort_on_panic]
     async fn test_lease_storage() -> Result<(), Box<dyn Error>> {
         let db = DB::open(&StorageConfig::Memory)?;
         let lease_store = init_store(db);
@@ -472,6 +474,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[abort_on_panic]
     async fn test_recover() -> Result<(), ExecuteError> {
         let db = DB::open(&StorageConfig::Memory)?;
         let store = init_store(Arc::clone(&db));

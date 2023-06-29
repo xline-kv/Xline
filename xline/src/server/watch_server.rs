@@ -413,6 +413,7 @@ mod test {
     };
 
     use parking_lot::Mutex;
+    use test_macros::abort_on_panic;
     use tokio::time::{sleep, timeout};
     use utils::config::{default_watch_progress_notify_interval, StorageConfig};
 
@@ -454,6 +455,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[abort_on_panic]
     async fn test_watch_client_closes_connection() -> Result<(), Box<dyn std::error::Error>> {
         let (req_tx, req_rx) = mpsc::channel(CHANNEL_SIZE);
         let (res_tx, mut res_rx) = mpsc::channel(CHANNEL_SIZE);
@@ -491,6 +493,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[abort_on_panic]
     #[allow(clippy::similar_names)] // use num as suffix
     async fn test_multi_watch_handle() -> Result<(), Box<dyn std::error::Error>> {
         let mut mock_watcher = MockKvWatcherOps::new();
@@ -553,6 +556,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[abort_on_panic]
     async fn test_watch_prev_kv() {
         let index = Arc::new(Index::new());
         let db = DB::open(&StorageConfig::Memory).unwrap();
@@ -617,6 +621,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[abort_on_panic]
     async fn test_watch_progress() -> Result<(), Box<dyn std::error::Error>> {
         let (req_tx, req_rx) = mpsc::channel(CHANNEL_SIZE);
         let (res_tx, mut res_rx) = mpsc::channel(CHANNEL_SIZE);
@@ -672,6 +677,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[abort_on_panic]
     async fn watch_task_should_be_terminated_when_response_tx_is_closed(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (req_tx, req_rx) = mpsc::channel(CHANNEL_SIZE);

@@ -746,6 +746,7 @@ where
 mod test {
     use std::time::Duration;
 
+    use test_macros::abort_on_panic;
     use utils::config::StorageConfig;
 
     use super::*;
@@ -822,6 +823,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[abort_on_panic]
     async fn test_keys_only() -> Result<(), ExecuteError> {
         let db = DB::open(&StorageConfig::Memory)?;
         let (store, _rev) = init_store(db).await?;
@@ -842,6 +844,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[abort_on_panic]
     async fn test_range_empty() -> Result<(), ExecuteError> {
         let db = DB::open(&StorageConfig::Memory)?;
         let (store, _rev) = init_store(db).await?;
@@ -860,6 +863,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[abort_on_panic]
     async fn test_range_filter() -> Result<(), ExecuteError> {
         let db = DB::open(&StorageConfig::Memory)?;
         let (store, _rev) = init_store(db).await?;
@@ -883,6 +887,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[abort_on_panic]
     async fn test_range_sort() -> Result<(), ExecuteError> {
         let db = DB::open(&StorageConfig::Memory)?;
         let (store, _rev) = init_store(db).await?;
@@ -926,6 +931,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[abort_on_panic]
     async fn test_recover() -> Result<(), ExecuteError> {
         let db = DB::open(&StorageConfig::Memory)?;
         let _store = init_store(Arc::clone(&db)).await?;
@@ -950,6 +956,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[abort_on_panic]
     async fn test_txn() -> Result<(), ExecuteError> {
         let txn_req = RequestWithToken::new(
             TxnRequest {
@@ -1006,6 +1013,7 @@ mod test {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    #[abort_on_panic]
     async fn test_kv_store_index_available() {
         let db = DB::open(&StorageConfig::Memory).unwrap();
         let (store, revision) = init_store(Arc::clone(&db)).await.unwrap();

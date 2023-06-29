@@ -90,8 +90,10 @@ mod tests {
 
     use super::*;
     use curp_test_utils::{sleep_secs, test_cmd::TestCommand};
+    use test_macros::abort_on_panic;
 
     #[tokio::test]
+    #[abort_on_panic]
     async fn create_and_recover() -> Result<(), Box<dyn Error>> {
         let db_dir = tempfile::tempdir().unwrap().into_path();
 

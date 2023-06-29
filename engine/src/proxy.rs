@@ -197,6 +197,7 @@ mod test {
     use std::iter::{repeat, zip};
 
     use clippy_utilities::NumericCast;
+    use test_macros::abort_on_panic;
 
     use super::*;
     use crate::api::snapshot_api::SnapshotApi;
@@ -314,6 +315,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[abort_on_panic]
     async fn snapshot_should_work() {
         let dir = PathBuf::from("/tmp/snapshot_should_work");
         let origin_data_dir = dir.join("origin");
