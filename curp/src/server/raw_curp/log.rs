@@ -432,13 +432,13 @@ mod tests {
         let mut log =
             Log::<TestCommand>::new(tx, default_batch_max_size(), default_log_entries_cap());
 
-        let _res = log.push_cmd(1, Arc::new(TestCommand::default()));
-        let log_entry_size = log.batch_index[1];
-
-        let _res = repeat(TestCommand::default())
-            .take(9)
-            .map(|cmd| log.push_cmd(1, Arc::new(cmd)).unwrap())
+        // Note: this test must use the same test command to ensure the size of the entry is fixed
+        let test_cmd = Arc::new(TestCommand::default());
+        let _res = repeat(Arc::clone(&test_cmd))
+            .take(10)
+            .map(|cmd| log.push_cmd(1, cmd).unwrap())
             .collect::<Vec<u64>>();
+        let log_entry_size = log.batch_index[1];
 
         set_batch_limit(&mut log, 3 * log_entry_size - 1);
         let bound_1 = log.get_range_by_batch(3);
@@ -507,7 +507,9 @@ mod tests {
 
     #[test]
     fn recover_log_should_success() {
-        let entries = repeat(Arc::new(TestCommand::default()))
+        // Note: this test must use the same test command to ensure the size of the entry is fixed
+        let test_cmd = Arc::new(TestCommand::default());
+        let entries = repeat(Arc::clone(&test_cmd))
             .enumerate()
             .take(10)
             .map(|(idx, cmd)| LogEntry::new((idx + 1).numeric_cast(), 1, cmd))
