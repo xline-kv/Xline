@@ -34,13 +34,13 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
   check:
-    name: Check
     runs-on: ubuntu-latest
     strategy:
       matrix:
         config:
-          - { name: "Check", args: "", rustflags: "" }
-          - { name: "CheckMadsim", args: "--package=simulation", rustflags: "--cfg madsim" }
+          - { name: "Normal", args: "", rustflags: "" }
+          - { name: "Madsim", args: "--package=simulation", rustflags: "--cfg madsim" }
+    name: Check ${{ matrix.config.name }}
     steps:
       - uses: actions/checkout@v2
       - run: sudo bash ./.github/scripts/install_deps.sh
@@ -74,13 +74,13 @@ jobs:
           args: --all -- --check
 
   test:
-    name: Test
     runs-on: ubuntu-latest
     strategy:
       matrix:
         config:
-          - { name: "Test", args: "", rustflags: "" }
-          - { name: "TestMadsim", args: "--package=simulation", rustflags: "--cfg madsim" }
+          - { name: "Normal", args: "", rustflags: "" }
+          - { name: "Madsim", args: "--package=simulation", rustflags: "--cfg madsim" }
+    name: Test ${{ matrix.config.name }}
     steps:
       - uses: actions/checkout@v2
       - run: sudo bash ./.github/scripts/install_deps.sh
@@ -99,13 +99,13 @@ jobs:
           RUSTFLAGS: ${{ matrix.config.rustflags }}
 
   clippy:
-    name: Clippy
     runs-on: ubuntu-latest
     strategy:
       matrix:
         config:
-          - { name: "Clippy", args: "--all-targets --all-features -- -D warnings", rustflags: "" }
-          - { name: "ClippyMadsim", args: "--package=simulation --all-targets --all-features -- -D warnings", rustflags: "--cfg madsim" }
+          - { name: "Normal", args: "--all-targets --all-features -- -D warnings", rustflags: "" }
+          - { name: "Madsim", args: "--package=simulation --all-targets --all-features -- -D warnings", rustflags: "--cfg madsim" }
+    name: Clippy ${{ matrix.config.name }}
     steps:
       - uses: actions/checkout@v2
       - run: sudo bash ./.github/scripts/install_deps.sh
