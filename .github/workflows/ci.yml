@@ -78,8 +78,8 @@ jobs:
     strategy:
       matrix:
         config:
-          - { name: "Normal", args: "", rustflags: "" }
-          - { name: "Madsim", args: "--package=simulation", rustflags: "--cfg madsim" }
+          - { name: "Normal", args: "-- --nocapture", rustflags: "" }
+          - { name: "Madsim", args: "--package=simulation -- --nocapture", rustflags: "--cfg madsim" }
     name: Test ${{ matrix.config.name }}
     steps:
       - uses: actions/checkout@v2
