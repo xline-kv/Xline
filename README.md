@@ -3,14 +3,14 @@
 [![Discord Shield](https://discordapp.com/api/guilds/1110584535248281760/widget.png?style=shield)][discord-url]
 [![Apache 2.0 licensed][apache-badge]][apache-url]
 [![Build Status][actions-badge]][actions-url]
-[![codecov](https://codecov.io/gh/datenlord/xline/branch/master/graph/badge.svg)][cov-url]
+[![codecov](https://codecov.io/gh/xline-kv/xline/branch/master/graph/badge.svg)][cov-url]
 
 [discord-url]: https://discord.gg/hqDRtYkWzm
 [apache-badge]: https://img.shields.io/badge/license-Apache--2.0-brightgreen
 [apache-url]: https://github.com/datenlord/Xline/blob/master/LICENSE
 [actions-badge]: https://github.com/datenlord/xline/actions/workflows/ci.yml/badge.svg?branch=master
 [actions-url]: https://github.com/datenlord/xline/actions
-[cov-url]: https://codecov.io/gh/datenlord/xline
+[cov-url]: https://codecov.io/gh/xline-kv/xline
 
 `Xline` is a geo-distributed KV store for metadata management. It provides the
 following features:
