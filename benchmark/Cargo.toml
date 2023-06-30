@@ -9,7 +9,7 @@ description = "Benchmark tool for Xline"
 keywords = ["benchmark"]
 license = "Apache-2.0"
 readme = "README.md"
-repository = "https://github.com/datenlord/Xline/tree/master/benchmark"
+repository = "https://github.com/xline-kv/Xline/tree/master/benchmark"
 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
