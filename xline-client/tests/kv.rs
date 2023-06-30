@@ -1,19 +1,18 @@
 //! The following tests are originally from `etcd-client`
+use common::get_cluster_client;
 use xline_client::{
     clients::kv::{Compare, DeleteRangeRequest, PutRequest, RangeRequest, Txn, TxnOp},
     error::Result,
-    Client, ClientOptions,
 };
-use xline_test_utils::Cluster;
 use xlineapi::CompareResult;
+
+mod common;
 
 #[tokio::test]
 async fn test_put() -> Result<()> {
-    let mut cluster = Cluster::new(3).await;
-    cluster.start().await;
-    let mut client = Client::connect(cluster.addrs().clone(), ClientOptions::default())
-        .await?
-        .kv_client();
+    let (_cluster, client) = get_cluster_client().await?;
+    let mut client = client.kv_client();
+
     let request = PutRequest::new("put", "123");
     client.put(request).await?;
 
@@ -44,11 +43,9 @@ async fn test_put() -> Result<()> {
 
 #[tokio::test]
 async fn test_get() -> Result<()> {
-    let mut cluster = Cluster::new(3).await;
-    cluster.start().await;
-    let mut client = Client::connect(cluster.addrs().clone(), ClientOptions::default())
-        .await?
-        .kv_client();
+    let (_cluster, client) = get_cluster_client().await?;
+    let mut client = client.kv_client();
+
     client.put(PutRequest::new("get10", "10")).await?;
     client.put(PutRequest::new("get11", "11")).await?;
     client.put(PutRequest::new("get20", "20")).await?;
@@ -96,11 +93,9 @@ async fn test_get() -> Result<()> {
 
 #[tokio::test]
 async fn test_delete() -> Result<()> {
-    let mut cluster = Cluster::new(3).await;
-    cluster.start().await;
-    let mut client = Client::connect(cluster.addrs().clone(), ClientOptions::default())
-        .await?
-        .kv_client();
+    let (_cluster, client) = get_cluster_client().await?;
+    let mut client = client.kv_client();
+
     client.put(PutRequest::new("del10", "10")).await?;
     client.put(PutRequest::new("del11", "11")).await?;
     client.put(PutRequest::new("del20", "20")).await?;
@@ -171,11 +166,8 @@ async fn test_delete() -> Result<()> {
 
 #[tokio::test]
 async fn test_txn() -> Result<()> {
-    let mut cluster = Cluster::new(3).await;
-    cluster.start().await;
-    let mut client = Client::connect(cluster.addrs().clone(), ClientOptions::default())
-        .await?
-        .kv_client();
+    let (_cluster, client) = get_cluster_client().await?;
+    let mut client = client.kv_client();
 
     client.put(PutRequest::new("txn01", "01")).await?;
 
