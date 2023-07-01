@@ -1,7 +1,10 @@
 use std::{
     cmp::Ordering,
     collections::{HashMap, VecDeque},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicI64, Ordering::Relaxed},
+        Arc,
+    },
 };
 
 use clippy_utilities::{Cast, OverflowArithmetic};
@@ -41,6 +44,8 @@ where
     index: Arc<Index>,
     /// DB to store key value
     db: Arc<DB>,
+    /// Compacted Revision
+    compacted_rev: AtomicI64,
     /// Revision
     revision: Arc<RevisionNumberGenerator>,
     /// Header generator
@@ -135,6 +140,7 @@ where
         Self {
             index,
             db,
+            compacted_rev: AtomicI64::new(-1),
             revision: header_gen.revision_arc(),
             header_gen,
             kv_update_tx,
@@ -145,6 +151,16 @@ where
     /// Get revision of KV store
     pub(crate) fn revision(&self) -> i64 {
         self.revision.get()
+    }
+
+    /// Get compacted revision of  KV stre
+    pub(crate) fn compacted_revision(&self) -> i64 {
+        self.compacted_rev.load(Relaxed)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn update_compacted_revision(&self, revision: i64) {
+        self.compacted_rev.store(revision, Relaxed);
     }
 
     /// Notify KV changes to KV watcher

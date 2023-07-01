@@ -298,6 +298,9 @@ pub(crate) trait KvWatcherOps {
 
     /// Get Prev `KeyValue` of a `KeyValue`
     fn get_prev_kv(&self, kv: &KeyValue) -> Option<KeyValue>;
+
+    /// Get compacted revision from backend store
+    fn compacted_revision(&self) -> i64;
 }
 
 #[async_trait::async_trait]
@@ -305,7 +308,6 @@ impl<S> KvWatcherOps for KvWatcher<S>
 where
     S: StorageApi,
 {
-    /// Create a watch to KV store
     fn watch(
         &self,
         id: WatchId,
@@ -354,13 +356,16 @@ where
         watcher_map_w.register(watcher);
     }
 
-    /// Cancel a watch from KV store
     fn cancel(&self, watch_id: WatchId) {
         self.watcher_map.write().remove(watch_id);
     }
 
     fn get_prev_kv(&self, kv: &KeyValue) -> Option<KeyValue> {
         self.storage.get_prev_kv(kv)
+    }
+
+    fn compacted_revision(&self) -> i64 {
+        self.storage.compacted_revision()
     }
 }
 

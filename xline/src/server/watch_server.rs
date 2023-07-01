@@ -198,6 +198,17 @@ where
 
     /// Handle `WatchCreateRequest`
     async fn handle_watch_create(&mut self, req: WatchCreateRequest) {
+        let compacted_revision = self.kv_watcher.compacted_revision();
+        if req.start_revision < compacted_revision {
+            let result = Err(tonic::Status::invalid_argument(format!(
+                "required revision {} has been compacted, compacted revision is {}",
+                req.start_revision, compacted_revision
+            )));
+            if self.response_tx.send(result).await.is_err() {
+                self.stop_notify.notify(1);
+            }
+            return;
+        }
         let Some(watch_id) = self.validate_watch_id(req.watch_id) else {
             let result = Err(tonic::Status::already_exists(format!(
                 "Watch ID {} has already been used",
@@ -239,6 +250,7 @@ where
             header: Some(self.header_gen.gen_header()),
             watch_id,
             created: true,
+            compact_revision: compacted_revision,
             ..WatchResponse::default()
         };
         if self.response_tx.send(Ok(response)).await.is_err() {
@@ -465,6 +477,9 @@ mod test {
         let mut mock_watcher = MockKvWatcherOps::new();
         let _ = mock_watcher.expect_watch().times(1).return_const(());
         let _ = mock_watcher.expect_cancel().times(1).return_const(());
+        let _ = mock_watcher
+            .expect_compacted_revision()
+            .return_const(-1_i64);
         let watcher = Arc::new(mock_watcher);
         let next_id = Arc::new(WatchIdGenerator::new(1));
         let handle = tokio::spawn(WatchServer::<DB>::task(
@@ -507,6 +522,9 @@ mod test {
             }
         });
         let _ = mock_watcher.expect_cancel().return_const(());
+        let _ = mock_watcher
+            .expect_compacted_revision()
+            .return_const(-1_i64);
         let kv_watcher = Arc::new(mock_watcher);
         let next_id_gen = Arc::new(WatchIdGenerator::new(1));
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
@@ -631,6 +649,9 @@ mod test {
         let mut mock_watcher = MockKvWatcherOps::new();
         let _ = mock_watcher.expect_watch().times(1).return_const(());
         let _ = mock_watcher.expect_cancel().times(1).return_const(());
+        let _ = mock_watcher
+            .expect_compacted_revision()
+            .return_const(-1_i64);
         let watcher = Arc::new(mock_watcher);
         let next_id = Arc::new(WatchIdGenerator::new(1));
         let handle = tokio::spawn(WatchServer::<DB>::task(
@@ -677,8 +698,7 @@ mod test {
     }
 
     #[tokio::test]
-    #[abort_on_panic]
-    async fn watch_task_should_be_terminated_when_response_tx_is_closed(
+    async fn watch_task_should_terminate_when_response_tx_closed(
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (req_tx, req_rx) = mpsc::channel(CHANNEL_SIZE);
         let (res_tx, res_rx) = mpsc::channel(CHANNEL_SIZE);
@@ -688,6 +708,9 @@ mod test {
         let mut mock_watcher = MockKvWatcherOps::new();
         let _ = mock_watcher.expect_watch().times(1).return_const(());
         let _ = mock_watcher.expect_cancel().times(1).return_const(());
+        let _ = mock_watcher
+            .expect_compacted_revision()
+            .return_const(-1_i64);
         let watcher = Arc::new(mock_watcher);
         let next_id = Arc::new(WatchIdGenerator::new(1));
         let handle = tokio::spawn(WatchServer::<DB>::task(
@@ -720,5 +743,72 @@ mod test {
 
         assert!(timeout(Duration::from_secs(10), handle).await.is_ok());
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn watch_compacted_revision_should_fail() {
+        let index = Arc::new(Index::new());
+        let db = DB::open(&StorageConfig::Memory).unwrap();
+        let header_gen = Arc::new(HeaderGenerator::new(0, 0));
+        let lease_collection = Arc::new(LeaseCollection::new(0));
+        let next_id_gen = Arc::new(WatchIdGenerator::new(1));
+        let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
+        let kv_store = Arc::new(KvStore::new(
+            kv_update_tx,
+            lease_collection,
+            Arc::clone(&header_gen),
+            Arc::clone(&db),
+            index,
+        ));
+        let shutdown_trigger = Arc::new(event_listener::Event::new());
+        let kv_watcher = KvWatcher::new_arc(
+            Arc::clone(&kv_store),
+            kv_update_rx,
+            shutdown_trigger,
+            Duration::from_millis(10),
+        );
+        put(&kv_store, &db, "foo", "old_bar", 2).await;
+        put(&kv_store, &db, "foo", "bar", 3).await;
+        put(&kv_store, &db, "foo", "new_bar", 4).await;
+
+        kv_store.update_compacted_revision(3);
+
+        let (req_tx, req_rx) = mpsc::channel(CHANNEL_SIZE);
+        let req_stream = ReceiverStream::new(req_rx);
+        let create_watch_req = move |watch_id: WatchId, start_rev: i64| WatchRequest {
+            request_union: Some(RequestUnion::CreateRequest(WatchCreateRequest {
+                watch_id,
+                key: "foo".into(),
+                start_revision: start_rev,
+                ..Default::default()
+            })),
+        };
+        req_tx.send(Ok(create_watch_req(1, 2))).await.unwrap();
+        req_tx.send(Ok(create_watch_req(2, 3))).await.unwrap();
+        req_tx.send(Ok(create_watch_req(3, 4))).await.unwrap();
+        let (res_tx, mut res_rx) = mpsc::channel(CHANNEL_SIZE);
+        let _hd = tokio::spawn(WatchServer::<DB>::task(
+            Arc::clone(&next_id_gen),
+            Arc::clone(&kv_watcher),
+            res_tx,
+            req_stream,
+            Arc::clone(&header_gen),
+            default_watch_progress_notify_interval(),
+        ));
+
+        for i in 0..3 {
+            let watch_res = res_rx.recv().await.unwrap();
+            if i == 0 {
+                assert!(
+                    watch_res.is_err(),
+                    "watch create request with a compacted revision should not be successful"
+                );
+            } else {
+                assert!(
+                    watch_res.is_ok(),
+                    "watch create request with a valid revision should be successful"
+                );
+            }
+        }
     }
 }
