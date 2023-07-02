@@ -458,7 +458,9 @@ impl RequestWrapper {
     /// Check whether the kv request or lease request should skip the revision or not
     pub fn skip_general_revision(&self) -> bool {
         match self {
-            RequestWrapper::RangeRequest(_) | RequestWrapper::LeaseGrantRequest(_) => true,
+            RequestWrapper::RangeRequest(_)
+            | RequestWrapper::LeaseGrantRequest(_)
+            | RequestWrapper::CompactionRequest(_) => true,
             RequestWrapper::TxnRequest(req) => req.is_read_only(),
             _ => false,
         }
@@ -472,6 +474,14 @@ impl RequestWrapper {
     /// Check if this request is a kv request
     pub fn is_kv_request(&self) -> bool {
         self.backend() == RequestBackend::Kv
+    }
+
+    pub fn is_compaction_request(&self) -> bool {
+        matches!(*self, RequestWrapper::CompactionRequest(_))
+    }
+
+    pub fn is_txn_request(&self) -> bool {
+        matches!(*self, RequestWrapper::TxnRequest(_))
     }
 
     pub fn is_lease_read_request(&self) -> bool {
@@ -659,6 +669,22 @@ impl TxnRequest {
             }
         };
         self.success.iter().all(read_only_checker) && self.failure.iter().all(read_only_checker)
+    }
+
+    /// Checks whether a `TxnRequest` is conflict with a given revision
+    pub fn is_conflict_with_rev(&self, revision: i64) -> bool {
+        let conflict_checker = |req: &RequestOp| {
+            if let Some(ref request) = req.request {
+                match request {
+                    Request::RequestRange(req) => req.revision > 0 && req.revision < revision,
+                    Request::RequestDeleteRange(_) | Request::RequestPut(_) => false,
+                    Request::RequestTxn(req) => req.is_conflict_with_rev(revision),
+                }
+            } else {
+                false
+            }
+        };
+        self.success.iter().any(conflict_checker) || self.failure.iter().any(conflict_checker)
     }
 }
 
