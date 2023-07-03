@@ -12,7 +12,7 @@ use tokio::{
     sync::broadcast::{self, Sender},
     time::{self, Duration},
 };
-use utils::config::{ClientTimeout, CurpConfig, ServerTimeout, StorageConfig};
+use utils::config::{ClientTimeout, CompactConfig, CurpConfig, ServerTimeout, StorageConfig};
 use xline::{client::Client, server::XlineServer, storage::db::DB};
 
 /// Cluster
@@ -86,6 +86,7 @@ impl Cluster {
                     ClientTimeout::default(),
                     ServerTimeout::default(),
                     StorageConfig::Memory,
+                    CompactConfig::default(),
                 );
                 let signal = async {
                     let _ = rx.recv().await;

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use event_listener::Event;
 use tokio::{sync::mpsc::UnboundedReceiver, time::sleep};
@@ -13,24 +13,23 @@ use super::{
 pub(crate) async fn compactor<DB>(
     kv_store: Arc<KvStore<DB>>,
     index: Arc<Index>,
+    batch_limit: usize,
+    interval: Duration,
     mut compact_task_rx: UnboundedReceiver<(i64, Option<Arc<Event>>)>,
 ) where
     DB: StorageApi,
 {
-    // TODO: make compact_interval and compact_batch_limit configurable
-    let compact_interval = std::time::Duration::from_millis(10);
-    let compact_batch_limit = 1000;
     while let Some((revision, listener)) = compact_task_rx.recv().await {
         let target_revisions = index
             .compact(revision)
             .into_iter()
             .map(|key_rev| key_rev.as_revision().encode_to_vec())
             .collect::<Vec<Vec<_>>>();
-        for revision_chunk in target_revisions.chunks(compact_batch_limit) {
+        for revision_chunk in target_revisions.chunks(batch_limit) {
             if let Err(e) = kv_store.compact(revision_chunk) {
                 panic!("failed to compact revision chunk {revision_chunk:?} due to {e}");
             }
-            sleep(compact_interval).await;
+            sleep(interval).await;
         }
         if let Some(notifier) = listener {
             notifier.notify(usize::MAX);

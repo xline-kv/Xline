@@ -24,6 +24,9 @@ pub struct XlineServerConfig {
     /// auth configuration object
     #[getset(get = "pub")]
     auth: AuthConfig,
+    /// compactor configuration object
+    #[getset(get = "pub")]
+    compact: CompactConfig,
 }
 
 /// Cluster Range type alias
@@ -116,6 +119,56 @@ impl ClusterConfig {
             server_timeout,
         }
     }
+}
+
+/// Compaction configuration
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Getters)]
+#[allow(clippy::module_name_repetitions)]
+pub struct CompactConfig {
+    /// The max number of historical versions processed in a single compact operation
+    #[getset(get = "pub")]
+    #[serde(default = "default_compact_batch_size")]
+    compact_batch_size: usize,
+    /// The interval between two compact operations
+    #[getset(get = "pub")]
+    #[serde(with = "duration_format", default = "default_compact_interval")]
+    compact_interval: Duration,
+}
+
+impl Default for CompactConfig {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            compact_batch_size: default_compact_batch_size(),
+            compact_interval: default_compact_interval(),
+        }
+    }
+}
+
+impl CompactConfig {
+    /// Create a new compact config
+    #[must_use]
+    #[inline]
+    pub fn new(compact_batch_size: usize, compact_interval: Duration) -> Self {
+        Self {
+            compact_batch_size,
+            compact_interval,
+        }
+    }
+}
+
+/// default compact batch size
+#[must_use]
+#[inline]
+pub const fn default_compact_batch_size() -> usize {
+    1000
+}
+
+/// default compact interval
+#[must_use]
+#[inline]
+pub const fn default_compact_interval() -> Duration {
+    Duration::from_millis(10)
 }
 
 /// Curp server timeout settings
@@ -647,6 +700,7 @@ impl XlineServerConfig {
         log: LogConfig,
         trace: TraceConfig,
         auth: AuthConfig,
+        compact: CompactConfig,
     ) -> Self {
         Self {
             cluster,
@@ -654,6 +708,7 @@ impl XlineServerConfig {
             log,
             trace,
             auth,
+            compact,
         }
     }
 }
@@ -691,6 +746,10 @@ mod tests {
 
             [storage]
             engine = 'memory'
+
+            [compact]
+            compact_batch_size = 123
+            compact_interval = '5ms'
 
             [log]
             path = '/var/log/xline'
@@ -761,6 +820,14 @@ mod tests {
                 LevelConfig::INFO
             )
         );
+
+        assert_eq!(
+            config.compact,
+            CompactConfig {
+                compact_batch_size: 123,
+                compact_interval: Duration::from_millis(5)
+            }
+        );
     }
 
     #[allow(clippy::unwrap_used)]
@@ -784,6 +851,8 @@ mod tests {
                 [storage]
                 engine = 'rocksdb'
                 data_dir = '/usr/local/xline/data-dir'
+
+                [compact]
 
                 [trace]
                 jaeger_online = false
@@ -836,5 +905,6 @@ mod tests {
                 LevelConfig::INFO
             )
         );
+        assert_eq!(config.compact, CompactConfig::default());
     }
 }
