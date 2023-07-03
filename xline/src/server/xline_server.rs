@@ -5,7 +5,7 @@ use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{members::ClusterMember, server::Rpc, ProtocolServer, SnapshotAllocator};
 use event_listener::Event;
 use jsonwebtoken::{DecodingKey, EncodingKey};
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, sync::mpsc::unbounded_channel};
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
 use tonic_health::ServingStatus;
@@ -32,6 +32,7 @@ use crate::{
     },
     state::State,
     storage::{
+        compact::compactor,
         index::Index,
         kvwatcher::KvWatcher,
         lease_store::LeaseCollection,
@@ -120,15 +121,23 @@ impl XlineServer {
         Arc<AuthStore<S>>,
         Arc<KvWatcher<S>>,
     )> {
+        let (compact_task_tx, compact_task_rx) = unbounded_channel();
         let index = Arc::new(Index::new());
         let (kv_update_tx, kv_update_rx) = tokio::sync::mpsc::channel(CHANNEL_SIZE);
         let kv_storage = Arc::new(KvStore::new(
-            kv_update_tx.clone(),
-            Arc::clone(&lease_collection),
-            Arc::clone(&header_gen),
-            Arc::clone(&persistent),
             Arc::clone(&index),
+            Arc::clone(&persistent),
+            Arc::clone(&header_gen),
+            kv_update_tx.clone(),
+            compact_task_tx,
+            Arc::clone(&lease_collection),
         ));
+        let _hd = tokio::spawn(compactor(
+            Arc::clone(&kv_storage),
+            Arc::clone(&index),
+            compact_task_rx,
+        ));
+        // TODO: Boot up the compact policy scheduler
         let lease_storage = Arc::new(LeaseStore::new(
             Arc::clone(&lease_collection),
             Arc::clone(&header_gen),

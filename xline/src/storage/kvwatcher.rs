@@ -555,17 +555,19 @@ mod test {
     };
 
     fn init_empty_store() -> (Arc<KvStore<DB>>, Arc<DB>, Arc<KvWatcher<DB>>) {
+        let (compact_tx, _compact_rx) = mpsc::unbounded_channel();
         let db = DB::open(&StorageConfig::Memory).unwrap();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let index = Arc::new(Index::new());
         let lease_collection = Arc::new(LeaseCollection::new(0));
         let (kv_update_tx, kv_update_rx) = mpsc::channel(128);
         let store = Arc::new(KvStore::new(
-            kv_update_tx,
-            lease_collection,
-            header_gen,
-            Arc::clone(&db),
             index,
+            Arc::clone(&db),
+            header_gen,
+            kv_update_tx,
+            compact_tx,
+            lease_collection,
         ));
         let shutdown_trigger = Arc::new(event_listener::Event::new());
         let sync_victims_interval = Duration::from_millis(10);
