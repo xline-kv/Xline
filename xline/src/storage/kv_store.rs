@@ -35,6 +35,7 @@ use crate::{
 pub(crate) const KV_TABLE: &str = "kv";
 
 /// KV store
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct KvStore<DB>
 where
@@ -52,6 +53,8 @@ where
     header_gen: Arc<HeaderGenerator>,
     /// KV update sender
     kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
+    /// Compact task submit sender
+    compact_task_tx: mpsc::UnboundedSender<(i64, Option<Arc<event_listener::Event>>)>,
     /// Lease collection
     lease_collection: Arc<LeaseCollection>,
 }
@@ -131,11 +134,12 @@ where
 {
     /// New `KvStore`
     pub(crate) fn new(
-        kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
-        lease_collection: Arc<LeaseCollection>,
-        header_gen: Arc<HeaderGenerator>,
-        db: Arc<DB>,
         index: Arc<Index>,
+        db: Arc<DB>,
+        header_gen: Arc<HeaderGenerator>,
+        kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
+        compact_task_tx: mpsc::UnboundedSender<(i64, Option<Arc<event_listener::Event>>)>,
+        lease_collection: Arc<LeaseCollection>,
     ) -> Self {
         Self {
             index,
@@ -144,6 +148,7 @@ where
             revision: header_gen.revision_arc(),
             header_gen,
             kv_update_tx,
+            compact_task_tx,
             lease_collection,
         }
     }
@@ -334,16 +339,9 @@ where
     }
 
     /// Compact kv storage
-    #[allow(dead_code)]
-    fn compact(&self, at_rev: i64) -> Result<(), ExecuteError> {
-        let compacted_rev = self
-            .index
-            .compact(at_rev)
-            .into_iter()
-            .map(|key_rev| key_rev.as_revision().encode_to_vec())
-            .collect::<Vec<Vec<_>>>();
+    pub(crate) fn compact(&self, revisions: &[Vec<u8>]) -> Result<(), ExecuteError> {
         let mut ops = Vec::new();
-        compacted_rev
+        revisions
             .iter()
             .for_each(|rev| ops.push(WriteOp::DeleteKeyValue(rev.as_ref())));
         self.db.flush_ops(ops)?;
@@ -823,16 +821,18 @@ mod test {
     }
 
     fn init_empty_store(db: Arc<DB>) -> Arc<KvStore<DB>> {
+        let (compact_tx, _compact_rx) = mpsc::unbounded_channel();
         let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
         let lease_collection = Arc::new(LeaseCollection::new(0));
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let index = Arc::new(Index::new());
         let storage = Arc::new(KvStore::new(
-            kv_update_tx,
-            lease_collection,
-            header_gen,
-            db,
             index,
+            db,
+            header_gen,
+            kv_update_tx,
+            compact_tx,
+            lease_collection,
         ));
         let shutdown_trigger = Arc::new(event_listener::Event::new());
         let _watcher = KvWatcher::new_arc(
@@ -853,6 +853,15 @@ mod test {
         store.db.flush_ops(ops)?;
         store.mark_index_available(sync_res.revision());
         Ok(())
+    }
+
+    fn index_compact(store: &Arc<KvStore<DB>>, at_rev: i64) -> Vec<Vec<u8>> {
+        store
+            .index
+            .compact(at_rev)
+            .into_iter()
+            .map(|key_rev| key_rev.as_revision().encode_to_vec())
+            .collect::<Vec<Vec<_>>>()
     }
 
     #[tokio::test]
@@ -1126,7 +1135,8 @@ mod test {
                 .unwrap();
         }
 
-        store.compact(3)?;
+        let target_revisions = index_compact(&store, 3);
+        store.compact(target_revisions.as_ref())?;
         assert_eq!(
             store.get_range(b"a", b"", 2).unwrap().len(),
             1,
@@ -1138,7 +1148,8 @@ mod test {
             "(b, 2) should not be removed"
         );
 
-        store.compact(4)?;
+        let target_revisions = index_compact(&store, 4);
+        store.compact(target_revisions.as_ref())?;
         assert!(
             store.get_range(b"a", b"", 2).unwrap().is_empty(),
             "(a, 1) should be removed"
@@ -1154,7 +1165,8 @@ mod test {
             "(a, 3) should not be removed"
         );
 
-        store.compact(5)?;
+        let target_revisions = index_compact(&store, 5);
+        store.compact(target_revisions.as_ref())?;
         assert!(
             store.get_range(b"a", b"", 2).unwrap().is_empty(),
             "(a, 1) should be removed"

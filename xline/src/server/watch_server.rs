@@ -426,7 +426,10 @@ mod test {
 
     use parking_lot::Mutex;
     use test_macros::abort_on_panic;
-    use tokio::time::{sleep, timeout};
+    use tokio::{
+        sync::mpsc,
+        time::{sleep, timeout},
+    };
     use utils::config::{default_watch_progress_notify_interval, StorageConfig};
 
     use super::*;
@@ -576,6 +579,7 @@ mod test {
     #[tokio::test]
     #[abort_on_panic]
     async fn test_watch_prev_kv() {
+        let (compact_tx, _compact_rx) = mpsc::unbounded_channel();
         let index = Arc::new(Index::new());
         let db = DB::open(&StorageConfig::Memory).unwrap();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
@@ -583,11 +587,12 @@ mod test {
         let next_id_gen = Arc::new(WatchIdGenerator::new(1));
         let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
         let kv_store = Arc::new(KvStore::new(
-            kv_update_tx,
-            lease_collection,
-            Arc::clone(&header_gen),
-            Arc::clone(&db),
             index,
+            Arc::clone(&db),
+            Arc::clone(&header_gen),
+            kv_update_tx,
+            compact_tx,
+            lease_collection,
         ));
         let shutdown_trigger = Arc::new(event_listener::Event::new());
         let kv_watcher = KvWatcher::new_arc(
@@ -747,6 +752,7 @@ mod test {
 
     #[tokio::test]
     async fn watch_compacted_revision_should_fail() {
+        let (compact_tx, _compact_rx) = mpsc::unbounded_channel();
         let index = Arc::new(Index::new());
         let db = DB::open(&StorageConfig::Memory).unwrap();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
@@ -754,11 +760,12 @@ mod test {
         let next_id_gen = Arc::new(WatchIdGenerator::new(1));
         let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
         let kv_store = Arc::new(KvStore::new(
-            kv_update_tx,
-            lease_collection,
-            Arc::clone(&header_gen),
-            Arc::clone(&db),
             index,
+            Arc::clone(&db),
+            Arc::clone(&header_gen),
+            kv_update_tx,
+            compact_tx,
+            lease_collection,
         ));
         let shutdown_trigger = Arc::new(event_listener::Event::new());
         let kv_watcher = KvWatcher::new_arc(
