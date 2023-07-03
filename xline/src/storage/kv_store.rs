@@ -22,10 +22,10 @@ use crate::{
     header_gen::HeaderGenerator,
     revision_number::RevisionNumberGenerator,
     rpc::{
-        Compare, CompareResult, CompareTarget, DeleteRangeRequest, DeleteRangeResponse, Event,
-        EventType, KeyValue, PutRequest, PutResponse, RangeRequest, RangeResponse, Request,
-        RequestWithToken, RequestWrapper, ResponseWrapper, SortOrder, SortTarget, TargetUnion,
-        TxnRequest, TxnResponse,
+        CompactionRequest, CompactionResponse, Compare, CompareResult, CompareTarget,
+        DeleteRangeRequest, DeleteRangeResponse, Event, EventType, KeyValue, PutRequest,
+        PutResponse, RangeRequest, RangeResponse, Request, RequestWithToken, RequestWrapper,
+        ResponseWrapper, SortOrder, SortTarget, TargetUnion, TxnRequest, TxnResponse,
     },
     server::command::{CommandResponse, KeyRange, SyncResponse},
     storage::{db::WriteOp, ExecuteError},
@@ -35,7 +35,6 @@ use crate::{
 pub(crate) const KV_TABLE: &str = "kv";
 
 /// KV store
-#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct KvStore<DB>
 where
@@ -465,7 +464,14 @@ where
             RequestWrapper::DeleteRangeRequest(ref req) => {
                 self.handle_delete_range_request(req).map(Into::into)
             }
-            RequestWrapper::TxnRequest(ref req) => self.handle_txn_request(req).map(Into::into),
+            RequestWrapper::TxnRequest(ref req) => {
+                debug!("Receive TxnRequest {:?}", req);
+                self.handle_txn_request(req).map(Into::into)
+            }
+            RequestWrapper::CompactionRequest(ref req) => {
+                debug!("Receive CompactionRequest {:?}", req);
+                Ok(self.handle_compaction_request(req).into())
+            }
             _ => unreachable!("Other request should not be sent to this store"),
         };
         res
@@ -578,6 +584,19 @@ where
         })
     }
 
+    /// Handle `CompactionRequest`
+    fn handle_compaction_request(&self, req: &CompactionRequest) -> CompactionResponse {
+        let target_revision = req.revision;
+        debug_assert!(
+            target_revision > self.compacted_revision(),
+            "required revision should not be compacted"
+        );
+        self.compacted_rev.store(target_revision, Relaxed);
+        CompactionResponse {
+            header: Some(self.header_gen.gen_header_without_revision()),
+        }
+    }
+
     /// Sync requests in kv store
     async fn sync_request(
         &self,
@@ -593,12 +612,41 @@ where
                 self.sync_delete_range_request(req, revision, 0)
             }
             RequestWrapper::TxnRequest(ref req) => self.sync_txn_request(req, revision)?,
+            RequestWrapper::CompactionRequest(ref req) => {
+                self.sync_compaction_request(req, revision).await?
+            }
             _ => {
                 unreachable!("only kv requests can be sent to kv store");
             }
         };
         self.notify_updates(revision, events).await;
         Ok((revision, ops))
+    }
+
+    /// Sync `CompactionRequest` and return if kvstore is changed
+    async fn sync_compaction_request(
+        &self,
+        req: &CompactionRequest,
+        _revision: i64,
+    ) -> Result<(Vec<WriteOp>, Vec<Event>), ExecuteError> {
+        let revision = req.revision;
+        let ops = vec![WriteOp::PutCompactRevision(revision)];
+        #[allow(clippy::collapsible_else_if)]
+        if req.physical {
+            let event = Arc::new(event_listener::Event::new());
+            if let Err(e) = self
+                .compact_task_tx
+                .send((revision, Some(Arc::clone(&event))))
+            {
+                panic!("the compactor exited unexpectedly: {e:?}");
+            }
+            event.listen().await;
+        } else {
+            if let Err(e) = self.compact_task_tx.send((revision, None)) {
+                panic!("the compactor exited unexpectedly: {e:?}");
+            }
+        }
+        Ok((ops, Vec::new()))
     }
 
     /// Sync `TxnRequest` and return if kvstore is changed
