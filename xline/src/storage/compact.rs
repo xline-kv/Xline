@@ -25,6 +25,7 @@ pub(crate) async fn compactor<DB>(
             .into_iter()
             .map(|key_rev| key_rev.as_revision().encode_to_vec())
             .collect::<Vec<Vec<_>>>();
+        // Given that the Xline uses a lim-tree database with smaller write amplification as the storage backend ,  does using progressive compaction really good at improving performance?
         for revision_chunk in target_revisions.chunks(batch_limit) {
             if let Err(e) = kv_store.compact(revision_chunk) {
                 panic!("failed to compact revision chunk {revision_chunk:?} due to {e}");

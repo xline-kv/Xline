@@ -152,7 +152,7 @@ use utils::{
     config::{
         default_batch_max_size, default_batch_timeout, default_candidate_timeout_ticks,
         default_client_wait_synced_timeout, default_cmd_workers, default_compact_batch_size,
-        default_compact_interval, default_follower_timeout_ticks, default_gc_interval,
+        default_compact_sleep_interval, default_follower_timeout_ticks, default_gc_interval,
         default_heartbeat_interval, default_log_entries_cap, default_log_level,
         default_propose_timeout, default_range_retry_timeout, default_retry_timeout,
         default_rotation, default_rpc_timeout, default_server_wait_synced_timeout,
@@ -268,7 +268,7 @@ struct ServerArgs {
     compact_batch_size: usize,
     /// Interval between two compaction operations [default: 10ms]
     #[clap(long, value_parser = parse_duration)]
-    compact_interval: Option<Duration>,
+    compact_sleep_interval: Option<Duration>,
 }
 
 impl From<ServerArgs> for XlineServerConfig {
@@ -337,8 +337,8 @@ impl From<ServerArgs> for XlineServerConfig {
         let auth = AuthConfig::new(args.auth_public_key, args.auth_private_key);
         let compact = CompactConfig::new(
             args.compact_batch_size,
-            args.compact_interval
-                .unwrap_or_else(default_compact_interval),
+            args.compact_sleep_interval
+                .unwrap_or_else(default_compact_sleep_interval),
         );
         XlineServerConfig::new(cluster, storage, log, trace, auth, compact)
     }

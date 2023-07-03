@@ -126,6 +126,10 @@ where
                         "cannot decode compacted revision from META_TABLE: {e:?}"
                     ))
                 })?);
+            assert!(
+                compacted_revision >= -1 && compacted_revision <= current_rev,
+                "compacted revision corruption, which ({compacted_revision}) must belong to the range [-1, {current_rev}]"
+            );
             self.update_compacted_revision(compacted_revision);
             if let Err(e) = self.compact_task_tx.send((compacted_revision, None)) {
                 panic!("the compactor exited unexpectedly: {e:?}");
@@ -644,6 +648,7 @@ where
     ) -> Result<(Vec<WriteOp>, Vec<Event>), ExecuteError> {
         let revision = req.revision;
         let ops = vec![WriteOp::PutCompactRevision(revision)];
+        // TODO: Remove the physical process logic here. It's better to move into the KvServer
         #[allow(clippy::collapsible_else_if)]
         if req.physical {
             let event = Arc::new(event_listener::Event::new());
