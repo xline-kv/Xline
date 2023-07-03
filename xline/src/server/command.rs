@@ -488,29 +488,26 @@ impl ConflictCheck for Command {
         if (this_req.is_txn_request() && other_req.is_compaction_request())
             || (this_req.is_compaction_request() && other_req.is_txn_request())
         {
-            let conflict = match (this_req.clone(), other_req.clone()) {
+            match (this_req, other_req) {
                 (
-                    RequestWrapper::CompactionRequest(ref com_req),
-                    RequestWrapper::TxnRequest(ref txn_req),
+                    &RequestWrapper::CompactionRequest(ref com_req),
+                    &RequestWrapper::TxnRequest(ref txn_req),
                 )
                 | (
-                    RequestWrapper::TxnRequest(ref txn_req),
-                    RequestWrapper::CompactionRequest(ref com_req),
+                    &RequestWrapper::TxnRequest(ref txn_req),
+                    &RequestWrapper::CompactionRequest(ref com_req),
                 ) => {
                     let target_revision = com_req.revision;
-                    txn_req.is_conflict_with_rev(target_revision)
+                    return txn_req.is_conflict_with_rev(target_revision)
                 }
-                _ => false,
-            };
-            if conflict {
-                return true;
+                _ => unreachable!("The request must be either a transaction or a compaction request! \nthis_req = {this_req:?} \nother_req = {other_req:?}")
             }
         }
 
         let this_lease_ids = get_lease_ids(this_req);
         let other_lease_ids = get_lease_ids(other_req);
         let lease_conflict = !this_lease_ids.is_disjoint(&other_lease_ids);
-        let key_conflict: bool = self
+        let key_conflict = self
             .keys()
             .iter()
             .cartesian_product(other.keys().iter())
@@ -603,6 +600,8 @@ impl CurpCommand for Command {
 
 #[cfg(test)]
 mod test {
+    use xlineapi::Compare;
+
     use super::*;
     use crate::rpc::{
         AuthEnableRequest, AuthStatusRequest, CompactionRequest, LeaseGrantRequest,
@@ -699,7 +698,7 @@ mod test {
                 lease: 123,
                 ..Default::default()
             })),
-            ProposeId::new("id8".to_owned()),
+            ProposeId::new("id5".to_owned()),
         );
         let txn_with_lease_id_cmd = Command::new(
             vec![KeyRange::new_one_key("key")],
@@ -735,6 +734,24 @@ mod test {
         assert!(cmd6.is_conflict(&lease_leases_cmd)); // lease read and write
     }
 
+    fn generate_txn_command(
+        keys: Vec<KeyRange>,
+        compare: Vec<Compare>,
+        success: Vec<RequestOp>,
+        failure: Vec<RequestOp>,
+        propose_id: &str,
+    ) -> Command {
+        Command::new(
+            keys,
+            RequestWithToken::new(RequestWrapper::TxnRequest(TxnRequest {
+                compare,
+                success,
+                failure,
+            })),
+            ProposeId::new(propose_id.to_owned()),
+        )
+    }
+
     #[test]
     fn test_compaction_txn_conflict() {
         let compaction_cmd_1 = Command::new(
@@ -755,68 +772,60 @@ mod test {
             ProposeId::new("id12".to_owned()),
         );
 
-        let txn_with_lease_id_cmd = Command::new(
+        let txn_with_lease_id_cmd = generate_txn_command(
             vec![KeyRange::new_one_key("key")],
-            RequestWithToken::new(RequestWrapper::TxnRequest(TxnRequest {
-                compare: vec![],
-                success: vec![RequestOp {
-                    request: Some(Request::RequestPut(PutRequest {
-                        key: b"key".to_vec(),
-                        value: b"value".to_vec(),
-                        lease: 123,
-                        ..Default::default()
-                    })),
-                }],
-                failure: vec![],
-            })),
-            ProposeId::new("id6".to_owned()),
+            vec![],
+            vec![RequestOp {
+                request: Some(Request::RequestPut(PutRequest {
+                    key: b"key".to_vec(),
+                    value: b"value".to_vec(),
+                    lease: 123,
+                    ..Default::default()
+                })),
+            }],
+            vec![],
+            "id6",
         );
 
-        let txn_cmd_1 = Command::new(
+        let txn_cmd_1 = generate_txn_command(
             vec![KeyRange::new_one_key("key")],
-            RequestWithToken::new(RequestWrapper::TxnRequest(TxnRequest {
-                compare: vec![],
-                success: vec![RequestOp {
-                    request: Some(Request::RequestRange(RangeRequest {
-                        key: b"key".to_vec(),
-                        ..Default::default()
-                    })),
-                }],
-                failure: vec![],
-            })),
-            ProposeId::new("id13".to_owned()),
+            vec![],
+            vec![RequestOp {
+                request: Some(Request::RequestRange(RangeRequest {
+                    key: b"key".to_vec(),
+                    ..Default::default()
+                })),
+            }],
+            vec![],
+            "id13",
         );
 
-        let txn_cmd_2 = Command::new(
+        let txn_cmd_2 = generate_txn_command(
             vec![KeyRange::new_one_key("key")],
-            RequestWithToken::new(RequestWrapper::TxnRequest(TxnRequest {
-                compare: vec![],
-                success: vec![RequestOp {
-                    request: Some(Request::RequestRange(RangeRequest {
-                        key: b"key".to_vec(),
-                        revision: 3,
-                        ..Default::default()
-                    })),
-                }],
-                failure: vec![],
-            })),
-            ProposeId::new("id14".to_owned()),
+            vec![],
+            vec![RequestOp {
+                request: Some(Request::RequestRange(RangeRequest {
+                    key: b"key".to_vec(),
+                    revision: 3,
+                    ..Default::default()
+                })),
+            }],
+            vec![],
+            "id14",
         );
 
-        let txn_cmd_3 = Command::new(
+        let txn_cmd_3 = generate_txn_command(
             vec![KeyRange::new_one_key("key")],
-            RequestWithToken::new(RequestWrapper::TxnRequest(TxnRequest {
-                compare: vec![],
-                success: vec![RequestOp {
-                    request: Some(Request::RequestRange(RangeRequest {
-                        key: b"key".to_vec(),
-                        revision: 7,
-                        ..Default::default()
-                    })),
-                }],
-                failure: vec![],
-            })),
-            ProposeId::new("id15".to_owned()),
+            vec![],
+            vec![RequestOp {
+                request: Some(Request::RequestRange(RangeRequest {
+                    key: b"key".to_vec(),
+                    revision: 7,
+                    ..Default::default()
+                })),
+            }],
+            vec![],
+            "id15",
         );
 
         assert!(compaction_cmd_1.is_conflict(&compaction_cmd_2));

@@ -140,7 +140,7 @@ impl XlineServer {
             Arc::clone(&kv_storage),
             Arc::clone(&index),
             *self.compact_cfg.compact_batch_size(),
-            *self.compact_cfg.compact_interval(),
+            *self.compact_cfg.compact_sleep_interval(),
             compact_task_rx,
         ));
         // TODO: Boot up the compact policy scheduler

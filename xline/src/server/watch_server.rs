@@ -806,10 +806,15 @@ mod test {
         for i in 0..3 {
             let watch_res = res_rx.recv().await.unwrap();
             if i == 0 {
-                assert!(
-                    watch_res.is_err(),
-                    "watch create request with a compacted revision should not be successful"
-                );
+                if let Err(e) = watch_res {
+                    assert_eq!(e.code(), tonic::Code::InvalidArgument,
+                        "watch a compacted revision should return invalid_argument error, but found {e:?}"
+                    );
+                } else {
+                    unreachable!(
+                        "watch create request with a compacted revision should not be successful"
+                    )
+                }
             } else {
                 assert!(
                     watch_res.is_ok(),

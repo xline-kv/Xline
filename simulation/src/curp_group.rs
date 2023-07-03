@@ -257,12 +257,13 @@ impl CurpGroup {
     }
 
     pub async fn get_leader(&self) -> (ServerId, u64) {
+        const RETRY_INTERVAL: u64 = 100;
         loop {
             if let Some(leader) = self.try_get_leader().await {
                 return leader;
             }
             debug!("failed to get leader");
-            madsim::time::sleep(Duration::from_millis(100)).await;
+            madsim::time::sleep(Duration::from_millis(RETRY_INTERVAL)).await;
         }
     }
 

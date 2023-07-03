@@ -9,6 +9,7 @@ use futures::future::join_all;
 use tokio::time::timeout;
 use tracing::{debug, instrument};
 use uuid::Uuid;
+use xlineapi::ResponseWrapper;
 
 use super::{
     auth_server::get_token,
@@ -211,14 +212,21 @@ where
                 "required revision {} is higher than current revision {}",
                 req.revision, current_revision
             )))
-        } else if req.revision < compacted_revision {
-            Err(tonic::Status::invalid_argument(format!(
-                "required revision {} has been compacted, compacted revision is {}",
-                req.revision, compacted_revision
-            )))
         } else {
-            Ok(())
+            Self::check_range_compacted(req.revision, compacted_revision)
         }
+    }
+
+    /// check whether the required revision is compacted or not
+    fn check_range_compacted(
+        range_revision: i64,
+        compacted_revision: i64,
+    ) -> Result<(), tonic::Status> {
+        (range_revision >= compacted_revision)
+            .then_some(())
+            .ok_or(tonic::Status::invalid_argument(format!(
+                "required revision {range_revision} has been compacted, compacted revision is {compacted_revision}"
+            )))
     }
 
     /// Validate compact request before handle
@@ -439,6 +447,7 @@ where
             self.kv_storage.compacted_revision(),
             self.kv_storage.revision(),
         )?;
+        let range_required_revision = range_req.revision;
         let is_serializable = range_req.serializable;
         let token = get_token(request.metadata());
         let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
@@ -446,6 +455,13 @@ where
         let cmd = Self::command_from_request_wrapper(propose_id, wrapper);
         if !is_serializable {
             self.wait_read_state(&cmd).await?;
+            // Double check whether the range request is compacted or not since the compaction request
+            // may be executed during the process of `wait_read_state` which results in the result of
+            // previous `check_range_request` outdated.
+            Self::check_range_compacted(
+                range_required_revision,
+                self.kv_storage.compacted_revision(),
+            )?;
         }
         self.serializable_range(cmd.request())
     }
@@ -547,18 +563,23 @@ where
         debug!("Receive CompactionRequest {:?}", request);
         let compacted_revision = self.kv_storage.compacted_revision();
         let current_revision = self.kv_storage.revision();
-        Self::check_compact_request(request.get_ref(), compacted_revision, current_revision)?;
-        Err(tonic::Status::new(
-            tonic::Code::Unimplemented,
-            "Not Implemented".to_owned(),
-        ))
+        let req = request.get_ref();
+        Self::check_compact_request(req, compacted_revision, current_revision)?;
+
+        let is_fast_path = !req.physical;
+        let (cmd_res, _sync_res) = self.propose(request, is_fast_path).await?;
+        let resp = cmd_res.decode();
+
+        if let ResponseWrapper::CompactionResponse(response) = resp {
+            Ok(tonic::Response::new(response))
+        } else {
+            panic!("Receive wrong response {resp:?} for CompactionRequest");
+        }
     }
 }
 
 #[cfg(test)]
 mod test {
-    use test_macros::abort_on_panic;
-
     use super::*;
     use crate::storage::db::DB;
 

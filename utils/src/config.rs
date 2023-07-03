@@ -129,10 +129,10 @@ pub struct CompactConfig {
     #[getset(get = "pub")]
     #[serde(default = "default_compact_batch_size")]
     compact_batch_size: usize,
-    /// The interval between two compact operations
+    /// The interval between two compaction batches
     #[getset(get = "pub")]
-    #[serde(with = "duration_format", default = "default_compact_interval")]
-    compact_interval: Duration,
+    #[serde(with = "duration_format", default = "default_compact_sleep_interval")]
+    compact_sleep_interval: Duration,
 }
 
 impl Default for CompactConfig {
@@ -140,7 +140,7 @@ impl Default for CompactConfig {
     fn default() -> Self {
         Self {
             compact_batch_size: default_compact_batch_size(),
-            compact_interval: default_compact_interval(),
+            compact_sleep_interval: default_compact_sleep_interval(),
         }
     }
 }
@@ -149,10 +149,10 @@ impl CompactConfig {
     /// Create a new compact config
     #[must_use]
     #[inline]
-    pub fn new(compact_batch_size: usize, compact_interval: Duration) -> Self {
+    pub fn new(compact_batch_size: usize, compact_sleep_interval: Duration) -> Self {
         Self {
             compact_batch_size,
-            compact_interval,
+            compact_sleep_interval,
         }
     }
 }
@@ -167,7 +167,7 @@ pub const fn default_compact_batch_size() -> usize {
 /// default compact interval
 #[must_use]
 #[inline]
-pub const fn default_compact_interval() -> Duration {
+pub const fn default_compact_sleep_interval() -> Duration {
     Duration::from_millis(10)
 }
 
@@ -749,7 +749,7 @@ mod tests {
 
             [compact]
             compact_batch_size = 123
-            compact_interval = '5ms'
+            compact_sleep_interval = '5ms'
 
             [log]
             path = '/var/log/xline'
@@ -825,7 +825,7 @@ mod tests {
             config.compact,
             CompactConfig {
                 compact_batch_size: 123,
-                compact_interval: Duration::from_millis(5)
+                compact_sleep_interval: Duration::from_millis(5)
             }
         );
     }
