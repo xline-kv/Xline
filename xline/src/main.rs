@@ -151,14 +151,14 @@ use tracing_subscriber::{fmt::format, prelude::*};
 use utils::{
     config::{
         default_batch_max_size, default_batch_timeout, default_candidate_timeout_ticks,
-        default_client_wait_synced_timeout, default_cmd_workers, default_follower_timeout_ticks,
-        default_gc_interval, default_heartbeat_interval, default_log_entries_cap,
-        default_log_level, default_propose_timeout, default_range_retry_timeout,
-        default_retry_timeout, default_rotation, default_rpc_timeout,
-        default_server_wait_synced_timeout, default_sync_victims_interval,
-        default_watch_progress_notify_interval, file_appender, AuthConfig, ClientTimeout,
-        ClusterConfig, CurpConfigBuilder, LevelConfig, LogConfig, RotationConfig, ServerTimeout,
-        StorageConfig, TraceConfig, XlineServerConfig,
+        default_client_wait_synced_timeout, default_cmd_workers, default_compact_batch_size,
+        default_compact_interval, default_follower_timeout_ticks, default_gc_interval,
+        default_heartbeat_interval, default_log_entries_cap, default_log_level,
+        default_propose_timeout, default_range_retry_timeout, default_retry_timeout,
+        default_rotation, default_rpc_timeout, default_server_wait_synced_timeout,
+        default_sync_victims_interval, default_watch_progress_notify_interval, file_appender,
+        AuthConfig, ClientTimeout, ClusterConfig, CompactConfig, CurpConfigBuilder, LevelConfig,
+        LogConfig, RotationConfig, ServerTimeout, StorageConfig, TraceConfig, XlineServerConfig,
     },
     parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_rotation,
 };
@@ -263,6 +263,12 @@ struct ServerArgs {
     /// Curp command workers count
     #[clap(long, default_value_t = default_cmd_workers())]
     cmd_workers: u8,
+    /// The max number of historical versions processed in a single compact operation  [default: 1000]
+    #[clap(long, default_value_t = default_compact_batch_size())]
+    compact_batch_size: usize,
+    /// Interval between two compaction operations [default: 10ms]
+    #[clap(long, value_parser = parse_duration)]
+    compact_interval: Option<Duration>,
 }
 
 impl From<ServerArgs> for XlineServerConfig {
@@ -329,7 +335,12 @@ impl From<ServerArgs> for XlineServerConfig {
             args.jaeger_level,
         );
         let auth = AuthConfig::new(args.auth_public_key, args.auth_private_key);
-        XlineServerConfig::new(cluster, storage, log, trace, auth)
+        let compact = CompactConfig::new(
+            args.compact_batch_size,
+            args.compact_interval
+                .unwrap_or_else(default_compact_interval),
+        );
+        XlineServerConfig::new(cluster, storage, log, trace, auth, compact)
     }
 }
 
@@ -480,6 +491,7 @@ async fn main() -> Result<()> {
         *cluster_config.client_timeout(),
         *cluster_config.server_timeout(),
         config.storage().clone(),
+        *config.compact(),
     );
     debug!("{:?}", server);
     server.start(self_addr, db_proxy, key_pair).await?;

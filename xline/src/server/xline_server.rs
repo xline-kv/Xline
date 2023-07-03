@@ -9,7 +9,7 @@ use tokio::{net::TcpListener, sync::mpsc::unbounded_channel};
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
 use tonic_health::ServingStatus;
-use utils::config::{ClientTimeout, CurpConfig, ServerTimeout, StorageConfig};
+use utils::config::{ClientTimeout, CompactConfig, CurpConfig, ServerTimeout, StorageConfig};
 
 use super::{
     auth_server::AuthServer,
@@ -58,6 +58,8 @@ pub struct XlineServer {
     client_timeout: ClientTimeout,
     /// Storage config,
     storage_cfg: StorageConfig,
+    /// Compact config
+    compact_cfg: CompactConfig,
     /// Server timeout
     server_timeout: ServerTimeout,
     /// Shutdown trigger
@@ -79,6 +81,7 @@ impl XlineServer {
         client_timeout: ClientTimeout,
         server_timeout: ServerTimeout,
         storage_config: StorageConfig,
+        compact_config: CompactConfig,
     ) -> Self {
         Self {
             cluster_info,
@@ -86,6 +89,7 @@ impl XlineServer {
             curp_cfg: Arc::new(curp_config),
             client_timeout,
             storage_cfg: storage_config,
+            compact_cfg: compact_config,
             server_timeout,
             shutdown_trigger: Arc::new(Event::new()),
         }
@@ -135,6 +139,8 @@ impl XlineServer {
         let _hd = tokio::spawn(compactor(
             Arc::clone(&kv_storage),
             Arc::clone(&index),
+            *self.compact_cfg.compact_batch_size(),
+            *self.compact_cfg.compact_interval(),
             compact_task_rx,
         ));
         // TODO: Boot up the compact policy scheduler
