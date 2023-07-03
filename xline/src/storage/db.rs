@@ -26,6 +26,9 @@ pub(crate) const XLINE_TABLES: [&str; 6] = [
     ROLE_TABLE,
 ];
 
+/// Key of compacted revision
+pub(crate) const COMPACT_REVISION: &str = "compact_revision";
+
 /// Database to store revision to kv mapping
 #[derive(Debug)]
 pub struct DB {
@@ -144,6 +147,11 @@ impl StorageApi for DB {
                     lease.id.encode_to_vec(),
                     lease.encode_to_vec(),
                 ),
+                WriteOp::PutCompactRevision(rev) => WriteOperation::new_put(
+                    META_TABLE,
+                    COMPACT_REVISION.as_bytes().to_vec(),
+                    rev.to_le_bytes().to_vec(),
+                ),
                 WriteOp::DeleteKeyValue(rev) => WriteOperation::new_delete(KV_TABLE, rev),
                 WriteOp::DeleteLease(lease_id) => {
                     let key = del_lease_key_buffer.get(&lease_id).unwrap_or_else(|| {
@@ -195,6 +203,8 @@ pub enum WriteOp<'a> {
     PutAppliedIndex(u64),
     /// Put a lease to lease table
     PutLease(PbLease),
+    /// Put a compacted revision into meta table
+    PutCompactRevision(i64),
     /// Delete a key-value pair from kv table
     DeleteKeyValue(&'a [u8]),
     /// Delete a lease from lease table
