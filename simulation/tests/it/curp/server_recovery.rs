@@ -1,8 +1,8 @@
 //! Integration test for the curp server
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
-use curp_test_utils::{init_logger, sleep_millis, sleep_secs, test_cmd::TestCommand, TEST_TABLE};
+use curp_test_utils::{init_logger, sleep_secs, test_cmd::TestCommand, TEST_TABLE};
 use engine::StorageEngine;
 use itertools::Itertools;
 use tracing::debug;
@@ -38,7 +38,6 @@ async fn leader_crash_and_recovery() {
     );
 
     // restart the original leader
-    sleep_secs(3).await;
     group.restart(&leader, false).await;
     let old_leader = group.nodes.get_mut(&leader).unwrap();
 
@@ -87,9 +86,6 @@ async fn follower_crash_and_recovery() {
             .0,
         vec![0]
     );
-
-    // let cmds to be synced
-    madsim::time::sleep(Duration::from_secs(2)).await;
 
     // restart follower
     group.restart(&follower, false).await;
@@ -141,8 +137,6 @@ async fn leader_and_follower_both_crash_and_recovery() {
         vec![0]
     );
 
-    // let cmds to be synced
-    madsim::time::sleep(Duration::from_secs(2)).await;
     group.crash(&leader).await;
 
     // restart the original leader
@@ -204,7 +198,6 @@ async fn new_leader_will_recover_spec_cmds_cond1() {
         let mut connect = group.get_connect(id).await;
         connect.propose(req1.clone()).await.unwrap();
     }
-    madsim::time::sleep(Duration::from_secs(1)).await;
 
     // 2: disable leader1
     group.disable_node(&leader1);
@@ -287,7 +280,6 @@ async fn old_leader_will_discard_spec_exe_cmds() {
     let (er, index) = client.propose_indexed(cmd0).await.unwrap();
     assert_eq!(er.0, vec![]);
     assert_eq!(index, 1);
-    sleep_secs(1).await;
 
     // 1: disable all others to prevent the cmd1 to be synced
     let leader1 = group.get_leader().await.0;
@@ -302,7 +294,6 @@ async fn old_leader_will_discard_spec_exe_cmds() {
     };
     let mut leader1_connect = group.get_connect(&leader1).await;
     leader1_connect.propose(req1).await.unwrap();
-    sleep_millis(100).await;
     let leader1_store = Arc::clone(&group.get_node(&leader1).store);
     let res = leader1_store
         .lock()
@@ -317,16 +308,17 @@ async fn old_leader_will_discard_spec_exe_cmds() {
 
     // 3: recover all others and disable leader, a new leader will be elected
     group.disable_node(&leader1);
-    sleep_millis(100).await;
     for node in group.nodes.values().filter(|node| node.id != leader1) {
         group.enable_node(&node.id);
     }
+    // wait for election
     sleep_secs(3).await;
     let leader2 = group.get_leader().await.0;
     assert_ne!(leader2, leader1);
 
     // 4: recover the old leader, its state should be reverted to the original state
     group.enable_node(&leader1);
+    // wait for reversion
     sleep_secs(1).await;
     let res = leader1_store
         .lock()
@@ -439,6 +431,7 @@ async fn recovery_after_compaction() {
             .is_ok());
     }
 
+    // wait for log compactions
     sleep_secs(1).await;
 
     debug!("start recovery");
@@ -446,6 +439,7 @@ async fn recovery_after_compaction() {
     // the restarted node should use snapshot to recover
     group.restart(&node_id, false).await;
 
+    // wait for node to restart
     sleep_secs(3).await;
 
     {

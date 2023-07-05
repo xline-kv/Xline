@@ -1,13 +1,10 @@
-use std::time::Duration;
-
-use curp_test_utils::{init_logger, test_cmd::TestCommand};
-use madsim::time::sleep;
+use curp_test_utils::{init_logger, sleep_secs, test_cmd::TestCommand};
 use utils::config::ClientTimeout;
 
 use simulation::curp_group::CurpGroup;
 
 async fn wait_for_election() {
-    sleep(Duration::from_secs(3)).await;
+    sleep_secs(3).await;
 }
 
 fn check_leader_state(group: &CurpGroup, leader: &String) {
@@ -50,7 +47,7 @@ async fn election() {
     check_role_state(&group, 5, &leader0);
 
     // check after some time, the term and the leader is still not changed
-    madsim::time::sleep(Duration::from_secs(1)).await;
+    sleep_secs(1).await;
     let leader2 = group
         .try_get_leader()
         .await
@@ -139,14 +136,12 @@ async fn propose_after_reelect() {
             .0,
         vec![]
     );
-    // wait for the cmd to be synced
-    madsim::time::sleep(Duration::from_secs(1)).await;
 
     let leader1 = group.get_leader().await.0;
     check_role_state(&group, 5, &leader1);
     group.disable_node(&leader1);
 
-    madsim::time::sleep(Duration::from_secs(2)).await;
+    wait_for_election().await;
     assert_eq!(
         client
             .propose(TestCommand::new_get(vec![0]))
