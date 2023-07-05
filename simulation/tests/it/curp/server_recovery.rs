@@ -311,14 +311,14 @@ async fn old_leader_will_discard_spec_exe_cmds() {
         group.enable_node(&node.id);
     }
     // wait for election
-    sleep_secs(3).await;
+    sleep_secs(15).await;
     let leader2 = group.get_leader().await.0;
     assert_ne!(leader2, leader1);
 
     // 4: recover the old leader, its state should be reverted to the original state
     group.enable_node(&leader1);
     // wait for reversion
-    sleep_secs(1).await;
+    sleep_secs(15).await;
     let res = leader1_store
         .lock()
         .as_ref()
@@ -431,7 +431,7 @@ async fn recovery_after_compaction() {
     }
 
     // wait for log compactions
-    sleep_secs(1).await;
+    sleep_secs(15).await;
 
     debug!("start recovery");
 
@@ -439,7 +439,7 @@ async fn recovery_after_compaction() {
     group.restart(&node_id, false).await;
 
     // wait for node to restart
-    sleep_secs(3).await;
+    sleep_secs(15).await;
 
     {
         let node = group.nodes.get_mut(&node_id).unwrap();

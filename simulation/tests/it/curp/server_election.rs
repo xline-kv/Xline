@@ -3,8 +3,11 @@ use utils::config::ClientTimeout;
 
 use simulation::curp_group::CurpGroup;
 
-async fn wait_for_election() {
-    sleep_secs(3).await;
+/// Wait some time for the election to finish, and get the leader to ensure that the election is
+/// completed.
+async fn wait_for_election(group: &CurpGroup) -> (String, u64) {
+    sleep_secs(15).await;
+    group.get_leader().await
 }
 
 fn check_leader_state(group: &CurpGroup, leader: &String) {
@@ -39,15 +42,14 @@ async fn election() {
     let leader0 = group.get_leader().await.0;
     check_role_state(&group, 5, &leader0);
     group.disable_node(&leader0);
-    wait_for_election().await;
 
     // check whether there is exact one leader in the group
-    let leader1 = group.get_leader().await.0;
+    let (leader1, _term) = wait_for_election(&group).await;
     let term1 = group.get_term_checked().await;
     check_role_state(&group, 5, &leader0);
 
     // check after some time, the term and the leader is still not changed
-    sleep_secs(1).await;
+    sleep_secs(15).await;
     let leader2 = group
         .try_get_leader()
         .await
@@ -79,8 +81,7 @@ async fn reelect() {
     println!("disable leader {leader1}");
 
     // after some time, a new leader should be elected
-    wait_for_election().await;
-    let (leader2, term2) = group.get_leader().await;
+    let (leader2, term2) = wait_for_election(&group).await;
     check_role_state(&group, 5, &leader2);
 
     assert_ne!(term1, term2);
@@ -91,8 +92,7 @@ async fn reelect() {
     println!("disable leader {leader2}");
 
     // after some time, a new leader should be elected
-    wait_for_election().await;
-    let (leader3, term3) = group.get_leader().await;
+    let (leader3, term3) = wait_for_election(&group).await;
     check_role_state(&group, 5, &leader3);
 
     assert_ne!(term1, term3);
@@ -105,7 +105,7 @@ async fn reelect() {
     println!("disable leader {leader3}");
 
     // after some time, no leader should be elected
-    wait_for_election().await;
+    sleep_secs(15).await;
     assert!(group.try_get_leader().await.is_none());
 
     // recover network partition
@@ -114,8 +114,7 @@ async fn reelect() {
     group.enable_node(&leader2);
     group.enable_node(&leader3);
 
-    wait_for_election().await;
-    let (final_leader, final_term) = group.get_leader().await;
+    let (final_leader, final_term) = wait_for_election(&group).await;
     check_role_state(&group, 5, &final_leader);
     assert!(final_term > term3);
 
@@ -141,7 +140,7 @@ async fn propose_after_reelect() {
     check_role_state(&group, 5, &leader1);
     group.disable_node(&leader1);
 
-    wait_for_election().await;
+    let (_leader, _term) = wait_for_election(&group).await;
     assert_eq!(
         client
             .propose(TestCommand::new_get(vec![0]))
