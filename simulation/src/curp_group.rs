@@ -257,13 +257,13 @@ impl CurpGroup {
     }
 
     pub async fn get_leader(&self) -> (ServerId, u64) {
-        for _ in 0..5 {
+        loop {
             if let Some(leader) = self.try_get_leader().await {
                 return leader;
             }
             debug!("failed to get leader");
+            madsim::time::sleep(Duration::from_millis(100)).await;
         }
-        panic!("can't get leader");
     }
 
     // get latest term and ensure every working node has the same term
