@@ -5,6 +5,7 @@ use tokio::{sync::oneshot, time::sleep};
 use tracing_test::traced_test;
 use utils::config::{
     default_candidate_timeout_ticks, default_follower_timeout_ticks, default_heartbeat_interval,
+    CurpConfigBuilder,
 };
 
 use super::*;
@@ -36,12 +37,18 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
         let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
-        let (log_tx, _log_rx) = mpsc::unbounded_channel();
+        let (log_tx, log_rx) = mpsc::unbounded_channel();
+        // prevent the channel from being closed
+        std::mem::forget(log_rx);
         let sync_events = cluster_info
             .peers_id()
             .iter()
             .map(|id| (id.clone(), Arc::new(Event::new())))
             .collect();
+        let curp_config = CurpConfigBuilder::default()
+            .log_entries_cap(10)
+            .build()
+            .unwrap();
 
         Self::new(
             cluster_info,
@@ -49,7 +56,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             cmd_board,
             spec_pool,
             uncommitted_pool,
-            Arc::new(CurpConfig::default()),
+            Arc::new(curp_config),
             Arc::new(exe_tx),
             sync_events,
             log_tx,
@@ -519,6 +526,52 @@ fn recover_from_spec_pools_will_pick_the_correct_cmds() {
         assert_eq!(log_r[2].cmd.id(), cmd1.id());
         assert_eq!(log_r.last_log_index(), 2);
     });
+}
+
+/*************** tests for leader retires **************/
+
+/// To ensure #331 is fixed
+#[traced_test]
+#[test]
+fn leader_retires_after_log_compact_will_succeed() {
+    let curp = RawCurp::new_test(
+        3,
+        MockCEEventTxApi::<TestCommand>::default(),
+        mock_role_change(),
+    );
+    let mut log_w = curp.log.write();
+    for _ in 1..=20 {
+        let cmd = Arc::new(TestCommand::default());
+        log_w.push_cmd(0, cmd).unwrap();
+    }
+    log_w.last_as = 20;
+    log_w.last_exe = 20;
+    log_w.commit_index = 20;
+    log_w.compact();
+    drop(log_w);
+
+    curp.leader_retires();
+}
+
+#[traced_test]
+#[test]
+fn leader_retires_should_cleanup() {
+    let curp = {
+        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
+        exe_tx.expect_send_sp_exe().returning(|_, _| {});
+        RawCurp::new_test(3, exe_tx, mock_role_change())
+    };
+
+    let _ignore = curp.handle_propose(Arc::new(TestCommand::new_put(vec![1], 0)));
+    let _ignore = curp.handle_propose(Arc::new(TestCommand::new_get(vec![1])));
+
+    curp.leader_retires();
+
+    let cb_r = curp.ctx.cb.read();
+    assert!(cb_r.er_buffer.is_empty(), "er buffer should be empty");
+    assert!(cb_r.asr_buffer.is_empty(), "asr buffer should be empty");
+    let ucp_l = curp.ctx.ucp.lock();
+    assert!(ucp_l.is_empty(), "ucp should be empty");
 }
 
 /*************** tests for other small functions **************/

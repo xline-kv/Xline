@@ -1014,22 +1014,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     fn leader_retires(&self) {
         debug!("leader {} retires", self.id());
 
-        // when a leader retires, it should wipe up speculatively executed cmds by resetting and re-executing
-        let _ig = self.ctx.cmd_tx.send_reset(None);
-
         let mut cb_w = self.ctx.cb.write();
         cb_w.clear();
-
-        let log_r = self.log.read();
-        for i in 1..=log_r.commit_index {
-            let entry = log_r.get(i).unwrap_or_else(|| {
-                unreachable!(
-                    "system corrupted, apply log[{i}] when we only have {} log entries",
-                    log_r.last_log_index()
-                )
-            });
-            self.ctx.cmd_tx.send_after_sync(Arc::clone(&entry.cmd), i);
-        }
+        let mut ucp_l = self.ctx.ucp.lock();
+        ucp_l.clear();
     }
 }
 
