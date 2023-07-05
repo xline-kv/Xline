@@ -353,10 +353,14 @@ async fn old_leader_will_discard_spec_exe_cmds() {
 }
 
 #[madsim::test]
-async fn all_crash_and_recovery() {
+async fn minority_crash_and_recovery() {
     init_logger();
 
-    let mut group = CurpGroup::new(3).await;
+    const NODES: usize = 9;
+    const MINORITY: usize = (NODES - 1) / 2;
+
+    let mut group = CurpGroup::new(NODES).await;
+
     let client = group.new_client(ClientTimeout::default()).await;
 
     assert_eq!(
@@ -376,12 +380,11 @@ async fn all_crash_and_recovery() {
         vec![0]
     );
 
-    let all = group.all.keys().cloned().collect_vec();
-    for node in &all {
+    let minority = group.all.keys().take(MINORITY).cloned().collect_vec();
+    for node in &minority {
         group.crash(node).await;
     }
-    sleep_secs(2).await;
-    for node in &all {
+    for node in &minority {
         group.restart(node, node.as_str() == "S0").await;
     }
 
