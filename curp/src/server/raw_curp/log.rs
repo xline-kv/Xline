@@ -20,17 +20,13 @@ use crate::{
     LogIndex,
 };
 
-/// Given that the log vector is used to store a large number of log entries, we can specify a suitable capacity to avoid unnecessary allocation.
-/// The initial capacity of the log entries
-const LOG_INIT_CAPACITY: usize = 8192;
-
 /// Curp logs
 /// There exists a fake log entry 0 whose term equals 0
 /// For the leader, there should never be a gap between snapshot and entries
 pub(super) struct Log<C: Command> {
     /// Log entries, should be persisted
     /// Note that the logical index in `LogEntry` is different from physical index
-    entries: VecDeque<LogEntry<C>>,
+    entries: LogEntryVecDeque<C>,
     /// The last log index that has been compacted
     pub(super) base_index: LogIndex,
     /// The last log term that has been compacted
@@ -43,12 +39,125 @@ pub(super) struct Log<C: Command> {
     pub(super) last_exe: LogIndex,
     /// Tx to send log entries to persist task
     log_tx: mpsc::UnboundedSender<LogEntry<C>>,
-    /// Prefix sum vector of log entries
+    /// Entries to keep in memory
+    entries_cap: usize,
+}
+
+/// That's a struct to store log entries and calculate batch of log
+#[derive(Debug)]
+struct LogEntryVecDeque<C: Command> {
+    /// A VecDeque to store log entries, it will be serialized and persisted
+    entries: VecDeque<LogEntry<C>>,
+    /// The sum of serialized size of previous log entries
+    /// batch_index[i+1] = batch_index[i] + size(entries[i])
     batch_index: VecDeque<u64>,
     /// Batch size limit
     batch_limit: u64,
-    /// Entries to keep in memory
-    entries_cap: usize,
+}
+
+impl<C: Command> LogEntryVecDeque<C> {
+    /// return a log entries with cap
+    fn new(cap: usize, batch_limit: u64) -> Self {
+        let mut batch_index = VecDeque::with_capacity(cap.overflow_add(1));
+        batch_index.push_back(0);
+        Self {
+            entries: VecDeque::with_capacity(cap),
+            batch_index,
+            batch_limit,
+        }
+    }
+
+    /// Shortens the log entries, keeping the first `len` elements and dropping
+    /// the rest.
+    /// `batch_index` will keep len+1 elem
+    fn truncate(&mut self, len: usize) {
+        self.entries.truncate(len);
+        self.batch_index.truncate(len.overflow_add(1));
+    }
+
+    /// push a log entry into the back of queue
+    fn push_back(&mut self, entry: LogEntry<C>) -> Result<(), bincode::Error> {
+        let entry_size = serialized_size(&entry)?;
+
+        self.entries.push_back(entry);
+        let Some(&pre_entries_size) = self.batch_index.back() else {
+            unreachable!("batch_index cannot be None")
+        };
+        self.batch_index
+            .push_back(pre_entries_size.overflow_add(entry_size));
+        Ok(())
+    }
+
+    /// pop a log entry from the front of queue
+    fn pop_front(&mut self) -> Option<LogEntry<C>> {
+        if self.entries.front().is_some() {
+            _ = self.batch_index.pop_front();
+            self.entries.pop_front()
+        } else {
+            None
+        }
+    }
+
+    /// restore log entries from Vec
+    fn restore(&mut self, entries: Vec<LogEntry<C>>) {
+        let mut batch_index = VecDeque::with_capacity(entries.capacity());
+        batch_index.push_back(0);
+        for entry in &entries {
+            #[allow(clippy::expect_used)]
+            let entry_size =
+                serialized_size(entry).expect("log entry {entry:?} cannot be serialized");
+            if let Some(cur_size) = batch_index.back() {
+                batch_index.push_back(cur_size.overflow_add(entry_size));
+            }
+        }
+
+        self.entries = VecDeque::from(entries);
+        self.batch_index = batch_index;
+    }
+
+    /// clear whole log entries
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.batch_index.clear();
+        self.batch_index.push_back(0);
+    }
+
+    /// Get the range [left, right) of the log entry, whose size should be equal or smaller than `batch_limit`
+    fn get_range_by_batch(&self, left: usize) -> Range<usize> {
+        #[allow(clippy::indexing_slicing)]
+        let target = self.batch_index[left].overflow_add(self.batch_limit);
+        // remove the fake index 0 in `batch_index`
+        match self.batch_index.binary_search(&target) {
+            Ok(right) => left..right,
+            Err(right) => left..right - 1,
+        }
+    }
+
+    /// Get a range of log entry
+    fn get_from(&self, left: usize) -> Vec<LogEntry<C>> {
+        let range = self.get_range_by_batch(left);
+        self.entries.range(range).cloned().collect_vec()
+    }
+
+    /// check whether the log entry range [li,..) exceeds the batch limit or not
+    fn has_next_batch(&self, left: usize) -> bool {
+        if let (Some(&cur_size), Some(&last_size)) =
+            (self.batch_index.get(left), self.batch_index.back())
+        {
+            let target_size = cur_size.overflow_add(self.batch_limit);
+            target_size <= last_size
+        } else {
+            false
+        }
+    }
+}
+
+impl<C: Command> std::ops::Deref for LogEntryVecDeque<C> {
+    type Target = VecDeque<LogEntry<C>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.entries
+    }
 }
 
 impl<C: Command> Debug for Log<C> {
@@ -71,18 +180,14 @@ impl<C: 'static + Command> Log<C> {
         batch_limit: u64,
         entries_cap: usize,
     ) -> Self {
-        let mut batch_index = VecDeque::with_capacity(entries_cap);
-        batch_index.push_back(0);
         Self {
-            entries: VecDeque::with_capacity(LOG_INIT_CAPACITY),
+            entries: LogEntryVecDeque::new(entries_cap, batch_limit),
             commit_index: 0,
             base_index: 0,
             base_term: 0,
             last_as: 0,
             last_exe: 0,
             log_tx,
-            batch_index,
-            batch_limit,
             entries_cap,
         }
     }
@@ -147,21 +252,12 @@ impl<C: 'static + Command> Log<C> {
                 continue;
             }
 
-            #[allow(clippy::expect_used)] // It's safe to expect here.
-            let entry_size =
-                serialized_size(&entry).expect("log entry {entry:?} cannot be serialized");
-
             self.entries.truncate(pi);
-            self.batch_index.truncate(pi.overflow_add(1));
+            #[allow(clippy::expect_used)] // It's safe to expect here.
+            self.entries
+                .push_back(entry.clone())
+                .expect("log entry {entry:?} cannot be serialized");
 
-            self.entries.push_back(entry.clone());
-            let pre_entry_size = if let Some(&last_entry_size) = self.batch_index.back() {
-                last_entry_size
-            } else {
-                0
-            };
-            self.batch_index
-                .push_back(pre_entry_size.overflow_add(entry_size));
             self.send_persist(entry);
         }
 
@@ -188,59 +284,24 @@ impl<C: 'static + Command> Log<C> {
 
     /// Pack the cmd into a log entry and push it to the end of the log, return its index
     pub(super) fn push_cmd(&mut self, term: u64, cmd: Arc<C>) -> Result<LogIndex, bincode::Error> {
-        assert_eq!(
-            self.batch_index.len(),
-            self.entries.len() + 1,
-            "The batch_index.len {} is not equal to the log entries.len {} + 1",
-            self.batch_index.len(),
-            self.entries.len()
-        );
-
         let index = self.last_log_index() + 1;
         let entry = LogEntry::new(index, term, cmd);
 
-        let entry_size = serialized_size(&entry)?;
-        let pre_entry_size = if let Some(&last_entry_size) = self.batch_index.back() {
-            last_entry_size
-        } else {
-            0
-        };
-        self.batch_index
-            .push_back(pre_entry_size.overflow_add(entry_size));
-        self.entries.push_back(entry.clone());
+        self.entries.push_back(entry.clone())?;
         self.send_persist(entry);
         Ok(self.last_log_index())
-    }
-
-    /// Get the range [left, right) of the log entry, whose size should be equal or smaller than `batch_limit`
-    fn get_range_by_batch(&self, left: usize) -> Range<usize> {
-        #[allow(clippy::indexing_slicing)]
-        let target = self.batch_index[left].overflow_add(self.batch_limit);
-        // remove the fake index 0 in `batch_index`
-        match self.batch_index.binary_search(&target) {
-            Ok(right) => left..right,
-            Err(right) => left..right - 1,
-        }
     }
 
     /// check whether the log entry range [li,..) exceeds the batch limit or not
     pub(super) fn has_next_batch(&self, li: u64) -> bool {
         let idx = self.li_to_pi(li);
-        if let (Some(&cur_size), Some(&last_size)) =
-            (self.batch_index.get(idx), self.batch_index.back())
-        {
-            let target_size = cur_size.overflow_add(self.batch_limit);
-            target_size <= last_size
-        } else {
-            false
-        }
+        self.entries.has_next_batch(idx)
     }
 
     /// Get a range of log entry
     pub(super) fn get_from(&self, li: LogIndex) -> Vec<LogEntry<C>> {
         let left_bound = self.li_to_pi(li);
-        let log_range = self.get_range_by_batch(left_bound);
-        self.entries.range(log_range).cloned().collect_vec()
+        self.entries.get_from(left_bound)
     }
 
     /// Get existing cmd ids
@@ -274,20 +335,7 @@ impl<C: 'static + Command> Log<C> {
     /// Restore log entries, provided entires must be in order
     pub(super) fn restore_entries(&mut self, entries: Vec<LogEntry<C>>) {
         // restore batch index
-        let mut batch_index = VecDeque::with_capacity(entries.capacity());
-        batch_index.push_back(0);
-        for entry in &entries {
-            #[allow(clippy::expect_used)]
-            // it's in the initialization stage, panic doesn't affect much
-            let entry_size =
-                serialized_size(entry).expect("log entry {entry:?} cannot be serialized");
-            if let Some(cur_size) = batch_index.back() {
-                batch_index.push_back(cur_size.overflow_add(entry_size));
-            }
-        }
-        self.batch_index = batch_index;
-
-        self.entries = VecDeque::from(entries);
+        self.entries.restore(entries);
         self.compact();
     }
 
@@ -304,17 +352,18 @@ impl<C: 'static + Command> Log<C> {
         } else {
             return;
         };
-        #[allow(clippy::unwrap_used)] // checked
         while self
             .entries
             .front()
             .map_or(false, |e| e.index <= compact_from)
-            & self.batch_index.front().is_some()
         {
-            let e = self.entries.pop_front().unwrap();
-            let _ig_i = self.batch_index.pop_front().unwrap();
-            self.base_index = e.index;
-            self.base_term = e.term;
+            match self.entries.pop_front() {
+                Some(entry) => {
+                    self.base_index = entry.index;
+                    self.base_term = entry.term;
+                }
+                None => return,
+            }
         }
     }
 }
@@ -339,7 +388,7 @@ mod tests {
     }
 
     fn set_batch_limit(log: &mut Log<TestCommand>, batch_limit: u64) {
-        log.batch_limit = batch_limit;
+        log.entries.batch_limit = batch_limit;
     }
 
     #[test]
@@ -438,68 +487,68 @@ mod tests {
             .take(10)
             .map(|cmd| log.push_cmd(1, cmd).unwrap())
             .collect::<Vec<u64>>();
-        let log_entry_size = log.batch_index[1];
+        let log_entry_size = log.entries.batch_index[1];
 
         set_batch_limit(&mut log, 3 * log_entry_size - 1);
-        let bound_1 = log.get_range_by_batch(3);
+        let bound_1 = log.entries.get_range_by_batch(3);
         assert_eq!(
             bound_1,
             3..5,
             "batch_index = {:?}, batch = {}, log_entry_size = {}",
-            log.batch_index,
-            log.batch_limit,
+            log.entries.batch_index,
+            log.entries.batch_limit,
             log_entry_size
         );
         assert!(log.has_next_batch(8));
         assert!(!log.has_next_batch(9));
 
         set_batch_limit(&mut log, 4 * log_entry_size);
-        let bound_2 = log.get_range_by_batch(3);
+        let bound_2 = log.entries.get_range_by_batch(3);
         assert_eq!(
             bound_2,
             3..7,
             "batch_index = {:?}, batch = {}, log_entry_size = {}",
-            log.batch_index,
-            log.batch_limit,
+            log.entries.batch_index,
+            log.entries.batch_limit,
             log_entry_size
         );
         assert!(log.has_next_batch(7));
         assert!(!log.has_next_batch(8));
 
         set_batch_limit(&mut log, 5 * log_entry_size + 2);
-        let bound_3 = log.get_range_by_batch(3);
+        let bound_3 = log.entries.get_range_by_batch(3);
         assert_eq!(
             bound_3,
             3..8,
             "batch_index = {:?}, batch = {}, log_entry_size = {}",
-            log.batch_index,
-            log.batch_limit,
+            log.entries.batch_index,
+            log.entries.batch_limit,
             log_entry_size
         );
         assert!(log.has_next_batch(5));
         assert!(!log.has_next_batch(6));
 
         set_batch_limit(&mut log, 100 * log_entry_size);
-        let bound_4 = log.get_range_by_batch(3);
+        let bound_4 = log.entries.get_range_by_batch(3);
         assert_eq!(
             bound_4,
             3..10,
             "batch_index = {:?}, batch = {}, log_entry_size = {}",
-            log.batch_index,
-            log.batch_limit,
+            log.entries.batch_index,
+            log.entries.batch_limit,
             log_entry_size
         );
         assert!(!log.has_next_batch(1));
         assert!(!log.has_next_batch(5));
 
         set_batch_limit(&mut log, log_entry_size - 1);
-        let bound_5 = log.get_range_by_batch(3);
+        let bound_5 = log.entries.get_range_by_batch(3);
         assert_eq!(
             bound_5,
             3..3,
             "batch_index = {:?}, batch = {}, log_entry_size = {}",
-            log.batch_index,
-            log.batch_limit,
+            log.entries.batch_index,
+            log.entries.batch_limit,
             log_entry_size
         );
         assert!(log.has_next_batch(10));
@@ -520,20 +569,24 @@ mod tests {
 
         log.restore_entries(entries);
         assert_eq!(log.entries.len(), 10);
-        assert_eq!(log.batch_index.len(), 11);
-        assert_eq!(log.batch_index[0], 0);
-        let entry_size = log.batch_index[1];
+        assert_eq!(log.entries.batch_index.len(), 11);
+        assert_eq!(log.entries.batch_index[0], 0);
+        let entry_size = log.entries.batch_index[1];
 
-        log.batch_index.iter().enumerate().for_each(|(idx, &size)| {
-            assert_eq!(
-                size,
-                entry_size * idx.numeric_cast::<u64>(),
-                "batch_index = {:?}, batch = {}, entry_size = {}",
-                log.batch_index,
-                log.batch_limit,
-                entry_size
-            );
-        });
+        log.entries
+            .batch_index
+            .iter()
+            .enumerate()
+            .for_each(|(idx, &size)| {
+                assert_eq!(
+                    size,
+                    entry_size * idx.numeric_cast::<u64>(),
+                    "batch_index = {:?}, batch = {}, entry_size = {}",
+                    log.entries.batch_index,
+                    log.entries.batch_limit,
+                    entry_size
+                );
+            });
     }
 
     #[test]
@@ -549,6 +602,6 @@ mod tests {
         log.compact();
         assert_eq!(log.base_index, 12);
         assert_eq!(log.entries.front().unwrap().index, 13);
-        assert_eq!(log.batch_index.len(), 19);
+        assert_eq!(log.entries.batch_index.len(), 19);
     }
 }
