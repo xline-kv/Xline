@@ -2,8 +2,8 @@
 use common::get_cluster_client;
 use test_macros::abort_on_panic;
 use xline_client::{
-    clients::kv::{Compare, DeleteRangeRequest, PutRequest, RangeRequest, Txn, TxnOp},
     error::Result,
+    types::kv::{Compare, DeleteRangeRequest, PutRequest, RangeRequest, Txn, TxnOp},
 };
 use xlineapi::CompareResult;
 
