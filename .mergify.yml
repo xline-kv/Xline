@@ -1,0 +1,23 @@
+pull_request_rules:
+  - name: Automatic merge on approval
+    conditions:
+      - "#approved-reviews-by>=2"
+      - check-success=Outdated
+      - check-success=Audit
+      - check-success=Check Normal
+      - check-success=Check Madsim
+      - check-success=Format
+      - check-success=Test Normal
+      - check-success=Test Madsim
+      - check-success=Clippy Normal
+      - check-success=Clippy Madsim
+      - check-success=Commit Message Validation
+      - check-success=Spell Check
+      - check-success=Coverage
+      - check-success=Validation
+      - check-success=DCO
+      - status-success="codecov/patch"
+      - status-success="codecov/project"
+    actions:
+      merge:
+        method: rebase

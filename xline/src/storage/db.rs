@@ -1,0 +1,385 @@
+use std::{collections::HashMap, path::Path, sync::Arc};
+
+use engine::{Engine, EngineType, Snapshot, StorageEngine, WriteOperation};
+use prost::Message;
+use utils::config::StorageConfig;
+
+use super::{
+    auth_store::{AUTH_ENABLE_KEY, AUTH_REVISION_KEY, AUTH_TABLE, ROLE_TABLE, USER_TABLE},
+    kv_store::KV_TABLE,
+    lease_store::LEASE_TABLE,
+    storage_api::StorageApi,
+    ExecuteError,
+};
+use crate::{
+    rpc::{PbLease, Role, User},
+    server::command::{APPLIED_INDEX_KEY, META_TABLE},
+};
+
+/// Xline Server Storage Table
+pub(crate) const XLINE_TABLES: [&str; 6] = [
+    META_TABLE,
+    KV_TABLE,
+    LEASE_TABLE,
+    AUTH_TABLE,
+    USER_TABLE,
+    ROLE_TABLE,
+];
+
+/// Key of compacted revision
+pub(crate) const COMPACT_REVISION: &str = "compact_revision";
+
+/// Database to store revision to kv mapping
+#[derive(Debug)]
+pub struct DB {
+    /// internal storage of `DB`
+    engine: Arc<Engine>,
+}
+
+impl DB {
+    /// Create a new `DB`
+    ///
+    /// # Errors
+    /// Return `ExecuteError::DbError` when open db failed
+    #[inline]
+    pub fn open(config: &StorageConfig) -> Result<Arc<Self>, ExecuteError> {
+        let engine_type = match *config {
+            StorageConfig::Memory => EngineType::Memory,
+            StorageConfig::RocksDB(ref path) => EngineType::Rocks(path.clone()),
+            _ => unreachable!("Not supported storage type"),
+        };
+        let engine = Engine::new(engine_type, &XLINE_TABLES)
+            .map_err(|e| ExecuteError::DbError(format!("Cannot open database: {e}")))?;
+        Ok(Arc::new(Self {
+            engine: Arc::new(engine),
+        }))
+    }
+}
+#[async_trait::async_trait]
+impl StorageApi for DB {
+    fn get_values<K>(
+        &self,
+        table: &'static str,
+        keys: &[K],
+    ) -> Result<Vec<Option<Vec<u8>>>, ExecuteError>
+    where
+        K: AsRef<[u8]> + std::fmt::Debug + Sized,
+    {
+        let values = self
+            .engine
+            .get_multi(table, keys)
+            .map_err(|e| ExecuteError::DbError(format!("Failed to get keys {keys:?}: {e}")))?
+            .into_iter()
+            .collect::<Vec<_>>();
+
+        assert_eq!(values.len(), keys.len(), "Index doesn't match with DB");
+
+        Ok(values)
+    }
+
+    fn get_value<K>(&self, table: &'static str, key: K) -> Result<Option<Vec<u8>>, ExecuteError>
+    where
+        K: AsRef<[u8]> + std::fmt::Debug,
+    {
+        self.engine
+            .get(table, key.as_ref())
+            .map_err(|e| ExecuteError::DbError(format!("Failed to get key {key:?}: {e}")))
+    }
+
+    fn get_all(&self, table: &'static str) -> Result<Vec<(Vec<u8>, Vec<u8>)>, ExecuteError> {
+        self.engine.get_all(table).map_err(|e| {
+            ExecuteError::DbError(format!("Failed to get all keys from {table:?}: {e}"))
+        })
+    }
+
+    fn get_snapshot(&self, snap_path: impl AsRef<Path>) -> Result<Snapshot, ExecuteError> {
+        self.engine
+            .get_snapshot(snap_path, &XLINE_TABLES)
+            .map_err(|e| ExecuteError::DbError(format!("Failed to get snapshot, error: {e}")))
+    }
+
+    async fn reset(&self, snapshot: Option<Snapshot>) -> Result<(), ExecuteError> {
+        if let Some(snap) = snapshot {
+            self.engine
+                .apply_snapshot(snap, &XLINE_TABLES)
+                .await
+                .map_err(|e| ExecuteError::DbError(format!("Failed to reset database, error: {e}")))
+        } else {
+            let start = vec![];
+            let end = vec![0xff];
+            let ops = XLINE_TABLES
+                .iter()
+                .map(|table| {
+                    WriteOperation::new_delete_range(table, start.as_slice(), end.as_slice())
+                })
+                .collect();
+            self.engine
+                .write_batch(ops, true)
+                .map_err(|e| ExecuteError::DbError(format!("Failed to reset database, error: {e}")))
+        }
+    }
+
+    fn flush_ops(&self, ops: Vec<WriteOp>) -> Result<(), ExecuteError> {
+        let mut wr_ops = Vec::new();
+        let del_lease_key_buffer = ops
+            .iter()
+            .filter_map(|op| {
+                if let WriteOp::DeleteLease(lease_id) = *op {
+                    Some((lease_id, lease_id.encode_to_vec()))
+                } else {
+                    None
+                }
+            })
+            .collect::<HashMap<_, _>>();
+        for op in ops {
+            let wop = match op {
+                WriteOp::PutKeyValue(key, value) => {
+                    WriteOperation::new_put(KV_TABLE, key, value.clone())
+                }
+                WriteOp::PutAppliedIndex(index) => WriteOperation::new_put(
+                    META_TABLE,
+                    APPLIED_INDEX_KEY.as_bytes().to_vec(),
+                    index.to_le_bytes().to_vec(),
+                ),
+                WriteOp::PutLease(lease) => WriteOperation::new_put(
+                    LEASE_TABLE,
+                    lease.id.encode_to_vec(),
+                    lease.encode_to_vec(),
+                ),
+                WriteOp::PutCompactRevision(rev) => WriteOperation::new_put(
+                    META_TABLE,
+                    COMPACT_REVISION.as_bytes().to_vec(),
+                    rev.to_le_bytes().to_vec(),
+                ),
+                WriteOp::DeleteKeyValue(rev) => WriteOperation::new_delete(KV_TABLE, rev),
+                WriteOp::DeleteLease(lease_id) => {
+                    let key = del_lease_key_buffer.get(&lease_id).unwrap_or_else(|| {
+                        panic!("lease_id({lease_id}) is not in del_lease_key_buffer")
+                    });
+                    WriteOperation::new_delete(LEASE_TABLE, key)
+                }
+                WriteOp::PutAuthEnable(enable) => WriteOperation::new_put(
+                    AUTH_TABLE,
+                    AUTH_ENABLE_KEY.to_vec(),
+                    vec![u8::from(enable)],
+                ),
+                WriteOp::PutAuthRevision(rev) => WriteOperation::new_put(
+                    AUTH_TABLE,
+                    AUTH_REVISION_KEY.to_vec(),
+                    rev.encode_to_vec(),
+                ),
+                WriteOp::PutUser(user) => {
+                    let value = user.encode_to_vec();
+                    WriteOperation::new_put(USER_TABLE, user.name.clone(), value)
+                }
+                WriteOp::DeleteUser(name) => {
+                    WriteOperation::new_delete(USER_TABLE, name.as_bytes())
+                }
+                WriteOp::PutRole(role) => {
+                    let value = role.encode_to_vec();
+                    WriteOperation::new_put(ROLE_TABLE, role.name.clone(), value)
+                }
+                WriteOp::DeleteRole(name) => {
+                    WriteOperation::new_delete(ROLE_TABLE, name.as_bytes())
+                }
+            };
+            wr_ops.push(wop);
+        }
+        self.engine
+            .write_batch(wr_ops, false)
+            .map_err(|e| ExecuteError::DbError(format!("Failed to flush ops, error: {e}")))?;
+        Ok(())
+    }
+}
+
+/// Buffered Write Operation
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum WriteOp<'a> {
+    /// Put a key-value pair to kv table
+    PutKeyValue(Vec<u8>, Vec<u8>),
+    /// Put the applied index to meta table
+    PutAppliedIndex(u64),
+    /// Put a lease to lease table
+    PutLease(PbLease),
+    /// Put a compacted revision into meta table
+    PutCompactRevision(i64),
+    /// Delete a key-value pair from kv table
+    DeleteKeyValue(&'a [u8]),
+    /// Delete a lease from lease table
+    DeleteLease(i64),
+    /// Put a auth enable flag to auth table
+    PutAuthEnable(bool),
+    /// Put a auth revision to auth table
+    PutAuthRevision(i64),
+    /// Put a user to user table
+    PutUser(User),
+    /// Delete a user from user table
+    DeleteUser(&'a str),
+    /// Put a role to role table
+    PutRole(Role),
+    /// Delete a role from role table
+    DeleteRole(&'a str),
+}
+
+#[cfg(test)]
+mod test {
+    use std::path::PathBuf;
+
+    use engine::SnapshotApi;
+    use test_macros::abort_on_panic;
+
+    use super::*;
+    use crate::storage::Revision;
+    #[tokio::test]
+    #[abort_on_panic]
+    async fn test_reset() -> Result<(), ExecuteError> {
+        let data_dir = PathBuf::from("/tmp/test_reset");
+        let db = DB::open(&StorageConfig::RocksDB(data_dir.clone()))?;
+
+        let revision = Revision::new(1, 1).encode_to_vec();
+        let key = revision.clone();
+        let ops = vec![WriteOp::PutKeyValue(revision, "value1".into())];
+        db.flush_ops(ops)?;
+        let res = db.get_value(KV_TABLE, &key)?;
+        assert_eq!(res, Some("value1".as_bytes().to_vec()));
+
+        db.reset(None).await?;
+
+        let res = db.get_values(KV_TABLE, &[&key])?;
+        assert_eq!(res, vec![None]);
+        let res = db.get_all(KV_TABLE)?;
+        assert!(res.is_empty());
+
+        std::fs::remove_dir_all(data_dir).unwrap();
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[abort_on_panic]
+    async fn test_db_snapshot() -> Result<(), ExecuteError> {
+        let dir = PathBuf::from("/tmp/test_db_snapshot");
+        let origin_db_path = dir.join("origin_db");
+        let new_db_path = dir.join("new_db");
+        let snapshot_path = dir.join("snapshot");
+        let origin_db = DB::open(&StorageConfig::RocksDB(origin_db_path))?;
+
+        let revision = Revision::new(1, 1).encode_to_vec();
+        let key: Vec<u8> = revision.clone();
+        let ops = vec![WriteOp::PutKeyValue(revision, "value1".into())];
+        origin_db.flush_ops(ops)?;
+
+        let snapshot = origin_db.get_snapshot(snapshot_path)?;
+
+        let new_db = DB::open(&StorageConfig::RocksDB(new_db_path))?;
+        new_db.reset(Some(snapshot)).await?;
+
+        let res = new_db.get_values(KV_TABLE, &[&key])?;
+        assert_eq!(res, vec![Some("value1".as_bytes().to_vec())]);
+
+        std::fs::remove_dir_all(dir).unwrap();
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[abort_on_panic]
+    async fn test_db_snapshot_wrong_type() -> Result<(), ExecuteError> {
+        let dir = PathBuf::from("/tmp/test_db_snapshot_wrong_type");
+        let db_path = dir.join("db");
+        let snapshot_path = dir.join("snapshot");
+        let rocks_db = DB::open(&StorageConfig::RocksDB(db_path))?;
+        let mem_db = DB::open(&StorageConfig::Memory)?;
+
+        let rocks_snap = rocks_db.get_snapshot(snapshot_path)?;
+        let res = mem_db.reset(Some(rocks_snap)).await;
+        assert!(res.is_err());
+
+        std::fs::remove_dir_all(dir).unwrap();
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[abort_on_panic]
+    async fn test_get_snapshot() -> Result<(), ExecuteError> {
+        let dir = PathBuf::from("/tmp/test_get_snapshot");
+        let data_path = dir.join("data");
+        let snapshot_path = dir.join("snapshot");
+        let db = DB::open(&StorageConfig::RocksDB(data_path))?;
+        let mut res = db.get_snapshot(snapshot_path)?;
+        assert_ne!(res.size(), 0);
+        res.clean().await.unwrap();
+
+        std::fs::remove_dir_all(dir).unwrap();
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[abort_on_panic]
+    async fn test_db_write_ops() {
+        let db = DB::open(&StorageConfig::Memory).unwrap();
+        let lease = PbLease {
+            id: 1,
+            ttl: 10,
+            remaining_ttl: 10,
+        };
+        let lease_bytes = lease.encode_to_vec();
+        let user = User {
+            name: "user".into(),
+            password: "password".into(),
+            roles: vec!["role".into()],
+            options: None,
+        };
+        let user_bytes = user.encode_to_vec();
+        let role = Role {
+            name: "role".into(),
+            key_permission: vec![],
+        };
+        let role_bytes = role.encode_to_vec();
+        let write_ops = vec![
+            WriteOp::PutKeyValue(Revision::new(1, 2).encode_to_vec(), "value".into()),
+            WriteOp::PutAppliedIndex(5),
+            WriteOp::PutLease(lease),
+            WriteOp::PutAuthEnable(true),
+            WriteOp::PutAuthRevision(1),
+            WriteOp::PutUser(user),
+            WriteOp::PutRole(role),
+        ];
+        db.flush_ops(write_ops).unwrap();
+        assert_eq!(
+            db.get_value(KV_TABLE, Revision::new(1, 2).encode_to_vec())
+                .unwrap(),
+            Some("value".as_bytes().to_vec())
+        );
+        assert_eq!(
+            db.get_value(META_TABLE, b"applied_index").unwrap(),
+            Some(5u64.to_le_bytes().to_vec())
+        );
+        assert_eq!(
+            db.get_value(LEASE_TABLE, 1i64.encode_to_vec()).unwrap(),
+            Some(lease_bytes)
+        );
+        assert_eq!(
+            db.get_value(AUTH_TABLE, b"enable").unwrap(),
+            Some(vec![u8::from(true)])
+        );
+        assert_eq!(
+            db.get_value(AUTH_TABLE, b"revision").unwrap(),
+            Some(1u64.encode_to_vec())
+        );
+        assert_eq!(db.get_value(USER_TABLE, b"user").unwrap(), Some(user_bytes));
+        assert_eq!(db.get_value(ROLE_TABLE, b"role").unwrap(), Some(role_bytes));
+
+        let del_ops = vec![
+            WriteOp::DeleteLease(1),
+            WriteOp::DeleteUser("user"),
+            WriteOp::DeleteRole("role"),
+        ];
+        db.flush_ops(del_ops).unwrap();
+        assert_eq!(
+            db.get_value(LEASE_TABLE, 1i64.encode_to_vec()).unwrap(),
+            None
+        );
+        assert_eq!(db.get_value(USER_TABLE, b"user").unwrap(), None);
+        assert_eq!(db.get_value(ROLE_TABLE, b"role").unwrap(), None);
+    }
+}

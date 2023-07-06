@@ -1,0 +1,43 @@
+[package]
+name = "utils"
+version = "0.1.0"
+authors = ["DatenLord Developers <dev@datenlord.io>"]
+edition = "2021"
+description = "Utilities functions for Xline"
+repository = "https://github.com/xline-kv/Xline/tree/master/utils"
+readme = "README.md"
+license = "MIT"
+keywords = ["utilities"]
+categories = ["utilities"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+full = ["std", "tokio", "parking_lot"]
+std = []
+tokio = ["dep:tokio", "dep:async-trait"]
+parking_lot = ["dep:parking_lot"]
+
+[dependencies]
+parking_lot = { version = "0.12.1", optional = true }
+tokio = { version = "0.2.23", package = "madsim-tokio", features = [
+  "sync",
+  "macros",
+  "rt-multi-thread",
+], optional = true }
+async-trait = { version = "0.1.60", optional = true }
+tonic = { version = "0.3.0", package = "madsim-tonic" }
+opentelemetry = "0.18.0"
+tracing = "0.1.37"
+tracing-opentelemetry = "0.18.0"
+getset = "0.1"
+serde = { version = "1.0.137", features = ["derive"] }
+toml = "0.5"
+thiserror = "1.0.31"
+tracing-appender = "0.2"
+derive_builder = "0.12.0"
+
+[dev-dependencies]
+opentelemetry-jaeger = "0.17.0"
+tracing-subscriber = "0.3.16"
+test-macros = { path = "../test-macros" }

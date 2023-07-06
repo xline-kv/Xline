@@ -1,0 +1,20 @@
+[package]
+name = "xlineapi"
+version = "0.1.0"
+edition = "2021"
+authors = ["DatenLord <dev@datenlord.io>"]
+description = "Xline RPC API"
+license = "Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/xline-kv/Xline/tree/master/xlineapi"
+categories = ["RPC"]
+keywords = ["RPC", "Interfaces"]
+
+[dependencies]
+tonic = { version = "0.3.0", package = "madsim-tonic" }
+prost = "0.11"
+serde = { version = "1.0.137", features = ["derive"] }
+etcd-client = { version = "0.3.0", package = "madsim-etcd-client" }
+
+[build-dependencies]
+tonic-build = { version = "0.3.0", package = "madsim-tonic-build" }

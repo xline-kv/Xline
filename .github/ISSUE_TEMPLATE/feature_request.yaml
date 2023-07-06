@@ -1,0 +1,29 @@
+name: Feature Request
+description: Request a new feature
+title: "[Feature]: "
+labels: ["enhancement"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to request this feature!
+  - type: textarea
+    id: Description
+    attributes:
+      label: Description about the feature
+      description: Briefly answer these questions
+      placeholder: |
+        1. Is your feature request related to a problem?
+        2. Describe the solution you'd like
+        3. Describe any alternative solutions or features you've considered
+    validations:
+      required: true
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Code of Conduct
+      description: By submitting this issue, you agree to follow our [Code of Conduct](https://github.com/datenlord/Xline/blob/master/CODE_OF_CONDUCT.md)
+      options:
+        - label: I agree to follow this project's Code of Conduct
+          required: true

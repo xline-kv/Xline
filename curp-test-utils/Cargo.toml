@@ -1,0 +1,30 @@
+[package]
+name = "curp-test-utils"
+version = "0.1.0"
+edition = "2021"
+authors = ["DatenLord <dev@datenlord.io>"]
+repository = "https://github.com/xline-kv/Xline/tree/master/curp-test-utils"
+description = "Test utils for curp"
+categories = ["Test"]
+keywords = ["Test", "Utils"]
+license = "Apache-2.0"
+readme = "README.md"
+
+[dependencies]
+curp-external-api = { path = "../curp-external-api" }
+engine = { path = "../engine" }
+utils = { path = "../utils", version = "0.1.0", features = ["parking_lot"] }
+async-trait = "0.1.53"
+clippy-utilities = "0.2.0"
+serde = { version = "1.0.130", features = ["derive", "rc"] }
+once_cell = "1.17.0"
+parking_lot = "0.12.1"
+thiserror = "1.0.31"
+itertools = "0.10.3"
+tokio = { version = "0.2.23", package = "madsim-tokio", features = [
+  "rt-multi-thread",
+] }
+tracing = { version = "0.1.34", features = ["std", "log", "attributes"] }
+madsim = { version = "0.2.22", features = ["rpc", "macros"] }
+tracing-subscriber = { version = "0.3.16", features = ["env-filter", "time"] }
+mockall = "0.11.3"

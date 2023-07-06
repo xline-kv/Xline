@@ -1,0 +1,48 @@
+name: Bug Report
+description: File a bug report
+title: "[Bug]: "
+labels: ["bug"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report!
+  - type: textarea
+    id: Description
+    attributes:
+      label: Description about the bug
+      description: Briefly answer these questions
+      placeholder: |
+        1. One line summary of the issue
+        2. What did you expect and what actually happened?
+        3. What steps can we take to reproduce the behaviour you saw?
+    validations:
+      required: true
+  - type: dropdown
+    id: version
+    attributes:
+      label: Version
+      description: What version of xline are you running?
+      options:
+        - 0.1.0
+        - 0.2.0
+        - 0.3.0
+        - 0.4.0
+        - 0.4.1 (Default)
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Please copy and paste any relevant log output. This will be automatically formatted into code, so no need for backticks.
+      render: shell
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Code of Conduct
+      description: By submitting this issue, you agree to follow our [Code of Conduct](https://github.com/datenlord/Xline/blob/master/CODE_OF_CONDUCT.md)
+      options:
+        - label: I agree to follow this project's Code of Conduct
+          required: true
