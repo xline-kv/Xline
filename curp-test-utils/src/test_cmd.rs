@@ -213,17 +213,7 @@ impl CommandExecutor<TestCommand> for TestCE {
                     .collect_vec();
                 (value, revision)
             }
-            TestCommandType::Put(ref v) => {
-                let value = v.to_be_bytes().to_vec();
-                let wr_ops = keys
-                    .into_iter()
-                    .map(|key| WriteOperation::new_put(TEST_TABLE, key, value.clone()))
-                    .collect();
-                self.store
-                    .write_batch(wr_ops, true)
-                    .map_err(|e| ExecuteError(e.to_string()))?;
-                TestCommandResult::default()
-            }
+            TestCommandType::Put(_) => TestCommandResult::default(),
         };
 
         self.exe_sender
@@ -245,23 +235,26 @@ impl CommandExecutor<TestCommand> for TestCE {
         self.after_sync_sender
             .send((cmd.clone(), index))
             .expect("failed to send after sync msg");
-        if let TestCommandType::Put(_) = cmd.cmd_type {
+        if let TestCommandType::Put(v) = cmd.cmd_type {
             debug!(
                 "cmd {:?}-{} revision is {}",
                 cmd.cmd_type,
                 cmd.id(),
                 revision
             );
-            let wr_ops = cmd
+            let value = v.to_be_bytes().to_vec();
+            let keys = cmd
                 .keys
                 .iter()
-                .map(|key| {
-                    WriteOperation::new_put(
-                        REVISION_TABLE,
-                        key.to_be_bytes().to_vec(),
-                        revision.to_be_bytes().to_vec(),
-                    )
-                })
+                .map(|k| k.to_be_bytes().to_vec())
+                .collect_vec();
+            let wr_ops = keys
+                .clone()
+                .into_iter()
+                .map(|key| WriteOperation::new_put(TEST_TABLE, key, value.clone()))
+                .chain(keys.into_iter().map(|key| {
+                    WriteOperation::new_put(REVISION_TABLE, key, revision.to_be_bytes().to_vec())
+                }))
                 .collect();
             self.store
                 .write_batch(wr_ops, true)
