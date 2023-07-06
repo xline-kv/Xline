@@ -5,7 +5,7 @@ use test_macros::abort_on_panic;
 use xline::client::kv_types::{DeleteRangeRequest, PutRequest};
 use xline_test_utils::Cluster;
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+#[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn test_watch() -> Result<(), Box<dyn Error>> {
     let mut cluster = Cluster::new(3).await;

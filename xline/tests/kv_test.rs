@@ -1,13 +1,13 @@
 use std::{error::Error, time::Duration};
 
-use etcd_client::Client;
+use etcd_client::{Client, Compare, CompareOp, GetOptions, KvClient, Txn, TxnOp, TxnOpResponse};
 use test_macros::abort_on_panic;
 use xline::client::kv_types::{
     DeleteRangeRequest, PutRequest, RangeRequest, SortOrder, SortTarget,
 };
 use xline_test_utils::Cluster;
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+#[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn test_kv_put() -> Result<(), Box<dyn Error>> {
     struct TestCase {
@@ -42,7 +42,7 @@ async fn test_kv_put() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+#[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn test_kv_get() -> Result<(), Box<dyn Error>> {
     struct TestCase<'a> {
@@ -159,7 +159,7 @@ async fn test_kv_get() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+#[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn test_range_redirect() -> Result<(), Box<dyn Error>> {
     let mut cluster = Cluster::new(3).await;
@@ -176,7 +176,7 @@ async fn test_range_redirect() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+#[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn test_kv_delete() -> Result<(), Box<dyn Error>> {
     struct TestCase<'a> {
@@ -245,6 +245,58 @@ async fn test_kv_delete() -> Result<(), Box<dyn Error>> {
             .all(|(kv, want)| kv.key == want.as_bytes());
         assert!(is_identical);
     }
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[abort_on_panic]
+async fn test_txn() -> Result<(), Box<dyn Error>> {
+    let mut cluster = Cluster::new(3).await;
+    cluster.start().await;
+    let mut client: KvClient = cluster.client().await.kv_client();
+
+    let kvs = ["a", "b", "c", "d", "e"];
+    for key in kvs {
+        client.put(key, "bar", None).await?;
+    }
+
+    let read_write_txn = Txn::new()
+        .when([Compare::value("b", CompareOp::Equal, "bar")])
+        .and_then([TxnOp::put("f", "foo", None)])
+        .or_else([TxnOp::get("a", None)]);
+    let res = client.txn(read_write_txn).await?;
+    assert!(res.succeeded());
+    assert_eq!(res.op_responses().len(), 1);
+    assert!(matches!(res.op_responses()[0], TxnOpResponse::Put(_)));
+
+    let read_only_txn = Txn::new()
+        .when([Compare::version("b", CompareOp::Greater, 10)])
+        .and_then([TxnOp::get("a", None)])
+        .or_else([TxnOp::get("b", None)]);
+    let res = client.txn(read_only_txn).await?;
+    assert!(!res.succeeded());
+    assert_eq!(res.op_responses().len(), 1);
+    let Some(TxnOpResponse::Get(get_res)) = res.op_responses().pop() else {
+        panic!("unexpected op response");
+    };
+    assert_eq!(get_res.kvs().len(), 1);
+    assert_eq!(get_res.kvs()[0].key(), b"b");
+    assert_eq!(get_res.kvs()[0].value(), b"bar");
+
+    let serializable_txn = Txn::new()
+        .when([])
+        .and_then([TxnOp::get("c", Some(GetOptions::new().with_serializable()))])
+        .or_else([TxnOp::get("d", Some(GetOptions::new().with_serializable()))]);
+    let res = client.txn(serializable_txn).await?;
+    assert!(res.succeeded());
+    assert_eq!(res.op_responses().len(), 1);
+    let Some(TxnOpResponse::Get(get_res)) = res.op_responses().pop() else {
+        panic!("unexpected op response");
+    };
+    assert_eq!(get_res.kvs().len(), 1);
+    assert_eq!(get_res.kvs()[0].key(), b"c");
+    assert_eq!(get_res.kvs()[0].value(), b"bar");
 
     Ok(())
 }

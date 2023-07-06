@@ -23,7 +23,7 @@ const N_MSG_PER_SENDER: usize = 10000;
 const SENDER_CNT: usize = 2;
 const RECEIVER_CNT: usize = 4;
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 10)]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() {
     let (senders, receivers) = {
         let (tx, rx) = better_key_mpmc::channel::<String, String>();
