@@ -1,9 +1,12 @@
-use xline_client::{clients::MaintenanceClient, error::Result, Client, ClientOptions};
-use xline_test_utils::Cluster;
+use common::get_cluster_client;
+use xline_client::error::Result;
+
+mod common;
 
 #[tokio::test]
 async fn snapshot_should_get_valid_data() -> Result<()> {
-    let (_cluster, mut client) = get_cluster_client().await?;
+    let (_cluster, client) = get_cluster_client().await?;
+    let mut client = client.maintenance_client();
 
     let mut msg = client.snapshot().await?;
     loop {
@@ -15,13 +18,4 @@ async fn snapshot_should_get_valid_data() -> Result<()> {
         }
     }
     Ok(())
-}
-
-async fn get_cluster_client() -> Result<(Cluster, MaintenanceClient)> {
-    let mut cluster = Cluster::new(3).await;
-    cluster.start().await;
-    let client = Client::connect(cluster.addrs().clone(), ClientOptions::default())
-        .await?
-        .maintenance_client();
-    Ok((cluster, client))
 }
