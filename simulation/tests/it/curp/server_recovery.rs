@@ -266,9 +266,8 @@ async fn new_leader_will_recover_spec_cmds_cond2() {
     group.stop().await;
 }
 
-// Old Leader should discard spec states
 #[madsim::test]
-async fn old_leader_will_discard_spec_exe_cmds() {
+async fn old_leader_will_keep_original_states() {
     init_logger();
 
     let group = CurpGroup::new(5).await;
@@ -293,17 +292,6 @@ async fn old_leader_will_discard_spec_exe_cmds() {
     };
     let mut leader1_connect = group.get_connect(&leader1).await;
     leader1_connect.propose(req1).await.unwrap();
-    let leader1_store = Arc::clone(&group.get_node(&leader1).store);
-    let res = leader1_store
-        .lock()
-        .as_ref()
-        .unwrap()
-        .get_all(TEST_TABLE)
-        .unwrap();
-    assert_eq!(
-        res,
-        vec![(0u32.to_be_bytes().to_vec(), 1u32.to_be_bytes().to_vec())]
-    );
 
     // 3: recover all others and disable leader, a new leader will be elected
     group.disable_node(&leader1);
@@ -315,10 +303,10 @@ async fn old_leader_will_discard_spec_exe_cmds() {
     let leader2 = group.get_leader().await.0;
     assert_ne!(leader2, leader1);
 
-    // 4: recover the old leader, its state should be reverted to the original state
+    // 4: recover the old leader, it should keep the original state
     group.enable_node(&leader1);
-    // wait for reversion
     sleep_secs(15).await;
+    let leader1_store = Arc::clone(&group.get_node(&leader1).store);
     let res = leader1_store
         .lock()
         .as_ref()
