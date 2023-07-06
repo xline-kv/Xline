@@ -4,7 +4,7 @@ use xlineapi::Type as PermissionType;
 /// Request for `Authenticate`
 #[derive(Debug)]
 pub struct AuthenticateRequest {
-    /// inner request
+    /// Inner request
     pub(crate) inner: xlineapi::AuthenticateRequest,
 }
 
@@ -31,7 +31,7 @@ impl From<AuthenticateRequest> for xlineapi::AuthenticateRequest {
 /// Request for `Authenticate`
 #[derive(Debug)]
 pub struct AuthUserAddRequest {
-    /// inner request
+    /// Inner request
     pub(crate) inner: xlineapi::AuthUserAddRequest,
 }
 
@@ -74,7 +74,7 @@ impl From<AuthUserAddRequest> for xlineapi::AuthUserAddRequest {
 /// Request for `AuthUserGet`
 #[derive(Debug)]
 pub struct AuthUserGetRequest {
-    /// inner request
+    /// Inner request
     pub(crate) inner: xlineapi::AuthUserGetRequest,
 }
 
@@ -98,7 +98,7 @@ impl From<AuthUserGetRequest> for xlineapi::AuthUserGetRequest {
 /// Request for `AuthUserDelete`
 #[derive(Debug)]
 pub struct AuthUserDeleteRequest {
-    /// inner request
+    /// Inner request
     pub(crate) inner: xlineapi::AuthUserDeleteRequest,
 }
 
@@ -122,7 +122,7 @@ impl From<AuthUserDeleteRequest> for xlineapi::AuthUserDeleteRequest {
 /// Request for `AuthUserChangePassword`
 #[derive(Debug)]
 pub struct AuthUserChangePasswordRequest {
-    /// inner request
+    /// Inner request
     pub(crate) inner: xlineapi::AuthUserChangePasswordRequest,
 }
 
@@ -150,7 +150,7 @@ impl From<AuthUserChangePasswordRequest> for xlineapi::AuthUserChangePasswordReq
 /// Request for `AuthUserGrantRole`
 #[derive(Debug)]
 pub struct AuthUserGrantRoleRequest {
-    /// inner request
+    /// Inner request
     pub(crate) inner: xlineapi::AuthUserGrantRoleRequest,
 }
 
@@ -177,7 +177,7 @@ impl From<AuthUserGrantRoleRequest> for xlineapi::AuthUserGrantRoleRequest {
 /// Request for `AuthUserRevokeRole`
 #[derive(Debug)]
 pub struct AuthUserRevokeRoleRequest {
-    /// inner request
+    /// Inner request
     pub(crate) inner: xlineapi::AuthUserRevokeRoleRequest,
 }
 
@@ -204,7 +204,7 @@ impl From<AuthUserRevokeRoleRequest> for xlineapi::AuthUserRevokeRoleRequest {
 /// Request for `AuthRoleAdd`
 #[derive(Debug)]
 pub struct AuthRoleAddRequest {
-    /// inner request
+    /// Inner request
     pub(crate) inner: xlineapi::AuthRoleAddRequest,
 }
 
@@ -228,7 +228,7 @@ impl From<AuthRoleAddRequest> for xlineapi::AuthRoleAddRequest {
 /// Request for `AuthRoleGet`
 #[derive(Debug)]
 pub struct AuthRoleGetRequest {
-    /// inner request
+    /// Inner request
     pub(crate) inner: xlineapi::AuthRoleGetRequest,
 }
 
@@ -252,7 +252,7 @@ impl From<AuthRoleGetRequest> for xlineapi::AuthRoleGetRequest {
 /// Request for `AuthRoleDelete`
 #[derive(Debug)]
 pub struct AuthRoleDeleteRequest {
-    /// inner request
+    /// Inner request
     pub(crate) inner: xlineapi::AuthRoleDeleteRequest,
 }
 
@@ -276,7 +276,7 @@ impl From<AuthRoleDeleteRequest> for xlineapi::AuthRoleDeleteRequest {
 /// Request for `AuthRoleGrantPermission`
 #[derive(Debug)]
 pub struct AuthRoleGrantPermissionRequest {
-    /// inner request
+    /// Inner request
     pub(crate) inner: xlineapi::AuthRoleGrantPermissionRequest,
 }
 
@@ -303,7 +303,7 @@ impl From<AuthRoleGrantPermissionRequest> for xlineapi::AuthRoleGrantPermissionR
 /// Request for `AuthRoleRevokePermission`
 #[derive(Debug)]
 pub struct AuthRoleRevokePermissionRequest {
-    /// inner request
+    /// Inner request
     pub(crate) inner: xlineapi::AuthRoleRevokePermissionRequest,
 }
 

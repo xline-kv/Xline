@@ -1,4 +1,4 @@
-use xline_client::{clients::maintenance::MaintenanceClient, error::Result, Client, ClientOptions};
+use xline_client::{clients::MaintenanceClient, error::Result, Client, ClientOptions};
 use xline_test_utils::Cluster;
 
 #[tokio::test]

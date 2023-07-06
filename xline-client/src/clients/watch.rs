@@ -13,7 +13,7 @@ use crate::{
 /// Channel size for watch request stream
 const CHANNEL_SIZE: usize = 128;
 
-/// The maintenance client
+/// Client for Watch operations.
 #[derive(Clone, Debug)]
 pub struct WatchClient {
     /// The watch RPC client, only communicate with one server at a time

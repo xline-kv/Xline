@@ -1,28 +1,28 @@
 use thiserror::Error;
 
-/// Xline client result
+/// The result type for `xline-client`
 pub type Result<T> = std::result::Result<T, ClientError>;
 
-/// Client Error
+/// The error type for `xline-client`
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum ClientError {
     /// Propose error
     #[error("propose error {0}")]
     ProposeError(#[from] curp::error::ProposeError),
-    /// IO error
+    /// Io error
     #[error("IO error {0}")]
     IoError(#[from] std::io::Error),
-    /// Rpc Error
+    /// Rpc error
     #[error("rpc error: {0}")]
     RpcError(String),
-    /// Arguments invalid Error
+    /// Arguments invalid error
     #[error("Invalid arguments: {0}")]
     InvalidArgs(String),
-    /// error in watch client
+    /// Error in watch client
     #[error("Watch client error: {0}")]
     WatchError(String),
-    /// error in lease client
+    /// Error in lease client
     #[error("Lease client error: {0}")]
     LeaseError(String),
 }

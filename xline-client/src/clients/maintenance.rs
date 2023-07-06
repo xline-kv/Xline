@@ -8,7 +8,7 @@ use crate::{
     AuthService,
 };
 
-/// The maintenance client
+/// Client for Maintenance operations.
 #[derive(Clone, Debug)]
 pub struct MaintenanceClient {
     /// The maintenance RPC client, only communicate with one server at a time
