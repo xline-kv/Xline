@@ -79,15 +79,12 @@ where
         if let Some(response) = response_op.response {
             response
         } else {
-            panic!("Receive empty ResponseOp");
+            unreachable!("Receive empty ResponseOp");
         }
     }
 
-    /// Execute `RangeRequest` in current node
-    fn serializable_range(
-        &self,
-        wrapper: &RequestWithToken,
-    ) -> Result<tonic::Response<RangeResponse>, tonic::Status> {
+    /// serializable execute request in current node
+    fn do_serializable(&self, wrapper: &RequestWithToken) -> Result<Response, tonic::Status> {
         self.auth_storage
             .check_permission(wrapper)
             .map_err(|err| tonic::Status::invalid_argument(err.to_string()))?;
@@ -95,12 +92,8 @@ where
             .kv_storage
             .execute(wrapper)
             .map_err(|e| tonic::Status::internal(format!("Execute failed: {e:?}")))?;
-        let res = Self::parse_response_op(cmd_res.decode().into());
-        if let Response::ResponseRange(response) = res {
-            Ok(tonic::Response::new(response))
-        } else {
-            panic!("Receive wrong response {res:?} for RangeRequest");
-        }
+
+        Ok(Self::parse_response_op(cmd_res.decode().into()))
     }
 
     /// Propose request and get result with fast/slow path
@@ -237,7 +230,13 @@ where
                 self.kv_storage.compacted_revision(),
             )?;
         }
-        self.serializable_range(cmd.request())
+
+        let res = self.do_serializable(cmd.request())?;
+        if let Response::ResponseRange(response) = res {
+            Ok(tonic::Response::new(response))
+        } else {
+            unreachable!("Receive wrong response {res:?} for RangeRequest");
+        }
     }
 
     /// Put puts the given key into the key-value store.
@@ -263,7 +262,7 @@ where
         if let Response::ResponsePut(response) = res {
             Ok(tonic::Response::new(response))
         } else {
-            panic!("Receive wrong response {res:?} for PutRequest");
+            unreachable!("Receive wrong response {res:?} for PutRequest");
         }
     }
 
@@ -290,7 +289,7 @@ where
         if let Response::ResponseDeleteRange(response) = res {
             Ok(tonic::Response::new(response))
         } else {
-            panic!("Receive wrong response {res:?} for DeleteRangeRequest");
+            unreachable!("Receive wrong response {res:?} for DeleteRangeRequest");
         }
     }
 
@@ -310,19 +309,34 @@ where
             self.kv_storage.compacted_revision(),
             self.kv_storage.revision(),
         )?;
-        let is_fast_path = false; // lock need revision of txn
-        let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
 
-        let mut res = Self::parse_response_op(cmd_res.decode().into());
-        if let Some(sync_res) = sync_res {
-            let revision = sync_res.revision();
-            debug!("Get revision {:?} for TxnRequest", revision);
-            Self::update_header_revision(&mut res, revision);
-        }
+        let res = if txn_req.is_read_only() {
+            debug!("TxnRequest is read only");
+            let is_serializable = txn_req.is_serializable();
+            let token = get_token(request.metadata());
+            let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
+            let propose_id = self.generate_propose_id();
+            let cmd = command_from_request_wrapper::<S>(propose_id, wrapper, None);
+            if !is_serializable {
+                self.wait_read_state(&cmd).await?;
+            }
+            self.do_serializable(cmd.request())?
+        } else {
+            let is_fast_path = false; // lock need revision of txn
+            let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
+
+            let mut res = Self::parse_response_op(cmd_res.decode().into());
+            if let Some(sync_res) = sync_res {
+                let revision = sync_res.revision();
+                debug!("Get revision {:?} for TxnRequest", revision);
+                Self::update_header_revision(&mut res, revision);
+            }
+            res
+        };
         if let Response::ResponseTxn(response) = res {
             Ok(tonic::Response::new(response))
         } else {
-            panic!("Receive wrong response {res:?} for TxnRequest");
+            unreachable!("Receive wrong response {res:?} for TxnRequest");
         }
     }
 

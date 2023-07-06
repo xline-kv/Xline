@@ -1169,7 +1169,7 @@ mod test {
         Ok(())
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    #[tokio::test(flavor = "multi_thread")]
     #[abort_on_panic]
     async fn test_kv_store_index_available() {
         let db = DB::open(&StorageConfig::Memory).unwrap();

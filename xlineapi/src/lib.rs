@@ -656,7 +656,7 @@ impl Event {
 
 impl TxnRequest {
     /// Checks whether a given `TxnRequest` is read-only or not.
-    fn is_read_only(&self) -> bool {
+    pub fn is_read_only(&self) -> bool {
         let read_only_checker = |req: &RequestOp| {
             if let Some(ref request) = req.request {
                 match request {
@@ -669,6 +669,23 @@ impl TxnRequest {
             }
         };
         self.success.iter().all(read_only_checker) && self.failure.iter().all(read_only_checker)
+    }
+
+    /// Checks whether a given `TxnRequest` is serializable or not.
+    pub fn is_serializable(&self) -> bool {
+        let serializable_checker = |req: &RequestOp| {
+            if let Some(ref request) = req.request {
+                match request {
+                    Request::RequestRange(req) => req.serializable,
+                    Request::RequestDeleteRange(_) | Request::RequestPut(_) => false,
+                    Request::RequestTxn(req) => req.is_serializable(),
+                }
+            } else {
+                false
+            }
+        };
+        self.success.iter().all(serializable_checker)
+            && self.failure.iter().all(serializable_checker)
     }
 
     /// Checks whether a `TxnRequest` is conflict with a given revision

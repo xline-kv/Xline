@@ -5,7 +5,7 @@ use tracing::info;
 use xline::client::kv_types::{LeaseGrantRequest, PutRequest, RangeRequest};
 use xline_test_utils::Cluster;
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+#[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn test_lease_expired() -> Result<(), Box<dyn Error>> {
     let mut cluster = Cluster::new(3).await;
@@ -31,7 +31,7 @@ async fn test_lease_expired() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+#[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn test_lease_keep_alive() -> Result<(), Box<dyn Error>> {
     let mut cluster = Cluster::new(3).await;

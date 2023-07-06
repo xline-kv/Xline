@@ -608,7 +608,7 @@ mod test {
         (store, db, kv_watcher)
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    #[tokio::test(flavor = "multi_thread")]
     #[abort_on_panic]
     async fn watch_should_not_lost_events() {
         let (store, db, kv_watcher) = init_empty_store();
@@ -662,7 +662,7 @@ mod test {
         handle.abort();
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    #[tokio::test(flavor = "multi_thread")]
     #[abort_on_panic]
     async fn test_victim() {
         let (store, db, kv_watcher) = init_empty_store();
@@ -699,7 +699,7 @@ mod test {
         handle.await.unwrap();
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    #[tokio::test(flavor = "multi_thread")]
     #[abort_on_panic]
     async fn test_cancel_watcher() {
         let (_store, _db, kv_watcher) = init_empty_store();
