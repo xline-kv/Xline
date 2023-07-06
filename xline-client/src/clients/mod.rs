@@ -1,16 +1,25 @@
+pub use auth::AuthClient;
+pub use cluster::ClusterClient;
+pub use election::ElectionClient;
+pub use kv::KvClient;
+pub use lease::LeaseClient;
+pub use lock::LockClient;
+pub use maintenance::MaintenanceClient;
+pub use watch::WatchClient;
+
 /// Auth client.
-pub mod auth;
+mod auth;
 /// Cluster client
-pub mod cluster;
+mod cluster;
 /// Election client.
-pub mod election;
+mod election;
 /// Kv client.
-pub mod kv;
+mod kv;
 /// Lease client.
-pub mod lease;
+mod lease;
 /// Lock client.
-pub mod lock;
+mod lock;
 /// Maintenance client.
-pub mod maintenance;
+mod maintenance;
 /// Watch client.
-pub mod watch;
+mod watch;

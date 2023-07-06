@@ -2,7 +2,7 @@
 #![allow(missing_copy_implementations)]
 #![allow(clippy::new_without_default)]
 
-/// The election client
+/// Client for Election operations.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct ElectionClient;

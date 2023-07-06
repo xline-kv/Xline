@@ -101,7 +101,7 @@ impl Watcher {
 /// Watch Request
 #[derive(Clone, Debug)]
 pub struct WatchRequest {
-    /// inner watch create request
+    /// Inner watch create request
     inner: xlineapi::WatchCreateRequest,
 }
 

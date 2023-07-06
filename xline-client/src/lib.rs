@@ -161,39 +161,39 @@ use utils::config::ClientTimeout;
 
 use crate::{
     clients::{
-        auth::AuthClient, cluster::ClusterClient, election::ElectionClient, kv::KvClient,
-        lease::LeaseClient, lock::LockClient, maintenance::MaintenanceClient, watch::WatchClient,
+        AuthClient, ClusterClient, ElectionClient, KvClient, LeaseClient, LockClient,
+        MaintenanceClient, WatchClient,
     },
     error::{ClientError, Result},
 };
 
-/// Clients
+/// Sub-clients for each type of API
 pub mod clients;
-/// Error.
+/// Error definitions for `xline-client`.
 pub mod error;
 /// Lease Id generator
 pub mod lease_gen;
-/// Request types
+/// Request type definitions.
 pub mod types;
 
 /// Xline client
 #[derive(Clone, Debug)]
 pub struct Client {
-    /// kv client
+    /// Kv client
     kv: KvClient,
-    /// lease client
+    /// Lease client
     lease: LeaseClient,
-    /// lock client
+    /// Lock client
     lock: LockClient,
-    /// auth client
+    /// Auth client
     auth: AuthClient,
-    /// maintenance client
+    /// Maintenance client
     maintenance: MaintenanceClient,
-    /// watch client
+    /// Watch client
     watch: WatchClient,
-    /// cluster client
+    /// Cluster client
     cluster: ClusterClient,
-    /// election client
+    /// Election client
     election: ElectionClient,
 }
 

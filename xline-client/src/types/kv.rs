@@ -4,7 +4,7 @@ use xlineapi::{CompareResult, CompareTarget, SortOrder, SortTarget, TargetUnion}
 /// Request for `Put`
 #[derive(Debug)]
 pub struct PutRequest {
-    /// inner request
+    /// Inner request
     inner: xlineapi::PutRequest,
 }
 
@@ -575,13 +575,13 @@ impl From<TxnOp> for xlineapi::Request {
 /// Transaction of multiple operations.
 #[derive(Debug)]
 pub struct Txn {
-    /// the inner txn request
+    /// The inner txn request
     pub(crate) req: xlineapi::TxnRequest,
-    /// if `when` have be set
+    /// If `when` have be set
     c_when: bool,
-    /// if `then` have be set
+    /// If `then` have be set
     c_then: bool,
-    /// if `else` have be set
+    /// If `else` have be set
     c_else: bool,
 }
 
