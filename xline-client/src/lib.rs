@@ -174,6 +174,10 @@ pub mod error;
 pub mod lease_gen;
 /// Request type definitions.
 pub mod types;
+/// Xline proto types API
+pub mod api_types {
+    pub use xlineapi::*;
+}
 
 /// Xline client
 #[derive(Clone, Debug)]
