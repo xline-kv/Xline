@@ -1,7 +1,7 @@
 use xline_client::{
     error::ClientError as Error,
     types::kv::{
-        CompactionRequest, Compare, DeleteRangeRequest, PutRequest, RangeRequest, Txn, TxnOp,
+        CompactionRequest, Compare, DeleteRangeRequest, PutRequest, RangeRequest, TxnOp, TxnRequest,
     },
     Client, ClientOptions,
 };
@@ -49,7 +49,7 @@ async fn main() -> Result<(), Error> {
     }
 
     // txn
-    let txn_req = Txn::new()
+    let txn_req = TxnRequest::new()
         .when(&[Compare::value("key2", CompareResult::Equal, "value2")][..])
         .and_then(
             &[TxnOp::put(
