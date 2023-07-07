@@ -10,24 +10,28 @@ use xlineapi::{
 
 use crate::{
     error::Result,
-    types::kv::{CompactionRequest, DeleteRangeRequest, PutRequest, RangeRequest, Txn},
+    types::kv::{CompactionRequest, DeleteRangeRequest, PutRequest, RangeRequest, TxnRequest},
 };
 
 /// Client for KV operations.
 #[derive(Clone, Debug)]
 pub struct KvClient {
-    /// Name of the KvClient
+    /// Name of the kv client, which will be used in CURP propose id generation
     name: String,
     /// The client running the CURP protocol, communicate with all servers.
     curp_client: Arc<CurpClient<Command>>,
-    /// Auth token
+    /// The auth token
     token: Option<String>,
 }
 
 impl KvClient {
     /// New `KvClient`
     #[inline]
-    pub fn new(name: String, curp_client: Arc<CurpClient<Command>>, token: Option<String>) -> Self {
+    pub(crate) fn new(
+        name: String,
+        curp_client: Arc<CurpClient<Command>>,
+        token: Option<String>,
+    ) -> Self {
         Self {
             name,
             curp_client,
@@ -35,11 +39,11 @@ impl KvClient {
         }
     }
 
-    /// Send `PutRequest` by `CurpClient`
+    /// Put a key-value into the store
     ///
     /// # Errors
     ///
-    /// If `CurpClient` failed to send request
+    /// This function will return an error if the inner CURP client encountered a propose failure
     #[inline]
     pub async fn put(&self, request: PutRequest) -> Result<PutResponse> {
         let key_ranges = vec![KeyRange::new_one_key(request.key())];
@@ -53,11 +57,11 @@ impl KvClient {
         Ok(cmd_res.decode().into())
     }
 
-    /// Send `RangeRequest` by `CurpClient`
+    /// Get a range of keys from the store
     ///
     /// # Errors
     ///
-    /// If `CurpClient` failed to send request
+    /// This function will return an error if the inner CURP client encountered a propose failure
     #[inline]
     pub async fn range(&self, request: RangeRequest) -> Result<RangeResponse> {
         let key_ranges = vec![KeyRange::new(request.key(), request.range_end())];
@@ -71,11 +75,11 @@ impl KvClient {
         Ok(cmd_res.decode().into())
     }
 
-    /// Send `DeleteRangeRequest` by `CurpClient`
+    /// Delete a range of keys from the store
     ///
     /// # Errors
     ///
-    /// If `CurpClient` failed to send request
+    /// This function will return an error if the inner CURP client encountered a propose failure
     #[inline]
     pub async fn delete(&self, request: DeleteRangeRequest) -> Result<DeleteRangeResponse> {
         let key_ranges = vec![KeyRange::new(request.key(), request.range_end())];
@@ -89,22 +93,22 @@ impl KvClient {
         Ok(cmd_res.decode().into())
     }
 
-    /// Send `TxnRequest` by `CurpClient`
+    /// Creates a transaction, which can provide serializable writes
     ///
     /// # Errors
     ///
-    /// If `CurpClient` failed to send request
+    /// This function will return an error if the inner CURP client encountered a propose failure
     #[inline]
-    pub async fn txn(&self, txn: Txn) -> Result<TxnResponse> {
-        let key_ranges = txn
-            .req
+    pub async fn txn(&self, request: TxnRequest) -> Result<TxnResponse> {
+        let key_ranges = request
+            .inner
             .compare
             .iter()
             .map(|cmp| KeyRange::new(cmp.key.as_slice(), cmp.range_end.as_slice()))
             .collect();
         let propose_id = self.generate_propose_id();
         let request = RequestWithToken::new_with_token(
-            xlineapi::TxnRequest::from(txn).into(),
+            xlineapi::TxnRequest::from(request).into(),
             self.token.clone(),
         );
         let cmd = Command::new(key_ranges, request, propose_id);

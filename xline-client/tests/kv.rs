@@ -4,7 +4,7 @@ use test_macros::abort_on_panic;
 use xline_client::{
     error::Result,
     types::kv::{
-        CompactionRequest, Compare, DeleteRangeRequest, PutRequest, RangeRequest, Txn, TxnOp,
+        CompactionRequest, Compare, DeleteRangeRequest, PutRequest, RangeRequest, TxnOp, TxnRequest,
     },
 };
 use xlineapi::CompareResult;
@@ -182,7 +182,7 @@ async fn txn_should_execute_as_expected() -> Result<()> {
     {
         let resp = client
             .txn(
-                Txn::new()
+                TxnRequest::new()
                     .when(&[Compare::value("txn01", CompareResult::Equal, "01")][..])
                     .and_then(
                         &[TxnOp::put(
@@ -213,7 +213,7 @@ async fn txn_should_execute_as_expected() -> Result<()> {
     {
         let resp = client
             .txn(
-                Txn::new()
+                TxnRequest::new()
                     .when(&[Compare::value("txn01", CompareResult::Equal, "01")][..])
                     .and_then(&[TxnOp::put(PutRequest::new("txn01", "02"))][..])
                     .or_else(&[TxnOp::range(RangeRequest::new("txn01"))][..]),
