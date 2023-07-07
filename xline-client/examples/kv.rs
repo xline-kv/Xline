@@ -1,11 +1,11 @@
 use xline_client::{
     error::ClientError as Error,
     types::kv::{
-        CompactionRequest, Compare, DeleteRangeRequest, PutRequest, RangeRequest, TxnOp, TxnRequest,
+        CompactionRequest, Compare, CompareResult, DeleteRangeRequest, PutRequest, RangeRequest,
+        TxnOp, TxnRequest,
     },
     Client, ClientOptions,
 };
-use xlineapi::CompareResult;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -72,5 +72,6 @@ async fn main() -> Result<(), Error> {
     // compact
     let rev = resp.header.unwrap().revision;
     let _resp = client.compact(CompactionRequest::new(rev)).await?;
+
     Ok(())
 }
