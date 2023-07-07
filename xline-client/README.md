@@ -112,6 +112,10 @@ To create a xline client:
  }
  ```
 
+## Examples
+
+You can find them in [examples](https://github.com/xline-kv/Xline/tree/master/xline-client/examples)
+
 ## Xline Compatibility
 
 We aim to maintain compatibility with each corresponding Xline version, and update this library with each new Xline release.
