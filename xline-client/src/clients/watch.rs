@@ -21,7 +21,7 @@ pub struct WatchClient {
 }
 
 impl WatchClient {
-    /// Create a new maintenance client
+    /// Creates a new maintenance client
     #[inline]
     #[must_use]
     pub fn new(channel: Channel, token: Option<String>) -> Self {
@@ -40,11 +40,11 @@ impl WatchClient {
     ///
     /// # Errors
     ///
-    /// If the RPC client fails to send request
+    /// This function will return an error if the RPC client fails to send request
     ///
     /// # Panics
     ///
-    /// If the RPC server returns the wrong value
+    /// This function will panic if the RPC server doesn't return a create watch response
     #[inline]
     pub async fn watch(
         &mut self,

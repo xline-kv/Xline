@@ -106,7 +106,9 @@ pub struct WatchRequest {
 }
 
 impl WatchRequest {
-    /// New `WatchRequest`
+    /// Creates a New `WatchRequest`
+    ///
+    /// `key` is the key to register for watching.
     #[inline]
     #[must_use]
     pub fn new(key: impl Into<Vec<u8>>) -> Self {
@@ -118,7 +120,7 @@ impl WatchRequest {
         }
     }
 
-    /// Set `key` and `range_end` when with prefix
+    /// If set, Xline will watch all keys with the matching prefix
     #[inline]
     #[must_use]
     pub fn with_prefix(mut self) -> Self {
@@ -131,7 +133,7 @@ impl WatchRequest {
         self
     }
 
-    /// Set `key` and `range_end` when with from key
+    /// If set, Xline will watch all keys that are equal to or greater than the given key
     #[inline]
     #[must_use]
     pub fn with_from_key(mut self) -> Self {
@@ -142,7 +144,11 @@ impl WatchRequest {
         self
     }
 
-    /// Set `range_end`
+    /// `range_end` is the end of the range [key, `range_end`) to watch. If `range_end` is not given,
+    /// only the key argument is watched. If `range_end` is equal to '\0', all keys greater than
+    /// or equal to the key argument are watched.
+    /// If the `range_end` is one bit larger than the given key,
+    /// then all keys with the prefix (the given key) will be watched.
     #[inline]
     #[must_use]
     pub fn with_range_end(mut self, range_end: impl Into<Vec<u8>>) -> Self {
@@ -150,7 +156,7 @@ impl WatchRequest {
         self
     }
 
-    /// Set `start_revision`
+    /// Sets the start revision to watch from (inclusive). No `start_revision` is "now".
     #[inline]
     #[must_use]
     pub const fn with_start_revision(mut self, revision: i64) -> Self {
@@ -158,7 +164,7 @@ impl WatchRequest {
         self
     }
 
-    /// Set `progress_notify`
+    /// `progress_notify` is set so that the Xline server will periodically send a `WatchResponse` with no events to the new watcher if there are no recent events. It is useful when clients wish to recover a disconnected watcher starting from a recent known revision. The xline server may decide how often it will send notifications based on current load.
     #[inline]
     #[must_use]
     pub const fn with_progress_notify(mut self) -> Self {
@@ -166,7 +172,7 @@ impl WatchRequest {
         self
     }
 
-    /// Set `filters`
+    /// `filters` filter the events on server side before it sends back to the watcher.
     #[inline]
     #[must_use]
     pub fn with_filters(mut self, filters: impl Into<Vec<WatchFilterType>>) -> Self {
@@ -174,7 +180,8 @@ impl WatchRequest {
         self
     }
 
-    /// Set `prev_kv`
+    /// If `prev_kv` is set, created watcher gets the previous KV before the event happens.
+    /// If the previous KV is already compacted, nothing will be returned.
     #[inline]
     #[must_use]
     pub const fn with_prev_kv(mut self) -> Self {
@@ -182,7 +189,10 @@ impl WatchRequest {
         self
     }
 
-    /// Set `watch_id`
+    /// If `watch_id` is provided and non-zero, it will be assigned to this watcher.
+    /// this can be used ensure that ordering is correct when creating multiple
+    /// watchers on the same stream. Creating a watcher with an ID already in
+    /// use on the stream will cause an error to be returned.
     #[inline]
     #[must_use]
     pub const fn with_watch_id(mut self, watch_id: i64) -> Self {
@@ -190,7 +200,7 @@ impl WatchRequest {
         self
     }
 
-    /// Set `fragment`
+    /// fragment enables splitting large revisions into multiple watch responses.
     #[inline]
     #[must_use]
     pub const fn with_fragment(mut self) -> Self {
