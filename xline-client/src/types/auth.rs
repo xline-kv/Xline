@@ -9,13 +9,13 @@ pub struct AuthenticateRequest {
 }
 
 impl AuthenticateRequest {
-    /// New `AuthenticateRequest`
+    /// Creates a new `AuthenticateRequest`.
     #[inline]
-    pub fn new(name: impl Into<String>, password: impl Into<String>) -> Self {
+    pub fn new(user_name: impl Into<String>, user_password: impl Into<String>) -> Self {
         Self {
             inner: xlineapi::AuthenticateRequest {
-                name: name.into(),
-                password: password.into(),
+                name: user_name.into(),
+                password: user_password.into(),
             },
         }
     }
@@ -36,30 +36,24 @@ pub struct AuthUserAddRequest {
 }
 
 impl AuthUserAddRequest {
-    /// New `AuthUserAddRequest`
+    /// Creates a new `AuthUserAddRequest`.
     #[inline]
-    pub fn new(name: impl Into<String>) -> Self {
+    pub fn new(user_name: impl Into<String>) -> Self {
         Self {
             inner: xlineapi::AuthUserAddRequest {
-                name: name.into(),
+                name: user_name.into(),
+                options: Some(xlineapi::UserAddOptions { no_password: true }),
                 ..Default::default()
             },
         }
     }
 
-    /// Set password.
+    /// Sets the password.
     #[inline]
     #[must_use]
     pub fn with_pwd(mut self, password: impl Into<String>) -> Self {
         self.inner.password = password.into();
-        self
-    }
-
-    /// Set no password.
-    #[inline]
-    #[must_use]
-    pub const fn with_no_pwd(mut self) -> Self {
-        self.inner.options = Some(xlineapi::UserAddOptions { no_password: true });
+        self.inner.options = Some(xlineapi::UserAddOptions { no_password: false });
         self
     }
 }
@@ -79,11 +73,13 @@ pub struct AuthUserGetRequest {
 }
 
 impl AuthUserGetRequest {
-    /// New `AuthUserGetRequest`
+    /// Creates a new `AuthUserGetRequest`.
     #[inline]
-    pub fn new(name: impl Into<String>) -> Self {
+    pub fn new(user_name: impl Into<String>) -> Self {
         Self {
-            inner: xlineapi::AuthUserGetRequest { name: name.into() },
+            inner: xlineapi::AuthUserGetRequest {
+                name: user_name.into(),
+            },
         }
     }
 }
@@ -103,11 +99,13 @@ pub struct AuthUserDeleteRequest {
 }
 
 impl AuthUserDeleteRequest {
-    /// New `AuthUserDeleteRequest`
+    /// Creates a new `AuthUserDeleteRequest`.
     #[inline]
-    pub fn new(name: impl Into<String>) -> Self {
+    pub fn new(user_name: impl Into<String>) -> Self {
         Self {
-            inner: xlineapi::AuthUserDeleteRequest { name: name.into() },
+            inner: xlineapi::AuthUserDeleteRequest {
+                name: user_name.into(),
+            },
         }
     }
 }
@@ -127,13 +125,13 @@ pub struct AuthUserChangePasswordRequest {
 }
 
 impl AuthUserChangePasswordRequest {
-    /// New `AuthUserChangePasswordRequest`
+    /// Creates a new `AuthUserChangePasswordRequest`.
     #[inline]
-    pub fn new(name: impl Into<String>, password: impl Into<String>) -> Self {
+    pub fn new(user_name: impl Into<String>, new_password: impl Into<String>) -> Self {
         Self {
             inner: xlineapi::AuthUserChangePasswordRequest {
-                name: name.into(),
-                password: password.into(),
+                name: user_name.into(),
+                password: new_password.into(),
                 hashed_password: String::new(),
             },
         }
@@ -155,12 +153,15 @@ pub struct AuthUserGrantRoleRequest {
 }
 
 impl AuthUserGrantRoleRequest {
-    /// New `AuthUserGrantRoleRequest`
+    /// Creates a new `AuthUserGrantRoleRequest`
+    ///
+    /// `user_name` is the name of the user to grant role,
+    /// `role` is the role name to grant.
     #[inline]
-    pub fn new(name: impl Into<String>, role: impl Into<String>) -> Self {
+    pub fn new(user_name: impl Into<String>, role: impl Into<String>) -> Self {
         Self {
             inner: xlineapi::AuthUserGrantRoleRequest {
-                user: name.into(),
+                user: user_name.into(),
                 role: role.into(),
             },
         }
@@ -182,12 +183,15 @@ pub struct AuthUserRevokeRoleRequest {
 }
 
 impl AuthUserRevokeRoleRequest {
-    /// New `AuthUserRevokeRoleRequest`
+    /// Creates a new `AuthUserRevokeRoleRequest`
+    ///
+    /// `user_name` is the name of the user to revoke role,
+    /// `role` is the role name to revoke.
     #[inline]
-    pub fn new(name: impl Into<String>, role: impl Into<String>) -> Self {
+    pub fn new(user_name: impl Into<String>, role: impl Into<String>) -> Self {
         Self {
             inner: xlineapi::AuthUserRevokeRoleRequest {
-                name: name.into(),
+                name: user_name.into(),
                 role: role.into(),
             },
         }
@@ -209,7 +213,9 @@ pub struct AuthRoleAddRequest {
 }
 
 impl AuthRoleAddRequest {
-    /// New `AuthRoleAddRequest`
+    /// Creates a new `AuthRoleAddRequest`
+    ///
+    /// `role` is the name of the role to add.
     #[inline]
     pub fn new(role: impl Into<String>) -> Self {
         Self {
@@ -233,7 +239,9 @@ pub struct AuthRoleGetRequest {
 }
 
 impl AuthRoleGetRequest {
-    /// New `AuthRoleGetRequest`
+    /// Creates a new `AuthRoleGetRequest`
+    ///
+    /// `role` is the name of the role to get.
     #[inline]
     pub fn new(role: impl Into<String>) -> Self {
         Self {
@@ -257,7 +265,9 @@ pub struct AuthRoleDeleteRequest {
 }
 
 impl AuthRoleDeleteRequest {
-    /// New `AuthRoleDeleteRequest`
+    /// Creates a new `AuthRoleDeleteRequest`
+    ///
+    /// `role` is the name of the role to delete.
     #[inline]
     pub fn new(role: impl Into<String>) -> Self {
         Self {
@@ -281,7 +291,10 @@ pub struct AuthRoleGrantPermissionRequest {
 }
 
 impl AuthRoleGrantPermissionRequest {
-    /// New `AuthRoleGrantPermissionRequest`
+    /// Creates a new `AuthRoleGrantPermissionRequest`
+    ///
+    /// `role` is the name of the role to grant permission,
+    /// `perm` is the permission name to grant.
     #[inline]
     pub fn new(role: impl Into<String>, perm: Permission) -> Self {
         Self {
@@ -308,7 +321,10 @@ pub struct AuthRoleRevokePermissionRequest {
 }
 
 impl AuthRoleRevokePermissionRequest {
-    /// Create a new `RoleRevokePermissionOption` from pb role revoke permission.
+    /// Creates a new `RoleRevokePermissionOption` from pb role revoke permission.
+    ///
+    /// `role` is the name of the role to revoke permission,
+    /// `key` is the key to revoke from the role.
     #[inline]
     pub fn new(role: impl Into<String>, key: impl Into<Vec<u8>>) -> Self {
         Self {
@@ -320,7 +336,7 @@ impl AuthRoleRevokePermissionRequest {
         }
     }
 
-    /// Set `key` and `range_end` when with prefix
+    /// If set, Xline will return all keys with the matching prefix
     #[inline]
     #[must_use]
     pub fn with_prefix(mut self) -> Self {
@@ -333,7 +349,7 @@ impl AuthRoleRevokePermissionRequest {
         self
     }
 
-    /// Set `key` and `range_end` when with from key
+    /// If set, Xline will return all keys that are equal or greater than the given key
     #[inline]
     #[must_use]
     pub fn with_from_key(mut self) -> Self {
@@ -344,7 +360,8 @@ impl AuthRoleRevokePermissionRequest {
         self
     }
 
-    /// Set `range_end`
+    /// `range_end` is the upper bound on the requested range \[key,` range_en`d).
+    /// If `range_end` is '\0', the range is all keys >= key.
     #[inline]
     #[must_use]
     pub fn with_range_end(mut self, range_end: impl Into<Vec<u8>>) -> Self {
@@ -369,6 +386,9 @@ pub struct Permission {
 
 impl Permission {
     /// Creates a permission with operation type and key
+    ///
+    /// `perm_type` is the permission type,
+    /// `key` is the key to grant with the permission.
     #[inline]
     #[must_use]
     pub fn new(perm_type: PermissionType, key: impl Into<Vec<u8>>) -> Self {
@@ -380,7 +400,8 @@ impl Permission {
             },
         }
     }
-    /// Set `key` and `range_end` when with prefix
+
+    /// If set, Xline will return all keys with the matching prefix
     #[inline]
     #[must_use]
     pub fn with_prefix(mut self) -> Self {
@@ -393,7 +414,7 @@ impl Permission {
         self
     }
 
-    /// Set `key` and `range_end` when with from key
+    /// If set, Xline will return all keys that are equal or greater than the given key
     #[inline]
     #[must_use]
     pub fn with_from_key(mut self) -> Self {
@@ -404,7 +425,8 @@ impl Permission {
         self
     }
 
-    /// Set `range_end`
+    /// `range_end` is the upper bound on the requested range \[key,` range_en`d).
+    /// If `range_end` is '\0', the range is all keys >= key.
     #[inline]
     #[must_use]
     pub fn with_range_end(mut self, range_end: impl Into<Vec<u8>>) -> Self {

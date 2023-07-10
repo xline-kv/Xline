@@ -163,9 +163,7 @@ async fn user_role_operations_should_success_in_normal_path() -> Result<()> {
     let role1 = "role1";
     let role2 = "role2";
 
-    client
-        .user_add(AuthUserAddRequest::new(name1).with_no_pwd())
-        .await?;
+    client.user_add(AuthUserAddRequest::new(name1)).await?;
     client.role_add(AuthRoleAddRequest::new(role1)).await?;
     client.role_add(AuthRoleAddRequest::new(role2)).await?;
 
