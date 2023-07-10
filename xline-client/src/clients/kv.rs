@@ -44,6 +44,29 @@ impl KvClient {
     /// # Errors
     ///
     /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{error::Result, types::kv::PutRequest, Client, ClientOptions};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let mut client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .kv_client();
+    ///
+    ///     client.put(PutRequest::new("key1", "value1")).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     #[inline]
     pub async fn put(&self, request: PutRequest) -> Result<PutResponse> {
         let key_ranges = vec![KeyRange::new_one_key(request.key())];
@@ -62,6 +85,37 @@ impl KvClient {
     /// # Errors
     ///
     /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{error::Result, types::kv::RangeRequest, Client, ClientOptions};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let mut client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .kv_client();
+    ///
+    ///     let resp = client.range(RangeRequest::new("key1")).await?;
+    ///
+    ///     if let Some(kv) = resp.kvs.first() {
+    ///         println!(
+    ///             "got key: {}, value: {}",
+    ///             String::from_utf8_lossy(&kv.key),
+    ///             String::from_utf8_lossy(&kv.value)
+    ///         );
+    ///     }
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     #[inline]
     pub async fn range(&self, request: RangeRequest) -> Result<RangeResponse> {
         let key_ranges = vec![KeyRange::new(request.key(), request.range_end())];
@@ -80,6 +134,30 @@ impl KvClient {
     /// # Errors
     ///
     /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use xline_client::{error::Result, types::kv::DeleteRangeRequest, Client, ClientOptions};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let mut client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .kv_client();
+    ///
+    ///     client
+    ///         .delete(DeleteRangeRequest::new("key1").with_prev_kv(true))
+    ///         .await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     #[inline]
     pub async fn delete(&self, request: DeleteRangeRequest) -> Result<DeleteRangeResponse> {
         let key_ranges = vec![KeyRange::new(request.key(), request.range_end())];
@@ -98,6 +176,42 @@ impl KvClient {
     /// # Errors
     ///
     /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{
+    ///     error::Result,
+    ///     types::kv::{Compare, PutRequest, RangeRequest, TxnOp, TxnRequest, CompareResult},
+    ///     Client, ClientOptions,
+    /// };
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let mut client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .kv_client();
+    ///
+    ///     let txn_req = TxnRequest::new()
+    ///         .when(&[Compare::value("key2", CompareResult::Equal, "value2")][..])
+    ///         .and_then(
+    ///             &[TxnOp::put(
+    ///                 PutRequest::new("key2", "value3").with_prev_kv(true),
+    ///             )][..],
+    ///         )
+    ///         .or_else(&[TxnOp::range(RangeRequest::new("key2"))][..]);
+    ///
+    ///     let _resp = client.txn(txn_req).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     #[inline]
     pub async fn txn(&self, request: TxnRequest) -> Result<TxnResponse> {
         let key_ranges = request
