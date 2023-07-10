@@ -66,6 +66,31 @@ impl AuthClient {
     /// # Errors
     ///
     /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{error::Result, Client, ClientOptions};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .auth_client();
+    ///
+    ///     let _resp = client.auth_enable().await?;
+    ///
+    ///     // auth with some user
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     #[inline]
     pub async fn auth_enable(&self) -> Result<AuthEnableResponse> {
         self.handle_req(xlineapi::AuthEnableRequest {}, false).await
@@ -76,6 +101,31 @@ impl AuthClient {
     /// # Errors
     ///
     /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{error::Result, Client, ClientOptions};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .auth_client();
+    ///
+    ///     let _resp = client.auth_enable().await?;
+    ///
+    ///     // auth with some user
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     #[inline]
     pub async fn auth_disable(&self) -> Result<AuthDisableResponse> {
         self.handle_req(xlineapi::AuthDisableRequest {}, false)
@@ -87,6 +137,34 @@ impl AuthClient {
     /// # Errors
     ///
     /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{error::Result, Client, ClientOptions};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .auth_client();
+    ///
+    ///     let resp = client.auth_status().await?;
+    ///     println!("auth status:");
+    ///     println!(
+    ///         "enabled: {}, revision: {}",
+    ///         resp.enabled, resp.auth_revision
+    ///     );
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     #[inline]
     pub async fn auth_status(&self) -> Result<AuthStatusResponse> {
         self.handle_req(xlineapi::AuthStatusRequest {}, true).await
@@ -97,6 +175,33 @@ impl AuthClient {
     /// # Errors
     ///
     /// This function will return an error if the inner RPC client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{error::Result, types::auth::AuthenticateRequest, Client, ClientOptions};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let mut client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .auth_client();
+    ///
+    ///     let resp = client
+    ///         .authenticate(AuthenticateRequest::new("root", "rootpw"))
+    ///         .await?;
+    ///
+    ///     println!("auth token: {}", resp.token);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     #[inline]
     pub async fn authenticate(
         &mut self,
@@ -114,6 +219,28 @@ impl AuthClient {
     /// # Errors
     ///
     /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{error::Result, types::auth::AuthUserAddRequest, Client, ClientOptions};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .auth_client();
+    ///
+    ///     client.user_add(AuthUserAddRequest::new("user1")).await?;
+    ///     Ok(())
+    /// }
+    ///```
     #[inline]
     pub async fn user_add(&self, mut request: AuthUserAddRequest) -> Result<AuthUserAddResponse> {
         if request.inner.name.is_empty() {
@@ -140,6 +267,33 @@ impl AuthClient {
     /// # Errors
     ///
     /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{error::Result, types::auth::AuthUserGetRequest, Client, ClientOptions};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .auth_client();
+    ///
+    ///     let resp = client.user_get(AuthUserGetRequest::new("user")).await?;
+    ///
+    ///     for role in resp.roles {
+    ///         print!("{} ", role);
+    ///     }
+    ///
+    ///     Ok(())
+    /// }
+    ///```
     #[inline]
     pub async fn user_get(&self, request: AuthUserGetRequest) -> Result<AuthUserGetResponse> {
         self.handle_req(request.inner, true).await
@@ -150,6 +304,33 @@ impl AuthClient {
     /// # Errors
     ///
     /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{error::Result, Client, ClientOptions};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .auth_client();
+    ///
+    ///     let resp = client.user_list().await?;
+    ///
+    ///     for user in resp.users {
+    ///         println!("user: {}", user);
+    ///     }
+    ///
+    ///     Ok(())
+    /// }
+    ///```
     #[inline]
     pub async fn user_list(&self) -> Result<AuthUserListResponse> {
         self.handle_req(xlineapi::AuthUserListRequest {}, true)
@@ -161,6 +342,35 @@ impl AuthClient {
     /// # Errors
     ///
     /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{error::Result, Client, ClientOptions};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .auth_client();
+    ///
+    ///     // add the user
+    ///
+    ///     let resp = client.user_list().await?;
+    ///
+    ///     for user in resp.users {
+    ///         println!("user: {}", user);
+    ///     }
+    ///
+    ///     Ok(())
+    /// }
+    ///```
     #[inline]
     pub async fn user_delete(
         &self,
@@ -174,6 +384,35 @@ impl AuthClient {
     /// # Errors
     ///
     /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{
+    ///     error::Result, types::auth::AuthUserChangePasswordRequest, Client, ClientOptions,
+    /// };
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .auth_client();
+    ///
+    ///     // add the user
+    ///
+    ///     client
+    ///         .user_change_password(AuthUserChangePasswordRequest::new("user", "123"))
+    ///         .await?;
+    ///
+    ///     Ok(())
+    /// }
+    ///```
     #[inline]
     pub async fn user_change_password(
         &self,
@@ -193,6 +432,33 @@ impl AuthClient {
     /// # Errors
     ///
     /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{error::Result, types::auth::AuthUserGrantRoleRequest, Client, ClientOptions};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .auth_client();
+    ///
+    ///     // add user and role
+    ///
+    ///     client
+    ///         .user_grant_role(AuthUserGrantRoleRequest::new("user", "role"))
+    ///         .await?;
+    ///
+    ///     Ok(())
+    /// }
+    ///```
     #[inline]
     pub async fn user_grant_role(
         &self,
@@ -206,6 +472,33 @@ impl AuthClient {
     /// # Errors
     ///
     /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{error::Result, types::auth::AuthUserRevokeRoleRequest, Client, ClientOptions};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .auth_client();
+    ///
+    ///     // grant role
+    ///
+    ///     client
+    ///         .user_revoke_role(AuthUserRevokeRoleRequest::new("user", "role"))
+    ///         .await?;
+    ///
+    ///     Ok(())
+    /// }
+    ///```
     #[inline]
     pub async fn user_revoke_role(
         &self,
@@ -219,6 +512,30 @@ impl AuthClient {
     /// # Errors
     ///
     /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::types::auth::AuthRoleAddRequest;
+    /// use xline_client::{error::Result, Client, ClientOptions};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .auth_client();
+    ///
+    ///     client.role_add(AuthRoleAddRequest::new("role")).await?;
+    ///
+    ///     Ok(())
+    /// }
+    ///```
     #[inline]
     pub async fn role_add(&self, request: AuthRoleAddRequest) -> Result<AuthRoleAddResponse> {
         if request.inner.name.is_empty() {
@@ -232,6 +549,35 @@ impl AuthClient {
     /// # Errors
     ///
     /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::types::auth::AuthRoleGetRequest;
+    /// use xline_client::{error::Result, Client, ClientOptions};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .auth_client();
+    ///
+    ///     let resp = client.role_get(AuthRoleGetRequest::new("role")).await?;
+    ///
+    ///     println!("permmisions:");
+    ///     for perm in resp.perm {
+    ///         println!("{} {}", perm.perm_type, String::from_utf8_lossy(&perm.key));
+    ///     }
+    ///
+    ///     Ok(())
+    /// }
+    ///```
     #[inline]
     pub async fn role_get(&self, request: AuthRoleGetRequest) -> Result<AuthRoleGetResponse> {
         self.handle_req(request.inner, true).await
@@ -242,6 +588,34 @@ impl AuthClient {
     /// # Errors
     ///
     /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{error::Result, Client, ClientOptions};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .auth_client();
+    ///
+    ///     let resp = client.role_list().await?;
+    ///
+    ///     println!("roles:");
+    ///     for role in resp.roles {
+    ///         println!("{}", role);
+    ///     }
+    ///
+    ///     Ok(())
+    /// }
+    ///```
     #[inline]
     pub async fn role_list(&self) -> Result<AuthRoleListResponse> {
         self.handle_req(xlineapi::AuthRoleListRequest {}, true)
@@ -253,6 +627,33 @@ impl AuthClient {
     /// # Errors
     ///
     /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{error::Result, types::auth::AuthRoleDeleteRequest, Client, ClientOptions};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .auth_client();
+    ///
+    ///     // add the role
+    ///
+    ///     client
+    ///         .role_delete(AuthRoleDeleteRequest::new("role"))
+    ///         .await?;
+    ///
+    ///     Ok(())
+    /// }
+    ///```
     #[inline]
     pub async fn role_delete(
         &self,
@@ -266,6 +667,40 @@ impl AuthClient {
     /// # Errors
     ///
     /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{
+    ///     error::Result,
+    ///     types::auth::{AuthRoleGrantPermissionRequest, Permission, PermissionType},
+    ///     Client, ClientOptions,
+    /// };
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .auth_client();
+    ///
+    ///     // add the role and key
+    ///
+    ///     client
+    ///         .role_grant_permission(AuthRoleGrantPermissionRequest::new(
+    ///             "role",
+    ///             Permission::new(PermissionType::Read, "key"),
+    ///         ))
+    ///         .await?;
+    ///
+    ///     Ok(())
+    /// }
+    ///```
     #[inline]
     pub async fn role_grant_permission(
         &self,
@@ -283,8 +718,36 @@ impl AuthClient {
     ///
     /// # Errors
     ///
-    /// If request fails to send
     /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{
+    ///     error::Result, types::auth::AuthRoleRevokePermissionRequest, Client, ClientOptions,
+    /// };
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .auth_client();
+    ///
+    ///     // grant the role
+    ///
+    ///     client
+    ///         .role_revoke_permission(AuthRoleRevokePermissionRequest::new("role", "key"))
+    ///         .await?;
+    ///
+    ///     Ok(())
+    /// }
+    ///```
     #[inline]
     pub async fn role_revoke_permission(
         &self,
