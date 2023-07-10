@@ -380,6 +380,26 @@ impl ClientOptions {
     pub fn curp_timeout(&self) -> ClientTimeout {
         self.curp_timeout
     }
+
+    /// Set `user`
+    #[inline]
+    #[must_use]
+    pub fn with_user(self, name: impl Into<String>, password: impl Into<String>) -> Self {
+        Self {
+            user: Some((name.into(), password.into())),
+            curp_timeout: self.curp_timeout,
+        }
+    }
+
+    /// Set `curp_timeout`
+    #[inline]
+    #[must_use]
+    pub fn with_curp_timeout(self, curp_timeout: ClientTimeout) -> Self {
+        Self {
+            user: self.user,
+            curp_timeout,
+        }
+    }
 }
 
 /// Authentication service.
