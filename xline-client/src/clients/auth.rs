@@ -31,18 +31,18 @@ use crate::{
 /// Client for Auth operations.
 #[derive(Clone, Debug)]
 pub struct AuthClient {
-    /// Name of the AuthClient
+    /// Name of the AuthClient, which will be used in CURP propose id generation
     name: String,
     /// The client running the CURP protocol, communicate with all servers.
     curp_client: Arc<CurpClient<Command>>,
     /// The auth RPC client, only communicate with one server at a time
     auth_client: xlineapi::AuthClient<AuthService<Channel>>,
-    /// Auth token
+    /// The auth token
     token: Option<String>,
 }
 
 impl AuthClient {
-    /// New `AuthClient`
+    /// Creates a new `AuthClient`
     #[inline]
     pub fn new(
         name: String,
@@ -65,7 +65,7 @@ impl AuthClient {
     ///
     /// # Errors
     ///
-    /// If request fails to send
+    /// This function will return an error if the inner CURP client encountered a propose failure
     #[inline]
     pub async fn auth_enable(&self) -> Result<AuthEnableResponse> {
         self.handle_req(xlineapi::AuthEnableRequest {}, false).await
@@ -75,28 +75,28 @@ impl AuthClient {
     ///
     /// # Errors
     ///
-    /// If request fails to send
+    /// This function will return an error if the inner CURP client encountered a propose failure
     #[inline]
     pub async fn auth_disable(&self) -> Result<AuthDisableResponse> {
         self.handle_req(xlineapi::AuthDisableRequest {}, false)
             .await
     }
 
-    /// Get auth status.
+    /// Gets authentication status.
     ///
     /// # Errors
     ///
-    /// If request fails to send
+    /// This function will return an error if the inner CURP client encountered a propose failure
     #[inline]
     pub async fn auth_status(&self) -> Result<AuthStatusResponse> {
         self.handle_req(xlineapi::AuthStatusRequest {}, true).await
     }
 
-    /// Get token through authenticate
+    /// Process an authentication request, and return the auth token
     ///
     /// # Errors
     ///
-    /// If request fails to send
+    /// This function will return an error if the inner RPC client encountered a propose failure
     #[inline]
     pub async fn authenticate(
         &mut self,
@@ -113,7 +113,7 @@ impl AuthClient {
     ///
     /// # Errors
     ///
-    /// If request fails to send
+    /// This function will return an error if the inner CURP client encountered a propose failure
     #[inline]
     pub async fn user_add(&self, mut request: AuthUserAddRequest) -> Result<AuthUserAddResponse> {
         if request.inner.name.is_empty() {
@@ -139,7 +139,7 @@ impl AuthClient {
     ///
     /// # Errors
     ///
-    /// If request fails to send
+    /// This function will return an error if the inner CURP client encountered a propose failure
     #[inline]
     pub async fn user_get(&self, request: AuthUserGetRequest) -> Result<AuthUserGetResponse> {
         self.handle_req(request.inner, true).await
@@ -149,7 +149,7 @@ impl AuthClient {
     ///
     /// # Errors
     ///
-    /// If request fails to send
+    /// This function will return an error if the inner CURP client encountered a propose failure
     #[inline]
     pub async fn user_list(&self) -> Result<AuthUserListResponse> {
         self.handle_req(xlineapi::AuthUserListRequest {}, true)
@@ -160,7 +160,7 @@ impl AuthClient {
     ///
     /// # Errors
     ///
-    /// If request fails to send
+    /// This function will return an error if the inner CURP client encountered a propose failure
     #[inline]
     pub async fn user_delete(
         &self,
@@ -173,7 +173,7 @@ impl AuthClient {
     ///
     /// # Errors
     ///
-    /// If request fails to send
+    /// This function will return an error if the inner CURP client encountered a propose failure
     #[inline]
     pub async fn user_change_password(
         &self,
@@ -192,7 +192,7 @@ impl AuthClient {
     ///
     /// # Errors
     ///
-    /// If request fails to send
+    /// This function will return an error if the inner CURP client encountered a propose failure
     #[inline]
     pub async fn user_grant_role(
         &self,
@@ -205,7 +205,7 @@ impl AuthClient {
     ///
     /// # Errors
     ///
-    /// If request fails to send
+    /// This function will return an error if the inner CURP client encountered a propose failure
     #[inline]
     pub async fn user_revoke_role(
         &self,
@@ -218,7 +218,7 @@ impl AuthClient {
     ///
     /// # Errors
     ///
-    /// If request fails to send
+    /// This function will return an error if the inner CURP client encountered a propose failure
     #[inline]
     pub async fn role_add(&self, request: AuthRoleAddRequest) -> Result<AuthRoleAddResponse> {
         if request.inner.name.is_empty() {
@@ -231,7 +231,7 @@ impl AuthClient {
     ///
     /// # Errors
     ///
-    /// If request fails to send
+    /// This function will return an error if the inner CURP client encountered a propose failure
     #[inline]
     pub async fn role_get(&self, request: AuthRoleGetRequest) -> Result<AuthRoleGetResponse> {
         self.handle_req(request.inner, true).await
@@ -241,7 +241,7 @@ impl AuthClient {
     ///
     /// # Errors
     ///
-    /// If request fails to send
+    /// This function will return an error if the inner CURP client encountered a propose failure
     #[inline]
     pub async fn role_list(&self) -> Result<AuthRoleListResponse> {
         self.handle_req(xlineapi::AuthRoleListRequest {}, true)
@@ -252,7 +252,7 @@ impl AuthClient {
     ///
     /// # Errors
     ///
-    /// If request fails to send
+    /// This function will return an error if the inner CURP client encountered a propose failure
     #[inline]
     pub async fn role_delete(
         &self,
@@ -265,7 +265,7 @@ impl AuthClient {
     ///
     /// # Errors
     ///
-    /// If request fails to send
+    /// This function will return an error if the inner CURP client encountered a propose failure
     #[inline]
     pub async fn role_grant_permission(
         &self,
@@ -284,6 +284,7 @@ impl AuthClient {
     /// # Errors
     ///
     /// If request fails to send
+    /// This function will return an error if the inner CURP client encountered a propose failure
     #[inline]
     pub async fn role_revoke_permission(
         &self,
