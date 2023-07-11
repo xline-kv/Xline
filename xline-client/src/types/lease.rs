@@ -29,7 +29,7 @@ impl LeaseKeeper {
     ///
     /// # Errors
     ///
-    /// If the sender fails to send
+    /// This function will return an error if the inner channel is closed
     #[inline]
     pub fn keep_alive(&mut self) -> Result<()> {
         self.sender
@@ -46,7 +46,9 @@ pub struct LeaseGrantRequest {
 }
 
 impl LeaseGrantRequest {
-    /// New `LeaseGrantRequest`
+    /// Creates a new `LeaseGrantRequest`
+    ///
+    /// `ttl` is the advisory time-to-live in seconds. Expired lease will return -1.
     #[inline]
     #[must_use]
     pub fn new(ttl: i64) -> Self {
@@ -58,7 +60,7 @@ impl LeaseGrantRequest {
         }
     }
 
-    /// Set `id`
+    /// `id` is the requested ID for the lease. If ID is set to 0, the lessor chooses an ID.
     #[inline]
     #[must_use]
     pub fn with_id(mut self, id: i64) -> Self {
@@ -82,7 +84,9 @@ pub struct LeaseRevokeRequest {
 }
 
 impl LeaseRevokeRequest {
-    /// New `LeaseRevokeRequest`
+    /// Creates a new `LeaseRevokeRequest`
+    ///
+    /// `id` is the lease ID to revoke. When the ID is revoked, all associated keys will be deleted.
     #[inline]
     #[must_use]
     pub fn new(id: i64) -> Self {
@@ -107,7 +111,9 @@ pub struct LeaseKeepAliveRequest {
 }
 
 impl LeaseKeepAliveRequest {
-    /// New `LeaseKeepAliveRequest`
+    /// Creates a new `LeaseKeepAliveRequest`
+    ///
+    /// `id` is the lease ID for the lease to keep alive.
     #[inline]
     #[must_use]
     pub fn new(id: i64) -> Self {
@@ -132,7 +138,9 @@ pub struct LeaseTimeToLiveRequest {
 }
 
 impl LeaseTimeToLiveRequest {
-    /// New `LeaseTimeToLiveRequest`
+    /// Creates a new `LeaseTimeToLiveRequest`
+    ///
+    /// `id` is the lease ID for the lease.
     #[inline]
     #[must_use]
     pub fn new(id: i64) -> Self {
@@ -144,7 +152,7 @@ impl LeaseTimeToLiveRequest {
         }
     }
 
-    /// Set `keys`
+    /// `keys` is true to query all the keys attached to this lease.
     #[inline]
     #[must_use]
     pub fn with_keys(mut self, keys: bool) -> Self {
