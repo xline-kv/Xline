@@ -147,7 +147,6 @@
     )
 )]
 use std::{
-    collections::HashMap,
     fmt::Debug,
     sync::Arc,
     task::{Context, Poll},
@@ -204,13 +203,32 @@ impl Client {
     ///
     /// If `Self::build_channel` fails.
     #[inline]
-    pub async fn connect(
-        all_members: HashMap<String, String>,
-        options: ClientOptions,
-    ) -> Result<Self> {
+    #[allow(clippy::pattern_type_mismatch)] // allow mismatch in map
+    pub async fn connect<E, S>(all_members: S, options: ClientOptions) -> Result<Self>
+    where
+        E: AsRef<str>,
+        S: IntoIterator<Item = (E, E)> + Clone,
+    {
         let name = String::from("client");
-        let channel = Self::build_channel(&all_members).await?;
-        let curp_client = Arc::new(CurpClient::new(None, all_members, options.curp_timeout).await);
+        let channel = Self::build_channel(
+            all_members
+                .clone()
+                .into_iter()
+                .map(|(_id, addr)| addr.as_ref().to_owned())
+                .collect(),
+        )
+        .await?;
+        let curp_client = Arc::new(
+            CurpClient::new(
+                None,
+                all_members
+                    .into_iter()
+                    .map(|(id, addr)| (id.as_ref().to_owned(), addr.as_ref().to_owned()))
+                    .collect(),
+                options.curp_timeout,
+            )
+            .await,
+        );
         let id_gen = Arc::new(lease_gen::LeaseIdGenerator::new());
 
         let token = match options.user {
@@ -263,10 +281,10 @@ impl Client {
     }
 
     /// Build a tonic load balancing channel.
-    async fn build_channel(all_members: &HashMap<String, String>) -> Result<Channel> {
+    async fn build_channel(addrs: Vec<String>) -> Result<Channel> {
         let (channel, tx) = Channel::balance_channel(64);
 
-        for mut addr in all_members.values().cloned() {
+        for mut addr in addrs {
             if !addr.starts_with("http://") {
                 addr.insert_str(0, "http://");
             }

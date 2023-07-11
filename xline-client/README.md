@@ -90,10 +90,9 @@ To create a xline client:
          ("server0", "10.0.0.1:2379"),
          ("server1", "10.0.0.2:2379"),
          ("server2", "10.0.0.3:2379"),
-     ]
-     .map(|(s, a)| (s.to_owned(), a.to_owned()));
+     ];
 
-     let mut client = Client::connect(curp_members.into(), ClientOptions::default())
+     let mut client = Client::connect(curp_members, ClientOptions::default())
          .await?
          .kv_client();
 
