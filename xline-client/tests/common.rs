@@ -4,6 +4,6 @@ use xline_test_utils::Cluster;
 pub async fn get_cluster_client() -> Result<(Cluster, Client)> {
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;
-    let client = Client::connect(cluster.addrs().clone(), ClientOptions::default()).await?;
+    let client = Client::connect(cluster.addrs(), ClientOptions::default()).await?;
     Ok((cluster, client))
 }
