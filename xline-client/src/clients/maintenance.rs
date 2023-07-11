@@ -1,7 +1,7 @@
 use std::{fmt::Debug, sync::Arc};
 
 use tonic::{transport::Channel, Streaming};
-use xlineapi::{self, SnapshotRequest, SnapshotResponse};
+use xlineapi::{SnapshotRequest, SnapshotResponse};
 
 use crate::{
     error::{ClientError, Result},
@@ -16,7 +16,7 @@ pub struct MaintenanceClient {
 }
 
 impl MaintenanceClient {
-    /// Create a new maintenance client
+    /// Creates a new maintenance client
     #[inline]
     #[must_use]
     pub fn new(channel: Channel, token: Option<String>) -> Self {
@@ -32,7 +32,7 @@ impl MaintenanceClient {
     ///
     /// # Errors
     ///
-    /// If the RPC client fails to send request
+    /// This function will return an error if the inner RPC client encountered a propose failure
     #[inline]
     pub async fn snapshot(&mut self) -> Result<Streaming<SnapshotResponse>> {
         Ok(self
