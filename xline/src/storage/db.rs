@@ -9,7 +9,7 @@ use super::{
     kv_store::KV_TABLE,
     lease_store::LEASE_TABLE,
     storage_api::StorageApi,
-    ExecuteError, Revision,
+    ExecuteError,
 };
 use crate::{
     rpc::{PbLease, Role, User},
@@ -133,8 +133,7 @@ impl StorageApi for DB {
             .collect::<HashMap<_, _>>();
         for op in ops {
             let wop = match op {
-                WriteOp::PutKeyValue(rev, value) => {
-                    let key = rev.encode_to_vec();
+                WriteOp::PutKeyValue(key, value) => {
                     WriteOperation::new_put(KV_TABLE, key, value.clone())
                 }
                 WriteOp::PutAppliedIndex(index) => WriteOperation::new_put(
@@ -198,7 +197,7 @@ impl StorageApi for DB {
 #[non_exhaustive]
 pub enum WriteOp<'a> {
     /// Put a key-value pair to kv table
-    PutKeyValue(Revision, Vec<u8>),
+    PutKeyValue(Vec<u8>, Vec<u8>),
     /// Put the applied index to meta table
     PutAppliedIndex(u64),
     /// Put a lease to lease table
@@ -231,14 +230,15 @@ mod test {
     use test_macros::abort_on_panic;
 
     use super::*;
+    use crate::storage::Revision;
     #[tokio::test]
     #[abort_on_panic]
     async fn test_reset() -> Result<(), ExecuteError> {
         let data_dir = PathBuf::from("/tmp/test_reset");
         let db = DB::open(&StorageConfig::RocksDB(data_dir.clone()))?;
 
-        let revision = Revision::new(1, 1);
-        let key = revision.encode_to_vec();
+        let revision = Revision::new(1, 1).encode_to_vec();
+        let key = revision.clone();
         let ops = vec![WriteOp::PutKeyValue(revision, "value1".into())];
         db.flush_ops(ops)?;
         let res = db.get_value(KV_TABLE, &key)?;
@@ -264,8 +264,8 @@ mod test {
         let snapshot_path = dir.join("snapshot");
         let origin_db = DB::open(&StorageConfig::RocksDB(origin_db_path))?;
 
-        let revision = Revision::new(1, 1);
-        let key = revision.encode_to_vec();
+        let revision = Revision::new(1, 1).encode_to_vec();
+        let key: Vec<u8> = revision.clone();
         let ops = vec![WriteOp::PutKeyValue(revision, "value1".into())];
         origin_db.flush_ops(ops)?;
 
@@ -336,7 +336,7 @@ mod test {
         };
         let role_bytes = role.encode_to_vec();
         let write_ops = vec![
-            WriteOp::PutKeyValue(Revision::new(1, 2), "value".into()),
+            WriteOp::PutKeyValue(Revision::new(1, 2).encode_to_vec(), "value".into()),
             WriteOp::PutAppliedIndex(5),
             WriteOp::PutLease(lease),
             WriteOp::PutAuthEnable(true),

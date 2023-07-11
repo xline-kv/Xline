@@ -436,8 +436,8 @@ mod test {
     use crate::{
         rpc::{PutRequest, RequestWithToken, WatchProgressRequest},
         storage::{
-            db::DB, index::Index, kvwatcher::MockKvWatcherOps, lease_store::LeaseCollection,
-            KvStore,
+            compact::COMPACT_CHANNEL_SIZE, db::DB, index::Index, kvwatcher::MockKvWatcherOps,
+            lease_store::LeaseCollection, KvStore,
         },
     };
 
@@ -579,7 +579,7 @@ mod test {
     #[tokio::test]
     #[abort_on_panic]
     async fn test_watch_prev_kv() {
-        let (compact_tx, _compact_rx) = mpsc::unbounded_channel();
+        let (compact_tx, _compact_rx) = mpsc::channel(COMPACT_CHANNEL_SIZE);
         let index = Arc::new(Index::new());
         let db = DB::open(&StorageConfig::Memory).unwrap();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
@@ -752,7 +752,7 @@ mod test {
 
     #[tokio::test]
     async fn watch_compacted_revision_should_fail() {
-        let (compact_tx, _compact_rx) = mpsc::unbounded_channel();
+        let (compact_tx, _compact_rx) = mpsc::channel(COMPACT_CHANNEL_SIZE);
         let index = Arc::new(Index::new());
         let db = DB::open(&StorageConfig::Memory).unwrap();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
