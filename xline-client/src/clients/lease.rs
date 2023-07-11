@@ -23,7 +23,7 @@ use crate::{
 /// Client for Lease operations.
 #[derive(Clone, Debug)]
 pub struct LeaseClient {
-    /// Name of the LeaseClient
+    /// Name of the LeaseClient, which will be used in CURP propose id generation
     name: String,
     /// The client running the CURP protocol, communicate with all servers.
     curp_client: Arc<CurpClient<Command>>,
@@ -36,7 +36,7 @@ pub struct LeaseClient {
 }
 
 impl LeaseClient {
-    /// New `LeaseClient`
+    /// Creates a new `LeaseClient`
     #[inline]
     pub fn new(
         name: String,
@@ -57,11 +57,13 @@ impl LeaseClient {
         }
     }
 
-    /// Send `LeaseGrantRequest` by `CurpClient`
+    /// Creates a lease which expires if the server does not receive a keepAlive
+    /// within a given time to live period. All keys attached to the lease will be expired and
+    /// deleted if the lease expires. Each expired key generates a delete event in the event history.
     ///
     /// # Errors
     ///
-    /// If `CurpClient` failed to send request
+    /// This function will return an error if the inner CURP client encountered a propose failure
     #[inline]
     pub async fn grant(&self, mut request: LeaseGrantRequest) -> Result<LeaseGrantResponse> {
         let propose_id = self.generate_propose_id();
@@ -77,22 +79,23 @@ impl LeaseClient {
         Ok(cmd_res.decode().into())
     }
 
-    /// Send `LeaseRevokeRequest` by `CurpClient`
+    /// Revokes a lease. All keys attached to the lease will expire and be deleted.
     ///
     /// # Errors
     ///
-    /// If client failed to send request
+    /// This function will return an error if the inner RPC client encountered a propose failure
     #[inline]
     pub async fn revoke(&mut self, request: LeaseRevokeRequest) -> Result<LeaseRevokeResponse> {
         let res = self.lease_client.lease_revoke(request.inner).await?;
         Ok(res.into_inner())
     }
 
-    /// Send `LeaseKeepAliveRequest` by `CurpClient`
+    /// Keeps the lease alive by streaming keep alive requests from the client
+    /// to the server and streaming keep alive responses from the server to the client.
     ///
     /// # Errors
     ///
-    /// If client failed to send request
+    /// This function will return an error if the inner RPC client encountered a propose failure
     #[inline]
     pub async fn keep_alive(
         &mut self,
@@ -122,11 +125,11 @@ impl LeaseClient {
         Ok((LeaseKeeper::new(id, sender), stream))
     }
 
-    /// Send `LeaseTimeToLiveRequest` by `CurpClient`
+    /// Retrieves lease information.
     ///
     /// # Errors
     ///
-    /// If client failed to send request
+    /// This function will return an error if the inner RPC client encountered a propose failure
     #[inline]
     pub async fn time_to_live(
         &mut self,
@@ -143,7 +146,7 @@ impl LeaseClient {
     ///
     /// # Errors
     ///
-    /// If client failed to send request
+    /// This function will return an error if the inner CURP client encountered a propose failure
     #[inline]
     pub async fn leases(&self) -> Result<LeaseLeasesResponse> {
         let propose_id = self.generate_propose_id();
