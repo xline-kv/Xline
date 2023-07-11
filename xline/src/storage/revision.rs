@@ -18,7 +18,7 @@ pub(super) struct KeyRevision {
 
 /// Revision
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
-pub struct Revision {
+pub(crate) struct Revision {
     /// Main revision
     revision: i64,
     /// Sub revision in one transaction or range deletion

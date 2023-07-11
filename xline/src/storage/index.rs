@@ -299,44 +299,28 @@ impl IndexOperate for Index {
         inner.index.iter_mut().for_each(|(key, revisions)| {
             if let Some(revision) = revisions.first() {
                 if revision.mod_revision < at_rev {
-                    match revisions.binary_search_by(|rev| rev.mod_revision.cmp(&at_rev)) {
-                        Ok(idx) => {
-                            let key_rev = revisions.get(idx).unwrap_or_else(|| {
-                                unreachable!(
-                                    "{idx} is out of range, len of revisions is {}",
-                                    revisions.len()
-                                )
-                            });
-                            let compact_revs = if key_rev.is_deleted() {
-                                revisions.drain(..=idx)
-                            } else {
-                                revisions.drain(..idx)
-                            };
-                            revs.extend(compact_revs.into_iter());
-                        }
-                        Err(idx) => {
-                            let compacted_last_idx = idx.overflow_sub(1);
-                            let key_rev = revisions.get(compacted_last_idx).unwrap_or_else(|| {
-                                unreachable!(
-                                    "{idx} is out of range, len of revisions is {}",
-                                    revisions.len()
-                                )
-                            });
-                            let compact_revs = if key_rev.is_deleted() {
-                                revisions.drain(..=compacted_last_idx)
-                            } else {
-                                revisions.drain(..compacted_last_idx)
-                            };
-                            revs.extend(compact_revs.into_iter());
-                        }
-                    }
+                    let pivot = revisions.partition_point(|rev| rev.mod_revision <= at_rev);
+                    let compacted_last_idx = pivot.overflow_sub(1);
+                    // There is at least 1 element in the first partition, so the key revision at `compacted_last_idx`
+                    // must exist.
+                    let key_rev = revisions.get(compacted_last_idx).unwrap_or_else(|| {
+                        unreachable!(
+                            "Oops, the key revision at {compacted_last_idx} should not be None",
+                        )
+                    });
+                    let compact_revs = if key_rev.is_deleted() {
+                        revisions.drain(..=compacted_last_idx)
+                    } else {
+                        revisions.drain(..compacted_last_idx)
+                    };
+                    revs.extend(compact_revs.into_iter());
+
                     if revisions.is_empty() {
                         del_keys.push(key.clone());
                     }
                 }
             }
         });
-
         for key in del_keys {
             let _ignore = inner.index.remove(&key);
         }

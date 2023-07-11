@@ -100,6 +100,7 @@ where
                 .iter()
                 .map(|cmp| KeyRange::new(cmp.key.as_slice(), cmp.range_end.as_slice()))
                 .collect(),
+            RequestWrapper::CompactionRequest(ref _req) => Vec::new(),
             _ => unreachable!("Other request should not be sent to this store"),
         };
         Command::new(key_ranges, wrapper, propose_id)
@@ -222,7 +223,7 @@ where
         range_revision: i64,
         compacted_revision: i64,
     ) -> Result<(), tonic::Status> {
-        (range_revision >= compacted_revision)
+        (range_revision <= 0 || range_revision >= compacted_revision)
             .then_some(())
             .ok_or(tonic::Status::invalid_argument(format!(
                 "required revision {range_revision} has been compacted, compacted revision is {compacted_revision}"
@@ -670,7 +671,6 @@ mod test {
         )
         .unwrap_err()
         .to_string();
-        assert_eq!(message, expected_err_message);
         assert_eq!(message, expected_err_message);
     }
 

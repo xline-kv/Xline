@@ -56,7 +56,7 @@ where
     /// KV update sender
     kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
     /// Compact task submit sender
-    compact_task_tx: mpsc::UnboundedSender<(i64, Option<Arc<event_listener::Event>>)>,
+    compact_task_tx: mpsc::Sender<(i64, Option<Arc<event_listener::Event>>)>,
     /// Lease collection
     lease_collection: Arc<LeaseCollection>,
 }
@@ -86,7 +86,7 @@ where
     }
 
     /// Recover data from persistent storage
-    pub(crate) fn recover(&self) -> Result<(), ExecuteError> {
+    pub(crate) async fn recover(&self) -> Result<(), ExecuteError> {
         let mut key_to_lease: HashMap<Vec<u8>, i64> = HashMap::new();
         let kvs = self.db.get_all(KV_TABLE)?;
 
@@ -131,7 +131,7 @@ where
                 "compacted revision corruption, which ({compacted_revision}) must belong to the range [-1, {current_rev}]"
             );
             self.update_compacted_revision(compacted_revision);
-            if let Err(e) = self.compact_task_tx.send((compacted_revision, None)) {
+            if let Err(e) = self.compact_task_tx.send((compacted_revision, None)).await {
                 panic!("the compactor exited unexpectedly: {e:?}");
             }
         }
@@ -154,7 +154,7 @@ where
         db: Arc<DB>,
         header_gen: Arc<HeaderGenerator>,
         kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
-        compact_task_tx: mpsc::UnboundedSender<(i64, Option<Arc<event_listener::Event>>)>,
+        compact_task_tx: mpsc::Sender<(i64, Option<Arc<event_listener::Event>>)>,
         lease_collection: Arc<LeaseCollection>,
     ) -> Self {
         Self {
@@ -655,12 +655,13 @@ where
             if let Err(e) = self
                 .compact_task_tx
                 .send((revision, Some(Arc::clone(&event))))
+                .await
             {
                 panic!("the compactor exited unexpectedly: {e:?}");
             }
             event.listen().await;
         } else {
-            if let Err(e) = self.compact_task_tx.send((revision, None)) {
+            if let Err(e) = self.compact_task_tx.send((revision, None)).await {
                 panic!("the compactor exited unexpectedly: {e:?}");
             }
         }
@@ -747,7 +748,7 @@ where
                 .unwrap_or_else(|e| panic!("unexpected error from lease Attach: {e}"));
         }
         ops.push(WriteOp::PutKeyValue(
-            new_rev.as_revision(),
+            new_rev.as_revision().encode_to_vec(),
             kv.encode_to_vec(),
         ));
         let event = Event {
@@ -793,7 +794,7 @@ where
                     ..KeyValue::default()
                 };
                 let value = del_kv.encode_to_vec();
-                WriteOp::PutKeyValue(new_rev, value)
+                WriteOp::PutKeyValue(new_rev.encode_to_vec(), value)
             })
             .collect()
     }
@@ -850,7 +851,11 @@ mod test {
     use crate::{
         revision_number::RevisionNumberGenerator,
         rpc::RequestOp,
-        storage::{compact::compactor, db::DB, kvwatcher::KvWatcher},
+        storage::{
+            compact::{compactor, COMPACT_CHANNEL_SIZE},
+            db::DB,
+            kvwatcher::KvWatcher,
+        },
     };
 
     const CHANNEL_SIZE: usize = 1024;
@@ -887,7 +892,7 @@ mod test {
     }
 
     fn init_empty_store(db: Arc<DB>) -> Arc<KvStore<DB>> {
-        let (compact_tx, compact_rx) = mpsc::unbounded_channel();
+        let (compact_tx, compact_rx) = mpsc::channel(COMPACT_CHANNEL_SIZE);
         let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
         let lease_collection = Arc::new(LeaseCollection::new(0));
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
@@ -1079,7 +1084,7 @@ mod test {
         assert_eq!(res.kvs.len(), 0);
         assert_eq!(new_store.compacted_revision(), -1);
 
-        new_store.recover()?;
+        new_store.recover().await?;
 
         let res = new_store.handle_range_request(&range_req)?;
         assert_eq!(res.kvs.len(), 1);

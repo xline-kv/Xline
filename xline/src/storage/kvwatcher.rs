@@ -551,11 +551,14 @@ mod test {
     use crate::{
         header_gen::HeaderGenerator,
         rpc::{PutRequest, RequestWithToken},
-        storage::{db::DB, index::Index, lease_store::LeaseCollection, KvStore},
+        storage::{
+            compact::COMPACT_CHANNEL_SIZE, db::DB, index::Index, lease_store::LeaseCollection,
+            KvStore,
+        },
     };
 
     fn init_empty_store() -> (Arc<KvStore<DB>>, Arc<DB>, Arc<KvWatcher<DB>>) {
-        let (compact_tx, _compact_rx) = mpsc::unbounded_channel();
+        let (compact_tx, _compact_rx) = mpsc::channel(COMPACT_CHANNEL_SIZE);
         let db = DB::open(&StorageConfig::Memory).unwrap();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let index = Arc::new(Index::new());

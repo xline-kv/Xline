@@ -5,7 +5,7 @@ use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{members::ClusterMember, server::Rpc, ProtocolServer, SnapshotAllocator};
 use event_listener::Event;
 use jsonwebtoken::{DecodingKey, EncodingKey};
-use tokio::{net::TcpListener, sync::mpsc::unbounded_channel};
+use tokio::{net::TcpListener, sync::mpsc::channel};
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
 use tonic_health::ServingStatus;
@@ -32,7 +32,7 @@ use crate::{
     },
     state::State,
     storage::{
-        compact::compactor,
+        compact::{compactor, COMPACT_CHANNEL_SIZE},
         index::Index,
         kvwatcher::KvWatcher,
         lease_store::LeaseCollection,
@@ -112,7 +112,7 @@ impl XlineServer {
     /// Construct underlying storages, including `KvStore`, `LeaseStore`, `AuthStore`
     #[allow(clippy::type_complexity)] // it is easy to read
     #[inline]
-    fn construct_underlying_storages<S: StorageApi>(
+    async fn construct_underlying_storages<S: StorageApi>(
         &self,
         persistent: Arc<S>,
         lease_collection: Arc<LeaseCollection>,
@@ -125,9 +125,9 @@ impl XlineServer {
         Arc<AuthStore<S>>,
         Arc<KvWatcher<S>>,
     )> {
-        let (compact_task_tx, compact_task_rx) = unbounded_channel();
+        let (compact_task_tx, compact_task_rx) = channel(COMPACT_CHANNEL_SIZE);
         let index = Arc::new(Index::new());
-        let (kv_update_tx, kv_update_rx) = tokio::sync::mpsc::channel(CHANNEL_SIZE);
+        let (kv_update_tx, kv_update_rx) = channel(CHANNEL_SIZE);
         let kv_storage = Arc::new(KvStore::new(
             Arc::clone(&index),
             Arc::clone(&persistent),
@@ -167,7 +167,7 @@ impl XlineServer {
         );
         // lease storage must recover before kv storage
         lease_storage.recover()?;
-        kv_storage.recover()?;
+        kv_storage.recover().await?;
         auth_storage.recover()?;
         Ok((kv_storage, lease_storage, auth_storage, watcher))
     }
@@ -299,7 +299,8 @@ impl XlineServer {
                 Arc::clone(&header_gen),
                 Arc::clone(&auth_revision_gen),
                 key_pair,
-            )?;
+            )
+            .await?;
 
         let index_barrier = Arc::new(IndexBarrier::new());
         let id_barrier = Arc::new(IdBarrier::new());

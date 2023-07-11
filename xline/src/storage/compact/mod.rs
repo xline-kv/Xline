@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use event_listener::Event;
-use tokio::{sync::mpsc::UnboundedReceiver, time::sleep};
+use tokio::{sync::mpsc::Receiver, time::sleep};
 
 use super::{
     index::{Index, IndexOperate},
@@ -9,13 +9,16 @@ use super::{
     KvStore,
 };
 
+/// compact task channel size
+pub(crate) const COMPACT_CHANNEL_SIZE: usize = 32;
+
 /// background compact executor
 pub(crate) async fn compactor<DB>(
     kv_store: Arc<KvStore<DB>>,
     index: Arc<Index>,
     batch_limit: usize,
     interval: Duration,
-    mut compact_task_rx: UnboundedReceiver<(i64, Option<Arc<Event>>)>,
+    mut compact_task_rx: Receiver<(i64, Option<Arc<Event>>)>,
 ) where
     DB: StorageApi,
 {
