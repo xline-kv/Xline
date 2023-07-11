@@ -81,7 +81,42 @@ impl LockClient {
     ///
     /// # Errors
     ///
-    /// If `CurpClient` fails to send request
+    /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{
+    ///     error::Result,
+    ///     types::lock::{LockRequest, UnlockRequest},
+    ///     Client, ClientOptions,
+    /// };
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     // the name and address of all curp members
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let mut client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .lock_client();
+    ///
+    ///     // acquire a lock
+    ///     let resp = client
+    ///         .lock(LockRequest::new().with_name("lock-test"))
+    ///         .await?;
+    ///
+    ///     let key = resp.key;
+    ///
+    ///     println!("lock key: {:?}", String::from_utf8_lossy(&key));
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     #[inline]
     pub async fn lock(&self, request: LockRequest) -> Result<LockResponse> {
         let mut lease_id = request.inner.lease;
@@ -180,7 +215,37 @@ impl LockClient {
     ///
     /// # Errors
     ///
-    /// If `CurpClient` fails to send request
+    /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{
+    ///     error::Result,
+    ///     types::lock::{LockRequest, UnlockRequest},
+    ///     Client, ClientOptions,
+    /// };
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     // the name and address of all curp members
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let mut client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .lock_client();
+    ///
+    ///     // acquire a lock first
+    ///
+    ///     client.unlock(UnlockRequest::new().with_key("lock_key")).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     #[inline]
     pub async fn unlock(&self, request: UnlockRequest) -> Result<UnlockResponse> {
         let header = self.delete_key(&request.inner.key).await?;
