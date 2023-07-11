@@ -64,6 +64,30 @@ impl LeaseClient {
     /// # Errors
     ///
     /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{error::Result, types::lease::LeaseGrantRequest, Client, ClientOptions};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let mut client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .lease_client();
+    ///
+    ///     let resp = client.grant(LeaseGrantRequest::new(60)).await?;
+    ///     println!("lease id: {}", resp.id);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     #[inline]
     pub async fn grant(&self, mut request: LeaseGrantRequest) -> Result<LeaseGrantResponse> {
         let propose_id = self.generate_propose_id();
@@ -84,6 +108,31 @@ impl LeaseClient {
     /// # Errors
     ///
     /// This function will return an error if the inner RPC client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{error::Result, types::lease::LeaseRevokeRequest, Client, ClientOptions};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let mut client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .lease_client();
+    ///
+    ///     // granted a lease id 1
+    ///
+    ///     let _resp = client.revoke(LeaseRevokeRequest::new(1)).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     #[inline]
     pub async fn revoke(&mut self, request: LeaseRevokeRequest) -> Result<LeaseRevokeResponse> {
         let res = self.lease_client.lease_revoke(request.inner).await?;
@@ -96,6 +145,37 @@ impl LeaseClient {
     /// # Errors
     ///
     /// This function will return an error if the inner RPC client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{error::Result, types::lease::LeaseKeepAliveRequest, Client, ClientOptions};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let mut client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .lease_client();
+    ///
+    ///     // granted a lease id 1
+    ///
+    ///     let (mut keeper, mut stream) = client.keep_alive(LeaseKeepAliveRequest::new(1)).await?;
+    ///
+    ///     if let Some(resp) = stream.message().await? {
+    ///         println!("new ttl: {}", resp.ttl);
+    ///     }
+    ///
+    ///     keeper.keep_alive()?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     #[inline]
     pub async fn keep_alive(
         &mut self,
@@ -130,6 +210,33 @@ impl LeaseClient {
     /// # Errors
     ///
     /// This function will return an error if the inner RPC client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{error::Result, types::lease::LeaseTimeToLiveRequest, Client, ClientOptions};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let mut client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .lease_client();
+    ///
+    ///     // granted a lease id 1
+    ///
+    ///     let resp = client.time_to_live(LeaseTimeToLiveRequest::new(1)).await?;
+    ///
+    ///     println!("remaining ttl: {}", resp.ttl);
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     #[inline]
     pub async fn time_to_live(
         &mut self,
@@ -147,6 +254,31 @@ impl LeaseClient {
     /// # Errors
     ///
     /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{error::Result, Client, ClientOptions};
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let mut client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .lease_client();
+    ///
+    ///     for lease in client.leases().await?.leases {
+    ///         println!("lease: {}", lease.id);
+    ///     }
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     #[inline]
     pub async fn leases(&self) -> Result<LeaseLeasesResponse> {
         let propose_id = self.generate_propose_id();
