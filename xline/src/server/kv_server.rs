@@ -140,7 +140,13 @@ where
         #[allow(clippy::wildcard_enum_match_arm)]
         if use_fast_path {
             let cmd_res = self.client.propose(cmd).await.map_err(|err| match err {
-                ProposeError::ExecutionError(e) => tonic::Status::invalid_argument(e),
+                // If an error occurs when `prepare` or `execute`, `after_sync` will not be called, in this case,
+                // `wait_synced` will return errors generated in the first two stages, so if the `slow_round`'s
+                // response is earlier than `fast_round`, the `propose` will return and `SyncedError` although
+                // `after_sync` is not called.
+                ProposeError::ExecutionError(e) | ProposeError::SyncedError(e) => {
+                    tonic::Status::invalid_argument(e)
+                }
                 _ => unreachable!("propose err {err:?}"),
             })?;
             Ok((cmd_res, None))
