@@ -139,3 +139,13 @@ jobs:
           version: latest
       - name: Validate commit messages
         run: git-cz check ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+
+  spell-check:
+    name: Spell Check
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Actions Repository
+      uses: actions/checkout@v2
+
+    - name: Check Spelling
+      uses: crate-ci/typos@master
