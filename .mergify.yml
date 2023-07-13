@@ -12,6 +12,7 @@ pull_request_rules:
       - check-success=Clippy Normal
       - check-success=Clippy Madsim
       - check-success=Commit Message Validation
+      - check-success=Spell Check
       - check-success=Coverage
       - check-success=Validation
       - check-success=DCO
