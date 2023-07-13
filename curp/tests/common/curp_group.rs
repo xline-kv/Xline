@@ -14,7 +14,7 @@ use futures::future::join_all;
 use itertools::Itertools;
 use tokio::{net::TcpListener, runtime::Runtime, sync::mpsc};
 use tracing::debug;
-use utils::config::{ClientTimeout, CurpConfigBuilder};
+use utils::config::{ClientTimeout, CurpConfigBuilder, StorageConfig};
 
 pub type ServerId = String;
 
@@ -87,7 +87,7 @@ impl CurpGroup {
                     .unwrap();
                 let handle = rt.handle().clone();
 
-                let storage_path_c = storage_path.clone();
+                let storage_cfg = StorageConfig::RocksDB(storage_path.clone());
                 let role_change_cb = TestRoleChange::default();
                 let role_change_arc = role_change_cb.get_inner_arc();
                 thread::spawn(move || {
@@ -100,7 +100,7 @@ impl CurpGroup {
                         role_change_cb,
                         Arc::new(
                             CurpConfigBuilder::default()
-                                .data_dir(storage_path_c)
+                                .storage_cfg(storage_cfg)
                                 .log_entries_cap(10)
                                 .build()
                                 .unwrap(),

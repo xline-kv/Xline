@@ -1,19 +1,14 @@
-#![allow(dead_code, unused)]
-
-use curp_external_api::role_change::RoleChange;
-use madsim::rand::{distributions::Alphanumeric, thread_rng, Rng};
-use parking_lot::RwLock;
 use std::{
-    env, io,
+    env,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
     time::Duration,
 };
-use thiserror::Error;
-use tracing_subscriber::fmt::time::{uptime, OffsetTime, Uptime};
-use utils::parking_lot_lock::RwLockMap;
+
+use curp_external_api::role_change::RoleChange;
+use tracing_subscriber::fmt::time::uptime;
 
 pub mod test_cmd;
 
@@ -56,7 +51,7 @@ pub fn init_logger() {
     if env::var("RUST_LOG").is_err() {
         env::set_var("RUST_LOG", "curp,server");
     }
-    tracing_subscriber::fmt()
+    _ = tracing_subscriber::fmt()
         .with_timer(uptime())
         .compact()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())

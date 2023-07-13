@@ -19,7 +19,7 @@ use madsim::runtime::NodeHandle;
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tracing::debug;
-use utils::config::{ClientTimeout, CurpConfigBuilder};
+use utils::config::{ClientTimeout, CurpConfigBuilder, StorageConfig};
 
 pub type ServerId = String;
 
@@ -80,7 +80,7 @@ impl CurpGroup {
                 let cluster_info = Arc::new(ClusterMember::new(all.clone(), id.clone()));
 
                 let id_c = id.clone();
-                let storage_path_c = storage_path.clone();
+                let storage_cfg = StorageConfig::RocksDB(storage_path.clone());
                 let store_c = Arc::clone(&store);
                 let role_change_cb = TestRoleChange::default();
                 let role_change_arc = role_change_cb.get_inner_arc();
@@ -105,7 +105,7 @@ impl CurpGroup {
                             },
                             Arc::new(
                                 CurpConfigBuilder::default()
-                                    .data_dir(storage_path_c.clone())
+                                    .storage_cfg(storage_cfg.clone())
                                     .log_entries_cap(10)
                                     .build()
                                     .unwrap(),

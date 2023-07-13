@@ -36,7 +36,7 @@ use crate::{
         InstallSnapshotResponse, ProposeRequest, ProposeResponse, VoteRequest, VoteResponse,
         WaitSyncedRequest, WaitSyncedResponse,
     },
-    server::{cmd_worker::CEEventTxApi, raw_curp::SyncAction, storage::rocksdb::RocksDBStorage},
+    server::{cmd_worker::CEEventTxApi, raw_curp::SyncAction, storage::db::DB},
     snapshot::{Snapshot, SnapshotMeta},
     ServerId, SnapshotAllocator,
 };
@@ -438,7 +438,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         let (ce_event_tx, task_rx, done_tx) =
             conflict_checked_mpmc::channel(Arc::clone(&cmd_executor));
         let ce_event_tx: Arc<dyn CEEventTxApi<C>> = Arc::new(ce_event_tx);
-        let storage = Arc::new(RocksDBStorage::new(&curp_cfg.data_dir)?);
+        let storage = Arc::new(DB::open(&curp_cfg.storage_cfg)?);
 
         // create curp state machine
         let (voted_for, entries) = storage.recover().await?;
@@ -680,12 +680,12 @@ impl<C: Command, RC: RoleChange> Debug for CurpNode<C, RC> {
 
 #[cfg(test)]
 mod tests {
+    use curp_test_utils::{mock_role_change, sleep_secs, test_cmd::TestCommand};
     use tokio::sync::oneshot;
     use tracing_test::traced_test;
 
     use super::*;
     use crate::{rpc::connect::MockConnectApi, server::cmd_worker::MockCEEventTxApi};
-    use curp_test_utils::{mock_role_change, sleep_secs, test_cmd::TestCommand};
 
     #[traced_test]
     #[tokio::test]

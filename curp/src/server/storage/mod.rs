@@ -34,5 +34,5 @@ pub(super) trait StorageApi: Send + Sync {
     ) -> Result<(Option<(u64, ServerId)>, Vec<LogEntry<Self::Command>>), StorageError>;
 }
 
-/// `RocksDB` storage implementation
-pub(super) mod rocksdb;
+/// CURP `DB` storage implementation
+pub(super) mod db;
