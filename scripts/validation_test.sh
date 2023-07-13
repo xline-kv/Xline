@@ -90,13 +90,13 @@ lease_validation() {
     echo "lease validation test running..."
     command="${ETCDCTL} lease grant 5"
     out=$(${command})
-    patten='lease [0-9a-z]+ granted with TTL\([0-9]+s\)'
-    if [[ ${out} =~ ${patten} ]]; then
+    pattern='lease [0-9a-z]+ granted with TTL\([0-9]+s\)'
+    if [[ ${out} =~ ${pattern} ]]; then
         echo "command run success"
     else
         echo "command run failed"
         echo "command: ${command}"
-        echo "expect: ${patten}"
+        echo "expect: ${pattern}"
         echo "result: ${out}"
         exit 1
     fi

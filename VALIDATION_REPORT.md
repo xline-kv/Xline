@@ -6,7 +6,7 @@ Here is the compatibility test report.
 
 ## ETCD KV Relevant APIs/Commands Tests
 
-| API | client comand | result |
+| API | client command | result |
 | --- | --- | --- |
 | Range(RangeRequest) returns (RangeResponse) | etcdctl get  | passed |
 | DeleteRange(DeleteRangeRequest) returns (DeleteRangeResponse) | etcdctl del | passed |
@@ -17,7 +17,7 @@ Here is the compatibility test report.
 
 ## ETCD Lease APIs/Commands Tests
 
-| API | client comand | result |
+| API | client command | result |
 | --- | --- | --- |
 | LeaseGrant(LeaseGrantRequest) returns (LeaseGrantResponse) |	etcdctl lease grant | passed |
 | LeaseRevoke(LeaseRevokeRequest) returns (LeaseRevokeResponse)	| etcdctl lease revoke | passed |
@@ -31,7 +31,7 @@ Here is the compatibility test report.
 ETCD maintenance relevant APIs are yet to fully implement. We will cover them in the future version (v0.3.0 ~ v0.5.0)
 
 ### ETCD Cluster APIs/Commands Tests
-| API | client comand | result |
+| API | client command | result |
 | --- | --- | --- |
 | MemberAdd(MemberAddRequest) returns (MemberAddResponse) |	etcdctl member add newMember --peer-urls=https://127.0.0.1:12345	| unimplemented (will cover in v0.3~v0.5) |
 | MemberRemove(MemberRemoveRequest) returns (MemberRemoveResponse) |	etcdctl member remove 2be1eb8f84b7f63e	| unimplemented (will cover in v0.3~v0.5) |
@@ -39,18 +39,18 @@ ETCD maintenance relevant APIs are yet to fully implement. We will cover them in
 | MemberList(MemberListRequest) returns (MemberListResponse) |	etcdctl member list	| unimplemented (will cover in v0.3~v0.5) |
 
 
-### ETCD Snapshot APIs/Commands Tests 
+### ETCD Snapshot APIs/Commands Tests
 
 The status and restore relevant features doesn't compatible with the etcd client since the Xline snapshot metadata format is totally different from the etcd snapshot format. The status and restore subcommands can be executed via the `xlinectl`. The `xlinectl` is yet to complete.
 
-| API | client comand | result |
+| API | client command | result |
 | --- | --- | --- |
 | Snapshot(SnapshotRequest) returns (stream SnapshotResponse) |	etcdctl snapshot save snapshot.db	| passed |
 
 
 ## ETCD Auth APIs/Commands Tests
 
-| API | client comand | result |
+| API | client command | result |
 | --- | --- | --- |
 | AuthEnable(AuthEnableRequest) returns (AuthEnableResponse) |	etcdctl auth enable	| passed |
 | AuthDisable(AuthDisableRequest) returns (AuthDisableResponse) |	etcdctl auth disable | passed |
@@ -59,7 +59,7 @@ The status and restore relevant features doesn't compatible with the etcd client
 
 ### ETCD User APIs/Commands Tests
 
-| API | client comand | result |
+| API | client command | result |
 | --- | --- | --- |
 | UserAdd(AuthUserAddRequest) returns (AuthUserAddResponse) |	etcdctl user add | passed |
 | UserGet(AuthUserGetRequest) returns (AuthUserGetResponse) |	etcdctl user get |	passed |
@@ -72,7 +72,7 @@ The status and restore relevant features doesn't compatible with the etcd client
 
 ### ETCD Role APIs/Commands Tests
 
-| API | client comand | result |
+| API | client command | result |
 | --- | --- | --- |
 | RoleAdd(AuthRoleAddRequest) returns (AuthRoleAddResponse)	| etcdctl role add |	passed |
 | RoleGet(AuthRoleGetRequest) returns (AuthRoleGetResponse) |	etcdctl role get  |	passed |

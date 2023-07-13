@@ -80,7 +80,7 @@ pub(super) struct RawCurp<C: Command, RC: RoleChange> {
 
 /// Actions of syncing
 pub(super) enum SyncAction<C> {
-    /// Use append entires to calibrate
+    /// Use append entries to calibrate
     AppendEntries(AppendEntries<C>),
     /// Use snapshot to calibrate
     Snapshot(oneshot::Receiver<Snapshot>),

@@ -147,7 +147,7 @@ pub struct CurpConfig {
 
     /// Curp append entries batch timeout
     /// If the `batch_timeout` has expired, then it will be dispatched
-    /// wether its size reaches the `BATCHING_MSG_MAX_SIZE` or not.
+    /// whether its size reaches the `BATCHING_MSG_MAX_SIZE` or not.
     #[builder(default = "default_batch_timeout()")]
     #[serde(with = "duration_format", default = "default_batch_timeout")]
     pub batch_timeout: Duration,
@@ -185,7 +185,7 @@ pub struct CurpConfig {
     #[serde(with = "duration_format", default = "default_gc_interval")]
     pub gc_interval: Duration,
 
-    /// Number of log entires to keep in memory
+    /// Number of log entries to keep in memory
     #[builder(default = "default_log_entries_cap()")]
     #[serde(default = "default_log_entries_cap")]
     pub log_entries_cap: usize,

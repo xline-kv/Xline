@@ -183,7 +183,7 @@ pub struct Client {
     lease: LeaseClient,
     /// lock client
     lock: LockClient,
-    /// auth clinet
+    /// auth client
     auth: AuthClient,
     /// maintenance client
     maintenance: MaintenanceClient,

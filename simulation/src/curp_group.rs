@@ -316,14 +316,14 @@ impl CurpGroup {
         net.unclog_node(node.id());
     }
 
-    pub async fn get_connect(&self, id: &ServerId) -> SimProtocalClient {
+    pub async fn get_connect(&self, id: &ServerId) -> SimProtocolClient {
         let addr = self
             .all
             .iter()
             .find_map(|(node_id, addr)| (node_id == id).then_some(addr))
             .unwrap();
         let addr = format!("http://{}", addr);
-        SimProtocalClient {
+        SimProtocolClient {
             addr,
             handle: self.client_node.clone(),
         }
@@ -331,12 +331,12 @@ impl CurpGroup {
 }
 
 #[derive(Clone)]
-pub struct SimProtocalClient {
+pub struct SimProtocolClient {
     addr: String,
     handle: NodeHandle,
 }
 
-impl SimProtocalClient {
+impl SimProtocolClient {
     #[inline]
     pub async fn propose(
         &mut self,
