@@ -531,9 +531,9 @@ impl TxnOp {
     /// `Put` operation.
     #[inline]
     #[must_use]
-    pub fn put(reqeust: PutRequest) -> Self {
+    pub fn put(request: PutRequest) -> Self {
         TxnOp {
-            inner: xlineapi::Request::RequestPut(reqeust.into()),
+            inner: xlineapi::Request::RequestPut(request.into()),
         }
     }
 

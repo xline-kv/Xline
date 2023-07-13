@@ -332,7 +332,7 @@ impl<C: 'static + Command> Log<C> {
         self.entries.clear();
     }
 
-    /// Restore log entries, provided entires must be in order
+    /// Restore log entries, provided entries must be in order
     pub(super) fn restore_entries(&mut self, entries: Vec<LogEntry<C>>) {
         // restore batch index
         self.entries.restore(entries);

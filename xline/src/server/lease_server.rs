@@ -40,7 +40,7 @@ where
     client: Arc<Client<Command>>,
     /// Id generator
     id_gen: Arc<IdGenerator>,
-    /// cluster infomation
+    /// cluster information
     cluster_info: Arc<ClusterMember>,
 }
 
