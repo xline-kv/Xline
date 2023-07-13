@@ -267,6 +267,19 @@ struct ServerArgs {
 
 impl From<ServerArgs> for XlineServerConfig {
     fn from(args: ServerArgs) -> Self {
+        let (storage, curp_storage) = match args.storage_engine.as_str() {
+            "memory" => (StorageConfig::Memory, StorageConfig::Memory),
+            "rocksdb" => (
+                StorageConfig::RocksDB(args.data_dir.clone()),
+                StorageConfig::RocksDB(args.curp_dir.unwrap_or_else(|| {
+                    let mut path = args.data_dir;
+                    path.push("curp");
+                    path
+                })),
+            ),
+            &_ => unreachable!("xline only supports memory and rocksdb engine"),
+        };
+
         let Ok(curp_config) = CurpConfigBuilder::default()
         .heartbeat_interval(args.heartbeat_interval
             .unwrap_or_else(default_heartbeat_interval))
@@ -278,20 +291,10 @@ impl From<ServerArgs> for XlineServerConfig {
         .batch_max_size(args.batch_max_size.unwrap_or_else(default_batch_max_size))
         .follower_timeout_ticks(args.follower_timeout_ticks)
         .candidate_timeout_ticks(args.candidate_timeout_ticks)
-        .data_dir(args.curp_dir.unwrap_or_else(|| {
-                let mut path = args.data_dir.clone();
-                path.push("curp");
-                path
-            }))
+        .storage_cfg(curp_storage)
         .gc_interval(args.gc_interval.unwrap_or_else(default_gc_interval))
         .cmd_workers(args.cmd_workers)
         .build() else { panic!("failed to create curp config") };
-
-        let storage = match args.storage_engine.as_str() {
-            "memory" => StorageConfig::Memory,
-            "rocksdb" => StorageConfig::RocksDB(args.data_dir),
-            &_ => unreachable!(),
-        };
 
         let client_timeout = ClientTimeout::new(
             args.client_wait_synced_timeout

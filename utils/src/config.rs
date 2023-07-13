@@ -171,9 +171,9 @@ pub struct CurpConfig {
     pub candidate_timeout_ticks: u8,
 
     /// Curp storage path
-    #[builder(default = "default_curp_data_dir()")]
-    #[serde(default = "default_curp_data_dir")]
-    pub data_dir: PathBuf,
+    #[builder(default = "StorageConfig::default()")]
+    #[serde(default = "StorageConfig::default")]
+    pub storage_cfg: StorageConfig,
 
     /// Number of command execute workers
     #[builder(default = "default_cmd_workers()")]
@@ -262,13 +262,6 @@ pub const fn default_follower_timeout_ticks() -> u8 {
     5
 }
 
-/// default curp data path
-#[must_use]
-#[inline]
-pub fn default_curp_data_dir() -> PathBuf {
-    PathBuf::from("/var/lib/curp")
-}
-
 /// default number of execute workers
 #[must_use]
 #[inline]
@@ -323,7 +316,7 @@ impl Default for CurpConfig {
             batch_max_size: default_batch_max_size(),
             follower_timeout_ticks: default_follower_timeout_ticks(),
             candidate_timeout_ticks: default_candidate_timeout_ticks(),
-            data_dir: default_curp_data_dir(),
+            storage_cfg: StorageConfig::default(),
             cmd_workers: default_cmd_workers(),
             gc_interval: default_gc_interval(),
             log_entries_cap: default_log_entries_cap(),
@@ -443,6 +436,13 @@ pub enum StorageConfig {
     Memory,
     /// RocksDB Storage Engine
     RocksDB(PathBuf),
+}
+
+impl Default for StorageConfig {
+    #[inline]
+    fn default() -> Self {
+        Self::Memory
+    }
 }
 
 /// Log configuration object
@@ -776,6 +776,8 @@ mod tests {
                 node2 = '127.0.0.1:2380'
                 node3 = '127.0.0.1:2381'
 
+                [cluster.storage]
+
                 [log]
                 path = '/var/log/xline'
 
@@ -805,7 +807,7 @@ mod tests {
                     ("node3".to_owned(), "127.0.0.1:2381".to_owned()),
                 ]),
                 true,
-                CurpConfig::default(),
+                CurpConfigBuilder::default().build().unwrap(),
                 ClientTimeout::default(),
                 ServerTimeout::default()
             )

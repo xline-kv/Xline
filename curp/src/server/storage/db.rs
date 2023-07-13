@@ -1,7 +1,8 @@
-use std::{marker::PhantomData, path::Path};
+use std::marker::PhantomData;
 
 use async_trait::async_trait;
-use engine::{Engine, StorageEngine, WriteOperation};
+use engine::{Engine, EngineType, StorageEngine, WriteOperation};
+use utils::config::StorageConfig;
 
 use super::{StorageApi, StorageError};
 use crate::{cmd::Command, log_entry::LogEntry, ServerId};
@@ -12,8 +13,8 @@ const VOTE_FOR: &[u8] = b"VoteFor";
 /// Column family name for curp storage
 const CF: &str = "curp";
 
-/// `RocksDB` storage implementation
-pub(in crate::server) struct RocksDBStorage<C> {
+/// `DB` storage implementation
+pub(in crate::server) struct DB<C> {
     /// DB handle
     db: Engine,
     /// Phantom
@@ -21,7 +22,7 @@ pub(in crate::server) struct RocksDBStorage<C> {
 }
 
 #[async_trait]
-impl<C: 'static + Command> StorageApi for RocksDBStorage<C> {
+impl<C: 'static + Command> StorageApi for DB<C> {
     /// Command
     type Command = C;
 
@@ -71,10 +72,15 @@ impl<C: 'static + Command> StorageApi for RocksDBStorage<C> {
     }
 }
 
-impl<C> RocksDBStorage<C> {
-    /// Create a new `RocksDBStorage`
-    pub(in crate::server) fn new(dir: impl AsRef<Path>) -> Result<Self, StorageError> {
-        let db = Engine::new(engine::EngineType::Rocks(dir.as_ref().into()), &[CF])?;
+impl<C> DB<C> {
+    /// Create a new CURP `DB`
+    pub(in crate::server) fn open(config: &StorageConfig) -> Result<Self, StorageError> {
+        let engine_type = match *config {
+            StorageConfig::Memory => EngineType::Memory,
+            StorageConfig::RocksDB(ref path) => EngineType::Rocks(path.clone()),
+            _ => unreachable!("Not supported storage type"),
+        };
+        let db = Engine::new(engine_type, &[CF])?;
         Ok(Self {
             db,
             phantom: PhantomData,
@@ -86,19 +92,19 @@ impl<C> RocksDBStorage<C> {
 mod tests {
     use std::{error::Error, sync::Arc};
 
+    use curp_test_utils::{sleep_secs, test_cmd::TestCommand};
+    use test_macros::abort_on_panic;
     use tokio::fs::remove_dir_all;
 
     use super::*;
-    use curp_test_utils::{sleep_secs, test_cmd::TestCommand};
-    use test_macros::abort_on_panic;
 
     #[tokio::test]
     #[abort_on_panic]
     async fn create_and_recover() -> Result<(), Box<dyn Error>> {
         let db_dir = tempfile::tempdir().unwrap().into_path();
-
+        let storage_cfg = StorageConfig::RocksDB(db_dir.clone());
         {
-            let s = RocksDBStorage::<TestCommand>::new(&db_dir)?;
+            let s = DB::<TestCommand>::open(&storage_cfg)?;
             s.flush_voted_for(1, "S2".to_string()).await?;
             s.flush_voted_for(3, "S1".to_string()).await?;
             let entry0 = LogEntry::new(1, 3, Arc::new(TestCommand::default()));
@@ -111,7 +117,7 @@ mod tests {
         }
 
         {
-            let s = RocksDBStorage::<TestCommand>::new(&db_dir)?;
+            let s = DB::<TestCommand>::open(&storage_cfg)?;
             let (voted_for, entries) = s.recover().await?;
             assert_eq!(voted_for, Some((3, "S1".to_string())));
             assert_eq!(entries[0].index, 1);

@@ -1,7 +1,5 @@
 use std::{
-    collections::HashMap,
     fmt::Display,
-    io::{self, Cursor, Read, SeekFrom, Write},
     sync::{
         atomic::{AtomicI64, AtomicU64, Ordering},
         Arc,
@@ -18,7 +16,6 @@ use curp_external_api::{
 use engine::{Engine, EngineType, Snapshot, SnapshotApi, StorageEngine, WriteOperation};
 use itertools::Itertools;
 use once_cell::sync::Lazy;
-use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::{sync::mpsc, time::sleep};

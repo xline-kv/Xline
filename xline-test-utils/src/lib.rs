@@ -80,7 +80,7 @@ impl Cluster {
                     cluster_info.into(),
                     is_leader,
                     CurpConfig {
-                        data_dir: path.join("curp"),
+                        storage_cfg: StorageConfig::RocksDB(path.join("curp")),
                         ..Default::default()
                     },
                     ClientTimeout::default(),
