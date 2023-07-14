@@ -26,10 +26,10 @@ repos:
       - id: cargo-fmt
         name: cargo fmt
         description: Format files with rustfmt.
-        entry: bash -c 'cargo fmt -- --check'
-        language: rust
-        files: ^(?!abi)\.rs$
-        args: [ ]
+        entry: cargo +nightly fmt --
+        pass_filenames: true
+        types: [file, rust]
+        language: system
       - id: cargo-check
         name: cargo check
         description: Check the package for errors.
