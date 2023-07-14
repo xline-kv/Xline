@@ -28,7 +28,6 @@ repos:
         description: Format files with rustfmt.
         entry: cargo +nightly fmt --
         pass_filenames: true
-        types: [file, rust]
         language: system
       - id: cargo-check
         name: cargo check
