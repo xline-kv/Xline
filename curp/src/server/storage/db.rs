@@ -107,9 +107,9 @@ mod tests {
             let s = DB::<TestCommand>::open(&storage_cfg)?;
             s.flush_voted_for(1, "S2".to_string()).await?;
             s.flush_voted_for(3, "S1".to_string()).await?;
-            let entry0 = LogEntry::new(1, 3, Arc::new(TestCommand::default()));
-            let entry1 = LogEntry::new(2, 3, Arc::new(TestCommand::default()));
-            let entry2 = LogEntry::new(3, 3, Arc::new(TestCommand::default()));
+            let entry0 = LogEntry::new_cmd(1, 3, Arc::new(TestCommand::default()));
+            let entry1 = LogEntry::new_cmd(2, 3, Arc::new(TestCommand::default()));
+            let entry2 = LogEntry::new_cmd(3, 3, Arc::new(TestCommand::default()));
             s.put_log_entry(&entry0).await?;
             s.put_log_entry(&entry1).await?;
             s.put_log_entry(&entry2).await?;

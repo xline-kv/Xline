@@ -14,7 +14,7 @@ use self::conflict_checked_mpmc::Task;
 use super::raw_curp::RawCurp;
 use crate::{
     cmd::{Command, CommandExecutor},
-    log_entry::LogEntry,
+    log_entry::{EntryData, LogEntry},
     role_change::RoleChange,
     server::cmd_worker::conflict_checked_mpmc::TaskType,
     snapshot::{Snapshot, SnapshotMeta},
@@ -68,34 +68,40 @@ async fn cmd_worker<
     while let Ok(mut task) = dispatch_rx.recv().await {
         let succeeded = match task.take() {
             TaskType::SpecExe(entry, pre_err) => {
-                let er = if let Some(err_msg) = pre_err {
-                    Err(err_msg)
-                } else {
-                    ce.execute(entry.cmd.as_ref(), entry.index).await
-                };
-                let er_ok = er.is_ok();
-                cb.write().insert_er(entry.cmd.id(), er);
-                if !er_ok {
-                    sp.lock().remove(entry.cmd.id());
-                    let _ig = ucp.lock().remove(entry.cmd.id());
+                match entry.entry_data {
+                    EntryData::Command(ref cmd) => {
+                        let er = if let Some(err_msg) = pre_err {
+                            Err(err_msg)
+                        } else {
+                            ce.execute(cmd, entry.index).await
+                        };
+                        let er_ok = er.is_ok();
+                        cb.write().insert_er(entry.id(), er);
+                        if !er_ok {
+                            sp.lock().remove(entry.id());
+                            let _ig = ucp.lock().remove(entry.id());
+                        }
+                        debug!(
+                            "{id} cmd({}) is speculatively executed, exe status: {er_ok}",
+                            entry.id()
+                        );
+                        er_ok
+                    }
+                    EntryData::ConfChange(_) => false, // TODO: implement conf change
                 }
-                debug!(
-                    "{id} cmd({}) is speculatively executed, exe status: {er_ok}",
-                    entry.cmd.id()
-                );
-                er_ok
             }
-            TaskType::AS(entry, prepare) => {
-                let asr = ce
-                    .after_sync(entry.cmd.as_ref(), entry.index, prepare)
-                    .await;
-                let asr_ok = asr.is_ok();
-                cb.write().insert_asr(entry.cmd.id(), asr);
-                sp.lock().remove(entry.cmd.id());
-                let _ig = ucp.lock().remove(entry.cmd.id());
-                debug!("{id} cmd({}) after sync is called", entry.cmd.id());
-                asr_ok
-            }
+            TaskType::AS(entry, prepare) => match entry.entry_data {
+                EntryData::Command(ref cmd) => {
+                    let asr = ce.after_sync(cmd.as_ref(), entry.index, prepare).await;
+                    let asr_ok = asr.is_ok();
+                    cb.write().insert_asr(entry.id(), asr);
+                    sp.lock().remove(entry.id());
+                    let _ig = ucp.lock().remove(entry.id());
+                    debug!("{id} cmd({}) after sync is called", entry.id());
+                    asr_ok
+                }
+                EntryData::ConfChange(_) => false, // TODO: implement conf change
+            },
             TaskType::Reset(snapshot, finish_tx) => {
                 if let Some(snapshot) = snapshot {
                     let meta = snapshot.meta;
@@ -291,7 +297,7 @@ mod tests {
             Arc::new(event_listener::Event::new()),
         );
 
-        let entry = Arc::new(LogEntry::new(1, 1, Arc::new(TestCommand::default())));
+        let entry = Arc::new(LogEntry::new_cmd(1, 1, Arc::new(TestCommand::default())));
 
         ce_event_tx.send_sp_exe(Arc::clone(&entry));
         assert_eq!(er_rx.recv().await.unwrap().1 .0, vec![]);
@@ -322,7 +328,7 @@ mod tests {
         );
 
         let begin = Instant::now();
-        let entry = Arc::new(LogEntry::new(
+        let entry = Arc::new(LogEntry::new_cmd(
             1,
             1,
             Arc::new(TestCommand::default().set_exe_dur(Duration::from_secs(1))),
@@ -360,7 +366,7 @@ mod tests {
             Arc::new(event_listener::Event::new()),
         );
 
-        let entry = Arc::new(LogEntry::new(
+        let entry = Arc::new(LogEntry::new_cmd(
             1,
             1,
             Arc::new(
@@ -403,7 +409,7 @@ mod tests {
             Arc::new(event_listener::Event::new()),
         );
 
-        let entry = Arc::new(LogEntry::new(1, 1, Arc::new(TestCommand::default())));
+        let entry = Arc::new(LogEntry::new_cmd(1, 1, Arc::new(TestCommand::default())));
 
         ce_event_tx.send_after_sync(entry);
 
@@ -432,7 +438,7 @@ mod tests {
             Arc::new(event_listener::Event::new()),
         );
 
-        let entry = Arc::new(LogEntry::new(
+        let entry = Arc::new(LogEntry::new_cmd(
             1,
             1,
             Arc::new(TestCommand::default().set_exe_should_fail()),
@@ -468,12 +474,16 @@ mod tests {
             Arc::new(event_listener::Event::new()),
         );
 
-        let entry1 = Arc::new(LogEntry::new(
+        let entry1 = Arc::new(LogEntry::new_cmd(
             1,
             1,
             Arc::new(TestCommand::new_put(vec![1], 1)),
         ));
-        let entry2 = Arc::new(LogEntry::new(2, 1, Arc::new(TestCommand::new_get(vec![1]))));
+        let entry2 = Arc::new(LogEntry::new_cmd(
+            2,
+            1,
+            Arc::new(TestCommand::new_get(vec![1])),
+        ));
 
         ce_event_tx.send_sp_exe(Arc::clone(&entry1));
         ce_event_tx.send_sp_exe(Arc::clone(&entry2));
@@ -516,12 +526,16 @@ mod tests {
             Arc::new(event_listener::Event::new()),
         );
 
-        let entry1 = Arc::new(LogEntry::new(
+        let entry1 = Arc::new(LogEntry::new_cmd(
             1,
             1,
             Arc::new(TestCommand::new_put(vec![1], 1).set_as_dur(Duration::from_millis(50))),
         ));
-        let entry2 = Arc::new(LogEntry::new(2, 1, Arc::new(TestCommand::new_get(vec![1]))));
+        let entry2 = Arc::new(LogEntry::new_cmd(
+            2,
+            1,
+            Arc::new(TestCommand::new_get(vec![1])),
+        ));
         ce_event_tx.send_sp_exe(Arc::clone(&entry1));
         ce_event_tx.send_sp_exe(Arc::clone(&entry2));
 
@@ -529,7 +543,11 @@ mod tests {
 
         ce_event_tx.send_reset(None);
 
-        let entry3 = Arc::new(LogEntry::new(3, 1, Arc::new(TestCommand::new_get(vec![1]))));
+        let entry3 = Arc::new(LogEntry::new_cmd(
+            3,
+            1,
+            Arc::new(TestCommand::new_get(vec![1])),
+        ));
 
         ce_event_tx.send_after_sync(entry3);
 
@@ -555,7 +573,7 @@ mod tests {
             "S3".to_owned(),
             0,
             0,
-            vec![LogEntry::new(1, 1, Arc::new(TestCommand::default()))],
+            vec![LogEntry::new_cmd(1, 1, Arc::new(TestCommand::default()))],
             0,
         )
         .unwrap();
@@ -567,7 +585,7 @@ mod tests {
             Arc::new(event_listener::Event::new()),
         );
 
-        let entry = Arc::new(LogEntry::new(
+        let entry = Arc::new(LogEntry::new_cmd(
             1,
             1,
             Arc::new(TestCommand::new_put(vec![1], 1).set_exe_dur(Duration::from_millis(50))),
@@ -602,7 +620,11 @@ mod tests {
 
         ce_event_tx.send_reset(Some(snapshot)).await.unwrap();
 
-        let entry = Arc::new(LogEntry::new(1, 1, Arc::new(TestCommand::new_get(vec![1]))));
+        let entry = Arc::new(LogEntry::new_cmd(
+            1,
+            1,
+            Arc::new(TestCommand::new_get(vec![1])),
+        ));
         ce_event_tx.send_after_sync(entry);
         assert_eq!(er_rx.recv().await.unwrap().1 .1, vec![1]);
     }

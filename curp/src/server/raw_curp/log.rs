@@ -290,7 +290,7 @@ impl<C: 'static + Command> Log<C> {
         cmd: Arc<C>,
     ) -> Result<Arc<LogEntry<C>>, bincode::Error> {
         let index = self.last_log_index() + 1;
-        let entry = Arc::new(LogEntry::new(index, term, cmd));
+        let entry = Arc::new(LogEntry::new_cmd(index, term, cmd));
 
         self.entries.push_back(Arc::clone(&entry))?;
         self.send_persist(Arc::clone(&entry));
@@ -311,7 +311,7 @@ impl<C: 'static + Command> Log<C> {
 
     /// Get existing cmd ids
     pub(super) fn get_cmd_ids(&self) -> HashSet<&ProposeId> {
-        self.entries.iter().map(|entry| entry.cmd.id()).collect()
+        self.entries.iter().map(|entry| entry.id()).collect()
     }
 
     /// Get previous log entry's term and index
@@ -403,8 +403,8 @@ mod tests {
             Log::<TestCommand>::new(log_tx, default_batch_max_size(), default_log_entries_cap());
         let result = log.try_append_entries(
             vec![
-                LogEntry::new(1, 1, Arc::new(TestCommand::default())),
-                LogEntry::new(2, 1, Arc::new(TestCommand::default())),
+                LogEntry::new_cmd(1, 1, Arc::new(TestCommand::default())),
+                LogEntry::new_cmd(2, 1, Arc::new(TestCommand::default())),
             ],
             0,
             0,
@@ -425,9 +425,9 @@ mod tests {
             Log::<TestCommand>::new(log_tx, default_batch_max_size(), default_log_entries_cap());
         let result = log.try_append_entries(
             vec![
-                LogEntry::new(1, 1, Arc::new(TestCommand::default())),
-                LogEntry::new(2, 1, Arc::new(TestCommand::default())),
-                LogEntry::new(3, 1, Arc::new(TestCommand::default())),
+                LogEntry::new_cmd(1, 1, Arc::new(TestCommand::default())),
+                LogEntry::new_cmd(2, 1, Arc::new(TestCommand::default())),
+                LogEntry::new_cmd(3, 1, Arc::new(TestCommand::default())),
             ],
             0,
             0,
@@ -436,8 +436,8 @@ mod tests {
 
         let result = log.try_append_entries(
             vec![
-                LogEntry::new(2, 2, Arc::new(TestCommand::default())),
-                LogEntry::new(3, 2, Arc::new(TestCommand::default())),
+                LogEntry::new_cmd(2, 2, Arc::new(TestCommand::default())),
+                LogEntry::new_cmd(3, 2, Arc::new(TestCommand::default())),
             ],
             1,
             1,
@@ -453,7 +453,7 @@ mod tests {
         let mut log =
             Log::<TestCommand>::new(log_tx, default_batch_max_size(), default_log_entries_cap());
         let result = log.try_append_entries(
-            vec![LogEntry::new(1, 1, Arc::new(TestCommand::default()))],
+            vec![LogEntry::new_cmd(1, 1, Arc::new(TestCommand::default()))],
             0,
             0,
         );
@@ -461,8 +461,8 @@ mod tests {
 
         let result = log.try_append_entries(
             vec![
-                LogEntry::new(4, 2, Arc::new(TestCommand::default())),
-                LogEntry::new(5, 2, Arc::new(TestCommand::default())),
+                LogEntry::new_cmd(4, 2, Arc::new(TestCommand::default())),
+                LogEntry::new_cmd(5, 2, Arc::new(TestCommand::default())),
             ],
             3,
             1,
@@ -471,8 +471,8 @@ mod tests {
 
         let result = log.try_append_entries(
             vec![
-                LogEntry::new(2, 2, Arc::new(TestCommand::default())),
-                LogEntry::new(3, 2, Arc::new(TestCommand::default())),
+                LogEntry::new_cmd(2, 2, Arc::new(TestCommand::default())),
+                LogEntry::new_cmd(3, 2, Arc::new(TestCommand::default())),
             ],
             1,
             2,
@@ -566,7 +566,7 @@ mod tests {
         let entries = repeat(Arc::clone(&test_cmd))
             .enumerate()
             .take(10)
-            .map(|(idx, cmd)| LogEntry::new((idx + 1).numeric_cast(), 1, cmd))
+            .map(|(idx, cmd)| LogEntry::new_cmd((idx + 1).numeric_cast(), 1, cmd))
             .collect::<Vec<LogEntry<TestCommand>>>();
         let (tx, _rx) = mpsc::unbounded_channel();
         let mut log =

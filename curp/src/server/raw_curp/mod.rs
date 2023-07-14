@@ -41,7 +41,7 @@ use super::cmd_worker::CEEventTxApi;
 use crate::{
     cmd::{Command, ProposeId},
     error::ProposeError,
-    log_entry::LogEntry,
+    log_entry::{EntryData, LogEntry},
     members::ClusterMember,
     role_change::RoleChange,
     rpc::{IdSet, ReadState},
@@ -666,7 +666,14 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             // all uncommitted cmds should stay in ucp until they are executed
             raw_curp.ctx.ucp.map_lock(|mut ucp_l| {
                 for e in &entries {
-                    let _ig = ucp_l.insert(e.cmd.id().clone(), Arc::clone(&e.cmd));
+                    match e.entry_data {
+                        EntryData::Command(ref cmd) => {
+                            let _ig = ucp_l.insert(e.id().clone(), Arc::clone(cmd));
+                        }
+                        EntryData::ConfChange(_) => {
+                            // TODO: recover conf change?
+                        }
+                    }
                 }
             });
         } else {
@@ -960,7 +967,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             debug!(
                 "{} recovers speculatively executed cmd({}) in log[{}]",
                 self.id(),
-                entry.cmd.id(),
+                entry.id(),
                 entry.index,
             );
         }
