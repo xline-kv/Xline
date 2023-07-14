@@ -33,9 +33,9 @@ repos:
       - id: cargo-check
         name: cargo check
         description: Check the package for errors.
-        entry: bash -c 'cargo check --all'
-        language: rust
-        files: \.rs$
+        entry: cargo check --all --
+        types: [file, rust]
+        language: system
         pass_filenames: false
       - id: cargo-clippy
         name: cargo clippy
