@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use curp_external_api::LogIndex;
+use curp_external_api::{
+    cmd::{Command, ProposeId},
+    LogIndex,
+};
 use serde::{Deserialize, Serialize};
 
 /// Log entry
@@ -10,13 +13,47 @@ pub(crate) struct LogEntry<C> {
     pub(crate) term: u64,
     /// Index
     pub(crate) index: LogIndex,
-    /// The Command
-    pub(crate) cmd: Arc<C>,
+    /// Entry data
+    pub(crate) entry_data: EntryData<C>,
 }
 
-impl<C> LogEntry<C> {
-    /// Create a new `LogEntry`
-    pub(super) fn new(index: LogIndex, term: u64, cmd: Arc<C>) -> Self {
-        Self { term, index, cmd }
+/// Entry data of a `LogEntry`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) enum EntryData<C> {
+    /// `Command` entry
+    Command(Arc<C>),
+    /// `ConfChange` entry
+    ConfChange(ProposeId),
+}
+
+impl<C> LogEntry<C>
+where
+    C: Command,
+{
+    /// Create a new `LogEntry` of a `Command`
+    pub(super) fn new_cmd(index: LogIndex, term: u64, cmd: Arc<C>) -> Self {
+        Self {
+            term,
+            index,
+            entry_data: EntryData::Command(cmd),
+        }
+    }
+
+    /// Create a new `LogEntry` of a `ConfChange`
+    #[allow(dead_code)] // TODO: remove this when we implement conf change
+    pub(super) fn new_conf_change(index: LogIndex, term: u64, id: ProposeId) -> Self {
+        Self {
+            term,
+            index,
+            entry_data: EntryData::ConfChange(id),
+        }
+    }
+
+    /// Get the id of the entry
+    pub(super) fn id(&self) -> &ProposeId {
+        match self.entry_data {
+            EntryData::Command(ref cmd) => cmd.id(),
+            EntryData::ConfChange(ref id) => id,
+        }
     }
 }

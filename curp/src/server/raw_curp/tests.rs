@@ -294,7 +294,7 @@ fn handle_ae_will_reject_wrong_log() {
         "S2".to_owned(),
         1,
         1,
-        vec![LogEntry::new(2, 1, Arc::new(TestCommand::default()))],
+        vec![LogEntry::new_cmd(2, 1, Arc::new(TestCommand::default()))],
         0,
     );
     assert_eq!(result, Err((1, 1)));
@@ -426,7 +426,7 @@ fn handle_vote_will_reject_outdated_candidate() {
         "S2".to_owned(),
         0,
         0,
-        vec![LogEntry::new(1, 1, Arc::new(TestCommand::default()))],
+        vec![LogEntry::new_cmd(1, 1, Arc::new(TestCommand::default()))],
         0,
     );
     assert!(result.is_ok());
@@ -522,8 +522,8 @@ fn recover_from_spec_pools_will_pick_the_correct_cmds() {
     curp.recover_from_spec_pools(&mut *curp.st.write(), &mut *curp.log.write(), spec_pools);
 
     curp.log.map_read(|log_r| {
-        assert_eq!(log_r[1].cmd.id(), cmd0.id());
-        assert_eq!(log_r[2].cmd.id(), cmd1.id());
+        assert_eq!(log_r[1].id(), cmd0.id());
+        assert_eq!(log_r[2].id(), cmd1.id());
         assert_eq!(log_r.last_log_index(), 2);
     });
 }

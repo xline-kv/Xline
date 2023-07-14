@@ -16,7 +16,7 @@ use self::cart::Cart;
 use super::{CEEvent, CEEventTx};
 use crate::{
     cmd::{Command, CommandExecutor, ProposeId},
-    log_entry::LogEntry,
+    log_entry::{EntryData, LogEntry},
     snapshot::{Snapshot, SnapshotMeta},
 };
 
@@ -93,7 +93,15 @@ impl<C: Command> Vertex<C> {
             (
                 VertexInner::Entry { entry: entry1, .. },
                 VertexInner::Entry { entry: entry2, .. },
-            ) => entry1.cmd.is_conflict(entry2.cmd.as_ref()),
+            ) => {
+                let EntryData::Command(ref cmd1) = entry1.entry_data else {
+                    return true;
+                };
+                let EntryData::Command(ref cmd2) = entry2.entry_data else {
+                    return true;
+                };
+                cmd1.is_conflict(cmd2)
+            }
             _ => true,
         }
     }
@@ -286,7 +294,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                 .remove(&vid)
                 .expect("no such vertex in conflict graph");
             if let VertexInner::Entry { ref entry, .. } = v.inner {
-                assert!(self.cmd_vid.remove(entry.cmd.id()).is_some(), "no such cmd");
+                assert!(self.cmd_vid.remove(entry.id()).is_some(), "no such cmd");
             }
             self.update_successors(&v);
         }
@@ -327,14 +335,18 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                     AsState::NotSynced(prepare) | AsState::AfterSyncReady(prepare),
                 ) => {
                     assert!(prepare.is_none(), "The prepare result of a given cmd can only be calculated when exe_state change from ExecuteReady to Executing");
-                    let prepare_err =
-                        match self.cmd_executor.prepare(entry.cmd.as_ref(), entry.index) {
-                            Ok(pre_res) => {
-                                as_st.set_prepare_result(pre_res);
-                                None
+                    let prepare_err = match entry.entry_data {
+                        EntryData::Command(ref cmd) => {
+                            match self.cmd_executor.prepare(cmd.as_ref(), entry.index) {
+                                Ok(pre_res) => {
+                                    as_st.set_prepare_result(pre_res);
+                                    None
+                                }
+                                Err(err) => Some(err),
                             }
-                            Err(err) => Some(err),
-                        };
+                        }
+                        EntryData::ConfChange(_) => None,
+                    };
                     *exe_st = ExeState::Executing;
                     let task = Task {
                         vid,
@@ -424,9 +436,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
             CEEvent::SpecExeReady(entry) => {
                 let new_vid = self.next_vertex_id();
                 assert!(
-                    self.cmd_vid
-                        .insert(entry.cmd.id().clone(), new_vid)
-                        .is_none(),
+                    self.cmd_vid.insert(entry.id().clone(), new_vid).is_none(),
                     "cannot insert a cmd twice"
                 );
                 let new_v = Vertex {
@@ -442,7 +452,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                 new_vid
             }
             CEEvent::ASReady(entry) => {
-                if let Some(vid) = self.cmd_vid.get(entry.cmd.id()).copied() {
+                if let Some(vid) = self.cmd_vid.get(entry.id()).copied() {
                     let v = self.get_vertex_mut(vid);
                     match v.inner {
                         VertexInner::Entry { ref mut as_st, .. } => {
@@ -460,9 +470,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                 } else {
                     let new_vid = self.next_vertex_id();
                     assert!(
-                        self.cmd_vid
-                            .insert(entry.cmd.id().clone(), new_vid)
-                            .is_none(),
+                        self.cmd_vid.insert(entry.id().clone(), new_vid).is_none(),
                         "cannot insert a cmd twice"
                     );
                     let new_v = Vertex {
