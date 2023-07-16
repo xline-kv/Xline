@@ -1,16 +1,21 @@
 # Xline
 
-[![Discord Shield](https://discordapp.com/api/guilds/1110584535248281760/widget.png?style=shield)][discord-url]
+[![Discord Shield][discord-badge]][discord-url]
 [![Apache 2.0 licensed][apache-badge]][apache-url]
 [![Build Status][actions-badge]][actions-url]
-[![codecov](https://codecov.io/gh/xline-kv/xline/branch/master/graph/badge.svg)][cov-url]
+[![codecov][cov-badge]][cov-url]
+[![OpenSSF Best Practices][openssf-badge]](openssf-url)
 
+[discord-badge]: https://discordapp.com/api/guilds/1110584535248281760/widget.png?style=shield
 [discord-url]: https://discord.gg/hqDRtYkWzm
 [apache-badge]: https://img.shields.io/badge/license-Apache--2.0-brightgreen
 [apache-url]: https://github.com/datenlord/Xline/blob/master/LICENSE
 [actions-badge]: https://github.com/datenlord/xline/actions/workflows/ci.yml/badge.svg?branch=master
 [actions-url]: https://github.com/datenlord/xline/actions
+[cov-badge]: https://codecov.io/gh/xline-kv/xline/branch/master/graph/badge.svg
 [cov-url]: https://codecov.io/gh/xline-kv/xline
+[openssf-badge]: https://bestpractices.coreinfrastructure.org/projects/7571/badge
+[openssf-url]: https://bestpractices.coreinfrastructure.org/projects/7571
 
 `Xline` is a geo-distributed KV store for metadata management. It provides the
 following features:
