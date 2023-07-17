@@ -2,7 +2,7 @@ use xline_client::{clients::maintenance::MaintenanceClient, error::Result, Clien
 use xline_test_utils::Cluster;
 
 #[tokio::test]
-async fn snapshot() -> Result<()> {
+async fn snapshot_should_get_valid_data() -> Result<()> {
     let (_cluster, mut client) = get_cluster_client().await?;
 
     let mut msg = client.snapshot().await?;
