@@ -8,6 +8,7 @@ use jsonwebtoken::{DecodingKey, EncodingKey};
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
+use tonic_health::ServingStatus;
 use utils::config::{ClientTimeout, CurpConfig, ServerTimeout, StorageConfig};
 
 use super::{
@@ -85,7 +86,7 @@ impl XlineServer {
             client_timeout,
             storage_cfg: storage_config,
             server_timeout,
-            shutdown_trigger: Arc::new(event_listener::Event::new()),
+            shutdown_trigger: Arc::new(Event::new()),
         }
     }
 
@@ -195,6 +196,10 @@ impl XlineServer {
             maintenance_server,
             curp_server,
         ) = self.init_servers(persistent, key_pair).await?;
+        let (mut reporter, health_server) = tonic_health::server::health_reporter();
+        reporter
+            .set_service_status("", ServingStatus::Serving)
+            .await;
         Ok(Server::builder()
             .add_service(RpcLockServer::new(lock_server))
             .add_service(RpcKvServer::new(kv_server))
@@ -203,6 +208,7 @@ impl XlineServer {
             .add_service(RpcWatchServer::new(watch_server))
             .add_service(RpcMaintenanceServer::new(maintenance_server))
             .add_service(ProtocolServer::new(curp_server))
+            .add_service(health_server)
             .serve(addr)
             .await?)
     }
@@ -232,6 +238,10 @@ impl XlineServer {
             maintenance_server,
             curp_server,
         ) = self.init_servers(persistent, key_pair).await?;
+        let (mut reporter, health_server) = tonic_health::server::health_reporter();
+        reporter
+            .set_service_status("", ServingStatus::Serving)
+            .await;
         Ok(Server::builder()
             .add_service(RpcLockServer::new(lock_server))
             .add_service(RpcKvServer::new(kv_server))
@@ -240,6 +250,7 @@ impl XlineServer {
             .add_service(RpcWatchServer::new(watch_server))
             .add_service(RpcMaintenanceServer::new(maintenance_server))
             .add_service(ProtocolServer::new(curp_server))
+            .add_service(health_server)
             .serve_with_incoming_shutdown(TcpListenerStream::new(xline_listener), signal)
             .await?)
     }
