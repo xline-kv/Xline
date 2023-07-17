@@ -11,7 +11,7 @@ mod common;
 
 #[tokio::test]
 #[abort_on_panic]
-async fn test_put() -> Result<()> {
+async fn put_should_success_in_normal_path() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await?;
     let mut client = client.kv_client();
 
@@ -45,7 +45,7 @@ async fn test_put() -> Result<()> {
 
 #[tokio::test]
 #[abort_on_panic]
-async fn test_get() -> Result<()> {
+async fn range_should_fetches_previously_put_keys() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await?;
     let mut client = client.kv_client();
 
@@ -96,7 +96,7 @@ async fn test_get() -> Result<()> {
 
 #[tokio::test]
 #[abort_on_panic]
-async fn test_delete() -> Result<()> {
+async fn delete_should_remove_previously_put_kvs() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await?;
     let mut client = client.kv_client();
 
@@ -170,7 +170,7 @@ async fn test_delete() -> Result<()> {
 
 #[tokio::test]
 #[abort_on_panic]
-async fn test_txn() -> Result<()> {
+async fn txn_should_execute_as_expected() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await?;
     let mut client = client.kv_client();
 

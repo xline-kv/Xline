@@ -14,7 +14,7 @@ use xlineapi::Type;
 mod common;
 
 #[tokio::test]
-async fn role_operations() -> Result<()> {
+async fn role_operations_should_success_in_normal_path() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await?;
     let client = client.auth_client();
     let role1 = "role1";
@@ -52,7 +52,7 @@ async fn role_operations() -> Result<()> {
 }
 
 #[tokio::test]
-async fn permission_operations() -> Result<()> {
+async fn permission_operations_should_success_in_normal_path() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await?;
     let client = client.auth_client();
 
@@ -123,7 +123,7 @@ async fn permission_operations() -> Result<()> {
 }
 
 #[tokio::test]
-async fn user_operations() -> Result<()> {
+async fn user_operations_should_success_in_normal_path() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await?;
     let client = client.auth_client();
 
@@ -155,7 +155,7 @@ async fn user_operations() -> Result<()> {
 }
 
 #[tokio::test]
-async fn user_roles() -> Result<()> {
+async fn user_role_operations_should_success_in_normal_path() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await?;
     let client = client.auth_client();
 
