@@ -2599,6 +2599,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "tonic-health"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a88aee666ef3a4d1ee46218bbc8e5f69bcf9cc27bf2e871d6b724d83f56d179f"
+dependencies = [
+ "async-stream",
+ "bytes",
+ "prost",
+ "tokio",
+ "tokio-stream 0.1.12 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tonic",
+]
+
+[[package]]
 name = "tower"
 version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3158,6 +3172,7 @@ dependencies = [
  "tokio-stream 0.1.12 (git+https://github.com/madsim-rs/tokio.git?rev=ab251ad)",
  "tokio-util",
  "toml 0.5.10",
+ "tonic-health",
  "tracing",
  "tracing-appender",
  "tracing-opentelemetry",
