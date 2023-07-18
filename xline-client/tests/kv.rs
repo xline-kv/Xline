@@ -13,7 +13,7 @@ mod common;
 #[abort_on_panic]
 async fn test_put() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await?;
-    let mut client = client.kv_client();
+    let client = client.kv_client();
 
     let request = PutRequest::new("put", "123");
     client.put(request).await?;
@@ -47,7 +47,7 @@ async fn test_put() -> Result<()> {
 #[abort_on_panic]
 async fn test_get() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await?;
-    let mut client = client.kv_client();
+    let client = client.kv_client();
 
     client.put(PutRequest::new("get10", "10")).await?;
     client.put(PutRequest::new("get11", "11")).await?;
@@ -98,7 +98,7 @@ async fn test_get() -> Result<()> {
 #[abort_on_panic]
 async fn test_delete() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await?;
-    let mut client = client.kv_client();
+    let client = client.kv_client();
 
     client.put(PutRequest::new("del10", "10")).await?;
     client.put(PutRequest::new("del11", "11")).await?;
@@ -172,7 +172,7 @@ async fn test_delete() -> Result<()> {
 #[abort_on_panic]
 async fn test_txn() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await?;
-    let mut client = client.kv_client();
+    let client = client.kv_client();
 
     client.put(PutRequest::new("txn01", "01")).await?;
 
