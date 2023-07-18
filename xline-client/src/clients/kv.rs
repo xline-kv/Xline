@@ -38,7 +38,7 @@ impl KvClient {
     ///
     /// If `CurpClient` failed to send request
     #[inline]
-    pub async fn put(&mut self, request: PutRequest) -> Result<PutResponse> {
+    pub async fn put(&self, request: PutRequest) -> Result<PutResponse> {
         let key_ranges = vec![KeyRange::new_one_key(request.key())];
         let propose_id = self.generate_propose_id();
         let request = RequestWithToken::new_with_token(
@@ -56,7 +56,7 @@ impl KvClient {
     ///
     /// If `CurpClient` failed to send request
     #[inline]
-    pub async fn range(&mut self, request: RangeRequest) -> Result<RangeResponse> {
+    pub async fn range(&self, request: RangeRequest) -> Result<RangeResponse> {
         let key_ranges = vec![KeyRange::new(request.key(), request.range_end())];
         let propose_id = self.generate_propose_id();
         let request = RequestWithToken::new_with_token(
@@ -74,7 +74,7 @@ impl KvClient {
     ///
     /// If `CurpClient` failed to send request
     #[inline]
-    pub async fn delete(&mut self, request: DeleteRangeRequest) -> Result<DeleteRangeResponse> {
+    pub async fn delete(&self, request: DeleteRangeRequest) -> Result<DeleteRangeResponse> {
         let key_ranges = vec![KeyRange::new(request.key(), request.range_end())];
         let propose_id = self.generate_propose_id();
         let request = RequestWithToken::new_with_token(
@@ -92,7 +92,7 @@ impl KvClient {
     ///
     /// If `CurpClient` failed to send request
     #[inline]
-    pub async fn txn(&mut self, txn: Txn) -> Result<TxnResponse> {
+    pub async fn txn(&self, txn: Txn) -> Result<TxnResponse> {
         let key_ranges = txn
             .req
             .compare

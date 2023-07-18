@@ -13,7 +13,7 @@ mod common;
 #[abort_on_panic]
 async fn put_should_success_in_normal_path() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await?;
-    let mut client = client.kv_client();
+    let client = client.kv_client();
 
     let request = PutRequest::new("put", "123");
     client.put(request).await?;
@@ -47,7 +47,7 @@ async fn put_should_success_in_normal_path() -> Result<()> {
 #[abort_on_panic]
 async fn range_should_fetches_previously_put_keys() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await?;
-    let mut client = client.kv_client();
+    let client = client.kv_client();
 
     client.put(PutRequest::new("get10", "10")).await?;
     client.put(PutRequest::new("get11", "11")).await?;
@@ -98,7 +98,7 @@ async fn range_should_fetches_previously_put_keys() -> Result<()> {
 #[abort_on_panic]
 async fn delete_should_remove_previously_put_kvs() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await?;
-    let mut client = client.kv_client();
+    let client = client.kv_client();
 
     client.put(PutRequest::new("del10", "10")).await?;
     client.put(PutRequest::new("del11", "11")).await?;
@@ -172,7 +172,7 @@ async fn delete_should_remove_previously_put_kvs() -> Result<()> {
 #[abort_on_panic]
 async fn txn_should_execute_as_expected() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await?;
-    let mut client = client.kv_client();
+    let client = client.kv_client();
 
     client.put(PutRequest::new("txn01", "01")).await?;
 

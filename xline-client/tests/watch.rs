@@ -9,7 +9,7 @@ mod common;
 async fn watch_should_receive_consistent_events() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await?;
     let mut watch_client = client.watch_client();
-    let mut kv_client = client.kv_client();
+    let kv_client = client.kv_client();
 
     let (mut watcher, mut stream) = watch_client.watch(WatchRequest::new("watch01")).await?;
 
