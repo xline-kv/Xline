@@ -139,11 +139,6 @@ where
         }
         Ok(())
     }
-
-    /// Mark the `KeyRevision` in index as available
-    pub(crate) fn mark_index_available(&self, revision: i64) {
-        self.index.mark_available(revision);
-    }
 }
 
 impl<DB> KvStore<DB>
@@ -944,9 +939,8 @@ mod test {
         request: &RequestWithToken,
         revision: i64,
     ) -> Result<(), ExecuteError> {
-        let (sync_res, ops) = store.after_sync(request, revision).await?;
+        let (_sync_res, ops) = store.after_sync(request, revision).await?;
         store.db.flush_ops(ops)?;
-        store.mark_index_available(sync_res.revision());
         Ok(())
     }
 
