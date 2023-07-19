@@ -40,7 +40,7 @@ pub struct CurpNode {
     pub exe_rx: mpsc::UnboundedReceiver<(TestCommand, TestCommandResult)>,
     pub as_rx: mpsc::UnboundedReceiver<(TestCommand, LogIndex)>,
     pub store: Arc<Engine>,
-    pub rt: Runtime,
+    pub rt: Option<Runtime>,
     pub storage_path: PathBuf,
     pub role_change_arc: Arc<TestRoleChangeInner>,
 }
@@ -85,28 +85,26 @@ impl CurpGroup {
                     .enable_all()
                     .build()
                     .unwrap();
-                let handle = rt.handle().clone();
 
                 let storage_path_c = storage_path.clone();
                 let role_change_cb = TestRoleChange::default();
                 let role_change_arc = role_change_cb.get_inner_arc();
-                thread::spawn(move || {
-                    handle.spawn(Rpc::run_from_listener(
-                        cluster_info,
-                        i == 0,
-                        listener,
-                        ce,
-                        Box::new(MemorySnapshotAllocator),
-                        role_change_cb,
-                        Arc::new(
-                            CurpConfigBuilder::default()
-                                .data_dir(storage_path_c)
-                                .log_entries_cap(10)
-                                .build()
-                                .unwrap(),
-                        ),
-                    ));
-                });
+
+                rt.spawn(Rpc::run_from_listener(
+                    cluster_info,
+                    i == 0,
+                    listener,
+                    ce,
+                    Box::new(MemorySnapshotAllocator),
+                    role_change_cb,
+                    Arc::new(
+                        CurpConfigBuilder::default()
+                            .data_dir(storage_path_c)
+                            .log_entries_cap(10)
+                            .build()
+                            .unwrap(),
+                    ),
+                ));
 
                 (
                     id.clone(),
@@ -116,7 +114,7 @@ impl CurpGroup {
                         exe_rx,
                         as_rx,
                         store,
-                        rt,
+                        rt: Some(rt),
                         storage_path,
                         role_change_arc,
                     },
@@ -155,11 +153,15 @@ impl CurpGroup {
             .values()
             .map(|node| node.storage_path.clone())
             .collect_vec();
-        thread::spawn(move || {
-            self.nodes.clear();
-        })
-        .join()
-        .unwrap();
+
+        for node in self.nodes.values_mut() {
+            if let Some(rt) = node.rt.take() {
+                rt.shutdown_background();
+            }
+        }
+
+        self.nodes.clear();
+
         for path in paths {
             std::fs::remove_dir_all(path).unwrap();
         }
