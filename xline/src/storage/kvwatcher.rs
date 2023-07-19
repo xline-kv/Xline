@@ -735,8 +735,7 @@ mod test {
             }
             .into(),
         );
-        let (sync_res, ops) = store.after_sync(&req, revision).await.unwrap();
+        let (_sync_res, ops) = store.after_sync(&req, revision).await.unwrap();
         db.flush_ops(ops).unwrap();
-        store.mark_index_available(sync_res.revision());
     }
 }

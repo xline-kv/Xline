@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use clippy_utilities::OverflowArithmetic;
 use itertools::Itertools;
@@ -19,8 +19,6 @@ pub(crate) struct Index {
 struct IndexInner {
     /// index
     index: BTreeMap<Vec<u8>, Vec<KeyRevision>>,
-    /// unavailable cache, used to cache unavailable revisions to keys mapping
-    unavailable_cache: HashMap<i64, Vec<Vec<u8>>>,
 }
 
 impl Index {
@@ -29,7 +27,6 @@ impl Index {
         Self {
             inner: Mutex::new(IndexInner {
                 index: BTreeMap::new(),
-                unavailable_cache: HashMap::new(),
             }),
         }
     }
@@ -37,7 +34,7 @@ impl Index {
     /// Filter out `KeyRevision` that is less than one revision and convert to `Revision`
     fn filter_revision(revs: &[KeyRevision], revision: i64) -> Vec<Revision> {
         revs.iter()
-            .filter(|rev| rev.mod_revision >= revision && rev.available)
+            .filter(|rev| rev.mod_revision >= revision)
             .map(KeyRevision::as_revision)
             .collect()
     }
@@ -45,7 +42,7 @@ impl Index {
     /// Get specified or last `KeyRevision` if the key is not deleted, and convert to `Revision`
     fn get_revision(revs: &[KeyRevision], revision: i64) -> Option<Revision> {
         let rev = if revision <= 0 {
-            revs.iter().rev().find(|kr| kr.available)
+            revs.last()
         } else {
             let idx = match revs.binary_search_by(|rev| rev.mod_revision.cmp(&revision)) {
                 Ok(idx) => idx,
@@ -72,24 +69,6 @@ impl Index {
         let del_rev = KeyRevision::new_deletion(revision, sub_revision);
         revs.push(del_rev);
         Some((last_available_rev, del_rev.as_revision()))
-    }
-
-    /// Mark the `KeyRevision` as available
-    /// # Panics
-    /// panic if keys in `unavailable_cache` does not match with `index`
-    pub(super) fn mark_available(&self, revision: i64) {
-        let mut inner = self.inner.lock();
-        let Some(keys) = inner.unavailable_cache.remove(&revision) else {
-            return;
-        };
-        for key in keys {
-            let Some(revs) = inner.index.get_mut(&key) else {
-                unreachable!("key({key:?}) should exist in index");
-            };
-            if let Some(rev) = revs.iter_mut().find(|rev| rev.mod_revision == revision) {
-                rev.available = true;
-            }
-        }
     }
 }
 
@@ -224,15 +203,6 @@ impl IndexOperate for Index {
                 })
                 .unzip(),
         };
-        if !keys.is_empty() {
-            assert!(
-                inner
-                    .unavailable_cache
-                    .insert(revision, keys.clone())
-                    .is_none(),
-                "revision {revision} is already in the unavailable cache",
-            );
-        }
         (pairs, keys)
     }
 
@@ -265,11 +235,6 @@ impl IndexOperate for Index {
             let _prev_val = inner.index.insert(key.to_vec(), vec![new_rev]);
             new_rev
         };
-        inner
-            .unavailable_cache
-            .entry(revision)
-            .or_default()
-            .push(key.to_vec());
         new_rev
     }
 
@@ -281,8 +246,7 @@ impl IndexOperate for Index {
         create_revision: i64,
         version: i64,
     ) {
-        let mut new_rev = KeyRevision::new(create_revision, version, revision, sub_revision);
-        new_rev.available = true;
+        let new_rev = KeyRevision::new(create_revision, version, revision, sub_revision);
         self.inner
             .lock()
             .index
@@ -332,14 +296,6 @@ impl IndexOperate for Index {
 mod test {
     use super::*;
 
-    #[allow(clippy::multiple_inherent_impl)] // just for test
-    impl KeyRevision {
-        fn mark_available(mut self) -> Self {
-            self.available = true;
-            self
-        }
-    }
-
     fn init_and_test_insert() -> Index {
         let index = Index::new();
 
@@ -353,41 +309,31 @@ mod test {
         index.insert_or_update_revision(b"foo", 8, 8);
         index.insert_or_update_revision(b"bar", 9, 9);
 
-        index.mark_available(1);
-        index.mark_available(2);
-        index.mark_available(3);
-        index.mark_available(4);
-        index.mark_available(5);
-        index.mark_available(6);
-        index.mark_available(7);
-        index.mark_available(8);
-        index.mark_available(9);
-
         assert_eq!(
             index.inner.lock().index,
             BTreeMap::from_iter(vec![
                 (
                     b"key".to_vec(),
                     vec![
-                        KeyRevision::new(1, 1, 1, 3).mark_available(),
-                        KeyRevision::new(1, 2, 2, 2).mark_available(),
-                        KeyRevision::new(1, 3, 3, 1).mark_available(),
+                        KeyRevision::new(1, 1, 1, 3),
+                        KeyRevision::new(1, 2, 2, 2),
+                        KeyRevision::new(1, 3, 3, 1),
                     ]
                 ),
                 (
                     b"foo".to_vec(),
                     vec![
-                        KeyRevision::new(4, 1, 4, 5).mark_available(),
-                        KeyRevision::new(4, 2, 6, 6).mark_available(),
-                        KeyRevision::new(4, 3, 8, 8).mark_available()
+                        KeyRevision::new(4, 1, 4, 5),
+                        KeyRevision::new(4, 2, 6, 6),
+                        KeyRevision::new(4, 3, 8, 8),
                     ]
                 ),
                 (
                     b"bar".to_vec(),
                     vec![
-                        KeyRevision::new(5, 1, 5, 4).mark_available(),
-                        KeyRevision::new(5, 2, 7, 7).mark_available(),
-                        KeyRevision::new(5, 3, 9, 9).mark_available(),
+                        KeyRevision::new(5, 1, 5, 4),
+                        KeyRevision::new(5, 2, 7, 7),
+                        KeyRevision::new(5, 3, 9, 9),
                     ]
                 )
             ])
@@ -441,7 +387,6 @@ mod test {
                 vec![b"key".to_vec()]
             )
         );
-        index.mark_available(10);
 
         assert_eq!(
             index.delete(b"a", b"g", 11, 0),
@@ -453,7 +398,6 @@ mod test {
                 vec![b"bar".to_vec(), b"foo".to_vec()]
             )
         );
-        index.mark_available(11);
 
         assert_eq!(index.delete(b"\0", b"\0", 12, 0), (vec![], vec![]));
 
@@ -463,28 +407,28 @@ mod test {
                 (
                     b"key".to_vec(),
                     vec![
-                        KeyRevision::new(1, 1, 1, 3).mark_available(),
-                        KeyRevision::new(1, 2, 2, 2).mark_available(),
-                        KeyRevision::new(1, 3, 3, 1).mark_available(),
-                        KeyRevision::new_deletion(10, 0).mark_available()
+                        KeyRevision::new(1, 1, 1, 3),
+                        KeyRevision::new(1, 2, 2, 2),
+                        KeyRevision::new(1, 3, 3, 1),
+                        KeyRevision::new_deletion(10, 0),
                     ]
                 ),
                 (
                     b"foo".to_vec(),
                     vec![
-                        KeyRevision::new(4, 1, 4, 5).mark_available(),
-                        KeyRevision::new(4, 2, 6, 6).mark_available(),
-                        KeyRevision::new(4, 3, 8, 8).mark_available(),
-                        KeyRevision::new_deletion(11, 1).mark_available()
+                        KeyRevision::new(4, 1, 4, 5),
+                        KeyRevision::new(4, 2, 6, 6),
+                        KeyRevision::new(4, 3, 8, 8),
+                        KeyRevision::new_deletion(11, 1),
                     ]
                 ),
                 (
                     b"bar".to_vec(),
                     vec![
-                        KeyRevision::new(5, 1, 5, 4).mark_available(),
-                        KeyRevision::new(5, 2, 7, 7).mark_available(),
-                        KeyRevision::new(5, 3, 9, 9).mark_available(),
-                        KeyRevision::new_deletion(11, 0).mark_available()
+                        KeyRevision::new(5, 1, 5, 4),
+                        KeyRevision::new(5, 2, 7, 7),
+                        KeyRevision::new(5, 3, 9, 9),
+                        KeyRevision::new_deletion(11, 0),
                     ]
                 )
             ])
@@ -502,13 +446,13 @@ mod test {
             BTreeMap::from_iter(vec![
                 (
                     b"foo".to_vec(),
-                    vec![KeyRevision::new(4, 1, 4, 0).mark_available()]
+                    vec![KeyRevision::new(4, 1, 4, 0)]
                 ),
                 (
                     b"key".to_vec(),
                     vec![
-                        KeyRevision::new(2, 1, 2, 0).mark_available(),
-                        KeyRevision::new(2, 2, 3, 0).mark_available(),
+                        KeyRevision::new(2, 1, 2, 0),
+                        KeyRevision::new(2, 2, 3, 0),
                     ],
                 ),
             ])
@@ -524,20 +468,20 @@ mod test {
             BTreeMap::from_iter(vec![
                 (
                     b"key".to_vec(),
-                    vec![KeyRevision::new(1, 3, 3, 1).mark_available(),]
+                    vec![KeyRevision::new(1, 3, 3, 1),]
                 ),
                 (
                     b"foo".to_vec(),
                     vec![
-                        KeyRevision::new(4, 2, 6, 6).mark_available(),
-                        KeyRevision::new(4, 3, 8, 8).mark_available()
+                        KeyRevision::new(4, 2, 6, 6),
+                        KeyRevision::new(4, 3, 8, 8)
                     ]
                 ),
                 (
                     b"bar".to_vec(),
                     vec![
-                        KeyRevision::new(5, 2, 7, 7).mark_available(),
-                        KeyRevision::new(5, 3, 9, 9).mark_available(),
+                        KeyRevision::new(5, 2, 7, 7),
+                        KeyRevision::new(5, 3, 9, 9),
                     ]
                 )
             ])
@@ -545,10 +489,10 @@ mod test {
         assert_eq!(
             res,
             vec![
-                KeyRevision::new(5, 1, 5, 4).mark_available(),
-                KeyRevision::new(4, 1, 4, 5).mark_available(),
-                KeyRevision::new(1, 1, 1, 3).mark_available(),
-                KeyRevision::new(1, 2, 2, 2).mark_available(),
+                KeyRevision::new(5, 1, 5, 4),
+                KeyRevision::new(4, 1, 4, 5),
+                KeyRevision::new(1, 1, 1, 3),
+                KeyRevision::new(1, 2, 2, 2),
             ]
         );
     }
@@ -557,10 +501,8 @@ mod test {
     fn test_compact_with_deletion() {
         let index = init_and_test_insert();
         index.delete(b"a", b"g", 10, 0);
-        index.mark_available(10);
 
         index.insert_or_update_revision(b"bar", 11, 0);
-        index.mark_available(11);
 
         let res = index.compact(10);
         assert_eq!(
@@ -568,27 +510,27 @@ mod test {
             BTreeMap::from_iter(vec![
                 (
                     b"key".to_vec(),
-                    vec![KeyRevision::new(1, 3, 3, 1).mark_available(),]
+                    vec![KeyRevision::new(1, 3, 3, 1),]
                 ),
                 (
                     b"bar".to_vec(),
-                    vec![KeyRevision::new(11, 1, 11, 0).mark_available(),]
+                    vec![KeyRevision::new(11, 1, 11, 0),]
                 )
             ])
         );
         assert_eq!(
             res,
             vec![
-                KeyRevision::new(5, 1, 5, 4).mark_available(),
-                KeyRevision::new(5, 2, 7, 7).mark_available(),
-                KeyRevision::new(5, 3, 9, 9).mark_available(),
-                KeyRevision::new(0, 0, 10, 0).mark_available(),
-                KeyRevision::new(4, 1, 4, 5).mark_available(),
-                KeyRevision::new(4, 2, 6, 6).mark_available(),
-                KeyRevision::new(4, 3, 8, 8).mark_available(),
-                KeyRevision::new(0, 0, 10, 1).mark_available(),
-                KeyRevision::new(1, 1, 1, 3).mark_available(),
-                KeyRevision::new(1, 2, 2, 2).mark_available(),
+                KeyRevision::new(5, 1, 5, 4),
+                KeyRevision::new(5, 2, 7, 7),
+                KeyRevision::new(5, 3, 9, 9),
+                KeyRevision::new(0, 0, 10, 0),
+                KeyRevision::new(4, 1, 4, 5),
+                KeyRevision::new(4, 2, 6, 6),
+                KeyRevision::new(4, 3, 8, 8),
+                KeyRevision::new(0, 0, 10, 1),
+                KeyRevision::new(1, 1, 1, 3),
+                KeyRevision::new(1, 2, 2, 2),
             ]
         );
     }

@@ -11,9 +11,6 @@ pub(super) struct KeyRevision {
     pub(super) mod_revision: i64,
     /// Sub revision in one transaction
     pub(super) sub_revision: i64,
-    /// Available flag
-    /// true means this revision has been already written to storage
-    pub(crate) available: bool,
 }
 
 /// Revision
@@ -85,7 +82,6 @@ impl KeyRevision {
             version,
             mod_revision,
             sub_revision,
-            available: false,
         }
     }
 
@@ -96,7 +92,6 @@ impl KeyRevision {
             version: 0,
             mod_revision,
             sub_revision,
-            available: false,
         }
     }
 

@@ -347,7 +347,6 @@ where
         };
         ops.append(&mut wr_ops);
         self.persistent.flush_ops(ops)?;
-        self.kv_storage.mark_index_available(res.revision());
         self.lease_storage.mark_lease_synced(&wrapper.request);
         self.id_barrier.trigger(cmd.id());
         self.index_barrier.trigger(index);
