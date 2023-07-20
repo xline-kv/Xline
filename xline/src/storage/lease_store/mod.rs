@@ -240,7 +240,7 @@ where
         _ = self.unsynced_cache.write().insert(req.id);
 
         Ok(LeaseGrantResponse {
-            header: Some(self.header_gen.gen_header_without_revision()),
+            header: Some(self.header_gen.gen_header()),
             id: req.id,
             ttl: req.ttl,
             error: String::new(),
@@ -256,7 +256,7 @@ where
             _ = self.unsynced_cache.write().insert(req.id);
 
             Ok(LeaseRevokeResponse {
-                header: Some(self.header_gen.gen_header_without_revision()),
+                header: Some(self.header_gen.gen_header()),
             })
         } else {
             Err(ExecuteError::lease_not_found(req.id))
@@ -272,7 +272,7 @@ where
             .collect();
 
         LeaseLeasesResponse {
-            header: Some(self.header_gen.gen_header_without_revision()),
+            header: Some(self.header_gen.gen_header()),
             leases,
         }
     }
@@ -381,7 +381,7 @@ mod test {
     async fn test_lease_storage() -> Result<(), Box<dyn Error>> {
         let db = DB::open(&StorageConfig::Memory)?;
         let lease_store = init_store(db);
-        let revision_gen = lease_store.header_gen.revision_arc();
+        let revision_gen = lease_store.header_gen.general_revision_arc();
 
         let req1 = RequestWithToken::new(LeaseGrantRequest { ttl: 10, id: 1 }.into());
         let _ignore1 = exe_and_sync_req(&lease_store, &req1, -1).await?;
