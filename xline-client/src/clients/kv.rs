@@ -3,11 +3,14 @@ use std::sync::Arc;
 use curp::{client::Client as CurpClient, cmd::ProposeId};
 use uuid::Uuid;
 use xline::server::{Command, KeyRange};
-use xlineapi::{DeleteRangeResponse, PutResponse, RangeResponse, RequestWithToken, TxnResponse};
+use xlineapi::{
+    CompactionResponse, DeleteRangeResponse, PutResponse, RangeResponse, RequestWithToken,
+    TxnResponse,
+};
 
 use crate::{
     error::Result,
-    types::kv::{DeleteRangeRequest, PutRequest, RangeRequest, Txn},
+    types::kv::{CompactionRequest, DeleteRangeRequest, PutRequest, RangeRequest, Txn},
 };
 
 /// Client for KV operations.
@@ -108,6 +111,34 @@ impl KvClient {
         let (cmd_res, sync_res) = self.curp_client.propose_indexed(cmd).await?;
         let mut res_wrapper = cmd_res.decode();
         res_wrapper.update_revision(sync_res.revision());
+        Ok(res_wrapper.into())
+    }
+
+    /// Send `CompactionRequest` by `CurpClient`
+    ///
+    /// # Errors
+    ///
+    /// If `CurpClient` failed to send request
+    #[inline]
+    pub async fn compact(&self, request: CompactionRequest) -> Result<CompactionResponse> {
+        let use_fast_path = request.physical();
+        let propose_id = self.generate_propose_id();
+        let request = RequestWithToken::new_with_token(
+            xlineapi::CompactionRequest::from(request).into(),
+            self.token.clone(),
+        );
+        let cmd = Command::new(vec![], request, propose_id);
+
+        let res_wrapper = if use_fast_path {
+            let cmd_res = self.curp_client.propose(cmd).await?;
+            cmd_res.decode()
+        } else {
+            let (cmd_res, sync_res) = self.curp_client.propose_indexed(cmd).await?;
+            let mut res_wrapper = cmd_res.decode();
+            res_wrapper.update_revision(sync_res.revision());
+            res_wrapper
+        };
+
         Ok(res_wrapper.into())
     }
 
