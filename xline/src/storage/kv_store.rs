@@ -161,7 +161,7 @@ where
             index,
             db,
             compacted_rev: AtomicI64::new(-1),
-            revision: header_gen.revision_arc(),
+            revision: header_gen.general_revision_arc(),
             header_gen,
             kv_update_tx,
             compact_task_tx,
@@ -546,7 +546,7 @@ where
     /// Handle `PutRequest`
     fn handle_put_request(&self, req: &PutRequest) -> Result<PutResponse, ExecuteError> {
         let mut response = PutResponse {
-            header: Some(self.header_gen.gen_header_without_revision()),
+            header: Some(self.header_gen.gen_header()),
             ..Default::default()
         };
         if req.prev_kv || req.ignore_lease || req.ignore_value {
@@ -568,7 +568,7 @@ where
     ) -> Result<DeleteRangeResponse, ExecuteError> {
         let prev_kvs = self.get_range(&req.key, &req.range_end, 0)?;
         let mut response = DeleteRangeResponse {
-            header: Some(self.header_gen.gen_header_without_revision()),
+            header: Some(self.header_gen.gen_header()),
             ..DeleteRangeResponse::default()
         };
         response.deleted = prev_kvs.len().cast();
@@ -595,7 +595,7 @@ where
             responses.push(response.into());
         }
         Ok(TxnResponse {
-            header: Some(self.header_gen.gen_header_without_revision()),
+            header: Some(self.header_gen.gen_header()),
             succeeded: success,
             responses,
         })
@@ -610,7 +610,7 @@ where
         );
         self.update_compacted_revision(target_revision);
         CompactionResponse {
-            header: Some(self.header_gen.gen_header_without_revision()),
+            header: Some(self.header_gen.gen_header()),
         }
     }
 

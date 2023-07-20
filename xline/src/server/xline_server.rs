@@ -24,7 +24,6 @@ use super::{
 use crate::{
     header_gen::HeaderGenerator,
     id_gen::IdGenerator,
-    revision_number::RevisionNumberGenerator,
     rpc::{
         AuthServer as RpcAuthServer, KvServer as RpcKvServer, LeaseServer as RpcLeaseServer,
         LockServer as RpcLockServer, MaintenanceServer as RpcMaintenanceServer,
@@ -117,7 +116,6 @@ impl XlineServer {
         persistent: Arc<S>,
         lease_collection: Arc<LeaseCollection>,
         header_gen: Arc<HeaderGenerator>,
-        auth_revision_gen: Arc<RevisionNumberGenerator>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
     ) -> Result<(
         Arc<KvStore<S>>,
@@ -157,7 +155,6 @@ impl XlineServer {
             key_pair,
             header_gen,
             persistent,
-            auth_revision_gen,
         ));
         let watcher = KvWatcher::new_arc(
             Arc::clone(&kv_storage),
@@ -176,17 +173,12 @@ impl XlineServer {
     #[inline]
     fn construct_generator(
         cluster_info: &Arc<ClusterMember>,
-    ) -> (
-        Arc<HeaderGenerator>,
-        Arc<IdGenerator>,
-        Arc<RevisionNumberGenerator>,
-    ) {
+    ) -> (Arc<HeaderGenerator>, Arc<IdGenerator>) {
         let member_id = cluster_info.gen_member_id("");
         let cluster_id = cluster_info.gen_cluster_id("");
         (
             Arc::new(HeaderGenerator::new(cluster_id, member_id)),
             Arc::new(IdGenerator::new(member_id)),
-            Arc::new(RevisionNumberGenerator::default()),
         )
     }
 
@@ -286,7 +278,7 @@ impl XlineServer {
         MaintenanceServer<S>,
         CurpServer<S>,
     )> {
-        let (header_gen, id_gen, auth_revision_gen) = Self::construct_generator(&self.cluster_info);
+        let (header_gen, id_gen) = Self::construct_generator(&self.cluster_info);
         let lease_collection = Self::construct_lease_collection(
             self.curp_cfg.heartbeat_interval,
             self.curp_cfg.candidate_timeout_ticks,
@@ -297,7 +289,6 @@ impl XlineServer {
                 Arc::clone(&persistent),
                 lease_collection,
                 Arc::clone(&header_gen),
-                Arc::clone(&auth_revision_gen),
                 key_pair,
             )
             .await?;
@@ -313,8 +304,8 @@ impl XlineServer {
             Arc::clone(&persistent),
             Arc::clone(&index_barrier),
             Arc::clone(&id_barrier),
-            header_gen.revision_arc(),
-            Arc::clone(&auth_revision_gen),
+            header_gen.general_revision_arc(),
+            header_gen.auth_revision_arc(),
         );
         let snapshot_allocator: Box<dyn SnapshotAllocator> = match self.storage_cfg {
             StorageConfig::Memory => Box::new(MemorySnapshotAllocator),

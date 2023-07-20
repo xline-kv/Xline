@@ -83,13 +83,12 @@ where
         key_pair: Option<(EncodingKey, DecodingKey)>,
         header_gen: Arc<HeaderGenerator>,
         storage: Arc<S>,
-        revision: Arc<RevisionNumberGenerator>,
     ) -> Self {
         let backend = Arc::new(AuthStoreBackend::new(storage));
         Self {
             backend,
             enabled: AtomicBool::new(false),
-            revision,
+            revision: header_gen.auth_revision_arc(),
             lease_collection,
             header_gen,
             permission_cache: RwLock::new(PermissionCache::new()),
@@ -240,7 +239,7 @@ where
     ) -> Result<AuthEnableResponse, ExecuteError> {
         debug!("handle_auth_enable");
         let res = Ok(AuthEnableResponse {
-            header: Some(self.header_gen.gen_header_without_revision()),
+            header: Some(self.header_gen.gen_auth_header()),
         });
         if self.is_enabled() {
             debug!("auth is already enabled");
@@ -260,7 +259,7 @@ where
             debug!("auth is already disabled");
         }
         AuthDisableResponse {
-            header: Some(self.header_gen.gen_header_without_revision()),
+            header: Some(self.header_gen.gen_auth_header()),
         }
     }
 
@@ -268,7 +267,7 @@ where
     fn handle_auth_status_request(&self, _req: &AuthStatusRequest) -> AuthStatusResponse {
         debug!("handle_auth_status");
         AuthStatusResponse {
-            header: Some(self.header_gen.gen_header_without_revision()),
+            header: Some(self.header_gen.gen_auth_header()),
             auth_revision: self.revision().cast(),
             enabled: self.is_enabled(),
         }
@@ -285,7 +284,7 @@ where
         }
         let token = self.assign(&req.name)?;
         Ok(AuthenticateResponse {
-            header: Some(self.header_gen.gen_header_without_revision()),
+            header: Some(self.header_gen.gen_auth_header()),
             token,
         })
     }
@@ -300,7 +299,7 @@ where
             return Err(ExecuteError::user_already_exists(&req.name));
         }
         Ok(AuthUserAddResponse {
-            header: Some(self.header_gen.gen_header_without_revision()),
+            header: Some(self.header_gen.gen_auth_header()),
         })
     }
 
@@ -312,7 +311,7 @@ where
         debug!("handle_user_add_request");
         let user = self.backend.get_user(&req.name)?;
         Ok(AuthUserGetResponse {
-            header: Some(self.header_gen.gen_header_without_revision()),
+            header: Some(self.header_gen.gen_auth_header()),
             roles: user.roles,
         })
     }
@@ -330,7 +329,7 @@ where
             .map(|u| String::from_utf8_lossy(&u.name).to_string())
             .collect();
         Ok(AuthUserListResponse {
-            header: Some(self.header_gen.gen_header_without_revision()),
+            header: Some(self.header_gen.gen_auth_header()),
             users,
         })
     }
@@ -346,7 +345,7 @@ where
         }
         let _user = self.backend.get_user(&req.name)?;
         Ok(AuthUserDeleteResponse {
-            header: Some(self.header_gen.gen_header_without_revision()),
+            header: Some(self.header_gen.gen_auth_header()),
         })
     }
 
@@ -362,7 +361,7 @@ where
             return Err(ExecuteError::no_password_user());
         }
         Ok(AuthUserChangePasswordResponse {
-            header: Some(self.header_gen.gen_header_without_revision()),
+            header: Some(self.header_gen.gen_auth_header()),
         })
     }
 
@@ -377,7 +376,7 @@ where
             let _role = self.backend.get_role(&req.role)?;
         }
         Ok(AuthUserGrantRoleResponse {
-            header: Some(self.header_gen.gen_header_without_revision()),
+            header: Some(self.header_gen.gen_auth_header()),
         })
     }
 
@@ -395,7 +394,7 @@ where
             return Err(ExecuteError::role_not_granted(&req.role));
         }
         Ok(AuthUserRevokeRoleResponse {
-            header: Some(self.header_gen.gen_header_without_revision()),
+            header: Some(self.header_gen.gen_auth_header()),
         })
     }
 
@@ -409,7 +408,7 @@ where
             return Err(ExecuteError::role_already_exists(&req.name));
         }
         Ok(AuthRoleAddResponse {
-            header: Some(self.header_gen.gen_header_without_revision()),
+            header: Some(self.header_gen.gen_auth_header()),
         })
     }
 
@@ -431,7 +430,7 @@ where
             role.key_permission
         };
         Ok(AuthRoleGetResponse {
-            header: Some(self.header_gen.gen_header_without_revision()),
+            header: Some(self.header_gen.gen_auth_header()),
             perm,
         })
     }
@@ -449,7 +448,7 @@ where
             .map(|r| String::from_utf8_lossy(&r.name).to_string())
             .collect();
         Ok(AuthRoleListResponse {
-            header: Some(self.header_gen.gen_header_without_revision()),
+            header: Some(self.header_gen.gen_auth_header()),
             roles,
         })
     }
@@ -465,7 +464,7 @@ where
         }
         let _role = self.backend.get_role(&req.role)?;
         Ok(AuthRoleDeleteResponse {
-            header: Some(self.header_gen.gen_header_without_revision()),
+            header: Some(self.header_gen.gen_auth_header()),
         })
     }
 
@@ -477,7 +476,7 @@ where
         debug!("handle_role_grant_permission_request");
         let _role = self.backend.get_role(&req.name)?;
         Ok(AuthRoleGrantPermissionResponse {
-            header: Some(self.header_gen.gen_header_without_revision()),
+            header: Some(self.header_gen.gen_auth_header()),
         })
     }
 
@@ -500,7 +499,7 @@ where
             return Err(ExecuteError::permission_not_granted());
         }
         Ok(AuthRoleRevokePermissionResponse {
-            header: Some(self.header_gen.gen_header_without_revision()),
+            header: Some(self.header_gen.gen_auth_header()),
         })
     }
 
@@ -1394,8 +1393,7 @@ mod test {
         let key_pair = test_key_pair();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let lease_collection = Arc::new(LeaseCollection::new(0));
-        let rev = Arc::new(RevisionNumberGenerator::default());
-        AuthStore::new(lease_collection, key_pair, header_gen, db, rev)
+        AuthStore::new(lease_collection, key_pair, header_gen, db)
     }
 
     fn exe_and_sync(

@@ -11,10 +11,12 @@ pub(crate) struct HeaderGenerator {
     cluster_id: u64,
     /// Id of the member
     member_id: u64,
-    /// term of curp
+    /// Term of curp
     term: Arc<Mutex<u64>>,
-    /// revision of kv store
-    revision: Arc<RevisionNumberGenerator>,
+    /// Revision of kv store
+    general_revision: Arc<RevisionNumberGenerator>,
+    /// Revision of auth store
+    auth_revision: Arc<RevisionNumberGenerator>,
 }
 
 impl HeaderGenerator {
@@ -24,7 +26,8 @@ impl HeaderGenerator {
             cluster_id,
             member_id,
             term: Arc::new(Mutex::new(0)),
-            revision: Arc::new(RevisionNumberGenerator::default()),
+            general_revision: Arc::new(RevisionNumberGenerator::default()),
+            auth_revision: Arc::new(RevisionNumberGenerator::default()),
         }
     }
 
@@ -34,17 +37,17 @@ impl HeaderGenerator {
             cluster_id: self.cluster_id,
             member_id: self.member_id,
             raft_term: *self.term.lock(),
-            revision: self.revision(),
+            revision: self.general_revision(),
         }
     }
 
-    /// Generate `ResponseHeader` without revision, user by fast path
-    pub(crate) fn gen_header_without_revision(&self) -> ResponseHeader {
+    /// Generate `ResponseHeader` for auth request
+    pub(crate) fn gen_auth_header(&self) -> ResponseHeader {
         ResponseHeader {
             cluster_id: self.cluster_id,
             member_id: self.member_id,
             raft_term: *self.term.lock(),
-            revision: -1,
+            revision: self.auth_revision(),
         }
     }
 
@@ -54,13 +57,23 @@ impl HeaderGenerator {
         *self.term.lock() = term;
     }
 
-    /// Get revision
-    pub(crate) fn revision(&self) -> i64 {
-        self.revision.get()
+    /// Get general revision
+    pub(crate) fn general_revision(&self) -> i64 {
+        self.general_revision.get()
     }
 
-    /// Return Arc of revision
-    pub(crate) fn revision_arc(&self) -> Arc<RevisionNumberGenerator> {
-        Arc::clone(&self.revision)
+    /// Return Arc of general revision
+    pub(crate) fn general_revision_arc(&self) -> Arc<RevisionNumberGenerator> {
+        Arc::clone(&self.general_revision)
+    }
+
+    /// Get auth revision
+    pub(crate) fn auth_revision(&self) -> i64 {
+        self.auth_revision.get()
+    }
+
+    /// Return Arc of auth revision
+    pub(crate) fn auth_revision_arc(&self) -> Arc<RevisionNumberGenerator> {
+        Arc::clone(&self.auth_revision)
     }
 }
