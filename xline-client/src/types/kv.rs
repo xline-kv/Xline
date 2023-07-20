@@ -674,3 +674,51 @@ impl From<Txn> for xlineapi::TxnRequest {
         txn.req
     }
 }
+
+/// Compaction Request compacts the key-value store up to a given revision.
+/// All superseded keys with a revision less than the compaction revision will be removed.
+#[derive(Debug)]
+pub struct CompactionRequest {
+    /// The inner request
+    inner: xlineapi::CompactionRequest,
+}
+
+impl CompactionRequest {
+    /// Creates a new `CompactionRequest`
+    ///
+    /// `Revision` is the key-value store revision for the compaction operation.
+    #[inline]
+    #[must_use]
+    pub fn new(revision: i64) -> Self {
+        Self {
+            inner: xlineapi::CompactionRequest {
+                revision,
+                ..Default::default()
+            },
+        }
+    }
+
+    /// Physical is set so the RPC will wait until the compaction is physically
+    /// applied to the local database such that compacted entries are totally
+    /// removed from the backend database.
+    #[inline]
+    #[must_use]
+    pub fn with_physical(mut self) -> Self {
+        self.inner.physical = true;
+        self
+    }
+
+    /// Get `physical`
+    #[inline]
+    #[must_use]
+    pub fn physical(&self) -> bool {
+        self.inner.physical
+    }
+}
+
+impl From<CompactionRequest> for xlineapi::CompactionRequest {
+    #[inline]
+    fn from(req: CompactionRequest) -> Self {
+        req.inner
+    }
+}

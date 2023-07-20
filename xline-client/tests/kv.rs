@@ -3,7 +3,9 @@ use common::get_cluster_client;
 use test_macros::abort_on_panic;
 use xline_client::{
     error::Result,
-    types::kv::{Compare, DeleteRangeRequest, PutRequest, RangeRequest, Txn, TxnOp},
+    types::kv::{
+        CompactionRequest, Compare, DeleteRangeRequest, PutRequest, RangeRequest, Txn, TxnOp,
+    },
 };
 use xlineapi::CompareResult;
 
@@ -229,6 +231,43 @@ async fn txn_should_execute_as_expected() -> Result<()> {
             _ => panic!("expect range response)"),
         }
     }
+
+    Ok(())
+}
+
+#[tokio::test]
+#[abort_on_panic]
+async fn compact_should_remove_previous_revision() -> Result<()> {
+    let (_cluster, client) = get_cluster_client().await?;
+    let client = client.kv_client();
+
+    client.put(PutRequest::new("compact", "0")).await?;
+    client.put(PutRequest::new("compact", "1")).await?;
+
+    // before compacting
+    let rev0_resp = client
+        .range(RangeRequest::new("compact").with_revision(2))
+        .await?;
+    assert_eq!(rev0_resp.kvs[0].value, b"0");
+    let rev1_resp = client
+        .range(RangeRequest::new("compact").with_revision(3))
+        .await?;
+    assert_eq!(rev1_resp.kvs[0].value, b"1");
+
+    client.compact(CompactionRequest::new(4)).await?;
+
+    // after compacting
+    let rev0_resp = client
+        .range(RangeRequest::new("compact").with_revision(2))
+        .await?;
+    assert!(
+        rev0_resp.kvs.is_empty(),
+        "kvs should be empty after compaction"
+    );
+    let rev1_resp = client
+        .range(RangeRequest::new("compact").with_revision(3))
+        .await?;
+    assert_eq!(rev1_resp.kvs[0].value, b"1");
 
     Ok(())
 }
