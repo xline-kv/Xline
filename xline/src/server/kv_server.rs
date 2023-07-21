@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fmt::Debug, sync::Arc, time::Duration};
+use std::{fmt::Debug, sync::Arc, time::Duration};
 
 use curp::{
     client::{Client, ReadState},
@@ -17,16 +17,14 @@ use super::{
     common::{propose, propose_indexed},
 };
 use crate::{
+    request_validation::{check_range_compacted, RequestValidator},
     rpc::{
         CompactionRequest, CompactionResponse, DeleteRangeRequest, DeleteRangeResponse, Kv,
-        PutRequest, PutResponse, RangeRequest, RangeResponse, Request, RequestOp, RequestWithToken,
-        RequestWrapper, Response, ResponseOp, SortOrder, SortTarget, TxnRequest, TxnResponse,
+        PutRequest, PutResponse, RangeRequest, RangeResponse, RequestWithToken, RequestWrapper,
+        Response, ResponseOp, TxnRequest, TxnResponse,
     },
     storage::{storage_api::StorageApi, AuthStore, KvStore},
 };
-
-/// Default max txn ops
-const DEFAULT_MAX_TXN_OPS: usize = 128;
 
 /// KV Server
 #[derive(Debug)]
@@ -185,207 +183,6 @@ where
         ProposeId::new(format!("{}-{}", self.name, Uuid::new_v4()))
     }
 
-    /// Validate range request before handle
-    fn check_range_request(
-        req: &RangeRequest,
-        compacted_revision: i64,
-        current_revision: i64,
-    ) -> Result<(), tonic::Status> {
-        if req.key.is_empty() {
-            return Err(tonic::Status::invalid_argument("key is not provided"));
-        }
-        if !SortOrder::is_valid(req.sort_order) || !SortTarget::is_valid(req.sort_target) {
-            return Err(tonic::Status::invalid_argument("invalid sort option"));
-        }
-        if req.revision > current_revision {
-            Err(tonic::Status::invalid_argument(format!(
-                "required revision {} is higher than current revision {}",
-                req.revision, current_revision
-            )))
-        } else {
-            Self::check_range_compacted(req.revision, compacted_revision)
-        }
-    }
-
-    /// check whether the required revision is compacted or not
-    fn check_range_compacted(
-        range_revision: i64,
-        compacted_revision: i64,
-    ) -> Result<(), tonic::Status> {
-        (range_revision <= 0 || range_revision >= compacted_revision)
-            .then_some(())
-            .ok_or(tonic::Status::invalid_argument(format!(
-                "required revision {range_revision} has been compacted, compacted revision is {compacted_revision}"
-            )))
-    }
-
-    /// Validate compact request before handle
-    fn check_compact_request(
-        req: &CompactionRequest,
-        compacted_revision: i64,
-        current_revision: i64,
-    ) -> Result<(), tonic::Status> {
-        debug_assert!(
-            compacted_revision <= current_revision,
-            "compacted revision should not larger than current revision"
-        );
-        if req.revision <= compacted_revision {
-            Err(tonic::Status::invalid_argument(format!(
-                "required revision {} has been compacted, compacted revision is {}",
-                req.revision, compacted_revision
-            )))
-        } else if req.revision > current_revision {
-            Err(tonic::Status::invalid_argument(format!(
-                "required revision {} is higher than current revision {}",
-                req.revision, current_revision
-            )))
-        } else {
-            Ok(())
-        }
-    }
-
-    /// Validate put request before handle
-    fn check_put_request(req: &PutRequest) -> Result<(), tonic::Status> {
-        if req.key.is_empty() {
-            return Err(tonic::Status::invalid_argument("key is not provided"));
-        }
-        if req.ignore_value && !req.value.is_empty() {
-            return Err(tonic::Status::invalid_argument("value is provided"));
-        }
-        if req.ignore_lease && req.lease != 0 {
-            return Err(tonic::Status::invalid_argument("lease is provided"));
-        }
-
-        Ok(())
-    }
-
-    /// Validate delete range request before handle
-    fn check_delete_range_request(req: &DeleteRangeRequest) -> Result<(), tonic::Status> {
-        if req.key.is_empty() {
-            return Err(tonic::Status::invalid_argument("key is not provided"));
-        }
-
-        Ok(())
-    }
-
-    /// Validate txn request before handle
-    fn check_txn_request(
-        req: &TxnRequest,
-        compacted_revision: i64,
-        current_revision: i64,
-    ) -> Result<(), tonic::Status> {
-        let opc = req
-            .compare
-            .len()
-            .max(req.success.len())
-            .max(req.failure.len());
-        if opc > DEFAULT_MAX_TXN_OPS {
-            return Err(tonic::Status::invalid_argument(
-                "too many operations in txn request",
-            ));
-        }
-        for c in &req.compare {
-            if c.key.is_empty() {
-                return Err(tonic::Status::invalid_argument("key is not provided"));
-            }
-        }
-        for op in req.success.iter().chain(req.failure.iter()) {
-            if let Some(ref request) = op.request {
-                match *request {
-                    Request::RequestRange(ref r) => {
-                        Self::check_range_request(r, compacted_revision, current_revision)
-                    }
-                    Request::RequestPut(ref r) => Self::check_put_request(r),
-                    Request::RequestDeleteRange(ref r) => Self::check_delete_range_request(r),
-                    Request::RequestTxn(ref r) => {
-                        Self::check_txn_request(r, compacted_revision, current_revision)
-                    }
-                }?;
-            } else {
-                return Err(tonic::Status::invalid_argument("key not found"));
-            }
-        }
-
-        let _ignore_success = Self::check_intervals(&req.success)?;
-        let _ignore_failure = Self::check_intervals(&req.failure)?;
-
-        Ok(())
-    }
-
-    /// Check if puts and deletes overlap
-    fn check_intervals(
-        ops: &[RequestOp],
-    ) -> Result<(HashSet<&[u8]>, Vec<KeyRange>), tonic::Status> {
-        // TODO: use interval tree is better?
-
-        let mut dels = Vec::new();
-
-        for op in ops {
-            if let Some(Request::RequestDeleteRange(ref req)) = op.request {
-                // collect dels
-                let del = KeyRange::new(req.key.as_slice(), req.range_end.as_slice());
-                dels.push(del);
-            }
-        }
-
-        let mut puts: HashSet<&[u8]> = HashSet::new();
-
-        for op in ops {
-            if let Some(Request::RequestTxn(ref req)) = op.request {
-                // handle child txn request
-                let (success_puts, mut success_dels) = Self::check_intervals(&req.success)?;
-                let (failure_puts, mut failure_dels) = Self::check_intervals(&req.failure)?;
-
-                for k in &success_puts {
-                    if !puts.insert(k) {
-                        return Err(tonic::Status::invalid_argument(
-                            "duplicate key given in txn request",
-                        ));
-                    }
-                    if dels.iter().any(|del| del.contains_key(k)) {
-                        return Err(tonic::Status::invalid_argument(
-                            "duplicate key given in txn request",
-                        ));
-                    }
-                }
-
-                for k in failure_puts {
-                    if !puts.insert(k) && !success_puts.contains(k) {
-                        // only keys in the puts and not in the success_puts is overlap
-                        return Err(tonic::Status::invalid_argument(
-                            "duplicate key given in txn request",
-                        ));
-                    }
-                    if dels.iter().any(|del| del.contains_key(k)) {
-                        return Err(tonic::Status::invalid_argument(
-                            "duplicate key given in txn request",
-                        ));
-                    }
-                }
-
-                dels.append(&mut success_dels);
-                dels.append(&mut failure_dels);
-            }
-        }
-
-        for op in ops {
-            if let Some(Request::RequestPut(ref req)) = op.request {
-                // check puts in this level
-                if !puts.insert(&req.key) {
-                    return Err(tonic::Status::invalid_argument(
-                        "duplicate key given in txn request",
-                    ));
-                }
-                if dels.iter().any(|del| del.contains_key(&req.key)) {
-                    return Err(tonic::Status::invalid_argument(
-                        "duplicate key given in txn request",
-                    ));
-                }
-            }
-        }
-        Ok((puts, dels))
-    }
-
     /// Wait current node's state machine apply the conflict commands
     async fn wait_read_state(&self, cmd: &Command) -> Result<(), tonic::Status> {
         loop {
@@ -432,11 +229,10 @@ where
     ) -> Result<tonic::Response<RangeResponse>, tonic::Status> {
         let range_req = request.get_ref();
         debug!("Receive grpc request: {:?}", range_req);
-        Self::check_range_request(
-            range_req,
+        range_req.validation((
             self.kv_storage.compacted_revision(),
             self.kv_storage.revision(),
-        )?;
+        ))?;
         let range_required_revision = range_req.revision;
         let is_serializable = range_req.serializable;
         let token = get_token(request.metadata());
@@ -448,7 +244,7 @@ where
             // Double check whether the range request is compacted or not since the compaction request
             // may be executed during the process of `wait_read_state` which results in the result of
             // previous `check_range_request` outdated.
-            Self::check_range_compacted(
+            check_range_compacted(
                 range_required_revision,
                 self.kv_storage.compacted_revision(),
             )?;
@@ -466,7 +262,7 @@ where
     ) -> Result<tonic::Response<PutResponse>, tonic::Status> {
         let put_req: &PutRequest = request.get_ref();
         debug!("Receive grpc request: {:?}", put_req);
-        Self::check_put_request(put_req)?;
+        put_req.validation(())?;
         let is_fast_path = true;
         let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
 
@@ -493,7 +289,7 @@ where
     ) -> Result<tonic::Response<DeleteRangeResponse>, tonic::Status> {
         let delete_range_req = request.get_ref();
         debug!("Receive grpc request: {:?}", delete_range_req);
-        Self::check_delete_range_request(delete_range_req)?;
+        delete_range_req.validation(())?;
         let is_fast_path = true;
         let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
 
@@ -521,11 +317,10 @@ where
     ) -> Result<tonic::Response<TxnResponse>, tonic::Status> {
         let txn_req = request.get_ref();
         debug!("Receive grpc request: {:?}", txn_req);
-        Self::check_txn_request(
-            txn_req,
+        txn_req.validation((
             self.kv_storage.compacted_revision(),
             self.kv_storage.revision(),
-        )?;
+        ))?;
         let is_fast_path = false; // lock need revision of txn
         let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
 
@@ -554,7 +349,7 @@ where
         let compacted_revision = self.kv_storage.compacted_revision();
         let current_revision = self.kv_storage.revision();
         let req = request.get_ref();
-        Self::check_compact_request(req, compacted_revision, current_revision)?;
+        req.validation((compacted_revision, current_revision))?;
 
         let is_fast_path = !req.physical;
         let (cmd_res, _sync_res) = self.propose(request, is_fast_path).await?;
@@ -571,7 +366,7 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::storage::db::DB;
+    use crate::rpc::{Request, RequestOp};
 
     #[test]
     fn txn_check() {
@@ -613,7 +408,7 @@ mod test {
             ],
             failure: vec![],
         };
-        let result = KvServer::<DB>::check_txn_request(&txn_req, 1, 0);
+        let result = txn_req.validation((1, 0));
         assert!(result.is_ok());
     }
 
@@ -632,13 +427,10 @@ mod test {
             range_request_with_future_rev.revision, current_revision
         ))
         .to_string();
-        let message = KvServer::<DB>::check_range_request(
-            &range_request_with_future_rev,
-            compacted_revision,
-            current_revision,
-        )
-        .unwrap_err()
-        .to_string();
+        let message = range_request_with_future_rev
+            .validation((compacted_revision, current_revision))
+            .unwrap_err()
+            .to_string();
         assert_eq!(message, expected_err_message);
 
         let range_request_with_compacted_rev = RangeRequest {
@@ -653,13 +445,10 @@ mod test {
         ))
         .to_string();
 
-        let message = KvServer::<DB>::check_range_request(
-            &range_request_with_compacted_rev,
-            compacted_revision,
-            current_revision,
-        )
-        .unwrap_err()
-        .to_string();
+        let message = range_request_with_compacted_rev
+            .validation((compacted_revision, current_revision))
+            .unwrap_err()
+            .to_string();
         assert_eq!(message, expected_err_message);
     }
 
@@ -685,13 +474,10 @@ mod test {
         ))
         .to_string();
 
-        let message = KvServer::<DB>::check_txn_request(
-            &txn_request_with_future_revision,
-            compacted_revision,
-            current_revision,
-        )
-        .unwrap_err()
-        .to_string();
+        let message = txn_request_with_future_revision
+            .validation((compacted_revision, current_revision))
+            .unwrap_err()
+            .to_string();
         assert_eq!(message, expected_err_message);
 
         let txn_request_with_compacted_revision = TxnRequest {
@@ -712,13 +498,10 @@ mod test {
         ))
         .to_string();
 
-        let message = KvServer::<DB>::check_txn_request(
-            &txn_request_with_compacted_revision,
-            compacted_revision,
-            current_revision,
-        )
-        .unwrap_err()
-        .to_string();
+        let message = txn_request_with_compacted_revision
+            .validation((compacted_revision, current_revision))
+            .unwrap_err()
+            .to_string();
         assert_eq!(message, expected_err_message);
     }
 
@@ -735,9 +518,7 @@ mod test {
         ))
         .to_string();
 
-        let message = KvServer::<DB>::check_compact_request(&compact_request, 3, 8)
-            .unwrap_err()
-            .to_string();
+        let message = compact_request.validation((3, 8)).unwrap_err().to_string();
         assert_eq!(message, expected_err_message);
 
         let expected_err_message = tonic::Status::invalid_argument(format!(
@@ -746,7 +527,8 @@ mod test {
         ))
         .to_string();
 
-        let message = KvServer::<DB>::check_compact_request(&compact_request, 13, 18)
+        let message = compact_request
+            .validation((13, 18))
             .unwrap_err()
             .to_string();
         assert_eq!(message, expected_err_message);
