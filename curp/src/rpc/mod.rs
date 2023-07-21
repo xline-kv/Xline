@@ -39,7 +39,8 @@ pub(crate) use connect::connect;
     variant_size_differences,
     missing_copy_implementations,
     missing_docs,
-    trivial_casts
+    trivial_casts,
+    unused_results
 )]
 mod proto {
     tonic::include_proto!("messagepb");

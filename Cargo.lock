@@ -3,6 +3,21 @@
 version = 3
 
 [[package]]
+name = "addr2line"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f4fa78e18c64fce05e902adecd7a5eed15a5e0a3439f7b0e169f0252214865e3"
+dependencies = [
+ "gimli",
+]
+
+[[package]]
+name = "adler"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f26201604c87b1e01bd3d98f8d5d9a8fcbb815e8cedb41ffccbeb4bf593a35fe"
+
+[[package]]
 name = "ahash"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -168,6 +183,21 @@ dependencies = [
  "rustversion",
  "tower-layer",
  "tower-service",
+]
+
+[[package]]
+name = "backtrace"
+version = "0.3.68"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4319208da049c43661739c5fade2ba182f09d1dc2299b32298d3a31692b17e12"
+dependencies = [
+ "addr2line",
+ "cc",
+ "cfg-if",
+ "libc",
+ "miniz_oxide",
+ "object",
+ "rustc-demangle",
 ]
 
 [[package]]
@@ -491,7 +521,7 @@ dependencies = [
  "tempfile",
  "test-macros",
  "thiserror",
- "tokio-stream 0.1.12 (git+https://github.com/madsim-rs/tokio.git?rev=ab251ad)",
+ "tokio-stream 0.1.12",
  "tower",
  "tracing",
  "tracing-opentelemetry",
@@ -718,14 +748,14 @@ checksum = "88bffebc5d80432c9b140ee17875ff173a8ab62faad5b257da912bd2f6c1c0a1"
 
 [[package]]
 name = "etcd-client"
-version = "0.10.2"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1259da3b15ec7e54bd7203adb2c4335adb9ca1d47b56220d650e52c247e824a"
+checksum = "f4b0ea5ef6dc2388a4b1669fa32097249bc03a15417b97cb75e38afb309e4a89"
 dependencies = [
  "http",
  "prost",
  "tokio",
- "tokio-stream 0.1.12 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tokio-stream 0.1.14",
  "tonic",
  "tonic-build",
  "tower",
@@ -910,6 +940,12 @@ dependencies = [
  "quote",
  "syn 1.0.107",
 ]
+
+[[package]]
+name = "gimli"
+version = "0.27.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6c80984affa11d98d1b88b66ac8853f143217b399d3c74116778ff8fdb4ed2e"
 
 [[package]]
 name = "glob"
@@ -1195,9 +1231,9 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "libc"
-version = "0.2.139"
+version = "0.2.147"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "201de327520df007757c1f0adce6e827fe8562fbc28bfd9c15571c66ca1f5f79"
+checksum = "b4668fb0ea861c1df094127ac5f1da3409a82116a4ba74fca2e58ef927159bb3"
 
 [[package]]
 name = "libloading"
@@ -1268,7 +1304,8 @@ dependencies = [
 [[package]]
 name = "madsim"
 version = "0.2.22"
-source = "git+https://github.com/madsim-rs/madsim.git?rev=6753d73#6753d730728eb9ad50ba13ad94f4c753f817d3c8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7777a8bc4e68878b6e5433ac7b9bc196d9ccdfeef1f7cb3d23193cb997a520c9"
 dependencies = [
  "ahash",
  "async-channel",
@@ -1297,8 +1334,9 @@ dependencies = [
 
 [[package]]
 name = "madsim-etcd-client"
-version = "0.2.23"
-source = "git+https://github.com/madsim-rs/madsim.git?rev=6753d73#6753d730728eb9ad50ba13ad94f4c753f817d3c8"
+version = "0.3.0+0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c26d21c8d69c25db9d461ab7dfa4b09bd982687546c8ca2c43d743533a8f1c3f"
 dependencies = [
  "etcd-client",
  "futures-util",
@@ -1317,7 +1355,8 @@ dependencies = [
 [[package]]
 name = "madsim-macros"
 version = "0.2.12"
-source = "git+https://github.com/madsim-rs/madsim.git?rev=6753d73#6753d730728eb9ad50ba13ad94f4c753f817d3c8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3d248e97b1a48826a12c3828d921e8548e714394bf17274dd0a93910dc946e1"
 dependencies = [
  "darling 0.14.2",
  "proc-macro2",
@@ -1328,7 +1367,8 @@ dependencies = [
 [[package]]
 name = "madsim-tokio"
 version = "0.2.23"
-source = "git+https://github.com/madsim-rs/madsim.git?rev=6753d73#6753d730728eb9ad50ba13ad94f4c753f817d3c8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b3b6df81cfc5c561311fa2e85ed52e8c6f3990b700751be914797addf984e72d"
 dependencies = [
  "madsim",
  "spin 0.9.7",
@@ -1337,8 +1377,9 @@ dependencies = [
 
 [[package]]
 name = "madsim-tonic"
-version = "0.2.21"
-source = "git+https://github.com/madsim-rs/madsim.git?rev=6753d73#6753d730728eb9ad50ba13ad94f4c753f817d3c8"
+version = "0.3.0+0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd91945c26b262333e10025306a3bd75b50f43222086fe1d0afee1b5c663e787"
 dependencies = [
  "async-stream",
  "chrono",
@@ -1350,8 +1391,9 @@ dependencies = [
 
 [[package]]
 name = "madsim-tonic-build"
-version = "0.2.11"
-source = "git+https://github.com/madsim-rs/madsim.git?rev=6753d73#6753d730728eb9ad50ba13ad94f4c753f817d3c8"
+version = "0.3.0+0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa4b467f3c8bb59b7faabe632a65b9731c8a412a5c7d698cba21fe2caa859e71"
 dependencies = [
  "prettyplease 0.1.22",
  "proc-macro2",
@@ -1404,15 +1446,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
-name = "mio"
-version = "0.8.5"
+name = "miniz_oxide"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5d732bc30207a6423068df043e3d02e0735b155ad7ce1a6f76fe2baa5b158de"
+checksum = "e7810e0be55b428ada41041c41f32c9f1a42817901b4ccf45fa3d4b6561e74c7"
+dependencies = [
+ "adler",
+]
+
+[[package]]
+name = "mio"
+version = "0.8.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "927a765cd3fc26206e66b296465fa9d3e5ab003e651c1b3c060e7956d96b19d2"
 dependencies = [
  "libc",
- "log",
  "wasi",
- "windows-sys 0.42.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -1542,6 +1592,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "89c16f12ae83bcd4510aff7778f043464991f8b5a10a27d7083f75361de32ac3"
 
 [[package]]
+name = "object"
+version = "0.31.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bda667d9f2b5051b8833f59f3bf748b28ef54f850f4fcb389a252aa383866d1"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1631,7 +1690,7 @@ dependencies = [
  "rand",
  "thiserror",
  "tokio",
- "tokio-stream 0.1.12 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tokio-stream 0.1.14",
 ]
 
 [[package]]
@@ -1895,9 +1954,9 @@ dependencies = [
 
 [[package]]
 name = "prost"
-version = "0.11.8"
+version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e48e50df39172a3e7eb17e14642445da64996989bc212b583015435d39a58537"
+checksum = "0b82eaa1d779e9a4bc1c3217db8ffbeabaae1dca241bf70183242128d48681cd"
 dependencies = [
  "bytes",
  "prost-derive",
@@ -1905,9 +1964,9 @@ dependencies = [
 
 [[package]]
 name = "prost-build"
-version = "0.11.8"
+version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c828f93f5ca4826f97fedcbd3f9a536c16b12cff3dbbb4a007f932bbad95b12"
+checksum = "119533552c9a7ffacc21e099c24a0ac8bb19c2a2a3f363de84cd9b844feab270"
 dependencies = [
  "bytes",
  "heck",
@@ -1927,9 +1986,9 @@ dependencies = [
 
 [[package]]
 name = "prost-derive"
-version = "0.11.8"
+version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ea9b0f8cbe5e15a8a042d030bd96668db28ecb567ec37d691971ff5731d2b1b"
+checksum = "e5d2d8d10f3c6ded6da8b05b5fb3b8a5082514344d56c9f871412d29b4e075b4"
 dependencies = [
  "anyhow",
  "itertools",
@@ -1940,9 +1999,9 @@ dependencies = [
 
 [[package]]
 name = "prost-types"
-version = "0.11.8"
+version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "379119666929a1afd7a043aa6cf96fa67a6dce9af60c88095a4686dbce4c9c88"
+checksum = "213622a1460818959ac1181aaeb2dc9c7f63df720db7d788b3e24eacd1983e13"
 dependencies = [
  "prost",
 ]
@@ -2063,6 +2122,12 @@ dependencies = [
  "libc",
  "librocksdb-sys",
 ]
+
+[[package]]
+name = "rustc-demangle"
+version = "0.1.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d626bb9dae77e28219937af045c257c28bfd3f69333c512553507f5f9798cb76"
 
 [[package]]
 name = "rustc-hash"
@@ -2247,9 +2312,9 @@ checksum = "a507befe795404456341dfab10cef66ead4c041f62b8b11bbb92bffe5d0953e0"
 
 [[package]]
 name = "socket2"
-version = "0.4.7"
+version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02e2d2db9033d13a1567121ddd7a095ee144db4e1ca1b1bda3419bc0da294ebd"
+checksum = "64a4a911eed85daf18834cfaa86a79b7d266ff93ff5ba14005426219480ed662"
 dependencies = [
  "libc",
  "winapi",
@@ -2437,21 +2502,21 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.26.0"
+version = "1.29.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03201d01c3c27a29c8a5cee5b55a93ddae1ccf6f08f65365c2c918f8c1b76f64"
+checksum = "532826ff75199d5833b9d2c5fe410f29235e25704ee5f0ef599fb51c21f4a4da"
 dependencies = [
  "autocfg",
+ "backtrace",
  "bytes",
  "libc",
- "memchr",
  "mio",
  "num_cpus",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2",
  "tokio-macros",
- "windows-sys 0.45.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -2466,24 +2531,13 @@ dependencies = [
 
 [[package]]
 name = "tokio-macros"
-version = "1.8.2"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d266c00fde287f55d3f1c3e96c500c362a2b8c695076ec180f27918820bc6df8"
+checksum = "630bdcf245f78637c13ec01ffae6187cca34625e8c63150d424b59e55af2675e"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 1.0.107",
-]
-
-[[package]]
-name = "tokio-stream"
-version = "0.1.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fb52b74f05dbf495a8fba459fdc331812b96aa086d9eb78101fa0d4569c3313"
-dependencies = [
- "futures-core",
- "pin-project-lite",
- "tokio",
+ "syn 2.0.18",
 ]
 
 [[package]]
@@ -2494,6 +2548,17 @@ dependencies = [
  "futures-core",
  "madsim-tokio",
  "pin-project-lite",
+]
+
+[[package]]
+name = "tokio-stream"
+version = "0.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "397c988d37662c7dda6d2208364a706264bf3d6138b11d436cbac0ad38832842"
+dependencies = [
+ "futures-core",
+ "pin-project-lite",
+ "tokio",
 ]
 
 [[package]]
@@ -2555,14 +2620,13 @@ dependencies = [
 
 [[package]]
 name = "tonic"
-version = "0.8.3"
+version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f219fad3b929bef19b1f86fbc0358d35daed8f2cac972037ac0dc10bbb8d5fb"
+checksum = "3082666a3a6433f7f511c7192923fa1fe07c69332d3c6a2e6bb040b569199d5a"
 dependencies = [
- "async-stream",
  "async-trait",
  "axum",
- "base64 0.13.1",
+ "base64 0.21.0",
  "bytes",
  "futures-core",
  "futures-util",
@@ -2574,22 +2638,19 @@ dependencies = [
  "percent-encoding",
  "pin-project",
  "prost",
- "prost-derive",
  "tokio",
- "tokio-stream 0.1.12 (registry+https://github.com/rust-lang/crates.io-index)",
- "tokio-util",
+ "tokio-stream 0.1.14",
  "tower",
  "tower-layer",
  "tower-service",
  "tracing",
- "tracing-futures",
 ]
 
 [[package]]
 name = "tonic-build"
-version = "0.8.4"
+version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5bf5e9b9c0f7e0a7c027dcfaba7b2c60816c7049171f679d99ee2ff65d0de8c4"
+checksum = "a6fdaae4c2c638bb70fe42803a26fbd6fc6ac8c72f5c59f67ecc2a2dcabf4b07"
 dependencies = [
  "prettyplease 0.1.22",
  "proc-macro2",
@@ -2600,15 +2661,14 @@ dependencies = [
 
 [[package]]
 name = "tonic-health"
-version = "0.8.0"
+version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a88aee666ef3a4d1ee46218bbc8e5f69bcf9cc27bf2e871d6b724d83f56d179f"
+checksum = "080964d45894b90273d2b1dd755fdd114560db8636bb41cea615213c45043c4d"
 dependencies = [
  "async-stream",
- "bytes",
  "prost",
  "tokio",
- "tokio-stream 0.1.12 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tokio-stream 0.1.14",
  "tonic",
 ]
 
@@ -2687,16 +2747,6 @@ checksum = "24eb03ba0eab1fd845050058ce5e616558e8f8d8fca633e6b163fe25c797213a"
 dependencies = [
  "once_cell",
  "valuable",
-]
-
-[[package]]
-name = "tracing-futures"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97d095ae15e245a057c8e8451bab9b3ee1e1f68e9ba2b4fbc18d0ac5237835f2"
-dependencies = [
- "pin-project",
- "tracing",
 ]
 
 [[package]]
@@ -2982,7 +3032,7 @@ version = "0.48.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e686886bc078bc1b0b600cac0147aadb815089b6e4da64016cbd754b6342700f"
 dependencies = [
- "windows-targets 0.48.0",
+ "windows-targets",
 ]
 
 [[package]]
@@ -3002,26 +3052,11 @@ dependencies = [
 
 [[package]]
 name = "windows-sys"
-version = "0.45.0"
+version = "0.48.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75283be5efb2831d37ea142365f009c02ec203cd29a3ebecbc093d52315b66d0"
+checksum = "677d2418bec65e3338edb076e806bc1ec15693c5d0104683f2efe857f61056a9"
 dependencies = [
- "windows-targets 0.42.2",
-]
-
-[[package]]
-name = "windows-targets"
-version = "0.42.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e5180c00cd44c9b1c88adb3693291f1cd93605ded80c250a75d472756b4d071"
-dependencies = [
- "windows_aarch64_gnullvm 0.42.2",
- "windows_aarch64_msvc 0.42.2",
- "windows_i686_gnu 0.42.2",
- "windows_i686_msvc 0.42.2",
- "windows_x86_64_gnu 0.42.2",
- "windows_x86_64_gnullvm 0.42.2",
- "windows_x86_64_msvc 0.42.2",
+ "windows-targets",
 ]
 
 [[package]]
@@ -3169,7 +3204,7 @@ dependencies = [
  "sha2",
  "test-macros",
  "thiserror",
- "tokio-stream 0.1.12 (git+https://github.com/madsim-rs/tokio.git?rev=ab251ad)",
+ "tokio-stream 0.1.12",
  "tokio-util",
  "toml 0.5.10",
  "tonic-health",
@@ -3214,8 +3249,8 @@ version = "0.1.0"
 dependencies = [
  "curp",
  "jsonwebtoken",
+ "madsim-tokio",
  "rand",
- "tokio",
  "utils",
  "xline",
 ]
