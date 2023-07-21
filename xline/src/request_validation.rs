@@ -4,8 +4,9 @@ use thiserror::Error;
 
 use crate::{
     rpc::{
-        CompactionRequest, DeleteRangeRequest, PutRequest, RangeRequest, Request, RequestOp,
-        SortOrder, SortTarget, TxnRequest,
+        AuthRoleAddRequest, AuthRoleGrantPermissionRequest, AuthUserAddRequest, CompactionRequest,
+        DeleteRangeRequest, PutRequest, RangeRequest, Request, RequestOp, SortOrder, SortTarget,
+        TxnRequest,
     },
     server::KeyRange,
     storage::ExecuteError,
@@ -218,6 +219,48 @@ fn check_intervals(ops: &[RequestOp]) -> Result<(HashSet<&[u8]>, Vec<KeyRange>),
         }
     }
     Ok((puts, dels))
+}
+
+impl RequestValidator for AuthUserAddRequest {
+    type Args = ();
+
+    fn validation(&self, _args: ()) -> Result<(), ValidationError> {
+        if self.name.is_empty() {
+            return Err(ValidationError::new("User name is empty"));
+        }
+        let need_password = self.options.as_ref().map_or(true, |o| !o.no_password);
+        if need_password && self.password.is_empty() && self.hashed_password.is_empty() {
+            return Err(ValidationError::new(
+                "Password is required but not provided",
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+impl RequestValidator for AuthRoleAddRequest {
+    type Args = ();
+
+    fn validation(&self, _args: ()) -> Result<(), ValidationError> {
+        if self.name.is_empty() {
+            return Err(ValidationError::new("Role name is empty"));
+        }
+
+        Ok(())
+    }
+}
+
+impl RequestValidator for AuthRoleGrantPermissionRequest {
+    type Args = ();
+
+    fn validation(&self, _args: ()) -> Result<(), ValidationError> {
+        if self.perm.is_none() {
+            return Err(ValidationError::new("Permission not given"));
+        }
+
+        Ok(())
+    }
 }
 
 /// Error type in Validation
