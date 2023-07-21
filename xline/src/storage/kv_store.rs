@@ -20,6 +20,7 @@ use super::{
 };
 use crate::{
     header_gen::HeaderGenerator,
+    request_validation::RequestValidator,
     revision_number::RevisionNumberGenerator,
     rpc::{
         CompactionRequest, CompactionResponse, Compare, CompareResult, CompareTarget,
@@ -487,7 +488,7 @@ where
             }
             RequestWrapper::CompactionRequest(ref req) => {
                 debug!("Receive CompactionRequest {:?}", req);
-                Ok(self.handle_compaction_request(req).into())
+                self.handle_compaction_request(req).map(Into::into)
             }
             _ => unreachable!("Other request should not be sent to this store"),
         };
@@ -496,6 +497,8 @@ where
 
     /// Handle `RangeRequest`
     fn handle_range_request(&self, req: &RangeRequest) -> Result<RangeResponse, ExecuteError> {
+        req.validation((self.compacted_revision(), self.revision()))?;
+
         let storage_fetch_limit = if (req.sort_order() != SortOrder::None)
             || (req.max_mod_revision != 0)
             || (req.min_mod_revision != 0)
@@ -545,6 +548,8 @@ where
 
     /// Handle `PutRequest`
     fn handle_put_request(&self, req: &PutRequest) -> Result<PutResponse, ExecuteError> {
+        req.validation(())?;
+
         let mut response = PutResponse {
             header: Some(self.header_gen.gen_header()),
             ..Default::default()
@@ -566,6 +571,8 @@ where
         &self,
         req: &DeleteRangeRequest,
     ) -> Result<DeleteRangeResponse, ExecuteError> {
+        req.validation(())?;
+
         let prev_kvs = self.get_range(&req.key, &req.range_end, 0)?;
         let mut response = DeleteRangeResponse {
             header: Some(self.header_gen.gen_header()),
@@ -580,6 +587,8 @@ where
 
     /// Handle `TxnRequest`
     fn handle_txn_request(&self, req: &TxnRequest) -> Result<TxnResponse, ExecuteError> {
+        req.validation((self.compacted_revision(), self.revision()))?;
+
         let success = req
             .compare
             .iter()
@@ -602,16 +611,21 @@ where
     }
 
     /// Handle `CompactionRequest`
-    fn handle_compaction_request(&self, req: &CompactionRequest) -> CompactionResponse {
+    fn handle_compaction_request(
+        &self,
+        req: &CompactionRequest,
+    ) -> Result<CompactionResponse, ExecuteError> {
+        req.validation((self.compacted_revision(), self.revision()))?;
+
         let target_revision = req.revision;
         debug_assert!(
             target_revision > self.compacted_revision(),
             "required revision should not be compacted"
         );
         self.update_compacted_revision(target_revision);
-        CompactionResponse {
+        Ok(CompactionResponse {
             header: Some(self.header_gen.gen_header()),
-        }
+        })
     }
 
     /// Sync requests in kv store
