@@ -16,7 +16,7 @@ xline = { path = "../xline" }
 utils = { path = "../utils", features = ["parking_lot"] }
 jsonwebtoken = "8.1.1"
 rand = "0.8.5"
-tokio = { version = "1.0", features = [
+tokio = { version = "0.2.23", package = "madsim-tokio", features = [
     "rt-multi-thread",
     "time",
     "fs",

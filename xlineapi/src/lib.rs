@@ -142,7 +142,8 @@
     unreachable_pub,
     variant_size_differences,
     missing_copy_implementations,
-    missing_docs
+    missing_docs,
+    unused_results
 )]
 #![cfg_attr(
     test,

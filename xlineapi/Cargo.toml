@@ -11,10 +11,10 @@ categories = ["RPC"]
 keywords = ["RPC", "Interfaces"]
 
 [dependencies]
-tonic = { version = "0.2", package = "madsim-tonic" }
+tonic = { version = "0.3.0", package = "madsim-tonic" }
 prost = "0.11"
 serde = { version = "1.0.137", features = ["derive"] }
-etcd-client = { version = "0.2", package = "madsim-etcd-client" }
+etcd-client = { version = "0.3.0", package = "madsim-etcd-client" }
 
 [build-dependencies]
-tonic-build = { version = "0.2", package = "madsim-tonic-build" }
+tonic-build = { version = "0.3.0", package = "madsim-tonic-build" }
