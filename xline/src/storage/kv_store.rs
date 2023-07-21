@@ -15,8 +15,8 @@ use tracing::{debug, warn};
 use super::{
     index::{Index, IndexOperate},
     lease_store::LeaseCollection,
+    revision::{KeyRevision, Revision},
     storage_api::StorageApi,
-    Revision,
 };
 use crate::{
     header_gen::HeaderGenerator,
@@ -357,7 +357,7 @@ where
         revisions
             .iter()
             .for_each(|rev| ops.push(WriteOp::DeleteKeyValue(rev.as_ref())));
-        self.db.flush_ops(ops)?;
+        _ = self.db.flush_ops(ops)?;
         Ok(())
     }
 }
@@ -410,7 +410,7 @@ where
     ) -> Result<(Vec<KeyValue>, usize), ExecuteError> {
         let mut revisions = self.index.get(key, range_end, revision);
         let total = revisions.len();
-        if count_only {
+        if count_only || total == 0 {
             return Ok((vec![], total));
         }
         if limit != 0 {
@@ -730,7 +730,7 @@ where
         let mut ops = Vec::new();
         let new_rev = self
             .index
-            .insert_or_update_revision(&req.key, revision, sub_revision);
+            .register_revision(&req.key, revision, sub_revision);
         let mut kv = KeyValue {
             key: req.key.clone(),
             value: req.value.clone(),
@@ -759,10 +759,7 @@ where
             self.attach(req.lease, kv.key.as_slice())
                 .unwrap_or_else(|e| panic!("unexpected error from lease Attach: {e}"));
         }
-        ops.push(WriteOp::PutKeyValue(
-            new_rev.as_revision().encode_to_vec(),
-            kv.encode_to_vec(),
-        ));
+        ops.push(WriteOp::PutKeyValue(new_rev.as_revision(), kv.clone()));
         let event = Event {
             #[allow(clippy::as_conversions)] // This cast is always valid
             r#type: EventType::Put as i32,
@@ -805,8 +802,7 @@ where
                     mod_revision: new_rev.revision(),
                     ..KeyValue::default()
                 };
-                let value = del_kv.encode_to_vec();
-                WriteOp::PutKeyValue(new_rev.encode_to_vec(), value)
+                WriteOp::PutKeyValue(new_rev, del_kv)
             })
             .collect()
     }
@@ -849,6 +845,12 @@ where
         }
         let events = Self::new_deletion_events(revision, keys);
         (ops, events)
+    }
+
+    /// Insert the given pairs (key, `KeyRevision`) into the index
+    #[inline]
+    pub(crate) fn insert_index(&self, key_revisions: Vec<(Vec<u8>, KeyRevision)>) {
+        self.index.insert(key_revisions);
     }
 }
 
@@ -940,7 +942,8 @@ mod test {
         revision: i64,
     ) -> Result<(), ExecuteError> {
         let (_sync_res, ops) = store.after_sync(request, revision).await?;
-        store.db.flush_ops(ops)?;
+        let key_revs = store.db.flush_ops(ops)?;
+        store.insert_index(key_revs);
         Ok(())
     }
 

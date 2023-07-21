@@ -439,7 +439,7 @@ mod test {
         );
 
         let (_ignore, ops) = lease_store.after_sync(&req1, -1).await?;
-        lease_store.db.flush_ops(ops)?;
+        _ = lease_store.db.flush_ops(ops)?;
         lease_store.mark_lease_synced(&req1.request);
 
         assert!(
@@ -460,7 +460,7 @@ mod test {
         );
 
         let (_ignore, ops) = lease_store.after_sync(&req2, -1).await?;
-        lease_store.db.flush_ops(ops)?;
+        _ = lease_store.db.flush_ops(ops)?;
         lease_store.mark_lease_synced(&req2.request);
 
         assert!(
@@ -513,7 +513,7 @@ mod test {
     ) -> Result<ResponseWrapper, ExecuteError> {
         let cmd_res = ls.execute(req)?;
         let (_ignore, ops) = ls.after_sync(req, revision).await?;
-        ls.db.flush_ops(ops)?;
+        _ = ls.db.flush_ops(ops)?;
         Ok(cmd_res.decode())
     }
 }

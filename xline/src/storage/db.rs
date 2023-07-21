@@ -8,12 +8,14 @@ use super::{
     auth_store::{AUTH_ENABLE_KEY, AUTH_REVISION_KEY, AUTH_TABLE, ROLE_TABLE, USER_TABLE},
     kv_store::KV_TABLE,
     lease_store::LEASE_TABLE,
+    revision::KeyRevision,
     storage_api::StorageApi,
     ExecuteError,
 };
 use crate::{
-    rpc::{PbLease, Role, User},
+    rpc::{KeyValue, PbLease, Role, User},
     server::command::{APPLIED_INDEX_KEY, META_TABLE},
+    storage::Revision,
 };
 
 /// Xline Server Storage Table
@@ -119,8 +121,9 @@ impl StorageApi for DB {
         }
     }
 
-    fn flush_ops(&self, ops: Vec<WriteOp>) -> Result<(), ExecuteError> {
+    fn flush_ops(&self, ops: Vec<WriteOp>) -> Result<Vec<(Vec<u8>, KeyRevision)>, ExecuteError> {
         let mut wr_ops = Vec::new();
+        let mut revs = Vec::new();
         let del_lease_key_buffer = ops
             .iter()
             .filter_map(|op| {
@@ -133,8 +136,18 @@ impl StorageApi for DB {
             .collect::<HashMap<_, _>>();
         for op in ops {
             let wop = match op {
-                WriteOp::PutKeyValue(key, value) => {
-                    WriteOperation::new_put(KV_TABLE, key, value.clone())
+                WriteOp::PutKeyValue(rev, value) => {
+                    revs.push((
+                        value.key.clone(),
+                        KeyRevision::new(
+                            value.create_revision,
+                            value.version,
+                            rev.revision(),
+                            rev.sub_revision(),
+                        ),
+                    ));
+                    let key = rev.encode_to_vec();
+                    WriteOperation::new_put(KV_TABLE, key, value.encode_to_vec())
                 }
                 WriteOp::PutAppliedIndex(index) => WriteOperation::new_put(
                     META_TABLE,
@@ -188,7 +201,7 @@ impl StorageApi for DB {
         self.engine
             .write_batch(wr_ops, false)
             .map_err(|e| ExecuteError::DbError(format!("Failed to flush ops, error: {e}")))?;
-        Ok(())
+        Ok(revs)
     }
 }
 
@@ -197,7 +210,7 @@ impl StorageApi for DB {
 #[non_exhaustive]
 pub enum WriteOp<'a> {
     /// Put a key-value pair to kv table
-    PutKeyValue(Vec<u8>, Vec<u8>),
+    PutKeyValue(Revision, KeyValue),
     /// Put the applied index to meta table
     PutAppliedIndex(u64),
     /// Put a lease to lease table
@@ -237,12 +250,16 @@ mod test {
         let data_dir = PathBuf::from("/tmp/test_reset");
         let db = DB::open(&StorageConfig::RocksDB(data_dir.clone()))?;
 
-        let revision = Revision::new(1, 1).encode_to_vec();
-        let key = revision.clone();
-        let ops = vec![WriteOp::PutKeyValue(revision, "value1".into())];
-        db.flush_ops(ops)?;
+        let revision = Revision::new(1, 1);
+        let key = revision.encode_to_vec();
+        let kv = KeyValue {
+            key: "value1".into(),
+            ..Default::default()
+        };
+        let ops = vec![WriteOp::PutKeyValue(revision, kv.clone())];
+        _ = db.flush_ops(ops)?;
         let res = db.get_value(KV_TABLE, &key)?;
-        assert_eq!(res, Some("value1".as_bytes().to_vec()));
+        assert_eq!(res, Some(kv.encode_to_vec()));
 
         db.reset(None).await?;
 
@@ -264,10 +281,14 @@ mod test {
         let snapshot_path = dir.join("snapshot");
         let origin_db = DB::open(&StorageConfig::RocksDB(origin_db_path))?;
 
-        let revision = Revision::new(1, 1).encode_to_vec();
-        let key: Vec<u8> = revision.clone();
-        let ops = vec![WriteOp::PutKeyValue(revision, "value1".into())];
-        origin_db.flush_ops(ops)?;
+        let revision = Revision::new(1, 1);
+        let key = revision.encode_to_vec();
+        let kv = KeyValue {
+            key: "value1".into(),
+            ..Default::default()
+        };
+        let ops = vec![WriteOp::PutKeyValue(revision, kv.clone())];
+        _ = origin_db.flush_ops(ops)?;
 
         let snapshot = origin_db.get_snapshot(snapshot_path)?;
 
@@ -275,7 +296,7 @@ mod test {
         new_db.reset(Some(snapshot)).await?;
 
         let res = new_db.get_values(KV_TABLE, &[&key])?;
-        assert_eq!(res, vec![Some("value1".as_bytes().to_vec())]);
+        assert_eq!(res, vec![Some(kv.encode_to_vec())]);
 
         std::fs::remove_dir_all(dir).unwrap();
         Ok(())
@@ -335,8 +356,12 @@ mod test {
             key_permission: vec![],
         };
         let role_bytes = role.encode_to_vec();
+        let kv = KeyValue {
+            key: b"value".to_vec(),
+            ..Default::default()
+        };
         let write_ops = vec![
-            WriteOp::PutKeyValue(Revision::new(1, 2).encode_to_vec(), "value".into()),
+            WriteOp::PutKeyValue(Revision::new(1, 2), kv.clone()),
             WriteOp::PutAppliedIndex(5),
             WriteOp::PutLease(lease),
             WriteOp::PutAuthEnable(true),
@@ -344,11 +369,11 @@ mod test {
             WriteOp::PutUser(user),
             WriteOp::PutRole(role),
         ];
-        db.flush_ops(write_ops).unwrap();
+        _ = db.flush_ops(write_ops).unwrap();
         assert_eq!(
             db.get_value(KV_TABLE, Revision::new(1, 2).encode_to_vec())
                 .unwrap(),
-            Some("value".as_bytes().to_vec())
+            Some(kv.encode_to_vec())
         );
         assert_eq!(
             db.get_value(META_TABLE, b"applied_index").unwrap(),
@@ -374,7 +399,7 @@ mod test {
             WriteOp::DeleteUser("user"),
             WriteOp::DeleteRole("role"),
         ];
-        db.flush_ops(del_ops).unwrap();
+        _ = db.flush_ops(del_ops).unwrap();
         assert_eq!(
             db.get_value(LEASE_TABLE, 1i64.encode_to_vec()).unwrap(),
             None
