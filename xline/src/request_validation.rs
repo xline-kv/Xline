@@ -153,7 +153,7 @@ pub(crate) fn check_range_compacted(
     range_revision: i64,
     compacted_revision: i64,
 ) -> Result<(), ValidationError> {
-    (range_revision >= compacted_revision)
+    (range_revision >= compacted_revision || range_revision <= 0)
             .then_some(())
             .ok_or(ValidationError::new(format!(
                 "required revision {range_revision} has been compacted, compacted revision is {compacted_revision}"
