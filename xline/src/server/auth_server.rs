@@ -14,6 +14,7 @@ use super::{
     common::{propose, propose_indexed},
 };
 use crate::{
+    request_validation::RequestValidator,
     rpc::{
         Auth, AuthDisableRequest, AuthDisableResponse, AuthEnableRequest, AuthEnableResponse,
         AuthRoleAddRequest, AuthRoleAddResponse, AuthRoleDeleteRequest, AuthRoleDeleteResponse,
@@ -206,18 +207,7 @@ where
     ) -> Result<tonic::Response<AuthUserAddResponse>, tonic::Status> {
         debug!("Receive AuthUserAddRequest {:?}", request);
         let user_add_req = request.get_mut();
-        if user_add_req.name.is_empty() {
-            return Err(tonic::Status::invalid_argument("user name is empty"));
-        }
-        let need_password = user_add_req
-            .options
-            .as_ref()
-            .map_or(true, |o| !o.no_password);
-        if need_password && user_add_req.password.is_empty() {
-            return Err(tonic::Status::invalid_argument(
-                "password is required but not provided",
-            ));
-        }
+        user_add_req.validation(())?;
         let hashed_password = Self::hash_password(user_add_req.password.as_bytes());
         user_add_req.hashed_password = hashed_password;
         user_add_req.password = String::new();
@@ -283,9 +273,7 @@ where
         request: tonic::Request<AuthRoleAddRequest>,
     ) -> Result<tonic::Response<AuthRoleAddResponse>, tonic::Status> {
         debug!("Receive AuthRoleAddRequest {:?}", request);
-        if request.get_ref().name.is_empty() {
-            return Err(tonic::Status::invalid_argument("Role name is empty"));
-        }
+        request.get_ref().validation(())?;
         self.handle_req(request, false).await
     }
 
@@ -320,9 +308,7 @@ where
         request: tonic::Request<AuthRoleGrantPermissionRequest>,
     ) -> Result<tonic::Response<AuthRoleGrantPermissionResponse>, tonic::Status> {
         debug!("Receive AuthRoleGrantPermissionRequest {:?}", request);
-        if request.get_ref().perm.is_none() {
-            return Err(tonic::Status::invalid_argument("Permission not given"));
-        }
+        request.get_ref().validation(())?;
         self.handle_req(request, false).await
     }
 
