@@ -147,6 +147,7 @@
     )
 )]
 use std::{
+    collections::HashMap,
     fmt::Debug,
     sync::Arc,
     task::{Context, Poll},
@@ -211,28 +212,15 @@ impl Client {
     pub async fn connect<E, S>(all_members: S, options: ClientOptions) -> Result<Self>
     where
         E: AsRef<str>,
-        S: IntoIterator<Item = (E, E)> + Clone,
+        S: IntoIterator<Item = (E, E)>,
     {
+        let all_members: HashMap<_, _> = all_members
+            .into_iter()
+            .map(|(id, addr)| (id.as_ref().to_owned(), addr.as_ref().to_owned()))
+            .collect();
         let name = String::from("client");
-        let channel = Self::build_channel(
-            all_members
-                .clone()
-                .into_iter()
-                .map(|(_id, addr)| addr.as_ref().to_owned())
-                .collect(),
-        )
-        .await?;
-        let curp_client = Arc::new(
-            CurpClient::new(
-                None,
-                all_members
-                    .into_iter()
-                    .map(|(id, addr)| (id.as_ref().to_owned(), addr.as_ref().to_owned()))
-                    .collect(),
-                options.curp_timeout,
-            )
-            .await,
-        );
+        let channel = Self::build_channel(all_members.values().cloned().collect()).await?;
+        let curp_client = Arc::new(CurpClient::new(None, all_members, options.curp_timeout).await);
         let id_gen = Arc::new(lease_gen::LeaseIdGenerator::new());
 
         let token = match options.user {
