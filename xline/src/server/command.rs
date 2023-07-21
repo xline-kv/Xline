@@ -44,6 +44,7 @@ pub(crate) enum RangeType {
 
 impl RangeType {
     /// Get `RangeType` by given `key` and `range_end`
+    #[inline]
     pub(crate) fn get_range_type(key: &[u8], range_end: &[u8]) -> Self {
         if range_end == ONE_KEY {
             RangeType::OneKey
@@ -346,7 +347,10 @@ where
             RequestBackend::Lease => self.lease_storage.after_sync(wrapper, revision).await?,
         };
         ops.append(&mut wr_ops);
-        self.persistent.flush_ops(ops)?;
+        let key_revisions = self.persistent.flush_ops(ops)?;
+        if !key_revisions.is_empty() {
+            self.kv_storage.insert_index(key_revisions);
+        }
         self.lease_storage.mark_lease_synced(&wrapper.request);
         self.id_barrier.trigger(cmd.id());
         self.index_barrier.trigger(index);
@@ -358,7 +362,8 @@ where
         snapshot: Option<(Snapshot, LogIndex)>,
     ) -> Result<(), <Command as CurpCommand>::Error> {
         let s = if let Some((snapshot, index)) = snapshot {
-            self.persistent
+            _ = self
+                .persistent
                 .flush_ops(vec![WriteOp::PutAppliedIndex(index)])?;
             Some(snapshot)
         } else {

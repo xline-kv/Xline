@@ -9,6 +9,8 @@ use xline_client::{
 
 use crate::common::get_cluster_client;
 
+use crate::common::get_cluster_client;
+
 mod common;
 
 #[tokio::test]

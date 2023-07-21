@@ -6,6 +6,8 @@ pub use xlineapi::{
 
 use crate::error::{ClientError, Result};
 
+use crate::error::{ClientError, Result};
+
 /// The lease keep alive handle.
 #[derive(Debug)]
 pub struct LeaseKeeper {

@@ -460,7 +460,8 @@ mod test {
             .into(),
         );
         let (_sync_res, ops) = store.after_sync(&req, revision).await.unwrap();
-        db.flush_ops(ops).unwrap();
+        let key_revisions = db.flush_ops(ops).unwrap();
+        store.insert_index(key_revisions);
     }
 
     #[tokio::test]

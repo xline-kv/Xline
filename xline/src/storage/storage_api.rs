@@ -2,7 +2,7 @@ use std::path::Path;
 
 use engine::Snapshot;
 
-use super::{db::WriteOp, ExecuteError};
+use super::{db::WriteOp, revision::KeyRevision, ExecuteError};
 
 /// The Stable Storage Api
 #[async_trait::async_trait]
@@ -48,5 +48,5 @@ pub trait StorageApi: Send + Sync + 'static + std::fmt::Debug {
     fn get_snapshot(&self, snap_path: impl AsRef<Path>) -> Result<Snapshot, ExecuteError>;
 
     /// Flush the operations to storage
-    fn flush_ops(&self, ops: Vec<WriteOp>) -> Result<(), ExecuteError>;
+    fn flush_ops(&self, ops: Vec<WriteOp>) -> Result<Vec<(Vec<u8>, KeyRevision)>, ExecuteError>;
 }
