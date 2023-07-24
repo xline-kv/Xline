@@ -114,11 +114,42 @@ impl KvClient {
         Ok(res_wrapper.into())
     }
 
-    /// Send `CompactionRequest` by `CurpClient`
+    /// Compacts the key-value store up to a given revision. All superseded keys
+    /// with a revision less than the compaction revision will be removed.
     ///
     /// # Errors
     ///
-    /// If `CurpClient` failed to send request
+    /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    ///```no_run
+    /// use xline_client::{
+    ///     error::Result,
+    ///     types::kv::{CompactionRequest, PutRequest},
+    ///     Client, ClientOptions,
+    /// };
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = [
+    ///         ("server0", "10.0.0.1:2379"),
+    ///         ("server1", "10.0.0.2:2379"),
+    ///         ("server2", "10.0.0.3:2379"),
+    ///     ];
+    ///
+    ///     let client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .kv_client();
+    ///
+    ///     let resp_put = client.put(PutRequest::new("key", "val")).await?;
+    ///     let rev = resp_put.header.unwrap().revision;
+    ///
+    ///     let _resp = client.compact(CompactionRequest::new(rev)).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
     #[inline]
     pub async fn compact(&self, request: CompactionRequest) -> Result<CompactionResponse> {
         let use_fast_path = request.physical();
