@@ -76,7 +76,7 @@ impl LockClient {
     ///
     /// If `CurpClient` fails to send request
     #[inline]
-    pub async fn lock(&mut self, request: LockRequest) -> Result<LockResponse> {
+    pub async fn lock(&self, request: LockRequest) -> Result<LockResponse> {
         let mut lease_id = request.inner.lease;
         if lease_id == 0 {
             let resp = self
@@ -156,7 +156,7 @@ impl LockClient {
     ///
     /// If `CurpClient` fails to send request
     #[inline]
-    pub async fn unlock(&mut self, request: UnlockRequest) -> Result<UnlockResponse> {
+    pub async fn unlock(&self, request: UnlockRequest) -> Result<UnlockResponse> {
         let header = self.delete_key(&request.inner.key).await?;
         Ok(UnlockResponse { header })
     }

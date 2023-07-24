@@ -63,7 +63,7 @@ impl LeaseClient {
     ///
     /// If `CurpClient` failed to send request
     #[inline]
-    pub async fn grant(&mut self, mut request: LeaseGrantRequest) -> Result<LeaseGrantResponse> {
+    pub async fn grant(&self, mut request: LeaseGrantRequest) -> Result<LeaseGrantResponse> {
         let propose_id = self.generate_propose_id();
         if request.inner.id == 0 {
             request.inner.id = self.id_gen.next();
@@ -145,7 +145,7 @@ impl LeaseClient {
     ///
     /// If client failed to send request
     #[inline]
-    pub async fn leases(&mut self) -> Result<LeaseLeasesResponse> {
+    pub async fn leases(&self) -> Result<LeaseLeasesResponse> {
         let propose_id = self.generate_propose_id();
         let request = RequestWithToken::new_with_token(
             xlineapi::LeaseLeasesRequest {}.into(),
