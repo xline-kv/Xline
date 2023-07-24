@@ -1,21 +1,21 @@
+/// Default session ttl
+const DEFAULT_SESSION_TTL: i64 = 60;
+
 /// Request for `Lock`
 #[derive(Debug)]
 pub struct LockRequest {
     /// The inner request
     pub(crate) inner: xlineapi::LockRequest,
+    /// The ttl of the lease that attached to the lock
+    pub(crate) ttl: i64,
 }
 
 impl LockRequest {
     /// Creates a new `LockRequest`
     #[inline]
     #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            inner: xlineapi::LockRequest {
-                name: Vec::new(),
-                lease: 0,
-            },
-        }
+    pub fn new() -> Self {
+        LockRequest::default()
     }
 
     /// Set name.
@@ -32,6 +32,28 @@ impl LockRequest {
     pub const fn with_lease(mut self, lease: i64) -> Self {
         self.inner.lease = lease;
         self
+    }
+
+    /// Set session TTL.
+    /// Will be ignored when lease id is set
+    #[inline]
+    #[must_use]
+    pub const fn with_ttl(mut self, ttl: i64) -> Self {
+        self.ttl = ttl;
+        self
+    }
+}
+
+impl Default for LockRequest {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            inner: xlineapi::LockRequest {
+                name: Vec::new(),
+                lease: 0,
+            },
+            ttl: DEFAULT_SESSION_TTL,
+        }
     }
 }
 
