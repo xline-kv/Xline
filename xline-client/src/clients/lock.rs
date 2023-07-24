@@ -68,7 +68,7 @@ impl LockClient {
     /// Acquires a distributed shared lock on a given named lock.
     /// On success, it will return a unique key that exists so long as the
     /// lock is held by the caller. This key can be used in conjunction with
-    /// transactions to safely ensure updates to etcd only occur while holding
+    /// transactions to safely ensure updates to Xline only occur while holding
     /// lock ownership. The lock is held until Unlock is called on the key or the
     /// lease associate with the owner expires.
     ///
@@ -79,7 +79,10 @@ impl LockClient {
     pub async fn lock(&mut self, request: LockRequest) -> Result<LockResponse> {
         let mut lease_id = request.inner.lease;
         if lease_id == 0 {
-            let resp = self.lease_client.grant(LeaseGrantRequest::new(60)).await?;
+            let resp = self
+                .lease_client
+                .grant(LeaseGrantRequest::new(request.ttl))
+                .await?;
             lease_id = resp.id;
         }
 
