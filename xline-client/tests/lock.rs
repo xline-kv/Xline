@@ -12,7 +12,7 @@ mod common;
 #[tokio::test]
 async fn lock_unlock_should_success_in_normal_path() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await?;
-    let mut client = client.lock_client();
+    let client = client.lock_client();
 
     let resp = client
         .lock(LockRequest::new().with_name("lock-test"))
@@ -29,8 +29,8 @@ async fn lock_unlock_should_success_in_normal_path() -> Result<()> {
 #[abort_on_panic]
 async fn lock_contention_should_occur_when_acquire_by_two() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await?;
-    let mut client = client.lock_client();
-    let mut client_c = client.clone();
+    let client = client.lock_client();
+    let client_c = client.clone();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
     tokio::spawn(async move {
@@ -63,7 +63,7 @@ async fn lock_contention_should_occur_when_acquire_by_two() -> Result<()> {
 #[abort_on_panic]
 async fn lock_should_timeout_when_ttl_is_set() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await?;
-    let mut client = client.lock_client();
+    let client = client.lock_client();
 
     let _resp = client
         .lock(LockRequest::new().with_name("lock-test").with_ttl(1))
