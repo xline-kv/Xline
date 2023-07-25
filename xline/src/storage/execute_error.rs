@@ -3,133 +3,87 @@ use thiserror::Error;
 
 /// Error met when executing commands
 #[derive(Error, Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum ExecuteError {
-    /// Kv error
-    #[error("kv error: {0}")]
-    KvError(String),
-    /// Lease error
-    #[error("lease error: {0}")]
-    LeaseError(String),
-    /// Auth error
-    #[error("auth error: {0}")]
-    AuthError(String),
+    /// Invalid Request Error
+    #[error("invalid request")]
+    InvalidRequest(String),
+
+    /// Key not found
+    #[error("key not found")]
+    KeyNotFound,
+
+    /// Lease not found
+    #[error("lease {0} not found")]
+    LeaseNotFound(i64),
+    /// Lease is expired
+    #[error("lease {0} is expired")]
+    LeaseExpired(i64),
+    /// Lease ttl is too large
+    #[error("lease ttl is too large: {0}")]
+    LeaseTtlTooLarge(i64),
+    /// Lease already exists
+    #[error("lease {0} already exists")]
+    LeaseAlreadyExists(i64),
+
+    // AuthErrors
+    /// Auth is not enabled
+    #[error("auth is not enabled")]
+    AuthNotEnabled,
+    /// Auth failed
+    #[error("invalid username or password")]
+    AuthFailed,
+    /// User not found
+    #[error("user {0} not found")]
+    UserNotFound(String),
+    /// User already exists
+    #[error("user {0} already exists")]
+    UserAlreadyExists(String),
+    /// User already has role
+    #[error("user {0} already has role {1}")]
+    UserAlreadyHasRole(String, String),
+    /// Password was given for no password user
+    #[error("password was given for no password user")]
+    NoPasswordUser,
+    /// Role not found
+    #[error("role {0} not found")]
+    RoleNotFound(String),
+    /// Role already exists
+    #[error("role {0} already exists")]
+    RoleAlreadyExists(String),
+    /// Role not granted
+    #[error("role {0} is not granted to the user")]
+    RoleNotGranted(String),
+    /// Root role not exist
+    #[error("root user does not have root role")]
+    RootRoleNotExist,
+    /// Permission not granted
+    #[error("permission not granted to the role")]
+    PermissionNotGranted,
+    /// Permission not given
+    #[error("permission not given")]
+    PermissionNotGiven,
+    /// Invalid auth management
+    #[error("invalid auth management")]
+    InvalidAuthManagement,
+    /// Invalid auth token
+    #[error("invalid auth token")]
+    InvalidAuthToken,
+    /// Token manager is not initialized
+    #[error("token manager is not initialized")]
+    TokenManagerNotInit,
+    /// Token is not provided
+    #[error("token is not provided")]
+    TokenNotProvided,
+    /// Token is expired
+    #[error("token's revision {0} is older than current revision {1}")]
+    TokenOldRevision(i64, i64),
+
     /// Db error
     #[error("db error: {0}")]
     DbError(String),
-    /// Permission denied
+
+    /// Permission denied Error
     #[error("permission denied")]
     PermissionDenied,
-}
-
-impl ExecuteError {
-    /// Key not found
-    pub(crate) fn key_not_found() -> Self {
-        Self::KvError("key not found".to_owned())
-    }
-
-    /// Lease not found
-    pub(crate) fn lease_not_found(lease_id: i64) -> Self {
-        Self::LeaseError(format!("lease {lease_id} not found"))
-    }
-
-    /// Lease is expired
-    pub(crate) fn lease_expired(lease_id: i64) -> Self {
-        Self::LeaseError(format!("lease {lease_id} is expired"))
-    }
-
-    /// Lease ttl is too large
-    pub(crate) fn lease_ttl_too_large(ttl: i64) -> Self {
-        Self::LeaseError(format!("lease ttl is too large: {ttl}"))
-    }
-
-    /// Lease already exists
-    pub(crate) fn lease_already_exists(lease_id: i64) -> Self {
-        Self::LeaseError(format!("lease {lease_id} already exists"))
-    }
-
-    /// Auth is not enabled
-    pub(crate) fn auth_not_enabled() -> Self {
-        Self::AuthError("auth is not enabled".to_owned())
-    }
-
-    /// Auth failed
-    pub(crate) fn auth_failed() -> Self {
-        Self::AuthError("invalid username or password".to_owned())
-    }
-
-    /// User not found
-    pub(crate) fn user_not_found(username: &str) -> Self {
-        Self::AuthError(format!("user {username} not found"))
-    }
-
-    /// User already exists
-    pub(crate) fn user_already_exists(username: &str) -> Self {
-        Self::AuthError(format!("user {username} already exists"))
-    }
-
-    /// User already has role
-    pub(crate) fn user_already_has_role(username: &str, rolename: &str) -> Self {
-        Self::AuthError(format!("user {username} already has role {rolename}"))
-    }
-
-    /// Permission already exists
-    pub(crate) fn no_password_user() -> Self {
-        Self::AuthError("password was given for no password user".to_owned())
-    }
-
-    /// Role not found
-    pub(crate) fn role_not_found(rolename: &str) -> Self {
-        Self::AuthError(format!("role {rolename} not found"))
-    }
-
-    /// Role already exists
-    pub(crate) fn role_already_exists(rolename: &str) -> Self {
-        Self::AuthError(format!("role {rolename} already exists"))
-    }
-
-    /// Role not granted
-    pub(crate) fn role_not_granted(rolename: &str) -> Self {
-        Self::AuthError(format!("role {rolename} is not granted to the user"))
-    }
-    /// Root role not exist
-    pub(crate) fn root_role_not_exist() -> Self {
-        Self::AuthError("root user does not have root role".to_owned())
-    }
-
-    /// Permission not granted
-    pub(crate) fn permission_not_granted() -> Self {
-        Self::AuthError("permission not granted to the role".to_owned())
-    }
-
-    /// Permission not given
-    pub(crate) fn permission_not_given() -> Self {
-        Self::AuthError("permission not given".to_owned())
-    }
-
-    /// Invalid auth management
-    pub(crate) fn invalid_auth_management() -> Self {
-        Self::AuthError("invalid auth management".to_owned())
-    }
-
-    /// Invalid auth token
-    pub(crate) fn invalid_auth_token() -> Self {
-        Self::AuthError("invalid auth token".to_owned())
-    }
-
-    /// Token manager is not initialized
-    pub(crate) fn token_manager_not_init() -> Self {
-        Self::AuthError("token manager is not initialized".to_owned())
-    }
-
-    /// Token is not provided
-    pub(crate) fn token_not_provided() -> Self {
-        Self::AuthError("token is not provided".to_owned())
-    }
-
-    /// Token is expired
-    pub(crate) fn token_old_revision(claim_rev: i64, cur_rev: i64) -> Self {
-        Self::AuthError(format!(
-            "token's revision {claim_rev} is older than current revision {cur_rev}"
-        ))
-    }
 }

@@ -21,7 +21,8 @@ pub(crate) mod snapshot_allocator;
 /// Persistent storage abstraction
 pub(crate) mod storage_api;
 
+pub use self::execute_error::ExecuteError;
+
 pub(crate) use self::{
-    auth_store::AuthStore, execute_error::ExecuteError, kv_store::KvStore, lease_store::LeaseStore,
-    revision::Revision,
+    auth_store::AuthStore, kv_store::KvStore, lease_store::LeaseStore, revision::Revision,
 };

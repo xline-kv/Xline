@@ -228,13 +228,13 @@ where
         req: &LeaseGrantRequest,
     ) -> Result<LeaseGrantResponse, ExecuteError> {
         if req.id == 0 {
-            return Err(ExecuteError::lease_not_found(0));
+            return Err(ExecuteError::LeaseNotFound(0));
         }
         if req.ttl > MAX_LEASE_TTL {
-            return Err(ExecuteError::lease_ttl_too_large(req.ttl));
+            return Err(ExecuteError::LeaseTtlTooLarge(req.ttl));
         }
         if self.lease_collection.contains_lease(req.id) {
-            return Err(ExecuteError::lease_already_exists(req.id));
+            return Err(ExecuteError::LeaseAlreadyExists(req.id));
         }
 
         _ = self.unsynced_cache.write().insert(req.id);
@@ -259,7 +259,7 @@ where
                 header: Some(self.header_gen.gen_header()),
             })
         } else {
-            Err(ExecuteError::lease_not_found(req.id))
+            Err(ExecuteError::LeaseNotFound(req.id))
         }
     }
 
@@ -336,7 +336,7 @@ where
 
         let del_keys = match self.lease_collection.look_up(req.id) {
             Some(l) => l.keys(),
-            None => return Err(ExecuteError::lease_not_found(req.id)),
+            None => return Err(ExecuteError::LeaseNotFound(req.id)),
         };
 
         if del_keys.is_empty() {

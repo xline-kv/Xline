@@ -57,7 +57,7 @@ where
             Some(value) => Ok(User::decode(value.as_slice()).unwrap_or_else(|e| {
                 panic!("Failed to decode user from value, error: {e:?}, value: {value:?}");
             })),
-            None => Err(ExecuteError::user_not_found(username)),
+            None => Err(ExecuteError::UserNotFound(username.to_owned())),
         }
     }
 
@@ -67,7 +67,7 @@ where
             Some(value) => Ok(Role::decode(value.as_slice()).unwrap_or_else(|e| {
                 panic!("Failed to decode role from value, error: {e:?}, value: {value:?}");
             })),
-            None => Err(ExecuteError::role_not_found(rolename)),
+            None => Err(ExecuteError::RoleNotFound(rolename.to_owned())),
         }
     }
 
