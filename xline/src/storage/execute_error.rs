@@ -12,6 +12,12 @@ pub enum ExecuteError {
     /// Key not found
     #[error("key not found")]
     KeyNotFound,
+    /// Revision is higher than current
+    #[error("required revision {0} is higher than current revision {1}")]
+    RevisionTooLarge(i64, i64),
+    /// Revision compacted
+    #[error("required revision {0} has been compacted, compacted revision is {1}")]
+    RevisionCompacted(i64, i64),
 
     /// Lease not found
     #[error("lease {0} not found")]
@@ -113,7 +119,9 @@ impl From<ExecuteError> for tonic::Status {
             | ExecuteError::RootRoleNotExist
             | ExecuteError::PermissionNotGranted
             | ExecuteError::TokenManagerNotInit => tonic::Code::FailedPrecondition,
-            ExecuteError::LeaseTtlTooLarge(_) => tonic::Code::OutOfRange,
+            ExecuteError::LeaseTtlTooLarge(_)
+            | ExecuteError::RevisionTooLarge(_, _)
+            | ExecuteError::RevisionCompacted(_, _) => tonic::Code::OutOfRange,
             ExecuteError::DbError(_) => tonic::Code::Internal,
             ExecuteError::InvalidAuthToken | ExecuteError::TokenOldRevision(_, _) => {
                 tonic::Code::Unauthenticated
