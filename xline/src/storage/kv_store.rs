@@ -25,8 +25,9 @@ use crate::{
     rpc::{
         CompactionRequest, CompactionResponse, Compare, CompareResult, CompareTarget,
         DeleteRangeRequest, DeleteRangeResponse, Event, EventType, KeyValue, PutRequest,
-        PutResponse, RangeRequest, RangeResponse, Request, RequestWithToken, RequestWrapper,
-        ResponseWrapper, SortOrder, SortTarget, TargetUnion, TxnRequest, TxnResponse,
+        PutResponse, RangeRequest, RangeResponse, Request, Request as UniRequest, RequestWithToken,
+        RequestWrapper, ResponseWrapper, SortOrder, SortTarget, TargetUnion, TxnRequest,
+        TxnResponse,
     },
     server::command::{CommandResponse, KeyRange, SyncResponse, META_TABLE},
     storage::{
@@ -498,6 +499,11 @@ where
     /// Handle `RangeRequest`
     fn handle_range_request(&self, req: &RangeRequest) -> Result<RangeResponse, ExecuteError> {
         req.validation()?;
+        Self::check_revision(
+            &UniRequest::RequestRange(req.clone()),
+            self.compacted_revision(),
+            self.revision(),
+        )?;
 
         let storage_fetch_limit = if (req.sort_order() != SortOrder::None)
             || (req.max_mod_revision != 0)
@@ -588,6 +594,11 @@ where
     /// Handle `TxnRequest`
     fn handle_txn_request(&self, req: &TxnRequest) -> Result<TxnResponse, ExecuteError> {
         req.validation()?;
+        Self::check_revision(
+            &UniRequest::RequestTxn(req.clone()),
+            self.compacted_revision(),
+            self.revision(),
+        )?;
 
         let success = req
             .compare
@@ -615,6 +626,8 @@ where
         &self,
         req: &CompactionRequest,
     ) -> Result<CompactionResponse, ExecuteError> {
+        Self::check_compaction_request(req, self.compacted_revision(), self.revision())?;
+
         let target_revision = req.revision;
         debug_assert!(
             target_revision > self.compacted_revision(),
@@ -849,6 +862,72 @@ where
         }
         let events = Self::new_deletion_events(revision, keys);
         (ops, events)
+    }
+}
+
+/// revision checker of kv requests
+impl<DB> KvStore<DB>
+where
+    DB: StorageApi,
+{
+    /// Check if the revision is valid
+    fn check_revision(
+        request: &UniRequest,
+        compacted_revision: i64,
+        current_revision: i64,
+    ) -> Result<(), ExecuteError> {
+        debug_assert!(
+            compacted_revision <= current_revision,
+            "compacted revision should not larger than current revision"
+        );
+        match *request {
+            UniRequest::RequestRange(ref r) => {
+                if r.revision > current_revision {
+                    Err(ExecuteError::RevisionTooLarge(r.revision, current_revision))
+                } else {
+                    (r.revision >= compacted_revision || r.revision <= 0)
+                        .then_some(())
+                        .ok_or(ExecuteError::RevisionCompacted(
+                            r.revision,
+                            compacted_revision,
+                        ))
+                }
+            }
+            UniRequest::RequestTxn(ref r) => {
+                for op in r.success.iter().chain(r.failure.iter()) {
+                    if let Some(ref req) = op.request {
+                        Self::check_revision(req, compacted_revision, current_revision)?;
+                    }
+                }
+                Ok(())
+            }
+            UniRequest::RequestPut(_) | UniRequest::RequestDeleteRange(_) => Ok(()),
+        }
+    }
+
+    /// Validate compact request before handle
+    fn check_compaction_request(
+        request: &CompactionRequest,
+        compacted_revision: i64,
+        current_revision: i64,
+    ) -> Result<(), ExecuteError> {
+        debug_assert!(
+            compacted_revision <= current_revision,
+            "compacted revision should not larger than current revision"
+        );
+        if request.revision <= compacted_revision {
+            Err(ExecuteError::RevisionCompacted(
+                request.revision,
+                compacted_revision,
+            ))
+        } else if request.revision > current_revision {
+            Err(ExecuteError::RevisionTooLarge(
+                request.revision,
+                current_revision,
+            ))
+        } else {
+            Ok(())
+        }
     }
 }
 
