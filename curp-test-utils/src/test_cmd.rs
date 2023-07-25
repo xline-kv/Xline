@@ -29,7 +29,7 @@ fn next_id() -> u64 {
     NEXT_ID.fetch_add(1, Ordering::SeqCst)
 }
 
-#[derive(Error, Debug, Clone)]
+#[derive(Error, Debug, Clone, Serialize, Deserialize)]
 pub struct ExecuteError(String);
 
 impl Display for ExecuteError {
@@ -119,6 +119,8 @@ impl TestCommand {
 }
 
 impl Command for TestCommand {
+    type Error = ExecuteError;
+
     type K = u32;
 
     type PR = i64;
@@ -161,13 +163,11 @@ pub struct TestCE {
 
 #[async_trait]
 impl CommandExecutor<TestCommand> for TestCE {
-    type Error = ExecuteError;
-
     fn prepare(
         &self,
         cmd: &TestCommand,
         _index: LogIndex,
-    ) -> Result<<TestCommand as Command>::PR, Self::Error> {
+    ) -> Result<<TestCommand as Command>::PR, <TestCommand as Command>::Error> {
         let rev = if let TestCommandType::Put(_) = cmd.cmd_type {
             self.revision.fetch_add(1, Ordering::Relaxed)
         } else {
@@ -180,7 +180,7 @@ impl CommandExecutor<TestCommand> for TestCE {
         &self,
         cmd: &TestCommand,
         _index: LogIndex,
-    ) -> Result<<TestCommand as Command>::ER, Self::Error> {
+    ) -> Result<<TestCommand as Command>::ER, <TestCommand as Command>::Error> {
         sleep(cmd.exe_dur).await;
         if cmd.exe_should_fail {
             return Err(ExecuteError("fail".to_owned()));
@@ -227,7 +227,7 @@ impl CommandExecutor<TestCommand> for TestCE {
         cmd: &TestCommand,
         index: LogIndex,
         revision: <TestCommand as Command>::PR,
-    ) -> Result<<TestCommand as Command>::ASR, Self::Error> {
+    ) -> Result<<TestCommand as Command>::ASR, <TestCommand as Command>::Error> {
         sleep(cmd.as_dur).await;
         if cmd.as_should_fail {
             return Err(ExecuteError("fail".to_owned()));
@@ -274,13 +274,16 @@ impl CommandExecutor<TestCommand> for TestCE {
         Ok(self.last_applied.load(Ordering::Relaxed))
     }
 
-    async fn snapshot(&self) -> Result<Snapshot, Self::Error> {
+    async fn snapshot(&self) -> Result<Snapshot, <TestCommand as Command>::Error> {
         self.store
             .get_snapshot("", &[TEST_TABLE])
             .map_err(|e| ExecuteError(e.to_string()))
     }
 
-    async fn reset(&self, snapshot: Option<(Snapshot, LogIndex)>) -> Result<(), Self::Error> {
+    async fn reset(
+        &self,
+        snapshot: Option<(Snapshot, LogIndex)>,
+    ) -> Result<(), <TestCommand as Command>::Error> {
         let Some((mut snapshot, index)) = snapshot else {
             self.last_applied.store(0, Ordering::Relaxed);
             let ops = vec![WriteOperation::new_delete_range(TEST_TABLE, &[], &[0xff])];
