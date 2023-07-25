@@ -67,10 +67,10 @@ impl LeaseCollection {
         let mut inner = self.inner.write();
         let (expiry, ttl) = {
             let Some(lease) = inner.lease_map.get_mut(&lease_id) else {
-                return Err(ExecuteError::lease_not_found(lease_id));
+                return Err(ExecuteError::LeaseNotFound(lease_id));
             };
             if lease.expired() {
-                return Err(ExecuteError::lease_expired(lease_id));
+                return Err(ExecuteError::LeaseExpired(lease_id));
             }
             let expiry = lease.refresh(Duration::default());
             let ttl = lease.ttl().as_secs().cast();
@@ -84,7 +84,7 @@ impl LeaseCollection {
     pub(crate) fn attach(&self, lease_id: i64, key: Vec<u8>) -> Result<(), ExecuteError> {
         let mut inner = self.inner.write();
         let Some(lease) = inner.lease_map.get_mut(&lease_id) else {
-            return  Err(ExecuteError::lease_not_found(lease_id));
+            return  Err(ExecuteError::LeaseNotFound(lease_id));
         };
         lease.insert_key(key.clone());
         let _ignore = inner.item_map.insert(key, lease_id);
@@ -95,7 +95,7 @@ impl LeaseCollection {
     pub(crate) fn detach(&self, lease_id: i64, key: &[u8]) -> Result<(), ExecuteError> {
         let mut inner = self.inner.write();
         let Some(lease) = inner.lease_map.get_mut(&lease_id) else {
-            return  Err(ExecuteError::lease_not_found(lease_id));
+            return  Err(ExecuteError::LeaseNotFound(lease_id));
         };
         lease.remove_key(key);
         let _ignore = inner.item_map.remove(key);

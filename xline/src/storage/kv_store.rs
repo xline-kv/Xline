@@ -552,7 +552,7 @@ where
         if req.prev_kv || req.ignore_lease || req.ignore_value {
             let prev_kv = self.get_range(&req.key, &[], 0)?.pop();
             if prev_kv.is_none() && (req.ignore_lease || req.ignore_value) {
-                return Err(ExecuteError::key_not_found());
+                return Err(ExecuteError::KeyNotFound);
             }
             if req.prev_kv {
                 response.prev_kv = prev_kv;
@@ -729,7 +729,7 @@ where
         };
         if req.ignore_lease || req.ignore_value {
             let prev_kv = self.get_range(&req.key, &[], 0)?.pop();
-            let prev = prev_kv.as_ref().ok_or_else(ExecuteError::key_not_found)?;
+            let prev = prev_kv.as_ref().ok_or(ExecuteError::KeyNotFound)?;
             if req.ignore_lease {
                 kv.lease = prev.lease;
             }

@@ -113,8 +113,8 @@ where
         match self.token_manager {
             Some(ref token_manager) => token_manager
                 .assign(username, self.revision())
-                .map_err(|_ignore| ExecuteError::invalid_auth_token()),
-            None => Err(ExecuteError::token_manager_not_init()),
+                .map_err(|_ignore| ExecuteError::InvalidAuthToken),
+            None => Err(ExecuteError::TokenManagerNotInit),
         }
     }
 
@@ -123,8 +123,8 @@ where
         match self.token_manager {
             Some(ref token_manager) => token_manager
                 .verify(token)
-                .map_err(|_ignore| ExecuteError::invalid_auth_token()),
-            None => Err(ExecuteError::token_manager_not_init()),
+                .map_err(|_ignore| ExecuteError::InvalidAuthToken),
+            None => Err(ExecuteError::TokenManagerNotInit),
         }
     }
 
@@ -247,7 +247,7 @@ where
         }
         let user = self.backend.get_user(ROOT_USER)?;
         if user.roles.binary_search(&ROOT_ROLE.to_owned()).is_err() {
-            return Err(ExecuteError::root_role_not_exist());
+            return Err(ExecuteError::RootRoleNotExist);
         }
         res
     }
@@ -280,7 +280,7 @@ where
     ) -> Result<AuthenticateResponse, ExecuteError> {
         debug!("handle_authenticate_request");
         if !self.is_enabled() {
-            return Err(ExecuteError::auth_not_enabled());
+            return Err(ExecuteError::AuthNotEnabled);
         }
         let token = self.assign(&req.name)?;
         Ok(AuthenticateResponse {
@@ -296,7 +296,7 @@ where
     ) -> Result<AuthUserAddResponse, ExecuteError> {
         debug!("handle_user_add_request");
         if self.backend.get_user(&req.name).is_ok() {
-            return Err(ExecuteError::user_already_exists(&req.name));
+            return Err(ExecuteError::UserAlreadyExists(req.name.clone()));
         }
         Ok(AuthUserAddResponse {
             header: Some(self.header_gen.gen_auth_header()),
@@ -341,7 +341,7 @@ where
     ) -> Result<AuthUserDeleteResponse, ExecuteError> {
         debug!("handle_user_delete_request");
         if self.is_enabled() && (req.name == ROOT_USER) {
-            return Err(ExecuteError::invalid_auth_management());
+            return Err(ExecuteError::InvalidAuthManagement);
         }
         let _user = self.backend.get_user(&req.name)?;
         Ok(AuthUserDeleteResponse {
@@ -358,7 +358,7 @@ where
         let user = self.backend.get_user(&req.name)?;
         let need_password = user.options.as_ref().map_or(true, |o| !o.no_password);
         if need_password && req.hashed_password.is_empty() {
-            return Err(ExecuteError::no_password_user());
+            return Err(ExecuteError::NoPasswordUser);
         }
         Ok(AuthUserChangePasswordResponse {
             header: Some(self.header_gen.gen_auth_header()),
@@ -387,11 +387,11 @@ where
     ) -> Result<AuthUserRevokeRoleResponse, ExecuteError> {
         debug!("handle_user_revoke_role_request");
         if self.is_enabled() && (req.name == ROOT_USER) && (req.role == ROOT_ROLE) {
-            return Err(ExecuteError::invalid_auth_management());
+            return Err(ExecuteError::InvalidAuthManagement);
         }
         let user = self.backend.get_user(&req.name)?;
         if user.roles.binary_search(&req.role).is_err() {
-            return Err(ExecuteError::role_not_granted(&req.role));
+            return Err(ExecuteError::RoleNotGranted(req.role.clone()));
         }
         Ok(AuthUserRevokeRoleResponse {
             header: Some(self.header_gen.gen_auth_header()),
@@ -405,7 +405,7 @@ where
     ) -> Result<AuthRoleAddResponse, ExecuteError> {
         debug!("handle_role_add_request");
         if self.backend.get_role(&req.name).is_ok() {
-            return Err(ExecuteError::role_already_exists(&req.name));
+            return Err(ExecuteError::RoleAlreadyExists(req.name.clone()));
         }
         Ok(AuthRoleAddResponse {
             header: Some(self.header_gen.gen_auth_header()),
@@ -460,7 +460,7 @@ where
     ) -> Result<AuthRoleDeleteResponse, ExecuteError> {
         debug!("handle_role_delete_request");
         if self.is_enabled() && req.role == ROOT_ROLE {
-            return Err(ExecuteError::invalid_auth_management());
+            return Err(ExecuteError::InvalidAuthManagement);
         }
         let _role = self.backend.get_role(&req.role)?;
         Ok(AuthRoleDeleteResponse {
@@ -496,7 +496,7 @@ where
             })
             .is_err()
         {
-            return Err(ExecuteError::permission_not_granted());
+            return Err(ExecuteError::PermissionNotGranted);
         }
         Ok(AuthRoleRevokePermissionResponse {
             header: Some(self.header_gen.gen_auth_header()),
@@ -673,10 +673,10 @@ where
         let mut user = self.backend.get_user(&req.user)?;
         let role = self.backend.get_role(&req.role);
         if (req.role != ROOT_ROLE) && role.is_err() {
-            return Err(ExecuteError::role_not_found(&req.role));
+            return Err(ExecuteError::RoleNotFound(req.role.clone()));
         }
         let Err(idx) =  user.roles.binary_search(&req.role) else {
-            return Err(ExecuteError::user_already_has_role(&req.user, &req.role));
+            return Err(ExecuteError::UserAlreadyHasRole(req.user.clone(), req.role.clone()));
         };
         user.roles.insert(idx, req.role.clone());
         if let Ok(role) = role {
@@ -712,7 +712,7 @@ where
         let idx = user
             .roles
             .binary_search(&req.role)
-            .map_err(|_ignore| ExecuteError::role_not_granted(&req.role))?;
+            .map_err(|_ignore| ExecuteError::RoleNotGranted(req.role.clone()))?;
         let _ignore = user.roles.remove(idx);
         self.permission_cache.map_write(|mut cache| {
             let user_permissions = self.get_user_permissions(&user, None);
@@ -779,10 +779,7 @@ where
     ) -> Result<Vec<WriteOp<'a>>, ExecuteError> {
         let mut ops = Vec::new();
         let mut role = self.backend.get_role(&req.name)?;
-        let permission = req
-            .perm
-            .clone()
-            .ok_or_else(ExecuteError::permission_not_given)?;
+        let permission = req.perm.clone().ok_or(ExecuteError::PermissionNotGiven)?;
 
         #[allow(clippy::indexing_slicing)] // this index is always valid
         match role
@@ -833,7 +830,7 @@ where
                 Ordering::Less => Ordering::Less,
                 Ordering::Greater => Ordering::Greater,
             })
-            .map_err(|_ignore| ExecuteError::permission_not_granted())?;
+            .map_err(|_ignore| ExecuteError::PermissionNotGranted)?;
         let _ignore = role.key_permission.remove(idx);
         self.permission_cache.map_write(|mut cache| {
             let users = cache
@@ -869,12 +866,12 @@ where
         password: &str,
     ) -> Result<i64, ExecuteError> {
         if !self.is_enabled() {
-            return Err(ExecuteError::auth_not_enabled());
+            return Err(ExecuteError::AuthNotEnabled);
         }
         let user = self.backend.get_user(username)?;
         let need_password = user.options.as_ref().map_or(true, |o| !o.no_password);
         if !need_password {
-            return Err(ExecuteError::no_password_user());
+            return Err(ExecuteError::NoPasswordUser);
         }
 
         let hash = String::from_utf8_lossy(&user.password);
@@ -882,7 +879,7 @@ where
             .unwrap_or_else(|e| panic!("Failed to parse password hash, error: {e}"));
         Pbkdf2
             .verify_password(password.as_bytes(), &hash)
-            .map_err(|_ignore| ExecuteError::auth_failed())?;
+            .map_err(|_ignore| ExecuteError::AuthFailed)?;
 
         Ok(self.revision())
     }
@@ -925,12 +922,12 @@ where
             Some(ref token) => self.verify_token(token)?,
             None => {
                 // TODO: some requests are allowed without token when auth is enabled
-                return Err(ExecuteError::token_not_provided());
+                return Err(ExecuteError::TokenNotProvided);
             }
         };
         let cur_rev = self.revision();
         if claims.revision < cur_rev {
-            return Err(ExecuteError::token_old_revision(claims.revision, cur_rev));
+            return Err(ExecuteError::TokenOldRevision(claims.revision, cur_rev));
         }
         let username = claims.username;
         if Self::need_admin_permission(wrapper) {
