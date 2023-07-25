@@ -4,9 +4,8 @@ use thiserror::Error;
 
 use crate::{
     rpc::{
-        AuthRoleAddRequest, AuthRoleGrantPermissionRequest, AuthUserAddRequest, CompactionRequest,
-        DeleteRangeRequest, PutRequest, RangeRequest, Request, RequestOp, SortOrder, SortTarget,
-        TxnRequest,
+        AuthRoleAddRequest, AuthRoleGrantPermissionRequest, AuthUserAddRequest, DeleteRangeRequest,
+        PutRequest, RangeRequest, Request, RequestOp, SortOrder, SortTarget, TxnRequest,
     },
     server::KeyRange,
     storage::ExecuteError,
@@ -17,68 +16,25 @@ const DEFAULT_MAX_TXN_OPS: usize = 128;
 
 /// Trait for request validation
 pub(crate) trait RequestValidator {
-    /// Extra arguments to in validating the request
-    type Args;
-
     /// Validate the request
-    fn validation(&self, args: Self::Args) -> Result<(), ValidationError>;
+    fn validation(&self) -> Result<(), ValidationError>;
 }
 
 impl RequestValidator for RangeRequest {
-    type Args = (i64, i64);
-
-    fn validation(
-        &self,
-        (compacted_revision, current_revision): (i64, i64),
-    ) -> Result<(), ValidationError> {
+    fn validation(&self) -> Result<(), ValidationError> {
         if self.key.is_empty() {
             return Err(ValidationError::new("key is not provided"));
         }
         if !SortOrder::is_valid(self.sort_order) || !SortTarget::is_valid(self.sort_target) {
             return Err(ValidationError::new("invalid sort option"));
         }
-        if self.revision > current_revision {
-            Err(ValidationError::new(format!(
-                "required revision {} is higher than current revision {}",
-                self.revision, current_revision
-            )))
-        } else {
-            check_range_compacted(self.revision, compacted_revision)
-        }
-    }
-}
 
-impl RequestValidator for CompactionRequest {
-    type Args = (i64, i64);
-
-    fn validation(
-        &self,
-        (compacted_revision, current_revision): (i64, i64),
-    ) -> Result<(), ValidationError> {
-        debug_assert!(
-            compacted_revision <= current_revision,
-            "compacted revision should not larger than current revision"
-        );
-        if self.revision <= compacted_revision {
-            Err(ValidationError::new(format!(
-                "required revision {} has been compacted, compacted revision is {}",
-                self.revision, compacted_revision
-            )))
-        } else if self.revision > current_revision {
-            Err(ValidationError::new(format!(
-                "required revision {} is higher than current revision {}",
-                self.revision, current_revision
-            )))
-        } else {
-            Ok(())
-        }
+        Ok(())
     }
 }
 
 impl RequestValidator for PutRequest {
-    type Args = ();
-
-    fn validation(&self, _args: ()) -> Result<(), ValidationError> {
+    fn validation(&self) -> Result<(), ValidationError> {
         if self.key.is_empty() {
             return Err(ValidationError::new("key is not provided"));
         }
@@ -94,9 +50,7 @@ impl RequestValidator for PutRequest {
 }
 
 impl RequestValidator for DeleteRangeRequest {
-    type Args = ();
-
-    fn validation(&self, _args: ()) -> Result<(), ValidationError> {
+    fn validation(&self) -> Result<(), ValidationError> {
         if self.key.is_empty() {
             return Err(ValidationError::new("key is not provided"));
         }
@@ -106,12 +60,7 @@ impl RequestValidator for DeleteRangeRequest {
 }
 
 impl RequestValidator for TxnRequest {
-    type Args = (i64, i64);
-
-    fn validation(
-        &self,
-        (compacted_revision, current_revision): (i64, i64),
-    ) -> Result<(), ValidationError> {
+    fn validation(&self) -> Result<(), ValidationError> {
         let opc = self
             .compare
             .len()
@@ -128,14 +77,10 @@ impl RequestValidator for TxnRequest {
         for op in self.success.iter().chain(self.failure.iter()) {
             if let Some(ref request) = op.request {
                 match *request {
-                    Request::RequestRange(ref r) => {
-                        r.validation((compacted_revision, current_revision))
-                    }
-                    Request::RequestPut(ref r) => r.validation(()),
-                    Request::RequestDeleteRange(ref r) => r.validation(()),
-                    Request::RequestTxn(ref r) => {
-                        r.validation((compacted_revision, current_revision))
-                    }
+                    Request::RequestRange(ref r) => r.validation(),
+                    Request::RequestPut(ref r) => r.validation(),
+                    Request::RequestDeleteRange(ref r) => r.validation(),
+                    Request::RequestTxn(ref r) => r.validation(),
                 }?;
             } else {
                 return Err(ValidationError::new("key not found"));
@@ -147,18 +92,6 @@ impl RequestValidator for TxnRequest {
 
         Ok(())
     }
-}
-
-/// check whether the required revision is compacted or not
-pub(crate) fn check_range_compacted(
-    range_revision: i64,
-    compacted_revision: i64,
-) -> Result<(), ValidationError> {
-    (range_revision >= compacted_revision || range_revision <= 0)
-            .then_some(())
-            .ok_or(ValidationError::new(format!(
-                "required revision {range_revision} has been compacted, compacted revision is {compacted_revision}"
-            )))
 }
 
 /// Check if puts and deletes overlap
@@ -222,9 +155,7 @@ fn check_intervals(ops: &[RequestOp]) -> Result<(HashSet<&[u8]>, Vec<KeyRange>),
 }
 
 impl RequestValidator for AuthUserAddRequest {
-    type Args = ();
-
-    fn validation(&self, _args: ()) -> Result<(), ValidationError> {
+    fn validation(&self) -> Result<(), ValidationError> {
         if self.name.is_empty() {
             return Err(ValidationError::new("User name is empty"));
         }
@@ -240,9 +171,7 @@ impl RequestValidator for AuthUserAddRequest {
 }
 
 impl RequestValidator for AuthRoleAddRequest {
-    type Args = ();
-
-    fn validation(&self, _args: ()) -> Result<(), ValidationError> {
+    fn validation(&self) -> Result<(), ValidationError> {
         if self.name.is_empty() {
             return Err(ValidationError::new("Role name is empty"));
         }
@@ -252,9 +181,7 @@ impl RequestValidator for AuthRoleAddRequest {
 }
 
 impl RequestValidator for AuthRoleGrantPermissionRequest {
-    type Args = ();
-
-    fn validation(&self, _args: ()) -> Result<(), ValidationError> {
+    fn validation(&self) -> Result<(), ValidationError> {
         if self.perm.is_none() {
             return Err(ValidationError::new("Permission not given"));
         }

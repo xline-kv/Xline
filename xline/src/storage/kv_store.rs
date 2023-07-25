@@ -497,7 +497,7 @@ where
 
     /// Handle `RangeRequest`
     fn handle_range_request(&self, req: &RangeRequest) -> Result<RangeResponse, ExecuteError> {
-        req.validation((self.compacted_revision(), self.revision()))?;
+        req.validation()?;
 
         let storage_fetch_limit = if (req.sort_order() != SortOrder::None)
             || (req.max_mod_revision != 0)
@@ -548,7 +548,7 @@ where
 
     /// Handle `PutRequest`
     fn handle_put_request(&self, req: &PutRequest) -> Result<PutResponse, ExecuteError> {
-        req.validation(())?;
+        req.validation()?;
 
         let mut response = PutResponse {
             header: Some(self.header_gen.gen_header()),
@@ -571,7 +571,7 @@ where
         &self,
         req: &DeleteRangeRequest,
     ) -> Result<DeleteRangeResponse, ExecuteError> {
-        req.validation(())?;
+        req.validation()?;
 
         let prev_kvs = self.get_range(&req.key, &req.range_end, 0)?;
         let mut response = DeleteRangeResponse {
@@ -587,7 +587,7 @@ where
 
     /// Handle `TxnRequest`
     fn handle_txn_request(&self, req: &TxnRequest) -> Result<TxnResponse, ExecuteError> {
-        req.validation((self.compacted_revision(), self.revision()))?;
+        req.validation()?;
 
         let success = req
             .compare
@@ -615,8 +615,6 @@ where
         &self,
         req: &CompactionRequest,
     ) -> Result<CompactionResponse, ExecuteError> {
-        req.validation((self.compacted_revision(), self.revision()))?;
-
         let target_revision = req.revision;
         debug_assert!(
             target_revision > self.compacted_revision(),

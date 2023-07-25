@@ -207,7 +207,7 @@ where
     ) -> Result<tonic::Response<AuthUserAddResponse>, tonic::Status> {
         debug!("Receive AuthUserAddRequest {:?}", request);
         let user_add_req = request.get_mut();
-        user_add_req.validation(())?;
+        user_add_req.validation()?;
         let hashed_password = Self::hash_password(user_add_req.password.as_bytes());
         user_add_req.hashed_password = hashed_password;
         user_add_req.password = String::new();
@@ -273,7 +273,7 @@ where
         request: tonic::Request<AuthRoleAddRequest>,
     ) -> Result<tonic::Response<AuthRoleAddResponse>, tonic::Status> {
         debug!("Receive AuthRoleAddRequest {:?}", request);
-        request.get_ref().validation(())?;
+        request.get_ref().validation()?;
         self.handle_req(request, false).await
     }
 
@@ -308,7 +308,7 @@ where
         request: tonic::Request<AuthRoleGrantPermissionRequest>,
     ) -> Result<tonic::Response<AuthRoleGrantPermissionResponse>, tonic::Status> {
         debug!("Receive AuthRoleGrantPermissionRequest {:?}", request);
-        request.get_ref().validation(())?;
+        request.get_ref().validation()?;
         self.handle_req(request, false).await
     }
 
