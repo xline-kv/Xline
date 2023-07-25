@@ -280,13 +280,11 @@ impl<S> CurpCommandExecutor<Command> for CommandExecutor<S>
 where
     S: StorageApi,
 {
-    type Error = ExecuteError;
-
     fn prepare(
         &self,
         cmd: &Command,
         index: LogIndex,
-    ) -> Result<<Command as CurpCommand>::PR, Self::Error> {
+    ) -> Result<<Command as CurpCommand>::PR, <Command as CurpCommand>::Error> {
         let wrapper = cmd.request();
         if let Err(e) = self.auth_storage.check_permission(wrapper) {
             self.id_barrier.trigger(cmd.id());
@@ -316,7 +314,7 @@ where
         &self,
         cmd: &Command,
         index: LogIndex,
-    ) -> Result<<Command as CurpCommand>::ER, Self::Error> {
+    ) -> Result<<Command as CurpCommand>::ER, <Command as CurpCommand>::Error> {
         let wrapper = cmd.request();
         let res = match wrapper.request.backend() {
             RequestBackend::Kv => self.kv_storage.execute(wrapper),
@@ -338,7 +336,7 @@ where
         cmd: &Command,
         index: LogIndex,
         revision: i64,
-    ) -> Result<<Command as CurpCommand>::ASR, Self::Error> {
+    ) -> Result<<Command as CurpCommand>::ASR, <Command as CurpCommand>::Error> {
         let mut ops = vec![WriteOp::PutAppliedIndex(index)];
         let wrapper = cmd.request();
         let (res, mut wr_ops) = match wrapper.request.backend() {
@@ -355,7 +353,10 @@ where
         Ok(res)
     }
 
-    async fn reset(&self, snapshot: Option<(Snapshot, LogIndex)>) -> Result<(), Self::Error> {
+    async fn reset(
+        &self,
+        snapshot: Option<(Snapshot, LogIndex)>,
+    ) -> Result<(), <Command as CurpCommand>::Error> {
         let s = if let Some((snapshot, index)) = snapshot {
             self.persistent
                 .flush_ops(vec![WriteOp::PutAppliedIndex(index)])?;
@@ -366,12 +367,12 @@ where
         self.persistent.reset(s).await
     }
 
-    async fn snapshot(&self) -> Result<Snapshot, Self::Error> {
+    async fn snapshot(&self) -> Result<Snapshot, <Command as CurpCommand>::Error> {
         let path = format!("/tmp/snapshot-{}", uuid::Uuid::new_v4());
         self.persistent.get_snapshot(path)
     }
 
-    fn last_applied(&self) -> Result<LogIndex, Self::Error> {
+    fn last_applied(&self) -> Result<LogIndex, <Command as CurpCommand>::Error> {
         let Some(index_bytes) = self.persistent.get_value(META_TABLE, APPLIED_INDEX_KEY)? else {
             return Ok(0);
         };
@@ -586,6 +587,7 @@ impl SyncResponse {
 
 #[async_trait::async_trait]
 impl CurpCommand for Command {
+    type Error = ExecuteError;
     type K = KeyRange;
     type PR = i64;
     type ER = CommandResponse;

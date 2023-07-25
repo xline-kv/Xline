@@ -11,6 +11,9 @@ use crate::LogIndex;
 pub trait Command:
     Sized + Sync + Send + DeserializeOwned + Serialize + std::fmt::Debug + Clone + ConflictCheck
 {
+    /// Error type
+    type Error: Send + Sync + Clone + std::error::Error + Serialize + DeserializeOwned;
+
     /// K (key) is used to tell confliction
     /// The key can be a single key or a key range
     type K: std::fmt::Debug
@@ -40,7 +43,7 @@ pub trait Command:
 
     /// Prepare the command
     #[inline]
-    fn prepare<E>(&self, e: &E, index: LogIndex) -> Result<Self::PR, E::Error>
+    fn prepare<E>(&self, e: &E, index: LogIndex) -> Result<Self::PR, Self::Error>
     where
         E: CommandExecutor<Self> + Send + Sync,
     {
@@ -49,7 +52,7 @@ pub trait Command:
 
     /// Execute the command according to the executor
     #[inline]
-    async fn execute<E>(&self, e: &E, index: LogIndex) -> Result<Self::ER, E::Error>
+    async fn execute<E>(&self, e: &E, index: LogIndex) -> Result<Self::ER, Self::Error>
     where
         E: CommandExecutor<Self> + Send + Sync,
     {
@@ -63,7 +66,7 @@ pub trait Command:
         e: &E,
         index: LogIndex,
         prepare_res: Self::PR,
-    ) -> Result<Self::ASR, E::Error>
+    ) -> Result<Self::ASR, Self::Error>
     where
         E: CommandExecutor<Self> + Send + Sync,
     {
@@ -123,14 +126,11 @@ pub trait CommandExecutor<C>: Sync + Send + std::fmt::Debug
 where
     C: Command,
 {
-    /// Error type
-    type Error: std::fmt::Debug + Send + Sync + Clone + std::error::Error;
-
     /// Prepare the command
-    fn prepare(&self, cmd: &C, index: LogIndex) -> Result<C::PR, Self::Error>;
+    fn prepare(&self, cmd: &C, index: LogIndex) -> Result<C::PR, C::Error>;
 
     /// Execute the command
-    async fn execute(&self, cmd: &C, index: LogIndex) -> Result<C::ER, Self::Error>;
+    async fn execute(&self, cmd: &C, index: LogIndex) -> Result<C::ER, C::Error>;
 
     /// Execute the after_sync callback
     async fn after_sync(
@@ -138,14 +138,14 @@ where
         cmd: &C,
         index: LogIndex,
         prepare_res: C::PR,
-    ) -> Result<C::ASR, Self::Error>;
+    ) -> Result<C::ASR, C::Error>;
 
     /// Index of the last log entry that has been successfully applied to the command executor
-    fn last_applied(&self) -> Result<LogIndex, Self::Error>;
+    fn last_applied(&self) -> Result<LogIndex, C::Error>;
 
     /// Take a snapshot
-    async fn snapshot(&self) -> Result<Snapshot, Self::Error>;
+    async fn snapshot(&self) -> Result<Snapshot, C::Error>;
 
     /// Reset the command executor using the snapshot or to the initial state if None
-    async fn reset(&self, snapshot: Option<(Snapshot, LogIndex)>) -> Result<(), Self::Error>;
+    async fn reset(&self, snapshot: Option<(Snapshot, LogIndex)>) -> Result<(), C::Error>;
 }
