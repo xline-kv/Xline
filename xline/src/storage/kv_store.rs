@@ -1376,4 +1376,54 @@ mod test {
 
         Ok(())
     }
+
+    #[test]
+    fn check_revision_will_return_correct_error_type() {
+        let request = UniRequest::RequestTxn(TxnRequest {
+            compare: vec![],
+            success: vec![RequestOp {
+                request: Some(UniRequest::RequestRange(RangeRequest {
+                    key: "k".into(),
+                    revision: 3,
+                    ..Default::default()
+                })),
+            }],
+            failure: vec![],
+        });
+        assert!(matches!(
+            KvStore::<DB>::check_revision(&request, 1, 2).unwrap_err(),
+            ExecuteError::RevisionTooLarge(_, _)
+        ));
+
+        let request = UniRequest::RequestRange(RangeRequest {
+            key: "k".into(),
+            revision: 1,
+            ..Default::default()
+        });
+        assert!(matches!(
+            KvStore::<DB>::check_revision(&request, 2, 3).unwrap_err(),
+            ExecuteError::RevisionCompacted(_, _)
+        ));
+    }
+
+    #[test]
+    fn check_compaction_will_return_correct_error_type() {
+        let request = CompactionRequest {
+            revision: 3,
+            physical: false,
+        };
+        assert!(matches!(
+            KvStore::<DB>::check_compaction_request(&request, 1, 2).unwrap_err(),
+            ExecuteError::RevisionTooLarge(_, _)
+        ));
+
+        let request = CompactionRequest {
+            revision: 1,
+            physical: false,
+        };
+        assert!(matches!(
+            KvStore::<DB>::check_compaction_request(&request, 2, 3).unwrap_err(),
+            ExecuteError::RevisionCompacted(_, _)
+        ));
+    }
 }
