@@ -3,7 +3,6 @@ use std::error::Error;
 use etcd_client::{AuthClient, ConnectOptions, GetOptions, Permission, PermissionType};
 use test_macros::abort_on_panic;
 use xline::client::kv_types::{PutRequest, RangeRequest};
-
 use xline_test_utils::Cluster;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]

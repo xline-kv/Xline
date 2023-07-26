@@ -3,7 +3,6 @@ use std::{error::Error, time::Duration};
 use test_macros::abort_on_panic;
 use tracing::info;
 use xline::client::kv_types::{LeaseGrantRequest, PutRequest, RangeRequest};
-
 use xline_test_utils::Cluster;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]

@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
-
 use curp_external_api::LogIndex;
+use serde::{Deserialize, Serialize};
 
 /// Log entry
 #[derive(Debug, Clone, Serialize, Deserialize)]

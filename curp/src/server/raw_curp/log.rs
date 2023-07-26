@@ -372,10 +372,10 @@ impl<C: 'static + Command> Log<C> {
 mod tests {
     use std::{iter::repeat, ops::Index, sync::Arc};
 
+    use curp_test_utils::test_cmd::TestCommand;
     use utils::config::{default_batch_max_size, default_log_entries_cap};
 
     use super::*;
-    use curp_test_utils::test_cmd::TestCommand;
 
     // impl index for test is handy
     impl<C: 'static + Command> Index<usize> for Log<C> {

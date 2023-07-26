@@ -6,6 +6,8 @@ use xline_client::{
     types::watch::{EventType, WatchRequest},
 };
 
+use crate::common::get_cluster_client;
+
 mod common;
 
 #[tokio::test]

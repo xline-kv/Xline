@@ -181,7 +181,6 @@ mod leasepb {
 
 use serde::{Deserialize, Serialize};
 
-pub use self::etcdserverpb::range_request::{SortOrder, SortTarget};
 pub use self::{
     authpb::{permission::Type, Permission, Role, User, UserAddOptions},
     etcdserverpb::{
@@ -193,6 +192,7 @@ pub use self::{
         lease_server::{Lease, LeaseServer},
         maintenance_client::MaintenanceClient,
         maintenance_server::{Maintenance, MaintenanceServer},
+        range_request::{SortOrder, SortTarget},
         request_op::Request,
         response_op::Response,
         watch_client::WatchClient,
