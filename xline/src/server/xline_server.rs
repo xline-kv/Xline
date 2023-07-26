@@ -33,7 +33,7 @@ use crate::{
     },
     state::State,
     storage::{
-        compact::{compactor, COMPACT_CHANNEL_SIZE},
+        compact::{compact_bg_task, COMPACT_CHANNEL_SIZE, auto_compactor},
         index::Index,
         kvwatcher::KvWatcher,
         lease_store::LeaseCollection,
@@ -139,7 +139,7 @@ impl XlineServer {
             compact_task_tx,
             Arc::clone(&lease_collection),
         ));
-        let _hd = tokio::spawn(compactor(
+        let _hd = tokio::spawn(compact_bg_task(
             Arc::clone(&kv_storage),
             Arc::clone(&index),
             *self.compact_cfg.compact_batch_size(),
@@ -301,7 +301,6 @@ impl XlineServer {
         let index_barrier = Arc::new(IndexBarrier::new());
         let id_barrier = Arc::new(IdBarrier::new());
 
-        let state = State::new(Arc::clone(&lease_storage));
         let ce = CommandExecutor::new(
             Arc::clone(&kv_storage),
             Arc::clone(&auth_storage),
@@ -328,6 +327,16 @@ impl XlineServer {
             .await,
         );
 
+        let auto_compactor = auto_compactor(
+            self.is_leader,
+            Arc::clone(&client),
+            header_gen.revision_arc(),
+            Arc::clone(&self.shutdown_trigger),
+            1000,
+        ).await;
+
+
+        let state = State::new(Arc::clone(&lease_storage), Some(auto_compactor));
         let curp_server = CurpServer::new(
             Arc::clone(&self.cluster_info),
             self.is_leader,

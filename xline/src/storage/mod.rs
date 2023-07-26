@@ -1,7 +1,7 @@
 /// Storage for Auth
 pub(crate) mod auth_store;
-/// Compactor
-pub(crate) mod compact;
+/// Compact module
+pub(super) mod compact;
 /// Database module
 pub mod db;
 /// Execute error
