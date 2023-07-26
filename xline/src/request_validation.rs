@@ -39,10 +39,14 @@ impl RequestValidator for PutRequest {
             return Err(ValidationError::new("key is not provided"));
         }
         if self.ignore_value && !self.value.is_empty() {
-            return Err(ValidationError::new("value is provided"));
+            return Err(ValidationError::new(
+                "ignore value is set but value is provided",
+            ));
         }
         if self.ignore_lease && self.lease != 0 {
-            return Err(ValidationError::new("lease is provided"));
+            return Err(ValidationError::new(
+                "ignore lease is set but lease is provided",
+            ));
         }
 
         Ok(())
@@ -67,7 +71,7 @@ impl RequestValidator for TxnRequest {
             .max(self.success.len())
             .max(self.failure.len());
         if opc > DEFAULT_MAX_TXN_OPS {
-            return Err(ValidationError::new("too many operations in txn selfuest"));
+            return Err(ValidationError::new("too many operations in txn request"));
         }
         for c in &self.compare {
             if c.key.is_empty() {
@@ -83,7 +87,7 @@ impl RequestValidator for TxnRequest {
                     Request::RequestTxn(ref r) => r.validation(),
                 }?;
             } else {
-                return Err(ValidationError::new("key not found"));
+                return Err(ValidationError::new("request not provided in operation"));
             }
         }
 
@@ -213,5 +217,198 @@ impl From<ValidationError> for ExecuteError {
     #[inline]
     fn from(err: ValidationError) -> Self {
         ExecuteError::InvalidRequest(err.0)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::rpc::{Compare, RequestOp, UserAddOptions};
+
+    struct TestCase<T: RequestValidator> {
+        req: T,
+        expected_err_message: &'static str,
+    }
+
+    fn run_test<T: RequestValidator>(testcases: Vec<TestCase<T>>) {
+        for testcase in testcases {
+            let message = testcase.req.validation().unwrap_err().to_string();
+            assert_eq!(
+                message,
+                ValidationError::new(testcase.expected_err_message).to_string()
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_range_request_should_have_correct_error_msg() {
+        let testcases = vec![
+            TestCase {
+                req: RangeRequest {
+                    key: vec![],
+                    ..Default::default()
+                },
+                expected_err_message: "key is not provided",
+            },
+            TestCase {
+                req: RangeRequest {
+                    key: "k".into(),
+                    sort_order: -1,
+                    ..Default::default()
+                },
+                expected_err_message: "invalid sort option",
+            },
+            TestCase {
+                req: RangeRequest {
+                    key: "k".into(),
+                    sort_target: -1,
+                    ..Default::default()
+                },
+                expected_err_message: "invalid sort option",
+            },
+        ];
+
+        run_test(testcases);
+    }
+
+    #[test]
+    fn invalid_put_request_should_have_correct_error_msg() {
+        let testcases = vec![
+            TestCase {
+                req: PutRequest {
+                    key: vec![],
+                    value: "v".into(),
+                    ..Default::default()
+                },
+                expected_err_message: "key is not provided",
+            },
+            TestCase {
+                req: PutRequest {
+                    key: "k".into(),
+                    value: "v".into(),
+                    ignore_value: true,
+                    ..Default::default()
+                },
+                expected_err_message: "ignore value is set but value is provided",
+            },
+            TestCase {
+                req: PutRequest {
+                    key: "k".into(),
+                    value: "v".into(),
+                    lease: 1,
+                    ignore_lease: true,
+                    ..Default::default()
+                },
+                expected_err_message: "ignore lease is set but lease is provided",
+            },
+        ];
+
+        run_test(testcases);
+    }
+
+    #[test]
+    fn invalid_delete_request_should_have_correct_error_msg() {
+        let testcases = vec![TestCase {
+            req: DeleteRangeRequest {
+                key: vec![],
+                ..Default::default()
+            },
+            expected_err_message: "key is not provided",
+        }];
+
+        run_test(testcases);
+    }
+
+    #[test]
+    fn invalid_txn_request_should_have_correct_error_msg() {
+        let testcases = vec![
+            TestCase {
+                req: TxnRequest {
+                    compare: vec![Compare {
+                        key: vec![],
+                        ..Default::default()
+                    }],
+                    success: vec![],
+                    failure: vec![],
+                },
+                expected_err_message: "key is not provided",
+            },
+            TestCase {
+                req: TxnRequest {
+                    compare: vec![Compare {
+                        key: "k".into(),
+                        ..Default::default()
+                    }],
+                    success: vec![RequestOp { request: None }],
+                    failure: vec![],
+                },
+                expected_err_message: "request not provided in operation",
+            },
+            TestCase {
+                req: TxnRequest {
+                    compare: std::iter::repeat(Compare {
+                        key: "k".into(),
+                        ..Default::default()
+                    })
+                    .take(DEFAULT_MAX_TXN_OPS + 1)
+                    .collect(),
+                    success: vec![],
+                    failure: vec![],
+                },
+                expected_err_message: "too many operations in txn request",
+            },
+        ];
+
+        run_test(testcases);
+    }
+
+    #[test]
+    fn invalid_user_add_request_should_have_correct_error_msg() {
+        let testcases = vec![
+            TestCase {
+                req: AuthUserAddRequest {
+                    name: String::new(),
+                    password: "pwd".to_owned(),
+                    ..Default::default()
+                },
+                expected_err_message: "User name is empty",
+            },
+            TestCase {
+                req: AuthUserAddRequest {
+                    name: "user".to_owned(),
+                    password: String::new(),
+                    options: Some(UserAddOptions { no_password: false }),
+                    ..Default::default()
+                },
+                expected_err_message: "Password is required but not provided",
+            },
+        ];
+
+        run_test(testcases);
+    }
+
+    #[test]
+    fn invalid_role_add_request_should_have_correct_error_msg() {
+        let testcases = vec![TestCase {
+            req: AuthRoleAddRequest {
+                name: String::new(),
+            },
+            expected_err_message: "Role name is empty",
+        }];
+
+        run_test(testcases);
+    }
+
+    #[test]
+    fn invalid_role_grant_perm_request_should_have_correct_error_msg() {
+        let testcases = vec![TestCase {
+            req: AuthRoleGrantPermissionRequest {
+                name: "role".to_owned(),
+                perm: None,
+            },
+            expected_err_message: "Permission not given",
+        }];
+
+        run_test(testcases);
     }
 }
