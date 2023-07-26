@@ -869,7 +869,7 @@ mod test {
         revision_number::RevisionNumberGenerator,
         rpc::{Request as UniRequest, RequestOp},
         storage::{
-            compact::{compactor, COMPACT_CHANNEL_SIZE},
+            compact::{compact_bg_task, COMPACT_CHANNEL_SIZE},
             db::DB,
             kvwatcher::KvWatcher,
         },
@@ -929,7 +929,7 @@ mod test {
             shutdown_trigger,
             Duration::from_millis(10),
         );
-        let _compactor = tokio::spawn(compactor(
+        let _compactor = tokio::spawn(compact_bg_task(
             Arc::clone(&storage),
             index,
             1000,
