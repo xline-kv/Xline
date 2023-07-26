@@ -265,16 +265,16 @@ pub(super) fn start_cmd_workers<
 mod tests {
     use std::time::Duration;
 
-    use tokio::{sync::mpsc, time::Instant};
-    use tracing_test::traced_test;
-
-    use super::*;
-    use crate::log_entry::LogEntry;
     use curp_test_utils::{
         mock_role_change, sleep_millis, sleep_secs,
         test_cmd::{TestCE, TestCommand},
     };
     use test_macros::abort_on_panic;
+    use tokio::{sync::mpsc, time::Instant};
+    use tracing_test::traced_test;
+
+    use super::*;
+    use crate::log_entry::LogEntry;
 
     // This should happen in fast path in most cases
     #[traced_test]

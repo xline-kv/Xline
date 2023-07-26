@@ -3,7 +3,6 @@ use std::error::Error;
 use etcd_client::EventType;
 use test_macros::abort_on_panic;
 use xline::client::kv_types::{DeleteRangeRequest, PutRequest};
-
 use xline_test_utils::Cluster;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]

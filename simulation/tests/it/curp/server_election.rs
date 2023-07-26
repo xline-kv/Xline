@@ -1,7 +1,6 @@
 use curp_test_utils::{init_logger, sleep_secs, test_cmd::TestCommand};
-use utils::config::ClientTimeout;
-
 use simulation::curp_group::CurpGroup;
+use utils::config::ClientTimeout;
 
 /// Wait some time for the election to finish, and get the leader to ensure that the election is
 /// completed.

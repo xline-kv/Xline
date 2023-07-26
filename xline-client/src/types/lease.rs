@@ -1,10 +1,10 @@
-use crate::error::{ClientError, Result};
 use futures::channel::mpsc::Sender;
 
 pub use xlineapi::{
     LeaseGrantResponse, LeaseKeepAliveResponse, LeaseLeasesResponse, LeaseRevokeResponse,
     LeaseStatus, LeaseTimeToLiveResponse,
 };
+use crate::error::{ClientError, Result};
 
 /// The lease keep alive handle.
 #[derive(Debug)]

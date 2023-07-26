@@ -13,7 +13,7 @@ use tokio::{
     time::MissedTickBehavior,
 };
 use tracing::{debug, error, info, warn};
-use utils::config::{ClientTimeout, CurpConfig};
+use utils::config::CurpConfig;
 
 use super::{
     cmd_board::{CmdBoardRef, CommandBoard},
@@ -24,7 +24,6 @@ use super::{
     storage::{StorageApi, StorageError},
 };
 use crate::{
-    client::Client,
     cmd::{Command, CommandExecutor},
     error::RpcError,
     log_entry::LogEntry,
@@ -274,12 +273,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
 
 /// Spawned tasks
 impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
-    /// get curp inner client from `CurpNode`
-    #[inline]
-    pub(crate) async fn inner_client(&self, client_timeout: ClientTimeout) -> Client<C> {
-        self.curp.inner_client(client_timeout).await
-    }
-
     /// Tick periodically
     async fn election_task(
         curp: Arc<RawCurp<C, RC>>,

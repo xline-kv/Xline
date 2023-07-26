@@ -5,10 +5,9 @@ use std::sync::Arc;
 use curp_test_utils::{init_logger, sleep_secs, test_cmd::TestCommand, TEST_TABLE};
 use engine::StorageEngine;
 use itertools::Itertools;
+use simulation::curp_group::{CurpGroup, ProposeRequest};
 use tracing::debug;
 use utils::config::ClientTimeout;
-
-use simulation::curp_group::{CurpGroup, ProposeRequest};
 
 #[madsim::test]
 async fn leader_crash_and_recovery() {

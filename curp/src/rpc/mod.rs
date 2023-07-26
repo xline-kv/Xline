@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use serde::{de::DeserializeOwned, Serialize};
 
-pub use self::proto::protocol_server::ProtocolServer;
 pub(crate) use self::proto::{
     fetch_read_state_response::ReadState,
     propose_response::ExeResult,
@@ -13,8 +12,8 @@ pub(crate) use self::proto::{
     WaitSyncedRequest, WaitSyncedResponse,
 };
 pub use self::proto::{
-    propose_response, protocol_client, FetchLeaderRequest, FetchLeaderResponse, ProposeRequest,
-    ProposeResponse,
+    propose_response, protocol_client, protocol_server::ProtocolServer, FetchLeaderRequest,
+    FetchLeaderResponse, ProposeRequest, ProposeResponse,
 };
 use crate::{
     cmd::{Command, ProposeId},

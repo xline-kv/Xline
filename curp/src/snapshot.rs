@@ -1,8 +1,7 @@
-#[allow(clippy::module_name_repetitions)] // it's re-exported in lib
-pub use curp_external_api::snapshot::SnapshotAllocator;
-
 use std::fmt::Debug;
 
+#[allow(clippy::module_name_repetitions)] // it's re-exported in lib
+pub use curp_external_api::snapshot::SnapshotAllocator;
 use engine::Snapshot as EngineSnapshot;
 
 /// Snapshot

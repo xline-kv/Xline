@@ -2,7 +2,9 @@ use std::{future::Future, net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use clippy_utilities::{Cast, OverflowArithmetic};
-use curp::{members::ClusterMember, server::Rpc, ProtocolServer, SnapshotAllocator};
+use curp::{
+    client::Client, members::ClusterMember, server::Rpc, ProtocolServer, SnapshotAllocator,
+};
 use event_listener::Event;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use tokio::{net::TcpListener, sync::mpsc::channel};
@@ -43,6 +45,9 @@ use crate::{
 
 /// Rpc Server of curp protocol
 type CurpServer<S> = Rpc<Command, State<S>>;
+
+/// Rpc Client of curp protocol
+type CurpClient = Client<Command>;
 
 /// Xline server
 #[derive(Debug)]
@@ -314,6 +319,15 @@ impl XlineServer {
             _ => unimplemented!(),
         };
 
+        let client = Arc::new(
+            CurpClient::new(
+                Some(self.cluster_info.self_id().clone()),
+                self.cluster_info.all_members(),
+                self.client_timeout,
+            )
+            .await,
+        );
+
         let curp_server = CurpServer::new(
             Arc::clone(&self.cluster_info),
             self.is_leader,
@@ -323,8 +337,6 @@ impl XlineServer {
             Arc::clone(&self.curp_cfg),
         )
         .await;
-
-        let client = Arc::new(curp_server.inner_client(self.client_timeout).await);
 
         Ok((
             KvServer::new(

@@ -72,6 +72,7 @@ async fn gc_cmd_board<C: Command + 'static>(cmd_board: CmdBoardRef<C>, interval:
 mod tests {
     use std::{sync::Arc, time::Duration};
 
+    use curp_test_utils::{sleep_secs, test_cmd::TestCommand};
     use parking_lot::{Mutex, RwLock};
     use test_macros::abort_on_panic;
 
@@ -84,7 +85,6 @@ mod tests {
             spec_pool::{SpecPoolRef, SpeculativePool},
         },
     };
-    use curp_test_utils::{sleep_secs, test_cmd::TestCommand};
 
     #[tokio::test]
     #[abort_on_panic]
