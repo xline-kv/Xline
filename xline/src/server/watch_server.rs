@@ -198,17 +198,6 @@ where
 
     /// Handle `WatchCreateRequest`
     async fn handle_watch_create(&mut self, req: WatchCreateRequest) {
-        let compacted_revision = self.kv_watcher.compacted_revision();
-        if req.start_revision < compacted_revision {
-            let result = Err(tonic::Status::invalid_argument(format!(
-                "required revision {} has been compacted, compacted revision is {}",
-                req.start_revision, compacted_revision
-            )));
-            if self.response_tx.send(result).await.is_err() {
-                self.stop_notify.notify(1);
-            }
-            return;
-        }
         let Some(watch_id) = self.validate_watch_id(req.watch_id) else {
             let result = Err(tonic::Status::already_exists(format!(
                 "Watch ID {} has already been used",
@@ -250,7 +239,6 @@ where
             header: Some(self.header_gen.gen_header()),
             watch_id,
             created: true,
-            compact_revision: compacted_revision,
             ..WatchResponse::default()
         };
         if self.response_tx.send(Ok(response)).await.is_err() {
@@ -301,31 +289,46 @@ where
 
     /// Handle watch event
     async fn handle_watch_event(&mut self, mut watch_event: WatchEvent) {
-        let mut events = watch_event.take_events();
-        if events.is_empty() {
-            return;
-        }
         let watch_id = watch_event.watch_id();
-        if self.prev_kv.contains(&watch_id) {
-            for ev in &mut events {
-                if !ev.is_create() {
-                    let kv = ev
-                        .kv
-                        .as_ref()
-                        .unwrap_or_else(|| panic!("event.kv can't be None"));
-                    ev.prev_kv = self.kv_watcher.get_prev_kv(kv);
+        let response = if watch_event.compacted() {
+            WatchResponse {
+                header: Some(ResponseHeader {
+                    revision: watch_event.revision(),
+                    ..ResponseHeader::default()
+                }),
+                watch_id,
+                compact_revision: self.kv_watcher.compacted_revision(),
+                canceled: true,
+                ..WatchResponse::default()
+            }
+        } else {
+            let mut events = watch_event.take_events();
+            if events.is_empty() {
+                return;
+            }
+
+            if self.prev_kv.contains(&watch_id) {
+                for ev in &mut events {
+                    if !ev.is_create() {
+                        let kv = ev
+                            .kv
+                            .as_ref()
+                            .unwrap_or_else(|| panic!("event.kv can't be None"));
+                        ev.prev_kv = self.kv_watcher.get_prev_kv(kv);
+                    }
                 }
             }
-        }
-        let response = WatchResponse {
-            header: Some(ResponseHeader {
-                revision: watch_event.revision(),
-                ..ResponseHeader::default()
-            }),
-            watch_id,
-            events,
-            ..WatchResponse::default()
+            WatchResponse {
+                header: Some(ResponseHeader {
+                    revision: watch_event.revision(),
+                    ..ResponseHeader::default()
+                }),
+                watch_id,
+                events,
+                ..WatchResponse::default()
+            }
         };
+
         if self.response_tx.send(Ok(response)).await.is_err() {
             self.stop_notify.notify(1);
         }
@@ -791,8 +794,7 @@ mod test {
             })),
         };
         req_tx.send(Ok(create_watch_req(1, 2))).await.unwrap();
-        req_tx.send(Ok(create_watch_req(2, 3))).await.unwrap();
-        req_tx.send(Ok(create_watch_req(3, 4))).await.unwrap();
+        // req_tx.send(Ok(create_watch_req(3, 4))).await.unwrap();
         let (res_tx, mut res_rx) = mpsc::channel(CHANNEL_SIZE);
         let _hd = tokio::spawn(WatchServer::<DB>::task(
             Arc::clone(&next_id_gen),
@@ -803,24 +805,26 @@ mod test {
             default_watch_progress_notify_interval(),
         ));
 
-        for i in 0..3 {
-            let watch_res = res_rx.recv().await.unwrap();
-            if i == 0 {
-                if let Err(e) = watch_res {
-                    assert_eq!(e.code(), tonic::Code::InvalidArgument,
-                        "watch a compacted revision should return invalid_argument error, but found {e:?}"
-                    );
-                } else {
-                    unreachable!(
-                        "watch create request with a compacted revision should not be successful"
-                    )
-                }
-            } else {
-                assert!(
-                    watch_res.is_ok(),
-                    "watch create request with a valid revision should be successful"
-                );
-            }
-        }
+        // It's allowed to create a compacted watch request, but it will immediately cancel. Doing so is for the compatibility with etcdctl
+        let watch_create_success_res = res_rx.recv().await.unwrap().unwrap();
+        assert!(watch_create_success_res.created);
+        assert_eq!(watch_create_success_res.watch_id, 1);
+        let watch_cancel_res = res_rx.recv().await.unwrap().unwrap();
+        assert!(watch_cancel_res.canceled);
+        assert_eq!(watch_cancel_res.compact_revision, 3);
+
+        req_tx.send(Ok(create_watch_req(2, 3))).await.unwrap();
+        let watch_create_success_res = res_rx.recv().await.unwrap().unwrap();
+        assert!(watch_create_success_res.created);
+        assert_eq!(watch_create_success_res.compact_revision, 0);
+        assert_eq!(watch_create_success_res.watch_id, 2);
+
+        let watch_event_res = res_rx.recv().await.unwrap().unwrap();
+        assert!(!watch_event_res.created);
+        assert!(!watch_event_res.canceled);
+        assert_eq!(watch_event_res.compact_revision, 0);
+        assert_eq!(watch_event_res.watch_id, 2);
+
+
     }
 }

@@ -60,6 +60,8 @@ struct Watcher {
     stop_notify: Arc<event_listener::Event>,
     /// Sender of watch event
     event_tx: mpsc::Sender<WatchEvent>,
+    /// Compacted flag
+    compacted: bool,
 }
 
 impl PartialEq for Watcher {
@@ -85,6 +87,7 @@ impl Watcher {
         filters: Vec<i32>,
         stop_notify: Arc<event_listener::Event>,
         event_tx: mpsc::Sender<WatchEvent>,
+        compacted: bool,
     ) -> Self {
         Self {
             key_range,
@@ -93,6 +96,7 @@ impl Watcher {
             filters,
             stop_notify,
             event_tx,
+            compacted,
         }
     }
 
@@ -123,24 +127,20 @@ impl Watcher {
         &mut self,
         (revision, events): (i64, Vec<Event>),
     ) -> Result<(), TrySendError<WatchEvent>> {
-        if revision < self.start_rev {
-            return Ok(());
-        }
-        let events = self.filter_events(events);
-        if events.is_empty() {
-            return Ok(());
-        }
         let watch_id = self.watch_id();
-        debug!(
-            watch_id,
-            revision,
-            events_len = events.len(),
-            "try to send watch response"
-        );
+        let events = self.filter_events(events);
+        let events_len = events.len();
         let watch_event = WatchEvent {
             id: watch_id,
             events,
             revision,
+            compacted: self.compacted,
+        };
+        if !self.compacted {
+            if revision < self.start_rev || 0 == events_len {
+                return Ok(());
+            }
+            debug!(watch_id, revision, events_len, "try to send watch response");
         };
 
         match self.event_tx.try_send(watch_event) {
@@ -238,6 +238,7 @@ impl WatcherMap {
             id: watch_id,
             revision: updates.0,
             events: updates.1,
+            compacted: false,
         };
         assert!(
             self.victims
@@ -317,6 +318,7 @@ where
         stop_notify: Arc<event_listener::Event>,
         event_tx: mpsc::Sender<WatchEvent>,
     ) {
+        let compacted = start_rev < self.compacted_revision();
         let mut watcher = Watcher::new(
             key_range.clone(),
             id,
@@ -324,8 +326,22 @@ where
             filters,
             stop_notify,
             event_tx,
+            compacted,
         );
         let mut watcher_map_w = self.watcher_map.write();
+        if compacted {
+            debug!("The revision {watcher:?} required has been compacted");
+            if let Err(TrySendError::Full(watch_event)) = watcher.notify((0, vec![])) {
+                assert!(
+                    watcher_map_w
+                        .victims
+                        .insert(watcher, (watch_event.revision, watch_event.events))
+                        .is_none(),
+                    "can't insert a watcher to victims twice"
+                );
+            };
+            return;
+        }
 
         let initial_events = if start_rev == 0 {
             vec![]
@@ -446,7 +462,9 @@ where
                         watche_id = watcher.watch_id(),
                         "watcher synced by sync_victims_task"
                     );
-                    watcher_map_w.register(watcher);
+                    if !watcher.compacted {
+                        watcher_map_w.register(watcher);
+                    }
                 }
             }
             if !new_victims.is_empty() {
@@ -507,6 +525,8 @@ pub(crate) struct WatchEvent {
     events: Vec<Event>,
     /// Revision when this event is generated
     revision: i64,
+    /// Compacted WatchEvent
+    compacted: bool,
 }
 
 impl WatchEvent {
@@ -523,6 +543,11 @@ impl WatchEvent {
     /// Take events
     pub(crate) fn take_events(&mut self) -> Vec<Event> {
         std::mem::take(&mut self.events)
+    }
+
+    /// Check whether the `WatchEvent` is a compacted `WatchEvent` or not.
+    pub(crate) fn compacted(&self) -> bool {
+        self.compacted
     }
 }
 

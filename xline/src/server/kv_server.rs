@@ -191,7 +191,7 @@ where
     ) -> Result<(), tonic::Status> {
         (range_revision <= 0 || range_revision >= compacted_revision)
             .then_some(())
-            .ok_or(tonic::Status::invalid_argument(format!(
+            .ok_or(tonic::Status::out_of_range(format!(
                 "required revision {range_revision} has been compacted, compacted revision is {compacted_revision}"
             )))
     }
