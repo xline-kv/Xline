@@ -21,6 +21,9 @@ use crate::{
 /// mod revision compactor;
 mod revision_compactor;
 
+/// mod periodic compactor;
+mod periodic_compactor;
+
 /// compact task channel size
 pub(crate) const COMPACT_CHANNEL_SIZE: usize = 32;
 
