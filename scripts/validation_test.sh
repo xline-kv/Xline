@@ -25,6 +25,25 @@ run_with_expect() {
     fi
 }
 
+# run a command with expect output, based on key word match
+# args:
+#   $1: command to run
+#   $2: expect output
+run_with_match() {
+    cmd="${1}"
+    res=$(eval ${cmd} 2>&1)
+    expect=$(echo -e ${2})
+    if echo "${res}" | grep -q "${expect}"; then
+        echo "command run success"
+    else
+        echo "command run failed"
+        echo "command: ${cmd}"
+        echo "expect: ${expect}"
+        echo "result: ${res}"
+        exit 1
+    fi
+}
+
 # validate kv requests
 kv_validation() {
     echo "kv validation test running..."
@@ -189,6 +208,21 @@ maintenance_validation() {
     echo "maintenance validation test passed"
 }
 
+# validate compact requests
+compact_validation() {
+    echo "compact validation test running..."
+    for value in "value1" "value2" "value3" "value4" "value5" "value6";
+    do
+        run_with_expect "${ETCDCTL} put key ${value}" "OK"
+    done
+    run_with_expect "${ETCDCTL} get --rev=4 key" "key\nvalue3"
+    run_with_expect "${ETCDCTL} compact 5" "compacted revision 5"
+    run_with_match "${ETCDCTL} get --rev=4 key" "required revision 4 has been compacted, compacted revision is 5"
+    run_with_match "${ETCDCTL} watch --rev=4 key " "watch was canceled (etcdserver: mvcc: required revision has been compacted)"
+    echo "compact validation test pass..."
+}
+
+compact_validation
 kv_validation
 watch_validation
 lease_validation

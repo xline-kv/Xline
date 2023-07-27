@@ -318,7 +318,7 @@ where
         stop_notify: Arc<event_listener::Event>,
         event_tx: mpsc::Sender<WatchEvent>,
     ) {
-        let compacted = start_rev < self.compacted_revision();
+        let compacted = start_rev != 0 && start_rev < self.compacted_revision();
         let mut watcher = Watcher::new(
             key_range.clone(),
             id,

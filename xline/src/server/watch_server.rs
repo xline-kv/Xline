@@ -824,7 +824,5 @@ mod test {
         assert!(!watch_event_res.canceled);
         assert_eq!(watch_event_res.compact_revision, 0);
         assert_eq!(watch_event_res.watch_id, 2);
-
-
     }
 }
