@@ -62,7 +62,7 @@ impl Compactor for RevisionCompactor {
 
     #[allow(clippy::integer_arithmetic)]
     async fn run(&self) {
-        let prev = 0;
+        let last_revision = 0;
         let shutdown_trigger = self.shutdown_trigger.listen();
         let mut ticker = tokio::time::interval(CHECK_INTERVAL);
         tokio::pin!(shutdown_trigger);
@@ -81,7 +81,7 @@ impl Compactor for RevisionCompactor {
             }
 
             let target_revision = self.revision_getter.get().overflow_sub(self.retention);
-            if target_revision <= 0 || target_revision == prev {
+            if target_revision <= 0 || target_revision == last_revision {
                 continue;
             }
 
