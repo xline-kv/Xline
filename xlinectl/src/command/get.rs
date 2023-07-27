@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{arg, value_parser, ArgMatches, Command};
 use xline_client::{types::kv::RangeRequest, Client};
-use xlineapi::{RangeResponse, SortOrder, SortTarget};
+use xlineapi::{SortOrder, SortTarget};
 
 use crate::utils::printer::Printer;
 
@@ -110,20 +110,9 @@ pub(crate) fn build_request(matches: &ArgMatches) -> RangeRequest {
 pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result<()> {
     let req = build_request(matches);
     let resp = client.kv_client().range(req).await?;
-
-    print_resp(&resp);
+    resp.print();
 
     Ok(())
-}
-
-/// Printer of range response
-fn print_resp(resp: &RangeResponse) {
-    Printer::header(resp.header.as_ref());
-    println!("kvs:");
-    for kv in &resp.kvs {
-        Printer::kv(kv);
-    }
-    println!("more: {}, count: {}", resp.more, resp.count);
 }
 
 #[cfg(test)]

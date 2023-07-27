@@ -1,7 +1,6 @@
 use anyhow::Result;
 use clap::{arg, value_parser, ArgMatches, Command};
 use xline_client::{types::kv::PutRequest, Client};
-use xlineapi::PutResponse;
 
 use crate::utils::printer::Printer;
 
@@ -44,18 +43,9 @@ pub(crate) fn build_request(matches: &ArgMatches) -> PutRequest {
 pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result<()> {
     let req = build_request(matches);
     let resp = client.kv_client().put(req).await?;
-
-    print_resp(&resp);
+    resp.print();
 
     Ok(())
-}
-
-/// Printer of put response
-fn print_resp(resp: &PutResponse) {
-    Printer::header(resp.header.as_ref());
-    if let Some(pre_kv) = resp.prev_kv.as_ref() {
-        Printer::kv(pre_kv);
-    }
 }
 
 #[cfg(test)]

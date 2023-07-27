@@ -160,6 +160,7 @@ use xline_client::{Client, ClientOptions};
 
 use crate::command::{get, put};
 use crate::utils::parser::{parse_endpoints, parse_user};
+use crate::utils::printer::{set_printer_type, PrinterType};
 
 /// Command definitions and parsers
 mod command;
@@ -209,6 +210,12 @@ fn cli() -> Command {
             .help_heading(GLOBAL_HEADING)
             .value_parser(value_parser!(u64))
             .default_value("50"))
+        .arg(arg!(--printer_type <TYPE> "The format of the result that will be printed")
+            .global(true)
+            .help_heading(GLOBAL_HEADING)
+            .value_parser(["SIMPLE", "FIELD"])
+            .default_value("SIMPLE"))
+
         .subcommand(get::command())
         .subcommand(put::command())
 }
@@ -224,6 +231,16 @@ async fn main() -> Result<()> {
         Duration::from_millis(*matches.get_one("wait_synced_timeout").expect("Required")),
     );
     let options = ClientOptions::new(user_opt, client_timeout_opt);
+    let printer_type = match matches
+        .get_one::<String>("printer_type")
+        .expect("Required")
+        .as_str()
+    {
+        "SIMPLE" => PrinterType::Simple,
+        "FIELD" => PrinterType::Field,
+        _ => unreachable!("already checked by clap"),
+    };
+    set_printer_type(printer_type);
 
     let mut client = Client::connect(endpoints, options).await?;
     handle_matches!(matches, client, { get, put });
