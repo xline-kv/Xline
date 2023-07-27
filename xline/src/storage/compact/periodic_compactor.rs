@@ -8,8 +8,8 @@ use std::{
 };
 
 use clippy_utilities::OverflowArithmetic;
-use event_listener::Event;
 use tracing::{info, warn};
+use utils::shutdown;
 
 use super::{Compactable, Compactor};
 use crate::{revision_number::RevisionNumberGenerator, storage::ExecuteError};
@@ -62,8 +62,8 @@ pub(crate) struct PeriodicCompactor<C: Compactable> {
     client: Arc<C>,
     /// revision getter
     revision_getter: Arc<RevisionNumberGenerator>,
-    /// shutdown trigger
-    shutdown_trigger: Arc<Event>,
+    /// shutdown listener
+    shutdown_listener: shutdown::Listener,
     /// compaction period
     period: Duration,
 }
@@ -74,14 +74,14 @@ impl<C: Compactable> PeriodicCompactor<C> {
         is_leader: bool,
         client: Arc<C>,
         revision_getter: Arc<RevisionNumberGenerator>,
-        shutdown_trigger: Arc<Event>,
+        shutdown_listener: shutdown::Listener,
         period: Duration,
     ) -> Arc<Self> {
         Arc::new(Self {
             is_leader: AtomicBool::new(is_leader),
             client,
             revision_getter,
-            shutdown_trigger,
+            shutdown_listener,
             period,
         })
     }
@@ -160,22 +160,13 @@ fn sample_config(period: Duration) -> (Duration, usize) {
 
 #[async_trait::async_trait]
 impl<C: Compactable> Compactor for PeriodicCompactor<C> {
-    fn pause(&self) {
-        self.is_leader.store(false, Relaxed);
-    }
-
-    fn resume(&self) {
-        self.is_leader.store(true, Relaxed);
-    }
-
     #[allow(clippy::integer_arithmetic)]
     async fn run(&self) {
         let mut last_revision: Option<i64> = None;
-        let shutdown_trigger = self.shutdown_trigger.listen();
         let (sample_frequency, sample_total) = sample_config(self.period);
         let mut ticker = tokio::time::interval(sample_frequency);
         let mut revision_window = RevisionWindow::new(sample_total);
-        tokio::pin!(shutdown_trigger);
+        let mut shutdown_listener = self.shutdown_listener.clone();
         loop {
             revision_window.sample(self.revision_getter.get());
             tokio::select! {
@@ -186,11 +177,19 @@ impl<C: Compactable> Compactor for PeriodicCompactor<C> {
                 }
                 // To ensure that each iteration invokes the same `shutdown_trigger` and keeps
                 // events losing due to the cancellation of `shutdown_trigger` at bay.
-                _ = &mut shutdown_trigger => {
+                _ = shutdown_listener.wait_self_shutdown() => {
                     break;
                 }
             }
         }
+    }
+
+    fn pause(&self) {
+        self.is_leader.store(false, Relaxed);
+    }
+
+    fn resume(&self) {
+        self.is_leader.store(true, Relaxed);
     }
 }
 
@@ -244,13 +243,13 @@ mod test {
         }
         let mut compactable = MockCompactable::new();
         compactable.expect_compact().times(3).returning(|_| Ok(()));
-        let shutdown_trigger = Arc::new(Event::new());
+        let (_shutdown_trigger, shutdown_listener) = shutdown::channel();
         let revision_gen = Arc::new(RevisionNumberGenerator::new(1));
         let periodic_compactor = PeriodicCompactor::new_arc(
             true,
             Arc::new(compactable),
             revision_gen,
-            shutdown_trigger,
+            shutdown_listener,
             Duration::from_secs(10),
         );
         // auto_compactor works successfully

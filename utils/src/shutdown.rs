@@ -120,6 +120,20 @@ impl Trigger {
             listener: self.inner.trigger.subscribe(),
         }
     }
+
+    /// Get receiver count.
+    #[inline]
+    #[must_use]
+    pub fn receiver_count(&self) -> usize {
+        self.inner.trigger.receiver_count()
+    }
+
+    /// Check if the shutdown trigger has been closed.
+    #[inline]
+    #[must_use]
+    pub fn is_closed(&self) -> bool {
+        self.inner.trigger.is_closed()
+    }
 }
 
 /// Shutdown listener.
