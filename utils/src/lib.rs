@@ -138,6 +138,7 @@
 
 use std::{collections::HashMap, time::Duration};
 
+use clippy_utilities::OverflowArithmetic;
 use thiserror::Error;
 
 use crate::config::{ClusterRange, LevelConfig, RotationConfig};
@@ -155,6 +156,13 @@ pub mod std_lock;
 pub mod tokio_lock;
 /// utils for pass span context
 pub mod tracing;
+
+/// seconds per minute
+const SECS_PER_MINUTE: u64 = 60;
+/// seconds per hour
+const SECS_PER_HOUR: u64 = 3600;
+/// seconds per day, equals to 24 * 60 * 60 = 86400
+const SECS_PER_DAY: u64 = 86400;
 
 /// Config Parse Error
 #[derive(Debug, Error)]
@@ -236,9 +244,36 @@ pub fn parse_duration(s: &str) -> Result<Duration, ConfigParseError> {
                 "the value of time should not be empty ({s})"
             )))
         }
+    } else if s.ends_with('m') {
+        if let Some(dur) = s.strip_suffix('m') {
+            let minutes: u64 = dur.parse()?;
+            Ok(Duration::from_secs(minutes.overflow_mul(SECS_PER_MINUTE)))
+        } else {
+            Err(ConfigParseError::InvalidValue(format!(
+                "the value of time should not be empty ({s})"
+            )))
+        }
+    } else if s.ends_with('h') {
+        if let Some(dur) = s.strip_suffix('h') {
+            let hours: u64 = dur.parse()?;
+            Ok(Duration::from_secs(hours.overflow_mul(SECS_PER_HOUR)))
+        } else {
+            Err(ConfigParseError::InvalidValue(format!(
+                "the value of time should not be empty ({s})"
+            )))
+        }
+    } else if s.ends_with('d') {
+        if let Some(dur) = s.strip_suffix('d') {
+            let days: u64 = dur.parse()?;
+            Ok(Duration::from_secs(days.overflow_mul(SECS_PER_DAY)))
+        } else {
+            Err(ConfigParseError::InvalidValue(format!(
+                "the value of time should not be empty ({s})"
+            )))
+        }
     } else {
         Err(ConfigParseError::InvalidUnit(format!(
-            "the unit of time should be one of 'us', 'ms' or 's'({s})"
+            "the unit of time should be one of 'us', 'ms', 's', 'm', 'h' or 'd' ({s})"
         )))
     }
 }
@@ -322,6 +357,15 @@ mod test {
         assert_eq!(parse_duration("5s").unwrap(), Duration::from_secs(5));
         assert_eq!(parse_duration("3ms").unwrap(), Duration::from_millis(3));
         assert_eq!(parse_duration("1us").unwrap(), Duration::from_micros(1));
+        assert_eq!(parse_duration("3m").unwrap(), Duration::from_secs(180));
+        assert_eq!(
+            parse_duration("2h").unwrap(),
+            Duration::from_secs(2 * SECS_PER_HOUR)
+        );
+        assert_eq!(
+            parse_duration("30d").unwrap(),
+            Duration::from_secs(30 * SECS_PER_DAY)
+        );
         let results = vec![
             parse_duration("hello world"),
             parse_duration("5x"),

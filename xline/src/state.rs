@@ -2,11 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use curp::role_change::RoleChange;
 
-use crate::storage::{
-    storage_api::StorageApi,
-    LeaseStore,
-    compact::Compactor,
-};
+use crate::storage::{compact::Compactor, storage_api::StorageApi, LeaseStore};
 
 /// State of current node
 #[derive(Debug)]
@@ -35,7 +31,13 @@ impl<DB: StorageApi> RoleChange for State<DB> {
 
 impl<DB: StorageApi> State<DB> {
     /// Create a new State
-    pub(super) fn new(lease_storage: Arc<LeaseStore<DB>>, auto_compactor: Option<Arc<dyn Compactor>>) -> Self {
-        Self { lease_storage, auto_compactor }
+    pub(super) fn new(
+        lease_storage: Arc<LeaseStore<DB>>,
+        auto_compactor: Option<Arc<dyn Compactor>>,
+    ) -> Self {
+        Self {
+            lease_storage,
+            auto_compactor,
+        }
     }
 }

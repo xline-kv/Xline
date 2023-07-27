@@ -133,6 +133,9 @@ pub struct CompactConfig {
     #[getset(get = "pub")]
     #[serde(with = "duration_format", default = "default_compact_sleep_interval")]
     compact_sleep_interval: Duration,
+    /// The auto compactor config
+    #[getset(get = "pub")]
+    auto_compact_config: Option<AutoCompactConfig>,
 }
 
 impl Default for CompactConfig {
@@ -141,6 +144,7 @@ impl Default for CompactConfig {
         Self {
             compact_batch_size: default_compact_batch_size(),
             compact_sleep_interval: default_compact_sleep_interval(),
+            auto_compact_config: None,
         }
     }
 }
@@ -149,10 +153,15 @@ impl CompactConfig {
     /// Create a new compact config
     #[must_use]
     #[inline]
-    pub fn new(compact_batch_size: usize, compact_sleep_interval: Duration) -> Self {
+    pub fn new(
+        compact_batch_size: usize,
+        compact_sleep_interval: Duration,
+        auto_compact_config: Option<AutoCompactConfig>,
+    ) -> Self {
         Self {
             compact_batch_size,
             compact_sleep_interval,
+            auto_compact_config,
         }
     }
 }
@@ -475,6 +484,23 @@ impl Default for ServerTimeout {
     }
 }
 
+/// Auto Compactor Configuration
+#[allow(clippy::module_name_repetitions)]
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(
+    tag = "mode",
+    content = "retention",
+    rename_all(deserialize = "lowercase")
+)]
+pub enum AutoCompactConfig {
+    /// auto periodic compactor
+    #[serde(with = "duration_format")]
+    Periodic(Duration),
+    /// auto revision compactor
+    Revision(i64),
+}
+
 /// Storage Configuration
 #[allow(clippy::module_name_repetitions)]
 #[non_exhaustive]
@@ -751,6 +777,10 @@ mod tests {
             compact_batch_size = 123
             compact_sleep_interval = '5ms'
 
+            [compact.auto_compact_config]
+            mode = 'periodic'
+            retention = '10h'
+
             [log]
             path = '/var/log/xline'
             rotation = 'daily'
@@ -785,6 +815,7 @@ mod tests {
             Duration::from_millis(20),
             Duration::from_secs(1),
         );
+
         assert_eq!(
             config.cluster,
             ClusterConfig::new(
@@ -825,7 +856,10 @@ mod tests {
             config.compact,
             CompactConfig {
                 compact_batch_size: 123,
-                compact_sleep_interval: Duration::from_millis(5)
+                compact_sleep_interval: Duration::from_millis(5),
+                auto_compact_config: Some(AutoCompactConfig::Periodic(Duration::from_secs(
+                    10 * 60 * 60
+                )))
             }
         );
     }
@@ -906,5 +940,53 @@ mod tests {
             )
         );
         assert_eq!(config.compact, CompactConfig::default());
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_auto_revision_compactor_config_should_be_loaded() {
+        let config: XlineServerConfig = toml::from_str(
+            r#"[cluster]
+                name = 'node1'
+                is_leader = true
+
+                [cluster.members]
+                node1 = '127.0.0.1:2379'
+                node2 = '127.0.0.1:2380'
+                node3 = '127.0.0.1:2381'
+
+                [cluster.storage]
+
+                [log]
+                path = '/var/log/xline'
+
+                [storage]
+                engine = 'memory'
+
+                [compact]
+
+                [compact.auto_compact_config]
+                mode = 'revision'
+                retention = 10000
+
+                [trace]
+                jaeger_online = false
+                jaeger_offline = false
+                jaeger_output_dir = './jaeger_jsons'
+                jaeger_level = 'info'
+
+                [auth]
+                # auth_public_key = './public_key'.pem'
+                # auth_private_key = './private_key.pem'"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.compact,
+            CompactConfig {
+                auto_compact_config: Some(AutoCompactConfig::Revision(10000)),
+                ..Default::default()
+            }
+        );
     }
 }
