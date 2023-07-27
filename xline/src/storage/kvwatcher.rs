@@ -17,7 +17,7 @@ use tokio::{
     time::sleep,
 };
 use tracing::debug;
-use utils::parking_lot_lock::RwLockMap;
+use utils::{parking_lot_lock::RwLockMap, shutdown};
 
 use super::storage_api::StorageApi;
 use crate::{
@@ -392,37 +392,61 @@ where
     /// Create a new `Arc<KvWatcher>`
     pub(crate) fn new_arc(
         storage: Arc<KvStore<S>>,
-        mut kv_update_rx: mpsc::Receiver<(i64, Vec<Event>)>,
-        shutdown_trigger: Arc<event_listener::Event>,
+        kv_update_rx: mpsc::Receiver<(i64, Vec<Event>)>,
         sync_victims_interval: Duration,
+        shutdown_listener: shutdown::Listener,
     ) -> Arc<Self> {
         let watcher_map = Arc::new(RwLock::new(WatcherMap::new()));
         let kv_watcher = Arc::new(Self {
             storage,
             watcher_map,
         });
-        let victim_handle =
-            tokio::spawn(Arc::clone(&kv_watcher).sync_victims_task(sync_victims_interval));
-        let kv_updates_handle = tokio::spawn({
-            let kv_watcher = Arc::clone(&kv_watcher);
-            async move {
-                while let Some(updates) = kv_update_rx.recv().await {
-                    kv_watcher.handle_kv_updates(updates);
-                }
-            }
-        });
-        let _hd = tokio::spawn(async move {
-            shutdown_trigger.listen().await;
-            victim_handle.abort();
-            kv_updates_handle.abort();
-        });
+        let _victim_handle = tokio::spawn(Self::sync_victims_task(
+            Arc::clone(&kv_watcher),
+            sync_victims_interval,
+            shutdown_listener.clone(),
+        ));
+        let _kv_updates_handle = tokio::spawn(Self::kv_updates_task(
+            Arc::clone(&kv_watcher),
+            kv_update_rx,
+            shutdown_listener,
+        ));
         kv_watcher
     }
 
-    /// Background task to sync victims
-    async fn sync_victims_task(self: Arc<Self>, sync_victims_interval: Duration) {
+    /// Background task to handle KV updates
+    #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
+    async fn kv_updates_task(
+        kv_watcher: Arc<KvWatcher<S>>,
+        mut kv_update_rx: mpsc::Receiver<(i64, Vec<Event>)>,
+        mut shutdown_listener: shutdown::Listener,
+    ) {
         loop {
-            let victims = self
+            tokio::select! {
+                _ = shutdown_listener.wait_self_shutdown() => {
+                    debug!("kv_updates_task shutdown");
+                    break;
+                }
+                res = kv_update_rx.recv() => {
+                    let Some(updates) = res else {
+                        debug!("kv_update_rx is closed");
+                        break;
+                    };
+                    kv_watcher.handle_kv_updates(updates);
+                }
+            }
+        }
+    }
+
+    /// Background task to sync victims
+    #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
+    async fn sync_victims_task(
+        kv_watcher: Arc<KvWatcher<S>>,
+        sync_victims_interval: Duration,
+        mut shutdown_listener: shutdown::Listener,
+    ) {
+        loop {
+            let victims = kv_watcher
                 .watcher_map
                 .map_write(|mut m| m.victims.drain().collect::<Vec<_>>());
             let mut new_victims = HashMap::new();
@@ -436,8 +460,8 @@ where
                         "can't insert a watcher to new_victims twice"
                     );
                 } else {
-                    let mut watcher_map_w = self.watcher_map.write();
-                    let initial_events = self
+                    let mut watcher_map_w = kv_watcher.watcher_map.write();
+                    let initial_events = kv_watcher
                         .storage
                         .get_event_from_revision(watcher.key_range.clone(), watcher.start_rev)
                         .unwrap_or_else(|e| {
@@ -459,7 +483,7 @@ where
                         };
                     }
                     debug!(
-                        watche_id = watcher.watch_id(),
+                        watch_id = watcher.watch_id(),
                         "watcher synced by sync_victims_task"
                     );
                     if !watcher.compacted {
@@ -468,9 +492,15 @@ where
                 }
             }
             if !new_victims.is_empty() {
-                self.watcher_map.write().victims.extend(new_victims);
+                kv_watcher.watcher_map.write().victims.extend(new_victims);
             }
-            sleep(sync_victims_interval).await;
+            tokio::select! {
+                _ = shutdown_listener.wait_self_shutdown() => {
+                    debug!("sync_victims_task shutdown");
+                    break;
+                }
+                _ = sleep(sync_victims_interval) => {}
+            }
         }
     }
 
@@ -582,7 +612,7 @@ mod test {
         },
     };
 
-    fn init_empty_store() -> (Arc<KvStore<DB>>, Arc<DB>, Arc<KvWatcher<DB>>) {
+    fn init_empty_store(rx: shutdown::Listener) -> (Arc<KvStore<DB>>, Arc<DB>, Arc<KvWatcher<DB>>) {
         let (compact_tx, _compact_rx) = mpsc::channel(COMPACT_CHANNEL_SIZE);
         let db = DB::open(&StorageConfig::Memory).unwrap();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
@@ -597,21 +627,17 @@ mod test {
             compact_tx,
             lease_collection,
         ));
-        let shutdown_trigger = Arc::new(event_listener::Event::new());
         let sync_victims_interval = Duration::from_millis(10);
-        let kv_watcher = KvWatcher::new_arc(
-            Arc::clone(&store),
-            kv_update_rx,
-            shutdown_trigger,
-            sync_victims_interval,
-        );
+        let kv_watcher =
+            KvWatcher::new_arc(Arc::clone(&store), kv_update_rx, sync_victims_interval, rx);
         (store, db, kv_watcher)
     }
 
     #[tokio::test(flavor = "multi_thread")]
     #[abort_on_panic]
     async fn watch_should_not_lost_events() {
-        let (store, db, kv_watcher) = init_empty_store();
+        let (tx, rx) = shutdown::channel();
+        let (store, db, kv_watcher) = init_empty_store(rx);
         let mut map = BTreeMap::new();
         let (event_tx, mut event_rx) = mpsc::channel(128);
         let stop_notify = Arc::new(event_listener::Event::new());
@@ -660,12 +686,14 @@ mod test {
             assert_eq!(count, 1, "key {k} should be notified once");
         }
         handle.abort();
+        tx.self_shutdown_and_wait().await;
     }
 
     #[tokio::test(flavor = "multi_thread")]
     #[abort_on_panic]
     async fn test_victim() {
-        let (store, db, kv_watcher) = init_empty_store();
+        let (tx, rx) = shutdown::channel();
+        let (store, db, kv_watcher) = init_empty_store(rx);
         // response channel with capacity 1, so it will be full easily, then we can trigger victim
         let (event_tx, mut event_rx) = mpsc::channel(1);
         let stop_notify = Arc::new(event_listener::Event::new());
@@ -697,12 +725,14 @@ mod test {
             put(store.as_ref(), db.as_ref(), "foo", vec![i], i.cast()).await;
         }
         handle.await.unwrap();
+        tx.self_shutdown_and_wait().await;
     }
 
     #[tokio::test(flavor = "multi_thread")]
     #[abort_on_panic]
     async fn test_cancel_watcher() {
-        let (_store, _db, kv_watcher) = init_empty_store();
+        let (tx, rx) = shutdown::channel();
+        let (_store, _db, kv_watcher) = init_empty_store(rx);
         let (event_tx, _event_rx) = mpsc::channel(1);
         let stop_notify = Arc::new(event_listener::Event::new());
         kv_watcher.watch(
@@ -718,6 +748,7 @@ mod test {
         kv_watcher.cancel(1);
         assert!(kv_watcher.watcher_map.read().index.is_empty());
         assert!(kv_watcher.watcher_map.read().watchers.is_empty());
+        tx.self_shutdown_and_wait().await;
     }
 
     async fn put(

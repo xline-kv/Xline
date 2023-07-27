@@ -5,7 +5,7 @@ mod common;
 
 #[tokio::test]
 async fn snapshot_should_get_valid_data() -> Result<()> {
-    let (_cluster, client) = get_cluster_client().await?;
+    let (mut cluster, client) = get_cluster_client().await?;
     let mut client = client.maintenance_client();
 
     let mut msg = client.snapshot().await?;
@@ -17,5 +17,6 @@ async fn snapshot_should_get_valid_data() -> Result<()> {
             }
         }
     }
+    cluster.stop().await;
     Ok(())
 }

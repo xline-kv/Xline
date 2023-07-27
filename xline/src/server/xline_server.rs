@@ -6,13 +6,12 @@ use curp::{
     client::Client, members::ClusterInfo, server::Rpc, InnerProtocolServer, ProtocolServer,
 };
 use engine::{MemorySnapshotAllocator, RocksSnapshotAllocator, SnapshotAllocator};
-use event_listener::Event;
-use futures::Future;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use tokio::{net::TcpListener, sync::mpsc::channel};
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
 use tonic_health::ServingStatus;
+use tracing::error;
 use utils::{
     config::{ClientConfig, CompactConfig, CurpConfig, ServerTimeout, StorageConfig},
     shutdown,
@@ -71,9 +70,7 @@ pub struct XlineServer {
     /// Server timeout
     server_timeout: ServerTimeout,
     /// Shutdown trigger
-    shutdown_trigger: Arc<Event>,
-    /// Curp shutdown trigger
-    curp_shutdown_trigger: shutdown::Trigger,
+    shutdown_trigger: shutdown::Trigger,
 }
 
 impl XlineServer {
@@ -93,7 +90,7 @@ impl XlineServer {
         storage_config: StorageConfig,
         compact_config: CompactConfig,
     ) -> Self {
-        let (trigger, _) = shutdown::channel();
+        let (shutdown_trigger, _) = shutdown::channel();
         Self {
             cluster_info,
             is_leader,
@@ -102,8 +99,7 @@ impl XlineServer {
             storage_cfg: storage_config,
             compact_cfg: compact_config,
             server_timeout,
-            shutdown_trigger: Arc::new(Event::new()),
-            curp_shutdown_trigger: trigger,
+            shutdown_trigger,
         }
     }
 
@@ -153,6 +149,7 @@ impl XlineServer {
             *self.compact_cfg.compact_batch_size(),
             *self.compact_cfg.compact_sleep_interval(),
             compact_task_rx,
+            self.shutdown_trigger.subscribe(),
         ));
         // TODO: Boot up the compact policy scheduler
         let lease_storage = Arc::new(LeaseStore::new(
@@ -172,8 +169,8 @@ impl XlineServer {
         let watcher = KvWatcher::new_arc(
             Arc::clone(&kv_storage),
             kv_update_rx,
-            Arc::clone(&self.shutdown_trigger),
             *self.server_timeout.sync_victims_interval(),
+            self.shutdown_trigger.subscribe(),
         );
         // lease storage must recover before kv storage
         lease_storage.recover()?;
@@ -205,6 +202,10 @@ impl XlineServer {
         persistent: Arc<S>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
     ) -> Result<()> {
+        let mut shutdown_listener = self.shutdown_trigger.subscribe();
+        let signal = async move {
+            let _r = shutdown_listener.wait_self_shutdown().await;
+        };
         let (
             kv_server,
             lock_server,
@@ -218,18 +219,21 @@ impl XlineServer {
         reporter
             .set_service_status("", ServingStatus::Serving)
             .await;
-        Ok(Server::builder()
-            .add_service(RpcLockServer::new(lock_server))
-            .add_service(RpcKvServer::new(kv_server))
-            .add_service(RpcLeaseServer::from_arc(lease_server))
-            .add_service(RpcAuthServer::new(auth_server))
-            .add_service(RpcWatchServer::new(watch_server))
-            .add_service(RpcMaintenanceServer::new(maintenance_server))
-            .add_service(ProtocolServer::from_arc(Arc::clone(&curp_server)))
-            .add_service(InnerProtocolServer::from_arc(curp_server))
-            .add_service(health_server)
-            .serve(addr)
-            .await?)
+        let _h = tokio::spawn(async move {
+            Server::builder()
+                .add_service(RpcLockServer::new(lock_server))
+                .add_service(RpcKvServer::new(kv_server))
+                .add_service(RpcLeaseServer::from_arc(lease_server))
+                .add_service(RpcAuthServer::new(auth_server))
+                .add_service(RpcWatchServer::new(watch_server))
+                .add_service(RpcMaintenanceServer::new(maintenance_server))
+                .add_service(ProtocolServer::from_arc(Arc::clone(&curp_server)))
+                .add_service(InnerProtocolServer::from_arc(curp_server))
+                .add_service(health_server)
+                .serve_with_shutdown(addr, signal)
+                .await
+        });
+        Ok(())
     }
 
     /// Start `XlineServer` from listeners
@@ -238,16 +242,16 @@ impl XlineServer {
     ///
     /// Will return `Err` when `tonic::Server` serve return an error
     #[inline]
-    pub async fn start_from_listener_shutdown<F, S: StorageApi>(
+    pub async fn start_from_listener<S: StorageApi>(
         &self,
         xline_listener: TcpListener,
-        signal: F,
         persistent: Arc<S>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
-    ) -> Result<()>
-    where
-        F: Future<Output = ()>,
-    {
+    ) -> Result<()> {
+        let mut shutdown_listener = self.shutdown_trigger.subscribe();
+        let signal = async move {
+            shutdown_listener.wait_self_shutdown().await;
+        };
         let (
             kv_server,
             lock_server,
@@ -261,18 +265,21 @@ impl XlineServer {
         reporter
             .set_service_status("", ServingStatus::Serving)
             .await;
-        Ok(Server::builder()
-            .add_service(RpcLockServer::new(lock_server))
-            .add_service(RpcKvServer::new(kv_server))
-            .add_service(RpcLeaseServer::from_arc(lease_server))
-            .add_service(RpcAuthServer::new(auth_server))
-            .add_service(RpcWatchServer::new(watch_server))
-            .add_service(RpcMaintenanceServer::new(maintenance_server))
-            .add_service(ProtocolServer::from_arc(Arc::clone(&curp_server)))
-            .add_service(InnerProtocolServer::from_arc(curp_server))
-            .add_service(health_server)
-            .serve_with_incoming_shutdown(TcpListenerStream::new(xline_listener), signal)
-            .await?)
+        let _h = tokio::spawn(async move {
+            Server::builder()
+                .add_service(RpcLockServer::new(lock_server))
+                .add_service(RpcKvServer::new(kv_server))
+                .add_service(RpcLeaseServer::from_arc(lease_server))
+                .add_service(RpcAuthServer::new(auth_server))
+                .add_service(RpcWatchServer::new(watch_server))
+                .add_service(RpcMaintenanceServer::new(maintenance_server))
+                .add_service(ProtocolServer::from_arc(Arc::clone(&curp_server)))
+                .add_service(InnerProtocolServer::from_arc(curp_server))
+                .add_service(health_server)
+                .serve_with_incoming_shutdown(TcpListenerStream::new(xline_listener), signal)
+                .await
+        });
+        Ok(())
     }
 
     /// Init `KvServer`, `LockServer`, `LeaseServer`, `WatchServer` and `CurpServer`
@@ -341,7 +348,7 @@ impl XlineServer {
                     self.is_leader,
                     Arc::clone(&client),
                     header_gen.general_revision_arc(),
-                    Arc::clone(&self.shutdown_trigger),
+                    self.shutdown_trigger.subscribe(),
                     auto_config_cfg,
                 )
                 .await,
@@ -358,7 +365,7 @@ impl XlineServer {
             snapshot_allocator,
             state,
             Arc::clone(&self.curp_cfg),
-            self.curp_shutdown_trigger.clone(),
+            self.shutdown_trigger.clone(),
         )
         .await;
 
@@ -384,23 +391,43 @@ impl XlineServer {
                 Arc::clone(&client),
                 id_gen,
                 Arc::clone(&self.cluster_info),
+                self.shutdown_trigger.subscribe(),
             ),
             AuthServer::new(client, self.cluster_info.self_name()),
             WatchServer::new(
                 watcher,
                 Arc::clone(&header_gen),
                 *self.server_timeout.watch_progress_notify_interval(),
+                self.shutdown_trigger.subscribe(),
             ),
             MaintenanceServer::new(persistent, header_gen),
             Arc::new(curp_server),
         ))
+    }
+
+    /// Check if `XlineServer` is stopped
+    #[inline]
+    #[must_use]
+    pub fn is_stopped(&self) -> bool {
+        self.shutdown_trigger.is_closed()
+    }
+
+    /// Stop `XlineServer`
+    #[inline]
+    pub async fn stop(&self) {
+        self.shutdown_trigger.self_shutdown_and_wait().await;
     }
 }
 
 impl Drop for XlineServer {
     #[inline]
     fn drop(&mut self) {
-        self.shutdown_trigger.notify(usize::MAX);
-        self.curp_shutdown_trigger.self_shutdown();
+        if !self.is_stopped() {
+            let task_number = self.shutdown_trigger.receiver_count();
+            error!(
+                "Xline server is not stopped, there are {} tasks not stopped",
+                task_number
+            );
+        }
     }
 }

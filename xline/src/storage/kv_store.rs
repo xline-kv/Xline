@@ -859,7 +859,7 @@ mod test {
     use std::time::Duration;
 
     use test_macros::abort_on_panic;
-    use utils::config::StorageConfig;
+    use utils::{config::StorageConfig, shutdown};
 
     use super::*;
     use crate::{
@@ -886,8 +886,9 @@ mod test {
 
     async fn init_store(
         db: Arc<DB>,
+        shutdown_listener: shutdown::Listener,
     ) -> Result<(Arc<KvStore<DB>>, RevisionNumberGenerator), ExecuteError> {
-        let store = init_empty_store(db);
+        let store = init_empty_store(db, shutdown_listener);
         let keys = vec!["a", "b", "c", "d", "e", "z", "z", "z"];
         let vals = vec!["a", "b", "c", "d", "e", "z1", "z2", "z3"];
         let revision = RevisionNumberGenerator::default();
@@ -905,7 +906,7 @@ mod test {
         Ok((store, revision))
     }
 
-    fn init_empty_store(db: Arc<DB>) -> Arc<KvStore<DB>> {
+    fn init_empty_store(db: Arc<DB>, shutdown_listener: shutdown::Listener) -> Arc<KvStore<DB>> {
         let (compact_tx, compact_rx) = mpsc::channel(COMPACT_CHANNEL_SIZE);
         let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
         let lease_collection = Arc::new(LeaseCollection::new(0));
@@ -919,12 +920,11 @@ mod test {
             compact_tx,
             lease_collection,
         ));
-        let shutdown_trigger = Arc::new(event_listener::Event::new());
         let _watcher = KvWatcher::new_arc(
             Arc::clone(&storage),
             kv_update_rx,
-            shutdown_trigger,
             Duration::from_millis(10),
+            shutdown_listener.clone(),
         );
         let _compactor = tokio::spawn(compact_bg_task(
             Arc::clone(&storage),
@@ -932,6 +932,7 @@ mod test {
             1000,
             Duration::from_millis(10),
             compact_rx,
+            shutdown_listener,
         ));
         storage
     }
@@ -959,8 +960,9 @@ mod test {
     #[tokio::test]
     #[abort_on_panic]
     async fn test_keys_only() -> Result<(), ExecuteError> {
+        let (tx, rx) = shutdown::channel();
         let db = DB::open(&StorageConfig::Memory)?;
-        let (store, _rev) = init_store(db).await?;
+        let (store, _rev) = init_store(db, rx).await?;
 
         let request = RangeRequest {
             key: vec![0],
@@ -973,15 +975,16 @@ mod test {
         for kv in response.kvs {
             assert!(kv.value.is_empty());
         }
-
+        tx.self_shutdown_and_wait().await;
         Ok(())
     }
 
     #[tokio::test]
     #[abort_on_panic]
     async fn test_range_empty() -> Result<(), ExecuteError> {
+        let (tx, rx) = shutdown::channel();
         let db = DB::open(&StorageConfig::Memory)?;
-        let (store, _rev) = init_store(db).await?;
+        let (store, _rev) = init_store(db, rx).await?;
 
         let request = RangeRequest {
             key: "x".into(),
@@ -992,15 +995,16 @@ mod test {
         let response = store.handle_range_request(&request)?;
         assert_eq!(response.kvs.len(), 0);
         assert_eq!(response.count, 0);
-
+        tx.self_shutdown_and_wait().await;
         Ok(())
     }
 
     #[tokio::test]
     #[abort_on_panic]
     async fn test_range_filter() -> Result<(), ExecuteError> {
+        let (tx, rx) = shutdown::channel();
         let db = DB::open(&StorageConfig::Memory)?;
-        let (store, _rev) = init_store(db).await?;
+        let (store, _rev) = init_store(db, rx).await?;
 
         let request = RangeRequest {
             key: vec![0],
@@ -1016,15 +1020,16 @@ mod test {
         assert_eq!(response.kvs.len(), 2);
         assert_eq!(response.kvs[0].create_revision, 2);
         assert_eq!(response.kvs[1].create_revision, 3);
-
+        tx.self_shutdown_and_wait().await;
         Ok(())
     }
 
     #[tokio::test]
     #[abort_on_panic]
     async fn test_range_sort() -> Result<(), ExecuteError> {
+        let (tx, rx) = shutdown::channel();
         let db = DB::open(&StorageConfig::Memory)?;
-        let (store, _rev) = init_store(db).await?;
+        let (store, _rev) = init_store(db, rx).await?;
         let keys = ["a", "b", "c", "d", "e", "z"];
         let reversed_keys = ["z", "e", "d", "c", "b", "a"];
         let version_keys = ["z", "a", "b", "c", "d", "e"];
@@ -1075,19 +1080,21 @@ mod test {
                 );
             }
         }
+        tx.self_shutdown_and_wait().await;
         Ok(())
     }
 
     #[tokio::test]
     #[abort_on_panic]
     async fn test_recover() -> Result<(), ExecuteError> {
+        let (tx, rx) = shutdown::channel();
         let db = DB::open(&StorageConfig::Memory)?;
         let ops = vec![WriteOp::PutCompactRevision(8)];
         db.flush_ops(ops)?;
-        let (store, _rev_gen) = init_store(Arc::clone(&db)).await?;
+        let (store, _rev_gen) = init_store(Arc::clone(&db), rx.clone()).await?;
         assert_eq!(store.index.get_from_rev(b"z", b"", 5).len(), 3);
 
-        let new_store = init_empty_store(db);
+        let new_store = init_empty_store(db, rx);
 
         let range_req = RangeRequest {
             key: "a".into(),
@@ -1106,12 +1113,14 @@ mod test {
         assert_eq!(new_store.compacted_revision(), 8);
         tokio::time::sleep(Duration::from_millis(500)).await;
         assert_eq!(new_store.index.get_from_rev(b"z", b"", 5).len(), 2);
+        tx.self_shutdown_and_wait().await;
         Ok(())
     }
 
     #[tokio::test]
     #[abort_on_panic]
     async fn test_txn() -> Result<(), ExecuteError> {
+        let (tx, rx) = shutdown::channel();
         let txn_req = RequestWithToken::new(
             TxnRequest {
                 compare: vec![Compare {
@@ -1151,7 +1160,7 @@ mod test {
             .into(),
         );
         let db = DB::open(&StorageConfig::Memory)?;
-        let (store, rev) = init_store(db).await?;
+        let (store, rev) = init_store(db, rx).await?;
         exe_as_and_flush(&store, &txn_req, rev.next()).await?;
         let request = RangeRequest {
             key: "success".into(),
@@ -1162,15 +1171,16 @@ mod test {
         assert_eq!(response.count, 1);
         assert_eq!(response.kvs.len(), 1);
         assert_eq!(response.kvs[0].value, "1".as_bytes());
-
+        tx.self_shutdown_and_wait().await;
         Ok(())
     }
 
     #[tokio::test(flavor = "multi_thread")]
     #[abort_on_panic]
     async fn test_kv_store_index_available() {
+        let (tx, rx) = shutdown::channel();
         let db = DB::open(&StorageConfig::Memory).unwrap();
-        let (store, revision) = init_store(Arc::clone(&db)).await.unwrap();
+        let (store, revision) = init_store(Arc::clone(&db), rx).await.unwrap();
         let handle = tokio::spawn({
             let store = Arc::clone(&store);
             async move {
@@ -1198,12 +1208,14 @@ mod test {
             "kvs.len() != revs.len(), maybe some operations already inserted into index, but not flushed to db"
         );
         handle.await.unwrap();
+        tx.self_shutdown_and_wait().await;
     }
 
     #[tokio::test]
     async fn test_compaction() -> Result<(), ExecuteError> {
+        let (tx, rx) = shutdown::channel();
         let db = DB::open(&StorageConfig::Memory)?;
-        let store = init_empty_store(db);
+        let store = init_empty_store(db, rx);
         let revision = RevisionNumberGenerator::default();
         // sample requests: (a, 1) (b, 2) (a, 3) (del a)
         // their revisions:     2      3      4       5
@@ -1296,7 +1308,7 @@ mod test {
             store.get_range(b"a", b"", 5).unwrap().is_empty(),
             "(a, 4) should be removed"
         );
-
+        tx.self_shutdown_and_wait().await;
         Ok(())
     }
 

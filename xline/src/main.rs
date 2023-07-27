@@ -145,7 +145,7 @@ use jsonwebtoken::{DecodingKey, EncodingKey};
 use opentelemetry::{global, runtime::Tokio, sdk::propagation::TraceContextPropagator};
 use opentelemetry_contrib::trace::exporter::jaeger_json::JaegerJsonExporter;
 use tokio::fs;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{fmt::format, prelude::*};
 use utils::{
@@ -473,6 +473,7 @@ async fn read_key_pair(
 }
 
 #[tokio::main]
+#[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
 async fn main() -> Result<()> {
     global::set_text_map_propagator(TraceContextPropagator::new());
     let config: XlineServerConfig = if env::args_os().len() == 1 {
@@ -535,6 +536,19 @@ async fn main() -> Result<()> {
     );
     debug!("{:?}", server);
     server.start(self_addr, db_proxy, key_pair).await?;
+
+    tokio::signal::ctrl_c().await?;
+    info!("received ctrl-c, shutting down, press ctrl-c again to force exit");
+
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            info!("received ctrl-c again, force exit");
+        }
+        _ = server.stop() => {
+            info!("server exited");
+        }
+    }
+
     global::shutdown_tracer_provider();
     Ok(())
 }

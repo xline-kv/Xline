@@ -14,7 +14,7 @@ mod common;
 #[tokio::test]
 #[abort_on_panic]
 async fn put_should_success_in_normal_path() -> Result<()> {
-    let (_cluster, client) = get_cluster_client().await?;
+    let (mut cluster, client) = get_cluster_client().await?;
     let client = client.kv_client();
 
     let request = PutRequest::new("put", "123");
@@ -41,14 +41,14 @@ async fn put_should_success_in_normal_path() -> Result<()> {
         assert_eq!(prev_kv.key, b"put");
         assert_eq!(prev_kv.value, b"456");
     }
-
+    cluster.stop().await;
     Ok(())
 }
 
 #[tokio::test]
 #[abort_on_panic]
 async fn range_should_fetches_previously_put_keys() -> Result<()> {
-    let (_cluster, client) = get_cluster_client().await?;
+    let (mut cluster, client) = get_cluster_client().await?;
     let client = client.kv_client();
 
     client.put(PutRequest::new("get10", "10")).await?;
@@ -92,14 +92,14 @@ async fn range_should_fetches_previously_put_keys() -> Result<()> {
         assert_eq!(resp.kvs[1].key, b"get11");
         assert_eq!(resp.kvs[1].value, b"11");
     }
-
+    cluster.stop().await;
     Ok(())
 }
 
 #[tokio::test]
 #[abort_on_panic]
 async fn delete_should_remove_previously_put_kvs() -> Result<()> {
-    let (_cluster, client) = get_cluster_client().await?;
+    let (mut cluster, client) = get_cluster_client().await?;
     let client = client.kv_client();
 
     client.put(PutRequest::new("del10", "10")).await?;
@@ -166,14 +166,14 @@ async fn delete_should_remove_previously_put_kvs() -> Result<()> {
             .await?;
         assert_eq!(resp.count, 0);
     }
-
+    cluster.stop().await;
     Ok(())
 }
 
 #[tokio::test]
 #[abort_on_panic]
 async fn txn_should_execute_as_expected() -> Result<()> {
-    let (_cluster, client) = get_cluster_client().await?;
+    let (mut cluster, client) = get_cluster_client().await?;
     let client = client.kv_client();
 
     client.put(PutRequest::new("txn01", "01")).await?;
@@ -231,7 +231,7 @@ async fn txn_should_execute_as_expected() -> Result<()> {
             _ => panic!("expect range response)"),
         }
     }
-
+    cluster.stop().await;
     Ok(())
 }
 

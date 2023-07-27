@@ -27,7 +27,7 @@ async fn test_lease_expired() -> Result<(), Box<dyn Error>> {
 
     let res = client.range(RangeRequest::new("foo")).await?;
     assert_eq!(res.kvs.len(), 0);
-
+    cluster.stop().await;
     Ok(())
 }
 
@@ -71,5 +71,6 @@ async fn test_lease_keep_alive() -> Result<(), Box<dyn Error>> {
     tokio::time::sleep(Duration::from_secs(2)).await;
     let res = client.range(RangeRequest::new("foo")).await?;
     assert_eq!(res.kvs.len(), 0);
+    cluster.stop().await;
     Ok(())
 }

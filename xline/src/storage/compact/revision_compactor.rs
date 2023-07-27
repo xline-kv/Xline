@@ -7,8 +7,8 @@ use std::{
 };
 
 use clippy_utilities::OverflowArithmetic;
-use event_listener::Event;
 use tracing::{info, warn};
+use utils::shutdown;
 
 use super::{Compactable, Compactor};
 use crate::{revision_number::RevisionNumberGenerator, storage::ExecuteError};
@@ -25,8 +25,8 @@ pub(crate) struct RevisionCompactor<C: Compactable> {
     client: Arc<C>,
     /// revision getter
     revision_getter: Arc<RevisionNumberGenerator>,
-    /// shutdown trigger
-    shutdown_trigger: Arc<Event>,
+    /// shutdown listener
+    shutdown_listener: shutdown::Listener,
     /// revision retention
     retention: i64,
 }
@@ -37,14 +37,14 @@ impl<C: Compactable> RevisionCompactor<C> {
         is_leader: bool,
         client: Arc<C>,
         revision_getter: Arc<RevisionNumberGenerator>,
-        shutdown_trigger: Arc<Event>,
+        shutdown_listener: shutdown::Listener,
         retention: i64,
     ) -> Arc<Self> {
         Arc::new(Self {
             is_leader: AtomicBool::new(is_leader),
             client,
             revision_getter,
-            shutdown_trigger,
+            shutdown_listener,
             retention,
         })
     }
@@ -106,9 +106,8 @@ impl<C: Compactable> Compactor for RevisionCompactor<C> {
     #[allow(clippy::integer_arithmetic)]
     async fn run(&self) {
         let mut last_revision = None;
-        let shutdown_trigger = self.shutdown_trigger.listen();
         let mut ticker = tokio::time::interval(CHECK_INTERVAL);
-        tokio::pin!(shutdown_trigger);
+        let mut shutdown_listener = self.shutdown_listener.clone();
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
@@ -118,7 +117,7 @@ impl<C: Compactable> Compactor for RevisionCompactor<C> {
                 }
                 // To ensure that each iteration invokes the same `shutdown_trigger` and keeps
                 // events losing due to the cancellation of `shutdown_trigger` at bay.
-                _ = &mut shutdown_trigger => {
+                _ = shutdown_listener.wait_self_shutdown() => {
                     break;
                 }
             }
@@ -135,13 +134,13 @@ mod test {
     async fn revision_compactor_should_work_in_normal_path() {
         let mut compactable = MockCompactable::new();
         compactable.expect_compact().times(3).returning(|_| Ok(()));
-        let shutdown_trigger = Arc::new(Event::new());
+        let (_shutdown_trigger, shutdown_listener) = shutdown::channel();
         let revision_gen = Arc::new(RevisionNumberGenerator::new(110));
         let revision_compactor = RevisionCompactor::new_arc(
             true,
             Arc::new(compactable),
             Arc::clone(&revision_gen),
-            shutdown_trigger,
+            shutdown_listener,
             100,
         );
         // auto_compactor works successfully
