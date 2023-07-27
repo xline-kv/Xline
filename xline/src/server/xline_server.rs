@@ -33,7 +33,7 @@ use crate::{
     },
     state::State,
     storage::{
-        compact::{compact_bg_task, COMPACT_CHANNEL_SIZE, auto_compactor},
+        compact::{auto_compactor, compact_bg_task, COMPACT_CHANNEL_SIZE},
         index::Index,
         kvwatcher::KvWatcher,
         lease_store::LeaseCollection,
@@ -327,16 +327,21 @@ impl XlineServer {
             .await,
         );
 
-        let auto_compactor = auto_compactor(
-            self.is_leader,
-            Arc::clone(&client),
-            header_gen.revision_arc(),
-            Arc::clone(&self.shutdown_trigger),
-            1000,
-        ).await;
+        let auto_compactor = if let Some(auto_config_cfg) = *self.compact_cfg.auto_compact_config()
+        {
+            auto_compactor(
+                self.is_leader,
+                Arc::clone(&client),
+                header_gen.revision_arc(),
+                Arc::clone(&self.shutdown_trigger),
+                auto_config_cfg,
+            )
+            .await
+        } else {
+            None
+        };
 
-
-        let state = State::new(Arc::clone(&lease_storage), Some(auto_compactor));
+        let state = State::new(Arc::clone(&lease_storage), auto_compactor);
         let curp_server = CurpServer::new(
             Arc::clone(&self.cluster_info),
             self.is_leader,

@@ -157,8 +157,9 @@ use utils::{
         default_propose_timeout, default_range_retry_timeout, default_retry_timeout,
         default_rotation, default_rpc_timeout, default_server_wait_synced_timeout,
         default_sync_victims_interval, default_watch_progress_notify_interval, file_appender,
-        AuthConfig, ClientTimeout, ClusterConfig, CompactConfig, CurpConfigBuilder, LevelConfig,
-        LogConfig, RotationConfig, ServerTimeout, StorageConfig, TraceConfig, XlineServerConfig,
+        AuthConfig, AutoCompactConfig, ClientTimeout, ClusterConfig, CompactConfig,
+        CurpConfigBuilder, LevelConfig, LogConfig, RotationConfig, ServerTimeout, StorageConfig,
+        TraceConfig, XlineServerConfig,
     },
     parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_rotation,
 };
@@ -269,6 +270,15 @@ struct ServerArgs {
     /// Interval between two compaction operations [default: 10ms]
     #[clap(long, value_parser = parse_duration)]
     compact_sleep_interval: Option<Duration>,
+    /// Auto compact mode
+    #[clap(long)]
+    auto_compact_mode: Option<String>,
+    /// Auto periodic compact retention
+    #[clap(long, value_parser = parse_duration)]
+    auto_periodic_retention: Option<Duration>,
+    /// Auto revision compact retention
+    #[clap(long)]
+    auto_revision_retention: Option<i64>,
 }
 
 impl From<ServerArgs> for XlineServerConfig {
@@ -335,10 +345,32 @@ impl From<ServerArgs> for XlineServerConfig {
             args.jaeger_level,
         );
         let auth = AuthConfig::new(args.auth_public_key, args.auth_private_key);
+        let auto_comapctor_cfg = if let Some(mode) = args.auto_compact_mode {
+            match mode.as_str() {
+                "periodic" => {
+                    let period = args.auto_periodic_retention.unwrap_or_else(|| {
+                        panic!("missing auto_periodic_retention argument");
+                    });
+                    Some(AutoCompactConfig::Periodic(period))
+                }
+                "revision" => {
+                    let retention = args.auto_revision_retention.unwrap_or_else(|| {
+                        panic!("missing auto_revision_retention argument");
+                    });
+                    Some(AutoCompactConfig::Revision(retention))
+                }
+                &_ => unreachable!(
+                    "xline only supports two auto-compaction modes: periodic, revision"
+                ),
+            }
+        } else {
+            None
+        };
         let compact = CompactConfig::new(
             args.compact_batch_size,
             args.compact_sleep_interval
                 .unwrap_or_else(default_compact_sleep_interval),
+            auto_comapctor_cfg,
         );
         XlineServerConfig::new(cluster, storage, log, trace, auth, compact)
     }

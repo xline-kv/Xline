@@ -3,8 +3,10 @@ use std::{sync::Arc, time::Duration};
 use async_trait::async_trait;
 use curp::{client::Client, cmd::ProposeId, error::ProposeError};
 use event_listener::Event;
+use periodic_compactor::PeriodicCompactor;
 use revision_compactor::RevisionCompactor;
 use tokio::{sync::mpsc::Receiver, time::sleep};
+use utils::config::AutoCompactConfig;
 use uuid::Uuid;
 
 use super::{
@@ -67,20 +69,28 @@ pub(crate) async fn auto_compactor(
     client: Arc<Client<Command>>,
     revision_getter: Arc<RevisionNumberGenerator>,
     shutdown_trigger: Arc<Event>,
-    retention: i64,
-) -> Arc<dyn Compactor> {
-    let auto_compactor: Arc<dyn Compactor + Send + Sync> = RevisionCompactor::new_arc(
-        is_leader,
-        client,
-        revision_getter,
-        shutdown_trigger,
-        retention,
-    );
+    auto_compact_cfg: AutoCompactConfig,
+) -> Option<Arc<dyn Compactor>> {
+    let auto_compactor: Arc<dyn Compactor> = match auto_compact_cfg {
+        AutoCompactConfig::Periodic(period) => {
+            PeriodicCompactor::new_arc(is_leader, client, revision_getter, shutdown_trigger, period)
+        }
+        AutoCompactConfig::Revision(retention) => RevisionCompactor::new_arc(
+            is_leader,
+            client,
+            revision_getter,
+            shutdown_trigger,
+            retention,
+        ),
+        _ => {
+            unreachable!("xline only supports two auto-compaction modes: periodic, revision")
+        }
+    };
     let compactor_handle = Arc::clone(&auto_compactor);
-    let _hd = tokio::spawn( async move{
+    let _hd = tokio::spawn(async move {
         auto_compactor.run().await;
     });
-    compactor_handle
+    Some(compactor_handle)
 }
 
 /// background compact executor

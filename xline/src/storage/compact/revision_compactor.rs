@@ -31,7 +31,7 @@ pub(crate) struct RevisionCompactor {
     retention: i64,
 }
 
-impl RevisionCompactor{
+impl RevisionCompactor {
     /// Creates a new revision compactor
     pub(super) fn new_arc(
         is_leader: bool,

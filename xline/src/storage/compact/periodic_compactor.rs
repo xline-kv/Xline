@@ -1,19 +1,18 @@
 use std::{
+    cmp::Ordering,
     sync::{
         atomic::{AtomicBool, Ordering::Relaxed},
         Arc,
     },
     time::{Duration, Instant},
-    cmp::Ordering,
 };
 
+use clippy_utilities::OverflowArithmetic;
 use event_listener::Event;
 use tracing::{info, warn};
-use clippy_utilities::OverflowArithmetic;
 
 use super::{Compactable, Compactor};
 use crate::revision_number::RevisionNumberGenerator;
-
 
 /// `RevisionWindow` is a ring buffer used to store periodically sampled revision.
 struct RevisionWindow {
@@ -22,7 +21,7 @@ struct RevisionWindow {
     /// head index of the ring buffer
     cursor: usize,
     /// sample total amount
-    retention: usize
+    retention: usize,
 }
 
 impl RevisionWindow {
@@ -38,24 +37,36 @@ impl RevisionWindow {
     /// Store the revision into the inner ring buffer
     #[allow(clippy::integer_arithmetic)]
     fn sample(&mut self, revision: i64) {
-        self.cursor = (self.cursor + 1) % self.retention;  // it's ok to do so since cursor will never overflow
+        self.cursor = (self.cursor + 1) % self.retention; // it's ok to do so since cursor will never overflow
         match self.ring_buf.len().cmp(&self.retention) {
-            Ordering::Less => {self.ring_buf.push(revision)},
+            Ordering::Less => self.ring_buf.push(revision),
             Ordering::Equal => {
-                if let Some(element) = self.ring_buf.get_mut(self.cursor){
+                if let Some(element) = self.ring_buf.get_mut(self.cursor) {
                     *element = revision;
                 } else {
-                    unreachable!("ring_buf ({:?}) at {} should not be None", self.ring_buf, self.cursor);
+                    unreachable!(
+                        "ring_buf ({:?}) at {} should not be None",
+                        self.ring_buf, self.cursor
+                    );
                 }
-            },
-            Ordering::Greater => {unreachable!("the length of RevisionWindow should be less than {}", self.retention)}
+            }
+            Ordering::Greater => {
+                unreachable!(
+                    "the length of RevisionWindow should be less than {}",
+                    self.retention
+                )
+            }
         }
     }
 
     /// Retrieve the expired revision that is sampled period ago
     #[allow(clippy::indexing_slicing, clippy::integer_arithmetic)]
     fn expired_revision(&self) -> Option<i64> {
-        debug_assert!(self.ring_buf.len() <= self.retention, "the length of RevisionWindow should be less than {}", self.retention);
+        debug_assert!(
+            self.ring_buf.len() <= self.retention,
+            "the length of RevisionWindow should be less than {}",
+            self.retention
+        );
         if self.ring_buf.len() < self.retention {
             None
         } else {
@@ -80,7 +91,7 @@ pub(crate) struct PeriodicCompactor {
     period: Duration,
 }
 
-impl PeriodicCompactor{
+impl PeriodicCompactor {
     #[allow(dead_code)]
     /// Creates a new revision compactor
     pub(super) fn new_arc(
@@ -108,11 +119,16 @@ fn sample_config(period: Duration) -> (Duration, usize) {
         Ordering::Equal | Ordering::Greater => one_hour,
     };
     let divisor = 10;
-    let check_interval = base_interval.checked_div(divisor).unwrap_or_else(|| {unreachable!("duration divisor should not be 0")});
+    let check_interval = base_interval
+        .checked_div(divisor)
+        .unwrap_or_else(|| unreachable!("duration divisor should not be 0"));
     let check_interval_secs = check_interval.as_secs();
     let periodic_secs = period.as_secs();
-    let length = periodic_secs.overflow_div(check_interval_secs).overflow_add(1);
-    let retention = usize::try_from(length).unwrap_or_else(|e| {panic!("auto compact period is too large: {e}")});
+    let length = periodic_secs
+        .overflow_div(check_interval_secs)
+        .overflow_add(1);
+    let retention =
+        usize::try_from(length).unwrap_or_else(|e| panic!("auto compact period is too large: {e}"));
     (check_interval, retention)
 }
 
@@ -151,7 +167,8 @@ impl Compactor for PeriodicCompactor {
 
             let target_revision = revision_window.expired_revision();
             if target_revision != last_revision {
-                let revision = target_revision.unwrap_or_else(|| {unreachable!("target revision shouldn't be None")});
+                let revision = target_revision
+                    .unwrap_or_else(|| unreachable!("target revision shouldn't be None"));
                 let now = Instant::now();
                 info!(
                     "starting auto periodic compaction, revision = {}, period = {:?}",

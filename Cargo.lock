@@ -3010,6 +3010,7 @@ name = "utils"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "clippy-utilities 0.2.0",
  "derive_builder",
  "getset",
  "madsim-tokio",
