@@ -1,0 +1,40 @@
+name: e2e
+
+on:
+  schedule:
+    - cron: "00 * * * *" # run ci periodically at 3 am
+  push: #enabled after the API is stable
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.actor }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  kube:
+    name: e2e_kube
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        k8s:
+          - v1.25.3
+          - v1.26.0
+          - v1.27.3
+    steps:
+      - uses: actions/checkout@v2
+      - name: work with kubernetes
+        env:
+          K8SVERSION: ${{ matrix.k8s }}
+        run: |
+          ./.github/scripts/kind.sh
+      - name: chmod
+        if: always()
+        run: |
+          sudo chmod -R 777 /tmp/kind
+          ls /tmp/kind
+      - name: upload kind logs
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: xline_kind_log_${{ matrix.k8s }}
+          path: /tmp/kind/
