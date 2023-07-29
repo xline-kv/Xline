@@ -92,11 +92,10 @@ pub(crate) struct PeriodicCompactor {
 }
 
 impl PeriodicCompactor {
-    #[allow(dead_code)]
     /// Creates a new revision compactor
     pub(super) fn new_arc(
         is_leader: bool,
-        client: Arc<dyn Compactable + Send + Sync>,
+        client: Arc<dyn Compactable>,
         revision_getter: Arc<RevisionNumberGenerator>,
         shutdown_trigger: Arc<Event>,
         period: Duration,
@@ -108,6 +107,44 @@ impl PeriodicCompactor {
             shutdown_trigger,
             period,
         })
+    }
+
+    /// perform auto compaction logic
+    async fn do_compact(
+        &self,
+        last_revision: Option<i64>,
+        revision_window: &RevisionWindow,
+    ) -> Option<i64> {
+        if !self.is_leader.load(Relaxed) {
+            return None;
+        }
+        let target_revision = revision_window.expired_revision();
+        if target_revision == last_revision {
+            return None;
+        }
+        let revision =
+            target_revision.unwrap_or_else(|| unreachable!("target revision shouldn't be None"));
+        let now = Instant::now();
+        info!(
+            "starting auto periodic compaction, revision = {}, period = {:?}",
+            revision, self.period
+        );
+        // TODO: add more error processing logic
+        if let Err(e) = self.client.compact(revision).await {
+            warn!(
+                "failed auto revision compaction, revision = {}, period = {:?}, error: {:?}",
+                revision, self.period, e
+            );
+            None
+        } else {
+            info!(
+                "completed auto revision compaction, revision = {}, period = {:?}, took {:?}",
+                revision,
+                self.period,
+                now.elapsed().as_secs()
+            );
+            target_revision
+        }
     }
 }
 
@@ -144,7 +181,7 @@ impl Compactor for PeriodicCompactor {
 
     #[allow(clippy::integer_arithmetic)]
     async fn run(&self) {
-        let mut last_revision = None;
+        let mut last_revision: Option<i64> = None;
         let shutdown_trigger = self.shutdown_trigger.listen();
         let (sample_frequency, sample_total) = sample_config(self.period);
         let mut ticker = tokio::time::interval(sample_frequency);
@@ -154,40 +191,14 @@ impl Compactor for PeriodicCompactor {
             revision_window.sample(self.revision_getter.get());
             tokio::select! {
                 _ = ticker.tick() => {
-                    if !self.is_leader.load(Relaxed) {
-                        continue;
+                    if let Some(last_compacted_rev) = self.do_compact(last_revision, &revision_window).await {
+                        last_revision = Some(last_compacted_rev);
                     }
                 }
                 // To ensure that each iteration invokes the same `shutdown_trigger` and keeps
                 // events losing due to the cancellation of `shutdown_trigger` at bay.
                 _ = &mut shutdown_trigger => {
                     break;
-                }
-            }
-
-            let target_revision = revision_window.expired_revision();
-            if target_revision != last_revision {
-                let revision = target_revision
-                    .unwrap_or_else(|| unreachable!("target revision shouldn't be None"));
-                let now = Instant::now();
-                info!(
-                    "starting auto periodic compaction, revision = {}, period = {:?}",
-                    revision, self.period
-                );
-                // TODO: add more error processing logic
-                if let Err(e) = self.client.compact(revision).await {
-                    warn!(
-                        "failed auto revision compaction, revision = {}, period = {:?}, error: {:?}",
-                        revision, self.period, e
-                    );
-                } else {
-                    info!(
-                        "completed auto revision compaction, revision = {}, period = {:?}, took {:?}",
-                        revision,
-                        self.period,
-                        now.elapsed().as_secs()
-                    );
-                    last_revision = Some(revision);
                 }
             }
         }
@@ -197,6 +208,8 @@ impl Compactor for PeriodicCompactor {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::storage::compact::MockCompactable;
+
     #[test]
     fn revision_window_should_work() {
         let mut rw = RevisionWindow::new(3);
@@ -231,5 +244,62 @@ mod test {
         let (interval, retention) = sample_config(Duration::from_secs(24 * 60 * 60));
         assert_eq!(interval, Duration::from_secs(6 * 60));
         assert_eq!(retention, 241);
+    }
+
+    #[tokio::test]
+    async fn periodic_compactor_should_work_in_normal_path() {
+        let mut revision_window = RevisionWindow::new(11);
+        // revision_window: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+        for revision in 1..=11 {
+            revision_window.sample(revision);
+        }
+        let mut compactable = MockCompactable::new();
+        compactable.expect_compact().times(3).returning(|_| Ok(()));
+        let shutdown_trigger = Arc::new(Event::new());
+        let revision_gen = Arc::new(RevisionNumberGenerator::new(1));
+        let periodic_compactor = PeriodicCompactor::new_arc(
+            true,
+            Arc::new(compactable),
+            revision_gen,
+            shutdown_trigger,
+            Duration::from_secs(10),
+        );
+        // auto_compactor works successfully
+        assert_eq!(
+            periodic_compactor.do_compact(None, &revision_window).await,
+            Some(1)
+        );
+        revision_window.sample(12);
+        assert_eq!(
+            periodic_compactor
+                .do_compact(Some(1), &revision_window)
+                .await,
+            Some(2)
+        );
+        periodic_compactor.pause();
+        revision_window.sample(13);
+        assert!(periodic_compactor
+            .do_compact(Some(2), &revision_window)
+            .await
+            .is_none());
+        revision_window.sample(14);
+        assert!(periodic_compactor
+            .do_compact(Some(2), &revision_window)
+            .await
+            .is_none());
+        periodic_compactor.resume();
+        // revision_window: [12, 13, 14, 4, 5, 6, 7, 8, 9, 10, 11]
+        assert_eq!(
+            periodic_compactor
+                .do_compact(Some(3), &revision_window)
+                .await,
+            Some(4)
+        );
+
+        // auto compactor should skip those revisions which have been auto compacted.
+        assert!(periodic_compactor
+            .do_compact(Some(4), &revision_window)
+            .await
+            .is_none());
     }
 }
