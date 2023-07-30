@@ -2,11 +2,10 @@ use std::fmt::Debug;
 
 use futures::channel::mpsc::Sender;
 use xline::server::KeyRange;
+pub use xlineapi::{Event, EventType, KeyValue, WatchResponse};
 use xlineapi::{RequestUnion, WatchCancelRequest, WatchProgressRequest};
 
 use crate::error::{ClientError, Result};
-
-pub use xlineapi::{Event, EventType, KeyValue, WatchResponse};
 
 /// The watching handle.
 #[derive(Debug)]

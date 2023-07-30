@@ -50,9 +50,8 @@ pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result
 
 #[cfg(test)]
 mod tests {
-    use crate::testcase_struct;
-
     use super::*;
+    use crate::testcase_struct;
 
     testcase_struct!(PutRequest);
 

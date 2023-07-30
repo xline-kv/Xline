@@ -329,14 +329,16 @@ impl XlineServer {
 
         let auto_compactor = if let Some(auto_config_cfg) = *self.compact_cfg.auto_compact_config()
         {
-            auto_compactor(
-                self.is_leader,
-                Arc::clone(&client),
-                header_gen.revision_arc(),
-                Arc::clone(&self.shutdown_trigger),
-                auto_config_cfg,
+            Some(
+                auto_compactor(
+                    self.is_leader,
+                    Arc::clone(&client),
+                    header_gen.general_revision_arc(),
+                    Arc::clone(&self.shutdown_trigger),
+                    auto_config_cfg,
+                )
+                .await,
             )
-            .await
         } else {
             None
         };
