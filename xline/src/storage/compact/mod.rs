@@ -70,7 +70,7 @@ pub(crate) async fn auto_compactor(
     revision_getter: Arc<RevisionNumberGenerator>,
     shutdown_trigger: Arc<Event>,
     auto_compact_cfg: AutoCompactConfig,
-) -> Option<Arc<dyn Compactor>> {
+) -> Arc<dyn Compactor> {
     let auto_compactor: Arc<dyn Compactor> = match auto_compact_cfg {
         AutoCompactConfig::Periodic(period) => {
             PeriodicCompactor::new_arc(is_leader, client, revision_getter, shutdown_trigger, period)
@@ -90,7 +90,7 @@ pub(crate) async fn auto_compactor(
     let _hd = tokio::spawn(async move {
         auto_compactor.run().await;
     });
-    Some(compactor_handle)
+    compactor_handle
 }
 
 /// background compact executor

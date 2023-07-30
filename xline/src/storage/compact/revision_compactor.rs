@@ -18,11 +18,11 @@ const CHECK_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 /// Revision auto compactor
 #[derive(Debug)]
-pub(crate) struct RevisionCompactor {
+pub(crate) struct RevisionCompactor<C: Compactable> {
     /// `is_leader` indicates whether the current node is a leader or not.
     is_leader: AtomicBool,
     /// curp client
-    client: Arc<dyn Compactable>,
+    client: Arc<C>,
     /// revision getter
     revision_getter: Arc<RevisionNumberGenerator>,
     /// shutdown trigger
@@ -31,11 +31,11 @@ pub(crate) struct RevisionCompactor {
     retention: i64,
 }
 
-impl RevisionCompactor {
+impl<C: Compactable> RevisionCompactor<C> {
     /// Creates a new revision compactor
     pub(super) fn new_arc(
         is_leader: bool,
-        client: Arc<dyn Compactable + Send + Sync>,
+        client: Arc<C>,
         revision_getter: Arc<RevisionNumberGenerator>,
         shutdown_trigger: Arc<Event>,
         retention: i64,
@@ -85,7 +85,7 @@ impl RevisionCompactor {
 }
 
 #[async_trait::async_trait]
-impl Compactor for RevisionCompactor {
+impl<C: Compactable> Compactor for RevisionCompactor<C> {
     fn pause(&self) {
         self.is_leader.store(false, Relaxed);
     }

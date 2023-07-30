@@ -28,61 +28,38 @@ impl RevisionWindow {
     /// Create a new `RevisionWindow`
     fn new(retention: usize) -> Self {
         Self {
-            ring_buf: Vec::with_capacity(retention),
+            ring_buf: vec![0; retention],
             cursor: retention.overflow_sub(1),
             retention,
         }
     }
 
     /// Store the revision into the inner ring buffer
-    #[allow(clippy::integer_arithmetic)]
+    #[allow(clippy::integer_arithmetic, clippy::indexing_slicing)]
     fn sample(&mut self, revision: i64) {
         self.cursor = (self.cursor + 1) % self.retention; // it's ok to do so since cursor will never overflow
-        match self.ring_buf.len().cmp(&self.retention) {
-            Ordering::Less => self.ring_buf.push(revision),
-            Ordering::Equal => {
-                if let Some(element) = self.ring_buf.get_mut(self.cursor) {
-                    *element = revision;
-                } else {
-                    unreachable!(
-                        "ring_buf ({:?}) at {} should not be None",
-                        self.ring_buf, self.cursor
-                    );
-                }
-            }
-            Ordering::Greater => {
-                unreachable!(
-                    "the length of RevisionWindow should be less than {}",
-                    self.retention
-                )
-            }
-        }
+        self.ring_buf[self.cursor] = revision;
     }
 
     /// Retrieve the expired revision that is sampled period ago
     #[allow(clippy::indexing_slicing, clippy::integer_arithmetic)]
     fn expired_revision(&self) -> Option<i64> {
-        debug_assert!(
-            self.ring_buf.len() <= self.retention,
-            "the length of RevisionWindow should be less than {}",
-            self.retention
-        );
-        if self.ring_buf.len() < self.retention {
+        let target = self.ring_buf[(self.cursor + 1) % self.retention];
+        if target == 0 {
             None
         } else {
-            let target = (self.cursor + 1) % self.retention;
-            Some(self.ring_buf[target]) // it's ok to do so since ring_buf[target] should not be None.
+            Some(target)
         }
     }
 }
 
 /// Revision auto compactor
 #[derive(Debug)]
-pub(crate) struct PeriodicCompactor {
+pub(crate) struct PeriodicCompactor<C: Compactable> {
     /// `is_leader` indicates whether the current node is a leader or not.
     is_leader: AtomicBool,
     /// curp client
-    client: Arc<dyn Compactable>,
+    client: Arc<C>,
     /// revision getter
     revision_getter: Arc<RevisionNumberGenerator>,
     /// shutdown trigger
@@ -91,11 +68,11 @@ pub(crate) struct PeriodicCompactor {
     period: Duration,
 }
 
-impl PeriodicCompactor {
+impl<C: Compactable> PeriodicCompactor<C> {
     /// Creates a new revision compactor
     pub(super) fn new_arc(
         is_leader: bool,
-        client: Arc<dyn Compactable>,
+        client: Arc<C>,
         revision_getter: Arc<RevisionNumberGenerator>,
         shutdown_trigger: Arc<Event>,
         period: Duration,
@@ -150,10 +127,11 @@ impl PeriodicCompactor {
 
 /// Calculate the sample frequency and the total amount of samples.
 fn sample_config(period: Duration) -> (Duration, usize) {
-    let one_hour = Duration::from_secs(60.overflow_mul(60));
-    let base_interval = match period.cmp(&one_hour) {
+    /// one hour duration
+    const ONEHOUR: Duration = Duration::from_secs(3600);
+    let base_interval = match period.cmp(&ONEHOUR) {
         Ordering::Less => period,
-        Ordering::Equal | Ordering::Greater => one_hour,
+        Ordering::Equal | Ordering::Greater => ONEHOUR,
     };
     let divisor = 10;
     let check_interval = base_interval
@@ -170,7 +148,7 @@ fn sample_config(period: Duration) -> (Duration, usize) {
 }
 
 #[async_trait::async_trait]
-impl Compactor for PeriodicCompactor {
+impl<C: Compactable> Compactor for PeriodicCompactor<C> {
     fn pause(&self) {
         self.is_leader.store(false, Relaxed);
     }
@@ -214,18 +192,18 @@ mod test {
     fn revision_window_should_work() {
         let mut rw = RevisionWindow::new(3);
         assert!(rw.expired_revision().is_none());
-        rw.sample(0);
-        assert!(rw.expired_revision().is_none());
         rw.sample(1);
         assert!(rw.expired_revision().is_none());
         rw.sample(2);
-        assert_eq!(rw.expired_revision(), Some(0));
+        assert!(rw.expired_revision().is_none());
+        rw.sample(3);
+        assert_eq!(rw.expired_revision(), Some(1));
         // retention is 2
-        // The first 3 minutes: 0,1,2
+        // The first 3 minutes: 1,2,3
         // The second 2 minutes: 3,4
         rw.sample(3);
         rw.sample(4);
-        assert_eq!(rw.expired_revision(), Some(2));
+        assert_eq!(rw.expired_revision(), Some(3));
     }
 
     #[test]

@@ -158,9 +158,13 @@ use clap::{arg, value_parser, Command};
 use ext_utils::config::ClientTimeout;
 use xline_client::{Client, ClientOptions};
 
-use crate::command::{get, put};
-use crate::utils::parser::{parse_endpoints, parse_user};
-use crate::utils::printer::{set_printer_type, PrinterType};
+use crate::{
+    command::{get, put},
+    utils::{
+        parser::{parse_endpoints, parse_user},
+        printer::{set_printer_type, PrinterType},
+    },
+};
 
 /// Command definitions and parsers
 mod command;
