@@ -26,7 +26,7 @@ use super::{
 use crate::{
     client::Client,
     cmd::{Command, CommandExecutor},
-    error::ProposeError,
+    error::{ProposeError, RpcError},
     log_entry::LogEntry,
     members::ClusterMember,
     role_change::RoleChange,
@@ -72,7 +72,7 @@ enum SendAEError {
     Rejected,
     /// Transport
     #[error("transport error, {0}")]
-    Transport(#[from] ProposeError),
+    Transport(#[from] RpcError),
     /// Encode/Decode error
     #[error("encode or decode error")]
     EncodeDecode(#[from] bincode::Error),
@@ -86,7 +86,7 @@ enum SendSnapshotError {
     NotLeader,
     /// Transport
     #[error("transport error, {0}")]
-    Transport(#[from] ProposeError),
+    Transport(#[from] RpcError),
 }
 
 /// `CurpNode` represents a single node of curp cluster

@@ -9,7 +9,7 @@ use utils::{config::ClientTimeout, parking_lot_lock::RwLockMap};
 
 use crate::{
     cmd::{Command, ProposeId},
-    error::ProposeError,
+    error::{ProposeError, RpcError},
     rpc::{
         self, connect::ConnectApi, FetchLeaderRequest, FetchReadStateRequest, ProposeRequest,
         ReadState as PbReadState, SyncError, SyncResult, WaitSyncedRequest,
@@ -275,11 +275,18 @@ where
                 .await;
 
             let resp = match resp {
-                Ok(resp) => resp.into_inner(),
-                Err(e) => {
-                    if matches!(e, ProposeError::Duplicated) {
-                        return Ok(());
+                Ok(resp) => {
+                    let resp = resp.into_inner();
+                    #[allow(clippy::pattern_type_mismatch)] // can't satisfy clippy
+                    if let Some(rpc::ExeResult::Error(e)) = resp.exe_result.as_ref() {
+                        let err: ProposeError = bincode::deserialize(e)?;
+                        if matches!(err, ProposeError::Duplicated) {
+                            return Ok(());
+                        }
                     }
+                    resp
+                }
+                Err(e) => {
                     // if the propose fails again, need to fetch the leader and try again
                     warn!("failed to resend propose, {e}");
                     tokio::time::sleep(*self.timeout.retry_timeout()).await;
@@ -514,7 +521,7 @@ where
     /// Fetch the current leader id and term from the curp server where is on the same node.
     /// Note that this method should not be invoked by an outside client.
     #[inline]
-    async fn fetch_local_leader_info(&self) -> Result<(Option<ServerId>, u64), ProposeError> {
+    async fn fetch_local_leader_info(&self) -> Result<(Option<ServerId>, u64), RpcError> {
         if let Some(ref local_server) = self.local_server_id {
             let resp = self
                 .connects
