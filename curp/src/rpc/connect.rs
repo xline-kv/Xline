@@ -13,7 +13,7 @@ use tracing::{debug, error, instrument};
 use utils::tracing::Inject;
 
 use crate::{
-    error::ProposeError,
+    error::RpcError,
     rpc::{
         proto::protocol_client::ProtocolClient, AppendEntriesRequest, AppendEntriesResponse,
         FetchLeaderRequest, FetchLeaderResponse, FetchReadStateRequest, FetchReadStateResponse,
@@ -73,35 +73,35 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
         &self,
         request: ProposeRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<ProposeResponse>, ProposeError>;
+    ) -> Result<tonic::Response<ProposeResponse>, RpcError>;
 
     /// Send `WaitSyncedRequest`
     async fn wait_synced(
         &self,
         request: WaitSyncedRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<WaitSyncedResponse>, ProposeError>;
+    ) -> Result<tonic::Response<WaitSyncedResponse>, RpcError>;
 
     /// Send `AppendEntriesRequest`
     async fn append_entries(
         &self,
         request: AppendEntriesRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<AppendEntriesResponse>, ProposeError>;
+    ) -> Result<tonic::Response<AppendEntriesResponse>, RpcError>;
 
     /// Send `VoteRequest`
     async fn vote(
         &self,
         request: VoteRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<VoteResponse>, ProposeError>;
+    ) -> Result<tonic::Response<VoteResponse>, RpcError>;
 
     /// Send `FetchLeaderRequest`
     async fn fetch_leader(
         &self,
         request: FetchLeaderRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<FetchLeaderResponse>, ProposeError>;
+    ) -> Result<tonic::Response<FetchLeaderResponse>, RpcError>;
 
     /// Send a snapshot
     async fn install_snapshot(
@@ -109,14 +109,14 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
         term: u64,
         leader_id: ServerId,
         snapshot: Snapshot,
-    ) -> Result<tonic::Response<InstallSnapshotResponse>, ProposeError>;
+    ) -> Result<tonic::Response<InstallSnapshotResponse>, RpcError>;
 
     /// Send `FetchReadStateRequest`
     async fn fetch_read_state(
         &self,
         request: FetchReadStateRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<FetchReadStateResponse>, ProposeError>;
+    ) -> Result<tonic::Response<FetchReadStateResponse>, RpcError>;
 }
 
 /// The connection struct to hold the real rpc connections, it may failed to connect, but it also
@@ -165,7 +165,7 @@ impl ConnectApi for Connect {
         &self,
         request: ProposeRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<ProposeResponse>, ProposeError> {
+    ) -> Result<tonic::Response<ProposeResponse>, RpcError> {
         let mut client = self.get().await?;
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
@@ -179,7 +179,7 @@ impl ConnectApi for Connect {
         &self,
         request: WaitSyncedRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<WaitSyncedResponse>, ProposeError> {
+    ) -> Result<tonic::Response<WaitSyncedResponse>, RpcError> {
         let mut client = self.get().await?;
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
@@ -192,7 +192,7 @@ impl ConnectApi for Connect {
         &self,
         request: AppendEntriesRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<AppendEntriesResponse>, ProposeError> {
+    ) -> Result<tonic::Response<AppendEntriesResponse>, RpcError> {
         let mut client = self.get().await?;
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
@@ -204,7 +204,7 @@ impl ConnectApi for Connect {
         &self,
         request: VoteRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<VoteResponse>, ProposeError> {
+    ) -> Result<tonic::Response<VoteResponse>, RpcError> {
         let mut client = self.get().await?;
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
@@ -216,7 +216,7 @@ impl ConnectApi for Connect {
         &self,
         request: FetchLeaderRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<FetchLeaderResponse>, ProposeError> {
+    ) -> Result<tonic::Response<FetchLeaderResponse>, RpcError> {
         let mut client = self.get().await?;
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
@@ -228,7 +228,7 @@ impl ConnectApi for Connect {
         term: u64,
         leader_id: ServerId,
         snapshot: Snapshot,
-    ) -> Result<tonic::Response<InstallSnapshotResponse>, ProposeError> {
+    ) -> Result<tonic::Response<InstallSnapshotResponse>, RpcError> {
         let stream = install_snapshot_stream(term, leader_id, snapshot);
         let mut client = self.get().await?;
         client.install_snapshot(stream).await.map_err(Into::into)
@@ -239,7 +239,7 @@ impl ConnectApi for Connect {
         &self,
         request: FetchReadStateRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<FetchReadStateResponse>, ProposeError> {
+    ) -> Result<tonic::Response<FetchReadStateResponse>, RpcError> {
         let mut client = self.get().await?;
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);

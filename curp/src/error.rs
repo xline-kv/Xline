@@ -3,16 +3,6 @@ use std::io;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// Rpc Error
-#[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
-#[non_exhaustive]
-#[derive(Error, Debug)]
-pub enum RpcError {
-    /// Met I/O error during rpc communication
-    #[error("meet io related error")]
-    IoError(#[from] io::Error),
-}
-
 /// Server side error
 #[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
 #[non_exhaustive]
@@ -52,25 +42,28 @@ pub enum ProposeError {
     /// Command syncing error
     #[error("syncing error {0}")]
     SyncedError(String),
-    /// Rpc Error reported by madsim
-    #[error("rpc error: {0}")]
-    RpcError(String),
     /// Encode error
     #[error("encode error: {0}")]
     EncodeError(String),
 }
 
-impl From<tonic::transport::Error> for ProposeError {
+/// The error met during propose phase
+#[derive(Error, Debug, Serialize, Deserialize)]
+#[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
+#[error("rcp error {0}")]
+pub struct RpcError(String);
+
+impl From<tonic::transport::Error> for RpcError {
     #[inline]
     fn from(e: tonic::transport::Error) -> Self {
-        Self::RpcError(e.to_string())
+        Self(e.to_string())
     }
 }
 
-impl From<tonic::Status> for ProposeError {
+impl From<tonic::Status> for RpcError {
     #[inline]
     fn from(e: tonic::Status) -> Self {
-        Self::RpcError(e.to_string())
+        Self(e.to_string())
     }
 }
 
