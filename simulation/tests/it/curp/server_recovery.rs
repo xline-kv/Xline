@@ -21,18 +21,20 @@ async fn leader_crash_and_recovery() {
 
     assert_eq!(
         client
-            .propose(TestCommand::new_put(vec![0], 0))
+            .propose(TestCommand::new_put(vec![0], 0), true)
             .await
             .unwrap()
-            .0,
+            .0
+             .0,
         vec![]
     );
     assert_eq!(
         client
-            .propose(TestCommand::new_get(vec![0]))
+            .propose(TestCommand::new_get(vec![0]), true)
             .await
             .unwrap()
-            .0,
+            .0
+             .0,
         vec![0]
     );
 
@@ -71,18 +73,20 @@ async fn follower_crash_and_recovery() {
 
     assert_eq!(
         client
-            .propose(TestCommand::new_put(vec![0], 0))
+            .propose(TestCommand::new_put(vec![0], 0), true)
             .await
             .unwrap()
-            .0,
+            .0
+             .0,
         vec![]
     );
     assert_eq!(
         client
-            .propose(TestCommand::new_get(vec![0]))
+            .propose(TestCommand::new_get(vec![0]), true)
             .await
             .unwrap()
-            .0,
+            .0
+             .0,
         vec![0]
     );
 
@@ -121,18 +125,20 @@ async fn leader_and_follower_both_crash_and_recovery() {
 
     assert_eq!(
         client
-            .propose(TestCommand::new_put(vec![0], 0))
+            .propose(TestCommand::new_put(vec![0], 0), true)
             .await
             .unwrap()
-            .0,
+            .0
+             .0,
         vec![]
     );
     assert_eq!(
         client
-            .propose(TestCommand::new_get(vec![0]))
+            .propose(TestCommand::new_get(vec![0]), true)
             .await
             .unwrap()
-            .0,
+            .0
+             .0,
         vec![0]
     );
 
@@ -143,10 +149,11 @@ async fn leader_and_follower_both_crash_and_recovery() {
     // add a new log to commit previous logs
     assert_eq!(
         client
-            .propose(TestCommand::new_get(vec![0]))
+            .propose(TestCommand::new_get(vec![0]), true)
             .await
             .unwrap()
-            .0,
+            .0
+             .0,
         vec![0]
     );
     let old_leader = group.nodes.get_mut(&leader).unwrap();
@@ -203,10 +210,11 @@ async fn new_leader_will_recover_spec_cmds_cond1() {
     // 3: the client should automatically find the new leader and get the response
     assert_eq!(
         client
-            .propose(TestCommand::new_get(vec![0]))
+            .propose(TestCommand::new_get(vec![0]), true)
             .await
             .unwrap()
-            .0,
+            .0
+             .0,
         vec![0]
     );
 
@@ -247,18 +255,20 @@ async fn new_leader_will_recover_spec_cmds_cond2() {
     // 2: the client should automatically find the new leader and get the response
     assert_eq!(
         client
-            .propose(TestCommand::new_put(vec![0], 0))
+            .propose(TestCommand::new_put(vec![0], 0), true)
             .await
             .unwrap()
-            .0,
+            .0
+             .0,
         vec![]
     );
     assert_eq!(
         client
-            .propose(TestCommand::new_get(vec![0]))
+            .propose(TestCommand::new_get(vec![0]), true)
             .await
             .unwrap()
-            .0,
+            .0
+             .0,
         vec![0]
     );
 
@@ -274,9 +284,9 @@ async fn old_leader_will_keep_original_states() {
 
     // 0: let's first propose an initial cmd0
     let cmd0 = TestCommand::new_put(vec![0], 0);
-    let (er, index) = client.propose_indexed(cmd0).await.unwrap();
+    let (er, index) = client.propose(cmd0, false).await.unwrap();
     assert_eq!(er.0, vec![]);
-    assert_eq!(index, 1);
+    assert_eq!(index.unwrap(), 1);
 
     // 1: disable all others to prevent the cmd1 to be synced
     let leader1 = group.get_leader().await.0;
@@ -320,10 +330,11 @@ async fn old_leader_will_keep_original_states() {
     // 5: the client should also get the original state
     assert_eq!(
         client
-            .propose(TestCommand::new_get(vec![0]))
+            .propose(TestCommand::new_get(vec![0]), true)
             .await
             .unwrap()
-            .0,
+            .0
+             .0,
         vec![0]
     );
 
@@ -343,18 +354,20 @@ async fn minority_crash_and_recovery() {
 
     assert_eq!(
         client
-            .propose(TestCommand::new_put(vec![0], 0))
+            .propose(TestCommand::new_put(vec![0], 0), true)
             .await
             .unwrap()
-            .0,
+            .0
+             .0,
         vec![]
     );
     assert_eq!(
         client
-            .propose(TestCommand::new_get(vec![0]))
+            .propose(TestCommand::new_get(vec![0]), true)
             .await
             .unwrap()
-            .0,
+            .0
+             .0,
         vec![0]
     );
 
@@ -368,26 +381,29 @@ async fn minority_crash_and_recovery() {
 
     assert_eq!(
         client
-            .propose(TestCommand::new_get(vec![0]))
+            .propose(TestCommand::new_get(vec![0]), true)
             .await
             .unwrap()
-            .0,
+            .0
+             .0,
         vec![0]
     );
     assert_eq!(
         client
-            .propose(TestCommand::new_put(vec![0], 1))
+            .propose(TestCommand::new_put(vec![0], 1), true)
             .await
             .unwrap()
-            .0,
+            .0
+             .0,
         vec![]
     );
     assert_eq!(
         client
-            .propose(TestCommand::new_get(vec![0]))
+            .propose(TestCommand::new_get(vec![0]), true)
             .await
             .unwrap()
-            .0,
+            .0
+             .0,
         vec![1]
     );
 
@@ -412,7 +428,7 @@ async fn recovery_after_compaction() {
     // since the log entries cap is set to 10, 50 commands will trigger log compactions
     for i in 0..50 {
         assert!(client
-            .propose(TestCommand::new_put(vec![i], i))
+            .propose(TestCommand::new_put(vec![i], i), true)
             .await
             .is_ok());
     }

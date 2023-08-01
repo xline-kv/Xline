@@ -13,8 +13,7 @@ use xlineapi::ResponseWrapper;
 use super::{
     auth_server::get_token,
     barriers::{IdBarrier, IndexBarrier},
-    command::{Command, CommandResponse, KeyRange, SyncResponse},
-    common::{propose, propose_indexed},
+    command::{propose_err_to_status, Command, CommandResponse, SyncResponse},
 };
 use crate::{
     request_validation::RequestValidator,
@@ -24,6 +23,7 @@ use crate::{
         PutRequest, PutResponse, RangeRequest, RangeResponse, RequestWithToken, RequestWrapper,
         Response, ResponseOp, TxnRequest, TxnResponse,
     },
+    server::command::command_from_request_wrapper,
     storage::{storage_api::StorageApi, AuthStore, KvStore},
 };
 
@@ -83,28 +83,6 @@ where
         }
     }
 
-    /// Generate `Command` proposal from `RequestWrapper`
-    fn command_from_request_wrapper(propose_id: ProposeId, wrapper: RequestWithToken) -> Command {
-        #[allow(clippy::wildcard_enum_match_arm)]
-        let key_ranges = match wrapper.request {
-            RequestWrapper::RangeRequest(ref req) => {
-                vec![KeyRange::new(req.key.as_slice(), req.range_end.as_slice())]
-            }
-            RequestWrapper::PutRequest(ref req) => vec![KeyRange::new_one_key(req.key.as_slice())],
-            RequestWrapper::DeleteRangeRequest(ref req) => {
-                vec![KeyRange::new(req.key.as_slice(), req.range_end.as_slice())]
-            }
-            RequestWrapper::TxnRequest(ref req) => req
-                .compare
-                .iter()
-                .map(|cmp| KeyRange::new(cmp.key.as_slice(), cmp.range_end.as_slice()))
-                .collect(),
-            RequestWrapper::CompactionRequest(ref _req) => Vec::new(),
-            _ => unreachable!("Other request should not be sent to this store"),
-        };
-        Command::new(key_ranges, wrapper, propose_id)
-    }
-
     /// Execute `RangeRequest` in current node
     fn serializable_range(
         &self,
@@ -136,16 +114,12 @@ where
     {
         let token = get_token(request.metadata());
         let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
-        let propose_id = self.generate_propose_id();
-        let cmd = Self::command_from_request_wrapper(propose_id, wrapper);
-        #[allow(clippy::wildcard_enum_match_arm)]
-        if use_fast_path {
-            let cmd_res = propose(&self.client, cmd).await?;
-            Ok((cmd_res, None))
-        } else {
-            let (cmd_res, sync_res) = propose_indexed(&self.client, cmd).await?;
-            Ok((cmd_res, Some(sync_res)))
-        }
+        let cmd = command_from_request_wrapper::<S>(self.generate_propose_id(), wrapper, None);
+
+        self.client
+            .propose(cmd, use_fast_path)
+            .await
+            .map_err(propose_err_to_status)
     }
 
     /// Update revision of `ResponseHeader`
@@ -252,7 +226,7 @@ where
         let token = get_token(request.metadata());
         let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
         let propose_id = self.generate_propose_id();
-        let cmd = Self::command_from_request_wrapper(propose_id, wrapper);
+        let cmd = command_from_request_wrapper::<S>(propose_id, wrapper, None);
         if !is_serializable {
             self.wait_read_state(&cmd).await?;
             // Double check whether the range request is compacted or not since the compaction request

@@ -18,7 +18,10 @@ async fn read_state() {
     let put_cmd = TestCommand::new_put(vec![0], 0).set_exe_dur(Duration::from_millis(100));
     let put_id = put_cmd.id().clone();
     tokio::spawn(async move {
-        assert_eq!(put_client.propose(put_cmd).await.unwrap().0, vec![]);
+        assert_eq!(
+            put_client.propose(put_cmd, true).await.unwrap().0,
+            (vec![], vec![])
+        );
     });
     let get_client = group.new_client(ClientTimeout::default()).await;
     let res = get_client

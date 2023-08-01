@@ -23,13 +23,18 @@ async fn basic_propose() {
 
     assert_eq!(
         client
-            .propose(TestCommand::new_put(vec![0], 0))
+            .propose(TestCommand::new_put(vec![0], 0), true)
             .await
-            .unwrap(),
+            .unwrap()
+            .0,
         (vec![], vec![])
     );
     assert_eq!(
-        client.propose(TestCommand::new_get(vec![0])).await.unwrap(),
+        client
+            .propose(TestCommand::new_get(vec![0]), true)
+            .await
+            .unwrap()
+            .0,
         (vec![0], vec![1])
     );
 
@@ -45,9 +50,9 @@ async fn synced_propose() {
     let client = group.new_client(ClientTimeout::default()).await;
     let cmd = TestCommand::new_get(vec![0]);
 
-    let (er, index) = client.propose_indexed(cmd.clone()).await.unwrap();
+    let (er, index) = client.propose(cmd.clone(), false).await.unwrap();
     assert_eq!(er, (vec![], vec![]));
-    assert_eq!(index, 1); // log[0] is a fake one
+    assert_eq!(index.unwrap(), 1); // log[0] is a fake one
 
     for exe_rx in group.exe_rxs() {
         let (cmd1, er) = exe_rx.recv().await.unwrap();
@@ -74,7 +79,7 @@ async fn exe_exact_n_times() {
     let client = group.new_client(ClientTimeout::default()).await;
     let cmd = TestCommand::new_get(vec![0]);
 
-    let er = client.propose(cmd.clone()).await.unwrap();
+    let er = client.propose(cmd.clone(), true).await.unwrap().0;
     assert_eq!(er, (vec![], vec![]));
 
     for exe_rx in group.exe_rxs() {
@@ -189,10 +194,11 @@ async fn concurrent_cmd_order() {
 
     assert_eq!(
         client
-            .propose(TestCommand::new_get(vec![1]))
+            .propose(TestCommand::new_get(vec![1]), true)
             .await
             .unwrap()
-            .0,
+            .0
+             .0,
         vec![2]
     );
 
@@ -213,7 +219,7 @@ async fn concurrent_cmd_order_should_have_correct_revision() {
     for i in sample_range.clone() {
         let rand_dur = Duration::from_millis(thread_rng().gen_range(0..500).numeric_cast());
         let _er = client
-            .propose(TestCommand::new_put(vec![i], i).set_as_dur(rand_dur))
+            .propose(TestCommand::new_put(vec![i], i).set_as_dur(rand_dur), true)
             .await
             .unwrap();
     }
@@ -221,10 +227,11 @@ async fn concurrent_cmd_order_should_have_correct_revision() {
     for i in sample_range {
         assert_eq!(
             client
-                .propose(TestCommand::new_get(vec![i]))
+                .propose(TestCommand::new_get(vec![i]), true)
                 .await
                 .unwrap()
-                .1,
+                .0
+                 .1,
             vec![i.numeric_cast::<i64>()]
         )
     }

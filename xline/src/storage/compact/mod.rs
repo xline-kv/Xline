@@ -62,7 +62,7 @@ impl Compactable for Client<Command> {
         let request_wrapper = RequestWithToken::new_with_token(request.into(), None);
         let propose_id = ProposeId::new(format!("auto-compactor-{}", Uuid::new_v4()));
         let cmd = Command::new(vec![], request_wrapper, propose_id);
-        if let Err(e) = self.propose(cmd).await {
+        if let Err(e) = self.propose(cmd, true).await {
             #[allow(clippy::wildcard_enum_match_arm)]
             match e {
                 Execute(e) | AfterSync(e) => Err(e),

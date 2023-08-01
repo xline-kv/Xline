@@ -276,7 +276,7 @@ impl XlineServer {
         key_pair: Option<(EncodingKey, DecodingKey)>,
     ) -> Result<(
         KvServer<S>,
-        LockServer,
+        LockServer<S>,
         Arc<LeaseServer<S>>,
         AuthServer<S>,
         WatchServer<S>,

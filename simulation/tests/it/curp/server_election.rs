@@ -128,10 +128,11 @@ async fn propose_after_reelect() {
     let client = group.new_client(ClientTimeout::default()).await;
     assert_eq!(
         client
-            .propose(TestCommand::new_put(vec![0], 0))
+            .propose(TestCommand::new_put(vec![0], 0), true)
             .await
             .unwrap()
-            .0,
+            .0
+             .0,
         vec![]
     );
 
@@ -142,10 +143,11 @@ async fn propose_after_reelect() {
     let (_leader, _term) = wait_for_election(&group).await;
     assert_eq!(
         client
-            .propose(TestCommand::new_get(vec![0]))
+            .propose(TestCommand::new_get(vec![0]), true)
             .await
             .unwrap()
-            .0,
+            .0
+             .0,
         vec![0]
     );
 

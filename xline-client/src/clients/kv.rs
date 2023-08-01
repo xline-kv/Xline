@@ -76,7 +76,7 @@ impl KvClient {
             self.token.clone(),
         );
         let cmd = Command::new(key_ranges, request, propose_id);
-        let cmd_res = self.curp_client.propose(cmd).await?;
+        let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
         Ok(cmd_res.decode().into())
     }
 
@@ -125,7 +125,7 @@ impl KvClient {
             self.token.clone(),
         );
         let cmd = Command::new(key_ranges, request, propose_id);
-        let cmd_res = self.curp_client.propose(cmd).await?;
+        let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
         Ok(cmd_res.decode().into())
     }
 
@@ -167,7 +167,7 @@ impl KvClient {
             self.token.clone(),
         );
         let cmd = Command::new(key_ranges, request, propose_id);
-        let cmd_res = self.curp_client.propose(cmd).await?;
+        let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
         Ok(cmd_res.decode().into())
     }
 
@@ -226,7 +226,9 @@ impl KvClient {
             self.token.clone(),
         );
         let cmd = Command::new(key_ranges, request, propose_id);
-        let (cmd_res, sync_res) = self.curp_client.propose_indexed(cmd).await?;
+        let (cmd_res, Some(sync_res)) = self.curp_client.propose(cmd, false).await? else {
+            unreachable!("sync_res is always Some when use_fast_path is false");
+        };
         let mut res_wrapper = cmd_res.decode();
         res_wrapper.update_revision(sync_res.revision());
         Ok(res_wrapper.into())
@@ -283,10 +285,12 @@ impl KvClient {
         let cmd = Command::new(vec![], request, propose_id);
 
         let res_wrapper = if use_fast_path {
-            let cmd_res = self.curp_client.propose(cmd).await?;
+            let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
             cmd_res.decode()
         } else {
-            let (cmd_res, sync_res) = self.curp_client.propose_indexed(cmd).await?;
+            let (cmd_res, Some(sync_res)) = self.curp_client.propose(cmd, false).await? else {
+                unreachable!("sync_res is always Some when use_fast_path is false");
+            };
             let mut res_wrapper = cmd_res.decode();
             res_wrapper.update_revision(sync_res.revision());
             res_wrapper

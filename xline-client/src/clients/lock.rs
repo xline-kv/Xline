@@ -291,14 +291,10 @@ impl LockClient {
         let propose_id = self.generate_propose_id();
 
         let cmd = Self::command_from_request_wrapper(propose_id, request_with_token);
-
-        if use_fast_path {
-            let cmd_res = self.curp_client.propose(cmd).await?;
-            Ok((cmd_res, None))
-        } else {
-            let (cmd_res, sync_res) = self.curp_client.propose_indexed(cmd).await?;
-            Ok((cmd_res, Some(sync_res)))
-        }
+        self.curp_client
+            .propose(cmd, use_fast_path)
+            .await
+            .map_err(Into::into)
     }
 
     /// Create txn for try acquire lock

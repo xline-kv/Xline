@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{marker::PhantomData, sync::Arc};
 
 use async_stream::stream;
 use clippy_utilities::OverflowArithmetic;
@@ -6,21 +6,25 @@ use curp::{client::Client, cmd::ProposeId};
 use etcd_client::EventType;
 use tracing::debug;
 use uuid::Uuid;
+use xlineapi::RequestWithToken;
 
 use super::{
     auth_server::get_token,
-    command::{Command, CommandResponse, KeyRange, SyncResponse},
-    common::{propose, propose_indexed},
+    command::{
+        command_from_request_wrapper, propose_err_to_status, Command, CommandResponse, KeyRange,
+        SyncResponse,
+    },
 };
 use crate::{
     id_gen::IdGenerator,
     rpc::{
         Compare, CompareResult, CompareTarget, DeleteRangeRequest, DeleteRangeResponse,
         LeaseGrantRequest, LeaseGrantResponse, Lock, LockRequest, LockResponse, PutRequest,
-        RangeRequest, RangeResponse, Request, RequestOp, RequestUnion, RequestWithToken,
-        RequestWrapper, Response, ResponseHeader, SortOrder, SortTarget, TargetUnion, TxnRequest,
-        TxnResponse, UnlockRequest, UnlockResponse, WatchClient, WatchCreateRequest, WatchRequest,
+        RangeRequest, RangeResponse, Request, RequestOp, RequestUnion, RequestWrapper, Response,
+        ResponseHeader, SortOrder, SortTarget, TargetUnion, TxnRequest, TxnResponse, UnlockRequest,
+        UnlockResponse, WatchClient, WatchCreateRequest, WatchRequest,
     },
+    storage::storage_api::StorageApi,
 };
 
 /// Default session ttl
@@ -28,7 +32,7 @@ const DEFAULT_SESSION_TTL: i64 = 60;
 
 /// Lock Server
 #[derive(Debug)]
-pub(super) struct LockServer {
+pub(super) struct LockServer<S> {
     /// Consensus client
     client: Arc<Client<Command>>,
     /// Id Generator
@@ -37,9 +41,14 @@ pub(super) struct LockServer {
     name: String,
     /// Server address
     address: String,
+    /// Phantom
+    phantom: PhantomData<S>,
 }
 
-impl LockServer {
+impl<S> LockServer<S>
+where
+    S: StorageApi,
+{
     /// New `LockServer`
     pub(super) fn new(
         client: Arc<Client<Command>>,
@@ -52,32 +61,13 @@ impl LockServer {
             id_gen,
             name,
             address,
+            phantom: PhantomData,
         }
     }
 
     /// Generate propose id
     fn generate_propose_id(&self) -> ProposeId {
         ProposeId::new(format!("{}-{}", self.name, Uuid::new_v4()))
-    }
-
-    /// Generate `Command` proposal from `Request`
-    fn command_from_request_wrapper(propose_id: ProposeId, wrapper: RequestWithToken) -> Command {
-        #[allow(clippy::wildcard_enum_match_arm)]
-        let keys = match wrapper.request {
-            RequestWrapper::DeleteRangeRequest(ref req) => {
-                vec![KeyRange::new_one_key(req.key.as_slice())]
-            }
-            RequestWrapper::RangeRequest(ref req) => {
-                vec![KeyRange::new(req.key.as_slice(), req.range_end.as_slice())]
-            }
-            RequestWrapper::TxnRequest(ref req) => req
-                .compare
-                .iter()
-                .map(|cmp| KeyRange::new(cmp.key.as_slice(), cmp.range_end.as_slice()))
-                .collect(),
-            _ => vec![],
-        };
-        Command::new(keys, wrapper, propose_id)
     }
 
     /// Propose request and get result with fast/slow path
@@ -91,15 +81,12 @@ impl LockServer {
         T: Into<RequestWrapper>,
     {
         let wrapper = RequestWithToken::new_with_token(request.into(), token);
-        let propose_id = self.generate_propose_id();
-        let cmd = Self::command_from_request_wrapper(propose_id, wrapper);
-        if use_fast_path {
-            let cmd_res = propose(&self.client, cmd).await?;
-            Ok((cmd_res, None))
-        } else {
-            let (cmd_res, sync_res) = propose_indexed(&self.client, cmd).await?;
-            Ok((cmd_res, Some(sync_res)))
-        }
+        let cmd = command_from_request_wrapper::<S>(self.generate_propose_id(), wrapper, None);
+
+        self.client
+            .propose(cmd, use_fast_path)
+            .await
+            .map_err(propose_err_to_status)
     }
 
     /// Crate txn for try acquire lock
@@ -226,7 +213,10 @@ impl LockServer {
 }
 
 #[tonic::async_trait]
-impl Lock for LockServer {
+impl<S> Lock for LockServer<S>
+where
+    S: StorageApi,
+{
     /// Lock acquires a distributed shared lock on a given named lock.
     /// On success, it will return a unique key that exists so long as the
     /// lock is held by the caller. This key can be used in conjunction with

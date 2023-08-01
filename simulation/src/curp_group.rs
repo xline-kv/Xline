@@ -361,19 +361,14 @@ pub struct SimClient<C: Command> {
 
 impl<C: Command + 'static> SimClient<C> {
     #[inline]
-    pub async fn propose(&self, cmd: C) -> Result<C::ER, CommandProposeError<C>> {
+    pub async fn propose(
+        &self,
+        cmd: C,
+        use_fast_path: bool,
+    ) -> Result<(C::ER, Option<C::ASR>), CommandProposeError<C>> {
         let inner = self.inner.clone();
         self.handle
-            .spawn(async move { inner.propose(cmd).await })
-            .await
-            .unwrap()
-    }
-
-    #[inline]
-    pub async fn propose_indexed(&self, cmd: C) -> Result<(C::ER, C::ASR), CommandProposeError<C>> {
-        let inner = self.inner.clone();
-        self.handle
-            .spawn(async move { inner.propose_indexed(cmd).await })
+            .spawn(async move { inner.propose(cmd, use_fast_path).await })
             .await
             .unwrap()
     }

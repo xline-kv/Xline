@@ -103,7 +103,7 @@ impl Client {
             let propose_id = self.generate_propose_id();
             let request = RequestWithToken::new(rpc::PutRequest::from(request).into());
             let cmd = Command::new(key_ranges, request, propose_id);
-            let cmd_res = self.curp_client.propose(cmd).await?;
+            let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
             Ok(cmd_res.decode().into())
         } else {
             let opts = (&request).into();
@@ -127,7 +127,7 @@ impl Client {
             let propose_id = self.generate_propose_id();
             let request = RequestWithToken::new(rpc::RangeRequest::from(request).into());
             let cmd = Command::new(key_ranges, request, propose_id);
-            let cmd_res = self.curp_client.propose(cmd).await?;
+            let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
             Ok(cmd_res.decode().into())
         } else {
             let opts = (&request).into();
@@ -151,7 +151,7 @@ impl Client {
             let propose_id = self.generate_propose_id();
             let request = RequestWithToken::new(rpc::DeleteRangeRequest::from(request).into());
             let cmd = Command::new(key_ranges, request, propose_id);
-            let cmd_res = self.curp_client.propose(cmd).await?;
+            let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
             Ok(cmd_res.decode().into())
         } else {
             let opts = (&request).into();

@@ -414,69 +414,58 @@ where
         }
     }
 
-    /// Propose the request to servers
+    /// Propose the request to servers, if use_fast_path is false, it will wait for the synced index
     /// # Errors
-    ///   `ProposeError::ExecutionError` if execution error is met
-    ///   `ProposeError::SyncedError` error met while syncing logs to followers
+    ///   `CommandProposeError::Execute` if execution error is met
+    ///   `CommandProposeError::AfterSync` error met while syncing logs to followers
     /// # Panics
     ///   If leader index is out of bound of all the connections, panic
     #[inline]
-    #[allow(clippy::too_many_lines)] // FIXME: split to smaller functions
     #[instrument(skip_all, fields(cmd_id=%cmd.id()))]
-    pub async fn propose(&self, cmd: C) -> Result<C::ER, CommandProposeError<C>> {
+    #[allow(clippy::type_complexity)] // This type is not complex
+    pub async fn propose(
+        &self,
+        cmd: C,
+        use_fast_path: bool,
+    ) -> Result<(C::ER, Option<C::ASR>), CommandProposeError<C>> {
         let cmd_arc = Arc::new(cmd);
         let fast_round = self.fast_round(Arc::clone(&cmd_arc));
         let slow_round = self.slow_round(cmd_arc);
+        if use_fast_path {
+            pin_mut!(fast_round);
+            pin_mut!(slow_round);
 
-        pin_mut!(fast_round);
-        pin_mut!(slow_round);
-
-        // Wait for the fast and slow round at the same time
-        match futures::future::select(fast_round, slow_round).await {
-            futures::future::Either::Left((fast_result, slow_round)) => {
-                let (fast_er, success) = fast_result?;
-                if success {
-                    #[allow(clippy::unwrap_used)]
-                    // when success is true fast_er must be Some
-                    Ok(fast_er.unwrap())
-                } else {
-                    let (_asr, er) = slow_round.await?;
-                    Ok(er)
-                }
-            }
-            futures::future::Either::Right((slow_result, fast_round)) => match slow_result {
-                Ok((_asr, er)) => Ok(er),
-                Err(e) => {
-                    if let Ok((Some(er), true)) = fast_round.await {
-                        return Ok(er);
+            // Wait for the fast and slow round at the same time
+            match futures::future::select(fast_round, slow_round).await {
+                futures::future::Either::Left((fast_result, slow_round)) => {
+                    let (fast_er, success) = fast_result?;
+                    if success {
+                        #[allow(clippy::unwrap_used)]
+                        // when success is true fast_er must be Some
+                        Ok((fast_er.unwrap(), None))
+                    } else {
+                        let (_asr, er) = slow_round.await?;
+                        Ok((er, None))
                     }
-                    Err(e)
                 }
-            },
-        }
-    }
+                futures::future::Either::Right((slow_result, fast_round)) => match slow_result {
+                    Ok((asr, er)) => Ok((er, Some(asr))),
+                    Err(e) => {
+                        if let Ok((Some(er), true)) = fast_round.await {
+                            return Ok((er, None));
+                        }
+                        Err(e)
+                    }
+                },
+            }
+        } else {
+            #[allow(clippy::integer_arithmetic)] // tokio framework triggers
+            let (_fast_result, slow_result) = tokio::join!(fast_round, slow_round);
 
-    /// Propose a command and wait for the synced index
-    /// # Errors
-    ///   `ProposeError::SyncedError` error met while syncing logs to followers
-    ///   `ProposeError::RpcError` rpc error met, usually it's network error
-    ///
-    /// # Panics
-    ///   If leader index is out of bound of all the connections, panic
-    #[inline]
-    #[allow(clippy::else_if_without_else)] // the else is redundant
-    #[instrument(skip_all, fields(cmd_id=%cmd.id()))]
-    pub async fn propose_indexed(&self, cmd: C) -> Result<(C::ER, C::ASR), CommandProposeError<C>> {
-        let cmd_arc = Arc::new(cmd);
-        let fast_round = self.fast_round(Arc::clone(&cmd_arc));
-        let slow_round = self.slow_round(cmd_arc);
-
-        #[allow(clippy::integer_arithmetic)] // tokio framework triggers
-        let (_fast_result, slow_result) = tokio::join!(fast_round, slow_round);
-
-        match slow_result {
-            Ok((asr, er)) => Ok((er, asr)),
-            Err(e) => Err(e),
+            match slow_result {
+                Ok((asr, er)) => Ok((er, Some(asr))),
+                Err(e) => Err(e),
+            }
         }
     }
 
