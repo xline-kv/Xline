@@ -20,9 +20,9 @@ pub(super) struct CommandBoard<C: Command> {
     /// The cmd has been received before, this is used for dedup
     pub(super) sync: IndexSet<ProposeId>,
     /// Store all execution results
-    pub(super) er_buffer: IndexMap<ProposeId, Result<C::ER, String>>,
+    pub(super) er_buffer: IndexMap<ProposeId, Result<C::ER, C::Error>>,
     /// Store all after sync results
-    pub(super) asr_buffer: IndexMap<ProposeId, Result<C::ASR, String>>,
+    pub(super) asr_buffer: IndexMap<ProposeId, Result<C::ASR, C::Error>>,
 }
 
 impl<C: Command> CommandBoard<C> {
@@ -55,7 +55,7 @@ impl<C: Command> CommandBoard<C> {
     }
 
     /// Insert er to internal buffer
-    pub(super) fn insert_er(&mut self, id: &ProposeId, er: Result<C::ER, String>) {
+    pub(super) fn insert_er(&mut self, id: &ProposeId, er: Result<C::ER, C::Error>) {
         let er_ok = er.is_ok();
         assert!(
             self.er_buffer.insert(id.clone(), er).is_none(),
@@ -71,7 +71,7 @@ impl<C: Command> CommandBoard<C> {
     }
 
     /// Insert er to internal buffer
-    pub(super) fn insert_asr(&mut self, id: &ProposeId, asr: Result<C::ASR, String>) {
+    pub(super) fn insert_asr(&mut self, id: &ProposeId, asr: Result<C::ASR, C::Error>) {
         assert!(
             self.asr_buffer.insert(id.clone(), asr).is_none(),
             "er should not be inserted twice"
@@ -121,7 +121,10 @@ impl<C: Command> CommandBoard<C> {
     }
 
     /// Wait for an execution result
-    pub(super) async fn wait_for_er(cb: &CmdBoardRef<C>, id: &ProposeId) -> Result<C::ER, String> {
+    pub(super) async fn wait_for_er(
+        cb: &CmdBoardRef<C>,
+        id: &ProposeId,
+    ) -> Result<C::ER, C::Error> {
         loop {
             if let Some(er) = cb.map_read(|cb_r| cb_r.er_buffer.get(id).cloned()) {
                 return er;
@@ -135,7 +138,7 @@ impl<C: Command> CommandBoard<C> {
     pub(super) async fn wait_for_er_asr(
         cb: &CmdBoardRef<C>,
         id: &ProposeId,
-    ) -> (Result<C::ER, String>, Option<Result<C::ASR, String>>) {
+    ) -> (Result<C::ER, C::Error>, Option<Result<C::ASR, C::Error>>) {
         loop {
             {
                 let cb_r = cb.read();

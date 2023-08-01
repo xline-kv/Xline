@@ -79,9 +79,7 @@ async fn cmd_worker<
                 let er = if let Some(err_msg) = pre_err {
                     Err(err_msg)
                 } else {
-                    ce.execute(cmd.as_ref(), index)
-                        .await
-                        .map_err(|e| e.to_string())
+                    ce.execute(cmd.as_ref(), index).await
                 };
                 let er_ok = er.is_ok();
                 cb.write().insert_er(cmd.id(), er);
@@ -96,10 +94,7 @@ async fn cmd_worker<
                 er_ok
             }
             TaskType::AS(ref cmd, index, prepare) => {
-                let asr = ce
-                    .after_sync(cmd.as_ref(), index, prepare)
-                    .await
-                    .map_err(|e| e.to_string());
+                let asr = ce.after_sync(cmd.as_ref(), index, prepare).await;
                 let asr_ok = asr.is_ok();
                 cb.write().insert_asr(cmd.id(), asr);
                 sp.lock().remove(cmd.id());

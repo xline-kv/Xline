@@ -1,7 +1,10 @@
 use std::io;
 
+use curp_external_api::cmd::Command;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::rpc::SyncError;
 
 /// Server side error
 #[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
@@ -11,10 +14,6 @@ pub enum ServerError {
     /// Met I/O error during rpc communication
     #[error("meet io related error")]
     IoError(#[from] io::Error),
-
-    /// Rpc Service Error reported by madsim
-    #[error("rpc service error")]
-    RpcServiceError(String),
 
     /// Parsing error
     #[error("parsing error: {0}")]
@@ -36,12 +35,9 @@ pub enum ProposeError {
     /// The command has already been proposed before
     #[error("duplicated, the cmd might have already been proposed")]
     Duplicated,
-    /// Command execution error
-    #[error("command execution error {0}")]
-    ExecutionError(String),
     /// Command syncing error
     #[error("syncing error {0}")]
-    SyncedError(String),
+    SyncedError(SyncError),
     /// Encode error
     #[error("encode error: {0}")]
     EncodeError(String),
@@ -72,4 +68,17 @@ impl From<bincode::Error> for ProposeError {
     fn from(e: bincode::Error) -> Self {
         Self::EncodeError(e.to_string())
     }
+}
+
+/// The union error which includes propose errors and user-defined errors.
+#[derive(Error, Debug, Serialize, Deserialize)]
+#[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
+#[non_exhaustive]
+pub enum CommandProposeError<C: Command> {
+    /// Curp propose error
+    Propose(#[from] ProposeError),
+    /// User defined execute error
+    Execute(C::Error),
+    /// User defined after sync error
+    AfterSync(C::Error),
 }

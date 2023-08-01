@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use thiserror::Error;
 
 pub use self::proto::protocol_server::ProtocolServer;
 pub(crate) use self::proto::{
@@ -79,7 +80,7 @@ impl ProposeResponse {
     pub(crate) fn new_result<C: Command>(
         leader_id: Option<ServerId>,
         term: u64,
-        result: &C::ER,
+        result: &Result<C::ER, C::Error>,
     ) -> bincode::Result<Self> {
         Ok(Self {
             leader_id,
@@ -123,7 +124,7 @@ impl ProposeResponse {
         failure: FF,
     ) -> bincode::Result<R>
     where
-        SF: FnOnce(Option<C::ER>) -> R,
+        SF: FnOnce(Option<Result<C::ER, C::Error>>) -> R,
         FF: FnOnce(ProposeError) -> R,
     {
         match self.exe_result {
@@ -160,7 +161,7 @@ impl WaitSyncedResponse {
     }
 
     /// Create an error response
-    pub(crate) fn new_error(err: &SyncError) -> bincode::Result<Self> {
+    pub(crate) fn new_error<C: Command>(err: &CommandSyncError<C>) -> bincode::Result<Self> {
         Ok(Self {
             sync_result: Some(SyncResultRaw::Error(bincode::serialize(&err)?)),
         })
@@ -168,30 +169,32 @@ impl WaitSyncedResponse {
 
     /// Create a new response from execution result and `after_sync` result
     pub(crate) fn new_from_result<C: Command>(
-        er: Option<Result<C::ER, String>>,
-        asr: Option<Result<C::ASR, String>>,
+        er: Option<Result<C::ER, C::Error>>,
+        asr: Option<Result<C::ASR, C::Error>>,
     ) -> bincode::Result<Self> {
         match (er, asr) {
             (None, Some(_)) => {
                 unreachable!("should not call after sync if execution fails")
             }
-            (None, None) => WaitSyncedResponse::new_error(&SyncError::AfterSyncError(
-                "can't get er result".to_owned(),
-            )), // this is highly unlikely to happen,
+            (None, None) => WaitSyncedResponse::new_error::<C>(
+                &SyncError::Other("can't get er result".to_owned()).into(),
+            ), // this is highly unlikely to happen,
             (Some(Err(_)), Some(_)) => {
                 unreachable!("should not call after_sync when exe failed")
             }
-            (Some(Err(err)), None) => WaitSyncedResponse::new_error(&SyncError::ExecuteError(err)),
+            (Some(Err(err)), None) => {
+                WaitSyncedResponse::new_error(&CommandSyncError::<C>::ExecuteError(err))
+            }
+            // The er is ignored as the propose has failed
             (Some(Ok(_er)), Some(Err(err))) => {
-                // FIXME: should er be returned?
-                WaitSyncedResponse::new_error(&SyncError::AfterSyncError(err))
+                WaitSyncedResponse::new_error(&CommandSyncError::<C>::AfterSyncError(err))
             }
             (Some(Ok(er)), Some(Ok(asr))) => WaitSyncedResponse::new_success::<C>(&asr, &er),
+            // The er is ignored as the propose has failed
             (Some(Ok(_er)), None) => {
-                // FIXME: should er be returned?
-                WaitSyncedResponse::new_error(&SyncError::AfterSyncError(
-                    "can't get after sync result".to_owned(),
-                )) // this is highly unlikely to happen,
+                WaitSyncedResponse::new_error::<C>(
+                    &SyncError::Other("can't get after sync result".to_owned()).into(),
+                ) // this is highly unlikely to happen,
             }
         }
     }
@@ -220,22 +223,41 @@ pub(crate) enum SyncResult<C: Command> {
         er: C::ER,
     },
     /// If sync fails, return `SyncError`
-    Error(SyncError),
+    Error(CommandSyncError<C>),
+}
+
+/// The union error which includes sync errors and user-defined errors.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) enum CommandSyncError<C: Command> {
+    /// If wait sync went wrong
+    Sync(SyncError),
+    /// If the execution of the cmd went wrong
+    ExecuteError(C::Error),
+    /// If after sync of the cmd went wrong
+    AfterSyncError(C::Error),
+}
+
+impl<C: Command> From<SyncError> for CommandSyncError<C> {
+    fn from(err: SyncError) -> Self {
+        Self::Sync(err)
+    }
 }
 
 /// Wait Synced error
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub(crate) enum SyncError {
+#[derive(Clone, Error, Serialize, Deserialize, Debug)]
+pub enum SyncError {
     /// If client sent a wait synced request to a non-leader
+    #[error("redirect to {0:?}, term {1}")]
     Redirect(Option<ServerId>, u64),
-    /// If the execution of the cmd went wrong
-    ExecuteError(String),
-    /// If after sync of the cmd went wrong
-    AfterSyncError(String),
     /// If there is no such cmd to be waited
+    #[error("no such command {0}")]
     NoSuchCmd(ProposeId),
     /// Wait timeout
+    #[error("timeout")]
     Timeout,
+    /// Other error
+    #[error("other: {0}")]
+    Other(String),
 }
 
 impl AppendEntriesRequest {
