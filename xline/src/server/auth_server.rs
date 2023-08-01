@@ -8,10 +8,10 @@ use pbkdf2::{
 use tonic::metadata::MetadataMap;
 use tracing::debug;
 use uuid::Uuid;
+use xlineapi::RequestWithToken;
 
-use super::{
-    command::{Command, CommandResponse, SyncResponse},
-    common::{propose, propose_indexed},
+use super::command::{
+    command_from_request_wrapper, propose_err_to_status, Command, CommandResponse, SyncResponse,
 };
 use crate::{
     request_validation::RequestValidator,
@@ -26,7 +26,7 @@ use crate::{
         AuthUserGetRequest, AuthUserGetResponse, AuthUserGrantRoleRequest,
         AuthUserGrantRoleResponse, AuthUserListRequest, AuthUserListResponse,
         AuthUserRevokeRoleRequest, AuthUserRevokeRoleResponse, AuthenticateRequest,
-        AuthenticateResponse, RequestWithToken, RequestWrapper, ResponseWrapper,
+        AuthenticateResponse, RequestWrapper, ResponseWrapper,
     },
     storage::{storage_api::StorageApi, AuthStore},
 };
@@ -75,11 +75,6 @@ where
         ProposeId::new(format!("{}-{}", self.name, Uuid::new_v4()))
     }
 
-    /// Generate `Command` proposal from `Request`
-    fn command_from_request_wrapper(propose_id: ProposeId, wrapper: RequestWithToken) -> Command {
-        Command::new(vec![], wrapper, propose_id)
-    }
-
     /// Propose request and get result with fast/slow path
     async fn propose<T>(
         &self,
@@ -91,16 +86,12 @@ where
     {
         let token = get_token(request.metadata());
         let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
-        let propose_id = self.generate_propose_id();
-        let cmd = Self::command_from_request_wrapper(propose_id, wrapper);
-        #[allow(clippy::wildcard_enum_match_arm)]
-        if use_fast_path {
-            let cmd_res = propose(&self.client, cmd).await?;
-            Ok((cmd_res, None))
-        } else {
-            let (cmd_res, sync_res) = propose_indexed(&self.client, cmd).await?;
-            Ok((cmd_res, Some(sync_res)))
-        }
+        let cmd = command_from_request_wrapper::<S>(self.generate_propose_id(), wrapper, None);
+
+        self.client
+            .propose(cmd, use_fast_path)
+            .await
+            .map_err(propose_err_to_status)
     }
 
     /// Hash password

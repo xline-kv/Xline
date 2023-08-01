@@ -99,7 +99,7 @@ impl LeaseClient {
             self.token.clone(),
         );
         let cmd = Command::new(vec![], request, propose_id);
-        let cmd_res = self.curp_client.propose(cmd).await?;
+        let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
         Ok(cmd_res.decode().into())
     }
 
@@ -287,7 +287,7 @@ impl LeaseClient {
             self.token.clone(),
         );
         let cmd = Command::new(vec![], request, propose_id);
-        let cmd_res = self.curp_client.propose(cmd).await?;
+        let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
         Ok(cmd_res.decode().into())
     }
 

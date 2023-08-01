@@ -8,6 +8,7 @@ use curp::{
     cmd::{
         Command as CurpCommand, CommandExecutor as CurpCommandExecutor, ConflictCheck, ProposeId,
     },
+    error::{CommandProposeError, ProposeError},
     LogIndex,
 };
 use engine::Snapshot;
@@ -601,6 +602,63 @@ impl CurpCommand for Command {
     #[inline]
     fn id(&self) -> &ProposeId {
         &self.id
+    }
+}
+
+/// Generate `Command` proposal from `Request`
+pub(super) fn command_from_request_wrapper<S>(
+    propose_id: ProposeId,
+    wrapper: RequestWithToken,
+    lease_storage: Option<&LeaseStore<S>>,
+) -> Command
+where
+    S: StorageApi,
+{
+    #[allow(clippy::wildcard_enum_match_arm)]
+    let keys = match wrapper.request {
+        RequestWrapper::RangeRequest(ref req) => {
+            vec![KeyRange::new(req.key.as_slice(), req.range_end.as_slice())]
+        }
+        RequestWrapper::PutRequest(ref req) => vec![KeyRange::new_one_key(req.key.as_slice())],
+        RequestWrapper::DeleteRangeRequest(ref req) => {
+            vec![KeyRange::new(req.key.as_slice(), req.range_end.as_slice())]
+        }
+        RequestWrapper::TxnRequest(ref req) => req
+            .compare
+            .iter()
+            .map(|cmp| KeyRange::new(cmp.key.as_slice(), cmp.range_end.as_slice()))
+            .collect(),
+        RequestWrapper::LeaseRevokeRequest(ref req) => {
+            let Some(lease_storage) = lease_storage else {
+                panic!("lease_storage should be Some(_) when creating command of LeaseRevokeRequest")
+            };
+            lease_storage
+                .get_keys(req.id)
+                .into_iter()
+                .map(|k| KeyRange::new(k, ""))
+                .collect()
+        }
+        _ => vec![],
+    };
+    Command::new(keys, wrapper, propose_id)
+}
+
+/// Convert `CommandProposeError` to `tonic::Status`
+pub(super) fn propose_err_to_status(err: CommandProposeError<Command>) -> tonic::Status {
+    #[allow(clippy::wildcard_enum_match_arm)]
+    match err {
+        CommandProposeError::Execute(e) | CommandProposeError::AfterSync(e) => {
+            // If an error occurs during the `prepare` or `execute` stages, `after_sync` will
+            // not be invoked. In this case, `wait_synced` will return the errors generated
+            // in the first two stages. Therefore, if the response from `slow_round` arrives
+            // earlier than `fast_round`, the `propose` function will return a `SyncedError`,
+            // even though `after_sync` is not called.
+            tonic::Status::from(e)
+        }
+        CommandProposeError::Propose(ProposeError::SyncedError(e)) => {
+            tonic::Status::unknown(e.to_string())
+        }
+        _ => unreachable!("propose err {err:?}"),
     }
 }
 

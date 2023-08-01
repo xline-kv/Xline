@@ -7,19 +7,20 @@ use futures::stream::Stream;
 use tokio::time;
 use tracing::{debug, warn};
 use uuid::Uuid;
+use xlineapi::RequestWithToken;
 
 use super::{
     auth_server::get_token,
-    command::{Command, CommandResponse, KeyRange, SyncResponse},
-    common::{propose, propose_indexed},
+    command::{
+        command_from_request_wrapper, propose_err_to_status, Command, CommandResponse, SyncResponse,
+    },
 };
 use crate::{
     id_gen::IdGenerator,
     rpc::{
         Lease, LeaseClient, LeaseGrantRequest, LeaseGrantResponse, LeaseKeepAliveRequest,
         LeaseKeepAliveResponse, LeaseLeasesRequest, LeaseLeasesResponse, LeaseRevokeRequest,
-        LeaseRevokeResponse, LeaseTimeToLiveRequest, LeaseTimeToLiveResponse, RequestWithToken,
-        RequestWrapper,
+        LeaseRevokeResponse, LeaseTimeToLiveRequest, LeaseTimeToLiveResponse, RequestWrapper,
     },
     storage::{storage_api::StorageApi, AuthStore, LeaseStore},
 };
@@ -108,24 +109,6 @@ where
         ))
     }
 
-    /// Generate `Command` proposal from `Request`
-    fn command_from_request_wrapper(
-        &self,
-        propose_id: ProposeId,
-        wrapper: RequestWithToken,
-    ) -> Command {
-        let keys = if let RequestWrapper::LeaseRevokeRequest(ref req) = wrapper.request {
-            self.lease_storage
-                .get_keys(req.id)
-                .into_iter()
-                .map(|k| KeyRange::new(k, ""))
-                .collect()
-        } else {
-            vec![]
-        };
-        Command::new(keys, wrapper, propose_id)
-    }
-
     /// Propose request and get result with fast/slow path
     async fn propose<T>(
         &self,
@@ -137,15 +120,16 @@ where
     {
         let token = get_token(request.metadata());
         let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
-        let propose_id = self.generate_propose_id();
-        let cmd = self.command_from_request_wrapper(propose_id, wrapper);
-        if use_fast_path {
-            let cmd_res = propose(&self.client, cmd).await?;
-            Ok((cmd_res, None))
-        } else {
-            let (cmd_res, sync_res) = propose_indexed(&self.client, cmd).await?;
-            Ok((cmd_res, Some(sync_res)))
-        }
+        let cmd = command_from_request_wrapper(
+            self.generate_propose_id(),
+            wrapper,
+            Some(self.lease_storage.as_ref()),
+        );
+
+        self.client
+            .propose(cmd, use_fast_path)
+            .await
+            .map_err(propose_err_to_status)
     }
 
     /// Handle keep alive at leader
