@@ -114,8 +114,12 @@ impl KvClient {
         Ok(res_wrapper.into())
     }
 
-    /// Compacts the key-value store up to a given revision. All superseded keys
-    /// with a revision less than the compaction revision will be removed.
+    /// Compacts the key-value store up to a given revision.
+    /// All keys with revisions less than the given revision will be compacted.
+    /// The compaction process will remove all historical versions of these keys, except for the most recent one.  
+    /// For example, here is a revision list: [(A, 1), (A, 2), (A, 3), (A, 4), (A, 5)].
+    /// We compact at revision 3. After the compaction, the revision list will become [(A, 3), (A, 4), (A, 5)].
+    /// All revisions less than 3 are deleted. The latest revision, 3, will be kept.
     ///
     /// # Errors
     ///
