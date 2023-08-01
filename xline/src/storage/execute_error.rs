@@ -87,3 +87,38 @@ pub enum ExecuteError {
     #[error("permission denied")]
     PermissionDenied,
 }
+
+impl From<ExecuteError> for tonic::Status {
+    #[inline]
+    fn from(err: ExecuteError) -> Self {
+        let code = match err {
+            ExecuteError::InvalidRequest(_)
+            | ExecuteError::AuthFailed
+            | ExecuteError::PermissionNotGiven
+            | ExecuteError::InvalidAuthManagement
+            | ExecuteError::TokenNotProvided => tonic::Code::InvalidArgument,
+            ExecuteError::LeaseExpired(_) => tonic::Code::DeadlineExceeded,
+            ExecuteError::KeyNotFound
+            | ExecuteError::LeaseNotFound(_)
+            | ExecuteError::UserNotFound(_)
+            | ExecuteError::RoleNotFound(_) => tonic::Code::NotFound,
+            ExecuteError::LeaseAlreadyExists(_)
+            | ExecuteError::UserAlreadyExists(_)
+            | ExecuteError::RoleAlreadyExists(_) => tonic::Code::AlreadyExists,
+            ExecuteError::PermissionDenied => tonic::Code::PermissionDenied,
+            ExecuteError::AuthNotEnabled
+            | ExecuteError::UserAlreadyHasRole(_, _)
+            | ExecuteError::NoPasswordUser
+            | ExecuteError::RoleNotGranted(_)
+            | ExecuteError::RootRoleNotExist
+            | ExecuteError::PermissionNotGranted
+            | ExecuteError::TokenManagerNotInit => tonic::Code::FailedPrecondition,
+            ExecuteError::LeaseTtlTooLarge(_) => tonic::Code::OutOfRange,
+            ExecuteError::DbError(_) => tonic::Code::Internal,
+            ExecuteError::InvalidAuthToken | ExecuteError::TokenOldRevision(_, _) => {
+                tonic::Code::Unauthenticated
+            }
+        };
+        Self::new(code, err.to_string())
+    }
+}
