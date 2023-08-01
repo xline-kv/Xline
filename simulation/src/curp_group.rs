@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use curp::{
     client::{Client, ReadState},
     cmd::Command,
-    error::ProposeError,
+    error::{CommandProposeError, ProposeError},
     members::ClusterMember,
     server::Rpc,
     FetchLeaderRequest, FetchLeaderResponse, LogIndex, SnapshotAllocator,
@@ -361,7 +361,7 @@ pub struct SimClient<C: Command> {
 
 impl<C: Command + 'static> SimClient<C> {
     #[inline]
-    pub async fn propose(&self, cmd: C) -> Result<C::ER, ProposeError> {
+    pub async fn propose(&self, cmd: C) -> Result<C::ER, CommandProposeError<C>> {
         let inner = self.inner.clone();
         self.handle
             .spawn(async move { inner.propose(cmd).await })
@@ -370,7 +370,7 @@ impl<C: Command + 'static> SimClient<C> {
     }
 
     #[inline]
-    pub async fn propose_indexed(&self, cmd: C) -> Result<(C::ER, C::ASR), ProposeError> {
+    pub async fn propose_indexed(&self, cmd: C) -> Result<(C::ER, C::ASR), CommandProposeError<C>> {
         let inner = self.inner.clone();
         self.handle
             .spawn(async move { inner.propose_indexed(cmd).await })

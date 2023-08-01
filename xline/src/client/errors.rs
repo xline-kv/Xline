@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::server::Command;
+
 /// Client Error
 #[derive(Error, Debug)]
 #[non_exhaustive]
@@ -9,7 +11,7 @@ pub enum ClientError {
     EtcdError(String),
     /// Propose error
     #[error("propose error {0}")]
-    ProposeError(#[from] curp::error::ProposeError),
+    ProposeError(#[from] curp::error::CommandProposeError<Command>),
     /// IO error
     #[error("IO error {0}")]
     IoError(#[from] std::io::Error),

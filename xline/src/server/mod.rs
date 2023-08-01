@@ -4,6 +4,8 @@ mod auth_server;
 mod barriers;
 /// Command to be executed
 pub(crate) mod command;
+/// Common utils
+mod common;
 /// Xline kv server
 mod kv_server;
 /// Xline lease server

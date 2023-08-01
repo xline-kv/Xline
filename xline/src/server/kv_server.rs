@@ -3,7 +3,6 @@ use std::{collections::HashSet, fmt::Debug, sync::Arc, time::Duration};
 use curp::{
     client::{Client, ReadState},
     cmd::ProposeId,
-    error::ProposeError,
 };
 use futures::future::join_all;
 use tokio::time::timeout;
@@ -15,6 +14,7 @@ use super::{
     auth_server::get_token,
     barriers::{IdBarrier, IndexBarrier},
     command::{Command, CommandResponse, KeyRange, SyncResponse},
+    common::{propose, propose_indexed},
 };
 use crate::{
     rpc::{
@@ -141,21 +141,10 @@ where
         let cmd = Self::command_from_request_wrapper(propose_id, wrapper);
         #[allow(clippy::wildcard_enum_match_arm)]
         if use_fast_path {
-            let cmd_res = self.client.propose(cmd).await.map_err(|err| match err {
-                ProposeError::ExecutionError(e) => tonic::Status::invalid_argument(e),
-                _ => unreachable!("propose err {err:?}"),
-            })?;
+            let cmd_res = propose(&self.client, cmd).await?;
             Ok((cmd_res, None))
         } else {
-            let (cmd_res, sync_res) =
-                self.client
-                    .propose_indexed(cmd)
-                    .await
-                    .map_err(|err| match err {
-                        ProposeError::ExecutionError(e) => tonic::Status::invalid_argument(e),
-                        ProposeError::SyncedError(e) => tonic::Status::unknown(e),
-                        _ => unreachable!("propose err {err:?}"),
-                    })?;
+            let (cmd_res, sync_res) = propose_indexed(&self.client, cmd).await?;
             Ok((cmd_res, Some(sync_res)))
         }
     }
