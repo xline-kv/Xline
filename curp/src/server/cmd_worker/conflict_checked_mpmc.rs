@@ -57,7 +57,7 @@ pub(in crate::server) struct Task<C: Command> {
 /// Task Type
 pub(super) enum TaskType<C: Command> {
     /// Execute a cmd
-    SpecExe(Arc<C>, LogIndex, Option<String>),
+    SpecExe(Arc<C>, LogIndex, Option<C::Error>),
     /// After sync a cmd
     AS(Arc<C>, LogIndex, C::PR),
     /// Reset the CE
@@ -331,7 +331,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                             as_st.set_prepare_result(pre_res);
                             None
                         }
-                        Err(err) => Some(err.to_string()),
+                        Err(err) => Some(err),
                     };
                     *exe_st = ExeState::Executing(index);
                     let task = Task {

@@ -9,10 +9,10 @@ use utils::{config::ClientTimeout, parking_lot_lock::RwLockMap};
 
 use crate::{
     cmd::{Command, ProposeId},
-    error::{ProposeError, RpcError},
+    error::{CommandProposeError, ProposeError, RpcError},
     rpc::{
-        self, connect::ConnectApi, FetchLeaderRequest, FetchReadStateRequest, ProposeRequest,
-        ReadState as PbReadState, SyncError, SyncResult, WaitSyncedRequest,
+        self, connect::ConnectApi, CommandSyncError, FetchLeaderRequest, FetchReadStateRequest,
+        ProposeRequest, ReadState as PbReadState, SyncError, SyncResult, WaitSyncedRequest,
     },
     LogIndex, ServerId,
 };
@@ -113,9 +113,9 @@ where
     async fn fast_round(
         &self,
         cmd_arc: Arc<C>,
-    ) -> Result<(Option<<C as Command>::ER>, bool), ProposeError> {
+    ) -> Result<(Option<<C as Command>::ER>, bool), CommandProposeError<C>> {
         debug!("fast round for cmd({}) started", cmd_arc.id());
-        let req = ProposeRequest::new(cmd_arc.as_ref())?;
+        let req = ProposeRequest::new(cmd_arc.as_ref()).map_err(Into::<ProposeError>::into)?;
         let mut rpcs: FuturesUnordered<_> = self
             .connects
             .values()
@@ -164,8 +164,8 @@ where
                 }
             });
             resp.map_or_else::<C, _, _, _>(
-                |er| {
-                    if let Some(er) = er {
+                |res| {
+                    if let Some(er) = res.transpose()? {
                         assert!(execute_result.is_none(), "should not set exe result twice");
                         execute_result = Some(er);
                     }
@@ -173,14 +173,12 @@ where
                     Ok(())
                 },
                 |err| {
-                    if let ProposeError::ExecutionError(_) = err {
-                        // Only `ProposeError::ExecutionError` will be reported to upper function
-                        return Err(err);
-                    }
                     warn!("Propose error: {}", err);
                     Ok(())
                 },
-            )??;
+            )
+            .map_err(Into::<ProposeError>::into)?
+            .map_err(|e| CommandProposeError::Execute(e))?;
             if (ok_cnt >= superquorum) && execute_result.is_some() {
                 debug!("fast round for cmd({}) succeed", cmd_arc.id());
                 return Ok((execute_result, true));
@@ -194,7 +192,7 @@ where
     async fn slow_round(
         &self,
         cmd: Arc<C>,
-    ) -> Result<(<C as Command>::ASR, <C as Command>::ER), ProposeError> {
+    ) -> Result<(<C as Command>::ASR, <C as Command>::ER), CommandProposeError<C>> {
         debug!("slow round for cmd({}) started", cmd.id());
         let retry_timeout = *self.timeout.retry_timeout();
         loop {
@@ -207,7 +205,7 @@ where
                 .get(&leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .wait_synced(
-                    WaitSyncedRequest::new(cmd.id())?,
+                    WaitSyncedRequest::new(cmd.id()).map_err(Into::<ProposeError>::into)?,
                     *self.timeout.wait_synced_timeout(),
                 )
                 .await
@@ -222,12 +220,15 @@ where
                 }
             };
 
-            match resp.into::<C>()? {
+            match resp.into::<C>().map_err(Into::<ProposeError>::into)? {
                 SyncResult::Success { er, asr } => {
                     debug!("slow round for cmd({}) succeeded", cmd.id());
                     return Ok((asr, er));
                 }
-                SyncResult::Error(SyncError::Redirect(new_leader, term)) => {
+                SyncResult::Error(CommandSyncError::Sync(SyncError::Redirect(
+                    new_leader,
+                    term,
+                ))) => {
                     let new_leader = new_leader.and_then(|id| {
                         let mut state = self.state.write();
                         (state.term <= term).then(|| {
@@ -238,11 +239,14 @@ where
                     });
                     self.resend_propose(Arc::clone(&cmd), new_leader).await?; // resend the propose to the new leader
                 }
-                SyncResult::Error(SyncError::Timeout) => {
-                    return Err(ProposeError::SyncedError("wait sync timeout".to_owned()));
+                SyncResult::Error(CommandSyncError::Sync(e)) => {
+                    return Err(ProposeError::SyncedError(e).into());
                 }
-                SyncResult::Error(e) => {
-                    return Err(ProposeError::SyncedError(format!("{e:?}")));
+                SyncResult::Error(CommandSyncError::ExecuteError(e)) => {
+                    return Err(CommandProposeError::Execute(e));
+                }
+                SyncResult::Error(CommandSyncError::AfterSyncError(e)) => {
+                    return Err(CommandProposeError::AfterSync(e));
                 }
             }
         }
@@ -419,7 +423,7 @@ where
     #[inline]
     #[allow(clippy::too_many_lines)] // FIXME: split to smaller functions
     #[instrument(skip_all, fields(cmd_id=%cmd.id()))]
-    pub async fn propose(&self, cmd: C) -> Result<C::ER, ProposeError> {
+    pub async fn propose(&self, cmd: C) -> Result<C::ER, CommandProposeError<C>> {
         let cmd_arc = Arc::new(cmd);
         let fast_round = self.fast_round(Arc::clone(&cmd_arc));
         let slow_round = self.slow_round(cmd_arc);
@@ -462,7 +466,7 @@ where
     #[inline]
     #[allow(clippy::else_if_without_else)] // the else is redundant
     #[instrument(skip_all, fields(cmd_id=%cmd.id()))]
-    pub async fn propose_indexed(&self, cmd: C) -> Result<(C::ER, C::ASR), ProposeError> {
+    pub async fn propose_indexed(&self, cmd: C) -> Result<(C::ER, C::ASR), CommandProposeError<C>> {
         let cmd_arc = Arc::new(cmd);
         let fast_round = self.fast_round(Arc::clone(&cmd_arc));
         let slow_round = self.slow_round(cmd_arc);

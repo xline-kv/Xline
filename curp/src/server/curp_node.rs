@@ -26,7 +26,7 @@ use super::{
 use crate::{
     client::Client,
     cmd::{Command, CommandExecutor},
-    error::{ProposeError, RpcError},
+    error::RpcError,
     log_entry::LogEntry,
     members::ClusterMember,
     role_change::RoleChange,
@@ -116,12 +116,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         // handle proposal
         let ((leader_id, term), result) = self.curp.handle_propose(Arc::clone(&cmd));
         let resp = match result {
-            Ok(true) => match CommandBoard::wait_for_er(&self.cmd_board, cmd.id()).await {
-                Ok(er) => ProposeResponse::new_result::<C>(leader_id, term, &er)?,
-                Err(err) => {
-                    ProposeResponse::new_error(leader_id, term, &ProposeError::ExecutionError(err))?
-                }
-            },
+            Ok(true) => {
+                let er_res = CommandBoard::wait_for_er(&self.cmd_board, cmd.id()).await;
+                ProposeResponse::new_result::<C>(leader_id, term, &er_res)?
+            }
             Ok(false) => ProposeResponse::new_empty(leader_id, term)?,
             Err(err) => ProposeResponse::new_error(leader_id, term, &err)?,
         };
