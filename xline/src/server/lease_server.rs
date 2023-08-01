@@ -2,7 +2,7 @@ use std::{pin::Pin, sync::Arc, time::Duration};
 
 use async_stream::{stream, try_stream};
 use clippy_utilities::Cast;
-use curp::{client::Client, cmd::ProposeId, error::ProposeError, members::ClusterMember};
+use curp::{client::Client, cmd::ProposeId, members::ClusterMember};
 use futures::stream::Stream;
 use tokio::time;
 use tracing::{debug, warn};
@@ -11,6 +11,7 @@ use uuid::Uuid;
 use super::{
     auth_server::get_token,
     command::{Command, CommandResponse, KeyRange, SyncResponse},
+    common::{propose, propose_indexed},
 };
 use crate::{
     id_gen::IdGenerator,
@@ -139,22 +140,10 @@ where
         let propose_id = self.generate_propose_id();
         let cmd = self.command_from_request_wrapper(propose_id, wrapper);
         if use_fast_path {
-            let cmd_res = self.client.propose(cmd).await.map_err(|err| {
-                if let ProposeError::ExecutionError(e) = err {
-                    tonic::Status::invalid_argument(e)
-                } else {
-                    panic!("propose err {err:?}")
-                }
-            })?;
+            let cmd_res = propose(&self.client, cmd).await?;
             Ok((cmd_res, None))
         } else {
-            let (cmd_res, sync_res) = self.client.propose_indexed(cmd).await.map_err(|err| {
-                if let ProposeError::ExecutionError(e) = err {
-                    tonic::Status::invalid_argument(e)
-                } else {
-                    panic!("propose err {err:?}")
-                }
-            })?;
+            let (cmd_res, sync_res) = propose_indexed(&self.client, cmd).await?;
             Ok((cmd_res, Some(sync_res)))
         }
     }

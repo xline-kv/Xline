@@ -76,9 +76,12 @@ impl From<bincode::Error> for ProposeError {
 #[non_exhaustive]
 pub enum CommandProposeError<C: Command> {
     /// Curp propose error
+    #[error("propose error: {0}")]
     Propose(#[from] ProposeError),
     /// User defined execute error
+    #[error("execute error: {0}")]
     Execute(C::Error),
     /// User defined after sync error
+    #[error("after sync error: {0}")]
     AfterSync(C::Error),
 }

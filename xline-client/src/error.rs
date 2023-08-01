@@ -1,4 +1,5 @@
 use thiserror::Error;
+use xline::server::Command;
 
 /// The result type for `xline-client`
 pub type Result<T> = std::result::Result<T, ClientError>;
@@ -9,7 +10,7 @@ pub type Result<T> = std::result::Result<T, ClientError>;
 pub enum ClientError {
     /// Propose error
     #[error("propose error {0}")]
-    ProposeError(#[from] curp::error::ProposeError),
+    ProposeError(#[from] curp::error::CommandProposeError<Command>),
     /// Io error
     #[error("IO error {0}")]
     IoError(#[from] std::io::Error),
