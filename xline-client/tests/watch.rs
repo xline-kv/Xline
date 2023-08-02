@@ -1,7 +1,10 @@
 //! The following tests are originally from `etcd-client`
 use crate::common::get_cluster_client;
-use xline_client::{error::Result, types::kv::PutRequest, types::watch::WatchRequest};
-use xlineapi::EventType;
+use xline_client::{
+    error::Result,
+    types::kv::PutRequest,
+    types::watch::{EventType, WatchRequest},
+};
 
 mod common;
 

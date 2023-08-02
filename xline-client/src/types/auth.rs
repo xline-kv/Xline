@@ -1,5 +1,13 @@
 use xline::server::KeyRange;
-use xlineapi::Type as PermissionType;
+
+pub use xlineapi::{
+    AuthDisableResponse, AuthEnableResponse, AuthRoleAddResponse, AuthRoleDeleteResponse,
+    AuthRoleGetResponse, AuthRoleGrantPermissionResponse, AuthRoleListResponse,
+    AuthRoleRevokePermissionResponse, AuthStatusResponse, AuthUserAddResponse,
+    AuthUserChangePasswordResponse, AuthUserDeleteResponse, AuthUserGetResponse,
+    AuthUserGrantRoleResponse, AuthUserListResponse, AuthUserRevokeRoleResponse,
+    AuthenticateResponse, Type as PermissionType,
+};
 
 /// Request for `Authenticate`
 #[derive(Debug)]

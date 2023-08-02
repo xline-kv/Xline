@@ -6,10 +6,9 @@ use xline_client::{
         AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGetRequest,
         AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest, AuthUserAddRequest,
         AuthUserChangePasswordRequest, AuthUserDeleteRequest, AuthUserGetRequest,
-        AuthUserGrantRoleRequest, AuthUserRevokeRoleRequest, Permission,
+        AuthUserGrantRoleRequest, AuthUserRevokeRoleRequest, Permission, PermissionType,
     },
 };
-use xlineapi::Type;
 
 mod common;
 
@@ -57,11 +56,11 @@ async fn permission_operations_should_success_in_normal_path() -> Result<()> {
     let client = client.auth_client();
 
     let role1 = "role1";
-    let perm1 = Permission::new(Type::Read, "123");
-    let perm2 = Permission::new(Type::Write, "abc").with_from_key();
-    let perm3 = Permission::new(Type::Readwrite, "hi").with_range_end("hjj");
-    let perm4 = Permission::new(Type::Write, "pp").with_prefix();
-    let perm5 = Permission::new(Type::Read, vec![0]).with_from_key();
+    let perm1 = Permission::new(PermissionType::Read, "123");
+    let perm2 = Permission::new(PermissionType::Write, "abc").with_from_key();
+    let perm3 = Permission::new(PermissionType::Readwrite, "hi").with_range_end("hjj");
+    let perm4 = Permission::new(PermissionType::Write, "pp").with_prefix();
+    let perm5 = Permission::new(PermissionType::Read, vec![0]).with_from_key();
 
     client.role_add(AuthRoleAddRequest::new(role1)).await?;
 

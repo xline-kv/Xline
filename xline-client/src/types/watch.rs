@@ -6,6 +6,8 @@ use xlineapi::{RequestUnion, WatchCancelRequest, WatchProgressRequest};
 
 use crate::error::{ClientError, Result};
 
+pub use xlineapi::{Event, EventType, KeyValue, WatchResponse};
+
 /// The watching handle.
 #[derive(Debug)]
 pub struct Watcher {
