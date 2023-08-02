@@ -1,5 +1,9 @@
 use xline::server::KeyRange;
-use xlineapi::{CompareResult, CompareTarget, SortOrder, SortTarget, TargetUnion};
+
+pub use xlineapi::{
+    CompareResult, CompareTarget, DeleteRangeResponse, PutResponse, RangeResponse, Response,
+    ResponseOp, SortOrder, SortTarget, TargetUnion, TxnResponse,
+};
 
 /// Request type for `Put`
 #[derive(Debug, PartialEq)]

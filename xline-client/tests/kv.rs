@@ -4,10 +4,10 @@ use test_macros::abort_on_panic;
 use xline_client::{
     error::Result,
     types::kv::{
-        CompactionRequest, Compare, DeleteRangeRequest, PutRequest, RangeRequest, TxnOp, TxnRequest,
+        CompactionRequest, Compare, CompareResult, DeleteRangeRequest, PutRequest, RangeRequest,
+        TxnOp, TxnRequest,
     },
 };
-use xlineapi::CompareResult;
 
 mod common;
 
