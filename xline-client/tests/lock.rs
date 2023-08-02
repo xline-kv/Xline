@@ -33,28 +33,35 @@ async fn lock_contention_should_occur_when_acquire_by_two() -> Result<()> {
     let client_c = client.clone();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
-    tokio::spawn(async move {
-        let resp = client_c
-            .lock(LockRequest::new().with_name("lock-test"))
-            .await
-            .unwrap();
-        let _ignore = tx.send(());
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        let _resp = client_c
-            .unlock(UnlockRequest::new().with_key(resp.key))
-            .await
-            .unwrap();
-    });
-
-    rx.recv().await.unwrap();
-    let now = tokio::time::Instant::now();
     let resp = client
         .lock(LockRequest::new().with_name("lock-test"))
         .await
         .unwrap();
 
-    assert!(now.elapsed() > Duration::from_secs(1));
-    assert!(resp.key.starts_with(b"lock-test/"));
+    let handle = tokio::spawn(async move {
+        let res = tokio::time::timeout(
+            Duration::from_secs(2),
+            client_c.lock(LockRequest::new().with_name("lock-test")),
+        )
+        .await;
+        assert!(res.is_err());
+        let _ignore = tx.send(());
+
+        let res = tokio::time::timeout(
+            Duration::from_millis(200),
+            client_c.lock(LockRequest::new().with_name("lock-test")),
+        )
+        .await;
+        assert!(res.is_ok_and(|r| r.is_ok_and(|resp| resp.key.starts_with(b"lock-test/"))));
+    });
+
+    rx.recv().await.unwrap();
+    let _resp = client
+        .unlock(UnlockRequest::new().with_key(resp.key))
+        .await
+        .unwrap();
+
+    handle.await.unwrap();
 
     Ok(())
 }
