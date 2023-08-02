@@ -172,7 +172,7 @@ pub mod clients;
 /// Error definitions for `xline-client`.
 pub mod error;
 /// Lease Id generator
-pub mod lease_gen;
+mod lease_gen;
 /// Request type definitions.
 pub mod types;
 /// Xline proto types API
@@ -388,7 +388,7 @@ impl ClientOptions {
 
 /// Authentication service.
 #[derive(Debug, Clone)]
-pub struct AuthService<S> {
+struct AuthService<S> {
     /// A `Service` trait object
     inner: S,
     /// Auth token
@@ -398,7 +398,7 @@ pub struct AuthService<S> {
 impl<S> AuthService<S> {
     /// Create a new `AuthService`
     #[inline]
-    pub fn new(inner: S, token: Option<Arc<HeaderValue>>) -> Self {
+    fn new(inner: S, token: Option<Arc<HeaderValue>>) -> Self {
         Self { inner, token }
     }
 }
