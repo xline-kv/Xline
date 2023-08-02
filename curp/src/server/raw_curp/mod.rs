@@ -45,7 +45,7 @@ use crate::{
     members::ClusterMember,
     role_change::RoleChange,
     rpc::{IdSet, ReadState},
-    server::{cmd_board::CmdBoardRef, spec_pool::SpecPoolRef},
+    server::{cmd_board::CmdBoardRef, raw_curp::state::VoteResult, spec_pool::SpecPoolRef},
     snapshot::{Snapshot, SnapshotMeta},
     LogIndex, ServerId,
 };
@@ -479,14 +479,13 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         let mut cst_w = self.cst.lock();
         debug!("{}'s vote is granted by server {}", self.id(), id);
 
-        cst_w.votes_received += 1;
+        let _ig = cst_w.votes_received.insert(id.clone(), vote_granted);
         assert!(
             cst_w.sps.insert(id.clone(), spec_pool).is_none(),
             "a server can't vote twice"
         );
 
-        let min_granted = self.quorum();
-        if cst_w.votes_received < min_granted {
+        if !matches!(cst_w.check_vote(), VoteResult::Won) {
             return Ok(false);
         }
 
@@ -604,7 +603,12 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 cfg.candidate_timeout_ticks,
             )),
             lst: LeaderState::new(&cluster_info.peers_id()),
-            cst: Mutex::new(CandidateState::new()),
+            cst: Mutex::new(CandidateState::new(
+                cluster_info
+                    .peers_id()
+                    .into_iter()
+                    .chain([cluster_info.self_id().clone()]),
+            )),
             log: RwLock::new(Log::new(log_tx, cfg.batch_max_size, cfg.log_entries_cap)),
             ctx: Context {
                 cluster_info,
@@ -839,16 +843,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
         // vote to self
         debug!("{}'s vote is granted by server {}", self.id(), self.id());
-        cst.votes_received = 1;
+        cst.votes_received = HashMap::from([(self.id().clone(), true)]);
         cst.sps = HashMap::from([(self.id().clone(), self_sp)]);
-        if cst.votes_received < self.quorum() {
-            Some(Vote {
-                term: st.term,
-                candidate_id: self.id().clone(),
-                last_log_index: log.last_log_index(),
-                last_log_term: log.last_log_term(),
-            })
-        } else {
+
+        if matches!(cst.check_vote(), VoteResult::Won) {
             // single node cluster
             // vote is granted by the majority of servers, can become leader
             let spec_pools = cst.sps.drain().collect();
@@ -856,6 +854,13 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             self.recover_from_spec_pools(st, &mut log_w, spec_pools);
             self.become_leader(st);
             None
+        } else {
+            Some(Vote {
+                term: st.term,
+                candidate_id: self.id().clone(),
+                last_log_index: log.last_log_index(),
+                last_log_term: log.last_log_term(),
+            })
         }
     }
 
@@ -1004,7 +1009,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
     /// Get quorum: the smallest number of servers who must be online for the cluster to work
     fn quorum(&self) -> u64 {
-        (self.ctx.cluster_info.peers_len() / 2 + 1).numeric_cast()
+        ((self.ctx.cluster_info.peers_len() + 1) / 2 + 1).numeric_cast()
     }
 
     /// Get `recover_quorum`: the smallest number of servers who must contain a command in speculative pool for it to be recovered
