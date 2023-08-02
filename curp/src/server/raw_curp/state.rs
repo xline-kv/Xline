@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use madsim::rand::{thread_rng, Rng};
 use parking_lot::{Mutex, MutexGuard};
@@ -38,8 +41,10 @@ pub(super) struct State {
 pub(super) struct CandidateState<C> {
     /// Collected speculative pools, used for recovery
     pub(super) sps: HashMap<ServerId, Vec<Arc<C>>>,
+    /// All voters in current cluster
+    pub(super) voters: HashSet<ServerId>,
     /// Votes received in the election
-    pub(super) votes_received: u64,
+    pub(super) votes_received: HashMap<ServerId, bool>,
 }
 
 /// Status of a follower
@@ -152,10 +157,118 @@ impl LeaderState {
 
 impl<C> CandidateState<C> {
     /// Create a new `CandidateState`
-    pub(super) fn new() -> Self {
+    pub(super) fn new(servers: impl Iterator<Item = ServerId>) -> Self {
         Self {
             sps: HashMap::new(),
-            votes_received: 0,
+            voters: servers.collect(),
+            votes_received: HashMap::new(),
         }
+    }
+
+    /// Get quorum: the smallest number of servers who must be online for the cluster to work
+    pub(super) fn quorum(&self) -> usize {
+        self.voters.len() / 2 + 1
+    }
+
+    /// Check if the candidate has won the election
+    pub(super) fn check_vote(&self) -> VoteResult {
+        if self.voters.is_empty() {
+            return VoteResult::Won;
+        }
+
+        let mut voted_cnt = 0;
+        let mut missing_cnt = 0;
+        for id in &self.voters {
+            match self.votes_received.get(id) {
+                Some(&true) => voted_cnt += 1,
+
+                None => missing_cnt += 1,
+                _ => {}
+            }
+        }
+
+        let quorum = self.quorum();
+        if voted_cnt >= quorum {
+            return VoteResult::Won;
+        }
+        if voted_cnt + missing_cnt >= quorum {
+            return VoteResult::Pending;
+        }
+        VoteResult::Lost
+    }
+}
+
+/// Result of a vote
+#[derive(Debug, PartialEq)]
+pub(super) enum VoteResult {
+    /// Won the election
+    Won,
+    /// Pending
+    Pending,
+    /// Lost the election
+    Lost,
+}
+
+#[cfg(test)]
+mod test {
+
+    use curp_test_utils::test_cmd::TestCommand;
+
+    use super::*;
+
+    #[test]
+    fn quorum_should_work() {
+        let cst = CandidateState::<TestCommand>::new((0..3).map(|n| n.to_string()));
+        assert_eq!(cst.quorum(), 2);
+
+        let cst = CandidateState::<TestCommand>::new((0..4).map(|n| n.to_string()));
+        assert_eq!(cst.quorum(), 3);
+
+        let cst = CandidateState::<TestCommand>::new((0..5).map(|n| n.to_string()));
+        assert_eq!(cst.quorum(), 3);
+
+        let cst = CandidateState::<TestCommand>::new((0..9).map(|n| n.to_string()));
+        assert_eq!(cst.quorum(), 5);
+
+        let cst = CandidateState::<TestCommand>::new((0..10).map(|n| n.to_string()));
+        assert_eq!(cst.quorum(), 6);
+    }
+
+    #[test]
+    fn check_vote_should_return_right_vote_result() {
+        let servers = vec![
+            "1".to_string(),
+            "2".to_string(),
+            "3".to_string(),
+            "4".to_string(),
+            "5".to_string(),
+        ];
+        let mut cst = CandidateState::<TestCommand>::new(servers.iter().cloned());
+
+        cst.votes_received = HashMap::from([
+            ("1".to_string(), true),
+            ("2".to_string(), true),
+            ("3".to_string(), true),
+            ("4".to_string(), false),
+            ("5".to_string(), false),
+        ]);
+        assert_eq!(cst.check_vote(), VoteResult::Won);
+
+        cst.votes_received = HashMap::from([
+            ("1".to_string(), true),
+            ("2".to_string(), true),
+            ("3".to_string(), false),
+            ("4".to_string(), false),
+            ("5".to_string(), false),
+        ]);
+        assert_eq!(cst.check_vote(), VoteResult::Lost);
+
+        cst.votes_received = HashMap::from([
+            ("1".to_string(), true),
+            ("2".to_string(), true),
+            ("3".to_string(), false),
+            ("4".to_string(), false),
+        ]);
+        assert_eq!(cst.check_vote(), VoteResult::Pending);
     }
 }
