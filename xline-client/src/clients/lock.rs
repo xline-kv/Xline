@@ -1,7 +1,14 @@
-use std::sync::Arc;
+use std::{
+    pin::Pin,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 use clippy_utilities::OverflowArithmetic;
 use curp::{client::Client as CurpClient, cmd::ProposeId};
+use futures::{Future, FutureExt};
 use tonic::transport::Channel;
 use uuid::Uuid;
 use xline::server::{Command, CommandResponse, KeyRange, SyncResponse};
@@ -85,13 +92,32 @@ impl LockClient {
                 .await?;
             lease_id = resp.id;
         }
-
         let prefix = format!(
             "{}/",
             String::from_utf8_lossy(&request.inner.name).into_owned()
         );
         let key = format!("{prefix}{lease_id:x}");
+        let lock_success = AtomicBool::new(false);
+        let lock_inner = self.lock_inner(prefix, key.clone(), lease_id, &lock_success);
+        tokio::pin!(lock_inner);
 
+        LockFuture {
+            key,
+            lock_success: &lock_success,
+            lock_client: self,
+            lock_inner,
+        }
+        .await
+    }
+
+    /// The inner lock logic
+    async fn lock_inner(
+        &self,
+        prefix: String,
+        key: String,
+        lease_id: i64,
+        lock_success: &AtomicBool,
+    ) -> Result<LockResponse> {
         let txn = Self::create_acquire_txn(&prefix, lease_id);
         let (cmd_res, sync_res) = self.propose(txn, false).await?;
         let mut txn_res = Into::<TxnResponse>::into(cmd_res.decode());
@@ -118,10 +144,7 @@ impl LockClient {
         {
             owner_res.header
         } else {
-            if let Err(e) = self.wait_delete(prefix, my_rev).await {
-                let _ignore = self.delete_key(key.as_bytes()).await;
-                return Err(e);
-            }
+            self.wait_delete(prefix, my_rev).await?;
             let range_req = RangeRequest {
                 key: key.as_bytes().to_vec(),
                 ..Default::default()
@@ -141,6 +164,8 @@ impl LockClient {
                 }
             }
         };
+
+        let _ignore = lock_success.fetch_or(true, Ordering::Relaxed);
 
         Ok(LockResponse {
             header,
@@ -300,5 +325,55 @@ impl LockClient {
         let (cmd_res, _sync_res) = self.propose(del_req, true).await?;
         let res = Into::<DeleteRangeResponse>::into(cmd_res.decode());
         Ok(res.header)
+    }
+}
+
+/// The future that will do the lock operation
+/// This exists because we need to do some clean up after the lock operation has failed or being cancelled
+struct LockFuture<'a> {
+    /// The key associated with the lock
+    key: String,
+    /// Whether the acquire attempt is success
+    lock_success: &'a AtomicBool,
+    /// The lock client
+    lock_client: &'a LockClient,
+    /// The inner lock future
+    lock_inner: Pin<&'a mut (dyn Future<Output = Result<LockResponse>> + Send)>,
+}
+
+impl std::fmt::Debug for LockFuture<'_> {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "key: {}, lock_success: {:?}, lock_client:{:?}",
+            self.key, self.lock_success, self.lock_client
+        )
+    }
+}
+
+impl Future for LockFuture<'_> {
+    type Output = Result<LockResponse>;
+
+    #[inline]
+    fn poll(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        self.lock_inner.poll_unpin(cx)
+    }
+}
+
+impl Drop for LockFuture<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        if self.lock_success.load(Ordering::Relaxed) {
+            return;
+        }
+        let lock_client = self.lock_client.clone();
+        let key = self.key.clone();
+        let _ignore = tokio::spawn(async move {
+            let _ignore = lock_client.delete_key(key.as_bytes()).await;
+        });
     }
 }

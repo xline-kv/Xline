@@ -81,3 +81,41 @@ async fn lock_should_timeout_when_ttl_is_set() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+#[abort_on_panic]
+async fn lock_should_unlock_after_cancelled() -> Result<()> {
+    let (_cluster, client) = get_cluster_client().await?;
+    let client = client.lock_client();
+    let client_c = client.clone();
+    // first acquire the lock
+    let resp = client
+        .lock(LockRequest::new().with_name("lock-test"))
+        .await
+        .unwrap();
+
+    // acquire the lock again and then cancel it
+    let res = tokio::time::timeout(
+        Duration::from_secs(1),
+        client_c.lock(LockRequest::new().with_name("lock-test")),
+    )
+    .await;
+    assert!(res.is_err());
+
+    // unlock the first one
+    client
+        .unlock(UnlockRequest::new().with_key(resp.key))
+        .await?;
+
+    // try lock again, it should success
+    let resp = tokio::time::timeout(
+        Duration::from_secs(1),
+        client.lock(LockRequest::new().with_name("lock-test")),
+    )
+    .await
+    .expect("timeout when trying to lock")?;
+
+    assert!(resp.key.starts_with(b"lock-test/"));
+
+    Ok(())
+}
