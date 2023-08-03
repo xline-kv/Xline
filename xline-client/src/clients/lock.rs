@@ -165,7 +165,8 @@ impl LockClient {
             }
         };
 
-        let _ignore = lock_success.fetch_or(true, Ordering::Relaxed);
+        // The `Release` ordering ensures that this store will not be reordered.
+        lock_success.store(true, Ordering::Release);
 
         Ok(LockResponse {
             header,
@@ -367,6 +368,8 @@ impl Future for LockFuture<'_> {
 impl Drop for LockFuture<'_> {
     #[inline]
     fn drop(&mut self) {
+        // We can safely use `Relaxed` ordering here as the if condition makes sure it
+        // won't be reordered.
         if self.lock_success.load(Ordering::Relaxed) {
             return;
         }
