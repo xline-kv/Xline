@@ -13,13 +13,13 @@ Official Xline API client for Rust that supports the [CURP](https://github.com/x
   - [x] Range
   - [x] Delete
   - [x] Transaction
-  - [ ] Compact
+  - [x] Compact
 - Lease
-  - [ ] Grant
-  - [ ] Revoke
-  - [ ] KeepAlive
-  - [ ] TimeToLive
-  - [ ] Leases
+  - [x] Grant
+  - [x] Revoke
+  - [x] KeepAlive
+  - [x] TimeToLive
+  - [x] Leases
 - Watch
   - [x] WatchCreate
   - [x] WatchCancel
@@ -54,8 +54,8 @@ Official Xline API client for Rust that supports the [CURP](https://github.com/x
   - [ ] Leader
   - [ ] Observe
 - Lock
-  - [ ] Lock
-  - [ ] Unlock
+  - [x] Lock
+  - [x] Unlock
 - Maintenance
   - [ ] Alarm
   - [ ] Status
