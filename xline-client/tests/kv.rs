@@ -254,16 +254,13 @@ async fn compact_should_remove_previous_revision() -> Result<()> {
         .await?;
     assert_eq!(rev1_resp.kvs[0].value, b"1");
 
-    client.compact(CompactionRequest::new(4)).await?;
+    client.compact(CompactionRequest::new(3)).await?;
 
     // after compacting
     let rev0_resp = client
         .range(RangeRequest::new("compact").with_revision(2))
-        .await?;
-    assert!(
-        rev0_resp.kvs.is_empty(),
-        "kvs should be empty after compaction"
-    );
+        .await;
+    assert!(rev0_resp.is_err(), "should be err after compaction");
     let rev1_resp = client
         .range(RangeRequest::new("compact").with_revision(3))
         .await?;
