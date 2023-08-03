@@ -9,10 +9,10 @@ use utils::{config::ClientTimeout, parking_lot_lock::RwLockMap};
 
 use crate::{
     cmd::{Command, ProposeId},
-    error::{CommandProposeError, ProposeError, RpcError},
+    error::{CommandProposeError, CommandSyncError, ProposeError, RpcError, SyncError},
     rpc::{
-        self, connect::ConnectApi, CommandSyncError, FetchLeaderRequest, FetchReadStateRequest,
-        ProposeRequest, ReadState as PbReadState, SyncError, SyncResult, WaitSyncedRequest,
+        self, connect::ConnectApi, FetchLeaderRequest, FetchReadStateRequest, ProposeRequest,
+        ReadState as PbReadState, SyncResult, WaitSyncedRequest,
     },
     LogIndex, ServerId,
 };
@@ -242,10 +242,10 @@ where
                 SyncResult::Error(CommandSyncError::Sync(e)) => {
                     return Err(ProposeError::SyncedError(e).into());
                 }
-                SyncResult::Error(CommandSyncError::ExecuteError(e)) => {
+                SyncResult::Error(CommandSyncError::Execute(e)) => {
                     return Err(CommandProposeError::Execute(e));
                 }
-                SyncResult::Error(CommandSyncError::AfterSyncError(e)) => {
+                SyncResult::Error(CommandSyncError::AfterSync(e)) => {
                     return Err(CommandProposeError::AfterSync(e));
                 }
             }

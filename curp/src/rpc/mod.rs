@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use thiserror::Error;
+use serde::{de::DeserializeOwned, Serialize};
 
 pub use self::proto::protocol_server::ProtocolServer;
 pub(crate) use self::proto::{
@@ -19,7 +18,7 @@ pub use self::proto::{
 };
 use crate::{
     cmd::{Command, ProposeId},
-    error::ProposeError,
+    error::{CommandSyncError, ProposeError, SyncError},
     log_entry::LogEntry,
     LogIndex, ServerId,
 };
@@ -183,11 +182,11 @@ impl WaitSyncedResponse {
                 unreachable!("should not call after_sync when exe failed")
             }
             (Some(Err(err)), None) => {
-                WaitSyncedResponse::new_error(&CommandSyncError::<C>::ExecuteError(err))
+                WaitSyncedResponse::new_error(&CommandSyncError::<C>::Execute(err))
             }
             // The er is ignored as the propose has failed
             (Some(Ok(_er)), Some(Err(err))) => {
-                WaitSyncedResponse::new_error(&CommandSyncError::<C>::AfterSyncError(err))
+                WaitSyncedResponse::new_error(&CommandSyncError::<C>::AfterSync(err))
             }
             (Some(Ok(er)), Some(Ok(asr))) => WaitSyncedResponse::new_success::<C>(&asr, &er),
             // The er is ignored as the propose has failed
@@ -224,40 +223,6 @@ pub(crate) enum SyncResult<C: Command> {
     },
     /// If sync fails, return `SyncError`
     Error(CommandSyncError<C>),
-}
-
-/// The union error which includes sync errors and user-defined errors.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub(crate) enum CommandSyncError<C: Command> {
-    /// If wait sync went wrong
-    Sync(SyncError),
-    /// If the execution of the cmd went wrong
-    ExecuteError(C::Error),
-    /// If after sync of the cmd went wrong
-    AfterSyncError(C::Error),
-}
-
-impl<C: Command> From<SyncError> for CommandSyncError<C> {
-    fn from(err: SyncError) -> Self {
-        Self::Sync(err)
-    }
-}
-
-/// Wait Synced error
-#[derive(Clone, Error, Serialize, Deserialize, Debug)]
-pub enum SyncError {
-    /// If client sent a wait synced request to a non-leader
-    #[error("redirect to {0:?}, term {1}")]
-    Redirect(Option<ServerId>, u64),
-    /// If there is no such cmd to be waited
-    #[error("no such command {0}")]
-    NoSuchCmd(ProposeId),
-    /// Wait timeout
-    #[error("timeout")]
-    Timeout,
-    /// Other error
-    #[error("other: {0}")]
-    Other(String),
 }
 
 impl AppendEntriesRequest {

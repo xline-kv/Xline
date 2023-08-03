@@ -4,7 +4,7 @@ use curp_external_api::cmd::Command;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::rpc::SyncError;
+use crate::{cmd::ProposeId, ServerId};
 
 /// Server side error
 #[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
@@ -84,4 +84,40 @@ pub enum CommandProposeError<C: Command> {
     /// User defined after sync error
     #[error("after sync error: {0}")]
     AfterSync(C::Error),
+}
+
+/// Wait synced error
+#[derive(Clone, Error, Serialize, Deserialize, Debug)]
+#[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
+#[non_exhaustive]
+pub enum SyncError {
+    /// If client sent a wait synced request to a non-leader
+    #[error("redirect to {0:?}, term {1}")]
+    Redirect(Option<ServerId>, u64),
+    /// If there is no such cmd to be waited
+    #[error("no such command {0}")]
+    NoSuchCmd(ProposeId),
+    /// Wait timeout
+    #[error("timeout")]
+    Timeout,
+    /// Other error
+    #[error("other: {0}")]
+    Other(String),
+}
+
+/// The union error which includes sync errors and user-defined errors.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) enum CommandSyncError<C: Command> {
+    /// If wait sync went wrong
+    Sync(SyncError),
+    /// If the execution of the cmd went wrong
+    Execute(C::Error),
+    /// If after sync of the cmd went wrong
+    AfterSync(C::Error),
+}
+
+impl<C: Command> From<SyncError> for CommandSyncError<C> {
+    fn from(err: SyncError) -> Self {
+        Self::Sync(err)
+    }
 }
