@@ -21,13 +21,13 @@ use super::{
 use crate::{
     header_gen::HeaderGenerator,
     request_validation::RequestValidator,
+    revision_check::RevisionCheck,
     revision_number::RevisionNumberGenerator,
     rpc::{
         CompactionRequest, CompactionResponse, Compare, CompareResult, CompareTarget,
         DeleteRangeRequest, DeleteRangeResponse, Event, EventType, KeyValue, PutRequest,
-        PutResponse, RangeRequest, RangeResponse, Request, Request as UniRequest, RequestWithToken,
-        RequestWrapper, ResponseWrapper, SortOrder, SortTarget, TargetUnion, TxnRequest,
-        TxnResponse,
+        PutResponse, RangeRequest, RangeResponse, Request, RequestWithToken, RequestWrapper,
+        ResponseWrapper, SortOrder, SortTarget, TargetUnion, TxnRequest, TxnResponse,
     },
     server::command::{CommandResponse, KeyRange, SyncResponse, META_TABLE},
     storage::{
@@ -499,11 +499,7 @@ where
     /// Handle `RangeRequest`
     fn handle_range_request(&self, req: &RangeRequest) -> Result<RangeResponse, ExecuteError> {
         req.validation()?;
-        Self::check_revision(
-            &UniRequest::RequestRange(req.clone()),
-            self.compacted_revision(),
-            self.revision(),
-        )?;
+        req.check_revision(self.compacted_revision(), self.revision())?;
 
         let storage_fetch_limit = if (req.sort_order() != SortOrder::None)
             || (req.max_mod_revision != 0)
@@ -594,11 +590,7 @@ where
     /// Handle `TxnRequest`
     fn handle_txn_request(&self, req: &TxnRequest) -> Result<TxnResponse, ExecuteError> {
         req.validation()?;
-        Self::check_revision(
-            &UniRequest::RequestTxn(req.clone()),
-            self.compacted_revision(),
-            self.revision(),
-        )?;
+        req.check_revision(self.compacted_revision(), self.revision())?;
 
         let success = req
             .compare
@@ -626,7 +618,7 @@ where
         &self,
         req: &CompactionRequest,
     ) -> Result<CompactionResponse, ExecuteError> {
-        Self::check_compaction_request(req, self.compacted_revision(), self.revision())?;
+        req.check_revision(self.compacted_revision(), self.revision())?;
 
         let target_revision = req.revision;
         debug_assert!(
@@ -865,72 +857,6 @@ where
     }
 }
 
-/// revision checker of kv requests
-impl<DB> KvStore<DB>
-where
-    DB: StorageApi,
-{
-    /// Check if the revision is valid
-    fn check_revision(
-        request: &UniRequest,
-        compacted_revision: i64,
-        current_revision: i64,
-    ) -> Result<(), ExecuteError> {
-        debug_assert!(
-            compacted_revision <= current_revision,
-            "compacted revision should not larger than current revision"
-        );
-        match *request {
-            UniRequest::RequestRange(ref r) => {
-                if r.revision > current_revision {
-                    Err(ExecuteError::RevisionTooLarge(r.revision, current_revision))
-                } else {
-                    (r.revision >= compacted_revision || r.revision <= 0)
-                        .then_some(())
-                        .ok_or(ExecuteError::RevisionCompacted(
-                            r.revision,
-                            compacted_revision,
-                        ))
-                }
-            }
-            UniRequest::RequestTxn(ref r) => {
-                for op in r.success.iter().chain(r.failure.iter()) {
-                    if let Some(ref req) = op.request {
-                        Self::check_revision(req, compacted_revision, current_revision)?;
-                    }
-                }
-                Ok(())
-            }
-            UniRequest::RequestPut(_) | UniRequest::RequestDeleteRange(_) => Ok(()),
-        }
-    }
-
-    /// Validate compact request before handle
-    fn check_compaction_request(
-        request: &CompactionRequest,
-        compacted_revision: i64,
-        current_revision: i64,
-    ) -> Result<(), ExecuteError> {
-        debug_assert!(
-            compacted_revision <= current_revision,
-            "compacted revision should not larger than current revision"
-        );
-        if request.revision <= compacted_revision {
-            Err(ExecuteError::RevisionCompacted(
-                request.revision,
-                compacted_revision,
-            ))
-        } else if request.revision > current_revision {
-            Err(ExecuteError::RevisionTooLarge(
-                request.revision,
-                current_revision,
-            ))
-        } else {
-            Ok(())
-        }
-    }
-}
-
 #[cfg(test)]
 mod test {
     use std::time::Duration;
@@ -941,7 +867,7 @@ mod test {
     use super::*;
     use crate::{
         revision_number::RevisionNumberGenerator,
-        rpc::RequestOp,
+        rpc::{Request as UniRequest, RequestOp},
         storage::{
             compact::{compactor, COMPACT_CHANNEL_SIZE},
             db::DB,
@@ -1379,7 +1305,7 @@ mod test {
 
     #[test]
     fn check_revision_will_return_correct_error_type() {
-        let request = UniRequest::RequestTxn(TxnRequest {
+        let request = TxnRequest {
             compare: vec![],
             success: vec![RequestOp {
                 request: Some(UniRequest::RequestRange(RangeRequest {
@@ -1389,19 +1315,19 @@ mod test {
                 })),
             }],
             failure: vec![],
-        });
+        };
         assert!(matches!(
-            KvStore::<DB>::check_revision(&request, 1, 2).unwrap_err(),
+            request.check_revision(1, 2).unwrap_err(),
             ExecuteError::RevisionTooLarge(_, _)
         ));
 
-        let request = UniRequest::RequestRange(RangeRequest {
+        let request = RangeRequest {
             key: "k".into(),
             revision: 1,
             ..Default::default()
-        });
+        };
         assert!(matches!(
-            KvStore::<DB>::check_revision(&request, 2, 3).unwrap_err(),
+            request.check_revision(2, 3).unwrap_err(),
             ExecuteError::RevisionCompacted(_, _)
         ));
     }
@@ -1413,7 +1339,7 @@ mod test {
             physical: false,
         };
         assert!(matches!(
-            KvStore::<DB>::check_compaction_request(&request, 1, 2).unwrap_err(),
+            request.check_revision(1, 2).unwrap_err(),
             ExecuteError::RevisionTooLarge(_, _)
         ));
 
@@ -1422,7 +1348,7 @@ mod test {
             physical: false,
         };
         assert!(matches!(
-            KvStore::<DB>::check_compaction_request(&request, 2, 3).unwrap_err(),
+            request.check_revision(2, 3).unwrap_err(),
             ExecuteError::RevisionCompacted(_, _)
         ));
     }
