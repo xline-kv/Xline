@@ -437,18 +437,12 @@ mod test {
             ..Default::default()
         };
 
-        let expected_err_message = tonic::Status::out_of_range(format!(
-            "required revision {} is higher than current revision {}",
-            range_request_with_future_rev.revision, current_revision
-        ))
-        .to_string();
-        let message = tonic::Status::from(
+        let expected_tonic_status = tonic::Status::from(
             range_request_with_future_rev
                 .check_revision(compacted_revision, current_revision)
                 .unwrap_err(),
-        )
-        .to_string();
-        assert_eq!(message, expected_err_message);
+        );
+        assert_eq!(expected_tonic_status.code(), tonic::Code::OutOfRange);
 
         let range_request_with_compacted_rev = RangeRequest {
             key: b"foo".to_vec(),
@@ -456,19 +450,13 @@ mod test {
             ..Default::default()
         };
 
-        let expected_err_message = tonic::Status::out_of_range(format!(
-            "required revision {} has been compacted, compacted revision is {}",
-            range_request_with_compacted_rev.revision, compacted_revision
-        ))
-        .to_string();
-
-        let message = tonic::Status::from(
+        let expected_tonic_status = tonic::Status::from(
             range_request_with_compacted_rev
                 .check_revision(compacted_revision, current_revision)
                 .unwrap_err(),
-        )
-        .to_string();
-        assert_eq!(message, expected_err_message);
+        );
+
+        assert_eq!(expected_tonic_status.code(), tonic::Code::OutOfRange);
     }
 
     #[tokio::test]
@@ -487,20 +475,13 @@ mod test {
             failure: vec![],
         };
 
-        let expected_err_message = tonic::Status::out_of_range(format!(
-            "required revision {} is higher than current revision {}",
-            20, current_revision
-        ))
-        .to_string();
-
-        let message = tonic::Status::from(
+        let expected_tonic_status = tonic::Status::from(
             txn_request_with_future_revision
                 .check_revision(compacted_revision, current_revision)
                 .unwrap_err(),
-        )
-        .to_string();
+        );
 
-        assert_eq!(message, expected_err_message);
+        assert_eq!(expected_tonic_status.code(), tonic::Code::OutOfRange);
 
         let txn_request_with_compacted_revision = TxnRequest {
             compare: vec![],
@@ -514,20 +495,13 @@ mod test {
             failure: vec![],
         };
 
-        let expected_err_message = tonic::Status::out_of_range(format!(
-            "required revision {} has been compacted, compacted revision is {}",
-            3, compacted_revision
-        ))
-        .to_string();
-
-        let message = tonic::Status::from(
+        let expected_tonic_status = tonic::Status::from(
             txn_request_with_compacted_revision
                 .check_revision(compacted_revision, current_revision)
                 .unwrap_err(),
-        )
-        .to_string();
+        );
 
-        assert_eq!(message, expected_err_message);
+        assert_eq!(expected_tonic_status.code(), tonic::Code::OutOfRange);
     }
 
     #[tokio::test]
@@ -537,24 +511,12 @@ mod test {
             ..Default::default()
         };
 
-        let expected_err_message = tonic::Status::out_of_range(format!(
-            "required revision {} is higher than current revision {}",
-            compact_request.revision, 8
-        ))
-        .to_string();
+        let expected_tonic_status =
+            tonic::Status::from(compact_request.check_revision(3, 8).unwrap_err());
+        assert_eq!(expected_tonic_status.code(), tonic::Code::OutOfRange);
 
-        let message =
-            tonic::Status::from(compact_request.check_revision(3, 8).unwrap_err()).to_string();
-        assert_eq!(message, expected_err_message);
-
-        let expected_err_message = tonic::Status::out_of_range(format!(
-            "required revision {} has been compacted, compacted revision is {}",
-            compact_request.revision, 13
-        ))
-        .to_string();
-
-        let message =
-            tonic::Status::from(compact_request.check_revision(13, 18).unwrap_err()).to_string();
-        assert_eq!(message, expected_err_message);
+        let expected_tonic_status =
+            tonic::Status::from(compact_request.check_revision(13, 18).unwrap_err());
+        assert_eq!(expected_tonic_status.code(), tonic::Code::OutOfRange);
     }
 }

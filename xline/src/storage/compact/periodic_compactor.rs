@@ -12,7 +12,7 @@ use event_listener::Event;
 use tracing::{info, warn};
 
 use super::{Compactable, Compactor};
-use crate::revision_number::RevisionNumberGenerator;
+use crate::{revision_number::RevisionNumberGenerator, storage::ExecuteError};
 
 /// `RevisionWindow` is a ring buffer used to store periodically sampled revision.
 struct RevisionWindow {
@@ -106,13 +106,24 @@ impl<C: Compactable> PeriodicCompactor<C> {
             "starting auto periodic compaction, revision = {}, period = {:?}",
             revision, self.period
         );
-        // TODO: add more error processing logic
+
         if let Err(e) = self.client.compact(revision).await {
-            warn!(
-                "failed auto revision compaction, revision = {}, period = {:?}, error: {:?}",
-                revision, self.period, e
-            );
-            None
+            if let ExecuteError::RevisionCompacted(_rev, compacted_rev) = e {
+                info!(
+                    "required revision {} has been compacted, the current compacted revision is {},  period = {:?}, took {:?}",
+                    revision,
+                    compacted_rev,
+                    self.period,
+                    now.elapsed().as_secs()
+                );
+                Some(compacted_rev)
+            } else {
+                warn!(
+                    "failed auto revision compaction, revision = {}, period = {:?}, error: {:?}",
+                    revision, self.period, e
+                );
+                None
+            }
         } else {
             info!(
                 "completed auto revision compaction, revision = {}, period = {:?}, took {:?}",
