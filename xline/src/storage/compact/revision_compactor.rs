@@ -11,7 +11,7 @@ use event_listener::Event;
 use tracing::{info, warn};
 
 use super::{Compactable, Compactor};
-use crate::revision_number::RevisionNumberGenerator;
+use crate::{revision_number::RevisionNumberGenerator, storage::ExecuteError};
 
 /// check for the need of compaction every 5 minutes
 const CHECK_INTERVAL: Duration = Duration::from_secs(5 * 60);
@@ -65,13 +65,22 @@ impl<C: Compactable> RevisionCompactor<C> {
             "starting auto revision compaction, revision = {}, retention = {}",
             target_revision, self.retention
         );
-        // TODO: add more error processing logic
         if let Err(e) = self.client.compact(target_revision).await {
-            warn!(
-                "failed auto revision compaction, revision = {}, retention = {}, error: {:?}",
-                target_revision, self.retention, e
-            );
-            None
+            if let ExecuteError::RevisionCompacted(_rev, compacted_rev) = e {
+                info!(
+                    "required revision {} has been compacted, the current compacted revision is {},  retention = {:?}",
+                    target_revision,
+                    compacted_rev,
+                    self.retention,
+                );
+                Some(compacted_rev)
+            } else {
+                warn!(
+                    "failed auto revision compaction, revision = {}, retention = {}, error: {:?}",
+                    target_revision, self.retention, e
+                );
+                None
+            }
         } else {
             info!(
                 "completed auto revision compaction, revision = {}, retention = {}, took {:?}",

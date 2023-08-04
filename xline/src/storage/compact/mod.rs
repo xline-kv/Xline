@@ -1,7 +1,11 @@
 use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use curp::{client::Client, cmd::ProposeId, error::ProposeError};
+use curp::{
+    client::Client,
+    cmd::ProposeId,
+    error::CommandProposeError::{AfterSync, Execute},
+};
 use event_listener::Event;
 use periodic_compactor::PeriodicCompactor;
 use revision_compactor::RevisionCompactor;
@@ -12,7 +16,7 @@ use uuid::Uuid;
 use super::{
     index::{Index, IndexOperate},
     storage_api::StorageApi,
-    KvStore,
+    ExecuteError, KvStore,
 };
 use crate::{
     revision_number::RevisionNumberGenerator,
@@ -45,12 +49,12 @@ pub(crate) trait Compactor: std::fmt::Debug + Send + Sync {
 #[async_trait]
 pub(crate) trait Compactable: std::fmt::Debug + Send + Sync {
     /// do compact
-    async fn compact(&self, revision: i64) -> Result<(), ProposeError>;
+    async fn compact(&self, revision: i64) -> Result<(), ExecuteError>;
 }
 
 #[async_trait]
 impl Compactable for Client<Command> {
-    async fn compact(&self, revision: i64) -> Result<(), ProposeError> {
+    async fn compact(&self, revision: i64) -> Result<(), ExecuteError> {
         let request = CompactionRequest {
             revision,
             physical: false,
@@ -58,8 +62,17 @@ impl Compactable for Client<Command> {
         let request_wrapper = RequestWithToken::new_with_token(request.into(), None);
         let propose_id = ProposeId::new(format!("auto-compactor-{}", Uuid::new_v4()));
         let cmd = Command::new(vec![], request_wrapper, propose_id);
-        let _cmd_res = self.propose(cmd).await?;
-        Ok(())
+        if let Err(e) = self.propose(cmd).await {
+            #[allow(clippy::wildcard_enum_match_arm)]
+            match e {
+                Execute(e) | AfterSync(e) => Err(e),
+                _ => {
+                    unreachable!("Compaction should not receive any errors other than ExecuteError, but it receives {e:?}");
+                }
+            }
+        } else {
+            Ok(())
+        }
     }
 }
 

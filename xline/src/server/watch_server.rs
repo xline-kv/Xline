@@ -290,17 +290,17 @@ where
     /// Handle watch event
     async fn handle_watch_event(&mut self, mut watch_event: WatchEvent) {
         let watch_id = watch_event.watch_id();
-        let response = if watch_event.compacted() {
-            WatchResponse {
-                header: Some(ResponseHeader {
-                    revision: watch_event.revision(),
-                    ..ResponseHeader::default()
-                }),
-                watch_id,
-                compact_revision: self.kv_watcher.compacted_revision(),
-                canceled: true,
-                ..WatchResponse::default()
-            }
+        let mut response = WatchResponse {
+            header: Some(ResponseHeader {
+                revision: watch_event.revision(),
+                ..ResponseHeader::default()
+            }),
+            watch_id,
+            ..WatchResponse::default()
+        };
+        if watch_event.compacted() {
+            response.compact_revision = self.kv_watcher.compacted_revision();
+            response.canceled = true;
         } else {
             let mut events = watch_event.take_events();
             if events.is_empty() {
@@ -318,15 +318,7 @@ where
                     }
                 }
             }
-            WatchResponse {
-                header: Some(ResponseHeader {
-                    revision: watch_event.revision(),
-                    ..ResponseHeader::default()
-                }),
-                watch_id,
-                events,
-                ..WatchResponse::default()
-            }
+            response.events = events;
         };
 
         if self.response_tx.send(Ok(response)).await.is_err() {
