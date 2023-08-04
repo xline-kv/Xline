@@ -18,10 +18,11 @@ use super::{
 };
 use crate::{
     request_validation::RequestValidator,
+    revision_check::RevisionCheck,
     rpc::{
         CompactionRequest, CompactionResponse, DeleteRangeRequest, DeleteRangeResponse, Kv,
-        PutRequest, PutResponse, RangeRequest, RangeResponse, Request as UniRequest,
-        RequestWithToken, RequestWrapper, Response, ResponseOp, TxnRequest, TxnResponse,
+        PutRequest, PutResponse, RangeRequest, RangeResponse, RequestWithToken, RequestWrapper,
+        Response, ResponseOp, TxnRequest, TxnResponse,
     },
     storage::{storage_api::StorageApi, AuthStore, KvStore},
 };
@@ -183,39 +184,6 @@ where
         ProposeId::new(format!("{}-{}", self.name, Uuid::new_v4()))
     }
 
-    /// Check if the revision is valid
-    fn check_revision(
-        request: &UniRequest,
-        compacted_revision: i64,
-        current_revision: i64,
-    ) -> Result<(), tonic::Status> {
-        debug_assert!(
-            compacted_revision <= current_revision,
-            "compacted revision should not larger than current revision"
-        );
-        match *request {
-            UniRequest::RequestRange(ref r) => {
-                if r.revision > current_revision {
-                    Err(tonic::Status::invalid_argument(format!(
-                        "required revision {} is higher than current revision {}",
-                        r.revision, current_revision
-                    )))
-                } else {
-                    Self::check_range_compacted(r.revision, compacted_revision)
-                }
-            }
-            UniRequest::RequestTxn(ref r) => {
-                for op in r.success.iter().chain(r.failure.iter()) {
-                    if let Some(ref req) = op.request {
-                        Self::check_revision(req, compacted_revision, current_revision)?;
-                    }
-                }
-                Ok(())
-            }
-            UniRequest::RequestPut(_) | UniRequest::RequestDeleteRange(_) => Ok(()),
-        }
-    }
-
     /// check whether the required revision is compacted or not
     fn check_range_compacted(
         range_revision: i64,
@@ -226,31 +194,6 @@ where
             .ok_or(tonic::Status::invalid_argument(format!(
                 "required revision {range_revision} has been compacted, compacted revision is {compacted_revision}"
             )))
-    }
-
-    /// Validate compact request before handle
-    fn check_compact_request(
-        req: &CompactionRequest,
-        compacted_revision: i64,
-        current_revision: i64,
-    ) -> Result<(), tonic::Status> {
-        debug_assert!(
-            compacted_revision <= current_revision,
-            "compacted revision should not larger than current revision"
-        );
-        if req.revision <= compacted_revision {
-            Err(tonic::Status::invalid_argument(format!(
-                "required revision {} has been compacted, compacted revision is {}",
-                req.revision, compacted_revision
-            )))
-        } else if req.revision > current_revision {
-            Err(tonic::Status::invalid_argument(format!(
-                "required revision {} is higher than current revision {}",
-                req.revision, current_revision
-            )))
-        } else {
-            Ok(())
-        }
     }
 
     /// Wait current node's state machine apply the conflict commands
@@ -300,8 +243,7 @@ where
         let range_req = request.get_ref();
         debug!("Receive grpc request: {:?}", range_req);
         range_req.validation()?;
-        Self::check_revision(
-            &UniRequest::RequestRange(range_req.clone()),
+        range_req.check_revision(
             self.kv_storage.compacted_revision(),
             self.kv_storage.revision(),
         )?;
@@ -390,8 +332,7 @@ where
         let txn_req = request.get_ref();
         debug!("Receive grpc request: {:?}", txn_req);
         txn_req.validation()?;
-        Self::check_revision(
-            &UniRequest::RequestTxn(txn_req.clone()),
+        txn_req.check_revision(
             self.kv_storage.compacted_revision(),
             self.kv_storage.revision(),
         )?;
@@ -423,7 +364,7 @@ where
         let compacted_revision = self.kv_storage.compacted_revision();
         let current_revision = self.kv_storage.revision();
         let req = request.get_ref();
-        Self::check_compact_request(req, compacted_revision, current_revision)?;
+        req.check_revision(compacted_revision, current_revision)?;
 
         let is_fast_path = !req.physical;
         let (cmd_res, _sync_res) = self.propose(request, is_fast_path).await?;
@@ -440,10 +381,7 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{
-        rpc::{Request, RequestOp},
-        storage::db::DB,
-    };
+    use crate::rpc::{Request, RequestOp};
 
     #[test]
     fn txn_check() {
@@ -486,7 +424,7 @@ mod test {
             failure: vec![],
         };
         assert!(txn_req.validation().is_ok());
-        assert!(KvServer::<DB>::check_revision(&UniRequest::RequestTxn(txn_req), 1, 2).is_ok());
+        assert!(txn_req.check_revision(1, 2).is_ok());
     }
 
     #[tokio::test]
@@ -499,17 +437,16 @@ mod test {
             ..Default::default()
         };
 
-        let expected_err_message = tonic::Status::invalid_argument(format!(
+        let expected_err_message = tonic::Status::out_of_range(format!(
             "required revision {} is higher than current revision {}",
             range_request_with_future_rev.revision, current_revision
         ))
         .to_string();
-        let message = KvServer::<DB>::check_revision(
-            &UniRequest::RequestRange(range_request_with_future_rev),
-            compacted_revision,
-            current_revision,
+        let message = tonic::Status::from(
+            range_request_with_future_rev
+                .check_revision(compacted_revision, current_revision)
+                .unwrap_err(),
         )
-        .unwrap_err()
         .to_string();
         assert_eq!(message, expected_err_message);
 
@@ -519,18 +456,17 @@ mod test {
             ..Default::default()
         };
 
-        let expected_err_message = tonic::Status::invalid_argument(format!(
+        let expected_err_message = tonic::Status::out_of_range(format!(
             "required revision {} has been compacted, compacted revision is {}",
             range_request_with_compacted_rev.revision, compacted_revision
         ))
         .to_string();
 
-        let message = KvServer::<DB>::check_revision(
-            &UniRequest::RequestRange(range_request_with_compacted_rev),
-            compacted_revision,
-            current_revision,
+        let message = tonic::Status::from(
+            range_request_with_compacted_rev
+                .check_revision(compacted_revision, current_revision)
+                .unwrap_err(),
         )
-        .unwrap_err()
         .to_string();
         assert_eq!(message, expected_err_message);
     }
@@ -551,18 +487,17 @@ mod test {
             failure: vec![],
         };
 
-        let expected_err_message = tonic::Status::invalid_argument(format!(
+        let expected_err_message = tonic::Status::out_of_range(format!(
             "required revision {} is higher than current revision {}",
             20, current_revision
         ))
         .to_string();
 
-        let message = KvServer::<DB>::check_revision(
-            &UniRequest::RequestTxn(txn_request_with_future_revision),
-            compacted_revision,
-            current_revision,
+        let message = tonic::Status::from(
+            txn_request_with_future_revision
+                .check_revision(compacted_revision, current_revision)
+                .unwrap_err(),
         )
-        .unwrap_err()
         .to_string();
 
         assert_eq!(message, expected_err_message);
@@ -579,18 +514,17 @@ mod test {
             failure: vec![],
         };
 
-        let expected_err_message = tonic::Status::invalid_argument(format!(
+        let expected_err_message = tonic::Status::out_of_range(format!(
             "required revision {} has been compacted, compacted revision is {}",
             3, compacted_revision
         ))
         .to_string();
 
-        let message = KvServer::<DB>::check_revision(
-            &UniRequest::RequestTxn(txn_request_with_compacted_revision),
-            compacted_revision,
-            current_revision,
+        let message = tonic::Status::from(
+            txn_request_with_compacted_revision
+                .check_revision(compacted_revision, current_revision)
+                .unwrap_err(),
         )
-        .unwrap_err()
         .to_string();
 
         assert_eq!(message, expected_err_message);
@@ -603,26 +537,24 @@ mod test {
             ..Default::default()
         };
 
-        let expected_err_message = tonic::Status::invalid_argument(format!(
+        let expected_err_message = tonic::Status::out_of_range(format!(
             "required revision {} is higher than current revision {}",
             compact_request.revision, 8
         ))
         .to_string();
 
-        let message = KvServer::<DB>::check_compact_request(&compact_request, 3, 8)
-            .unwrap_err()
-            .to_string();
+        let message =
+            tonic::Status::from(compact_request.check_revision(3, 8).unwrap_err()).to_string();
         assert_eq!(message, expected_err_message);
 
-        let expected_err_message = tonic::Status::invalid_argument(format!(
+        let expected_err_message = tonic::Status::out_of_range(format!(
             "required revision {} has been compacted, compacted revision is {}",
             compact_request.revision, 13
         ))
         .to_string();
 
-        let message = KvServer::<DB>::check_compact_request(&compact_request, 13, 18)
-            .unwrap_err()
-            .to_string();
+        let message =
+            tonic::Status::from(compact_request.check_revision(13, 18).unwrap_err()).to_string();
         assert_eq!(message, expected_err_message);
     }
 }

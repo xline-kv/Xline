@@ -163,6 +163,8 @@ mod rpc {
 }
 /// Request validation module
 mod request_validation;
+/// Revision check
+mod revision_check;
 /// Xline server
 pub mod server;
 /// State of current node
