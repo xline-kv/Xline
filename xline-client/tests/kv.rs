@@ -260,7 +260,10 @@ async fn compact_should_remove_previous_revision() -> Result<()> {
     let rev0_resp = client
         .range(RangeRequest::new("compact").with_revision(2))
         .await;
-    assert!(rev0_resp.is_err(), "should be err after compaction");
+    assert!(
+        rev0_resp.is_err(),
+        "client.range should receive an err after compaction, but it receives: {rev0_resp:?}"
+    );
     let rev1_resp = client
         .range(RangeRequest::new("compact").with_revision(3))
         .await?;
