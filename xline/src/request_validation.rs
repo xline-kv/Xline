@@ -120,18 +120,8 @@ fn check_intervals(ops: &[RequestOp]) -> Result<(HashSet<&[u8]>, Vec<KeyRange>),
             let (success_puts, mut success_dels) = check_intervals(&req.success)?;
             let (failure_puts, mut failure_dels) = check_intervals(&req.failure)?;
 
-            for k in &success_puts {
+            for k in success_puts.union(&failure_puts) {
                 if !puts.insert(k) {
-                    return Err(ValidationError::new("duplicate key given in txn request"));
-                }
-                if dels.iter().any(|del| del.contains_key(k)) {
-                    return Err(ValidationError::new("duplicate key given in txn request"));
-                }
-            }
-
-            for k in failure_puts {
-                if !puts.insert(k) && !success_puts.contains(k) {
-                    // only keys in the puts and not in the success_puts is overlap
                     return Err(ValidationError::new("duplicate key given in txn request"));
                 }
                 if dels.iter().any(|del| del.contains_key(k)) {
@@ -408,6 +398,200 @@ mod test {
             },
             expected_err_message: "Permission not given",
         }];
+
+        run_test(testcases);
+    }
+
+    #[test]
+    fn check_intervals_txn_duplicate_should_return_error() {
+        let put_op = RequestOp {
+            request: Some(Request::RequestPut(PutRequest {
+                key: "k".into(),
+                ..Default::default()
+            })),
+        };
+
+        let txn_req_inner = RequestOp {
+            request: Some(Request::RequestTxn(TxnRequest {
+                compare: vec![Compare {
+                    key: "k".into(),
+                    ..Default::default()
+                }],
+                success: vec![put_op.clone()],
+                failure: vec![],
+            })),
+        };
+
+        let testcases = vec![
+            TestCase {
+                req: TxnRequest {
+                    compare: vec![Compare {
+                        key: "k".into(),
+                        ..Default::default()
+                    }],
+                    success: vec![put_op.clone(), put_op],
+                    failure: vec![],
+                },
+                expected_err_message: "duplicate key given in txn request",
+            },
+            // nested
+            TestCase {
+                req: TxnRequest {
+                    compare: vec![Compare {
+                        key: "k".into(),
+                        ..Default::default()
+                    }],
+                    success: vec![txn_req_inner.clone(), txn_req_inner],
+                    failure: vec![],
+                },
+                expected_err_message: "duplicate key given in txn request",
+            },
+        ];
+
+        run_test(testcases);
+    }
+
+    #[test]
+    fn check_intervals_txn_overlap_should_return_error() {
+        let put_op = RequestOp {
+            request: Some(Request::RequestPut(PutRequest {
+                key: "k1".into(),
+                ..Default::default()
+            })),
+        };
+        let del_op = RequestOp {
+            request: Some(Request::RequestDeleteRange(DeleteRangeRequest {
+                key: "k0".into(),
+                range_end: "k3".into(),
+                ..Default::default()
+            })),
+        };
+        let txn_req_inner_put = RequestOp {
+            request: Some(Request::RequestTxn(TxnRequest {
+                compare: vec![Compare {
+                    key: "k".into(),
+                    ..Default::default()
+                }],
+                success: vec![put_op.clone()],
+                failure: vec![],
+            })),
+        };
+        let txn_req_inner_del = RequestOp {
+            request: Some(Request::RequestTxn(TxnRequest {
+                compare: vec![Compare {
+                    key: "k".into(),
+                    ..Default::default()
+                }],
+                success: vec![del_op.clone()],
+                failure: vec![],
+            })),
+        };
+
+        let testcases = vec![
+            TestCase {
+                req: TxnRequest {
+                    compare: vec![Compare {
+                        key: "k".into(),
+                        ..Default::default()
+                    }],
+                    success: vec![del_op.clone(), put_op],
+                    failure: vec![],
+                },
+                expected_err_message: "duplicate key given in txn request",
+            },
+            // nested
+            TestCase {
+                req: TxnRequest {
+                    compare: vec![Compare {
+                        key: "k".into(),
+                        ..Default::default()
+                    }],
+                    success: vec![txn_req_inner_put.clone(), del_op],
+                    failure: vec![],
+                },
+                expected_err_message: "duplicate key given in txn request",
+            },
+            TestCase {
+                req: TxnRequest {
+                    compare: vec![Compare {
+                        key: "k".into(),
+                        ..Default::default()
+                    }],
+                    success: vec![txn_req_inner_del, txn_req_inner_put],
+                    failure: vec![],
+                },
+                expected_err_message: "duplicate key given in txn request",
+            },
+        ];
+
+        run_test(testcases);
+    }
+
+    // FIXME: This test will fail in the current implementation.
+    // See https://github.com/xline-kv/Xline/issues/410 for more details
+    #[ignore]
+    #[test]
+    fn check_intervals_txn_nested_overlap_should_return_error() {
+        let put_op = RequestOp {
+            request: Some(Request::RequestPut(PutRequest {
+                key: "k1".into(),
+                ..Default::default()
+            })),
+        };
+        let del_op = RequestOp {
+            request: Some(Request::RequestDeleteRange(DeleteRangeRequest {
+                key: "k0".into(),
+                range_end: "k3".into(),
+                ..Default::default()
+            })),
+        };
+        let txn_req_inner_put = RequestOp {
+            request: Some(Request::RequestTxn(TxnRequest {
+                compare: vec![Compare {
+                    key: "k".into(),
+                    ..Default::default()
+                }],
+                success: vec![put_op],
+                failure: vec![],
+            })),
+        };
+        let txn_req_inner_del = RequestOp {
+            request: Some(Request::RequestTxn(TxnRequest {
+                compare: vec![Compare {
+                    key: "k".into(),
+                    ..Default::default()
+                }],
+                success: vec![del_op],
+                failure: vec![],
+            })),
+        };
+
+        let testcases = vec![
+            TestCase {
+                req: TxnRequest {
+                    compare: vec![Compare {
+                        key: "k".into(),
+                        ..Default::default()
+                    }],
+                    success: vec![txn_req_inner_del.clone(), txn_req_inner_put.clone()],
+                    failure: vec![],
+                },
+                expected_err_message: "duplicate key given in txn request",
+            },
+            // Swap the two txn request in success.
+            // This is to test if the order of the request affect the validation result.
+            TestCase {
+                req: TxnRequest {
+                    compare: vec![Compare {
+                        key: "k".into(),
+                        ..Default::default()
+                    }],
+                    success: vec![txn_req_inner_put, txn_req_inner_del],
+                    failure: vec![],
+                },
+                expected_err_message: "duplicate key given in txn request",
+            },
+        ];
 
         run_test(testcases);
     }
