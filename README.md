@@ -77,6 +77,11 @@ other is 100K key space case. Here's the test result.
 It's easy to tell Xline has a better performance than Etcd in a geo-distributed
 multi-cluster environment.
 
+## Xline client
+
+Read the document [README.md](xline-client/README.md) for more details about the Xline client SDK.
+Read the document [README.md](xlinectl/README.md) for more details about the Xline client command line tool.
+
 ## Quick Start
 
 Read the document [QUICK_START.md](doc/quick-start/README.md) for more details.
@@ -109,3 +114,4 @@ Read the document [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) for more details.
 - v1.0 ~
   - Enable chaos engineering to validate the system's stability
   - Integration with other CNCF components
+  - Support Karmada (a Kubernetes management system)

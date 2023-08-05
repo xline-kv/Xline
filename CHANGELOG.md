@@ -1,5 +1,101 @@
 # ChangeLog
 
+## v0.5.0
+
+### Features
+
+- Add a new xline-client crate
+- Add new `simulation` crate and change dependencies to madsim
+- Add madsim specific code in curp
+- Support multiplatform quick start
+- Implement kv client for xline-client
+- Support single node cluster
+- Add mock implementation of rocksdb
+- Support dns resolution for Xline cluster
+- Support single node cluster
+- Implement watch client for xline-client
+- Support multiplatform artifacts
+- Implement maintenance client for xline-client
+- Add a new macro which can abort process when panicked
+- Implement auth client for xline-client
+- Implement lease client for xline-client
+- Support grpc health checking protocol
+- Implement underlying compact logic
+- Add revision check for kv and watch requests
+- Add conflict check logic for compact
+- Implement compactor task
+- Make compact interval and batch_size configurable
+- Implement compact consensus process
+- Add compact logic in recover process
+- Add kv server compact implementation
+- Add a new `xlinectl` crate
+- Implement lock client for xline-client
+- Implement compaction in `xline-client`
+- Add `ExecuteError` to tonic::Status conversion
+- Add a new `RequestValidator` trait for request validation
+- Add revision related errors
+- Add revision checker in `kv_store`
+- Implement the revision compactor
+
+### Fix Bugs
+
+- Use git version of madsim-tonic
+- Avoid losing events when using event_lisenter and tokio::select! together
+- Resolve failing tests related to serialized size
+- Wait for lease synced in lease keepalive and lease timetolive
+- Change `all_crash_and_recovery` to `minority_crash_and_recovery`
+- Remove the reapplication of log entries when leader retires
+- Only write to storage when after sync in `test_cmd`
+- Fix `lock_success` memory ordering
+- `range_revision` could be less than or equal to 0 in `check_range_compacted`
+- Fix compaction test in xline client
+
+### Refactor
+
+- Move curp public trait interfaces to `curp-external-api` crate
+- Move curp test utils to `curp-test-utils` crate
+- Use `tempfile` crate to create temporary dirs
+- Move xline test utils to `xline-test-utils` crate
+- Add lease leases request to request wrapper
+- Add lease leases request to xline lease store
+- Let lease_leases use curp protocol in lease_server
+- Add a common util for `xline-client` tests
+- Merge entries and batch_index in raw_curp
+- Move kv types in `xline-client` to a separate file
+- Remove unnecessary sleep in curp integration tests
+- Change leader fetch mechanism and increase sleep time in simulation
+- Refactor curp_server storage implementation
+- Change `old_leader_will_discard_spec_exe_cmds` to `old_leader_will_keep_original_states`
+- Remove unnecessary mutable borrow in `xline-client`
+- Refactor compact mod
+- Make the `Client::connect` interface more ergonomic
+- Re-export `xlineapi` in `xline-client`
+- Update maintenance tests in `xline-client`
+- Remove `Clone` trait bound in `connect`
+- Add a new trait that control the printer type in xlinectl
+- Return revision in execution result
+- Add ttl option in lock request
+- Remove unnecessary mutable borrow in lock client
+- Add clean up logic when lock failed
+- Use a different approach to implement lock contention test
+- Modify visibility of some types and modules
+- Move xlineapi export to types
+- Return `RpcError` instead of `ProposeError` in `ConnectApi`
+- Move `Error` associate type from `CommandExecutor` to `Command`
+- Split errors to curp errors and user defined errors
+- Expand `ExecuteError` to use distinct types
+- Handle `CommandProposeError` in client propose result
+- Move sync error type to `error.rs`
+- Change code in `kv_server` to use `RequestValidator`
+- Add validation check for request in `kv_store`
+- Implement auth request validation
+- Move revision check back to `kv_server`
+- Add a `RevisionCheck` trait to unify check for request revisions
+- Break down the dependency between CurpServer and CurpClient
+- Improve the compatibility with etcdctl
+- Refactor auto compactor implementation
+- Refactor the error handling logic in compact
+
 ## v0.4.1
 
 ### Features
