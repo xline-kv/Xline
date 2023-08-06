@@ -694,6 +694,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         self.st.map_read(|st_r| (st_r.leader_id.clone(), st_r.term))
     }
 
+    /// Get cluster info
+    pub(super) fn cluster(&self) -> &ClusterMember {
+        self.ctx.cluster_info.as_ref()
+    }
+
     /// Get self's id
     pub(super) fn id(&self) -> &ServerId {
         self.ctx.cluster_info.self_id()

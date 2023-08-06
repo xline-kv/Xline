@@ -71,7 +71,11 @@ impl Client {
         let name = String::from("client");
         let etcd_client =
             EtcdClient::connect(all_members.values().cloned().collect_vec(), None).await?;
-        let curp_client = CurpClient::new(None, all_members, timeout).await;
+        let curp_client = CurpClient::builder()
+            .addrs(all_members.into_values().collect())
+            .timeout(timeout)
+            .build()
+            .await?;
         Ok(Self {
             name,
             curp_client,

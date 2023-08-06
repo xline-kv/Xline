@@ -30,8 +30,9 @@ use crate::{
     members::ClusterMember,
     role_change::RoleChange,
     rpc::{
-        self, connect::ConnectApi, AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest,
-        FetchLeaderResponse, FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,
+        self, connect::ConnectApi, AppendEntriesRequest, AppendEntriesResponse,
+        FetchClusterRequest, FetchClusterResponse, FetchLeaderRequest, FetchLeaderResponse,
+        FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,
         InstallSnapshotResponse, ProposeRequest, ProposeResponse, VoteRequest, VoteResponse,
         WaitSyncedRequest, WaitSyncedResponse,
     },
@@ -191,6 +192,17 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     ) -> Result<FetchLeaderResponse, CurpError> {
         let (leader_id, term) = self.curp.leader();
         Ok(FetchLeaderResponse::new(leader_id, term))
+    }
+
+    /// Handle fetch cluster requests
+    #[allow(clippy::unnecessary_wraps, clippy::needless_pass_by_value)] // To keep type consistent with other request handlers
+    pub(super) fn fetch_cluster(
+        &self,
+        _req: FetchClusterRequest,
+    ) -> Result<FetchClusterResponse, CurpError> {
+        let (leader_id, term) = self.curp.leader();
+        let all_members = self.curp.cluster().all_members();
+        Ok(FetchClusterResponse::new(leader_id, all_members, term))
     }
 
     /// Install snapshot

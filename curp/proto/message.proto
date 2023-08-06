@@ -28,6 +28,15 @@ message FetchLeaderResponse {
     uint64 term = 2;
 }
 
+message FetchClusterRequest {
+}
+
+message FetchClusterResponse {
+    optional string leader_id = 1;
+    map<string, string> all_members = 2;
+    uint64 term = 3;
+}
+
 message WaitSyncedRequest {
     bytes id = 1;
 }
@@ -105,7 +114,8 @@ service Protocol {
     rpc WaitSynced (WaitSyncedRequest) returns (WaitSyncedResponse);
     rpc AppendEntries (AppendEntriesRequest) returns (AppendEntriesResponse);
     rpc Vote (VoteRequest) returns (VoteResponse);
-    rpc FetchLeader (FetchLeaderRequest) returns (FetchLeaderResponse);
     rpc InstallSnapshot (stream InstallSnapshotRequest) returns (InstallSnapshotResponse);
+    rpc FetchLeader (FetchLeaderRequest) returns (FetchLeaderResponse);
+    rpc FetchCluster (FetchClusterRequest) returns (FetchClusterResponse);
     rpc FetchReadState (FetchReadStateRequest) returns (FetchReadStateResponse);
 }

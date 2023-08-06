@@ -1,3 +1,4 @@
+use curp::error::ClientBuildError;
 use thiserror::Error;
 
 use crate::server::Command;
@@ -18,6 +19,9 @@ pub enum ClientError {
     /// Engine error
     #[error("Engine error {0}")]
     EngineError(#[from] engine::EngineError),
+    /// Build error
+    #[error("Build error {0}")]
+    BuildError(#[from] ClientBuildError),
 }
 
 impl From<etcd_client::Error> for ClientError {

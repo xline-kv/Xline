@@ -3,6 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
+use curp::client::Builder;
 use curp_test_utils::{init_logger, sleep_millis, sleep_secs, test_cmd::TestCommand};
 use madsim::rand::{thread_rng, Rng};
 use test_macros::abort_on_panic;
@@ -11,6 +12,7 @@ use utils::config::ClientTimeout;
 use crate::common::curp_group::{
     proto::propose_response::ExeResult, CurpGroup, ProposeRequest, ProposeResponse,
 };
+
 mod common;
 
 #[tokio::test]
@@ -37,6 +39,22 @@ async fn basic_propose() {
             .0,
         (vec![0], vec![1])
     );
+
+    group.stop();
+}
+
+#[tokio::test]
+#[abort_on_panic]
+async fn fetch_cluster() {
+    init_logger();
+    let group = CurpGroup::new(3).await;
+
+    let all_addrs = group.all.values().cloned().collect::<Vec<_>>();
+    let client_builder = Builder::<TestCommand>::default()
+        .addrs(all_addrs)
+        .timeout(ClientTimeout::default());
+
+    let _client = client_builder.build().await.unwrap();
 
     group.stop();
 }

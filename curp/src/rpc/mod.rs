@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -7,9 +7,9 @@ pub(crate) use self::proto::{
     propose_response::ExeResult,
     protocol_server::Protocol,
     wait_synced_response::{Success, SyncResult as SyncResultRaw},
-    AppendEntriesRequest, AppendEntriesResponse, FetchReadStateRequest, FetchReadStateResponse,
-    IdSet, InstallSnapshotRequest, InstallSnapshotResponse, VoteRequest, VoteResponse,
-    WaitSyncedRequest, WaitSyncedResponse,
+    AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse,
+    FetchReadStateRequest, FetchReadStateResponse, IdSet, InstallSnapshotRequest,
+    InstallSnapshotResponse, VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
 };
 pub use self::proto::{
     propose_response, protocol_client, protocol_server::ProtocolServer, FetchLeaderRequest,
@@ -56,6 +56,28 @@ impl FetchLeaderResponse {
     /// Create a new `FetchLeaderResponse`
     pub(crate) fn new(leader_id: Option<ServerId>, term: u64) -> Self {
         Self { leader_id, term }
+    }
+}
+
+impl FetchClusterRequest {
+    /// Create a new `FetchClusterRequest`
+    pub(crate) fn new() -> Self {
+        Self {}
+    }
+}
+
+impl FetchClusterResponse {
+    /// Create a new `FetchClusterResponse`
+    pub(crate) fn new(
+        leader_id: Option<ServerId>,
+        all_members: HashMap<ServerId, String>,
+        term: u64,
+    ) -> Self {
+        Self {
+            leader_id,
+            all_members,
+            term,
+        }
     }
 }
 
