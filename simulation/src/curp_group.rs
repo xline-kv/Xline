@@ -149,13 +149,20 @@ impl CurpGroup {
     }
 
     pub async fn new_client(&self, timeout: ClientTimeout) -> SimClient<TestCommand> {
-        let addrs = self
+        let all_members = self
             .nodes
             .iter()
             .map(|(id, node)| (id.clone(), node.addr.clone()))
             .collect();
         SimClient {
-            inner: Arc::new(Client::<TestCommand>::new(None, addrs, timeout).await),
+            inner: Arc::new(
+                Client::<TestCommand>::builder()
+                    .all_members(all_members)
+                    .timeout(timeout)
+                    .build()
+                    .await
+                    .unwrap(),
+            ),
             handle: self.client_node.clone(),
         }
     }

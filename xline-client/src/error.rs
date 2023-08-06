@@ -1,3 +1,4 @@
+use curp::error::ClientBuildError;
 use thiserror::Error;
 use xline::server::Command;
 
@@ -26,6 +27,9 @@ pub enum ClientError {
     /// Error in lease client
     #[error("Lease client error: {0}")]
     LeaseError(String),
+    /// Curp client build error
+    #[error("Curp client build error: {0}")]
+    BuildError(#[from] ClientBuildError),
 }
 
 impl From<tonic::transport::Error> for ClientError {

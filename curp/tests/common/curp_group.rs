@@ -134,7 +134,12 @@ impl CurpGroup {
     }
 
     pub async fn new_client(&self, timeout: ClientTimeout) -> Client<TestCommand> {
-        Client::<TestCommand>::new(None, self.all.clone(), timeout).await
+        Client::builder()
+            .addrs(self.all.values().cloned().collect_vec())
+            .timeout(timeout)
+            .build()
+            .await
+            .unwrap()
     }
 
     pub fn exe_rxs(

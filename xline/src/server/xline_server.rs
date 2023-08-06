@@ -319,12 +319,12 @@ impl XlineServer {
         };
 
         let client = Arc::new(
-            CurpClient::new(
-                Some(self.cluster_info.self_id().clone()),
-                self.cluster_info.all_members(),
-                self.client_timeout,
-            )
-            .await,
+            CurpClient::builder()
+                .all_members(self.cluster_info.all_members())
+                .local_server_id(self.cluster_info.self_id().clone())
+                .timeout(self.client_timeout)
+                .build()
+                .await?,
         );
 
         let auto_compactor = if let Some(auto_config_cfg) = *self.compact_cfg.auto_compact_config()

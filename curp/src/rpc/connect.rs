@@ -59,7 +59,7 @@ pub(crate) async fn connect(
 /// Connect interface
 #[cfg_attr(test, automock)]
 #[async_trait]
-pub(crate) trait ConnectApi: Send + Sync + 'static {
+pub(crate) trait ConnectApi: Send + Sync + 'static + Debug {
     /// Get server id
     fn id(&self) -> &ServerId;
 

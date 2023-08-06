@@ -18,10 +18,10 @@ use crate::{
     members::ClusterMember,
     role_change::RoleChange,
     rpc::{
-        AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest, FetchLeaderResponse,
-        FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,
-        InstallSnapshotResponse, ProposeRequest, ProposeResponse, ProtocolServer, VoteRequest,
-        VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse,
+        FetchLeaderRequest, FetchLeaderResponse, FetchReadStateRequest, FetchReadStateResponse,
+        InstallSnapshotRequest, InstallSnapshotResponse, ProposeRequest, ProposeResponse,
+        ProtocolServer, VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
     ServerId, SnapshotAllocator,
 };
@@ -110,6 +110,16 @@ impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::Protocol for Rp
     ) -> Result<tonic::Response<FetchLeaderResponse>, tonic::Status> {
         Ok(tonic::Response::new(
             self.inner.fetch_leader(request.into_inner())?,
+        ))
+    }
+
+    #[instrument(skip_all, name = "curp_fetch_cluster")]
+    async fn fetch_cluster(
+        &self,
+        request: tonic::Request<FetchClusterRequest>,
+    ) -> Result<tonic::Response<FetchClusterResponse>, tonic::Status> {
+        Ok(tonic::Response::new(
+            self.inner.fetch_cluster(request.into_inner())?,
         ))
     }
 

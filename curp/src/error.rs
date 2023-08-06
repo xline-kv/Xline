@@ -6,6 +6,42 @@ use thiserror::Error;
 
 use crate::{cmd::ProposeId, ServerId};
 
+/// Error type of client builder
+#[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum ClientBuildError {
+    /// Rpc error
+    #[error("Rpc error: {0}")]
+    RpcError(String),
+    /// Invalid arguments
+    #[error("Invalid arguments: {0}")]
+    InvalidArguments(String),
+}
+
+impl ClientBuildError {
+    /// Create a new `ClientBuildError::InvalidArguments`
+    #[inline]
+    #[must_use]
+    pub fn invalid_aurguments(msg: &str) -> Self {
+        Self::InvalidArguments(msg.to_owned())
+    }
+}
+
+impl From<tonic::transport::Error> for ClientBuildError {
+    #[inline]
+    fn from(e: tonic::transport::Error) -> Self {
+        Self::RpcError(e.to_string())
+    }
+}
+
+impl From<tonic::Status> for ClientBuildError {
+    #[inline]
+    fn from(e: tonic::Status) -> Self {
+        Self::RpcError(e.to_string())
+    }
+}
+
 /// Server side error
 #[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
 #[non_exhaustive]

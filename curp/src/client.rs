@@ -1,7 +1,8 @@
 use std::{cmp::Ordering, collections::HashMap, fmt::Debug, iter, marker::PhantomData, sync::Arc};
 
 use event_listener::Event;
-use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
+use futures::{future::select_all, pin_mut, stream::FuturesUnordered, StreamExt};
+use itertools::Itertools;
 use parking_lot::RwLock;
 use tokio::time::timeout;
 use tracing::{debug, instrument, warn};
@@ -9,13 +10,182 @@ use utils::{config::ClientTimeout, parking_lot_lock::RwLockMap};
 
 use crate::{
     cmd::{Command, ProposeId},
-    error::{CommandProposeError, CommandSyncError, ProposeError, RpcError, SyncError},
+    error::{
+        ClientBuildError, CommandProposeError, CommandSyncError, ProposeError, RpcError, SyncError,
+    },
     rpc::{
-        self, connect::ConnectApi, FetchLeaderRequest, FetchReadStateRequest, ProposeRequest,
+        self, connect::ConnectApi, protocol_client::ProtocolClient, FetchClusterRequest,
+        FetchClusterResponse, FetchLeaderRequest, FetchReadStateRequest, ProposeRequest,
         ReadState as PbReadState, SyncResult, WaitSyncedRequest,
     },
     LogIndex, ServerId,
 };
+
+/// Client builder
+#[derive(Debug)]
+pub struct Builder<C> {
+    /// Server addresses
+    addrs: Vec<String>,
+    /// Server addresses and ids (used in an inner client)
+    all_members: HashMap<ServerId, String>,
+    /// Local server id (used in an inner client)
+    local_server_id: Option<ServerId>,
+    /// Client timeout
+    timeout: Option<ClientTimeout>,
+    /// Phantom data
+    phantom: PhantomData<C>,
+}
+
+impl<C> Default for Builder<C> {
+    #[inline]
+    #[must_use]
+    fn default() -> Self {
+        Self {
+            addrs: Vec::new(),
+            all_members: HashMap::new(),
+            local_server_id: None,
+            timeout: None,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<C> Builder<C>
+where
+    C: Command + 'static,
+{
+    /// Create new client builder
+    #[inline]
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set addresses of servers
+    /// # Panics
+    /// Panics when set `all_members` before
+    #[inline]
+    #[must_use]
+    pub fn addrs(self, addrs: Vec<String>) -> Self {
+        Self { addrs, ..self }
+    }
+
+    /// Set server id and all addresses of servers
+    /// # Panics
+    /// Panics when set `addrs` before
+    #[inline]
+    #[must_use]
+    pub fn all_members(self, all_members: HashMap<ServerId, String>) -> Self {
+        Self {
+            all_members,
+            ..self
+        }
+    }
+
+    /// Set client timeout
+    #[inline]
+    #[must_use]
+    pub fn timeout(self, timeout: ClientTimeout) -> Self {
+        Self {
+            timeout: Some(timeout),
+            ..self
+        }
+    }
+
+    /// Set local server id. (only used in an inner client)
+    #[inline]
+    #[must_use]
+    pub fn local_server_id(self, local_server_id: ServerId) -> Self {
+        Self {
+            local_server_id: Some(local_server_id),
+            ..self
+        }
+    }
+
+    /// Build client
+    /// # Errors
+    /// Return error when meet rpc error or missing some arguments
+    #[inline]
+    pub async fn build(self) -> Result<Client<C>, ClientBuildError> {
+        let Some(timeout) = self.timeout else {
+            return Err(ClientBuildError::invalid_aurguments("timeout is required"));
+        };
+        match (self.addrs.is_empty(), self.all_members.is_empty()) {
+            (false, true) => {
+                Self::build_from_addrs(timeout, self.local_server_id, self.addrs).await
+            }
+            (true, false) => {
+                Self::build_from_all_members(
+                    timeout,
+                    self.local_server_id,
+                    self.all_members,
+                    None,
+                    0,
+                )
+                .await
+            }
+            (true, true) => Err(ClientBuildError::invalid_aurguments(
+                "One of addrs and all_members is required",
+            )),
+            (false, false) => Err(ClientBuildError::invalid_aurguments(
+                "Client builder can't set addrs and all_members at the same time",
+            )),
+        }
+    }
+
+    /// Build client from all members
+    async fn build_from_all_members(
+        timeout: ClientTimeout,
+        local_server_id: Option<ServerId>,
+        all_members: HashMap<ServerId, String>,
+        leader_id: Option<ServerId>,
+        term: u64,
+    ) -> Result<Client<C>, ClientBuildError> {
+        let connects = rpc::connect(all_members).await;
+        let client = Client::<C> {
+            local_server_id,
+            state: RwLock::new(State::new(leader_id, term, connects)),
+            timeout,
+            phantom: PhantomData,
+        };
+        Ok(client)
+    }
+
+    /// Build client from addresses, this method will fetch all members from servers
+    async fn build_from_addrs(
+        timeout: ClientTimeout,
+        local_server_id: Option<ServerId>,
+        addrs: Vec<String>,
+    ) -> Result<Client<C>, ClientBuildError> {
+        let futs = addrs.into_iter().map(|mut addr| {
+            if !addr.starts_with("http://") {
+                addr.insert_str(0, "http://");
+            }
+            let timeout = *timeout.propose_timeout();
+            let fut = async move {
+                let mut protocol_client = ProtocolClient::connect(addr).await?;
+                let mut req = tonic::Request::new(FetchClusterRequest::new());
+                req.set_timeout(timeout);
+                let fetch_cluster_res = protocol_client.fetch_cluster(req).await?.into_inner();
+                Ok::<FetchClusterResponse, ClientBuildError>(fetch_cluster_res)
+            };
+            Box::pin(fut)
+        });
+
+        let res = select_all(futs).await.0?;
+
+        let client = Self::build_from_all_members(
+            timeout,
+            local_server_id,
+            res.all_members,
+            res.leader_id,
+            res.term,
+        )
+        .await?;
+
+        Ok(client)
+    }
+}
 
 /// Protocol client
 pub struct Client<C: Command> {
@@ -23,8 +193,6 @@ pub struct Client<C: Command> {
     local_server_id: Option<ServerId>,
     /// Current leader and term
     state: RwLock<State>,
-    /// All servers's `Connect`
-    connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
     /// Curp client timeout settings
     timeout: ClientTimeout,
     /// To keep Command type
@@ -50,15 +218,22 @@ struct State {
     term: u64,
     /// When a new leader is set, notify
     leader_notify: Arc<Event>,
+    /// All servers's `Connect`
+    connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
 }
 
 impl State {
     /// Create the initial client state
-    fn new() -> Self {
+    fn new(
+        leader: Option<ServerId>,
+        term: u64,
+        connects: HashMap<String, Arc<dyn ConnectApi>>,
+    ) -> Self {
         Self {
-            leader: None,
-            term: 0,
+            leader,
+            term,
             leader_notify: Arc::new(Event::new()),
+            connects,
         }
     }
 
@@ -91,20 +266,11 @@ impl<C> Client<C>
 where
     C: Command + 'static,
 {
-    /// Create a new protocol client based on the addresses
+    /// Client builder
     #[inline]
-    pub async fn new(
-        self_id: Option<ServerId>,
-        addrs: HashMap<ServerId, String>,
-        timeout: ClientTimeout,
-    ) -> Self {
-        Self {
-            local_server_id: self_id,
-            state: RwLock::new(State::new()),
-            connects: rpc::connect(addrs).await,
-            timeout,
-            phantom: PhantomData,
-        }
+    #[must_use]
+    pub fn builder() -> Builder<C> {
+        Builder::new()
     }
 
     /// The fast round of Curp protocol
@@ -116,9 +282,15 @@ where
     ) -> Result<(Option<<C as Command>::ER>, bool), CommandProposeError<C>> {
         debug!("fast round for cmd({}) started", cmd_arc.id());
         let req = ProposeRequest::new(cmd_arc.as_ref()).map_err(Into::<ProposeError>::into)?;
-        let mut rpcs: FuturesUnordered<_> = self
-            .connects
-            .values()
+
+        let (connects, superquorum) = self.state.map_read(|state_r| {
+            (
+                state_r.connects.values().cloned().collect_vec(),
+                superquorum(state_r.connects.len()),
+            )
+        });
+        let mut rpcs: FuturesUnordered<_> = connects
+            .iter()
             .zip(iter::repeat(req))
             .map(|(connect, req_cloned)| {
                 connect.propose(req_cloned, *self.timeout.propose_timeout())
@@ -127,7 +299,6 @@ where
 
         let mut ok_cnt: usize = 0;
         let mut execute_result: Option<C::ER> = None;
-        let superquorum = superquorum(self.connects.len());
         while let Some(resp_result) = rpcs.next().await {
             let resp = match resp_result {
                 Ok(resp) => resp.into_inner(),
@@ -200,9 +371,9 @@ where
             let leader_id = self.get_leader_id().await;
 
             debug!("wait synced request sent to {}", leader_id);
+
             let resp = match self
-                .connects
-                .get(&leader_id)
+                .get_connect(&leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .wait_synced(
                     WaitSyncedRequest::new(cmd.id()).map_err(Into::<ProposeError>::into)?,
@@ -230,11 +401,12 @@ where
                     term,
                 ))) => {
                     let new_leader = new_leader.and_then(|id| {
-                        let mut state = self.state.write();
-                        (state.term <= term).then(|| {
-                            state.leader = Some(id.clone());
-                            state.term = term;
-                            id
+                        self.state.map_write(|mut state| {
+                            (state.term <= term).then(|| {
+                                state.leader = Some(id.clone());
+                                state.term = term;
+                                id
+                            })
                         })
                     });
                     self.resend_propose(Arc::clone(&cmd), new_leader).await?; // resend the propose to the new leader
@@ -269,8 +441,7 @@ where
             debug!("resend propose to {leader_id}");
 
             let resp = self
-                .connects
-                .get(&leader_id)
+                .get_connect(&leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .propose(
                     ProposeRequest::new(cmd.as_ref())?,
@@ -281,8 +452,7 @@ where
             let resp = match resp {
                 Ok(resp) => {
                     let resp = resp.into_inner();
-                    #[allow(clippy::pattern_type_mismatch)] // can't satisfy clippy
-                    if let Some(rpc::ExeResult::Error(e)) = resp.exe_result.as_ref() {
+                    if let Some(rpc::ExeResult::Error(ref e)) = resp.exe_result {
                         let err: ProposeError = bincode::deserialize(e)?;
                         if matches!(err, ProposeError::Duplicated) {
                             return Ok(());
@@ -339,9 +509,9 @@ where
     /// Note: The fetched leader may still be outdated
     async fn fetch_leader(&self) -> ServerId {
         loop {
-            let mut rpcs: FuturesUnordered<_> = self
-                .connects
-                .values()
+            let connects = self.all_connects();
+            let mut rpcs: FuturesUnordered<_> = connects
+                .iter()
                 .map(|connect| async {
                     (
                         connect.id().clone(),
@@ -356,7 +526,7 @@ where
 
             let mut ok_cnt = 0;
             #[allow(clippy::integer_arithmetic)]
-            let majority_cnt = self.connects.len() / 2 + 1;
+            let majority_cnt = connects.len() / 2 + 1;
             while let Some((id, resp)) = rpcs.next().await {
                 let resp = match resp {
                     Ok(resp) => resp.into_inner(),
@@ -479,8 +649,7 @@ where
             let leader_id = self.get_leader_id().await;
             debug!("fetch read state request sent to {}", leader_id);
             let resp = match self
-                .connects
-                .get(&leader_id)
+                .get_connect(&leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .fetch_read_state(
                     FetchReadStateRequest::new(cmd)?,
@@ -517,8 +686,7 @@ where
     async fn fetch_local_leader_info(&self) -> Result<(Option<ServerId>, u64), RpcError> {
         if let Some(ref local_server) = self.local_server_id {
             let resp = self
-                .connects
-                .get(local_server)
+                .get_connect(local_server)
                 .unwrap_or_else(|| unreachable!("self id {} not found", local_server))
                 .fetch_leader(FetchLeaderRequest::new(), *self.timeout.retry_timeout())
                 .await?
@@ -537,6 +705,16 @@ where
         }
         self.fetch_leader().await
     }
+
+    /// Get the connect by server id
+    fn get_connect(&self, id: &ServerId) -> Option<Arc<dyn ConnectApi>> {
+        self.state.read().connects.get(id).cloned()
+    }
+
+    /// Get all connects
+    fn all_connects(&self) -> Vec<Arc<dyn ConnectApi>> {
+        self.state.read().connects.values().cloned().collect()
+    }
 }
 
 /// Get the superquorum for curp protocol
@@ -553,6 +731,8 @@ fn superquorum(nodes: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use curp_test_utils::test_cmd::TestCommand;
+
     use super::*;
 
     #[test]
@@ -562,5 +742,29 @@ mod tests {
         assert_eq!(superquorum(97), 73);
         assert_eq!(superquorum(31), 24);
         assert_eq!(superquorum(59), 45);
+    }
+
+    #[tokio::test]
+    async fn client_builder_should_return_err_when_arguments_invalid() {
+        let res = Client::<TestCommand>::builder()
+            .timeout(ClientTimeout::default())
+            .addrs(vec!["addr".to_owned()])
+            .all_members(HashMap::from([("id".to_owned(), "addr".to_owned())]))
+            .build()
+            .await;
+        assert!(matches!(res, Err(ClientBuildError::InvalidArguments(_))));
+
+        let res = Client::<TestCommand>::builder()
+            .local_server_id("local_server_id".to_owned())
+            .timeout(ClientTimeout::default())
+            .build()
+            .await;
+        assert!(matches!(res, Err(ClientBuildError::InvalidArguments(_))));
+
+        let res = Client::<TestCommand>::builder()
+            .addrs(vec!["addr".to_owned()])
+            .build()
+            .await;
+        assert!(matches!(res, Err(ClientBuildError::InvalidArguments(_))));
     }
 }

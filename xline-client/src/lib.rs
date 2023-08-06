@@ -216,7 +216,13 @@ impl Client {
             .collect();
         let name = String::from("client");
         let channel = Self::build_channel(all_members.values().cloned().collect()).await?;
-        let curp_client = Arc::new(CurpClient::new(None, all_members, options.curp_timeout).await);
+        let curp_client = Arc::new(
+            CurpClient::builder()
+                .addrs(all_members.into_values().collect())
+                .timeout(options.curp_timeout)
+                .build()
+                .await?,
+        );
         let id_gen = Arc::new(lease_gen::LeaseIdGenerator::new());
 
         let token = match options.user {
