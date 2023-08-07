@@ -781,4 +781,82 @@ mod test {
 
         assert!(!read_write_nested_txn_req.is_read_only());
     }
+
+    #[test]
+    fn txn_request_is_serializable_should_success() {
+        let serializable_req = Some(Request::RequestRange(RangeRequest {
+            serializable: true,
+            ..Default::default()
+        }));
+
+        let serializable_txn_req = TxnRequest {
+            compare: vec![],
+            success: vec![RequestOp {
+                request: serializable_req.clone(),
+            }],
+            failure: vec![RequestOp {
+                request: serializable_req.clone(),
+            }],
+        };
+
+        assert!(serializable_txn_req.is_serializable());
+
+        let mixed_txn_req = TxnRequest {
+            compare: vec![],
+            success: vec![RequestOp {
+                request: serializable_req.clone(),
+            }],
+            failure: vec![RequestOp {
+                request: Some(Request::RequestPut(PutRequest::default())),
+            }],
+        };
+
+        assert!(!mixed_txn_req.is_serializable());
+
+        let serializable_nested_txn_req = TxnRequest {
+            compare: vec![],
+            success: vec![RequestOp {
+                request: Some(Request::RequestTxn(TxnRequest {
+                    compare: vec![],
+                    success: vec![RequestOp {
+                        request: serializable_req.clone(),
+                    }],
+                    failure: vec![],
+                })),
+            }],
+            failure: vec![RequestOp {
+                request: serializable_req.clone(),
+            }],
+        };
+
+        assert!(serializable_nested_txn_req.is_serializable());
+
+        let mixed_nested_txn_req = TxnRequest {
+            compare: vec![],
+            success: vec![RequestOp {
+                request: Some(Request::RequestTxn(TxnRequest {
+                    compare: vec![],
+                    success: vec![RequestOp {
+                        request: Some(Request::RequestTxn(TxnRequest {
+                            compare: vec![],
+                            success: vec![RequestOp {
+                                request: serializable_req.clone(),
+                            }],
+                            failure: vec![RequestOp {
+                                request: Some(Request::RequestPut(PutRequest::default())),
+                            }],
+                        })),
+                    }],
+                    failure: vec![RequestOp {
+                        request: serializable_req.clone(),
+                    }],
+                })),
+            }],
+            failure: vec![RequestOp {
+                request: serializable_req,
+            }],
+        };
+
+        assert!(!mixed_nested_txn_req.is_serializable());
+    }
 }

@@ -322,7 +322,7 @@ where
             }
             self.do_serializable(cmd.request())?
         } else {
-            let is_fast_path = false; // lock need revision of txn
+            let is_fast_path = true;
             let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
 
             let mut res = Self::parse_response_op(cmd_res.decode().into());
