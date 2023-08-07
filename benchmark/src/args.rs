@@ -1,7 +1,4 @@
-use std::collections::HashMap;
-
 use clap::{Parser, Subcommand};
-use utils::parse_members;
 
 #[derive(Parser, Debug)]
 #[non_exhaustive]
@@ -9,10 +6,10 @@ use utils::parse_members;
 /// Args of Benchmark
 pub struct Benchmark {
     /// The address of the server
-    #[clap(long, value_parser = parse_members)]
-    pub endpoints: HashMap<String, String>,
+    #[clap(long, value_delimiter = ',', default_value = "127.0.0.1:2379")]
+    pub endpoints: Vec<String>,
     /// Clients number
-    #[clap(long, required = true)]
+    #[clap(long, default_value_t = 1)]
     pub clients: usize,
     /// Use curp or not
     #[clap(long)]

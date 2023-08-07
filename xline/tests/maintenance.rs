@@ -22,7 +22,7 @@ async fn test_snapshot_and_restore() -> Result<(), Box<dyn std::error::Error>> {
         let _ignore = client.put(PutRequest::new("key", "value")).await?;
         tokio::time::sleep(Duration::from_millis(100)).await; // TODO: use `propose_index` and remove this sleep after we finished our client.
         let mut maintenance_client =
-            etcd_client::Client::connect(vec![cluster.addrs()["server0"].to_string()], None)
+            etcd_client::Client::connect(vec![cluster.all_members()["server0"].to_string()], None)
                 .await?
                 .maintenance_client();
         let mut stream = maintenance_client.snapshot().await?;

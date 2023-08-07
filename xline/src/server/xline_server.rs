@@ -320,10 +320,9 @@ impl XlineServer {
 
         let client = Arc::new(
             CurpClient::builder()
-                .all_members(self.cluster_info.all_members())
                 .local_server_id(self.cluster_info.self_id().clone())
                 .timeout(self.client_timeout)
-                .build()
+                .build_from_all_members(self.cluster_info.all_members())
                 .await?,
         );
 

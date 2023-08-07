@@ -1,8 +1,5 @@
-use std::collections::HashMap;
-
-use anyhow::{anyhow, bail, Result};
+use anyhow::{bail, Result};
 use clap::ArgMatches;
-use itertools::Itertools;
 
 /// Parser user name and password
 pub(crate) fn parse_user(matches: &ArgMatches) -> Result<Option<(String, String)>> {
@@ -35,18 +32,4 @@ pub(crate) fn parse_user(matches: &ArgMatches) -> Result<Option<(String, String)
     } else {
         Ok(None)
     }
-}
-
-/// Parser of endpoints
-pub(crate) fn parse_endpoints(matches: &ArgMatches) -> Result<HashMap<String, String>> {
-    matches
-        .get_many::<String>("endpoints")
-        .expect("Required")
-        .map(|s| {
-            s.split_whitespace()
-                .map(std::borrow::ToOwned::to_owned)
-                .collect_tuple()
-                .ok_or(anyhow!("endpoints argument is invalid"))
-        })
-        .collect::<Result<_>>()
 }

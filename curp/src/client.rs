@@ -24,10 +24,6 @@ use crate::{
 /// Client builder
 #[derive(Debug)]
 pub struct Builder<C> {
-    /// Server addresses
-    addrs: Vec<String>,
-    /// Server addresses and ids (used in an inner client)
-    all_members: HashMap<ServerId, String>,
     /// Local server id (used in an inner client)
     local_server_id: Option<ServerId>,
     /// Client timeout
@@ -41,8 +37,6 @@ impl<C> Default for Builder<C> {
     #[must_use]
     fn default() -> Self {
         Self {
-            addrs: Vec::new(),
-            all_members: HashMap::new(),
             local_server_id: None,
             timeout: None,
             phantom: PhantomData,
@@ -59,27 +53,6 @@ where
     #[must_use]
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Set addresses of servers
-    /// # Panics
-    /// Panics when set `all_members` before
-    #[inline]
-    #[must_use]
-    pub fn addrs(self, addrs: Vec<String>) -> Self {
-        Self { addrs, ..self }
-    }
-
-    /// Set server id and all addresses of servers
-    /// # Panics
-    /// Panics when set `addrs` before
-    #[inline]
-    #[must_use]
-    pub fn all_members(self, all_members: HashMap<ServerId, String>) -> Self {
-        Self {
-            all_members,
-            ..self
-        }
     }
 
     /// Set client timeout
@@ -102,49 +75,21 @@ where
         }
     }
 
-    /// Build client
+    /// Build client from all members
     /// # Errors
     /// Return error when meet rpc error or missing some arguments
     #[inline]
-    pub async fn build(self) -> Result<Client<C>, ClientBuildError> {
+    pub async fn build_from_all_members(
+        self,
+        all_members: HashMap<ServerId, String>,
+    ) -> Result<Client<C>, ClientBuildError> {
         let Some(timeout) = self.timeout else {
             return Err(ClientBuildError::invalid_aurguments("timeout is required"));
         };
-        match (self.addrs.is_empty(), self.all_members.is_empty()) {
-            (false, true) => {
-                Self::build_from_addrs(timeout, self.local_server_id, self.addrs).await
-            }
-            (true, false) => {
-                Self::build_from_all_members(
-                    timeout,
-                    self.local_server_id,
-                    self.all_members,
-                    None,
-                    0,
-                )
-                .await
-            }
-            (true, true) => Err(ClientBuildError::invalid_aurguments(
-                "One of addrs and all_members is required",
-            )),
-            (false, false) => Err(ClientBuildError::invalid_aurguments(
-                "Client builder can't set addrs and all_members at the same time",
-            )),
-        }
-    }
-
-    /// Build client from all members
-    async fn build_from_all_members(
-        timeout: ClientTimeout,
-        local_server_id: Option<ServerId>,
-        all_members: HashMap<ServerId, String>,
-        leader_id: Option<ServerId>,
-        term: u64,
-    ) -> Result<Client<C>, ClientBuildError> {
         let connects = rpc::connect(all_members).await;
         let client = Client::<C> {
-            local_server_id,
-            state: RwLock::new(State::new(leader_id, term, connects)),
+            local_server_id: self.local_server_id,
+            state: RwLock::new(State::new(None, 0, connects)),
             timeout,
             phantom: PhantomData,
         };
@@ -152,11 +97,13 @@ where
     }
 
     /// Build client from addresses, this method will fetch all members from servers
-    async fn build_from_addrs(
-        timeout: ClientTimeout,
-        local_server_id: Option<ServerId>,
-        addrs: Vec<String>,
-    ) -> Result<Client<C>, ClientBuildError> {
+    /// # Errors
+    /// Return error when meet rpc error or missing some arguments
+    #[inline]
+    pub async fn build_from_addrs(self, addrs: Vec<String>) -> Result<Client<C>, ClientBuildError> {
+        let Some(timeout) = self.timeout else {
+            return Err(ClientBuildError::invalid_aurguments("timeout is required"));
+        };
         let futs = addrs.into_iter().map(|mut addr| {
             if !addr.starts_with("http://") {
                 addr.insert_str(0, "http://");
@@ -174,15 +121,13 @@ where
 
         let res = select_all(futs).await.0?;
 
-        let client = Self::build_from_all_members(
+        let connects = rpc::connect(res.all_members).await;
+        let client = Client::<C> {
+            local_server_id: self.local_server_id,
+            state: RwLock::new(State::new(res.leader_id, res.term, connects)),
             timeout,
-            local_server_id,
-            res.all_members,
-            res.leader_id,
-            res.term,
-        )
-        .await?;
-
+            phantom: PhantomData,
+        };
         Ok(client)
     }
 }
@@ -227,7 +172,7 @@ impl State {
     fn new(
         leader: Option<ServerId>,
         term: u64,
-        connects: HashMap<String, Arc<dyn ConnectApi>>,
+        connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
     ) -> Self {
         Self {
             leader,
@@ -748,22 +693,13 @@ mod tests {
     async fn client_builder_should_return_err_when_arguments_invalid() {
         let res = Client::<TestCommand>::builder()
             .timeout(ClientTimeout::default())
-            .addrs(vec!["addr".to_owned()])
-            .all_members(HashMap::from([("id".to_owned(), "addr".to_owned())]))
-            .build()
+            .build_from_all_members(HashMap::from([("ServerId".to_owned(), "addr".to_owned())]))
             .await;
-        assert!(matches!(res, Err(ClientBuildError::InvalidArguments(_))));
+        assert!(res.is_ok());
 
         let res = Client::<TestCommand>::builder()
             .local_server_id("local_server_id".to_owned())
-            .timeout(ClientTimeout::default())
-            .build()
-            .await;
-        assert!(matches!(res, Err(ClientBuildError::InvalidArguments(_))));
-
-        let res = Client::<TestCommand>::builder()
-            .addrs(vec!["addr".to_owned()])
-            .build()
+            .build_from_addrs(vec!["addr".to_owned()])
             .await;
         assert!(matches!(res, Err(ClientBuildError::InvalidArguments(_))));
     }

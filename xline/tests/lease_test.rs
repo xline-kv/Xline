@@ -36,7 +36,7 @@ async fn test_lease_expired() -> Result<(), Box<dyn Error>> {
 async fn test_lease_keep_alive() -> Result<(), Box<dyn Error>> {
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;
-    let non_leader_ep = cluster.addrs()["server1"].to_string();
+    let non_leader_ep = cluster.all_members()["server1"].to_string();
     let client = cluster.client().await;
 
     let res = client.lease_grant(LeaseGrantRequest::new(1)).await?;

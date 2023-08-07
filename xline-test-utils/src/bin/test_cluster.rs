@@ -9,7 +9,7 @@ async fn main() {
 
     println!("cluster running");
 
-    for (id, addr) in cluster.addrs() {
+    for (id, addr) in cluster.all_members() {
         println!("server id: {} addr: {}", id, addr);
     }
 

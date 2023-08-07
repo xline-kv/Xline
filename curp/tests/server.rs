@@ -50,11 +50,11 @@ async fn fetch_cluster() {
     let group = CurpGroup::new(3).await;
 
     let all_addrs = group.all.values().cloned().collect::<Vec<_>>();
-    let client_builder = Builder::<TestCommand>::default()
-        .addrs(all_addrs)
-        .timeout(ClientTimeout::default());
-
-    let _client = client_builder.build().await.unwrap();
+    let _client = Builder::<TestCommand>::default()
+        .timeout(ClientTimeout::default())
+        .build_from_addrs(all_addrs)
+        .await
+        .unwrap();
 
     group.stop();
 }

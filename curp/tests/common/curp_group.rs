@@ -135,9 +135,8 @@ impl CurpGroup {
 
     pub async fn new_client(&self, timeout: ClientTimeout) -> Client<TestCommand> {
         Client::builder()
-            .addrs(self.all.values().cloned().collect_vec())
             .timeout(timeout)
-            .build()
+            .build_from_addrs(self.all.values().cloned().collect_vec())
             .await
             .unwrap()
     }
