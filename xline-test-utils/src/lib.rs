@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use curp::{members::ClusterMember, ServerId};
+use curp::members::ClusterInfo;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use tokio::{
@@ -20,7 +20,7 @@ pub struct Cluster {
     /// listeners of members
     listeners: BTreeMap<usize, TcpListener>,
     /// address of members
-    all_members: HashMap<ServerId, String>,
+    all_members: HashMap<String, String>,
     /// Client of cluster
     client: Option<Client>,
     /// Stop sender
@@ -74,7 +74,7 @@ impl Cluster {
                 path
             };
             let db: Arc<DB> = DB::open(&StorageConfig::RocksDB(path.clone())).unwrap();
-            let cluster_info = ClusterMember::new(self.all_members.clone(), name.clone());
+            let cluster_info = ClusterInfo::new(self.all_members.clone(), &name);
             tokio::spawn(async move {
                 let server = XlineServer::new(
                     cluster_info.into(),
@@ -121,7 +121,7 @@ impl Cluster {
         self.client.as_mut().unwrap()
     }
 
-    pub fn all_members(&self) -> &HashMap<ServerId, String> {
+    pub fn all_members(&self) -> &HashMap<String, String> {
         &self.all_members
     }
 

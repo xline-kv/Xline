@@ -1,134 +1,172 @@
+use clippy_utilities::OverflowArithmetic;
+use itertools::Itertools;
 use std::{
     collections::{hash_map::DefaultHasher, HashMap},
     hash::Hasher,
-    time::SystemTime,
 };
 
-use itertools::Itertools;
+/// Server Id
+pub type ServerId = u64;
 
-use crate::ServerId;
+/// Cluster member
+#[derive(Debug)]
+pub struct Member {
+    /// Server id of the member
+    id: ServerId,
+    /// Name of the member
+    name: String,
+    /// Address of the member
+    address: String,
+}
 
 /// cluster members information
 #[derive(Debug)]
-pub struct ClusterMember {
+pub struct ClusterInfo {
+    /// cluster id
+    cluster_id: u64,
     /// current server id
-    self_id: ServerId,
-    /// current server url
-    self_address: String,
-    /// other peers information
-    peers: HashMap<ServerId, String>,
+    member_id: ServerId,
+    /// all members information
+    members: HashMap<ServerId, Member>,
 }
 
-impl ClusterMember {
-    /// Construct a new `ClusterMember`
-    ///
+impl ClusterInfo {
+    /// Construct a new `ClusterInfo`
     /// # Panics
-    ///
     /// panic if `all_members` is empty
     #[inline]
     #[must_use]
-    pub fn new(mut all_members: HashMap<ServerId, String>, id: String) -> Self {
-        let address = all_members.remove(id.as_str()).unwrap_or_else(|| {
-            unreachable!(
-                "The address of {} not found in all_members {:?}",
-                id, all_members
-            )
-        });
-        Self {
-            self_id: id,
-            self_address: address,
-            peers: all_members,
+    pub fn new(all_members: HashMap<String, String>, self_name: &str) -> Self {
+        let mut member_id = 0;
+        let mut members = HashMap::new();
+        for (name, address) in all_members {
+            let id = Self::calculate_member_id(&address, "", None);
+            if name == self_name {
+                member_id = id;
+            }
+            let member = Member { id, name, address };
+            let _ig = members.insert(id, member);
         }
+        debug_assert!(member_id != 0, "self_id should not be 0");
+        let mut cluster_info = Self {
+            cluster_id: 0,
+            member_id,
+            members,
+        };
+        cluster_info.gen_cluster_id();
+        cluster_info
     }
 
-    /// get server address via server id
+    /// Get server address via server id
     #[must_use]
     #[inline]
-    pub fn address(&self, id: &str) -> Option<&str> {
-        if id == self.self_id {
-            Some(self.self_address())
-        } else {
-            self.peers.get(id).map(String::as_str)
-        }
+    pub fn address(&self, id: ServerId) -> Option<&str> {
+        self.members
+            .values()
+            .find(|t| t.id == id)
+            .map(|t| t.address.as_str())
     }
 
-    /// get the current server address
+    /// Get the current member
+    #[allow(clippy::indexing_slicing)] // self member id must be in members
+    fn self_member(&self) -> &Member {
+        &self.members[&self.member_id]
+    }
+
+    /// Get the current server address
     #[must_use]
     #[inline]
     pub fn self_address(&self) -> &str {
-        self.self_address.as_str()
+        &self.self_member().address
     }
 
-    /// get the current server id
+    /// Get the current server id
     #[must_use]
     #[inline]
-    pub fn self_id(&self) -> &ServerId {
-        &self.self_id
+    pub fn self_name(&self) -> &str {
+        &self.self_member().name
     }
 
-    /// get peers id
+    /// Get peers id
     #[must_use]
     #[inline]
-    pub fn peers_id(&self) -> Vec<ServerId> {
-        self.peers.keys().cloned().collect()
-    }
-
-    /// calculate the member id
-    #[must_use]
-    #[inline]
-    pub fn gen_member_id(&self, cluster_name: &str) -> u64 {
-        let ts = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap_or_else(|e| unreachable!("SystemTime before UNIX EPOCH! {e}"))
-            .as_secs();
-        let mut hasher = DefaultHasher::new();
-        hasher.write(self.self_address().as_bytes());
-        hasher.write(cluster_name.as_bytes());
-        hasher.write_u64(ts);
-        hasher.finish()
-    }
-
-    /// calculate the cluster id
-    #[must_use]
-    #[inline]
-    pub fn gen_cluster_id(&self, cluster_name: &str) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        let cluster_members = self.all_members();
-
-        let member_urls = cluster_members
+    pub fn peers_ids(&self) -> Vec<ServerId> {
+        self.members
             .values()
-            .sorted()
-            .map(String::as_str)
-            .collect::<Vec<_>>();
+            .filter(|t| t.id != self.member_id)
+            .map(|t| t.id)
+            .collect()
+    }
 
-        for url in member_urls {
-            hasher.write(url.as_bytes());
-        }
+    /// Calculate the member id
+    fn calculate_member_id(address: &str, cluster_name: &str, timestamp: Option<u64>) -> ServerId {
+        let mut hasher = DefaultHasher::new();
+        hasher.write(address.as_bytes());
         hasher.write(cluster_name.as_bytes());
+        if let Some(ts) = timestamp {
+            hasher.write_u64(ts);
+        }
         hasher.finish()
     }
 
-    /// get peers
+    /// Calculate the cluster id
+    fn gen_cluster_id(&mut self) {
+        let mut hasher = DefaultHasher::new();
+        for id in self.members.keys().sorted() {
+            hasher.write_u64(*id);
+        }
+        self.cluster_id = hasher.finish();
+    }
+
+    /// Get member id
+    #[must_use]
+    #[inline]
+    pub fn self_id(&self) -> ServerId {
+        self.member_id
+    }
+
+    /// Get cluster id
+    #[must_use]
+    #[inline]
+    pub fn cluster_id(&self) -> u64 {
+        self.cluster_id
+    }
+
+    /// Get peers
     #[must_use]
     #[inline]
     pub fn peers(&self) -> HashMap<ServerId, String> {
-        self.peers.clone()
+        self.members
+            .values()
+            .filter(|t| t.id != self.member_id)
+            .map(|t| (t.id, t.address.clone()))
+            .collect()
     }
 
-    /// get all members
+    /// Get all members
     #[must_use]
     #[inline]
     pub fn all_members(&self) -> HashMap<ServerId, String> {
-        let mut cluster_members = self.peers.clone();
-        let _ignore = cluster_members.insert(self.self_id.clone(), self.self_address.clone());
-        cluster_members
+        self.members
+            .values()
+            .map(|t| (t.id, t.address.clone()))
+            .collect()
     }
 
-    /// peers count
+    /// Get length of peers
     #[must_use]
     #[inline]
     pub fn peers_len(&self) -> usize {
-        self.peers.len()
+        self.members.len().overflow_sub(1)
+    }
+
+    /// Get id by name
+    #[must_use]
+    #[inline]
+    pub fn get_id_by_name(&self, name: &str) -> Option<ServerId> {
+        self.members
+            .iter()
+            .find_map(|(_, m)| (m.name == name).then_some(m.id))
     }
 }
 
@@ -138,7 +176,7 @@ mod tests {
 
     #[test]
     fn test_calculate_id() {
-        let all_members: HashMap<ServerId, String> = vec![
+        let all_members: HashMap<String, String> = vec![
             ("S1".to_owned(), "S1".to_owned()),
             ("S2".to_owned(), "S2".to_owned()),
             ("S3".to_owned(), "S3".to_owned()),
@@ -146,39 +184,37 @@ mod tests {
         .into_iter()
         .collect();
 
-        let node1 = ClusterMember::new(all_members.clone(), "S1".to_owned());
-        let node2 = ClusterMember::new(all_members.clone(), "S2".to_owned());
-        let node3 = ClusterMember::new(all_members, "S3".to_owned());
+        let node1 = ClusterInfo::new(all_members.clone(), "S1");
+        let node2 = ClusterInfo::new(all_members.clone(), "S2");
+        let node3 = ClusterInfo::new(all_members, "S3");
 
-        assert_ne!(node1.gen_member_id(""), node2.gen_member_id(""));
-        assert_ne!(node1.gen_member_id(""), node3.gen_member_id(""));
-        assert_ne!(node3.gen_member_id(""), node2.gen_member_id(""));
+        assert_ne!(node1.self_id(), node2.self_id());
+        assert_ne!(node1.self_id(), node3.self_id());
+        assert_ne!(node3.self_id(), node2.self_id());
 
-        assert_eq!(node1.gen_cluster_id(""), node2.gen_cluster_id(""));
-        assert_eq!(node3.gen_cluster_id(""), node2.gen_cluster_id(""));
+        assert_eq!(node1.cluster_id(), node2.cluster_id());
+        assert_eq!(node3.cluster_id(), node2.cluster_id());
     }
 
     #[test]
     fn test_get_peers() {
-        let all_members: HashMap<ServerId, String> = vec![
+        let all_members = HashMap::from([
             ("S1".to_owned(), "S1".to_owned()),
             ("S2".to_owned(), "S2".to_owned()),
             ("S3".to_owned(), "S3".to_owned()),
-        ]
-        .into_iter()
-        .collect();
+        ]);
 
-        let node1 = ClusterMember::new(all_members, "S1".to_owned());
+        let node1 = ClusterInfo::new(all_members, "S1");
         let peers = node1.peers();
         let node1_id = node1.self_id();
         let node1_url = node1.self_address();
-        assert!(!peers.contains_key(node1.self_id()));
+        assert!(!peers.contains_key(&node1_id));
         assert_eq!(peers.len(), 2);
         assert_eq!(node1.peers_len(), peers.len());
 
-        let peer_urls = node1.peers.values().collect::<Vec<_>>();
+        let peer_urls = peers.values().collect::<Vec<_>>();
 
-        let peer_ids = node1.peers_id();
+        let peer_ids = node1.peers_ids();
 
         assert_eq!(peer_ids.len(), peer_urls.len());
 
@@ -186,9 +222,6 @@ mod tests {
             .iter()
             .find(|url| url.as_str() == node1_url)
             .is_none());
-        assert!(peer_ids
-            .iter()
-            .find(|id| id.as_str() == node1_id.as_str())
-            .is_none());
+        assert!(peer_ids.iter().find(|id| **id == node1_id).is_none());
     }
 }

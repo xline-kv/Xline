@@ -8,7 +8,7 @@ use parking_lot::{Mutex, MutexGuard};
 use tracing::debug;
 
 use super::Role;
-use crate::{LogIndex, ServerId};
+use crate::{members::ServerId, LogIndex};
 
 /// Curp state
 #[derive(Debug)]
@@ -103,10 +103,9 @@ impl LeaderState {
         Self {
             statuses: others
                 .iter()
-                .cloned()
                 .map(|o| {
                     (
-                        o,
+                        *o,
                         Mutex::new(FollowerStatus {
                             next_index: 1,
                             match_index: 0,
@@ -118,30 +117,30 @@ impl LeaderState {
     }
 
     /// Get status for a server
-    fn get_status(&self, id: &ServerId) -> MutexGuard<'_, FollowerStatus> {
+    fn get_status(&self, id: ServerId) -> MutexGuard<'_, FollowerStatus> {
         self.statuses
-            .get(id)
+            .get(&id)
             .unwrap_or_else(|| unreachable!("no status for {id}"))
             .lock()
     }
 
     /// Get `next_index` for server
-    pub(super) fn get_next_index(&self, id: &ServerId) -> LogIndex {
+    pub(super) fn get_next_index(&self, id: ServerId) -> LogIndex {
         self.get_status(id).next_index
     }
 
     /// Get `match_index` for server
-    pub(super) fn get_match_index(&self, id: &ServerId) -> LogIndex {
+    pub(super) fn get_match_index(&self, id: ServerId) -> LogIndex {
         self.get_status(id).match_index
     }
 
     /// Update `next_index` for server
-    pub(super) fn update_next_index(&self, id: &ServerId, index: LogIndex) {
+    pub(super) fn update_next_index(&self, id: ServerId, index: LogIndex) {
         self.get_status(id).next_index = index;
     }
 
     /// Update `match_index` for server, will update `next_index` if possible
-    pub(super) fn update_match_index(&self, id: &ServerId, index: LogIndex) {
+    pub(super) fn update_match_index(&self, id: ServerId, index: LogIndex) {
         let mut status = self.get_status(id);
 
         if status.match_index >= index {
@@ -218,57 +217,36 @@ mod test {
 
     #[test]
     fn quorum_should_work() {
-        let cst = CandidateState::<TestCommand>::new((0..3).map(|n| n.to_string()));
+        let cst = CandidateState::<TestCommand>::new(0..3);
         assert_eq!(cst.quorum(), 2);
 
-        let cst = CandidateState::<TestCommand>::new((0..4).map(|n| n.to_string()));
+        let cst = CandidateState::<TestCommand>::new(0..4);
         assert_eq!(cst.quorum(), 3);
 
-        let cst = CandidateState::<TestCommand>::new((0..5).map(|n| n.to_string()));
+        let cst = CandidateState::<TestCommand>::new(0..5);
         assert_eq!(cst.quorum(), 3);
 
-        let cst = CandidateState::<TestCommand>::new((0..9).map(|n| n.to_string()));
+        let cst = CandidateState::<TestCommand>::new(0..9);
         assert_eq!(cst.quorum(), 5);
 
-        let cst = CandidateState::<TestCommand>::new((0..10).map(|n| n.to_string()));
+        let cst = CandidateState::<TestCommand>::new(0..10);
         assert_eq!(cst.quorum(), 6);
     }
 
     #[test]
     fn check_vote_should_return_right_vote_result() {
-        let servers = vec![
-            "1".to_string(),
-            "2".to_string(),
-            "3".to_string(),
-            "4".to_string(),
-            "5".to_string(),
-        ];
-        let mut cst = CandidateState::<TestCommand>::new(servers.iter().cloned());
+        let servers = vec![1, 2, 3, 4, 5];
+        let mut cst = CandidateState::<TestCommand>::new(servers.into_iter());
 
-        cst.votes_received = HashMap::from([
-            ("1".to_string(), true),
-            ("2".to_string(), true),
-            ("3".to_string(), true),
-            ("4".to_string(), false),
-            ("5".to_string(), false),
-        ]);
+        cst.votes_received =
+            HashMap::from([(1, true), (2, true), (3, true), (4, false), (5, false)]);
         assert_eq!(cst.check_vote(), VoteResult::Won);
 
-        cst.votes_received = HashMap::from([
-            ("1".to_string(), true),
-            ("2".to_string(), true),
-            ("3".to_string(), false),
-            ("4".to_string(), false),
-            ("5".to_string(), false),
-        ]);
+        cst.votes_received =
+            HashMap::from([(1, true), (2, true), (3, false), (4, false), (5, false)]);
         assert_eq!(cst.check_vote(), VoteResult::Lost);
 
-        cst.votes_received = HashMap::from([
-            ("1".to_string(), true),
-            ("2".to_string(), true),
-            ("3".to_string(), false),
-            ("4".to_string(), false),
-        ]);
+        cst.votes_received = HashMap::from([(1, true), (2, true), (3, false), (4, false)]);
         assert_eq!(cst.check_vote(), VoteResult::Pending);
     }
 }

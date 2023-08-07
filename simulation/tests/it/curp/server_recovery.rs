@@ -17,7 +17,7 @@ async fn leader_crash_and_recovery() {
     let client = group.new_client(ClientTimeout::default()).await;
 
     let leader = group.try_get_leader().await.unwrap().0;
-    group.crash(&leader).await;
+    group.crash(leader).await;
 
     assert_eq!(
         client
@@ -39,7 +39,7 @@ async fn leader_crash_and_recovery() {
     );
 
     // restart the original leader
-    group.restart(&leader, false).await;
+    group.restart(leader, false).await;
     let old_leader = group.nodes.get_mut(&leader).unwrap();
 
     let (_cmd, er) = old_leader.exe_rx.recv().await.unwrap();
@@ -63,13 +63,8 @@ async fn follower_crash_and_recovery() {
     let client = group.new_client(ClientTimeout::default()).await;
 
     let leader = group.try_get_leader().await.unwrap().0;
-    let follower = group
-        .nodes
-        .keys()
-        .find(|&id| id != &leader)
-        .unwrap()
-        .clone();
-    group.crash(&follower).await;
+    let follower = *group.nodes.keys().find(|&id| id != &leader).unwrap();
+    group.crash(follower).await;
 
     assert_eq!(
         client
@@ -91,7 +86,7 @@ async fn follower_crash_and_recovery() {
     );
 
     // restart follower
-    group.restart(&follower, false).await;
+    group.restart(follower, false).await;
     let follower = group.nodes.get_mut(&follower).unwrap();
 
     let (_cmd, er) = follower.exe_rx.recv().await.unwrap();
@@ -115,13 +110,8 @@ async fn leader_and_follower_both_crash_and_recovery() {
     let client = group.new_client(ClientTimeout::default()).await;
 
     let leader = group.try_get_leader().await.unwrap().0;
-    let follower = group
-        .nodes
-        .keys()
-        .find(|&id| id != &leader)
-        .unwrap()
-        .clone();
-    group.crash(&follower).await;
+    let follower = *group.nodes.keys().find(|&id| id != &leader).unwrap();
+    group.crash(follower).await;
 
     assert_eq!(
         client
@@ -142,10 +132,10 @@ async fn leader_and_follower_both_crash_and_recovery() {
         vec![0]
     );
 
-    group.crash(&leader).await;
+    group.crash(leader).await;
 
     // restart the original leader
-    group.restart(&leader, false).await;
+    group.restart(leader, false).await;
     // add a new log to commit previous logs
     assert_eq!(
         client
@@ -169,7 +159,7 @@ async fn leader_and_follower_both_crash_and_recovery() {
     assert_eq!(asr.1, 2);
 
     // restart follower
-    group.restart(&follower, false).await;
+    group.restart(follower, false).await;
     let follower = group.nodes.get_mut(&follower).unwrap();
 
     let (_cmd, er) = follower.exe_rx.recv().await.unwrap();
@@ -199,13 +189,18 @@ async fn new_leader_will_recover_spec_cmds_cond1() {
     let req1 = ProposeRequest {
         command: bincode::serialize(&cmd1).unwrap(),
     };
-    for id in group.all.keys().filter(|&id| id != &leader1).take(4) {
+    for id in group
+        .all_members
+        .keys()
+        .filter(|&id| id != &leader1)
+        .take(4)
+    {
         let mut connect = group.get_connect(id).await;
         connect.propose(req1.clone()).await.unwrap();
     }
 
     // 2: disable leader1
-    group.disable_node(&leader1);
+    group.disable_node(leader1);
 
     // 3: the client should automatically find the new leader and get the response
     assert_eq!(
@@ -219,7 +214,7 @@ async fn new_leader_will_recover_spec_cmds_cond1() {
     );
 
     // old leader should recover from the new leader
-    group.enable_node(&leader1);
+    group.enable_node(leader1);
 
     // every cmd should be executed and after synced on every node
     for rx in group.exe_rxs() {
@@ -244,7 +239,7 @@ async fn new_leader_will_recover_spec_cmds_cond2() {
     let leader1 = group.get_leader().await.0;
 
     // 1: disable leader1
-    group.disable_node(&leader1);
+    group.disable_node(leader1);
 
     // now when the client proposes, all others will receive the proposal.
     // but since a new round of election has not started yet, none of them will execute them
@@ -291,7 +286,7 @@ async fn old_leader_will_keep_original_states() {
     // 1: disable all others to prevent the cmd1 to be synced
     let leader1 = group.get_leader().await.0;
     for node in group.nodes.values().filter(|node| node.id != leader1) {
-        group.disable_node(&node.id);
+        group.disable_node(node.id);
     }
 
     // 2: send the cmd1 to the leader, it should be speculatively executed
@@ -303,9 +298,9 @@ async fn old_leader_will_keep_original_states() {
     leader1_connect.propose(req1).await.unwrap();
 
     // 3: recover all others and disable leader, a new leader will be elected
-    group.disable_node(&leader1);
+    group.disable_node(leader1);
     for node in group.nodes.values().filter(|node| node.id != leader1) {
-        group.enable_node(&node.id);
+        group.enable_node(node.id);
     }
     // wait for election
     sleep_secs(15).await;
@@ -313,7 +308,7 @@ async fn old_leader_will_keep_original_states() {
     assert_ne!(leader2, leader1);
 
     // 4: recover the old leader, it should keep the original state
-    group.enable_node(&leader1);
+    group.enable_node(leader1);
     sleep_secs(15).await;
     let leader1_store = Arc::clone(&group.get_node(&leader1).store);
     let res = leader1_store
@@ -371,12 +366,18 @@ async fn minority_crash_and_recovery() {
         vec![0]
     );
 
-    let minority = group.all.keys().take(MINORITY).cloned().collect_vec();
-    for node in &minority {
+    let minority = group
+        .all_members
+        .keys()
+        .take(MINORITY)
+        .cloned()
+        .collect_vec();
+    for node in minority.clone() {
         group.crash(node).await;
     }
-    for node in &minority {
-        group.restart(node, node.as_str() == "S0").await;
+    for node in minority {
+        let is_leader = *group.leader.as_ref().lock() == node;
+        group.restart(node, is_leader).await;
     }
 
     assert_eq!(
@@ -423,7 +424,7 @@ async fn recovery_after_compaction() {
         .find(|&n| n != &leader)
         .unwrap()
         .to_owned();
-    group.crash(&node_id).await;
+    group.crash(node_id).await;
 
     // since the log entries cap is set to 10, 50 commands will trigger log compactions
     for i in 0..50 {
@@ -439,7 +440,7 @@ async fn recovery_after_compaction() {
     debug!("start recovery");
 
     // the restarted node should use snapshot to recover
-    group.restart(&node_id, false).await;
+    group.restart(node_id, false).await;
 
     // wait for node to restart
     sleep_secs(15).await;

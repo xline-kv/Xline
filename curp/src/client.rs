@@ -17,12 +17,13 @@ use crate::{
     error::{
         ClientBuildError, CommandProposeError, CommandSyncError, ProposeError, RpcError, SyncError,
     },
+    members::ServerId,
     rpc::{
         self, connect::ConnectApi, protocol_client::ProtocolClient, FetchClusterRequest,
         FetchClusterResponse, FetchLeaderRequest, FetchReadStateRequest, ProposeRequest,
         ReadState as PbReadState, SyncResult, WaitSyncedRequest,
     },
-    LogIndex, ServerId,
+    LogIndex,
 };
 
 /// Protocol client
@@ -241,19 +242,19 @@ where
                         // reset term only when the resp has leader id to prevent:
                         // If a server loses contact with its leader, it will update its term for election. Since other servers are all right, the election will not succeed.
                         // But if the client learns about the new term and updates its term to it, it will never get the true leader.
-                        if let Some(ref leader_id) = resp.leader_id {
+                        if let Some(leader_id) = resp.leader_id {
                             state.update_to_term(resp.term());
-                            state.set_leader(leader_id.clone());
+                            state.set_leader(leader_id);
                             execute_result = None;
                         }
                     }
                     Ordering::Equal => {
-                        if let Some(ref leader_id) = resp.leader_id {
+                        if let Some(leader_id) = resp.leader_id {
                             if state.leader.is_none() {
-                                state.set_leader(leader_id.clone());
+                                state.set_leader(leader_id);
                             }
                             assert_eq!(
-                                state.leader.as_ref(),
+                                state.leader,
                                 Some(leader_id),
                                 "there should never be two leader in one term"
                             );
@@ -301,7 +302,7 @@ where
             debug!("wait synced request sent to {}", leader_id);
 
             let resp = match self
-                .get_connect(&leader_id)
+                .get_connect(leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .wait_synced(
                     WaitSyncedRequest::new(cmd.id()).map_err(Into::<ProposeError>::into)?,
@@ -331,7 +332,7 @@ where
                     let new_leader = new_leader.and_then(|id| {
                         self.state.map_write(|mut state| {
                             (state.term <= term).then(|| {
-                                state.leader = Some(id.clone());
+                                state.leader = Some(id);
                                 state.term = term;
                                 id
                             })
@@ -369,7 +370,7 @@ where
             debug!("resend propose to {leader_id}");
 
             let resp = self
-                .get_connect(&leader_id)
+                .get_connect(leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .propose(
                     ProposeRequest::new(cmd.as_ref())?,
@@ -442,7 +443,7 @@ where
                 .iter()
                 .map(|connect| async {
                     (
-                        connect.id().clone(),
+                        connect.id(),
                         connect
                             .fetch_leader(FetchLeaderRequest::new(), *self.timeout.retry_timeout())
                             .await,
@@ -487,7 +488,7 @@ where
                 let mut state = self.state.write();
                 debug!("Fetch leader succeeded, leader set to {}", leader);
                 state.term = max_term;
-                state.set_leader(leader.clone());
+                state.set_leader(leader);
                 return leader;
             }
 
@@ -503,7 +504,7 @@ where
         let notify = Arc::clone(&self.state.read().leader_notify);
         let retry_timeout = *self.timeout.retry_timeout();
         loop {
-            if let Some(id) = self.state.read().leader.clone() {
+            if let Some(id) = self.state.read().leader {
                 return id;
             }
             if timeout(retry_timeout, notify.listen()).await.is_err() {
@@ -577,7 +578,7 @@ where
             let leader_id = self.get_leader_id().await;
             debug!("fetch read state request sent to {}", leader_id);
             let resp = match self
-                .get_connect(&leader_id)
+                .get_connect(leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .fetch_read_state(
                     FetchReadStateRequest::new(cmd)?,
@@ -612,7 +613,7 @@ where
     /// Note that this method should not be invoked by an outside client.
     #[inline]
     async fn fetch_local_leader_info(&self) -> Result<(Option<ServerId>, u64), RpcError> {
-        if let Some(ref local_server) = self.local_server_id {
+        if let Some(local_server) = self.local_server_id {
             let resp = self
                 .get_connect(local_server)
                 .unwrap_or_else(|| unreachable!("self id {} not found", local_server))
@@ -635,8 +636,8 @@ where
     }
 
     /// Get the connect by server id
-    fn get_connect(&self, id: &ServerId) -> Option<Arc<dyn ConnectApi>> {
-        self.connects.get(id).map(|c| Arc::clone(&c))
+    fn get_connect(&self, id: ServerId) -> Option<Arc<dyn ConnectApi>> {
+        self.connects.get(&id).map(|c| Arc::clone(&c))
     }
 
     /// Get all connects
@@ -676,12 +677,12 @@ mod tests {
     async fn client_builder_should_return_err_when_arguments_invalid() {
         let res = Client::<TestCommand>::builder()
             .timeout(ClientTimeout::default())
-            .build_from_all_members(HashMap::from([("ServerId".to_owned(), "addr".to_owned())]))
+            .build_from_all_members(HashMap::from([(123, "addr".to_owned())]))
             .await;
         assert!(res.is_ok());
 
         let res = Client::<TestCommand>::builder()
-            .local_server_id("local_server_id".to_owned())
+            .local_server_id(123)
             .build_from_addrs(vec!["addr".to_owned()])
             .await;
         assert!(matches!(res, Err(ClientBuildError::InvalidArguments(_))));

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use curp::members::ServerId;
 use parking_lot::Mutex;
 
 use crate::{revision_number::RevisionNumberGenerator, rpc::ResponseHeader};
@@ -21,7 +22,7 @@ pub(crate) struct HeaderGenerator {
 
 impl HeaderGenerator {
     /// New `HeaderGenerator`
-    pub(crate) fn new(cluster_id: u64, member_id: u64) -> Self {
+    pub(crate) fn new(cluster_id: u64, member_id: ServerId) -> Self {
         Self {
             cluster_id,
             member_id,

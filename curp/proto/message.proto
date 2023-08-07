@@ -10,7 +10,7 @@ message ProposeRequest {
 }
 
 message ProposeResponse {
-    optional string leader_id = 1;
+    optional uint64 leader_id = 1;
     uint64 term = 2;
     oneof exe_result {
         // The original type is Command::ER
@@ -24,7 +24,7 @@ message FetchLeaderRequest {
 }
 
 message FetchLeaderResponse {
-    optional string leader_id = 1;
+    optional uint64 leader_id = 1;
     uint64 term = 2;
 }
 
@@ -32,8 +32,8 @@ message FetchClusterRequest {
 }
 
 message FetchClusterResponse {
-    optional string leader_id = 1;
-    map<string, string> all_members = 2;
+    optional uint64 leader_id = 1;
+    map<uint64, string> all_members = 2;
     uint64 term = 3;
 }
 
@@ -54,7 +54,7 @@ message WaitSyncedResponse {
 
 message AppendEntriesRequest {
     uint64 term = 1;
-    string leader_id = 2;
+    uint64 leader_id = 2;
     uint64 prev_log_index = 3;
     uint64 prev_log_term = 4;
     repeated bytes entries = 5;
@@ -69,7 +69,7 @@ message AppendEntriesResponse {
 
 message VoteRequest {
     uint64 term = 1;
-    string candidate_id = 2;
+    uint64 candidate_id = 2;
     uint64 last_log_index = 3;
     uint64 last_log_term = 4;
 }
@@ -82,7 +82,7 @@ message VoteResponse {
 
 message InstallSnapshotRequest {
     uint64 term = 1;
-    string leader_id = 2;
+    uint64 leader_id = 2;
     uint64 last_included_index = 3;
     uint64 last_included_term = 4;
     uint64 offset = 5;

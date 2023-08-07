@@ -2,9 +2,7 @@ use std::{future::Future, net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use clippy_utilities::{Cast, OverflowArithmetic};
-use curp::{
-    client::Client, members::ClusterMember, server::Rpc, ProtocolServer, SnapshotAllocator,
-};
+use curp::{client::Client, members::ClusterInfo, server::Rpc, ProtocolServer, SnapshotAllocator};
 use event_listener::Event;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use tokio::{net::TcpListener, sync::mpsc::channel};
@@ -53,7 +51,7 @@ type CurpClient = Client<Command>;
 #[derive(Debug)]
 pub struct XlineServer {
     /// cluster information
-    cluster_info: Arc<ClusterMember>,
+    cluster_info: Arc<ClusterInfo>,
     /// is leader
     is_leader: bool,
     /// Curp server timeout
@@ -79,7 +77,7 @@ impl XlineServer {
     #[inline]
     #[must_use]
     pub fn new(
-        cluster_info: Arc<ClusterMember>,
+        cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         curp_config: CurpConfig,
         client_timeout: ClientTimeout,
@@ -176,11 +174,9 @@ impl XlineServer {
 
     /// Construct a header generator
     #[inline]
-    fn construct_generator(
-        cluster_info: &Arc<ClusterMember>,
-    ) -> (Arc<HeaderGenerator>, Arc<IdGenerator>) {
-        let member_id = cluster_info.gen_member_id("");
-        let cluster_id = cluster_info.gen_cluster_id("");
+    fn construct_generator(cluster_info: &ClusterInfo) -> (Arc<HeaderGenerator>, Arc<IdGenerator>) {
+        let member_id = cluster_info.self_id();
+        let cluster_id = cluster_info.cluster_id();
         (
             Arc::new(HeaderGenerator::new(cluster_id, member_id)),
             Arc::new(IdGenerator::new(member_id)),
@@ -269,7 +265,7 @@ impl XlineServer {
 
     /// Init `KvServer`, `LockServer`, `LeaseServer`, `WatchServer` and `CurpServer`
     /// for the Xline Server.
-    #[allow(clippy::type_complexity)] // it is easy to read
+    #[allow(clippy::type_complexity, clippy::too_many_lines)] // it is easy to read
     async fn init_servers<S: StorageApi>(
         &self,
         persistent: Arc<S>,
@@ -320,7 +316,7 @@ impl XlineServer {
 
         let client = Arc::new(
             CurpClient::builder()
-                .local_server_id(self.cluster_info.self_id().clone())
+                .local_server_id(self.cluster_info.self_id())
                 .timeout(self.client_timeout)
                 .build_from_all_members(self.cluster_info.all_members())
                 .await?,
@@ -361,12 +357,12 @@ impl XlineServer {
                 id_barrier,
                 *self.server_timeout.range_retry_timeout(),
                 Arc::clone(&client),
-                self.cluster_info.self_id().clone(),
+                self.cluster_info.self_name().to_owned(),
             ),
             LockServer::new(
                 Arc::clone(&client),
                 Arc::clone(&id_gen),
-                self.cluster_info.self_id().clone(),
+                self.cluster_info.self_name().to_owned(),
                 self.cluster_info.self_address().to_owned(),
             ),
             LeaseServer::new(
@@ -376,7 +372,11 @@ impl XlineServer {
                 id_gen,
                 Arc::clone(&self.cluster_info),
             ),
-            AuthServer::new(auth_storage, client, self.cluster_info.self_id().clone()),
+            AuthServer::new(
+                auth_storage,
+                client,
+                self.cluster_info.self_name().to_owned(),
+            ),
             WatchServer::new(
                 watcher,
                 Arc::clone(&header_gen),

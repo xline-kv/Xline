@@ -273,8 +273,9 @@ mod tests {
     use tokio::{sync::mpsc, time::Instant};
     use tracing_test::traced_test;
 
-    use super::*;
     use crate::log_entry::LogEntry;
+
+    use super::*;
 
     // This should happen in fast path in most cases
     #[traced_test]
@@ -568,9 +569,10 @@ mod tests {
         let ce1 = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
         let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel(Arc::clone(&ce1));
         let curp = RawCurp::new_test(3, ce_event_tx.clone(), mock_role_change());
+        let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
         curp.handle_append_entries(
             1,
-            "S3".to_owned(),
+            s2_id,
             0,
             0,
             vec![LogEntry::new_cmd(1, 1, Arc::new(TestCommand::default()))],

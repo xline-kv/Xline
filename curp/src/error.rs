@@ -4,7 +4,7 @@ use curp_external_api::cmd::Command;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{cmd::ProposeId, ServerId};
+use crate::{cmd::ProposeId, members::ServerId};
 
 /// Error type of client builder
 #[allow(clippy::module_name_repetitions)] // this-error generate code false-positive

@@ -15,7 +15,7 @@ use self::curp_node::{CurpError, CurpNode};
 use crate::{
     cmd::{Command, CommandExecutor},
     error::ServerError,
-    members::ClusterMember,
+    members::{ClusterInfo, ServerId},
     role_change::RoleChange,
     rpc::{
         AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse,
@@ -23,7 +23,7 @@ use crate::{
         InstallSnapshotRequest, InstallSnapshotResponse, ProposeRequest, ProposeResponse,
         ProtocolServer, VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
-    ServerId, SnapshotAllocator,
+    SnapshotAllocator,
 };
 
 /// Command worker to do execution and after sync
@@ -89,7 +89,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::Protocol for Rp
         request: tonic::Request<AppendEntriesRequest>,
     ) -> Result<tonic::Response<AppendEntriesResponse>, tonic::Status> {
         Ok(tonic::Response::new(
-            self.inner.append_entries(request.into_inner())?,
+            self.inner.append_entries(request.get_ref())?,
         ))
     }
 
@@ -154,7 +154,7 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
     /// Panic if storage creation failed
     #[inline]
     pub async fn new<CE: CommandExecutor<C> + 'static>(
-        cluster_info: Arc<ClusterMember>,
+        cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         executor: CE,
         snapshot_allocator: Box<dyn SnapshotAllocator>,
@@ -192,7 +192,7 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
     #[allow(clippy::too_many_arguments)]
     #[inline]
     pub async fn run<CE>(
-        cluster_info: Arc<ClusterMember>,
+        cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         server_port: Option<u16>,
         executor: CE,
@@ -237,7 +237,7 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
     #[allow(clippy::too_many_arguments)]
     #[inline]
     pub async fn run_from_listener<CE>(
-        cluster_info: Arc<ClusterMember>,
+        cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         listener: TcpListener,
         executor: CE,
@@ -275,7 +275,7 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
     #[allow(clippy::too_many_arguments)]
     #[inline]
     pub async fn run_from_addr<CE>(
-        cluster_info: Arc<ClusterMember>,
+        cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         addr: std::net::SocketAddr,
         executor: CE,

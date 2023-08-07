@@ -2,7 +2,7 @@ use std::{pin::Pin, sync::Arc, time::Duration};
 
 use async_stream::{stream, try_stream};
 use clippy_utilities::Cast;
-use curp::{client::Client, cmd::ProposeId, members::ClusterMember};
+use curp::{client::Client, cmd::ProposeId, members::ClusterInfo};
 use futures::stream::Stream;
 use tokio::time;
 use tracing::{debug, warn};
@@ -43,7 +43,7 @@ where
     /// Id generator
     id_gen: Arc<IdGenerator>,
     /// cluster information
-    cluster_info: Arc<ClusterMember>,
+    cluster_info: Arc<ClusterInfo>,
 }
 
 impl<S> LeaseServer<S>
@@ -56,7 +56,7 @@ where
         auth_storage: Arc<AuthStore<S>>,
         client: Arc<Client<Command>>,
         id_gen: Arc<IdGenerator>,
-        cluster_info: Arc<ClusterMember>,
+        cluster_info: Arc<ClusterInfo>,
     ) -> Arc<Self> {
         let lease_server = Arc::new(Self {
             lease_storage,
@@ -104,7 +104,7 @@ where
     fn generate_propose_id(&self) -> ProposeId {
         ProposeId::new(format!(
             "{}-{}",
-            self.cluster_info.self_id(),
+            self.cluster_info.self_name(),
             Uuid::new_v4()
         ))
     }
@@ -236,7 +236,7 @@ where
             // a follower when it lost the election. Therefore we need to double check here.
             // We can directly invoke leader_keep_alive when a candidate becomes a leader.
             if !self.lease_storage.is_primary() {
-                let leader_addr = self.cluster_info.address(&leader_id).unwrap_or_else(|| {
+                let leader_addr = self.cluster_info.address(leader_id).unwrap_or_else(|| {
                     unreachable!(
                         "The address of leader {} not found in all_members {:?}",
                         leader_id, self.cluster_info
@@ -326,7 +326,7 @@ where
                 return Ok(tonic::Response::new(res));
             }
             let leader_id = self.client.get_leader_id_from_curp().await;
-            let leader_addr = self.cluster_info.address(&leader_id).unwrap_or_else(|| {
+            let leader_addr = self.cluster_info.address(leader_id).unwrap_or_else(|| {
                 unreachable!(
                     "The address of leader {} not found in all_members {:?}",
                     leader_id, self.cluster_info
