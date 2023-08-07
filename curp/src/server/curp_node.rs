@@ -27,7 +27,7 @@ use crate::{
     cmd::{Command, CommandExecutor},
     error::RpcError,
     log_entry::LogEntry,
-    members::ClusterMember,
+    members::{ClusterInfo, ServerId},
     role_change::RoleChange,
     rpc::{
         self, connect::ConnectApi, AppendEntriesRequest, AppendEntriesResponse,
@@ -38,7 +38,7 @@ use crate::{
     },
     server::{cmd_worker::CEEventTxApi, raw_curp::SyncAction, storage::db::DB},
     snapshot::{Snapshot, SnapshotMeta},
-    ServerId, SnapshotAllocator,
+    SnapshotAllocator,
 };
 
 /// Curp error
@@ -130,7 +130,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     /// Handle `AppendEntries` requests
     pub(super) fn append_entries(
         &self,
-        req: AppendEntriesRequest,
+        req: &AppendEntriesRequest,
     ) -> Result<AppendEntriesResponse, CurpError> {
         let entries = req.entries()?;
 
@@ -154,7 +154,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     pub(super) async fn vote(&self, req: VoteRequest) -> Result<VoteResponse, CurpError> {
         let result = self.curp.handle_vote(
             req.term,
-            req.candidate_id.clone(),
+            req.candidate_id,
             req.last_log_index,
             req.last_log_term,
         );
@@ -417,7 +417,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     /// Create a new server instance
     #[inline]
     pub(super) async fn new<CE: CommandExecutor<C> + 'static>(
-        cluster_info: Arc<ClusterMember>,
+        cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         cmd_executor: Arc<CE>,
         snapshot_allocator: Box<dyn SnapshotAllocator>,
@@ -425,9 +425,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         curp_cfg: Arc<CurpConfig>,
     ) -> Result<Self, CurpError> {
         let sync_events = cluster_info
-            .peers_id()
-            .iter()
-            .map(|server_id| (server_id.clone(), Arc::new(Event::new())))
+            .peers_ids()
+            .into_iter()
+            .map(|server_id| (server_id, Arc::new(Event::new())))
             .collect();
 
         let (log_tx, log_rx) = mpsc::unbounded_channel();
@@ -445,7 +445,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
 
         // create curp state machine
         let (voted_for, entries) = storage.recover().await?;
-        let id = cluster_info.self_id();
         let curp = if voted_for.is_none() && entries.is_empty() {
             Arc::new(RawCurp::new(
                 Arc::clone(&cluster_info),
@@ -462,7 +461,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         } else {
             info!(
                 "{} recovered voted_for({voted_for:?}), entries from {:?} to {:?}",
-                id,
+                cluster_info.self_id(),
                 entries.first(),
                 entries.last()
             );
@@ -521,7 +520,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     async fn run_bg_tasks(
         curp: Arc<RawCurp<C, RC>>,
         storage: Arc<impl StorageApi<Command = C> + 'static>,
-        cluster_info: Arc<ClusterMember>,
+        cluster_info: Arc<ClusterInfo>,
         shutdown_trigger: Arc<Event>,
         log_rx: tokio::sync::mpsc::UnboundedReceiver<Arc<LogEntry<C>>>,
     ) {
@@ -535,7 +534,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                 tokio::spawn(Self::sync_follower_daemon(
                     Arc::clone(&curp),
                     connect,
-                    curp.sync_event(&server_id),
+                    curp.sync_event(server_id),
                 ))
             })
             .collect_vec();
@@ -565,13 +564,13 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
             .map(|(id, connect)| {
                 let req = VoteRequest::new(
                     vote.term,
-                    vote.candidate_id.clone(),
+                    vote.candidate_id,
                     vote.last_log_index,
                     vote.last_log_term,
                 );
                 async move {
                     let resp = connect.vote(req, rpc_timeout).await;
-                    (id.clone(), resp)
+                    (*id, resp)
                 }
             })
             .collect::<FuturesUnordered<_>>()
@@ -595,7 +594,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                 Ok(spec_pool) => spec_pool.into_iter().map(|cmd| Arc::new(cmd)).collect(),
             };
             let result =
-                curp.handle_vote_resp(&id, resp.term, resp.vote_granted, follower_spec_pool);
+                curp.handle_vote_resp(id, resp.term, resp.vote_granted, follower_spec_pool);
             match result {
                 Ok(false) => {}
                 Ok(true) | Err(()) => return,
@@ -657,7 +656,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     ) -> Result<(), SendSnapshotError> {
         let meta = snapshot.meta;
         let resp = connect
-            .install_snapshot(curp.term(), curp.id().clone(), snapshot)
+            .install_snapshot(curp.term(), curp.id(), snapshot)
             .await?
             .into_inner();
         curp.handle_snapshot_resp(connect.id(), meta, resp.term)
@@ -705,7 +704,8 @@ mod tests {
             .expect_append_entries()
             .times(1..)
             .returning(|_, _| Ok(tonic::Response::new(AppendEntriesResponse::new_accept(0))));
-        mock_connect1.expect_id().return_const("S1".to_owned());
+        let id = curp.cluster().get_id_by_name("S1").unwrap();
+        mock_connect1.expect_id().return_const(id);
         tokio::spawn(CurpNode::sync_follower_task(
             curp,
             Arc::new(mock_connect1),
@@ -724,7 +724,8 @@ mod tests {
                 .returning(|_| oneshot::channel().1);
             Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
         };
-        curp.handle_append_entries(1, "S2".to_owned(), 0, 0, vec![], 0)
+        let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
+        curp.handle_append_entries(1, s2_id, 0, 0, vec![], 0)
             .unwrap();
 
         let mut mock_connect1 = MockConnectApi::default();
@@ -733,7 +734,8 @@ mod tests {
                 VoteResponse::new_accept::<TestCommand>(req.term, vec![]).unwrap(),
             ))
         });
-        mock_connect1.expect_id().return_const("S1".to_owned());
+        let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
+        mock_connect1.expect_id().return_const(s1_id);
 
         let mut mock_connect2 = MockConnectApi::default();
         mock_connect2.expect_vote().returning(|req, _| {
@@ -741,13 +743,13 @@ mod tests {
                 VoteResponse::new_accept::<TestCommand>(req.term, vec![]).unwrap(),
             ))
         });
-        mock_connect2.expect_id().return_const("S2".to_owned());
+        mock_connect2.expect_id().return_const(s2_id);
 
         tokio::spawn(CurpNode::election_task(
             Arc::clone(&curp),
             HashMap::from([
-                ("S1".to_owned(), Arc::new(mock_connect1)),
-                ("S2".to_owned(), Arc::new(mock_connect2)),
+                (s1_id, Arc::new(mock_connect1)),
+                (s2_id, Arc::new(mock_connect2)),
             ]),
         ));
         sleep_secs(3).await;

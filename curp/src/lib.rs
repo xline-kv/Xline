@@ -165,9 +165,6 @@ pub use rpc::{
 };
 pub use snapshot::SnapshotAllocator;
 
-/// Server Id
-pub type ServerId = String;
-
 /// Client side, sending requests and determining requests' state
 pub mod client;
 

@@ -14,6 +14,7 @@ use utils::tracing::Inject;
 
 use crate::{
     error::RpcError,
+    members::ServerId,
     rpc::{
         proto::protocol_client::ProtocolClient, AppendEntriesRequest, AppendEntriesResponse,
         FetchLeaderRequest, FetchLeaderResponse, FetchReadStateRequest, FetchReadStateResponse,
@@ -21,7 +22,6 @@ use crate::{
         VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
     snapshot::Snapshot,
-    ServerId,
 };
 
 /// Install snapshot chunk size: 64KB
@@ -47,7 +47,7 @@ pub(crate) async fn connect(
     .map(|(id, addr, conn)| {
         debug!("successfully establish connection with {addr}");
         let connect: Arc<dyn ConnectApi> = Arc::new(Connect {
-            id: id.clone(),
+            id,
             rpc_connect: RwLock::new(conn),
             addr,
         });
@@ -60,7 +60,7 @@ pub(crate) async fn connect(
 #[async_trait]
 pub(crate) trait ConnectApi: Send + Sync + 'static {
     /// Get server id
-    fn id(&self) -> &ServerId;
+    fn id(&self) -> ServerId;
 
     /// Get the internal rpc connection/client
     async fn get(
@@ -133,8 +133,8 @@ pub(crate) struct Connect {
 #[async_trait]
 impl ConnectApi for Connect {
     /// Get server id
-    fn id(&self) -> &ServerId {
-        &self.id
+    fn id(&self) -> ServerId {
+        self.id
     }
 
     /// Get the internal rpc connection/client
@@ -271,7 +271,7 @@ fn install_snapshot_stream(
             }
             yield InstallSnapshotRequest {
                 term,
-                leader_id: leader_id.clone(),
+                leader_id,
                 last_included_index: meta.last_included_index,
                 last_included_term: meta.last_included_term,
                 offset,
@@ -311,7 +311,7 @@ mod tests {
             .unwrap();
         let stream = install_snapshot_stream(
             0,
-            "test".to_owned(),
+            123,
             Snapshot::new(
                 SnapshotMeta {
                     last_included_index: 1,
@@ -324,7 +324,7 @@ mod tests {
         let mut sum = 0;
         while let Some(req) = stream.next().await {
             assert_eq!(req.term, 0);
-            assert_eq!(req.leader_id, "test".to_owned());
+            assert_eq!(req.leader_id, 123);
             assert_eq!(req.last_included_index, 1);
             assert_eq!(req.last_included_term, 1);
             sum += req.data.len() as u64;

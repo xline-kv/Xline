@@ -140,7 +140,7 @@ use std::{collections::HashMap, env, net::ToSocketAddrs, path::PathBuf, time::Du
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
-use curp::{members::ClusterMember, ServerId};
+use curp::members::ClusterInfo;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use opentelemetry::{global, runtime::Tokio, sdk::propagation::TraceContextPropagator};
 use opentelemetry_contrib::trace::exporter::jaeger_json::JaegerJsonExporter;
@@ -172,9 +172,9 @@ struct ServerArgs {
     /// Node name
     #[clap(long)]
     name: String,
-    /// Cluster peers. eg: 192.168.x.x:8080 192.168.x.x:8080
-    #[clap(long,value_parser = parse_members)]
-    members: HashMap<ServerId, String>,
+    /// Cluster peers. eg: node1=192.168.x.x:8080,node2=192.168.x.x:8080
+    #[clap(long, value_parser = parse_members)]
+    members: HashMap<String, String>,
     /// If node is leader
     #[clap(long)]
     is_leader: bool,
@@ -513,7 +513,7 @@ async fn main() -> Result<()> {
 
     let name = cluster_config.name().clone();
     let all_members = cluster_config.members().clone();
-    let cluster_info = ClusterMember::new(all_members, name);
+    let cluster_info = ClusterInfo::new(all_members, &name);
 
     let db_proxy = DB::open(storage_config)?;
     let server = XlineServer::new(

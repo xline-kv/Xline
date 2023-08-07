@@ -5,6 +5,7 @@ use std::{
 };
 
 use clippy_utilities::{Cast, OverflowArithmetic};
+use curp::members::ServerId;
 
 /// Generator of unique id
 /// id format:
@@ -21,7 +22,7 @@ pub(crate) struct IdGenerator {
 
 impl IdGenerator {
     /// New `IdGenerator`
-    pub(crate) fn new(member_id: u64) -> Self {
+    pub(crate) fn new(member_id: ServerId) -> Self {
         let prefix = member_id.overflowing_shl(48).0;
         let mut ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)

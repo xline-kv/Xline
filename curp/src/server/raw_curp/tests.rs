@@ -31,9 +31,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     pub(crate) fn new_test<Tx: CEEventTxApi<C>>(n: u64, exe_tx: Tx, role_change: RC) -> Self {
-        let all_members: HashMap<ServerId, String> =
+        let all_members: HashMap<String, String> =
             (0..n).map(|i| (format!("S{i}"), format!("S{i}"))).collect();
-        let cluster_info = Arc::new(ClusterMember::new(all_members, "S0".to_owned()));
+        let cluster_info = Arc::new(ClusterInfo::new(all_members, "S0"));
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
         let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
@@ -41,9 +41,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         // prevent the channel from being closed
         std::mem::forget(log_rx);
         let sync_events = cluster_info
-            .peers_id()
-            .iter()
-            .map(|id| (id.clone(), Arc::new(Event::new())))
+            .peers_ids()
+            .into_iter()
+            .map(|id| (id, Arc::new(Event::new())))
             .collect();
         let curp_config = CurpConfigBuilder::default()
             .log_entries_cap(10)
@@ -193,7 +193,8 @@ fn heartbeat_will_calibrate_term() {
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
 
-    let result = curp.handle_append_entries_resp(&"S1".to_owned(), None, 1, false, 1);
+    let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let result = curp.handle_append_entries_resp(s1_id, None, 1, false, 1);
     assert!(result.is_err());
 
     let st_r = curp.st.read();
@@ -210,12 +211,13 @@ fn heartbeat_will_calibrate_next_index() {
         mock_role_change(),
     );
 
-    let result = curp.handle_append_entries_resp(&"S1".to_owned(), None, 0, false, 1);
+    let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let result = curp.handle_append_entries_resp(s1_id, None, 0, false, 1);
     assert_eq!(result, Ok(false));
 
     let st_r = curp.st.read();
     assert_eq!(st_r.term, 0);
-    assert_eq!(curp.lst.get_next_index(&"S1".to_string()), 1);
+    assert_eq!(curp.lst.get_next_index(s1_id), 1);
 }
 
 #[traced_test]
@@ -229,14 +231,15 @@ fn handle_ae_will_calibrate_term() {
         Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
+    let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
 
-    let result = curp.handle_append_entries(2, "S2".to_owned(), 0, 0, vec![], 0);
+    let result = curp.handle_append_entries(2, s2_id, 0, 0, vec![], 0);
     assert!(result.is_ok());
 
     let st_r = curp.st.read();
     assert_eq!(st_r.term, 2);
     assert_eq!(st_r.role, Role::Follower);
-    assert_eq!(st_r.leader_id, Some("S2".to_owned()));
+    assert_eq!(st_r.leader_id, Some(s2_id));
 }
 
 #[traced_test]
@@ -251,13 +254,14 @@ fn handle_ae_will_set_leader_id() {
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
-    let result = curp.handle_append_entries(1, "S2".to_owned(), 0, 0, vec![], 0);
+    let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
+    let result = curp.handle_append_entries(1, s2_id, 0, 0, vec![], 0);
     assert!(result.is_ok());
 
     let st_r = curp.st.read();
     assert_eq!(st_r.term, 1);
     assert_eq!(st_r.role, Role::Follower);
-    assert_eq!(st_r.leader_id, Some("S2".to_owned()));
+    assert_eq!(st_r.leader_id, Some(s2_id));
 }
 
 #[traced_test]
@@ -272,7 +276,8 @@ fn handle_ae_will_reject_wrong_term() {
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
-    let result = curp.handle_append_entries(0, "S2".to_owned(), 0, 0, vec![], 0);
+    let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
+    let result = curp.handle_append_entries(0, s2_id, 0, 0, vec![], 0);
     assert!(result.is_err());
     assert_eq!(result.unwrap_err().0, 1);
 }
@@ -289,9 +294,10 @@ fn handle_ae_will_reject_wrong_log() {
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
+    let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
     let result = curp.handle_append_entries(
         1,
-        "S2".to_owned(),
+        s2_id,
         1,
         1,
         vec![LogEntry::new_cmd(2, 1, Arc::new(TestCommand::default()))],
@@ -388,7 +394,8 @@ fn handle_vote_will_calibrate_term() {
         Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
 
-    let result = curp.handle_vote(1, "S1".to_owned(), 0, 0).unwrap();
+    let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let result = curp.handle_vote(1, s1_id, 0, 0).unwrap();
     assert_eq!(result.0, 1);
 
     assert_eq!(curp.term(), 1);
@@ -407,7 +414,8 @@ fn handle_vote_will_reject_smaller_term() {
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 2);
 
-    let result = curp.handle_vote(1, "S1".to_owned(), 0, 0);
+    let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let result = curp.handle_vote(1, s1_id, 0, 0);
     assert_eq!(result, Err(2));
 }
 
@@ -421,9 +429,10 @@ fn handle_vote_will_reject_outdated_candidate() {
             .returning(|_| oneshot::channel().1);
         Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
+    let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
     let result = curp.handle_append_entries(
         1,
-        "S2".to_owned(),
+        s2_id,
         0,
         0,
         vec![LogEntry::new_cmd(1, 1, Arc::new(TestCommand::default()))],
@@ -431,7 +440,8 @@ fn handle_vote_will_reject_outdated_candidate() {
     );
     assert!(result.is_ok());
 
-    let result = curp.handle_vote(3, "S1".to_owned(), 0, 0);
+    let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let result = curp.handle_vote(3, s1_id, 0, 0);
     assert_eq!(result, Err(3));
 }
 
@@ -452,13 +462,13 @@ fn candidate_will_become_leader_after_election_succeeds() {
         let _ig = curp.tick_election();
     }
 
-    let result = curp
-        .handle_vote_resp(&"S1".to_owned(), 2, true, vec![])
-        .unwrap();
+    let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let result = curp.handle_vote_resp(s1_id, 2, true, vec![]).unwrap();
     assert!(result);
     assert_eq!(curp.role(), Role::Leader);
 
-    let result = curp.handle_vote_resp(&"S2".to_owned(), 2, true, vec![]);
+    let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
+    let result = curp.handle_vote_resp(s2_id, 2, true, vec![]);
     assert!(result.is_err());
     assert_eq!(curp.role(), Role::Leader);
 }
@@ -480,7 +490,8 @@ fn vote_will_calibrate_candidate_term() {
         let _ig = curp.tick_election();
     }
 
-    let result = curp.handle_vote_resp(&"S1".to_owned(), 3, false, vec![]);
+    let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let result = curp.handle_vote_resp(s1_id, 3, false, vec![]);
     assert!(result.is_err());
 
     let st_r = curp.st.read();
@@ -511,12 +522,18 @@ fn recover_from_spec_pools_will_pick_the_correct_cmds() {
     curp.push_cmd(Arc::clone(&cmd0));
     curp.log.map_write(|mut log_w| log_w.commit_index = 1);
 
+    let s0_id = curp.cluster().get_id_by_name("S0").unwrap();
+    let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
+    let s3_id = curp.cluster().get_id_by_name("S3").unwrap();
+    let s4_id = curp.cluster().get_id_by_name("S4").unwrap();
+
     let spec_pools = HashMap::from([
-        ("S0".to_owned(), vec![Arc::clone(&cmd1), Arc::clone(&cmd2)]),
-        ("S1".to_owned(), vec![Arc::clone(&cmd1)]),
-        ("S2".to_owned(), vec![Arc::clone(&cmd1)]),
-        ("S3".to_owned(), vec![Arc::clone(&cmd1)]),
-        ("S4".to_owned(), vec![]),
+        (s0_id, vec![Arc::clone(&cmd1), Arc::clone(&cmd2)]),
+        (s1_id, vec![Arc::clone(&cmd1)]),
+        (s2_id, vec![Arc::clone(&cmd1)]),
+        (s3_id, vec![Arc::clone(&cmd1)]),
+        (s4_id, vec![]),
     ]);
 
     curp.recover_from_spec_pools(&mut *curp.st.write(), &mut *curp.log.write(), spec_pools);

@@ -4,7 +4,13 @@ use std::{
 };
 
 use async_trait::async_trait;
-use curp::{client::Client, members::ClusterMember, server::Rpc, LogIndex, SnapshotAllocator};
+use clippy_utilities::NumericCast;
+use curp::{
+    client::Client,
+    members::{ClusterInfo, ServerId},
+    server::Rpc,
+    LogIndex, SnapshotAllocator,
+};
 use curp_test_utils::{
     test_cmd::{TestCE, TestCommand, TestCommandResult},
     TestRoleChange, TestRoleChangeInner,
@@ -15,8 +21,6 @@ use itertools::Itertools;
 use tokio::{net::TcpListener, runtime::Runtime, sync::mpsc};
 use tracing::debug;
 use utils::config::{ClientTimeout, CurpConfigBuilder, StorageConfig};
-
-pub type ServerId = String;
 
 pub mod proto {
     tonic::include_proto!("messagepb");
@@ -58,27 +62,28 @@ impl CurpGroup {
                 .take(n_nodes),
         )
         .await;
-        let all: HashMap<ServerId, String> = listeners
+        let all_members: HashMap<String, String> = listeners
             .iter()
             .enumerate()
             .map(|(i, listener)| (format!("S{i}"), listener.local_addr().unwrap().to_string()))
             .collect();
-
+        let mut all = HashMap::new();
         let nodes = listeners
             .into_iter()
             .enumerate()
             .map(|(i, listener)| {
-                let id = format!("S{i}");
+                let name = format!("S{i}");
                 let addr = listener.local_addr().unwrap().to_string();
                 let storage_path = tempfile::tempdir().unwrap().into_path();
 
                 let (exe_tx, exe_rx) = mpsc::unbounded_channel();
                 let (as_tx, as_rx) = mpsc::unbounded_channel();
-                let ce = TestCE::new(id.clone(), exe_tx, as_tx);
+                let ce = TestCE::new(name.clone(), exe_tx, as_tx);
                 let store = Arc::clone(&ce.store);
 
-                let cluster_info = Arc::new(ClusterMember::new(all.clone(), id.clone()));
-
+                let cluster_info = Arc::new(ClusterInfo::new(all_members.clone(), &name));
+                all = cluster_info.all_members();
+                let id = cluster_info.self_id();
                 let rt = tokio::runtime::Builder::new_multi_thread()
                     .worker_threads(2)
                     .thread_name(format!("rt-{id}"))
@@ -109,7 +114,7 @@ impl CurpGroup {
                 });
 
                 (
-                    id.clone(),
+                    id,
                     CurpNode {
                         id,
                         addr,

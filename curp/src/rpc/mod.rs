@@ -19,7 +19,8 @@ use crate::{
     cmd::{Command, ProposeId},
     error::{CommandSyncError, ProposeError, SyncError},
     log_entry::LogEntry,
-    LogIndex, ServerId,
+    members::ServerId,
+    LogIndex,
 };
 
 /// Rpc connect
@@ -302,7 +303,7 @@ impl VoteRequest {
     /// Create a new vote request
     pub fn new(
         term: u64,
-        candidate_id: String,
+        candidate_id: ServerId,
         last_log_index: LogIndex,
         last_log_term: u64,
     ) -> Self {

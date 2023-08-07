@@ -5,7 +5,7 @@ use curp::{
     client::{Client, ReadState},
     cmd::Command,
     error::{CommandProposeError, ProposeError},
-    members::ClusterMember,
+    members::{ClusterInfo, ServerId},
     server::Rpc,
     FetchLeaderRequest, FetchLeaderResponse, LogIndex, SnapshotAllocator,
 };
@@ -20,8 +20,6 @@ use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tracing::debug;
 use utils::config::{ClientTimeout, CurpConfigBuilder, StorageConfig};
-
-pub type ServerId = String;
 
 pub use curp::{
     propose_response, protocol_client::ProtocolClient, ProposeRequest, ProposeResponse,
@@ -50,7 +48,7 @@ pub struct CurpNode {
 pub struct CurpGroup {
     pub nodes: HashMap<ServerId, CurpNode>,
     pub leader: Arc<Mutex<ServerId>>,
-    pub all: HashMap<ServerId, String>,
+    pub all_members: HashMap<ServerId, String>,
     pub client_node: NodeHandle,
 }
 
@@ -59,15 +57,16 @@ impl CurpGroup {
         assert!(n_nodes >= 3, "the number of nodes must >= 3");
         let handle = madsim::runtime::Handle::current();
 
-        let all: HashMap<ServerId, String> = (0..n_nodes)
+        let all: HashMap<String, String> = (0..n_nodes)
             .map(|x| (format!("S{x}"), format!("192.168.1.{}:12345", x + 1)))
             .collect();
+        let mut all_members = HashMap::new();
 
-        let leader = Arc::new(Mutex::new("S0".to_string()));
+        let leader = Arc::new(Mutex::new(0));
 
         let nodes = (0..n_nodes)
             .map(|i| {
-                let id = format!("S{i}");
+                let name = format!("S{i}");
                 let addr = format!("192.168.1.{}:12345", i + 1);
                 let storage_path = tempfile::tempdir().unwrap().into_path();
 
@@ -75,11 +74,9 @@ impl CurpGroup {
                 let (as_tx, as_rx) = mpsc::unbounded_channel();
                 let store = Arc::new(Mutex::new(None));
 
-                let leader = Arc::clone(&leader);
-
-                let cluster_info = Arc::new(ClusterMember::new(all.clone(), id.clone()));
-
-                let id_c = id.clone();
+                let cluster_info = Arc::new(ClusterInfo::new(all.clone(), &name));
+                all_members = cluster_info.all_members();
+                let id = cluster_info.self_id();
                 let storage_cfg = StorageConfig::RocksDB(storage_path.clone());
                 let store_c = Arc::clone(&store);
                 let role_change_cb = TestRoleChange::default();
@@ -87,12 +84,12 @@ impl CurpGroup {
 
                 let node_handle = handle
                     .create_node()
-                    .name(format!("S{i}"))
+                    .name(id.to_string())
                     .ip(format!("192.168.1.{}", i + 1).parse().unwrap())
                     .init(move || {
-                        let ce = TestCE::new(id_c.clone(), exe_tx.clone(), as_tx.clone());
+                        let ce = TestCE::new(name.clone(), exe_tx.clone(), as_tx.clone());
                         store_c.lock().replace(Arc::clone(&ce.store));
-                        let is_leader = *leader.lock() == id_c;
+                        let is_leader = "S0" == name;
 
                         Rpc::run_from_addr(
                             cluster_info.clone(),
@@ -113,8 +110,9 @@ impl CurpGroup {
                         )
                     })
                     .build();
+
                 (
-                    id.clone(),
+                    id,
                     CurpNode {
                         id,
                         addr,
@@ -139,7 +137,7 @@ impl CurpGroup {
         Self {
             nodes,
             leader,
-            all,
+            all_members,
             client_node,
         }
     }
@@ -152,7 +150,7 @@ impl CurpGroup {
         let all_members = self
             .nodes
             .iter()
-            .map(|(id, node)| (id.clone(), node.addr.clone()))
+            .map(|(id, node)| (*id, node.addr.clone()))
             .collect();
         SimClient {
             inner: Arc::new(
@@ -206,23 +204,23 @@ impl CurpGroup {
         debug!("all nodes shutdowned");
     }
 
-    pub async fn crash(&mut self, id: &ServerId) {
+    pub async fn crash(&mut self, id: ServerId) {
         let handle = madsim::runtime::Handle::current();
-        handle.kill(id);
+        handle.kill(id.to_string());
         madsim::time::sleep(Duration::from_secs(2)).await;
-        if !handle.is_exit(id) {
+        if !handle.is_exit(id.to_string()) {
             panic!("failed to crash node: {id}");
         }
     }
 
-    pub async fn restart(&mut self, id: &ServerId, is_leader: bool) {
+    pub async fn restart(&mut self, id: ServerId, is_leader: bool) {
         let handle = madsim::runtime::Handle::current();
         if is_leader {
-            *self.leader.lock() = id.clone();
+            *self.leader.lock() = id;
         } else {
-            *self.leader.lock() = "".to_string();
+            *self.leader.lock() = 0;
         }
-        handle.restart(id);
+        handle.restart(id.to_string());
     }
 
     pub async fn try_get_leader(&self) -> Option<(ServerId, u64)> {
@@ -230,7 +228,7 @@ impl CurpGroup {
         let mut leader = None;
         let mut max_term = 0;
 
-        let all = self.all.clone();
+        let all = self.all_members.clone();
         self.client_node
             .spawn(async move {
                 for addr in all.values() {
@@ -275,7 +273,7 @@ impl CurpGroup {
 
     // get latest term and ensure every working node has the same term
     pub async fn get_term_checked(&self) -> u64 {
-        let all = self.all.clone();
+        let all = self.all_members.clone();
         self.client_node
             .spawn(async move {
                 let mut max_term = None;
@@ -308,24 +306,24 @@ impl CurpGroup {
     }
 
     // Disconnect the node from the network.
-    pub fn disable_node(&self, id: &ServerId) {
+    pub fn disable_node(&self, id: ServerId) {
         let handle = madsim::runtime::Handle::current();
         let net = madsim::net::NetSim::current();
-        let Some(node)  = handle.get_node(id) else { panic!("no node with name {id} in the simulator")};
+        let Some(node)  = handle.get_node(id.to_string()) else { panic!("no node with name {id} in the simulator")};
         net.clog_node(node.id());
     }
 
     // Reconnect the node to the network.
-    pub fn enable_node(&self, id: &ServerId) {
+    pub fn enable_node(&self, id: ServerId) {
         let handle = madsim::runtime::Handle::current();
         let net = madsim::net::NetSim::current();
-        let Some(node)  = handle.get_node(id) else { panic!("no node with name {id} the simulator")};
+        let Some(node)  = handle.get_node(id.to_string()) else { panic!("no node with name {id} the simulator")};
         net.unclog_node(node.id());
     }
 
     pub async fn get_connect(&self, id: &ServerId) -> SimProtocolClient {
         let addr = self
-            .all
+            .all_members
             .iter()
             .find_map(|(node_id, addr)| (node_id == id).then_some(addr))
             .unwrap();

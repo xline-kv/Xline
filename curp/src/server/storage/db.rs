@@ -5,7 +5,7 @@ use engine::{Engine, EngineType, StorageEngine, WriteOperation};
 use utils::config::StorageConfig;
 
 use super::{StorageApi, StorageError};
-use crate::{cmd::Command, log_entry::LogEntry, ServerId};
+use crate::{cmd::Command, log_entry::LogEntry, members::ServerId};
 
 /// Key for persisted state
 const VOTE_FOR: &[u8] = b"VoteFor";
@@ -105,8 +105,8 @@ mod tests {
         let storage_cfg = StorageConfig::RocksDB(db_dir.clone());
         {
             let s = DB::<TestCommand>::open(&storage_cfg)?;
-            s.flush_voted_for(1, "S2".to_string()).await?;
-            s.flush_voted_for(3, "S1".to_string()).await?;
+            s.flush_voted_for(1, 222).await?;
+            s.flush_voted_for(3, 111).await?;
             let entry0 = LogEntry::new_cmd(1, 3, Arc::new(TestCommand::default()));
             let entry1 = LogEntry::new_cmd(2, 3, Arc::new(TestCommand::default()));
             let entry2 = LogEntry::new_cmd(3, 3, Arc::new(TestCommand::default()));
@@ -119,7 +119,7 @@ mod tests {
         {
             let s = DB::<TestCommand>::open(&storage_cfg)?;
             let (voted_for, entries) = s.recover().await?;
-            assert_eq!(voted_for, Some((3, "S1".to_string())));
+            assert_eq!(voted_for, Some((3, 111)));
             assert_eq!(entries[0].index, 1);
             assert_eq!(entries[1].index, 2);
             assert_eq!(entries[2].index, 3);

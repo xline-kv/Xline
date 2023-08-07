@@ -42,12 +42,12 @@ use crate::{
     cmd::{Command, ProposeId},
     error::ProposeError,
     log_entry::{EntryData, LogEntry},
-    members::ClusterMember,
+    members::{ClusterInfo, ServerId},
     role_change::RoleChange,
     rpc::{IdSet, ReadState},
     server::{cmd_board::CmdBoardRef, raw_curp::state::VoteResult, spec_pool::SpecPoolRef},
     snapshot::{Snapshot, SnapshotMeta},
-    LogIndex, ServerId,
+    LogIndex,
 };
 
 /// Curp state
@@ -128,7 +128,7 @@ enum Role {
 /// Relevant context for Curp
 struct Context<C: Command, RC: RoleChange> {
     /// Cluster information
-    cluster_info: Arc<ClusterMember>,
+    cluster_info: Arc<ClusterInfo>,
     /// Config
     cfg: Arc<CurpConfig>,
     /// Cmd board for tracking the cmd sync results
@@ -206,7 +206,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             .map_lock(|mut spec_l| spec_l.insert(Arc::clone(&cmd)).is_some());
 
         let st_r = self.st.read();
-        let info = (st_r.leader_id.clone(), st_r.term);
+        let info = (st_r.leader_id, st_r.term);
 
         // Non-leader doesn't need to sync or execute
         if st_r.role != Role::Leader {
@@ -256,7 +256,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         }
 
         self.ctx.sync_events.iter().for_each(|(id, event)| {
-            let next = self.lst.get_next_index(id);
+            let next = self.lst.get_next_index(*id);
             if next > log_w.base_index && log_w.has_next_batch(next) {
                 event.notify(1);
             }
@@ -286,7 +286,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     pub(super) fn handle_append_entries(
         &self,
         term: u64,
-        leader_id: String,
+        leader_id: ServerId,
         prev_log_index: LogIndex,
         prev_log_term: u64,
         entries: Vec<LogEntry<C>>,
@@ -303,13 +303,13 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             std::cmp::Ordering::Less => {
                 let mut st_w = RwLockUpgradableReadGuard::upgrade(st_r);
                 self.update_to_term_and_become_follower(&mut st_w, term);
-                st_w.leader_id = Some(leader_id.clone());
+                st_w.leader_id = Some(leader_id);
                 let _ig = self.ctx.leader_tx.send(Some(leader_id)).ok();
             }
             std::cmp::Ordering::Equal => {
                 if st_r.leader_id.is_none() {
                     let mut st_w = RwLockUpgradableReadGuard::upgrade(st_r);
-                    st_w.leader_id = Some(leader_id.clone());
+                    st_w.leader_id = Some(leader_id);
                     let _ig = self.ctx.leader_tx.send(Some(leader_id)).ok();
                 }
             }
@@ -349,7 +349,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     /// Return `Err(())` if self is no longer the leader
     pub(super) fn handle_append_entries_resp(
         &self,
-        follower_id: &ServerId,
+        follower_id: ServerId,
         last_sent_index: Option<LogIndex>, // None means the ae is a heartbeat
         term: u64,
         success: bool,
@@ -458,7 +458,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     /// Return `Err(())` if self is no longer a candidate
     pub(super) fn handle_vote_resp(
         &self,
-        id: &ServerId,
+        id: ServerId,
         term: u64,
         vote_granted: bool,
         spec_pool: Vec<Arc<C>>,
@@ -479,9 +479,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         let mut cst_w = self.cst.lock();
         debug!("{}'s vote is granted by server {}", self.id(), id);
 
-        let _ig = cst_w.votes_received.insert(id.clone(), vote_granted);
+        let _ig = cst_w.votes_received.insert(id, vote_granted);
         assert!(
-            cst_w.sps.insert(id.clone(), spec_pool).is_none(),
+            cst_w.sps.insert(id, spec_pool).is_none(),
             "a server can't vote twice"
         );
 
@@ -501,7 +501,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         self.become_leader(&mut st_w);
 
         // update next_index for each follower
-        for other in &self.ctx.cluster_info.peers_id() {
+        for other in self.ctx.cluster_info.peers_ids() {
             self.lst.update_next_index(other, last_log_index + 1); // iter from the end to front is more likely to match the follower
         }
         if prev_last_log_index < last_log_index {
@@ -542,7 +542,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     /// Return Err(()) if the current node isn't a leader or current term is less than the given term
     pub(super) fn handle_snapshot_resp(
         &self,
-        follower_id: &ServerId,
+        follower_id: ServerId,
         meta: SnapshotMeta,
         term: u64,
     ) -> Result<(), ()> {
@@ -582,7 +582,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     /// Create a new `RawCurp`
     #[allow(clippy::too_many_arguments)] // only called once
     pub(super) fn new(
-        cluster_info: Arc<ClusterMember>,
+        cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         cmd_board: CmdBoardRef<C>,
         spec_pool: SpecPoolRef<C>,
@@ -602,12 +602,12 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 cfg.follower_timeout_ticks,
                 cfg.candidate_timeout_ticks,
             )),
-            lst: LeaderState::new(&cluster_info.peers_id()),
+            lst: LeaderState::new(&cluster_info.peers_ids()),
             cst: Mutex::new(CandidateState::new(
                 cluster_info
-                    .peers_id()
+                    .peers_ids()
                     .into_iter()
-                    .chain([cluster_info.self_id().clone()]),
+                    .chain([cluster_info.self_id()]),
             )),
             log: RwLock::new(Log::new(log_tx, cfg.batch_max_size, cfg.log_entries_cap)),
             ctx: Context {
@@ -635,7 +635,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     /// `is_leader` will only take effect when all servers start from a fresh state
     #[allow(clippy::too_many_arguments)] // only called once
     pub(super) fn recover_from(
-        cluster_info: Arc<ClusterMember>,
+        cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         cmd_board: CmdBoardRef<C>,
         spec_pool: SpecPoolRef<C>,
@@ -695,16 +695,16 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
     /// Get the leader id, attached with the term
     pub(super) fn leader(&self) -> (Option<ServerId>, u64) {
-        self.st.map_read(|st_r| (st_r.leader_id.clone(), st_r.term))
+        self.st.map_read(|st_r| (st_r.leader_id, st_r.term))
     }
 
     /// Get cluster info
-    pub(super) fn cluster(&self) -> &ClusterMember {
+    pub(super) fn cluster(&self) -> &ClusterInfo {
         self.ctx.cluster_info.as_ref()
     }
 
     /// Get self's id
-    pub(super) fn id(&self) -> &ServerId {
+    pub(super) fn id(&self) -> ServerId {
         self.ctx.cluster_info.self_id()
     }
 
@@ -714,7 +714,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     /// Get `append_entries` request for `follower_id` that contains the latest log entries
-    pub(super) fn sync(&self, follower_id: &ServerId) -> Result<SyncAction<C>, ()> {
+    pub(super) fn sync(&self, follower_id: ServerId) -> Result<SyncAction<C>, ()> {
         let term = {
             let lst_r = self.st.read();
             if lst_r.role != Role::Leader {
@@ -748,7 +748,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             let entries = log_r.get_from(next_index);
             let ae = AppendEntries {
                 term,
-                leader_id: self.id().clone(),
+                leader_id: self.id(),
                 prev_log_index,
                 prev_log_term,
                 leader_commit: log_r.commit_index,
@@ -800,11 +800,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     /// Get sync event
-    pub(super) fn sync_event(&self, id: &ServerId) -> Arc<Event> {
+    pub(super) fn sync_event(&self, id: ServerId) -> Arc<Event> {
         Arc::clone(
             self.ctx
                 .sync_events
-                .get(id)
+                .get(&id)
                 .unwrap_or_else(|| unreachable!("server id {id} not found")),
         )
     }
@@ -825,7 +825,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
         st.term += 1;
         st.role = Role::Candidate;
-        st.voted_for = Some(self.id().clone());
+        st.voted_for = Some(self.id());
         st.leader_id = None;
         let _ig = self.ctx.leader_tx.send(None).ok();
         self.reset_election_tick();
@@ -843,8 +843,8 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
         // vote to self
         debug!("{}'s vote is granted by server {}", self.id(), self.id());
-        cst.votes_received = HashMap::from([(self.id().clone(), true)]);
-        cst.sps = HashMap::from([(self.id().clone(), self_sp)]);
+        cst.votes_received = HashMap::from([(self.id(), true)]);
+        cst.sps = HashMap::from([(self.id(), self_sp)]);
 
         if matches!(cst.check_vote(), VoteResult::Won) {
             // single node cluster
@@ -857,7 +857,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         } else {
             Some(Vote {
                 term: st.term,
-                candidate_id: self.id().clone(),
+                candidate_id: self.id(),
                 last_log_index: log.last_log_index(),
                 last_log_term: log.last_log_term(),
             })
@@ -867,8 +867,8 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     /// Server becomes a leader
     fn become_leader(&self, st: &mut State) {
         st.role = Role::Leader;
-        st.leader_id = Some(self.id().clone());
-        let _ig = self.ctx.leader_tx.send(Some(self.id().clone())).ok();
+        st.leader_id = Some(self.id());
+        let _ig = self.ctx.leader_tx.send(Some(self.id())).ok();
         self.ctx.leader_event.notify(usize::MAX);
         self.ctx.role_change.on_election_win();
         debug!("{} becomes the leader", self.id());
@@ -918,8 +918,8 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         let replicated_cnt: u64 = self
             .ctx
             .cluster_info
-            .peers_id()
-            .iter()
+            .peers_ids()
+            .into_iter()
             .filter(|&id| self.lst.get_match_index(id) >= i)
             .count()
             .numeric_cast();
@@ -938,7 +938,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 .iter()
                 .map(|(id, sp)| {
                     let sp: Vec<String> = sp.iter().map(|cmd| cmd.id().to_string()).collect();
-                    (id.clone(), sp.join(","))
+                    (*id, sp.join(","))
                 })
                 .collect();
             debug!("{} collected spec pools: {debug_sps:?}", self.id());
