@@ -5,21 +5,21 @@ This crate provides a command line client for Xline.
 ## Global Options
 
 - endpoints <SERVER_NAME ADDR>... -- Set Xline endpoints, which are separated by ','
-  
+
   ```bash
   # connect to servers with specific addresses
-  ./xlinectl --endpoints "server0 127.0.0.1:2379"
+  ./xlinectl --endpoints "127.0.0.1:2379"
   ```
 
 - user <USERNAME[:PASSWD]> -- The name of the user, this provide a shorthand to set password
-  
+
   ```bash
   # connect to servers using user `foo` with password `bar`
   ./xlinectl --user foo:bar
   ```
 
 - password <PASSWD> -- The password of the user, should exist if password not set in `--user`
-  
+
   ```bash
   # connect to servers using user `foo` with password `bar`
   ./xlinectl --user foo --password bar
@@ -118,11 +118,11 @@ get [options] <key> [range_end]
 #### Examples
 
 ```bash
-./xlinectl put foo bar      
+./xlinectl put foo bar
 OK
-./xlinectl put foo1 bar1      
+./xlinectl put foo1 bar1
 OK
-./xlinectl put foo2 bar2      
+./xlinectl put foo2 bar2
 OK
 
 # get the key `foo`

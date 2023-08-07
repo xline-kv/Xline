@@ -42,11 +42,7 @@ impl MaintenanceClient {
     /// #[tokio::main]
     /// async fn main() -> Result<()> {
     ///     // the name and address of all curp members
-    ///     let curp_members = [
-    ///         ("server0", "10.0.0.1:2379"),
-    ///         ("server1", "10.0.0.2:2379"),
-    ///         ("server2", "10.0.0.3:2379"),
-    ///     ];
+    ///     let curp_members = ["10.0.0.1:2379", "10.0.0.2:2379", "10.0.0.3:2379"];
     ///
     ///     let mut client = Client::connect(curp_members, ClientOptions::default())
     ///         .await?

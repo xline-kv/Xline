@@ -148,6 +148,7 @@
         clippy::integer_arithmetic
     )
 )]
+#![allow(unused)]
 
 extern crate utils as ext_utils;
 
@@ -156,12 +157,13 @@ use std::time::Duration;
 use anyhow::Result;
 use clap::{arg, value_parser, Command};
 use ext_utils::config::ClientTimeout;
+use itertools::Itertools;
 use xline_client::{Client, ClientOptions};
 
 use crate::{
     command::{get, put},
     utils::{
-        parser::{parse_endpoints, parse_user},
+        parser::parse_user,
         printer::{set_printer_type, PrinterType},
     },
 };
@@ -182,9 +184,9 @@ fn cli() -> Command {
         .arg_required_else_help(true)
         .allow_external_subcommands(true)
         .arg(
-            arg!(--endpoints <"SERVER_NAME ADDR"> "Xline endpoints, using the format of [name0 addr0, name1 addr1, ...]")
+            arg!(--endpoints <"SERVER_NAME ADDR"> "Xline endpoints, using the format of [addr0, addr1, ...]")
                 .num_args(1..)
-                .default_values(["server0 127.0.0.1:2379"])
+                .default_values(["127.0.0.1:2379"])
                 .value_delimiter(',')
                 .global(true)
                 .help_heading(GLOBAL_HEADING),
@@ -228,7 +230,7 @@ fn cli() -> Command {
 async fn main() -> Result<()> {
     let matches = cli().get_matches();
     let user_opt = parse_user(&matches)?;
-    let endpoints = parse_endpoints(&matches)?;
+    let endpoints = matches.get_many::<String>("endpoints").expect("Required");
     let client_timeout_opt = ClientTimeout::new(
         Duration::from_secs(*matches.get_one("wait_synced_timeout").expect("Required")),
         Duration::from_secs(*matches.get_one("wait_synced_timeout").expect("Required")),

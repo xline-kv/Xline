@@ -107,18 +107,26 @@ impl Cluster {
     /// Create or get the client with the specified index
     pub async fn client(&mut self) -> &mut Client {
         if self.client.is_none() {
-            let client = Client::new(self.all_members.clone(), true, ClientTimeout::default())
-                .await
-                .unwrap_or_else(|e| {
-                    panic!("Client connect error: {:?}", e);
-                });
+            let client = Client::new(
+                self.all_members.values().cloned().collect(),
+                true,
+                ClientTimeout::default(),
+            )
+            .await
+            .unwrap_or_else(|e| {
+                panic!("Client connect error: {:?}", e);
+            });
             self.client = Some(client);
         }
         self.client.as_mut().unwrap()
     }
 
-    pub fn addrs(&self) -> &HashMap<ServerId, String> {
+    pub fn all_members(&self) -> &HashMap<ServerId, String> {
         &self.all_members
+    }
+
+    pub fn addrs(&self) -> Vec<String> {
+        self.all_members.values().cloned().collect()
     }
 
     fn test_key_pair() -> Option<(EncodingKey, DecodingKey)> {

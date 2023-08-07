@@ -157,9 +157,8 @@ impl CurpGroup {
         SimClient {
             inner: Arc::new(
                 Client::<TestCommand>::builder()
-                    .all_members(all_members)
                     .timeout(timeout)
-                    .build()
+                    .build_from_all_members(all_members)
                     .await
                     .unwrap(),
             ),

@@ -147,7 +147,6 @@
     )
 )]
 use std::{
-    collections::HashMap,
     fmt::Debug,
     sync::Arc,
     task::{Context, Poll},
@@ -208,19 +207,18 @@ impl Client {
     pub async fn connect<E, S>(all_members: S, options: ClientOptions) -> Result<Self>
     where
         E: AsRef<str>,
-        S: IntoIterator<Item = (E, E)>,
+        S: IntoIterator<Item = E>,
     {
-        let all_members: HashMap<_, _> = all_members
+        let addrs: Vec<_> = all_members
             .into_iter()
-            .map(|(id, addr)| (id.as_ref().to_owned(), addr.as_ref().to_owned()))
+            .map(|addr| addr.as_ref().to_owned())
             .collect();
         let name = String::from("client");
-        let channel = Self::build_channel(all_members.values().cloned().collect()).await?;
+        let channel = Self::build_channel(addrs.clone()).await?;
         let curp_client = Arc::new(
             CurpClient::builder()
-                .addrs(all_members.into_values().collect())
                 .timeout(options.curp_timeout)
-                .build()
+                .build_from_addrs(addrs)
                 .await?,
         );
         let id_gen = Arc::new(lease_gen::LeaseIdGenerator::new());

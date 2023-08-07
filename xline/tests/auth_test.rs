@@ -45,7 +45,7 @@ async fn test_auth_token_with_disable() -> Result<(), Box<dyn Error>> {
 
     enable_auth(&mut auth_client).await?;
     let mut authed_client = etcd_client::Client::connect(
-        vec![cluster.addrs()["server0"].to_string()],
+        vec![cluster.all_members()["server0"].to_string()],
         Some(ConnectOptions::new().with_user("root", "123")),
     )
     .await?;
@@ -102,12 +102,12 @@ async fn test_kv_authorization() -> Result<(), Box<dyn Error>> {
     enable_auth(&mut auth_client).await?;
 
     let mut u1_client = etcd_client::Client::connect(
-        vec![cluster.addrs()["server0"].to_string()],
+        vec![cluster.all_members()["server0"].to_string()],
         Some(ConnectOptions::new().with_user("u1", "123")),
     )
     .await?;
     let mut u2_client = etcd_client::Client::connect(
-        vec![cluster.addrs()["server0"].to_string()],
+        vec![cluster.all_members()["server0"].to_string()],
         Some(ConnectOptions::new().with_user("u2", "123")),
     )
     .await?;
@@ -158,12 +158,12 @@ async fn test_no_root_user_do_admin_ops() -> Result<(), Box<dyn Error>> {
     set_user(&mut auth_client, "u", "123", "r", &[], &[]).await?;
     enable_auth(&mut auth_client).await?;
     let mut user_client = etcd_client::Client::connect(
-        vec![cluster.addrs()["server0"].to_string()],
+        vec![cluster.all_members()["server0"].to_string()],
         Some(ConnectOptions::new().with_user("u", "123")),
     )
     .await?;
     let mut root_client = etcd_client::Client::connect(
-        vec![cluster.addrs()["server0"].to_string()],
+        vec![cluster.all_members()["server0"].to_string()],
         Some(ConnectOptions::new().with_user("root", "123")),
     )
     .await?;
@@ -190,14 +190,14 @@ async fn test_auth_wrong_password() -> Result<(), Box<dyn Error>> {
     enable_auth(&mut auth_client).await?;
 
     let result = etcd_client::Client::connect(
-        vec![cluster.addrs()["server0"].to_string()],
+        vec![cluster.all_members()["server0"].to_string()],
         Some(ConnectOptions::new().with_user("root", "456")),
     )
     .await;
     assert!(result.is_err());
 
     let result = etcd_client::Client::connect(
-        vec![cluster.addrs()["server0"].to_string()],
+        vec![cluster.all_members()["server0"].to_string()],
         Some(ConnectOptions::new().with_user("root", "123")),
     )
     .await;

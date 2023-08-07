@@ -1,11 +1,10 @@
-use std::{collections::HashMap, fmt::Debug};
+use std::fmt::Debug;
 
-use curp::{client::Client as CurpClient, cmd::ProposeId, ServerId};
+use curp::{client::Client as CurpClient, cmd::ProposeId};
 use etcd_client::{
     AuthClient, Client as EtcdClient, KvClient, LeaseClient, LeaseKeepAliveStream, LeaseKeeper,
     LockClient, MaintenanceClient, WatchClient,
 };
-use itertools::Itertools;
 use utils::config::ClientTimeout;
 use uuid::Uuid;
 
@@ -64,17 +63,15 @@ impl Client {
     /// If `EtcdClient::connect` fails.
     #[inline]
     pub async fn new(
-        all_members: HashMap<ServerId, String>,
+        addrs: Vec<String>,
         use_curp_client: bool,
         timeout: ClientTimeout,
     ) -> Result<Self, ClientError> {
         let name = String::from("client");
-        let etcd_client =
-            EtcdClient::connect(all_members.values().cloned().collect_vec(), None).await?;
+        let etcd_client = EtcdClient::connect(addrs.clone(), None).await?;
         let curp_client = CurpClient::builder()
-            .addrs(all_members.into_values().collect())
             .timeout(timeout)
-            .build()
+            .build_from_addrs(addrs)
             .await?;
         Ok(Self {
             name,
