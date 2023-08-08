@@ -21,58 +21,29 @@ use crate::{
     LogIndex, ServerId,
 };
 
-/// Client builder
-#[derive(Debug)]
-pub struct Builder<C> {
-    /// Local server id (used in an inner client)
+/// Protocol client
+#[derive(derive_builder::Builder)]
+#[builder(build_fn(skip), name = "Builder")]
+pub struct Client<C: Command> {
+    /// local server id. Only use in an inner client.
+    #[builder(field(type = "Option<ServerId>"), setter(custom))]
     local_server_id: Option<ServerId>,
-    /// Client timeout
-    timeout: Option<ClientTimeout>,
-    /// Phantom data
+    /// Current leader and term
+    #[builder(setter(skip))]
+    state: RwLock<State>,
+    /// Curp client timeout settings
+    timeout: ClientTimeout,
+    /// To keep Command type
+    #[builder(setter(skip))]
     phantom: PhantomData<C>,
 }
 
-impl<C> Default for Builder<C> {
+impl<C: Command> Builder<C> {
+    /// Set local server id.
     #[inline]
-    #[must_use]
-    fn default() -> Self {
-        Self {
-            local_server_id: None,
-            timeout: None,
-            phantom: PhantomData,
-        }
-    }
-}
-
-impl<C> Builder<C>
-where
-    C: Command + 'static,
-{
-    /// Create new client builder
-    #[inline]
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Set client timeout
-    #[inline]
-    #[must_use]
-    pub fn timeout(self, timeout: ClientTimeout) -> Self {
-        Self {
-            timeout: Some(timeout),
-            ..self
-        }
-    }
-
-    /// Set local server id. (only used in an inner client)
-    #[inline]
-    #[must_use]
-    pub fn local_server_id(self, local_server_id: ServerId) -> Self {
-        Self {
-            local_server_id: Some(local_server_id),
-            ..self
-        }
+    pub fn local_server_id(&mut self, value: ServerId) -> &mut Self {
+        self.local_server_id = Some(value);
+        self
     }
 
     /// Build client from all members
@@ -80,7 +51,7 @@ where
     /// Return error when meet rpc error or missing some arguments
     #[inline]
     pub async fn build_from_all_members(
-        self,
+        &self,
         all_members: HashMap<ServerId, String>,
     ) -> Result<Client<C>, ClientBuildError> {
         let Some(timeout) = self.timeout else {
@@ -88,7 +59,7 @@ where
         };
         let connects = rpc::connect(all_members).await;
         let client = Client::<C> {
-            local_server_id: self.local_server_id,
+            local_server_id: self.local_server_id.clone(),
             state: RwLock::new(State::new(None, 0, connects)),
             timeout,
             phantom: PhantomData,
@@ -100,7 +71,10 @@ where
     /// # Errors
     /// Return error when meet rpc error or missing some arguments
     #[inline]
-    pub async fn build_from_addrs(self, addrs: Vec<String>) -> Result<Client<C>, ClientBuildError> {
+    pub async fn build_from_addrs(
+        &self,
+        addrs: Vec<String>,
+    ) -> Result<Client<C>, ClientBuildError> {
         let Some(timeout) = self.timeout else {
             return Err(ClientBuildError::invalid_aurguments("timeout is required"));
         };
@@ -123,25 +97,13 @@ where
 
         let connects = rpc::connect(res.all_members).await;
         let client = Client::<C> {
-            local_server_id: self.local_server_id,
+            local_server_id: self.local_server_id.clone(),
             state: RwLock::new(State::new(res.leader_id, res.term, connects)),
             timeout,
             phantom: PhantomData,
         };
         Ok(client)
     }
-}
-
-/// Protocol client
-pub struct Client<C: Command> {
-    /// local server id. Only use in an inner client.
-    local_server_id: Option<ServerId>,
-    /// Current leader and term
-    state: RwLock<State>,
-    /// Curp client timeout settings
-    timeout: ClientTimeout,
-    /// To keep Command type
-    phantom: PhantomData<C>,
 }
 
 impl<C: Command> Debug for Client<C> {
@@ -155,7 +117,7 @@ impl<C: Command> Debug for Client<C> {
 }
 
 /// State of a client
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct State {
     /// Current leader
     leader: Option<ServerId>,
@@ -215,7 +177,7 @@ where
     #[inline]
     #[must_use]
     pub fn builder() -> Builder<C> {
-        Builder::new()
+        Builder::default()
     }
 
     /// The fast round of Curp protocol
