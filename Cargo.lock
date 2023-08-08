@@ -597,6 +597,7 @@ dependencies = [
  "clippy-utilities 0.2.0",
  "curp-external-api",
  "curp-test-utils",
+ "derive_builder",
  "engine",
  "event-listener",
  "flume",
