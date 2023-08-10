@@ -1,7 +1,11 @@
-use std::{cmp::Ordering, collections::HashMap, fmt::Debug, iter, marker::PhantomData, sync::Arc};
+use std::{
+    cmp::Ordering, collections::HashMap, fmt::Debug, iter, marker::PhantomData, sync::Arc,
+    time::Duration,
+};
 
+use dashmap::DashMap;
 use event_listener::Event;
-use futures::{future::select_all, pin_mut, stream::FuturesUnordered, StreamExt};
+use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use tokio::time::timeout;
@@ -31,6 +35,9 @@ pub struct Client<C: Command> {
     /// Current leader and term
     #[builder(setter(skip))]
     state: RwLock<State>,
+    /// All servers's `Connect`
+    #[builder(setter(skip))]
+    connects: DashMap<ServerId, Arc<dyn ConnectApi>>,
     /// Curp client timeout settings
     timeout: ClientTimeout,
     /// To keep Command type
@@ -57,14 +64,48 @@ impl<C: Command> Builder<C> {
         let Some(timeout) = self.timeout else {
             return Err(ClientBuildError::invalid_aurguments("timeout is required"));
         };
-        let connects = rpc::connect(all_members).await;
+        let connects = rpc::connect(all_members).await.collect();
         let client = Client::<C> {
             local_server_id: self.local_server_id.clone(),
-            state: RwLock::new(State::new(None, 0, connects)),
+            state: RwLock::new(State::new(None, 0)),
             timeout,
+            connects,
             phantom: PhantomData,
         };
         Ok(client)
+    }
+
+    /// Fetch cluster from server
+    async fn fetch_cluster(
+        &self,
+        addrs: Vec<String>,
+        propose_timeout: Duration,
+    ) -> Result<FetchClusterResponse, ClientBuildError> {
+        let mut futs: FuturesUnordered<_> = addrs
+            .into_iter()
+            .map(|mut addr| {
+                if !addr.starts_with("http://") {
+                    addr.insert_str(0, "http://");
+                }
+                async move {
+                    let mut protocol_client = ProtocolClient::connect(addr).await?;
+                    let mut req = tonic::Request::new(FetchClusterRequest::new());
+                    req.set_timeout(propose_timeout);
+                    let fetch_cluster_res = protocol_client.fetch_cluster(req).await?.into_inner();
+                    Ok::<FetchClusterResponse, ClientBuildError>(fetch_cluster_res)
+                }
+            })
+            .collect();
+        let mut err = ClientBuildError::invalid_aurguments("addrs is empty");
+        while let Some(r) = futs.next().await {
+            match r {
+                Ok(r) => {
+                    return Ok(r);
+                }
+                Err(e) => err = e,
+            }
+        }
+        Err(err)
     }
 
     /// Build client from addresses, this method will fetch all members from servers
@@ -78,28 +119,15 @@ impl<C: Command> Builder<C> {
         let Some(timeout) = self.timeout else {
             return Err(ClientBuildError::invalid_aurguments("timeout is required"));
         };
-        let futs = addrs.into_iter().map(|mut addr| {
-            if !addr.starts_with("http://") {
-                addr.insert_str(0, "http://");
-            }
-            let timeout = *timeout.propose_timeout();
-            let fut = async move {
-                let mut protocol_client = ProtocolClient::connect(addr).await?;
-                let mut req = tonic::Request::new(FetchClusterRequest::new());
-                req.set_timeout(timeout);
-                let fetch_cluster_res = protocol_client.fetch_cluster(req).await?.into_inner();
-                Ok::<FetchClusterResponse, ClientBuildError>(fetch_cluster_res)
-            };
-            Box::pin(fut)
-        });
-
-        let res = select_all(futs).await.0?;
-
-        let connects = rpc::connect(res.all_members).await;
+        let res = self
+            .fetch_cluster(addrs.clone(), *timeout.propose_timeout())
+            .await?;
+        let connects = rpc::connect(res.all_members).await.collect();
         let client = Client::<C> {
             local_server_id: self.local_server_id.clone(),
-            state: RwLock::new(State::new(res.leader_id, res.term, connects)),
+            state: RwLock::new(State::new(res.leader_id, res.term)),
             timeout,
+            connects,
             phantom: PhantomData,
         };
         Ok(client)
@@ -125,22 +153,15 @@ struct State {
     term: u64,
     /// When a new leader is set, notify
     leader_notify: Arc<Event>,
-    /// All servers's `Connect`
-    connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
 }
 
 impl State {
     /// Create the initial client state
-    fn new(
-        leader: Option<ServerId>,
-        term: u64,
-        connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
-    ) -> Self {
+    fn new(leader: Option<ServerId>, term: u64) -> Self {
         Self {
             leader,
             term,
             leader_notify: Arc::new(Event::new()),
-            connects,
         }
     }
 
@@ -190,12 +211,11 @@ where
         debug!("fast round for cmd({}) started", cmd_arc.id());
         let req = ProposeRequest::new(cmd_arc.as_ref()).map_err(Into::<ProposeError>::into)?;
 
-        let (connects, superquorum) = self.state.map_read(|state_r| {
-            (
-                state_r.connects.values().cloned().collect_vec(),
-                superquorum(state_r.connects.len()),
-            )
-        });
+        let connects = self
+            .connects
+            .iter()
+            .map(|connect| Arc::clone(&connect))
+            .collect_vec();
         let mut rpcs: FuturesUnordered<_> = connects
             .iter()
             .zip(iter::repeat(req))
@@ -206,6 +226,7 @@ where
 
         let mut ok_cnt: usize = 0;
         let mut execute_result: Option<C::ER> = None;
+        let superquorum = superquorum(self.connects.len());
         while let Some(resp_result) = rpcs.next().await {
             let resp = match resp_result {
                 Ok(resp) => resp.into_inner(),
@@ -615,12 +636,12 @@ where
 
     /// Get the connect by server id
     fn get_connect(&self, id: &ServerId) -> Option<Arc<dyn ConnectApi>> {
-        self.state.read().connects.get(id).cloned()
+        self.connects.get(id).map(|c| Arc::clone(&c))
     }
 
     /// Get all connects
     fn all_connects(&self) -> Vec<Arc<dyn ConnectApi>> {
-        self.state.read().connects.values().cloned().collect()
+        self.connects.iter().map(|c| Arc::clone(&c)).collect()
     }
 }
 

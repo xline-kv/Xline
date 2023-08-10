@@ -525,7 +525,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         shutdown_trigger: Arc<Event>,
         log_rx: tokio::sync::mpsc::UnboundedReceiver<Arc<LogEntry<C>>>,
     ) {
-        let connects = rpc::connect(cluster_info.peers()).await;
+        let connects = rpc::connect(cluster_info.peers())
+            .await
+            .collect::<HashMap<_, _>>();
         let election_task = tokio::spawn(Self::election_task(Arc::clone(&curp), connects.clone()));
         let sync_task_daemons = connects
             .into_iter()

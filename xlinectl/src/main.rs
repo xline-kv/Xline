@@ -148,7 +148,6 @@
         clippy::integer_arithmetic
     )
 )]
-#![allow(unused)]
 
 extern crate utils as ext_utils;
 
@@ -157,7 +156,6 @@ use std::time::Duration;
 use anyhow::Result;
 use clap::{arg, value_parser, Command};
 use ext_utils::config::ClientTimeout;
-use itertools::Itertools;
 use xline_client::{Client, ClientOptions};
 
 use crate::{

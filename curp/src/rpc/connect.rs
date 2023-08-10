@@ -30,7 +30,7 @@ const SNAPSHOT_CHUNK_SIZE: u64 = 64 * 1024;
 /// Convert a vec of addr string to a vec of `Connect`
 pub(crate) async fn connect(
     addrs: HashMap<ServerId, String>,
-) -> HashMap<ServerId, Arc<dyn ConnectApi>> {
+) -> impl Iterator<Item = (ServerId, Arc<dyn ConnectApi>)> {
     futures::future::join_all(addrs.into_iter().map(|(id, mut addr)| async move {
         // Addrs must start with "http" to communicate with the server
         if !addr.starts_with("http://") {
@@ -53,13 +53,12 @@ pub(crate) async fn connect(
         });
         (id, connect)
     })
-    .collect()
 }
 
 /// Connect interface
 #[cfg_attr(test, automock)]
 #[async_trait]
-pub(crate) trait ConnectApi: Send + Sync + 'static + Debug {
+pub(crate) trait ConnectApi: Send + Sync + 'static {
     /// Get server id
     fn id(&self) -> &ServerId;
 
