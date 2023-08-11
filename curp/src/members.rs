@@ -1,4 +1,3 @@
-use clippy_utilities::OverflowArithmetic;
 use itertools::Itertools;
 use std::{
     collections::{hash_map::DefaultHasher, HashMap},
@@ -156,13 +155,14 @@ impl ClusterInfo {
     /// Get length of peers
     #[must_use]
     #[inline]
-    pub fn peers_len(&self) -> usize {
-        self.members.len().overflow_sub(1)
+    pub fn members_len(&self) -> usize {
+        self.members.len()
     }
 
     /// Get id by name
     #[must_use]
     #[inline]
+    #[cfg(test)]
     pub fn get_id_by_name(&self, name: &str) -> Option<ServerId> {
         self.members
             .iter()
@@ -210,7 +210,7 @@ mod tests {
         let node1_url = node1.self_address();
         assert!(!peers.contains_key(&node1_id));
         assert_eq!(peers.len(), 2);
-        assert_eq!(node1.peers_len(), peers.len());
+        assert_eq!(node1.members_len(), peers.len() + 1);
 
         let peer_urls = peers.values().collect::<Vec<_>>();
 

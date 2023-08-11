@@ -45,7 +45,7 @@ async fn basic_propose() {
 
 #[tokio::test]
 #[abort_on_panic]
-async fn fetch_cluster() {
+async fn client_build_from_addrs_shoulde_fetch_cluster_from_server() {
     init_logger();
     let group = CurpGroup::new(3).await;
 

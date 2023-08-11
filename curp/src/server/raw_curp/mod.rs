@@ -472,14 +472,15 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             return Err(());
         }
 
+        let mut cst_w = self.cst.lock();
+        let _ig = cst_w.votes_received.insert(id, vote_granted);
+
         if !vote_granted {
             return Ok(false);
         }
 
-        let mut cst_w = self.cst.lock();
         debug!("{}'s vote is granted by server {}", self.id(), id);
 
-        let _ig = cst_w.votes_received.insert(id, vote_granted);
         assert!(
             cst_w.sps.insert(id, spec_pool).is_none(),
             "a server can't vote twice"
@@ -1009,7 +1010,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
     /// Get quorum: the smallest number of servers who must be online for the cluster to work
     fn quorum(&self) -> u64 {
-        ((self.ctx.cluster_info.peers_len() + 1) / 2 + 1).numeric_cast()
+        (self.ctx.cluster_info.members_len() / 2 + 1).numeric_cast()
     }
 
     /// Get `recover_quorum`: the smallest number of servers who must contain a command in speculative pool for it to be recovered

@@ -67,7 +67,7 @@ impl<C: Command> Builder<C> {
         };
         let connects = rpc::connect(all_members).await.collect();
         let client = Client::<C> {
-            local_server_id: self.local_server_id.clone(),
+            local_server_id: self.local_server_id,
             state: RwLock::new(State::new(None, 0)),
             timeout,
             connects,
@@ -125,7 +125,7 @@ impl<C: Command> Builder<C> {
             .await?;
         let connects = rpc::connect(res.all_members).await.collect();
         let client = Client::<C> {
-            local_server_id: self.local_server_id.clone(),
+            local_server_id: self.local_server_id,
             state: RwLock::new(State::new(res.leader_id, res.term)),
             timeout,
             connects,
