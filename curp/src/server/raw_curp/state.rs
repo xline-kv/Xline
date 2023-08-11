@@ -41,8 +41,8 @@ pub(super) struct State {
 pub(super) struct CandidateState<C> {
     /// Collected speculative pools, used for recovery
     pub(super) sps: HashMap<ServerId, Vec<Arc<C>>>,
-    /// All voters in current cluster
-    pub(super) voters: HashSet<ServerId>,
+    /// config in current cluster
+    pub(super) config: MajorityConfig,
     /// Votes received in the election
     pub(super) votes_received: HashMap<ServerId, bool>,
 }
@@ -156,11 +156,38 @@ impl LeaderState {
 
 impl<C> CandidateState<C> {
     /// Create a new `CandidateState`
-    pub(super) fn new(servers: impl Iterator<Item = ServerId>) -> Self {
+    pub(super) fn new(voters: impl Iterator<Item = ServerId>) -> Self {
         Self {
             sps: HashMap::new(),
-            voters: servers.collect(),
+            config: MajorityConfig::new(voters),
             votes_received: HashMap::new(),
+        }
+    }
+
+    /// Check if the candidate has won the election
+    pub(super) fn check_vote(&self) -> VoteResult {
+        self.config.check_vote(&self.votes_received)
+    }
+}
+
+/// Trait for cluster configuration
+trait ClusterConfig {
+    /// Check if the candidate has won the election
+    fn check_vote(&self, votes_received: &HashMap<ServerId, bool>) -> VoteResult;
+}
+
+/// `MajorityConfig` is a set of IDs that uses majority quorums to make decisions.
+#[derive(Debug)]
+pub(super) struct MajorityConfig {
+    /// The voters in the cluster
+    voters: HashSet<ServerId>,
+}
+
+impl MajorityConfig {
+    /// Create a new `MajorityConfig`
+    fn new(voters: impl Iterator<Item = ServerId>) -> Self {
+        Self {
+            voters: voters.collect(),
         }
     }
 
@@ -168,9 +195,10 @@ impl<C> CandidateState<C> {
     pub(super) fn quorum(&self) -> usize {
         self.voters.len() / 2 + 1
     }
+}
 
-    /// Check if the candidate has won the election
-    pub(super) fn check_vote(&self) -> VoteResult {
+impl ClusterConfig for MajorityConfig {
+    fn check_vote(&self, votes_received: &HashMap<ServerId, bool>) -> VoteResult {
         if self.voters.is_empty() {
             return VoteResult::Won;
         }
@@ -178,9 +206,8 @@ impl<C> CandidateState<C> {
         let mut voted_cnt = 0;
         let mut missing_cnt = 0;
         for id in &self.voters {
-            match self.votes_received.get(id) {
+            match votes_received.get(id) {
                 Some(&true) => voted_cnt += 1,
-
                 None => missing_cnt += 1,
                 _ => {}
             }
@@ -217,19 +244,19 @@ mod test {
 
     #[test]
     fn quorum_should_work() {
-        let cst = CandidateState::<TestCommand>::new(0..3);
+        let cst = MajorityConfig::new(0..3);
         assert_eq!(cst.quorum(), 2);
 
-        let cst = CandidateState::<TestCommand>::new(0..4);
+        let cst = MajorityConfig::new(0..4);
         assert_eq!(cst.quorum(), 3);
 
-        let cst = CandidateState::<TestCommand>::new(0..5);
+        let cst = MajorityConfig::new(0..5);
         assert_eq!(cst.quorum(), 3);
 
-        let cst = CandidateState::<TestCommand>::new(0..9);
+        let cst = MajorityConfig::new(0..9);
         assert_eq!(cst.quorum(), 5);
 
-        let cst = CandidateState::<TestCommand>::new(0..10);
+        let cst = MajorityConfig::new(0..10);
         assert_eq!(cst.quorum(), 6);
     }
 
