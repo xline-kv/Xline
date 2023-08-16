@@ -111,7 +111,7 @@ where
     ) -> Result<i64, tonic::Status> {
         self.storage
             .check_password(username, password)
-            .map_err(|e| tonic::Status::invalid_argument(format!("Auth failed, error: {e}")))
+            .map_err(Into::into)
     }
 
     /// Propose request and make a response
