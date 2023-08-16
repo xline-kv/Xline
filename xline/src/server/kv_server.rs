@@ -24,7 +24,7 @@ use crate::{
         Response, ResponseOp, TxnRequest, TxnResponse,
     },
     server::command::command_from_request_wrapper,
-    storage::{storage_api::StorageApi, AuthStore, KvStore},
+    storage::{storage_api::StorageApi, AuthStore, ExecuteError, KvStore},
 };
 
 /// KV Server
@@ -85,13 +85,8 @@ where
 
     /// serializable execute request in current node
     fn do_serializable(&self, wrapper: &RequestWithToken) -> Result<Response, tonic::Status> {
-        self.auth_storage
-            .check_permission(wrapper)
-            .map_err(|err| tonic::Status::invalid_argument(err.to_string()))?;
-        let cmd_res = self
-            .kv_storage
-            .execute(wrapper)
-            .map_err(|e| tonic::Status::internal(format!("Execute failed: {e:?}")))?;
+        self.auth_storage.check_permission(wrapper)?;
+        let cmd_res = self.kv_storage.execute(wrapper)?;
 
         Ok(Self::parse_response_op(cmd_res.decode().into()))
     }
@@ -158,9 +153,7 @@ where
     ) -> Result<(), tonic::Status> {
         (range_revision <= 0 || range_revision >= compacted_revision)
             .then_some(())
-            .ok_or(tonic::Status::out_of_range(format!(
-                "required revision {range_revision} has been compacted, compacted revision is {compacted_revision}"
-            )))
+            .ok_or(ExecuteError::RevisionCompacted(range_revision, compacted_revision).into())
     }
 
     /// Wait current node's state machine apply the conflict commands

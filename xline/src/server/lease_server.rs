@@ -22,7 +22,7 @@ use crate::{
         LeaseKeepAliveResponse, LeaseLeasesRequest, LeaseLeasesResponse, LeaseRevokeRequest,
         LeaseRevokeResponse, LeaseTimeToLiveRequest, LeaseTimeToLiveResponse, RequestWrapper,
     },
-    storage::{storage_api::StorageApi, AuthStore, LeaseStore},
+    storage::{storage_api::StorageApi, AuthStore, ExecuteError, LeaseStore},
 };
 
 /// Default Lease Request Time
@@ -144,10 +144,9 @@ where
                 let ttl = if lease_storage.is_primary() {
                     lease_storage.wait_synced(keep_alive_req.id).await;
 
-                    lease_storage.keep_alive(keep_alive_req.id).map_err(|e| {
-                        tonic::Status::invalid_argument(format!("Keep alive error: {e}",))})
+                    lease_storage.keep_alive(keep_alive_req.id).map_err(Into::into)
                 } else {
-                    Err(tonic::Status::invalid_argument("current node is not a leader"))
+                    Err(tonic::Status::failed_precondition("current node is not a leader"))
                 }?;
                 yield LeaseKeepAliveResponse {
                     id: keep_alive_req.id,
@@ -309,7 +308,7 @@ where
                 self.lease_storage.wait_synced(time_to_live_req.id).await;
 
                 let Some(lease) = self.lease_storage.look_up(time_to_live_req.id) else {
-                    return Err(tonic::Status::not_found("Lease not found"));
+                    return Err(ExecuteError::LeaseNotFound(time_to_live_req.id).into());
                 };
 
                 let keys = time_to_live_req

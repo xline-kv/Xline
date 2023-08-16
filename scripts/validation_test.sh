@@ -52,6 +52,9 @@ kv_validation() {
     run_with_expect "echo -e \"${stdin}\" | ${ETCDCTL} txn" "SUCCESS\n\nOK"
     run_with_expect "${ETCDCTL} get key2" "key2\nsuccess"
     run_with_expect "${ETCDCTL} del key1" "1"
+    run_with_match "${ETCDCTL} put '' value" "etcdserver: key is not provided"
+    run_with_match "${ETCDCTL} put non_exist_key --ignore-value" "etcdserver: key not found"
+
     # TODO compact
     echo "kv validation test passed"
 }
@@ -149,6 +152,8 @@ lease_validation() {
 
     run_with_expect "${ETCDCTL} lease revoke ${lease_id}" "lease ${lease_id} revoked"
     run_with_expect "${ETCDCTL} get key1" ""
+    run_with_match "${ETCDCTL} lease revoke 255" "etcdserver: requested lease not found"
+    run_with_match "${ETCDCTL} lease grant 10000000000" "etcdserver: too large lease TTL"
     echo "lease validation test passed"
 }
 
@@ -158,9 +163,12 @@ auth_validation() {
     run_with_expect "${ETCDCTL} user add root:root" "User root created"
     run_with_expect "${ETCDCTL} role add root" "Role root created"
     run_with_expect "${ETCDCTL} user grant-role root root" "Role root is granted to user root"
+    run_with_match "${ETCDCTL} --user root:root user list" "etcdserver: authentication is not enabled"
     run_with_expect "${ETCDCTL} auth enable" "Authentication Enabled"
+    run_with_match "${ETCDCTL} --user root:rot user list" "etcdserver: authentication failed, invalid user ID or password"
     run_with_expect "${ETCDCTL} --user root:root auth status" "Authentication Status: true\nAuthRevision: 4"
     run_with_expect "${ETCDCTL} --user root:root user add u:u" "User u created"
+    run_with_match "${ETCDCTL} --user u:u user add f:f" "etcdserver: permission denied"
     run_with_expect "${ETCDCTL} --user root:root role add r" "Role r created"
     run_with_expect "${ETCDCTL} --user root:root user grant-role u r" "Role r is granted to user u"
     run_with_expect "${ETCDCTL} --user root:root role grant-permission r readwrite key1" "Role r updated"
@@ -175,6 +183,13 @@ auth_validation() {
     run_with_expect "${ETCDCTL} --user root:root role list" "r\nroot"
     run_with_expect "${ETCDCTL} --user root:root user delete u" "User u deleted"
     run_with_expect "${ETCDCTL} --user root:root role delete r" "Role r deleted"
+    run_with_match "${ETCDCTL} --user root:root user get non_exist_user" "etcdserver: user name not found"
+    run_with_match "${ETCDCTL} --user root:root user add root:root" "etcdserver: user name already exists"
+    run_with_match "${ETCDCTL} --user root:root role get non_exist_role" "etcdserver: role name not found"
+    run_with_match "${ETCDCTL} --user root:root role add root" "etcdserver: role name already exists"
+    run_with_match "${ETCDCTL} --user root:root user revoke root r" "etcdserver: role is not granted to the user"
+    run_with_match "${ETCDCTL} --user root:root role revoke root non_exist_key" "etcdserver: permission is not granted to the role"
+    run_with_match "${ETCDCTL} --user root:root user delete root" "etcdserver: invalid auth management"
     run_with_expect "${ETCDCTL} --user root:root auth disable" "Authentication Disabled"
     echo "auth validation test passed"
 }
@@ -217,7 +232,7 @@ compact_validation() {
     done
     run_with_expect "${ETCDCTL} get --rev=4 key" "key\nvalue3"
     run_with_expect "${ETCDCTL} compact 5" "compacted revision 5"
-    run_with_match "${ETCDCTL} get --rev=4 key" "required revision 4 has been compacted, compacted revision is 5"
+    run_with_match "${ETCDCTL} get --rev=4 key" "etcdserver: mvcc: required revision has been compacted"
     run_with_match "${ETCDCTL} watch --rev=4 key " "watch was canceled (etcdserver: mvcc: required revision has been compacted)"
     echo "compact validation test pass..."
 }

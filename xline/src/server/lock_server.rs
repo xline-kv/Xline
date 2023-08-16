@@ -24,7 +24,7 @@ use crate::{
         ResponseHeader, SortOrder, SortTarget, TargetUnion, TxnRequest, TxnResponse, UnlockRequest,
         UnlockResponse, WatchClient, WatchCreateRequest, WatchRequest,
     },
-    storage::storage_api::StorageApi,
+    storage::{storage_api::StorageApi, ExecuteError},
 };
 
 /// Default session ttl
@@ -277,7 +277,7 @@ where
                 Ok(res) => {
                     let res = Into::<RangeResponse>::into(res.0.decode());
                     if res.kvs.is_empty() {
-                        return Err(tonic::Status::internal("session expired"));
+                        return Err(ExecuteError::LeaseExpired(lease_id).into());
                     }
                     res.header
                 }
