@@ -207,7 +207,7 @@ where
         let is_fast_path = true;
         let (res, sync_res) = self.propose(request, is_fast_path).await?;
 
-        let mut res: LeaseGrantResponse = res.decode().into();
+        let mut res: LeaseGrantResponse = res.into_inner().into();
         if let Some(sync_res) = sync_res {
             let revision = sync_res.revision();
             debug!("Get revision {:?} for LeaseGrantResponse", revision);
@@ -263,7 +263,7 @@ where
         let is_fast_path = true;
         let (res, sync_res) = self.propose(request, is_fast_path).await?;
 
-        let mut res: LeaseLeasesResponse = res.decode().into();
+        let mut res: LeaseLeasesResponse = res.into_inner().into();
         if let Some(sync_res) = sync_res {
             let revision = sync_res.revision();
             debug!("Get revision {:?} for LeaseLeasesResponse", revision);
@@ -284,7 +284,7 @@ where
         let is_fast_path = true;
         let (res, sync_res) = self.propose(request, is_fast_path).await?;
 
-        let mut res: LeaseRevokeResponse = res.decode().into();
+        let mut res: LeaseRevokeResponse = res.into_inner().into();
         if let Some(sync_res) = sync_res {
             let revision = sync_res.revision();
             debug!("Get revision {:?} for LeaseRevokeResponse", revision);

@@ -6,7 +6,8 @@ use thiserror::Error;
 use crate::{
     rpc::{
         AuthRoleAddRequest, AuthRoleGrantPermissionRequest, AuthUserAddRequest, DeleteRangeRequest,
-        PutRequest, RangeRequest, Request, RequestOp, SortOrder, SortTarget, TxnRequest,
+        PbValidationError, PutRequest, RangeRequest, Request, RequestOp, SortOrder, SortTarget,
+        TxnRequest,
     },
     server::KeyRange,
     storage::ExecuteError,
@@ -215,6 +216,44 @@ pub enum ValidationError {
     /// Permission not given
     #[error("permission not given")]
     PermissionNotGiven,
+}
+
+impl From<PbValidationError> for ValidationError {
+    #[inline]
+    fn from(err: PbValidationError) -> Self {
+        match err {
+            PbValidationError::EmptyKey => ValidationError::EmptyKey,
+            PbValidationError::ValueProvided => ValidationError::ValueProvided,
+            PbValidationError::LeaseProvided => ValidationError::LeaseProvided,
+            PbValidationError::InvalidSortOption => ValidationError::InvalidSortOption,
+            PbValidationError::TooManyOps => ValidationError::TooManyOps,
+            PbValidationError::RequestNotProvided => ValidationError::RequestNotProvided,
+            PbValidationError::DuplicateKey => ValidationError::DuplicateKey,
+            PbValidationError::UserEmpty => ValidationError::UserEmpty,
+            PbValidationError::PasswordEmpty => ValidationError::PasswordEmpty,
+            PbValidationError::RoleEmpty => ValidationError::RoleEmpty,
+            PbValidationError::PermissionNotGiven => ValidationError::PermissionNotGiven,
+        }
+    }
+}
+
+impl From<ValidationError> for PbValidationError {
+    #[inline]
+    fn from(err: ValidationError) -> Self {
+        match err {
+            ValidationError::EmptyKey => PbValidationError::EmptyKey,
+            ValidationError::ValueProvided => PbValidationError::ValueProvided,
+            ValidationError::LeaseProvided => PbValidationError::LeaseProvided,
+            ValidationError::InvalidSortOption => PbValidationError::InvalidSortOption,
+            ValidationError::TooManyOps => PbValidationError::TooManyOps,
+            ValidationError::RequestNotProvided => PbValidationError::RequestNotProvided,
+            ValidationError::DuplicateKey => PbValidationError::DuplicateKey,
+            ValidationError::UserEmpty => PbValidationError::UserEmpty,
+            ValidationError::PasswordEmpty => PbValidationError::PasswordEmpty,
+            ValidationError::RoleEmpty => PbValidationError::RoleEmpty,
+            ValidationError::PermissionNotGiven => PbValidationError::PermissionNotGiven,
+        }
+    }
 }
 
 // The etcd client relies on GRPC error messages for error type interpretation.

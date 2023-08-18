@@ -661,7 +661,9 @@ dependencies = [
  "async-trait",
  "engine",
  "mockall",
+ "prost",
  "serde",
+ "thiserror",
 ]
 
 [[package]]
@@ -669,6 +671,7 @@ name = "curp-test-utils"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bincode",
  "clippy-utilities 0.2.0",
  "curp-external-api",
  "engine",
@@ -678,6 +681,7 @@ dependencies = [
  "mockall",
  "once_cell",
  "parking_lot",
+ "prost",
  "serde",
  "thiserror",
  "tracing",
@@ -3465,6 +3469,7 @@ dependencies = [
 name = "xlineapi"
 version = "0.1.0"
 dependencies = [
+ "curp-external-api",
  "madsim-etcd-client",
  "madsim-tonic",
  "madsim-tonic-build",

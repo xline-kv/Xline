@@ -133,7 +133,7 @@ async fn propose_after_reelect() {
             .await
             .unwrap()
             .0
-             .0,
+            .values,
         vec![]
     );
 
@@ -148,7 +148,7 @@ async fn propose_after_reelect() {
             .await
             .unwrap()
             .0
-             .0,
+            .values,
         vec![0]
     );
 

@@ -125,7 +125,7 @@ where
         Res: From<ResponseWrapper>,
     {
         let (cmd_res, sync_res) = self.propose(request, use_fast_path).await?;
-        let mut res_wrapper = cmd_res.decode();
+        let mut res_wrapper = cmd_res.into_inner();
         if let Some(sync_res) = sync_res {
             res_wrapper.update_revision(sync_res.revision());
         }
@@ -182,7 +182,7 @@ where
                 if let Some(sync_res) = sync_res {
                     let revision = sync_res.revision();
                     debug!("Get revision {:?} for AuthDisableResponse", revision);
-                    let mut res: AuthenticateResponse = res.decode().into();
+                    let mut res: AuthenticateResponse = res.into_inner().into();
                     if let Some(mut header) = res.header.as_mut() {
                         header.revision = revision;
                     }

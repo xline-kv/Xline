@@ -157,7 +157,7 @@ where
                 ..Default::default()
             };
             let (cmd_res, _sync_res) = self.propose(get_req, token.cloned(), false).await?;
-            let response = Into::<RangeResponse>::into(cmd_res.decode());
+            let response = Into::<RangeResponse>::into(cmd_res.into_inner());
             let last_key = match response.kvs.first() {
                 Some(kv) => kv.key.clone(),
                 None => return Ok(()),
@@ -195,7 +195,7 @@ where
             ..Default::default()
         };
         let (cmd_res, _) = self.propose(del_req, token, true).await?;
-        let res = Into::<DeleteRangeResponse>::into(cmd_res.decode());
+        let res = Into::<DeleteRangeResponse>::into(cmd_res.into_inner());
         Ok(res.header)
     }
 
@@ -207,7 +207,7 @@ where
             id: lease_id,
         };
         let (cmd_res, _) = self.propose(lease_grant_req, token, true).await?;
-        let res = Into::<LeaseGrantResponse>::into(cmd_res.decode());
+        let res = Into::<LeaseGrantResponse>::into(cmd_res.into_inner());
         Ok(res.id)
     }
 }
@@ -241,7 +241,7 @@ where
 
         let txn = Self::create_acquire_txn(&prefix, lease_id);
         let (cmd_res, sync_res) = self.propose(txn, token.clone(), false).await?;
-        let mut txn_res = Into::<TxnResponse>::into(cmd_res.decode());
+        let mut txn_res = Into::<TxnResponse>::into(cmd_res.into_inner());
         #[allow(clippy::unwrap_used)] // sync_res always has value when use slow path
         let my_rev = sync_res.unwrap().revision();
         let owner_res = txn_res
@@ -275,7 +275,7 @@ where
             let result = self.propose(range_req, token.clone(), true).await;
             match result {
                 Ok(res) => {
-                    let res = Into::<RangeResponse>::into(res.0.decode());
+                    let res = Into::<RangeResponse>::into(res.0.into_inner());
                     if res.kvs.is_empty() {
                         return Err(ExecuteError::LeaseExpired(lease_id).into());
                     }

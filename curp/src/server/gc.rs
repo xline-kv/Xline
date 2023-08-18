@@ -72,7 +72,10 @@ async fn gc_cmd_board<C: Command + 'static>(cmd_board: CmdBoardRef<C>, interval:
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use curp_test_utils::{sleep_secs, test_cmd::TestCommand};
+    use curp_test_utils::{
+        sleep_secs,
+        test_cmd::{TestCommand, TestCommandResult},
+    };
     use parking_lot::{Mutex, RwLock};
     use test_macros::abort_on_panic;
 
@@ -93,15 +96,15 @@ mod tests {
         tokio::spawn(gc_cmd_board(Arc::clone(&board), Duration::from_millis(500)));
 
         tokio::time::sleep(Duration::from_millis(100)).await;
-        board
-            .write()
-            .er_buffer
-            .insert(ProposeId::new("1".to_owned()), Ok((vec![], vec![])));
+        board.write().er_buffer.insert(
+            ProposeId::new("1".to_owned()),
+            Ok(TestCommandResult::default()),
+        );
         tokio::time::sleep(Duration::from_millis(100)).await;
-        board
-            .write()
-            .er_buffer
-            .insert(ProposeId::new("2".to_owned()), Ok((vec![], vec![])));
+        board.write().er_buffer.insert(
+            ProposeId::new("2".to_owned()),
+            Ok(TestCommandResult::default()),
+        );
         board
             .write()
             .asr_buffer
@@ -114,10 +117,10 @@ mod tests {
 
         // at 600ms
         tokio::time::sleep(Duration::from_millis(400)).await;
-        board
-            .write()
-            .er_buffer
-            .insert(ProposeId::new("3".to_owned()), Ok((vec![], vec![])));
+        board.write().er_buffer.insert(
+            ProposeId::new("3".to_owned()),
+            Ok(TestCommandResult::default()),
+        );
         board
             .write()
             .asr_buffer

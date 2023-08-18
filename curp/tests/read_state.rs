@@ -1,7 +1,10 @@
 use std::time::Duration;
 
 use curp::{client::ReadState, cmd::Command};
-use curp_test_utils::{init_logger, sleep_millis, test_cmd::TestCommand};
+use curp_test_utils::{
+    init_logger, sleep_millis,
+    test_cmd::{TestCommand, TestCommandResult},
+};
 use test_macros::abort_on_panic;
 use utils::config::ClientTimeout;
 
@@ -20,7 +23,7 @@ async fn read_state() {
     tokio::spawn(async move {
         assert_eq!(
             put_client.propose(put_cmd, true).await.unwrap().0,
-            (vec![], vec![])
+            TestCommandResult::default(),
         );
     });
     let get_client = group.new_client(ClientTimeout::default()).await;

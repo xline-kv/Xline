@@ -179,10 +179,29 @@ mod leasepb {
     tonic::include_proto!("leasepb");
 }
 
+mod commandpb {
+    tonic::include_proto!("commandpb");
+}
+
+mod errorpb {
+    tonic::include_proto!("errorpb");
+}
+
+use curp_external_api::cmd::PbSerializeError;
 use serde::{Deserialize, Serialize};
 
 pub use self::{
     authpb::{permission::Type, Permission, Role, User, UserAddOptions},
+    commandpb::{
+        request_with_token::RequestWrapper, response_wrapper::ResponseWrapper,
+        Command as PbCommand, KeyRange as PbKeyRange, RequestWithToken as PbRequestWithToken,
+        ResponseWrapper as ResponseWrapperOuter,
+    },
+    errorpb::{
+        execute_error::Error as PbExecuteError,
+        execute_error::ValidationError as PbValidationError, Empty,
+        ExecuteError as PbExecuteErrorOuter, Revisions as PbRevisions, UserRole as PbUserRole,
+    },
     etcdserverpb::{
         auth_client::AuthClient,
         auth_server::{Auth, AuthServer},
@@ -243,116 +262,27 @@ pub struct RequestWithToken {
     pub request: RequestWrapper,
 }
 
-/// Internal request
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[allow(clippy::enum_variant_names)] // in order to quickly implement trait by macro
-pub enum RequestWrapper {
-    /// `RangeRequest`
-    RangeRequest(RangeRequest),
-    /// `PutRequest`
-    PutRequest(PutRequest),
-    /// `DeleteRangeRequest`
-    DeleteRangeRequest(DeleteRangeRequest),
-    /// `TxnRequest`
-    TxnRequest(TxnRequest),
-    /// `CompactionRequest`
-    CompactionRequest(CompactionRequest),
-    /// `AuthEnableRequest`
-    AuthEnableRequest(AuthEnableRequest),
-    /// `AuthDisableRequest`
-    AuthDisableRequest(AuthDisableRequest),
-    /// `AuthStatusRequest`
-    AuthStatusRequest(AuthStatusRequest),
-    /// `AuthRoleAddRequest`
-    AuthRoleAddRequest(AuthRoleAddRequest),
-    /// `AuthRoleDeleteRequest`
-    AuthRoleDeleteRequest(AuthRoleDeleteRequest),
-    /// `AuthRoleGetRequest`
-    AuthRoleGetRequest(AuthRoleGetRequest),
-    /// `AuthRoleGrantPermissionRequest`
-    AuthRoleGrantPermissionRequest(AuthRoleGrantPermissionRequest),
-    /// `AuthRoleListRequest`
-    AuthRoleListRequest(AuthRoleListRequest),
-    /// `AuthRoleRevokePermissionRequest`
-    AuthRoleRevokePermissionRequest(AuthRoleRevokePermissionRequest),
-    /// `AuthUserAddRequest`
-    AuthUserAddRequest(AuthUserAddRequest),
-    /// `AuthUserChangePasswordRequest`
-    AuthUserChangePasswordRequest(AuthUserChangePasswordRequest),
-    /// `AuthUserDeleteRequest`
-    AuthUserDeleteRequest(AuthUserDeleteRequest),
-    /// `AuthUserGetRequest`
-    AuthUserGetRequest(AuthUserGetRequest),
-    /// `AuthUserGrantRoleRequest`
-    AuthUserGrantRoleRequest(AuthUserGrantRoleRequest),
-    /// `AuthUserListRequest`
-    AuthUserListRequest(AuthUserListRequest),
-    /// `AuthUserRevokeRoleRequest`
-    AuthUserRevokeRoleRequest(AuthUserRevokeRoleRequest),
-    /// `AuthenticateRequest`
-    AuthenticateRequest(AuthenticateRequest),
-    /// `LeaseGrantRequest`
-    LeaseGrantRequest(LeaseGrantRequest),
-    /// `LeaseRevokeRequest`
-    LeaseRevokeRequest(LeaseRevokeRequest),
-    /// `LeaseLeasesRequest`
-    LeaseLeasesRequest(LeaseLeasesRequest),
+impl TryFrom<PbRequestWithToken> for RequestWithToken {
+    type Error = PbSerializeError;
+
+    #[inline]
+    fn try_from(req: PbRequestWithToken) -> Result<Self, Self::Error> {
+        let request = req.request_wrapper.ok_or(PbSerializeError::EmptyField)?;
+        Ok(Self {
+            token: req.token,
+            request,
+        })
+    }
 }
 
-/// Wrapper for responses
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[allow(clippy::enum_variant_names)] // in order to quickly implement trait by macro
-pub enum ResponseWrapper {
-    /// `RangeResponse`
-    RangeResponse(RangeResponse),
-    /// `PutResponse`
-    PutResponse(PutResponse),
-    /// `DeleteRangeResponse`
-    DeleteRangeResponse(DeleteRangeResponse),
-    /// `TxnResponse`
-    TxnResponse(TxnResponse),
-    /// `CompactionResponse`
-    CompactionResponse(CompactionResponse),
-    /// `AuthEnableResponse`
-    AuthEnableResponse(AuthEnableResponse),
-    /// `AuthDisableResponse`
-    AuthDisableResponse(AuthDisableResponse),
-    /// `AuthStatusResponse`
-    AuthStatusResponse(AuthStatusResponse),
-    /// `AuthRoleAddResponse`
-    AuthRoleAddResponse(AuthRoleAddResponse),
-    /// `AuthRoleDeleteResponse`
-    AuthRoleDeleteResponse(AuthRoleDeleteResponse),
-    /// `AuthRoleGetResponse`
-    AuthRoleGetResponse(AuthRoleGetResponse),
-    /// `AuthRoleGrantPermissionResponse`
-    AuthRoleGrantPermissionResponse(AuthRoleGrantPermissionResponse),
-    /// `AuthRoleListResponse`
-    AuthRoleListResponse(AuthRoleListResponse),
-    /// `AuthRoleRevokePermissionResponse`
-    AuthRoleRevokePermissionResponse(AuthRoleRevokePermissionResponse),
-    /// `AuthUserAddResponse`
-    AuthUserAddResponse(AuthUserAddResponse),
-    /// `AuthUserChangePasswordResponse`
-    AuthUserChangePasswordResponse(AuthUserChangePasswordResponse),
-    /// `AuthUserDeleteResponse`
-    AuthUserDeleteResponse(AuthUserDeleteResponse),
-    /// `AuthUserGetResponse`
-    AuthUserGetResponse(AuthUserGetResponse),
-    /// `AuthUserGrantRoleResponse`
-    AuthUserGrantRoleResponse(AuthUserGrantRoleResponse),
-    /// `AuthUserListResponse`
-    AuthUserListResponse(AuthUserListResponse),
-    /// `AuthUserRevokeRoleResponse`
-    AuthUserRevokeRoleResponse(AuthUserRevokeRoleResponse),
-    /// `AuthenticateResponse`
-    AuthenticateResponse(AuthenticateResponse),
-    /// `LeaseGrantResponse`
-    LeaseGrantResponse(LeaseGrantResponse),
-    /// `LeaseRevokeResponse`
-    LeaseRevokeResponse(LeaseRevokeResponse),
-    /// `LeaseLeasesResponse`
-    LeaseLeasesResponse(LeaseLeasesResponse),
+impl From<RequestWithToken> for PbRequestWithToken {
+    #[inline]
+    fn from(req: RequestWithToken) -> Self {
+        PbRequestWithToken {
+            token: req.token,
+            request_wrapper: Some(req.request),
+        }
+    }
 }
 
 impl ResponseWrapper {

@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package errorpb;
+
+message Empty {
+}
+
+message Revisions {
+    int64 required_revision = 1;
+    int64 current_revision = 2;
+}
+
+message UserRole {
+    string user = 1;
+    string role = 2;
+}
+
+message ExecuteError {
+    oneof error {
+        VALIDATION_ERROR invalid_request = 1;
+        Empty key_not_found = 2;
+        Revisions revision_too_large = 3;
+        Revisions revision_compacted = 4;
+        int64 lease_not_found = 5;
+        int64 lease_expired = 6;
+        int64 lease_ttl_too_large = 7;
+        int64 lease_already_exists = 8;
+        Empty auth_not_enabled = 9;
+        Empty auth_failed = 10;
+        string user_not_found = 11;
+        string user_already_exists = 12;
+        UserRole user_already_has_role = 13;
+        Empty no_password_user = 14;
+        string role_not_found = 15;
+        string role_already_exists = 16;
+        string role_not_granted = 17;
+        Empty root_role_not_exist = 18;
+        Empty permission_not_granted = 19;
+        Empty permission_not_given = 20;
+        Empty invalid_auth_management = 21;
+        Empty invalid_auth_token = 22;
+        Empty token_manager_not_init = 23;
+        Empty token_not_provided = 24;
+        Revisions token_old_revision = 25;
+        string db_error = 26;
+        Empty permission_denied = 27;
+    }
+
+    enum VALIDATION_ERROR {
+        EMPTY_KEY = 0;
+        VALUE_PROVIDED = 1;
+        LEASE_PROVIDED = 2;
+        INVALID_SORT_OPTION = 3;
+        TOO_MANY_OPS = 4;
+        REQUEST_NOT_PROVIDED = 5;
+        DUPLICATE_KEY = 6;
+        USER_EMPTY = 7;
+        PASSWORD_EMPTY = 8;
+        ROLE_EMPTY = 9;
+        PERMISSION_NOT_GIVEN = 10;
+    }
+}

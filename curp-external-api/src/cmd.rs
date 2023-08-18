@@ -2,6 +2,7 @@ use std::{fmt::Display, hash::Hash};
 
 use async_trait::async_trait;
 use engine::Snapshot;
+use prost::DecodeError;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::LogIndex;
@@ -9,10 +10,18 @@ use crate::LogIndex;
 /// Command to execute on the server side
 #[async_trait]
 pub trait Command:
-    Sized + Sync + Send + DeserializeOwned + Serialize + std::fmt::Debug + Clone + ConflictCheck
+    Sized
+    + Sync
+    + Send
+    + DeserializeOwned
+    + Serialize
+    + std::fmt::Debug
+    + Clone
+    + ConflictCheck
+    + PbSerialize
 {
     /// Error type
-    type Error: Send + Sync + Clone + std::error::Error + Serialize + DeserializeOwned;
+    type Error: Send + Sync + Clone + std::error::Error + Serialize + DeserializeOwned + PbSerialize;
 
     /// K (key) is used to tell confliction
     /// The key can be a single key or a key range
@@ -30,7 +39,7 @@ pub trait Command:
     type PR: std::fmt::Debug + Send + Sync + Clone + Serialize + DeserializeOwned;
 
     /// Execution result
-    type ER: std::fmt::Debug + Send + Sync + Clone + Serialize + DeserializeOwned;
+    type ER: std::fmt::Debug + Send + Sync + Clone + Serialize + DeserializeOwned + PbSerialize;
 
     /// After_sync result
     type ASR: std::fmt::Debug + Send + Sync + Clone + Serialize + DeserializeOwned;
@@ -85,6 +94,13 @@ impl ProposeId {
     #[must_use]
     pub fn new(id: String) -> Self {
         Self(id)
+    }
+
+    /// Get inner string
+    #[inline]
+    #[must_use]
+    pub fn into_inner(self) -> String {
+        self.0
     }
 }
 
@@ -148,4 +164,35 @@ where
 
     /// Reset the command executor using the snapshot or to the initial state if None
     async fn reset(&self, snapshot: Option<(Snapshot, LogIndex)>) -> Result<(), C::Error>;
+}
+
+/// Serializaion for protobuf
+pub trait PbSerialize: Sized {
+    /// Encode
+    fn encode(&self) -> Vec<u8>;
+    /// Decode
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if decode failed
+    fn decode(buf: &[u8]) -> Result<Self, PbSerializeError>;
+}
+
+/// Serialize error used in `PbSerialize`
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum PbSerializeError {
+    /// Error during decode phase
+    #[error("rpc decode error: {0}")]
+    RpcDecode(DecodeError),
+    /// Error if the required field is empty
+    #[error("field is empty after decoded")]
+    EmptyField,
+}
+
+impl From<DecodeError> for PbSerializeError {
+    #[inline]
+    fn from(err: DecodeError) -> Self {
+        PbSerializeError::RpcDecode(err)
+    }
 }

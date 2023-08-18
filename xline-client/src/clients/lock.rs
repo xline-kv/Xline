@@ -151,7 +151,7 @@ impl LockClient {
     ) -> Result<LockResponse> {
         let txn = Self::create_acquire_txn(&prefix, lease_id);
         let (cmd_res, sync_res) = self.propose(txn, false).await?;
-        let mut txn_res = Into::<TxnResponse>::into(cmd_res.decode());
+        let mut txn_res = Into::<TxnResponse>::into(cmd_res.into_inner());
         let my_rev = sync_res
             .unwrap_or_else(|| unreachable!("sync_res always has value when use slow path"))
             .revision();
@@ -183,7 +183,7 @@ impl LockClient {
             let result = self.propose(range_req, true).await;
             match result {
                 Ok(res) => {
-                    let res = Into::<RangeResponse>::into(res.0.decode());
+                    let res = Into::<RangeResponse>::into(res.0.into_inner());
                     if res.kvs.is_empty() {
                         return Err(ClientError::RpcError(String::from("session expired")));
                     }
@@ -351,7 +351,7 @@ impl LockClient {
             };
 
             let (cmd_res, _sync_res) = self.propose(get_req, false).await?;
-            let response = Into::<RangeResponse>::into(cmd_res.decode());
+            let response = Into::<RangeResponse>::into(cmd_res.into_inner());
             let last_key = match response.kvs.first() {
                 Some(kv) => kv.key.clone(),
                 None => return Ok(()),
@@ -377,7 +377,7 @@ impl LockClient {
             ..Default::default()
         };
         let (cmd_res, _sync_res) = self.propose(del_req, true).await?;
-        let res = Into::<DeleteRangeResponse>::into(cmd_res.decode());
+        let res = Into::<DeleteRangeResponse>::into(cmd_res.into_inner());
         Ok(res.header)
     }
 }

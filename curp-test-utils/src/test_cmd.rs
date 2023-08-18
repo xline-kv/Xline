@@ -10,7 +10,7 @@ use std::{
 use async_trait::async_trait;
 use clippy_utilities::NumericCast;
 use curp_external_api::{
-    cmd::{Command, CommandExecutor, ConflictCheck, ProposeId},
+    cmd::{Command, CommandExecutor, ConflictCheck, PbSerialize, ProposeId},
     LogIndex,
 };
 use engine::{Engine, EngineType, Snapshot, SnapshotApi, StorageEngine, WriteOperation};
@@ -35,6 +35,17 @@ pub struct ExecuteError(String);
 impl Display for ExecuteError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+// The `ExecuteError` is only for internal use, so we donnot have to serialize it to protobuf format
+impl PbSerialize for ExecuteError {
+    fn encode(&self) -> Vec<u8> {
+        self.0.clone().into_bytes()
+    }
+
+    fn decode(buf: &[u8]) -> Result<Self, curp_external_api::cmd::PbSerializeError> {
+        Ok(ExecuteError(String::from_utf8_lossy(buf).into()))
     }
 }
 
@@ -70,7 +81,32 @@ pub enum TestCommandType {
 }
 
 /// value and revision
-pub type TestCommandResult = (Vec<u32>, Vec<i64>);
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct TestCommandResult {
+    pub values: Vec<u32>,
+    pub revisions: Vec<i64>,
+}
+
+impl TestCommandResult {
+    pub fn new(values: Vec<u32>, revisions: Vec<i64>) -> Self {
+        Self { values, revisions }
+    }
+}
+
+// The `TestCommandResult` is only for internal use, so we donnot have to serialize it to protobuf format
+impl PbSerialize for TestCommandResult {
+    fn encode(&self) -> Vec<u8> {
+        bincode::serialize(self).unwrap_or_else(|_| {
+            unreachable!("test cmd result should always be successfully serialized")
+        })
+    }
+
+    fn decode(buf: &[u8]) -> Result<Self, curp_external_api::cmd::PbSerializeError> {
+        Ok(bincode::deserialize(buf).unwrap_or_else(|_| {
+            unreachable!("test cmd result should always be successfully serialized")
+        }))
+    }
+}
 
 impl TestCommand {
     pub fn new_get(keys: Vec<u32>) -> Self {
@@ -151,6 +187,19 @@ impl ConflictCheck for TestCommand {
     }
 }
 
+// The `TestCommand` is only for internal use, so we donnot have to serialize it to protobuf format
+impl PbSerialize for TestCommand {
+    fn encode(&self) -> Vec<u8> {
+        bincode::serialize(self)
+            .unwrap_or_else(|_| unreachable!("test cmd should always be successfully serialized"))
+    }
+
+    fn decode(buf: &[u8]) -> Result<Self, curp_external_api::cmd::PbSerializeError> {
+        Ok(bincode::deserialize(buf)
+            .unwrap_or_else(|_| unreachable!("test cmd should always be successfully serialized")))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TestCE {
     server_id: String,
@@ -211,7 +260,7 @@ impl CommandExecutor<TestCommand> for TestCE {
                     .flatten()
                     .map(|v| i64::from_be_bytes(v.as_slice().try_into().unwrap()))
                     .collect_vec();
-                (value, revision)
+                TestCommandResult::new(value, revision)
             }
             TestCommandType::Put(_) => TestCommandResult::default(),
         };

@@ -6,19 +6,25 @@ use std::{
 
 use curp::{
     cmd::{
-        Command as CurpCommand, CommandExecutor as CurpCommandExecutor, ConflictCheck, ProposeId,
+        Command as CurpCommand, CommandExecutor as CurpCommandExecutor, ConflictCheck, PbSerialize,
+        PbSerializeError, ProposeId,
     },
     error::{CommandProposeError, ProposeError},
     LogIndex,
 };
 use engine::Snapshot;
 use itertools::Itertools;
+use prost::Message;
 use serde::{Deserialize, Serialize};
+use xlineapi::{PbCommand, PbKeyRange};
 
 use super::barriers::{IdBarrier, IndexBarrier};
 use crate::{
     revision_number::RevisionNumberGenerator,
-    rpc::{Request, RequestBackend, RequestWithToken, RequestWrapper, ResponseWrapper},
+    rpc::{
+        Request, RequestBackend, RequestWithToken, RequestWrapper, ResponseWrapper,
+        ResponseWrapperOuter,
+    },
     storage::{db::WriteOp, storage_api::StorageApi, AuthStore, ExecuteError, KvStore, LeaseStore},
 };
 
@@ -220,6 +226,23 @@ impl RangeBounds<Vec<u8>> for KeyRange {
             Bound::Unbounded => Bound::Unbounded,
             Bound::Included(ref k) => Bound::Included(k),
             Bound::Excluded(ref k) => Bound::Excluded(k),
+        }
+    }
+}
+
+impl From<PbKeyRange> for KeyRange {
+    #[inline]
+    fn from(range: PbKeyRange) -> Self {
+        Self::new(range.key, range.range_end)
+    }
+}
+
+impl From<KeyRange> for PbKeyRange {
+    #[inline]
+    fn from(range: KeyRange) -> Self {
+        Self {
+            key: range.range_start().to_vec(),
+            range_end: range.range_end().to_vec(),
         }
     }
 }
@@ -552,6 +575,25 @@ pub struct CommandResponse {
     response: ResponseWrapper,
 }
 
+impl PbSerialize for CommandResponse {
+    #[inline]
+    fn encode(&self) -> Vec<u8> {
+        ResponseWrapperOuter {
+            response_wrapper: Some(self.response.clone()),
+        }
+        .encode_to_vec()
+    }
+
+    #[inline]
+    fn decode(buf: &[u8]) -> Result<Self, PbSerializeError> {
+        Ok(CommandResponse {
+            response: ResponseWrapperOuter::decode(buf)?
+                .response_wrapper
+                .ok_or(PbSerializeError::EmptyField)?,
+        })
+    }
+}
+
 impl CommandResponse {
     /// New `ResponseOp` from `CommandResponse`
     #[inline]
@@ -563,7 +605,7 @@ impl CommandResponse {
     /// Decode `CommandResponse` and get `ResponseOp`
     #[inline]
     #[must_use]
-    pub fn decode(self) -> ResponseWrapper {
+    pub fn into_inner(self) -> ResponseWrapper {
         self.response
     }
 }
@@ -606,6 +648,32 @@ impl CurpCommand for Command {
     #[inline]
     fn id(&self) -> &ProposeId {
         &self.id
+    }
+}
+
+impl PbSerialize for Command {
+    #[inline]
+    fn encode(&self) -> Vec<u8> {
+        let cmd = self.clone();
+        let rpc_cmd = PbCommand {
+            keys: cmd.keys.into_iter().map(Into::into).collect(),
+            request: Some(cmd.request.into()),
+            id: cmd.id.into_inner(),
+        };
+        rpc_cmd.encode_to_vec()
+    }
+
+    #[inline]
+    fn decode(buf: &[u8]) -> Result<Self, PbSerializeError> {
+        let rpc_cmd = PbCommand::decode(buf)?;
+        Ok(Self {
+            keys: rpc_cmd.keys.into_iter().map(Into::into).collect(),
+            request: rpc_cmd
+                .request
+                .ok_or(PbSerializeError::EmptyField)?
+                .try_into()?,
+            id: ProposeId::new(rpc_cmd.id),
+        })
     }
 }
 

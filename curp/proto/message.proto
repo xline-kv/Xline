@@ -9,12 +9,19 @@ message ProposeRequest {
     bytes command = 1;
 }
 
+// The original type is Result<Command::ER, Command::Error>
+message CmdResult {
+    oneof result {
+        bytes er = 1;
+        bytes error = 2;
+    }
+}
+
 message ProposeResponse {
     optional uint64 leader_id = 1;
     uint64 term = 2;
     oneof exe_result {
-        // The original type is Command::ER
-        bytes result = 3;
+        CmdResult result = 3;
         // The original type is ProposeError
         bytes error = 4;
     }
@@ -48,7 +55,7 @@ message WaitSyncedResponse {
     }
     oneof sync_result {
         Success success = 1;
-        bytes   error = 2;
+        bytes error = 2;
     }
 }
 
@@ -76,7 +83,7 @@ message VoteRequest {
 
 message VoteResponse {
     uint64 term = 1;
-    bool   vote_granted = 2;
+    bool vote_granted = 2;
     repeated bytes spec_pool = 3;
 }
 
@@ -98,7 +105,7 @@ message IdSet {
     repeated bytes ids = 1;
 }
 
-message FetchReadStateRequest{
+message FetchReadStateRequest {
     bytes command = 1;
 }
 
@@ -110,12 +117,13 @@ message FetchReadStateResponse {
 }
 
 service Protocol {
-    rpc Propose (ProposeRequest) returns (ProposeResponse);
-    rpc WaitSynced (WaitSyncedRequest) returns (WaitSyncedResponse);
-    rpc AppendEntries (AppendEntriesRequest) returns (AppendEntriesResponse);
-    rpc Vote (VoteRequest) returns (VoteResponse);
-    rpc InstallSnapshot (stream InstallSnapshotRequest) returns (InstallSnapshotResponse);
-    rpc FetchLeader (FetchLeaderRequest) returns (FetchLeaderResponse);
-    rpc FetchCluster (FetchClusterRequest) returns (FetchClusterResponse);
-    rpc FetchReadState (FetchReadStateRequest) returns (FetchReadStateResponse);
+    rpc Propose(ProposeRequest) returns (ProposeResponse);
+    rpc WaitSynced(WaitSyncedRequest) returns (WaitSyncedResponse);
+    rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
+    rpc Vote(VoteRequest) returns (VoteResponse);
+    rpc InstallSnapshot(stream InstallSnapshotRequest)
+        returns (InstallSnapshotResponse);
+    rpc FetchLeader(FetchLeaderRequest) returns (FetchLeaderResponse);
+    rpc FetchCluster(FetchClusterRequest) returns (FetchClusterResponse);
+    rpc FetchReadState(FetchReadStateRequest) returns (FetchReadStateResponse);
 }

@@ -73,7 +73,7 @@ impl KvClient {
         );
         let cmd = Command::new(key_ranges, request, propose_id);
         let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
-        Ok(cmd_res.decode().into())
+        Ok(cmd_res.into_inner().into())
     }
 
     /// Get a range of keys from the store
@@ -118,7 +118,7 @@ impl KvClient {
         );
         let cmd = Command::new(key_ranges, request, propose_id);
         let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
-        Ok(cmd_res.decode().into())
+        Ok(cmd_res.into_inner().into())
     }
 
     /// Delete a range of keys from the store
@@ -156,7 +156,7 @@ impl KvClient {
         );
         let cmd = Command::new(key_ranges, request, propose_id);
         let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
-        Ok(cmd_res.decode().into())
+        Ok(cmd_res.into_inner().into())
     }
 
     /// Creates a transaction, which can provide serializable writes
@@ -213,7 +213,7 @@ impl KvClient {
         let (cmd_res, Some(sync_res)) = self.curp_client.propose(cmd, false).await? else {
             unreachable!("sync_res is always Some when use_fast_path is false");
         };
-        let mut res_wrapper = cmd_res.decode();
+        let mut res_wrapper = cmd_res.into_inner();
         res_wrapper.update_revision(sync_res.revision());
         Ok(res_wrapper.into())
     }
@@ -266,12 +266,12 @@ impl KvClient {
 
         let res_wrapper = if use_fast_path {
             let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
-            cmd_res.decode()
+            cmd_res.into_inner()
         } else {
             let (cmd_res, Some(sync_res)) = self.curp_client.propose(cmd, false).await? else {
                 unreachable!("sync_res is always Some when use_fast_path is false");
             };
-            let mut res_wrapper = cmd_res.decode();
+            let mut res_wrapper = cmd_res.into_inner();
             res_wrapper.update_revision(sync_res.revision());
             res_wrapper
         };
