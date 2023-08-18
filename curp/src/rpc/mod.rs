@@ -1,7 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
 
+use curp_external_api::cmd::{PbSerialize, PbSerializeError};
 use serde::{de::DeserializeOwned, Serialize};
 
+use self::proto::{cmd_result::Result as CmdResultInner, CmdResult};
 pub(crate) use self::proto::{
     fetch_read_state_response::ReadState,
     propose_response::ExeResult,
@@ -15,6 +17,12 @@ pub use self::proto::{
     propose_response, protocol_client, protocol_server::ProtocolServer, FetchLeaderRequest,
     FetchLeaderResponse, ProposeRequest, ProposeResponse,
 };
+
+pub(crate) use self::errorpb::{
+    propose_error::ProposeError as PbProposeError, sync_error::SyncError as PbSyncError, Empty,
+    ProposeError as PbProposeErrorOuter, RedirectData, SyncError as PbSyncErrorOuter,
+};
+
 use crate::{
     cmd::{Command, ProposeId},
     error::{CommandSyncError, ProposeError, SyncError},
@@ -44,6 +52,25 @@ pub(crate) use connect::connect;
 )]
 mod proto {
     tonic::include_proto!("messagepb");
+}
+
+// Skip for generated code
+#[allow(
+    clippy::all,
+    clippy::restriction,
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::cargo,
+    unused_qualifications,
+    unreachable_pub,
+    variant_size_differences,
+    missing_copy_implementations,
+    missing_docs,
+    trivial_casts,
+    unused_results
+)]
+mod errorpb {
+    tonic::include_proto!("errorpb");
 }
 
 impl FetchLeaderRequest {
@@ -84,15 +111,15 @@ impl FetchClusterResponse {
 
 impl ProposeRequest {
     /// Create a new `Propose` request
-    pub(crate) fn new<C: Command>(cmd: &C) -> bincode::Result<Self> {
-        Ok(Self {
-            command: bincode::serialize(cmd)?,
-        })
+    pub(crate) fn new<C: Command>(cmd: &C) -> Self {
+        Self {
+            command: cmd.encode(),
+        }
     }
 
     /// Get command
-    pub(crate) fn cmd<C: Command>(&self) -> bincode::Result<C> {
-        bincode::deserialize(&self.command)
+    pub(crate) fn cmd<C: Command>(&self) -> Result<C, PbSerializeError> {
+        C::decode(&self.command)
     }
 }
 
@@ -102,35 +129,39 @@ impl ProposeResponse {
         leader_id: Option<ServerId>,
         term: u64,
         result: &Result<C::ER, C::Error>,
-    ) -> bincode::Result<Self> {
-        Ok(Self {
+    ) -> Self {
+        let exe_result = match *result {
+            Ok(ref er) => Some(ExeResult::Result(CmdResult {
+                result: Some(CmdResultInner::Er(er.encode())),
+            })),
+            Err(ref e) => Some(ExeResult::Result(CmdResult {
+                result: Some(CmdResultInner::Error(e.encode())),
+            })),
+        };
+        Self {
             leader_id,
             term,
-            exe_result: Some(ExeResult::Result(bincode::serialize(result)?)),
-        })
+            exe_result,
+        }
     }
 
     /// Create an empty propose response
     #[allow(clippy::unnecessary_wraps)] // To keep the new functions return the same type
-    pub(crate) fn new_empty(leader_id: Option<ServerId>, term: u64) -> bincode::Result<Self> {
-        Ok(Self {
+    pub(crate) fn new_empty(leader_id: Option<ServerId>, term: u64) -> Self {
+        Self {
             leader_id,
             term,
             exe_result: None,
-        })
+        }
     }
 
     /// Create an error propose response
-    pub(crate) fn new_error(
-        leader_id: Option<ServerId>,
-        term: u64,
-        error: &ProposeError,
-    ) -> bincode::Result<Self> {
-        Ok(Self {
+    pub(crate) fn new_error(leader_id: Option<ServerId>, term: u64, error: &ProposeError) -> Self {
+        Self {
             leader_id,
             term,
-            exe_result: Some(ExeResult::Error(bincode::serialize(error)?)),
-        })
+            exe_result: Some(ExeResult::Error(error.encode())),
+        }
     }
 
     /// Response term
@@ -143,14 +174,21 @@ impl ProposeResponse {
         &self,
         success: SF,
         failure: FF,
-    ) -> bincode::Result<R>
+    ) -> Result<R, PbSerializeError>
     where
         SF: FnOnce(Option<Result<C::ER, C::Error>>) -> R,
         FF: FnOnce(ProposeError) -> R,
     {
         match self.exe_result {
-            Some(ExeResult::Result(ref rv)) => Ok(success(Some(bincode::deserialize(rv)?))),
-            Some(ExeResult::Error(ref e)) => Ok(failure(bincode::deserialize(e)?)),
+            Some(ExeResult::Result(ref rv)) => {
+                let result = rv.result.as_ref().ok_or(PbSerializeError::EmptyField)?;
+                let cmd_result = match *result {
+                    CmdResultInner::Er(ref buf) => Ok(<C as Command>::ER::decode(buf)?),
+                    CmdResultInner::Error(ref buf) => Err(<C as Command>::Error::decode(buf)?),
+                };
+                Ok(success(Some(cmd_result)))
+            }
+            Some(ExeResult::Error(ref buf)) => Ok(failure(ProposeError::decode(buf)?)),
             None => Ok(success(None)),
         }
     }

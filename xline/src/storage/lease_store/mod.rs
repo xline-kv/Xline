@@ -514,6 +514,6 @@ mod test {
         let cmd_res = ls.execute(req)?;
         let (_ignore, ops) = ls.after_sync(req, revision).await?;
         _ = ls.db.flush_ops(ops)?;
-        Ok(cmd_res.decode())
+        Ok(cmd_res.into_inner())
     }
 }

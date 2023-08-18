@@ -301,7 +301,7 @@ mod tests {
         let entry = Arc::new(LogEntry::new_cmd(1, 1, Arc::new(TestCommand::default())));
 
         ce_event_tx.send_sp_exe(Arc::clone(&entry));
-        assert_eq!(er_rx.recv().await.unwrap().1 .0, vec![]);
+        assert_eq!(er_rx.recv().await.unwrap().1.values, vec![]);
 
         ce_event_tx.send_after_sync(entry);
         assert_eq!(as_rx.recv().await.unwrap().1, 1);
@@ -414,7 +414,7 @@ mod tests {
 
         ce_event_tx.send_after_sync(entry);
 
-        assert_eq!(er_rx.recv().await.unwrap().1 .1, vec![]);
+        assert_eq!(er_rx.recv().await.unwrap().1.revisions, vec![]);
         assert_eq!(as_rx.recv().await.unwrap().1, 1);
     }
 
@@ -490,7 +490,7 @@ mod tests {
         ce_event_tx.send_sp_exe(Arc::clone(&entry2));
 
         // cmd1 exe done
-        assert_eq!(er_rx.recv().await.unwrap().1 .1, vec![]);
+        assert_eq!(er_rx.recv().await.unwrap().1.revisions, vec![]);
 
         sleep_millis(100).await;
 
@@ -502,7 +502,7 @@ mod tests {
         ce_event_tx.send_after_sync(entry1);
         ce_event_tx.send_after_sync(entry2);
 
-        assert_eq!(er_rx.recv().await.unwrap().1 .1, vec![1]);
+        assert_eq!(er_rx.recv().await.unwrap().1.revisions, vec![1]);
         assert_eq!(as_rx.recv().await.unwrap().1, 1);
         assert_eq!(as_rx.recv().await.unwrap().1, 2);
     }
@@ -540,7 +540,7 @@ mod tests {
         ce_event_tx.send_sp_exe(Arc::clone(&entry1));
         ce_event_tx.send_sp_exe(Arc::clone(&entry2));
 
-        assert_eq!(er_rx.recv().await.unwrap().1 .1, vec![]);
+        assert_eq!(er_rx.recv().await.unwrap().1.revisions, vec![]);
 
         ce_event_tx.send_reset(None);
 
@@ -552,7 +552,7 @@ mod tests {
 
         ce_event_tx.send_after_sync(entry3);
 
-        assert_eq!(er_rx.recv().await.unwrap().1 .1, vec![]);
+        assert_eq!(er_rx.recv().await.unwrap().1.revisions, vec![]);
 
         // there will be only one after sync results
         assert!(as_rx.recv().await.is_some());
@@ -628,6 +628,6 @@ mod tests {
             Arc::new(TestCommand::new_get(vec![1])),
         ));
         ce_event_tx.send_after_sync(entry);
-        assert_eq!(er_rx.recv().await.unwrap().1 .1, vec![1]);
+        assert_eq!(er_rx.recv().await.unwrap().1.revisions, vec![1]);
     }
 }

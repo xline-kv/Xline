@@ -88,7 +88,7 @@ where
         self.auth_storage.check_permission(wrapper)?;
         let cmd_res = self.kv_storage.execute(wrapper)?;
 
-        Ok(Self::parse_response_op(cmd_res.decode().into()))
+        Ok(Self::parse_response_op(cmd_res.into_inner().into()))
     }
 
     /// Propose request and get result with fast/slow path
@@ -246,7 +246,7 @@ where
         let is_fast_path = true;
         let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
 
-        let mut res = Self::parse_response_op(cmd_res.decode().into());
+        let mut res = Self::parse_response_op(cmd_res.into_inner().into());
         if let Some(sync_res) = sync_res {
             let revision = sync_res.revision();
             debug!("Get revision {:?} for PutRequest", revision);
@@ -273,7 +273,7 @@ where
         let is_fast_path = true;
         let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
 
-        let mut res = Self::parse_response_op(cmd_res.decode().into());
+        let mut res = Self::parse_response_op(cmd_res.into_inner().into());
         if let Some(sync_res) = sync_res {
             let revision = sync_res.revision();
             debug!("Get revision {:?} for DeleteRangeRequest", revision);
@@ -318,7 +318,7 @@ where
             let is_fast_path = true;
             let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
 
-            let mut res = Self::parse_response_op(cmd_res.decode().into());
+            let mut res = Self::parse_response_op(cmd_res.into_inner().into());
             if let Some(sync_res) = sync_res {
                 let revision = sync_res.revision();
                 debug!("Get revision {:?} for TxnRequest", revision);
@@ -349,7 +349,7 @@ where
 
         let is_fast_path = !req.physical;
         let (cmd_res, _sync_res) = self.propose(request, is_fast_path).await?;
-        let resp = cmd_res.decode();
+        let resp = cmd_res.into_inner();
 
         if let ResponseWrapper::CompactionResponse(response) = resp {
             Ok(tonic::Response::new(response))

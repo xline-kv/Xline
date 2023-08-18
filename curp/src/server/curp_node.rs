@@ -1,6 +1,7 @@
 use std::{collections::HashMap, fmt::Debug, io, sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
+use curp_external_api::cmd::PbSerializeError;
 use engine::SnapshotApi;
 use event_listener::Event;
 use futures::{pin_mut, stream::FuturesUnordered, Stream, StreamExt};
@@ -46,7 +47,7 @@ use crate::{
 pub(super) enum CurpError {
     /// Encode or decode error
     #[error("encode or decode error")]
-    EncodeDecode(#[from] bincode::Error),
+    EncodeDecode(String),
     /// Storage error
     #[error("storage error, {0}")]
     Storage(#[from] StorageError),
@@ -59,6 +60,17 @@ pub(super) enum CurpError {
     /// Internal error
     #[error("internal error, {0}")]
     Internal(String),
+}
+
+impl From<bincode::Error> for CurpError {
+    fn from(err: bincode::Error) -> Self {
+        Self::EncodeDecode(err.to_string())
+    }
+}
+impl From<PbSerializeError> for CurpError {
+    fn from(err: PbSerializeError) -> Self {
+        Self::EncodeDecode(err.to_string())
+    }
 }
 
 /// Internal error encountered when sending `append_entries`
@@ -118,10 +130,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         let resp = match result {
             Ok(true) => {
                 let er_res = CommandBoard::wait_for_er(&self.cmd_board, cmd.id()).await;
-                ProposeResponse::new_result::<C>(leader_id, term, &er_res)?
+                ProposeResponse::new_result::<C>(leader_id, term, &er_res)
             }
-            Ok(false) => ProposeResponse::new_empty(leader_id, term)?,
-            Err(err) => ProposeResponse::new_error(leader_id, term, &err)?,
+            Ok(false) => ProposeResponse::new_empty(leader_id, term),
+            Err(err) => ProposeResponse::new_error(leader_id, term, &err),
         };
 
         Ok(resp)

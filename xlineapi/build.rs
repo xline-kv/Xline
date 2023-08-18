@@ -8,6 +8,8 @@ fn main() {
                 "proto/auth.proto",
                 "proto/v3lock.proto",
                 "proto/lease.proto",
+                "proto/command.proto",
+                "proto/error.proto",
             ],
             &["proto"],
         )

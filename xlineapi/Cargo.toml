@@ -15,6 +15,7 @@ tonic = { version = "0.3.0", package = "madsim-tonic" }
 prost = "0.11"
 serde = { version = "1.0.137", features = ["derive"] }
 etcd-client = { version = "0.3.0", package = "madsim-etcd-client" }
+curp-external-api = { path = "../curp-external-api" }
 
 [build-dependencies]
 tonic-build = { version = "0.3.0", package = "madsim-tonic-build" }

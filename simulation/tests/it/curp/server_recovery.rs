@@ -25,7 +25,7 @@ async fn leader_crash_and_recovery() {
             .await
             .unwrap()
             .0
-             .0,
+            .values,
         vec![]
     );
     assert_eq!(
@@ -34,7 +34,7 @@ async fn leader_crash_and_recovery() {
             .await
             .unwrap()
             .0
-             .0,
+            .values,
         vec![0]
     );
 
@@ -43,12 +43,12 @@ async fn leader_crash_and_recovery() {
     let old_leader = group.nodes.get_mut(&leader).unwrap();
 
     let (_cmd, er) = old_leader.exe_rx.recv().await.unwrap();
-    assert_eq!(er.0, vec![]);
+    assert_eq!(er.values, vec![]);
     let asr = old_leader.as_rx.recv().await.unwrap();
     assert_eq!(asr.1, 1);
 
     let (_cmd, er) = old_leader.exe_rx.recv().await.unwrap();
-    assert_eq!(er.0, vec![0]);
+    assert_eq!(er.values, vec![0]);
     let asr = old_leader.as_rx.recv().await.unwrap();
     assert_eq!(asr.1, 2);
 
@@ -72,7 +72,7 @@ async fn follower_crash_and_recovery() {
             .await
             .unwrap()
             .0
-             .0,
+            .values,
         vec![]
     );
     assert_eq!(
@@ -81,7 +81,7 @@ async fn follower_crash_and_recovery() {
             .await
             .unwrap()
             .0
-             .0,
+            .values,
         vec![0]
     );
 
@@ -90,12 +90,12 @@ async fn follower_crash_and_recovery() {
     let follower = group.nodes.get_mut(&follower).unwrap();
 
     let (_cmd, er) = follower.exe_rx.recv().await.unwrap();
-    assert_eq!(er.0, vec![]);
+    assert_eq!(er.values, vec![]);
     let asr = follower.as_rx.recv().await.unwrap();
     assert_eq!(asr.1, 1);
 
     let (_cmd, er) = follower.exe_rx.recv().await.unwrap();
-    assert_eq!(er.0, vec![0]);
+    assert_eq!(er.values, vec![0]);
     let asr = follower.as_rx.recv().await.unwrap();
     assert_eq!(asr.1, 2);
 
@@ -119,7 +119,7 @@ async fn leader_and_follower_both_crash_and_recovery() {
             .await
             .unwrap()
             .0
-             .0,
+            .values,
         vec![]
     );
     assert_eq!(
@@ -128,7 +128,7 @@ async fn leader_and_follower_both_crash_and_recovery() {
             .await
             .unwrap()
             .0
-             .0,
+            .values,
         vec![0]
     );
 
@@ -143,18 +143,18 @@ async fn leader_and_follower_both_crash_and_recovery() {
             .await
             .unwrap()
             .0
-             .0,
+            .values,
         vec![0]
     );
     let old_leader = group.nodes.get_mut(&leader).unwrap();
 
     let (_cmd, er) = old_leader.exe_rx.recv().await.unwrap();
-    assert_eq!(er.0, vec![]);
+    assert_eq!(er.values, vec![]);
     let asr = old_leader.as_rx.recv().await.unwrap();
     assert_eq!(asr.1, 1);
 
     let (_cmd, er) = old_leader.exe_rx.recv().await.unwrap();
-    assert_eq!(er.0, vec![0]);
+    assert_eq!(er.values, vec![0]);
     let asr = old_leader.as_rx.recv().await.unwrap();
     assert_eq!(asr.1, 2);
 
@@ -163,12 +163,12 @@ async fn leader_and_follower_both_crash_and_recovery() {
     let follower = group.nodes.get_mut(&follower).unwrap();
 
     let (_cmd, er) = follower.exe_rx.recv().await.unwrap();
-    assert_eq!(er.0, vec![]);
+    assert_eq!(er.values, vec![]);
     let asr = follower.as_rx.recv().await.unwrap();
     assert_eq!(asr.1, 1);
 
     let (_cmd, er) = follower.exe_rx.recv().await.unwrap();
-    assert_eq!(er.0, vec![0]);
+    assert_eq!(er.values, vec![0]);
     let asr = follower.as_rx.recv().await.unwrap();
     assert_eq!(asr.1, 2);
 
@@ -209,7 +209,7 @@ async fn new_leader_will_recover_spec_cmds_cond1() {
             .await
             .unwrap()
             .0
-             .0,
+            .values,
         vec![0]
     );
 
@@ -254,7 +254,7 @@ async fn new_leader_will_recover_spec_cmds_cond2() {
             .await
             .unwrap()
             .0
-             .0,
+            .values,
         vec![]
     );
     assert_eq!(
@@ -263,7 +263,7 @@ async fn new_leader_will_recover_spec_cmds_cond2() {
             .await
             .unwrap()
             .0
-             .0,
+            .values,
         vec![0]
     );
 
@@ -280,7 +280,7 @@ async fn old_leader_will_keep_original_states() {
     // 0: let's first propose an initial cmd0
     let cmd0 = TestCommand::new_put(vec![0], 0);
     let (er, index) = client.propose(cmd0, false).await.unwrap();
-    assert_eq!(er.0, vec![]);
+    assert_eq!(er.values, vec![]);
     assert_eq!(index.unwrap(), 1);
 
     // 1: disable all others to prevent the cmd1 to be synced
@@ -329,7 +329,7 @@ async fn old_leader_will_keep_original_states() {
             .await
             .unwrap()
             .0
-             .0,
+            .values,
         vec![0]
     );
 
@@ -353,7 +353,7 @@ async fn minority_crash_and_recovery() {
             .await
             .unwrap()
             .0
-             .0,
+            .values,
         vec![]
     );
     assert_eq!(
@@ -362,7 +362,7 @@ async fn minority_crash_and_recovery() {
             .await
             .unwrap()
             .0
-             .0,
+            .values,
         vec![0]
     );
 
@@ -386,7 +386,7 @@ async fn minority_crash_and_recovery() {
             .await
             .unwrap()
             .0
-             .0,
+            .values,
         vec![0]
     );
     assert_eq!(
@@ -395,7 +395,7 @@ async fn minority_crash_and_recovery() {
             .await
             .unwrap()
             .0
-             .0,
+            .values,
         vec![]
     );
     assert_eq!(
@@ -404,7 +404,7 @@ async fn minority_crash_and_recovery() {
             .await
             .unwrap()
             .0
-             .0,
+            .values,
         vec![1]
     );
 

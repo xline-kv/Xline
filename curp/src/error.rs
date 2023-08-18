@@ -1,10 +1,14 @@
 use std::io;
 
-use curp_external_api::cmd::Command;
+use curp_external_api::cmd::{Command, PbSerialize, PbSerializeError};
+use prost::Message;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{cmd::ProposeId, members::ServerId};
+use crate::{
+    members::ServerId,
+    rpc::{Empty, PbProposeError, PbProposeErrorOuter, PbSyncError, RedirectData},
+};
 
 /// Error type of client builder
 #[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
@@ -61,7 +65,7 @@ pub enum ServerError {
 }
 
 /// The error met during propose phase
-#[derive(Error, Debug, Serialize, Deserialize)]
+#[derive(Error, Debug, Clone, Serialize, Deserialize)]
 #[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
 #[non_exhaustive]
 pub enum ProposeError {
@@ -77,6 +81,63 @@ pub enum ProposeError {
     /// Encode error
     #[error("encode error: {0}")]
     EncodeError(String),
+}
+
+impl TryFrom<PbProposeError> for ProposeError {
+    type Error = PbSerializeError;
+
+    #[inline]
+    fn try_from(err: PbProposeError) -> Result<ProposeError, Self::Error> {
+        Ok(match err {
+            PbProposeError::KeyConflict(_) => ProposeError::KeyConflict,
+            PbProposeError::Duplicated(_) => ProposeError::Duplicated,
+            PbProposeError::SyncError(e) => {
+                ProposeError::SyncedError(e.sync_error.ok_or(PbSerializeError::EmptyField)?.into())
+            }
+            PbProposeError::EncodeError(s) => ProposeError::EncodeError(s),
+        })
+    }
+}
+
+impl From<ProposeError> for PbProposeError {
+    #[inline]
+    fn from(err: ProposeError) -> Self {
+        match err {
+            ProposeError::KeyConflict => PbProposeError::KeyConflict(Empty {}),
+            ProposeError::Duplicated => PbProposeError::Duplicated(Empty {}),
+            ProposeError::SyncedError(e) => {
+                PbProposeError::SyncError(crate::rpc::PbSyncErrorOuter {
+                    sync_error: Some(e.into()),
+                })
+            }
+            ProposeError::EncodeError(e) => PbProposeError::EncodeError(e),
+        }
+    }
+}
+
+impl From<PbSerializeError> for ProposeError {
+    #[inline]
+    fn from(err: PbSerializeError) -> Self {
+        ProposeError::EncodeError(err.to_string())
+    }
+}
+
+impl PbSerialize for ProposeError {
+    #[inline]
+    fn encode(&self) -> Vec<u8> {
+        PbProposeErrorOuter {
+            propose_error: Some(self.clone().into()),
+        }
+        .encode_to_vec()
+    }
+
+    #[inline]
+    fn decode(buf: &[u8]) -> Result<Self, PbSerializeError> {
+        PbProposeErrorOuter::decode(buf)?
+            .propose_error
+            .ok_or(PbSerializeError::EmptyField)?
+            .try_into()
+    }
 }
 
 /// The error met during propose phase
@@ -112,7 +173,7 @@ impl From<bincode::Error> for ProposeError {
 #[non_exhaustive]
 pub enum CommandProposeError<C: Command> {
     /// Curp propose error
-    #[error("propose error: {0}")]
+    #[error("propose error: {0:?}")]
     Propose(#[from] ProposeError),
     /// User defined execute error
     #[error("execute error: {0}")]
@@ -130,15 +191,30 @@ pub enum SyncError {
     /// If client sent a wait synced request to a non-leader
     #[error("redirect to {0:?}, term {1}")]
     Redirect(Option<ServerId>, u64),
-    /// If there is no such cmd to be waited
-    #[error("no such command {0}")]
-    NoSuchCmd(ProposeId),
-    /// Wait timeout
-    #[error("timeout")]
-    Timeout,
     /// Other error
     #[error("other: {0}")]
     Other(String),
+}
+
+impl From<PbSyncError> for SyncError {
+    #[inline]
+    fn from(err: PbSyncError) -> Self {
+        match err {
+            PbSyncError::Redirect(data) => SyncError::Redirect(data.server_id, data.term),
+            PbSyncError::Other(s) => SyncError::Other(s),
+        }
+    }
+}
+
+impl From<SyncError> for PbSyncError {
+    fn from(err: SyncError) -> Self {
+        match err {
+            SyncError::Redirect(server_id, term) => {
+                PbSyncError::Redirect(RedirectData { server_id, term })
+            }
+            SyncError::Other(s) => PbSyncError::Other(s),
+        }
+    }
 }
 
 /// The union error which includes sync errors and user-defined errors.

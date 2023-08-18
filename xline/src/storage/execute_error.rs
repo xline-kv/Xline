@@ -1,5 +1,8 @@
+use curp::cmd::{PbSerialize, PbSerializeError};
+use prost::Message;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use xlineapi::{Empty, PbExecuteError, PbExecuteErrorOuter, PbRevisions, PbValidationError};
 
 use crate::request_validation::ValidationError;
 
@@ -94,6 +97,123 @@ pub enum ExecuteError {
     /// Permission denied Error
     #[error("permission denied")]
     PermissionDenied,
+}
+
+impl From<PbExecuteError> for ExecuteError {
+    #[inline]
+    fn from(err: PbExecuteError) -> Self {
+        match err {
+            PbExecuteError::InvalidRequest(s) => ExecuteError::InvalidRequest(
+                PbValidationError::from_i32(s).unwrap_or_default().into(),
+            ),
+            PbExecuteError::KeyNotFound(_) => ExecuteError::KeyNotFound,
+            PbExecuteError::RevisionTooLarge(revs) => {
+                ExecuteError::RevisionTooLarge(revs.required_revision, revs.current_revision)
+            }
+            PbExecuteError::RevisionCompacted(revs) => {
+                ExecuteError::RevisionCompacted(revs.required_revision, revs.current_revision)
+            }
+            PbExecuteError::LeaseNotFound(l) => ExecuteError::LeaseNotFound(l),
+            PbExecuteError::LeaseExpired(l) => ExecuteError::LeaseExpired(l),
+            PbExecuteError::LeaseTtlTooLarge(l) => ExecuteError::LeaseTtlTooLarge(l),
+            PbExecuteError::LeaseAlreadyExists(l) => ExecuteError::LeaseAlreadyExists(l),
+            PbExecuteError::AuthNotEnabled(_) => ExecuteError::AuthNotEnabled,
+            PbExecuteError::AuthFailed(_) => ExecuteError::AuthFailed,
+            PbExecuteError::UserNotFound(u) => ExecuteError::UserNotFound(u),
+            PbExecuteError::UserAlreadyExists(u) => ExecuteError::UserAlreadyExists(u),
+            PbExecuteError::UserAlreadyHasRole(ur) => {
+                ExecuteError::UserAlreadyHasRole(ur.user, ur.role)
+            }
+            PbExecuteError::NoPasswordUser(_) => ExecuteError::NoPasswordUser,
+            PbExecuteError::RoleNotFound(r) => ExecuteError::RoleNotFound(r),
+            PbExecuteError::RoleAlreadyExists(r) => ExecuteError::RoleAlreadyExists(r),
+            PbExecuteError::RoleNotGranted(r) => ExecuteError::RoleNotGranted(r),
+            PbExecuteError::RootRoleNotExist(_) => ExecuteError::RootRoleNotExist,
+            PbExecuteError::PermissionNotGranted(_) => ExecuteError::PermissionNotGranted,
+            PbExecuteError::PermissionNotGiven(_) => ExecuteError::PermissionNotGiven,
+            PbExecuteError::InvalidAuthManagement(_) => ExecuteError::InvalidAuthManagement,
+            PbExecuteError::InvalidAuthToken(_) => ExecuteError::InvalidAuthToken,
+            PbExecuteError::TokenManagerNotInit(_) => ExecuteError::TokenManagerNotInit,
+            PbExecuteError::TokenNotProvided(_) => ExecuteError::TokenNotProvided,
+            PbExecuteError::TokenOldRevision(revs) => {
+                ExecuteError::TokenOldRevision(revs.required_revision, revs.current_revision)
+            }
+            PbExecuteError::DbError(e) => ExecuteError::DbError(e),
+            PbExecuteError::PermissionDenied(_) => ExecuteError::PermissionDenied,
+        }
+    }
+}
+
+impl From<ExecuteError> for PbExecuteError {
+    #[inline]
+    fn from(err: ExecuteError) -> Self {
+        match err {
+            ExecuteError::InvalidRequest(s) => {
+                PbExecuteError::InvalidRequest(PbValidationError::from(s).into())
+            }
+            ExecuteError::KeyNotFound => PbExecuteError::KeyNotFound(Empty {}),
+            ExecuteError::RevisionTooLarge(required_revision, current_revision) => {
+                PbExecuteError::RevisionTooLarge(PbRevisions {
+                    required_revision,
+                    current_revision,
+                })
+            }
+            ExecuteError::RevisionCompacted(required_revision, current_revision) => {
+                PbExecuteError::RevisionCompacted(PbRevisions {
+                    required_revision,
+                    current_revision,
+                })
+            }
+            ExecuteError::LeaseNotFound(l) => PbExecuteError::LeaseNotFound(l),
+            ExecuteError::LeaseExpired(l) => PbExecuteError::LeaseExpired(l),
+            ExecuteError::LeaseTtlTooLarge(l) => PbExecuteError::LeaseTtlTooLarge(l),
+            ExecuteError::LeaseAlreadyExists(l) => PbExecuteError::LeaseAlreadyExists(l),
+            ExecuteError::AuthNotEnabled => PbExecuteError::AuthNotEnabled(Empty {}),
+            ExecuteError::AuthFailed => PbExecuteError::AuthFailed(Empty {}),
+            ExecuteError::UserNotFound(u) => PbExecuteError::UserNotFound(u),
+            ExecuteError::UserAlreadyExists(u) => PbExecuteError::UserAlreadyExists(u),
+            ExecuteError::UserAlreadyHasRole(user, role) => {
+                PbExecuteError::UserAlreadyHasRole(xlineapi::PbUserRole { user, role })
+            }
+            ExecuteError::NoPasswordUser => PbExecuteError::NoPasswordUser(Empty {}),
+            ExecuteError::RoleNotFound(r) => PbExecuteError::RoleNotFound(r),
+            ExecuteError::RoleAlreadyExists(r) => PbExecuteError::RoleAlreadyExists(r),
+            ExecuteError::RoleNotGranted(r) => PbExecuteError::RoleNotGranted(r),
+            ExecuteError::RootRoleNotExist => PbExecuteError::RootRoleNotExist(Empty {}),
+            ExecuteError::PermissionNotGranted => PbExecuteError::PermissionNotGranted(Empty {}),
+            ExecuteError::PermissionNotGiven => PbExecuteError::PermissionNotGiven(Empty {}),
+            ExecuteError::InvalidAuthManagement => PbExecuteError::InvalidAuthManagement(Empty {}),
+            ExecuteError::InvalidAuthToken => PbExecuteError::InvalidAuthToken(Empty {}),
+            ExecuteError::TokenManagerNotInit => PbExecuteError::TokenManagerNotInit(Empty {}),
+            ExecuteError::TokenNotProvided => PbExecuteError::TokenNotProvided(Empty {}),
+            ExecuteError::TokenOldRevision(required_revision, current_revision) => {
+                PbExecuteError::TokenOldRevision(PbRevisions {
+                    required_revision,
+                    current_revision,
+                })
+            }
+            ExecuteError::DbError(e) => PbExecuteError::DbError(e),
+            ExecuteError::PermissionDenied => PbExecuteError::PermissionDenied(Empty {}),
+        }
+    }
+}
+
+impl PbSerialize for ExecuteError {
+    #[inline]
+    fn encode(&self) -> Vec<u8> {
+        PbExecuteErrorOuter {
+            error: Some(self.clone().into()),
+        }
+        .encode_to_vec()
+    }
+
+    #[inline]
+    fn decode(buf: &[u8]) -> Result<Self, PbSerializeError> {
+        Ok(PbExecuteErrorOuter::decode(buf)?
+            .error
+            .ok_or(PbSerializeError::EmptyField)?
+            .into())
+    }
 }
 
 // The etcd client relies on GRPC error messages for error type interpretation.

@@ -4,7 +4,10 @@ use std::{sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
 use curp::client::Builder;
-use curp_test_utils::{init_logger, sleep_millis, sleep_secs, test_cmd::TestCommand};
+use curp_test_utils::{
+    init_logger, sleep_millis, sleep_secs,
+    test_cmd::{TestCommand, TestCommandResult},
+};
 use madsim::rand::{thread_rng, Rng};
 use test_macros::abort_on_panic;
 use utils::config::ClientTimeout;
@@ -29,7 +32,7 @@ async fn basic_propose() {
             .await
             .unwrap()
             .0,
-        (vec![], vec![])
+        TestCommandResult::new(vec![], vec![])
     );
     assert_eq!(
         client
@@ -37,7 +40,7 @@ async fn basic_propose() {
             .await
             .unwrap()
             .0,
-        (vec![0], vec![1])
+        TestCommandResult::new(vec![0], vec![1])
     );
 
     group.stop();
@@ -69,13 +72,13 @@ async fn synced_propose() {
     let cmd = TestCommand::new_get(vec![0]);
 
     let (er, index) = client.propose(cmd.clone(), false).await.unwrap();
-    assert_eq!(er, (vec![], vec![]));
+    assert_eq!(er, TestCommandResult::new(vec![], vec![]));
     assert_eq!(index.unwrap(), 1); // log[0] is a fake one
 
     for exe_rx in group.exe_rxs() {
         let (cmd1, er) = exe_rx.recv().await.unwrap();
         assert_eq!(cmd1, cmd);
-        assert_eq!(er, (vec![], vec![]));
+        assert_eq!(er, TestCommandResult::new(vec![], vec![]));
     }
 
     for as_rx in group.as_rxs() {
@@ -98,7 +101,7 @@ async fn exe_exact_n_times() {
     let cmd = TestCommand::new_get(vec![0]);
 
     let er = client.propose(cmd.clone(), true).await.unwrap().0;
-    assert_eq!(er, (vec![], vec![]));
+    assert_eq!(er, TestCommandResult::new(vec![], vec![]));
 
     for exe_rx in group.exe_rxs() {
         let (cmd1, er) = exe_rx.recv().await.unwrap();
@@ -108,7 +111,7 @@ async fn exe_exact_n_times() {
                 .is_err()
         );
         assert_eq!(cmd1, cmd);
-        assert_eq!(er.0, vec![]);
+        assert_eq!(er.values, vec![]);
     }
 
     for as_rx in group.as_rxs() {
@@ -216,7 +219,7 @@ async fn concurrent_cmd_order() {
             .await
             .unwrap()
             .0
-             .0,
+            .values,
         vec![2]
     );
 
@@ -249,7 +252,7 @@ async fn concurrent_cmd_order_should_have_correct_revision() {
                 .await
                 .unwrap()
                 .0
-                 .1,
+                .revisions,
             vec![i.numeric_cast::<i64>()]
         )
     }

@@ -105,7 +105,7 @@ impl Client {
             let request = RequestWithToken::new(rpc::PutRequest::from(request).into());
             let cmd = Command::new(key_ranges, request, propose_id);
             let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
-            Ok(cmd_res.decode().into())
+            Ok(cmd_res.into_inner().into())
         } else {
             let opts = (&request).into();
             let response = self
@@ -129,7 +129,7 @@ impl Client {
             let request = RequestWithToken::new(rpc::RangeRequest::from(request).into());
             let cmd = Command::new(key_ranges, request, propose_id);
             let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
-            Ok(cmd_res.decode().into())
+            Ok(cmd_res.into_inner().into())
         } else {
             let opts = (&request).into();
             let response = self.etcd_client.get(request.key(), Some(opts)).await?;
@@ -153,7 +153,7 @@ impl Client {
             let request = RequestWithToken::new(rpc::DeleteRangeRequest::from(request).into());
             let cmd = Command::new(key_ranges, request, propose_id);
             let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
-            Ok(cmd_res.decode().into())
+            Ok(cmd_res.into_inner().into())
         } else {
             let opts = (&request).into();
             let response = self.etcd_client.delete(request.key(), Some(opts)).await?;

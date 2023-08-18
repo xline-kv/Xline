@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package errorpb;
+
+// empty type
+message Empty {
+}
+
+message ProposeError {
+    oneof propose_error {
+        Empty key_conflict = 1;
+        Empty duplicated = 2;
+        SyncError sync_error = 3;
+        string encode_error = 4;
+    }
+}
+
+message RedirectData {
+    optional uint64 server_id = 1;
+    uint64 term = 2;
+}
+
+message SyncError {
+    oneof sync_error {
+        RedirectData redirect = 1;
+        string other = 2;
+    }
+}

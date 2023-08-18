@@ -21,9 +21,7 @@ use tokio::sync::mpsc;
 use tracing::debug;
 use utils::config::{ClientTimeout, CurpConfigBuilder, StorageConfig};
 
-pub use curp::{
-    propose_response, protocol_client::ProtocolClient, ProposeRequest, ProposeResponse,
-};
+pub use curp::{protocol_client::ProtocolClient, ProposeRequest, ProposeResponse};
 
 struct MemorySnapshotAllocator;
 

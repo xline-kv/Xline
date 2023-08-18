@@ -3,6 +3,7 @@ use std::{
     time::Duration,
 };
 
+use curp_external_api::cmd::PbSerialize;
 use dashmap::DashMap;
 use event_listener::Event;
 use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
@@ -210,7 +211,7 @@ where
         cmd_arc: Arc<C>,
     ) -> Result<(Option<<C as Command>::ER>, bool), CommandProposeError<C>> {
         debug!("fast round for cmd({}) started", cmd_arc.id());
-        let req = ProposeRequest::new(cmd_arc.as_ref()).map_err(Into::<ProposeError>::into)?;
+        let req = ProposeRequest::new(cmd_arc.as_ref());
 
         let connects = self
             .connects
@@ -325,11 +326,8 @@ where
                     debug!("slow round for cmd({}) succeeded", cmd.id());
                     return Ok((asr, er));
                 }
-                SyncResult::Error(CommandSyncError::Sync(SyncError::Redirect(
-                    new_leader,
-                    term,
-                ))) => {
-                    let new_leader = new_leader.and_then(|id| {
+                SyncResult::Error(CommandSyncError::Sync(SyncError::Redirect(server_id, term))) => {
+                    let new_leader = server_id.and_then(|id| {
                         self.state.map_write(|mut state| {
                             (state.term <= term).then(|| {
                                 state.leader = Some(id);
@@ -341,7 +339,7 @@ where
                     self.resend_propose(Arc::clone(&cmd), new_leader).await?; // resend the propose to the new leader
                 }
                 SyncResult::Error(CommandSyncError::Sync(e)) => {
-                    return Err(ProposeError::SyncedError(e).into());
+                    return Err(ProposeError::SyncedError(SyncError::Other(e.to_string())).into());
                 }
                 SyncResult::Error(CommandSyncError::Execute(e)) => {
                     return Err(CommandProposeError::Execute(e));
@@ -373,7 +371,7 @@ where
                 .get_connect(leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .propose(
-                    ProposeRequest::new(cmd.as_ref())?,
+                    ProposeRequest::new(cmd.as_ref()),
                     *self.timeout.propose_timeout(),
                 )
                 .await;
@@ -382,7 +380,7 @@ where
                 Ok(resp) => {
                     let resp = resp.into_inner();
                     if let Some(rpc::ExeResult::Error(ref e)) = resp.exe_result {
-                        let err: ProposeError = bincode::deserialize(e)?;
+                        let err = ProposeError::decode(e)?;
                         if matches!(err, ProposeError::Duplicated) {
                             return Ok(());
                         }

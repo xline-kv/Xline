@@ -96,7 +96,7 @@ impl LeaseClient {
         );
         let cmd = Command::new(vec![], request, propose_id);
         let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
-        Ok(cmd_res.decode().into())
+        Ok(cmd_res.into_inner().into())
     }
 
     /// Revokes a lease. All keys attached to the lease will expire and be deleted.
@@ -268,7 +268,7 @@ impl LeaseClient {
         );
         let cmd = Command::new(vec![], request, propose_id);
         let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
-        Ok(cmd_res.decode().into())
+        Ok(cmd_res.into_inner().into())
     }
 
     /// Generate a new `ProposeId`
