@@ -32,6 +32,8 @@ jobs:
         run: |
           sudo chmod -R 777 /tmp/kind
           ls /tmp/kind
+          ls /tmp/kind/pods
+          ls /tmp/kind/containers
       - name: upload kind logs
         if: always()
         uses: actions/upload-artifact@v3
