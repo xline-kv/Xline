@@ -1,7 +1,7 @@
 use std::{fmt::Debug, sync::Arc, time::Duration};
 
 use curp::{
-    client::{Client, ReadState},
+    client::{ClientPool, ReadState},
     cmd::generate_propose_id,
 };
 use futures::future::join_all;
@@ -42,8 +42,8 @@ where
     id_barrier: Arc<IdBarrier>,
     /// Range request retry timeout
     range_retry_timeout: Duration,
-    /// Consensus client
-    client: Arc<Client<Command>>,
+    /// Consensus client pool
+    client_pool: Arc<ClientPool<Command>>,
     /// Server name
     name: String,
 }
@@ -59,7 +59,7 @@ where
         index_barrier: Arc<IndexBarrier>,
         id_barrier: Arc<IdBarrier>,
         range_retry_timeout: Duration,
-        client: Arc<Client<Command>>,
+        client_pool: Arc<ClientPool<Command>>,
         name: String,
     ) -> Self {
         Self {
@@ -68,7 +68,7 @@ where
             index_barrier,
             id_barrier,
             range_retry_timeout,
-            client,
+            client_pool,
             name,
         }
     }
@@ -103,7 +103,8 @@ where
         let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
         let cmd = command_from_request_wrapper::<S>(generate_propose_id(&self.name), wrapper, None);
 
-        self.client
+        self.client_pool
+            .get_client()
             .propose(cmd, use_fast_path)
             .await
             .map_err(propose_err_to_status)
@@ -154,7 +155,8 @@ where
     async fn wait_read_state(&self, cmd: &Command) -> Result<(), tonic::Status> {
         loop {
             let rd_state = self
-                .client
+                .client_pool
+                .get_client()
                 .fetch_read_state(cmd)
                 .await
                 .map_err(|e| tonic::Status::internal(e.to_string()))?;

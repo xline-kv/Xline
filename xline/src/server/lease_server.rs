@@ -2,7 +2,7 @@ use std::{pin::Pin, sync::Arc, time::Duration};
 
 use async_stream::{stream, try_stream};
 use clippy_utilities::Cast;
-use curp::{client::Client, cmd::generate_propose_id, members::ClusterInfo};
+use curp::{client::ClientPool, cmd::generate_propose_id, members::ClusterInfo};
 use futures::stream::Stream;
 use tokio::time;
 use tracing::{debug, warn};
@@ -37,8 +37,8 @@ where
     lease_storage: Arc<LeaseStore<S>>,
     /// Auth storage
     auth_storage: Arc<AuthStore<S>>,
-    /// Consensus client
-    client: Arc<Client<Command>>,
+    /// Consensus client pool
+    client_pool: Arc<ClientPool<Command>>,
     /// Id generator
     id_gen: Arc<IdGenerator>,
     /// cluster information
@@ -53,14 +53,14 @@ where
     pub(crate) fn new(
         lease_storage: Arc<LeaseStore<S>>,
         auth_storage: Arc<AuthStore<S>>,
-        client: Arc<Client<Command>>,
+        client_pool: Arc<ClientPool<Command>>,
         id_gen: Arc<IdGenerator>,
         cluster_info: Arc<ClusterInfo>,
     ) -> Arc<Self> {
         let lease_server = Arc::new(Self {
             lease_storage,
             auth_storage,
-            client,
+            client_pool,
             id_gen,
             cluster_info,
         });
@@ -116,7 +116,8 @@ where
             Some(self.lease_storage.as_ref()),
         );
 
-        self.client
+        self.client_pool
+            .get_client()
             .propose(cmd, use_fast_path)
             .await
             .map_err(propose_err_to_status)
@@ -220,7 +221,11 @@ where
             if self.lease_storage.is_primary() {
                 break self.leader_keep_alive(request_stream).await;
             }
-            let leader_id = self.client.get_leader_id_from_curp().await;
+            let leader_id = self
+                .client_pool
+                .get_client()
+                .get_leader_id_from_curp()
+                .await;
             // Given that a candidate server may become a leader when it won the election or
             // a follower when it lost the election. Therefore we need to double check here.
             // We can directly invoke leader_keep_alive when a candidate becomes a leader.
@@ -314,7 +319,11 @@ where
                 };
                 return Ok(tonic::Response::new(res));
             }
-            let leader_id = self.client.get_leader_id_from_curp().await;
+            let leader_id = self
+                .client_pool
+                .get_client()
+                .get_leader_id_from_curp()
+                .await;
             let leader_addr = self.cluster_info.address(leader_id).unwrap_or_else(|| {
                 unreachable!(
                     "The address of leader {} not found in all_members {:?}",

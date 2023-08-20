@@ -2,7 +2,7 @@ use std::{marker::PhantomData, sync::Arc};
 
 use async_stream::stream;
 use clippy_utilities::OverflowArithmetic;
-use curp::{client::Client, cmd::generate_propose_id};
+use curp::{client::ClientPool, cmd::generate_propose_id};
 use etcd_client::EventType;
 use tracing::debug;
 use xlineapi::RequestWithToken;
@@ -32,8 +32,8 @@ const DEFAULT_SESSION_TTL: i64 = 60;
 /// Lock Server
 #[derive(Debug)]
 pub(super) struct LockServer<S> {
-    /// Consensus client
-    client: Arc<Client<Command>>,
+    /// Consensus client pool
+    client_pool: Arc<ClientPool<Command>>,
     /// Id Generator
     id_gen: Arc<IdGenerator>,
     /// Cluster information
@@ -50,13 +50,13 @@ where
 {
     /// New `LockServer`
     pub(super) fn new(
-        client: Arc<Client<Command>>,
+        client_pool: Arc<ClientPool<Command>>,
         id_gen: Arc<IdGenerator>,
         name: String,
         address: String,
     ) -> Self {
         Self {
-            client,
+            client_pool,
             id_gen,
             name,
             address,
@@ -77,7 +77,8 @@ where
         let wrapper = RequestWithToken::new_with_token(request.into(), token);
         let cmd = command_from_request_wrapper::<S>(generate_propose_id(&self.name), wrapper, None);
 
-        self.client
+        self.client_pool
+            .get_client()
             .propose(cmd, use_fast_path)
             .await
             .map_err(propose_err_to_status)

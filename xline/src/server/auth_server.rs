@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use curp::{client::Client, cmd::generate_propose_id};
+use curp::{client::ClientPool, cmd::generate_propose_id};
 use pbkdf2::{
     password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
     Pbkdf2,
@@ -39,7 +39,7 @@ where
     /// Auth storage
     storage: Arc<AuthStore<S>>,
     /// Consensus client
-    client: Arc<Client<Command>>,
+    client_pool: Arc<ClientPool<Command>>,
     /// Server name
     name: String,
 }
@@ -59,12 +59,12 @@ where
     /// New `AuthServer`
     pub(crate) fn new(
         storage: Arc<AuthStore<S>>,
-        client: Arc<Client<Command>>,
+        client_pool: Arc<ClientPool<Command>>,
         name: String,
     ) -> Self {
         Self {
             storage,
-            client,
+            client_pool,
             name,
         }
     }
@@ -82,7 +82,8 @@ where
         let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
         let cmd = command_from_request_wrapper::<S>(generate_propose_id(&self.name), wrapper, None);
 
-        self.client
+        self.client_pool
+            .get_client()
             .propose(cmd, use_fast_path)
             .await
             .map_err(propose_err_to_status)

@@ -2,7 +2,7 @@ use std::{future::Future, net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use clippy_utilities::{Cast, OverflowArithmetic};
-use curp::{client::Client, members::ClusterInfo, server::Rpc, ProtocolServer, SnapshotAllocator};
+use curp::{client::ClientPool, members::ClusterInfo, server::Rpc, ProtocolServer, SnapshotAllocator};
 use event_listener::Event;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use tokio::{net::TcpListener, sync::mpsc::channel};
@@ -43,9 +43,6 @@ use crate::{
 
 /// Rpc Server of curp protocol
 type CurpServer<S> = Rpc<Command, State<S>>;
-
-/// Rpc Client of curp protocol
-type CurpClient = Client<Command>;
 
 /// Xline server
 #[derive(Debug)]
@@ -314,12 +311,14 @@ impl XlineServer {
             _ => unimplemented!(),
         };
 
-        let client = Arc::new(
-            CurpClient::builder()
-                .local_server_id(self.cluster_info.self_id())
-                .timeout(self.client_timeout)
-                .build_from_all_members(self.cluster_info.all_members())
-                .await?,
+        let client_pool: Arc<ClientPool<Command>> = Arc::new(
+            ClientPool::new(
+                16,
+                self.cluster_info.self_id(),
+                self.client_timeout,
+                self.cluster_info.all_members(),
+            )
+            .await?,
         );
 
         let auto_compactor = if let Some(auto_config_cfg) = *self.compact_cfg.auto_compact_config()
@@ -327,7 +326,7 @@ impl XlineServer {
             Some(
                 auto_compactor(
                     self.is_leader,
-                    Arc::clone(&client),
+                    Arc::clone(&client_pool),
                     header_gen.general_revision_arc(),
                     Arc::clone(&self.shutdown_trigger),
                     auto_config_cfg,
@@ -356,11 +355,11 @@ impl XlineServer {
                 index_barrier,
                 id_barrier,
                 *self.server_timeout.range_retry_timeout(),
-                Arc::clone(&client),
+                Arc::clone(&client_pool),
                 self.cluster_info.self_name().to_owned(),
             ),
             LockServer::new(
-                Arc::clone(&client),
+                Arc::clone(&client_pool),
                 Arc::clone(&id_gen),
                 self.cluster_info.self_name().to_owned(),
                 self.cluster_info.self_address().to_owned(),
@@ -368,13 +367,13 @@ impl XlineServer {
             LeaseServer::new(
                 lease_storage,
                 Arc::clone(&auth_storage),
-                Arc::clone(&client),
+                Arc::clone(&client_pool),
                 id_gen,
                 Arc::clone(&self.cluster_info),
             ),
             AuthServer::new(
                 auth_storage,
-                client,
+                client_pool,
                 self.cluster_info.self_name().to_owned(),
             ),
             WatchServer::new(

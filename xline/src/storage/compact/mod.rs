@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use curp::{
-    client::Client,
+    client::ClientPool,
     cmd::generate_propose_id,
     error::CommandProposeError::{AfterSync, Execute},
 };
@@ -52,7 +52,7 @@ pub(crate) trait Compactable: std::fmt::Debug + Send + Sync {
 }
 
 #[async_trait]
-impl Compactable for Client<Command> {
+impl Compactable for ClientPool<Command> {
     async fn compact(&self, revision: i64) -> Result<(), ExecuteError> {
         let request = CompactionRequest {
             revision,
@@ -61,7 +61,7 @@ impl Compactable for Client<Command> {
         let request_wrapper = RequestWithToken::new_with_token(request.into(), None);
         let propose_id = generate_propose_id("auto-compactor");
         let cmd = Command::new(vec![], request_wrapper, propose_id);
-        if let Err(e) = self.propose(cmd, true).await {
+        if let Err(e) = self.get_client().propose(cmd, true).await {
             #[allow(clippy::wildcard_enum_match_arm)]
             match e {
                 Execute(e) | AfterSync(e) => Err(e),
@@ -78,18 +78,22 @@ impl Compactable for Client<Command> {
 /// Boot up an auto-compactor background task.
 pub(crate) async fn auto_compactor(
     is_leader: bool,
-    client: Arc<Client<Command>>,
+    client_pool: Arc<ClientPool<Command>>,
     revision_getter: Arc<RevisionNumberGenerator>,
     shutdown_trigger: Arc<Event>,
     auto_compact_cfg: AutoCompactConfig,
 ) -> Arc<dyn Compactor> {
     let auto_compactor: Arc<dyn Compactor> = match auto_compact_cfg {
-        AutoCompactConfig::Periodic(period) => {
-            PeriodicCompactor::new_arc(is_leader, client, revision_getter, shutdown_trigger, period)
-        }
+        AutoCompactConfig::Periodic(period) => PeriodicCompactor::new_arc(
+            is_leader,
+            client_pool,
+            revision_getter,
+            shutdown_trigger,
+            period,
+        ),
         AutoCompactConfig::Revision(retention) => RevisionCompactor::new_arc(
             is_leader,
-            client,
+            client_pool,
             revision_getter,
             shutdown_trigger,
             retention,

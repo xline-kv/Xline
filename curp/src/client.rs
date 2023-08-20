@@ -1,5 +1,13 @@
 use std::{
-    cmp::Ordering, collections::HashMap, fmt::Debug, iter, marker::PhantomData, sync::Arc,
+    cmp::Ordering,
+    collections::HashMap,
+    fmt::Debug,
+    iter,
+    marker::PhantomData,
+    sync::{
+        atomic::{AtomicUsize, Ordering::Relaxed},
+        Arc,
+    },
     time::Duration,
 };
 
@@ -664,6 +672,63 @@ fn superquorum(nodes: usize) -> usize {
     fault_tolerance
         .wrapping_add(fault_tolerance.wrapping_add(1).wrapping_div(2))
         .wrapping_add(1)
+}
+
+/// Inner client pool
+#[allow(clippy::module_name_repetitions)]
+#[derive(Debug)]
+pub struct ClientPool<C: Command> {
+    /// TODO: add a better name
+    selector: AtomicUsize,
+    /// the capacity of the client pool
+    capacity: usize,
+    /// client pool
+    pool: Vec<Arc<Client<C>>>,
+}
+
+impl<C> ClientPool<C>
+where
+    C: Command + 'static,
+{
+    /// create a new client pool
+    ///
+    /// # Errors
+    /// Return an `ClientBuilderError` when it failed to build a client
+    #[inline]
+    pub async fn new(
+        capacity: usize,
+        local_server_id: ServerId,
+        client_cfg: ClientTimeout,
+        all_members: HashMap<ServerId, String>,
+    ) -> Result<Self, ClientBuildError> {
+        let mut pool = Vec::new();
+        for _i in 0..capacity {
+            pool.push(Arc::new(
+                Client::builder()
+                    .local_server_id(local_server_id)
+                    .timeout(client_cfg)
+                    .build_from_all_members(all_members.clone())
+                    .await?,
+            ));
+        }
+        Ok(Self {
+            selector: AtomicUsize::new(0),
+            capacity,
+            pool,
+        })
+    }
+
+    /// get an client from the pool
+    #[inline]
+    pub fn get_client(&self) -> Arc<Client<C>> {
+        #[allow(clippy::integer_arithmetic)]
+        let index = self.selector.fetch_add(1, Relaxed) % self.capacity;
+        if let Some(client) = self.pool.get(index) {
+            Arc::clone(client)
+        } else {
+            unreachable!("Oops, the ClientPool[{index}] should not be empty");
+        }
+    }
 }
 
 #[cfg(test)]
