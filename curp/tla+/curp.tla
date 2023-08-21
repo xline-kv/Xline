@@ -2,84 +2,81 @@
 
 EXTENDS FiniteSets, Naturals, Sequences
 
-CONSTANTS COMMANDS, \* set of records like [key: STRING, value: STRING]
-          REPLICAS  \* set of replicas
+(************************************************************************************)
+(* Constants:                                                                       *)
+(*     commands: set of records like [key |-> "key", value |-> "value"].            *)
+(*               each command should be unique in the set.                          *)
+(*     replicas: set of replicas.                                                   *)
+(************************************************************************************)
+CONSTANTS commands, replicas
 
-ASSUME IsFiniteSet(REPLICAS)
-
-VARIABLES msgPool,        \* messages in transit
-          leader,         \* current leader
-          epoch,          \* current epoch
-          specPools,      \* specPool of each replica
-          unsyncedCmds,   \* unsynced commands (backend)
-          syncedCmds,     \* synced commands (backend)
-          requestedCmds,  \* client requested commands
-          committedCmds   \* commands that client believes are stable in the RSM
-
-vars == <<msgPool,
-          leader,
-          epoch,
-          specPools,
-          syncedCmds,
-          unsyncedCmds,
-          requestedCmds,
-          committedCmds>>
+(************************************************************************************)
+(* Variables:                                                                       *)
+(*     leader: the current leader.                                                  *)
+(*     epoch: the current epoch (the number of leader changes).                     *)
+(*     specPools: the spec pool of each replica.                                    *)
+(*     requested: the set of requested commands (by client).                        *)
+(*     committed: the set of committed commands by CURP. It also records the index  *)
+(*                of the last same-key command in the synced sequence at the time.  *)
+(*     unsynced: the sequence of unsynced commands.                                 *)
+(*     synced: the sequence of synced commands.                                     *)
+(************************************************************************************)
+VARIABLES leader, epoch, specPools, requested, committed, unsynced, synced
 
 (************************************************************************************)
 (* The initial state of the system.                                                 *)
 (************************************************************************************)
 Init ==
-    /\ msgPool = {}
-    /\ leader \in REPLICAS
+    /\ leader \in replicas
     /\ epoch = 1
-    /\ specPools = [r \in REPLICAS |-> {}]
-    /\ unsyncedCmds = <<>>
-    /\ syncedCmds = <<>>
-    /\ requestedCmds = {}
-    /\ committedCmds = {}
+    /\ specPools = [r \in replicas |-> {}]
+    /\ requested = {}
+    /\ committed = {}
+    /\ unsynced = <<>>
+    /\ synced = <<>>
 
 (************************************************************************************)
-(* Helper function for converting a set to a sequence.                              *)
+(* Helper function for converting a set to a set containing all sequences           *)
+(* containing the elements of the set exactly once and no other elements.           *)
 (************************************************************************************)
 SetToSeqs(set) ==
-    LET len == 1..Cardinality(set)
-        seqs == {f \in [len -> set]: \A i, j \in len: i # j => f[i] # f[j]}
-    IN seqs
+    LET len == 1..Cardinality(set) IN
+        {f \in [len -> set]: \A i, j \in len: i # j => f[i] # f[j]}
 
 (************************************************************************************)
-(* Helper function for checking if a target exists in a sequence.                   *)
+(* Helper function for getting the index of the last element in a sequence          *)
+(* satisfying the predicate.                                                        *)
 (************************************************************************************)
-ExistInSeq(seq, target) ==
-    \E i \in 1..Len(seq): seq[i] = target
+GetIdxInSeq(seq, Test(_)) ==
+    LET I == {i \in 1..Len(seq): Test(seq[i])} IN 
+        IF I # {} THEN CHOOSE i \in I: \A j \in I: j <= i ELSE 0
 
 (************************************************************************************)
-(* SuperQuorums:                                                                    *)
+(* SuperQuorum:                                                                     *)
 (*     In N = 2 * f + 1 replicas, a SuperQuorum is a set of replicas that contains  *)
-(*     at least f + (f + 1) / 2 + 1 replicas (including the leader).                *)
+(*     at least f + (f + 1) / 2 + 1 replicas.                                       *)
 (*                                                                                  *)
 (*     The client can consider a command as committed if and only if it receives    *)
-(*     positive responses from a SuperQuorum.                                       *)
-(*                                                                                  *)
-(*     This defines the set consisting of all SuperQuorums.                         *)
+(*     positive responses from a set of replicas larger then a SuperQuorum.         *)
 (************************************************************************************)
-SuperQuorums ==
-    {q \in SUBSET REPLICAS:
-        /\ Cardinality(q) >= (Cardinality(REPLICAS) * 3) \div 4 + 1
-        /\ leader \in q}
+IsSuperQuorum(S) ==
+    LET f == (Cardinality(replicas) - 1) \div 2
+        size == f + (f + 1) \div 2 + 1
+    IN Cardinality(S) >= size
 
 (************************************************************************************)
-(* LeastQuorums:                                                                    *)
+(* LeastQuorum:                                                                     *)
 (*     In N = 2 * f + 1 replicas, a LeastQuorum is a set of replicas that contains  *)
 (*     at least (f + 1) / 2 + 1 replicas.                                           *)
 (*                                                                                  *)
 (*     When a replica becomes a leader, it must recover the command if and only if  *)
-(*     the command is a LeastQuorum of replicas' specPool.                          *)
-(*                                                                                  *)
-(*     This defines the set consisting of all LeastQuorums.                         *)
+(*     the command is in the specPool of a set of replicas larger then a            *)
+(*     LeastQuorum.                                                                 *)
 (************************************************************************************)
-LeastQuorums ==
-    {q \in SUBSET REPLICAS:
-        Cardinality(q) >= Cardinality(REPLICAS) \div 4 + 1}
+IsLeastQuorum(S) ==
+    LET f == (Cardinality(replicas) - 1) \div 2
+        size == (f + 1) \div 2 + 1
+    IN Cardinality(S) >= size
 
 (************************************************************************************)
 (* RecoveryQuorums:                                                                 *)
@@ -91,123 +88,69 @@ LeastQuorums ==
 (*                                                                                  *)
 (*     This defines the set consisting of all RecoveryQuorums.                      *)
 (************************************************************************************)
-RecoveryQuorums ==
-    {q \in SUBSET REPLICAS:
-        Cardinality(q) >= Cardinality(REPLICAS) \div 2 + 1}
+recoveryQuorums ==
+    LET f == (Cardinality(replicas) - 1) \div 2
+        size == f + 1
+    IN {q \in SUBSET replicas: Cardinality(q) = size}
 
 (************************************************************************************)
-(* Client sends a request to all replicas.                                          *)
+(* The Abstraction of the normal procedure of CURP.                                 *)
 (************************************************************************************)
-ClientSendRequest(cmd) ==
-    /\ requestedCmds' = requestedCmds \cup {cmd}
-    /\ msgPool' = msgPool \cup
-        [type: {"request"},
-         cmd: {cmd},
-         dst: REPLICAS]
-    /\ UNCHANGED <<leader,
-                   epoch,
-                   specPools,
-                   syncedCmds,
-                   unsyncedCmds,
-                   committedCmds>>
+Request ==
+    \E cmd \in commands \ requested:
+        /\ requested' = requested \cup {cmd}
+
+        \* To simulate the unreliability of the network,
+        \* only a subset of replicas could receive the request.
+        /\ \E received \in SUBSET replicas:
+            \* The set of replicas that got no conflict in the spec pool.
+            /\ LET acceptedReplicas ==
+                {r \in received:
+                    \A specCmd \in specPools[r]:
+                        specCmd.key # cmd.key}
+               IN
+                \* Update the specPool.
+                /\ specPools' = [r \in replicas |->
+                    IF r \in acceptedReplicas
+                    THEN specPools[r] \cup {cmd}
+                    ELSE specPools[r]]
+
+                \* If there is at least a superquorum set of replicas that accepted
+                \* the request, and the leader can execute the command,
+                \* the request is committed.
+                /\ LET CompareKey(elem) == elem.key = cmd.key IN
+                    IF
+                        /\ IsSuperQuorum(acceptedReplicas)
+                        /\ leader \in acceptedReplicas
+                        /\ GetIdxInSeq(unsynced, CompareKey) = 0
+                    THEN
+                        \* The previous state of the key is also recorded.
+                        \* This is used to check the correctness of the property.
+                        LET prevIdx == GetIdxInSeq(synced, CompareKey) IN
+                            committed' = committed \cup {[
+                                cmd |-> cmd,
+                                prevIdx |-> prevIdx]}
+                    ELSE committed' = committed
+
+            \* No matter if the request is committed or not,
+            \* as long as the leader is in the received set,
+            \* the command should be synced afterward.
+            /\ IF leader \in received
+               THEN unsynced' = Append(unsynced, cmd)
+               ELSE unsynced' = unsynced
+
+        /\ UNCHANGED <<leader, epoch, synced>>
 
 (************************************************************************************)
-(* Replica receives a request from the client.                                      *)
-(*                                                                                  *)
-(* If there is no conflict command (command on the same key) in the specPool, the   *)
-(* replica adds the command to its specPool.                                        *)
-(*                                                                                  *)
-(* The leader will always add the command to unsyncedCmds.                          *)
+(* Syncing a command using the back-end protocol like Raft. The implementation      *)
+(* details of the back-end protocol are omitted.                                    *)
 (************************************************************************************)
-ReplicaReceiveRequest(r, msg) ==
-    IF ~ExistInSeq(syncedCmds, msg.cmd) THEN
-        LET conflict == (\E cmd \in specPools[r]: cmd.key = msg.cmd.key) IN
-            /\ specPools' = [specPools EXCEPT ![r] =
-                IF conflict THEN @ ELSE @ \cup {msg.cmd}]
-            /\ unsyncedCmds' =
-                IF r = leader THEN Append(unsyncedCmds, msg.cmd)
-                ELSE unsyncedCmds
-            /\ msgPool' = (msgPool \ {msg}) \cup
-                {[type |-> "response",
-                  cmd |-> msg.cmd,
-                  ok |-> ~conflict,
-                  src |-> r]}
-            /\ UNCHANGED <<leader,
-                           epoch,
-                           syncedCmds,
-                           requestedCmds,
-                           committedCmds>>
-    ELSE \* If the command is already synced, the replica does nothing.
-        /\ msgPool' = msgPool \ {msg}
-        /\ UNCHANGED <<leader,
-                       epoch,
-                       specPools,
-                       syncedCmds,
-                       unsyncedCmds,
-                       requestedCmds,
-                       committedCmds>>
-
-(************************************************************************************)
-(* Client receives a response from a replica.                                       *)
-(*                                                                                  *)
-(* If the client got positive responses from a SuperQuorum, the client considers    *)
-(* the command as committed.                                                        *)
-(*                                                                                  *)
-(* If the client got negative responses from a LeastQuorum, the command can never   *)
-(* accepted by a SuperQuorum. Thus the client stops waiting for it.                 *)
-(************************************************************************************)
-ClientReceiveResponse(msg) ==
-    LET sameCmdResp ==
-        {resp \in msgPool: resp.type = "response" /\ resp.cmd = msg.cmd}
-    IN
-        \/ /\ {m.src: m \in {resp \in sameCmdResp: resp.ok}} \in SuperQuorums
-           /\ committedCmds' = committedCmds \cup {msg.cmd}
-           /\ msgPool' = msgPool \ sameCmdResp
-           /\ UNCHANGED <<leader,
-                          epoch,
-                          specPools,
-                          syncedCmds,
-                          unsyncedCmds,
-                          requestedCmds>>
-        \/ /\ {m.src: m \in {resp \in sameCmdResp: ~resp.ok}} \in LeastQuorums
-           /\ msgPool' = msgPool \ sameCmdResp
-           /\ UNCHANGED <<leader,
-                          epoch,
-                          specPools,
-                          syncedCmds,
-                          unsyncedCmds,
-                          requestedCmds,
-                          committedCmds>>
-
-(************************************************************************************)
-(* Client Actions                                                                   *)
-(************************************************************************************)
-ClientAction ==
-    \/ \E cmd \in (COMMANDS \ requestedCmds): ClientSendRequest(cmd)
-    \/ \E msg \in msgPool: /\ msg.type = "response"
-                           /\ ClientReceiveResponse(msg)
-
-(************************************************************************************)
-(* Replica Actions                                                                  *)
-(************************************************************************************)
-ReplicaAction ==
-    \E msg \in msgPool:
-        /\ msg.type = "request"
-        /\ ReplicaReceiveRequest(msg.dst, msg)
-
-(************************************************************************************)
-(* Syncing an `unsyncedCmd`                                                         *)
-(************************************************************************************)
-SyncAction ==
-    /\ unsyncedCmds # <<>>
-    /\ specPools' = [r \in REPLICAS |-> specPools[r] \ {Head(unsyncedCmds)}]
-    /\ syncedCmds' = Append(syncedCmds, Head(unsyncedCmds))
-    /\ unsyncedCmds' = Tail(unsyncedCmds)
-    /\ UNCHANGED <<msgPool,
-                   leader,
-                   epoch,
-                   requestedCmds,
-                   committedCmds>>
+Sync ==
+    /\ unsynced # <<>>
+    /\ specPools' = [r \in replicas |-> specPools[r] \ {Head(unsynced)}]
+    /\ synced' = Append(synced, Head(unsynced))
+    /\ unsynced' = Tail(unsynced)
+    /\ UNCHANGED <<leader, epoch, requested, committed>>
 
 (************************************************************************************)
 (* Leader Change Action                                                             *)
@@ -215,73 +158,62 @@ SyncAction ==
 (* The new leader should gather at least a RecoveryQuorum of replicas' specPool to  *)
 (* recover the commands.                                                            *)
 (*                                                                                  *)
-(* Commands occurring in the specPool of a LeastQuorum of replicas need to be       *)
+(* Commands existed in the specPool of a LeastQuorum of replicas need to be         *)
 (* recovered.                                                                       *)
 (************************************************************************************)
-LeaderChangeAction ==
-    \E newLeader \in REPLICAS:
-        /\ newLeader # leader
-        /\ \E recoveryQuorum \in RecoveryQuorums:
-            LET specPoolCmds == UNION {({
-                    [cmd |-> cmd, r |-> r]: cmd \in specPools[r]
-                }): r \in recoveryQuorum}
-                filteredSpecPoolCmds == {c1 \in specPoolCmds: {
-                    c.r: c \in {c2 \in specPoolCmds: c1.cmd = c2.cmd}
-                } \in LeastQuorums}
-                newSpecPool == {c.cmd: c \in filteredSpecPoolCmds}
+LeaderChange ==
+    \E newLeader \in (replicas \ {leader}):
+        /\ leader' = newLeader
+        /\ epoch' = epoch + 1
+        /\ \E recoveryQuorum \in recoveryQuorums:
+            LET specCmds == UNION {specPools[r] : r \in recoveryQuorum}
+                newSpecPool == {cmd \in specCmds: IsLeastQuorum({r \in replicas: cmd \in specPools[r]})}
             IN
                 /\ specPools' = [specPools EXCEPT ![newLeader] = newSpecPool]
-                /\ LET newUnsyncedCmds ==
-                        CHOOSE s \in SetToSeqs(newSpecPool): TRUE
-                   IN unsyncedCmds' = unsyncedCmds \o newUnsyncedCmds
-                /\ leader' = newLeader
-                /\ epoch' = epoch + 1
-                /\ UNCHANGED <<msgPool,
-                               syncedCmds,
-                               requestedCmds,
-                               committedCmds>>
+                /\ unsynced' \in SetToSeqs(newSpecPool)
+        /\ UNCHANGED <<requested, committed, synced>>
 
 Next ==
-    \/ LeaderChangeAction
-    \/ ClientAction
-    \/ ReplicaAction
-    \/ SyncAction
+    \/ Request
+    \/ Sync
+    \/ LeaderChange
 
-Spec == Init /\ [][Next]_vars /\ WF_vars(Next)
+Spec == Init /\ [][Next]_<<leader, epoch, specPools, requested, committed, unsynced, synced>>
 
 (************************************************************************************)
 (* Type Check                                                                       *)
 (************************************************************************************)
 TypeOK ==
-    /\ msgPool \subseteq
-        [type: {"request"},
-         cmd: COMMANDS,
-         dst: REPLICAS] \cup
-        [type: "response",
-         cmd: COMMANDS,
-         ok: {TRUE, FALSE},
-         src: REPLICAS]
-    /\ leader \in REPLICAS
+    /\ leader \in replicas
     /\ epoch \in Nat
-    /\ \A r \in REPLICAS:
-        LET specPool == specPools[r] IN
-            /\ specPool \subseteq COMMANDS
-            /\ \A cmd1, cmd2 \in specPool:
-                cmd1.key # cmd2.key
-    /\ syncedCmds \in {SetToSeqs(s): s \in SUBSET COMMANDS}
-    /\ unsyncedCmds \in {SetToSeqs(s): s \in SUBSET COMMANDS}
-    /\ requestedCmds \subseteq COMMANDS
-    /\ committedCmds \subseteq COMMANDS
+    /\ \A r \in replicas: specPools[r] \subseteq commands
+    /\ requested \subseteq commands
+    /\ \A committedCmd \in committed:
+        /\ committedCmd.cmd \in commands
+        /\ committedCmd.prevIdx \in 0..Len(synced)
+    /\ synced \in {SetToSeqs(s): s \in SUBSET commands}
+    /\ unsynced \in {SetToSeqs(s): s \in SUBSET commands}
 
 (************************************************************************************)
 (* Stability Property                                                               *)
 (*                                                                                  *)
-(* If the client considers a command has been committed, the command must           *)
-(* eventually be synced.                                                            *)
+(* This is the key property of CURP. There are two parts of the property.           *)
+(*                                                                                  *)
+(* 1. If a command is committed by CURP, command will eventually be synced by the   *)
+(*    back-end protocol.                                                            *)
+(*                                                                                  *)
+(* 2. If a command is committed by CURP, when the command is synced be the back-end *)
+(* protocol, there will never be a command with the same key between the command    *)
+(* and the recorded previous same-key command in the synced sequence.               *)
 (************************************************************************************)
 Stability ==
-    \A cmd \in COMMANDS:
-        cmd \in committedCmds ~> cmd \in {syncedCmds[i]: i \in DOMAIN syncedCmds}
+    \A committedCmd \in committed:
+        LET CompareExact(elem) == elem = committedCmd.cmd
+            syncedIdx == GetIdxInSeq(synced, CompareExact)
+        IN
+            /\ syncedIdx # 0
+            /\ \A j \in (committedCmd.prevIdx + 1)..(syncedIdx - 1):
+                synced[j].key # committedCmd.cmd.key
 
-THEOREM Spec => ([]TypeOK) /\ Stability
+THEOREM Spec => []TypeOK /\ <>Stability
 ====
