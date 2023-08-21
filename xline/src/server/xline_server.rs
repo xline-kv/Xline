@@ -1,11 +1,15 @@
-use std::{future::Future, net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{client::Client, members::ClusterInfo, server::Rpc, ProtocolServer, SnapshotAllocator};
 use event_listener::Event;
+use futures::Future;
 use jsonwebtoken::{DecodingKey, EncodingKey};
-use tokio::{net::TcpListener, sync::mpsc::channel};
+use tokio::{
+    net::TcpListener,
+    sync::{mpsc::channel, watch},
+};
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
 use tonic_health::ServingStatus;
@@ -66,6 +70,8 @@ pub struct XlineServer {
     server_timeout: ServerTimeout,
     /// Shutdown trigger
     shutdown_trigger: Arc<Event>,
+    /// Curp Shutdown trigger
+    curp_shutdown_trigger: watch::Sender<()>,
 }
 
 impl XlineServer {
@@ -85,6 +91,7 @@ impl XlineServer {
         storage_config: StorageConfig,
         compact_config: CompactConfig,
     ) -> Self {
+        let (tx, _) = watch::channel(());
         Self {
             cluster_info,
             is_leader,
@@ -94,6 +101,7 @@ impl XlineServer {
             compact_cfg: compact_config,
             server_timeout,
             shutdown_trigger: Arc::new(Event::new()),
+            curp_shutdown_trigger: tx,
         }
     }
 
@@ -346,6 +354,7 @@ impl XlineServer {
             snapshot_allocator,
             state,
             Arc::clone(&self.curp_cfg),
+            self.curp_shutdown_trigger.subscribe(),
         )
         .await;
 
@@ -392,5 +401,6 @@ impl Drop for XlineServer {
     #[inline]
     fn drop(&mut self) {
         self.shutdown_trigger.notify(usize::MAX);
+        let _ig = self.curp_shutdown_trigger.send(());
     }
 }

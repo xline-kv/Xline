@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use clippy_utilities::NumericCast;
 #[cfg(test)]
 use mockall::automock;
-use tokio::{sync::oneshot, task::JoinHandle};
+use tokio::sync::{oneshot, watch};
 use tracing::{debug, error};
 
 use self::conflict_checked_mpmc::Task;
@@ -62,6 +62,9 @@ async fn cmd_worker<
     done_tx: flume::Sender<(Task<C>, bool)>,
     curp: Arc<RawCurp<C, RC>>,
     ce: Arc<CE>,
+    // This task will safely exit when the log_tx is dropped, but we still
+    // need to keep the shutdown_listener here to notify the shutdown trigger
+    _shutdown_listener: watch::Receiver<()>,
 ) {
     let (cb, sp, ucp) = (curp.cmd_board(), curp.spec_pool(), curp.uncommitted_pool());
     let id = curp.id();
@@ -154,7 +157,7 @@ async fn cmd_worker<
             error!("can't mark a task done, the channel could be closed, {e}");
         }
     }
-    error!("cmd worker exits unexpectedly");
+    debug!("cmd worker exits");
 }
 
 /// Send event to background command executor workers
@@ -237,28 +240,25 @@ pub(super) fn start_cmd_workers<
     CE: 'static + CommandExecutor<C>,
     RC: RoleChange + 'static,
 >(
-    cmd_executor: &Arc<CE>,
+    cmd_executor: Arc<CE>,
     curp: Arc<RawCurp<C, RC>>,
     task_rx: flume::Receiver<Task<C>>,
     done_tx: flume::Sender<(Task<C>, bool)>,
-    shutdown_trigger: Arc<event_listener::Event>,
+    shutdown_listener: watch::Receiver<()>,
 ) {
     let n_workers: usize = curp.cfg().cmd_workers.numeric_cast();
     #[allow(clippy::shadow_unrelated)] // false positive
-    let cmd_worker_handles: Vec<JoinHandle<_>> =
-        iter::repeat((task_rx, done_tx, curp, Arc::clone(cmd_executor)))
-            .take(n_workers)
-            .map(|(task_rx, done_tx, curp, ce)| {
-                tokio::spawn(cmd_worker(TaskRx(task_rx), done_tx, curp, ce))
-            })
-            .collect();
-
-    let _ig = tokio::spawn(async move {
-        shutdown_trigger.listen().await;
-        for handle in cmd_worker_handles {
-            handle.abort();
-        }
-    });
+    iter::repeat((task_rx, done_tx, curp, cmd_executor, shutdown_listener))
+        .take(n_workers)
+        .for_each(|(task_rx, done_tx, curp, ce, shutdown_listener)| {
+            let _cmd_worker = tokio::spawn(cmd_worker(
+                TaskRx(task_rx),
+                done_tx,
+                curp,
+                ce,
+                shutdown_listener,
+            ));
+        });
 }
 
 #[cfg(test)]
@@ -285,9 +285,11 @@ mod tests {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
         let ce = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
-        let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel(Arc::clone(&ce));
+        let (t, l) = watch::channel(());
+        let (ce_event_tx, task_rx, done_tx) =
+            conflict_checked_mpmc::channel(Arc::clone(&ce), l.clone());
         start_cmd_workers(
-            &ce,
+            Arc::clone(&ce),
             Arc::new(RawCurp::new_test(
                 3,
                 ce_event_tx.clone(),
@@ -295,7 +297,7 @@ mod tests {
             )),
             task_rx,
             done_tx,
-            Arc::new(event_listener::Event::new()),
+            l,
         );
 
         let entry = Arc::new(LogEntry::new_cmd(1, 1, Arc::new(TestCommand::default())));
@@ -305,6 +307,7 @@ mod tests {
 
         ce_event_tx.send_after_sync(entry);
         assert_eq!(as_rx.recv().await.unwrap().1, 1);
+        let _r = t.send(());
     }
 
     // When the execution takes more time than sync, `as` should be called after exe has finished
@@ -315,9 +318,11 @@ mod tests {
         let (er_tx, _er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
         let ce = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
-        let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel(Arc::clone(&ce));
+        let (t, l) = watch::channel(());
+        let (ce_event_tx, task_rx, done_tx) =
+            conflict_checked_mpmc::channel(Arc::clone(&ce), l.clone());
         start_cmd_workers(
-            &ce,
+            Arc::clone(&ce),
             Arc::new(RawCurp::new_test(
                 3,
                 ce_event_tx.clone(),
@@ -325,7 +330,7 @@ mod tests {
             )),
             task_rx,
             done_tx,
-            Arc::new(event_listener::Event::new()),
+            l,
         );
 
         let begin = Instant::now();
@@ -344,6 +349,7 @@ mod tests {
         assert_eq!(as_rx.recv().await.unwrap().1, 1);
 
         assert!((Instant::now() - begin) >= Duration::from_secs(1));
+        let _r = t.send(());
     }
 
     // When the execution takes more time than sync and fails, after sync should not be called
@@ -354,9 +360,11 @@ mod tests {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
         let ce = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
-        let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel(Arc::clone(&ce));
+        let (t, l) = watch::channel(());
+        let (ce_event_tx, task_rx, done_tx) =
+            conflict_checked_mpmc::channel(Arc::clone(&ce), l.clone());
         start_cmd_workers(
-            &ce,
+            Arc::clone(&ce),
             Arc::new(RawCurp::new_test(
                 3,
                 ce_event_tx.clone(),
@@ -364,7 +372,7 @@ mod tests {
             )),
             task_rx,
             done_tx,
-            Arc::new(event_listener::Event::new()),
+            l,
         );
 
         let entry = Arc::new(LogEntry::new_cmd(
@@ -387,6 +395,7 @@ mod tests {
         sleep_secs(1).await;
         assert!(er_rx.try_recv().is_err());
         assert!(as_rx.try_recv().is_err());
+        let _r = t.send(());
     }
 
     // This should happen in slow path in most cases
@@ -397,9 +406,11 @@ mod tests {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
         let ce = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
-        let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel(Arc::clone(&ce));
+        let (t, l) = watch::channel(());
+        let (ce_event_tx, task_rx, done_tx) =
+            conflict_checked_mpmc::channel(Arc::clone(&ce), l.clone());
         start_cmd_workers(
-            &ce,
+            Arc::clone(&ce),
             Arc::new(RawCurp::new_test(
                 3,
                 ce_event_tx.clone(),
@@ -407,7 +418,7 @@ mod tests {
             )),
             task_rx,
             done_tx,
-            Arc::new(event_listener::Event::new()),
+            l,
         );
 
         let entry = Arc::new(LogEntry::new_cmd(1, 1, Arc::new(TestCommand::default())));
@@ -416,6 +427,7 @@ mod tests {
 
         assert_eq!(er_rx.recv().await.unwrap().1.revisions, vec![]);
         assert_eq!(as_rx.recv().await.unwrap().1, 1);
+        let _r = t.send(());
     }
 
     // When exe fails
@@ -426,9 +438,11 @@ mod tests {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
         let ce = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
-        let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel(Arc::clone(&ce));
+        let (t, l) = watch::channel(());
+        let (ce_event_tx, task_rx, done_tx) =
+            conflict_checked_mpmc::channel(Arc::clone(&ce), l.clone());
         start_cmd_workers(
-            &ce,
+            Arc::clone(&ce),
             Arc::new(RawCurp::new_test(
                 3,
                 ce_event_tx.clone(),
@@ -436,7 +450,7 @@ mod tests {
             )),
             task_rx,
             done_tx,
-            Arc::new(event_listener::Event::new()),
+            l,
         );
 
         let entry = Arc::new(LogEntry::new_cmd(
@@ -452,6 +466,7 @@ mod tests {
         assert!(er.is_err(), "The execute command result is {er:?}");
         let asr = as_rx.try_recv();
         assert!(asr.is_err(), "The after sync result is {asr:?}");
+        let _r = t.send(());
     }
 
     // If cmd1 and cmd2 conflict, order will be (cmd1 exe) -> (cmd1 as) -> (cmd2 exe) -> (cmd2 as)
@@ -462,9 +477,11 @@ mod tests {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
         let ce = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
-        let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel(Arc::clone(&ce));
+        let (t, l) = watch::channel(());
+        let (ce_event_tx, task_rx, done_tx) =
+            conflict_checked_mpmc::channel(Arc::clone(&ce), l.clone());
         start_cmd_workers(
-            &ce,
+            Arc::clone(&ce),
             Arc::new(RawCurp::new_test(
                 3,
                 ce_event_tx.clone(),
@@ -472,7 +489,7 @@ mod tests {
             )),
             task_rx,
             done_tx,
-            Arc::new(event_listener::Event::new()),
+            l,
         );
 
         let entry1 = Arc::new(LogEntry::new_cmd(
@@ -505,6 +522,7 @@ mod tests {
         assert_eq!(er_rx.recv().await.unwrap().1.revisions, vec![1]);
         assert_eq!(as_rx.recv().await.unwrap().1, 1);
         assert_eq!(as_rx.recv().await.unwrap().1, 2);
+        let _r = t.send(());
     }
 
     #[traced_test]
@@ -514,9 +532,11 @@ mod tests {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
         let ce = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
-        let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel(Arc::clone(&ce));
+        let (t, l) = watch::channel(());
+        let (ce_event_tx, task_rx, done_tx) =
+            conflict_checked_mpmc::channel(Arc::clone(&ce), l.clone());
         start_cmd_workers(
-            &ce,
+            Arc::clone(&ce),
             Arc::new(RawCurp::new_test(
                 3,
                 ce_event_tx.clone(),
@@ -524,7 +544,7 @@ mod tests {
             )),
             task_rx,
             done_tx,
-            Arc::new(event_listener::Event::new()),
+            l,
         );
 
         let entry1 = Arc::new(LogEntry::new_cmd(
@@ -557,17 +577,21 @@ mod tests {
         // there will be only one after sync results
         assert!(as_rx.recv().await.is_some());
         assert!(as_rx.try_recv().is_err());
+        let _r = t.send(());
     }
 
     #[traced_test]
     #[tokio::test]
     #[abort_on_panic]
     async fn test_snapshot() {
+        let (t, l) = watch::channel(());
+
         // ce1
         let (er_tx, mut _er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut _as_rx) = mpsc::unbounded_channel();
         let ce1 = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
-        let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel(Arc::clone(&ce1));
+        let (ce_event_tx, task_rx, done_tx) =
+            conflict_checked_mpmc::channel(Arc::clone(&ce1), l.clone());
         let curp = RawCurp::new_test(3, ce_event_tx.clone(), mock_role_change());
         let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
         curp.handle_append_entries(
@@ -580,11 +604,11 @@ mod tests {
         )
         .unwrap();
         start_cmd_workers(
-            &ce1,
+            Arc::clone(&ce1),
             Arc::new(curp),
             task_rx,
             done_tx,
-            Arc::new(event_listener::Event::new()),
+            l.clone(),
         );
 
         let entry = Arc::new(LogEntry::new_cmd(
@@ -607,9 +631,10 @@ mod tests {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut _as_rx) = mpsc::unbounded_channel();
         let ce2 = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
-        let (ce_event_tx, task_rx, done_tx) = conflict_checked_mpmc::channel(Arc::clone(&ce2));
+        let (ce_event_tx, task_rx, done_tx) =
+            conflict_checked_mpmc::channel(Arc::clone(&ce2), l.clone());
         start_cmd_workers(
-            &ce2,
+            Arc::clone(&ce2),
             Arc::new(RawCurp::new_test(
                 3,
                 ce_event_tx.clone(),
@@ -617,7 +642,7 @@ mod tests {
             )),
             task_rx,
             done_tx,
-            Arc::new(event_listener::Event::new()),
+            l,
         );
 
         ce_event_tx.send_reset(Some(snapshot)).await.unwrap();
@@ -629,5 +654,6 @@ mod tests {
         ));
         ce_event_tx.send_after_sync(entry);
         assert_eq!(er_rx.recv().await.unwrap().1.revisions, vec![1]);
+        let _r = t.send(());
     }
 }

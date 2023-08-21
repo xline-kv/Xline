@@ -5,12 +5,11 @@ use curp_external_api::cmd::PbSerializeError;
 use engine::SnapshotApi;
 use event_listener::Event;
 use futures::{pin_mut, stream::FuturesUnordered, Stream, StreamExt};
-use itertools::Itertools;
 use madsim::rand::{thread_rng, Rng};
 use parking_lot::{Mutex, RwLock};
 use thiserror::Error;
 use tokio::{
-    sync::{broadcast, mpsc},
+    sync::{broadcast, mpsc, watch},
     time::MissedTickBehavior,
 };
 use tracing::{debug, error, info, warn};
@@ -109,8 +108,6 @@ pub(super) struct CurpNode<C: Command, RC: RoleChange> {
     spec_pool: SpecPoolRef<C>,
     /// Cmd watch board for tracking the cmd sync results
     cmd_board: CmdBoardRef<C>,
-    /// Shutdown trigger
-    shutdown_trigger: Arc<Event>,
     /// CE event tx,
     ce_event_tx: Arc<dyn CEEventTxApi<C>>,
     /// Storage
@@ -298,9 +295,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
 /// Spawned tasks
 impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     /// Tick periodically
+    #[allow(clippy::integer_arithmetic)]
     async fn election_task(
         curp: Arc<RawCurp<C, RC>>,
         connects: HashMap<ServerId, Arc<impl ConnectApi + ?Sized>>,
+        mut shutdown_listener: watch::Receiver<()>,
     ) {
         let heartbeat_interval = curp.cfg().heartbeat_interval;
         // wait for some random time before tick starts to minimize vote split possibility
@@ -312,7 +311,13 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         let mut ticker = tokio::time::interval(heartbeat_interval);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
-            let _now = ticker.tick().await;
+            tokio::select! {
+                _now = ticker.tick() => {}
+                _ = shutdown_listener.changed() => {
+                    debug!("election task exits");
+                    return;
+                }
+            }
             if let Some(vote) = curp.tick_election() {
                 Self::bcast_vote(curp.as_ref(), &connects, vote).await;
             }
@@ -320,22 +325,35 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     }
 
     /// Responsible for bringing up `sync_follower_task` when self becomes leader
+    #[allow(clippy::integer_arithmetic)]
     async fn sync_follower_daemon(
         curp: Arc<RawCurp<C, RC>>,
         connect: Arc<impl ConnectApi + ?Sized>,
         sync_event: Arc<Event>,
+        mut shutdown_listener: watch::Receiver<()>,
     ) {
         let leader_event = curp.leader_event();
         loop {
             if !curp.is_leader() {
-                leader_event.listen().await;
+                tokio::select! {
+                    _ = shutdown_listener.changed() => {
+                        debug!("{} sync follower daemon exits", connect.id());
+                        return;
+                    }
+                    _ = leader_event.listen() => {}
+                }
             }
             Self::sync_follower_task(
                 Arc::clone(&curp),
                 Arc::clone(&connect),
                 Arc::clone(&sync_event),
+                shutdown_listener.clone(),
             )
             .await;
+            if shutdown_listener.has_changed().unwrap_or(true) {
+                debug!("{} sync follower daemon exits", connect.id());
+                return;
+            }
         }
     }
 
@@ -344,6 +362,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         curp: Arc<RawCurp<C, RC>>,
         connect: Arc<impl ConnectApi + ?Sized>,
         sync_event: Arc<Event>,
+        mut shutdown_listener: watch::Receiver<()>,
     ) {
         let mut hb_opt = false;
         let mut ticker = tokio::time::interval(curp.cfg().heartbeat_interval);
@@ -354,9 +373,21 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         #[allow(clippy::integer_arithmetic, clippy::unwrap_used)]
         // tokio select internal triggered,
         loop {
-            // grab the listener in the beginning to prevent missing sync events
-            let listener: event_listener::EventListener = sync_event.listen();
-
+            // a sync is either triggered by an heartbeat timeout event or when new log entries arrive
+            tokio::select! {
+                _ = shutdown_listener.changed() => {
+                    debug!("{} sync task exits", id);
+                    return;
+                }
+                _now = ticker.tick() => {
+                    hb_opt = false;
+                }
+                res = tokio::time::timeout(batch_timeout, sync_event.listen()) => {
+                    if let Err(_e) = res {
+                        hb_opt = true;
+                    }
+                }
+            }
             let Ok(sync_action) = curp.sync(id) else {
                 return;
             };
@@ -395,18 +426,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                     }
                 },
             }
-
-            // a sync is either triggered by an heartbeat timeout event or when new log entries arrive
-            tokio::select! {
-                _now = ticker.tick() => {
-                    hb_opt = false;
-                }
-                res = tokio::time::timeout(batch_timeout, listener) => {
-                    if let Err(_e) = res {
-                        hb_opt = true;
-                    }
-                }
-            }
         }
     }
 
@@ -414,13 +433,16 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     pub(super) async fn log_persist_task(
         mut log_rx: mpsc::UnboundedReceiver<Arc<LogEntry<C>>>,
         storage: Arc<dyn StorageApi<Command = C>>,
+        // This task will safely exit when the log_tx is dropped, but we still
+        // need to keep the shutdown_listener here to notify the shutdown trigger
+        _shutdown_listener: watch::Receiver<()>,
     ) {
         while let Some(e) = log_rx.recv().await {
             if let Err(err) = storage.put_log_entry(e.as_ref()).await {
                 error!("storage error, {err}");
             }
         }
-        error!("log persist task exits unexpectedly");
+        debug!("log persist task exits");
     }
 }
 
@@ -435,6 +457,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         snapshot_allocator: Box<dyn SnapshotAllocator>,
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
+        shutdown_listener: watch::Receiver<()>,
     ) -> Result<Self, CurpError> {
         let sync_events = cluster_info
             .peers_ids()
@@ -443,7 +466,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
             .collect();
 
         let (log_tx, log_rx) = mpsc::unbounded_channel();
-        let shutdown_trigger = Arc::new(Event::new());
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
         let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
@@ -451,7 +473,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
             .last_applied()
             .map_err(|e| CurpError::Internal(format!("get applied index error, {e}")))?;
         let (ce_event_tx, task_rx, done_tx) =
-            conflict_checked_mpmc::channel(Arc::clone(&cmd_executor));
+            conflict_checked_mpmc::channel(Arc::clone(&cmd_executor), shutdown_listener.clone());
         let ce_event_tx: Arc<dyn CEEventTxApi<C>> = Arc::new(ce_event_tx);
         let storage = Arc::new(DB::open(&curp_cfg.storage_cfg)?);
 
@@ -495,24 +517,24 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         };
 
         start_cmd_workers(
-            &cmd_executor,
+            Arc::clone(&cmd_executor),
             Arc::clone(&curp),
             task_rx,
             done_tx,
-            Arc::clone(&shutdown_trigger),
+            shutdown_listener.clone(),
         );
         run_gc_tasks(
             Arc::clone(&cmd_board),
             Arc::clone(&spec_pool),
             curp_cfg.gc_interval,
-            Arc::clone(&shutdown_trigger),
+            shutdown_listener.clone(),
         );
 
         Self::run_bg_tasks(
             Arc::clone(&curp),
             Arc::clone(&storage),
             cluster_info,
-            Arc::clone(&shutdown_trigger),
+            shutdown_listener.clone(),
             log_rx,
         )
         .await;
@@ -521,7 +543,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
             curp,
             spec_pool,
             cmd_board,
-            shutdown_trigger,
             ce_event_tx,
             storage,
             snapshot_allocator,
@@ -533,34 +554,31 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         curp: Arc<RawCurp<C, RC>>,
         storage: Arc<impl StorageApi<Command = C> + 'static>,
         cluster_info: Arc<ClusterInfo>,
-        shutdown_trigger: Arc<Event>,
+        shutdown_listener: watch::Receiver<()>,
         log_rx: tokio::sync::mpsc::UnboundedReceiver<Arc<LogEntry<C>>>,
     ) {
         let connects = rpc::connect(cluster_info.peers())
             .await
             .collect::<HashMap<_, _>>();
-        let election_task = tokio::spawn(Self::election_task(Arc::clone(&curp), connects.clone()));
-        let sync_task_daemons = connects
-            .into_iter()
-            .map(|(server_id, connect)| {
-                tokio::spawn(Self::sync_follower_daemon(
-                    Arc::clone(&curp),
-                    connect,
-                    curp.sync_event(server_id),
-                ))
-            })
-            .collect_vec();
+        let _election_task = tokio::spawn(Self::election_task(
+            Arc::clone(&curp),
+            connects.clone(),
+            shutdown_listener.clone(),
+        ));
+        for (server_id, connect) in connects {
+            let _sync_task_daemon = tokio::spawn(Self::sync_follower_daemon(
+                Arc::clone(&curp),
+                connect,
+                curp.sync_event(server_id),
+                shutdown_listener.clone(),
+            ));
+        }
 
-        let log_persist_task = tokio::spawn(Self::log_persist_task(log_rx, storage));
-
-        let _ig = tokio::spawn(async move {
-            shutdown_trigger.listen().await;
-            election_task.abort();
-            for sync_task in sync_task_daemons {
-                sync_task.abort();
-            }
-            log_persist_task.abort();
-        });
+        let _log_persist_task = tokio::spawn(Self::log_persist_task(
+            log_rx,
+            storage,
+            shutdown_listener.clone(),
+        ));
     }
 
     /// Candidate broadcasts votes
@@ -676,20 +694,12 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     }
 }
 
-impl<C: Command, RC: RoleChange> Drop for CurpNode<C, RC> {
-    #[inline]
-    fn drop(&mut self) {
-        self.shutdown_trigger.notify(usize::MAX);
-    }
-}
-
 impl<C: Command, RC: RoleChange> Debug for CurpNode<C, RC> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CurpNode")
             .field("raw_curp", &self.curp)
             .field("spec_pool", &self.spec_pool)
             .field("cmd_board", &self.cmd_board)
-            .field("shutdown_trigger", &self.shutdown_trigger)
             .finish()
     }
 }
@@ -716,14 +726,17 @@ mod tests {
             .expect_append_entries()
             .times(1..)
             .returning(|_, _| Ok(tonic::Response::new(AppendEntriesResponse::new_accept(0))));
-        let id = curp.cluster().get_id_by_name("S1").unwrap();
-        mock_connect1.expect_id().return_const(id);
+        let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
+        mock_connect1.expect_id().return_const(s1_id);
+        let (t, l) = watch::channel(());
         tokio::spawn(CurpNode::sync_follower_task(
             curp,
             Arc::new(mock_connect1),
             Arc::new(Event::new()),
+            l,
         ));
         sleep_secs(2).await;
+        let _r = t.send(());
     }
 
     #[traced_test]
@@ -755,16 +768,19 @@ mod tests {
                 VoteResponse::new_accept::<TestCommand>(req.term, vec![]).unwrap(),
             ))
         });
+        let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
         mock_connect2.expect_id().return_const(s2_id);
-
+        let (t, l) = watch::channel(());
         tokio::spawn(CurpNode::election_task(
             Arc::clone(&curp),
             HashMap::from([
                 (s1_id, Arc::new(mock_connect1)),
                 (s2_id, Arc::new(mock_connect2)),
             ]),
+            l,
         ));
         sleep_secs(3).await;
         assert!(curp.is_leader());
+        let _r = t.send(());
     }
 }

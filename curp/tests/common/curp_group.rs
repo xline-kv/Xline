@@ -18,7 +18,11 @@ use curp_test_utils::{
 use engine::{Engine, EngineType, Snapshot};
 use futures::future::join_all;
 use itertools::Itertools;
-use tokio::{net::TcpListener, runtime::Runtime, sync::mpsc};
+use tokio::{
+    net::TcpListener,
+    runtime::Runtime,
+    sync::{mpsc, watch},
+};
 use tracing::debug;
 use utils::config::{ClientTimeout, CurpConfigBuilder, StorageConfig};
 
@@ -51,18 +55,19 @@ pub struct CurpNode {
     pub exe_rx: mpsc::UnboundedReceiver<(TestCommand, TestCommandResult)>,
     pub as_rx: mpsc::UnboundedReceiver<(TestCommand, LogIndex)>,
     pub store: Arc<Engine>,
-    pub rt: Runtime,
     pub storage_path: PathBuf,
     pub role_change_arc: Arc<TestRoleChangeInner>,
 }
 
 pub struct CurpGroup {
+    pub shutdown_trigger: watch::Sender<()>,
     pub nodes: HashMap<ServerId, CurpNode>,
     pub all: HashMap<ServerId, String>,
 }
 
 impl CurpGroup {
     pub async fn new(n_nodes: usize) -> Self {
+        let (t, l) = watch::channel(());
         assert!(n_nodes >= 3, "the number of nodes must >= 3");
         let listeners = join_all(
             iter::repeat_with(|| async { TcpListener::bind("0.0.0.0:0").await.unwrap() })
@@ -91,34 +96,27 @@ impl CurpGroup {
                 let cluster_info = Arc::new(ClusterInfo::new(all_members.clone(), &name));
                 all = cluster_info.all_members();
                 let id = cluster_info.self_id();
-                let rt = tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(2)
-                    .thread_name(format!("rt-{id}"))
-                    .enable_all()
-                    .build()
-                    .unwrap();
-                let handle = rt.handle().clone();
 
                 let storage_cfg = StorageConfig::RocksDB(storage_path.clone());
                 let role_change_cb = TestRoleChange::default();
                 let role_change_arc = role_change_cb.get_inner_arc();
-                thread::spawn(move || {
-                    handle.spawn(Rpc::run_from_listener(
-                        cluster_info,
-                        i == 0,
-                        listener,
-                        ce,
-                        Box::new(MemorySnapshotAllocator),
-                        role_change_cb,
-                        Arc::new(
-                            CurpConfigBuilder::default()
-                                .storage_cfg(storage_cfg)
-                                .log_entries_cap(10)
-                                .build()
-                                .unwrap(),
-                        ),
-                    ));
-                });
+
+                tokio::spawn(Rpc::run_from_listener(
+                    cluster_info,
+                    i == 0,
+                    listener,
+                    ce,
+                    Box::new(MemorySnapshotAllocator),
+                    role_change_cb,
+                    Arc::new(
+                        CurpConfigBuilder::default()
+                            .storage_cfg(storage_cfg)
+                            .log_entries_cap(10)
+                            .build()
+                            .unwrap(),
+                    ),
+                    l.clone(),
+                ));
 
                 (
                     id,
@@ -128,7 +126,6 @@ impl CurpGroup {
                         exe_rx,
                         as_rx,
                         store,
-                        rt,
                         storage_path,
                         role_change_arc,
                     },
@@ -138,7 +135,11 @@ impl CurpGroup {
 
         tokio::time::sleep(Duration::from_millis(300)).await;
         debug!("successfully start group");
-        Self { nodes, all }
+        Self {
+            nodes,
+            all,
+            shutdown_trigger: t,
+        }
     }
 
     pub fn get_node(&self, id: &ServerId) -> &CurpNode {
@@ -165,17 +166,17 @@ impl CurpGroup {
         self.nodes.values_mut().map(|node| &mut node.as_rx)
     }
 
-    pub fn stop(mut self) {
+    pub async fn stop(mut self) {
         let paths = self
             .nodes
             .values()
             .map(|node| node.storage_path.clone())
             .collect_vec();
-        thread::spawn(move || {
-            self.nodes.clear();
-        })
-        .join()
-        .unwrap();
+        debug!("curp group stopping");
+        self.shutdown_trigger.send(());
+        self.shutdown_trigger.closed().await;
+        self.nodes.clear();
+        debug!("curp group stopped");
         for path in paths {
             std::fs::remove_dir_all(path).unwrap();
         }
