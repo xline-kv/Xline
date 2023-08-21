@@ -41,7 +41,7 @@ use super::cmd_worker::CEEventTxApi;
 use crate::{
     cmd::{Command, ProposeId},
     error::ProposeError,
-    log_entry::{EntryData, LogEntry},
+    log_entry::LogEntry,
     members::{ClusterInfo, ServerId},
     role_change::RoleChange,
     rpc::{IdSet, ReadState},
@@ -667,21 +667,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             let mut st_w = raw_curp.st.write();
             raw_curp.update_to_term_and_become_follower(&mut st_w, term);
             st_w.voted_for = Some(server_id);
-        } else if is_leader {
-            // all uncommitted cmds should stay in ucp until they are executed
-            raw_curp.ctx.ucp.map_lock(|mut ucp_l| {
-                for e in &entries {
-                    match e.entry_data {
-                        EntryData::Command(ref cmd) => {
-                            let _ig = ucp_l.insert(e.id().clone(), Arc::clone(cmd));
-                        }
-                        EntryData::ConfChange(_) => {
-                            // TODO: recover conf change?
-                        }
-                    }
-                }
-            });
-        } else {
         }
 
         raw_curp.log.map_write(|mut log_w| {
