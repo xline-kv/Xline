@@ -12,7 +12,7 @@ use crate::common::curp_group::CurpGroup;
 
 mod common;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn read_state() {
     init_logger();
@@ -55,5 +55,5 @@ async fn read_state() {
             1, res
         );
     }
-    group.stop();
+    group.stop().await;
 }

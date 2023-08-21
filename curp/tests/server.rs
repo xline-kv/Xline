@@ -18,7 +18,7 @@ use crate::common::curp_group::{
 
 mod common;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn basic_propose() {
     init_logger();
@@ -43,10 +43,10 @@ async fn basic_propose() {
         TestCommandResult::new(vec![0], vec![1])
     );
 
-    group.stop();
+    group.stop().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn client_build_from_addrs_shoulde_fetch_cluster_from_server() {
     init_logger();
@@ -59,7 +59,7 @@ async fn client_build_from_addrs_shoulde_fetch_cluster_from_server() {
         .await
         .unwrap();
 
-    group.stop();
+    group.stop().await;
 }
 
 #[tokio::test]
@@ -87,11 +87,11 @@ async fn synced_propose() {
         assert_eq!(index, 1);
     }
 
-    group.stop();
+    group.stop().await;
 }
 
 // Each command should be executed once and only once on each node
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn exe_exact_n_times() {
     init_logger();
@@ -125,11 +125,11 @@ async fn exe_exact_n_times() {
         assert_eq!(index, 1);
     }
 
-    group.stop();
+    group.stop().await;
 }
 
 // To verify PR #86 is fixed
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn fast_round_is_slower_than_slow_round() {
     init_logger();
@@ -166,10 +166,10 @@ async fn fast_round_is_slower_than_slow_round() {
         .into_inner();
     assert!(resp.exe_result.is_none());
 
-    group.stop();
+    group.stop().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn concurrent_cmd_order() {
     init_logger();
@@ -223,11 +223,11 @@ async fn concurrent_cmd_order() {
         vec![2]
     );
 
-    group.stop();
+    group.stop().await;
 }
 
 /// This test case ensures that the issue 228 is fixed.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn concurrent_cmd_order_should_have_correct_revision() {
     init_logger();
@@ -257,5 +257,5 @@ async fn concurrent_cmd_order_should_have_correct_revision() {
         )
     }
 
-    group.stop();
+    group.stop().await;
 }

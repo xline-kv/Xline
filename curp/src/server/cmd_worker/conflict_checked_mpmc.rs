@@ -9,7 +9,7 @@ use std::{
     sync::Arc,
 };
 
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 use tracing::{debug, error};
 
 use self::cart::Cart;
@@ -519,6 +519,20 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
         };
         self.update_graph(vid);
     }
+
+    /// Check whether the channel can be shutdown
+    fn check_shutdown(&self) -> bool {
+        self.vs.iter().all(|(_, v)| {
+            matches!(
+                v.inner,
+                VertexInner::Entry {
+                    exe_st: ExeState::Executed(_),
+                    as_st: AsState::NotSynced(_),
+                    ..
+                }
+            )
+        })
+    }
 }
 
 /// Create conflict checked channel. The channel guarantees there will be no conflicted msgs received by multiple receivers at the same time.
@@ -530,6 +544,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
 #[allow(clippy::type_complexity)] // it's clear
 pub(in crate::server) fn channel<C: 'static + Command, CE: 'static + CommandExecutor<C>>(
     ce: Arc<CE>,
+    mut shutdown_listener: watch::Receiver<()>,
 ) -> (
     CEEventTx<C>,
     flume::Receiver<Task<C>>,
@@ -548,6 +563,9 @@ pub(in crate::server) fn channel<C: 'static + Command, CE: 'static + CommandExec
         loop {
             tokio::select! {
                 biased; // cleanup filter first so that the buffer in filter can be kept as small as possible
+                _ = shutdown_listener.changed() => {
+                    break;
+                }
                 Ok((task, succeeded)) = done_rx.recv_async() => {
                     filter.progress(task.vid, succeeded);
                 },
@@ -558,6 +576,16 @@ pub(in crate::server) fn channel<C: 'static + Command, CE: 'static + CommandExec
                     error!("mpmc channel stopped unexpectedly");
                     return;
                 }
+            }
+        }
+
+        // cleanup filter after receiving shutdown signal
+        loop {
+            if filter.check_shutdown() {
+                return;
+            }
+            if let Ok((task, succeeded)) = done_rx.recv_async().await {
+                filter.progress(task.vid, succeeded);
             }
         }
     });
