@@ -34,7 +34,7 @@ pub trait Command:
     type ER: std::fmt::Debug + Send + Sync + Clone + Serialize + DeserializeOwned + PbSerialize;
 
     /// After_sync result
-    type ASR: std::fmt::Debug + Send + Sync + Clone + Serialize + DeserializeOwned;
+    type ASR: std::fmt::Debug + Send + Sync + Clone + Serialize + DeserializeOwned + PbSerialize;
 
     /// Get keys of the command
     fn keys(&self) -> &[Self::K];

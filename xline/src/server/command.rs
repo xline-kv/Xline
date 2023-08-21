@@ -16,15 +16,12 @@ use engine::Snapshot;
 use itertools::Itertools;
 use prost::Message;
 use serde::{Deserialize, Serialize};
-use xlineapi::{PbCommand, PbKeyRange};
+use xlineapi::{PbCommand, PbCommandResponse, PbKeyRange, PbSyncResponse};
 
 use super::barriers::{IdBarrier, IndexBarrier};
 use crate::{
     revision_number::RevisionNumberGenerator,
-    rpc::{
-        Request, RequestBackend, RequestWithToken, RequestWrapper, ResponseWrapper,
-        ResponseWrapperOuter,
-    },
+    rpc::{Request, RequestBackend, RequestWithToken, RequestWrapper, ResponseWrapper},
     storage::{db::WriteOp, storage_api::StorageApi, AuthStore, ExecuteError, KvStore, LeaseStore},
 };
 
@@ -580,7 +577,7 @@ pub struct CommandResponse {
 impl PbSerialize for CommandResponse {
     #[inline]
     fn encode(&self) -> Vec<u8> {
-        ResponseWrapperOuter {
+        PbCommandResponse {
             response_wrapper: Some(self.response.clone()),
         }
         .encode_to_vec()
@@ -588,8 +585,10 @@ impl PbSerialize for CommandResponse {
 
     #[inline]
     fn decode(buf: &[u8]) -> Result<Self, PbSerializeError> {
+        let pb_cmd_resp = PbCommandResponse::decode(buf)?;
+
         Ok(CommandResponse {
-            response: ResponseWrapperOuter::decode(buf)?
+            response: pb_cmd_resp
                 .response_wrapper
                 .ok_or(PbSerializeError::EmptyField)?,
         })
@@ -634,6 +633,36 @@ impl SyncResponse {
     }
 }
 
+impl From<PbSyncResponse> for SyncResponse {
+    #[inline]
+    fn from(resp: PbSyncResponse) -> Self {
+        Self {
+            revision: resp.revision,
+        }
+    }
+}
+
+impl From<SyncResponse> for PbSyncResponse {
+    #[inline]
+    fn from(resp: SyncResponse) -> Self {
+        Self {
+            revision: resp.revision,
+        }
+    }
+}
+
+impl PbSerialize for SyncResponse {
+    #[inline]
+    fn encode(&self) -> Vec<u8> {
+        PbSyncResponse::from(*self).encode_to_vec()
+    }
+
+    #[inline]
+    fn decode(buf: &[u8]) -> Result<Self, PbSerializeError> {
+        Ok(PbSyncResponse::decode(buf)?.into())
+    }
+}
+
 #[async_trait::async_trait]
 impl CurpCommand for Command {
     type Error = ExecuteError;
@@ -660,7 +689,7 @@ impl PbSerialize for Command {
         let rpc_cmd = PbCommand {
             keys: cmd.keys.into_iter().map(Into::into).collect(),
             request: Some(cmd.request.into()),
-            id: cmd.id.into_inner(),
+            propose_id: cmd.id.into_inner(),
         };
         rpc_cmd.encode_to_vec()
     }
@@ -674,7 +703,7 @@ impl PbSerialize for Command {
                 .request
                 .ok_or(PbSerializeError::EmptyField)?
                 .try_into()?,
-            id: ProposeId::new(rpc_cmd.id),
+            id: ProposeId::new(rpc_cmd.propose_id),
         })
     }
 }
@@ -732,6 +761,7 @@ pub(super) fn propose_err_to_status(err: CommandProposeError<Command>) -> tonic:
         CommandProposeError::Propose(ProposeError::SyncedError(e)) => {
             tonic::Status::unknown(e.to_string())
         }
+        CommandProposeError::Propose(ProposeError::EncodeError(e)) => tonic::Status::internal(e),
         _ => unreachable!("propose err {err:?}"),
     }
 }

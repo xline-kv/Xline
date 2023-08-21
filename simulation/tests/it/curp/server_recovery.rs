@@ -281,7 +281,7 @@ async fn old_leader_will_keep_original_states() {
     let cmd0 = TestCommand::new_put(vec![0], 0);
     let (er, index) = client.propose(cmd0, false).await.unwrap();
     assert_eq!(er.values, vec![]);
-    assert_eq!(index.unwrap(), 1);
+    assert_eq!(index.unwrap(), 1.into());
 
     // 1: disable all others to prevent the cmd1 to be synced
     let leader1 = group.get_leader().await.0;

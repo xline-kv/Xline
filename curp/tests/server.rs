@@ -13,7 +13,7 @@ use test_macros::abort_on_panic;
 use utils::config::ClientTimeout;
 
 use crate::common::curp_group::{
-    proto::propose_response::ExeResult, CurpGroup, ProposeRequest, ProposeResponse,
+    commandpb::propose_response::ExeResult, CurpGroup, ProposeRequest, ProposeResponse,
 };
 
 mod common;
@@ -73,7 +73,7 @@ async fn synced_propose() {
 
     let (er, index) = client.propose(cmd.clone(), false).await.unwrap();
     assert_eq!(er, TestCommandResult::new(vec![], vec![]));
-    assert_eq!(index.unwrap(), 1); // log[0] is a fake one
+    assert_eq!(index.unwrap(), 1.into()); // log[0] is a fake one
 
     for exe_rx in group.exe_rxs() {
         let (cmd1, er) = exe_rx.recv().await.unwrap();
