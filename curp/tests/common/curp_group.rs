@@ -25,7 +25,14 @@ use utils::config::{ClientTimeout, CurpConfigBuilder, StorageConfig};
 pub mod proto {
     tonic::include_proto!("messagepb");
 }
-pub use proto::{protocol_client::ProtocolClient, ProposeRequest, ProposeResponse};
+pub mod commandpb {
+    tonic::include_proto!("commandpb");
+}
+pub mod errorpb {
+    tonic::include_proto!("errorpb");
+}
+pub use commandpb::{ProposeRequest, ProposeResponse};
+pub use proto::protocol_client::ProtocolClient;
 
 use self::proto::{FetchLeaderRequest, FetchLeaderResponse};
 

@@ -3,31 +3,39 @@ use std::{collections::HashMap, sync::Arc};
 use curp_external_api::cmd::{PbSerialize, PbSerializeError};
 use serde::{de::DeserializeOwned, Serialize};
 
-use self::proto::{cmd_result::Result as CmdResultInner, CmdResult};
-pub(crate) use self::proto::{
-    fetch_read_state_response::ReadState,
-    propose_error::ProposeError as PbProposeError,
-    propose_response::ExeResult,
-    protocol_server::Protocol,
-    sync_error::SyncError as PbSyncError,
-    wait_synced_response::{Success, SyncResult as SyncResultRaw},
-    AppendEntriesRequest, AppendEntriesResponse, Empty, FetchClusterRequest, FetchClusterResponse,
-    FetchReadStateRequest, FetchReadStateResponse, IdSet, InstallSnapshotRequest,
-    InstallSnapshotResponse, ProposeError as PbProposeErrorOuter, RedirectData,
-    SyncError as PbSyncErrorOuter, VoteRequest, VoteResponse, WaitSyncedRequest,
-    WaitSyncedResponse,
-};
-pub use self::proto::{
-    propose_response, protocol_client, protocol_server::ProtocolServer, FetchLeaderRequest,
-    FetchLeaderResponse, ProposeRequest, ProposeResponse,
-};
-
 use crate::{
     cmd::{Command, ProposeId},
     error::{CommandSyncError, ProposeError, SyncError},
     log_entry::LogEntry,
     members::ServerId,
     LogIndex,
+};
+
+use self::proto::commandpb::{cmd_result::Result as CmdResultInner, CmdResult};
+pub(crate) use self::proto::{
+    commandpb::{
+        propose_response::ExeResult,
+        wait_synced_response::{Success, SyncResult as SyncResultRaw},
+        WaitSyncedRequest, WaitSyncedResponse,
+    },
+    errorpb::{
+        command_sync_error::CommandSyncError as PbCommandSyncError,
+        propose_error::ProposeError as PbProposeError, sync_error::SyncError as PbSyncError,
+        CommandSyncError as PbCommandSyncErrorOuter, ProposeError as PbProposeErrorOuter,
+        RedirectData, SyncError as PbSyncErrorOuter,
+    },
+    messagepb::{
+        fetch_read_state_response::ReadState, protocol_server::Protocol, AppendEntriesRequest,
+        AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest,
+        FetchReadStateResponse, IdSet, InstallSnapshotRequest, InstallSnapshotResponse,
+        VoteRequest, VoteResponse,
+    },
+};
+pub use self::proto::{
+    commandpb::{ProposeRequest, ProposeResponse},
+    messagepb::{
+        protocol_client, protocol_server::ProtocolServer, FetchLeaderRequest, FetchLeaderResponse,
+    },
 };
 
 /// Rpc connect
@@ -50,8 +58,15 @@ pub(crate) use connect::connect;
     unused_results
 )]
 mod proto {
-    tonic::include_proto!("messagepb");
-    tonic::include_proto!("errorpb");
+    pub(crate) mod messagepb {
+        tonic::include_proto!("messagepb");
+    }
+    pub(crate) mod commandpb {
+        tonic::include_proto!("commandpb");
+    }
+    pub(crate) mod errorpb {
+        tonic::include_proto!("errorpb");
+    }
 }
 
 impl FetchLeaderRequest {
@@ -137,11 +152,13 @@ impl ProposeResponse {
     }
 
     /// Create an error propose response
-    pub(crate) fn new_error(leader_id: Option<ServerId>, term: u64, error: &ProposeError) -> Self {
+    pub(crate) fn new_error(leader_id: Option<ServerId>, term: u64, error: ProposeError) -> Self {
         Self {
             leader_id,
             term,
-            exe_result: Some(ExeResult::Error(error.encode())),
+            exe_result: Some(ExeResult::Error(PbProposeErrorOuter {
+                propose_error: Some(error.into()),
+            })),
         }
     }
 
@@ -169,7 +186,14 @@ impl ProposeResponse {
                 };
                 Ok(success(Some(cmd_result)))
             }
-            Some(ExeResult::Error(ref buf)) => Ok(failure(ProposeError::decode(buf)?)),
+            Some(ExeResult::Error(ref err)) => {
+                let propose_error = err
+                    .clone()
+                    .propose_error
+                    .ok_or(PbSerializeError::EmptyField)?
+                    .try_into()?;
+                Ok(failure(propose_error))
+            }
             None => Ok(success(None)),
         }
     }
@@ -177,77 +201,82 @@ impl ProposeResponse {
 
 impl WaitSyncedRequest {
     /// Create a `WaitSynced` request
-    pub(crate) fn new(id: &ProposeId) -> bincode::Result<Self> {
-        Ok(Self {
-            id: bincode::serialize(id)?,
-        })
+    pub(crate) fn new(id: &ProposeId) -> Self {
+        Self {
+            propose_id: id.clone().into_inner(),
+        }
     }
 
     /// Get the propose id
-    pub(crate) fn id(&self) -> bincode::Result<ProposeId> {
-        bincode::deserialize(&self.id)
+    pub(crate) fn propose_id(&self) -> ProposeId {
+        ProposeId::new(self.propose_id.clone())
     }
 }
 
 impl WaitSyncedResponse {
     /// Create a success response
-    pub(crate) fn new_success<C: Command>(asr: &C::ASR, er: &C::ER) -> bincode::Result<Self> {
-        Ok(Self {
+    pub(crate) fn new_success<C: Command>(asr: &C::ASR, er: &C::ER) -> Self {
+        Self {
             sync_result: Some(SyncResultRaw::Success(Success {
-                after_sync_result: bincode::serialize(&asr)?,
-                exe_result: bincode::serialize(&er)?,
+                after_sync_result: asr.encode(),
+                exe_result: er.encode(),
             })),
-        })
+        }
     }
 
     /// Create an error response
-    pub(crate) fn new_error<C: Command>(err: &CommandSyncError<C>) -> bincode::Result<Self> {
-        Ok(Self {
-            sync_result: Some(SyncResultRaw::Error(bincode::serialize(&err)?)),
-        })
+    pub(crate) fn new_error<C: Command>(err: CommandSyncError<C>) -> Self {
+        Self {
+            sync_result: Some(SyncResultRaw::Error(PbCommandSyncErrorOuter {
+                command_sync_error: Some(err.into()),
+            })),
+        }
     }
 
     /// Create a new response from execution result and `after_sync` result
     pub(crate) fn new_from_result<C: Command>(
         er: Option<Result<C::ER, C::Error>>,
         asr: Option<Result<C::ASR, C::Error>>,
-    ) -> bincode::Result<Self> {
+    ) -> Self {
         match (er, asr) {
-            (None, Some(_)) => {
+            (None | Some(Err(_)), Some(_)) => {
                 unreachable!("should not call after sync if execution fails")
             }
             (None, None) => WaitSyncedResponse::new_error::<C>(
-                &SyncError::Other("can't get er result".to_owned()).into(),
+                SyncError::Other("can't get er result".to_owned()).into(),
             ), // this is highly unlikely to happen,
-            (Some(Err(_)), Some(_)) => {
-                unreachable!("should not call after_sync when exe failed")
-            }
             (Some(Err(err)), None) => {
-                WaitSyncedResponse::new_error(&CommandSyncError::<C>::Execute(err))
+                WaitSyncedResponse::new_error(CommandSyncError::<C>::Execute(err))
             }
             // The er is ignored as the propose has failed
             (Some(Ok(_er)), Some(Err(err))) => {
-                WaitSyncedResponse::new_error(&CommandSyncError::<C>::AfterSync(err))
+                WaitSyncedResponse::new_error(CommandSyncError::<C>::AfterSync(err))
             }
             (Some(Ok(er)), Some(Ok(asr))) => WaitSyncedResponse::new_success::<C>(&asr, &er),
             // The er is ignored as the propose has failed
             (Some(Ok(_er)), None) => {
                 WaitSyncedResponse::new_error::<C>(
-                    &SyncError::Other("can't get after sync result".to_owned()).into(),
+                    SyncError::Other("can't get after sync result".to_owned()).into(),
                 ) // this is highly unlikely to happen,
             }
         }
     }
 
     /// Into deserialized result
-    pub(crate) fn into<C: Command>(self) -> bincode::Result<SyncResult<C>> {
+    pub(crate) fn into<C: Command>(self) -> Result<SyncResult<C>, PbSerializeError> {
         let res = match self.sync_result {
             None => unreachable!("WaitSyncedResponse should contain valid sync_result"),
             Some(SyncResultRaw::Success(success)) => SyncResult::Success {
-                asr: bincode::deserialize(&success.after_sync_result)?,
-                er: bincode::deserialize(&success.exe_result)?,
+                asr: <C as Command>::ASR::decode(&success.after_sync_result)?,
+                er: <C as Command>::ER::decode(&success.exe_result)?,
             },
-            Some(SyncResultRaw::Error(err)) => SyncResult::Error(bincode::deserialize(&err)?),
+            Some(SyncResultRaw::Error(err)) => {
+                let cmd_sync_err = err
+                    .command_sync_error
+                    .ok_or(PbSerializeError::EmptyField)?
+                    .try_into()?;
+                SyncResult::Error(cmd_sync_err)
+            }
         };
         Ok(res)
     }

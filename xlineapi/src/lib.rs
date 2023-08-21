@@ -193,14 +193,14 @@ use serde::{Deserialize, Serialize};
 pub use self::{
     authpb::{permission::Type, Permission, Role, User, UserAddOptions},
     commandpb::{
-        request_with_token::RequestWrapper, response_wrapper::ResponseWrapper,
-        Command as PbCommand, KeyRange as PbKeyRange, RequestWithToken as PbRequestWithToken,
-        ResponseWrapper as ResponseWrapperOuter,
+        command_response::ResponseWrapper, request_with_token::RequestWrapper,
+        Command as PbCommand, CommandResponse as PbCommandResponse, KeyRange as PbKeyRange,
+        RequestWithToken as PbRequestWithToken, SyncResponse as PbSyncResponse,
     },
     errorpb::{
         execute_error::Error as PbExecuteError,
-        execute_error::ValidationError as PbValidationError, Empty,
-        ExecuteError as PbExecuteErrorOuter, Revisions as PbRevisions, UserRole as PbUserRole,
+        execute_error::ValidationError as PbValidationError, ExecuteError as PbExecuteErrorOuter,
+        Revisions as PbRevisions, UserRole as PbUserRole,
     },
     etcdserverpb::{
         auth_client::AuthClient,

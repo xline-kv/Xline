@@ -2,30 +2,7 @@ syntax = "proto3";
 
 package messagepb;
 
-// Propose command from client to servers
-message ProposeRequest {
-    // The serialized command
-    // Original type is Command trait
-    bytes command = 1;
-}
-
-// The original type is Result<Command::ER, Command::Error>
-message CmdResult {
-    oneof result {
-        bytes er = 1;
-        bytes error = 2;
-    }
-}
-
-message ProposeResponse {
-    optional uint64 leader_id = 1;
-    uint64 term = 2;
-    oneof exe_result {
-        CmdResult result = 3;
-        // The original type is ProposeError
-        bytes error = 4;
-    }
-}
+import "command.proto";
 
 message FetchLeaderRequest {
 }
@@ -42,21 +19,6 @@ message FetchClusterResponse {
     optional uint64 leader_id = 1;
     map<uint64, string> all_members = 2;
     uint64 term = 3;
-}
-
-message WaitSyncedRequest {
-    bytes id = 1;
-}
-
-message WaitSyncedResponse {
-    message Success {
-        bytes after_sync_result = 1;
-        bytes exe_result = 2;
-    }
-    oneof sync_result {
-        Success success = 1;
-        bytes error = 2;
-    }
 }
 
 message AppendEntriesRequest {
@@ -117,8 +79,9 @@ message FetchReadStateResponse {
 }
 
 service Protocol {
-    rpc Propose(ProposeRequest) returns (ProposeResponse);
-    rpc WaitSynced(WaitSyncedRequest) returns (WaitSyncedResponse);
+    rpc Propose(commandpb.ProposeRequest) returns (commandpb.ProposeResponse);
+    rpc WaitSynced(commandpb.WaitSyncedRequest)
+        returns (commandpb.WaitSyncedResponse);
     rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
     rpc Vote(VoteRequest) returns (VoteResponse);
     rpc InstallSnapshot(stream InstallSnapshotRequest)

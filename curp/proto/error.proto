@@ -1,23 +1,29 @@
+// Message error types for curp client
 syntax = "proto3";
+
+import "google/protobuf/empty.proto";
 
 package errorpb;
 
-// empty type
-message Empty {
-}
-
 message ProposeError {
     oneof propose_error {
-        Empty key_conflict = 1;
-        Empty duplicated = 2;
+        google.protobuf.Empty key_conflict = 1;
+        google.protobuf.Empty duplicated = 2;
         SyncError sync_error = 3;
         string encode_error = 4;
     }
 }
 
-message RedirectData {
-    optional uint64 server_id = 1;
-    uint64 term = 2;
+message CommandSyncError {
+    oneof command_sync_error {
+        SyncError sync = 1;
+        // The serialized command error
+        // The original type is Command::Error
+        bytes execute = 2;
+        // The serialized command error
+        // The original type is Command::Error
+        bytes after_sync = 3;
+    }
 }
 
 message SyncError {
@@ -25,4 +31,9 @@ message SyncError {
         RedirectData redirect = 1;
         string other = 2;
     }
+}
+
+message RedirectData {
+    optional uint64 server_id = 1;
+    uint64 term = 2;
 }

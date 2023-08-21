@@ -4,7 +4,7 @@ use curp::cmd::{PbSerialize, PbSerializeError};
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use xlineapi::{Empty, PbExecuteError, PbExecuteErrorOuter, PbRevisions, PbValidationError};
+use xlineapi::{PbExecuteError, PbExecuteErrorOuter, PbRevisions, PbValidationError};
 
 use crate::request_validation::ValidationError;
 
@@ -154,7 +154,7 @@ impl From<ExecuteError> for PbExecuteError {
             ExecuteError::InvalidRequest(s) => {
                 PbExecuteError::InvalidRequest(PbValidationError::from(s).into())
             }
-            ExecuteError::KeyNotFound => PbExecuteError::KeyNotFound(Empty {}),
+            ExecuteError::KeyNotFound => PbExecuteError::KeyNotFound(()),
             ExecuteError::RevisionTooLarge(required_revision, current_revision) => {
                 PbExecuteError::RevisionTooLarge(PbRevisions {
                     required_revision,
@@ -171,24 +171,24 @@ impl From<ExecuteError> for PbExecuteError {
             ExecuteError::LeaseExpired(l) => PbExecuteError::LeaseExpired(l),
             ExecuteError::LeaseTtlTooLarge(l) => PbExecuteError::LeaseTtlTooLarge(l),
             ExecuteError::LeaseAlreadyExists(l) => PbExecuteError::LeaseAlreadyExists(l),
-            ExecuteError::AuthNotEnabled => PbExecuteError::AuthNotEnabled(Empty {}),
-            ExecuteError::AuthFailed => PbExecuteError::AuthFailed(Empty {}),
+            ExecuteError::AuthNotEnabled => PbExecuteError::AuthNotEnabled(()),
+            ExecuteError::AuthFailed => PbExecuteError::AuthFailed(()),
             ExecuteError::UserNotFound(u) => PbExecuteError::UserNotFound(u),
             ExecuteError::UserAlreadyExists(u) => PbExecuteError::UserAlreadyExists(u),
             ExecuteError::UserAlreadyHasRole(user, role) => {
                 PbExecuteError::UserAlreadyHasRole(xlineapi::PbUserRole { user, role })
             }
-            ExecuteError::NoPasswordUser => PbExecuteError::NoPasswordUser(Empty {}),
+            ExecuteError::NoPasswordUser => PbExecuteError::NoPasswordUser(()),
             ExecuteError::RoleNotFound(r) => PbExecuteError::RoleNotFound(r),
             ExecuteError::RoleAlreadyExists(r) => PbExecuteError::RoleAlreadyExists(r),
             ExecuteError::RoleNotGranted(r) => PbExecuteError::RoleNotGranted(r),
-            ExecuteError::RootRoleNotExist => PbExecuteError::RootRoleNotExist(Empty {}),
-            ExecuteError::PermissionNotGranted => PbExecuteError::PermissionNotGranted(Empty {}),
-            ExecuteError::PermissionNotGiven => PbExecuteError::PermissionNotGiven(Empty {}),
-            ExecuteError::InvalidAuthManagement => PbExecuteError::InvalidAuthManagement(Empty {}),
-            ExecuteError::InvalidAuthToken => PbExecuteError::InvalidAuthToken(Empty {}),
-            ExecuteError::TokenManagerNotInit => PbExecuteError::TokenManagerNotInit(Empty {}),
-            ExecuteError::TokenNotProvided => PbExecuteError::TokenNotProvided(Empty {}),
+            ExecuteError::RootRoleNotExist => PbExecuteError::RootRoleNotExist(()),
+            ExecuteError::PermissionNotGranted => PbExecuteError::PermissionNotGranted(()),
+            ExecuteError::PermissionNotGiven => PbExecuteError::PermissionNotGiven(()),
+            ExecuteError::InvalidAuthManagement => PbExecuteError::InvalidAuthManagement(()),
+            ExecuteError::InvalidAuthToken => PbExecuteError::InvalidAuthToken(()),
+            ExecuteError::TokenManagerNotInit => PbExecuteError::TokenManagerNotInit(()),
+            ExecuteError::TokenNotProvided => PbExecuteError::TokenNotProvided(()),
             ExecuteError::TokenOldRevision(required_revision, current_revision) => {
                 PbExecuteError::TokenOldRevision(PbRevisions {
                     required_revision,
@@ -196,7 +196,7 @@ impl From<ExecuteError> for PbExecuteError {
                 })
             }
             ExecuteError::DbError(e) => PbExecuteError::DbError(e),
-            ExecuteError::PermissionDenied => PbExecuteError::PermissionDenied(Empty {}),
+            ExecuteError::PermissionDenied => PbExecuteError::PermissionDenied(()),
         }
     }
 }

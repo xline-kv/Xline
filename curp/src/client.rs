@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 
-use curp_external_api::cmd::PbSerialize;
+use curp_external_api::cmd::PbSerializeError;
 use dashmap::DashMap;
 use event_listener::Event;
 use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
@@ -306,7 +306,7 @@ where
                 .get_connect(leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .wait_synced(
-                    WaitSyncedRequest::new(cmd.id()).map_err(Into::<ProposeError>::into)?,
+                    WaitSyncedRequest::new(cmd.id()),
                     *self.timeout.wait_synced_timeout(),
                 )
                 .await
@@ -380,7 +380,11 @@ where
                 Ok(resp) => {
                     let resp = resp.into_inner();
                     if let Some(rpc::ExeResult::Error(ref e)) = resp.exe_result {
-                        let err = ProposeError::decode(e)?;
+                        let err: ProposeError = e
+                            .clone()
+                            .propose_error
+                            .ok_or(PbSerializeError::EmptyField)?
+                            .try_into()?;
                         if matches!(err, ProposeError::Duplicated) {
                             return Ok(());
                         }

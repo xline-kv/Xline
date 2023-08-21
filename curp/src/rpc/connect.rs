@@ -16,10 +16,10 @@ use crate::{
     error::RpcError,
     members::ServerId,
     rpc::{
-        proto::protocol_client::ProtocolClient, AppendEntriesRequest, AppendEntriesResponse,
-        FetchLeaderRequest, FetchLeaderResponse, FetchReadStateRequest, FetchReadStateResponse,
-        InstallSnapshotRequest, InstallSnapshotResponse, ProposeRequest, ProposeResponse,
-        VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        proto::messagepb::protocol_client::ProtocolClient, AppendEntriesRequest,
+        AppendEntriesResponse, FetchLeaderRequest, FetchLeaderResponse, FetchReadStateRequest,
+        FetchReadStateResponse, InstallSnapshotRequest, InstallSnapshotResponse, ProposeRequest,
+        ProposeResponse, VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
     snapshot::Snapshot,
 };

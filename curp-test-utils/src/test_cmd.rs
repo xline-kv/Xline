@@ -154,6 +154,37 @@ impl TestCommand {
     }
 }
 
+/// LogIndex used in Command::ASR
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LogIndexResult(LogIndex);
+
+impl From<LogIndex> for LogIndexResult {
+    fn from(value: LogIndex) -> Self {
+        Self(value)
+    }
+}
+
+impl From<LogIndexResult> for LogIndex {
+    fn from(value: LogIndexResult) -> Self {
+        value.0
+    }
+}
+
+// The `TestCommandResult` is only for internal use, so we donnot have to serialize it to protobuf format
+impl PbSerialize for LogIndexResult {
+    fn encode(&self) -> Vec<u8> {
+        bincode::serialize(self).unwrap_or_else(|_| {
+            unreachable!("test cmd result should always be successfully serialized")
+        })
+    }
+
+    fn decode(buf: &[u8]) -> Result<Self, curp_external_api::cmd::PbSerializeError> {
+        Ok(bincode::deserialize(buf).unwrap_or_else(|_| {
+            unreachable!("test cmd result should always be successfully serialized")
+        }))
+    }
+}
+
 impl Command for TestCommand {
     type Error = ExecuteError;
 
@@ -163,7 +194,7 @@ impl Command for TestCommand {
 
     type ER = TestCommandResult;
 
-    type ASR = LogIndex;
+    type ASR = LogIndexResult;
 
     fn keys(&self) -> &[Self::K] {
         &self.keys
@@ -316,7 +347,7 @@ impl CommandExecutor<TestCommand> for TestCE {
             cmd.cmd_type,
             cmd.id()
         );
-        Ok(index)
+        Ok(index.into())
     }
 
     fn last_applied(&self) -> Result<LogIndex, ExecuteError> {

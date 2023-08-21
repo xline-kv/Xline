@@ -133,7 +133,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                 ProposeResponse::new_result::<C>(leader_id, term, &er_res)
             }
             Ok(false) => ProposeResponse::new_empty(leader_id, term),
-            Err(err) => ProposeResponse::new_error(leader_id, term, &err),
+            Err(err) => ProposeResponse::new_error(leader_id, term, err),
         };
 
         Ok(resp)
@@ -186,11 +186,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         &self,
         req: WaitSyncedRequest,
     ) -> Result<WaitSyncedResponse, CurpError> {
-        let id = req.id()?;
+        let id = req.propose_id();
         debug!("{} get wait synced request for cmd({id})", self.curp.id());
 
         let (er, asr) = CommandBoard::wait_for_er_asr(&self.cmd_board, &id).await;
-        let resp = WaitSyncedResponse::new_from_result::<C>(Some(er), asr)?;
+        let resp = WaitSyncedResponse::new_from_result::<C>(Some(er), asr);
 
         debug!("{} wait synced for cmd({id}) finishes", self.curp.id());
         Ok(resp)

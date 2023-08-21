@@ -7,7 +7,10 @@ use thiserror::Error;
 
 use crate::{
     members::ServerId,
-    rpc::{Empty, PbProposeError, PbProposeErrorOuter, PbSyncError, RedirectData},
+    rpc::{
+        PbCommandSyncError, PbCommandSyncErrorOuter, PbProposeError, PbProposeErrorOuter,
+        PbSyncError, PbSyncErrorOuter, RedirectData,
+    },
 };
 
 /// Error type of client builder
@@ -103,14 +106,12 @@ impl From<ProposeError> for PbProposeError {
     #[inline]
     fn from(err: ProposeError) -> Self {
         match err {
-            ProposeError::KeyConflict => PbProposeError::KeyConflict(Empty {}),
-            ProposeError::Duplicated => PbProposeError::Duplicated(Empty {}),
-            ProposeError::SyncedError(e) => {
-                PbProposeError::SyncError(crate::rpc::PbSyncErrorOuter {
-                    sync_error: Some(e.into()),
-                })
-            }
-            ProposeError::EncodeError(e) => PbProposeError::EncodeError(e),
+            ProposeError::KeyConflict => PbProposeError::KeyConflict(()),
+            ProposeError::Duplicated => PbProposeError::Duplicated(()),
+            ProposeError::SyncedError(e) => PbProposeError::SyncError(PbSyncErrorOuter {
+                sync_error: Some(e.into()),
+            }),
+            ProposeError::EncodeError(s) => PbProposeError::EncodeError(s),
         }
     }
 }
@@ -226,6 +227,52 @@ pub(crate) enum CommandSyncError<C: Command> {
     Execute(C::Error),
     /// If after sync of the cmd went wrong
     AfterSync(C::Error),
+}
+
+impl<C: Command> From<CommandSyncError<C>> for PbCommandSyncError {
+    fn from(err: CommandSyncError<C>) -> Self {
+        match err {
+            CommandSyncError::Sync(e) => PbCommandSyncError::Sync(PbSyncErrorOuter {
+                sync_error: Some(e.into()),
+            }),
+            CommandSyncError::Execute(e) => PbCommandSyncError::Execute(e.encode()),
+            CommandSyncError::AfterSync(e) => PbCommandSyncError::AfterSync(e.encode()),
+        }
+    }
+}
+
+impl<C: Command> TryFrom<PbCommandSyncError> for CommandSyncError<C> {
+    type Error = PbSerializeError;
+
+    fn try_from(err: PbCommandSyncError) -> Result<Self, Self::Error> {
+        Ok(match err {
+            PbCommandSyncError::Sync(e) => {
+                CommandSyncError::Sync(e.sync_error.ok_or(PbSerializeError::EmptyField)?.into())
+            }
+            PbCommandSyncError::Execute(e) => {
+                CommandSyncError::Execute(<C as Command>::Error::decode(&e)?)
+            }
+            PbCommandSyncError::AfterSync(e) => {
+                CommandSyncError::AfterSync(<C as Command>::Error::decode(&e)?)
+            }
+        })
+    }
+}
+
+impl<C: Command> PbSerialize for CommandSyncError<C> {
+    fn encode(&self) -> Vec<u8> {
+        PbCommandSyncErrorOuter {
+            command_sync_error: Some(self.clone().into()),
+        }
+        .encode_to_vec()
+    }
+
+    fn decode(buf: &[u8]) -> Result<Self, PbSerializeError> {
+        PbCommandSyncErrorOuter::decode(buf)?
+            .command_sync_error
+            .ok_or(PbSerializeError::EmptyField)?
+            .try_into()
+    }
 }
 
 impl<C: Command> From<SyncError> for CommandSyncError<C> {
