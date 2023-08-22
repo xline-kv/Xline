@@ -29,7 +29,7 @@ repos:
         entry: bash -c 'cargo fmt -- --check'
         language: rust
         files: ^(?!abi)\.rs$
-        args: []
+        args: [ ]
       - id: cargo-check
         name: cargo check
         description: Check the package for errors.
@@ -55,11 +55,11 @@ repos:
         name: commit message conventional validation
         language: pygrep
         entry: '^(breaking|build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test){1}(\([\w\-\.]+\))?(!)?: ([\w `])+([\s\S]*)'
-        args: [--multiline, --negate]
-        stages: [commit-msg]
+        args: [ --multiline, --negate ]
+        stages: [ commit-msg ]
       - id: commit-msg-needs-to-be-signed-off
         name: commit message needs to be signed off
         language: pygrep
         entry: '^Signed-off-by:'
-        args: [--multiline, --negate]
-        stages: [commit-msg]
+        args: [ --multiline, --negate ]
+        stages: [ commit-msg ]
