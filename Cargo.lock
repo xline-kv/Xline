@@ -3509,6 +3509,8 @@ dependencies = [
  "async-trait",
  "clap 4.4.2",
  "itertools",
+ "regex",
+ "shlex",
  "thiserror",
  "tokio",
  "tonic",
