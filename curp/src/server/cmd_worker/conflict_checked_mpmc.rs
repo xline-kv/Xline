@@ -9,8 +9,9 @@ use std::{
     sync::Arc,
 };
 
-use tokio::sync::{oneshot, watch};
+use tokio::sync::oneshot;
 use tracing::{debug, error};
+use utils::shutdown::{self, Signal};
 
 use self::cart::Cart;
 use super::{CEEvent, CEEventTx};
@@ -59,7 +60,7 @@ pub(super) enum TaskType<C: Command> {
     /// Execute a cmd
     SpecExe(Arc<LogEntry<C>>, Option<C::Error>),
     /// After sync a cmd
-    AS(Arc<LogEntry<C>>, C::PR),
+    AS(Arc<LogEntry<C>>, Option<C::PR>),
     /// Reset the CE
     Reset(Option<Snapshot>, oneshot::Sender<()>),
     /// Snapshot
@@ -345,7 +346,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                                 Err(err) => Some(err),
                             }
                         }
-                        EntryData::ConfChange(_) => None,
+                        EntryData::ConfChange(_) | EntryData::Shutdown(_) => None,
                     };
                     *exe_st = ExeState::Executing;
                     let task = Task {
@@ -359,9 +360,6 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                 }
                 (ExeState::Executed(true), AsState::AfterSyncReady(prepare)) => {
                     *as_st = AsState::AfterSyncing;
-                    let Some(prepare) = prepare else {
-                        unreachable!("prepare always exists when exe_state is Executed(true)");
-                    };
                     let task = Task {
                         vid,
                         inner: Cart::new(TaskType::AS(Arc::clone(entry), prepare)),
@@ -519,20 +517,6 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
         };
         self.update_graph(vid);
     }
-
-    /// Check whether the channel can be shutdown
-    fn check_shutdown(&self) -> bool {
-        self.vs.iter().all(|(_, v)| {
-            matches!(
-                v.inner,
-                VertexInner::Entry {
-                    exe_st: ExeState::Executed(_),
-                    as_st: AsState::NotSynced(_),
-                    ..
-                }
-            )
-        })
-    }
 }
 
 /// Create conflict checked channel. The channel guarantees there will be no conflicted msgs received by multiple receivers at the same time.
@@ -544,7 +528,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
 #[allow(clippy::type_complexity)] // it's clear
 pub(in crate::server) fn channel<C: 'static + Command, CE: 'static + CommandExecutor<C>>(
     ce: Arc<CE>,
-    mut shutdown_listener: watch::Receiver<()>,
+    shutdown_trigger: shutdown::Trigger,
 ) -> (
     CEEventTx<C>,
     flume::Receiver<Task<C>>,
@@ -556,38 +540,60 @@ pub(in crate::server) fn channel<C: 'static + Command, CE: 'static + CommandExec
     let (filter_tx, recv_rx) = flume::unbounded();
     // recv from user to mark a msg done
     let (done_tx, done_rx) = flume::unbounded::<(Task<C>, bool)>();
-    let _ig = tokio::spawn(async move {
-        let mut filter = Filter::new(filter_tx, ce);
-        #[allow(clippy::integer_arithmetic, clippy::pattern_type_mismatch)]
-        // tokio internal triggers
-        loop {
-            tokio::select! {
-                biased; // cleanup filter first so that the buffer in filter can be kept as small as possible
-                _ = shutdown_listener.changed() => {
-                    break;
+    let _ig = tokio::spawn(conflict_checked_mpmc_task(
+        filter_tx,
+        filter_rx,
+        ce,
+        shutdown_trigger,
+        done_rx,
+    ));
+    (CEEventTx(send_tx), recv_rx, done_tx)
+}
+
+/// Conflict checked mpmc task
+async fn conflict_checked_mpmc_task<C: 'static + Command, CE: 'static + CommandExecutor<C>>(
+    filter_tx: flume::Sender<Task<C>>,
+    filter_rx: flume::Receiver<CEEvent<C>>,
+    ce: Arc<CE>,
+    shutdown_trigger: shutdown::Trigger,
+    done_rx: flume::Receiver<(Task<C>, bool)>,
+) {
+    let mut shutdown_listener = shutdown_trigger.subscribe();
+    let mut filter = Filter::new(filter_tx, ce);
+    let mut is_shutdown_state = false;
+    #[allow(clippy::integer_arithmetic, clippy::pattern_type_mismatch)] // tokio internal triggers
+    loop {
+        tokio::select! {
+            biased; // cleanup filter first so that the buffer in filter can be kept as small as possible
+            sig = shutdown_listener.wait(), if !is_shutdown_state => {
+                match sig {
+                    Some(Signal::Running) => {
+                        unreachable!("shutdown trigger should send ClusterShutdown or SelfShutdown")
+                    }
+                    Some(Signal::ClusterShutdown) => {
+                        is_shutdown_state = true;
+                    }
+                    _ => {
+                        return;
+                    },
                 }
-                Ok((task, succeeded)) = done_rx.recv_async() => {
-                    filter.progress(task.vid, succeeded);
-                },
-                Ok(event) = filter_rx.recv_async() => {
-                    filter.handle_event(event);
-                },
-                else => {
-                    error!("mpmc channel stopped unexpectedly");
-                    return;
-                }
+            }
+            Ok((task, succeeded)) = done_rx.recv_async() => {
+                filter.progress(task.vid, succeeded);
+            },
+            Ok(event) = filter_rx.recv_async() => {
+                filter.handle_event(event);
+            },
+            else => {
+                error!("mpmc channel stopped unexpectedly");
+                return;
             }
         }
 
-        // cleanup filter after receiving shutdown signal
-        loop {
-            if filter.check_shutdown() {
-                return;
-            }
-            if let Ok((task, succeeded)) = done_rx.recv_async().await {
-                filter.progress(task.vid, succeeded);
-            }
+        if is_shutdown_state && filter.vs.is_empty() {
+            shutdown_trigger.mark_channel_shutdown();
+            shutdown_trigger.check_and_shutdown();
+            return;
         }
-    });
-    (CEEventTx(send_tx), recv_rx, done_tx)
+    }
 }

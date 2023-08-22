@@ -346,7 +346,7 @@ impl From<ServerArgs> for XlineServerConfig {
             args.jaeger_level,
         );
         let auth = AuthConfig::new(args.auth_public_key, args.auth_private_key);
-        let auto_comapctor_cfg = if let Some(mode) = args.auto_compact_mode {
+        let auto_compactor_cfg = if let Some(mode) = args.auto_compact_mode {
             match mode.as_str() {
                 "periodic" => {
                     let period = args.auto_periodic_retention.unwrap_or_else(|| {
@@ -371,7 +371,7 @@ impl From<ServerArgs> for XlineServerConfig {
             args.compact_batch_size,
             args.compact_sleep_interval
                 .unwrap_or_else(default_compact_sleep_interval),
-            auto_comapctor_cfg,
+            auto_compactor_cfg,
         );
         XlineServerConfig::new(cluster, storage, log, trace, auth, compact)
     }

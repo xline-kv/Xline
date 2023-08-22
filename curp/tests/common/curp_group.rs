@@ -7,12 +7,15 @@ use async_trait::async_trait;
 use clippy_utilities::NumericCast;
 use curp::{
     client::Client,
+    error::ServerError,
     members::{ClusterInfo, ServerId},
     server::Rpc,
     LogIndex, SnapshotAllocator,
 };
+use curp_external_api::cmd::ProposeId;
 use curp_test_utils::{
-    test_cmd::{TestCE, TestCommand, TestCommandResult},
+    sleep_secs,
+    test_cmd::{next_id, TestCE, TestCommand, TestCommandResult},
     TestRoleChange, TestRoleChangeInner,
 };
 use engine::{Engine, EngineType, Snapshot};
@@ -22,9 +25,13 @@ use tokio::{
     net::TcpListener,
     runtime::Runtime,
     sync::{mpsc, watch},
+    task::JoinHandle,
 };
 use tracing::debug;
-use utils::config::{ClientTimeout, CurpConfigBuilder, StorageConfig};
+use utils::{
+    config::{ClientTimeout, CurpConfigBuilder, StorageConfig},
+    shutdown::{self, Trigger},
+};
 
 pub mod proto {
     tonic::include_proto!("messagepb");
@@ -57,17 +64,17 @@ pub struct CurpNode {
     pub store: Arc<Engine>,
     pub storage_path: PathBuf,
     pub role_change_arc: Arc<TestRoleChangeInner>,
+    pub handle: JoinHandle<Result<(), ServerError>>,
+    pub trigger: shutdown::Trigger,
 }
 
 pub struct CurpGroup {
-    pub shutdown_trigger: watch::Sender<()>,
     pub nodes: HashMap<ServerId, CurpNode>,
     pub all: HashMap<ServerId, String>,
 }
 
 impl CurpGroup {
     pub async fn new(n_nodes: usize) -> Self {
-        let (t, l) = watch::channel(());
         assert!(n_nodes >= 3, "the number of nodes must >= 3");
         let listeners = join_all(
             iter::repeat_with(|| async { TcpListener::bind("0.0.0.0:0").await.unwrap() })
@@ -84,6 +91,7 @@ impl CurpGroup {
             .into_iter()
             .enumerate()
             .map(|(i, listener)| {
+                let (trigger, l) = shutdown::channel();
                 let name = format!("S{i}");
                 let addr = listener.local_addr().unwrap().to_string();
                 let storage_path = tempfile::tempdir().unwrap().into_path();
@@ -101,7 +109,7 @@ impl CurpGroup {
                 let role_change_cb = TestRoleChange::default();
                 let role_change_arc = role_change_cb.get_inner_arc();
 
-                tokio::spawn(Rpc::run_from_listener(
+                let handle = tokio::spawn(Rpc::run_from_listener(
                     cluster_info,
                     i == 0,
                     listener,
@@ -115,7 +123,7 @@ impl CurpGroup {
                             .build()
                             .unwrap(),
                     ),
-                    l.clone(),
+                    trigger.clone(),
                 ));
 
                 (
@@ -128,6 +136,8 @@ impl CurpGroup {
                         store,
                         storage_path,
                         role_change_arc,
+                        handle,
+                        trigger,
                     },
                 )
             })
@@ -135,11 +145,7 @@ impl CurpGroup {
 
         tokio::time::sleep(Duration::from_millis(300)).await;
         debug!("successfully start group");
-        Self {
-            nodes,
-            all,
-            shutdown_trigger: t,
-        }
+        Self { nodes, all }
     }
 
     pub fn get_node(&self, id: &ServerId) -> &CurpNode {
@@ -166,6 +172,10 @@ impl CurpGroup {
         self.nodes.values_mut().map(|node| &mut node.as_rx)
     }
 
+    pub fn is_finished(&self) -> bool {
+        self.nodes.values().all(|node| node.handle.is_finished())
+    }
+
     pub async fn stop(mut self) {
         let paths = self
             .nodes
@@ -173,8 +183,13 @@ impl CurpGroup {
             .map(|node| node.storage_path.clone())
             .collect_vec();
         debug!("curp group stopping");
-        self.shutdown_trigger.send(());
-        self.shutdown_trigger.closed().await;
+
+        let futs = self
+            .nodes
+            .values_mut()
+            .map(|n| n.trigger.shutdown_and_wait());
+        futures::future::join_all(futs).await;
+
         self.nodes.clear();
         debug!("curp group stopped");
         for path in paths {

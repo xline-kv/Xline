@@ -3,10 +3,14 @@
 use std::{sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
-use curp::client::Builder;
+use curp::{
+    client::Builder,
+    error::{CommandProposeError::Propose, ProposeError},
+};
+use curp_external_api::cmd::ProposeId;
 use curp_test_utils::{
     init_logger, sleep_millis, sleep_secs,
-    test_cmd::{TestCommand, TestCommandResult},
+    test_cmd::{next_id, TestCommand, TestCommandResult},
 };
 use madsim::rand::{thread_rng, Rng};
 use test_macros::abort_on_panic;
@@ -48,7 +52,7 @@ async fn basic_propose() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
-async fn client_build_from_addrs_shoulde_fetch_cluster_from_server() {
+async fn client_build_from_addrs_should_fetch_cluster_from_server() {
     init_logger();
     let group = CurpGroup::new(3).await;
 
@@ -258,4 +262,24 @@ async fn concurrent_cmd_order_should_have_correct_revision() {
     }
 
     group.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[abort_on_panic]
+async fn shutdown_rpc_should_shutdown_the_cluster() {
+    init_logger();
+    let group = CurpGroup::new(3).await;
+
+    let client = group.new_client(ClientTimeout::default()).await;
+    let id = ProposeId::new(next_id().to_string());
+    client.shutdown(id).await.unwrap();
+
+    let res = client
+        .propose(TestCommand::new_put(vec![1], 1), false)
+        .await;
+    assert!(matches!(res, Err(Propose(ProposeError::Shutdown))));
+
+    sleep_secs(3).await;
+
+    assert!(group.is_finished());
 }

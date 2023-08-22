@@ -148,6 +148,8 @@ pub mod config;
 /// utils of `parking_lot` lock
 #[cfg(feature = "parking_lot")]
 pub mod parking_lot_lock;
+/// utils of `shutdown`
+pub mod shutdown;
 /// utils of `std` lock
 #[cfg(feature = "std")]
 pub mod std_lock;

@@ -17,9 +17,12 @@ use engine::{Engine, EngineType, Snapshot};
 use itertools::Itertools;
 use madsim::runtime::NodeHandle;
 use parking_lot::Mutex;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::mpsc;
 use tracing::debug;
-use utils::config::{ClientTimeout, CurpConfigBuilder, StorageConfig};
+use utils::{
+    config::{ClientTimeout, CurpConfigBuilder, StorageConfig},
+    shutdown,
+};
 
 pub use curp::{protocol_client::ProtocolClient, ProposeRequest, ProposeResponse};
 
@@ -85,7 +88,7 @@ impl CurpGroup {
                     .name(id.to_string())
                     .ip(format!("192.168.1.{}", i + 1).parse().unwrap())
                     .init(move || {
-                        let (trigger, listener) = watch::channel(());
+                        let (trigger, _listener) = shutdown::channel();
                         let ce = TestCE::new(name.clone(), exe_tx.clone(), as_tx.clone());
                         store_c.lock().replace(Arc::clone(&ce.store));
                         let is_leader = "S0" == name;
@@ -106,7 +109,7 @@ impl CurpGroup {
                                     .build()
                                     .unwrap(),
                             ),
-                            listener,
+                            trigger,
                         )
                     })
                     .build();

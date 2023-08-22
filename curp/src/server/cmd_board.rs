@@ -17,6 +17,8 @@ pub(super) struct CommandBoard<C: Command> {
     er_notifiers: HashMap<ProposeId, Event>,
     /// Store all notifiers for after sync results
     asr_notifiers: HashMap<ProposeId, Event>,
+    /// Store the shutdown notifier
+    shutdown_notifier: Event,
     /// The cmd has been received before, this is used for dedup
     pub(super) sync: IndexSet<ProposeId>,
     /// Store all execution results
@@ -31,6 +33,7 @@ impl<C: Command> CommandBoard<C> {
         Self {
             er_notifiers: HashMap::new(),
             asr_notifiers: HashMap::new(),
+            shutdown_notifier: Event::new(),
             sync: IndexSet::new(),
             er_buffer: IndexMap::new(),
             asr_buffer: IndexMap::new(),
@@ -93,6 +96,11 @@ impl<C: Command> CommandBoard<C> {
         listener
     }
 
+    /// Get a listener for shutdown
+    fn shutdown_listener(&mut self) -> EventListener {
+        self.shutdown_notifier.listen()
+    }
+
     /// Get a listener for after sync result
     fn asr_listener(&mut self, id: &ProposeId) -> EventListener {
         let event = self
@@ -120,6 +128,11 @@ impl<C: Command> CommandBoard<C> {
         }
     }
 
+    /// Notify `shutdown` requests
+    pub(super) fn notify_shutdown(&mut self) {
+        self.shutdown_notifier.notify(usize::MAX);
+    }
+
     /// Wait for an execution result
     pub(super) async fn wait_for_er(
         cb: &CmdBoardRef<C>,
@@ -132,6 +145,12 @@ impl<C: Command> CommandBoard<C> {
             let listener = cb.write().er_listener(id);
             listener.await;
         }
+    }
+
+    /// Wait for an execution result
+    pub(super) async fn wait_for_shutdown_synced(cb: &CmdBoardRef<C>) {
+        let listener = cb.write().shutdown_listener();
+        listener.await;
     }
 
     /// Wait for an after sync result

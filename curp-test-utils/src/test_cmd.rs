@@ -25,7 +25,7 @@ use crate::{REVISION_TABLE, TEST_TABLE};
 
 static NEXT_ID: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(1));
 
-fn next_id() -> u64 {
+pub fn next_id() -> u64 {
     NEXT_ID.fetch_add(1, Ordering::SeqCst)
 }
 

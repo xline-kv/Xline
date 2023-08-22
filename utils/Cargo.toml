@@ -15,7 +15,7 @@ categories = ["utilities"]
 [features]
 full = ["std", "tokio", "parking_lot"]
 std = []
-tokio = ["dep:tokio", "dep:async-trait"]
+tokio = ["dep:async-trait"]
 parking_lot = ["dep:parking_lot"]
 
 [dependencies]
@@ -24,7 +24,7 @@ tokio = { version = "0.2.23", package = "madsim-tokio", features = [
   "sync",
   "macros",
   "rt-multi-thread",
-], optional = true }
+] }
 async-trait = { version = "0.1.60", optional = true }
 tonic = { version = "0.3.0", package = "madsim-tonic" }
 opentelemetry = "0.18.0"

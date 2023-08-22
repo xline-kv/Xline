@@ -3,13 +3,13 @@ use std::{fmt::Debug, sync::Arc};
 use futures::TryStreamExt;
 #[cfg(not(madsim))]
 use tokio::net::TcpListener;
-use tokio::sync::{broadcast, watch};
+use tokio::sync::broadcast;
 #[cfg(not(madsim))]
 use tokio_stream::wrappers::TcpListenerStream;
 #[cfg(not(madsim))]
 use tracing::info;
 use tracing::instrument;
-use utils::{config::CurpConfig, tracing::Extract};
+use utils::{config::CurpConfig, shutdown, tracing::Extract};
 
 use self::curp_node::{CurpError, CurpNode};
 use crate::{
@@ -21,7 +21,8 @@ use crate::{
         AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse,
         FetchLeaderRequest, FetchLeaderResponse, FetchReadStateRequest, FetchReadStateResponse,
         InstallSnapshotRequest, InstallSnapshotResponse, ProposeRequest, ProposeResponse,
-        ProtocolServer, VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        ProtocolServer, ShutdownRequest, ShutdownResponse, VoteRequest, VoteResponse,
+        WaitSyncedRequest, WaitSyncedResponse,
     },
     SnapshotAllocator,
 };
@@ -69,6 +70,17 @@ impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::Protocol for Rp
         request.metadata().extract_span();
         Ok(tonic::Response::new(
             self.inner.propose(request.into_inner()).await?,
+        ))
+    }
+
+    #[instrument(skip_all, name = "curp_shutdown")]
+    async fn shutdown(
+        &self,
+        request: tonic::Request<ShutdownRequest>,
+    ) -> Result<tonic::Response<ShutdownResponse>, tonic::Status> {
+        request.metadata().extract_span();
+        Ok(tonic::Response::new(
+            self.inner.shutdown(request.into_inner()).await?,
         ))
     }
 
@@ -160,7 +172,7 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
         snapshot_allocator: Box<dyn SnapshotAllocator>,
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
-        shutdown_listener: watch::Receiver<()>,
+        shutdown_trigger: shutdown::Trigger,
     ) -> Self {
         #[allow(clippy::panic)]
         let curp_node = match CurpNode::new(
@@ -170,7 +182,7 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
             snapshot_allocator,
             role_change,
             curp_cfg,
-            shutdown_listener,
+            shutdown_trigger,
         )
         .await
         {
@@ -201,7 +213,7 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
         snapshot_allocator: Box<dyn SnapshotAllocator>,
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
-        shutdown_listener: watch::Receiver<()>,
+        shutdown_trigger: shutdown::Trigger,
     ) -> Result<(), ServerError>
     where
         CE: 'static + CommandExecutor<C>,
@@ -216,7 +228,7 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
             snapshot_allocator,
             role_change,
             curp_cfg,
-            shutdown_listener,
+            shutdown_trigger,
         )
         .await;
 
@@ -248,11 +260,12 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
         snapshot_allocator: Box<dyn SnapshotAllocator>,
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
-        mut shutdown_listener: watch::Receiver<()>,
+        shutdown_trigger: shutdown::Trigger,
     ) -> Result<(), ServerError>
     where
         CE: 'static + CommandExecutor<C>,
     {
+        let mut shutdown_listener = shutdown_trigger.subscribe();
         let server = Self::new(
             cluster_info,
             is_leader,
@@ -260,14 +273,14 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
             snapshot_allocator,
             role_change,
             curp_cfg,
-            shutdown_listener.clone(),
+            shutdown_trigger,
         )
         .await;
 
         tonic::transport::Server::builder()
             .add_service(ProtocolServer::new(server))
             .serve_with_incoming_shutdown(TcpListenerStream::new(listener), async move {
-                let _r = shutdown_listener.changed().await;
+                shutdown_listener.wait_self_shutdown().await;
             })
             .await?;
 
@@ -290,11 +303,12 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
         snapshot_allocator: Box<dyn SnapshotAllocator>,
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
-        mut shutdown_listener: watch::Receiver<()>,
+        shutdown_trigger: shutdown::Trigger,
     ) -> Result<(), ServerError>
     where
         CE: 'static + CommandExecutor<C>,
     {
+        let mut shutdown_listener = shutdown_trigger.subscribe();
         let server = Self::new(
             cluster_info,
             is_leader,
@@ -302,14 +316,14 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
             snapshot_allocator,
             role_change,
             curp_cfg,
-            shutdown_listener.clone(),
+            shutdown_trigger,
         )
         .await;
 
         tonic::transport::Server::builder()
             .add_service(ProtocolServer::new(server))
             .serve_with_shutdown(addr, async move {
-                let _r = shutdown_listener.changed().await;
+                shutdown_listener.wait_self_shutdown().await;
             })
             .await?;
         Ok(())
@@ -320,6 +334,13 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
     #[must_use]
     pub fn leader_rx(&self) -> broadcast::Receiver<Option<ServerId>> {
         self.inner.leader_rx()
+    }
+
+    /// Get a shutdown listener
+    #[must_use]
+    #[inline]
+    pub fn shutdown_listener(&self) -> shutdown::Listener {
+        self.inner.shutdown_listener()
     }
 }
 

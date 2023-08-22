@@ -6,14 +6,14 @@ use curp::{client::Client, members::ClusterInfo, server::Rpc, ProtocolServer, Sn
 use event_listener::Event;
 use futures::Future;
 use jsonwebtoken::{DecodingKey, EncodingKey};
-use tokio::{
-    net::TcpListener,
-    sync::{mpsc::channel, watch},
-};
+use tokio::{net::TcpListener, sync::mpsc::channel};
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
 use tonic_health::ServingStatus;
-use utils::config::{ClientTimeout, CompactConfig, CurpConfig, ServerTimeout, StorageConfig};
+use utils::{
+    config::{ClientTimeout, CompactConfig, CurpConfig, ServerTimeout, StorageConfig},
+    shutdown,
+};
 
 use super::{
     auth_server::AuthServer,
@@ -70,8 +70,8 @@ pub struct XlineServer {
     server_timeout: ServerTimeout,
     /// Shutdown trigger
     shutdown_trigger: Arc<Event>,
-    /// Curp Shutdown trigger
-    curp_shutdown_trigger: watch::Sender<()>,
+    /// Curp shutdown trigger
+    curp_shutdown_trigger: shutdown::Trigger,
 }
 
 impl XlineServer {
@@ -91,7 +91,7 @@ impl XlineServer {
         storage_config: StorageConfig,
         compact_config: CompactConfig,
     ) -> Self {
-        let (tx, _) = watch::channel(());
+        let (trigger, _) = shutdown::channel();
         Self {
             cluster_info,
             is_leader,
@@ -101,7 +101,7 @@ impl XlineServer {
             compact_cfg: compact_config,
             server_timeout,
             shutdown_trigger: Arc::new(Event::new()),
-            curp_shutdown_trigger: tx,
+            curp_shutdown_trigger: trigger,
         }
     }
 
@@ -354,7 +354,7 @@ impl XlineServer {
             snapshot_allocator,
             state,
             Arc::clone(&self.curp_cfg),
-            self.curp_shutdown_trigger.subscribe(),
+            self.curp_shutdown_trigger.clone(),
         )
         .await;
 
@@ -401,6 +401,6 @@ impl Drop for XlineServer {
     #[inline]
     fn drop(&mut self) {
         self.shutdown_trigger.notify(usize::MAX);
-        let _ig = self.curp_shutdown_trigger.send(());
+        self.curp_shutdown_trigger.shutdown();
     }
 }

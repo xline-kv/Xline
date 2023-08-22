@@ -1,6 +1,9 @@
 use std::time::Instant;
 
-use curp_test_utils::{mock_role_change, test_cmd::TestCommand};
+use curp_test_utils::{
+    mock_role_change,
+    test_cmd::{next_id, TestCommand},
+};
 use test_macros::abort_on_panic;
 use tokio::{sync::oneshot, time::sleep};
 use tracing_test::traced_test;
@@ -49,6 +52,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             .log_entries_cap(10)
             .build()
             .unwrap();
+        let (shutdown_trigger, _) = shutdown::channel();
 
         Self::new(
             cluster_info,
@@ -61,6 +65,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             sync_events,
             log_tx,
             role_change,
+            shutdown_trigger,
         )
     }
 
@@ -605,4 +610,63 @@ fn quorum() {
     };
     assert_eq!(curp.quorum(), 3);
     assert_eq!(curp.recover_quorum(), 2);
+}
+
+#[traced_test]
+#[test]
+fn leader_handle_shutdown_will_succeed() {
+    let curp = {
+        let exe_tx = MockCEEventTxApi::<TestCommand>::default();
+        RawCurp::new_test(3, exe_tx, mock_role_change())
+    };
+    let id = ProposeId::new(next_id().to_string());
+    let ((leader_id, term), result) = curp.handle_shutdown(id);
+    assert_eq!(leader_id, Some(curp.id().clone()));
+    assert_eq!(term, 0);
+    assert!(matches!(result, Ok(())));
+}
+
+#[traced_test]
+#[test]
+fn follower_handle_shutdown_will_reject() {
+    let curp = {
+        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
+        exe_tx.expect_send_sp_exe().returning(|_| {});
+        RawCurp::new_test(3, exe_tx, mock_role_change())
+    };
+    curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
+    let id = ProposeId::new(next_id().to_string());
+    let ((leader_id, term), result) = curp.handle_shutdown(id);
+    assert_eq!(leader_id, None);
+    assert_eq!(term, 1);
+    assert!(matches!(result, Err(ProposeError::NotLeader)));
+}
+
+#[traced_test]
+#[test]
+fn enter_shutdown_should_enter_the_shutdown_state() {
+    let curp = {
+        let exe_tx = MockCEEventTxApi::<TestCommand>::default();
+        RawCurp::new_test(3, exe_tx, mock_role_change())
+    };
+    let _listener = curp.shutdown_listener();
+    curp.enter_shutdown();
+    assert!(curp.is_shutdown());
+}
+
+#[traced_test]
+#[test]
+fn is_synced_should_return_true_when_followers_caught_up_with_leader() {
+    let curp = {
+        let exe_tx = MockCEEventTxApi::<TestCommand>::default();
+        RawCurp::new_test(3, exe_tx, mock_role_change())
+    };
+    curp.log.write().commit_index = 3;
+    assert!(!curp.is_synced());
+
+    let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
+    curp.lst.update_match_index(s1_id, 3);
+    curp.lst.update_match_index(s2_id, 3);
+    assert!(curp.is_synced());
 }

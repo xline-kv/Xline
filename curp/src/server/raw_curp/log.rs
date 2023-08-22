@@ -297,6 +297,19 @@ impl<C: 'static + Command> Log<C> {
         Ok(entry)
     }
 
+    /// Push a shutdown entry to the end of the log, return its index
+    pub(super) fn push_shutdown(
+        &mut self,
+        term: u64,
+        propose_id: ProposeId,
+    ) -> Result<Arc<LogEntry<C>>, bincode::Error> {
+        let index = self.last_log_index() + 1;
+        let entry = Arc::new(LogEntry::new_shutdown(index, term, propose_id));
+        self.entries.push_back(Arc::clone(&entry))?;
+        self.send_persist(Arc::clone(&entry));
+        Ok(entry)
+    }
+
     /// check whether the log entry range [li,..) exceeds the batch limit or not
     pub(super) fn has_next_batch(&self, li: u64) -> bool {
         let idx = self.li_to_pi(li);

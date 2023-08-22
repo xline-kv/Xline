@@ -1,7 +1,6 @@
 use std::{collections::HashSet, time::Duration};
 
-use tokio::sync::watch;
-use utils::parking_lot_lock::MutexMap;
+use utils::{parking_lot_lock::MutexMap, shutdown};
 
 use super::spec_pool::SpecPoolRef;
 use crate::{
@@ -14,12 +13,12 @@ pub(super) fn run_gc_tasks<C: Command + 'static>(
     cmd_board: CmdBoardRef<C>,
     spec: SpecPoolRef<C>,
     gc_interval: Duration,
-    mut shutdown_listener: watch::Receiver<()>,
+    mut shutdown_listener: shutdown::Listener,
 ) {
     let spec_pool_gc = tokio::spawn(gc_spec_pool(spec, gc_interval));
     let cmd_board_gc = tokio::spawn(gc_cmd_board(cmd_board, gc_interval));
     let _ig = tokio::spawn(async move {
-        let _r = shutdown_listener.changed().await;
+        shutdown_listener.wait_self_shutdown().await;
         spec_pool_gc.abort();
         cmd_board_gc.abort();
     });

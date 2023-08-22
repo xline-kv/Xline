@@ -24,6 +24,8 @@ use crate::{
     snapshot::Snapshot,
 };
 
+use super::{ShutdownRequest, ShutdownResponse};
+
 /// Install snapshot chunk size: 64KB
 const SNAPSHOT_CHUNK_SIZE: u64 = 64 * 1024;
 
@@ -80,6 +82,13 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
         request: WaitSyncedRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<WaitSyncedResponse>, RpcError>;
+
+    /// Send `ShutdownRequest`
+    async fn shutdown(
+        &self,
+        request: ShutdownRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<ShutdownResponse>, RpcError>;
 
     /// Send `AppendEntriesRequest`
     async fn append_entries(
@@ -170,6 +179,19 @@ impl ConnectApi for Connect {
         req.set_timeout(timeout);
         req.metadata_mut().inject_current();
         client.propose(req).await.map_err(Into::into)
+    }
+
+    /// Send `ShutdownRequest`
+    async fn shutdown(
+        &self,
+        request: ShutdownRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<ShutdownResponse>, RpcError> {
+        let mut client = self.get().await?;
+        let mut req = tonic::Request::new(request);
+        req.set_timeout(timeout);
+        req.metadata_mut().inject_current();
+        client.shutdown(req).await.map_err(Into::into)
     }
 
     /// Send `WaitSyncedRequest`

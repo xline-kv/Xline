@@ -29,7 +29,7 @@ pub(crate) use self::proto::{
         fetch_read_state_response::ReadState, protocol_server::Protocol, AppendEntriesRequest,
         AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest,
         FetchReadStateResponse, IdSet, InstallSnapshotRequest, InstallSnapshotResponse,
-        VoteRequest, VoteResponse,
+        ShutdownRequest, ShutdownResponse, VoteRequest, VoteResponse,
     },
 };
 pub use self::proto::{
@@ -438,5 +438,12 @@ impl FetchReadStateResponse {
         Self {
             read_state: Some(state),
         }
+    }
+}
+
+impl ShutdownRequest {
+    /// Create a new shutdown request
+    pub(crate) fn new(id: ProposeId) -> Self {
+        Self { id: id.into() }
     }
 }

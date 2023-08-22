@@ -96,6 +96,13 @@ impl ProposeId {
     }
 }
 
+impl From<ProposeId> for String {
+    #[inline]
+    fn from(value: ProposeId) -> Self {
+        value.0
+    }
+}
+
 impl Display for ProposeId {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
