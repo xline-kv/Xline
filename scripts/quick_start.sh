@@ -4,7 +4,7 @@ DIR=$(
     pwd
 )
 SERVERS=("172.20.0.2" "172.20.0.3" "172.20.0.4" "172.20.0.5")
-MEMBERS="node1=${SERVERS[1]}:2379,node2=${SERVERS[2]}:2379,node3=${SERVERS[3]}:2379"
+MEMBERS="node1=${SERVERS[1]}:2379,${SERVERS[1]}:2380,node2=${SERVERS[2]}:2379,${SERVERS[2]}:2380,node3=${SERVERS[3]}:2379,${SERVERS[3]}:2380"
 
 # run xline node by index
 # args:
