@@ -10,18 +10,16 @@ keywords = ["benchmark"]
 license = "Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/xline-kv/Xline/tree/master/benchmark"
-
-
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-xline = { path = "../xline" }
-tokio = "1.21.2"
 anyhow = "1.0.66"
 clap = { version = "3.2.16", features = ["derive"] }
-rand = "0.8.5"
 clippy-utilities = "0.2.0"
 indicatif = "0.17.1"
+rand = "0.8.5"
+tokio = "1.21.2"
 tracing = "0.1.37"
 tracing-subscriber = "0.3.1"
 utils = { path = "../utils", version = "0.1.0" }
+xline = { path = "../xline" }
