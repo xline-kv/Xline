@@ -197,6 +197,73 @@ delete [options] <key> [range_end]
 ```
 
 ### TXN
+Txn processes all the requests in one transaction
+
+#### Usage
+
+```bash
+txn [options]
+```
+
+#### Options
+- interactive -- set interactive mode
+
+#### Input Format
+
+The ebnf is the same as etcdctl
+```ebnf
+<Txn> ::= <CMP>* "\n" <THEN> "\n" <ELSE> "\n"
+<CMP> ::= (<CMPCREATE>|<CMPMOD>|<CMPVAL>|<CMPVER>|<CMPLEASE>) "\n"
+<CMPOP> ::= "<" | "=" | ">"
+<CMPCREATE> := ("c"|"create")"("<KEY>")" <CMPOP> <REVISION>
+<CMPMOD> ::= ("m"|"mod")"("<KEY>")" <CMPOP> <REVISION>
+<CMPVAL> ::= ("val"|"value")"("<KEY>")" <CMPOP> <VALUE>
+<CMPVER> ::= ("ver"|"version")"("<KEY>")" <CMPOP> <VERSION>
+<CMPLEASE> ::= "lease("<KEY>")" <CMPOP> <LEASE>
+<THEN> ::= <OP>*
+<ELSE> ::= <OP>*
+<OP> ::= ((see put, get, del xlinectl command syntax)) "\n"
+<KEY> ::= (%q formatted string)
+<VALUE> ::= (%q formatted string)
+<REVISION> ::= "\""[0-9]+"\""
+<VERSION> ::= "\""[0-9]+"\""
+<LEASE> ::= "\""[0-9]+\""
+```
+
+#### Output
+
+```
+SUCCESS | FAILURE
+[child requests]
+```
+
+#### Examples
+
+non-interactive mode
+```bash
+./xlinectl txn <<<'mod("key1") > "0"
+
+get key1
+
+put key1 "val1"
+put key2 "some-val"
+
+'
+```
+
+interactive mode
+```bash
+./xlinectl txn --interactive
+compares:
+mod("key1") > "0"
+
+successful request:
+get key1
+
+failure request:
+put key1 "val1"
+put key2 "some-val"
+```
 
 ### WATCH
 

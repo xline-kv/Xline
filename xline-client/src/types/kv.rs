@@ -463,7 +463,7 @@ impl From<DeleteRangeRequest> for xlineapi::DeleteRangeRequest {
 }
 
 /// Transaction comparison.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Compare(xlineapi::Compare);
 
 impl Compare {
@@ -557,7 +557,7 @@ impl Compare {
 }
 
 /// Transaction operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TxnOp {
     /// The inner txn op request
     inner: xlineapi::Request,

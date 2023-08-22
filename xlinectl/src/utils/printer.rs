@@ -8,6 +8,7 @@ use xlineapi::{
     AuthUserGrantRoleResponse, AuthUserListResponse, AuthUserRevokeRoleResponse,
     DeleteRangeResponse, KeyValue, LeaseGrantResponse, LeaseKeepAliveResponse, LeaseLeasesResponse,
     LeaseRevokeResponse, LeaseTimeToLiveResponse, PutResponse, RangeResponse, ResponseHeader,
+    TxnResponse,
 };
 
 /// The global printer type config
@@ -91,6 +92,36 @@ impl Printer for DeleteRangeResponse {
             FieldPrinter::kv(kv);
         }
         println!("deleted: {}", self.deleted);
+    }
+}
+
+impl Printer for TxnResponse {
+    fn simple(&self) {
+        println!("{}", if self.succeeded { "SUCCESS" } else { "FAILURE" });
+        for resp_op in &self.responses {
+            if let Some(resp_wrapper) = resp_op.response.as_ref() {
+                match *resp_wrapper {
+                    xlineapi::Response::ResponseRange(ref resp) => resp.print(),
+                    xlineapi::Response::ResponsePut(ref resp) => resp.print(),
+                    xlineapi::Response::ResponseDeleteRange(ref resp) => resp.print(),
+                    xlineapi::Response::ResponseTxn(ref resp) => resp.print(),
+                }
+            }
+        }
+    }
+
+    fn field(&self) {
+        println!("succeed: {}", self.succeeded);
+        for resp_op in &self.responses {
+            if let Some(resp_wrapper) = resp_op.response.as_ref() {
+                match *resp_wrapper {
+                    xlineapi::Response::ResponseRange(ref resp) => resp.print(),
+                    xlineapi::Response::ResponsePut(ref resp) => resp.print(),
+                    xlineapi::Response::ResponseDeleteRange(ref resp) => resp.print(),
+                    xlineapi::Response::ResponseTxn(ref resp) => resp.print(),
+                }
+            }
+        }
     }
 }
 
