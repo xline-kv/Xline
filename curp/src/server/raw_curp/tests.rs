@@ -38,8 +38,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     pub(crate) fn new_test<Tx: CEEventTxApi<C>>(n: u64, exe_tx: Tx, role_change: RC) -> Self {
-        let all_members: HashMap<String, String> =
-            (0..n).map(|i| (format!("S{i}"), format!("S{i}"))).collect();
+        let all_members: HashMap<_, _> = (0..n)
+            .map(|i| (format!("S{i}"), vec![format!("S{i}")]))
+            .collect();
         let cluster_info = Arc::new(ClusterInfo::new(all_members, "S0"));
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));

@@ -4,6 +4,7 @@ use async_stream::stream;
 use clippy_utilities::OverflowArithmetic;
 use curp::{client::Client, cmd::generate_propose_id};
 use etcd_client::EventType;
+use tonic::transport::{Channel, Endpoint};
 use tracing::debug;
 use xlineapi::RequestWithToken;
 
@@ -38,8 +39,8 @@ pub(super) struct LockServer<S> {
     id_gen: Arc<IdGenerator>,
     /// Cluster information
     name: String,
-    /// Server address
-    address: String,
+    /// Server addresses
+    addrs: Vec<Endpoint>,
     /// Phantom
     phantom: PhantomData<S>,
 }
@@ -53,13 +54,23 @@ where
         client: Arc<Client<Command>>,
         id_gen: Arc<IdGenerator>,
         name: String,
-        address: String,
+        addrs: Vec<String>,
     ) -> Self {
+        let addrs = addrs
+            .into_iter()
+            .map(|mut addr| {
+                if !addr.starts_with("http://") {
+                    addr.insert_str(0, "http://");
+                }
+                addr.parse()
+                    .unwrap_or_else(|_e| panic!("invalid address: {addr}"))
+            })
+            .collect();
         Self {
             client,
             id_gen,
             name,
-            address,
+            addrs,
             phantom: PhantomData,
         }
     }
@@ -135,9 +146,8 @@ where
         token: Option<&String>,
     ) -> Result<(), tonic::Status> {
         let rev = my_rev.overflow_sub(1);
-        let mut watch_client = WatchClient::connect(format!("http://{}", self.address))
-            .await
-            .map_err(|e| tonic::Status::internal(format!("Connect error: {e}")))?;
+        let mut watch_client =
+            WatchClient::new(Channel::balance_list(self.addrs.clone().into_iter()));
         loop {
             let range_end = KeyRange::get_prefix(pfx.as_bytes());
             #[allow(clippy::as_conversions)] // this cast is always safe

@@ -62,12 +62,12 @@ impl<C: Command> Builder<C> {
     #[inline]
     pub async fn build_from_all_members(
         &self,
-        all_members: HashMap<ServerId, String>,
+        all_members: HashMap<ServerId, Vec<String>>,
     ) -> Result<Client<C>, ClientBuildError> {
         let Some(config) = self.config else {
             return Err(ClientBuildError::invalid_arguments("timeout is required"));
         };
-        let connects = rpc::connect(all_members).await.collect();
+        let connects = rpc::connect(all_members).await?.collect();
         let client = Client::<C> {
             local_server_id: self.local_server_id,
             state: RwLock::new(State::new(None, 0)),
@@ -111,7 +111,7 @@ impl<C: Command> Builder<C> {
         Err(err)
     }
 
-    /// Build client from addresses, this method will fetch all members from servers
+    /// Build client from addresses (could be incomplete), this method will fetch all members from servers
     /// # Errors
     /// Return error when meet rpc error or missing some arguments
     #[inline]
@@ -125,12 +125,11 @@ impl<C: Command> Builder<C> {
         let res = self
             .fetch_cluster(addrs.clone(), *config.propose_timeout())
             .await?;
-        let connects = rpc::connect(res.all_members).await.collect();
         let client = Client::<C> {
             local_server_id: self.local_server_id,
             state: RwLock::new(State::new(res.leader_id, res.term)),
             config,
-            connects,
+            connects: rpc::connect(res.into_members()).await?.collect(),
             phantom: PhantomData,
         };
         Ok(client)
@@ -766,7 +765,7 @@ mod tests {
     async fn client_builder_should_return_err_when_arguments_invalid() {
         let res = Client::<TestCommand>::builder()
             .config(ClientConfig::default())
-            .build_from_all_members(HashMap::from([(123, "addr".to_owned())]))
+            .build_from_all_members(HashMap::from([(123, vec!["addr".to_owned()])]))
             .await;
         assert!(res.is_ok());
 

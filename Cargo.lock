@@ -3412,6 +3412,7 @@ dependencies = [
  "flume",
  "futures",
  "getset",
+ "hyper",
  "itertools",
  "jsonwebtoken",
  "log",

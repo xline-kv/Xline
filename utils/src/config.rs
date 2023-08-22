@@ -80,7 +80,7 @@ pub struct ClusterConfig {
     name: String,
     /// All the nodes in the xline cluster
     #[getset(get = "pub")]
-    members: HashMap<String, String>,
+    members: HashMap<String, Vec<String>>,
     /// Leader node.
     #[getset(get = "pub")]
     is_leader: bool,
@@ -104,7 +104,7 @@ impl ClusterConfig {
     #[inline]
     pub fn new(
         name: String,
-        members: HashMap<String, String>,
+        members: HashMap<String, Vec<String>>,
         is_leader: bool,
         curp: CurpConfig,
         client_config: ClientConfig,
@@ -766,6 +766,7 @@ mod tests {
     use super::*;
 
     #[allow(clippy::unwrap_used)]
+    #[allow(clippy::too_many_lines)] // just a testcase, not too bad
     #[test]
     fn test_xline_server_config_should_be_loaded() {
         let config: XlineServerConfig = toml::from_str(
@@ -779,9 +780,9 @@ mod tests {
             watch_progress_notify_interval = '1s'
 
             [cluster.members]
-            node1 = '127.0.0.1:2379'
-            node2 = '127.0.0.1:2380'
-            node3 = '127.0.0.1:2381'
+            node1 = ['127.0.0.1:2378', '127.0.0.1:2379']
+            node2 = ['127.0.0.1:2380']
+            node3 = ['127.0.0.1:2381']
 
             [cluster.curp_config]
             heartbeat_interval = '200ms'
@@ -844,9 +845,12 @@ mod tests {
             ClusterConfig::new(
                 "node1".to_owned(),
                 HashMap::from_iter([
-                    ("node1".to_owned(), "127.0.0.1:2379".to_owned()),
-                    ("node2".to_owned(), "127.0.0.1:2380".to_owned()),
-                    ("node3".to_owned(), "127.0.0.1:2381".to_owned()),
+                    (
+                        "node1".to_owned(),
+                        vec!["127.0.0.1:2378".to_owned(), "127.0.0.1:2379".to_owned()]
+                    ),
+                    ("node2".to_owned(), vec!["127.0.0.1:2380".to_owned()]),
+                    ("node3".to_owned(), vec!["127.0.0.1:2381".to_owned()]),
                 ]),
                 true,
                 curp_config,
@@ -896,9 +900,9 @@ mod tests {
                 is_leader = true
 
                 [cluster.members]
-                node1 = '127.0.0.1:2379'
-                node2 = '127.0.0.1:2380'
-                node3 = '127.0.0.1:2381'
+                node1 = ['127.0.0.1:2379']
+                node2 = ['127.0.0.1:2380']
+                node3 = ['127.0.0.1:2381']
 
                 [cluster.storage]
 
@@ -928,9 +932,9 @@ mod tests {
             ClusterConfig::new(
                 "node1".to_owned(),
                 HashMap::from([
-                    ("node1".to_owned(), "127.0.0.1:2379".to_owned()),
-                    ("node2".to_owned(), "127.0.0.1:2380".to_owned()),
-                    ("node3".to_owned(), "127.0.0.1:2381".to_owned()),
+                    ("node1".to_owned(), vec!["127.0.0.1:2379".to_owned()]),
+                    ("node2".to_owned(), vec!["127.0.0.1:2380".to_owned()]),
+                    ("node3".to_owned(), vec!["127.0.0.1:2381".to_owned()]),
                 ]),
                 true,
                 CurpConfigBuilder::default().build().unwrap(),
@@ -974,9 +978,9 @@ mod tests {
                 is_leader = true
 
                 [cluster.members]
-                node1 = '127.0.0.1:2379'
-                node2 = '127.0.0.1:2380'
-                node3 = '127.0.0.1:2381'
+                node1 = ['127.0.0.1:2379']
+                node2 = ['127.0.0.1:2380']
+                node3 = ['127.0.0.1:2381']
 
                 [cluster.storage]
 
