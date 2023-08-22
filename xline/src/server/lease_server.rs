@@ -1,10 +1,11 @@
-use std::{pin::Pin, sync::Arc, time::Duration};
+use std::{borrow::Cow, pin::Pin, sync::Arc, time::Duration};
 
 use async_stream::{stream, try_stream};
 use clippy_utilities::Cast;
 use curp::{client::Client, cmd::generate_propose_id, members::ClusterInfo};
 use futures::stream::Stream;
 use tokio::time;
+use tonic::transport::Endpoint;
 use tracing::{debug, warn};
 use utils::shutdown;
 use xlineapi::RequestWithToken;
@@ -186,15 +187,15 @@ where
     async fn follower_keep_alive(
         &self,
         mut request_stream: tonic::Streaming<LeaseKeepAliveRequest>,
-        leader_addr: &str,
+        leader_addr: &[String],
         mut shutdown_listener: shutdown::Listener,
     ) -> Result<
         Pin<Box<dyn Stream<Item = Result<LeaseKeepAliveResponse, tonic::Status>> + Send>>,
         tonic::Status,
     > {
-        let mut lease_client = LeaseClient::connect(format!("http://{leader_addr}"))
-            .await
-            .map_err(|_e| tonic::Status::internal("Connect to leader error: {e}"))?;
+        let endpoints = build_endpoints(leader_addr)?;
+        let channel = tonic::transport::Channel::balance_list(endpoints.into_iter());
+        let mut lease_client = LeaseClient::new(channel);
 
         let redirect_stream = stream! {
             loop {
@@ -222,6 +223,22 @@ where
 
         Ok(Box::pin(stream))
     }
+}
+
+/// Build endpoints from addresses
+fn build_endpoints(addrs: &[String]) -> Result<Vec<Endpoint>, tonic::Status> {
+    addrs
+        .iter()
+        .map(|addr| {
+            let addr = if addr.starts_with("http://") {
+                Cow::Borrowed(addr)
+            } else {
+                Cow::Owned(format!("http://{addr}"))
+            };
+            addr.parse()
+                .map_err(|e| tonic::Status::internal(format!("Connect to leader error: {e}")))
+        })
+        .collect()
 }
 
 #[tonic::async_trait]
@@ -363,11 +380,9 @@ where
                 )
             });
             if !self.lease_storage.is_primary() {
-                let mut lease_client = LeaseClient::connect(format!("http://{leader_addr}"))
-                    .await
-                    .map_err(|e| {
-                        tonic::Status::internal(format!("Connect to leader error: {e}"))
-                    })?;
+                let endpoints = build_endpoints(leader_addr.as_slice())?;
+                let channel = tonic::transport::Channel::balance_list(endpoints.into_iter());
+                let mut lease_client = LeaseClient::new(channel);
                 return lease_client.lease_time_to_live(request).await;
             }
         }

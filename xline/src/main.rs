@@ -173,9 +173,9 @@ struct ServerArgs {
     /// Node name
     #[clap(long)]
     name: String,
-    /// Cluster peers. eg: node1=192.168.x.x:8080,node2=192.168.x.x:8080
+    /// Cluster peers. eg: node1=192.168.x.x:8080,192.168.x.x:8081,node2=192.168.x.x:8083
     #[clap(long, value_parser = parse_members)]
-    members: HashMap<String, String>,
+    members: HashMap<String, Vec<String>>,
     /// If node is leader
     #[clap(long)]
     is_leader: bool,
@@ -502,7 +502,7 @@ async fn main() -> Result<()> {
     )
     .await;
 
-    let self_addr_string = cluster_config
+    let self_addr_strings = cluster_config
         .members()
         .get(cluster_config.name())
         .ok_or_else(|| {
@@ -511,13 +511,17 @@ async fn main() -> Result<()> {
                 cluster_config.name()
             )
         })?;
-    let self_addr = self_addr_string
-        .to_socket_addrs()?
-        .next()
-        .ok_or_else(|| anyhow!("failed to resolve self address {}", self_addr_string))?;
+    let self_addrs = self_addr_strings
+        .iter()
+        .map(|addr| {
+            addr.to_socket_addrs()?
+                .next()
+                .ok_or_else(|| anyhow!("failed to resolve self address {}", addr))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
     debug!("name = {:?}", cluster_config.name());
-    debug!("server_addr = {:?}", self_addr);
+    debug!("server_addr = {self_addrs:?}");
     debug!("cluster_peers = {:?}", cluster_config.members());
 
     let name = cluster_config.name().clone();
@@ -535,7 +539,7 @@ async fn main() -> Result<()> {
         *config.compact(),
     );
     debug!("{:?}", server);
-    server.start(self_addr, db_proxy, key_pair).await?;
+    server.start(self_addrs, db_proxy, key_pair).await?;
 
     tokio::signal::ctrl_c().await?;
     info!("received ctrl-c, shutting down, press ctrl-c again to force exit");

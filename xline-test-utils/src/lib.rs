@@ -72,7 +72,14 @@ impl Cluster {
                 path
             };
             let db: Arc<DB> = DB::open(&StorageConfig::RocksDB(path.clone())).unwrap();
-            let cluster_info = ClusterInfo::new(self.all_members.clone(), &name);
+            let cluster_info = ClusterInfo::new(
+                self.all_members
+                    .clone()
+                    .into_iter()
+                    .map(|(id, addr)| (id, vec![addr]))
+                    .collect(),
+                &name,
+            );
             tokio::spawn(async move {
                 let server = XlineServer::new(
                     cluster_info.into(),

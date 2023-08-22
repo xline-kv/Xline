@@ -1,14 +1,19 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{
     client::Client, members::ClusterInfo, server::Rpc, InnerProtocolServer, ProtocolServer,
 };
 use engine::{MemorySnapshotAllocator, RocksSnapshotAllocator, SnapshotAllocator};
+use event_listener::Event;
+use futures::stream::select_all;
+use futures::Future;
+use hyper::server::conn::AddrStream;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use tokio::{net::TcpListener, sync::mpsc::channel};
 use tokio_stream::wrappers::TcpListenerStream;
+use tonic::transport::server::TcpIncoming;
 use tonic::transport::Server;
 use tonic_health::ServingStatus;
 use tracing::error;
@@ -197,7 +202,7 @@ impl XlineServer {
     #[inline]
     pub async fn start<S: StorageApi>(
         &self,
-        addr: SocketAddr,
+        addrs: Vec<SocketAddr>,
         persistent: Arc<S>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
     ) -> Result<()> {
@@ -229,7 +234,7 @@ impl XlineServer {
                 .add_service(ProtocolServer::from_arc(Arc::clone(&curp_server)))
                 .add_service(InnerProtocolServer::from_arc(curp_server))
                 .add_service(health_server)
-                .serve_with_shutdown(addr, signal)
+                .serve_with_incoming_shutdown(bind_addrs(addrs.into_iter())?, signal)
                 .await
         });
         Ok(())
@@ -429,4 +434,17 @@ impl Drop for XlineServer {
             );
         }
     }
+}
+
+/// Bind multiple addresses
+fn bind_addrs<T: Iterator<Item = SocketAddr>>(
+    addrs: T,
+) -> Result<impl futures::Stream<Item = Result<AddrStream, std::io::Error>>> {
+    let incoming = addrs
+        .map(|addr| {
+            TcpIncoming::new(addr, true, None)
+                .map_err(|e| anyhow!("Failed to bind to {}, err: {e}", addr))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(select_all(incoming.into_iter()))
 }

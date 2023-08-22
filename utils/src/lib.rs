@@ -184,19 +184,30 @@ pub enum ConfigParseError {
     IoError(String, #[source] std::io::Error),
 }
 
-/// parse members from string
+/// parse members from string like "node1=addr1,addr2,node2=add3,addr4,addr5,node3=addr6"
 /// # Errors
 /// Return error when pass wrong args
 #[inline]
-pub fn parse_members(s: &str) -> Result<HashMap<String, String>, ConfigParseError> {
+pub fn parse_members(s: &str) -> Result<HashMap<String, Vec<String>>, ConfigParseError> {
     let mut map = HashMap::new();
-    for pair in s.split(',') {
-        if let Some((id, addr)) = pair.split_once('=') {
-            let _ignore = map.insert(id.to_owned(), addr.to_owned());
-        } else {
+    let mut last_node = "";
+    for item in s.split(',') {
+        let terms = item.split('=').collect::<Vec<_>>();
+        if terms.iter().any(|term| term.is_empty()) {
             return Err(ConfigParseError::InvalidValue(
                 "parse members error".to_owned(),
             ));
+        }
+        #[allow(clippy::indexing_slicing)] // that is safe to index slice after checking the length
+        if terms.len() == 2 {
+            last_node = terms[0];
+            let _ignore = map.insert(last_node.to_owned(), vec![terms[1].to_owned()]);
+        } else if terms.len() == 1 {
+            map.get_mut(last_node)
+                .ok_or_else(|| ConfigParseError::InvalidValue("parse members error".to_owned()))?
+                .push(terms[0].to_owned());
+        } else {
+            unreachable!("terms length should be 1 or 2, terms: {terms:?}");
         }
     }
     Ok(map)
@@ -398,19 +409,39 @@ mod test {
         assert!(parse_members(s1).is_err());
 
         let s2 = "a=1";
-        let m2 = HashMap::from_iter(vec![("a".to_owned(), "1".to_owned())]);
+        let m2 = HashMap::from([("a".to_owned(), vec!["1".to_owned()])]);
         assert_eq!(parse_members(s2).unwrap(), m2);
 
         let s3 = "a=1,b=2,c=3";
-        let m3 = HashMap::from_iter(vec![
-            ("a".to_owned(), "1".to_owned()),
-            ("b".to_owned(), "2".to_owned()),
-            ("c".to_owned(), "3".to_owned()),
+        let m3 = HashMap::from([
+            ("a".to_owned(), vec!["1".to_owned()]),
+            ("b".to_owned(), vec!["2".to_owned()]),
+            ("c".to_owned(), vec!["3".to_owned()]),
         ]);
         assert_eq!(parse_members(s3).unwrap(), m3);
 
         let s4 = "abcde";
         assert!(parse_members(s4).is_err());
+
+        let s5 = "a=1,2,3,b=1,2,c=1";
+        let m5 = HashMap::from([
+            (
+                "a".to_owned(),
+                vec!["1".to_owned(), "2".to_owned(), "3".to_owned()],
+            ),
+            ("b".to_owned(), vec!["1".to_owned(), "2".to_owned()]),
+            ("c".to_owned(), vec!["1".to_owned()]),
+        ]);
+        assert_eq!(parse_members(s5).unwrap(), m5);
+
+        let s6 = "a=1,";
+        assert!(parse_members(s6).is_err());
+
+        let s7 = "=1,2,b=3";
+        assert!(parse_members(s7).is_err());
+
+        let s8 = "1,2,b=3";
+        assert!(parse_members(s8).is_err());
     }
 
     #[allow(clippy::unwrap_used)]

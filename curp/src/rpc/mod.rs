@@ -104,14 +104,25 @@ impl FetchClusterResponse {
     /// Create a new `FetchClusterResponse`
     pub(crate) fn new(
         leader_id: Option<ServerId>,
-        all_members: HashMap<ServerId, String>,
+        all_members: HashMap<ServerId, Vec<String>>,
         term: u64,
     ) -> Self {
         Self {
             leader_id,
-            all_members,
+            all_members: all_members
+                .into_iter()
+                .map(|(id, addrs)| (id, Addrs { addrs }))
+                .collect(),
             term,
         }
+    }
+
+    /// Get all members
+    pub(crate) fn into_members(self) -> HashMap<ServerId, Vec<String>> {
+        self.all_members
+            .into_iter()
+            .map(|(id, addrs)| (id, addrs.addrs))
+            .collect()
     }
 }
 

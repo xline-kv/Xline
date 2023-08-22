@@ -599,7 +599,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
             shutdown_trigger,
             log_rx,
         )
-        .await;
+        .await?;
 
         Ok(Self {
             curp,
@@ -617,11 +617,12 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         storage: Arc<impl StorageApi<Command = C> + 'static>,
         cluster_info: Arc<ClusterInfo>,
         shutdown_trigger: shutdown::Trigger,
-        log_rx: tokio::sync::mpsc::UnboundedReceiver<Arc<LogEntry<C>>>,
+        log_rx: mpsc::UnboundedReceiver<Arc<LogEntry<C>>>,
     ) {
         let shutdown_listener = shutdown_trigger.subscribe();
         let connects = rpc::inner_connect(cluster_info.peers_addrs())
             .await
+            .map_err(|e| CurpError::Internal(format!("parse peers addresses failed, err {e:?}")))?
             .collect::<HashMap<_, _>>();
         let _election_task = tokio::spawn(Self::election_task(
             Arc::clone(&curp),
