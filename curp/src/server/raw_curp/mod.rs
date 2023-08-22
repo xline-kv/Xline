@@ -31,6 +31,7 @@ use tracing::{
 use utils::{
     config::CurpConfig,
     parking_lot_lock::{MutexMap, RwLockMap},
+    shutdown::{self, Signal},
 };
 
 use self::{
@@ -60,7 +61,7 @@ mod log;
 pub(super) type UncommittedPool<C> = HashMap<ProposeId, Arc<C>>;
 
 /// Reference to uncommitted pool
-type UncommittedPoolRef<C> = Arc<Mutex<UncommittedPool<C>>>;
+pub(super) type UncommittedPoolRef<C> = Arc<Mutex<UncommittedPool<C>>>;
 
 /// The curp state machine
 #[derive(Debug)]
@@ -75,6 +76,8 @@ pub(super) struct RawCurp<C: Command, RC: RoleChange> {
     log: RwLock<Log<C>>,
     /// Relevant context
     ctx: Context<C, RC>,
+    /// Shutdown trigger
+    shutdown_trigger: shutdown::Trigger,
 }
 
 /// Actions of syncing
@@ -278,6 +281,48 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 Ok(true)
             },
         )
+    }
+
+    /// Handle `shutdown` request
+    pub(super) fn handle_shutdown(
+        &self,
+        propose_id: ProposeId,
+    ) -> ((Option<ServerId>, u64), Result<(), ProposeError>) {
+        let st_r = self.st.read();
+        let info = (st_r.leader_id, st_r.term);
+        if st_r.role != Role::Leader {
+            return (info, Err(ProposeError::NotLeader));
+        }
+
+        let mut log_w = self.log.write();
+
+        let entry = match log_w.push_shutdown(st_r.term, propose_id) {
+            Ok(entry) => {
+                debug!("{} gets new log[{}]", self.id(), entry.index);
+                entry
+            }
+            Err(e) => {
+                return (info, Err(e.into()));
+            }
+        };
+
+        let index = entry.index;
+        self.ctx.sync_events.iter().for_each(|(id, event)| {
+            let next = self.lst.get_next_index(*id);
+            if next > log_w.base_index && log_w.has_next_batch(next) {
+                event.notify(1);
+            }
+        });
+
+        // check if commit_index needs to be updated
+        if self.can_update_commit_index_to(&log_w, index, self.term()) && index > log_w.commit_index
+        {
+            log_w.commit_index = index;
+            debug!("{} updates commit index to {index}", self.id());
+            self.apply(&mut *log_w);
+        }
+
+        (info, Ok(()))
     }
 
     /// Handle `append_entries`
@@ -593,6 +638,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         sync_events: HashMap<ServerId, Arc<Event>>,
         log_tx: mpsc::UnboundedSender<Arc<LogEntry<C>>>,
         role_change: RC,
+        shutdown_trigger: shutdown::Trigger,
     ) -> Self {
         let raw_curp = Self {
             st: RwLock::new(State::new(
@@ -624,6 +670,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 leader_event: Arc::new(Event::new()),
                 role_change,
             },
+            shutdown_trigger,
         };
         if is_leader {
             let mut st_w = raw_curp.st.write();
@@ -649,6 +696,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         entries: Vec<LogEntry<C>>,
         last_applied: LogIndex,
         role_change: RC,
+        shutdown_trigger: shutdown::Trigger,
     ) -> Self {
         let raw_curp = Self::new(
             cluster_info,
@@ -661,6 +709,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             sync_event,
             log_tx,
             role_change,
+            shutdown_trigger,
         );
 
         if let Some((term, server_id)) = voted_for {
@@ -793,6 +842,29 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 .get(&id)
                 .unwrap_or_else(|| unreachable!("server id {id} not found")),
         )
+    }
+
+    /// Enter shutdown state
+    pub(super) fn enter_shutdown(&self) {
+        self.shutdown_trigger.cluster_shutdown();
+        debug!("enter cluster shutdown state");
+    }
+
+    /// Check if the cluster is shutting down
+    pub(super) fn is_shutdown(&self) -> bool {
+        !matches!(self.shutdown_trigger.state(), Signal::Running)
+    }
+
+    /// Get a shutdown listener
+    pub(super) fn shutdown_listener(&self) -> shutdown::Listener {
+        self.shutdown_trigger.subscribe()
+    }
+
+    /// Check if all followers have caught up with the leader
+    pub(super) fn is_synced(&self) -> bool {
+        let log_r = self.log.read();
+        let leader_commit_index = log_r.commit_index;
+        self.lst.check_all(|f| f.match_index == leader_commit_index)
     }
 }
 

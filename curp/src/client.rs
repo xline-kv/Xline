@@ -23,7 +23,7 @@ use crate::{
     rpc::{
         self, connect::ConnectApi, protocol_client::ProtocolClient, FetchClusterRequest,
         FetchClusterResponse, FetchLeaderRequest, FetchReadStateRequest, ProposeRequest,
-        ReadState as PbReadState, SyncResult, WaitSyncedRequest,
+        ReadState as PbReadState, ShutdownRequest, SyncResult, WaitSyncedRequest,
     },
     LogIndex,
 };
@@ -65,7 +65,7 @@ impl<C: Command> Builder<C> {
         all_members: HashMap<ServerId, String>,
     ) -> Result<Client<C>, ClientBuildError> {
         let Some(timeout) = self.timeout else {
-            return Err(ClientBuildError::invalid_aurguments("timeout is required"));
+            return Err(ClientBuildError::invalid_arguments("timeout is required"));
         };
         let connects = rpc::connect(all_members).await.collect();
         let client = Client::<C> {
@@ -99,7 +99,7 @@ impl<C: Command> Builder<C> {
                 }
             })
             .collect();
-        let mut err = ClientBuildError::invalid_aurguments("addrs is empty");
+        let mut err = ClientBuildError::invalid_arguments("addrs is empty");
         while let Some(r) = futs.next().await {
             match r {
                 Ok(r) => {
@@ -120,7 +120,7 @@ impl<C: Command> Builder<C> {
         addrs: Vec<String>,
     ) -> Result<Client<C>, ClientBuildError> {
         let Some(timeout) = self.timeout else {
-            return Err(ClientBuildError::invalid_aurguments("timeout is required"));
+            return Err(ClientBuildError::invalid_arguments("timeout is required"));
         };
         let res = self
             .fetch_cluster(addrs.clone(), *timeout.propose_timeout())
@@ -181,6 +181,34 @@ impl State {
         self.term = term;
         self.leader = None;
     }
+
+    /// Check the term and leader id, update the state if needed
+    fn check_and_update(&mut self, leader_id: Option<u64>, term: u64) {
+        match self.term.cmp(&term) {
+            Ordering::Less => {
+                // reset term only when the resp has leader id to prevent:
+                // If a server loses contact with its leader, it will update its term for election. Since other servers are all right, the election will not succeed.
+                // But if the client learns about the new term and updates its term to it, it will never get the true leader.
+                if let Some(new_leader_id) = leader_id {
+                    self.update_to_term(term);
+                    self.set_leader(new_leader_id);
+                }
+            }
+            Ordering::Equal => {
+                if let Some(new_leader_id) = leader_id {
+                    if self.leader.is_none() {
+                        self.set_leader(new_leader_id);
+                    }
+                    assert_eq!(
+                        self.leader,
+                        Some(new_leader_id),
+                        "there should never be two leader in one term"
+                    );
+                }
+            }
+            Ordering::Greater => {}
+        }
+    }
 }
 
 /// Read state of a command
@@ -238,36 +266,15 @@ where
                     continue;
                 }
             };
-            self.state.map_write(|mut state| {
-                match state.term.cmp(&resp.term()) {
-                    Ordering::Less => {
-                        // reset term only when the resp has leader id to prevent:
-                        // If a server loses contact with its leader, it will update its term for election. Since other servers are all right, the election will not succeed.
-                        // But if the client learns about the new term and updates its term to it, it will never get the true leader.
-                        if let Some(leader_id) = resp.leader_id {
-                            state.update_to_term(resp.term());
-                            state.set_leader(leader_id);
-                            execute_result = None;
-                        }
-                    }
-                    Ordering::Equal => {
-                        if let Some(leader_id) = resp.leader_id {
-                            if state.leader.is_none() {
-                                state.set_leader(leader_id);
-                            }
-                            assert_eq!(
-                                state.leader,
-                                Some(leader_id),
-                                "there should never be two leader in one term"
-                            );
-                        }
-                    }
-                    Ordering::Greater => {}
-                }
-            });
+            self.state
+                .write()
+                .check_and_update(resp.leader_id, resp.term);
             resp.map_or_else::<C, _, _, _>(
                 |res| {
-                    if let Some(er) = res.transpose()? {
+                    if let Some(er) = res
+                        .transpose()
+                        .map_err(|e| CommandProposeError::Execute(e))?
+                    {
                         assert!(execute_result.is_none(), "should not set exe result twice");
                         execute_result = Some(er);
                     }
@@ -275,12 +282,15 @@ where
                     Ok(())
                 },
                 |err| {
-                    warn!("Propose error: {}", err);
-                    Ok(())
+                    if matches!(err, ProposeError::Shutdown) {
+                        Err(CommandProposeError::Propose(ProposeError::Shutdown))
+                    } else {
+                        warn!("Propose error: {}", err);
+                        Ok(())
+                    }
                 },
             )
-            .map_err(Into::<ProposeError>::into)?
-            .map_err(|e| CommandProposeError::Execute(e))?;
+            .map_err(Into::<ProposeError>::into)??;
             if (ok_cnt >= superquorum) && execute_result.is_some() {
                 debug!("fast round for cmd({}) succeed", cmd_arc.id());
                 return Ok((execute_result, true));
@@ -327,6 +337,9 @@ where
                     debug!("slow round for cmd({}) succeeded", cmd.id());
                     return Ok((asr, er));
                 }
+                SyncResult::Error(CommandSyncError::Shutdown) => {
+                    return Err(CommandProposeError::Propose(ProposeError::Shutdown));
+                }
                 SyncResult::Error(CommandSyncError::WaitSync(WaitSyncError::Redirect(
                     server_id,
                     term,
@@ -353,6 +366,38 @@ where
                 SyncResult::Error(CommandSyncError::AfterSync(e)) => {
                     return Err(CommandProposeError::AfterSync(e));
                 }
+            }
+        }
+    }
+
+    /// The shutdown rpc of curp protocol
+    #[instrument(skip_all)]
+    pub async fn shutdown(&self, id: ProposeId) -> Result<(), ProposeError> {
+        loop {
+            let leader_id = self.get_leader_id().await;
+            debug!("shutdown request sent to {}", leader_id);
+            let resp = match self
+                .get_connect(leader_id)
+                .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
+                .shutdown(
+                    ShutdownRequest::new(id.clone()),
+                    *self.timeout.wait_synced_timeout(),
+                )
+                .await
+            {
+                Ok(resp) => resp.into_inner(),
+                Err(e) => {
+                    warn!("shutdown rpc error: {e}");
+                    tokio::time::sleep(*self.timeout.retry_timeout()).await;
+                    continue;
+                }
+            };
+            self.state
+                .write()
+                .check_and_update(resp.leader_id, resp.term);
+            match resp.error {
+                Some(e) => return Err(bincode::deserialize(&e)?),
+                None => return Ok(()),
             }
         }
     }
@@ -656,7 +701,7 @@ where
 
 /// Get the superquorum for curp protocol
 /// Although curp can proceed with f + 1 available replicas, it needs f + 1 + (f + 1)/2 replicas
-/// (for superquorum of witenesses) to use 1 RTT operations. With less than superquorum replicas,
+/// (for superquorum of witnesses) to use 1 RTT operations. With less than superquorum replicas,
 /// clients must ask masters to commit operations in f + 1 replicas before returning result.(2 RTTs).
 #[inline]
 fn superquorum(nodes: usize) -> usize {

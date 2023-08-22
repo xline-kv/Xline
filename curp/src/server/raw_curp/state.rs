@@ -3,8 +3,11 @@ use std::{
     sync::Arc,
 };
 
+use dashmap::{
+    mapref::one::{Ref, RefMut},
+    DashMap,
+};
 use madsim::rand::{thread_rng, Rng};
-use parking_lot::{Mutex, MutexGuard};
 use tracing::debug;
 
 use super::Role;
@@ -49,18 +52,18 @@ pub(super) struct CandidateState<C> {
 
 /// Status of a follower
 #[derive(Debug)]
-struct FollowerStatus {
+pub(super) struct FollowerStatus {
     /// Index of the next log entry to send to that follower
-    next_index: LogIndex,
+    pub(super) next_index: LogIndex,
     /// Index of highest log entry known to be replicated on that follower
-    match_index: LogIndex,
+    pub(super) match_index: LogIndex,
 }
 
 /// Additional state for the leader, all volatile
 #[derive(Debug)]
 pub(super) struct LeaderState {
     /// For each server, the leader maintains its status
-    statuses: HashMap<ServerId, Mutex<FollowerStatus>>,
+    statuses: DashMap<ServerId, FollowerStatus>,
 }
 
 impl State {
@@ -103,13 +106,13 @@ impl LeaderState {
         Self {
             statuses: others
                 .iter()
-                .map(|o| {
+                .map(|id| {
                     (
-                        *o,
-                        Mutex::new(FollowerStatus {
+                        *id,
+                        FollowerStatus {
                             next_index: 1,
                             match_index: 0,
-                        }),
+                        },
                     )
                 })
                 .collect(),
@@ -117,11 +120,22 @@ impl LeaderState {
     }
 
     /// Get status for a server
-    fn get_status(&self, id: ServerId) -> MutexGuard<'_, FollowerStatus> {
+    fn get_status(&self, id: ServerId) -> Ref<'_, u64, FollowerStatus> {
         self.statuses
             .get(&id)
             .unwrap_or_else(|| unreachable!("no status for {id}"))
-            .lock()
+    }
+
+    /// Get status for a server
+    fn get_status_mut(&self, id: ServerId) -> RefMut<'_, u64, FollowerStatus> {
+        self.statuses
+            .get_mut(&id)
+            .unwrap_or_else(|| unreachable!("no status for {id}"))
+    }
+
+    /// Check all followers by `f`
+    pub(super) fn check_all(&self, f: impl Fn(&FollowerStatus) -> bool) -> bool {
+        self.statuses.iter().all(|s| f(s.value()))
     }
 
     /// Get `next_index` for server
@@ -136,20 +150,17 @@ impl LeaderState {
 
     /// Update `next_index` for server
     pub(super) fn update_next_index(&self, id: ServerId, index: LogIndex) {
-        self.get_status(id).next_index = index;
+        self.get_status_mut(id).next_index = index;
     }
 
     /// Update `match_index` for server, will update `next_index` if possible
     pub(super) fn update_match_index(&self, id: ServerId, index: LogIndex) {
-        let mut status = self.get_status(id);
-
+        let mut status = self.get_status_mut(id);
         if status.match_index >= index {
             return;
         }
-
         status.match_index = index;
         status.next_index = index + 1;
-
         debug!("follower {id}'s match_index updated to {index}");
     }
 }

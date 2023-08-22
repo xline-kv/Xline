@@ -78,11 +78,23 @@ message FetchReadStateResponse {
     }
 }
 
+message ShutdownRequest {
+    string id = 1;
+}
+
+message ShutdownResponse {
+    optional uint64 leader_id = 1;
+    uint64 term = 2;
+    // The original type is ProposeError
+    optional bytes error = 3;
+}
+
 service Protocol {
     rpc Propose(commandpb.ProposeRequest) returns (commandpb.ProposeResponse);
     rpc WaitSynced(commandpb.WaitSyncedRequest)
         returns (commandpb.WaitSyncedResponse);
-    rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
+    rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+        rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
     rpc Vote(VoteRequest) returns (VoteResponse);
     rpc InstallSnapshot(stream InstallSnapshotRequest)
         returns (InstallSnapshotResponse);

@@ -30,7 +30,7 @@ impl ClientBuildError {
     /// Create a new `ClientBuildError::InvalidArguments`
     #[inline]
     #[must_use]
-    pub fn invalid_aurguments(msg: &str) -> Self {
+    pub fn invalid_arguments(msg: &str) -> Self {
         Self::InvalidArguments(msg.to_owned())
     }
 }
@@ -72,6 +72,12 @@ pub enum ServerError {
 #[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
 #[non_exhaustive]
 pub enum ProposeError {
+    /// Current node is not leader
+    #[error("not leader")]
+    NotLeader,
+    /// Cluster already shutdown
+    #[error("cluster shutdown")]
+    Shutdown,
     /// The command conflicts with keys in the speculative commands
     #[error("key conflict error")]
     KeyConflict,
@@ -92,6 +98,8 @@ impl TryFrom<PbProposeError> for ProposeError {
     #[inline]
     fn try_from(err: PbProposeError) -> Result<ProposeError, Self::Error> {
         Ok(match err {
+            PbProposeError::NotLeader(_) => ProposeError::NotLeader,
+            PbProposeError::Shutdown(_) => ProposeError::Shutdown,
             PbProposeError::KeyConflict(_) => ProposeError::KeyConflict,
             PbProposeError::Duplicated(_) => ProposeError::Duplicated,
             PbProposeError::WaitSyncError(e) => ProposeError::SyncedError(
@@ -108,6 +116,8 @@ impl From<ProposeError> for PbProposeError {
     #[inline]
     fn from(err: ProposeError) -> Self {
         match err {
+            ProposeError::NotLeader => PbProposeError::NotLeader(()),
+            ProposeError::Shutdown => PbProposeError::Shutdown(()),
             ProposeError::KeyConflict => PbProposeError::KeyConflict(()),
             ProposeError::Duplicated => PbProposeError::Duplicated(()),
             ProposeError::SyncedError(e) => PbProposeError::WaitSyncError(PbWaitSyncErrorOuter {
@@ -175,6 +185,9 @@ impl From<bincode::Error> for ProposeError {
 #[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
 #[non_exhaustive]
 pub enum CommandProposeError<C: Command> {
+    /// Cluster already shutdown
+    #[error("cluster shutdown")]
+    Shutdown,
     /// Curp propose error
     #[error("propose error: {0:?}")]
     Propose(#[from] ProposeError),
@@ -223,6 +236,8 @@ impl From<WaitSyncError> for PbWaitSyncError {
 /// The union error which includes sync errors and user-defined errors.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) enum CommandSyncError<C: Command> {
+    /// Cluster already shutdown
+    Shutdown,
     /// If wait sync went wrong
     WaitSync(WaitSyncError),
     /// If the execution of the cmd went wrong
@@ -234,6 +249,7 @@ pub(crate) enum CommandSyncError<C: Command> {
 impl<C: Command> From<CommandSyncError<C>> for PbCommandSyncError {
     fn from(err: CommandSyncError<C>) -> Self {
         match err {
+            CommandSyncError::Shutdown => PbCommandSyncError::Shutdown(()),
             CommandSyncError::WaitSync(e) => PbCommandSyncError::WaitSync(PbWaitSyncErrorOuter {
                 wait_sync_error: Some(e.into()),
             }),
@@ -248,6 +264,7 @@ impl<C: Command> TryFrom<PbCommandSyncError> for CommandSyncError<C> {
 
     fn try_from(err: PbCommandSyncError) -> Result<Self, Self::Error> {
         Ok(match err {
+            PbCommandSyncError::Shutdown(_) => CommandSyncError::Shutdown,
             PbCommandSyncError::WaitSync(e) => CommandSyncError::WaitSync(
                 e.wait_sync_error
                     .ok_or(PbSerializeError::EmptyField)?

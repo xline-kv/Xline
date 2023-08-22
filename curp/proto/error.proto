@@ -11,6 +11,8 @@ message ProposeError {
         google.protobuf.Empty duplicated = 2;
         WaitSyncError wait_sync_error = 3;
         string encode_error = 4;
+        google.protobuf.Empty not_leader = 5;
+        google.protobuf.Empty shutdown = 6;
     }
 }
 
@@ -23,6 +25,7 @@ message CommandSyncError {
         // The serialized command error
         // The original type is Command::Error
         bytes after_sync = 3;
+        google.protobuf.Empty shutdown = 4;
     }
 }
 
