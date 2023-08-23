@@ -412,7 +412,7 @@ where
 }
 
 /// Command to run consensus protocol
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Command {
     /// Keys of request
     keys: Vec<KeyRange>,
@@ -569,7 +569,7 @@ impl Command {
 }
 
 /// Command to run consensus protocol
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct CommandResponse {
     /// Response data
     response: ResponseWrapper,
@@ -736,7 +736,7 @@ pub(super) fn propose_err_to_status(err: CommandProposeError<Command>) -> tonic:
 
 #[cfg(test)]
 mod test {
-    use xlineapi::Compare;
+    use xlineapi::{Compare, PutResponse};
 
     use super::*;
     use crate::rpc::{
@@ -972,5 +972,25 @@ mod test {
         assert!(!compaction_cmd_2.is_conflict(&txn_cmd_1));
         assert!(compaction_cmd_2.is_conflict(&txn_cmd_2));
         assert!(!compaction_cmd_2.is_conflict(&txn_cmd_3));
+    }
+
+    #[test]
+    fn command_serialization_is_ok() {
+        let cmd = Command::new(
+            vec![KeyRange::new("a", "e")],
+            RequestWithToken::new(RequestWrapper::PutRequest(PutRequest::default())),
+            ProposeId::new("id".to_owned()),
+        );
+        let decoded_cmd =
+            <Command as PbSerialize>::decode(&cmd.encode()).expect("decode should success");
+        assert_eq!(cmd, decoded_cmd);
+    }
+
+    #[test]
+    fn command_resp_serialization_is_ok() {
+        let cmd_resp = CommandResponse::new(ResponseWrapper::PutResponse(PutResponse::default()));
+        let decoded_cmd_resp = <CommandResponse as PbSerialize>::decode(&cmd_resp.encode())
+            .expect("decode should success");
+        assert_eq!(cmd_resp, decoded_cmd_resp);
     }
 }
