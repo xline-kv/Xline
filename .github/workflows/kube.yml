@@ -33,7 +33,8 @@ jobs:
           sudo chmod -R 777 /xline/kind
           ls /xline/kind
           ls /xline/kind/pods
-          ls /xline/kind/containers
+          du -h --max-depth=1 /xline/kind
+          ls -allh /xline/kind/containers
       - name: upload kind logs
         if: always()
         uses: actions/upload-artifact@v3
