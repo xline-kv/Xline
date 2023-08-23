@@ -57,8 +57,8 @@ impl CurpGroup {
         assert!(n_nodes >= 3, "the number of nodes must >= 3");
         let handle = madsim::runtime::Handle::current();
 
-        let all: HashMap<String, String> = (0..n_nodes)
-            .map(|x| (format!("S{x}"), format!("192.168.1.{}:12345", x + 1)))
+        let all: HashMap<_, _> = (0..n_nodes)
+            .map(|x| (format!("S{x}"), vec![format!("192.168.1.{}:12345", x + 1)]))
             .collect();
         let mut all_members = HashMap::new();
 
@@ -157,7 +157,7 @@ impl CurpGroup {
         let all_members = self
             .nodes
             .iter()
-            .map(|(id, node)| (*id, node.addr.clone()))
+            .map(|(id, node)| (*id, vec![node.addr.clone()]))
             .collect();
         SimClient {
             inner: Arc::new(
