@@ -283,6 +283,8 @@ impl<C: Command> From<SyncError> for CommandSyncError<C> {
 
 #[cfg(test)]
 mod test {
+    use curp_test_utils::test_cmd::{ExecuteError, TestCommand};
+
     use super::*;
 
     #[test]
@@ -291,5 +293,20 @@ mod test {
         let _decoded_err =
             <ProposeError as PbSerialize>::decode(&err.encode()).expect("decode should success");
         assert!(matches!(err, _decoded_err));
+    }
+
+    #[test]
+    fn cmd_sync_error_serialization_is_ok() {
+        let err: CommandSyncError<TestCommand> =
+            CommandSyncError::Sync(SyncError::Other("msg".to_owned()));
+        let _decoded_err = <CommandSyncError<TestCommand> as PbSerialize>::decode(&err.encode())
+            .expect("decode should success");
+        assert!(matches!(err, _decoded_err));
+
+        let err1: CommandSyncError<TestCommand> =
+            CommandSyncError::Execute(ExecuteError("msg".to_owned()));
+        let _decoded_err1 = <CommandSyncError<TestCommand> as PbSerialize>::decode(&err1.encode())
+            .expect("decode should success");
+        assert!(matches!(err1, _decoded_err1));
     }
 }

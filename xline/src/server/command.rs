@@ -612,6 +612,7 @@ impl CommandResponse {
 }
 
 /// Sync Response
+#[cfg_attr(test, derive(PartialEq, Eq))]
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct SyncResponse {
     /// Revision of this request
@@ -1024,5 +1025,13 @@ mod test {
         let decoded_cmd_resp = <CommandResponse as PbSerialize>::decode(&cmd_resp.encode())
             .expect("decode should success");
         assert_eq!(cmd_resp, decoded_cmd_resp);
+    }
+
+    #[test]
+    fn sync_resp_serialization_is_ok() {
+        let sync_resp = SyncResponse::new(1);
+        let decoded_sync_resp = <SyncResponse as PbSerialize>::decode(&sync_resp.encode())
+            .expect("decode should success");
+        assert_eq!(sync_resp, decoded_sync_resp);
     }
 }
