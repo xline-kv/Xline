@@ -30,7 +30,7 @@ fn next_id() -> u64 {
 }
 
 #[derive(Error, Debug, Clone, Serialize, Deserialize)]
-pub struct ExecuteError(String);
+pub struct ExecuteError(pub String);
 
 impl Display for ExecuteError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
