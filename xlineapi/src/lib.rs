@@ -254,7 +254,7 @@ impl User {
 }
 
 /// Wrapper for requests
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct RequestWithToken {
     /// token for authentication
     pub token: Option<String>,

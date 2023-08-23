@@ -1,13 +1,16 @@
+#![allow(clippy::integer_arithmetic)] // introduced by `strum_macros::EnumIter`
+
 use curp::cmd::{PbSerialize, PbSerializeError};
 use prost::Message;
 use serde::{Deserialize, Serialize};
+use strum_macros::EnumIter;
 use thiserror::Error;
 use xlineapi::{Empty, PbExecuteError, PbExecuteErrorOuter, PbRevisions, PbValidationError};
 
 use crate::request_validation::ValidationError;
 
 /// Error met when executing commands
-#[derive(Error, Debug, Clone, Serialize, Deserialize)]
+#[derive(Error, Debug, Clone, Serialize, Deserialize, PartialEq, Eq, EnumIter)]
 #[non_exhaustive]
 pub enum ExecuteError {
     /// Invalid Request Error
@@ -312,5 +315,20 @@ impl From<ExecuteError> for tonic::Status {
         };
 
         tonic::Status::new(code, message)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use strum::IntoEnumIterator;
+
+    #[test]
+    fn serialization_is_ok() {
+        for err in ExecuteError::iter() {
+            let decoded_err = <ExecuteError as PbSerialize>::decode(&err.encode())
+                .expect("decode should success");
+            assert_eq!(err, decoded_err);
+        }
     }
 }
