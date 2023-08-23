@@ -8,7 +8,7 @@ use xlineapi::{
     AuthUserGrantRoleResponse, AuthUserListResponse, AuthUserRevokeRoleResponse,
     DeleteRangeResponse, KeyValue, LeaseGrantResponse, LeaseKeepAliveResponse, LeaseLeasesResponse,
     LeaseRevokeResponse, LeaseTimeToLiveResponse, PutResponse, RangeResponse, ResponseHeader,
-    TxnResponse,
+    TxnResponse, WatchResponse,
 };
 
 /// The global printer type config
@@ -408,6 +408,61 @@ impl Printer for AuthRoleRevokePermissionResponse {
         FieldPrinter::header(self.header.as_ref());
         println!("Permission revoked");
     }
+}
+
+impl Printer for WatchResponse {
+    fn simple(&self) {
+        let event_type = |t: i32| -> &str {
+            match t {
+                0 => "PUT",
+                1 => "DELETE",
+                _ => "Unknown",
+            }
+        };
+        for event in &self.events {
+            println!("{}", event_type(event.r#type));
+            if let Some(prev_kv) = event.prev_kv.as_ref() {
+                SimplePrinter::utf8(&prev_kv.key);
+                SimplePrinter::utf8(&prev_kv.value);
+            }
+            if let Some(kv) = event.kv.as_ref() {
+                SimplePrinter::utf8(&kv.key);
+                SimplePrinter::utf8(&kv.value);
+            }
+        }
+    }
+
+    fn field(&self) {
+        println!("created: {}", self.created);
+        println!("watch_id: {}", self.watch_id);
+        println!("compact_revision: {}", self.compact_revision);
+        println!("fragment: {}", self.fragment);
+        println!("canceled: {}", self.canceled);
+        println!("cancel_reason: {}", self.cancel_reason);
+
+        println!("events:");
+        for event in &self.events {
+            println!("kv:");
+            if let Some(kv) = event.kv.as_ref() {
+                FieldPrinter::kv(kv);
+            }
+            println!("type: {}", event_type(event.r#type));
+            println!("prev_kv:");
+            if let Some(prev_kv) = event.prev_kv.as_ref() {
+                FieldPrinter::kv(prev_kv);
+            }
+        }
+    }
+}
+
+/// convert event type to string
+fn event_type(event: i32) -> String {
+    match event {
+        0 => "PUT",
+        1 => "DELETE",
+        _ => "UNKNOWN",
+    }
+    .to_owned()
 }
 
 /// Simple Printer of common response types
