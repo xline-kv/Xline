@@ -16,3 +16,5 @@ pub(crate) mod snapshot;
 pub(crate) mod txn;
 /// User command
 pub(crate) mod user;
+/// Watch command
+pub(crate) mod watch;

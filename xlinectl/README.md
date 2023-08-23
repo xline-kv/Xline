@@ -233,9 +233,11 @@ The ebnf is the same as etcdctl
 #### Output
 
 ```
-SUCCESS | FAILURE
+<succeed>
 [child requests]
 ```
+
+`<succeed>` can be SUCCESS | FAILURE
 
 #### Examples
 
@@ -266,6 +268,61 @@ put key2 "some-val"
 ```
 
 ### WATCH
+Watches events stream on keys or prefixes
+
+#### Usage
+```bash
+watch [options] [key] [range_end]
+```
+
+#### Options
+- prefix -- Watch a prefix
+- rev -- Revision to start watching
+- pre_kv -- Get the previous key-value pair before the event happens
+- progress_notify -- Get periodic watch progress notification from server
+- interactive -- Interactive mode
+
+#### Output
+
+```
+<event0>
+[prev_key0]
+[prev_value0]
+<key0>
+<value0>
+<event1>
+[prev_key1]
+[prev_value1]
+<key1>
+<value1>
+...
+
+```
+
+`<event>` can be PUT | DELETE
+
+#### Examples
+
+non-interactive mode, which will continuously get output from response stream
+```bash
+# Watch key `foo`
+./xlinectl watch foo
+```
+```bash
+# Watch a range of keys from foo to foo3
+./xlinectl watch foo foo3
+```
+
+interactive mode, which can start or cancel a watch
+```bash
+./xlinectl watch --interactive
+
+watch foo foo3
+
+# assume the returned watch id is 100 in previous command
+cancel 100
+```
+
 
 ### LEASE
 
