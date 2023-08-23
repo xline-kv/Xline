@@ -60,7 +60,7 @@ kv_validation() {
 }
 
 watch_progress_validation() {
-    expect << EOF
+    expect <<EOF
     spawn ${ETCDCTL} watch -i
     send "watch foo\r"
     send "progress\r"
@@ -218,16 +218,17 @@ lock_rpc_validation() {
 
 # validate maintenance requests
 maintenance_validation() {
+    # snapshot save request only works on one endpoint
+    local _ETCDCTL="docker exec -i node4 etcdctl --endpoints=http://172.20.0.3:2379"
     echo "maintenance validation test running..."
-    run_with_expect "${ETCDCTL} snapshot save snap.db" "Snapshot saved at snap.db"
+    run_with_expect "${_ETCDCTL} snapshot save snap.db" "Snapshot saved at snap.db"
     echo "maintenance validation test passed"
 }
 
 # validate compact requests
 compact_validation() {
     echo "compact validation test running..."
-    for value in "value1" "value2" "value3" "value4" "value5" "value6";
-    do
+    for value in "value1" "value2" "value3" "value4" "value5" "value6"; do
         run_with_expect "${ETCDCTL} put key ${value}" "OK"
     done
     run_with_expect "${ETCDCTL} get --rev=4 key" "key\nvalue3"
