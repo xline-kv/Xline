@@ -30,7 +30,7 @@ jobs:
       - name: chmod
         if: always()
         run: |
-          sudo chmod -R 777 /tmp/kind
+          sudo chmod -R 777 /xline/kind
           ls /xline/kind
           ls /xline/kind/pods
           ls /xline/kind/containers
