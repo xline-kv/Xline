@@ -31,12 +31,12 @@ jobs:
         if: always()
         run: |
           sudo chmod -R 777 /tmp/kind
-          ls /tmp/kind
-          ls /tmp/kind/pods
-          ls /tmp/kind/containers
+          ls /xline/kind
+          ls /xline/kind/pods
+          ls /xline/kind/containers
       - name: upload kind logs
         if: always()
         uses: actions/upload-artifact@v3
         with:
           name: xline_kind_log_${{ matrix.k8s }}
-          path: /tmp/kind/
+          path: /xline/kind/

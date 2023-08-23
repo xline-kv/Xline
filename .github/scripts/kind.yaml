@@ -4,7 +4,7 @@ nodes:
 - role: control-plane
   image: kindest/node:K8SVERSION
   extraMounts:
-    - hostPath: /tmp/kind
+    - hostPath: /xline/kind
       containerPath: /var/log
     - hostPath: WORKSPACE/.github/scripts/xline.yaml
       containerPath: /etc/kubernetes/manifests/xline.yaml
