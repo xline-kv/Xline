@@ -48,6 +48,12 @@ use crate::{
 /// Rpc connect
 pub(crate) mod connect;
 pub(crate) use connect::{connect, inner_connect};
+/// The mocked Channel of `tonic::transport::Channel`
+/// It is used for adding some api that is not implement by `madsim_tonic`
+/// TODO remove it when `madsim_tonic` support these api
+#[cfg(madsim)]
+mod mock_channel;
+pub(crate) use connect::connect;
 
 // Skip for generated code
 #[allow(

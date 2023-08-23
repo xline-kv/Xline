@@ -1,5 +1,15 @@
 use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
 
+#[cfg(madsim)]
+use crate::rpc::mock_channel::MockedChannel as Channel;
+#[cfg(madsim)]
+use crate::rpc::mock_channel::MockedProtocolClient as ProtocolClient;
+
+#[cfg(not(madsim))]
+use crate::rpc::proto::protocol_client::ProtocolClient;
+#[cfg(not(madsim))]
+use tonic::transport::Channel;
+
 use async_stream::stream;
 use async_trait::async_trait;
 use bytes::BytesMut;
@@ -43,13 +53,13 @@ pub(crate) async fn connect(
     const DEFAULT_BUFFER_SIZE: usize = 1024;
 
     futures::future::join_all(members.into_iter().map(|(id, mut addrs)| async move {
-        let (channel, change_tx) = tonic::transport::Channel::balance_channel(DEFAULT_BUFFER_SIZE);
+        let (channel, change_tx) = Channel::balance_channel(DEFAULT_BUFFER_SIZE);
         // Addrs must start with "http" to communicate with the server
         for addr in &mut addrs {
             if !addr.starts_with("http://") {
                 addr.insert_str(0, "http://");
             }
-            let endpoint = addr.parse()?;
+            let endpoint = Endpoint::from_shared(addr.clone())?;
             let res = change_tx
                 .send(tower::discover::Change::Insert(addr.clone(), endpoint))
                 .await;
@@ -186,7 +196,7 @@ pub(crate) struct Connect {
     /// Server id
     id: ServerId,
     /// The rpc connection
-    rpc_connect: ProtocolClient<tonic::transport::Channel>,
+    rpc_connect: ProtocolClient<Channel>,
     /// The rpc connection balance sender
     change_tx: tokio::sync::mpsc::Sender<tower::discover::Change<String, Endpoint>>,
     /// The current rpc connection address, when the address is updated,
@@ -212,9 +222,10 @@ impl ConnectApi for Connect {
             assert!(res.is_ok(), "balance rx must not be closed");
         }
         for addr in &addrs {
+            let endpoint = Endpoint::from_shared(addr.clone())?;
             let res = self
                 .change_tx
-                .send(tower::discover::Change::Insert(addr.clone(), addr.parse()?))
+                .send(tower::discover::Change::Insert(addr.clone(), endpoint))
                 .await;
             assert!(res.is_ok(), "balance rx must not be closed");
         }
