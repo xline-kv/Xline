@@ -14,4 +14,4 @@ nodes:
       etcd:
         external:
           endpoints:
-          - http://xline:2379
+          - http://172.18.0.2:2379

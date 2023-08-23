@@ -15,6 +15,6 @@ spec:
       command:
         - /bin/sh
         - -c
-        - xline --name node1 --members node1=172.18.0.2:12379 --data-dir /tmp/xline --storage-engine rocksdb
+        - xline --name node1 --members node1=172.18.0.2:2379 --data-dir /tmp/xline --storage-engine rocksdb
   hostNetwork: true
 status: {}
