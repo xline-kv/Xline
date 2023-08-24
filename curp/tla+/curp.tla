@@ -47,8 +47,8 @@ SetToSeqs(set) ==
 (* Helper function for getting the index of the last element in a sequence          *)
 (* satisfying the predicate.                                                        *)
 (************************************************************************************)
-GetIdxInSeq(seq, Test(_)) ==
-    LET I == {i \in 1..Len(seq): Test(seq[i])} IN 
+GetIdxInSeq(seq, Pred(_)) ==
+    LET I == {i \in 1..Len(seq): Pred(seq[i])} IN 
         IF I # {} THEN CHOOSE i \in I: \A j \in I: j <= i ELSE 0
 
 (************************************************************************************)
@@ -60,36 +60,35 @@ GetIdxInSeq(seq, Test(_)) ==
 (*     positive responses from a set of replicas larger then a SuperQuorum.         *)
 (************************************************************************************)
 IsSuperQuorum(S) ==
-    LET f == (Cardinality(replicas) - 1) \div 2
+    LET f == Cardinality(replicas) \div 2
         size == f + (f + 1) \div 2 + 1
     IN Cardinality(S) >= size
 
 (************************************************************************************)
-(* LeastQuorum:                                                                     *)
-(*     In N = 2 * f + 1 replicas, a LeastQuorum is a set of replicas that contains  *)
-(*     at least (f + 1) / 2 + 1 replicas.                                           *)
+(* RecoverQuorum:                                                                   *)
+(*     In N = 2 * f + 1 replicas, a RecoverQuorum is a set of replicas that         *)
+(*     contains at least (f + 1) / 2 + 1 replicas.                                  *)
 (*                                                                                  *)
 (*     When a replica becomes a leader, it must recover the command if and only if  *)
 (*     the command is in the specPool of a set of replicas larger then a            *)
-(*     LeastQuorum.                                                                 *)
+(*     RecoverQuorum.                                                               *)
 (************************************************************************************)
-IsLeastQuorum(S) ==
-    LET f == (Cardinality(replicas) - 1) \div 2
+IsRecoverQuorum(S) ==
+    LET f == Cardinality(replicas) \div 2
         size == (f + 1) \div 2 + 1
     IN Cardinality(S) >= size
 
 (************************************************************************************)
-(* RecoveryQuorums:                                                                 *)
-(*     In N = 2 * f + 1 replicas, a RecoveryQuorum is a set of replicas that        *)
-(*     contains at least f + 1 replicas.                                            *)
+(* Quorum:                                                                          *)
+(*     In N = 2 * f + 1 replicas, a Quorum is a set of replicas that contains       *)
+(*     at least f + 1 replicas.                                                     *)
 (*                                                                                  *)
-(*     A replica must gather a RecoveryQuorum of replicas' specPool to recover the  *)
-(*     commands that need to be recovered.                                          *)
+(*     A replica must gather a quorum of replicas' specPool to recover a command.   *)
 (*                                                                                  *)
-(*     This defines the set consisting of all RecoveryQuorums.                      *)
+(*     This defines the set containing all quorums.                                 *)
 (************************************************************************************)
-recoveryQuorums ==
-    LET f == (Cardinality(replicas) - 1) \div 2
+quorums ==
+    LET f == Cardinality(replicas) \div 2
         size == f + 1
     IN {q \in SUBSET replicas: Cardinality(q) = size}
 
@@ -155,19 +154,19 @@ Sync ==
 (************************************************************************************)
 (* Leader Change Action                                                             *)
 (*                                                                                  *)
-(* The new leader should gather at least a RecoveryQuorum of replicas' specPool to  *)
-(* recover the commands.                                                            *)
+(* The new leader should gather at least a quorum of replicas' specPool to recover  *)
+(* the commands.                                                                    *)
 (*                                                                                  *)
-(* Commands existed in the specPool of a LeastQuorum of replicas need to be         *)
+(* Commands existed in the specPool of a RecoverQuorum of replicas need to be       *)
 (* recovered.                                                                       *)
 (************************************************************************************)
 LeaderChange ==
     \E newLeader \in (replicas \ {leader}):
         /\ leader' = newLeader
         /\ epoch' = epoch + 1
-        /\ \E recoveryQuorum \in recoveryQuorums:
-            LET specCmds == UNION {specPools[r] : r \in recoveryQuorum}
-                newSpecPool == {cmd \in specCmds: IsLeastQuorum({r \in replicas: cmd \in specPools[r]})}
+        /\ \E q \in quorums:
+            LET specCmds == UNION {specPools[r] : r \in q}
+                newSpecPool == {cmd \in specCmds: IsRecoverQuorum({r \in replicas: cmd \in specPools[r]})}
             IN
                 /\ specPools' = [specPools EXCEPT ![newLeader] = newSpecPool]
                 /\ unsynced' \in SetToSeqs(newSpecPool)
@@ -203,8 +202,8 @@ TypeOK ==
 (*    back-end protocol.                                                            *)
 (*                                                                                  *)
 (* 2. If a command is committed by CURP, when the command is synced be the back-end *)
-(* protocol, there will never be a command with the same key between the command    *)
-(* and the recorded previous same-key command in the synced sequence.               *)
+(*    protocol, there will never be a command with the same key between the command *)
+(*    and the recorded previous same-key command in the synced sequence.            *)
 (************************************************************************************)
 Stability ==
     \A committedCmd \in committed:
