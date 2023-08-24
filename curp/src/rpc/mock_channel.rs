@@ -1,13 +1,9 @@
 use std::collections::HashMap;
 use std::marker::PhantomData;
-use std::ops::{Deref, DerefMut};
-use std::sync::atomic::AtomicI32;
 use std::sync::Arc;
-use std::time::Duration;
 
-use event_listener::Event;
-use parking_lot::RwLock;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::RwLock;
 use tonic::transport::Channel;
 use tonic::transport::Endpoint;
 use tower::discover::Change;
@@ -18,57 +14,40 @@ use crate::rpc::proto::protocol_client::ProtocolClient;
 /// Mocked Channel
 #[derive(Clone, Debug)]
 pub(crate) struct MockedChannel {
-    /// Real channel
-    channels: Arc<RwLock<HashMap<String, Channel>>>,
-    /// Emit event when channel changed
-    event: Arc<Event>,
+    /// Endpoints
+    endpoints: Arc<RwLock<HashMap<String, Endpoint>>>,
 }
 
 impl MockedChannel {
     /// Mock `balance_channel` method
     pub(crate) fn balance_channel(capacity: usize) -> (Self, Sender<Change<String, Endpoint>>) {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Change<String, Endpoint>>(capacity);
-        let channels = Arc::new(RwLock::new(HashMap::new()));
-        let channels_clone = Arc::clone(&channels);
-        let event = Arc::new(Event::new());
-        let event_clone = Arc::clone(&event);
+        let endpoints = Arc::new(RwLock::new(HashMap::new()));
+        let endpoints_clone = Arc::clone(&endpoints);
         let _ig = madsim::task::spawn(async move {
             while let Some(change) = rx.recv().await {
                 match change {
                     Change::Insert(key, endpoint) => {
-                        // we do need to get a channel here
-                        let channel = loop {
-                            if let Ok(chan) = endpoint.connect().await {
-                                break chan;
-                            } else {
-                                madsim::time::sleep(Duration::from_millis(100)).await;
-                            }
-                        };
-                        debug!("successfully established connect to {endpoint:?}");
-                        let _ig = channels_clone.write().insert(key, channel);
-                        event_clone.notify(usize::MAX);
+                        debug!("insert endpoint: {key}");
+                        let _ig = endpoints_clone.write().await.insert(key, endpoint);
                     }
                     Change::Remove(key) => {
-                        let _ig = channels_clone.write().remove(&key);
+                        let _ig = endpoints_clone.write().await.remove(&key);
                     }
                 }
             }
         });
-        (Self { channels, event }, tx)
+        (Self { endpoints }, tx)
     }
 }
 
 /// Mocked Protocol Client
 #[derive(Debug, Clone)]
 pub(crate) struct MockedProtocolClient<T> {
-    /// The index of real channel to achieve round-robin mechanism
-    idx: Arc<AtomicI32>,
-    /// Emit event when channel changed
-    event: Arc<Event>,
     /// Mocked channel
     channel: MockedChannel,
-    /// Current real protocol client, used to attach the lifetime with MockedProtocolClient
-    current: Option<ProtocolClient<Channel>>,
+    /// Cached client
+    cached_client: Option<ProtocolClient<Channel>>,
     /// PhantomData
     _fake: PhantomData<T>,
 }
@@ -77,49 +56,89 @@ impl<T> MockedProtocolClient<T> {
     /// Mock `new` method
     pub(crate) fn new(channel: MockedChannel) -> Self {
         Self {
-            idx: Arc::new(AtomicI32::new(0)),
-            event: Arc::clone(&channel.event),
             channel,
-            current: None,
+            cached_client: None,
             _fake: PhantomData,
         }
     }
 }
 
-// It is verbose to implement all method in `ProtocolClient` for `MockedProtocolClient`
-// So just implement DerefMut here.
-// Since `ProtocolClient` only invokes methods on its `&mut self` receiver, it is sufficient to implement DerefMut.
-// Indeed, apart from employing techniques like `Box::leak`, implementing Deref is simply unreachable. That is because
-// we need to attach the lifetime of `ProtocolClient<Channel>`(generated within the deref call) to MockedProtocolClient,
-// which is impossible behind an immutable reference.
-impl<T> Deref for MockedProtocolClient<T> {
-    type Target = ProtocolClient<Channel>;
-
-    fn deref(&self) -> &Self::Target {
-        unreachable!("only deref_mut is allowed")
-    }
-}
-
-impl<T> DerefMut for MockedProtocolClient<T> {
-    #[allow(clippy::as_conversions)] // safe to convert
-    #[allow(clippy::cast_possible_truncation)] // length of channel is not too big
-    #[allow(clippy::cast_possible_wrap)] // length of channel is not too big
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        loop {
-            let channels = self.channel.channels.read();
-            let len = channels.len();
-            if len == 0 {
-                drop(channels); // release read lock
-                self.event.listen().wait();
-                continue;
-            }
-            let idx = self.idx.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            let idx = idx.rem_euclid(len as i32) as usize;
-            let channel = channels
-                .values()
-                .nth(idx)
-                .unwrap_or_else(|| unreachable!("unexpected channels idx: {}, len: {}", idx, len));
-            return self.current.insert(ProtocolClient::new(channel.clone()));
+/// Mock some methods of `ProtocolClient`
+impl<T> MockedProtocolClient<T> {
+    /// Get a client base on round-robin mechanism
+    async fn get_client(&mut self) -> Result<ProtocolClient<Channel>, tonic::Status> {
+        if let Some(client) = self.cached_client.as_ref() {
+            return Ok(client.clone());
         }
+        let endpoints = self.channel.endpoints.read().await;
+        // In the testing phase of madsim, each node has only one address.
+        // Additionally, these mock stuff will be removed in the future,
+        // thus round-robin and similar strategies have not been implemented here.
+        if let Some(endpoint) = endpoints.values().next() {
+            let chan = endpoint.connect().await.map_err(|_e| {
+                tonic::Status::new(tonic::Code::Unavailable, "Failed to connect to endpoint")
+            })?;
+            return Ok(self.cached_client.insert(ProtocolClient::new(chan)).clone());
+        }
+        Err(tonic::Status::new(
+            tonic::Code::Unavailable,
+            "No endpoint available",
+        ))
+    }
+
+    /// Mock `propose` method
+    pub(crate) async fn propose(
+        &mut self,
+        request: impl tonic::IntoRequest<super::ProposeRequest>,
+    ) -> Result<tonic::Response<super::ProposeResponse>, tonic::Status> {
+        self.get_client().await?.propose(request).await
+    }
+
+    /// Mock `wait_synced` method
+    pub(crate) async fn wait_synced(
+        &mut self,
+        request: impl tonic::IntoRequest<super::WaitSyncedRequest>,
+    ) -> Result<tonic::Response<super::WaitSyncedResponse>, tonic::Status> {
+        self.get_client().await?.wait_synced(request).await
+    }
+
+    /// Mock `append_entries` method
+    pub(crate) async fn append_entries(
+        &mut self,
+        request: impl tonic::IntoRequest<super::AppendEntriesRequest>,
+    ) -> Result<tonic::Response<super::AppendEntriesResponse>, tonic::Status> {
+        self.get_client().await?.append_entries(request).await
+    }
+
+    /// Mock `vote` method
+    pub(crate) async fn vote(
+        &mut self,
+        request: impl tonic::IntoRequest<super::VoteRequest>,
+    ) -> Result<tonic::Response<super::VoteResponse>, tonic::Status> {
+        self.get_client().await?.vote(request).await
+    }
+
+    /// Mock `install_snapshot` method
+    pub(crate) async fn install_snapshot(
+        &mut self,
+        request: impl tonic::IntoStreamingRequest<Message = super::InstallSnapshotRequest>,
+    ) -> Result<tonic::Response<super::InstallSnapshotResponse>, tonic::Status> {
+        self.get_client().await?.install_snapshot(request).await
+    }
+
+    /// Mock `fetch_leader` method
+    pub(crate) async fn fetch_leader(
+        &mut self,
+        request: impl tonic::IntoRequest<super::FetchLeaderRequest>,
+    ) -> Result<tonic::Response<super::FetchLeaderResponse>, tonic::Status> {
+        self.get_client().await?.fetch_leader(request).await
+    }
+
+    /// Mock `fetch_read_state` method
+    pub(crate) async fn fetch_read_state(
+        &mut self,
+        request: impl tonic::IntoRequest<super::FetchReadStateRequest>,
+    ) -> Result<tonic::Response<super::FetchReadStateResponse>, tonic::Status> {
+        self.get_client().await?.fetch_read_state(request).await
     }
 }
