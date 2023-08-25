@@ -63,3 +63,11 @@ repos:
         entry: '^Signed-off-by:'
         args: [ --multiline, --negate ]
         stages: [ commit-msg ]
+      - id: cargo-sort
+        name: Check Cargo.toml is sorted
+        description: 'Ensure Cargo.toml is sorted'
+        entry: bash -c 'cargo sort --workspace'
+        language: rust
+        types: [ file, toml ]
+        files: Cargo\.toml
+        pass_filenames: false
