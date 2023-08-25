@@ -1,0 +1,5 @@
+disallowed-methods = [
+    { path = "event_listener::EventListener::wait", reason = "no blocking single-thread runtime, please use .await instead" },
+    { path = "event_listener::EventListener::wait_timeout", reason = "no blocking single-thread runtime, please use .await instead" },
+    { path = "event_listener::EventListener::wait_deadline", reason = "no blocking single-thread runtime, please use .await instead" },
+]
