@@ -10,15 +10,7 @@ use crate::LogIndex;
 /// Command to execute on the server side
 #[async_trait]
 pub trait Command:
-    Sized
-    + Sync
-    + Send
-    + DeserializeOwned
-    + Serialize
-    + std::fmt::Debug
-    + Clone
-    + ConflictCheck
-    + PbSerialize
+    Sync + Send + DeserializeOwned + Serialize + std::fmt::Debug + Clone + ConflictCheck + PbSerialize
 {
     /// Error type
     type Error: Send + Sync + Clone + std::error::Error + Serialize + DeserializeOwned + PbSerialize;

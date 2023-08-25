@@ -412,7 +412,8 @@ where
 }
 
 /// Command to run consensus protocol
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(PartialEq))]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Command {
     /// Keys of request
     keys: Vec<KeyRange>,
@@ -569,7 +570,8 @@ impl Command {
 }
 
 /// Command to run consensus protocol
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(PartialEq))]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CommandResponse {
     /// Response data
     response: ResponseWrapper,

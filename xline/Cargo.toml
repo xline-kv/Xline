@@ -63,8 +63,6 @@ async-stream = "0.3.5"
 bytes = "1.4.0"
 tokio-util = { version = "0.7.8", features = ["io"] }
 crossbeam-skiplist = "0.1.1"
-strum = "0.25"
-strum_macros = "0.25"
 
 [build-dependencies]
 tonic-build = { version = "0.3.0", package = "madsim-tonic-build" }
@@ -74,3 +72,5 @@ mockall = "0.11.3"
 rand = "0.8.5"
 xline-test-utils = { path = "../xline-test-utils" }
 test-macros = { path = "../test-macros" }
+strum = "0.25"
+strum_macros = "0.25"

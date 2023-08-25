@@ -254,7 +254,8 @@ impl User {
 }
 
 /// Wrapper for requests
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(PartialEq)] // used only in tests, doesn't work with a `cfg_attr` macro.
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RequestWithToken {
     /// token for authentication
     pub token: Option<String>,
