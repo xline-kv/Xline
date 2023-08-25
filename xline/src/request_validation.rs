@@ -181,10 +181,11 @@ impl RequestValidator for AuthRoleGrantPermissionRequest {
 }
 
 /// Error type in Validation
-#[derive(Default, Error, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(Default))]
+#[derive(Error, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ValidationError {
     /// Key is not provided
-    #[default]
+    #[cfg_attr(test, default)] // used in tests
     #[error("key is not provided")]
     EmptyKey,
     /// Ignore value is set but value is provided

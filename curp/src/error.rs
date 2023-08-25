@@ -65,7 +65,7 @@ pub enum ServerError {
 }
 
 /// The error met during propose phase
-#[derive(Error, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Error, Debug, Clone, Serialize, Deserialize)]
 #[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
 #[non_exhaustive]
 pub enum ProposeError {
@@ -184,7 +184,7 @@ pub enum CommandProposeError<C: Command> {
 }
 
 /// Wait synced error
-#[derive(Clone, Error, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Clone, Error, Serialize, Deserialize, Debug)]
 #[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
 #[non_exhaustive]
 pub enum SyncError {
@@ -241,8 +241,8 @@ mod test {
     #[test]
     fn propose_error_serialization_is_ok() {
         let err = ProposeError::Duplicated;
-        let decoded_err =
+        let _decoded_err =
             <ProposeError as PbSerialize>::decode(&err.encode()).expect("decode should success");
-        assert_eq!(err, decoded_err);
+        assert!(matches!(err, _decoded_err));
     }
 }

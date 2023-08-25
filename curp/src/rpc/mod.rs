@@ -6,21 +6,20 @@ use serde::{de::DeserializeOwned, Serialize};
 use self::proto::{cmd_result::Result as CmdResultInner, CmdResult};
 pub(crate) use self::proto::{
     fetch_read_state_response::ReadState,
+    propose_error::ProposeError as PbProposeError,
     propose_response::ExeResult,
     protocol_server::Protocol,
+    sync_error::SyncError as PbSyncError,
     wait_synced_response::{Success, SyncResult as SyncResultRaw},
-    AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse,
+    AppendEntriesRequest, AppendEntriesResponse, Empty, FetchClusterRequest, FetchClusterResponse,
     FetchReadStateRequest, FetchReadStateResponse, IdSet, InstallSnapshotRequest,
-    InstallSnapshotResponse, VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+    InstallSnapshotResponse, ProposeError as PbProposeErrorOuter, RedirectData,
+    SyncError as PbSyncErrorOuter, VoteRequest, VoteResponse, WaitSyncedRequest,
+    WaitSyncedResponse,
 };
 pub use self::proto::{
     propose_response, protocol_client, protocol_server::ProtocolServer, FetchLeaderRequest,
     FetchLeaderResponse, ProposeRequest, ProposeResponse,
-};
-
-pub(crate) use self::errorpb::{
-    propose_error::ProposeError as PbProposeError, sync_error::SyncError as PbSyncError, Empty,
-    ProposeError as PbProposeErrorOuter, RedirectData, SyncError as PbSyncErrorOuter,
 };
 
 use crate::{
@@ -52,24 +51,6 @@ pub(crate) use connect::connect;
 )]
 mod proto {
     tonic::include_proto!("messagepb");
-}
-
-// Skip for generated code
-#[allow(
-    clippy::all,
-    clippy::restriction,
-    clippy::pedantic,
-    clippy::nursery,
-    clippy::cargo,
-    unused_qualifications,
-    unreachable_pub,
-    variant_size_differences,
-    missing_copy_implementations,
-    missing_docs,
-    trivial_casts,
-    unused_results
-)]
-mod errorpb {
     tonic::include_proto!("errorpb");
 }
 

@@ -38,7 +38,7 @@ impl Display for ExecuteError {
     }
 }
 
-// The `ExecuteError` is only for internal use, so we donnot have to serialize it to protobuf format
+// The `ExecuteError` is only for internal use, so we do not have to serialize it to protobuf format
 impl PbSerialize for ExecuteError {
     fn encode(&self) -> Vec<u8> {
         self.0.clone().into_bytes()
@@ -93,7 +93,7 @@ impl TestCommandResult {
     }
 }
 
-// The `TestCommandResult` is only for internal use, so we donnot have to serialize it to protobuf format
+// The `TestCommandResult` is only for internal use, so we do not have to serialize it to protobuf format
 impl PbSerialize for TestCommandResult {
     fn encode(&self) -> Vec<u8> {
         bincode::serialize(self).unwrap_or_else(|_| {
