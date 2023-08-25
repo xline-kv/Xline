@@ -4,7 +4,7 @@ on:
   schedule:
     - cron: "00 19 * * *" # run ci periodically at 3 am
   pull_request:
-    branches: [master]
+    branches: [ master ]
 
 env:
   CI_RUST_TOOLCHAIN: 1.70.0
@@ -150,8 +150,19 @@ jobs:
     name: Spell Check
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout Actions Repository
-      uses: actions/checkout@v2
+      - name: Checkout Actions Repository
+        uses: actions/checkout@v2
 
-    - name: Check Spelling
-      uses: crate-ci/typos@master
+      - name: Check Spelling
+        uses: crate-ci/typos@master
+
+  cargo-sort:
+    name: Check Crate Sort
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/install@v0.1
+        with:
+          crate: cargo-sort
+          version: latest
+      - run: cargo sort --check --workspace
