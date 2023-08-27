@@ -472,7 +472,12 @@ async fn main() -> Result<()> {
     let config: XlineServerConfig = if env::args_os().len() == 1 {
         let path =
             env::var("XLINE_SERVER_CONFIG").unwrap_or_else(|_| "/etc/xline_server.conf".to_owned());
-        let config_file = fs::read_to_string(&path).await?;
+        let config_file = match fs::read_to_string(&path).await {
+            Ok(config_file) => config_file,
+            Err(e) => {
+                panic!("read {:?} failed: {:?}", &path, e);
+            }
+        };
         toml::from_str(&config_file)?
     } else {
         let server_args: ServerArgs = ServerArgs::parse();
