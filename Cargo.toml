@@ -1,17 +1,24 @@
 [workspace]
 
 members = [
-  "benchmark",
-  "curp",
-  "curp-external-api",
-  "curp-test-utils",
-  "engine",
-  "simulation",
-  "test-macros",
-  "utils",
-  "xline",
-  "xline-client",
-  "xline-test-utils",
-  "xlineapi",
-  "xlinectl",
+    "benchmark",
+    "curp",
+    "curp-external-api",
+    "curp-test-utils",
+    "engine",
+    "simulation",
+    "test-macros",
+    "utils",
+    "xline",
+    "xline-client",
+    "xline-test-utils",
+    "xlineapi",
+    "xlinectl",
 ]
+
+# TODO: We should remove it when the madsim updates its release in the crate.io
+[patch.crates-io]
+madsim = { git = "https://github.com/madsim-rs/madsim.git", rev = "5eb4198", package = "madsim" }
+tokio = { git = "https://github.com/madsim-rs/madsim.git", rev = "5eb4198", package = "madsim-tokio" }
+tonic = { git = "https://github.com/madsim-rs/madsim.git", rev = "5eb4198", package = "madsim-tonic" }
+tonic-build = { git = "https://github.com/madsim-rs/madsim.git", rev = "5eb4198", package = "madsim-tonic-build" }

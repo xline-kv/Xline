@@ -1,15 +1,5 @@
 use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
 
-#[cfg(madsim)]
-use crate::rpc::mock_channel::MockedChannel as Channel;
-#[cfg(madsim)]
-use crate::rpc::mock_channel::MockedProtocolClient as ProtocolClient;
-
-#[cfg(not(madsim))]
-use crate::rpc::proto::protocol_client::ProtocolClient;
-#[cfg(not(madsim))]
-use tonic::transport::Channel;
-
 use async_stream::stream;
 use async_trait::async_trait;
 use bytes::BytesMut;
@@ -19,7 +9,7 @@ use futures::Stream;
 #[cfg(test)]
 use mockall::automock;
 use tokio::sync::Mutex;
-use tonic::transport::Endpoint;
+use tonic::transport::{Channel, Endpoint};
 use tracing::{error, instrument};
 use utils::tracing::Inject;
 
