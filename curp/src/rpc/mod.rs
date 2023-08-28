@@ -18,9 +18,12 @@ pub(crate) use self::proto::{
         RedirectData, WaitSyncError as PbWaitSyncErrorOuter,
     },
     messagepb::{
-        fetch_read_state_response::ReadState, protocol_server::Protocol, AppendEntriesRequest,
-        AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest,
-        FetchReadStateResponse, IdSet, InstallSnapshotRequest, InstallSnapshotResponse,
+        fetch_read_state_response::ReadState,
+        propose_conf_change_request::{ConfChange, ConfChangeType},
+        protocol_server::Protocol,
+        AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse,
+        FetchReadStateRequest, FetchReadStateResponse, IdSet, InstallSnapshotRequest,
+        InstallSnapshotResponse, ProposeConfChangeRequest, ProposeConfChangeResponse,
         ShutdownRequest, ShutdownResponse, VoteRequest, VoteResponse,
     },
 };
@@ -437,5 +440,45 @@ impl ShutdownRequest {
     /// Create a new shutdown request
     pub(crate) fn new(id: ProposeId) -> Self {
         Self { id }
+    }
+}
+
+#[allow(dead_code)] // TODO: remove
+#[allow(clippy::as_conversions)] // those conversions are safe
+impl ConfChange {
+    /// Create a new `ConfChange` to add a node
+    pub(crate) fn add(node_id: ServerId, address: String) -> Self {
+        Self {
+            change_type: ConfChangeType::Add as i32,
+            node_id,
+            address,
+        }
+    }
+
+    /// Create a new `ConfChange` to remove a node
+    pub(crate) fn remove(node_id: ServerId) -> Self {
+        Self {
+            change_type: ConfChangeType::Remove as i32,
+            node_id,
+            address: String::new(),
+        }
+    }
+
+    /// Create a new `ConfChange` to update a node
+    pub(crate) fn update(node_id: ServerId, address: String) -> Self {
+        Self {
+            change_type: ConfChangeType::Update as i32,
+            node_id,
+            address,
+        }
+    }
+
+    /// Create a new `ConfChange` to add a learner node
+    pub(crate) fn add_learner(node_id: ServerId, address: String) -> Self {
+        Self {
+            change_type: ConfChangeType::AddLearner as i32,
+            node_id,
+            address,
+        }
     }
 }

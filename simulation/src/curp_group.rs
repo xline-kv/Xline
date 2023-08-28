@@ -75,7 +75,7 @@ impl CurpGroup {
                 let store = Arc::new(Mutex::new(None));
 
                 let cluster_info = Arc::new(ClusterInfo::new(all.clone(), &name));
-                all_members = cluster_info.all_members();
+                all_members = cluster_info.all_members_addrs();
                 let id = cluster_info.self_id();
                 let storage_cfg = StorageConfig::RocksDB(storage_path.clone());
                 let store_c = Arc::clone(&store);

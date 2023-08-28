@@ -236,7 +236,7 @@ where
                     )
                 });
                 break self
-                    .follower_keep_alive(request_stream, leader_addr)
+                    .follower_keep_alive(request_stream, &leader_addr)
                     .await?;
             }
         };

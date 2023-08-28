@@ -304,6 +304,22 @@ impl<C: Command> From<WaitSyncError> for CommandSyncError<C> {
     }
 }
 
+/// Error type of `apply_conf_change`
+#[derive(Error, Debug, Clone, Copy)]
+#[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
+#[non_exhaustive]
+pub enum ApplyConfChangeError {
+    /// Config is invalid after applying the conf change
+    #[error("invalid config")]
+    InvalidConfig,
+    /// The node to be removed does not exist
+    #[error("node {0} does not exist")]
+    NodeNotExists(ServerId),
+    /// The node to be added already exists
+    #[error("node {0} already exists")]
+    NodeAlreadyExists(ServerId),
+}
+
 #[cfg(test)]
 mod test {
     use curp_test_utils::test_cmd::{ExecuteError, TestCommand};

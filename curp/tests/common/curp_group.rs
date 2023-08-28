@@ -118,7 +118,7 @@ impl CurpGroup {
                 let ce = TestCE::new(name.clone(), exe_tx, as_tx, xline_storage_config);
 
                 let cluster_info = Arc::new(ClusterInfo::new(all_members.clone(), &name));
-                all = cluster_info.all_members();
+                all = cluster_info.all_members_addrs();
                 let id = cluster_info.self_id();
 
                 let role_change_cb = TestRoleChange::default();

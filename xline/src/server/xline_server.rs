@@ -326,7 +326,7 @@ impl XlineServer {
             CurpClient::builder()
                 .local_server_id(self.cluster_info.self_id())
                 .config(self.client_config)
-                .build_from_all_members(self.cluster_info.all_members())
+                .build_from_all_members(self.cluster_info.all_members_addrs())
                 .await?,
         );
 
@@ -366,13 +366,13 @@ impl XlineServer {
                 id_barrier,
                 *self.server_timeout.range_retry_timeout(),
                 Arc::clone(&client),
-                self.cluster_info.self_name().to_owned(),
+                self.cluster_info.self_name(),
             ),
             LockServer::new(
                 Arc::clone(&client),
                 Arc::clone(&id_gen),
-                self.cluster_info.self_name().to_owned(),
-                self.cluster_info.self_address().to_owned(),
+                self.cluster_info.self_name(),
+                self.cluster_info.self_address(),
             ),
             LeaseServer::new(
                 lease_storage,
@@ -381,11 +381,7 @@ impl XlineServer {
                 id_gen,
                 Arc::clone(&self.cluster_info),
             ),
-            AuthServer::new(
-                auth_storage,
-                client,
-                self.cluster_info.self_name().to_owned(),
-            ),
+            AuthServer::new(auth_storage, client, self.cluster_info.self_name()),
             WatchServer::new(
                 watcher,
                 Arc::clone(&header_gen),
