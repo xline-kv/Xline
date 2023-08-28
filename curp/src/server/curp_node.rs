@@ -36,8 +36,9 @@ use crate::{
         self, connect::ConnectApi, AppendEntriesRequest, AppendEntriesResponse,
         FetchClusterRequest, FetchClusterResponse, FetchLeaderRequest, FetchLeaderResponse,
         FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,
-        InstallSnapshotResponse, ProposeRequest, ProposeResponse, ShutdownRequest,
-        ShutdownResponse, VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        InstallSnapshotResponse, ProposeConfChangeRequest, ProposeConfChangeResponse,
+        ProposeRequest, ProposeResponse, ShutdownRequest, ShutdownResponse, VoteRequest,
+        VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
     server::{cmd_worker::CEEventTxApi, raw_curp::SyncAction, storage::db::DB},
     snapshot::{Snapshot, SnapshotMeta},
@@ -120,7 +121,7 @@ pub(super) struct CurpNode<C: Command, RC: RoleChange> {
 
 // handlers
 impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
-    /// Handle "propose" requests
+    /// Handle `Propose` requests
     pub(super) async fn propose(&self, req: ProposeRequest) -> Result<ProposeResponse, CurpError> {
         if self.curp.is_shutdown() {
             return Ok(ProposeResponse::new_error(None, 0, ProposeError::Shutdown));
@@ -159,6 +160,15 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         };
         CommandBoard::wait_for_shutdown_synced(&self.cmd_board).await;
         Ok(resp)
+    }
+
+    /// Handle `ProposeConfChange` requests
+    #[allow(clippy::todo, clippy::unused_async)] // TODO: implement this
+    pub(super) async fn propose_conf_change(
+        &self,
+        _req: ProposeConfChangeRequest,
+    ) -> Result<ProposeConfChangeResponse, CurpError> {
+        todo!("propose_conf_change")
     }
 
     /// Handle `AppendEntries` requests
@@ -240,7 +250,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         _req: FetchClusterRequest,
     ) -> Result<FetchClusterResponse, CurpError> {
         let (leader_id, term) = self.curp.leader();
-        let all_members = self.curp.cluster().all_members();
+        let all_members = self.curp.cluster().all_members_addrs();
         Ok(FetchClusterResponse::new(leader_id, all_members, term))
     }
 
@@ -615,7 +625,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         log_rx: tokio::sync::mpsc::UnboundedReceiver<Arc<LogEntry<C>>>,
     ) {
         let shutdown_listener = shutdown_trigger.subscribe();
-        let connects = rpc::connect(cluster_info.peers())
+        let connects = rpc::connect(cluster_info.peers_addrs())
             .await
             .collect::<HashMap<_, _>>();
         let _election_task = tokio::spawn(Self::election_task(
@@ -623,7 +633,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
             connects.clone(),
             shutdown_trigger.subscribe(),
         ));
-        let _big_daemon = tokio::spawn(Self::sync_followers_daemon(
+        let _sync_followers_daemon = tokio::spawn(Self::sync_followers_daemon(
             Arc::clone(&curp),
             connects,
             shutdown_trigger,

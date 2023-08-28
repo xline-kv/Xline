@@ -3,13 +3,14 @@ use std::{
     hash::Hasher,
 };
 
+use dashmap::{mapref::one::Ref, DashMap};
 use itertools::Itertools;
 
 /// Server Id
 pub type ServerId = u64;
 
 /// Cluster member
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Member {
     /// Server id of the member
     id: ServerId,
@@ -17,6 +18,26 @@ pub struct Member {
     name: String,
     /// Address of the member
     address: String,
+}
+
+/// Cluster member
+impl Member {
+    /// Create a new `Member`
+    #[inline]
+    pub fn new(id: ServerId, name: impl Into<String>, address: impl Into<String>) -> Self {
+        Self {
+            id,
+            name: name.into(),
+            address: address.into(),
+        }
+    }
+
+    /// Get member id
+    #[must_use]
+    #[inline]
+    pub fn id(&self) -> ServerId {
+        self.id
+    }
 }
 
 /// cluster members information
@@ -27,7 +48,7 @@ pub struct ClusterInfo {
     /// current server id
     member_id: ServerId,
     /// all members information
-    members: HashMap<ServerId, Member>,
+    members: DashMap<ServerId, Member>,
 }
 
 impl ClusterInfo {
@@ -36,10 +57,10 @@ impl ClusterInfo {
     /// panic if `all_members` is empty
     #[inline]
     #[must_use]
-    pub fn new(all_members: HashMap<String, String>, self_name: &str) -> Self {
+    pub fn new(all_members_addrs: HashMap<String, String>, self_name: &str) -> Self {
         let mut member_id = 0;
-        let mut members = HashMap::new();
-        for (name, address) in all_members {
+        let members = DashMap::new();
+        for (name, address) in all_members_addrs {
             let id = Self::calculate_member_id(&address, "", None);
             if name == self_name {
                 member_id = id;
@@ -57,45 +78,83 @@ impl ClusterInfo {
         cluster_info
     }
 
+    /// Get all members
+    #[must_use]
+    #[inline]
+    pub fn get_members(&self) -> HashMap<ServerId, Member> {
+        self.members
+            .iter()
+            .map(|t| (t.id, t.value().clone()))
+            .collect()
+    }
+
+    /// Insert a member
+    #[inline]
+    pub fn insert(&self, member: Member) {
+        _ = self.members.insert(member.id, member);
+    }
+
+    /// Remove a member
+    #[inline]
+    pub fn remove(&self, id: &ServerId) {
+        _ = self.members.remove(id);
+    }
+
+    /// Update a member
+    #[inline]
+    pub fn update(&self, id: &ServerId, address: impl Into<String>) {
+        self.members
+            .get_mut(id)
+            .unwrap_or_else(|| unreachable!("member {} not found", id))
+            .address = address.into();
+    }
+
     /// Get server address via server id
     #[must_use]
     #[inline]
-    pub fn address(&self, id: ServerId) -> Option<&str> {
+    pub fn address(&self, id: ServerId) -> Option<String> {
         self.members
-            .values()
+            .iter()
             .find(|t| t.id == id)
-            .map(|t| t.address.as_str())
+            .map(|t| t.address.clone())
     }
 
     /// Get the current member
-    #[allow(clippy::indexing_slicing)] // self member id must be in members
-    fn self_member(&self) -> &Member {
-        &self.members[&self.member_id]
+    #[allow(clippy::unwrap_used)] // self member id must be in members
+    fn self_member(&self) -> Ref<'_, u64, Member> {
+        self.members.get(&self.member_id).unwrap()
     }
 
     /// Get the current server address
     #[must_use]
     #[inline]
-    pub fn self_address(&self) -> &str {
-        &self.self_member().address
+    pub fn self_address(&self) -> String {
+        self.self_member().address.clone()
     }
 
     /// Get the current server id
     #[must_use]
     #[inline]
-    pub fn self_name(&self) -> &str {
-        &self.self_member().name
+    pub fn self_name(&self) -> String {
+        self.self_member().name.clone()
     }
 
-    /// Get peers id
+    /// Get peers ids
     #[must_use]
     #[inline]
     pub fn peers_ids(&self) -> Vec<ServerId> {
         self.members
-            .values()
+            .iter()
             .filter(|t| t.id != self.member_id)
             .map(|t| t.id)
             .collect()
+    }
+
+    /// Get all ids
+    #[must_use]
+    #[inline]
+    pub fn all_ids(&self) -> Vec<ServerId> {
+        self.members.iter().map(|t| t.id).collect()
     }
 
     /// Calculate the member id
@@ -112,8 +171,8 @@ impl ClusterInfo {
     /// Calculate the cluster id
     fn gen_cluster_id(&mut self) {
         let mut hasher = DefaultHasher::new();
-        for id in self.members.keys().sorted() {
-            hasher.write_u64(*id);
+        for id in self.members.iter().map(|t| t.id).sorted() {
+            hasher.write_u64(id);
         }
         self.cluster_id = hasher.finish();
     }
@@ -135,9 +194,9 @@ impl ClusterInfo {
     /// Get peers
     #[must_use]
     #[inline]
-    pub fn peers(&self) -> HashMap<ServerId, String> {
+    pub fn peers_addrs(&self) -> HashMap<ServerId, String> {
         self.members
-            .values()
+            .iter()
             .filter(|t| t.id != self.member_id)
             .map(|t| (t.id, t.address.clone()))
             .collect()
@@ -146,9 +205,9 @@ impl ClusterInfo {
     /// Get all members
     #[must_use]
     #[inline]
-    pub fn all_members(&self) -> HashMap<ServerId, String> {
+    pub fn all_members_addrs(&self) -> HashMap<ServerId, String> {
         self.members
-            .values()
+            .iter()
             .map(|t| (t.id, t.address.clone()))
             .collect()
     }
@@ -167,7 +226,7 @@ impl ClusterInfo {
     pub fn get_id_by_name(&self, name: &str) -> Option<ServerId> {
         self.members
             .iter()
-            .find_map(|(_, m)| (m.name == name).then_some(m.id))
+            .find_map(|m| (m.name == name).then_some(m.id))
     }
 }
 
@@ -206,7 +265,7 @@ mod tests {
         ]);
 
         let node1 = ClusterInfo::new(all_members, "S1");
-        let peers = node1.peers();
+        let peers = node1.peers_addrs();
         let node1_id = node1.self_id();
         let node1_url = node1.self_address();
         assert!(!peers.contains_key(&node1_id));
