@@ -380,12 +380,12 @@ impl XlineServer {
             ),
             LeaseServer::new(
                 lease_storage,
-                Arc::clone(&auth_storage),
+                auth_storage,
                 Arc::clone(&client),
                 id_gen,
                 Arc::clone(&self.cluster_info),
             ),
-            AuthServer::new(auth_storage, client, self.cluster_info.self_name()),
+            AuthServer::new(client, self.cluster_info.self_name()),
             WatchServer::new(
                 watcher,
                 Arc::clone(&header_gen),
