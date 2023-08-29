@@ -94,7 +94,7 @@ service Protocol {
     rpc WaitSynced(commandpb.WaitSyncedRequest)
         returns (commandpb.WaitSyncedResponse);
     rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
-        rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
+    rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
     rpc Vote(VoteRequest) returns (VoteResponse);
     rpc InstallSnapshot(stream InstallSnapshotRequest)
         returns (InstallSnapshotResponse);

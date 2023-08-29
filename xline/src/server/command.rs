@@ -397,6 +397,13 @@ where
         self.persistent.get_snapshot(path)
     }
 
+    fn set_last_applied(&self, index: LogIndex) -> Result<(), <Command as CurpCommand>::Error> {
+        _ = self
+            .persistent
+            .flush_ops(vec![WriteOp::PutAppliedIndex(index)])?;
+        Ok(())
+    }
+
     fn last_applied(&self) -> Result<LogIndex, <Command as CurpCommand>::Error> {
         let Some(index_bytes) = self.persistent.get_value(META_TABLE, APPLIED_INDEX_KEY)? else {
             return Ok(0);
@@ -763,6 +770,8 @@ pub(super) fn propose_err_to_status(err: CommandProposeError<Command>) -> tonic:
             tonic::Status::unknown(e.to_string())
         }
         CommandProposeError::Propose(ProposeError::EncodeError(e)) => tonic::Status::internal(e),
+        CommandProposeError::Propose(ProposeError::Timeout) => tonic::Status::internal("timeout"),
+
         _ => unreachable!("propose err {err:?}"),
     }
 }

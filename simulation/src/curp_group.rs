@@ -7,20 +7,20 @@ use curp::{
     error::{CommandProposeError, ProposeError},
     members::{ClusterInfo, ServerId},
     server::Rpc,
-    FetchLeaderRequest, FetchLeaderResponse, LogIndex, SnapshotAllocator,
+    FetchLeaderRequest, FetchLeaderResponse, LogIndex,
 };
 use curp_test_utils::{
     test_cmd::{TestCE, TestCommand, TestCommandResult},
     TestRoleChange, TestRoleChangeInner,
 };
-use engine::{Engine, EngineType, Snapshot};
+use engine::{Engine, EngineType, Snapshot, SnapshotAllocator};
 use itertools::Itertools;
 use madsim::runtime::NodeHandle;
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tracing::debug;
 use utils::{
-    config::{ClientTimeout, CurpConfigBuilder, StorageConfig},
+    config::{ClientConfig, CurpConfigBuilder, StorageConfig},
     shutdown,
 };
 
@@ -89,7 +89,12 @@ impl CurpGroup {
                     .ip(format!("192.168.1.{}", i + 1).parse().unwrap())
                     .init(move || {
                         let (trigger, _listener) = shutdown::channel();
-                        let ce = TestCE::new(name.clone(), exe_tx.clone(), as_tx.clone());
+                        let ce = TestCE::new(
+                            name.clone(),
+                            exe_tx.clone(),
+                            as_tx.clone(),
+                            StorageConfig::Memory,
+                        );
                         store_c.lock().replace(Arc::clone(&ce.store));
                         let is_leader = "S0" == name;
 
@@ -149,7 +154,7 @@ impl CurpGroup {
         &self.nodes[id]
     }
 
-    pub async fn new_client(&self, timeout: ClientTimeout) -> SimClient<TestCommand> {
+    pub async fn new_client(&self, config: ClientConfig) -> SimClient<TestCommand> {
         let all_members = self
             .nodes
             .iter()
@@ -158,7 +163,7 @@ impl CurpGroup {
         SimClient {
             inner: Arc::new(
                 Client::<TestCommand>::builder()
-                    .timeout(timeout)
+                    .config(config)
                     .build_from_all_members(all_members)
                     .await
                     .unwrap(),
@@ -312,7 +317,9 @@ impl CurpGroup {
     pub fn disable_node(&self, id: ServerId) {
         let handle = madsim::runtime::Handle::current();
         let net = madsim::net::NetSim::current();
-        let Some(node)  = handle.get_node(id.to_string()) else { panic!("no node with name {id} in the simulator")};
+        let Some(node) = handle.get_node(id.to_string()) else {
+            panic!("no node with name {id} in the simulator")
+        };
         net.clog_node(node.id());
     }
 
@@ -320,7 +327,9 @@ impl CurpGroup {
     pub fn enable_node(&self, id: ServerId) {
         let handle = madsim::runtime::Handle::current();
         let net = madsim::net::NetSim::current();
-        let Some(node)  = handle.get_node(id.to_string()) else { panic!("no node with name {id} the simulator")};
+        let Some(node) = handle.get_node(id.to_string()) else {
+            panic!("no node with name {id} the simulator")
+        };
         net.unclog_node(node.id());
     }
 
@@ -394,7 +403,7 @@ impl<C: Command + 'static> SimClient<C> {
     pub async fn get_leader_id(&self) -> ServerId {
         let inner = self.inner.clone();
         self.handle
-            .spawn(async move { inner.get_leader_id().await })
+            .spawn(async move { inner.get_leader_id().await.unwrap() })
             .await
             .unwrap()
     }
@@ -403,7 +412,7 @@ impl<C: Command + 'static> SimClient<C> {
     pub async fn get_leader_id_from_curp(&self) -> ServerId {
         let inner = self.inner.clone();
         self.handle
-            .spawn(async move { inner.get_leader_id_from_curp().await })
+            .spawn(async move { inner.get_leader_id_from_curp().await.unwrap() })
             .await
             .unwrap()
     }

@@ -10,7 +10,7 @@ use curp::{
     error::ServerError,
     members::{ClusterInfo, ServerId},
     server::Rpc,
-    LogIndex, SnapshotAllocator,
+    LogIndex,
 };
 use curp_external_api::cmd::ProposeId;
 use curp_test_utils::{
@@ -18,7 +18,10 @@ use curp_test_utils::{
     test_cmd::{next_id, TestCE, TestCommand, TestCommandResult},
     TestRoleChange, TestRoleChangeInner,
 };
-use engine::{Engine, EngineType, Snapshot};
+use engine::{
+    Engine, EngineType, MemorySnapshotAllocator, RocksSnapshotAllocator, Snapshot,
+    SnapshotAllocator,
+};
 use futures::future::join_all;
 use itertools::Itertools;
 use tokio::{
@@ -29,7 +32,7 @@ use tokio::{
 };
 use tracing::debug;
 use utils::{
-    config::{ClientTimeout, CurpConfigBuilder, StorageConfig},
+    config::{ClientConfig, CurpConfigBuilder, StorageConfig},
     shutdown::{self, Trigger},
 };
 
@@ -47,22 +50,11 @@ pub use proto::protocol_client::ProtocolClient;
 
 use self::proto::{FetchLeaderRequest, FetchLeaderResponse};
 
-struct MemorySnapshotAllocator;
-
-#[async_trait]
-impl SnapshotAllocator for MemorySnapshotAllocator {
-    async fn allocate_new_snapshot(&self) -> Result<Snapshot, Box<dyn Error>> {
-        Ok(Snapshot::new_for_receiving(EngineType::Memory)?)
-    }
-}
-
 pub struct CurpNode {
     pub id: ServerId,
     pub addr: String,
     pub exe_rx: mpsc::UnboundedReceiver<(TestCommand, TestCommandResult)>,
     pub as_rx: mpsc::UnboundedReceiver<(TestCommand, LogIndex)>,
-    pub store: Arc<Engine>,
-    pub storage_path: PathBuf,
     pub role_change_arc: Arc<TestRoleChangeInner>,
     pub handle: JoinHandle<Result<(), ServerError>>,
     pub trigger: shutdown::Trigger,
@@ -71,10 +63,19 @@ pub struct CurpNode {
 pub struct CurpGroup {
     pub nodes: HashMap<ServerId, CurpNode>,
     pub all: HashMap<ServerId, String>,
+    pub storage_path: Option<PathBuf>,
 }
 
 impl CurpGroup {
     pub async fn new(n_nodes: usize) -> Self {
+        Self::inner_new(n_nodes, None).await
+    }
+
+    pub async fn new_rocks(n_nodes: usize, path: PathBuf) -> Self {
+        Self::inner_new(n_nodes, Some(path)).await
+    }
+
+    async fn inner_new(n_nodes: usize, storage_path: Option<PathBuf>) -> Self {
         assert!(n_nodes >= 3, "the number of nodes must >= 3");
         let listeners = join_all(
             iter::repeat_with(|| async { TcpListener::bind("0.0.0.0:0").await.unwrap() })
@@ -94,31 +95,44 @@ impl CurpGroup {
                 let (trigger, l) = shutdown::channel();
                 let name = format!("S{i}");
                 let addr = listener.local_addr().unwrap().to_string();
-                let storage_path = tempfile::tempdir().unwrap().into_path();
+                let (curp_storage_config, xline_storage_config, snapshot_allocator) =
+                    match storage_path {
+                        Some(ref path) => {
+                            let storage_path = path.join(&name);
+                            (
+                                StorageConfig::RocksDB(storage_path.join("curp")),
+                                StorageConfig::RocksDB(storage_path.join("xline")),
+                                Box::<RocksSnapshotAllocator>::default()
+                                    as Box<dyn SnapshotAllocator>,
+                            )
+                        }
+                        None => (
+                            StorageConfig::Memory,
+                            StorageConfig::Memory,
+                            Box::<MemorySnapshotAllocator>::default() as Box<dyn SnapshotAllocator>,
+                        ),
+                    };
 
                 let (exe_tx, exe_rx) = mpsc::unbounded_channel();
                 let (as_tx, as_rx) = mpsc::unbounded_channel();
-                let ce = TestCE::new(name.clone(), exe_tx, as_tx);
-                let store = Arc::clone(&ce.store);
+                let ce = TestCE::new(name.clone(), exe_tx, as_tx, xline_storage_config);
 
                 let cluster_info = Arc::new(ClusterInfo::new(all_members.clone(), &name));
                 all = cluster_info.all_members();
                 let id = cluster_info.self_id();
 
-                let storage_cfg = StorageConfig::RocksDB(storage_path.clone());
                 let role_change_cb = TestRoleChange::default();
                 let role_change_arc = role_change_cb.get_inner_arc();
-
                 let handle = tokio::spawn(Rpc::run_from_listener(
                     cluster_info,
                     i == 0,
                     listener,
                     ce,
-                    Box::new(MemorySnapshotAllocator),
+                    snapshot_allocator,
                     role_change_cb,
                     Arc::new(
                         CurpConfigBuilder::default()
-                            .storage_cfg(storage_cfg)
+                            .storage_cfg(curp_storage_config)
                             .log_entries_cap(10)
                             .build()
                             .unwrap(),
@@ -133,8 +147,6 @@ impl CurpGroup {
                         addr,
                         exe_rx,
                         as_rx,
-                        store,
-                        storage_path,
                         role_change_arc,
                         handle,
                         trigger,
@@ -145,16 +157,20 @@ impl CurpGroup {
 
         tokio::time::sleep(Duration::from_millis(300)).await;
         debug!("successfully start group");
-        Self { nodes, all }
+        Self {
+            nodes,
+            all,
+            storage_path,
+        }
     }
 
     pub fn get_node(&self, id: &ServerId) -> &CurpNode {
         &self.nodes[id]
     }
 
-    pub async fn new_client(&self, timeout: ClientTimeout) -> Client<TestCommand> {
+    pub async fn new_client(&self, config: ClientConfig) -> Client<TestCommand> {
         Client::builder()
-            .timeout(timeout)
+            .config(config)
             .build_from_addrs(self.all.values().cloned().collect_vec())
             .await
             .unwrap()
@@ -177,23 +193,19 @@ impl CurpGroup {
     }
 
     pub async fn stop(mut self) {
-        let paths = self
-            .nodes
-            .values()
-            .map(|node| node.storage_path.clone())
-            .collect_vec();
         debug!("curp group stopping");
 
         let futs = self
             .nodes
             .values_mut()
-            .map(|n| n.trigger.shutdown_and_wait());
+            .map(|n| n.trigger.self_shutdown_and_wait());
         futures::future::join_all(futs).await;
 
         self.nodes.clear();
         debug!("curp group stopped");
-        for path in paths {
-            std::fs::remove_dir_all(path).unwrap();
+
+        if let Some(path) = self.storage_path {
+            _ = std::fs::remove_dir_all(path);
         }
     }
 

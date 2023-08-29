@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use tokio::sync::watch;
-use tracing::warn;
+use tracing::{debug, warn};
 
 /// Shutdown Signal
 #[derive(Debug, Clone, Copy)]
@@ -46,7 +46,8 @@ impl Trigger {
 
     /// Send the shutdown signal
     #[inline]
-    pub fn shutdown(&self) {
+    pub fn self_shutdown(&self) {
+        debug!("send self shutdown signal");
         if self.inner.trigger.send(Signal::SelfShutdown).is_err() {
             warn!("no listener waiting for shutdown");
         };
@@ -55,6 +56,7 @@ impl Trigger {
     /// Mark mpsc channel shutdown.
     #[inline]
     pub fn mark_channel_shutdown(&self) {
+        debug!("mark mpmc channel shutdown");
         self.inner
             .mpmc_channel_shutdown
             .store(true, Ordering::Relaxed);
@@ -63,9 +65,19 @@ impl Trigger {
     /// Mark sync daemon shutdown.
     #[inline]
     pub fn mark_sync_daemon_shutdown(&self) {
+        debug!("mark sync followers daemon shutdown");
         self.inner
             .sync_follower_daemon_shutdown
             .store(true, Ordering::Relaxed);
+    }
+
+    /// Reset sync daemon shutdown.
+    #[inline]
+    pub fn reset_sync_daemon_shutdown(&self) {
+        debug!("reset sync followers daemon shutdown");
+        self.inner
+            .sync_follower_daemon_shutdown
+            .store(false, Ordering::Relaxed);
     }
 
     /// Check if the mpsc channel and sync follower daemon has been shutdown.
@@ -78,7 +90,7 @@ impl Trigger {
                 .sync_follower_daemon_shutdown
                 .load(Ordering::Relaxed)
         {
-            self.shutdown();
+            self.self_shutdown();
         }
     }
 
@@ -92,7 +104,7 @@ impl Trigger {
 
     /// Send the shutdown signal and wait for all listeners drop.
     #[inline]
-    pub async fn shutdown_and_wait(&self) {
+    pub async fn self_shutdown_and_wait(&self) {
         if self.inner.trigger.send(Signal::SelfShutdown).is_err() {
             warn!("no listener waiting for shutdown");
             return;

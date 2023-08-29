@@ -155,7 +155,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::{arg, value_parser, Command};
-use ext_utils::config::ClientTimeout;
+use ext_utils::config::ClientConfig;
 use xline_client::{Client, ClientOptions};
 
 use crate::{
@@ -214,6 +214,11 @@ fn cli() -> Command {
             .help_heading(GLOBAL_HEADING)
             .value_parser(value_parser!(u64))
             .default_value("50"))
+        .arg(arg!(--retry_count <COUNT> "The count of Curp client retry times")
+            .global(true)
+            .help_heading(GLOBAL_HEADING)
+            .value_parser(value_parser!(usize))
+            .default_value("3"))
         .arg(arg!(--printer_type <TYPE> "The format of the result that will be printed")
             .global(true)
             .help_heading(GLOBAL_HEADING)
@@ -229,12 +234,13 @@ async fn main() -> Result<()> {
     let matches = cli().get_matches();
     let user_opt = parse_user(&matches)?;
     let endpoints = matches.get_many::<String>("endpoints").expect("Required");
-    let client_timeout_opt = ClientTimeout::new(
+    let client_config = ClientConfig::new(
         Duration::from_secs(*matches.get_one("wait_synced_timeout").expect("Required")),
-        Duration::from_secs(*matches.get_one("wait_synced_timeout").expect("Required")),
-        Duration::from_millis(*matches.get_one("wait_synced_timeout").expect("Required")),
+        Duration::from_secs(*matches.get_one("propose_timeout").expect("Required")),
+        Duration::from_millis(*matches.get_one("retry_timeout").expect("Required")),
+        *matches.get_one("retry_count").expect("Required"),
     );
-    let options = ClientOptions::new(user_opt, client_timeout_opt);
+    let options = ClientOptions::new(user_opt, client_config);
     let printer_type = match matches
         .get_one::<String>("printer_type")
         .expect("Required")

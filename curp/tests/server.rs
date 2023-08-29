@@ -5,7 +5,7 @@ use std::{sync::Arc, time::Duration};
 use clippy_utilities::NumericCast;
 use curp::{
     client::Builder,
-    error::{CommandProposeError::Propose, ProposeError},
+    error::{CommandProposeError, ProposeError},
 };
 use curp_external_api::cmd::ProposeId;
 use curp_test_utils::{
@@ -14,7 +14,7 @@ use curp_test_utils::{
 };
 use madsim::rand::{thread_rng, Rng};
 use test_macros::abort_on_panic;
-use utils::config::ClientTimeout;
+use utils::config::ClientConfig;
 
 use crate::common::curp_group::{
     commandpb::propose_response::ExeResult, CurpGroup, ProposeRequest, ProposeResponse,
@@ -28,7 +28,7 @@ async fn basic_propose() {
     init_logger();
 
     let group = CurpGroup::new(3).await;
-    let client = group.new_client(ClientTimeout::default()).await;
+    let client = group.new_client(ClientConfig::default()).await;
 
     assert_eq!(
         client
@@ -58,7 +58,7 @@ async fn client_build_from_addrs_should_fetch_cluster_from_server() {
 
     let all_addrs = group.all.values().cloned().collect::<Vec<_>>();
     let _client = Builder::<TestCommand>::default()
-        .timeout(ClientTimeout::default())
+        .config(ClientConfig::default())
         .build_from_addrs(all_addrs)
         .await
         .unwrap();
@@ -72,7 +72,7 @@ async fn synced_propose() {
     init_logger();
 
     let mut group = CurpGroup::new(5).await;
-    let client = group.new_client(ClientTimeout::default()).await;
+    let client = group.new_client(ClientConfig::default()).await;
     let cmd = TestCommand::new_get(vec![0]);
 
     let (er, index) = client.propose(cmd.clone(), false).await.unwrap();
@@ -101,7 +101,7 @@ async fn exe_exact_n_times() {
     init_logger();
 
     let mut group = CurpGroup::new(3).await;
-    let client = group.new_client(ClientTimeout::default()).await;
+    let client = group.new_client(ClientConfig::default()).await;
     let cmd = TestCommand::new_get(vec![0]);
 
     let er = client.propose(cmd.clone(), true).await.unwrap().0;
@@ -215,7 +215,7 @@ async fn concurrent_cmd_order() {
 
     sleep_secs(1).await;
 
-    let client = group.new_client(ClientTimeout::default()).await;
+    let client = group.new_client(ClientConfig::default()).await;
 
     assert_eq!(
         client
@@ -237,7 +237,7 @@ async fn concurrent_cmd_order_should_have_correct_revision() {
     init_logger();
 
     let group = CurpGroup::new(3).await;
-    let client = group.new_client(ClientTimeout::default()).await;
+    let client = group.new_client(ClientConfig::default()).await;
 
     let sample_range = 1..=100;
 
@@ -268,18 +268,44 @@ async fn concurrent_cmd_order_should_have_correct_revision() {
 #[abort_on_panic]
 async fn shutdown_rpc_should_shutdown_the_cluster() {
     init_logger();
-    let group = CurpGroup::new(3).await;
+    let tmp_path = tempfile::TempDir::new().unwrap().into_path();
+    let group = CurpGroup::new_rocks(3, tmp_path.clone()).await;
 
-    let client = group.new_client(ClientTimeout::default()).await;
+    let req_client = group.new_client(ClientConfig::default()).await;
+    let collection_task = tokio::spawn(async move {
+        let mut collection = vec![];
+        for i in 0..10 {
+            let cmd = TestCommand::new_put(vec![i], i);
+            let res = req_client.propose(cmd, true).await;
+            if res.is_ok() {
+                collection.push(i);
+            }
+        }
+        collection
+    });
+
+    let client = group.new_client(ClientConfig::default()).await;
     let id = ProposeId::new(next_id().to_string());
     client.shutdown(id).await.unwrap();
 
     let res = client
-        .propose(TestCommand::new_put(vec![1], 1), false)
+        .propose(TestCommand::new_put(vec![888], 1), false)
         .await;
-    assert!(matches!(res, Err(Propose(ProposeError::Shutdown))));
+    assert!(matches!(
+        res,
+        Err(CommandProposeError::Propose(ProposeError::Shutdown))
+    ));
 
-    sleep_secs(3).await;
-
+    let collection = collection_task.await.unwrap();
+    sleep_secs(3).await; // wait for the cluster to shutdown
     assert!(group.is_finished());
+
+    let group = CurpGroup::new_rocks(3, tmp_path).await;
+    let client = group.new_client(ClientConfig::default()).await;
+    for i in collection {
+        let res = client.propose(TestCommand::new_get(vec![i]), true).await;
+        assert_eq!(res.unwrap().0.values, vec![i]);
+    }
+
+    group.stop().await;
 }

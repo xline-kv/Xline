@@ -2,7 +2,8 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use clippy_utilities::{Cast, OverflowArithmetic};
-use curp::{client::Client, members::ClusterInfo, server::Rpc, ProtocolServer, SnapshotAllocator};
+use curp::{client::Client, members::ClusterInfo, server::Rpc, ProtocolServer};
+use engine::{MemorySnapshotAllocator, RocksSnapshotAllocator, SnapshotAllocator};
 use event_listener::Event;
 use futures::Future;
 use jsonwebtoken::{DecodingKey, EncodingKey};
@@ -11,7 +12,7 @@ use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
 use tonic_health::ServingStatus;
 use utils::{
-    config::{ClientTimeout, CompactConfig, CurpConfig, ServerTimeout, StorageConfig},
+    config::{ClientConfig, CompactConfig, CurpConfig, ServerTimeout, StorageConfig},
     shutdown,
 };
 
@@ -39,7 +40,6 @@ use crate::{
         index::Index,
         kvwatcher::KvWatcher,
         lease_store::LeaseCollection,
-        snapshot_allocator::{MemorySnapshotAllocator, RocksSnapshotAllocator},
         storage_api::StorageApi,
         AuthStore, KvStore, LeaseStore,
     },
@@ -60,8 +60,8 @@ pub struct XlineServer {
     is_leader: bool,
     /// Curp server timeout
     curp_cfg: Arc<CurpConfig>,
-    /// Client timeout
-    client_timeout: ClientTimeout,
+    /// Client config
+    client_config: ClientConfig,
     /// Storage config,
     storage_cfg: StorageConfig,
     /// Compact config
@@ -86,7 +86,7 @@ impl XlineServer {
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         curp_config: CurpConfig,
-        client_timeout: ClientTimeout,
+        client_config: ClientConfig,
         server_timeout: ServerTimeout,
         storage_config: StorageConfig,
         compact_config: CompactConfig,
@@ -96,7 +96,7 @@ impl XlineServer {
             cluster_info,
             is_leader,
             curp_cfg: Arc::new(curp_config),
-            client_timeout,
+            client_config,
             storage_cfg: storage_config,
             compact_cfg: compact_config,
             server_timeout,
@@ -316,8 +316,8 @@ impl XlineServer {
             header_gen.auth_revision_arc(),
         );
         let snapshot_allocator: Box<dyn SnapshotAllocator> = match self.storage_cfg {
-            StorageConfig::Memory => Box::new(MemorySnapshotAllocator),
-            StorageConfig::RocksDB(_) => Box::new(RocksSnapshotAllocator),
+            StorageConfig::Memory => Box::<MemorySnapshotAllocator>::default(),
+            StorageConfig::RocksDB(_) => Box::<RocksSnapshotAllocator>::default(),
             #[allow(clippy::unimplemented)]
             _ => unimplemented!(),
         };
@@ -325,7 +325,7 @@ impl XlineServer {
         let client = Arc::new(
             CurpClient::builder()
                 .local_server_id(self.cluster_info.self_id())
-                .timeout(self.client_timeout)
+                .config(self.client_config)
                 .build_from_all_members(self.cluster_info.all_members())
                 .await?,
         );
@@ -401,6 +401,6 @@ impl Drop for XlineServer {
     #[inline]
     fn drop(&mut self) {
         self.shutdown_trigger.notify(usize::MAX);
-        self.curp_shutdown_trigger.shutdown();
+        self.curp_shutdown_trigger.self_shutdown();
     }
 }

@@ -13,6 +13,7 @@ message ProposeError {
         string encode_error = 4;
         google.protobuf.Empty not_leader = 5;
         google.protobuf.Empty shutdown = 6;
+        google.protobuf.Empty timeout = 7;
     }
 }
 

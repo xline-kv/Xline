@@ -5,7 +5,7 @@ use etcd_client::{
     AuthClient, Client as EtcdClient, KvClient, LeaseClient, LeaseKeepAliveStream, LeaseKeeper,
     LockClient, MaintenanceClient, WatchClient,
 };
-use utils::config::ClientTimeout;
+use utils::config::ClientConfig;
 use uuid::Uuid;
 
 use crate::{
@@ -65,12 +65,12 @@ impl Client {
     pub async fn new(
         addrs: Vec<String>,
         use_curp_client: bool,
-        timeout: ClientTimeout,
+        config: ClientConfig,
     ) -> Result<Self, ClientError> {
         let name = String::from("client");
         let etcd_client = EtcdClient::connect(addrs.clone(), None).await?;
         let curp_client = CurpClient::builder()
-            .timeout(timeout)
+            .config(config)
             .build_from_addrs(addrs)
             .await?;
         Ok(Self {

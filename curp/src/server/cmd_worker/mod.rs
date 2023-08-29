@@ -154,6 +154,9 @@ async fn worker_as<
         }
         EntryData::Shutdown(_) => {
             curp.enter_shutdown();
+            if let Err(e) = ce.set_last_applied(entry.index) {
+                error!("failed to set last_applied, {e}");
+            }
             cb.write().notify_shutdown();
             true
         }
@@ -345,6 +348,7 @@ mod tests {
     use test_macros::abort_on_panic;
     use tokio::{sync::mpsc, time::Instant};
     use tracing_test::traced_test;
+    use utils::config::StorageConfig;
 
     use crate::log_entry::LogEntry;
 
@@ -357,7 +361,12 @@ mod tests {
     async fn fast_path_normal() {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
-        let ce = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
+        let ce = Arc::new(TestCE::new(
+            "S1".to_owned(),
+            er_tx,
+            as_tx,
+            StorageConfig::Memory,
+        ));
         let (t, l) = shutdown::channel();
         let (ce_event_tx, task_rx, done_tx) =
             conflict_checked_mpmc::channel(Arc::clone(&ce), t.clone());
@@ -380,7 +389,7 @@ mod tests {
 
         ce_event_tx.send_after_sync(entry);
         assert_eq!(as_rx.recv().await.unwrap().1, 1);
-        let _r = t.shutdown();
+        t.self_shutdown();
     }
 
     // When the execution takes more time than sync, `as` should be called after exe has finished
@@ -390,7 +399,12 @@ mod tests {
     async fn fast_path_cond1() {
         let (er_tx, _er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
-        let ce = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
+        let ce = Arc::new(TestCE::new(
+            "S1".to_owned(),
+            er_tx,
+            as_tx,
+            StorageConfig::Memory,
+        ));
         let (t, l) = shutdown::channel();
         let (ce_event_tx, task_rx, done_tx) =
             conflict_checked_mpmc::channel(Arc::clone(&ce), t.clone());
@@ -422,7 +436,7 @@ mod tests {
         assert_eq!(as_rx.recv().await.unwrap().1, 1);
 
         assert!((Instant::now() - begin) >= Duration::from_secs(1));
-        let _r = t.shutdown();
+        t.self_shutdown();
     }
 
     // When the execution takes more time than sync and fails, after sync should not be called
@@ -432,7 +446,12 @@ mod tests {
     async fn fast_path_cond2() {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
-        let ce = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
+        let ce = Arc::new(TestCE::new(
+            "S1".to_owned(),
+            er_tx,
+            as_tx,
+            StorageConfig::Memory,
+        ));
         let (t, l) = shutdown::channel();
         let (ce_event_tx, task_rx, done_tx) =
             conflict_checked_mpmc::channel(Arc::clone(&ce), t.clone());
@@ -468,7 +487,7 @@ mod tests {
         sleep_secs(1).await;
         assert!(er_rx.try_recv().is_err());
         assert!(as_rx.try_recv().is_err());
-        let _r = t.shutdown();
+        t.self_shutdown();
     }
 
     // This should happen in slow path in most cases
@@ -478,7 +497,12 @@ mod tests {
     async fn slow_path_normal() {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
-        let ce = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
+        let ce = Arc::new(TestCE::new(
+            "S1".to_owned(),
+            er_tx,
+            as_tx,
+            StorageConfig::Memory,
+        ));
         let (t, l) = shutdown::channel();
         let (ce_event_tx, task_rx, done_tx) =
             conflict_checked_mpmc::channel(Arc::clone(&ce), t.clone());
@@ -500,7 +524,7 @@ mod tests {
 
         assert_eq!(er_rx.recv().await.unwrap().1.revisions, vec![]);
         assert_eq!(as_rx.recv().await.unwrap().1, 1);
-        let _r = t.shutdown();
+        t.self_shutdown();
     }
 
     // When exe fails
@@ -510,7 +534,12 @@ mod tests {
     async fn slow_path_exe_fails() {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
-        let ce = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
+        let ce = Arc::new(TestCE::new(
+            "S1".to_owned(),
+            er_tx,
+            as_tx,
+            StorageConfig::Memory,
+        ));
         let (t, l) = shutdown::channel();
         let (ce_event_tx, task_rx, done_tx) =
             conflict_checked_mpmc::channel(Arc::clone(&ce), t.clone());
@@ -539,7 +568,7 @@ mod tests {
         assert!(er.is_err(), "The execute command result is {er:?}");
         let asr = as_rx.try_recv();
         assert!(asr.is_err(), "The after sync result is {asr:?}");
-        let _r = t.shutdown();
+        t.self_shutdown();
     }
 
     // If cmd1 and cmd2 conflict, order will be (cmd1 exe) -> (cmd1 as) -> (cmd2 exe) -> (cmd2 as)
@@ -549,7 +578,12 @@ mod tests {
     async fn conflict_cmd_order() {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
-        let ce = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
+        let ce = Arc::new(TestCE::new(
+            "S1".to_owned(),
+            er_tx,
+            as_tx,
+            StorageConfig::Memory,
+        ));
         let (t, l) = shutdown::channel();
         let (ce_event_tx, task_rx, done_tx) =
             conflict_checked_mpmc::channel(Arc::clone(&ce), t.clone());
@@ -595,7 +629,7 @@ mod tests {
         assert_eq!(er_rx.recv().await.unwrap().1.revisions, vec![1]);
         assert_eq!(as_rx.recv().await.unwrap().1, 1);
         assert_eq!(as_rx.recv().await.unwrap().1, 2);
-        let _r = t.shutdown();
+        t.self_shutdown();
     }
 
     #[traced_test]
@@ -604,7 +638,12 @@ mod tests {
     async fn reset_will_wipe_all_states_and_outdated_cmds() {
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut as_rx) = mpsc::unbounded_channel();
-        let ce = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
+        let ce = Arc::new(TestCE::new(
+            "S1".to_owned(),
+            er_tx,
+            as_tx,
+            StorageConfig::Memory,
+        ));
         let (t, l) = shutdown::channel();
         let (ce_event_tx, task_rx, done_tx) =
             conflict_checked_mpmc::channel(Arc::clone(&ce), t.clone());
@@ -650,7 +689,7 @@ mod tests {
         // there will be only one after sync results
         assert!(as_rx.recv().await.is_some());
         assert!(as_rx.try_recv().is_err());
-        let _r = t.shutdown();
+        t.self_shutdown();
     }
 
     #[traced_test]
@@ -662,7 +701,12 @@ mod tests {
         // ce1
         let (er_tx, mut _er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut _as_rx) = mpsc::unbounded_channel();
-        let ce1 = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
+        let ce1 = Arc::new(TestCE::new(
+            "S1".to_owned(),
+            er_tx,
+            as_tx,
+            StorageConfig::Memory,
+        ));
         let (ce_event_tx, task_rx, done_tx) =
             conflict_checked_mpmc::channel(Arc::clone(&ce1), t.clone());
         let curp = RawCurp::new_test(3, ce_event_tx.clone(), mock_role_change());
@@ -703,7 +747,12 @@ mod tests {
         // ce2
         let (er_tx, mut er_rx) = mpsc::unbounded_channel();
         let (as_tx, mut _as_rx) = mpsc::unbounded_channel();
-        let ce2 = Arc::new(TestCE::new("S1".to_owned(), er_tx, as_tx));
+        let ce2 = Arc::new(TestCE::new(
+            "S1".to_owned(),
+            er_tx,
+            as_tx,
+            StorageConfig::Memory,
+        ));
         let (ce_event_tx, task_rx, done_tx) =
             conflict_checked_mpmc::channel(Arc::clone(&ce2), t.clone());
         start_cmd_workers(
@@ -727,6 +776,6 @@ mod tests {
         ));
         ce_event_tx.send_after_sync(entry);
         assert_eq!(er_rx.recv().await.unwrap().1.revisions, vec![1]);
-        let _r = t.shutdown();
+        t.self_shutdown();
     }
 }

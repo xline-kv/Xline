@@ -169,12 +169,15 @@ mod proxy;
 /// `RocksDB` Storage Engine
 #[cfg(not(madsim))]
 mod rocksdb_engine;
+/// Snapshot Allocator
+mod snapshot_allocator;
 
 pub use crate::{
     api::{
         engine_api::{StorageEngine, WriteOperation},
-        snapshot_api::SnapshotApi,
+        snapshot_api::{SnapshotAllocator, SnapshotApi},
     },
     error::EngineError,
     proxy::{Engine, EngineType, Snapshot},
+    snapshot_allocator::{MemorySnapshotAllocator, RocksSnapshotAllocator},
 };

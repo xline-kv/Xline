@@ -139,5 +139,3 @@ pub type LogIndex = u64;
 pub mod cmd;
 /// The command to be executed
 pub mod role_change;
-/// Snapshot
-pub mod snapshot;
