@@ -1,3 +1,4 @@
+use std::marker::PhantomData;
 use std::sync::Arc;
 
 use curp::{client::Client, cmd::generate_propose_id};
@@ -27,7 +28,7 @@ use crate::{
         AuthUserRevokeRoleRequest, AuthUserRevokeRoleResponse, AuthenticateRequest,
         AuthenticateResponse, RequestWrapper, ResponseWrapper,
     },
-    storage::{storage_api::StorageApi, AuthStore},
+    storage::storage_api::StorageApi,
 };
 
 /// Auth Server
@@ -36,12 +37,12 @@ pub(crate) struct AuthServer<S>
 where
     S: StorageApi,
 {
-    /// Auth storage
-    storage: Arc<AuthStore<S>>,
     /// Consensus client
     client: Arc<Client<Command>>,
     /// Server name
     name: String,
+    /// Phantom
+    phantom: PhantomData<S>,
 }
 
 /// Get token from metadata
@@ -57,15 +58,11 @@ where
     S: StorageApi,
 {
     /// New `AuthServer`
-    pub(crate) fn new(
-        storage: Arc<AuthStore<S>>,
-        client: Arc<Client<Command>>,
-        name: String,
-    ) -> Self {
+    pub(crate) fn new(client: Arc<Client<Command>>, name: String) -> Self {
         Self {
-            storage,
             client,
             name,
+            phantom: PhantomData,
         }
     }
 
@@ -95,17 +92,6 @@ where
             .hash_password(password, salt.as_ref())
             .unwrap_or_else(|e| panic!("Failed to hash password: {e}"));
         hashed_password.to_string()
-    }
-
-    /// Check password in storage
-    pub(crate) fn check_password(
-        &self,
-        username: &str,
-        password: &str,
-    ) -> Result<i64, tonic::Status> {
-        self.storage
-            .check_password(username, password)
-            .map_err(Into::into)
     }
 
     /// Propose request and make a response
@@ -162,28 +148,7 @@ where
         request: tonic::Request<AuthenticateRequest>,
     ) -> Result<tonic::Response<AuthenticateResponse>, tonic::Status> {
         debug!("Receive AuthenticateRequest {:?}", request);
-        loop {
-            let checked_revision =
-                self.check_password(&request.get_ref().name, &request.get_ref().password)?;
-            let mut authenticate_req = request.get_ref().clone();
-            authenticate_req.password = String::new();
-
-            let (res, sync_res) = self
-                .propose(tonic::Request::new(authenticate_req), false)
-                .await?;
-
-            if checked_revision == self.storage.revision() {
-                if let Some(sync_res) = sync_res {
-                    let revision = sync_res.revision();
-                    debug!("Get revision {:?} for AuthDisableResponse", revision);
-                    let mut res: AuthenticateResponse = res.into_inner().into();
-                    if let Some(mut header) = res.header.as_mut() {
-                        header.revision = revision;
-                    }
-                    return Ok(tonic::Response::new(res));
-                }
-            }
-        }
+        self.handle_req(request, false).await
     }
 
     async fn user_add(

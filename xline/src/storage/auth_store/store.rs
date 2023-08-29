@@ -283,6 +283,7 @@ where
         if !self.is_enabled() {
             return Err(ExecuteError::AuthNotEnabled);
         }
+        self.check_password(&req.name, &req.password)?;
         let token = self.assign(&req.name)?;
         Ok(AuthenticateResponse {
             header: Some(self.header_gen.gen_auth_header()),
@@ -868,7 +869,7 @@ where
         &self,
         username: &str,
         password: &str,
-    ) -> Result<i64, ExecuteError> {
+    ) -> Result<(), ExecuteError> {
         if !self.is_enabled() {
             return Err(ExecuteError::AuthNotEnabled);
         }
@@ -885,7 +886,7 @@ where
             .verify_password(password.as_bytes(), &hash)
             .map_err(|_ignore| ExecuteError::AuthFailed)?;
 
-        Ok(self.revision())
+        Ok(())
     }
 
     /// Check if the request need admin permission
