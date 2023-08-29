@@ -12,7 +12,7 @@ use tokio::{
     sync::broadcast::{self, Sender},
     time::{self, Duration},
 };
-use utils::config::{ClientTimeout, CompactConfig, CurpConfig, ServerTimeout, StorageConfig};
+use utils::config::{ClientConfig, CompactConfig, CurpConfig, ServerTimeout, StorageConfig};
 use xline::{client::Client, server::XlineServer, storage::db::DB};
 
 /// Cluster
@@ -83,7 +83,7 @@ impl Cluster {
                         storage_cfg: StorageConfig::RocksDB(path.join("curp")),
                         ..Default::default()
                     },
-                    ClientTimeout::default(),
+                    ClientConfig::default(),
                     ServerTimeout::default(),
                     StorageConfig::Memory,
                     CompactConfig::default(),
@@ -110,7 +110,7 @@ impl Cluster {
             let client = Client::new(
                 self.all_members.values().cloned().collect(),
                 true,
-                ClientTimeout::default(),
+                ClientConfig::default(),
             )
             .await
             .unwrap_or_else(|e| {

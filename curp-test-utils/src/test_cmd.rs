@@ -8,7 +8,6 @@ use std::{
 };
 
 use async_trait::async_trait;
-use clippy_utilities::NumericCast;
 use curp_external_api::{
     cmd::{Command, CommandExecutor, ConflictCheck, PbCodec, ProposeId},
     LogIndex,
@@ -20,8 +19,12 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::{sync::mpsc, time::sleep};
 use tracing::debug;
+use utils::config::StorageConfig;
 
-use crate::{REVISION_TABLE, TEST_TABLE};
+use crate::{META_TABLE, REVISION_TABLE, TEST_TABLE};
+
+pub(crate) const APPLIED_INDEX_KEY: &str = "applied_index";
+pub(crate) const LAST_REVISION_KEY: &str = "last_revision";
 
 static NEXT_ID: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(1));
 
@@ -234,7 +237,6 @@ impl PbCodec for TestCommand {
 #[derive(Debug, Clone)]
 pub struct TestCE {
     server_id: String,
-    last_applied: Arc<AtomicU64>,
     revision: Arc<AtomicI64>,
     pub store: Arc<Engine>,
     exe_sender: mpsc::UnboundedSender<(TestCommand, TestCommandResult)>,
@@ -249,7 +251,16 @@ impl CommandExecutor<TestCommand> for TestCE {
         _index: LogIndex,
     ) -> Result<<TestCommand as Command>::PR, <TestCommand as Command>::Error> {
         let rev = if let TestCommandType::Put(_) = cmd.cmd_type {
-            self.revision.fetch_add(1, Ordering::Relaxed)
+            let rev = self.revision.fetch_add(1, Ordering::Relaxed);
+            let wr_ops = vec![WriteOperation::new_put(
+                META_TABLE,
+                LAST_REVISION_KEY.into(),
+                rev.to_le_bytes().to_vec(),
+            )];
+            self.store
+                .write_batch(wr_ops, true)
+                .map_err(|e| ExecuteError(e.to_string()))?;
+            rev
         } else {
             -1
         };
@@ -315,6 +326,11 @@ impl CommandExecutor<TestCommand> for TestCE {
         self.after_sync_sender
             .send((cmd.clone(), index))
             .expect("failed to send after sync msg");
+        let mut wr_ops = vec![WriteOperation::new_put(
+            META_TABLE,
+            APPLIED_INDEX_KEY.into(),
+            index.to_le_bytes().to_vec(),
+        )];
         if let TestCommandType::Put(v) = cmd.cmd_type {
             debug!(
                 "cmd {:?}-{} revision is {}",
@@ -328,19 +344,22 @@ impl CommandExecutor<TestCommand> for TestCE {
                 .iter()
                 .map(|k| k.to_be_bytes().to_vec())
                 .collect_vec();
-            let wr_ops = keys
-                .clone()
-                .into_iter()
-                .map(|key| WriteOperation::new_put(TEST_TABLE, key, value.clone()))
-                .chain(keys.into_iter().map(|key| {
-                    WriteOperation::new_put(REVISION_TABLE, key, revision.to_be_bytes().to_vec())
-                }))
-                .collect();
+            wr_ops.extend(
+                keys.clone()
+                    .into_iter()
+                    .map(|key| WriteOperation::new_put(TEST_TABLE, key, value.clone()))
+                    .chain(keys.into_iter().map(|key| {
+                        WriteOperation::new_put(
+                            REVISION_TABLE,
+                            key,
+                            revision.to_be_bytes().to_vec(),
+                        )
+                    })),
+            );
             self.store
                 .write_batch(wr_ops, true)
                 .map_err(|e| ExecuteError(e.to_string()))?;
         }
-        self.last_applied.store(index, Ordering::Relaxed);
         debug!(
             "{} after sync cmd({:?} - {}), index: {index}",
             self.server_id,
@@ -350,8 +369,27 @@ impl CommandExecutor<TestCommand> for TestCE {
         Ok(index.into())
     }
 
+    fn set_last_applied(&self, index: LogIndex) -> Result<(), <TestCommand as Command>::Error> {
+        let ops = vec![WriteOperation::new_put(
+            META_TABLE,
+            APPLIED_INDEX_KEY.into(),
+            index.to_le_bytes().to_vec(),
+        )];
+        self.store
+            .write_batch(ops, true)
+            .map_err(|e| ExecuteError(e.to_string()))?;
+        Ok(())
+    }
+
     fn last_applied(&self) -> Result<LogIndex, ExecuteError> {
-        Ok(self.last_applied.load(Ordering::Relaxed))
+        let Some(index) = self
+            .store
+            .get(META_TABLE, APPLIED_INDEX_KEY)
+            .map_err(|e| ExecuteError(e.to_string()))? else {
+            return Ok(0);
+        };
+        let index = LogIndex::from_le_bytes(index.as_slice().try_into().unwrap());
+        Ok(index)
     }
 
     async fn snapshot(&self) -> Result<Snapshot, <TestCommand as Command>::Error> {
@@ -365,15 +403,20 @@ impl CommandExecutor<TestCommand> for TestCE {
         snapshot: Option<(Snapshot, LogIndex)>,
     ) -> Result<(), <TestCommand as Command>::Error> {
         let Some((mut snapshot, index)) = snapshot else {
-            self.last_applied.store(0, Ordering::Relaxed);
-            let ops = vec![WriteOperation::new_delete_range(TEST_TABLE, &[], &[0xff])];
+            let ops = vec![WriteOperation::new_delete_range(TEST_TABLE, &[], &[0xff]),WriteOperation::new_delete(META_TABLE, APPLIED_INDEX_KEY.as_ref())];
             self.store
                 .write_batch(ops, true)
                 .map_err(|e| ExecuteError(e.to_string()))?;
             return Ok(());
         };
-        self.last_applied
-            .store(index.numeric_cast(), Ordering::Relaxed);
+        let ops = vec![WriteOperation::new_put(
+            META_TABLE,
+            APPLIED_INDEX_KEY.into(),
+            index.to_le_bytes().to_vec(),
+        )];
+        self.store
+            .write_batch(ops, true)
+            .map_err(|e| ExecuteError(e.to_string()))?;
         snapshot.rewind().unwrap();
         self.store
             .apply_snapshot(snapshot, &[TEST_TABLE])
@@ -388,14 +431,24 @@ impl TestCE {
         server_id: String,
         exe_sender: mpsc::UnboundedSender<(TestCommand, TestCommandResult)>,
         after_sync_sender: mpsc::UnboundedSender<(TestCommand, LogIndex)>,
+        storage_cfg: StorageConfig,
     ) -> Self {
+        let engine_type = match storage_cfg {
+            StorageConfig::Memory => EngineType::Memory,
+            StorageConfig::RocksDB(path) => EngineType::Rocks(path),
+            _ => unreachable!("Not supported storage type"),
+        };
+        let store =
+            Arc::new(Engine::new(engine_type, &[TEST_TABLE, REVISION_TABLE, META_TABLE]).unwrap());
+        let rev = store
+            .get(META_TABLE, LAST_REVISION_KEY)
+            .unwrap()
+            .map(|r| i64::from_le_bytes(r.as_slice().try_into().unwrap()))
+            .unwrap_or(0);
         Self {
             server_id,
-            last_applied: Arc::new(AtomicU64::new(0)),
-            revision: Arc::new(AtomicI64::new(1)),
-            store: Arc::new(
-                Engine::new(EngineType::Memory, &[TEST_TABLE, REVISION_TABLE]).unwrap(),
-            ),
+            revision: Arc::new(AtomicI64::new(rev + 1)),
+            store,
             exe_sender,
             after_sync_sender,
         }

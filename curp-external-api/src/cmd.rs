@@ -155,6 +155,9 @@ where
         prepare_res: C::PR,
     ) -> Result<C::ASR, C::Error>;
 
+    /// Set the index of the last log entry that has been successfully applied to the command executor
+    fn set_last_applied(&self, index: LogIndex) -> Result<(), C::Error>;
+
     /// Index of the last log entry that has been successfully applied to the command executor
     fn last_applied(&self) -> Result<LogIndex, C::Error>;
 

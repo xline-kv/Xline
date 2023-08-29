@@ -1,5 +1,6 @@
 use std::{fmt::Debug, sync::Arc};
 
+use engine::SnapshotAllocator;
 use futures::TryStreamExt;
 #[cfg(not(madsim))]
 use tokio::net::TcpListener;
@@ -24,7 +25,6 @@ use crate::{
         ProtocolServer, ShutdownRequest, ShutdownResponse, VoteRequest, VoteResponse,
         WaitSyncedRequest, WaitSyncedResponse,
     },
-    SnapshotAllocator,
 };
 
 /// Command worker to do execution and after sync

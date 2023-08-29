@@ -38,7 +38,7 @@ auth_public_key = '/etc/xline/public_key.pem'
 auth_private_key = '/etc/xline/private_key.pem'
 ```
 
-For tuning and development purpose, the cluster section provides two subsections, curp_cfg, and client_timeout, with the following definitions and default values.
+For tuning and development purpose, the cluster section provides two subsections, curp_cfg, and client_config, with the following definitions and default values.
 
 ```toml
 [cluster.curp_config]
@@ -53,7 +53,7 @@ candidate_timeout_ticks = 2     # if a candidate cannot win an election, it will
                                 # after `candidate_timeout_ticks` ticks. Its default value is 2
 
 
-[cluster.client_timeout]
+[cluster.client_config]
 propose_timeout = '1s'          # client propose timeout
 wait_synced_timeout = '2s'      # client wait synced timeout
 retry_timeout = '50ms'          # the rpc retry interval, of which the default is 50ms

@@ -14,6 +14,7 @@ pub mod test_cmd;
 
 pub const TEST_TABLE: &str = "test";
 pub const REVISION_TABLE: &str = "revision";
+pub const META_TABLE: &str = "meta";
 
 #[derive(Default, Debug)]
 pub struct TestRoleChange {

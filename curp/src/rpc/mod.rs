@@ -163,11 +163,6 @@ impl ProposeResponse {
         }
     }
 
-    /// Response term
-    pub(crate) fn term(&self) -> u64 {
-        self.term
-    }
-
     /// Map response to functions `success` and `failure`
     pub(crate) fn map_or_else<C: Command, SF, FF, R>(
         &self,

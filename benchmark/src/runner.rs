@@ -19,7 +19,7 @@ use tokio::{
     time::{Duration, Instant},
 };
 use tracing::debug;
-use utils::config::ClientTimeout;
+use utils::config::ClientConfig;
 use xline::client::{kv_types::PutRequest, Client};
 
 use crate::{args::Commands, Benchmark};
@@ -162,10 +162,11 @@ impl CommandRunner {
             let client = Client::new(
                 self.args.endpoints.clone(),
                 self.args.use_curp,
-                ClientTimeout::new(
+                ClientConfig::new(
                     Duration::from_secs(10),
                     Duration::from_secs(5),
                     Duration::from_millis(250),
+                    3,
                 ),
             )
             .await?;

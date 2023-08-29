@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt::Debug, io, sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
 use curp_external_api::cmd::{PbSerializeError, ProposeId};
-use engine::SnapshotApi;
+use engine::{SnapshotAllocator, SnapshotApi};
 use event_listener::Event;
 use futures::{pin_mut, stream::FuturesUnordered, Stream, StreamExt};
 use madsim::rand::{thread_rng, Rng};
@@ -41,7 +41,6 @@ use crate::{
     },
     server::{cmd_worker::CEEventTxApi, raw_curp::SyncAction, storage::db::DB},
     snapshot::{Snapshot, SnapshotMeta},
-    SnapshotAllocator,
 };
 
 /// Curp error
@@ -373,7 +372,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                         debug!("sync follower daemon exits");
                         return;
                     }
-                    _ = leader_event.listen() => {}
+                    _ = leader_event.listen() => {
+                        shutdown_trigger.reset_sync_daemon_shutdown();
+                    }
                 }
             }
             let futs = connects.iter().map(|(id, connect)| {
@@ -792,7 +793,7 @@ mod tests {
             l,
         ));
         sleep_secs(2).await;
-        let _r = t.shutdown();
+        t.self_shutdown();
     }
 
     #[traced_test]
@@ -837,6 +838,6 @@ mod tests {
         ));
         sleep_secs(3).await;
         assert!(curp.is_leader());
-        let _r = t.shutdown();
+        t.self_shutdown();
     }
 }

@@ -78,6 +78,9 @@ pub enum ProposeError {
     /// Cluster already shutdown
     #[error("cluster shutdown")]
     Shutdown,
+    /// Propose timeout
+    #[error("timeout")]
+    Timeout,
     /// The command conflicts with keys in the speculative commands
     #[error("key conflict error")]
     KeyConflict,
@@ -98,6 +101,7 @@ impl TryFrom<PbProposeError> for ProposeError {
     #[inline]
     fn try_from(err: PbProposeError) -> Result<ProposeError, Self::Error> {
         Ok(match err {
+            PbProposeError::Timeout(_) => ProposeError::Timeout,
             PbProposeError::NotLeader(_) => ProposeError::NotLeader,
             PbProposeError::Shutdown(_) => ProposeError::Shutdown,
             PbProposeError::KeyConflict(_) => ProposeError::KeyConflict,
@@ -116,6 +120,7 @@ impl From<ProposeError> for PbProposeError {
     #[inline]
     fn from(err: ProposeError) -> Self {
         match err {
+            ProposeError::Timeout => PbProposeError::Timeout(()),
             ProposeError::NotLeader => PbProposeError::NotLeader(()),
             ProposeError::Shutdown => PbProposeError::Shutdown(()),
             ProposeError::KeyConflict => PbProposeError::KeyConflict(()),
@@ -185,9 +190,6 @@ impl From<bincode::Error> for ProposeError {
 #[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
 #[non_exhaustive]
 pub enum CommandProposeError<C: Command> {
-    /// Cluster already shutdown
-    #[error("cluster shutdown")]
-    Shutdown,
     /// Curp propose error
     #[error("propose error: {0:?}")]
     Propose(#[from] ProposeError),

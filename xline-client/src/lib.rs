@@ -156,7 +156,7 @@ use curp::client::Client as CurpClient;
 use http::{header::AUTHORIZATION, HeaderValue, Request};
 use tonic::transport::Channel;
 use tower::Service;
-use utils::config::ClientTimeout;
+use utils::config::ClientConfig;
 
 use crate::{
     clients::{
@@ -217,7 +217,7 @@ impl Client {
         let channel = Self::build_channel(addrs.clone()).await?;
         let curp_client = Arc::new(
             CurpClient::builder()
-                .timeout(options.curp_timeout)
+                .config(options.client_config)
                 .build_from_addrs(addrs)
                 .await?,
         );
@@ -359,16 +359,19 @@ impl Client {
 pub struct ClientOptions {
     /// User is a pair values of name and password
     user: Option<(String, String)>,
-    /// Timeout settings for the curp client
-    curp_timeout: ClientTimeout,
+    /// config for the curp client
+    client_config: ClientConfig,
 }
 
 impl ClientOptions {
     /// Create a new `ClientOptions`
     #[inline]
     #[must_use]
-    pub fn new(user: Option<(String, String)>, curp_timeout: ClientTimeout) -> Self {
-        Self { user, curp_timeout }
+    pub fn new(user: Option<(String, String)>, client_config: ClientConfig) -> Self {
+        Self {
+            user,
+            client_config,
+        }
     }
 
     /// Get `user`
@@ -378,11 +381,11 @@ impl ClientOptions {
         self.user.clone()
     }
 
-    /// Get `curp_timeout`
+    /// Get `client_config`
     #[inline]
     #[must_use]
-    pub fn curp_timeout(&self) -> ClientTimeout {
-        self.curp_timeout
+    pub fn client_config(&self) -> ClientConfig {
+        self.client_config
     }
 
     /// Set `user`
@@ -391,17 +394,17 @@ impl ClientOptions {
     pub fn with_user(self, name: impl Into<String>, password: impl Into<String>) -> Self {
         Self {
             user: Some((name.into(), password.into())),
-            curp_timeout: self.curp_timeout,
+            client_config: self.client_config,
         }
     }
 
-    /// Set `curp_timeout`
+    /// Set `client_config`
     #[inline]
     #[must_use]
-    pub fn with_curp_timeout(self, curp_timeout: ClientTimeout) -> Self {
+    pub fn with_client_config(self, client_config: ClientConfig) -> Self {
         Self {
             user: self.user,
-            curp_timeout,
+            client_config,
         }
     }
 }
