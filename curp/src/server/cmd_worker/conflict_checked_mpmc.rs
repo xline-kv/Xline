@@ -455,13 +455,10 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                     let v = self.get_vertex_mut(vid);
                     match v.inner {
                         VertexInner::Entry { ref mut as_st, .. } => {
-                            if let AsState::NotSynced(ref mut prepare) = *as_st {
-                                *as_st = AsState::AfterSyncReady(prepare.take());
-                            } else {
-                                unreachable!(
-                                    "after sync state should be AsState::NotSynced but found {as_st:?}"
-                                );
-                            }
+                            let AsState::NotSynced(ref mut prepare) = *as_st else {
+                                unreachable!("after sync state should be AsState::NotSynced but found {as_st:?}");
+                            };
+                            *as_st = AsState::AfterSyncReady(prepare.take());
                         }
                         _ => unreachable!("impossible vertex type"),
                     }

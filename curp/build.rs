@@ -1,5 +1,9 @@
 fn main() {
     tonic_build::configure()
+        .type_attribute(
+            "ProposeConfChangeRequest.ConfChange",
+            "#[derive(serde::Deserialize, serde::Serialize)]",
+        )
         .compile(
             &[
                 "./proto/common/src/message.proto",

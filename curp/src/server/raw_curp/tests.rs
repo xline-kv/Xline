@@ -30,7 +30,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         self.cluster().all_members().contains_key(&id)
             && self.ctx.sync_events.contains_key(&id)
             && self.lst.get_all_statuses().contains_key(&id)
-            && self.cst.lock().config.voters().contains(&id)
+            && self.cst.lock().config.contains(&id)
     }
 
     pub(crate) fn commit_index(&self) -> LogIndex {
@@ -730,7 +730,7 @@ fn add_exists_node_should_return_node_already_exists_error() {
         "http://127.0.0.1:4567".to_owned(),
     )];
     let resp = curp.apply_conf_change(changes);
-    let error_match = matches!(resp, Err(ApplyConfChangeError::NodeAlreadyExists(_)));
+    let error_match = matches!(resp, Err(ConfChangeError::NodeAlreadyExists(())));
     assert!(error_match);
 }
 
@@ -770,7 +770,7 @@ fn remove_non_exists_node_should_return_node_not_exists_error() {
     };
     let changes = vec![ConfChange::remove(1)];
     let resp = curp.apply_conf_change(changes);
-    assert!(matches!(resp, Err(ApplyConfChangeError::NodeNotExists(_))));
+    assert!(matches!(resp, Err(ConfChangeError::NodeNotExists(()))));
 }
 
 #[traced_test]
@@ -783,7 +783,7 @@ fn remove_node_should_return_invalid_config_error_when_nodes_count_less_than_3()
     let follower_id = curp.cluster().get_id_by_name("S1").unwrap();
     let changes = vec![ConfChange::remove(follower_id)];
     let resp = curp.apply_conf_change(changes);
-    assert!(matches!(resp, Err(ApplyConfChangeError::InvalidConfig)));
+    assert!(matches!(resp, Err(ConfChangeError::InvalidConfig(()))));
 }
 
 #[traced_test]
