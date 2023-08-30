@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    ops::{Deref, DerefMut},
     sync::Arc,
 };
 
@@ -221,29 +222,28 @@ impl MajorityConfig {
         }
     }
 
-    /// Get voters set
+    /// Get voters of current config
     pub(super) fn voters(&self) -> &HashSet<ServerId> {
         &self.voters
     }
 
-    /// Insert a voter
-    pub(super) fn insert(&mut self, id: ServerId) -> bool {
-        self.voters.insert(id)
-    }
-
-    /// Remove a voter
-    pub(super) fn remove(&mut self, id: ServerId) -> bool {
-        self.voters.remove(&id)
-    }
-
-    /// Check if a voter exists
-    pub(super) fn contains(&self, id: ServerId) -> bool {
-        self.voters.contains(&id)
-    }
-
     /// Get quorum: the smallest number of servers who must be online for the cluster to work
-    pub(super) fn quorum(&self) -> usize {
+    fn quorum(&self) -> usize {
         self.voters.len() / 2 + 1
+    }
+}
+
+impl Deref for MajorityConfig {
+    type Target = HashSet<ServerId>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.voters
+    }
+}
+
+impl DerefMut for MajorityConfig {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.voters
     }
 }
 

@@ -19,13 +19,13 @@ use crate::{
         ClientBuildError, CommandProposeError, CommandSyncError, ProposeError, RpcError,
         WaitSyncError,
     },
-    members::{Member, ServerId},
+    members::ServerId,
     rpc::{
         self, connect::ConnectApi, protocol_client::ProtocolClient, ConfChangeError,
         FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, ProposeConfChangeRequest,
         ProposeRequest, ReadState as PbReadState, ShutdownRequest, SyncResult, WaitSyncedRequest,
     },
-    LogIndex,
+    LogIndex, Member,
 };
 
 /// Protocol client
@@ -666,14 +666,50 @@ where
     }
 
     /// Propose the conf change request to servers
-    #[allow(clippy::unimplemented)] // rebase on #437
-    #[allow(unused_variables)] // rebase on #437
     #[instrument(skip_all)]
     pub async fn propose_conf_change(
         &self,
         conf_change: ProposeConfChangeRequest,
     ) -> Result<Result<Vec<Member>, ConfChangeError>, CommandProposeError<C>> {
-        unimplemented!("rebase on #437")
+        debug!(
+            "propose_conf_change with propose_id({}) started",
+            conf_change.id()
+        );
+        let retry_timeout = *self.config.retry_timeout();
+        let retry_count = *self.config.retry_count();
+        for _ in 0..retry_count {
+            // fetch leader id
+            let leader_id = self.get_leader_id().await?;
+
+            debug!("propose_conf_change request sent to {}", leader_id);
+
+            let resp = match self
+                .get_connect(leader_id)
+                .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
+                .propose_conf_change(conf_change.clone(), *self.config.wait_synced_timeout())
+                .await
+            {
+                Ok(resp) => resp.into_inner(),
+                Err(e) => {
+                    warn!("wait synced rpc error: {e}");
+                    tokio::time::sleep(retry_timeout).await;
+                    continue;
+                }
+            };
+            return match resp.error {
+                Some(e) => {
+                    warn!("propose conf change error: {:?}", e);
+                    if let ConfChangeError::Propose(ref nl) = e {
+                        if *nl == ProposeError::NotLeader.into() {
+                            continue;
+                        }
+                    }
+                    Ok(Err(e))
+                }
+                None => Ok(Ok(resp.members)),
+            };
+        }
+        Err(CommandProposeError::Propose(ProposeError::Timeout))
     }
 
     /// Fetch Read state from leader

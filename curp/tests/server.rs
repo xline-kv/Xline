@@ -1,11 +1,16 @@
 //! Integration test for the curp server
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use clippy_utilities::NumericCast;
 use curp::{
     client::Builder,
     error::{CommandProposeError, ProposeError},
+    members::ClusterInfo,
+    ConfChange, ConfChangeError, ProposeConfChangeRequest,
 };
 use curp_test_utils::{
     init_logger, sleep_millis, sleep_secs,
@@ -290,4 +295,84 @@ async fn shutdown_rpc_should_shutdown_the_cluster() {
         let res = client.propose(TestCommand::new_get(vec![i]), true).await;
         assert_eq!(res.unwrap().0.values, vec![i]);
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[abort_on_panic]
+async fn propose_add_node() {
+    init_logger();
+
+    let group = CurpGroup::new(3).await;
+    let client = group.new_client().await;
+
+    let id = client.gen_propose_id().await.unwrap();
+    let timestamp = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let node_id = ClusterInfo::calculate_member_id(vec!["address".to_owned()], "", Some(timestamp));
+    let changes = vec![ConfChange::add(node_id, "address".to_string())];
+    let conf_change = ProposeConfChangeRequest::new(id, changes);
+    let res = client.propose_conf_change(conf_change).await;
+    let members = res.unwrap().unwrap();
+    assert_eq!(members.len(), 4);
+    assert!(members.iter().any(|m| m.id == node_id));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[abort_on_panic]
+async fn propose_remove_node() {
+    init_logger();
+
+    let group = CurpGroup::new(5).await;
+    let client = group.new_client().await;
+
+    let id = client.gen_propose_id().await.unwrap();
+    let node_id = group.nodes.keys().next().copied().unwrap();
+    let changes = vec![ConfChange::remove(node_id)];
+    let conf_change = ProposeConfChangeRequest::new(id, changes);
+    let members = client
+        .propose_conf_change(conf_change)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(members.len(), 4);
+    assert!(members.iter().all(|m| m.id != node_id));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[abort_on_panic]
+async fn propose_update_node() {
+    init_logger();
+
+    let group = CurpGroup::new(5).await;
+    let client = group.new_client().await;
+    let id = client.gen_propose_id().await.unwrap();
+    let node_id = group.nodes.keys().next().copied().unwrap();
+    let changes = vec![ConfChange::update(node_id, "new_addr".to_owned())];
+    let conf_change = ProposeConfChangeRequest::new(id, changes);
+    let members = client
+        .propose_conf_change(conf_change)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(members.len(), 5);
+    let member = members.iter().find(|m| m.id == node_id);
+    assert!(member.is_some_and(|m| &m.addrs == &["new_addr"]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[abort_on_panic]
+async fn propose_remove_node_failed() {
+    init_logger();
+
+    let group = CurpGroup::new(3).await;
+    let client = group.new_client().await;
+
+    let id = client.gen_propose_id().await.unwrap();
+    let node_id = group.nodes.keys().next().copied().unwrap();
+    let changes = vec![ConfChange::remove(node_id)];
+    let conf_change = ProposeConfChangeRequest::new(id, changes);
+    let res = client.propose_conf_change(conf_change).await.unwrap();
+    assert!(matches!(res, Err(ConfChangeError::InvalidConfig(()))));
 }

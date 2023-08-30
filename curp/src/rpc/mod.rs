@@ -1,9 +1,19 @@
 use std::{collections::HashMap, sync::Arc};
 
 use curp_external_api::cmd::{PbCodec, PbSerializeError};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use self::proto::commandpb::{cmd_result::Result as CmdResultInner, CmdResult};
+pub use self::proto::{
+    commandpb::{cmd_result::Result as CmdResultInner, CmdResult, ProposeRequest, ProposeResponse},
+    inner_messagepb::inner_protocol_server::InnerProtocolServer,
+    messagepb::{
+        propose_conf_change_request::{ConfChange, ConfChangeType},
+        propose_conf_change_response::Error as ConfChangeError,
+        protocol_client,
+        protocol_server::ProtocolServer,
+        Member, ProposeConfChangeRequest, ProposeConfChangeResponse,
+    },
+};
 pub(crate) use self::proto::{
     commandpb::{
         propose_response::ExeResult,
@@ -22,27 +32,16 @@ pub(crate) use self::proto::{
         InstallSnapshotRequest, InstallSnapshotResponse, VoteRequest, VoteResponse,
     },
     messagepb::{
-        fetch_read_state_response::ReadState,
-        propose_conf_change_response::Error as ConfChangeError, protocol_server::Protocol,
-        FetchReadStateRequest, FetchReadStateResponse, IdSet, ShutdownRequest, ShutdownResponse,
-    },
-};
-pub use self::proto::{
-    commandpb::{ProposeRequest, ProposeResponse},
-    inner_messagepb::inner_protocol_server::InnerProtocolServer,
-    messagepb::{
-        propose_conf_change_request::{ConfChange, ConfChangeType},
-        protocol_client,
-        protocol_server::ProtocolServer,
-        FetchClusterRequest, FetchClusterResponse, Member as PbMember, ProposeConfChangeRequest,
-        ProposeConfChangeResponse,
+        fetch_read_state_response::ReadState, protocol_server::Protocol, FetchClusterRequest,
+        FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse, IdSet,
+        ShutdownRequest, ShutdownResponse,
     },
 };
 use crate::{
     cmd::{Command, ProposeId},
     error::{CommandSyncError, ProposeError, WaitSyncError},
     log_entry::LogEntry,
-    members::{Member, ServerId},
+    members::ServerId,
     LogIndex,
 };
 
@@ -436,11 +435,12 @@ impl FetchReadStateResponse {
     }
 }
 
-#[allow(dead_code)] // TODO: remove this when we implement conf change
 #[allow(clippy::as_conversions)] // ConfChangeType is so small that it won't exceed the range of i32 type.
 impl ConfChange {
     /// Create a new `ConfChange` to add a node
-    pub(crate) fn add(node_id: ServerId, address: String) -> Self {
+    #[must_use]
+    #[inline]
+    pub fn add(node_id: ServerId, address: String) -> Self {
         Self {
             change_type: ConfChangeType::Add as i32,
             node_id,
@@ -449,7 +449,9 @@ impl ConfChange {
     }
 
     /// Create a new `ConfChange` to remove a node
-    pub(crate) fn remove(node_id: ServerId) -> Self {
+    #[must_use]
+    #[inline]
+    pub fn remove(node_id: ServerId) -> Self {
         Self {
             change_type: ConfChangeType::Remove as i32,
             node_id,
@@ -458,7 +460,9 @@ impl ConfChange {
     }
 
     /// Create a new `ConfChange` to update a node
-    pub(crate) fn update(node_id: ServerId, address: String) -> Self {
+    #[must_use]
+    #[inline]
+    pub fn update(node_id: ServerId, address: String) -> Self {
         Self {
             change_type: ConfChangeType::Update as i32,
             node_id,
@@ -467,11 +471,59 @@ impl ConfChange {
     }
 
     /// Create a new `ConfChange` to add a learner node
-    pub(crate) fn add_learner(node_id: ServerId, address: String) -> Self {
+    #[must_use]
+    #[inline]
+    pub fn add_learner(node_id: ServerId, address: String) -> Self {
         Self {
             change_type: ConfChangeType::AddLearner as i32,
             node_id,
             address: vec![address],
+        }
+    }
+}
+
+impl ProposeConfChangeRequest {
+    /// Create a new `ProposeConfChangeRequest`
+    #[inline]
+    #[must_use]
+    pub fn new(id: String, changes: Vec<ConfChange>) -> Self {
+        Self { id, changes }
+    }
+
+    /// Get id of the request
+    #[inline]
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+}
+
+/// Conf change data in log entry
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct ConfChangeEntry {
+    /// Propose id
+    id: ProposeId,
+    /// Conf changes
+    changes: Vec<ConfChange>,
+}
+
+impl ConfChangeEntry {
+    /// Get id of the entry
+    pub(crate) fn id(&self) -> &ProposeId {
+        &self.id
+    }
+
+    /// Get changes of the entry
+    pub(crate) fn changes(&self) -> &[ConfChange] {
+        &self.changes
+    }
+}
+
+impl From<ProposeConfChangeRequest> for ConfChangeEntry {
+    fn from(req: ProposeConfChangeRequest) -> Self {
+        Self {
+            id: req.id,
+            changes: req.changes,
         }
     }
 }
@@ -485,6 +537,13 @@ impl ShutdownResponse {
             term,
             error,
         }
+    }
+}
+
+impl ConfChangeError {
+    /// Create a new `ConfChangeError` with `ProposeError`
+    pub(crate) fn new_propose(error: ProposeError) -> Self {
+        Self::Propose(error.into())
     }
 }
 

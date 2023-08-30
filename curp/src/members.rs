@@ -6,35 +6,10 @@ use std::{
 use dashmap::{mapref::one::Ref, DashMap};
 use itertools::Itertools;
 
-use crate::rpc::PbMember;
+use crate::Member;
 
 /// Server Id
 pub type ServerId = u64;
-
-/// Cluster member
-#[derive(Debug, Clone)]
-pub struct Member {
-    /// Server id of the member
-    id: ServerId,
-    /// Name of the member
-    name: String,
-    /// Addresses of the member
-    addrs: Vec<String>,
-    /// Learner
-    is_learner: bool,
-}
-
-impl From<Member> for PbMember {
-    #[inline]
-    fn from(member: Member) -> Self {
-        Self {
-            id: member.id,
-            name: member.name,
-            addrs: member.addrs,
-            is_learner: member.is_learner,
-        }
-    }
-}
 
 /// Cluster member
 impl Member {
@@ -84,7 +59,7 @@ impl Member {
 }
 
 /// cluster members information
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ClusterInfo {
     /// cluster id
     cluster_id: u64,
@@ -108,12 +83,7 @@ impl ClusterInfo {
             if name == self_name {
                 member_id = id;
             }
-            let member = Member {
-                id,
-                name,
-                addrs,
-                is_learner: false, // TODO restore learner here?
-            };
+            let member = Member::new(id, name, addrs, false);
             let _ig = members.insert(id, member);
         }
         debug_assert!(member_id != 0, "self_id should not be 0");
@@ -157,14 +127,12 @@ impl ClusterInfo {
             .addrs = addrs.into();
     }
 
+    // TODO
     /// Get server addresses via server id
     #[must_use]
     #[inline]
     pub fn addrs(&self, id: ServerId) -> Option<Vec<String>> {
-        self.members
-            .iter()
-            .find(|t| t.id == id)
-            .map(|t| t.addrs.clone())
+        self.members.get(&id).map(|t| t.addrs.clone())
     }
 
     /// Get the current member
@@ -206,8 +174,8 @@ impl ClusterInfo {
     }
 
     /// Calculate the member id
-    #[must_use]
     #[inline]
+    #[must_use]
     pub fn calculate_member_id(
         mut addrs: Vec<String>,
         cluster_name: &str,
@@ -268,6 +236,13 @@ impl ClusterInfo {
             .iter()
             .map(|t| (t.id, t.addrs.clone()))
             .collect()
+    }
+
+    /// Get all members
+    #[must_use]
+    #[inline]
+    pub fn members(&self) -> Vec<Member> {
+        self.members.iter().map(|t| t.value().clone()).collect()
     }
 
     /// Get length of peers
