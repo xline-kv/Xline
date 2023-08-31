@@ -177,6 +177,9 @@ pub enum ConfigParseError {
     /// Invalid values
     #[error("Invalid Value: {0}")]
     InvalidValue(String),
+    /// Invalid config file path
+    #[error("Couldn't read file {0}")]
+    IoError(String, #[source] std::io::Error),
 }
 
 /// parse members from string
