@@ -1,39 +1,67 @@
----- MODULE curp ----
+------------------------------------ MODULE curp ------------------------------------
 
 EXTENDS FiniteSets, Naturals, Sequences
 
 (************************************************************************************)
 (* Constants:                                                                       *)
-(*     commands: set of records like [key |-> "key", value |-> "value"].            *)
-(*               each command should be unique in the set.                          *)
-(*     replicas: set of replicas.                                                   *)
+(*     `commands`: set of records like [key |-> "key", value |-> "value"].          *)
+(*     `replicas`: set of replicas.                                                 *)
 (************************************************************************************)
 CONSTANTS commands, replicas
 
-(************************************************************************************)
-(* Variables:                                                                       *)
-(*     leader: the current leader.                                                  *)
-(*     epoch: the current epoch (the number of leader changes).                     *)
-(*     specPools: the spec pool of each replica.                                    *)
-(*     requested: the set of requested commands (by client).                        *)
-(*     committed: the set of committed commands by CURP. It also records the index  *)
-(*                of the last same-key command in the synced sequence at the time.  *)
-(*     unsynced: the sequence of unsynced commands.                                 *)
-(*     synced: the sequence of synced commands.                                     *)
-(************************************************************************************)
-VARIABLES leader, epoch, specPools, requested, committed, unsynced, synced
+ASSUME IsFiniteSet(replicas)
 
 (************************************************************************************)
-(* The initial state of the system.                                                 *)
+(* Variables:                                                                       *)
+(*     `leader`: records the leader of each epoch.                                  *)
+(*     `epoch`: current epoch (the number of leader changes).                       *)
+(*     `proposedCmds`: the set of proposed commands.                                *)
+(*     `proposeRequests`: the set of propose could be received by each replica.     *)
+(*     `proposeResponses`: the set of responses in each epoch to each proposed      *)
+(*                         command.                                                 *)
+(*     `specPools`: the speculative pool of each replica.                           *)
+(*     `uncommittedCmds`: the sequence of back-end protocol uncommitted commands.   *)
+(*     `committedCmds`: the sequence of back-end protocol committed commands.       *)
+(*     `commitMsgs`: the set of commit messages could be received by each replica.  *)
+(*     `specExecPrevCmd`: the index of the last same-key command in the committed   *)
+(*                        sequence at the time the leader responds to the proposal. *)
 (************************************************************************************)
-Init ==
-    /\ leader \in replicas
-    /\ epoch = 1
-    /\ specPools = [r \in replicas |-> {}]
-    /\ requested = {}
-    /\ committed = {}
-    /\ unsynced = <<>>
-    /\ synced = <<>>
+VARIABLES leader, epoch, proposedCmds, proposeRequests,
+          proposeResponses, specPools, uncommittedCmds,
+          committedCmds, commitMsgs, specExecPrevCmd
+
+(************************************************************************************)
+(* The epoch space.                                                                 *)
+(************************************************************************************)
+epoches == Nat
+
+(************************************************************************************)
+(* Special `noLeader` value, for future epoches.                                    *)
+(************************************************************************************)
+noLeader == CHOOSE r: r \notin replicas
+
+(************************************************************************************)
+(* In N = 2 * f + 1 replicas:                                                       *)
+(*     `quorum`: a set of replicas that contains at least f + 1 replicas.           *)
+(*     `superQuorum`: a set of replicas that contains at least f + (f + 1) / 2 + 1  *)
+(*                    replicas.                                                     *)
+(*     `recoverQuorum`: a set of replicas that contains at least (f + 1) / 2 + 1    *)
+(*                      replicas.                                                   *)
+(************************************************************************************)
+quorums ==
+    LET f == Cardinality(replicas) \div 2
+        size == f + 1
+    IN {q \in SUBSET replicas: Cardinality(q) >= size}
+
+superQuorums ==
+    LET f == Cardinality(replicas) \div 2
+        size == f + (f + 1) \div 2 + 1
+    IN {q \in SUBSET replicas: Cardinality(q) >= size}
+
+recoverQuorums ==
+    LET f == Cardinality(replicas) \div 2
+        size == (f + 1) \div 2 + 1
+    IN {q \in SUBSET replicas: Cardinality(q) >= size}
 
 (************************************************************************************)
 (* Helper function for converting a set to a set containing all sequences           *)
@@ -52,104 +80,88 @@ GetIdxInSeq(seq, Pred(_)) ==
         IF I # {} THEN CHOOSE i \in I: \A j \in I: j <= i ELSE 0
 
 (************************************************************************************)
-(* SuperQuorum:                                                                     *)
-(*     In N = 2 * f + 1 replicas, a SuperQuorum is a set of replicas that contains  *)
-(*     at least f + (f + 1) / 2 + 1 replicas.                                       *)
+(* Propose a command.                                                               *)
+(* This is done by the client sending a proposeRequest to all replicas.             *)
+(************************************************************************************)
+Propose(cmd) ==
+    /\ proposedCmds' = proposedCmds \cup {cmd}
+    /\ proposeRequests' =
+        [r \in replicas |-> proposeRequests[r] \cup {cmd}]
+    /\ UNCHANGED <<leader, epoch, specPools, proposeResponses,
+                   uncommittedCmds, committedCmds, commitMsgs,
+                   specExecPrevCmd>>
+
+(************************************************************************************)
+(* How the leader process a proposeRequest.                                         *)
+(************************************************************************************)
+ProcessProposeLeader(r, cmd) ==
+    LET specPoolHasConflict ==
+            \E specCmd \in specPools[r]: specCmd.key = cmd.key
+        uncommittedCmdsHasConflict ==
+            GetIdxInSeq(uncommittedCmds, LAMBDA e: e.key = cmd.key) # 0
+    IN
+        /\ proposeRequests' =
+            [proposeRequests EXCEPT ![r] = @ \ {cmd}]
+        /\ specPools' =
+            [specPools EXCEPT ![r] =
+                IF ~specPoolHasConflict THEN @ \cup {cmd} ELSE @]
+        /\ uncommittedCmds' = Append(uncommittedCmds, cmd)
+        /\ proposeResponses' =
+            [proposeResponses EXCEPT ![cmd][epoch] =
+                IF ~specPoolHasConflict /\ ~uncommittedCmdsHasConflict
+                THEN @ \cup {r}
+                ELSE @]
+        /\ specExecPrevCmd' =
+            [specExecPrevCmd EXCEPT ![cmd] =
+                IF ~specPoolHasConflict /\ ~uncommittedCmdsHasConflict
+                THEN GetIdxInSeq(committedCmds, LAMBDA e: e.key = cmd.key)
+                ELSE @]
+        /\ UNCHANGED <<leader, epoch, proposedCmds, committedCmds,
+                       commitMsgs>>
+
+(************************************************************************************)
+(* How a non-leader replica process a proposeRequest.                               *)
+(************************************************************************************)
+ProcessProposeNonLeader(r, cmd) ==
+    LET specPoolHasConflict ==
+            \E specCmd \in specPools[r]: specCmd.key = cmd.key
+    IN
+        /\ proposeRequests' =
+            [proposeRequests EXCEPT ![r] = @ \ {cmd}]
+        /\ specPools' =
+            [specPools EXCEPT ![r] =
+                IF ~specPoolHasConflict THEN @ \cup {cmd} ELSE @]
+        /\ proposeResponses' =
+            [proposeResponses EXCEPT ![cmd][epoch] =
+                IF ~specPoolHasConflict THEN @ \cup {r} ELSE @]
+        /\ UNCHANGED <<leader, epoch, proposedCmds, uncommittedCmds,
+                       committedCmds, commitMsgs, specExecPrevCmd>>
+
+(************************************************************************************)
+(* Syncing a command using the back-end protocol (Raft). The implementation details *)
+(* are omitted.                                                                     *)
 (*                                                                                  *)
-(*     The client can consider a command as committed if and only if it receives    *)
-(*     positive responses from a set of replicas larger then a SuperQuorum.         *)
+(* A replica may not be able to receive the commit message at the exact time the    *)
+(* the leader sends it.                                                             *)
 (************************************************************************************)
-IsSuperQuorum(S) ==
-    LET f == Cardinality(replicas) \div 2
-        size == f + (f + 1) \div 2 + 1
-    IN Cardinality(S) >= size
+Commit ==
+    /\ committedCmds' = Append(committedCmds, Head(uncommittedCmds))
+    /\ commitMsgs' =
+        [r \in replicas |-> commitMsgs[r] \cup {Head(uncommittedCmds)}]
+    /\ uncommittedCmds' = Tail(uncommittedCmds)
+    /\ UNCHANGED <<leader, epoch, specPools, proposedCmds, proposeRequests,
+                   proposeResponses, specExecPrevCmd>>
 
 (************************************************************************************)
-(* RecoverQuorum:                                                                   *)
-(*     In N = 2 * f + 1 replicas, a RecoverQuorum is a set of replicas that         *)
-(*     contains at least (f + 1) / 2 + 1 replicas.                                  *)
-(*                                                                                  *)
-(*     When a replica becomes a leader, it must recover the command if and only if  *)
-(*     the command is in the specPool of a set of replicas larger then a            *)
-(*     RecoverQuorum.                                                               *)
+(* How a replica process a commit message.                                          *)
 (************************************************************************************)
-IsRecoverQuorum(S) ==
-    LET f == Cardinality(replicas) \div 2
-        size == (f + 1) \div 2 + 1
-    IN Cardinality(S) >= size
-
-(************************************************************************************)
-(* Quorum:                                                                          *)
-(*     In N = 2 * f + 1 replicas, a Quorum is a set of replicas that contains       *)
-(*     at least f + 1 replicas.                                                     *)
-(*                                                                                  *)
-(*     A replica must gather a quorum of replicas' specPool to recover a command.   *)
-(*                                                                                  *)
-(*     This defines the set containing all quorums.                                 *)
-(************************************************************************************)
-quorums ==
-    LET f == Cardinality(replicas) \div 2
-        size == f + 1
-    IN {q \in SUBSET replicas: Cardinality(q) = size}
-
-(************************************************************************************)
-(* The Abstraction of the normal procedure of CURP.                                 *)
-(************************************************************************************)
-Request ==
-    \E cmd \in commands \ requested:
-        /\ requested' = requested \cup {cmd}
-
-        \* To simulate the unreliability of the network,
-        \* only a subset of replicas could receive the request.
-        /\ \E received \in SUBSET replicas:
-            \* The set of replicas that got no conflict in the spec pool.
-            /\ LET acceptedReplicas ==
-                {r \in received:
-                    \A specCmd \in specPools[r]:
-                        specCmd.key # cmd.key}
-               IN
-                \* Update the specPool.
-                /\ specPools' = [r \in replicas |->
-                    IF r \in acceptedReplicas
-                    THEN specPools[r] \cup {cmd}
-                    ELSE specPools[r]]
-
-                \* If there is at least a superquorum set of replicas that accepted
-                \* the request, and the leader can execute the command,
-                \* the request is committed.
-                /\ LET CompareKey(elem) == elem.key = cmd.key IN
-                    IF
-                        /\ IsSuperQuorum(acceptedReplicas)
-                        /\ leader \in acceptedReplicas
-                        /\ GetIdxInSeq(unsynced, CompareKey) = 0
-                    THEN
-                        \* The previous state of the key is also recorded.
-                        \* This is used to check the correctness of the property.
-                        LET prevIdx == GetIdxInSeq(synced, CompareKey) IN
-                            committed' = committed \cup {[
-                                cmd |-> cmd,
-                                prevIdx |-> prevIdx]}
-                    ELSE committed' = committed
-
-            \* No matter if the request is committed or not,
-            \* as long as the leader is in the received set,
-            \* the command should be synced afterward.
-            /\ IF leader \in received
-               THEN unsynced' = Append(unsynced, cmd)
-               ELSE unsynced' = unsynced
-
-        /\ UNCHANGED <<leader, epoch, synced>>
-
-(************************************************************************************)
-(* Syncing a command using the back-end protocol like Raft. The implementation      *)
-(* details of the back-end protocol are omitted.                                    *)
-(************************************************************************************)
-Sync ==
-    /\ unsynced # <<>>
-    /\ specPools' = [r \in replicas |-> specPools[r] \ {Head(unsynced)}]
-    /\ synced' = Append(synced, Head(unsynced))
-    /\ unsynced' = Tail(unsynced)
-    /\ UNCHANGED <<leader, epoch, requested, committed>>
+ProcessCommitMsg(r, cmd) ==
+    /\ commitMsgs' =
+        [commitMsgs EXCEPT ![r] = @ \ {cmd}]
+    /\ specPools' = [specPools EXCEPT ![r] = @ \ {cmd}]
+    /\ UNCHANGED <<leader, epoch, proposedCmds, proposeRequests,
+                   proposeResponses, uncommittedCmds, committedCmds,
+                   specExecPrevCmd>>
 
 (************************************************************************************)
 (* Leader Change Action                                                             *)
@@ -160,43 +172,73 @@ Sync ==
 (* Commands existed in the specPool of a RecoverQuorum of replicas need to be       *)
 (* recovered.                                                                       *)
 (************************************************************************************)
-LeaderChange ==
-    \E newLeader \in (replicas \ {leader}):
-        /\ leader' = newLeader
-        /\ epoch' = epoch + 1
-        /\ \E q \in quorums:
-            LET specCmds == UNION {specPools[r] : r \in q}
-                newSpecPool == {cmd \in specCmds: IsRecoverQuorum({r \in replicas: cmd \in specPools[r]})}
-            IN
-                /\ specPools' = [specPools EXCEPT ![newLeader] = newSpecPool]
-                /\ unsynced' \in SetToSeqs(newSpecPool)
-        /\ UNCHANGED <<requested, committed, synced>>
+LeaderChange(l) ==
+    /\ leader' = [e \in epoches |-> IF e = epoch + 1 THEN l ELSE leader[e]]
+    /\ epoch' = epoch + 1
+    /\ \E q \in quorums:
+        LET specCmds == UNION {specPools[r] : r \in q}
+            newSpecPool ==
+                {cmd \in specCmds:
+                    {r \in q: cmd \in specPools[r]} \in recoverQuorums}
+        IN
+            /\ specPools' = [specPools EXCEPT ![l] = newSpecPool]
+            /\ uncommittedCmds' \in SetToSeqs(newSpecPool)
+    /\ UNCHANGED <<proposedCmds, proposeRequests, proposeResponses,
+                   committedCmds, commitMsgs, specExecPrevCmd>>
+
+(************************************************************************************)
+(* The initial state of the system.                                                 *)
+(************************************************************************************)
+Init ==
+    \E r \in replicas:
+        LET initEpoch == 1 initLeader == r IN
+            /\ leader = [e \in epoches |-> 
+                IF e = initEpoch THEN initLeader ELSE noLeader]
+            /\ epoch = initEpoch
+            /\ proposedCmds = {}
+            /\ proposeRequests = [replica \in replicas |-> {}]
+            /\ proposeResponses =
+                [cmd \in commands |-> [e \in epoches |-> {}]]
+            /\ specPools = [replica \in replicas |-> {}]
+            /\ uncommittedCmds = <<>>
+            /\ committedCmds = <<>>
+            /\ commitMsgs = [replica \in replicas |-> {}]
+            /\ specExecPrevCmd = [cmd \in commands |-> 0]
 
 Next ==
-    \/ Request
-    \/ Sync
-    \/ LeaderChange
+    \/ \E cmd \in (commands \ proposedCmds): Propose(cmd)
+    \/ \E r \in replicas: \E cmd \in proposeRequests[r]:
+        IF leader[epoch] = r
+        THEN ProcessProposeLeader(r, cmd)
+        ELSE ProcessProposeNonLeader(r, cmd)
+    \/ uncommittedCmds # <<>> /\ Commit
+    \/ \E r \in replicas: \E cmd \in commitMsgs[r]: ProcessCommitMsg(r, cmd)
+    \/ \E l \in replicas: LeaderChange(l)
 
-Spec == Init /\ [][Next]_<<leader, epoch, specPools, requested, committed, unsynced, synced>>
+Spec == Init /\ [][Next]_<<leader, epoch, specPools, proposedCmds,
+                           proposeRequests, proposeResponses,
+                           uncommittedCmds, committedCmds, commitMsgs,
+                           specExecPrevCmd>>
 
 (************************************************************************************)
-(* Type Check                                                                       *)
+(* Type Invariants                                                                  *)
 (************************************************************************************)
 TypeOK ==
-    /\ leader \in replicas
-    /\ epoch \in Nat
-    /\ \A r \in replicas: specPools[r] \subseteq commands
-    /\ requested \subseteq commands
-    /\ \A committedCmd \in committed:
-        /\ committedCmd.cmd \in commands
-        /\ committedCmd.prevIdx \in 0..Len(synced)
-    /\ synced \in {SetToSeqs(s): s \in SUBSET commands}
-    /\ unsynced \in {SetToSeqs(s): s \in SUBSET commands}
+    /\ leader \in [epoches -> (replicas \cup {noLeader})]
+    /\ epoch \in epoches
+    /\ proposedCmds \subseteq commands
+    /\ proposeRequests \in [replicas -> SUBSET commands]
+    /\ proposeResponses \in [commands -> [epoches -> SUBSET replicas]]
+    /\ specPools \in [replicas -> SUBSET commands]
+    /\ uncommittedCmds \in UNION {SetToSeqs(s): s \in SUBSET commands}
+    /\ committedCmds \in UNION {SetToSeqs(s): s \in SUBSET commands}
+    /\ commitMsgs \in [replicas -> SUBSET commands]
+    /\ specExecPrevCmd \in [commands -> 0..Cardinality(commands)]
 
 (************************************************************************************)
 (* Stability Property                                                               *)
 (*                                                                                  *)
-(* This is the key property of CURP. There are two parts of the property.           *)
+(* This is the key property of CURP:                                                *)
 (*                                                                                  *)
 (* 1. If a command is committed by CURP, command will eventually be synced by the   *)
 (*    back-end protocol.                                                            *)
@@ -206,13 +248,16 @@ TypeOK ==
 (*    and the recorded previous same-key command in the synced sequence.            *)
 (************************************************************************************)
 Stability ==
-    \A committedCmd \in committed:
-        LET CompareExact(elem) == elem = committedCmd.cmd
-            syncedIdx == GetIdxInSeq(synced, CompareExact)
-        IN
-            /\ syncedIdx # 0
-            /\ \A j \in (committedCmd.prevIdx + 1)..(syncedIdx - 1):
-                synced[j].key # committedCmd.cmd.key
+    \A cmd \in commands: \A e \in epoches:
+        (/\ leader[e] \in proposeResponses[cmd][e]
+         /\ proposeResponses[cmd][e] \in superQuorums) =>
+            LET idx == GetIdxInSeq(committedCmds, LAMBDA t: t = cmd)
+                prevExecCmds == SubSeq(committedCmds, 1, idx)
+            IN
+                /\ idx # 0
+                /\ GetIdxInSeq(prevExecCmds, LAMBDA t: t.key = cmd.key) =
+                    specExecPrevCmd[cmd]
 
 THEOREM Spec => []TypeOK /\ <>Stability
-====
+
+======================================================================================
