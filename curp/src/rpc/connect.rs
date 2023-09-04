@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
-    fmt::Debug,
+    fmt::{Debug, Formatter},
+    ops::Deref,
     sync::Arc,
     time::Duration,
 };
@@ -85,8 +86,9 @@ pub(crate) async fn connect(
 /// Convert a vec of addr string to a vec of `InnerConnect`
 pub(crate) async fn inner_connect(
     members: HashMap<ServerId, Vec<String>>,
-) -> Result<impl Iterator<Item = (ServerId, Arc<dyn InnerConnectApi>)>, tonic::transport::Error> {
+) -> Result<impl Iterator<Item = (ServerId, ConnectApiWrapper)>, tonic::transport::Error> {
     connect_impl!(InnerProtocolClient<Channel>, InnerConnectApi, members)
+        .map(|iter| iter.map(|(id, connect)| (id, ConnectApiWrapper::new_from_arc(connect))))
 }
 
 /// Connect interface between server and clients
@@ -175,6 +177,32 @@ pub(crate) trait InnerConnectApi: Send + Sync + 'static {
     ) -> Result<tonic::Response<InstallSnapshotResponse>, RpcError>;
 }
 
+/// Connect Api Wrapper
+/// The solution of [rustc bug](https://github.com/dtolnay/async-trait/issues/141#issuecomment-767978616)
+#[derive(Clone)]
+pub(crate) struct ConnectApiWrapper(Arc<dyn InnerConnectApi>);
+
+impl ConnectApiWrapper {
+    /// Create a new `ConnectApiWrapper` from `Arc<dyn ConnectApi>`
+    pub(crate) fn new_from_arc(connect: Arc<dyn InnerConnectApi>) -> Self {
+        Self(connect)
+    }
+}
+
+impl Debug for ConnectApiWrapper {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectApiWrapper").finish()
+    }
+}
+
+impl Deref for ConnectApiWrapper {
+    type Target = Arc<dyn InnerConnectApi>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 /// The connection struct to hold the real rpc connections, it may failed to connect, but it also
 /// retries the next time
 #[derive(Debug)]
@@ -242,18 +270,18 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         client.propose(req).await.map_err(Into::into)
     }
 
-   /// Send `ShutdownRequest`
-   async fn shutdown(
-    &self,
-    request: ShutdownRequest,
-    timeout: Duration,
-) -> Result<tonic::Response<ShutdownResponse>, RpcError> {
-    let mut client = self.rpc_connect.clone();
-    let mut req = tonic::Request::new(request);
-    req.set_timeout(timeout);
-    req.metadata_mut().inject_current();
-    client.shutdown(req).await.map_err(Into::into)
-}
+    /// Send `ShutdownRequest`
+    async fn shutdown(
+        &self,
+        request: ShutdownRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<ShutdownResponse>, RpcError> {
+        let mut client = self.rpc_connect.clone();
+        let mut req = tonic::Request::new(request);
+        req.set_timeout(timeout);
+        req.metadata_mut().inject_current();
+        client.shutdown(req).await.map_err(Into::into)
+    }
 
     /// Send `ProposeRequest`
     #[instrument(skip(self), name = "client propose conf change")]

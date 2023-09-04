@@ -295,6 +295,13 @@ impl CurpGroup {
         let addr = format!("http://{}", addr);
         ProtocolClient::connect(addr.clone()).await.unwrap()
     }
+
+    pub fn all(&self) -> HashMap<ServerId, Vec<String>> {
+        self.all
+            .iter()
+            .map(|(k, v)| (*k, vec![v.clone()]))
+            .collect()
+    }
 }
 
 impl Drop for CurpGroup {

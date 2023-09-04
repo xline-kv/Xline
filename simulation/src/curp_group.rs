@@ -170,7 +170,7 @@ impl CurpGroup {
             inner: Arc::new(
                 Client::<TestCommand>::builder()
                     .config(config)
-                    .build_from_all_members(all_members)
+                    .build_from_all_members(all_members, None)
                     .await
                     .unwrap(),
             ),

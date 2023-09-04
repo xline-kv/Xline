@@ -63,6 +63,7 @@ impl<C: Command> Builder<C> {
     pub async fn build_from_all_members(
         &self,
         all_members: HashMap<ServerId, Vec<String>>,
+        leader_id: Option<ServerId>,
     ) -> Result<Client<C>, ClientBuildError> {
         let Some(config) = self.config else {
             return Err(ClientBuildError::invalid_arguments("timeout is required"));
@@ -70,7 +71,7 @@ impl<C: Command> Builder<C> {
         let connects = rpc::connect(all_members).await?.collect();
         let client = Client::<C> {
             local_server_id: self.local_server_id,
-            state: RwLock::new(State::new(None, 0)),
+            state: RwLock::new(State::new(leader_id, 0)),
             config,
             connects,
             phantom: PhantomData,
@@ -401,6 +402,7 @@ where
             self.state
                 .write()
                 .check_and_update(resp.leader_id, resp.term);
+
             match resp.error {
                 Some(e) => {
                     // Leader may not be correct leader, resend the shutdown request to the new leader
@@ -678,11 +680,14 @@ where
         let retry_timeout = *self.config.retry_timeout();
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {
-            // fetch leader id
-            let leader_id = self.get_leader_id().await?;
-
+            let leader_id = match self.get_leader_id().await {
+                Ok(leader_id) => leader_id,
+                Err(e) => {
+                    warn!("failed to fetch leader, {e}");
+                    continue;
+                }
+            };
             debug!("propose_conf_change request sent to {}", leader_id);
-
             let resp = match self
                 .get_connect(leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
@@ -696,6 +701,9 @@ where
                     continue;
                 }
             };
+            self.state
+                .write()
+                .check_and_update(resp.leader_id, resp.term);
             return match resp.error {
                 Some(e) => {
                     warn!("propose conf change error: {:?}", e);
@@ -927,7 +935,7 @@ mod tests {
     async fn client_builder_should_return_err_when_arguments_invalid() {
         let res = Client::<TestCommand>::builder()
             .config(ClientConfig::default())
-            .build_from_all_members(HashMap::from([(123, vec!["addr".to_owned()])]))
+            .build_from_all_members(HashMap::from([(123, vec!["addr".to_owned()])]), None)
             .await;
         assert!(res.is_ok());
 

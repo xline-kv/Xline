@@ -10,6 +10,7 @@ use utils::config::{
 };
 
 use super::*;
+use crate::rpc::connect::MockInnerConnectApi;
 use crate::{
     server::{
         cmd_board::CommandBoard,
@@ -53,6 +54,16 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             .into_iter()
             .map(|id| (id, Arc::new(Event::new())))
             .collect();
+        let connects = cluster_info
+            .peers_ids()
+            .into_iter()
+            .map(|id| {
+                (
+                    id,
+                    ConnectApiWrapper::new_from_arc(Arc::new(MockInnerConnectApi::new())),
+                )
+            })
+            .collect();
         let curp_config = CurpConfigBuilder::default()
             .log_entries_cap(10)
             .build()
@@ -71,7 +82,13 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             log_tx,
             role_change,
             shutdown_trigger,
+            connects,
         )
+    }
+
+    /// Set connect for a server
+    pub(crate) fn set_connect(&self, id: ServerId, connect: ConnectApiWrapper) {
+        self.ctx.connects.entry(id).and_modify(|c| *c = connect);
     }
 
     /// Add a new cmd to the log, will return log entry index
@@ -94,7 +111,7 @@ fn leader_handle_propose_will_succeed() {
     let cmd = Arc::new(TestCommand::default());
     let ((leader_id, term), result) = curp.handle_propose(cmd);
     assert_eq!(leader_id, Some(curp.id().clone()));
-    assert_eq!(term, 0);
+    assert_eq!(term, 1);
     assert!(matches!(result, Ok(true)));
 }
 
@@ -110,20 +127,20 @@ fn leader_handle_propose_will_reject_conflicted() {
     let cmd1 = Arc::new(TestCommand::new_put(vec![1], 0));
     let ((leader_id, term), result) = curp.handle_propose(cmd1);
     assert_eq!(leader_id, Some(curp.id().clone()));
-    assert_eq!(term, 0);
+    assert_eq!(term, 1);
     assert!(matches!(result, Ok(true)));
 
     let cmd2 = Arc::new(TestCommand::new_put(vec![1, 2], 1));
     let ((leader_id, term), result) = curp.handle_propose(cmd2);
     assert_eq!(leader_id, Some(curp.id().clone()));
-    assert_eq!(term, 0);
+    assert_eq!(term, 1);
     assert!(matches!(result, Err(ProposeError::KeyConflict)));
 
     // leader will also reject cmds that conflict un-synced cmds
     let cmd3 = Arc::new(TestCommand::new_put(vec![2], 1));
     let ((leader_id, term), result) = curp.handle_propose(cmd3);
     assert_eq!(leader_id, Some(curp.id().clone()));
-    assert_eq!(term, 0);
+    assert_eq!(term, 1);
     assert!(matches!(result, Err(ProposeError::KeyConflict)));
 }
 
@@ -138,12 +155,12 @@ fn leader_handle_propose_will_reject_duplicated() {
     let cmd = Arc::new(TestCommand::default());
     let ((leader_id, term), result) = curp.handle_propose(Arc::clone(&cmd));
     assert_eq!(leader_id, Some(curp.id().clone()));
-    assert_eq!(term, 0);
+    assert_eq!(term, 1);
     assert!(matches!(result, Ok(true)));
 
     let ((leader_id, term), result) = curp.handle_propose(cmd);
     assert_eq!(leader_id, Some(curp.id().clone()));
-    assert_eq!(term, 0);
+    assert_eq!(term, 1);
     assert!(matches!(result, Err(ProposeError::Duplicated)));
 }
 
@@ -204,11 +221,11 @@ fn heartbeat_will_calibrate_term() {
     };
 
     let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
-    let result = curp.handle_append_entries_resp(s1_id, None, 1, false, 1);
+    let result = curp.handle_append_entries_resp(s1_id, None, 2, false, 1);
     assert!(result.is_err());
 
     let st_r = curp.st.read();
-    assert_eq!(st_r.term, 1);
+    assert_eq!(st_r.term, 2);
     assert_eq!(st_r.role, Role::Follower);
 }
 
@@ -226,7 +243,7 @@ fn heartbeat_will_calibrate_next_index() {
     assert_eq!(result, Ok(false));
 
     let st_r = curp.st.read();
-    assert_eq!(st_r.term, 0);
+    assert_eq!(st_r.term, 1);
     assert_eq!(curp.lst.get_next_index(s1_id), 1);
 }
 
@@ -405,10 +422,10 @@ fn handle_vote_will_calibrate_term() {
     };
 
     let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
-    let result = curp.handle_vote(1, s1_id, 0, 0).unwrap();
-    assert_eq!(result.0, 1);
+    let result = curp.handle_vote(2, s1_id, 0, 0).unwrap();
+    assert_eq!(result.0, 2);
 
-    assert_eq!(curp.term(), 1);
+    assert_eq!(curp.term(), 2);
     assert_eq!(curp.role(), Role::Follower);
 }
 
@@ -649,15 +666,15 @@ fn quorum() {
 }
 
 #[traced_test]
-#[test]
-fn leader_handle_shutdown_will_succeed() {
+#[tokio::test]
+async fn leader_handle_shutdown_will_succeed() {
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
     let ((leader_id, term), result) = curp.handle_shutdown();
     assert_eq!(leader_id, Some(curp.id().clone()));
-    assert_eq!(term, 0);
+    assert_eq!(term, 1);
     assert!(matches!(result, Ok(())));
 }
 
@@ -706,20 +723,20 @@ fn is_synced_should_return_true_when_followers_caught_up_with_leader() {
 }
 
 #[traced_test]
-#[test]
-fn add_node_should_add_new_node_to_curp() {
+#[tokio::test]
+async fn add_node_should_add_new_node_to_curp() {
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
     let changes = vec![ConfChange::add(1, "http://127.0.0.1:4567".to_owned())];
-    assert!(curp.apply_conf_change(changes).is_ok());
+    assert!(curp.apply_conf_change(changes).await.is_ok());
     assert!(curp.contains(1));
 }
 
 #[traced_test]
-#[test]
-fn add_exists_node_should_return_node_already_exists_error() {
+#[tokio::test]
+async fn add_exists_node_should_return_node_already_exists_error() {
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
@@ -729,66 +746,66 @@ fn add_exists_node_should_return_node_already_exists_error() {
         exists_node_id,
         "http://127.0.0.1:4567".to_owned(),
     )];
-    let resp = curp.apply_conf_change(changes);
+    let resp = curp.apply_conf_change(changes).await;
     let error_match = matches!(resp, Err(ConfChangeError::NodeAlreadyExists(())));
     assert!(error_match);
 }
 
 #[traced_test]
-#[test]
-fn remove_node_should_remove_node_from_curp() {
+#[tokio::test]
+async fn remove_node_should_remove_node_from_curp() {
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         Arc::new(RawCurp::new_test(5, exe_tx, mock_role_change()))
     };
     let follower_id = curp.cluster().get_id_by_name("S1").unwrap();
     let changes = vec![ConfChange::remove(follower_id)];
-    let resp = curp.apply_conf_change(changes);
+    let resp = curp.apply_conf_change(changes).await;
     assert!(resp.is_ok());
     assert!(!curp.contains(follower_id));
 }
 
 #[traced_test]
-#[test]
-fn apply_conf_change_shoulde_return_true_when_remove_self_node() {
+#[tokio::test]
+async fn apply_conf_change_shoulde_return_true_when_remove_self_node() {
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         Arc::new(RawCurp::new_test(5, exe_tx, mock_role_change()))
     };
     let self_id = curp.id();
     let changes = vec![ConfChange::remove(self_id)];
-    let resp = curp.apply_conf_change(changes);
+    let resp = curp.apply_conf_change(changes).await;
     assert!(resp.is_ok_and(|b| b));
 }
 
 #[traced_test]
-#[test]
-fn remove_non_exists_node_should_return_node_not_exists_error() {
+#[tokio::test]
+async fn remove_non_exists_node_should_return_node_not_exists_error() {
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         Arc::new(RawCurp::new_test(5, exe_tx, mock_role_change()))
     };
     let changes = vec![ConfChange::remove(1)];
-    let resp = curp.apply_conf_change(changes);
+    let resp = curp.apply_conf_change(changes).await;
     assert!(matches!(resp, Err(ConfChangeError::NodeNotExists(()))));
 }
 
 #[traced_test]
-#[test]
-fn remove_node_should_return_invalid_config_error_when_nodes_count_less_than_3() {
+#[tokio::test]
+async fn remove_node_should_return_invalid_config_error_when_nodes_count_less_than_3() {
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
     let follower_id = curp.cluster().get_id_by_name("S1").unwrap();
     let changes = vec![ConfChange::remove(follower_id)];
-    let resp = curp.apply_conf_change(changes);
+    let resp = curp.apply_conf_change(changes).await;
     assert!(matches!(resp, Err(ConfChangeError::InvalidConfig(()))));
 }
 
 #[traced_test]
-#[test]
-fn update_node_should_update_the_address_of_node() {
+#[tokio::test]
+async fn update_node_should_update_the_address_of_node() {
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
@@ -802,7 +819,7 @@ fn update_node_should_update_the_address_of_node() {
         follower_id,
         "http://127.0.0.1:4567".to_owned(),
     )];
-    let resp = curp.apply_conf_change(changes);
+    let resp = curp.apply_conf_change(changes).await;
     assert!(resp.is_ok());
     assert_eq!(
         curp.cluster().addrs(follower_id),

@@ -47,7 +47,10 @@ use crate::{
     log_entry::{EntryData, LogEntry},
     members::{ClusterInfo, ServerId},
     role_change::RoleChange,
-    rpc::{ConfChange, ConfChangeEntry, ConfChangeError, ConfChangeType, IdSet, Member, ReadState},
+    rpc::{
+        connect::ConnectApiWrapper, ConfChange, ConfChangeEntry, ConfChangeError, ConfChangeType,
+        IdSet, Member, ReadState,
+    },
     server::{cmd_board::CmdBoardRef, raw_curp::state::VoteResult, spec_pool::SpecPoolRef},
     snapshot::{Snapshot, SnapshotMeta},
     LogIndex,
@@ -58,6 +61,10 @@ mod state;
 
 /// Curp log
 mod log;
+
+/// test utils
+#[cfg(test)]
+mod tests;
 
 /// Uncommitted pool type
 pub(super) type UncommittedPool<C> = HashMap<ProposeId, Arc<C>>;
@@ -154,6 +161,12 @@ struct Context<C: Command, RC: RoleChange> {
     leader_event: Arc<Event>,
     /// Leader change callback
     role_change: RC,
+    /// Conf change tx, used to update sync tasks
+    change_tx: flume::Sender<ConfChange>,
+    /// Conf change tx, used to update sync tasks
+    change_rx: flume::Receiver<ConfChange>,
+    /// Connects of peers
+    connects: DashMap<ServerId, ConnectApiWrapper>,
 }
 
 impl<C: Command, RC: RoleChange> Debug for Context<C, RC> {
@@ -713,7 +726,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         log_tx: mpsc::UnboundedSender<Arc<LogEntry<C>>>,
         role_change: RC,
         shutdown_trigger: shutdown::Trigger,
+        connects: DashMap<ServerId, ConnectApiWrapper>,
     ) -> Self {
+        let (change_tx, change_rx) = flume::bounded(128);
         let raw_curp = Self {
             st: RwLock::new(State::new(
                 0,
@@ -738,11 +753,15 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 sync_events,
                 leader_event: Arc::new(Event::new()),
                 role_change,
+                change_tx,
+                change_rx,
+                connects,
             },
             shutdown_trigger,
         };
         if is_leader {
             let mut st_w = raw_curp.st.write();
+            st_w.term = 1;
             raw_curp.become_leader(&mut st_w);
         }
         raw_curp
@@ -766,6 +785,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         last_applied: LogIndex,
         role_change: RC,
         shutdown_trigger: shutdown::Trigger,
+        connects: DashMap<ServerId, ConnectApiWrapper>,
     ) -> Self {
         let raw_curp = Self::new(
             cluster_info,
@@ -779,6 +799,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             log_tx,
             role_change,
             shutdown_trigger,
+            connects,
         );
 
         if let Some((term, server_id)) = voted_for {
@@ -818,11 +839,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     /// Get `append_entries` request for `follower_id` that contains the latest log entries
-    pub(super) fn sync(&self, follower_id: ServerId) -> Result<SyncAction<C>, ()> {
+    pub(super) fn sync(&self, follower_id: ServerId) -> Option<SyncAction<C>> {
         let term = {
             let lst_r = self.st.read();
             if lst_r.role != Role::Leader {
-                return Err(());
+                return None;
             }
             lst_r.term
         };
@@ -841,7 +862,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             // the leader will take a snapshot itself every time `sync` is called in effort to
             // calibrate it. Since taking a snapshot will block the leader's execute workers, we should
             // not take snapshot so often. A better solution would be to keep a snapshot cache.
-            Ok(SyncAction::Snapshot(self.ctx.cmd_tx.send_snapshot(
+            Some(SyncAction::Snapshot(self.ctx.cmd_tx.send_snapshot(
                 SnapshotMeta {
                     last_included_index: entry.index,
                     last_included_term: entry.term,
@@ -858,7 +879,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 leader_commit: log_r.commit_index,
                 entries,
             };
-            Ok(SyncAction::AppendEntries(ae))
+            Some(SyncAction::AppendEntries(ae))
         }
     }
 
@@ -943,7 +964,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     /// Apply conf changes and return true if self node is removed
-    pub(super) fn apply_conf_change(
+    pub(super) async fn apply_conf_change(
         &self,
         changes: Vec<ConfChange>,
     ) -> Result<bool, ConfChangeError> {
@@ -954,85 +975,27 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
         self.check_new_config(&conf_change)?;
 
-        Ok(self.switch_config(conf_change))
+        Ok(self.switch_config(conf_change).await)
     }
 
-    /// Check if the new config is valid
-    #[allow(clippy::unimplemented)] // TODO: remove this when learner is implemented
-    fn check_new_config(&self, conf_change: &ConfChange) -> Result<(), ConfChangeError> {
-        let mut statuses_ids = self
-            .lst
-            .get_all_statuses()
-            .keys()
-            .copied()
-            .chain([self.id()])
-            .collect::<HashSet<_>>();
-        let mut config = self.cst.map_lock(|cst_l| cst_l.config.clone());
-        let node_id = conf_change.node_id;
-        match conf_change.change_type() {
-            ConfChangeType::Add => {
-                if !statuses_ids.insert(node_id) || !config.insert(node_id) {
-                    return Err(ConfChangeError::NodeAlreadyExists(()));
-                }
-            }
-            ConfChangeType::Remove => {
-                if !statuses_ids.remove(&node_id) || !config.remove(&node_id) {
-                    return Err(ConfChangeError::NodeNotExists(()));
-                }
-            }
-            ConfChangeType::Update => {
-                if statuses_ids.get(&node_id).is_none() || !config.contains(&node_id) {
-                    return Err(ConfChangeError::NodeNotExists(()));
-                }
-            }
-            ConfChangeType::AddLearner => {
-                unimplemented!("learner node is not supported yet");
-            }
-            ConfChangeType::Promote => {
-                unimplemented!("learner node is not supported yet");
-            }
-        }
-        if statuses_ids.len() < 3 || config.voters() != &statuses_ids {
-            return Err(ConfChangeError::InvalidConfig(()));
-        }
-        Ok(())
+    /// Get a receiver for conf changes
+    pub(super) fn change_rx(&self) -> flume::Receiver<ConfChange> {
+        self.ctx.change_rx.clone()
     }
 
-    /// Switch to a new config and return true if self node is removed
-    #[allow(clippy::unimplemented)] // TODO: remove unimplemented when learner node is supported
-    fn switch_config(&self, conf_change: ConfChange) -> bool {
-        let node_id = conf_change.node_id;
-        match conf_change.change_type() {
-            ConfChangeType::Add => {
-                let member = Member::new(node_id, "", conf_change.address, false);
-                self.cst
-                    .map_lock(|mut cst_l| _ = cst_l.config.insert(node_id));
-                self.lst.insert(node_id);
-                _ = self.ctx.sync_events.insert(node_id, Arc::new(Event::new()));
-                self.ctx.cluster_info.insert(member);
-                false
-            }
-            ConfChangeType::Remove => {
-                self.cst
-                    .map_lock(|mut cst_l| _ = cst_l.config.remove(&node_id));
-                self.lst.remove(node_id);
-                _ = self.ctx.sync_events.remove(&node_id);
-                self.ctx.cluster_info.remove(&node_id);
-                node_id == self.id()
-            }
-            ConfChangeType::Update => {
-                self.ctx.cluster_info.update(&node_id, conf_change.address);
-                // TODO
-                todo!();
-                // false
-            }
-            ConfChangeType::AddLearner => {
-                unimplemented!("learner node is not supported yet");
-            }
-            ConfChangeType::Promote => {
-                unimplemented!("learner node is not supported yet");
-            }
-        }
+    /// Get all connects
+    pub(super) fn connects(&self) -> &DashMap<ServerId, ConnectApiWrapper> {
+        &self.ctx.connects
+    }
+
+    /// Get connect
+    pub(super) fn connect(&self, id: ServerId) -> ConnectApiWrapper {
+        self.ctx
+            .connects
+            .get(&id)
+            .unwrap_or_else(|| unreachable!("server id {id} not found"))
+            .value()
+            .clone()
     }
 }
 
@@ -1047,7 +1010,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         log: RwLockUpgradableReadGuard<'_, Log<C>>,
     ) -> Option<Vote> {
         let prev_role = st.role;
-        assert!(prev_role != Role::Leader, "leader can't start election");
+        assert_ne!(prev_role, Role::Leader, "leader can't start election");
 
         st.term += 1;
         st.role = Role::Candidate;
@@ -1264,7 +1227,88 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         self.ctx.cb.write().clear();
         self.ctx.ucp.lock().clear();
     }
-}
 
-#[cfg(test)]
-mod tests;
+    /// Check if the new config is valid
+    #[allow(clippy::unimplemented)] // TODO: remove this when learner is implemented
+    fn check_new_config(&self, conf_change: &ConfChange) -> Result<(), ConfChangeError> {
+        let mut statuses_ids = self
+            .lst
+            .get_all_statuses()
+            .keys()
+            .copied()
+            .chain([self.id()])
+            .collect::<HashSet<_>>();
+        let mut config = self.cst.map_lock(|cst_l| cst_l.config.clone());
+        let node_id = conf_change.node_id;
+        match conf_change.change_type() {
+            ConfChangeType::Add => {
+                if !statuses_ids.insert(node_id) || !config.insert(node_id) {
+                    return Err(ConfChangeError::NodeAlreadyExists(()));
+                }
+            }
+            ConfChangeType::Remove => {
+                if !statuses_ids.remove(&node_id) || !config.remove(&node_id) {
+                    return Err(ConfChangeError::NodeNotExists(()));
+                }
+            }
+            ConfChangeType::Update | ConfChangeType::Promote => {
+                if statuses_ids.get(&node_id).is_none() || !config.contains(&node_id) {
+                    return Err(ConfChangeError::NodeNotExists(()));
+                }
+            }
+            ConfChangeType::AddLearner => {
+                unimplemented!("learner node is not supported yet");
+            }
+        }
+        if statuses_ids.len() < 3 || config.voters() != &statuses_ids {
+            return Err(ConfChangeError::InvalidConfig(()));
+        }
+        Ok(())
+    }
+
+    /// Switch to a new config and return true if self node is removed
+    #[allow(clippy::unimplemented)] // TODO: remove this when learner is implemented
+    async fn switch_config(&self, conf_change: ConfChange) -> bool {
+        let node_id = conf_change.node_id;
+        let remove_self = match conf_change.change_type() {
+            ConfChangeType::Add => {
+                let member = Member::new(node_id, "", conf_change.address.clone(), false);
+                self.cst
+                    .map_lock(|mut cst_l| _ = cst_l.config.insert(node_id));
+                self.lst.insert(node_id);
+                _ = self.ctx.sync_events.insert(node_id, Arc::new(Event::new()));
+                self.ctx.cluster_info.insert(member);
+                // let connect = ConnectApiWrapper::new_from_arc(Arc::new(
+                //     InnerConnect::new(conf_change.node_id, address).await,
+                // ));
+                // _ = self.ctx.connects.insert(connect.id(), connect);
+                // TODO
+                false
+            }
+            ConfChangeType::Remove => {
+                self.cst
+                    .map_lock(|mut cst_l| _ = cst_l.config.remove(&node_id));
+                self.lst.remove(node_id);
+                _ = self.ctx.sync_events.remove(&node_id);
+                self.ctx.cluster_info.remove(&node_id);
+                _ = self.ctx.connects.remove(&node_id);
+                node_id == self.id()
+            }
+            ConfChangeType::Update => {
+                self.ctx
+                    .cluster_info
+                    .update(&node_id, conf_change.address.clone());
+                // TODO: update connect
+                false
+            }
+            ConfChangeType::AddLearner | ConfChangeType::Promote => {
+                unimplemented!("learner node is not supported yet");
+            }
+        };
+        self.ctx
+            .change_tx
+            .send(conf_change)
+            .unwrap_or_else(|_e| unreachable!("change_rx should not be dropped"));
+        remove_self
+    }
+}

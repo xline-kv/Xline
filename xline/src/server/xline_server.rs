@@ -345,7 +345,7 @@ impl XlineServer {
             CurpClient::builder()
                 .local_server_id(self.cluster_info.self_id())
                 .config(self.client_config)
-                .build_from_all_members(self.cluster_info.all_members_addrs())
+                .build_from_all_members(self.cluster_info.all_members_addrs(), None)
                 .await?,
         );
 
