@@ -1,4 +1,4 @@
-use std::{borrow::Cow, pin::Pin, sync::Arc, time::Duration};
+use std::{pin::Pin, sync::Arc, time::Duration};
 
 use async_stream::{stream, try_stream};
 use clippy_utilities::Cast;
@@ -187,13 +187,13 @@ where
     async fn follower_keep_alive(
         &self,
         mut request_stream: tonic::Streaming<LeaseKeepAliveRequest>,
-        leader_addr: &[String],
+        leader_addrs: Vec<String>,
         mut shutdown_listener: shutdown::Listener,
     ) -> Result<
         Pin<Box<dyn Stream<Item = Result<LeaseKeepAliveResponse, tonic::Status>> + Send>>,
         tonic::Status,
     > {
-        let endpoints = build_endpoints(leader_addr)?;
+        let endpoints = build_endpoints(leader_addrs)?;
         let channel = tonic::transport::Channel::balance_list(endpoints.into_iter());
         let mut lease_client = LeaseClient::new(channel);
 
@@ -226,14 +226,15 @@ where
 }
 
 /// Build endpoints from addresses
-fn build_endpoints(addrs: &[String]) -> Result<Vec<Endpoint>, tonic::Status> {
+fn build_endpoints(mut addrs: Vec<String>) -> Result<Vec<Endpoint>, tonic::Status> {
     addrs
-        .iter()
+        .iter_mut()
         .map(|addr| {
             let addr = if addr.starts_with("http://") {
-                Cow::Borrowed(addr)
+                addr
             } else {
-                Cow::Owned(format!("http://{addr}"))
+                addr.insert_str(0, "http://");
+                addr
             };
             addr.parse()
                 .map_err(|e| tonic::Status::internal(format!("Connect to leader error: {e}")))
@@ -330,7 +331,7 @@ where
                 break self
                     .follower_keep_alive(
                         request_stream,
-                        &leader_addr,
+                        leader_addr,
                         self.shutdown_listener.clone(),
                     )
                     .await?;
@@ -380,7 +381,7 @@ where
                 )
             });
             if !self.lease_storage.is_primary() {
-                let endpoints = build_endpoints(leader_addr.as_slice())?;
+                let endpoints = build_endpoints(leader_addr)?;
                 let channel = tonic::transport::Channel::balance_list(endpoints.into_iter());
                 let mut lease_client = LeaseClient::new(channel);
                 return lease_client.lease_time_to_live(request).await;

@@ -76,7 +76,7 @@ SetToSeqs(set) ==
 (* satisfying the predicate.                                                        *)
 (************************************************************************************)
 GetIdxInSeq(seq, Pred(_)) ==
-    LET I == {i \in 1..Len(seq): Pred(seq[i])} IN 
+    LET I == {i \in 1..Len(seq): Pred(seq[i])} IN
         IF I # {} THEN CHOOSE i \in I: \A j \in I: j <= i ELSE 0
 
 (************************************************************************************)
@@ -192,7 +192,7 @@ LeaderChange(l) ==
 Init ==
     \E r \in replicas:
         LET initEpoch == 1 initLeader == r IN
-            /\ leader = [e \in epoches |-> 
+            /\ leader = [e \in epoches |->
                 IF e = initEpoch THEN initLeader ELSE noLeader]
             /\ epoch = initEpoch
             /\ proposedCmds = {}

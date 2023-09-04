@@ -117,8 +117,19 @@ impl CurpGroup {
                 let (as_tx, as_rx) = mpsc::unbounded_channel();
                 let ce = TestCE::new(name.clone(), exe_tx, as_tx, xline_storage_config);
 
-                let cluster_info = Arc::new(ClusterInfo::new(all_members.clone(), &name));
-                all = cluster_info.all_members_addrs();
+                let cluster_info = Arc::new(ClusterInfo::new(
+                    all_members
+                        .clone()
+                        .into_iter()
+                        .map(|(k, v)| (k, vec![v]))
+                        .collect(),
+                    &name,
+                ));
+                all = cluster_info
+                    .all_members_addrs()
+                    .into_iter()
+                    .map(|(k, mut v)| (k, v.pop().unwrap()))
+                    .collect();
                 let id = cluster_info.self_id();
 
                 let role_change_cb = TestRoleChange::default();

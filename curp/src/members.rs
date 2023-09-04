@@ -18,17 +18,25 @@ pub struct Member {
     name: String,
     /// Addresses of the member
     addrs: Vec<String>,
+    /// Learner
+    is_learner: bool,
 }
 
 /// Cluster member
 impl Member {
     /// Create a new `Member`
     #[inline]
-    pub fn new(id: ServerId, name: impl Into<String>, addrs: impl Into<Vec<String>>) -> Self {
+    pub fn new(
+        id: ServerId,
+        name: impl Into<String>,
+        addrs: impl Into<Vec<String>>,
+        is_learner: bool,
+    ) -> Self {
         Self {
             id,
             name: name.into(),
             addrs: addrs.into(),
+            is_learner,
         }
     }
 
@@ -37,6 +45,27 @@ impl Member {
     #[inline]
     pub fn id(&self) -> ServerId {
         self.id
+    }
+
+    /// Get member name
+    #[must_use]
+    #[inline]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Get member addresses
+    #[must_use]
+    #[inline]
+    pub fn addrs(&self) -> &[String] {
+        self.addrs.as_slice()
+    }
+
+    /// Is learner or not
+    #[must_use]
+    #[inline]
+    pub fn is_learner(&self) -> bool {
+        self.is_learner
     }
 }
 
@@ -60,12 +89,17 @@ impl ClusterInfo {
     pub fn new(all_members_addrs: HashMap<String, Vec<String>>, self_name: &str) -> Self {
         let mut member_id = 0;
         let members = DashMap::new();
-        for (name, address) in all_members_addrs {
-            let id = Self::calculate_member_id(&address, "", None);
+        for (name, addrs) in all_members_addrs {
+            let id = Self::calculate_member_id(addrs.clone(), "", None);
             if name == self_name {
                 member_id = id;
             }
-            let member = Member { id, name, addrs };
+            let member = Member {
+                id,
+                name,
+                addrs,
+                is_learner: false, // TODO restore learner here?
+            };
             let _ig = members.insert(id, member);
         }
         debug_assert!(member_id != 0, "self_id should not be 0");
@@ -102,18 +136,21 @@ impl ClusterInfo {
 
     /// Update a member
     #[inline]
-    pub fn update(&self, id: &ServerId, address: impl Into<String>) {
+    pub fn update(&self, id: &ServerId, addrs: impl Into<Vec<String>>) {
         self.members
             .get_mut(id)
             .unwrap_or_else(|| unreachable!("member {} not found", id))
-            .address = address.into();
+            .addrs = addrs.into();
     }
 
     /// Get server address via server id
     #[must_use]
     #[inline]
-    pub fn address(&self, id: ServerId) -> Option<String> {
-        self.members.get(&id).map(|t| t.address.clone())
+    pub fn address(&self, id: ServerId) -> Option<Vec<String>> {
+        self.members
+            .iter()
+            .find(|t| t.id == id)
+            .map(|t| t.addrs.clone())
     }
 
     /// Get the current member
@@ -125,8 +162,8 @@ impl ClusterInfo {
     /// Get the current server address
     #[must_use]
     #[inline]
-    pub fn self_address(&self) -> &Vec<Vec<String>> {
-        &self.self_member().addrs
+    pub fn self_address(&self) -> Vec<String> {
+        self.self_member().addrs.clone()
     }
 
     /// Get the current server id
@@ -156,11 +193,12 @@ impl ClusterInfo {
 
     /// Calculate the member id
     fn calculate_member_id(
-        addrs: &Vec<String>,
+        mut addrs: Vec<String>,
         cluster_name: &str,
         timestamp: Option<u64>,
     ) -> ServerId {
         let mut hasher = DefaultHasher::new();
+        addrs.sort();
         for addr in addrs {
             hasher.write(addr.as_bytes());
         }
@@ -279,7 +317,7 @@ mod tests {
 
         assert_eq!(peer_ids.len(), peer_urls.len());
 
-        assert!(peer_urls.iter().find(|url| **url == node1_url).is_none());
+        assert!(peer_urls.iter().find(|url| ***url == node1_url).is_none());
         assert!(peer_ids.iter().find(|id| **id == node1_id).is_none());
     }
 }

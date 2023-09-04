@@ -794,7 +794,10 @@ fn update_node_should_update_the_address_of_node() {
         Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
     let follower_id = curp.cluster().get_id_by_name("S1").unwrap();
-    assert_eq!(curp.cluster().address(follower_id), Some("S1".to_owned()));
+    assert_eq!(
+        curp.cluster().address(follower_id),
+        Some(vec!["S1".to_owned()])
+    );
     let changes = vec![ConfChange::update(
         follower_id,
         "http://127.0.0.1:4567".to_owned(),
@@ -803,6 +806,6 @@ fn update_node_should_update_the_address_of_node() {
     assert!(resp.is_ok());
     assert_eq!(
         curp.cluster().address(follower_id),
-        Some("http://127.0.0.1:4567".to_owned())
+        Some(vec!["http://127.0.0.1:4567".to_owned()])
     );
 }

@@ -245,7 +245,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         _req: FetchClusterRequest,
     ) -> Result<FetchClusterResponse, CurpError> {
         let (leader_id, term) = self.curp.leader();
-        let all_members = self.curp.cluster().all_members_addrs();
+        let all_members = self.curp.cluster().all_members();
         Ok(FetchClusterResponse::new(leader_id, all_members, term))
     }
 
@@ -618,7 +618,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         cluster_info: Arc<ClusterInfo>,
         shutdown_trigger: shutdown::Trigger,
         log_rx: mpsc::UnboundedReceiver<Arc<LogEntry<C>>>,
-    ) {
+    ) -> Result<(), CurpError> {
         let shutdown_listener = shutdown_trigger.subscribe();
         let connects = rpc::inner_connect(cluster_info.peers_addrs())
             .await
@@ -637,6 +637,8 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
 
         let _log_persist_task =
             tokio::spawn(Self::log_persist_task(log_rx, storage, shutdown_listener));
+
+        Ok(())
     }
 
     /// Candidate broadcasts votes
