@@ -161,7 +161,7 @@ async fn worker_as<
         }
         EntryData::ConfChange(ref conf_change) => {
             let changes = conf_change.changes().to_owned();
-            let res = curp.apply_conf_change(changes);
+            let res = curp.apply_conf_change(changes).await;
             let is_ok = res.is_ok();
             let shutdown_self = res.as_ref().is_ok_and(|r| *r);
             if let Err(e) = ce.set_last_applied(entry.index) {

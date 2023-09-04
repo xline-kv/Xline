@@ -7,7 +7,7 @@ use std::{
 
 use clippy_utilities::NumericCast;
 use curp::{
-    client::Builder,
+    client::{Builder, Client},
     error::{CommandProposeError, ProposeError},
     members::ClusterInfo,
     ConfChange, ConfChangeError, ProposeConfChangeRequest,
@@ -340,6 +340,7 @@ async fn propose_remove_node() {
     assert!(members.iter().all(|m| m.id != node_id));
 }
 
+#[ignore] // TODO: use this test after multi-address and update node is supported
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn propose_update_node() {
@@ -375,4 +376,65 @@ async fn propose_remove_node_failed() {
     let conf_change = ProposeConfChangeRequest::new(id, changes);
     let res = client.propose_conf_change(conf_change).await.unwrap();
     assert!(matches!(res, Err(ConfChangeError::InvalidConfig(()))));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[abort_on_panic]
+async fn shutdown_rpc_should_shutdown_the_cluster_when_client_has_wrong_leader() {
+    init_logger();
+    let tmp_path = tempfile::TempDir::new().unwrap().into_path();
+    let group = CurpGroup::new_rocks(3, tmp_path.clone()).await;
+
+    let leader_id = group.get_leader().await.0;
+    let follower_id = group
+        .all
+        .keys()
+        .find(|&id| &leader_id != id)
+        .copied()
+        .unwrap();
+    // build a client and set a wrong leader id
+    let client = Client::<TestCommand>::builder()
+        .config(ClientConfig::default())
+        .build_from_all_members(group.all(), Some(follower_id))
+        .await
+        .unwrap();
+
+    client.shutdown().await.unwrap();
+
+    sleep_secs(3).await; // wait for the cluster to shutdown
+    assert!(group.is_finished());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[abort_on_panic]
+async fn propose_conf_change_to_learner() {
+    init_logger();
+    let group = CurpGroup::new(5).await;
+
+    let leader_id = group.get_leader().await.0;
+    let follower_id = group
+        .all
+        .keys()
+        .find(|&id| &leader_id != id)
+        .copied()
+        .unwrap();
+    // build a client and set a wrong leader id
+    let client = Client::<TestCommand>::builder()
+        .config(ClientConfig::default())
+        .build_from_all_members(group.all(), Some(follower_id))
+        .await
+        .unwrap();
+
+    let id = generate_propose_id("test");
+    let node_id = group.nodes.keys().next().copied().unwrap();
+    let changes = vec![ConfChange::update(node_id, "new_addr".to_owned())];
+    let conf_change = ProposeConfChangeRequest::new(id, changes);
+    let members = client
+        .propose_conf_change(conf_change)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(members.len(), 5);
+    let member = members.iter().find(|m| m.id == node_id);
+    assert!(member.is_some_and(|m| &m.addrs == &["new_addr"]));
 }
