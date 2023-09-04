@@ -926,12 +926,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
     /// Switch to a new config and return true if self node is removed
     #[allow(clippy::unimplemented)] // TODO: remove unimplemented when learner node is supported
-    #[allow(clippy::unwrap_used)] // TODO: refactor this when multi-address is supported
-    fn switch_config(&self, mut conf_change: ConfChange) -> bool {
+    fn switch_config(&self, conf_change: ConfChange) -> bool {
         let node_id = conf_change.node_id;
         match conf_change.change_type() {
             ConfChangeType::Add => {
-                let member = Member::new(node_id, "", conf_change.address.pop().unwrap());
+                let member = Member::new(node_id, "", conf_change.address, false);
                 self.cst
                     .map_lock(|mut cst_l| _ = cst_l.config.insert(node_id));
                 self.lst.insert(node_id);
@@ -948,9 +947,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 node_id == self.id()
             }
             ConfChangeType::Update => {
-                self.ctx
-                    .cluster_info
-                    .update(&node_id, conf_change.address.pop().unwrap());
+                self.ctx.cluster_info.update(&node_id, conf_change.address);
                 false
             }
             ConfChangeType::AddLearner => {

@@ -26,8 +26,8 @@ pub(crate) use self::proto::{
         propose_conf_change_request::{ConfChange, ConfChangeType},
         protocol_server::Protocol,
         FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
-        IdSet, ProposeConfChangeRequest, ProposeConfChangeResponse, ShutdownRequest,
-        ShutdownResponse,
+        IdSet, Member as PbMember, ProposeConfChangeRequest, ProposeConfChangeResponse,
+        ShutdownRequest, ShutdownResponse,
     },
 };
 pub use self::proto::{
@@ -41,19 +41,13 @@ use crate::{
     cmd::{Command, ProposeId},
     error::{CommandSyncError, ProposeError, WaitSyncError},
     log_entry::LogEntry,
-    members::ServerId,
+    members::{Member, ServerId},
     LogIndex,
 };
 
 /// Rpc connect
 pub(crate) mod connect;
 pub(crate) use connect::{connect, inner_connect};
-/// The mocked Channel of `tonic::transport::Channel`
-/// It is used for adding some api that is not implement by `madsim_tonic`
-/// TODO remove it when `madsim_tonic` support these api
-#[cfg(madsim)]
-mod mock_channel;
-pub(crate) use connect::connect;
 
 // Skip for generated code
 #[allow(
@@ -85,6 +79,17 @@ mod proto {
     }
 }
 
+impl From<Member> for PbMember {
+    fn from(member: Member) -> Self {
+        Self {
+            id: member.id(),
+            name: member.name().to_owned(),
+            addrs: member.addrs().to_vec(),
+            is_learner: member.is_learner(),
+        }
+    }
+}
+
 impl FetchLeaderRequest {
     /// Create a new `FetchLeaderRequest`
     pub(crate) fn new() -> Self {
@@ -110,24 +115,21 @@ impl FetchClusterResponse {
     /// Create a new `FetchClusterResponse`
     pub(crate) fn new(
         leader_id: Option<ServerId>,
-        all_members: HashMap<ServerId, Vec<String>>,
+        all_members: HashMap<ServerId, Member>,
         term: u64,
     ) -> Self {
         Self {
             leader_id,
-            all_members: all_members
-                .into_iter()
-                .map(|(id, addrs)| (id, Addrs { addrs }))
-                .collect(),
+            members: all_members.into_values().map(Into::into).collect(),
             term,
         }
     }
 
-    /// Get all members
-    pub(crate) fn into_members(self) -> HashMap<ServerId, Vec<String>> {
-        self.all_members
+    /// Get all members addresses
+    pub(crate) fn into_members_addrs(self) -> HashMap<ServerId, Vec<String>> {
+        self.members
             .into_iter()
-            .map(|(id, addrs)| (id, addrs.addrs))
+            .map(|member| (member.id, member.addrs))
             .collect()
     }
 }

@@ -6,15 +6,12 @@ use curp::{
     client::Client, members::ClusterInfo, server::Rpc, InnerProtocolServer, ProtocolServer,
 };
 use engine::{MemorySnapshotAllocator, RocksSnapshotAllocator, SnapshotAllocator};
-use event_listener::Event;
 use futures::stream::select_all;
-use futures::Future;
 use hyper::server::conn::AddrStream;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use tokio::{net::TcpListener, sync::mpsc::channel};
 use tokio_stream::wrappers::TcpListenerStream;
-use tonic::transport::server::TcpIncoming;
-use tonic::transport::Server;
+use tonic::transport::{server::TcpIncoming, Server};
 use tonic_health::ServingStatus;
 use tracing::error;
 use utils::{
@@ -223,6 +220,7 @@ impl XlineServer {
         reporter
             .set_service_status("", ServingStatus::Serving)
             .await;
+        let incoming = bind_addrs(addrs.into_iter())?;
         let _h = tokio::spawn(async move {
             Server::builder()
                 .add_service(RpcLockServer::new(lock_server))
@@ -234,7 +232,7 @@ impl XlineServer {
                 .add_service(ProtocolServer::from_arc(Arc::clone(&curp_server)))
                 .add_service(InnerProtocolServer::from_arc(curp_server))
                 .add_service(health_server)
-                .serve_with_incoming_shutdown(bind_addrs(addrs.into_iter())?, signal)
+                .serve_with_incoming_shutdown(incoming, signal)
                 .await
         });
         Ok(())

@@ -129,7 +129,7 @@ impl<C: Command> Builder<C> {
             local_server_id: self.local_server_id,
             state: RwLock::new(State::new(res.leader_id, res.term)),
             config,
-            connects: rpc::connect(res.into_members()).await?.collect(),
+            connects: rpc::connect(res.into_members_addrs()).await?.collect(),
             phantom: PhantomData,
         };
         Ok(client)
