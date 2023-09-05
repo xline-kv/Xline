@@ -89,11 +89,7 @@ impl<C: Command> CommandBoard<C> {
             .er_notifiers
             .entry(id.clone())
             .or_insert_with(Event::new);
-        let listener = event.listen();
-        if self.er_buffer.contains_key(id) {
-            event.notify(usize::MAX);
-        }
-        listener
+        event.listen()
     }
 
     /// Get a listener for shutdown
@@ -107,11 +103,7 @@ impl<C: Command> CommandBoard<C> {
             .asr_notifiers
             .entry(id.clone())
             .or_insert_with(Event::new);
-        let listener = event.listen();
-        if self.asr_buffer.contains_key(id) {
-            event.notify(usize::MAX);
-        }
-        listener
+        event.listen()
     }
 
     /// Notify execution results
@@ -133,18 +125,38 @@ impl<C: Command> CommandBoard<C> {
         self.shutdown_notifier.notify(usize::MAX);
     }
 
+    /// Get an execution result
+    fn get_er(&self, id: &ProposeId) -> Option<Result<C::ER, C::Error>> {
+        self.er_buffer.get(id).cloned()
+    }
+
+    /// Get an execution result and an after sync result
+    #[allow(clippy::type_complexity)] // it is easy to understand
+    fn get_er_asr(
+        &self,
+        id: &ProposeId,
+    ) -> (
+        Option<Result<C::ER, C::Error>>,
+        Option<Result<C::ASR, C::Error>>,
+    ) {
+        (
+            self.er_buffer.get(id).cloned(),
+            self.asr_buffer.get(id).cloned(),
+        )
+    }
+
     /// Wait for an execution result
+    #[allow(clippy::expect_used)]
     pub(super) async fn wait_for_er(
         cb: &CmdBoardRef<C>,
         id: &ProposeId,
-    ) -> Result<C::ER, C::Error> {
-        loop {
-            if let Some(er) = cb.map_read(|cb_r| cb_r.er_buffer.get(id).cloned()) {
-                return er;
-            }
-            let listener = cb.write().er_listener(id);
-            listener.await;
+    ) -> Option<Result<C::ER, C::Error>> {
+        if let Some(er) = cb.map_read(|cb_r| cb_r.get_er(id)) {
+            return Some(er);
         }
+        let listener = cb.write().er_listener(id);
+        listener.await;
+        cb.map_read(|cb_r| cb_r.get_er(id))
     }
 
     /// Wait for an execution result
@@ -157,18 +169,18 @@ impl<C: Command> CommandBoard<C> {
     pub(super) async fn wait_for_er_asr(
         cb: &CmdBoardRef<C>,
         id: &ProposeId,
-    ) -> (Result<C::ER, C::Error>, Option<Result<C::ASR, C::Error>>) {
-        loop {
-            {
-                let cb_r = cb.read();
-                match (cb_r.er_buffer.get(id), cb_r.asr_buffer.get(id)) {
-                    (Some(er), None) if er.is_err() => return (er.clone(), None),
-                    (Some(er), Some(asr)) => return (er.clone(), Some(asr.clone())),
-                    _ => {}
-                }
-            }
-            let listener = cb.write().asr_listener(id);
-            listener.await;
+    ) -> Option<(Result<C::ER, C::Error>, Option<Result<C::ASR, C::Error>>)> {
+        match cb.map_read(|cb_r| cb_r.get_er_asr(id)) {
+            (Some(er), None) if er.is_err() => return Some((er, None)),
+            (Some(er), Some(asr)) => return Some((er, Some(asr))),
+            _ => {}
+        }
+        let listener = cb.write().asr_listener(id);
+        listener.await;
+        match cb.map_read(|cb_r| cb_r.get_er_asr(id)) {
+            (Some(er), None) if er.is_err() => Some((er, None)),
+            (Some(er), Some(asr)) => Some((er, Some(asr))),
+            _ => None,
         }
     }
 }

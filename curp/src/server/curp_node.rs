@@ -131,7 +131,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         let ((leader_id, term), result) = self.curp.handle_propose(Arc::clone(&cmd));
         let resp = match result {
             Ok(true) => {
-                let er_res = CommandBoard::wait_for_er(&self.cmd_board, cmd.id()).await;
+                let Some(er_res) = CommandBoard::wait_for_er(&self.cmd_board, cmd.id()).await else {
+                    return Ok(ProposeResponse::new_empty(leader_id, term));
+                };
                 ProposeResponse::new_result::<C>(leader_id, term, &er_res)
             }
             Ok(false) => ProposeResponse::new_empty(leader_id, term),
@@ -216,7 +218,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         let id = req.propose_id();
         debug!("{} get wait synced request for cmd({id})", self.curp.id());
 
-        let (er, asr) = CommandBoard::wait_for_er_asr(&self.cmd_board, &id).await;
+        let Some((er, asr)) = CommandBoard::wait_for_er_asr(&self.cmd_board, &id).await else {
+            return Ok(WaitSyncedResponse::new_from_result::<C>(None, None));
+        };
         let resp = WaitSyncedResponse::new_from_result::<C>(Some(er), asr);
 
         debug!("{} wait synced for cmd({id}) finishes", self.curp.id());
