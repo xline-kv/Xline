@@ -10,7 +10,7 @@ use std::{
 use async_trait::async_trait;
 use clippy_utilities::NumericCast;
 use curp_external_api::{
-    cmd::{Command, CommandExecutor, ConflictCheck, PbSerialize, ProposeId},
+    cmd::{Command, CommandExecutor, ConflictCheck, PbCodec, ProposeId},
     LogIndex,
 };
 use engine::{Engine, EngineType, Snapshot, SnapshotApi, StorageEngine, WriteOperation};
@@ -39,7 +39,7 @@ impl Display for ExecuteError {
 }
 
 // The `ExecuteError` is only for internal use, so we do not have to serialize it to protobuf format
-impl PbSerialize for ExecuteError {
+impl PbCodec for ExecuteError {
     fn encode(&self) -> Vec<u8> {
         self.0.clone().into_bytes()
     }
@@ -94,7 +94,7 @@ impl TestCommandResult {
 }
 
 // The `TestCommandResult` is only for internal use, so we do not have to serialize it to protobuf format
-impl PbSerialize for TestCommandResult {
+impl PbCodec for TestCommandResult {
     fn encode(&self) -> Vec<u8> {
         bincode::serialize(self).unwrap_or_else(|_| {
             unreachable!("test cmd result should always be successfully serialized")
@@ -171,7 +171,7 @@ impl From<LogIndexResult> for LogIndex {
 }
 
 // The `TestCommandResult` is only for internal use, so we donnot have to serialize it to protobuf format
-impl PbSerialize for LogIndexResult {
+impl PbCodec for LogIndexResult {
     fn encode(&self) -> Vec<u8> {
         bincode::serialize(self).unwrap_or_else(|_| {
             unreachable!("test cmd result should always be successfully serialized")
@@ -219,7 +219,7 @@ impl ConflictCheck for TestCommand {
 }
 
 // The `TestCommand` is only for internal use, so we donnot have to serialize it to protobuf format
-impl PbSerialize for TestCommand {
+impl PbCodec for TestCommand {
     fn encode(&self) -> Vec<u8> {
         bincode::serialize(self)
             .unwrap_or_else(|_| unreachable!("test cmd should always be successfully serialized"))

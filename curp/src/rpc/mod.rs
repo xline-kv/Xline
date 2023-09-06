@@ -1,11 +1,11 @@
 use std::{collections::HashMap, sync::Arc};
 
-use curp_external_api::cmd::{PbSerialize, PbSerializeError};
+use curp_external_api::cmd::{PbCodec, PbSerializeError};
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
     cmd::{Command, ProposeId},
-    error::{CommandSyncError, ProposeError, SyncError},
+    error::{CommandSyncError, ProposeError, WaitSyncError},
     log_entry::LogEntry,
     members::ServerId,
     LogIndex,
@@ -20,9 +20,10 @@ pub(crate) use self::proto::{
     },
     errorpb::{
         command_sync_error::CommandSyncError as PbCommandSyncError,
-        propose_error::ProposeError as PbProposeError, sync_error::SyncError as PbSyncError,
+        propose_error::ProposeError as PbProposeError,
+        wait_sync_error::WaitSyncError as PbWaitSyncError,
         CommandSyncError as PbCommandSyncErrorOuter, ProposeError as PbProposeErrorOuter,
-        RedirectData, SyncError as PbSyncErrorOuter,
+        RedirectData, WaitSyncError as PbWaitSyncErrorOuter,
     },
     messagepb::{
         fetch_read_state_response::ReadState, protocol_server::Protocol, AppendEntriesRequest,
@@ -243,7 +244,7 @@ impl WaitSyncedResponse {
                 unreachable!("should not call after sync if execution fails")
             }
             (None, None) => WaitSyncedResponse::new_error::<C>(
-                SyncError::Other("can't get er result".to_owned()).into(),
+                WaitSyncError::Other("can't get er result".to_owned()).into(),
             ), // this is highly unlikely to happen,
             (Some(Err(err)), None) => {
                 WaitSyncedResponse::new_error(CommandSyncError::<C>::Execute(err))
@@ -256,7 +257,7 @@ impl WaitSyncedResponse {
             // The er is ignored as the propose has failed
             (Some(Ok(_er)), None) => {
                 WaitSyncedResponse::new_error::<C>(
-                    SyncError::Other("can't get after sync result".to_owned()).into(),
+                    WaitSyncError::Other("can't get after sync result".to_owned()).into(),
                 ) // this is highly unlikely to happen,
             }
         }

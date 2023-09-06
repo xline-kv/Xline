@@ -1,6 +1,6 @@
 use std::io;
 
-use curp_external_api::cmd::{Command, PbSerialize, PbSerializeError};
+use curp_external_api::cmd::{Command, PbCodec, PbSerializeError};
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -9,7 +9,7 @@ use crate::{
     members::ServerId,
     rpc::{
         PbCommandSyncError, PbCommandSyncErrorOuter, PbProposeError, PbProposeErrorOuter,
-        PbSyncError, PbSyncErrorOuter, RedirectData,
+        PbWaitSyncError, PbWaitSyncErrorOuter, RedirectData,
     },
 };
 
@@ -80,7 +80,7 @@ pub enum ProposeError {
     Duplicated,
     /// Command syncing error
     #[error("syncing error {0}")]
-    SyncedError(SyncError),
+    SyncedError(WaitSyncError),
     /// Encode error
     #[error("encode error: {0}")]
     EncodeError(String),
@@ -94,9 +94,11 @@ impl TryFrom<PbProposeError> for ProposeError {
         Ok(match err {
             PbProposeError::KeyConflict(_) => ProposeError::KeyConflict,
             PbProposeError::Duplicated(_) => ProposeError::Duplicated,
-            PbProposeError::SyncError(e) => {
-                ProposeError::SyncedError(e.sync_error.ok_or(PbSerializeError::EmptyField)?.into())
-            }
+            PbProposeError::WaitSyncError(e) => ProposeError::SyncedError(
+                e.wait_sync_error
+                    .ok_or(PbSerializeError::EmptyField)?
+                    .into(),
+            ),
             PbProposeError::EncodeError(s) => ProposeError::EncodeError(s),
         })
     }
@@ -108,8 +110,8 @@ impl From<ProposeError> for PbProposeError {
         match err {
             ProposeError::KeyConflict => PbProposeError::KeyConflict(()),
             ProposeError::Duplicated => PbProposeError::Duplicated(()),
-            ProposeError::SyncedError(e) => PbProposeError::SyncError(PbSyncErrorOuter {
-                sync_error: Some(e.into()),
+            ProposeError::SyncedError(e) => PbProposeError::WaitSyncError(PbWaitSyncErrorOuter {
+                wait_sync_error: Some(e.into()),
             }),
             ProposeError::EncodeError(s) => PbProposeError::EncodeError(s),
         }
@@ -123,7 +125,7 @@ impl From<PbSerializeError> for ProposeError {
     }
 }
 
-impl PbSerialize for ProposeError {
+impl PbCodec for ProposeError {
     #[inline]
     fn encode(&self) -> Vec<u8> {
         PbProposeErrorOuter {
@@ -188,7 +190,7 @@ pub enum CommandProposeError<C: Command> {
 #[derive(Clone, Error, Serialize, Deserialize, Debug)]
 #[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
 #[non_exhaustive]
-pub enum SyncError {
+pub enum WaitSyncError {
     /// If client sent a wait synced request to a non-leader
     #[error("redirect to {0:?}, term {1}")]
     Redirect(Option<ServerId>, u64),
@@ -197,23 +199,23 @@ pub enum SyncError {
     Other(String),
 }
 
-impl From<PbSyncError> for SyncError {
+impl From<PbWaitSyncError> for WaitSyncError {
     #[inline]
-    fn from(err: PbSyncError) -> Self {
+    fn from(err: PbWaitSyncError) -> Self {
         match err {
-            PbSyncError::Redirect(data) => SyncError::Redirect(data.server_id, data.term),
-            PbSyncError::Other(s) => SyncError::Other(s),
+            PbWaitSyncError::Redirect(data) => WaitSyncError::Redirect(data.server_id, data.term),
+            PbWaitSyncError::Other(s) => WaitSyncError::Other(s),
         }
     }
 }
 
-impl From<SyncError> for PbSyncError {
-    fn from(err: SyncError) -> Self {
+impl From<WaitSyncError> for PbWaitSyncError {
+    fn from(err: WaitSyncError) -> Self {
         match err {
-            SyncError::Redirect(server_id, term) => {
-                PbSyncError::Redirect(RedirectData { server_id, term })
+            WaitSyncError::Redirect(server_id, term) => {
+                PbWaitSyncError::Redirect(RedirectData { server_id, term })
             }
-            SyncError::Other(s) => PbSyncError::Other(s),
+            WaitSyncError::Other(s) => PbWaitSyncError::Other(s),
         }
     }
 }
@@ -222,7 +224,7 @@ impl From<SyncError> for PbSyncError {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) enum CommandSyncError<C: Command> {
     /// If wait sync went wrong
-    Sync(SyncError),
+    WaitSync(WaitSyncError),
     /// If the execution of the cmd went wrong
     Execute(C::Error),
     /// If after sync of the cmd went wrong
@@ -232,8 +234,8 @@ pub(crate) enum CommandSyncError<C: Command> {
 impl<C: Command> From<CommandSyncError<C>> for PbCommandSyncError {
     fn from(err: CommandSyncError<C>) -> Self {
         match err {
-            CommandSyncError::Sync(e) => PbCommandSyncError::Sync(PbSyncErrorOuter {
-                sync_error: Some(e.into()),
+            CommandSyncError::WaitSync(e) => PbCommandSyncError::WaitSync(PbWaitSyncErrorOuter {
+                wait_sync_error: Some(e.into()),
             }),
             CommandSyncError::Execute(e) => PbCommandSyncError::Execute(e.encode()),
             CommandSyncError::AfterSync(e) => PbCommandSyncError::AfterSync(e.encode()),
@@ -246,9 +248,11 @@ impl<C: Command> TryFrom<PbCommandSyncError> for CommandSyncError<C> {
 
     fn try_from(err: PbCommandSyncError) -> Result<Self, Self::Error> {
         Ok(match err {
-            PbCommandSyncError::Sync(e) => {
-                CommandSyncError::Sync(e.sync_error.ok_or(PbSerializeError::EmptyField)?.into())
-            }
+            PbCommandSyncError::WaitSync(e) => CommandSyncError::WaitSync(
+                e.wait_sync_error
+                    .ok_or(PbSerializeError::EmptyField)?
+                    .into(),
+            ),
             PbCommandSyncError::Execute(e) => {
                 CommandSyncError::Execute(<C as Command>::Error::decode(&e)?)
             }
@@ -259,7 +263,7 @@ impl<C: Command> TryFrom<PbCommandSyncError> for CommandSyncError<C> {
     }
 }
 
-impl<C: Command> PbSerialize for CommandSyncError<C> {
+impl<C: Command> PbCodec for CommandSyncError<C> {
     fn encode(&self) -> Vec<u8> {
         PbCommandSyncErrorOuter {
             command_sync_error: Some(self.clone().into()),
@@ -275,9 +279,9 @@ impl<C: Command> PbSerialize for CommandSyncError<C> {
     }
 }
 
-impl<C: Command> From<SyncError> for CommandSyncError<C> {
-    fn from(err: SyncError) -> Self {
-        Self::Sync(err)
+impl<C: Command> From<WaitSyncError> for CommandSyncError<C> {
+    fn from(err: WaitSyncError) -> Self {
+        Self::WaitSync(err)
     }
 }
 
@@ -291,21 +295,21 @@ mod test {
     fn propose_error_serialization_is_ok() {
         let err = ProposeError::Duplicated;
         let _decoded_err =
-            <ProposeError as PbSerialize>::decode(&err.encode()).expect("decode should success");
+            <ProposeError as PbCodec>::decode(&err.encode()).expect("decode should success");
         assert!(matches!(err, _decoded_err));
     }
 
     #[test]
     fn cmd_sync_error_serialization_is_ok() {
         let err: CommandSyncError<TestCommand> =
-            CommandSyncError::Sync(SyncError::Other("msg".to_owned()));
-        let _decoded_err = <CommandSyncError<TestCommand> as PbSerialize>::decode(&err.encode())
+            CommandSyncError::WaitSync(WaitSyncError::Other("msg".to_owned()));
+        let _decoded_err = <CommandSyncError<TestCommand> as PbCodec>::decode(&err.encode())
             .expect("decode should success");
         assert!(matches!(err, _decoded_err));
 
         let err1: CommandSyncError<TestCommand> =
             CommandSyncError::Execute(ExecuteError("msg".to_owned()));
-        let _decoded_err1 = <CommandSyncError<TestCommand> as PbSerialize>::decode(&err1.encode())
+        let _decoded_err1 = <CommandSyncError<TestCommand> as PbCodec>::decode(&err1.encode())
             .expect("decode should success");
         assert!(matches!(err1, _decoded_err1));
     }

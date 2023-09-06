@@ -6,7 +6,7 @@ use std::{
 
 use curp::{
     cmd::{
-        Command as CurpCommand, CommandExecutor as CurpCommandExecutor, ConflictCheck, PbSerialize,
+        Command as CurpCommand, CommandExecutor as CurpCommandExecutor, ConflictCheck, PbCodec,
         PbSerializeError, ProposeId,
     },
     error::{CommandProposeError, ProposeError},
@@ -574,7 +574,7 @@ pub struct CommandResponse {
     response: ResponseWrapper,
 }
 
-impl PbSerialize for CommandResponse {
+impl PbCodec for CommandResponse {
     #[inline]
     fn encode(&self) -> Vec<u8> {
         PbCommandResponse {
@@ -652,7 +652,7 @@ impl From<SyncResponse> for PbSyncResponse {
     }
 }
 
-impl PbSerialize for SyncResponse {
+impl PbCodec for SyncResponse {
     #[inline]
     fn encode(&self) -> Vec<u8> {
         PbSyncResponse::from(*self).encode_to_vec()
@@ -683,7 +683,7 @@ impl CurpCommand for Command {
     }
 }
 
-impl PbSerialize for Command {
+impl PbCodec for Command {
     #[inline]
     fn encode(&self) -> Vec<u8> {
         let cmd = self.clone();
@@ -1015,14 +1015,14 @@ mod test {
             ProposeId::new("id".to_owned()),
         );
         let decoded_cmd =
-            <Command as PbSerialize>::decode(&cmd.encode()).expect("decode should success");
+            <Command as PbCodec>::decode(&cmd.encode()).expect("decode should success");
         assert_eq!(cmd, decoded_cmd);
     }
 
     #[test]
     fn command_resp_serialization_is_ok() {
         let cmd_resp = CommandResponse::new(ResponseWrapper::PutResponse(PutResponse::default()));
-        let decoded_cmd_resp = <CommandResponse as PbSerialize>::decode(&cmd_resp.encode())
+        let decoded_cmd_resp = <CommandResponse as PbCodec>::decode(&cmd_resp.encode())
             .expect("decode should success");
         assert_eq!(cmd_resp, decoded_cmd_resp);
     }
@@ -1030,8 +1030,8 @@ mod test {
     #[test]
     fn sync_resp_serialization_is_ok() {
         let sync_resp = SyncResponse::new(1);
-        let decoded_sync_resp = <SyncResponse as PbSerialize>::decode(&sync_resp.encode())
-            .expect("decode should success");
+        let decoded_sync_resp =
+            <SyncResponse as PbCodec>::decode(&sync_resp.encode()).expect("decode should success");
         assert_eq!(sync_resp, decoded_sync_resp);
     }
 }

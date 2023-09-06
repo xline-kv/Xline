@@ -9,14 +9,14 @@ message ProposeError {
     oneof propose_error {
         google.protobuf.Empty key_conflict = 1;
         google.protobuf.Empty duplicated = 2;
-        SyncError sync_error = 3;
+        WaitSyncError wait_sync_error = 3;
         string encode_error = 4;
     }
 }
 
 message CommandSyncError {
     oneof command_sync_error {
-        SyncError sync = 1;
+        WaitSyncError wait_sync = 1;
         // The serialized command error
         // The original type is Command::Error
         bytes execute = 2;
@@ -26,8 +26,8 @@ message CommandSyncError {
     }
 }
 
-message SyncError {
-    oneof sync_error {
+message WaitSyncError {
+    oneof wait_sync_error {
         RedirectData redirect = 1;
         string other = 2;
     }
