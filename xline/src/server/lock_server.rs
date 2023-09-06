@@ -2,8 +2,9 @@ use std::{marker::PhantomData, sync::Arc};
 
 use async_stream::stream;
 use clippy_utilities::OverflowArithmetic;
-use curp::{client::ClientPool, cmd::generate_propose_id};
+use curp::cmd::generate_propose_id;
 use etcd_client::EventType;
+use tokio::sync::{mpsc::UnboundedSender, oneshot::Sender};
 use tracing::debug;
 use xlineapi::RequestWithToken;
 
@@ -13,6 +14,7 @@ use super::{
         command_from_request_wrapper, propose_err_to_status, Command, CommandResponse, KeyRange,
         SyncResponse,
     },
+    forward_dispatcher::ProposeResult,
 };
 use crate::{
     id_gen::IdGenerator,
@@ -32,8 +34,8 @@ const DEFAULT_SESSION_TTL: i64 = 60;
 /// Lock Server
 #[derive(Debug)]
 pub(super) struct LockServer<S> {
-    /// Consensus client pool
-    client_pool: Arc<ClientPool<Command>>,
+    /// Forward dispatcher tx
+    forward_sender: UnboundedSender<(Command, bool, Sender<ProposeResult<Command>>)>,
     /// Id Generator
     id_gen: Arc<IdGenerator>,
     /// Cluster information
@@ -50,13 +52,13 @@ where
 {
     /// New `LockServer`
     pub(super) fn new(
-        client_pool: Arc<ClientPool<Command>>,
+        forward_sender: UnboundedSender<(Command, bool, Sender<ProposeResult<Command>>)>,
         id_gen: Arc<IdGenerator>,
         name: String,
         address: String,
     ) -> Self {
         Self {
-            client_pool,
+            forward_sender,
             id_gen,
             name,
             address,
@@ -76,12 +78,14 @@ where
     {
         let wrapper = RequestWithToken::new_with_token(request.into(), token);
         let cmd = command_from_request_wrapper::<S>(generate_propose_id(&self.name), wrapper, None);
-
-        self.client_pool
-            .get_client()
-            .propose(cmd, use_fast_path)
-            .await
-            .map_err(propose_err_to_status)
+        let (tx, rx) = tokio::sync::oneshot::channel::<ProposeResult<Command>>();
+        if let Err(e) = self.forward_sender.send((cmd, use_fast_path, tx)) {
+            panic!("the forward receiver has been close unexpectedly: {e}");
+        }
+        match rx.await {
+            Ok(res) => res.map_err(propose_err_to_status),
+            Err(e) => panic!("the propose result sender has been dropped unexpectedly: {e}"),
+        }
     }
 
     /// Crate txn for try acquire lock

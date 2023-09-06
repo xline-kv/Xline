@@ -15,6 +15,7 @@ use super::{
     auth_server::AuthServer,
     barriers::{IdBarrier, IndexBarrier},
     command::{Command, CommandExecutor},
+    forward_dispatcher::forward_dispatcher,
     kv_server::KvServer,
     lease_server::LeaseServer,
     lock_server::LockServer,
@@ -320,6 +321,16 @@ impl XlineServer {
             )
             .await?,
         );
+        let new_client_pool: ClientPool<Command> = ClientPool::new(
+            16,
+            self.cluster_info.self_id(),
+            self.client_config,
+            self.cluster_info.all_members(),
+        )
+        .await?;
+
+        let forward_sender =
+            forward_dispatcher(new_client_pool, Arc::clone(&self.shutdown_trigger)).await;
 
         let auto_compactor = if let Some(auto_config_cfg) = *self.compact_cfg.auto_compact_config()
         {
@@ -355,11 +366,12 @@ impl XlineServer {
                 index_barrier,
                 id_barrier,
                 *self.server_timeout.range_retry_timeout(),
-                Arc::clone(&client_pool),
+                client_pool.get_client(),
+                forward_sender.clone(),
                 self.cluster_info.self_name().to_owned(),
             ),
             LockServer::new(
-                Arc::clone(&client_pool),
+                forward_sender.clone(),
                 Arc::clone(&id_gen),
                 self.cluster_info.self_name().to_owned(),
                 self.cluster_info.self_address().to_owned(),
@@ -367,13 +379,14 @@ impl XlineServer {
             LeaseServer::new(
                 lease_storage,
                 Arc::clone(&auth_storage),
-                Arc::clone(&client_pool),
+                client_pool.get_client(),
+                forward_sender.clone(),
                 id_gen,
                 Arc::clone(&self.cluster_info),
             ),
             AuthServer::new(
                 auth_storage,
-                client_pool,
+                forward_sender.clone(),
                 self.cluster_info.self_name().to_owned(),
             ),
             WatchServer::new(

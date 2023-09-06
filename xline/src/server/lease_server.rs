@@ -2,9 +2,12 @@ use std::{pin::Pin, sync::Arc, time::Duration};
 
 use async_stream::{stream, try_stream};
 use clippy_utilities::Cast;
-use curp::{client::ClientPool, cmd::generate_propose_id, members::ClusterInfo};
+use curp::{client::Client, cmd::generate_propose_id, members::ClusterInfo};
 use futures::stream::Stream;
-use tokio::time;
+use tokio::{
+    sync::{mpsc::UnboundedSender, oneshot::Sender},
+    time,
+};
 use tracing::{debug, warn};
 use xlineapi::RequestWithToken;
 
@@ -13,6 +16,7 @@ use super::{
     command::{
         command_from_request_wrapper, propose_err_to_status, Command, CommandResponse, SyncResponse,
     },
+    forward_dispatcher::ProposeResult,
 };
 use crate::{
     id_gen::IdGenerator,
@@ -37,8 +41,10 @@ where
     lease_storage: Arc<LeaseStore<S>>,
     /// Auth storage
     auth_storage: Arc<AuthStore<S>>,
-    /// Consensus client pool
-    client_pool: Arc<ClientPool<Command>>,
+    /// Curp Client
+    client: Arc<Client<Command>>,
+    /// Forward dispatcher tx
+    forward_sender: UnboundedSender<(Command, bool, Sender<ProposeResult<Command>>)>,
     /// Id generator
     id_gen: Arc<IdGenerator>,
     /// cluster information
@@ -53,14 +59,16 @@ where
     pub(crate) fn new(
         lease_storage: Arc<LeaseStore<S>>,
         auth_storage: Arc<AuthStore<S>>,
-        client_pool: Arc<ClientPool<Command>>,
+        client: Arc<Client<Command>>,
+        forward_sender: UnboundedSender<(Command, bool, Sender<ProposeResult<Command>>)>,
         id_gen: Arc<IdGenerator>,
         cluster_info: Arc<ClusterInfo>,
     ) -> Arc<Self> {
         let lease_server = Arc::new(Self {
             lease_storage,
             auth_storage,
-            client_pool,
+            client,
+            forward_sender,
             id_gen,
             cluster_info,
         });
@@ -115,12 +123,14 @@ where
             wrapper,
             Some(self.lease_storage.as_ref()),
         );
-
-        self.client_pool
-            .get_client()
-            .propose(cmd, use_fast_path)
-            .await
-            .map_err(propose_err_to_status)
+        let (tx, rx) = tokio::sync::oneshot::channel::<ProposeResult<Command>>();
+        if let Err(e) = self.forward_sender.send((cmd, use_fast_path, tx)) {
+            panic!("the forward receiver has been close unexpectedly: {e}");
+        }
+        match rx.await {
+            Ok(res) => res.map_err(propose_err_to_status),
+            Err(e) => panic!("the propose result sender has been dropped unexpectedly: {e}"),
+        }
     }
 
     /// Handle keep alive at leader
@@ -222,8 +232,7 @@ where
                 break self.leader_keep_alive(request_stream).await;
             }
             let leader_id = self
-                .client_pool
-                .get_client()
+                .client
                 .get_leader_id_from_curp()
                 .await;
             // Given that a candidate server may become a leader when it won the election or
@@ -320,8 +329,7 @@ where
                 return Ok(tonic::Response::new(res));
             }
             let leader_id = self
-                .client_pool
-                .get_client()
+                .client
                 .get_leader_id_from_curp()
                 .await;
             let leader_addr = self.cluster_info.address(leader_id).unwrap_or_else(|| {

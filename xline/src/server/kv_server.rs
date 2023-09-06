@@ -1,11 +1,14 @@
 use std::{fmt::Debug, sync::Arc, time::Duration};
 
 use curp::{
-    client::{ClientPool, ReadState},
+    client::{Client, ReadState},
     cmd::generate_propose_id,
 };
 use futures::future::join_all;
-use tokio::time::timeout;
+use tokio::{
+    sync::{mpsc::UnboundedSender, oneshot::Sender},
+    time::timeout,
+};
 use tracing::{debug, instrument};
 use xlineapi::ResponseWrapper;
 
@@ -13,6 +16,7 @@ use super::{
     auth_server::get_token,
     barriers::{IdBarrier, IndexBarrier},
     command::{propose_err_to_status, Command, CommandResponse, SyncResponse},
+    forward_dispatcher::ProposeResult,
 };
 use crate::{
     request_validation::RequestValidator,
@@ -42,8 +46,10 @@ where
     id_barrier: Arc<IdBarrier>,
     /// Range request retry timeout
     range_retry_timeout: Duration,
-    /// Consensus client pool
-    client_pool: Arc<ClientPool<Command>>,
+    /// Curp Client
+    client: Arc<Client<Command>>,
+    /// Forward dispatcher tx
+    forward_sender: UnboundedSender<(Command, bool, Sender<ProposeResult<Command>>)>,
     /// Server name
     name: String,
 }
@@ -53,13 +59,15 @@ where
     S: StorageApi,
 {
     /// New `KvServer`
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         kv_storage: Arc<KvStore<S>>,
         auth_storage: Arc<AuthStore<S>>,
         index_barrier: Arc<IndexBarrier>,
         id_barrier: Arc<IdBarrier>,
         range_retry_timeout: Duration,
-        client_pool: Arc<ClientPool<Command>>,
+        client: Arc<Client<Command>>,
+        forward_sender: UnboundedSender<(Command, bool, Sender<ProposeResult<Command>>)>,
         name: String,
     ) -> Self {
         Self {
@@ -68,7 +76,8 @@ where
             index_barrier,
             id_barrier,
             range_retry_timeout,
-            client_pool,
+            client,
+            forward_sender,
             name,
         }
     }
@@ -102,12 +111,14 @@ where
         let token = get_token(request.metadata());
         let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
         let cmd = command_from_request_wrapper::<S>(generate_propose_id(&self.name), wrapper, None);
-
-        self.client_pool
-            .get_client()
-            .propose(cmd, use_fast_path)
-            .await
-            .map_err(propose_err_to_status)
+        let (tx, rx) = tokio::sync::oneshot::channel::<ProposeResult<Command>>();
+        if let Err(e) = self.forward_sender.send((cmd, use_fast_path, tx)) {
+            panic!("the forward receiver has been close unexpectedly: {e}");
+        }
+        match rx.await {
+            Ok(res) => res.map_err(propose_err_to_status),
+            Err(e) => panic!("the propose result sender has been dropped unexpectedly: {e}"),
+        }
     }
 
     /// Update revision of `ResponseHeader`
@@ -155,8 +166,7 @@ where
     async fn wait_read_state(&self, cmd: &Command) -> Result<(), tonic::Status> {
         loop {
             let rd_state = self
-                .client_pool
-                .get_client()
+                .client
                 .fetch_read_state(cmd)
                 .await
                 .map_err(|e| tonic::Status::internal(e.to_string()))?;

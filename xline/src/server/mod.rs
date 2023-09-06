@@ -4,6 +4,8 @@ mod auth_server;
 mod barriers;
 /// Command to be executed
 pub(crate) mod command;
+/// forward dispatcher
+mod forward_dispatcher;
 /// Xline kv server
 mod kv_server;
 /// Xline lease server

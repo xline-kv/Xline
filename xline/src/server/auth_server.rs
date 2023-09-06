@@ -1,16 +1,20 @@
 use std::sync::Arc;
 
-use curp::{client::ClientPool, cmd::generate_propose_id};
+use curp::cmd::generate_propose_id;
 use pbkdf2::{
     password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
     Pbkdf2,
 };
+use tokio::sync::{mpsc::UnboundedSender, oneshot::Sender};
 use tonic::metadata::MetadataMap;
 use tracing::debug;
 use xlineapi::RequestWithToken;
 
-use super::command::{
-    command_from_request_wrapper, propose_err_to_status, Command, CommandResponse, SyncResponse,
+use super::{
+    command::{
+        command_from_request_wrapper, propose_err_to_status, Command, CommandResponse, SyncResponse,
+    },
+    forward_dispatcher::ProposeResult,
 };
 use crate::{
     request_validation::RequestValidator,
@@ -38,8 +42,8 @@ where
 {
     /// Auth storage
     storage: Arc<AuthStore<S>>,
-    /// Consensus client
-    client_pool: Arc<ClientPool<Command>>,
+    /// Forward dispatcher tx
+    forward_sender: UnboundedSender<(Command, bool, Sender<ProposeResult<Command>>)>,
     /// Server name
     name: String,
 }
@@ -59,12 +63,12 @@ where
     /// New `AuthServer`
     pub(crate) fn new(
         storage: Arc<AuthStore<S>>,
-        client_pool: Arc<ClientPool<Command>>,
+        forward_sender: UnboundedSender<(Command, bool, Sender<ProposeResult<Command>>)>,
         name: String,
     ) -> Self {
         Self {
             storage,
-            client_pool,
+            forward_sender,
             name,
         }
     }
@@ -82,11 +86,14 @@ where
         let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
         let cmd = command_from_request_wrapper::<S>(generate_propose_id(&self.name), wrapper, None);
 
-        self.client_pool
-            .get_client()
-            .propose(cmd, use_fast_path)
-            .await
-            .map_err(propose_err_to_status)
+        let (tx, rx) = tokio::sync::oneshot::channel::<ProposeResult<Command>>();
+        if let Err(e) = self.forward_sender.send((cmd, use_fast_path, tx)) {
+            panic!("the forward receiver has been close unexpectedly: {e}");
+        }
+        match rx.await {
+            Ok(res) => res.map_err(propose_err_to_status),
+            Err(e) => panic!("the propose result sender has been dropped unexpectedly: {e}"),
+        }
     }
 
     /// Hash password
