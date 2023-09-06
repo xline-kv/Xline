@@ -16,7 +16,8 @@ use utils::{config::ClientTimeout, parking_lot_lock::RwLockMap};
 use crate::{
     cmd::{Command, ProposeId},
     error::{
-        ClientBuildError, CommandProposeError, CommandSyncError, ProposeError, RpcError, SyncError,
+        ClientBuildError, CommandProposeError, CommandSyncError, ProposeError, RpcError,
+        WaitSyncError,
     },
     members::ServerId,
     rpc::{
@@ -326,7 +327,10 @@ where
                     debug!("slow round for cmd({}) succeeded", cmd.id());
                     return Ok((asr, er));
                 }
-                SyncResult::Error(CommandSyncError::Sync(SyncError::Redirect(server_id, term))) => {
+                SyncResult::Error(CommandSyncError::WaitSync(WaitSyncError::Redirect(
+                    server_id,
+                    term,
+                ))) => {
                     let new_leader = server_id.and_then(|id| {
                         self.state.map_write(|mut state| {
                             (state.term <= term).then(|| {
@@ -338,8 +342,10 @@ where
                     });
                     self.resend_propose(Arc::clone(&cmd), new_leader).await?; // resend the propose to the new leader
                 }
-                SyncResult::Error(CommandSyncError::Sync(e)) => {
-                    return Err(ProposeError::SyncedError(SyncError::Other(e.to_string())).into());
+                SyncResult::Error(CommandSyncError::WaitSync(e)) => {
+                    return Err(
+                        ProposeError::SyncedError(WaitSyncError::Other(e.to_string())).into(),
+                    );
                 }
                 SyncResult::Error(CommandSyncError::Execute(e)) => {
                     return Err(CommandProposeError::Execute(e));

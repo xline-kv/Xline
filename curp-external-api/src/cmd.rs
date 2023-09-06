@@ -10,10 +10,10 @@ use crate::LogIndex;
 /// Command to execute on the server side
 #[async_trait]
 pub trait Command:
-    Sync + Send + DeserializeOwned + Serialize + std::fmt::Debug + Clone + ConflictCheck + PbSerialize
+    Sync + Send + DeserializeOwned + Serialize + std::fmt::Debug + Clone + ConflictCheck + PbCodec
 {
     /// Error type
-    type Error: Send + Sync + Clone + std::error::Error + Serialize + DeserializeOwned + PbSerialize;
+    type Error: Send + Sync + Clone + std::error::Error + Serialize + DeserializeOwned + PbCodec;
 
     /// K (key) is used to tell confliction
     /// The key can be a single key or a key range
@@ -31,10 +31,10 @@ pub trait Command:
     type PR: std::fmt::Debug + Send + Sync + Clone + Serialize + DeserializeOwned;
 
     /// Execution result
-    type ER: std::fmt::Debug + Send + Sync + Clone + Serialize + DeserializeOwned + PbSerialize;
+    type ER: std::fmt::Debug + Send + Sync + Clone + Serialize + DeserializeOwned + PbCodec;
 
     /// After_sync result
-    type ASR: std::fmt::Debug + Send + Sync + Clone + Serialize + DeserializeOwned + PbSerialize;
+    type ASR: std::fmt::Debug + Send + Sync + Clone + Serialize + DeserializeOwned + PbCodec;
 
     /// Get keys of the command
     fn keys(&self) -> &[Self::K];
@@ -158,8 +158,8 @@ where
     async fn reset(&self, snapshot: Option<(Snapshot, LogIndex)>) -> Result<(), C::Error>;
 }
 
-/// Serializaion for protobuf
-pub trait PbSerialize: Sized {
+/// Codec for encoding and decoding data into/from the Protobuf format
+pub trait PbCodec: Sized {
     /// Encode
     fn encode(&self) -> Vec<u8>;
     /// Decode

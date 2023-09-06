@@ -1,6 +1,6 @@
 #![allow(clippy::integer_arithmetic)] // introduced by `strum_macros::EnumIter`
 
-use curp::cmd::{PbSerialize, PbSerializeError};
+use curp::cmd::{PbCodec, PbSerializeError};
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -201,7 +201,7 @@ impl From<ExecuteError> for PbExecuteError {
     }
 }
 
-impl PbSerialize for ExecuteError {
+impl PbCodec for ExecuteError {
     #[inline]
     fn encode(&self) -> Vec<u8> {
         PbExecuteErrorOuter {
@@ -326,8 +326,8 @@ mod test {
     #[test]
     fn serialization_is_ok() {
         for err in ExecuteError::iter() {
-            let _decoded_err = <ExecuteError as PbSerialize>::decode(&err.encode())
-                .expect("decode should success");
+            let _decoded_err =
+                <ExecuteError as PbCodec>::decode(&err.encode()).expect("decode should success");
             assert!(matches!(err, _decoded_err));
         }
     }
