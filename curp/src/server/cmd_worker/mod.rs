@@ -350,9 +350,8 @@ mod tests {
     use tracing_test::traced_test;
     use utils::config::StorageConfig;
 
-    use crate::log_entry::LogEntry;
-
     use super::*;
+    use crate::log_entry::LogEntry;
 
     // This should happen in fast path in most cases
     #[traced_test]

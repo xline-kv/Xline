@@ -9,6 +9,7 @@ use curp::{
     server::Rpc,
     FetchLeaderRequest, FetchLeaderResponse, LogIndex,
 };
+pub use curp::{protocol_client::ProtocolClient, ProposeRequest, ProposeResponse};
 use curp_test_utils::{
     test_cmd::{TestCE, TestCommand, TestCommandResult},
     TestRoleChange, TestRoleChangeInner,
@@ -23,8 +24,6 @@ use utils::{
     config::{ClientConfig, CurpConfigBuilder, StorageConfig},
     shutdown,
 };
-
-pub use curp::{protocol_client::ProtocolClient, ProposeRequest, ProposeResponse};
 
 struct MemorySnapshotAllocator;
 

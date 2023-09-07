@@ -1,8 +1,9 @@
-use itertools::Itertools;
 use std::{
     collections::{hash_map::DefaultHasher, HashMap},
     hash::Hasher,
 };
+
+use itertools::Itertools;
 
 /// Server Id
 pub type ServerId = u64;

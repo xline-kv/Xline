@@ -55,7 +55,7 @@ stop_all() {
 run_container() {
     echo container starting
     size=${1}
-    image="datenlord/xline:latest"
+    image="ghcr.io/xline-kv/xline:latest"
     for ((i = 1; i <= ${size}; i++)); do
         docker run -d -it --rm --name=node${i} --net=xline_net --ip=${SERVERS[$i]} --cap-add=NET_ADMIN --cpu-shares=1024 -m=512M -v ${DIR}:/mnt ${image} bash &
     done
