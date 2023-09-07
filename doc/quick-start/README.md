@@ -5,7 +5,7 @@
 ```bash
 # Assume that docker engine environment is installed.
 
-docker run -it --name=xline datenlord/xline \
+docker run -it --name=xline ghcr.io/xline-kv/xline \
   xline \
   --name xline \
   --storage-engine rocksdb \
@@ -64,8 +64,15 @@ cargo build --release
 
 ## Test Xline cluster
 
-### Build image for validation
+### Pull or Build image for validation
 
+#### Pull the latest image from ghcr.io
+```bash
+# Assume that docker engine environment is installed.
+ docker pull ghcr.io/xline-kv/xline:latest
+ ```
+
+#### Build image 
 ```bash
 # Assume that docker engine environment is installed.
 
@@ -75,7 +82,7 @@ cd Xline
 
 # build docker image
 # you may need to add sudo before the command to make it work
-docker build . -t datenlord/xline:latest -f doc/quick-start/Dockerfile
+docker build . -t ghcr.io/xline-kv/xline -f doc/quick-start/Dockerfile
 ```
 
 ### Start Xline servers

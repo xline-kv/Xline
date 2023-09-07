@@ -273,9 +273,8 @@ mod tests {
     use tokio::{sync::mpsc, time::Instant};
     use tracing_test::traced_test;
 
-    use crate::log_entry::LogEntry;
-
     use super::*;
+    use crate::log_entry::LogEntry;
 
     // This should happen in fast path in most cases
     #[traced_test]

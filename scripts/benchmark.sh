@@ -5,7 +5,7 @@ SERVERS=("172.20.0.2" "172.20.0.3" "172.20.0.4" "172.20.0.5")
 MEMBERS="node1=${SERVERS[1]}:2379,node2=${SERVERS[2]}:2379,node3=${SERVERS[3]}:2379"
 
 # container use_curp endpoints
-# XLINE_TESTCASE[0] VS ETCD_TESTCASE[0]: In the best performance case contrast, xline uses the curp-client while the 
+# XLINE_TESTCASE[0] VS ETCD_TESTCASE[0]: In the best performance case contrast, xline uses the curp-client while the
 #                                        etcd uses etcd-client to propose to the leader directly.
 # XLINE_TESTCASE[1] VS ETCD_TESTCASE[1]: Both etcd and xline use etcd-client to issue a proposal to their nearest follower.
 # XLINE_TESTCASE[0] VS ETCD_TESTCASE[2]: The performance contrast between one using curp-client to propose and the other use etcd-client.
@@ -194,7 +194,7 @@ run_container() {
     size=${1}
     case ${2} in
     xline)
-        image="datenlord/xline:latest"
+        image="ghcr.io/xline-kv/xline:latest"
         ;;
     etcd)
         image="datenlord/etcd:v3.5.5"

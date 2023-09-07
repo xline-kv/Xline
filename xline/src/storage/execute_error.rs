@@ -320,8 +320,9 @@ impl From<ExecuteError> for tonic::Status {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use strum::IntoEnumIterator;
+
+    use super::*;
 
     #[test]
     fn serialization_is_ok() {

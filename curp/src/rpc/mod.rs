@@ -3,14 +3,6 @@ use std::{collections::HashMap, sync::Arc};
 use curp_external_api::cmd::{PbCodec, PbSerializeError};
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::{
-    cmd::{Command, ProposeId},
-    error::{CommandSyncError, ProposeError, WaitSyncError},
-    log_entry::LogEntry,
-    members::ServerId,
-    LogIndex,
-};
-
 use self::proto::commandpb::{cmd_result::Result as CmdResultInner, CmdResult};
 pub(crate) use self::proto::{
     commandpb::{
@@ -37,6 +29,13 @@ pub use self::proto::{
     messagepb::{
         protocol_client, protocol_server::ProtocolServer, FetchLeaderRequest, FetchLeaderResponse,
     },
+};
+use crate::{
+    cmd::{Command, ProposeId},
+    error::{CommandSyncError, ProposeError, WaitSyncError},
+    log_entry::LogEntry,
+    members::ServerId,
+    LogIndex,
 };
 
 /// Rpc connect

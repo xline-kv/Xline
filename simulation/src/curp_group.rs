@@ -9,6 +9,7 @@ use curp::{
     server::Rpc,
     FetchLeaderRequest, FetchLeaderResponse, LogIndex, SnapshotAllocator,
 };
+pub use curp::{protocol_client::ProtocolClient, ProposeRequest, ProposeResponse};
 use curp_test_utils::{
     test_cmd::{TestCE, TestCommand, TestCommandResult},
     TestRoleChange, TestRoleChangeInner,
@@ -20,8 +21,6 @@ use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tracing::debug;
 use utils::config::{ClientTimeout, CurpConfigBuilder, StorageConfig};
-
-pub use curp::{protocol_client::ProtocolClient, ProposeRequest, ProposeResponse};
 
 struct MemorySnapshotAllocator;
 
