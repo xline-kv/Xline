@@ -323,7 +323,7 @@ where
                 .get_connect(leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .wait_synced(
-                    WaitSyncedRequest::new(cmd.id()),
+                    WaitSyncedRequest::new(cmd.id().clone()),
                     *self.config.wait_synced_timeout(),
                 )
                 .await

@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
-use curp::{client::Client as CurpClient, cmd::ProposeId};
-use uuid::Uuid;
+use curp::{client::Client as CurpClient, cmd::generate_propose_id};
 use xline::server::{Command, KeyRange};
 use xlineapi::{
     CompactionResponse, DeleteRangeResponse, PutResponse, RangeResponse, RequestWithToken,
@@ -66,7 +65,7 @@ impl KvClient {
     #[inline]
     pub async fn put(&self, request: PutRequest) -> Result<PutResponse> {
         let key_ranges = vec![KeyRange::new_one_key(request.key())];
-        let propose_id = self.generate_propose_id();
+        let propose_id = generate_propose_id(&self.name);
         let request = RequestWithToken::new_with_token(
             xlineapi::PutRequest::from(request).into(),
             self.token.clone(),
@@ -111,7 +110,7 @@ impl KvClient {
     #[inline]
     pub async fn range(&self, request: RangeRequest) -> Result<RangeResponse> {
         let key_ranges = vec![KeyRange::new(request.key(), request.range_end())];
-        let propose_id = self.generate_propose_id();
+        let propose_id = generate_propose_id(&self.name);
         let request = RequestWithToken::new_with_token(
             xlineapi::RangeRequest::from(request).into(),
             self.token.clone(),
@@ -149,7 +148,7 @@ impl KvClient {
     #[inline]
     pub async fn delete(&self, request: DeleteRangeRequest) -> Result<DeleteRangeResponse> {
         let key_ranges = vec![KeyRange::new(request.key(), request.range_end())];
-        let propose_id = self.generate_propose_id();
+        let propose_id = generate_propose_id(&self.name);
         let request = RequestWithToken::new_with_token(
             xlineapi::DeleteRangeRequest::from(request).into(),
             self.token.clone(),
@@ -204,7 +203,7 @@ impl KvClient {
             .iter()
             .map(|cmp| KeyRange::new(cmp.key.as_slice(), cmp.range_end.as_slice()))
             .collect();
-        let propose_id = self.generate_propose_id();
+        let propose_id = generate_propose_id(&self.name);
         let request = RequestWithToken::new_with_token(
             xlineapi::TxnRequest::from(request).into(),
             self.token.clone(),
@@ -257,7 +256,7 @@ impl KvClient {
     #[inline]
     pub async fn compact(&self, request: CompactionRequest) -> Result<CompactionResponse> {
         let use_fast_path = request.physical();
-        let propose_id = self.generate_propose_id();
+        let propose_id = generate_propose_id(&self.name);
         let request = RequestWithToken::new_with_token(
             xlineapi::CompactionRequest::from(request).into(),
             self.token.clone(),
@@ -277,10 +276,5 @@ impl KvClient {
         };
 
         Ok(res_wrapper.into())
-    }
-
-    /// Generate a new `ProposeId`
-    fn generate_propose_id(&self) -> ProposeId {
-        ProposeId::new(format!("{}-{}", self.name, Uuid::new_v4()))
     }
 }

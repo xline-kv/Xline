@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt::Debug, io, sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
-use curp_external_api::cmd::{PbSerializeError, ProposeId};
+use curp_external_api::cmd::PbSerializeError;
 use engine::{SnapshotAllocator, SnapshotApi};
 use event_listener::Event;
 use futures::{pin_mut, stream::FuturesUnordered, Stream, StreamExt};
@@ -146,7 +146,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         &self,
         request: ShutdownRequest,
     ) -> Result<ShutdownResponse, CurpError> {
-        let propose_id = ProposeId::new(request.id);
+        let propose_id = request.id;
         let ((leader_id, term), result) = self.curp.handle_shutdown(propose_id);
         let error = match result {
             Ok(()) => None,
@@ -216,7 +216,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         let id = req.propose_id();
         debug!("{} get wait synced request for cmd({id})", self.curp.id());
 
-        let (er, asr) = CommandBoard::wait_for_er_asr(&self.cmd_board, &id).await;
+        let (er, asr) = CommandBoard::wait_for_er_asr(&self.cmd_board, id).await;
         let resp = WaitSyncedResponse::new_from_result::<C>(Some(er), asr);
 
         debug!("{} wait synced for cmd({id}) finishes", self.curp.id());

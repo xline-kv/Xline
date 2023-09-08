@@ -3,14 +3,6 @@ use std::{collections::HashMap, sync::Arc};
 use curp_external_api::cmd::{PbCodec, PbSerializeError};
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::{
-    cmd::{Command, ProposeId},
-    error::{CommandSyncError, ProposeError, WaitSyncError},
-    log_entry::LogEntry,
-    members::ServerId,
-    LogIndex,
-};
-
 use self::proto::commandpb::{cmd_result::Result as CmdResultInner, CmdResult};
 pub(crate) use self::proto::{
     commandpb::{
@@ -37,6 +29,13 @@ pub use self::proto::{
     messagepb::{
         protocol_client, protocol_server::ProtocolServer, FetchLeaderRequest, FetchLeaderResponse,
     },
+};
+use crate::{
+    cmd::{Command, ProposeId},
+    error::{CommandSyncError, ProposeError, WaitSyncError},
+    log_entry::LogEntry,
+    members::ServerId,
+    LogIndex,
 };
 
 /// Rpc connect
@@ -197,15 +196,13 @@ impl ProposeResponse {
 
 impl WaitSyncedRequest {
     /// Create a `WaitSynced` request
-    pub(crate) fn new(id: &ProposeId) -> Self {
-        Self {
-            propose_id: id.clone().into_inner(),
-        }
+    pub(crate) fn new(propose_id: ProposeId) -> Self {
+        Self { propose_id }
     }
 
-    /// Get the propose id
-    pub(crate) fn propose_id(&self) -> ProposeId {
-        ProposeId::new(self.propose_id.clone())
+    /// Get the `propose_id` reference
+    pub(crate) fn propose_id(&self) -> &ProposeId {
+        &self.propose_id
     }
 }
 
@@ -439,6 +436,6 @@ impl FetchReadStateResponse {
 impl ShutdownRequest {
     /// Create a new shutdown request
     pub(crate) fn new(id: ProposeId) -> Self {
-        Self { id: id.into() }
+        Self { id }
     }
 }

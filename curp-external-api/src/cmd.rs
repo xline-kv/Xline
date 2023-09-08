@@ -1,9 +1,10 @@
-use std::{fmt::Display, hash::Hash};
+use std::hash::Hash;
 
 use async_trait::async_trait;
 use engine::Snapshot;
 use prost::DecodeError;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Serialize};
+use uuid::Uuid;
 
 use crate::LogIndex;
 
@@ -76,38 +77,13 @@ pub trait Command:
 }
 
 /// Command Id wrapper, abstracting underlying implementation
-#[allow(clippy::module_name_repetitions)] // the name is ok even with repetitions
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize, Hash)]
-pub struct ProposeId(String);
+pub type ProposeId = String;
 
-impl ProposeId {
-    /// Create a new propose id
-    #[inline]
-    #[must_use]
-    pub fn new(id: String) -> Self {
-        Self(id)
-    }
-
-    /// Get inner string
-    #[inline]
-    #[must_use]
-    pub fn into_inner(self) -> String {
-        self.0
-    }
-}
-
-impl From<ProposeId> for String {
-    #[inline]
-    fn from(value: ProposeId) -> Self {
-        value.0
-    }
-}
-
-impl Display for ProposeId {
-    #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "\"{}\"", self.0)
-    }
+/// Generate propose id with the given prefix
+#[inline]
+#[must_use]
+pub fn generate_propose_id(prefix: &str) -> ProposeId {
+    format!("{}-{}", prefix, Uuid::new_v4())
 }
 
 /// Check conflict of two keys

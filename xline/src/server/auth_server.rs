@@ -1,13 +1,12 @@
 use std::sync::Arc;
 
-use curp::{client::Client, cmd::ProposeId};
+use curp::{client::Client, cmd::generate_propose_id};
 use pbkdf2::{
     password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
     Pbkdf2,
 };
 use tonic::metadata::MetadataMap;
 use tracing::debug;
-use uuid::Uuid;
 use xlineapi::RequestWithToken;
 
 use super::command::{
@@ -70,11 +69,6 @@ where
         }
     }
 
-    /// Generate propose id
-    fn generate_propose_id(&self) -> ProposeId {
-        ProposeId::new(format!("{}-{}", self.name, Uuid::new_v4()))
-    }
-
     /// Propose request and get result with fast/slow path
     async fn propose<T>(
         &self,
@@ -86,7 +80,7 @@ where
     {
         let token = get_token(request.metadata());
         let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
-        let cmd = command_from_request_wrapper::<S>(self.generate_propose_id(), wrapper, None);
+        let cmd = command_from_request_wrapper::<S>(generate_propose_id(&self.name), wrapper, None);
 
         self.client
             .propose(cmd, use_fast_path)

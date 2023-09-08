@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration};
 use async_trait::async_trait;
 use curp::{
     client::Client,
-    cmd::ProposeId,
+    cmd::generate_propose_id,
     error::CommandProposeError::{AfterSync, Execute},
 };
 use event_listener::Event;
@@ -11,7 +11,6 @@ use periodic_compactor::PeriodicCompactor;
 use revision_compactor::RevisionCompactor;
 use tokio::{sync::mpsc::Receiver, time::sleep};
 use utils::config::AutoCompactConfig;
-use uuid::Uuid;
 
 use super::{
     index::{Index, IndexOperate},
@@ -60,7 +59,7 @@ impl Compactable for Client<Command> {
             physical: false,
         };
         let request_wrapper = RequestWithToken::new_with_token(request.into(), None);
-        let propose_id = ProposeId::new(format!("auto-compactor-{}", Uuid::new_v4()));
+        let propose_id = generate_propose_id("auto-compactor");
         let cmd = Command::new(vec![], request_wrapper, propose_id);
         if let Err(e) = self.propose(cmd, true).await {
             #[allow(clippy::wildcard_enum_match_arm)]
