@@ -81,7 +81,7 @@ impl ClusterInfo {
     /// Get all members
     #[must_use]
     #[inline]
-    pub fn get_members(&self) -> HashMap<ServerId, Member> {
+    pub fn all_members(&self) -> HashMap<ServerId, Member> {
         self.members
             .iter()
             .map(|t| (t.id, t.value().clone()))
@@ -113,10 +113,7 @@ impl ClusterInfo {
     #[must_use]
     #[inline]
     pub fn address(&self, id: ServerId) -> Option<String> {
-        self.members
-            .iter()
-            .find(|t| t.id == id)
-            .map(|t| t.address.clone())
+        self.members.get(&id).map(|t| t.address.clone())
     }
 
     /// Get the current member

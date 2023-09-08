@@ -89,8 +89,6 @@ message ShutdownResponse {
     optional bytes error = 3;
 }
 
-
-
 message ProposeConfChangeRequest {
     enum ConfChangeType {
         Add = 0;
@@ -101,14 +99,27 @@ message ProposeConfChangeRequest {
     message ConfChange {
         ConfChangeType change_type = 1;
         uint64 node_id = 2;
-        string address = 3;
+        repeated string address = 3;
     }
     string id = 1;
     repeated ConfChange changes = 2;
 }
 
+message Member {
+    uint64 id = 1;
+    string name = 2;
+    string addrs = 3;
+    bool is_learner = 4;
+};
+
 message ProposeConfChangeResponse {
-    bool ok = 1;
+    enum ConfChangeError {
+        InvalidConfig = 0;
+        NodeNotExists = 1;
+        NodeAlreadyExists = 2;
+    }
+    optional ConfChangeError error = 1;
+    repeated Member members = 2;
 }
 
 
