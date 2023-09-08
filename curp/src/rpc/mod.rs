@@ -453,7 +453,7 @@ impl ConfChange {
         Self {
             change_type: ConfChangeType::Add as i32,
             node_id,
-            address,
+            address: vec![address],
         }
     }
 
@@ -462,7 +462,7 @@ impl ConfChange {
         Self {
             change_type: ConfChangeType::Remove as i32,
             node_id,
-            address: String::new(),
+            address: vec![],
         }
     }
 
@@ -471,7 +471,7 @@ impl ConfChange {
         Self {
             change_type: ConfChangeType::Update as i32,
             node_id,
-            address,
+            address: vec![address],
         }
     }
 
@@ -480,7 +480,7 @@ impl ConfChange {
         Self {
             change_type: ConfChangeType::AddLearner as i32,
             node_id,
-            address,
+            address: vec![address],
         }
     }
 }

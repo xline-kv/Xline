@@ -142,7 +142,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         Ok(resp)
     }
 
-    /// Handle `propose_shutdown` requests
+    /// Handle `Shutdown` requests
     pub(super) async fn shutdown(
         &self,
         request: ShutdownRequest,
@@ -213,7 +213,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         Ok(resp)
     }
 
-    /// handle "wait synced" request
+    /// handle `WaitSynced` requests
     pub(super) async fn wait_synced(
         &self,
         req: WaitSyncedRequest,
@@ -233,7 +233,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         Ok(resp)
     }
 
-    /// Handle fetch leader requests
+    /// Handle `FetchLeader` requests
     #[allow(clippy::unnecessary_wraps, clippy::needless_pass_by_value)] // To keep type consistent with other request handlers
     pub(super) fn fetch_leader(
         &self,
@@ -243,7 +243,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         Ok(FetchLeaderResponse::new(leader_id, term))
     }
 
-    /// Handle fetch cluster requests
+    /// Handle `FetchCluster` requests
     #[allow(clippy::unnecessary_wraps, clippy::needless_pass_by_value)] // To keep type consistent with other request handlers
     pub(super) fn fetch_cluster(
         &self,
@@ -254,7 +254,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         Ok(FetchClusterResponse::new(leader_id, all_members, term))
     }
 
-    /// Install snapshot
+    /// Handle `InstallSnapshot` stream
     #[allow(clippy::integer_arithmetic)] // can't overflow
     pub(super) async fn install_snapshot(
         &self,
@@ -320,7 +320,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         ))
     }
 
-    /// Handle fetch read state requests
+    /// Handle `FetchReadState` requests
     #[allow(clippy::needless_pass_by_value)] // To keep type consistent with other request handlers
     pub(super) fn fetch_read_state(
         &self,

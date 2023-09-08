@@ -30,7 +30,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     fn contains(&self, id: ServerId) -> bool {
-        self.cluster().get_members().contains_key(&id)
+        self.cluster().all_members().contains_key(&id)
             && self.ctx.sync_events.contains_key(&id)
             && self.lst.get_all_statuses().contains_key(&id)
             && self.cst.lock().config.voters().contains(&id)
@@ -680,7 +680,7 @@ fn is_synced_should_return_true_when_followers_caught_up_with_leader() {
 
 #[traced_test]
 #[test]
-fn add_node() {
+fn add_node_should_add_new_node_to_curp() {
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
@@ -692,7 +692,7 @@ fn add_node() {
 
 #[traced_test]
 #[test]
-fn add_exists_node() {
+fn add_exists_node_should_return_node_already_exists_error() {
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
@@ -709,7 +709,7 @@ fn add_exists_node() {
 
 #[traced_test]
 #[test]
-fn remove_node() {
+fn remove_node_should_remove_node_from_curp() {
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         Arc::new(RawCurp::new_test(5, exe_tx, mock_role_change()))
@@ -723,7 +723,7 @@ fn remove_node() {
 
 #[traced_test]
 #[test]
-fn remove_self_node() {
+fn apply_conf_change_shoulde_return_true_when_remove_self_node() {
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         Arc::new(RawCurp::new_test(5, exe_tx, mock_role_change()))
@@ -736,7 +736,7 @@ fn remove_self_node() {
 
 #[traced_test]
 #[test]
-fn remove_non_exists_node() {
+fn remove_non_exists_node_should_return_node_not_exists_error() {
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         Arc::new(RawCurp::new_test(5, exe_tx, mock_role_change()))
@@ -748,7 +748,7 @@ fn remove_non_exists_node() {
 
 #[traced_test]
 #[test]
-fn remove_node_less_than_3() {
+fn remove_node_should_return_invalid_config_error_when_nodes_count_less_than_3() {
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
@@ -761,7 +761,7 @@ fn remove_node_less_than_3() {
 
 #[traced_test]
 #[test]
-fn update_node() {
+fn update_node_should_update_the_address_of_node() {
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
