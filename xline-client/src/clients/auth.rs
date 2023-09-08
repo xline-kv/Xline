@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
-use curp::{client::Client as CurpClient, cmd::ProposeId};
+use curp::{client::Client as CurpClient, cmd::generate_propose_id};
 use pbkdf2::{
     password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
     Pbkdf2,
 };
 use tonic::transport::Channel;
-use uuid::Uuid;
 use xline::server::Command;
 use xlineapi::{
     AuthDisableResponse, AuthEnableResponse, AuthRoleAddResponse, AuthRoleDeleteResponse,
@@ -694,7 +693,7 @@ impl AuthClient {
         request: Req,
         use_fast_path: bool,
     ) -> Result<Res> {
-        let propose_id = self.generate_propose_id();
+        let propose_id = generate_propose_id(&self.name);
         let request = RequestWithToken::new_with_token(request.into(), self.token.clone());
         let cmd = Command::new(vec![], request, propose_id);
 
@@ -721,10 +720,5 @@ impl AuthClient {
             .hash_password(password, salt.as_ref())
             .unwrap_or_else(|e| panic!("Failed to hash password: {e}"));
         hashed_password.to_string()
-    }
-
-    /// Generate a new `ProposeId`
-    fn generate_propose_id(&self) -> ProposeId {
-        ProposeId::new(format!("{}-{}", self.name, Uuid::new_v4()))
     }
 }

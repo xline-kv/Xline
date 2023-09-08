@@ -63,7 +63,7 @@ pub struct TestCommand {
 impl Default for TestCommand {
     fn default() -> Self {
         Self {
-            id: ProposeId::new(next_id().to_string()),
+            id: next_id().to_string(),
             keys: vec![1],
             exe_dur: Duration::ZERO,
             as_dur: Duration::ZERO,
@@ -111,7 +111,7 @@ impl PbCodec for TestCommandResult {
 impl TestCommand {
     pub fn new_get(keys: Vec<u32>) -> Self {
         Self {
-            id: ProposeId::new(next_id().to_string()),
+            id: next_id().to_string(),
             keys,
             exe_dur: Duration::ZERO,
             as_dur: Duration::ZERO,
@@ -123,7 +123,7 @@ impl TestCommand {
 
     pub fn new_put(keys: Vec<u32>, value: u32) -> Self {
         Self {
-            id: ProposeId::new(next_id().to_string()),
+            id: next_id().to_string(),
             keys,
             exe_dur: Duration::ZERO,
             as_dur: Duration::ZERO,

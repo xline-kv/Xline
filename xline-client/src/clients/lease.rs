@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
-use curp::{client::Client as CurpClient, cmd::ProposeId};
+use curp::{client::Client as CurpClient, cmd::generate_propose_id};
 use futures::channel::mpsc::channel;
 use tonic::{transport::Channel, Streaming};
-use uuid::Uuid;
 use xline::server::Command;
 use xlineapi::{
     LeaseGrantResponse, LeaseKeepAliveResponse, LeaseLeasesResponse, LeaseRevokeResponse,
@@ -86,7 +85,7 @@ impl LeaseClient {
     /// ```
     #[inline]
     pub async fn grant(&self, mut request: LeaseGrantRequest) -> Result<LeaseGrantResponse> {
-        let propose_id = self.generate_propose_id();
+        let propose_id = generate_propose_id(&self.name);
         if request.inner.id == 0 {
             request.inner.id = self.id_gen.next();
         }
@@ -261,7 +260,7 @@ impl LeaseClient {
     /// ```
     #[inline]
     pub async fn leases(&self) -> Result<LeaseLeasesResponse> {
-        let propose_id = self.generate_propose_id();
+        let propose_id = generate_propose_id(&self.name);
         let request = RequestWithToken::new_with_token(
             xlineapi::LeaseLeasesRequest {}.into(),
             self.token.clone(),
@@ -269,10 +268,5 @@ impl LeaseClient {
         let cmd = Command::new(vec![], request, propose_id);
         let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
         Ok(cmd_res.into_inner().into())
-    }
-
-    /// Generate a new `ProposeId`
-    fn generate_propose_id(&self) -> ProposeId {
-        ProposeId::new(format!("{}-{}", self.name, Uuid::new_v4()))
     }
 }

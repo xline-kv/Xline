@@ -2,12 +2,11 @@ use std::{fmt::Debug, sync::Arc, time::Duration};
 
 use curp::{
     client::{Client, ReadState},
-    cmd::ProposeId,
+    cmd::generate_propose_id,
 };
 use futures::future::join_all;
 use tokio::time::timeout;
 use tracing::{debug, instrument};
-use uuid::Uuid;
 use xlineapi::ResponseWrapper;
 
 use super::{
@@ -102,7 +101,7 @@ where
     {
         let token = get_token(request.metadata());
         let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
-        let cmd = command_from_request_wrapper::<S>(self.generate_propose_id(), wrapper, None);
+        let cmd = command_from_request_wrapper::<S>(generate_propose_id(&self.name), wrapper, None);
 
         self.client
             .propose(cmd, use_fast_path)
@@ -139,11 +138,6 @@ where
                 }
             }
         };
-    }
-
-    /// Generate propose id
-    fn generate_propose_id(&self) -> ProposeId {
-        ProposeId::new(format!("{}-{}", self.name, Uuid::new_v4()))
     }
 
     /// check whether the required revision is compacted or not
@@ -211,7 +205,7 @@ where
         let is_serializable = range_req.serializable;
         let token = get_token(request.metadata());
         let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
-        let propose_id = self.generate_propose_id();
+        let propose_id = generate_propose_id(&self.name);
         let cmd = command_from_request_wrapper::<S>(propose_id, wrapper, None);
         if !is_serializable {
             self.wait_read_state(&cmd).await?;
@@ -308,7 +302,7 @@ where
             let is_serializable = txn_req.is_serializable();
             let token = get_token(request.metadata());
             let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
-            let propose_id = self.generate_propose_id();
+            let propose_id = generate_propose_id(&self.name);
             let cmd = command_from_request_wrapper::<S>(propose_id, wrapper, None);
             if !is_serializable {
                 self.wait_read_state(&cmd).await?;

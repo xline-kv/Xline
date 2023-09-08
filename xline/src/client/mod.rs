@@ -1,12 +1,11 @@
 use std::fmt::Debug;
 
-use curp::{client::Client as CurpClient, cmd::ProposeId};
+use curp::{client::Client as CurpClient, cmd::generate_propose_id};
 use etcd_client::{
     AuthClient, Client as EtcdClient, KvClient, LeaseClient, LeaseKeepAliveStream, LeaseKeeper,
     LockClient, MaintenanceClient, WatchClient,
 };
 use utils::config::ClientTimeout;
-use uuid::Uuid;
 
 use crate::{
     client::{
@@ -87,11 +86,6 @@ impl Client {
         self.use_curp_client = use_curp_client;
     }
 
-    /// Generate a new `ProposeId`
-    fn generate_propose_id(&self) -> ProposeId {
-        ProposeId::new(format!("{}-{}", self.name, Uuid::new_v4()))
-    }
-
     /// Send `PutRequest` by `CurpClient` or `EtcdClient`
     ///
     /// # Errors
@@ -101,7 +95,7 @@ impl Client {
     pub async fn put(&mut self, request: PutRequest) -> Result<PutResponse, ClientError> {
         if self.use_curp_client {
             let key_ranges = vec![KeyRange::new_one_key(request.key())];
-            let propose_id = self.generate_propose_id();
+            let propose_id = generate_propose_id(&self.name);
             let request = RequestWithToken::new(rpc::PutRequest::from(request).into());
             let cmd = Command::new(key_ranges, request, propose_id);
             let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
@@ -125,7 +119,7 @@ impl Client {
     pub async fn range(&mut self, request: RangeRequest) -> Result<RangeResponse, ClientError> {
         if self.use_curp_client {
             let key_ranges = vec![KeyRange::new(request.key(), request.range_end())];
-            let propose_id = self.generate_propose_id();
+            let propose_id = generate_propose_id(&self.name);
             let request = RequestWithToken::new(rpc::RangeRequest::from(request).into());
             let cmd = Command::new(key_ranges, request, propose_id);
             let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
@@ -149,7 +143,7 @@ impl Client {
     ) -> Result<DeleteRangeResponse, ClientError> {
         if self.use_curp_client {
             let key_ranges = vec![KeyRange::new(request.key(), request.range_end())];
-            let propose_id = self.generate_propose_id();
+            let propose_id = generate_propose_id(&self.name);
             let request = RequestWithToken::new(rpc::DeleteRangeRequest::from(request).into());
             let cmd = Command::new(key_ranges, request, propose_id);
             let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;

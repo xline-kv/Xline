@@ -690,7 +690,7 @@ impl PbCodec for Command {
         let rpc_cmd = PbCommand {
             keys: cmd.keys.into_iter().map(Into::into).collect(),
             request: Some(cmd.request.into()),
-            propose_id: cmd.id.into_inner(),
+            propose_id: cmd.id,
         };
         rpc_cmd.encode_to_vec()
     }
@@ -704,7 +704,7 @@ impl PbCodec for Command {
                 .request
                 .ok_or(PbSerializeError::EmptyField)?
                 .try_into()?,
-            id: ProposeId::new(rpc_cmd.propose_id),
+            id: rpc_cmd.propose_id,
         })
     }
 }
@@ -814,26 +814,26 @@ mod test {
         let cmd1 = Command::new(
             vec![KeyRange::new("a", "e")],
             RequestWithToken::new(RequestWrapper::PutRequest(PutRequest::default())),
-            ProposeId::new("id".to_owned()),
+            ProposeId::from("id"),
         );
         let cmd2 = Command::new(
             vec![],
             RequestWithToken::new(RequestWrapper::AuthStatusRequest(
                 AuthStatusRequest::default(),
             )),
-            ProposeId::new("id".to_owned()),
+            ProposeId::from("id"),
         );
         let cmd3 = Command::new(
             vec![KeyRange::new("c", "g")],
             RequestWithToken::new(RequestWrapper::PutRequest(PutRequest::default())),
-            ProposeId::new("id2".to_owned()),
+            ProposeId::from("id2"),
         );
         let cmd4 = Command::new(
             vec![],
             RequestWithToken::new(RequestWrapper::AuthEnableRequest(
                 AuthEnableRequest::default(),
             )),
-            ProposeId::new("id3".to_owned()),
+            ProposeId::from("id3"),
         );
         let cmd5 = Command::new(
             vec![],
@@ -841,14 +841,14 @@ mod test {
                 ttl: 1,
                 id: 1,
             })),
-            ProposeId::new("id3".to_owned()),
+            ProposeId::from("id3"),
         );
         let cmd6 = Command::new(
             vec![],
             RequestWithToken::new(RequestWrapper::LeaseRevokeRequest(LeaseRevokeRequest {
                 id: 1,
             })),
-            ProposeId::new("id3".to_owned()),
+            ProposeId::from("id3"),
         );
 
         let lease_grant_cmd = Command::new(
@@ -857,7 +857,7 @@ mod test {
                 ttl: 1,
                 id: 123,
             })),
-            ProposeId::new("id4".to_owned()),
+            ProposeId::from("id4"),
         );
         let put_with_lease_cmd = Command::new(
             vec![KeyRange::new_one_key("foo")],
@@ -867,7 +867,7 @@ mod test {
                 lease: 123,
                 ..Default::default()
             })),
-            ProposeId::new("id5".to_owned()),
+            ProposeId::from("id5"),
         );
         let txn_with_lease_id_cmd = Command::new(
             vec![KeyRange::new_one_key("key")],
@@ -883,12 +883,12 @@ mod test {
                 }],
                 failure: vec![],
             })),
-            ProposeId::new("id6".to_owned()),
+            ProposeId::from("id6"),
         );
         let lease_leases_cmd = Command::new(
             vec![],
             RequestWithToken::new(RequestWrapper::LeaseLeasesRequest(LeaseLeasesRequest {})),
-            ProposeId::new("id4".to_owned()),
+            ProposeId::from("id4"),
         );
 
         assert!(lease_grant_cmd.is_conflict(&put_with_lease_cmd)); // lease id
@@ -917,7 +917,7 @@ mod test {
                 success,
                 failure,
             })),
-            ProposeId::new(propose_id.to_owned()),
+            propose_id.to_owned(),
         )
     }
 
@@ -929,7 +929,7 @@ mod test {
                 revision: 3,
                 physical: false,
             })),
-            ProposeId::new("id11".to_owned()),
+            ProposeId::from("id11"),
         );
 
         let compaction_cmd_2 = Command::new(
@@ -938,7 +938,7 @@ mod test {
                 revision: 5,
                 physical: false,
             })),
-            ProposeId::new("id12".to_owned()),
+            ProposeId::from("id12"),
         );
 
         let txn_with_lease_id_cmd = generate_txn_command(
@@ -1012,7 +1012,7 @@ mod test {
         let cmd = Command::new(
             vec![KeyRange::new("a", "e")],
             RequestWithToken::new(RequestWrapper::PutRequest(PutRequest::default())),
-            ProposeId::new("id".to_owned()),
+            ProposeId::from("id"),
         );
         let decoded_cmd =
             <Command as PbCodec>::decode(&cmd.encode()).expect("decode should success");
