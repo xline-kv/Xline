@@ -17,7 +17,6 @@ utils = { path = "../utils", features = ["parking_lot"] }
 xlineapi = { path = "../xlineapi" }
 tonic = { version = "0.3.0", package = "madsim-tonic" }
 itertools = "0.10.3"
-uuid = { version = "1.1.2", features = ["v4"] }
 thiserror = "1.0.37"
 tower = { version = "0.4", features = ["discover"] }
 tokio = { version = "0.2.23", package = "madsim-tokio", features = ["sync"] }

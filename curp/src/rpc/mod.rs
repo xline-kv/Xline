@@ -196,15 +196,13 @@ impl ProposeResponse {
 
 impl WaitSyncedRequest {
     /// Create a `WaitSynced` request
-    pub(crate) fn new(id: &ProposeId) -> Self {
-        Self {
-            propose_id: id.clone().into_inner(),
-        }
+    pub(crate) fn new(propose_id: ProposeId) -> Self {
+        Self { propose_id }
     }
 
-    /// Get the propose id
-    pub(crate) fn propose_id(&self) -> ProposeId {
-        ProposeId::new(self.propose_id.clone())
+    /// Get the `propose_id` reference
+    pub(crate) fn propose_id(&self) -> &ProposeId {
+        &self.propose_id
     }
 }
 
@@ -438,6 +436,6 @@ impl FetchReadStateResponse {
 impl ShutdownRequest {
     /// Create a new shutdown request
     pub(crate) fn new(id: ProposeId) -> Self {
-        Self { id: id.into() }
+        Self { id }
     }
 }

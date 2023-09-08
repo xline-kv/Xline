@@ -2,11 +2,10 @@ use std::{pin::Pin, sync::Arc, time::Duration};
 
 use async_stream::{stream, try_stream};
 use clippy_utilities::Cast;
-use curp::{client::Client, cmd::ProposeId, members::ClusterInfo};
+use curp::{client::Client, cmd::generate_propose_id, members::ClusterInfo};
 use futures::stream::Stream;
 use tokio::time;
 use tracing::{debug, warn};
-use uuid::Uuid;
 use xlineapi::RequestWithToken;
 
 use super::{
@@ -100,15 +99,6 @@ where
         }
     }
 
-    /// Generate propose id
-    fn generate_propose_id(&self) -> ProposeId {
-        ProposeId::new(format!(
-            "{}-{}",
-            self.cluster_info.self_name(),
-            Uuid::new_v4()
-        ))
-    }
-
     /// Propose request and get result with fast/slow path
     async fn propose<T>(
         &self,
@@ -121,7 +111,7 @@ where
         let token = get_token(request.metadata());
         let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
         let cmd = command_from_request_wrapper(
-            self.generate_propose_id(),
+            generate_propose_id(self.cluster_info.self_name()),
             wrapper,
             Some(self.lease_storage.as_ref()),
         );

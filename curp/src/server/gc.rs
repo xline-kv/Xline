@@ -96,49 +96,43 @@ mod tests {
         tokio::spawn(gc_cmd_board(Arc::clone(&board), Duration::from_millis(500)));
 
         tokio::time::sleep(Duration::from_millis(100)).await;
-        board.write().er_buffer.insert(
-            ProposeId::new("1".to_owned()),
-            Ok(TestCommandResult::default()),
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        board.write().er_buffer.insert(
-            ProposeId::new("2".to_owned()),
-            Ok(TestCommandResult::default()),
-        );
         board
             .write()
-            .asr_buffer
-            .insert(ProposeId::new("1".to_owned()), Ok(0.into()));
+            .er_buffer
+            .insert(ProposeId::from("1"), Ok(TestCommandResult::default()));
         tokio::time::sleep(Duration::from_millis(100)).await;
         board
             .write()
+            .er_buffer
+            .insert(ProposeId::from("2"), Ok(TestCommandResult::default()));
+        board
+            .write()
             .asr_buffer
-            .insert(ProposeId::new("2".to_owned()), Ok(0.into()));
+            .insert(ProposeId::from("1"), Ok(0.into()));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        board
+            .write()
+            .asr_buffer
+            .insert(ProposeId::from("2"), Ok(0.into()));
 
         // at 600ms
         tokio::time::sleep(Duration::from_millis(400)).await;
-        board.write().er_buffer.insert(
-            ProposeId::new("3".to_owned()),
-            Ok(TestCommandResult::default()),
-        );
+        board
+            .write()
+            .er_buffer
+            .insert(ProposeId::from("3"), Ok(TestCommandResult::default()));
         board
             .write()
             .asr_buffer
-            .insert(ProposeId::new("3".to_owned()), Ok(0.into()));
+            .insert(ProposeId::from("3"), Ok(0.into()));
 
         // at 1100ms, the first two kv should be removed
         tokio::time::sleep(Duration::from_millis(500)).await;
         let board = board.write();
         assert_eq!(board.er_buffer.len(), 1);
-        assert_eq!(
-            board.er_buffer.get_index(0).unwrap().0,
-            &ProposeId::new("3".to_owned())
-        );
+        assert_eq!(board.er_buffer.get_index(0).unwrap().0, "3");
         assert_eq!(board.asr_buffer.len(), 1);
-        assert_eq!(
-            board.asr_buffer.get_index(0).unwrap().0,
-            &ProposeId::new("3".to_owned())
-        );
+        assert_eq!(board.asr_buffer.get_index(0).unwrap().0, "3");
     }
 
     #[tokio::test]

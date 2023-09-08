@@ -12,6 +12,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, instrument};
 use utils::tracing::Inject;
 
+use super::{ShutdownRequest, ShutdownResponse};
 use crate::{
     error::RpcError,
     members::ServerId,
@@ -23,8 +24,6 @@ use crate::{
     },
     snapshot::Snapshot,
 };
-
-use super::{ShutdownRequest, ShutdownResponse};
 
 /// Install snapshot chunk size: 64KB
 const SNAPSHOT_CHUNK_SIZE: u64 = 64 * 1024;

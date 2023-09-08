@@ -619,7 +619,7 @@ fn leader_handle_shutdown_will_succeed() {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
-    let id = ProposeId::new(next_id().to_string());
+    let id = next_id().to_string();
     let ((leader_id, term), result) = curp.handle_shutdown(id);
     assert_eq!(leader_id, Some(curp.id().clone()));
     assert_eq!(term, 0);
@@ -635,7 +635,7 @@ fn follower_handle_shutdown_will_reject() {
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
-    let id = ProposeId::new(next_id().to_string());
+    let id = next_id().to_string();
     let ((leader_id, term), result) = curp.handle_shutdown(id);
     assert_eq!(leader_id, None);
     assert_eq!(term, 1);

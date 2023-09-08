@@ -7,10 +7,12 @@ use std::{
 };
 
 use clippy_utilities::OverflowArithmetic;
-use curp::{client::Client as CurpClient, cmd::ProposeId};
+use curp::{
+    client::Client as CurpClient,
+    cmd::{generate_propose_id, ProposeId},
+};
 use futures::{Future, FutureExt};
 use tonic::transport::Channel;
-use uuid::Uuid;
 use xline::server::{Command, CommandResponse, KeyRange, SyncResponse};
 use xlineapi::{
     Compare, CompareResult, CompareTarget, DeleteRangeRequest, DeleteRangeResponse, EventType,
@@ -244,11 +246,6 @@ impl LockClient {
         Ok(UnlockResponse { header })
     }
 
-    /// Generate a new `ProposeId`
-    fn generate_propose_id(&self) -> ProposeId {
-        ProposeId::new(format!("{}-{}", self.name, Uuid::new_v4()))
-    }
-
     /// Generate `Command` proposal from `Request`
     fn command_from_request_wrapper(propose_id: ProposeId, wrapper: RequestWithToken) -> Command {
         #[allow(clippy::wildcard_enum_match_arm)]
@@ -280,7 +277,7 @@ impl LockClient {
     {
         let request_with_token =
             RequestWithToken::new_with_token(request.into(), self.token.clone());
-        let propose_id = self.generate_propose_id();
+        let propose_id = generate_propose_id(&self.name);
 
         let cmd = Self::command_from_request_wrapper(propose_id, request_with_token);
         self.curp_client

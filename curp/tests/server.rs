@@ -7,7 +7,6 @@ use curp::{
     client::Builder,
     error::{CommandProposeError, ProposeError},
 };
-use curp_external_api::cmd::ProposeId;
 use curp_test_utils::{
     init_logger, sleep_millis, sleep_secs,
     test_cmd::{next_id, TestCommand, TestCommandResult},
@@ -285,7 +284,7 @@ async fn shutdown_rpc_should_shutdown_the_cluster() {
     });
 
     let client = group.new_client(ClientConfig::default()).await;
-    let id = ProposeId::new(next_id().to_string());
+    let id = next_id().to_string();
     client.shutdown(id).await.unwrap();
 
     let res = client
