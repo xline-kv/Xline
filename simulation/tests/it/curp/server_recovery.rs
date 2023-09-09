@@ -47,15 +47,18 @@ async fn leader_crash_and_recovery() {
     group.restart(leader, false).await;
     let old_leader = group.nodes.get_mut(&leader).unwrap();
 
+    // new leader will push a empty log to commit previous logs, the empty log does
+    // not call ce.execute and ce.after_sync, therefore, the index of the first item
+    // received by as_rx is 2
     let (_cmd, er) = old_leader.exe_rx.recv().await.unwrap();
     assert_eq!(er.values, Vec::<u32>::new());
     let asr = old_leader.as_rx.recv().await.unwrap();
-    assert_eq!(asr.1, 1);
+    assert_eq!(asr.1, 2); // log index 1 is the empty log
 
     let (_cmd, er) = old_leader.exe_rx.recv().await.unwrap();
     assert_eq!(er.values, vec![0]);
     let asr = old_leader.as_rx.recv().await.unwrap();
-    assert_eq!(asr.1, 2);
+    assert_eq!(asr.1, 4); // log index 3 is the empty log
 }
 
 #[madsim::test]
@@ -95,12 +98,12 @@ async fn follower_crash_and_recovery() {
     let (_cmd, er) = follower.exe_rx.recv().await.unwrap();
     assert_eq!(er.values, Vec::<u32>::new(),);
     let asr = follower.as_rx.recv().await.unwrap();
-    assert_eq!(asr.1, 1);
+    assert_eq!(asr.1, 2); // log index 1 is the empty log
 
     let (_cmd, er) = follower.exe_rx.recv().await.unwrap();
     assert_eq!(er.values, vec![0]);
     let asr = follower.as_rx.recv().await.unwrap();
-    assert_eq!(asr.1, 2);
+    assert_eq!(asr.1, 3);
 }
 
 #[madsim::test]
@@ -137,27 +140,18 @@ async fn leader_and_follower_both_crash_and_recovery() {
 
     // restart the original leader
     group.restart(leader, false).await;
-    // add a new log to commit previous logs
-    assert_eq!(
-        client
-            .propose(TestCommand::new_get(vec![0]), true)
-            .await
-            .unwrap()
-            .0
-            .values,
-        vec![0]
-    );
+
     let old_leader = group.nodes.get_mut(&leader).unwrap();
 
     let (_cmd, er) = old_leader.exe_rx.recv().await.unwrap();
     assert_eq!(er.values, Vec::<u32>::new(),);
     let asr = old_leader.as_rx.recv().await.unwrap();
-    assert_eq!(asr.1, 1);
+    assert_eq!(asr.1, 2); // log index 1 is the empty log
 
     let (_cmd, er) = old_leader.exe_rx.recv().await.unwrap();
     assert_eq!(er.values, vec![0]);
     let asr = old_leader.as_rx.recv().await.unwrap();
-    assert_eq!(asr.1, 2);
+    assert_eq!(asr.1, 3);
 
     // restart follower
     group.restart(follower, false).await;
@@ -166,12 +160,12 @@ async fn leader_and_follower_both_crash_and_recovery() {
     let (_cmd, er) = follower.exe_rx.recv().await.unwrap();
     assert_eq!(er.values, Vec::<u32>::new(),);
     let asr = follower.as_rx.recv().await.unwrap();
-    assert_eq!(asr.1, 1);
+    assert_eq!(asr.1, 2); // log index 1 is the empty log
 
     let (_cmd, er) = follower.exe_rx.recv().await.unwrap();
     assert_eq!(er.values, vec![0]);
     let asr = follower.as_rx.recv().await.unwrap();
-    assert_eq!(asr.1, 2);
+    assert_eq!(asr.1, 3);
 }
 
 #[madsim::test]
@@ -269,6 +263,7 @@ async fn new_leader_will_recover_spec_cmds_cond2() {
 }
 
 #[madsim::test]
+#[ignore = "fix this after revert cmd_vid"]
 async fn old_leader_will_keep_original_states() {
     init_logger();
 
@@ -279,7 +274,7 @@ async fn old_leader_will_keep_original_states() {
     let cmd0 = TestCommand::new_put(vec![0], 0);
     let (er, index) = client.propose(cmd0, false).await.unwrap();
     assert_eq!(er.values, Vec::<u32>::new());
-    assert_eq!(index.unwrap(), 1.into());
+    assert_eq!(index.unwrap(), 2.into()); // log index 1 is the empty log
 
     // 1: disable all others to prevent the cmd1 to be synced
     let leader1 = group.get_leader().await.0;

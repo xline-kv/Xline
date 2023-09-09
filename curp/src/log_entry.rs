@@ -22,6 +22,8 @@ pub(crate) struct LogEntry<C> {
 /// Entry data of a `LogEntry`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum EntryData<C> {
+    /// Empty entry
+    Empty(ProposeId),
     /// `Command` entry
     Command(Arc<C>),
     /// `ConfChange` entry
@@ -69,7 +71,7 @@ where
         match self.entry_data {
             EntryData::Command(ref cmd) => cmd.id(),
             EntryData::ConfChange(ref e) => e.id(),
-            EntryData::Shutdown(id) => id,
+            EntryData::Shutdown(id) | EntryData::Empty(id) => id,
         }
     }
 }
