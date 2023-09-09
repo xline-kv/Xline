@@ -618,6 +618,8 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
         let prev_last_log_index = log_w.last_log_index();
         self.recover_from_spec_pools(&mut st_w, &mut log_w, spec_pools);
+        let propose_id = ProposeId(rand::random(), 0);
+        let _ignore = log_w.push(st_w.term, EntryData::Empty(propose_id));
         self.recover_ucp_from_log(&mut log_w);
         let last_log_index = log_w.last_log_index();
 
@@ -1418,7 +1420,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                     let _ignore =
                         ucp_l.insert(conf_change.id(), conf_change.as_ref().clone().into());
                 }
-                EntryData::Shutdown(_) => {}
+                EntryData::Shutdown(_) | EntryData::Empty(_) => {}
             }
         }
     }

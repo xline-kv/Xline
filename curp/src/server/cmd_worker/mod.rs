@@ -122,7 +122,7 @@ async fn worker_exe<
             );
             er_ok
         }
-        EntryData::ConfChange(_) | EntryData::Shutdown(_) => true,
+        EntryData::ConfChange(_) | EntryData::Shutdown(_) | EntryData::Empty(_) => true,
     }
 }
 
@@ -176,6 +176,7 @@ async fn worker_as<
             }
             true
         }
+        EntryData::Empty(_) => true,
     }
 }
 
