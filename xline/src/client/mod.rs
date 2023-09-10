@@ -97,7 +97,7 @@ impl Client {
             let key_ranges = vec![KeyRange::new_one_key(request.key())];
             let propose_id = generate_propose_id(&self.name);
             let request = RequestWithToken::new(rpc::PutRequest::from(request).into());
-            let cmd = Command::new(key_ranges, request, propose_id);
+            let cmd = vec![Command::new(key_ranges, request, propose_id)];
             let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
             Ok(cmd_res.into_inner().into())
         } else {
@@ -121,7 +121,7 @@ impl Client {
             let key_ranges = vec![KeyRange::new(request.key(), request.range_end())];
             let propose_id = generate_propose_id(&self.name);
             let request = RequestWithToken::new(rpc::RangeRequest::from(request).into());
-            let cmd = Command::new(key_ranges, request, propose_id);
+            let cmd = vec![Command::new(key_ranges, request, propose_id)];
             let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
             Ok(cmd_res.into_inner().into())
         } else {
@@ -145,7 +145,7 @@ impl Client {
             let key_ranges = vec![KeyRange::new(request.key(), request.range_end())];
             let propose_id = generate_propose_id(&self.name);
             let request = RequestWithToken::new(rpc::DeleteRangeRequest::from(request).into());
-            let cmd = Command::new(key_ranges, request, propose_id);
+            let cmd = vec![Command::new(key_ranges, request, propose_id)];
             let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
             Ok(cmd_res.into_inner().into())
         } else {

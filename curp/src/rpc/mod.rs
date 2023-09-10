@@ -37,6 +37,7 @@ use crate::{
     members::ServerId,
     LogIndex,
 };
+use itertools::Itertools;
 
 /// Rpc connect
 pub(crate) mod connect;
@@ -107,15 +108,15 @@ impl FetchClusterResponse {
 
 impl ProposeRequest {
     /// Create a new `Propose` request
-    pub(crate) fn new<C: Command>(cmd: &C) -> Self {
+    pub(crate) fn new<C: Command>(cmds: &[C]) -> Self {
         Self {
-            command: cmd.encode(),
+            command: cmds.iter().map(PbCodec::encode).collect_vec(),
         }
     }
 
     /// Get command
-    pub(crate) fn cmd<C: Command>(&self) -> Result<C, PbSerializeError> {
-        C::decode(&self.command)
+    pub(crate) fn cmds<C: Command>(&self) -> Result<Vec<C>, PbSerializeError> {
+        self.command.iter().map(|cmd| C::decode(cmd)).collect()
     }
 }
 
@@ -155,7 +156,12 @@ impl ProposeResponse {
     }
 
     /// Create an error propose response
-    pub(crate) fn new_error(id: ProposeId, leader_id: Option<ServerId>, term: u64, error: ProposeError) -> Self {
+    pub(crate) fn new_error(
+        id: ProposeId,
+        leader_id: Option<ServerId>,
+        term: u64,
+        error: ProposeError,
+    ) -> Self {
         Self {
             propose_id: id,
             leader_id,
@@ -205,14 +211,15 @@ impl ProposeResponse {
 
 impl WaitSyncedRequest {
     /// Create a `WaitSynced` request
-    pub(crate) fn new(id: &ProposeId) -> Self {
+    pub(crate) fn new(id: &[ProposeId]) -> Self {
         Self {
-            propose_id: id.clone(),
+            propose_id: id.to_owned(),
         }
     }
 
     /// Get the propose id
-    pub(crate) fn propose_id(&self) -> ProposeId {
+    #[allow(dead_code)]
+    pub(crate) fn propose_ids(&self) -> Vec<ProposeId> {
         self.propose_id.clone()
     }
 }

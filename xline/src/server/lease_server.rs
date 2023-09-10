@@ -231,10 +231,7 @@ where
             if self.lease_storage.is_primary() {
                 break self.leader_keep_alive(request_stream).await;
             }
-            let leader_id = self
-                .client
-                .get_leader_id_from_curp()
-                .await;
+            let leader_id = self.client.get_leader_id_from_curp().await;
             // Given that a candidate server may become a leader when it won the election or
             // a follower when it lost the election. Therefore we need to double check here.
             // We can directly invoke leader_keep_alive when a candidate becomes a leader.
@@ -328,10 +325,7 @@ where
                 };
                 return Ok(tonic::Response::new(res));
             }
-            let leader_id = self
-                .client
-                .get_leader_id_from_curp()
-                .await;
+            let leader_id = self.client.get_leader_id_from_curp().await;
             let leader_addr = self.cluster_info.address(leader_id).unwrap_or_else(|| {
                 unreachable!(
                     "The address of leader {} not found in all_members {:?}",

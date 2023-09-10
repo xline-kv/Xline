@@ -70,7 +70,7 @@ impl KvClient {
             xlineapi::PutRequest::from(request).into(),
             self.token.clone(),
         );
-        let cmd = Command::new(key_ranges, request, propose_id);
+        let cmd = vec![Command::new(key_ranges, request, propose_id)];
         let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
         Ok(cmd_res.into_inner().into())
     }
@@ -115,7 +115,7 @@ impl KvClient {
             xlineapi::RangeRequest::from(request).into(),
             self.token.clone(),
         );
-        let cmd = Command::new(key_ranges, request, propose_id);
+        let cmd = vec![Command::new(key_ranges, request, propose_id)];
         let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
         Ok(cmd_res.into_inner().into())
     }
@@ -153,7 +153,7 @@ impl KvClient {
             xlineapi::DeleteRangeRequest::from(request).into(),
             self.token.clone(),
         );
-        let cmd = Command::new(key_ranges, request, propose_id);
+        let cmd = vec![Command::new(key_ranges, request, propose_id)];
         let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
         Ok(cmd_res.into_inner().into())
     }
@@ -208,7 +208,7 @@ impl KvClient {
             xlineapi::TxnRequest::from(request).into(),
             self.token.clone(),
         );
-        let cmd = Command::new(key_ranges, request, propose_id);
+        let cmd = vec![Command::new(key_ranges, request, propose_id)];
         let (cmd_res, Some(sync_res)) = self.curp_client.propose(cmd, false).await? else {
             unreachable!("sync_res is always Some when use_fast_path is false");
         };
@@ -261,7 +261,7 @@ impl KvClient {
             xlineapi::CompactionRequest::from(request).into(),
             self.token.clone(),
         );
-        let cmd = Command::new(vec![], request, propose_id);
+        let cmd = vec![Command::new(vec![], request, propose_id)];
 
         let res_wrapper = if use_fast_path {
             let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;

@@ -60,7 +60,7 @@ impl Compactable for ClientPool<Command> {
         };
         let request_wrapper = RequestWithToken::new_with_token(request.into(), None);
         let propose_id = generate_propose_id("auto-compactor");
-        let cmd = Command::new(vec![], request_wrapper, propose_id);
+        let cmd = vec![Command::new(vec![], request_wrapper, propose_id)];
         if let Err(e) = self.get_client().propose(cmd, true).await {
             #[allow(clippy::wildcard_enum_match_arm)]
             match e {

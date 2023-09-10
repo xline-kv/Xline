@@ -8,7 +8,7 @@ import "error.proto";
 message ProposeRequest {
     // The serialized command
     // The original type is `Command`
-    bytes command = 1;
+    repeated bytes command = 1;
 }
 
 message ProposeResponse {
@@ -22,7 +22,7 @@ message ProposeResponse {
 }
 
 message WaitSyncedRequest {
-    string propose_id = 1;
+    repeated string propose_id = 1;
 }
 
 message WaitSyncedResponse {

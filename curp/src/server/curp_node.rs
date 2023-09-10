@@ -123,9 +123,15 @@ pub(super) struct CurpNode<C: Command, RC: RoleChange> {
 impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     /// Handle "propose" requests
     pub(super) async fn propose(&self, req: ProposeRequest) -> Result<ProposeResponse, CurpError> {
-        let cmd: Arc<C> = Arc::new(req.cmd()?);
+        let cmds: Arc<Vec<C>> = Arc::new(req.cmds()?);
+        assert_eq!(
+            cmds.len(),
+            1,
+            "the length of a proposal should not be larger than 1"
+        );
+        #[allow(clippy::indexing_slicing)]
+        let cmd = Arc::new(cmds[0].clone());
 
-        // handle proposal
         let ((leader_id, term), result) = self.curp.handle_propose(Arc::clone(&cmd));
         let resp = match result {
             Ok(true) => {
@@ -186,8 +192,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         &self,
         req: WaitSyncedRequest,
     ) -> Result<WaitSyncedResponse, CurpError> {
-        let id = req.propose_id();
-        debug!("{} get wait synced request for cmd({id})", self.curp.id());
+        let ids = req.propose_id;
+        #[allow(clippy::indexing_slicing)]
+        let id = ids[0].clone();
+        debug!("{} get wait synced request for cmd({id:?})", self.curp.id());
 
         let (er, asr) = CommandBoard::wait_for_er_asr(&self.cmd_board, &id).await;
         let resp = WaitSyncedResponse::new_from_result::<C>(id.clone(), Some(er), asr);

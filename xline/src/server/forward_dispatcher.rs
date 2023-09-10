@@ -125,7 +125,7 @@ async fn handle_forward(
     fast_path: bool,
 ) {
     for (cmd, sender) in cmd_batch {
-        let propose_res = client.propose(cmd, fast_path).await;
+        let propose_res = client.propose(vec![cmd], fast_path).await;
         if let Err(_e) = sender.send(propose_res) {
             panic!("cannot send proposal result in handl_forward");
         }

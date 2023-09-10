@@ -217,10 +217,10 @@ where
     #[instrument(skip_all)]
     async fn fast_round(
         &self,
-        cmd_arc: Arc<C>,
+        cmds_arc: &[C],
     ) -> Result<(Option<<C as Command>::ER>, bool), CommandProposeError<C>> {
-        debug!("fast round for cmd({}) started", cmd_arc.id());
-        let req = ProposeRequest::new(cmd_arc.as_ref());
+        // debug!("fast round for cmd({}) started", cmds_arc.id());
+        let req = ProposeRequest::new(cmds_arc);
 
         let connects = self
             .connects
@@ -290,7 +290,7 @@ where
             .map_err(Into::<ProposeError>::into)?
             .map_err(|e| CommandProposeError::Execute(e))?;
             if (ok_cnt >= superquorum) && execute_result.is_some() {
-                debug!("fast round for cmd({}) succeed", cmd_arc.id());
+                debug!("fast round for cmd({}) succeed", resp.propose_id);
                 return Ok((execute_result, true));
             }
         }
@@ -301,9 +301,10 @@ where
     #[instrument(skip_all)]
     async fn slow_round(
         &self,
-        cmd: Arc<C>,
+        cmds_arc: &[C],
     ) -> Result<(<C as Command>::ASR, <C as Command>::ER), CommandProposeError<C>> {
-        debug!("slow round for cmd({}) started", cmd.id());
+        let propose_ids: Vec<_> = cmds_arc.iter().map(|cmd| cmd.id().clone()).collect();
+        debug!("slow round for cmd({propose_ids:?}) started");
         let retry_timeout = *self.timeout.retry_timeout();
         loop {
             // fetch leader id
@@ -315,7 +316,7 @@ where
                 .get_connect(leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .wait_synced(
-                    WaitSyncedRequest::new(cmd.id()),
+                    WaitSyncedRequest::new(&propose_ids),
                     *self.timeout.wait_synced_timeout(),
                 )
                 .await
@@ -325,14 +326,14 @@ where
                     warn!("wait synced rpc error: {e}");
                     // it's quite likely that the leader has crashed, then we should wait for some time and fetch the leader again
                     tokio::time::sleep(retry_timeout).await;
-                    self.resend_propose(Arc::clone(&cmd), None).await?;
+                    self.resend_propose(cmds_arc, None).await?;
                     continue;
                 }
             };
-
+            let propose_id = resp.propose_id.clone();
             match resp.into::<C>().map_err(Into::<ProposeError>::into)? {
                 SyncResult::Success { er, asr } => {
-                    debug!("slow round for cmd({}) succeeded", cmd.id());
+                    debug!("slow round for cmd({}) succeeded", propose_id);
                     return Ok((asr, er));
                 }
                 SyncResult::Error(CommandSyncError::WaitSync(WaitSyncError::Redirect(
@@ -348,7 +349,7 @@ where
                             })
                         })
                     });
-                    self.resend_propose(Arc::clone(&cmd), new_leader).await?; // resend the propose to the new leader
+                    self.resend_propose(cmds_arc, new_leader).await?; // resend the propose to the new leader
                 }
                 SyncResult::Error(CommandSyncError::WaitSync(e)) => {
                     return Err(
@@ -368,7 +369,7 @@ where
     /// Resend the propose only to the leader. This is used when leader changes and we need to ensure that the propose is received by the new leader.
     async fn resend_propose(
         &self,
-        cmd: Arc<C>,
+        cmds_arc: &[C],
         mut new_leader: Option<ServerId>,
     ) -> Result<(), ProposeError> {
         loop {
@@ -385,7 +386,7 @@ where
                 .get_connect(leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .propose(
-                    ProposeRequest::new(cmd.as_ref()),
+                    ProposeRequest::new(cmds_arc),
                     *self.timeout.propose_timeout(),
                 )
                 .await;
@@ -536,16 +537,16 @@ where
     /// # Panics
     ///   If leader index is out of bound of all the connections, panic
     #[inline]
-    #[instrument(skip_all, fields(cmd_id=%cmd.id()))]
+    #[instrument(skip_all)]
     #[allow(clippy::type_complexity)] // This type is not complex
     pub async fn propose(
         &self,
-        cmd: C,
+        cmds: Vec<C>,
         use_fast_path: bool,
     ) -> Result<(C::ER, Option<C::ASR>), CommandProposeError<C>> {
-        let cmd_arc = Arc::new(cmd);
-        let fast_round = self.fast_round(Arc::clone(&cmd_arc));
-        let slow_round = self.slow_round(cmd_arc);
+        let cmds_arc = cmds.as_slice();
+        let fast_round = self.fast_round(cmds_arc);
+        let slow_round = self.slow_round(cmds_arc);
         if use_fast_path {
             pin_mut!(fast_round);
             pin_mut!(slow_round);

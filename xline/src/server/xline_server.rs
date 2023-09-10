@@ -2,7 +2,9 @@ use std::{future::Future, net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use clippy_utilities::{Cast, OverflowArithmetic};
-use curp::{client::ClientPool, members::ClusterInfo, server::Rpc, ProtocolServer, SnapshotAllocator};
+use curp::{
+    client::ClientPool, members::ClusterInfo, server::Rpc, ProtocolServer, SnapshotAllocator,
+};
 use event_listener::Event;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use tokio::{net::TcpListener, sync::mpsc::channel};

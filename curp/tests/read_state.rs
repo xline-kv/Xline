@@ -22,7 +22,7 @@ async fn read_state() {
     let put_id = put_cmd.id().clone();
     tokio::spawn(async move {
         assert_eq!(
-            put_client.propose(put_cmd, true).await.unwrap().0,
+            put_client.propose(vec![put_cmd], true).await.unwrap().0,
             TestCommandResult::default(),
         );
     });
