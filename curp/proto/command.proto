@@ -12,11 +12,12 @@ message ProposeRequest {
 }
 
 message ProposeResponse {
-    optional uint64 leader_id = 1;
-    uint64 term = 2;
+    string propose_id = 1;
+    optional uint64 leader_id = 2;
+    uint64 term = 3;
     oneof exe_result {
-        CmdResult result = 3;
-        errorpb.ProposeError error = 4;
+        CmdResult result = 4;
+        errorpb.ProposeError error = 5;
     }
 }
 
@@ -25,6 +26,7 @@ message WaitSyncedRequest {
 }
 
 message WaitSyncedResponse {
+    string propose_id = 1;
     message Success {
         // The serialized command after sync result
         // The original type is Command::ASR
@@ -34,8 +36,8 @@ message WaitSyncedResponse {
         bytes exe_result = 2;
     }
     oneof sync_result {
-        Success success = 1;
-        errorpb.CommandSyncError error = 2;
+        Success success = 2;
+        errorpb.CommandSyncError error = 3;
     }
 }
 

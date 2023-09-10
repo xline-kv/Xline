@@ -324,7 +324,7 @@ impl XlineServer {
         let new_client_pool: ClientPool<Command> = ClientPool::new(
             16,
             self.cluster_info.self_id(),
-            self.client_config,
+            self.client_timeout,
             self.cluster_info.all_members(),
         )
         .await?;

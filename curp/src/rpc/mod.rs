@@ -122,6 +122,7 @@ impl ProposeRequest {
 impl ProposeResponse {
     /// Create an ok propose response
     pub(crate) fn new_result<C: Command>(
+        id: ProposeId,
         leader_id: Option<ServerId>,
         term: u64,
         result: &Result<C::ER, C::Error>,
@@ -135,6 +136,7 @@ impl ProposeResponse {
             })),
         };
         Self {
+            propose_id: id,
             leader_id,
             term,
             exe_result,
@@ -143,8 +145,9 @@ impl ProposeResponse {
 
     /// Create an empty propose response
     #[allow(clippy::unnecessary_wraps)] // To keep the new functions return the same type
-    pub(crate) fn new_empty(leader_id: Option<ServerId>, term: u64) -> Self {
+    pub(crate) fn new_empty(id: ProposeId, leader_id: Option<ServerId>, term: u64) -> Self {
         Self {
+            propose_id: id,
             leader_id,
             term,
             exe_result: None,
@@ -152,8 +155,9 @@ impl ProposeResponse {
     }
 
     /// Create an error propose response
-    pub(crate) fn new_error(leader_id: Option<ServerId>, term: u64, error: ProposeError) -> Self {
+    pub(crate) fn new_error(id: ProposeId, leader_id: Option<ServerId>, term: u64, error: ProposeError) -> Self {
         Self {
+            propose_id: id,
             leader_id,
             term,
             exe_result: Some(ExeResult::Error(PbProposeErrorOuter {
@@ -215,8 +219,9 @@ impl WaitSyncedRequest {
 
 impl WaitSyncedResponse {
     /// Create a success response
-    pub(crate) fn new_success<C: Command>(asr: &C::ASR, er: &C::ER) -> Self {
+    pub(crate) fn new_success<C: Command>(id: ProposeId, asr: &C::ASR, er: &C::ER) -> Self {
         Self {
+            propose_id: id,
             sync_result: Some(SyncResultRaw::Success(Success {
                 after_sync_result: asr.encode(),
                 exe_result: er.encode(),
@@ -225,8 +230,9 @@ impl WaitSyncedResponse {
     }
 
     /// Create an error response
-    pub(crate) fn new_error<C: Command>(err: CommandSyncError<C>) -> Self {
+    pub(crate) fn new_error<C: Command>(id: ProposeId, err: CommandSyncError<C>) -> Self {
         Self {
+            propose_id: id,
             sync_result: Some(SyncResultRaw::Error(PbCommandSyncErrorOuter {
                 command_sync_error: Some(err.into()),
             })),
@@ -235,6 +241,7 @@ impl WaitSyncedResponse {
 
     /// Create a new response from execution result and `after_sync` result
     pub(crate) fn new_from_result<C: Command>(
+        id: ProposeId,
         er: Option<Result<C::ER, C::Error>>,
         asr: Option<Result<C::ASR, C::Error>>,
     ) -> Self {
@@ -243,19 +250,21 @@ impl WaitSyncedResponse {
                 unreachable!("should not call after sync if execution fails")
             }
             (None, None) => WaitSyncedResponse::new_error::<C>(
+                id,
                 WaitSyncError::Other("can't get er result".to_owned()).into(),
             ), // this is highly unlikely to happen,
             (Some(Err(err)), None) => {
-                WaitSyncedResponse::new_error(CommandSyncError::<C>::Execute(err))
+                WaitSyncedResponse::new_error(id, CommandSyncError::<C>::Execute(err))
             }
             // The er is ignored as the propose has failed
             (Some(Ok(_er)), Some(Err(err))) => {
-                WaitSyncedResponse::new_error(CommandSyncError::<C>::AfterSync(err))
+                WaitSyncedResponse::new_error(id, CommandSyncError::<C>::AfterSync(err))
             }
-            (Some(Ok(er)), Some(Ok(asr))) => WaitSyncedResponse::new_success::<C>(&asr, &er),
+            (Some(Ok(er)), Some(Ok(asr))) => WaitSyncedResponse::new_success::<C>(id, &asr, &er),
             // The er is ignored as the propose has failed
             (Some(Ok(_er)), None) => {
                 WaitSyncedResponse::new_error::<C>(
+                    id,
                     WaitSyncError::Other("can't get after sync result".to_owned()).into(),
                 ) // this is highly unlikely to happen,
             }
