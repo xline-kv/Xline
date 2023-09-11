@@ -9,7 +9,7 @@ use std::{
     sync::Arc,
 };
 
-use curp_external_api::LogIndex;
+use curp_external_api::cmd::ProposeId;
 use tokio::sync::oneshot;
 use tracing::{debug, error};
 use utils::shutdown::{self, Signal};
@@ -191,8 +191,8 @@ enum OnceState {
 /// Internally it maintains a dependency graph of conflicting cmds
 
 struct Filter<C: Command, CE> {
-    /// Index from `LogIndex` to `vertex`
-    entry_vid: HashMap<LogIndex, u64>,
+    /// Index from `ProposeId` to `vertex`
+    cmd_vid: HashMap<ProposeId, u64>,
     /// Conflict graph
     vs: HashMap<u64, Vertex<C>>,
     /// Next vertex id
@@ -207,7 +207,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
     /// Create a new filter that checks conflict in between msgs
     fn new(filter_tx: flume::Sender<Task<C>>, ce: Arc<CE>) -> Self {
         Self {
-            entry_vid: HashMap::new(),
+            cmd_vid: HashMap::new(),
             vs: HashMap::new(),
             next_id: 0,
             filter_tx,
@@ -296,7 +296,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                 .remove(&vid)
                 .expect("no such vertex in conflict graph");
             if let VertexInner::Entry { ref entry, .. } = v.inner {
-                assert!(self.entry_vid.remove(&entry.index).is_some(), "no such cmd");
+                assert!(self.cmd_vid.remove(&entry.id()).is_some(), "no such cmd");
             }
             self.update_successors(&v);
         }
@@ -437,7 +437,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
             CEEvent::SpecExeReady(entry) => {
                 let new_vid = self.next_vertex_id();
                 assert!(
-                    self.entry_vid.insert(entry.index, new_vid).is_none(),
+                    self.cmd_vid.insert(entry.id(), new_vid).is_none(),
                     "cannot insert a cmd twice"
                 );
                 let new_v = Vertex {
@@ -453,7 +453,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                 new_vid
             }
             CEEvent::ASReady(entry) => {
-                if let Some(vid) = self.entry_vid.get(&entry.index).copied() {
+                if let Some(vid) = self.cmd_vid.get(&entry.id()).copied() {
                     let v = self.get_vertex_mut(vid);
                     match v.inner {
                         VertexInner::Entry { ref mut as_st, .. } => {
@@ -468,7 +468,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                 } else {
                     let new_vid = self.next_vertex_id();
                     assert!(
-                        self.entry_vid.insert(entry.index, new_vid).is_none(),
+                        self.cmd_vid.insert(entry.id(), new_vid).is_none(),
                         "cannot insert a cmd twice"
                     );
                     let new_v = Vertex {
@@ -486,7 +486,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
             }
             CEEvent::Reset(snapshot, finish_tx) => {
                 // since a reset is needed, all other vertices doesn't matter anymore, so delete them all
-                self.entry_vid.clear();
+                self.cmd_vid.clear();
                 self.vs.clear();
 
                 let new_vid = self.next_vertex_id();

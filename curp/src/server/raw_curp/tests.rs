@@ -640,11 +640,10 @@ fn recover_ucp_from_logs_will_pick_the_correct_cmds() {
 #[traced_test]
 #[test]
 fn leader_retires_after_log_compact_will_succeed() {
-    let curp = RawCurp::new_test(
-        3,
-        MockCEEventTxApi::<TestCommand>::default(),
-        mock_role_change(),
-    );
+    let curp = {
+        let exe_tx = MockCEEventTxApi::<TestCommand>::default();
+        RawCurp::new_test(3, exe_tx, mock_role_change())
+    };
     let mut log_w = curp.log.write();
     for _ in 1..=20 {
         let cmd = Arc::new(TestCommand::default());

@@ -240,7 +240,7 @@ impl PbCodec for TestCommand {
 
 #[derive(Debug, Clone)]
 pub struct TestCE {
-    server_id: String,
+    server_name: String,
     revision: Arc<AtomicI64>,
     pub store: Arc<Engine>,
     exe_sender: mpsc::UnboundedSender<(TestCommand, TestCommandResult)>,
@@ -281,7 +281,7 @@ impl CommandExecutor<TestCommand> for TestCE {
             return Err(ExecuteError("fail".to_owned()));
         }
 
-        debug!("{} execute cmd({})", self.server_id, cmd.id());
+        debug!("{} execute cmd({})", self.server_name, cmd.id());
 
         let keys = cmd
             .keys
@@ -366,7 +366,7 @@ impl CommandExecutor<TestCommand> for TestCE {
         }
         debug!(
             "{} after sync cmd({:?} - {}), index: {index}",
-            self.server_id,
+            self.server_name,
             cmd.cmd_type,
             cmd.id()
         );
@@ -432,7 +432,7 @@ impl CommandExecutor<TestCommand> for TestCE {
 
 impl TestCE {
     pub fn new(
-        server_id: String,
+        server_name: String,
         exe_sender: mpsc::UnboundedSender<(TestCommand, TestCommandResult)>,
         after_sync_sender: mpsc::UnboundedSender<(TestCommand, LogIndex)>,
         storage_cfg: StorageConfig,
@@ -450,7 +450,7 @@ impl TestCE {
             .map(|r| i64::from_le_bytes(r.as_slice().try_into().unwrap()))
             .unwrap_or(0);
         Self {
-            server_id,
+            server_name,
             revision: Arc::new(AtomicI64::new(rev + 1)),
             store,
             exe_sender,

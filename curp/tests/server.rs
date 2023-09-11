@@ -60,7 +60,7 @@ async fn client_build_from_addrs_should_fetch_cluster_from_server() {
     init_logger();
     let group = CurpGroup::new(3).await;
 
-    let all_addrs = group.all.values().cloned().collect::<Vec<_>>();
+    let all_addrs = group.all_addrs().cloned().collect();
     let _client = Builder::<TestCommand>::default()
         .config(ClientConfig::default())
         .build_from_addrs(all_addrs)
@@ -155,8 +155,8 @@ async fn fast_round_is_slower_than_slow_round() {
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     // send propose to follower
-    let follower_addr = group.all.keys().find(|&id| &leader != id).unwrap();
-    let mut follower_connect = group.get_connect(follower_addr).await;
+    let follower_id = group.nodes.keys().find(|&id| &leader != id).unwrap();
+    let mut follower_connect = group.get_connect(follower_id).await;
 
     // the follower should response empty immediately
     let resp: ProposeResponse = follower_connect
@@ -332,7 +332,7 @@ async fn propose_remove_follower_should_success() {
 
     let id = client.gen_propose_id().await.unwrap();
     let leader_id = group.get_leader().await.0;
-    let follower_id = *group.all.keys().find(|&id| &leader_id != id).unwrap();
+    let follower_id = *group.nodes.keys().find(|&id| &leader_id != id).unwrap();
     let changes = vec![ConfChange::remove(follower_id)];
     let members = client
         .propose_conf_change(id, changes)
@@ -417,16 +417,11 @@ async fn shutdown_rpc_should_shutdown_the_cluster_when_client_has_wrong_leader()
     let group = CurpGroup::new_rocks(3, tmp_path.clone()).await;
 
     let leader_id = group.get_leader().await.0;
-    let follower_id = group
-        .all
-        .keys()
-        .find(|&id| &leader_id != id)
-        .copied()
-        .unwrap();
+    let follower_id = *group.nodes.keys().find(|&id| &leader_id != id).unwrap();
     // build a client and set a wrong leader id
     let client = Client::<TestCommand>::builder()
         .config(ClientConfig::default())
-        .build_from_all_members(group.all(), Some(follower_id))
+        .build_from_all_members(group.all_addrs_map(), Some(follower_id))
         .await
         .unwrap();
     let id = client.gen_propose_id().await.unwrap();
@@ -443,16 +438,11 @@ async fn propose_conf_change_to_follower() {
     let group = CurpGroup::new(5).await;
 
     let leader_id = group.get_leader().await.0;
-    let follower_id = group
-        .all
-        .keys()
-        .find(|&id| &leader_id != id)
-        .copied()
-        .unwrap();
+    let follower_id = *group.nodes.keys().find(|&id| &leader_id != id).unwrap();
     // build a client and set a wrong leader id
     let client = Client::<TestCommand>::builder()
         .config(ClientConfig::default())
-        .build_from_all_members(group.all(), Some(follower_id))
+        .build_from_all_members(group.all_addrs_map(), Some(follower_id))
         .await
         .unwrap();
 
@@ -543,25 +533,22 @@ async fn check_new_node(is_learner: bool) {
 
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
-#[ignore = "TODO: enable this test after #448 merged"]
 async fn new_follower_node_should_apply_old_cluster_logs() {
     check_new_node(false).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
-#[ignore = "TODO: enable this test after #448 merged"]
 async fn new_learner_node_should_apply_old_cluster_logs() {
     check_new_node(true).await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
-#[ignore = "enable this test after support run_node method"]
 async fn shutdown_rpc_should_shutdown_the_cluster_when_client_has_wrong_cluster() {
     init_logger();
     let tmp_path = tempfile::TempDir::new().unwrap().into_path();
-    let group = CurpGroup::new_rocks(3, tmp_path.clone()).await;
+    let mut group = CurpGroup::new_rocks(3, tmp_path.clone()).await;
     let client = group.new_client().await;
 
     let listener = TcpListener::bind("0.0.0.0:0").await.unwrap();
@@ -588,13 +575,12 @@ async fn shutdown_rpc_should_shutdown_the_cluster_when_client_has_wrong_cluster(
     assert!(group.is_finished());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
-#[ignore = "enable this test after support run_node method"]
 async fn propose_conf_change_rpc_should_work_when_client_has_wrong_cluster() {
     init_logger();
     let tmp_path = tempfile::TempDir::new().unwrap().into_path();
-    let group = CurpGroup::new_rocks(3, tmp_path.clone()).await;
+    let mut group = CurpGroup::new_rocks(3, tmp_path.clone()).await;
     let client = group.new_client().await;
 
     let listener = TcpListener::bind("0.0.0.0:0").await.unwrap();
@@ -626,13 +612,12 @@ async fn propose_conf_change_rpc_should_work_when_client_has_wrong_cluster() {
     assert!(group.nodes.get(&node_id).unwrap().handle.is_finished());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
-#[ignore = "enable this test after support run_node method"]
 async fn fetch_read_state_rpc_should_work_when_client_has_wrong_cluster() {
     init_logger();
     let tmp_path = tempfile::TempDir::new().unwrap().into_path();
-    let group = CurpGroup::new_rocks(3, tmp_path.clone()).await;
+    let mut group = CurpGroup::new_rocks(3, tmp_path.clone()).await;
     let client = group.new_client().await;
 
     let listener = TcpListener::bind("0.0.0.0:0").await.unwrap();

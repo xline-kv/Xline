@@ -84,7 +84,9 @@ async fn cmd_worker<
             }
         };
         if let Err(e) = done_tx.send((task, succeeded)) {
-            error!("can't mark a task done, the channel could be closed, {e}");
+            if !curp.is_shutdown() {
+                error!("can't mark a task done, the channel could be closed, {e}");
+            }
         }
     }
     debug!("cmd worker exits");

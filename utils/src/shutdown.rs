@@ -147,18 +147,26 @@ impl Listener {
     /// Wait for the shutdown signal.
     #[inline]
     pub async fn wait(&mut self) -> Option<Signal> {
-        self.listener.changed().await.ok()?;
-        Some(*self.listener.borrow())
+        let current = *self.listener.borrow();
+        let sig = match current {
+            Signal::ClusterShutdown => Signal::ClusterShutdown,
+            Signal::SelfShutdown => Signal::SelfShutdown,
+            Signal::Running => {
+                self.listener.changed().await.ok()?;
+                *self.listener.borrow()
+            }
+        };
+        Some(sig)
     }
 
     /// Wait for the shutdown signal.
     #[inline]
     pub async fn wait_self_shutdown(&mut self) {
         loop {
-            let _ig = self.listener.changed().await;
             if matches!(*self.listener.borrow(), Signal::SelfShutdown) {
                 break;
             }
+            let _ig = self.listener.changed().await;
         }
     }
 
