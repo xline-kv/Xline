@@ -1049,7 +1049,6 @@ mod tests {
     use std::io::{Error, ErrorKind};
 
     use curp_test_utils::{mock_role_change, sleep_secs, test_cmd::TestCommand};
-    use tokio::sync::oneshot;
     use tracing_test::traced_test;
 
     use super::*;
@@ -1096,10 +1095,7 @@ mod tests {
     #[tokio::test]
     async fn tick_task_will_bcast_votes() {
         let curp = {
-            let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
-            exe_tx
-                .expect_send_reset()
-                .returning(|_| oneshot::channel().1);
+            let exe_tx = MockCEEventTxApi::<TestCommand>::default();
             Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
         };
         let s2_id = curp.cluster().get_id_by_name("S2").unwrap();

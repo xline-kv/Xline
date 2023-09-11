@@ -263,7 +263,6 @@ async fn new_leader_will_recover_spec_cmds_cond2() {
 }
 
 #[madsim::test]
-#[ignore = "fix this after revert cmd_vid"]
 async fn old_leader_will_keep_original_states() {
     init_logger();
 

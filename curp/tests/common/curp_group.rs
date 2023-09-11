@@ -56,7 +56,6 @@ pub struct CurpNode {
 
 pub struct CurpGroup {
     pub nodes: HashMap<ServerId, CurpNode>,
-    pub all: HashMap<ServerId, String>,
     pub storage_path: Option<PathBuf>,
 }
 
@@ -164,9 +163,81 @@ impl CurpGroup {
         debug!("successfully start group");
         Self {
             nodes,
-            all,
             storage_path,
         }
+    }
+
+    pub async fn run_node(
+        &mut self,
+        listener: TcpListener,
+        name: String,
+        cluster_info: Arc<ClusterInfo>,
+    ) {
+        let (trigger, l) = shutdown::channel();
+        let addr = listener.local_addr().unwrap().to_string();
+        let (curp_storage_config, xline_storage_config, snapshot_allocator) =
+            match self.storage_path {
+                Some(ref path) => {
+                    let storage_path = path.join(&name);
+                    (
+                        StorageConfig::RocksDB(storage_path.join("curp")),
+                        StorageConfig::RocksDB(storage_path.join("xline")),
+                        Box::<RocksSnapshotAllocator>::default() as Box<dyn SnapshotAllocator>,
+                    )
+                }
+                None => (
+                    StorageConfig::Memory,
+                    StorageConfig::Memory,
+                    Box::<MemorySnapshotAllocator>::default() as Box<dyn SnapshotAllocator>,
+                ),
+            };
+
+        let (exe_tx, exe_rx) = mpsc::unbounded_channel();
+        let (as_tx, as_rx) = mpsc::unbounded_channel();
+        let ce = TestCE::new(name, exe_tx, as_tx, xline_storage_config);
+
+        let id = cluster_info.self_id();
+        let role_change_cb = TestRoleChange::default();
+        let role_change_arc = role_change_cb.get_inner_arc();
+        let handle = tokio::spawn(Rpc::run_from_listener(
+            cluster_info,
+            false,
+            listener,
+            ce,
+            snapshot_allocator,
+            role_change_cb,
+            Arc::new(
+                CurpConfigBuilder::default()
+                    .storage_cfg(curp_storage_config)
+                    .log_entries_cap(10)
+                    .build()
+                    .unwrap(),
+            ),
+            trigger.clone(),
+        ));
+        self.nodes.insert(
+            id,
+            CurpNode {
+                id,
+                addr,
+                exe_rx,
+                as_rx,
+                role_change_arc,
+                handle,
+                trigger,
+            },
+        );
+    }
+
+    pub fn all_addrs(&self) -> impl Iterator<Item = &String> {
+        self.nodes.values().map(|n| &n.addr)
+    }
+
+    pub fn all_addrs_map(&self) -> HashMap<ServerId, Vec<String>> {
+        self.nodes
+            .iter()
+            .map(|(id, n)| (*id, vec![n.addr.clone()]))
+            .collect()
     }
 
     pub fn get_node(&self, id: &ServerId) -> &CurpNode {
@@ -174,9 +245,10 @@ impl CurpGroup {
     }
 
     pub async fn new_client(&self) -> Client<TestCommand> {
+        let addrs = self.all_addrs().cloned().collect();
         Client::builder()
             .config(ClientConfig::default())
-            .build_from_addrs(self.all.values().cloned().collect_vec())
+            .build_from_addrs(addrs)
             .await
             .unwrap()
     }
@@ -217,7 +289,7 @@ impl CurpGroup {
     pub async fn try_get_leader(&self) -> Option<(ServerId, u64)> {
         let mut leader = None;
         let mut max_term = 0;
-        for addr in self.all.values() {
+        for addr in self.all_addrs() {
             let addr = format!("http://{}", addr);
             let mut client = if let Ok(client) = ProtocolClient::connect(addr.clone()).await {
                 client
@@ -255,7 +327,7 @@ impl CurpGroup {
     // get latest term and ensure every working node has the same term
     pub async fn get_term_checked(&self) -> u64 {
         let mut max_term = None;
-        for addr in self.all.values() {
+        for addr in self.all_addrs() {
             let addr = format!("http://{}", addr);
             let mut client = if let Ok(client) = ProtocolClient::connect(addr.clone()).await {
                 client
@@ -281,20 +353,8 @@ impl CurpGroup {
     }
 
     pub async fn get_connect(&self, id: &ServerId) -> ProtocolClient<tonic::transport::Channel> {
-        let addr = self
-            .all
-            .iter()
-            .find_map(|(node_id, addr)| (node_id == id).then_some(addr))
-            .unwrap();
-        let addr = format!("http://{}", addr);
+        let addr = format!("http://{}", self.nodes[id].addr);
         ProtocolClient::connect(addr.clone()).await.unwrap()
-    }
-
-    pub fn all(&self) -> HashMap<ServerId, Vec<String>> {
-        self.all
-            .iter()
-            .map(|(k, v)| (*k, vec![v.clone()]))
-            .collect()
     }
 
     pub async fn fetch_cluster_info(&self, addrs: &[String]) -> ClusterInfo {
@@ -320,15 +380,6 @@ impl CurpGroup {
             cluster_version: cluster_res_base.cluster_version,
         };
         ClusterInfo::from_cluster(cluster_res, addrs)
-    }
-
-    pub async fn run_node(
-        &self,
-        listener: TcpListener,
-        name: String,
-        cluster_info: Arc<ClusterInfo>,
-    ) {
-        unimplemented!("this method will be implemented in #448");
     }
 }
 
