@@ -120,7 +120,7 @@ impl LeaderState {
         }
     }
 
-    /// Get all status for a server
+    /// Get statuses for all servers
     pub(super) fn get_all_statuses(&self) -> HashMap<ServerId, FollowerStatus> {
         self.statuses
             .iter()
