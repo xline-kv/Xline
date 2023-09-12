@@ -443,8 +443,8 @@ impl ShutdownRequest {
     }
 }
 
-#[allow(dead_code)] // TODO: remove
-#[allow(clippy::as_conversions)] // those conversions are safe
+#[allow(dead_code)] // TODO: remove this when we implement conf change
+#[allow(clippy::as_conversions)] // ConfChangeType is so small that it won't exceed the range of i32 type.
 impl ConfChange {
     /// Create a new `ConfChange` to add a node
     pub(crate) fn add(node_id: ServerId, address: String) -> Self {

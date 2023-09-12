@@ -130,7 +130,6 @@ enum Role {
 }
 
 /// Relevant context for Curp
-#[derive(Debug)]
 struct Context<C: Command, RC: RoleChange> {
     /// Cluster information
     cluster_info: Arc<ClusterInfo>,
@@ -154,6 +153,24 @@ struct Context<C: Command, RC: RoleChange> {
     leader_event: Arc<Event>,
     /// Leader change callback
     role_change: RC,
+}
+
+impl<C: Command, RC: RoleChange> Debug for Context<C, RC> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Context")
+            .field("cluster_info", &self.cluster_info)
+            .field("cfg", &self.cfg)
+            .field("cb", &self.cb)
+            .field("sp", &self.sp)
+            .field("ucp", &self.ucp)
+            .field("leader_tx", &self.leader_tx)
+            .field("election_tick", &self.election_tick)
+            .field("cmd_tx", &"CEEventTxApi")
+            .field("sync_events", &self.sync_events)
+            .field("leader_event", &self.leader_event)
+            .field("role_change", &self.role_change)
+            .finish()
+    }
 }
 
 // Tick
@@ -853,7 +870,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     /// Apply conf changes and return true if self node is removed
-    #[allow(unused)] // TODO: remove
+    #[allow(unused)] // TODO: remove this when we implement conf change
     pub(super) fn apply_conf_change(
         &self,
         changes: Vec<ConfChange>,
@@ -869,7 +886,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     /// Check if the new config is valid
-    #[allow(clippy::unimplemented)] // TODO: remove
+    #[allow(clippy::unimplemented)] // TODO: remove this when we implement conf change
     fn check_new_config(&self, conf_change: &ConfChange) -> Result<(), ApplyConfChangeError> {
         let mut statuses_ids = self
             .lst
