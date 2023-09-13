@@ -31,7 +31,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         self.cluster().all_members().contains_key(&id)
             && self.ctx.sync_events.contains_key(&id)
             && self.lst.get_all_statuses().contains_key(&id)
-            && self.cst.lock().config.voters().contains(&id)
+            && self.cst.lock().config.contains(id)
     }
 
     pub(crate) fn commit_index(&self) -> LogIndex {
@@ -726,17 +726,15 @@ fn is_synced_should_return_true_when_followers_caught_up_with_leader() {
 }
 
 #[traced_test]
-#[tokio::test]
-async fn add_node_should_add_new_node_to_curp() {
+#[test]
+fn add_node_should_add_new_node_to_curp() {
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
     let old_cluster = curp.cluster().clone();
     let changes = vec![ConfChange::add(1, vec!["http://127.0.0.1:4567".to_owned()])];
-    let resp = curp.apply_conf_change(changes.clone());
-    let infos = resp.unwrap();
-    assert_eq!(infos, (vec![], String::new(), false));
+    let infos = curp.apply_conf_change(changes.clone()).unwrap();
     assert!(curp.contains(1));
     curp.fallback_conf_change(changes, infos.0, infos.1, infos.2);
     let cluster_after_fallback = curp.cluster();
@@ -752,8 +750,23 @@ async fn add_node_should_add_new_node_to_curp() {
 }
 
 #[traced_test]
-#[tokio::test]
-async fn add_exists_node_should_return_node_already_exists_error() {
+#[test]
+fn add_learner_node_should_add_learner_to_curp() {
+    let curp = {
+        let exe_tx = MockCEEventTxApi::<TestCommand>::default();
+        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+    };
+    let changes = vec![ConfChange::add_learner(
+        1,
+        vec!["http://127.0.0.1:4567".to_owned()],
+    )];
+    assert!(curp.apply_conf_change(changes).is_ok());
+    assert!(curp.contains(1));
+}
+
+#[traced_test]
+#[test]
+fn add_exists_node_should_return_node_already_exists_error() {
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
@@ -769,8 +782,8 @@ async fn add_exists_node_should_return_node_already_exists_error() {
 }
 
 #[traced_test]
-#[tokio::test]
-async fn remove_node_should_remove_node_from_curp() {
+#[test]
+fn remove_node_should_remove_node_from_curp() {
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         Arc::new(RawCurp::new_test(5, exe_tx, mock_role_change()))
@@ -796,8 +809,8 @@ async fn remove_node_should_remove_node_from_curp() {
 }
 
 #[traced_test]
-#[tokio::test]
-async fn remove_non_exists_node_should_return_node_not_exists_error() {
+#[test]
+fn remove_non_exists_node_should_return_node_not_exists_error() {
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         Arc::new(RawCurp::new_test(5, exe_tx, mock_role_change()))
@@ -808,8 +821,8 @@ async fn remove_non_exists_node_should_return_node_not_exists_error() {
 }
 
 #[traced_test]
-#[tokio::test]
-async fn remove_node_should_return_invalid_config_error_when_nodes_count_less_than_3() {
+#[test]
+fn remove_node_should_return_invalid_config_error_when_nodes_count_less_than_3() {
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
@@ -821,8 +834,8 @@ async fn remove_node_should_return_invalid_config_error_when_nodes_count_less_th
 }
 
 #[traced_test]
-#[tokio::test]
-async fn update_node_should_update_the_address_of_node() {
+#[test]
+fn update_node_should_update_the_address_of_node() {
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
@@ -864,8 +877,8 @@ async fn update_node_should_update_the_address_of_node() {
 }
 
 #[traced_test]
-#[tokio::test]
-async fn leader_handle_propose_conf_change() {
+#[test]
+fn leader_handle_propose_conf_change() {
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx.expect_send_sp_exe().returning(|_| {});
@@ -888,8 +901,8 @@ async fn leader_handle_propose_conf_change() {
 }
 
 #[traced_test]
-#[tokio::test]
-async fn follower_handle_propose_conf_change() {
+#[test]
+fn follower_handle_propose_conf_change() {
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))

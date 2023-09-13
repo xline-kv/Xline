@@ -176,7 +176,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
             }
             Err(err) => Some(err),
         };
-        let members = self.curp.cluster().members();
+        let members = self.curp.cluster().all_members_vec();
         Ok(ProposeConfChangeResponse {
             members,
             leader_id,
@@ -254,8 +254,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         _req: FetchClusterRequest,
     ) -> Result<FetchClusterResponse, CurpError> {
         let (leader_id, term) = self.curp.leader();
-        let all_members = self.curp.cluster().all_members();
-        Ok(FetchClusterResponse::new(leader_id, all_members, term))
+        let cluster_id = self.curp.cluster().cluster_id();
+        let members = self.curp.cluster().all_members_vec();
+        Ok(FetchClusterResponse::new(
+            leader_id, term, cluster_id, members,
+        ))
     }
 
     /// Handle `InstallSnapshot` stream
@@ -723,21 +726,24 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     async fn bcast_vote(curp: &RawCurp<C, RC>, vote: Vote) {
         debug!("{} broadcasts votes to all servers", curp.id());
         let rpc_timeout = curp.cfg().rpc_timeout;
+        let voters = curp.voters();
         let resps = curp
             .connects()
             .iter()
-            .map(|c| {
-                let req = VoteRequest::new(
-                    vote.term,
-                    vote.candidate_id,
-                    vote.last_log_index,
-                    vote.last_log_term,
-                );
-                let connect = Arc::clone(c.value());
-                async move {
-                    let resp = connect.vote(req, rpc_timeout).await;
-                    (connect.id(), resp)
-                }
+            .filter_map(|c| {
+                voters.contains(c.key()).then(|| {
+                    let req = VoteRequest::new(
+                        vote.term,
+                        vote.candidate_id,
+                        vote.last_log_index,
+                        vote.last_log_term,
+                    );
+                    let connect = Arc::clone(c.value());
+                    async move {
+                        let resp = connect.vote(req, rpc_timeout).await;
+                        (connect.id(), resp)
+                    }
+                })
             })
             .collect::<FuturesUnordered<_>>()
             .filter_map(|(id, resp)| async move {
@@ -858,7 +864,9 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::{rpc::connect::MockInnerConnectApi, server::cmd_worker::MockCEEventTxApi};
+    use crate::{
+        rpc::connect::MockInnerConnectApi, server::cmd_worker::MockCEEventTxApi, ConfChange,
+    };
 
     #[traced_test]
     #[tokio::test]
@@ -924,6 +932,64 @@ mod tests {
         curp.set_connect(
             s2_id,
             InnerConnectApiWrapper::new_from_arc(Arc::new(mock_connect2)),
+        );
+        tokio::spawn(CurpNode::election_task(Arc::clone(&curp)));
+        sleep_secs(3).await;
+        assert!(curp.is_leader());
+        curp.shutdown_trigger().self_shutdown_and_wait().await;
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn vote_will_not_send_to_learner_during_election() {
+        let curp = {
+            let exe_tx = MockCEEventTxApi::<TestCommand>::default();
+            Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+        };
+
+        let learner_id = 123;
+        let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
+        let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
+
+        let _ig = curp.apply_conf_change(vec![ConfChange::add_learner(
+            learner_id,
+            vec!["address".to_owned()],
+        )]);
+
+        curp.handle_append_entries(1, s2_id, 0, 0, vec![], 0)
+            .unwrap();
+
+        let mut mock_connect1 = MockInnerConnectApi::default();
+        mock_connect1.expect_vote().returning(|req, _| {
+            Ok(tonic::Response::new(
+                VoteResponse::new_accept::<TestCommand>(req.term, vec![]).unwrap(),
+            ))
+        });
+        mock_connect1.expect_id().return_const(s1_id);
+        curp.set_connect(
+            s1_id,
+            InnerConnectApiWrapper::new_from_arc(Arc::new(mock_connect1)),
+        );
+
+        let mut mock_connect2 = MockInnerConnectApi::default();
+        mock_connect2.expect_vote().returning(|req, _| {
+            Ok(tonic::Response::new(
+                VoteResponse::new_accept::<TestCommand>(req.term, vec![]).unwrap(),
+            ))
+        });
+        mock_connect2.expect_id().return_const(s2_id);
+        curp.set_connect(
+            s2_id,
+            InnerConnectApiWrapper::new_from_arc(Arc::new(mock_connect2)),
+        );
+
+        let mut mock_connect_learner = MockInnerConnectApi::default();
+        mock_connect_learner
+            .expect_vote()
+            .returning(|_, _| panic!("should not send vote to learner"));
+        curp.set_connect(
+            learner_id,
+            InnerConnectApiWrapper::new_from_arc(Arc::new(mock_connect_learner)),
         );
         tokio::spawn(CurpNode::election_task(Arc::clone(&curp)));
         sleep_secs(3).await;

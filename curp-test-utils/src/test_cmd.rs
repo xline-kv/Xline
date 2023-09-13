@@ -58,13 +58,13 @@ impl PbCodec for ExecuteError {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct TestCommand {
-    id: ProposeId,
-    keys: Vec<u32>,
-    exe_dur: Duration,
-    as_dur: Duration,
-    exe_should_fail: bool,
-    as_should_fail: bool,
-    cmd_type: TestCommandType,
+    pub id: ProposeId,
+    pub keys: Vec<u32>,
+    pub exe_dur: Duration,
+    pub as_dur: Duration,
+    pub exe_should_fail: bool,
+    pub as_should_fail: bool,
+    pub cmd_type: TestCommandType,
 }
 
 impl Default for TestCommand {
@@ -177,7 +177,7 @@ impl From<LogIndexResult> for LogIndex {
     }
 }
 
-// The `TestCommandResult` is only for internal use, so we donnot have to serialize it to protobuf format
+// The `TestCommandResult` is only for internal use, so we do not have to serialize it to protobuf format
 impl PbCodec for LogIndexResult {
     fn encode(&self) -> Vec<u8> {
         bincode::serialize(self).unwrap_or_else(|_| {
@@ -225,7 +225,7 @@ impl ConflictCheck for TestCommand {
     }
 }
 
-// The `TestCommand` is only for internal use, so we donnot have to serialize it to protobuf format
+// The `TestCommand` is only for internal use, so we do not have to serialize it to protobuf format
 impl PbCodec for TestCommand {
     fn encode(&self) -> Vec<u8> {
         bincode::serialize(self)

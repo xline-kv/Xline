@@ -941,9 +941,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         };
         let node_id = conf_change.node_id;
         let fallback_change = match conf_change.change_type() {
-            ConfChangeType::Add => {
+            ConfChangeType::Add | ConfChangeType::AddLearner => {
                 self.cst
-                    .map_lock(|mut cst_l| _ = cst_l.config.voters_mut().remove(&node_id));
+                    .map_lock(|mut cst_l| _ = cst_l.config.remove(node_id));
                 self.lst.remove(node_id);
                 _ = self.ctx.sync_events.remove(&node_id);
                 let _ig = self.ctx.cluster_info.remove(&node_id);
@@ -952,20 +952,22 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             }
             ConfChangeType::Remove => {
                 let member = Member::new(node_id, name, old_addrs.clone(), is_learner);
-                // TODO: Add node to Learner when learner is supported
                 self.cst
-                    .map_lock(|mut cst_l| _ = cst_l.config.voters_mut().insert(node_id));
-                self.lst.insert(node_id);
+                    .map_lock(|mut cst_l| _ = cst_l.config.insert(node_id, is_learner));
+                self.lst.insert(node_id, is_learner);
                 _ = self.ctx.sync_events.insert(node_id, Arc::new(Event::new()));
                 self.ctx.cluster_info.insert(member);
-                // TODO: add leaner when learner is supported
-                ConfChange::add(node_id, old_addrs)
+                if is_learner {
+                    ConfChange::add_learner(node_id, old_addrs)
+                } else {
+                    ConfChange::add(node_id, old_addrs)
+                }
             }
             ConfChangeType::Update => {
                 _ = self.ctx.cluster_info.update(&node_id, old_addrs.clone());
                 ConfChange::update(node_id, old_addrs)
             }
-            ConfChangeType::AddLearner | ConfChangeType::Promote => {
+            ConfChangeType::Promote => {
                 unimplemented!("learner node is not supported yet");
             }
         };
@@ -1000,6 +1002,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             Some(connect) => connect.update_addrs(addrs).await,
             None => Ok(()),
         }
+    }
+
+    /// Get voters set
+    pub(super) fn voters(&self) -> HashSet<ServerId> {
+        self.cst.lock().config.voters().clone()
     }
 }
 
@@ -1110,11 +1117,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         }
 
         let replicated_cnt: u64 = self
-            .ctx
-            .cluster_info
-            .peers_ids()
-            .into_iter()
-            .filter(|&id| self.lst.get_match_index(id) >= i)
+            .lst
+            .iter()
+            .filter(|f| !f.is_learner && f.match_index >= i)
             .count()
             .numeric_cast();
         replicated_cnt + 1 >= self.quorum()
@@ -1226,7 +1231,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
     /// Get quorum: the smallest number of servers who must be online for the cluster to work
     fn quorum(&self) -> u64 {
-        (self.ctx.cluster_info.members_len() / 2 + 1).numeric_cast()
+        (self.ctx.cluster_info.voters_len() / 2 + 1).numeric_cast()
     }
 
     /// Get `recover_quorum`: the smallest number of servers who must contain a command in speculative pool for it to be recovered
@@ -1242,7 +1247,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     /// Check if the new config is valid
-    #[allow(clippy::unimplemented)] // TODO: remove this when learner is implemented
+    #[allow(clippy::unimplemented)] // TODO: remove this when learner promote is implemented
     fn check_new_config(&self, conf_change: &ConfChange) -> Result<(), ConfChangeError> {
         let mut statuses_ids = self
             .lst
@@ -1255,25 +1260,33 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         let node_id = conf_change.node_id;
         match conf_change.change_type() {
             ConfChangeType::Add => {
-                if !statuses_ids.insert(node_id) || !config.voters_mut().insert(node_id) {
+                if !statuses_ids.insert(node_id) || !config.insert(node_id, false) {
                     return Err(ConfChangeError::NodeAlreadyExists(()));
                 }
             }
             ConfChangeType::Remove => {
-                if !statuses_ids.remove(&node_id) || !config.voters_mut().remove(&node_id) {
+                if !statuses_ids.remove(&node_id) || !config.remove(node_id) {
                     return Err(ConfChangeError::NodeNotExists(()));
                 }
             }
             ConfChangeType::Update | ConfChangeType::Promote => {
-                if statuses_ids.get(&node_id).is_none() || !config.voters().contains(&node_id) {
+                if statuses_ids.get(&node_id).is_none() || !config.contains(node_id) {
                     return Err(ConfChangeError::NodeNotExists(()));
                 }
             }
             ConfChangeType::AddLearner => {
-                unimplemented!("learner node is not supported yet");
+                if !statuses_ids.insert(node_id) || !config.insert(node_id, true) {
+                    return Err(ConfChangeError::NodeAlreadyExists(()));
+                }
             }
         }
-        if statuses_ids.len() < 3 || config.voters() != &statuses_ids {
+        let mut all_nodes = HashSet::new();
+        all_nodes.extend(config.voters());
+        all_nodes.extend(config.learners());
+        if statuses_ids.len() < 3
+            || all_nodes != statuses_ids
+            || !config.voters().is_disjoint(config.learners())
+        {
             return Err(ConfChangeError::InvalidConfig(()));
         }
         Ok(())
@@ -1284,21 +1297,25 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     fn switch_config(&self, conf_change: ConfChange) -> (Vec<String>, String, bool) {
         let node_id = conf_change.node_id;
         let fallback_info = match conf_change.change_type() {
-            ConfChangeType::Add => {
-                let member = Member::new(node_id, "", conf_change.address.clone(), false);
+            ConfChangeType::Add | ConfChangeType::AddLearner => {
+                let is_learner = matches!(conf_change.change_type(), ConfChangeType::AddLearner);
+                let member = Member::new(node_id, "", conf_change.address.clone(), is_learner);
                 self.cst
-                    .map_lock(|mut cst_l| _ = cst_l.config.voters_mut().insert(node_id));
-                self.lst.insert(node_id);
+                    .map_lock(|mut cst_l| _ = cst_l.config.insert(node_id, is_learner));
+                self.lst.insert(node_id, is_learner);
                 _ = self.ctx.sync_events.insert(node_id, Arc::new(Event::new()));
                 self.ctx.cluster_info.insert(member);
-                (vec![], String::new(), false)
+                (vec![], String::new(), is_learner)
             }
             ConfChangeType::Remove => {
+                // the removed follower need to commit the conf change entry, so when leader applies
+                // the conf change entry, it will not remove the follower status, and after the log
+                // entry is committed on the removed follower, leader will remove the follower status
+                // and stop the sync_follower_task.
                 self.cst
-                    .map_lock(|mut cst_l| _ = cst_l.config.voters_mut().remove(&node_id));
-                self.lst.remove(node_id);
-                _ = self.ctx.sync_events.remove(&node_id);
+                    .map_lock(|mut cst_l| _ = cst_l.config.remove(node_id));
                 let m = self.ctx.cluster_info.remove(&node_id);
+                _ = self.ctx.sync_events.remove(&node_id);
                 _ = self.ctx.connects.remove(&node_id);
                 let removed_member =
                     m.unwrap_or_else(|| unreachable!("the member should exist before remove"));
@@ -1315,7 +1332,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                     .update(&node_id, conf_change.address.clone());
                 (old_addrs, String::new(), false)
             }
-            ConfChangeType::AddLearner | ConfChangeType::Promote => {
+            ConfChangeType::Promote => {
                 unimplemented!("learner node is not supported yet");
             }
         };

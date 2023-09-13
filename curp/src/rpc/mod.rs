@@ -84,13 +84,15 @@ impl FetchClusterResponse {
     /// Create a new `FetchClusterResponse`
     pub(crate) fn new(
         leader_id: Option<ServerId>,
-        all_members: HashMap<ServerId, Member>,
         term: u64,
+        cluster_id: u64,
+        members: Vec<Member>,
     ) -> Self {
         Self {
             leader_id,
-            members: all_members.into_values().map(Into::into).collect(),
             term,
+            cluster_id,
+            members,
         }
     }
 
