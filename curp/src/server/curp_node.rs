@@ -163,7 +163,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     }
 
     /// Handle `ProposeConfChange` requests
-    #[allow(clippy::todo, clippy::unused_async)] // TODO: implement this
+    #[allow(clippy::todo, clippy::unused_async)] // TODO: this method will be implemented in #437
     pub(super) async fn propose_conf_change(
         &self,
         _req: ProposeConfChangeRequest,
