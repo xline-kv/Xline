@@ -106,6 +106,13 @@ impl ClusterInfo {
             .collect()
     }
 
+    /// Get all members vec
+    #[must_use]
+    #[inline]
+    pub fn all_members_vec(&self) -> Vec<Member> {
+        self.members.iter().map(|t| t.value().clone()).collect()
+    }
+
     /// Insert a member
     #[inline]
     pub fn insert(&self, member: Member) {
@@ -241,18 +248,11 @@ impl ClusterInfo {
             .collect()
     }
 
-    /// Get all members
-    #[must_use]
-    #[inline]
-    pub fn members(&self) -> Vec<Member> {
-        self.members.iter().map(|t| t.value().clone()).collect()
-    }
-
     /// Get length of peers
     #[must_use]
     #[inline]
-    pub fn members_len(&self) -> usize {
-        self.members.len()
+    pub fn voters_len(&self) -> usize {
+        self.members.iter().filter(|t| !t.is_learner).count()
     }
 
     /// Get id by name
@@ -304,7 +304,7 @@ mod tests {
         let node1_url = node1.self_addrs();
         assert!(!peers.contains_key(&node1_id));
         assert_eq!(peers.len(), 2);
-        assert_eq!(node1.members_len(), peers.len() + 1);
+        assert_eq!(node1.voters_len(), peers.len() + 1); // TODO fix test
 
         let peer_urls = peers.values().collect::<Vec<_>>();
 
