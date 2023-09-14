@@ -1,8 +1,8 @@
 name: e2e
 
 on:
-  schedule:
-    - cron: "00 * * * *" # run ci periodically at 3 am
+  # schedule:
+  #   - cron: "00 * * * *" # run ci periodically at 3 am
   push: #enabled after the API is stable
   workflow_dispatch:
 concurrency:
