@@ -264,6 +264,13 @@ impl ClusterInfo {
             .iter()
             .find_map(|m| (m.name == name).then_some(m.id))
     }
+
+    /// Promote a learner to voter
+    pub(crate) fn promote(&self, node_id: ServerId) {
+        if let Some(mut s) = self.members.get_mut(&node_id) {
+            s.is_learner = false;
+        }
+    }
 }
 
 #[cfg(test)]

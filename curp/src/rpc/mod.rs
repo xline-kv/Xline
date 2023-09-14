@@ -489,6 +489,17 @@ impl ConfChange {
             address: vec![],
         }
     }
+
+    /// Create a new `ConfChange` to promote a node
+    #[must_use]
+    #[inline]
+    pub fn promote(node_id: ServerId) -> Self {
+        Self {
+            change_type: ConfChangeType::Promote as i32,
+            node_id,
+            address: vec![],
+        }
+    }
 }
 
 impl ProposeConfChangeRequest {
