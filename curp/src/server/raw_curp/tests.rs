@@ -97,6 +97,22 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         let mut log_w = self.log.write();
         log_w.push(st_r.term, cmd).unwrap().index
     }
+
+    pub(crate) fn check_learner(&self, node_id: ServerId, is_learner: bool) -> bool {
+        self.lst
+            .get_all_statuses()
+            .get(&node_id)
+            .is_some_and(|f| f.is_learner == is_learner)
+            && self
+                .cluster()
+                .all_members()
+                .get(&node_id)
+                .is_some_and(|m| m.is_learner == is_learner)
+            && self.cst.map_lock(|cst_l| {
+                cst_l.config.learners.contains(&node_id) == is_learner
+                    && cst_l.config.voters().contains(&1) != is_learner
+            })
+    }
 }
 
 /*************** tests for propose **************/
@@ -751,7 +767,7 @@ fn add_node_should_add_new_node_to_curp() {
 
 #[traced_test]
 #[test]
-fn add_learner_node_should_add_learner_to_curp() {
+fn add_learner_node_and_promote_should_success() {
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
@@ -761,7 +777,11 @@ fn add_learner_node_should_add_learner_to_curp() {
         vec!["http://127.0.0.1:4567".to_owned()],
     )];
     assert!(curp.apply_conf_change(changes).is_ok());
-    assert!(curp.contains(1));
+    assert!(curp.check_learner(1, true));
+
+    let changes = vec![ConfChange::promote(1)];
+    assert!(curp.apply_conf_change(changes).is_ok());
+    assert!(curp.check_learner(1, false));
 }
 
 #[traced_test]

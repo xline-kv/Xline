@@ -178,11 +178,10 @@ impl LeaderState {
         self.get_status(id).next_index
     }
 
-    // /// Get `match_index` for server
-    // pub(super) fn get_match_index(&self, id: ServerId) -> LogIndex {
-    //     self.get_status(id).match_index
-    // }
-    // TODO
+    /// Get `match_index` for server
+    pub(super) fn get_match_index(&self, id: ServerId) -> LogIndex {
+        self.get_status(id).match_index
+    }
 
     /// Update `next_index` for server
     pub(super) fn update_next_index(&self, id: ServerId, index: LogIndex) {
@@ -203,6 +202,13 @@ impl LeaderState {
     /// Create a `Iterator` for all statuses
     pub(super) fn iter(&self) -> impl Iterator<Item = RefMulti<'_, ServerId, FollowerStatus>> {
         self.statuses.iter()
+    }
+
+    /// Promote a learner to voter
+    pub(super) fn promote(&self, node_id: ServerId) {
+        if let Some(mut s) = self.statuses.get_mut(&node_id) {
+            s.is_learner = false;
+        }
     }
 }
 
@@ -239,9 +245,9 @@ pub(super) struct MajorityConfig {
 #[derive(Debug, Clone)]
 pub(super) struct Config {
     /// The majority config
-    majority_config: MajorityConfig,
+    pub(super) majority_config: MajorityConfig,
     /// The learners in the cluster
-    learners: HashSet<ServerId>,
+    pub(super) learners: HashSet<ServerId>,
 }
 
 impl Config {
@@ -256,11 +262,6 @@ impl Config {
     /// Get voters of current config
     pub(super) fn voters(&self) -> &HashSet<ServerId> {
         &self.majority_config.voters
-    }
-
-    /// Get learners set
-    pub(super) fn learners(&self) -> &HashSet<ServerId> {
-        &self.learners
     }
 
     /// Insert a voter

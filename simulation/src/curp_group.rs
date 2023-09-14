@@ -5,7 +5,7 @@ use curp::{
     client::{Client, ReadState},
     cmd::Command,
     error::{CommandProposeError, ProposeError},
-    members::{ClusterInfo, Member, ServerId},
+    members::{ClusterInfo, ServerId},
     server::Rpc,
     ConfChangeError, FetchClusterRequest, FetchClusterResponse, LogIndex, Member,
     ProposeConfChangeRequest, ProposeConfChangeResponse,

@@ -19,7 +19,7 @@ use std::{
     },
 };
 
-use clippy_utilities::NumericCast;
+use clippy_utilities::{NumericCast, OverflowArithmetic};
 use curp_external_api::cmd::ConflictCheck;
 use dashmap::DashMap;
 use event_listener::Event;
@@ -79,6 +79,9 @@ pub(super) type UncommittedPoolRef<C> = Arc<Mutex<UncommittedPool<C>>>;
 
 /// Default Size of channel
 const CHANGE_CHANNEL_SIZE: usize = 128;
+
+/// Max gap between leader and learner when promoting a learner
+const MAX_PROMOTE_GAP: u64 = 500;
 
 /// The curp state machine
 #[derive(Debug)]
@@ -310,6 +313,16 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 Err(ConfChangeError::new_propose(ProposeError::NotLeader)),
             );
         }
+        if let Some(change) = conf_change.changes().first() {
+            if let ConfChangeType::Promote = change.change_type() {
+                let learner_index = self.lst.get_match_index(change.node_id);
+                let leader_index = self.log.read().last_log_index();
+                if leader_index.overflow_sub(learner_index) > MAX_PROMOTE_GAP {
+                    return (info, Err(ConfChangeError::LearnerNotCatchUp(())));
+                }
+            }
+        }
+
         let pool_entry = PoolEntry::from(conf_change.clone());
         let mut conflict = self.insert_sp(pool_entry.clone());
         conflict |= self.insert_ucp(pool_entry);
@@ -1247,7 +1260,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     /// Check if the new config is valid
-    #[allow(clippy::unimplemented)] // TODO: remove this when learner promote is implemented
     fn check_new_config(&self, conf_change: &ConfChange) -> Result<(), ConfChangeError> {
         let mut statuses_ids = self
             .lst
@@ -1282,10 +1294,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         }
         let mut all_nodes = HashSet::new();
         all_nodes.extend(config.voters());
-        all_nodes.extend(config.learners());
+        all_nodes.extend(&config.learners);
         if statuses_ids.len() < 3
             || all_nodes != statuses_ids
-            || !config.voters().is_disjoint(config.learners())
+            || !config.voters().is_disjoint(&config.learners)
         {
             return Err(ConfChangeError::InvalidConfig(()));
         }
@@ -1293,7 +1305,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     /// Switch to a new config and return old member infos for fallback
-    #[allow(clippy::unimplemented)] // TODO: remove this when learner is implemented
     fn switch_config(&self, conf_change: ConfChange) -> (Vec<String>, String, bool) {
         let node_id = conf_change.node_id;
         let fallback_info = match conf_change.change_type() {
@@ -1333,13 +1344,21 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 (old_addrs, String::new(), false)
             }
             ConfChangeType::Promote => {
-                unimplemented!("learner node is not supported yet");
+                self.cst.map_lock(|mut cst_l| {
+                    _ = cst_l.config.learners.remove(&node_id);
+                    _ = cst_l.config.insert(node_id, false);
+                });
+                self.ctx.cluster_info.promote(node_id);
+                self.lst.promote(node_id);
+                (vec![], String::new(), false)
             }
         };
-        self.ctx
-            .change_tx
-            .send(conf_change)
-            .unwrap_or_else(|_e| unreachable!("change_rx should not be dropped"));
+        if self.is_leader() {
+            self.ctx
+                .change_tx
+                .send(conf_change)
+                .unwrap_or_else(|_e| unreachable!("change_rx should not be dropped"));
+        }
         fallback_info
     }
 

@@ -448,7 +448,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                     let Ok(change) = change_res else {
                         break;
                     };
-
                     match change.change_type() {
                         ConfChangeType::Add | ConfChangeType::AddLearner => {
                             let connect = match InnerConnectApiWrapper::connect(change.node_id, change.address).await {
@@ -487,7 +486,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                                 continue;
                             }
                         }
-                        ConfChangeType::Promote => {}   // TODO: Support Promote
+                        ConfChangeType::Promote => {}
                     }
                 }
             }
