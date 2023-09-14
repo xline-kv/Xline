@@ -1,5 +1,6 @@
-use std::{collections::HashMap, fmt::Debug, io, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt::Debug, io, pin::Pin, sync::Arc, time::Duration};
 
+use async_stream::try_stream;
 use clippy_utilities::NumericCast;
 use curp_external_api::cmd::PbSerializeError;
 use engine::SnapshotApi;
@@ -119,30 +120,35 @@ pub(super) struct CurpNode<C: Command, RC: RoleChange> {
     snapshot_allocator: Box<dyn SnapshotAllocator>,
 }
 
+type ProposeResponseStream = Pin<Box<dyn Stream<Item = Result<ProposeResponse, CurpError>> + Send>>;
+type WaitSyncedResponseStream =
+    Pin<Box<dyn Stream<Item = Result<WaitSyncedResponse, CurpError>> + Send>>;
+
 // handlers
 impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     /// Handle "propose" requests
-    pub(super) async fn propose(&self, req: ProposeRequest) -> Result<ProposeResponse, CurpError> {
-        let cmds: Arc<Vec<C>> = Arc::new(req.cmds()?);
-        assert_eq!(
-            cmds.len(),
-            1,
-            "the length of a proposal should not be larger than 1"
-        );
-        #[allow(clippy::indexing_slicing)]
-        let cmd = Arc::new(cmds[0].clone());
-
-        let ((leader_id, term), result) = self.curp.handle_propose(Arc::clone(&cmd));
-        let resp = match result {
-            Ok(true) => {
-                let er_res = CommandBoard::wait_for_er(&self.cmd_board, cmd.id()).await;
-                ProposeResponse::new_result::<C>(cmd.id().clone(), leader_id, term, &er_res)
+    pub(super) async fn propose(
+        &self,
+        req: ProposeRequest,
+    ) -> Result<ProposeResponseStream, CurpError> {
+        let raw_curp = Arc::clone(&self.curp);
+        let cmd_board = Arc::clone(&self.cmd_board);
+        let cmds: Vec<C> = req.cmds()?;
+        let resp_stream = try_stream! {
+            for cmd in cmds.into_iter() {
+                let cmd = Arc::new(cmd);
+                let ((leader_id, term), result) = raw_curp.handle_propose(Arc::clone(&cmd));
+                yield match result {
+                    Ok(true) => {
+                        let er_res = CommandBoard::wait_for_er(&cmd_board, cmd.id()).await;
+                        ProposeResponse::new_result::<C>(cmd.id().clone(), leader_id, term, &er_res)
+                    }
+                    Ok(false) => ProposeResponse::new_empty(cmd.id().clone(), leader_id, term),
+                    Err(err) => ProposeResponse::new_error(cmd.id().clone(), leader_id, term, err),
+                };
             }
-            Ok(false) => ProposeResponse::new_empty(cmd.id().clone(), leader_id, term),
-            Err(err) => ProposeResponse::new_error(cmd.id().clone(), leader_id, term, err),
         };
-
-        Ok(resp)
+        Ok(Box::pin(resp_stream))
     }
 
     /// Handle `AppendEntries` requests
@@ -188,20 +194,20 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     }
 
     /// handle "wait synced" request
-    pub(super) async fn wait_synced(
-        &self,
-        req: WaitSyncedRequest,
-    ) -> Result<WaitSyncedResponse, CurpError> {
-        let ids = req.propose_id;
-        #[allow(clippy::indexing_slicing)]
-        let id = ids[0].clone();
-        debug!("{} get wait synced request for cmd({id:?})", self.curp.id());
+    pub(super) async fn wait_synced(&self, req: WaitSyncedRequest) -> WaitSyncedResponseStream {
+        let raw_curp = Arc::clone(&self.curp);
+        let cmd_board = Arc::clone(&self.cmd_board);
+        let resp_stream = try_stream! {
+            let ids = req.propose_id;
+            for id in ids.iter() {
+                debug!("{} get wait synced request for cmd({id:?})", raw_curp.id());
+                let (er, asr) = CommandBoard::wait_for_er_asr(&cmd_board, &id).await;
+                debug!("{} wait synced for cmd({id}) finishes", raw_curp.id());
+                yield WaitSyncedResponse::new_from_result::<C>(id.clone(), Some(er), asr);
+            }
+        };
 
-        let (er, asr) = CommandBoard::wait_for_er_asr(&self.cmd_board, &id).await;
-        let resp = WaitSyncedResponse::new_from_result::<C>(id.clone(), Some(er), asr);
-
-        debug!("{} wait synced for cmd({id}) finishes", self.curp.id());
-        Ok(resp)
+        Box::pin(resp_stream)
     }
 
     /// Handle fetch leader requests

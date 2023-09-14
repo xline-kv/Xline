@@ -1,6 +1,6 @@
-use std::{fmt::Debug, sync::Arc};
+use std::{fmt::Debug, pin::Pin, sync::Arc};
 
-use futures::TryStreamExt;
+use futures::{Stream, TryStreamExt};
 #[cfg(not(madsim))]
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
@@ -61,26 +61,36 @@ pub struct Rpc<C: Command + 'static, RC: RoleChange + 'static> {
 
 #[tonic::async_trait]
 impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::Protocol for Rpc<C, RC> {
+    type ProposeStream = Pin<Box<dyn Stream<Item = Result<ProposeResponse, tonic::Status>> + Send>>;
+    type WaitSyncedStream =
+        Pin<Box<dyn Stream<Item = Result<WaitSyncedResponse, tonic::Status>> + Send>>;
+
     #[instrument(skip_all, name = "curp_propose")]
     async fn propose(
         &self,
         request: tonic::Request<ProposeRequest>,
-    ) -> Result<tonic::Response<ProposeResponse>, tonic::Status> {
+    ) -> Result<tonic::Response<Self::ProposeStream>, tonic::Status> {
         request.metadata().extract_span();
-        Ok(tonic::Response::new(
-            self.inner.propose(request.into_inner()).await?,
-        ))
+        Ok(tonic::Response::new(Box::pin(
+            self.inner
+                .propose(request.into_inner())
+                .await?
+                .map_err(Into::into),
+        )))
     }
 
     #[instrument(skip_all, name = "curp_wait_synced")]
     async fn wait_synced(
         &self,
         request: tonic::Request<WaitSyncedRequest>,
-    ) -> Result<tonic::Response<WaitSyncedResponse>, tonic::Status> {
+    ) -> Result<tonic::Response<Self::WaitSyncedStream>, tonic::Status> {
         request.metadata().extract_span();
-        Ok(tonic::Response::new(
-            self.inner.wait_synced(request.into_inner()).await?,
-        ))
+        Ok(tonic::Response::new(Box::pin(
+            self.inner
+                .wait_synced(request.into_inner())
+                .await
+                .map_err(Into::into),
+        )))
     }
 
     #[instrument(skip_all, name = "curp_append_entries")]

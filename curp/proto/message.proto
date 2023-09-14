@@ -79,9 +79,9 @@ message FetchReadStateResponse {
 }
 
 service Protocol {
-    rpc Propose(commandpb.ProposeRequest) returns (commandpb.ProposeResponse);
+    rpc Propose(commandpb.ProposeRequest) returns (stream commandpb.ProposeResponse);
     rpc WaitSynced(commandpb.WaitSyncedRequest)
-        returns (commandpb.WaitSyncedResponse);
+        returns (stream commandpb.WaitSyncedResponse);
     rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
     rpc Vote(VoteRequest) returns (VoteResponse);
     rpc InstallSnapshot(stream InstallSnapshotRequest)

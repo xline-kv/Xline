@@ -93,7 +93,7 @@ impl LeaseClient {
             xlineapi::LeaseGrantRequest::from(request).into(),
             self.token.clone(),
         );
-        let cmd = vec![Command::new(vec![], request, propose_id)];
+        let cmd = Command::new(vec![], request, propose_id);
         let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
         Ok(cmd_res.into_inner().into())
     }
@@ -265,7 +265,7 @@ impl LeaseClient {
             xlineapi::LeaseLeasesRequest {}.into(),
             self.token.clone(),
         );
-        let cmd = vec![Command::new(vec![], request, propose_id)];
+        let cmd = Command::new(vec![], request, propose_id);
         let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
         Ok(cmd_res.into_inner().into())
     }

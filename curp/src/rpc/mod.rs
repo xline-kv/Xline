@@ -173,6 +173,7 @@ impl ProposeResponse {
     }
 
     /// Response term
+    #[allow(dead_code)]
     pub(crate) fn term(&self) -> u64 {
         self.term
     }

@@ -1,8 +1,9 @@
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
+use super::command::Command;
 use curp::{
     client::{Client, ClientPool},
-    cmd::Command as CurpCommand,
+    cmd::{Command as CurpCommand, ProposeId},
     error::CommandProposeError,
 };
 use event_listener::Event;
@@ -10,9 +11,7 @@ use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedSender},
     oneshot::Sender,
 };
-
-use super::command::Command;
-
+use futures::StreamExt;
 /// The propose result
 pub(super) type ProposeResult<Command> = Result<
     (
@@ -23,7 +22,11 @@ pub(super) type ProposeResult<Command> = Result<
 >;
 
 /// The proposal batch type alias
-type ProposalBatch = (Vec<(Command, Sender<ProposeResult<Command>>)>, bool);
+type ProposalBatch = (
+    Vec<Command>,
+    HashMap<ProposeId, Sender<ProposeResult<Command>>>,
+    bool,
+);
 
 /// forward batch limit
 const FORWARD_BATCH_LIMIT: usize = 10;
@@ -33,7 +36,9 @@ const FORWARD_BATCH_TIMEOUT: Duration = Duration::from_millis(8);
 /// Batch collector
 struct BatchCollector {
     /// batch collector to store the (cmd, sender) pair
-    batch_collector: Vec<(Command, Sender<ProposeResult<Command>>)>,
+    batch_collector: Vec<Command>,
+    /// sender table
+    cmd_sender_table: HashMap<ProposeId, Sender<ProposeResult<Command>>>,
     /// The max length of a batch
     batch_limit: usize,
     /// current batch flag
@@ -45,6 +50,7 @@ impl BatchCollector {
     fn new(batch_limit: usize) -> Self {
         Self {
             batch_collector: Vec::with_capacity(batch_limit),
+            cmd_sender_table: HashMap::with_capacity(batch_limit),
             batch_limit,
             batch_flag: false,
         }
@@ -61,23 +67,44 @@ impl BatchCollector {
             self.batch_flag = use_fast_path;
         }
         if self.batch_flag == use_fast_path {
-            self.batch_collector.push((cmd, sender));
-            (self.batch_collector.len() >= self.batch_limit)
-                .then(|| (self.batch_collector.drain(..).collect(), self.batch_flag))
+            let id = cmd.id().clone();
+            self.batch_collector.push(cmd);
+            assert!(
+                self.cmd_sender_table.insert(id, sender).is_none(),
+                "cmd cannot be inserted twice"
+            );
+            (self.batch_collector.len() >= self.batch_limit).then(|| {
+                (
+                    self.batch_collector.drain(..).collect(),
+                    self.cmd_sender_table.drain().collect(),
+                    self.batch_flag,
+                )
+            })
         } else {
             let batch_flag = self.batch_flag;
-            let batch: Vec<(Command, Sender<ProposeResult<Command>>)> =
-                self.batch_collector.drain(..).collect();
-            self.batch_collector.push((cmd, sender));
+            let batch: Vec<Command> = self.batch_collector.drain(..).collect();
+            let cmd_sender_table: HashMap<ProposeId, Sender<ProposeResult<Command>>> =
+                self.cmd_sender_table.drain().collect();
+            let id = cmd.id().clone();
+            self.batch_collector.push(cmd);
+            assert!(
+                self.cmd_sender_table.insert(id, sender).is_none(),
+                "cmd cannot be inserted twice"
+            );
             self.batch_flag = use_fast_path;
-            Some((batch, batch_flag))
+            Some((batch, cmd_sender_table, batch_flag))
         }
     }
 
     /// fetch a batch from the `BatchCollector`
     fn fetch_batch(&mut self) -> Option<ProposalBatch> {
-        (!self.batch_collector.is_empty())
-            .then(|| (self.batch_collector.drain(..).collect(), self.batch_flag))
+        (!self.batch_collector.is_empty()).then(|| {
+            (
+                self.batch_collector.drain(..).collect(),
+                self.cmd_sender_table.drain().collect(),
+                self.batch_flag,
+            )
+        })
     }
 }
 
@@ -95,9 +122,9 @@ pub(super) async fn forward_dispatcher(
         loop {
             tokio::select! {
                 _ = &mut shutdown_trigger => {
-                    if let Some((final_batch, final_flag)) = batch_collector.fetch_batch() {
+                    if let Some((final_batch, cmd_sender_table, final_flag)) = batch_collector.fetch_batch() {
                         let client = client_pool.get_client();
-                        handle_forward(client, final_batch, final_flag).await;
+                        handle_forward(client, final_batch, cmd_sender_table, final_flag).await;
                     }
                     return;
                 }
@@ -107,9 +134,9 @@ pub(super) async fn forward_dispatcher(
                     } else {
                         batch_collector.fetch_batch()
                     };
-                    if let Some((forward_batch, forward_flag)) = batch {
+                    if let Some((forward_batch, cmd_sender_table, forward_flag)) = batch {
                         let client = client_pool.get_client();
-                        let _handle = tokio::spawn(handle_forward(client, forward_batch, forward_flag));
+                        let _handle = tokio::spawn(handle_forward(client, forward_batch, cmd_sender_table, forward_flag));
                     }
                 }
             }
@@ -121,13 +148,19 @@ pub(super) async fn forward_dispatcher(
 /// handle a forward task
 async fn handle_forward(
     client: Arc<Client<Command>>,
-    cmd_batch: Vec<(Command, Sender<ProposeResult<Command>>)>,
+    cmd_batch: Vec<Command>,
+    mut cmd_sender_table: HashMap<ProposeId, Sender<ProposeResult<Command>>>,
     fast_path: bool,
 ) {
-    for (cmd, sender) in cmd_batch {
-        let propose_res = client.propose(vec![cmd], fast_path).await;
-        if let Err(_e) = sender.send(propose_res) {
-            panic!("cannot send proposal result in handl_forward");
+    let cmds = Arc::new(cmd_batch);
+    let mut propose_res = client.propose_batch(cmds, fast_path).await;
+    while let Some((id, res)) = propose_res.next().await {
+        if let Some(sender) = cmd_sender_table.remove(&id) {
+            if let Err(_) = sender.send(res) {
+                unreachable!("the receiver dropped");
+            }
+        } else {
+            continue;
         }
     }
 }
@@ -144,15 +177,20 @@ mod test {
         let mut batch_collector = BatchCollector::new(2);
         let (tx_1, _rx) = tokio::sync::oneshot::channel::<ProposeResult<Command>>();
         let (tx_2, _rx) = tokio::sync::oneshot::channel::<ProposeResult<Command>>();
-        let cmd = Command::new(
+        let cmd_1 = Command::new(
             vec![KeyRange::new("a", "e")],
             RequestWithToken::new(RequestWrapper::PutRequest(PutRequest::default())),
-            ProposeId::from("id"),
+            ProposeId::from("cmd_1"),
         );
         assert!(batch_collector
-            .insert_cmd(cmd.clone(), true, tx_1)
+            .insert_cmd(cmd_1.clone(), true, tx_1)
             .is_none());
-        assert!(batch_collector.insert_cmd(cmd, true, tx_2).is_some());
+        let cmd_2 = Command::new(
+            vec![KeyRange::new("b", "f")],
+            RequestWithToken::new(RequestWrapper::PutRequest(PutRequest::default())),
+            ProposeId::from("cmd_2"),
+        );
+        assert!(batch_collector.insert_cmd(cmd_2, true, tx_2).is_some());
     }
 
     #[test]
@@ -168,7 +206,7 @@ mod test {
         assert!(batch_collector
             .insert_cmd(cmd.clone(), true, tx_1)
             .is_none());
-        let (batch, flag) = batch_collector.insert_cmd(cmd, false, tx_2).unwrap();
+        let (batch, _sender_table, flag) = batch_collector.insert_cmd(cmd, false, tx_2).unwrap();
         assert_eq!(batch.len(), 1);
         assert!(flag);
     }

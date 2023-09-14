@@ -72,14 +72,14 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
         &self,
         request: ProposeRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<ProposeResponse>, RpcError>;
+    ) -> Result<tonic::Response<tonic::Streaming<ProposeResponse>>, RpcError>;
 
     /// Send `WaitSyncedRequest`
     async fn wait_synced(
         &self,
         request: WaitSyncedRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<WaitSyncedResponse>, RpcError>;
+    ) -> Result<tonic::Response<tonic::Streaming<WaitSyncedResponse>>, RpcError>;
 
     /// Send `AppendEntriesRequest`
     async fn append_entries(
@@ -164,7 +164,7 @@ impl ConnectApi for Connect {
         &self,
         request: ProposeRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<ProposeResponse>, RpcError> {
+    ) -> Result<tonic::Response<tonic::Streaming<ProposeResponse>>, RpcError> {
         let mut client = self.get().await?;
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
@@ -178,7 +178,7 @@ impl ConnectApi for Connect {
         &self,
         request: WaitSyncedRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<WaitSyncedResponse>, RpcError> {
+    ) -> Result<tonic::Response<tonic::Streaming<WaitSyncedResponse>>, RpcError> {
         let mut client = self.get().await?;
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);

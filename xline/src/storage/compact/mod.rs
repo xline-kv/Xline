@@ -1,5 +1,15 @@
 use std::{sync::Arc, time::Duration};
 
+use super::{
+    index::{Index, IndexOperate},
+    storage_api::StorageApi,
+    ExecuteError, KvStore,
+};
+use crate::{
+    revision_number::RevisionNumberGenerator,
+    rpc::{CompactionRequest, RequestWithToken},
+    server::command::Command,
+};
 use async_trait::async_trait;
 use curp::{
     client::ClientPool,
@@ -11,17 +21,6 @@ use periodic_compactor::PeriodicCompactor;
 use revision_compactor::RevisionCompactor;
 use tokio::{sync::mpsc::Receiver, time::sleep};
 use utils::config::AutoCompactConfig;
-
-use super::{
-    index::{Index, IndexOperate},
-    storage_api::StorageApi,
-    ExecuteError, KvStore,
-};
-use crate::{
-    revision_number::RevisionNumberGenerator,
-    rpc::{CompactionRequest, RequestWithToken},
-    server::command::Command,
-};
 
 /// mod revision compactor;
 mod revision_compactor;
@@ -60,8 +59,9 @@ impl Compactable for ClientPool<Command> {
         };
         let request_wrapper = RequestWithToken::new_with_token(request.into(), None);
         let propose_id = generate_propose_id("auto-compactor");
-        let cmd = vec![Command::new(vec![], request_wrapper, propose_id)];
-        if let Err(e) = self.get_client().propose(cmd, true).await {
+        let cmd = Command::new(vec![], request_wrapper, propose_id);
+        let client = self.get_client();
+        if let Err(e) = client.propose(cmd, true).await {
             #[allow(clippy::wildcard_enum_match_arm)]
             match e {
                 Execute(e) | AfterSync(e) => Err(e),
@@ -74,7 +74,6 @@ impl Compactable for ClientPool<Command> {
         }
     }
 }
-
 /// Boot up an auto-compactor background task.
 pub(crate) async fn auto_compactor(
     is_leader: bool,

@@ -13,9 +13,9 @@ use test_macros::abort_on_panic;
 use utils::config::ClientTimeout;
 
 use crate::common::curp_group::{
-    commandpb::propose_response::ExeResult, CurpGroup, ProposeRequest, ProposeResponse,
+    commandpb::propose_response::ExeResult, CurpGroup, ProposeRequest,
 };
-
+use futures::StreamExt;
 mod common;
 
 #[tokio::test]
@@ -28,7 +28,7 @@ async fn basic_propose() {
 
     assert_eq!(
         client
-            .propose(vec![TestCommand::new_put(vec![0], 0)], true)
+            .propose(TestCommand::new_put(vec![0], 0), true)
             .await
             .unwrap()
             .0,
@@ -36,7 +36,7 @@ async fn basic_propose() {
     );
     assert_eq!(
         client
-            .propose(vec![TestCommand::new_get(vec![0])], true)
+            .propose(TestCommand::new_get(vec![0]), true)
             .await
             .unwrap()
             .0,
@@ -71,7 +71,7 @@ async fn synced_propose() {
     let client = group.new_client(ClientTimeout::default()).await;
     let cmd = TestCommand::new_get(vec![0]);
 
-    let (er, index) = client.propose(vec![cmd.clone()], false).await.unwrap();
+    let (er, index) = client.propose(cmd.clone(), false).await.unwrap();
     assert_eq!(er, TestCommandResult::new(vec![], vec![]));
     assert_eq!(index.unwrap(), 1.into()); // log[0] is a fake one
 
@@ -100,7 +100,7 @@ async fn exe_exact_n_times() {
     let client = group.new_client(ClientTimeout::default()).await;
     let cmd = TestCommand::new_get(vec![0]);
 
-    let er = client.propose(vec![cmd.clone()], true).await.unwrap().0;
+    let er = client.propose(cmd.clone(), true).await.unwrap().0;
     assert_eq!(er, TestCommandResult::new(vec![], vec![]));
 
     for exe_rx in group.exe_rxs() {
@@ -157,15 +157,18 @@ async fn fast_round_is_slower_than_slow_round() {
     let mut follower_connect = group.get_connect(follower_addr).await;
 
     // the follower should response empty immediately
-    let resp: ProposeResponse = follower_connect
+    let mut resp_stream  = follower_connect
         .propose(tonic::Request::new(ProposeRequest {
             command: vec![bincode::serialize(&cmd).unwrap()],
         }))
         .await
         .unwrap()
         .into_inner();
-    assert!(resp.exe_result.is_none());
-
+    
+    while let Some(res) = resp_stream.next().await {
+        let resp = res.unwrap();
+        assert!(resp.exe_result.is_none());
+    } 
     group.stop();
 }
 
@@ -192,30 +195,40 @@ async fn concurrent_cmd_order() {
     });
 
     sleep_millis(20).await;
-    let response = leader_connect
+    let mut resp_stream = leader_connect
         .propose(ProposeRequest {
             command: vec![bincode::serialize(&cmd1).unwrap()],
         })
         .await
         .expect("propose failed")
         .into_inner();
-    assert!(matches!(response.exe_result.unwrap(), ExeResult::Error(_)));
-    let response = leader_connect
+    
+    while let Some(resp) = resp_stream.next().await {
+        let response = resp.unwrap();
+        assert!(matches!(response.exe_result.unwrap(), ExeResult::Error(_)));
+    }
+
+    
+    let mut resp_stream = leader_connect
         .propose(ProposeRequest {
             command: vec![bincode::serialize(&cmd2).unwrap()],
         })
         .await
         .expect("propose failed")
         .into_inner();
-    assert!(matches!(response.exe_result.unwrap(), ExeResult::Error(_)));
 
+    while let Some(resp) = resp_stream.next().await {
+        let response = resp.unwrap();
+        assert!(matches!(response.exe_result.unwrap(), ExeResult::Error(_)));
+    }
+    
     sleep_secs(1).await;
 
     let client = group.new_client(ClientTimeout::default()).await;
 
     assert_eq!(
         client
-            .propose(vec![TestCommand::new_get(vec![1])], true)
+            .propose(TestCommand::new_get(vec![1]), true)
             .await
             .unwrap()
             .0
@@ -241,7 +254,7 @@ async fn concurrent_cmd_order_should_have_correct_revision() {
         let rand_dur = Duration::from_millis(thread_rng().gen_range(0..500).numeric_cast());
         let _er = client
             .propose(
-                vec![TestCommand::new_put(vec![i], i).set_as_dur(rand_dur)],
+                TestCommand::new_put(vec![i], i).set_as_dur(rand_dur),
                 true,
             )
             .await
@@ -251,7 +264,7 @@ async fn concurrent_cmd_order_should_have_correct_revision() {
     for i in sample_range {
         assert_eq!(
             client
-                .propose(vec![TestCommand::new_get(vec![i])], true)
+                .propose(TestCommand::new_get(vec![i]), true)
                 .await
                 .unwrap()
                 .0

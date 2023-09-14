@@ -1,26 +1,3 @@
-use std::{
-    cmp::Ordering,
-    collections::HashMap,
-    fmt::Debug,
-    iter,
-    marker::PhantomData,
-    sync::{
-        atomic::{AtomicUsize, Ordering::Relaxed},
-        Arc,
-    },
-    time::Duration,
-};
-
-use curp_external_api::cmd::PbSerializeError;
-use dashmap::DashMap;
-use event_listener::Event;
-use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
-use itertools::Itertools;
-use parking_lot::RwLock;
-use tokio::time::timeout;
-use tracing::{debug, instrument, warn};
-use utils::{config::ClientTimeout, parking_lot_lock::RwLockMap};
-
 use crate::{
     cmd::{Command, ProposeId},
     error::{
@@ -31,10 +8,68 @@ use crate::{
     rpc::{
         self, connect::ConnectApi, protocol_client::ProtocolClient, FetchClusterRequest,
         FetchClusterResponse, FetchLeaderRequest, FetchReadStateRequest, ProposeRequest,
-        ReadState as PbReadState, SyncResult, WaitSyncedRequest,
+        ProposeResponse, ReadState as PbReadState, SyncResult, WaitSyncedRequest,
     },
     LogIndex,
 };
+use async_stream::stream;
+use clippy_utilities::OverflowArithmetic;
+use dashmap::DashMap;
+use event_listener::Event;
+use futures::{
+    stream::{FuturesUnordered, Stream},
+    StreamExt,
+};
+use itertools::Itertools;
+use parking_lot::RwLock;
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+    fmt::Debug,
+    iter,
+    marker::PhantomData,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicUsize, Ordering::Relaxed},
+        Arc,
+    },
+    time::Duration,
+};
+use tokio::{
+    sync::mpsc::{channel, Receiver, Sender},
+    time::timeout,
+};
+use tokio_stream::wrappers::ReceiverStream;
+use tracing::{debug, instrument, warn};
+use utils::{config::ClientTimeout, parking_lot_lock::RwLockMap};
+
+type FastRoundStream<C> = Pin<
+    Box<
+        dyn Stream<
+                Item = (
+                    ProposeId,
+                    Result<(Option<<C as Command>::ER>, bool), CommandProposeError<C>>,
+                ),
+            > + Send,
+    >,
+>;
+
+type SlowRoundStream<C> = Pin<
+    Box<
+        dyn Stream<
+                Item = (
+                    ProposeId,
+                    Result<(<C as Command>::ASR, <C as Command>::ER), CommandProposeError<C>>,
+                ),
+            > + Send,
+    >,
+>;
+
+type ProposeResult<C> = (
+    ProposeId,
+    Result<(<C as Command>::ER, Option<<C as Command>::ASR>), CommandProposeError<C>>,
+);
+type ProposeStream<C> = Pin<Box<dyn Stream<Item = ProposeResult<C>> + Send>>;
 
 /// Protocol client
 #[derive(derive_builder::Builder)]
@@ -45,10 +80,10 @@ pub struct Client<C: Command> {
     local_server_id: Option<ServerId>,
     /// Current leader and term
     #[builder(setter(skip))]
-    state: RwLock<State>,
+    state: Arc<RwLock<State>>,
     /// All servers's `Connect`
     #[builder(setter(skip))]
-    connects: DashMap<ServerId, Arc<dyn ConnectApi>>,
+    connects: DashMap<ServerId, Arc<dyn ConnectApi + 'static>>,
     /// Curp client timeout settings
     timeout: ClientTimeout,
     /// To keep Command type
@@ -78,7 +113,7 @@ impl<C: Command> Builder<C> {
         let connects = rpc::connect(all_members).await.collect();
         let client = Client::<C> {
             local_server_id: self.local_server_id,
-            state: RwLock::new(State::new(None, 0)),
+            state: Arc::new(RwLock::new(State::new(None, 0))),
             timeout,
             connects,
             phantom: PhantomData,
@@ -136,7 +171,7 @@ impl<C: Command> Builder<C> {
         let connects = rpc::connect(res.all_members).await.collect();
         let client = Client::<C> {
             local_server_id: self.local_server_id,
-            state: RwLock::new(State::new(res.leader_id, res.term)),
+            state: Arc::new(RwLock::new(State::new(res.leader_id, res.term))),
             timeout,
             connects,
             phantom: PhantomData,
@@ -184,10 +219,39 @@ impl State {
     }
 
     /// Update to the newest term and reset local cache
+    #[allow(dead_code)]
     fn update_to_term(&mut self, term: u64) {
         debug_assert!(self.term <= term, "the client's term {} should not be greater than the given term {} when update the term", self.term, term);
         self.term = term;
         self.leader = None;
+    }
+
+    /// Check the term and leader id, update the state if needed
+    fn check_and_update(&mut self, leader_id: Option<u64>, term: u64) {
+        match self.term.cmp(&term) {
+            Ordering::Less => {
+                // reset term only when the resp has leader id to prevent:
+                // If a server loses contact with its leader, it will update its term for election. Since other servers are all right, the election will not succeed.
+                // But if the client learns about the new term and updates its term to it, it will never get the true leader.
+                if let Some(new_leader_id) = leader_id {
+                    self.update_to_term(term);
+                    self.set_leader(new_leader_id);
+                }
+            }
+            Ordering::Equal => {
+                if let Some(new_leader_id) = leader_id {
+                    if self.leader.is_none() {
+                        self.set_leader(new_leader_id);
+                    }
+                    assert_eq!(
+                        self.leader,
+                        Some(new_leader_id),
+                        "there should never be two leader in one term"
+                    );
+                }
+            }
+            Ordering::Greater => {}
+        }
     }
 }
 
@@ -212,243 +276,281 @@ where
         Builder::default()
     }
 
-    /// The fast round of Curp protocol
-    /// It broadcast the requests to all the curp servers.
-    #[instrument(skip_all)]
-    async fn fast_round(
-        &self,
-        cmds_arc: &[C],
-    ) -> Result<(Option<<C as Command>::ER>, bool), CommandProposeError<C>> {
-        // debug!("fast round for cmd({}) started", cmds_arc.id());
-        let req = ProposeRequest::new(cmds_arc);
-
-        let connects = self
-            .connects
-            .iter()
-            .map(|connect| Arc::clone(&connect))
-            .collect_vec();
-        let mut rpcs: FuturesUnordered<_> = connects
+    #[inline]
+    async fn process_streams(
+        connects: Vec<Arc<dyn ConnectApi>>,
+        req: ProposeRequest,
+        sender: Sender<ProposeResponse>,
+        propose_timeout: Duration,
+    ) {
+        let mut fut_stream = connects
             .iter()
             .zip(iter::repeat(req))
             .map(|(connect, req_cloned)| {
-                connect.propose(req_cloned, *self.timeout.propose_timeout())
+                connect.propose(req_cloned, propose_timeout)
             })
-            .collect();
-
-        let mut ok_cnt: usize = 0;
-        let mut execute_result: Option<C::ER> = None;
-        let superquorum = superquorum(self.connects.len());
-        while let Some(resp_result) = rpcs.next().await {
-            let resp = match resp_result {
+            .collect::<FuturesUnordered<_>>();
+        while let Some(resp_stream) = fut_stream.next().await {
+            let mut resp_stream = match resp_stream {
                 Ok(resp) => resp.into_inner(),
                 Err(e) => {
                     warn!("Propose error: {}", e);
                     continue;
                 }
             };
-            self.state.map_write(|mut state| {
-                match state.term.cmp(&resp.term()) {
-                    Ordering::Less => {
-                        // reset term only when the resp has leader id to prevent:
-                        // If a server loses contact with its leader, it will update its term for election. Since other servers are all right, the election will not succeed.
-                        // But if the client learns about the new term and updates its term to it, it will never get the true leader.
-                        if let Some(leader_id) = resp.leader_id {
-                            state.update_to_term(resp.term());
-                            state.set_leader(leader_id);
-                            execute_result = None;
-                        }
-                    }
-                    Ordering::Equal => {
-                        if let Some(leader_id) = resp.leader_id {
-                            if state.leader.is_none() {
-                                state.set_leader(leader_id);
+            let tx = sender.clone();
+            let _handle = tokio::spawn(async move {
+                while let Some(resp_result) = resp_stream.next().await {
+                    match resp_result {
+                        Ok(resp) => {
+                            if let Err(_) = tx.send(resp).await {
+                                break;
                             }
-                            assert_eq!(
-                                state.leader,
-                                Some(leader_id),
-                                "there should never be two leader in one term"
-                            );
                         }
-                    }
-                    Ordering::Greater => {}
+                        Err(e) => {
+                            warn!("Propose error: {}", e);
+                            continue;
+                        }
+                    };
                 }
             });
-            resp.map_or_else::<C, _, _, _>(
-                |res| {
-                    if let Some(er) = res.transpose()? {
-                        assert!(execute_result.is_none(), "should not set exe result twice");
-                        execute_result = Some(er);
-                    }
-                    ok_cnt = ok_cnt.wrapping_add(1);
-                    Ok(())
-                },
-                |err| {
-                    warn!("Propose error: {}", err);
-                    Ok(())
-                },
-            )
-            .map_err(Into::<ProposeError>::into)?
-            .map_err(|e| CommandProposeError::Execute(e))?;
-            if (ok_cnt >= superquorum) && execute_result.is_some() {
-                debug!("fast round for cmd({}) succeed", resp.propose_id);
-                return Ok((execute_result, true));
-            }
         }
-        Ok((execute_result, false))
+    }
+
+    /// The fast round of Curp protocol
+    /// It broadcast the requests to all the curp servers.
+    #[instrument(skip_all)]
+    async fn fast_round( 
+        connects: Vec<Arc<dyn ConnectApi>>,
+        cmds: Arc<Vec<C>>,
+        state: Arc<RwLock<State>>,
+        propose_timeout: Duration
+    ) -> FastRoundStream<C> {
+        // debug!("fast round for cmd({}) started", cmds_arc.id());
+        let req = ProposeRequest::new(cmds.as_ref());
+        let mut ballot_box: HashMap<
+            ProposeId,
+            (Option<C::ER>, u64, Option<ServerId>, usize, usize),
+        > = HashMap::new();
+        let mut reach_consensus: Option<ProposeId> = None;
+
+        for cmd in cmds.iter() {
+            assert!(
+                ballot_box
+                    .insert(cmd.id().clone(), (None, 0, None, 0, 0))
+                    .is_none(),
+                "cmd {} has been proposed twice",
+                cmd.id()
+            );
+        }
+
+        let total_nodes = connects.len();
+        let (tx, mut rx) = channel(cmds.len().overflow_mul(connects.len()));
+        _ = tokio::spawn(Self::process_streams(connects, req.clone(), tx, propose_timeout));
+        let superquorum = superquorum(total_nodes);
+        let fast_stream = stream! {
+            while let Some(resp) = rx.recv().await {
+                if let Some((execute_result, cmd_term, leader_id, ok_cnt, recv_cnt)) = ballot_box.get_mut(&resp.propose_id) {
+                    *recv_cnt = recv_cnt.wrapping_add(1);
+                    if resp.term < *cmd_term {
+                        continue;
+                    }
+                    *cmd_term = std::cmp::max(*cmd_term, resp.term);
+                    if resp.leader_id.is_some() {
+                        *leader_id = resp.leader_id;
+                    }
+
+                    let res =  resp.map_or_else::<C, _, _, _>(
+                        |res| {
+                            if let Some(er) = res
+                                .transpose()
+                                .map_err(|e| CommandProposeError::Execute(e))?
+                            {
+                                assert!(execute_result.is_none(), "should not set exe result twice");
+                                *execute_result = Some(er);
+                            }
+                            *ok_cnt = ok_cnt.wrapping_add(1);
+                            Ok(())
+                        },
+                        |err| {
+                            warn!("error: {}", err);
+                            Ok(())
+                        },
+                    );
+
+                    match res {
+                        Ok(Ok(())) => {
+                            if (*ok_cnt >= superquorum) && execute_result.is_some() {
+                                reach_consensus = Some(resp.propose_id.clone());
+                                debug!("fast round for cmd({}) succeed", &resp.propose_id);
+                                yield (resp.propose_id.clone(), Ok((execute_result.clone(), true)));
+                            }
+                        },
+                        Ok(Err(e)) => {
+                            reach_consensus = Some(resp.propose_id.clone());
+                            yield (resp.propose_id.clone(), Err(e));
+                        }
+                        Err(e) => {
+                            // 此处的 error 可能是 EmptyField 或者 encode/decode Error
+                            reach_consensus = Some(resp.propose_id.clone());
+                            // PbSerializeError -> ProposeError -> CommandProposeError<C> 然后 yield 给用户，同时剔除 ballot_box 中这条 cmd 的记录
+                            yield (resp.propose_id.clone(), Err(CommandProposeError::Propose(Into::<ProposeError>::into(e))));
+                        }
+                    }
+                    if *recv_cnt == total_nodes {
+                        yield (resp.propose_id.clone(), Ok((execute_result.clone(), false)));
+                    }
+                }
+                if let Some(ref id) = reach_consensus {
+                    let (_er, term, leader_id, _ok_cnt, _recv_cnt) = ballot_box.remove(id).expect("cmd doesn't exist in ballot_box");
+                    state.map_write(|mut state_w| state_w.check_and_update(leader_id, term));
+                    reach_consensus = None;
+                }
+            }
+        };
+        Box::pin(fast_stream)
     }
 
     /// The slow round of Curp protocol
     #[instrument(skip_all)]
     async fn slow_round(
-        &self,
-        cmds_arc: &[C],
-    ) -> Result<(<C as Command>::ASR, <C as Command>::ER), CommandProposeError<C>> {
+        leader_connect: Arc<dyn ConnectApi>, 
+        state: Arc<RwLock<State>>, 
+        wait_synced_timeout: Duration,
+        cmds_arc: Arc<Vec<C>>
+    ) -> SlowRoundStream<C> {
         let propose_ids: Vec<_> = cmds_arc.iter().map(|cmd| cmd.id().clone()).collect();
         debug!("slow round for cmd({propose_ids:?}) started");
-        let retry_timeout = *self.timeout.retry_timeout();
-        loop {
+        let mut resp_stream = loop {
             // fetch leader id
-            let leader_id = self.get_leader_id().await;
 
-            debug!("wait synced request sent to {}", leader_id);
-
-            let resp = match self
-                .get_connect(leader_id)
-                .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
+            match leader_connect
                 .wait_synced(
                     WaitSyncedRequest::new(&propose_ids),
-                    *self.timeout.wait_synced_timeout(),
+                    wait_synced_timeout,
                 )
                 .await
             {
-                Ok(resp) => resp.into_inner(),
-                Err(e) => {
-                    warn!("wait synced rpc error: {e}");
+                Ok(resp) => break resp.into_inner(),
+                Err(_e) => {
                     // it's quite likely that the leader has crashed, then we should wait for some time and fetch the leader again
-                    tokio::time::sleep(retry_timeout).await;
-                    self.resend_propose(cmds_arc, None).await?;
+                    // self.resend_propose(Arc::clone(&cmds_arc), None)
+                    //     .await
+                    //     .expect("resend_propose failed");
                     continue;
                 }
             };
-            let propose_id = resp.propose_id.clone();
-            match resp.into::<C>().map_err(Into::<ProposeError>::into)? {
-                SyncResult::Success { er, asr } => {
-                    debug!("slow round for cmd({}) succeeded", propose_id);
-                    return Ok((asr, er));
-                }
-                SyncResult::Error(CommandSyncError::WaitSync(WaitSyncError::Redirect(
-                    server_id,
-                    term,
-                ))) => {
-                    let new_leader = server_id.and_then(|id| {
-                        self.state.map_write(|mut state| {
-                            (state.term <= term).then(|| {
-                                state.leader = Some(id);
-                                state.term = term;
-                                id
-                            })
-                        })
-                    });
-                    self.resend_propose(cmds_arc, new_leader).await?; // resend the propose to the new leader
-                }
-                SyncResult::Error(CommandSyncError::WaitSync(e)) => {
-                    return Err(
-                        ProposeError::SyncedError(WaitSyncError::Other(e.to_string())).into(),
-                    );
-                }
-                SyncResult::Error(CommandSyncError::Execute(e)) => {
-                    return Err(CommandProposeError::Execute(e));
-                }
-                SyncResult::Error(CommandSyncError::AfterSync(e)) => {
-                    return Err(CommandProposeError::AfterSync(e));
+        };
+        let resp_stream = stream! {
+            while let Some(resp) = resp_stream.next().await {
+                match resp {
+                    Ok(wait_resp) => {
+                        let propose_id = wait_resp.propose_id.clone();
+                        match wait_resp.into::<C>().map_err(Into::<ProposeError>::into).unwrap() {
+                            SyncResult::Success { er, asr } => {
+                                debug!("slow round for cmd({}) succeeded", propose_id);
+                                yield (propose_id, Ok((asr, er)));
+                            }
+                            SyncResult::Error(CommandSyncError::WaitSync(WaitSyncError::Redirect(
+                                server_id,
+                                term,
+                            ))) => {
+                                let new_leader = server_id.and_then(|id| {
+                                    state.map_write(|mut state| {
+                                        (state.term <= term).then(|| {
+                                            state.leader = Some(id);
+                                            state.term = term;
+                                            id
+                                        })
+                                    })
+                                });
+                                yield (propose_id, Err(CommandProposeError::Propose(ProposeError::SyncedError(WaitSyncError::Redirect(new_leader, term)))));
+                            }
+                            SyncResult::Error(CommandSyncError::WaitSync(e)) => {
+                                yield (propose_id,  Err(
+                                    ProposeError::SyncedError(WaitSyncError::Other(e.to_string())).into(),
+                                ));
+                            }
+                            SyncResult::Error(CommandSyncError::Execute(e)) => {
+                                yield (propose_id,  Err(CommandProposeError::Execute(e)));
+                            }
+                            SyncResult::Error(CommandSyncError::AfterSync(e)) => {
+                                yield (propose_id,  Err(CommandProposeError::AfterSync(e)));
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        // yield (propose_id, Err(CommandProposeError::Propose(ProposeError::SyncedError(WaitSyncError::Other(e.to_string())))));
+                        unreachable!("error: {e}")
+                    }
                 }
             }
-        }
+        };
+
+        Box::pin(resp_stream)
     }
 
     /// Resend the propose only to the leader. This is used when leader changes and we need to ensure that the propose is received by the new leader.
+    #[allow(dead_code)]
     async fn resend_propose(
         &self,
-        cmds_arc: &[C],
-        mut new_leader: Option<ServerId>,
+        _cmds_arc: Arc<Vec<C>>,
+        _new_leader: Option<ServerId>,
     ) -> Result<(), ProposeError> {
-        loop {
-            tokio::time::sleep(*self.timeout.retry_timeout()).await;
+        unimplemented!("it's hard to implement this function");
+        // loop {
+        //     tokio::time::sleep(*self.timeout.retry_timeout()).await;
 
-            let leader_id = if let Some(id) = new_leader.take() {
-                id
-            } else {
-                self.fetch_leader().await
-            };
-            debug!("resend propose to {leader_id}");
+        //     let leader_id = if let Some(id) = new_leader.take() {
+        //         id
+        //     } else {
+        //         self.fetch_leader().await
+        //     };
+        //     debug!("resend propose to {leader_id}");
 
-            let resp = self
-                .get_connect(leader_id)
-                .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
-                .propose(
-                    ProposeRequest::new(cmds_arc),
-                    *self.timeout.propose_timeout(),
-                )
-                .await;
+        //     let resp_stream = match self
+        //         .get_connect(leader_id)
+        //         .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
+        //         .propose(
+        //             ProposeRequest::new(cmds_arc.as_ref()),
+        //             *self.timeout.propose_timeout(),
+        //         )
+        //         .await {
+        //             Ok(resp) => resp.into_inner(),
+        //             Err(e) => {
+        //                 warn!("resend_propose error:{e}");
+        //                 continue;
+        //             }
+        //         };
 
-            let resp = match resp {
-                Ok(resp) => {
-                    let resp = resp.into_inner();
-                    if let Some(rpc::ExeResult::Error(ref e)) = resp.exe_result {
-                        let err: ProposeError = e
-                            .clone()
-                            .propose_error
-                            .ok_or(PbSerializeError::EmptyField)?
-                            .try_into()?;
-                        if matches!(err, ProposeError::Duplicated) {
-                            return Ok(());
-                        }
-                    }
-                    resp
-                }
-                Err(e) => {
-                    // if the propose fails again, need to fetch the leader and try again
-                    warn!("failed to resend propose, {e}");
-                    tokio::time::sleep(*self.timeout.retry_timeout()).await;
-                    continue;
-                }
-            };
+        //     while let Some(resp) = resp_stream.next().await {
+        //         match resp {
+        //             Ok(resp) => {
+        //                 if let Some(rpc::ExeResult::Error(ref e)) = resp.exe_result {
+        //                     let err: ProposeError = e
+        //                         .clone()
+        //                         .propose_error
+        //                         .ok_or(PbSerializeError::EmptyField)?
+        //                         .try_into()?;
+        //                     if matches!(err, ProposeError::Duplicated) {
+        //                         return Ok(());
+        //                     }
+        //                 }
+        //                 resp
+        //             }
+        //             Err(e) => {
+        //                 // if the propose fails again, need to fetch the leader and try again
+        //                 warn!("failed to resend propose, {e}");
+        //                 tokio::time::sleep(*self.timeout.retry_timeout()).await;
+        //                 continue;
+        //             }
+        //         }
 
-            let mut state_w = self.state.write();
+        //         let mut state_w = self.state.write();
+        //         state_w.check_and_update(resp.leader_id, resp.term);
 
-            let resp_term = resp.term();
-            match state_w.term.cmp(&resp_term) {
-                Ordering::Less => {
-                    // reset term only when the resp has leader id to prevent:
-                    // If a server loses contact with its leader, it will update its term for election. Since other servers are all right, the election will not succeed.
-                    // But if the client learns about the new term and updates its term to it, it will never get the true leader.
-                    if let Some(id) = resp.leader_id {
-                        state_w.update_to_term(resp_term);
-                        let done = id == leader_id;
-                        state_w.set_leader(leader_id);
-                        if done {
-                            return Ok(());
-                        }
-                    }
-                }
-                Ordering::Equal => {
-                    if let Some(id) = resp.leader_id {
-                        let done = id == leader_id;
-                        debug_assert!(
-                            state_w.leader.as_ref().map_or(true, |leader| leader == &id),
-                            "there should never be two leader in one term"
-                        );
-                        if state_w.leader.is_none() {
-                            state_w.set_leader(id);
-                        }
-                        if done {
-                            return Ok(());
-                        }
-                    }
-                }
-                Ordering::Greater => {}
-            }
-        }
+        //     }
+        // }
     }
 
     /// Send fetch leader requests to all servers until there is a leader
@@ -530,6 +632,105 @@ where
         }
     }
 
+    async fn fast_task(
+        connects: Vec<Arc<dyn ConnectApi>>,
+        cmds: Arc<Vec<C>>,
+        state: Arc<RwLock<State>>,
+        propose_timeout: Duration,
+        use_fast_path: bool,
+        fast_tx: Sender<ProposeId>,
+        res_tx: Sender<ProposeResult<C>>,
+    ) {
+        let mut fast_stream = Self::fast_round(connects, cmds, state, propose_timeout).await;
+        while let Some((id, resp)) = fast_stream.next().await {
+            if use_fast_path {
+                match resp {
+                    Ok((exe_res, success)) => {
+                        if success {
+                            if let Err(e) = res_tx.send((id, Ok((exe_res.unwrap(), None)))).await {
+                                unreachable!("propose channel has been closed unexpectedly: {e}");
+                            }
+                        } else {
+                            // notify slow_task to wait the `ProposeId` after sync
+                            if let Err(e) = fast_tx.send(id).await {
+                                unreachable!("slow task channel has been closed unexpectedly: {e}");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        if let Err(e) = res_tx.send((id, Err(e))).await {
+                            unreachable!("propose channel has been closed unexpectedly: {e}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    async fn slow_task(
+        leader_connect: Arc<dyn ConnectApi>, 
+        state: Arc<RwLock<State>>,
+        wait_synced_timeout: Duration,
+        use_fast_path: bool,
+        cmds: Arc<Vec<C>>,
+        mut slow_rx: Receiver<ProposeId>,
+        res_tx: Sender<ProposeResult<C>>,
+    ) {
+        let mut slow_stream = Self::slow_round(leader_connect, state, wait_synced_timeout, cmds).await;
+        let mut result_buffer = HashMap::new();
+        let mut need_wait = HashSet::new();
+        if use_fast_path {
+            loop {
+                tokio::select! {
+                    slow_result = slow_stream.next() => {
+                        if let Some((id, resp)) = slow_result{
+                            let result = resp.map(|(_asr, er)| (er, None));
+                            if need_wait.remove(&id) {
+                                res_tx.send((id, result)).await.expect("res_tx channel has been closed unexpectedly");
+                            } else {
+                                assert!(result_buffer.insert(id, result).is_none(), "proposal result cannot be inserted into result_buffer twice");
+                            }
+                        } else {
+                            break;
+                        }
+                    },
+                    Some(id) = slow_rx.recv() => {
+                        if let Some(result) = result_buffer.remove(&id) {
+                            res_tx.send((id, result)).await.expect("res_tx channel has been closed unexpectedly");
+                        } else {
+                            assert!(need_wait.insert(id), "proposal result cannot be inserted into result_buffer twice");
+                        }
+                    }
+                }
+            }
+        } else {
+            while let Some((id, resp)) = slow_stream.next().await {
+                let result = resp.map(|(asr, er)| (er, Some(asr)));
+                if let Err(e) = res_tx.send((id, result)).await {
+                    unreachable!("propose channel has been closed unexpectedly: {e}");
+                }
+            }
+        }
+    }
+
+    /// propose a single command
+    #[inline]
+    #[instrument(skip_all)]
+    #[allow(clippy::type_complexity)] // This type is not complex
+    pub async fn propose(
+        &self,
+        cmd: C,
+        use_fast_path: bool,
+    ) -> Result<(<C as Command>::ER, Option<<C as Command>::ASR>), CommandProposeError<C>> {
+        let cmds = Arc::new(vec![cmd]);
+        let mut propose_stream = self.propose_batch(cmds, use_fast_path).await;
+        loop {
+            if let Some((_id, result)) = propose_stream.next().await {
+                return result;
+            }
+        }
+    }
+
     /// Propose the request to servers, if use_fast_path is false, it will wait for the synced index
     /// # Errors
     ///   `CommandProposeError::Execute` if execution error is met
@@ -539,50 +740,32 @@ where
     #[inline]
     #[instrument(skip_all)]
     #[allow(clippy::type_complexity)] // This type is not complex
-    pub async fn propose(
+    pub async fn propose_batch(
         &self,
-        cmds: Vec<C>,
+        cmds: Arc<Vec<C>>,
         use_fast_path: bool,
-    ) -> Result<(C::ER, Option<C::ASR>), CommandProposeError<C>> {
-        let cmds_arc = cmds.as_slice();
-        let fast_round = self.fast_round(cmds_arc);
-        let slow_round = self.slow_round(cmds_arc);
-        if use_fast_path {
-            pin_mut!(fast_round);
-            pin_mut!(slow_round);
+    ) -> ProposeStream<C> {
+        let connects = self
+            .connects
+            .iter()
+            .map(|connect| Arc::clone(&connect))
+            .collect_vec();
+        let state = Arc::clone(&self.state);
+        let propose_timeout = *self.timeout.propose_timeout();
+        let wait_synced_timeout = *self.timeout.wait_synced_timeout();
 
-            // Wait for the fast and slow round at the same time
-            match futures::future::select(fast_round, slow_round).await {
-                futures::future::Either::Left((fast_result, slow_round)) => {
-                    let (fast_er, success) = fast_result?;
-                    if success {
-                        #[allow(clippy::unwrap_used)]
-                        // when success is true fast_er must be Some
-                        Ok((fast_er.unwrap(), None))
-                    } else {
-                        let (_asr, er) = slow_round.await?;
-                        Ok((er, None))
-                    }
-                }
-                futures::future::Either::Right((slow_result, fast_round)) => match slow_result {
-                    Ok((asr, er)) => Ok((er, Some(asr))),
-                    Err(e) => {
-                        if let Ok((Some(er), true)) = fast_round.await {
-                            return Ok((er, None));
-                        }
-                        Err(e)
-                    }
-                },
-            }
-        } else {
-            #[allow(clippy::integer_arithmetic)] // tokio framework triggers
-            let (_fast_result, slow_result) = tokio::join!(fast_round, slow_round);
-
-            match slow_result {
-                Ok((asr, er)) => Ok((er, Some(asr))),
-                Err(e) => Err(e),
-            }
-        }
+        let (fast_tx, slow_rx) = channel(32);
+        let (res_tx, res_rx) = channel(32);
+        _ = tokio::spawn(Self::fast_task(connects, Arc::clone(&cmds), Arc::clone(&state), propose_timeout, use_fast_path, fast_tx, res_tx.clone()));
+        let leader_connect = loop {
+            let leader_id = self.get_leader_id().await;
+            debug!("wait synced request sent to {}", leader_id);
+            if let Some(conn) = self.get_connect(leader_id) {
+                break conn;
+            } 
+        };
+        _ = tokio::spawn(Self::slow_task(leader_connect, state, wait_synced_timeout, use_fast_path, cmds, slow_rx, res_tx));
+        Box::pin(ReceiverStream::new(res_rx))
     }
 
     /// Fetch Read state from leader
