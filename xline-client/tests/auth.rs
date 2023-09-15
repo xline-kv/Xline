@@ -12,9 +12,9 @@ use xline_client::{
 
 mod common;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn role_operations_should_success_in_normal_path() -> Result<()> {
-    let (mut cluster, client) = get_cluster_client().await?;
+    let (_cluster, client) = get_cluster_client().await?;
     let client = client.auth_client();
     let role1 = "role1";
     let role2 = "role2";
@@ -46,13 +46,13 @@ async fn role_operations_should_success_in_normal_path() -> Result<()> {
         .role_get(AuthRoleGetRequest::new(role2))
         .await
         .unwrap_err();
-    cluster.stop().await;
+
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn permission_operations_should_success_in_normal_path() -> Result<()> {
-    let (mut cluster, client) = get_cluster_client().await?;
+    let (_cluster, client) = get_cluster_client().await?;
     let client = client.auth_client();
 
     let role1 = "role1";
@@ -117,13 +117,13 @@ async fn permission_operations_should_success_in_normal_path() -> Result<()> {
     client
         .role_delete(AuthRoleDeleteRequest::new(role1))
         .await?;
-    cluster.stop().await;
+    // // cluster.stop().await;
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn user_operations_should_success_in_normal_path() -> Result<()> {
-    let (mut cluster, client) = get_cluster_client().await?;
+    let (_cluster, client) = get_cluster_client().await?;
     let client = client.auth_client();
 
     let name1 = "usr1";
@@ -149,13 +149,13 @@ async fn user_operations_should_success_in_normal_path() -> Result<()> {
         .user_get(AuthUserGetRequest::new(name1))
         .await
         .unwrap_err();
-    cluster.stop().await;
+
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn user_role_operations_should_success_in_normal_path() -> Result<()> {
-    let (mut cluster, client) = get_cluster_client().await?;
+    let (_cluster, client) = get_cluster_client().await?;
     let client = client.auth_client();
 
     let name1 = "usr1";
@@ -185,6 +185,6 @@ async fn user_role_operations_should_success_in_normal_path() -> Result<()> {
     client
         .user_revoke_role(AuthUserRevokeRoleRequest::new(name1, role2))
         .await?;
-    cluster.stop().await;
+
     Ok(())
 }

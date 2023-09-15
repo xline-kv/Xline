@@ -26,9 +26,9 @@ use futures::future::join_all;
 use itertools::Itertools;
 use tokio::{
     net::TcpListener,
-    runtime::Runtime,
+    runtime::{Handle, Runtime},
     sync::{mpsc, watch},
-    task::JoinHandle,
+    task::{block_in_place, JoinHandle},
 };
 use tracing::debug;
 use utils::{
@@ -192,7 +192,7 @@ impl CurpGroup {
         self.nodes.values().all(|node| node.handle.is_finished())
     }
 
-    pub async fn stop(mut self) {
+    async fn stop(&mut self) {
         debug!("curp group stopping");
 
         let futs = self
@@ -204,7 +204,7 @@ impl CurpGroup {
         self.nodes.clear();
         debug!("curp group stopped");
 
-        if let Some(path) = self.storage_path {
+        if let Some(ref path) = self.storage_path {
             _ = std::fs::remove_dir_all(path);
         }
     }
@@ -281,5 +281,15 @@ impl CurpGroup {
             .unwrap();
         let addr = format!("http://{}", addr);
         ProtocolClient::connect(addr.clone()).await.unwrap()
+    }
+}
+
+impl Drop for CurpGroup {
+    fn drop(&mut self) {
+        block_in_place(move || {
+            Handle::current().block_on(async move {
+                self.stop().await;
+            });
+        });
     }
 }

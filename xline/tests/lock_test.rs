@@ -29,7 +29,7 @@ async fn test_lock() -> Result<(), Box<dyn Error>> {
     assert!(res.key().starts_with(b"test"));
     assert!(elapsed >= Duration::from_secs(1));
     let _ignore = lock_handle.await;
-    cluster.stop().await;
+
     Ok(())
 }
 
@@ -48,6 +48,6 @@ async fn test_lock_timeout() -> Result<(), Box<dyn Error>> {
 
     let res = timeout(Duration::from_secs(3), lock_client.lock("test", None)).await??;
     assert!(res.key().starts_with(b"test"));
-    cluster.stop().await;
+
     Ok(())
 }

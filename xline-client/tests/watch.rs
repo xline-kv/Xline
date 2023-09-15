@@ -11,9 +11,9 @@ use crate::common::get_cluster_client;
 
 mod common;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn watch_should_receive_consistent_events() -> Result<()> {
-    let (mut cluster, client) = get_cluster_client().await?;
+    let (_cluster, client) = get_cluster_client().await?;
     let mut watch_client = client.watch_client();
     let kv_client = client.kv_client();
 
@@ -35,6 +35,6 @@ async fn watch_should_receive_consistent_events() -> Result<()> {
     let resp = stream.message().await?.unwrap();
     assert_eq!(resp.watch_id, watcher.watch_id());
     assert!(resp.canceled);
-    cluster.stop().await;
+
     Ok(())
 }

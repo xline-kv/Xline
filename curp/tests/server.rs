@@ -45,8 +45,6 @@ async fn basic_propose() {
             .0,
         TestCommandResult::new(vec![0], vec![1])
     );
-
-    group.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -61,11 +59,9 @@ async fn client_build_from_addrs_should_fetch_cluster_from_server() {
         .build_from_addrs(all_addrs)
         .await
         .unwrap();
-
-    group.stop().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn synced_propose() {
     init_logger();
@@ -89,8 +85,6 @@ async fn synced_propose() {
         assert_eq!(cmd1, cmd);
         assert_eq!(index, 1);
     }
-
-    group.stop().await;
 }
 
 // Each command should be executed once and only once on each node
@@ -127,8 +121,6 @@ async fn exe_exact_n_times() {
         assert_eq!(cmd1, cmd);
         assert_eq!(index, 1);
     }
-
-    group.stop().await;
 }
 
 // To verify PR #86 is fixed
@@ -168,8 +160,6 @@ async fn fast_round_is_slower_than_slow_round() {
         .unwrap()
         .into_inner();
     assert!(resp.exe_result.is_none());
-
-    group.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -225,8 +215,6 @@ async fn concurrent_cmd_order() {
             .values,
         vec![2]
     );
-
-    group.stop().await;
 }
 
 /// This test case ensures that the issue 228 is fixed.
@@ -259,8 +247,6 @@ async fn concurrent_cmd_order_should_have_correct_revision() {
             vec![i.numeric_cast::<i64>()]
         )
     }
-
-    group.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -305,6 +291,4 @@ async fn shutdown_rpc_should_shutdown_the_cluster() {
         let res = client.propose(TestCommand::new_get(vec![i]), true).await;
         assert_eq!(res.unwrap().0.values, vec![i]);
     }
-
-    group.stop().await;
 }

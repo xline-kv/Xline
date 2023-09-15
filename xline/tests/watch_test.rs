@@ -35,6 +35,6 @@ async fn test_watch() -> Result<(), Box<dyn Error>> {
     client.delete(DeleteRangeRequest::new("foo")).await?;
 
     handle.await?;
-    cluster.stop().await;
+
     Ok(())
 }

@@ -51,8 +51,6 @@ async fn leader_crash_and_recovery() {
     assert_eq!(er.values, vec![0]);
     let asr = old_leader.as_rx.recv().await.unwrap();
     assert_eq!(asr.1, 2);
-
-    group.stop().await;
 }
 
 #[madsim::test]
@@ -98,8 +96,6 @@ async fn follower_crash_and_recovery() {
     assert_eq!(er.values, vec![0]);
     let asr = follower.as_rx.recv().await.unwrap();
     assert_eq!(asr.1, 2);
-
-    group.stop().await;
 }
 
 #[madsim::test]
@@ -171,8 +167,6 @@ async fn leader_and_follower_both_crash_and_recovery() {
     assert_eq!(er.values, vec![0]);
     let asr = follower.as_rx.recv().await.unwrap();
     assert_eq!(asr.1, 2);
-
-    group.stop().await;
 }
 
 #[madsim::test]
@@ -226,8 +220,6 @@ async fn new_leader_will_recover_spec_cmds_cond1() {
         rx.recv().await;
         rx.recv().await;
     }
-
-    group.stop().await;
 }
 
 #[madsim::test]
@@ -268,8 +260,6 @@ async fn new_leader_will_recover_spec_cmds_cond2() {
             .values,
         vec![0]
     );
-
-    group.stop().await;
 }
 
 #[madsim::test]
@@ -334,8 +324,6 @@ async fn old_leader_will_keep_original_states() {
             .values,
         vec![0]
     );
-
-    group.stop().await;
 }
 
 #[madsim::test]
@@ -409,8 +397,6 @@ async fn minority_crash_and_recovery() {
             .values,
         vec![1]
     );
-
-    group.stop().await;
 }
 
 #[madsim::test]
@@ -462,6 +448,4 @@ async fn recovery_after_compaction() {
             assert_eq!(val, kv);
         }
     }
-
-    group.stop().await;
 }

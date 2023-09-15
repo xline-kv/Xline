@@ -8,7 +8,7 @@ use xline::client::{
 };
 use xline_test_utils::Cluster;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn test_snapshot_and_restore() -> Result<(), Box<dyn std::error::Error>> {
     let dir = PathBuf::from("/tmp/test_snapshot_and_restore");
@@ -30,7 +30,6 @@ async fn test_snapshot_and_restore() -> Result<(), Box<dyn std::error::Error>> {
         while let Some(chunk) = stream.message().await? {
             snapshot.write_all(chunk.blob()).await?;
         }
-        cluster.stop().await;
     }
     for restore_dir in &restore_dirs {
         restore(&snapshot_path, &restore_dir).await?;
@@ -44,6 +43,5 @@ async fn test_snapshot_and_restore() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(res.kvs[0].key, b"key");
     assert_eq!(res.kvs[0].value, b"value");
     tokio::fs::remove_dir_all(&dir).await?;
-    new_cluster.stop().await;
     Ok(())
 }

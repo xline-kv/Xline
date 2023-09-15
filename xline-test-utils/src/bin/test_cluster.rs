@@ -16,5 +16,4 @@ async fn main() {
     if let Err(e) = signal::ctrl_c().await {
         eprintln!("Unable to listen for shutdown signal: {e}");
     }
-    cluster.stop().await;
 }

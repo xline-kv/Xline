@@ -9,6 +9,8 @@ use jsonwebtoken::{DecodingKey, EncodingKey};
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use tokio::{
     net::TcpListener,
+    runtime::Handle,
+    task::block_in_place,
     time::{self, Duration},
 };
 use utils::config::{ClientConfig, CompactConfig, CurpConfig, ServerTimeout, StorageConfig};
@@ -121,7 +123,7 @@ impl Cluster {
         self.all_members.values().cloned().collect()
     }
 
-    pub async fn stop(&mut self) {
+    async fn stop(&mut self) {
         futures::future::join_all(self.servers.iter_mut().map(|s| s.stop())).await;
         for path in &self.paths {
             let _ignore = tokio::fs::remove_dir_all(path).await;
@@ -139,10 +141,12 @@ impl Cluster {
 
 impl Drop for Cluster {
     fn drop(&mut self) {
-        assert!(
-            self.servers.iter().all(|s| s.is_stopped()),
-            "cluster is not stopped, please stop it manually by `cluster.stop().await`"
-        );
+        block_in_place(move || {
+            Handle::current().block_on(async move {
+                // do something async
+                self.stop().await;
+            });
+        });
     }
 }
 
