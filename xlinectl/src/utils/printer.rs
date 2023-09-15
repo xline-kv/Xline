@@ -168,7 +168,6 @@ impl SimplePrinter {
 /// Field Printer of common response types
 struct FieldPrinter;
 
-#[allow(dead_code)]
 impl FieldPrinter {
     /// Response header printer
     fn header(header: Option<&ResponseHeader>) {
@@ -185,6 +184,7 @@ impl FieldPrinter {
         println!("key: {}", String::from_utf8_lossy(key));
     }
 
+    #[allow(dead_code)]
     /// Response value printer
     pub(crate) fn value(value: &[u8]) {
         println!("value: {}", String::from_utf8_lossy(value));
