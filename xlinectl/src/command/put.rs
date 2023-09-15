@@ -51,13 +51,13 @@ pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testcase_struct;
+    use crate::test_case_struct;
 
-    testcase_struct!(PutRequest);
+    test_case_struct!(PutRequest);
 
     #[test]
     fn valid() {
-        let testcases = vec![
+        let test_cases = vec![
             TestCase::new(
                 vec!["put", "key1", "value1"],
                 Some(PutRequest::new("key1".as_bytes(), "value1".as_bytes())),
@@ -84,7 +84,7 @@ mod tests {
             ),
         ];
 
-        for case in testcases {
+        for case in test_cases {
             case.run_test();
         }
     }

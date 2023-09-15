@@ -58,15 +58,15 @@ pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result
 
 #[cfg(test)]
 mod tests {
-    use crate::testcase_struct;
+    use crate::test_case_struct;
 
     use super::*;
 
-    testcase_struct!(DeleteRangeRequest);
+    test_case_struct!(DeleteRangeRequest);
 
     #[test]
     fn valid() {
-        let testcases = vec![
+        let test_cases = vec![
             TestCase::new(
                 vec!["delete", "key1"],
                 Some(DeleteRangeRequest::new("key1".as_bytes())),
@@ -89,20 +89,20 @@ mod tests {
             ),
         ];
 
-        for case in testcases {
+        for case in test_cases {
             case.run_test();
         }
     }
 
     #[test]
     fn invalid() {
-        let testcases = vec![
+        let test_cases = vec![
             TestCase::new(vec!["delete", "key", "key2", "--from_key"], None),
             TestCase::new(vec!["delete", "key", "key2", "--prefix"], None),
             TestCase::new(vec!["delete", "key", "--from_key", "--prefix"], None),
         ];
 
-        for case in testcases {
+        for case in test_cases {
             case.run_test();
         }
     }

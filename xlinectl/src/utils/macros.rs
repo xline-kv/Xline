@@ -13,7 +13,7 @@ macro_rules! handle_matches {
 
 ///  Generate `TestCase` struct
 #[macro_export]
-macro_rules! testcase_struct {
+macro_rules! test_case_struct {
     ($req:ident) => {
         struct TestCase {
             arg: Vec<&'static str>,
