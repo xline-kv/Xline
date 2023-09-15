@@ -27,20 +27,20 @@ pub(super) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result
 
 #[cfg(test)]
 mod tests {
-    use crate::testcase_struct;
+    use crate::test_case_struct;
 
     use super::*;
 
-    testcase_struct!(LeaseGrantRequest);
+    test_case_struct!(LeaseGrantRequest);
 
     #[test]
     fn valid() {
-        let testcases = vec![TestCase::new(
+        let test_cases = vec![TestCase::new(
             vec!["grant", "100"],
             Some(LeaseGrantRequest::new(100)),
         )];
 
-        for case in testcases {
+        for case in test_cases {
             case.run_test();
         }
     }

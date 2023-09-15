@@ -74,13 +74,13 @@ async fn keep_alive_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testcase_struct;
+    use crate::test_case_struct;
 
-    testcase_struct!(LeaseKeepAliveRequest);
+    test_case_struct!(LeaseKeepAliveRequest);
 
     #[test]
     fn valid() {
-        let testcases = vec![
+        let test_cases = vec![
             TestCase::new(
                 vec!["keep_alive", "123"],
                 Some(LeaseKeepAliveRequest::new(123)),
@@ -91,7 +91,7 @@ mod tests {
             ),
         ];
 
-        for case in testcases {
+        for case in test_cases {
             case.run_test();
         }
     }
