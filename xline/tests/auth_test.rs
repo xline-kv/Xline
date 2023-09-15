@@ -16,7 +16,7 @@ async fn test_auth_empty_user_get() -> Result<(), Box<dyn Error>> {
     enable_auth(&mut auth_client).await?;
     let res = client.range(RangeRequest::new("foo")).await;
     assert!(res.is_err());
-    cluster.stop().await;
+
     Ok(())
 }
 
@@ -31,7 +31,7 @@ async fn test_auth_empty_user_put() -> Result<(), Box<dyn Error>> {
     enable_auth(&mut auth_client).await?;
     let res = client.put(PutRequest::new("foo", "bar")).await;
     assert!(res.is_err());
-    cluster.stop().await;
+
     Ok(())
 }
 
@@ -52,7 +52,7 @@ async fn test_auth_token_with_disable() -> Result<(), Box<dyn Error>> {
     authed_client.put("foo", "bar", None).await?;
     authed_client.auth_disable().await?;
     authed_client.put("foo", "bar", None).await?;
-    cluster.stop().await;
+
     Ok(())
 }
 
@@ -68,7 +68,7 @@ async fn test_auth_revision() -> Result<(), Box<dyn Error>> {
     let user_add_resp = auth_client.user_add("root", "123", None).await?;
     let auth_rev = user_add_resp.header().unwrap().revision();
     assert_eq!(auth_rev, 2);
-    cluster.stop().await;
+
     Ok(())
 }
 
@@ -85,7 +85,7 @@ async fn test_auth_non_authorized_rpcs() -> Result<(), Box<dyn Error>> {
     enable_auth(&mut auth_client).await?;
     let result = client.put(PutRequest::new("foo", "bar")).await;
     assert!(result.is_err());
-    cluster.stop().await;
+
     Ok(())
 }
 
@@ -125,7 +125,7 @@ async fn test_kv_authorization() -> Result<(), Box<dyn Error>> {
         .get("foo", Some(GetOptions::new().with_range("foz")))
         .await;
     assert!(result.is_err());
-    cluster.stop().await;
+
     Ok(())
 }
 
@@ -143,7 +143,7 @@ async fn test_role_delete() -> Result<(), Box<dyn Error>> {
     auth_client.role_delete("r").await?;
     let user = auth_client.user_get("u").await?;
     assert_eq!(user.roles().len(), 0);
-    cluster.stop().await;
+
     Ok(())
 }
 
@@ -175,7 +175,7 @@ async fn test_no_root_user_do_admin_ops() -> Result<(), Box<dyn Error>> {
     );
     let result = root_client.user_add("u2", "123", None).await;
     assert!(result.is_ok(), "root user failed to add user: {result:?}");
-    cluster.stop().await;
+
     Ok(())
 }
 
@@ -202,7 +202,7 @@ async fn test_auth_wrong_password() -> Result<(), Box<dyn Error>> {
     )
     .await;
     assert!(result.is_ok());
-    cluster.stop().await;
+
     Ok(())
 }
 

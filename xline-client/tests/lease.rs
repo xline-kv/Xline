@@ -8,22 +8,22 @@ use xline_client::{
 
 mod common;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn grant_revoke_should_success_in_normal_path() -> Result<()> {
-    let (mut cluster, client) = get_cluster_client().await?;
+    let (_cluster, client) = get_cluster_client().await?;
     let mut client = client.lease_client();
 
     let resp = client.grant(LeaseGrantRequest::new(123)).await?;
     assert_eq!(resp.ttl, 123);
     let id = resp.id;
     client.revoke(LeaseRevokeRequest::new(id)).await?;
-    cluster.stop().await;
+
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn keep_alive_should_success_in_normal_path() -> Result<()> {
-    let (mut cluster, client) = get_cluster_client().await?;
+    let (_cluster, client) = get_cluster_client().await?;
     let mut client = client.lease_client();
 
     let resp = client.grant(LeaseGrantRequest::new(60)).await?;
@@ -38,13 +38,13 @@ async fn keep_alive_should_success_in_normal_path() -> Result<()> {
     assert_eq!(resp.ttl, 60);
 
     client.revoke(LeaseRevokeRequest::new(id)).await?;
-    cluster.stop().await;
+
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn time_to_live_ttl_is_consistent_in_normal_path() -> Result<()> {
-    let (mut cluster, client) = get_cluster_client().await?;
+    let (_cluster, client) = get_cluster_client().await?;
     let mut client = client.lease_client();
 
     let lease_id = 200;
@@ -61,17 +61,17 @@ async fn time_to_live_ttl_is_consistent_in_normal_path() -> Result<()> {
     assert_eq!(resp.granted_ttl, 60);
 
     client.revoke(LeaseRevokeRequest::new(lease_id)).await?;
-    cluster.stop().await;
+
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn leases_should_include_granted_in_normal_path() -> Result<()> {
     let lease1 = 100;
     let lease2 = 101;
     let lease3 = 102;
 
-    let (mut cluster, client) = get_cluster_client().await?;
+    let (_cluster, client) = get_cluster_client().await?;
     let mut client = client.lease_client();
 
     let resp = client
@@ -101,6 +101,6 @@ async fn leases_should_include_granted_in_normal_path() -> Result<()> {
     client.revoke(LeaseRevokeRequest::new(lease1)).await?;
     client.revoke(LeaseRevokeRequest::new(lease2)).await?;
     client.revoke(LeaseRevokeRequest::new(lease3)).await?;
-    cluster.stop().await;
+
     Ok(())
 }

@@ -38,7 +38,7 @@ async fn test_kv_put() -> Result<(), Box<dyn Error>> {
         let res = client.put(test.req).await;
         assert_eq!(res.is_err(), test.want_err);
     }
-    cluster.stop().await;
+
     Ok(())
 }
 
@@ -155,7 +155,7 @@ async fn test_kv_get() -> Result<(), Box<dyn Error>> {
             .all(|(kv, want)| kv.key == want.as_bytes());
         assert!(is_identical);
     }
-    cluster.stop().await;
+
     Ok(())
 }
 
@@ -172,7 +172,7 @@ async fn test_range_redirect() -> Result<(), Box<dyn Error>> {
     let res = kv_client.get("foo", None).await?;
     assert_eq!(res.kvs().len(), 1);
     assert_eq!(res.kvs()[0].value(), b"bar");
-    cluster.stop().await;
+
     Ok(())
 }
 
@@ -245,7 +245,7 @@ async fn test_kv_delete() -> Result<(), Box<dyn Error>> {
             .all(|(kv, want)| kv.key == want.as_bytes());
         assert!(is_identical);
     }
-    cluster.stop().await;
+
     Ok(())
 }
 

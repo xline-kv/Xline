@@ -55,5 +55,4 @@ async fn read_state() {
             1, res
         );
     }
-    group.stop().await;
 }

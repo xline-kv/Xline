@@ -183,34 +183,6 @@ impl CurpGroup {
         self.nodes.values_mut().map(|node| &mut node.as_rx)
     }
 
-    pub async fn stop(self) {
-        let handle = madsim::runtime::Handle::current();
-
-        for node in self.nodes.values() {
-            handle.send_ctrl_c(node.handle.id());
-        }
-        handle.send_ctrl_c(self.client_node.id());
-        madsim::time::sleep(Duration::from_secs(10)).await;
-
-        // check that all nodes have exited
-        for (name, node) in &self.nodes {
-            if !handle.is_exit(node.handle.id()) {
-                panic!("failed to graceful shutdown {name}");
-            }
-        }
-
-        let paths = self
-            .nodes
-            .values()
-            .map(|node| node.storage_path.clone())
-            .collect_vec();
-        for path in paths {
-            std::fs::remove_dir_all(path).unwrap();
-        }
-
-        debug!("all nodes shutdowned");
-    }
-
     pub async fn crash(&mut self, id: ServerId) {
         let handle = madsim::runtime::Handle::current();
         handle.kill(id.to_string());
@@ -414,5 +386,32 @@ impl<C: Command + 'static> SimClient<C> {
             .spawn(async move { inner.get_leader_id_from_curp().await.unwrap() })
             .await
             .unwrap()
+    }
+}
+
+impl Drop for CurpGroup {
+    fn drop(&mut self) {
+        let handle = madsim::runtime::Handle::current();
+
+        for node in self.nodes.values() {
+            handle.send_ctrl_c(node.handle.id());
+        }
+        handle.send_ctrl_c(self.client_node.id());
+        for (name, node) in &self.nodes {
+            if !handle.is_exit(node.handle.id()) {
+                panic!("failed to graceful shutdown {name}");
+            }
+        }
+
+        let paths = self
+            .nodes
+            .values()
+            .map(|node| node.storage_path.clone())
+            .collect_vec();
+        for path in paths {
+            std::fs::remove_dir_all(path).unwrap();
+        }
+
+        debug!("all nodes shutdowned");
     }
 }

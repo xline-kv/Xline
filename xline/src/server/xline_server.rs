@@ -151,7 +151,6 @@ impl XlineServer {
             compact_task_rx,
             self.shutdown_trigger.subscribe(),
         ));
-        // TODO: Boot up the compact policy scheduler
         let lease_storage = Arc::new(LeaseStore::new(
             Arc::clone(&lease_collection),
             Arc::clone(&header_gen),

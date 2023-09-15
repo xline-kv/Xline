@@ -394,23 +394,26 @@ where
         storage: Arc<KvStore<S>>,
         kv_update_rx: mpsc::Receiver<(i64, Vec<Event>)>,
         sync_victims_interval: Duration,
-        shutdown_listener: shutdown::Listener,
+        mut shutdown_listener: shutdown::Listener,
     ) -> Arc<Self> {
         let watcher_map = Arc::new(RwLock::new(WatcherMap::new()));
         let kv_watcher = Arc::new(Self {
             storage,
             watcher_map,
         });
-        let _victim_handle = tokio::spawn(Self::sync_victims_task(
+        let victim_handle = tokio::spawn(Self::sync_victims_task(
             Arc::clone(&kv_watcher),
             sync_victims_interval,
-            shutdown_listener.clone(),
         ));
-        let _kv_updates_handle = tokio::spawn(Self::kv_updates_task(
-            Arc::clone(&kv_watcher),
-            kv_update_rx,
-            shutdown_listener,
-        ));
+        let kv_updates_handle =
+            tokio::spawn(Self::kv_updates_task(Arc::clone(&kv_watcher), kv_update_rx));
+        let _ig = tokio::spawn(async move {
+            // sync_victims_task and kv_updates_task are both cancel safe, so we directly abort them
+            shutdown_listener.wait_self_shutdown().await;
+            debug!("kv_watcher is shutting down");
+            kv_updates_handle.abort();
+            victim_handle.abort();
+        });
         kv_watcher
     }
 
@@ -419,32 +422,16 @@ where
     async fn kv_updates_task(
         kv_watcher: Arc<KvWatcher<S>>,
         mut kv_update_rx: mpsc::Receiver<(i64, Vec<Event>)>,
-        mut shutdown_listener: shutdown::Listener,
     ) {
-        loop {
-            tokio::select! {
-                _ = shutdown_listener.wait_self_shutdown() => {
-                    debug!("kv_updates_task shutdown");
-                    break;
-                }
-                res = kv_update_rx.recv() => {
-                    let Some(updates) = res else {
-                        debug!("kv_update_rx is closed");
-                        break;
-                    };
-                    kv_watcher.handle_kv_updates(updates);
-                }
-            }
+        while let Some(updates) = kv_update_rx.recv().await {
+            kv_watcher.handle_kv_updates(updates);
         }
+        debug!("kv_update_rx is closed");
     }
 
     /// Background task to sync victims
     #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
-    async fn sync_victims_task(
-        kv_watcher: Arc<KvWatcher<S>>,
-        sync_victims_interval: Duration,
-        mut shutdown_listener: shutdown::Listener,
-    ) {
+    async fn sync_victims_task(kv_watcher: Arc<KvWatcher<S>>, sync_victims_interval: Duration) {
         loop {
             let victims = kv_watcher
                 .watcher_map
@@ -494,13 +481,7 @@ where
             if !new_victims.is_empty() {
                 kv_watcher.watcher_map.write().victims.extend(new_victims);
             }
-            tokio::select! {
-                _ = shutdown_listener.wait_self_shutdown() => {
-                    debug!("sync_victims_task shutdown");
-                    break;
-                }
-                _ = sleep(sync_victims_interval) => {}
-            }
+            sleep(sync_victims_interval).await;
         }
     }
 

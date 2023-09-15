@@ -61,8 +61,6 @@ async fn election() {
     assert_ne!(leader0, leader1);
     assert_eq!(term1, term2);
     assert_eq!(leader1, leader2);
-
-    group.stop().await;
 }
 
 // Reelect after network failure
@@ -117,8 +115,6 @@ async fn reelect() {
     let (final_leader, final_term) = wait_for_election(&group).await;
     check_role_state(&group, 5, final_leader);
     assert!(final_term > term3);
-
-    group.stop().await;
 }
 
 #[madsim::test]
@@ -151,6 +147,4 @@ async fn propose_after_reelect() {
             .values,
         vec![0]
     );
-
-    group.stop().await;
 }
