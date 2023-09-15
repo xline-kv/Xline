@@ -15,7 +15,7 @@ use crate::utils::printer::Printer;
 /// Definition of `keep_alive` command
 pub(super) fn command() -> Command {
     Command::new("keep_alive")
-        .about("lease keep alive periodically")
+        .about("Lease keep alive periodically")
         .arg(arg!(<leaseId> "Lease Id to keep alive").value_parser(value_parser!(i64)))
         .arg(arg!(--once "keep alive once"))
 }
