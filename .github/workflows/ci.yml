@@ -43,6 +43,8 @@ jobs:
     name: Check ${{ matrix.config.name }}
     steps:
       - uses: actions/checkout@v2
+        with:
+          submodules: recursive
       - run: sudo bash ./.github/scripts/install_deps.sh
       - uses: actions-rs/toolchain@v1
         with:
@@ -83,6 +85,8 @@ jobs:
     name: Test ${{ matrix.config.name }}
     steps:
       - uses: actions/checkout@v2
+        with:
+          submodules: recursive
       - run: sudo bash ./.github/scripts/install_deps.sh
       - uses: actions-rs/toolchain@v1
         with:
@@ -108,6 +112,8 @@ jobs:
     name: Clippy ${{ matrix.config.name }}
     steps:
       - uses: actions/checkout@v2
+        with:
+          submodules: recursive
       - run: sudo bash ./.github/scripts/install_deps.sh
       - uses: actions-rs/toolchain@v1
         with:
