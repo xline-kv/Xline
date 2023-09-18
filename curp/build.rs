@@ -5,11 +5,11 @@ fn main() {
         .compile_with_config(
             prost_config,
             &[
-                "./old-proto/message.proto",
-                "./old-proto/error.proto",
-                "./old-proto/command.proto",
+                "./proto/src/message.proto",
+                "./proto/src/error.proto",
+                "./proto/src/command.proto",
             ],
-            &["./old-proto/"],
+            &["./proto/src/"],
         )
         .unwrap_or_else(|e| panic!("Failed to compile proto, error is {:?}", e));
 }
