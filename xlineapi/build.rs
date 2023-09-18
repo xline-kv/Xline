@@ -3,15 +3,15 @@ fn main() {
         .type_attribute(".", "#[derive(serde::Deserialize, serde::Serialize)]")
         .compile(
             &[
-                "proto/kv.proto",
-                "proto/rpc.proto",
-                "proto/auth.proto",
-                "proto/v3lock.proto",
-                "proto/lease.proto",
-                "proto/command.proto",
-                "proto/error.proto",
+                "old-proto/kv.proto",
+                "old-proto/rpc.proto",
+                "old-proto/auth.proto",
+                "old-proto/v3lock.proto",
+                "old-proto/lease.proto",
+                "old-proto/command.proto",
+                "old-proto/error.proto",
             ],
-            &["proto"],
+            &["old-proto"],
         )
         .unwrap_or_else(|e| panic!("Failed to compile proto, error is {:?}", e));
 }
