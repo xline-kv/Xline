@@ -18,6 +18,8 @@ jobs:
       CARGO_TERM_COLOR: always
     steps:
       - uses: actions/checkout@v3
+        with:
+          submodules: recursive
       - uses: Swatinem/rust-cache@v2
       - run: sudo bash ./.github/scripts/install_deps.sh
       - name: Install Rust
