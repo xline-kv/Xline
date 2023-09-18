@@ -46,7 +46,7 @@ brew install protobuf
 # Assume that rust compile environment installed, such as cargo, etc.
 
 # clone source code
-git clone https://github.com/datenlord/Xline
+git clone --recurse-submodules https://github.com/datenlord/Xline
 
 # compile Xline
 cd Xline
@@ -72,12 +72,12 @@ cargo build --release
  docker pull ghcr.io/xline-kv/xline:latest
  ```
 
-#### Build image 
+#### Build image
 ```bash
 # Assume that docker engine environment is installed.
 
 # clone source code
-git clone https://github.com/datenlord/Xline
+git clone --recurse-submodules https://github.com/datenlord/Xline
 cd Xline
 
 # build docker image
