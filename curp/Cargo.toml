@@ -33,6 +33,7 @@ itertools = "0.10.3"
 madsim = { version = "0.2.22", features = ["rpc", "macros"] }
 opentelemetry = "0.18.0"
 parking_lot = "0.12.1"
+priority-queue = "1.3.2"
 prost = "0.11"
 rand = "0.8.5"
 serde = { version = "1.0.130", features = ["derive", "rc"] }

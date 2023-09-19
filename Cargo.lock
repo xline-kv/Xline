@@ -645,6 +645,7 @@ dependencies = [
  "once_cell",
  "opentelemetry",
  "parking_lot",
+ "priority-queue",
  "prost",
  "prost-build",
  "rand",
