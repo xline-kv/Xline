@@ -175,8 +175,6 @@ impl<C: Compactable> Compactor for PeriodicCompactor<C> {
                         last_revision = Some(last_compacted_rev);
                     }
                 }
-                // To ensure that each iteration invokes the same `shutdown_trigger` and keeps
-                // events losing due to the cancellation of `shutdown_trigger` at bay.
                 _ = shutdown_listener.wait_self_shutdown() => {
                     break;
                 }
