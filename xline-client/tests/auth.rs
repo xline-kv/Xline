@@ -50,7 +50,7 @@ async fn role_operations_should_success_in_normal_path() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[tokio::test(flavor = "multi_thread")]
 async fn permission_operations_should_success_in_normal_path() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await?;
     let client = client.auth_client();
@@ -117,7 +117,6 @@ async fn permission_operations_should_success_in_normal_path() -> Result<()> {
     client
         .role_delete(AuthRoleDeleteRequest::new(role1))
         .await?;
-    // // cluster.stop().await;
     Ok(())
 }
 

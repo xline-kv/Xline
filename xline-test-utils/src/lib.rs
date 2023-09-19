@@ -143,7 +143,6 @@ impl Drop for Cluster {
     fn drop(&mut self) {
         block_in_place(move || {
             Handle::current().block_on(async move {
-                // do something async
                 self.stop().await;
             });
         });
