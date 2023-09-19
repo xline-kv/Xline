@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use bytes::BytesMut;
 use clippy_utilities::NumericCast;
 use engine::SnapshotApi;
+use event_listener::Event;
 use futures::Stream;
 #[cfg(test)]
 use mockall::automock;
@@ -13,6 +14,7 @@ use tracing::{debug, error, instrument};
 use utils::tracing::Inject;
 
 use super::{ShutdownRequest, ShutdownResponse};
+use crate::rpc::ClientLeaseKeepAliveRequest;
 use crate::{
     error::RpcError,
     members::ServerId,
@@ -134,6 +136,16 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
         request: FetchReadStateRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<FetchReadStateResponse>, RpcError>;
+
+    /// Keep send lease keep alive to server and mutate the client id
+    /// Return RpcError if failed to get response
+    /// Return leader_id and term if leadership changed
+    /// TODO: How to improve generality without compromising automock and dyn object safety?
+    async fn lease_keep_alive(
+        &self,
+        client_id: Arc<RwLock<String>>,
+        client_id_notifier: Arc<Event>,
+    ) -> Result<(ServerId, u64), RpcError>;
 }
 
 /// Inner Connect interface among different servers
@@ -275,6 +287,32 @@ impl ConnectApi for Connect {
         req.set_timeout(timeout);
         client.fetch_read_state(req).await.map_err(Into::into)
     }
+
+    /// Keep send lease keep alive to server and mutate the client id
+    /// Return RpcError if failed to get response
+    /// Return leader_id and term if leadership changed
+    /// TODO: How to improve generality without compromising automock and dyn object safety?
+    async fn lease_keep_alive(
+        &self,
+        client_id: Arc<RwLock<String>>,
+        client_id_notifier: Arc<Event>,
+    ) -> Result<(ServerId, u64), RpcError> {
+        let mut client = self.get().await?;
+        loop {
+            let stream = heartbeat_stream(Arc::clone(&client_id));
+            let resp = client
+                .client_lease_keep_alive(stream)
+                .await
+                .map_err(RpcError::from)?
+                .into_inner();
+            if let Some(leader_id) = resp.leader_id {
+                return Ok((leader_id, resp.term));
+            }
+            let mut client_id = client_id.write().await;
+            *client_id = resp.client_id;
+            client_id_notifier.notify(usize::MAX);
+        }
+    }
 }
 
 // The inner connection struct to hold the real rpc connections, it may failed to connect, but it also
@@ -392,6 +430,22 @@ fn install_snapshot_stream(
         // TODO: Shall we clean snapshot after stream generation complete
         if let Err(e) = snapshot.clean().await {
             error!("snapshot clean error, {e}");
+        }
+    }
+}
+
+/// Generate heartbeat stream
+fn heartbeat_stream(
+    client_id: Arc<RwLock<String>>,
+) -> impl Stream<Item = ClientLeaseKeepAliveRequest> {
+    stream! {
+        loop {
+            let id = client_id.read().await.to_string();
+            if id.is_empty() {
+                yield ClientLeaseKeepAliveRequest::grant();
+            } else {
+                yield ClientLeaseKeepAliveRequest::keep_alive(id);
+            }
         }
     }
 }

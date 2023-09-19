@@ -28,6 +28,11 @@ pub(crate) use self::proto::{
         FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
         IdSet, ProposeConfChangeRequest, ProposeConfChangeResponse, ShutdownRequest,
         ShutdownResponse,
+        fetch_read_state_response::ReadState, protocol_server::Protocol, AppendEntriesRequest,
+        AppendEntriesResponse, ClientLeaseKeepAliveRequest, ClientLeaseKeepAliveResponse,
+        FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
+        IdSet, InstallSnapshotRequest, InstallSnapshotResponse, ShutdownRequest, ShutdownResponse,
+        VoteRequest, VoteResponse,
     },
 };
 pub use self::proto::{
@@ -494,6 +499,40 @@ impl ShutdownResponse {
             leader_id,
             term,
             error,
+        }
+    }
+}
+
+impl ClientLeaseKeepAliveRequest {
+    /// Create a new keep alive request
+    pub(crate) fn keep_alive(client_id: String) -> Self {
+        Self { client_id }
+    }
+
+    /// Create a new lease grant request
+    pub(crate) fn grant() -> Self {
+        Self {
+            client_id: String::new(),
+        }
+    }
+}
+
+impl ClientLeaseKeepAliveResponse {
+    /// Return this if it is not a leader
+    pub(crate) fn not_leader(leader_id: Option<ServerId>, term: u64) -> Self {
+        Self {
+            leader_id,
+            term,
+            client_id: String::new(),
+        }
+    }
+
+    /// Return this if the client id needs to be set
+    pub(crate) fn set_client_id(client_id: String) -> Self {
+        Self {
+            leader_id: None,
+            term: 0,
+            client_id,
         }
     }
 }

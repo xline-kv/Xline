@@ -15,6 +15,7 @@ use tokio::{
 use tracing::{debug, error, info, warn};
 use utils::{
     config::CurpConfig,
+    parking_lot_lock::RwLockMap,
     shutdown::{self, Signal},
 };
 
@@ -26,7 +27,7 @@ use super::{
     spec_pool::{SpecPoolRef, SpeculativePool},
     storage::{StorageApi, StorageError},
 };
-use crate::server::client_lease::LeaseManager;
+use crate::server::client_lease::{LeaseManager, LeaseManagerRef};
 use crate::{
     cmd::{Command, CommandExecutor},
     error::{CommandSyncError, ProposeError, RpcError},
@@ -39,7 +40,7 @@ use crate::{
         FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,
         InstallSnapshotResponse, ProposeConfChangeRequest, ProposeConfChangeResponse,
         ProposeRequest, ProposeResponse, ShutdownRequest, ShutdownResponse, VoteRequest,
-        VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        VoteResponse, WaitSyncedRequest, WaitSyncedResponse, ClientLeaseKeepAliveRequest, ClientLeaseKeepAliveResponse,
     },
     server::{cmd_worker::CEEventTxApi, raw_curp::SyncAction, storage::db::DB},
     snapshot::{Snapshot, SnapshotMeta},
@@ -112,6 +113,8 @@ pub(super) struct CurpNode<C: Command, RC: RoleChange> {
     spec_pool: SpecPoolRef<C>,
     /// Cmd watch board for tracking the cmd sync results
     cmd_board: CmdBoardRef<C>,
+    /// Lease manager
+    lease_manager: LeaseManagerRef,
     /// CE event tx,
     ce_event_tx: Arc<dyn CEEventTxApi<C>>,
     /// Storage
@@ -327,6 +330,44 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         let cmd = req.cmd()?;
         let state = self.curp.handle_fetch_read_state(&cmd)?;
         Ok(FetchReadStateResponse::new(state))
+    }
+
+    /// Handle lease keep alive requests
+    pub(super) async fn client_lease_keep_alive(
+        &self,
+        req_stream: impl Stream<Item = Result<ClientLeaseKeepAliveRequest, String>>,
+    ) -> Result<ClientLeaseKeepAliveResponse, CurpError> {
+        pin_mut!(req_stream);
+        while let Some(req) = req_stream.next().await {
+            if !self.curp.is_leader() {
+                let (leader_id, term) = self.curp.leader();
+                return Ok(ClientLeaseKeepAliveResponse::not_leader(leader_id, term));
+            }
+            let req = req.map_err(|e| {
+                warn!("lease keep alive stream error, {e}");
+                CurpError::Transport(e)
+            })?;
+            if req.client_id.is_empty() {
+                let client_id = self.lease_manager.write().grant();
+                return Ok(ClientLeaseKeepAliveResponse::set_client_id(client_id));
+            }
+            let client_id = self.lease_manager.map_write(|mut lm_w| {
+                if lm_w.check_alive(&req.client_id) {
+                    lm_w.renew(&req.client_id);
+                    None
+                } else {
+                    lm_w.revoke(&req.client_id);
+                    let client_id = lm_w.grant();
+                    Some(client_id)
+                }
+            });
+            if let Some(client_id) = client_id {
+                return Ok(ClientLeaseKeepAliveResponse::set_client_id(client_id));
+            }
+        }
+        Err(CurpError::Transport(
+            "lease keep alive stream interrupt".to_owned(),
+        ))
     }
 }
 
@@ -570,7 +611,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                 is_leader,
                 Arc::clone(&cmd_board),
                 Arc::clone(&spec_pool),
-                lease_manager,
+                Arc::clone(&lease_manager),
                 uncommitted_pool,
                 &curp_cfg,
                 Arc::clone(&ce_event_tx),
@@ -611,6 +652,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
             curp,
             spec_pool,
             cmd_board,
+            lease_manager,
             ce_event_tx,
             storage,
             snapshot_allocator,

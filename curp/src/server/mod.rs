@@ -19,7 +19,8 @@ use crate::{
     members::{ClusterInfo, ServerId},
     role_change::RoleChange,
     rpc::{
-        AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse,
+        AppendEntriesRequest, AppendEntriesResponse, ClientLeaseKeepAliveRequest,
+        ClientLeaseKeepAliveResponse, FetchClusterRequest, FetchClusterResponse,
         FetchLeaderRequest, FetchLeaderResponse, FetchReadStateRequest, FetchReadStateResponse,
         InnerProtocolServer, InstallSnapshotRequest, InstallSnapshotResponse,
         ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest, ProposeResponse,
@@ -173,6 +174,19 @@ impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::InnerProtocol f
     ) -> Result<tonic::Response<VoteResponse>, tonic::Status> {
         Ok(tonic::Response::new(
             self.inner.vote(request.into_inner()).await?,
+        ))
+    }
+
+    #[instrument(skip_all, name = "curp_client_lease_keep_alive")]
+    async fn client_lease_keep_alive(
+        &self,
+        request: tonic::Request<tonic::Streaming<ClientLeaseKeepAliveRequest>>,
+    ) -> Result<tonic::Response<ClientLeaseKeepAliveResponse>, tonic::Status> {
+        let req_stream = request
+            .into_inner()
+            .map_err(|e| format!("keep-alive transmission failed at client side, {e}"));
+        Ok(tonic::Response::new(
+            self.inner.client_lease_keep_alive(req_stream).await?,
         ))
     }
 }
