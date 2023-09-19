@@ -78,7 +78,7 @@ async fn cmd_worker<
                         let er_ok = er.is_ok();
                         cb.write().insert_er(entry.id(), er);
                         if !er_ok {
-                            sp.lock().remove(entry.id());
+                            sp.remove(entry.id());
                             let _ig = ucp.lock().remove(entry.id());
                         }
                         debug!(
@@ -95,7 +95,7 @@ async fn cmd_worker<
                     let asr = ce.after_sync(cmd.as_ref(), entry.index, prepare).await;
                     let asr_ok = asr.is_ok();
                     cb.write().insert_asr(entry.id(), asr);
-                    sp.lock().remove(entry.id());
+                    sp.remove(entry.id());
                     let _ig = ucp.lock().remove(entry.id());
                     debug!("{id} cmd({}) after sync is called", entry.id());
                     asr_ok

@@ -200,10 +200,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         cmd: Arc<C>,
     ) -> ((Option<ServerId>, u64), Result<bool, ProposeError>) {
         debug!("{} gets proposal for cmd({})", self.id(), cmd.id());
-        let mut conflict = self
-            .ctx
-            .sp
-            .map_lock(|mut spec_l| spec_l.insert(Arc::clone(&cmd)).is_some());
+        let mut conflict = self.ctx.sp.insert(Arc::clone(&cmd)).is_some();
 
         let st_r = self.st.read();
         let info = (st_r.leader_id, st_r.term);
@@ -448,7 +445,13 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         // grant the vote
         debug!("{} votes for server {}", self.id(), candidate_id);
         st_w.voted_for = Some(candidate_id);
-        let self_spec_pool = self.ctx.sp.lock().pool.values().cloned().collect_vec();
+        let self_spec_pool = self
+            .ctx
+            .sp
+            .pool
+            .iter()
+            .map(|entry| Arc::<C>::clone(entry.value()))
+            .collect_vec();
         self.reset_election_tick();
         Ok((st_w.term, self_spec_pool))
     }
@@ -564,12 +567,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
     /// Handle `fetch_read_state`
     pub(super) fn handle_fetch_read_state(&self, cmd: &C) -> bincode::Result<ReadState> {
-        let ids = self.ctx.sp.map_lock(|sp| {
-            sp.pool
-                .iter()
-                .filter_map(|(id, c)| c.is_conflict(cmd).then_some(id.clone()))
-                .collect_vec()
-        });
+        let ids = self.ctx.sp.pool.iter().filter_map(|entry| {
+            entry.value().is_conflict(cmd).then_some(entry.key().clone())
+        }).collect_vec();
         if ids.is_empty() {
             Ok(ReadState::CommitIndex(self.log.read().commit_index))
         } else {
@@ -819,7 +819,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         let self_sp = self
             .ctx
             .sp
-            .map_lock(|sp| sp.pool.values().cloned().collect());
+            .pool
+            .iter()
+            .map(|entry| Arc::<C>::clone(entry.value()))
+            .collect_vec();
 
         if prev_role == Role::Follower {
             debug!("Follower {} starts election", self.id());
@@ -950,12 +953,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             .collect_vec();
 
         let mut cb_w = self.ctx.cb.write();
-        let mut sp_l = self.ctx.sp.lock();
 
         let term = st.term;
         for cmd in recovered_cmds {
             let _ig_sync = cb_w.sync.insert(cmd.id().clone()); // may have been inserted before
-            let _ig_spec = sp_l.insert(Arc::clone(&cmd)); // may have been inserted before
+            let _ig_spec = self.ctx.sp.insert(Arc::clone(&cmd)); // may have been inserted before
             #[allow(clippy::expect_used)]
             let entry = log
                 .push_cmd(term, cmd)

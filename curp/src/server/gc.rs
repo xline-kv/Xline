@@ -1,6 +1,5 @@
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
-use utils::parking_lot_lock::MutexMap;
 
 use super::spec_pool::SpecPoolRef;
 use crate::{
@@ -27,13 +26,12 @@ pub(super) fn run_gc_tasks<C: Command + 'static>(
 /// Cleanup spec pool
 async fn gc_spec_pool<C: Command + 'static>(sp: SpecPoolRef<C>, interval: Duration) {
     let mut last_check: HashSet<ProposeId> =
-        sp.map_lock(|sp_l| sp_l.pool.keys().cloned().collect());
+        sp.pool.iter().map(|entry| entry.key().clone()).collect();
     loop {
         tokio::time::sleep(interval).await;
-        let mut sp = sp.lock();
         sp.pool.retain(|k, _v| !last_check.contains(k));
 
-        last_check = sp.pool.keys().cloned().collect();
+        last_check = sp.pool.iter().map(|entry| entry.key().clone()).collect();
     }
 }
 
@@ -76,7 +74,7 @@ mod tests {
         sleep_secs,
         test_cmd::{TestCommand, TestCommandResult},
     };
-    use parking_lot::{Mutex, RwLock};
+    use parking_lot::RwLock;
     use test_macros::abort_on_panic;
 
     use super::*;
@@ -144,31 +142,27 @@ mod tests {
     #[tokio::test]
     #[abort_on_panic]
     async fn spec_gc_test() {
-        let spec: SpecPoolRef<TestCommand> = Arc::new(Mutex::new(SpeculativePool::new()));
+        let spec: SpecPoolRef<TestCommand> = Arc::new(SpeculativePool::new());
         tokio::spawn(gc_spec_pool(Arc::clone(&spec), Duration::from_millis(500)));
 
         tokio::time::sleep(Duration::from_millis(100)).await;
         let cmd1 = Arc::new(TestCommand::default());
-        spec.lock()
-            .pool
+        spec.pool
             .insert(cmd1.id().clone(), Arc::clone(&cmd1));
 
         tokio::time::sleep(Duration::from_millis(100)).await;
         let cmd2 = Arc::new(TestCommand::default());
-        spec.lock()
-            .pool
+        spec.pool
             .insert(cmd2.id().clone(), Arc::clone(&cmd2));
 
         // at 600ms
         tokio::time::sleep(Duration::from_millis(400)).await;
         let cmd3 = Arc::new(TestCommand::default());
-        spec.lock()
-            .pool
+        spec.pool
             .insert(cmd3.id().clone(), Arc::clone(&cmd3));
 
         // at 1100ms, the first two kv should be removed
         tokio::time::sleep(Duration::from_millis(500)).await;
-        let spec = spec.lock();
         assert_eq!(spec.pool.len(), 1);
         assert!(spec.pool.contains_key(cmd3.id()));
     }
@@ -177,27 +171,24 @@ mod tests {
     #[tokio::test]
     #[abort_on_panic]
     async fn spec_gc_will_not_panic() {
-        let spec: SpecPoolRef<TestCommand> = Arc::new(Mutex::new(SpeculativePool::new()));
+        let spec: SpecPoolRef<TestCommand> = Arc::new(SpeculativePool::new());
 
         let cmd1 = Arc::new(TestCommand::default());
-        spec.lock()
-            .pool
+        spec.pool
             .insert(cmd1.id().clone(), Arc::clone(&cmd1));
 
         tokio::time::sleep(Duration::from_millis(100)).await;
         let cmd2 = Arc::new(TestCommand::default());
-        spec.lock()
-            .pool
+        spec.pool
             .insert(cmd2.id().clone(), Arc::clone(&cmd2));
 
         let cmd3 = Arc::new(TestCommand::default());
-        spec.lock()
-            .pool
+        spec.pool
             .insert(cmd2.id().clone(), Arc::clone(&cmd3));
 
         tokio::spawn(gc_spec_pool(Arc::clone(&spec), Duration::from_millis(500)));
 
-        spec.lock().remove(cmd2.id());
+        spec.remove(cmd2.id());
 
         sleep_secs(1).await;
     }

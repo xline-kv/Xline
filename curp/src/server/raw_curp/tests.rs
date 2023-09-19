@@ -35,7 +35,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             (0..n).map(|i| (format!("S{i}"), format!("S{i}"))).collect();
         let cluster_info = Arc::new(ClusterInfo::new(all_members, "S0"));
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
-        let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
+        let spec_pool = Arc::new(SpeculativePool::new());
         let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
         let (log_tx, log_rx) = mpsc::unbounded_channel();
         // prevent the channel from being closed

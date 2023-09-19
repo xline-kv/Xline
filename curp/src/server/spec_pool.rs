@@ -1,30 +1,30 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
+use dashmap::DashMap;
 
-use parking_lot::Mutex;
 use tracing::{debug, warn};
 
 use crate::cmd::{Command, ProposeId};
 
 /// A reference to the speculative pool
-pub(super) type SpecPoolRef<C> = Arc<Mutex<SpeculativePool<C>>>;
+pub(super) type SpecPoolRef<C> = Arc<SpeculativePool<C>>;
 
 /// The speculative pool that stores commands that might be executed speculatively
 #[derive(Debug)]
 pub(super) struct SpeculativePool<C> {
     /// Store
-    pub(super) pool: HashMap<ProposeId, Arc<C>>,
+    pub(super) pool: DashMap<ProposeId, Arc<C>>,
 }
 
 impl<C: Command + 'static> SpeculativePool<C> {
     /// Create a new speculative pool
     pub(super) fn new() -> Self {
         Self {
-            pool: HashMap::new(),
+            pool: DashMap::new(),
         }
     }
 
     /// Push a new command into spec pool if it has no conflict. Return Some if it conflicts with spec pool or the cmd is already in the pool.
-    pub(super) fn insert(&mut self, cmd: Arc<C>) -> Option<Arc<C>> {
+    pub(super) fn insert(&self, cmd: Arc<C>) -> Option<Arc<C>> {
         if self.has_conflict_with(cmd.as_ref()) {
             Some(cmd)
         } else {
@@ -41,11 +41,11 @@ impl<C: Command + 'static> SpeculativePool<C> {
 
     /// Check whether the command pool has conflict with the new command
     fn has_conflict_with(&self, cmd: &C) -> bool {
-        self.pool.values().any(|spec_cmd| spec_cmd.is_conflict(cmd))
+        self.pool.iter().any(|spec_cmd| spec_cmd.is_conflict(cmd))
     }
 
     /// Remove the command from spec pool
-    pub(super) fn remove(&mut self, cmd_id: &ProposeId) {
+    pub(super) fn remove(&self, cmd_id: &ProposeId) {
         if self.pool.remove(cmd_id).is_some() {
             debug!("cmd({cmd_id}) is removed from spec pool");
         } else {

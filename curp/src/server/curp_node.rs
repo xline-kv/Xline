@@ -459,7 +459,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         let (log_tx, log_rx) = mpsc::unbounded_channel();
         let shutdown_trigger = Arc::new(Event::new());
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
-        let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
+        let spec_pool = Arc::new(SpeculativePool::new());
         let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
         let last_applied = cmd_executor
             .last_applied()
