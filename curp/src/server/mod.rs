@@ -49,6 +49,9 @@ mod curp_node;
 /// Storage
 mod storage;
 
+/// Client id lease manager
+mod client_lease;
+
 /// Default server serving port
 #[cfg(not(madsim))]
 static DEFAULT_SERVER_PORT: u16 = 12345;

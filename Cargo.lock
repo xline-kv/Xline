@@ -638,6 +638,7 @@ dependencies = [
  "once_cell",
  "opentelemetry",
  "parking_lot",
+ "priority-queue",
  "prost",
  "prost-build",
  "serde",
@@ -651,6 +652,7 @@ dependencies = [
  "tracing-subscriber",
  "tracing-test",
  "utils",
+ "uuid",
 ]
 
 [[package]]
@@ -2091,9 +2093,9 @@ dependencies = [
 
 [[package]]
 name = "priority-queue"
-version = "1.3.1"
+version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ca9c6be70d989d21a136eb86c2d83e4b328447fac4a88dace2143c179c86267"
+checksum = "fff39edfcaec0d64e8d0da38564fad195d2d51b680940295fcc307366e101e61"
 dependencies = [
  "autocfg",
  "indexmap 1.9.2",

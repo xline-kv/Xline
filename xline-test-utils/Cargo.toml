@@ -12,8 +12,6 @@ readme = "README.md"
 
 [dependencies]
 curp = { path = "../curp" }
-xline = { path = "../xline" }
-utils = { path = "../utils", features = ["parking_lot"] }
 jsonwebtoken = "8.1.1"
 rand = "0.8.5"
 tokio = { version = "0.2.23", package = "madsim-tokio", features = [
@@ -24,3 +22,5 @@ tokio = { version = "0.2.23", package = "madsim-tokio", features = [
     "net",
     "signal",
 ] }
+utils = { path = "../utils", features = ["parking_lot"] }
+xline = { path = "../xline" }

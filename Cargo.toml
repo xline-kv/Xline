@@ -1,17 +1,17 @@
 [workspace]
 
 members = [
-  "xline",
-  "curp",
   "benchmark",
-  "utils",
-  "engine",
-  "xlineapi",
+  "curp",
   "curp-external-api",
   "curp-test-utils",
-  "xline-client",
+  "engine",
   "simulation",
-  "xline-test-utils",
   "test-macros",
+  "utils",
+  "xline",
+  "xline-client",
+  "xline-test-utils",
+  "xlineapi",
   "xlinectl",
 ]
