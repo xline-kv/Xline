@@ -147,6 +147,7 @@ async fn fast_round_is_slower_than_slow_round() {
     leader_connect
         .propose(tonic::Request::new(ProposeRequest {
             command: bincode::serialize(&cmd).unwrap(),
+            first_incomplete: 0,
         }))
         .await
         .unwrap();
@@ -163,6 +164,7 @@ async fn fast_round_is_slower_than_slow_round() {
     let resp: ProposeResponse = follower_connect
         .propose(tonic::Request::new(ProposeRequest {
             command: bincode::serialize(&cmd).unwrap(),
+            first_incomplete: 0,
         }))
         .await
         .unwrap()
@@ -189,6 +191,7 @@ async fn concurrent_cmd_order() {
     tokio::spawn(async move {
         c.propose(ProposeRequest {
             command: bincode::serialize(&cmd0).unwrap(),
+            first_incomplete: 0,
         })
         .await
         .expect("propose failed");
@@ -198,6 +201,7 @@ async fn concurrent_cmd_order() {
     let response = leader_connect
         .propose(ProposeRequest {
             command: bincode::serialize(&cmd1).unwrap(),
+            first_incomplete: 0,
         })
         .await
         .expect("propose failed")
@@ -206,6 +210,7 @@ async fn concurrent_cmd_order() {
     let response = leader_connect
         .propose(ProposeRequest {
             command: bincode::serialize(&cmd2).unwrap(),
+            first_incomplete: 0,
         })
         .await
         .expect("propose failed")

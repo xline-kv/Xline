@@ -10,6 +10,7 @@ use utils::config::{
 };
 
 use super::*;
+use crate::server::client_lease::LeaseManager;
 use crate::{
     server::{
         cmd_board::CommandBoard,
@@ -43,6 +44,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         let cluster_info = Arc::new(ClusterInfo::new(all_members, "S0"));
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
+        let lease_manager = Arc::new(RwLock::new(LeaseManager::new()));
         let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
         let (log_tx, log_rx) = mpsc::unbounded_channel();
         // prevent the channel from being closed
@@ -63,6 +65,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             true,
             cmd_board,
             spec_pool,
+            lease_manager,
             uncommitted_pool,
             Arc::new(curp_config),
             Arc::new(exe_tx),
@@ -91,7 +94,7 @@ fn leader_handle_propose_will_succeed() {
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
     let cmd = Arc::new(TestCommand::default());
-    let ((leader_id, term), result) = curp.handle_propose(cmd);
+    let ((leader_id, term), result) = curp.handle_propose(cmd, 0);
     assert_eq!(leader_id, Some(curp.id().clone()));
     assert_eq!(term, 0);
     assert!(matches!(result, Ok(true)));
@@ -107,20 +110,20 @@ fn leader_handle_propose_will_reject_conflicted() {
     };
 
     let cmd1 = Arc::new(TestCommand::new_put(vec![1], 0));
-    let ((leader_id, term), result) = curp.handle_propose(cmd1);
+    let ((leader_id, term), result) = curp.handle_propose(cmd1, 0);
     assert_eq!(leader_id, Some(curp.id().clone()));
     assert_eq!(term, 0);
     assert!(matches!(result, Ok(true)));
 
     let cmd2 = Arc::new(TestCommand::new_put(vec![1, 2], 1));
-    let ((leader_id, term), result) = curp.handle_propose(cmd2);
+    let ((leader_id, term), result) = curp.handle_propose(cmd2, 0);
     assert_eq!(leader_id, Some(curp.id().clone()));
     assert_eq!(term, 0);
     assert!(matches!(result, Err(ProposeError::KeyConflict)));
 
     // leader will also reject cmds that conflict un-synced cmds
     let cmd3 = Arc::new(TestCommand::new_put(vec![2], 1));
-    let ((leader_id, term), result) = curp.handle_propose(cmd3);
+    let ((leader_id, term), result) = curp.handle_propose(cmd3, 0);
     assert_eq!(leader_id, Some(curp.id().clone()));
     assert_eq!(term, 0);
     assert!(matches!(result, Err(ProposeError::KeyConflict)));
@@ -135,12 +138,12 @@ fn leader_handle_propose_will_reject_duplicated() {
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
     let cmd = Arc::new(TestCommand::default());
-    let ((leader_id, term), result) = curp.handle_propose(Arc::clone(&cmd));
+    let ((leader_id, term), result) = curp.handle_propose(Arc::clone(&cmd), 0);
     assert_eq!(leader_id, Some(curp.id().clone()));
     assert_eq!(term, 0);
     assert!(matches!(result, Ok(true)));
 
-    let ((leader_id, term), result) = curp.handle_propose(cmd);
+    let ((leader_id, term), result) = curp.handle_propose(cmd, 0);
     assert_eq!(leader_id, Some(curp.id().clone()));
     assert_eq!(term, 0);
     assert!(matches!(result, Err(ProposeError::Duplicated)));
@@ -158,7 +161,7 @@ fn follower_handle_propose_will_succeed() {
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
     let cmd = Arc::new(TestCommand::new_get(vec![1]));
-    let ((leader_id, term), result) = curp.handle_propose(cmd);
+    let ((leader_id, term), result) = curp.handle_propose(cmd, 0);
     assert_eq!(leader_id, None);
     assert_eq!(term, 1);
     assert!(matches!(result, Ok(false)));
@@ -177,13 +180,13 @@ fn follower_handle_propose_will_reject_conflicted() {
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
     let cmd1 = Arc::new(TestCommand::new_get(vec![1]));
-    let ((leader_id, term), result) = curp.handle_propose(cmd1);
+    let ((leader_id, term), result) = curp.handle_propose(cmd1, 0);
     assert_eq!(leader_id, None);
     assert_eq!(term, 1);
     assert!(matches!(result, Ok(false)));
 
     let cmd2 = Arc::new(TestCommand::new_get(vec![1]));
-    let ((leader_id, term), result) = curp.handle_propose(cmd2);
+    let ((leader_id, term), result) = curp.handle_propose(cmd2, 0);
     assert_eq!(leader_id, None);
     assert_eq!(term, 1);
     assert!(matches!(result, Err(ProposeError::KeyConflict)));
@@ -588,8 +591,8 @@ fn leader_retires_should_cleanup() {
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
 
-    let _ignore = curp.handle_propose(Arc::new(TestCommand::new_put(vec![1], 0)));
-    let _ignore = curp.handle_propose(Arc::new(TestCommand::new_get(vec![1])));
+    let _ignore = curp.handle_propose(Arc::new(TestCommand::new_put(vec![1], 0)), 0);
+    let _ignore = curp.handle_propose(Arc::new(TestCommand::new_get(vec![1])), 0);
 
     curp.leader_retires();
 
