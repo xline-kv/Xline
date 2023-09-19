@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 
-use curp_external_api::cmd::PbSerializeError;
+use curp_external_api::cmd::{parse_propose_id, PbSerializeError};
 use dashmap::DashMap;
 use event_listener::Event;
 use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
@@ -20,6 +20,7 @@ use crate::{
         WaitSyncError,
     },
     members::ServerId,
+    request_tracker::RequestTracker,
     rpc::{
         self, connect::ConnectApi, protocol_client::ProtocolClient, FetchClusterRequest,
         FetchClusterResponse, FetchLeaderRequest, FetchReadStateRequest, ProposeRequest,
@@ -38,6 +39,9 @@ pub struct Client<C: Command> {
     /// Current leader and term
     #[builder(setter(skip))]
     state: RwLock<State>,
+    /// Request tracker
+    #[builder(setter(skip))]
+    tracker: RwLock<RequestTracker>,
     /// All servers's `Connect`
     #[builder(setter(skip))]
     connects: DashMap<ServerId, Arc<dyn ConnectApi>>,
@@ -71,6 +75,7 @@ impl<C: Command> Builder<C> {
         let client = Client::<C> {
             local_server_id: self.local_server_id,
             state: RwLock::new(State::new(None, 0)),
+            tracker: RwLock::new(RequestTracker::new()),
             config,
             connects,
             phantom: PhantomData,
@@ -129,6 +134,7 @@ impl<C: Command> Builder<C> {
         let client = Client::<C> {
             local_server_id: self.local_server_id,
             state: RwLock::new(State::new(res.leader_id, res.term)),
+            tracker: RwLock::new(RequestTracker::new()),
             config,
             connects,
             phantom: PhantomData,
@@ -238,9 +244,10 @@ where
     async fn fast_round(
         &self,
         cmd_arc: Arc<C>,
+        first_incomplete: u64,
     ) -> Result<(Option<<C as Command>::ER>, bool), CommandProposeError<C>> {
         debug!("fast round for cmd({}) started", cmd_arc.id());
-        let req = ProposeRequest::new(cmd_arc.as_ref());
+        let req = ProposeRequest::new(cmd_arc.as_ref(), first_incomplete);
 
         let connects = self
             .connects
@@ -304,6 +311,7 @@ where
     async fn slow_round(
         &self,
         cmd: Arc<C>,
+        first_incomplete: u64,
     ) -> Result<(<C as Command>::ASR, <C as Command>::ER), CommandProposeError<C>> {
         debug!("slow round for cmd({}) started", cmd.id());
         let retry_timeout = *self.config.retry_timeout();
@@ -333,7 +341,8 @@ where
                     warn!("wait synced rpc error: {e}");
                     // it's quite likely that the leader has crashed, then we should wait for some time and fetch the leader again
                     tokio::time::sleep(retry_timeout).await;
-                    self.resend_propose(Arc::clone(&cmd), None).await?;
+                    self.resend_propose(Arc::clone(&cmd), first_incomplete, None)
+                        .await?;
                     continue;
                 }
             };
@@ -351,7 +360,8 @@ where
                     term,
                 ))) => {
                     self.state.write().check_and_update(new_leader, term);
-                    self.resend_propose(Arc::clone(&cmd), new_leader).await?; // resend the propose to the new leader
+                    self.resend_propose(Arc::clone(&cmd), first_incomplete, new_leader)
+                        .await?; // resend the propose to the new leader
                 }
                 SyncResult::Error(CommandSyncError::WaitSync(e)) => {
                     return Err(
@@ -416,6 +426,7 @@ where
     async fn resend_propose(
         &self,
         cmd: Arc<C>,
+        first_complete: u64,
         mut new_leader: Option<ServerId>,
     ) -> Result<(), ProposeError> {
         let retry_count = *self.config.retry_count();
@@ -439,7 +450,7 @@ where
                 .get_connect(leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .propose(
-                    ProposeRequest::new(cmd.as_ref()),
+                    ProposeRequest::new(cmd.as_ref(), first_complete),
                     *self.config.propose_timeout(),
                 )
                 .await;
@@ -604,9 +615,13 @@ where
         use_fast_path: bool,
     ) -> Result<(C::ER, Option<C::ASR>), CommandProposeError<C>> {
         let cmd_arc = Arc::new(cmd);
-        let fast_round = self.fast_round(Arc::clone(&cmd_arc));
-        let slow_round = self.slow_round(cmd_arc);
-        if use_fast_path {
+        let Some((_, seq_num)) = parse_propose_id(cmd_arc.id()) else {
+            return Err(CommandProposeError::Propose(ProposeError::InvalidProposeId));
+        };
+        let first_incomplete = self.tracker.read().first_incomplete();
+        let fast_round = self.fast_round(Arc::clone(&cmd_arc), first_incomplete);
+        let slow_round = self.slow_round(cmd_arc, first_incomplete);
+        let ret = if use_fast_path {
             pin_mut!(fast_round);
             pin_mut!(slow_round);
 
@@ -641,7 +656,9 @@ where
                 Ok((asr, er)) => Ok((er, Some(asr))),
                 Err(e) => Err(e),
             }
-        }
+        };
+        self.tracker.write().record_complete(seq_num);
+        ret
     }
 
     /// Fetch Read state from leader

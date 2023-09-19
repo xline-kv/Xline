@@ -87,6 +87,12 @@ pub enum ProposeError {
     /// The command has already been proposed before
     #[error("duplicated, the cmd might have already been proposed")]
     Duplicated,
+    /// The command propose id is invalid
+    #[error("invalid propose id, use generate_propose_id() to get one")]
+    InvalidProposeId,
+    /// The command client id is expired
+    #[error("client id expired, please renew a client id")]
+    ExpiredClientId,
     /// Command syncing error
     #[error("syncing error {0}")]
     SyncedError(WaitSyncError),
@@ -112,6 +118,8 @@ impl TryFrom<PbProposeError> for ProposeError {
                     .into(),
             ),
             PbProposeError::EncodeError(s) => ProposeError::EncodeError(s),
+            PbProposeError::InvalidProposeId(_) => ProposeError::InvalidProposeId,
+            PbProposeError::ExpiredClientId(_) => ProposeError::ExpiredClientId,
         })
     }
 }
@@ -129,6 +137,8 @@ impl From<ProposeError> for PbProposeError {
                 wait_sync_error: Some(e.into()),
             }),
             ProposeError::EncodeError(s) => PbProposeError::EncodeError(s),
+            ProposeError::InvalidProposeId => PbProposeError::InvalidProposeId(()),
+            ProposeError::ExpiredClientId => PbProposeError::ExpiredClientId(()),
         }
     }
 }

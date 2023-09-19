@@ -1,4 +1,6 @@
-use std::{collections::HashMap, sync::Arc};
+#![allow(unused)]
+
+use std::{collections::HashMap, collections::HashSet, sync::Arc};
 
 use event_listener::{Event, EventListener};
 use indexmap::{IndexMap, IndexSet};
@@ -10,6 +12,37 @@ use crate::cmd::{Command, ProposeId};
 /// Ref to the cmd board
 pub(super) type CmdBoardRef<C> = Arc<RwLock<CommandBoard<C>>>;
 
+/// Track results for a command
+#[derive(Debug, Default)]
+pub(super) struct ResultTracker {
+    /// First incomplete seq num, it will be advanced by client
+    first_incomplete: u64,
+    /// inflight seq nums proposed by the client
+    seq_nums: HashSet<u64>,
+}
+
+impl ResultTracker {
+    /// Check duplicated
+    fn filter_dup(&mut self, seq_num: u64) -> bool {
+        if seq_num < self.first_incomplete {
+            return true;
+        }
+        !self.seq_nums.insert(seq_num)
+    }
+
+    /// Advance `last_incomplete` to `seq_num`
+    fn advance_confirm_to(&mut self, seq_num: u64) {
+        // The ACK request may out-of-order, resulting in the server's
+        // first_incomplete fallback, which would be very weird, so here the maximum value is taken.
+        if seq_num <= self.first_incomplete {
+            return;
+        }
+        self.first_incomplete = seq_num;
+        self.seq_nums
+            .retain(|in_process| *in_process >= self.first_incomplete);
+    }
+}
+
 /// Command board is a buffer to track cmd states and store notifiers for requests that need to wait for a cmd
 #[derive(Debug)]
 pub(super) struct CommandBoard<C: Command> {
@@ -19,8 +52,8 @@ pub(super) struct CommandBoard<C: Command> {
     asr_notifiers: HashMap<ProposeId, Event>,
     /// Store the shutdown notifier
     shutdown_notifier: Event,
-    /// The cmd has been received before, this is used for dedup
-    pub(super) sync: IndexSet<ProposeId>,
+    /// The result trackers track all cmd, this is used for dedup
+    trackers: HashMap<String, ResultTracker>,
     /// Store all execution results
     pub(super) er_buffer: IndexMap<ProposeId, Result<C::ER, C::Error>>,
     /// Store all after sync results
@@ -34,10 +67,33 @@ impl<C: Command> CommandBoard<C> {
             er_notifiers: HashMap::new(),
             asr_notifiers: HashMap::new(),
             shutdown_notifier: Event::new(),
-            sync: IndexSet::new(),
+            trackers: HashMap::new(),
             er_buffer: IndexMap::new(),
             asr_buffer: IndexMap::new(),
         }
+    }
+
+    /// filter duplication, return true if duplicated
+    pub(super) fn filter_dup(&mut self, client_id: &str, seq_num: u64) -> bool {
+        let tracker = self
+            .trackers
+            .entry(client_id.to_owned())
+            .or_insert_with(ResultTracker::default);
+        tracker.filter_dup(seq_num)
+    }
+
+    /// Process ack for a request
+    pub(super) fn process_ack(&mut self, client_id: &str, first_incomplete: u64) {
+        let tracker = self
+            .trackers
+            .entry(client_id.to_owned())
+            .or_insert_with(ResultTracker::default);
+        tracker.advance_confirm_to(first_incomplete);
+    }
+
+    /// Remove client result tracker from trackers if it is expired
+    pub(super) fn client_expired(&mut self, client_id: &str) {
+        let _ig = self.trackers.remove(client_id);
     }
 
     /// Release notifiers
@@ -50,10 +106,11 @@ impl<C: Command> CommandBoard<C> {
             .for_each(|(_, event)| event.notify(usize::MAX));
     }
 
-    /// Clear
+    /// Clear, called when leader retires
     pub(super) fn clear(&mut self) {
         self.er_buffer.clear();
         self.asr_buffer.clear();
+        self.trackers.clear();
         self.release_notifiers();
     }
 

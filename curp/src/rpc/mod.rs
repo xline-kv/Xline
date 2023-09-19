@@ -117,9 +117,10 @@ impl FetchClusterResponse {
 
 impl ProposeRequest {
     /// Create a new `Propose` request
-    pub(crate) fn new<C: Command>(cmd: &C) -> Self {
+    pub(crate) fn new<C: Command>(cmd: &C, first_incomplete: u64) -> Self {
         Self {
             command: cmd.encode(),
+            first_incomplete,
         }
     }
 

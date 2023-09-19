@@ -86,6 +86,16 @@ pub fn generate_propose_id(prefix: &str) -> ProposeId {
     format!("{}-{}", prefix, Uuid::new_v4())
 }
 
+/// Parse propose id to (`client_id`, `seq_num`)
+#[inline]
+#[must_use]
+pub fn parse_propose_id(id: &ProposeId) -> Option<(&str, u64)> {
+    let mut iter = id.split('#');
+    let client_id = iter.next()?;
+    let seq_num: u64 = iter.next()?.parse().ok()?;
+    Some((client_id, seq_num))
+}
+
 /// Check conflict of two keys
 pub trait ConflictCheck {
     /// check if this keys conflicts with the `other` key

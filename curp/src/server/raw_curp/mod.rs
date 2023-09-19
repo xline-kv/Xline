@@ -20,6 +20,7 @@ use std::{
 };
 
 use clippy_utilities::NumericCast;
+use curp_external_api::cmd::parse_propose_id;
 use dashmap::DashMap;
 use event_listener::Event;
 use itertools::Itertools;
@@ -47,7 +48,10 @@ use crate::{
     members::{ClusterInfo, Member, ServerId},
     role_change::RoleChange,
     rpc::{ConfChange, ConfChangeType, IdSet, ReadState},
-    server::{cmd_board::CmdBoardRef, raw_curp::state::VoteResult, spec_pool::SpecPoolRef},
+    server::{
+        client_lease::LeaseManagerRef, cmd_board::CmdBoardRef, raw_curp::state::VoteResult,
+        spec_pool::SpecPoolRef,
+    },
     snapshot::{Snapshot, SnapshotMeta},
     LogIndex,
 };
@@ -137,6 +141,8 @@ struct Context<C: Command, RC: RoleChange> {
     cfg: Arc<CurpConfig>,
     /// Cmd board for tracking the cmd sync results
     cb: CmdBoardRef<C>,
+    /// Client id lease manager
+    lm: LeaseManagerRef,
     /// Speculative pool
     sp: SpecPoolRef<C>,
     /// Uncommitted pool
@@ -161,6 +167,7 @@ impl<C: Command, RC: RoleChange> Debug for Context<C, RC> {
             .field("cluster_info", &self.cluster_info)
             .field("cfg", &self.cfg)
             .field("cb", &self.cb)
+            .field("lm", &self.lm)
             .field("sp", &self.sp)
             .field("ucp", &self.ucp)
             .field("leader_tx", &self.leader_tx)
@@ -207,15 +214,25 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     pub(super) fn handle_propose(
         &self,
         cmd: Arc<C>,
+        first_incomplete: u64,
     ) -> ((Option<ServerId>, u64), Result<bool, ProposeError>) {
         debug!("{} gets proposal for cmd({})", self.id(), cmd.id());
+
+        let st_r = self.st.read();
+        let info = (st_r.leader_id, st_r.term);
+
+        // check propose id format
+        let Some((client_id, seq_num)) = parse_propose_id(cmd.id()) else {
+            return (
+                info,
+                Err(ProposeError::InvalidProposeId),
+            )
+        };
+
         let mut conflict = self
             .ctx
             .sp
             .map_lock(|mut spec_l| spec_l.insert(Arc::clone(&cmd)).is_some());
-
-        let st_r = self.st.read();
-        let info = (st_r.leader_id, st_r.term);
 
         // Non-leader doesn't need to sync or execute
         if st_r.role != Role::Leader {
@@ -229,12 +246,17 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             );
         }
 
-        if !self
-            .ctx
-            .cb
-            .map_write(|mut cb_w| cb_w.sync.insert(cmd.id().clone()))
-        {
-            return (info, Err(ProposeError::Duplicated));
+        // deduplication
+        if self.ctx.lm.read().check_alive(client_id) {
+            let mut cb_w = self.ctx.cb.write();
+            // TODO if a duplicated cmd has result in cmd_board, then get the result and return
+            if cb_w.filter_dup(client_id, seq_num) {
+                return (info, Err(ProposeError::Duplicated));
+            }
+            cb_w.process_ack(client_id, first_incomplete);
+        } else {
+            self.ctx.cb.write().client_expired(client_id);
+            return (info, Err(ProposeError::ExpiredClientId));
         }
 
         // leader also needs to check if the cmd conflicts un-synced commands
@@ -635,6 +657,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         is_leader: bool,
         cmd_board: CmdBoardRef<C>,
         spec_pool: SpecPoolRef<C>,
+        lease_manager: LeaseManagerRef,
         uncommitted_pool: UncommittedPoolRef<C>,
         cfg: Arc<CurpConfig>,
         cmd_tx: Arc<dyn CEEventTxApi<C>>,
@@ -659,6 +682,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 cluster_info,
                 cb: cmd_board,
                 sp: spec_pool,
+                lm: lease_manager,
                 ucp: uncommitted_pool,
                 leader_tx: broadcast::channel(1).0,
                 cfg,
@@ -685,6 +709,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         is_leader: bool,
         cmd_board: CmdBoardRef<C>,
         spec_pool: SpecPoolRef<C>,
+        lease_manager: LeaseManagerRef,
         uncommitted_pool: UncommittedPoolRef<C>,
         cfg: &Arc<CurpConfig>,
         cmd_tx: Arc<dyn CEEventTxApi<C>>,
@@ -701,6 +726,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             is_leader,
             cmd_board,
             spec_pool,
+            lease_manager,
             uncommitted_pool,
             Arc::clone(cfg),
             cmd_tx,
@@ -1120,7 +1146,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
         let term = st.term;
         for cmd in recovered_cmds {
-            let _ig_sync = cb_w.sync.insert(cmd.id().clone()); // may have been inserted before
+            let (client_id, seq_num) = parse_propose_id(cmd.id()).unwrap_or_else(|| {
+                unreachable!("cmd with a invalid propose id should not be inserted into spec pool")
+            });
+            let _ig_cb = cb_w.filter_dup(client_id, seq_num); // may have been inserted before
             let _ig_spec = sp_l.insert(Arc::clone(&cmd)); // may have been inserted before
             #[allow(clippy::expect_used)]
             let entry = log

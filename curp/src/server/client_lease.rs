@@ -1,3 +1,5 @@
+#![allow(unused)] // TODO: remove
+
 use std::cmp::Reverse;
 use std::ops::Add;
 use std::sync::Arc;

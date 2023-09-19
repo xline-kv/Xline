@@ -26,6 +26,7 @@ use super::{
     spec_pool::{SpecPoolRef, SpeculativePool},
     storage::{StorageApi, StorageError},
 };
+use crate::server::client_lease::LeaseManager;
 use crate::{
     cmd::{Command, CommandExecutor},
     error::{CommandSyncError, ProposeError, RpcError},
@@ -129,7 +130,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         let cmd: Arc<C> = Arc::new(req.cmd()?);
 
         // handle proposal
-        let ((leader_id, term), result) = self.curp.handle_propose(Arc::clone(&cmd));
+        let ((leader_id, term), result) = self
+            .curp
+            .handle_propose(Arc::clone(&cmd), req.first_incomplete);
         let resp = match result {
             Ok(true) => {
                 let er_res = CommandBoard::wait_for_er(&self.cmd_board, cmd.id()).await;
@@ -528,6 +531,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         let (log_tx, log_rx) = mpsc::unbounded_channel();
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
+        let lease_manager = Arc::new(RwLock::new(LeaseManager::new()));
         let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
         let last_applied = cmd_executor
             .last_applied()
@@ -545,6 +549,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                 is_leader,
                 Arc::clone(&cmd_board),
                 Arc::clone(&spec_pool),
+                Arc::clone(&lease_manager),
                 uncommitted_pool,
                 Arc::clone(&curp_cfg),
                 Arc::clone(&ce_event_tx),
@@ -565,6 +570,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                 is_leader,
                 Arc::clone(&cmd_board),
                 Arc::clone(&spec_pool),
+                lease_manager,
                 uncommitted_pool,
                 &curp_cfg,
                 Arc::clone(&ce_event_tx),
@@ -617,7 +623,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         storage: Arc<impl StorageApi<Command = C> + 'static>,
         cluster_info: Arc<ClusterInfo>,
         shutdown_trigger: shutdown::Trigger,
-        log_rx: tokio::sync::mpsc::UnboundedReceiver<Arc<LogEntry<C>>>,
+        log_rx: mpsc::UnboundedReceiver<Arc<LogEntry<C>>>,
     ) {
         let shutdown_listener = shutdown_trigger.subscribe();
         let connects = rpc::inner_connect(cluster_info.peers_addrs())
