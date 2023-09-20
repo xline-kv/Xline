@@ -21,10 +21,10 @@ use crate::{
     rpc::{
         AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse,
         FetchLeaderRequest, FetchLeaderResponse, FetchReadStateRequest, FetchReadStateResponse,
-        InstallSnapshotRequest, InstallSnapshotResponse, ProposeConfChangeRequest,
-        ProposeConfChangeResponse, ProposeRequest, ProposeResponse, ProtocolServer,
-        ShutdownRequest, ShutdownResponse, VoteRequest, VoteResponse, WaitSyncedRequest,
-        WaitSyncedResponse,
+        InnerProtocolServer, InstallSnapshotRequest, InstallSnapshotResponse,
+        ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest, ProposeResponse,
+        ProtocolServer, ShutdownRequest, ShutdownResponse, VoteRequest, VoteResponse,
+        WaitSyncedRequest, WaitSyncedResponse,
     },
 };
 
@@ -107,26 +107,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::Protocol for Rp
         ))
     }
 
-    #[instrument(skip_all, name = "curp_append_entries")]
-    async fn append_entries(
-        &self,
-        request: tonic::Request<AppendEntriesRequest>,
-    ) -> Result<tonic::Response<AppendEntriesResponse>, tonic::Status> {
-        Ok(tonic::Response::new(
-            self.inner.append_entries(request.get_ref())?,
-        ))
-    }
-
-    #[instrument(skip_all, name = "curp_vote")]
-    async fn vote(
-        &self,
-        request: tonic::Request<VoteRequest>,
-    ) -> Result<tonic::Response<VoteResponse>, tonic::Status> {
-        Ok(tonic::Response::new(
-            self.inner.vote(request.into_inner()).await?,
-        ))
-    }
-
     #[instrument(skip_all, name = "curp_fetch_leader")]
     async fn fetch_leader(
         &self,
@@ -147,6 +127,29 @@ impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::Protocol for Rp
         ))
     }
 
+    #[instrument(skip_all, name = "curp_fetch_read_state")]
+    async fn fetch_read_state(
+        &self,
+        request: tonic::Request<FetchReadStateRequest>,
+    ) -> Result<tonic::Response<FetchReadStateResponse>, tonic::Status> {
+        Ok(tonic::Response::new(
+            self.inner.fetch_read_state(request.into_inner())?,
+        ))
+    }
+}
+
+#[tonic::async_trait]
+impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::InnerProtocol for Rpc<C, RC> {
+    #[instrument(skip_all, name = "curp_append_entries")]
+    async fn append_entries(
+        &self,
+        request: tonic::Request<AppendEntriesRequest>,
+    ) -> Result<tonic::Response<AppendEntriesResponse>, tonic::Status> {
+        Ok(tonic::Response::new(
+            self.inner.append_entries(request.get_ref())?,
+        ))
+    }
+
     #[instrument(skip_all, name = "curp_install_snapshot")]
     async fn install_snapshot(
         &self,
@@ -160,13 +163,13 @@ impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::Protocol for Rp
         ))
     }
 
-    #[instrument(skip_all, name = "curp_fetch_read_state")]
-    async fn fetch_read_state(
+    #[instrument(skip_all, name = "curp_vote")]
+    async fn vote(
         &self,
-        request: tonic::Request<FetchReadStateRequest>,
-    ) -> Result<tonic::Response<FetchReadStateResponse>, tonic::Status> {
+        request: tonic::Request<VoteRequest>,
+    ) -> Result<tonic::Response<VoteResponse>, tonic::Status> {
         Ok(tonic::Response::new(
-            self.inner.fetch_read_state(request.into_inner())?,
+            self.inner.vote(request.into_inner()).await?,
         ))
     }
 }
@@ -233,19 +236,22 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
         let port = server_port.unwrap_or(DEFAULT_SERVER_PORT);
         let id = cluster_info.self_id();
         info!("RPC server {id} started, listening on port {port}");
-        let server = Self::new(
-            cluster_info,
-            is_leader,
-            executor,
-            snapshot_allocator,
-            role_change,
-            curp_cfg,
-            shutdown_trigger,
-        )
-        .await;
+        let server = Arc::new(
+            Self::new(
+                cluster_info,
+                is_leader,
+                executor,
+                snapshot_allocator,
+                role_change,
+                curp_cfg,
+                shutdown_trigger,
+            )
+            .await,
+        );
 
         tonic::transport::Server::builder()
-            .add_service(ProtocolServer::new(server))
+            .add_service(ProtocolServer::from_arc(Arc::clone(&server)))
+            .add_service(InnerProtocolServer::from_arc(server))
             .serve(
                 format!("0.0.0.0:{port}")
                     .parse()
@@ -278,19 +284,22 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
         CE: 'static + CommandExecutor<C>,
     {
         let mut shutdown_listener = shutdown_trigger.subscribe();
-        let server = Self::new(
-            cluster_info,
-            is_leader,
-            executor,
-            snapshot_allocator,
-            role_change,
-            curp_cfg,
-            shutdown_trigger,
-        )
-        .await;
+        let server = Arc::new(
+            Self::new(
+                cluster_info,
+                is_leader,
+                executor,
+                snapshot_allocator,
+                role_change,
+                curp_cfg,
+                shutdown_trigger,
+            )
+            .await,
+        );
 
         tonic::transport::Server::builder()
-            .add_service(ProtocolServer::new(server))
+            .add_service(ProtocolServer::from_arc(Arc::clone(&server)))
+            .add_service(InnerProtocolServer::from_arc(server))
             .serve_with_incoming_shutdown(TcpListenerStream::new(listener), async move {
                 shutdown_listener.wait_self_shutdown().await;
             })
@@ -321,19 +330,22 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
         CE: 'static + CommandExecutor<C>,
     {
         let mut shutdown_listener = shutdown_trigger.subscribe();
-        let server = Self::new(
-            cluster_info,
-            is_leader,
-            executor,
-            snapshot_allocator,
-            role_change,
-            curp_cfg,
-            shutdown_trigger,
-        )
-        .await;
+        let server = Arc::new(
+            Self::new(
+                cluster_info,
+                is_leader,
+                executor,
+                snapshot_allocator,
+                role_change,
+                curp_cfg,
+                shutdown_trigger,
+            )
+            .await,
+        );
 
         tonic::transport::Server::builder()
-            .add_service(ProtocolServer::new(server))
+            .add_service(ProtocolServer::from_arc(Arc::clone(&server)))
+            .add_service(InnerProtocolServer::from_arc(server))
             .serve_with_shutdown(addr, async move {
                 shutdown_listener.wait_self_shutdown().await;
             })

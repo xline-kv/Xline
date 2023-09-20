@@ -58,9 +58,8 @@ pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result
 
 #[cfg(test)]
 mod tests {
-    use crate::test_case_struct;
-
     use super::*;
+    use crate::test_case_struct;
 
     test_case_struct!(DeleteRangeRequest);
 
