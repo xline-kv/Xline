@@ -10,18 +10,20 @@ use curp::{
     client::{Builder, Client},
     error::ClientError,
     members::ClusterInfo,
-    ConfChange, ConfChangeError, ProposeConfChangeRequest,
+    ConfChange, ConfChangeError, Member,
 };
 use curp_test_utils::{
     init_logger, sleep_millis, sleep_secs,
-    test_cmd::{TestCommand, TestCommandResult},
+    test_cmd::{TestCommand, TestCommandResult, TestCommandType},
 };
 use madsim::rand::{thread_rng, Rng};
 use test_macros::abort_on_panic;
+use tokio::net::TcpListener;
 use utils::config::ClientConfig;
 
 use crate::common::curp_group::{
-    commandpb::propose_response::ExeResult, CurpGroup, ProposeRequest, ProposeResponse,
+    commandpb::propose_response::ExeResult, CurpGroup, FetchClusterRequest, ProposeRequest,
+    ProposeResponse,
 };
 
 mod common;
@@ -143,6 +145,7 @@ async fn fast_round_is_slower_than_slow_round() {
     leader_connect
         .propose(tonic::Request::new(ProposeRequest {
             command: bincode::serialize(&cmd).unwrap(),
+            cluster_version: 0,
         }))
         .await
         .unwrap();
@@ -159,6 +162,7 @@ async fn fast_round_is_slower_than_slow_round() {
     let resp: ProposeResponse = follower_connect
         .propose(tonic::Request::new(ProposeRequest {
             command: bincode::serialize(&cmd).unwrap(),
+            cluster_version: 0,
         }))
         .await
         .unwrap()
@@ -183,6 +187,7 @@ async fn concurrent_cmd_order() {
     tokio::spawn(async move {
         c.propose(ProposeRequest {
             command: bincode::serialize(&cmd0).unwrap(),
+            cluster_version: 0,
         })
         .await
         .expect("propose failed");
@@ -192,6 +197,7 @@ async fn concurrent_cmd_order() {
     let response = leader_connect
         .propose(ProposeRequest {
             command: bincode::serialize(&cmd1).unwrap(),
+            cluster_version: 0,
         })
         .await
         .expect("propose failed")
@@ -200,6 +206,7 @@ async fn concurrent_cmd_order() {
     let response = leader_connect
         .propose(ProposeRequest {
             command: bincode::serialize(&cmd2).unwrap(),
+            cluster_version: 0,
         })
         .await
         .expect("propose failed")
@@ -308,8 +315,7 @@ async fn propose_add_node_should_success() {
         .as_secs();
     let node_id = ClusterInfo::calculate_member_id(vec!["address".to_owned()], "", Some(timestamp));
     let changes = vec![ConfChange::add(node_id, vec!["address".to_string()])];
-    let conf_change = ProposeConfChangeRequest::new(id, changes);
-    let res = client.propose_conf_change(conf_change).await;
+    let res = client.propose_conf_change(id, changes).await;
     let members = res.unwrap().unwrap();
     assert_eq!(members.len(), 4);
     assert!(members.iter().any(|m| m.id == node_id));
@@ -326,9 +332,8 @@ async fn propose_remove_node_should_success() {
     let id = client.gen_propose_id().await.unwrap();
     let node_id = group.nodes.keys().next().copied().unwrap();
     let changes = vec![ConfChange::remove(node_id)];
-    let conf_change = ProposeConfChangeRequest::new(id, changes);
     let members = client
-        .propose_conf_change(conf_change)
+        .propose_conf_change(id, changes)
         .await
         .unwrap()
         .unwrap();
@@ -346,9 +351,8 @@ async fn propose_update_node_should_success() {
     let id = client.gen_propose_id().await.unwrap();
     let node_id = group.nodes.keys().next().copied().unwrap();
     let changes = vec![ConfChange::update(node_id, vec!["new_addr".to_owned()])];
-    let conf_change = ProposeConfChangeRequest::new(id, changes);
     let members = client
-        .propose_conf_change(conf_change)
+        .propose_conf_change(id, changes)
         .await
         .unwrap()
         .unwrap();
@@ -368,8 +372,7 @@ async fn propose_remove_node_should_failed_when_cluster_nodes_equals_to_three() 
     let id = client.gen_propose_id().await.unwrap();
     let node_id = group.nodes.keys().next().copied().unwrap();
     let changes = vec![ConfChange::remove(node_id)];
-    let conf_change = ProposeConfChangeRequest::new(id, changes);
-    let res = client.propose_conf_change(conf_change).await.unwrap();
+    let res = client.propose_conf_change(id, changes).await.unwrap();
     assert!(matches!(res, Err(ConfChangeError::InvalidConfig(()))));
 }
 
@@ -423,13 +426,112 @@ async fn propose_conf_change_to_follower() {
     let id = client.gen_propose_id().await.unwrap();
     let node_id = group.nodes.keys().next().copied().unwrap();
     let changes = vec![ConfChange::update(node_id, vec!["new_addr".to_owned()])];
-    let conf_change = ProposeConfChangeRequest::new(id, changes);
     let members = client
-        .propose_conf_change(conf_change)
+        .propose_conf_change(id, changes)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(members.len(), 5);
     let member = members.iter().find(|m| m.id == node_id);
     assert!(member.is_some_and(|m| m.addrs == ["new_addr"]));
+}
+
+async fn check_new_node(is_learner: bool) {
+    init_logger();
+
+    let mut group = CurpGroup::new(3).await;
+    let client = group.new_client().await;
+    let req = TestCommand::new_put(vec![123], 123);
+    let put_id = req.id;
+    let _res = client.propose(req, true).await;
+
+    let id = client.gen_propose_id().await.unwrap();
+    let listener = TcpListener::bind("0.0.0.0:0").await.unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+    let addrs = vec![addr.clone()];
+    let node_id = ClusterInfo::calculate_member_id(addrs.clone(), "", Some(123));
+    let changes = if is_learner {
+        vec![ConfChange::add_learner(node_id, addrs.clone())]
+    } else {
+        vec![ConfChange::add(node_id, addrs.clone())]
+    };
+
+    let members = client
+        .propose_conf_change(id, changes)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(members.len(), 4);
+    assert!(members.iter().any(|m| m.id == node_id));
+
+    /*******  start new node *******/
+
+    // 1. fetch cluster from other nodes
+    let leader_id = group.get_leader().await.0;
+    let mut connect = group.get_connect(&leader_id).await;
+    let cluster_res_base = connect
+        .fetch_cluster(tonic::Request::new(FetchClusterRequest::default()))
+        .await
+        .unwrap()
+        .into_inner();
+    let members = cluster_res_base
+        .members
+        .into_iter()
+        .map(|m| Member::new(m.id, m.name, m.addrs, m.is_learner))
+        .collect();
+    let cluster_res = curp::FetchClusterResponse {
+        leader_id: cluster_res_base.leader_id,
+        term: cluster_res_base.term,
+        cluster_id: cluster_res_base.cluster_id,
+        members,
+        cluster_version: cluster_res_base.cluster_version,
+    };
+    let _cluster_info = Arc::new(ClusterInfo::from_cluster(cluster_res, &[addr]));
+
+    // TODO: add run_node method after #448 merged
+    // // 2. start new node
+    // group
+    //     .run_node(listener, "new_node".to_owned(), cluster_info)
+    //     .await;
+
+    // 3. fetch and check cluster from new node
+    let mut new_connect = group.get_connect(&node_id).await;
+    let res = new_connect
+        .fetch_cluster(tonic::Request::new(FetchClusterRequest::default()))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(res.members.len(), 4);
+    assert!(res
+        .members
+        .iter()
+        .any(|m| m.id == node_id && is_learner == m.is_learner));
+
+    // 4. check if the new node executes the command from old cluster
+    let new_node = group.nodes.get_mut(&node_id).unwrap();
+    let (cmd, res) = new_node.exe_rx.recv().await.unwrap();
+    assert_eq!(
+        cmd,
+        TestCommand {
+            id: put_id,
+            keys: vec![123],
+            cmd_type: TestCommandType::Put(123),
+            ..Default::default()
+        }
+    );
+    assert!(res.values.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[abort_on_panic]
+#[ignore = "TODO: enable this test after #448 merged"]
+async fn new_follower_node_should_apply_old_cluster_logs() {
+    check_new_node(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[abort_on_panic]
+#[ignore = "TODO: enable this test after #448 merged"]
+async fn new_learner_node_should_apply_old_cluster_logs() {
+    check_new_node(true).await;
 }

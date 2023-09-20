@@ -14,7 +14,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::Debug,
     sync::{
-        atomic::{AtomicU8, Ordering},
+        atomic::{AtomicU64, AtomicU8, Ordering},
         Arc,
     },
 };
@@ -178,6 +178,8 @@ struct Context<C: Command, RC: RoleChange> {
     change_rx: flume::Receiver<ConfChange>,
     /// Connects of peers
     connects: DashMap<ServerId, InnerConnectApiWrapper>,
+    /// last conf change idx
+    last_conf_change_idx: AtomicU64,
 }
 
 impl<C: Command, RC: RoleChange> Debug for Context<C, RC> {
@@ -319,6 +321,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         let entry = log_w.push(st_r.term, conf_change)?;
         debug!("{} gets new log[{}]", self.id(), entry.index);
         let (addrs, name, is_learner) = self.apply_conf_change(changes);
+        self.ctx
+            .last_conf_change_idx
+            .store(entry.index, Ordering::Relaxed);
         let _ig = log_w.fallback_contexts.insert(
             entry.index,
             FallbackContext::new(Arc::clone(&entry), addrs, name, is_learner),
@@ -691,6 +696,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 change_tx,
                 change_rx,
                 connects,
+                last_conf_change_idx: AtomicU64::new(0),
             },
             shutdown_trigger,
         };
@@ -772,6 +778,24 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     /// Get a rx for leader changes
     pub(super) fn leader_rx(&self) -> broadcast::Receiver<Option<ServerId>> {
         self.ctx.leader_tx.subscribe()
+    }
+
+    /// Check on the leader that the remove node conf change entry has been synced to the removed follower
+    pub(super) fn can_remove_follower_after_hb(&self, follower_id: ServerId) -> bool {
+        if self.ctx.connects.contains_key(&follower_id) {
+            return false;
+        }
+        let match_index = self.lst.get_match_index(follower_id);
+        let last_conf_change_idx = self.ctx.last_conf_change_idx.load(Ordering::Relaxed);
+        if match_index >= last_conf_change_idx {
+            return true;
+        }
+        false
+    }
+
+    /// Remove a follower's status
+    pub(super) fn remove_node_status(&self, follower_id: ServerId) {
+        self.lst.remove(follower_id);
     }
 
     /// Get `append_entries` request for `follower_id` that contains the latest log entries
@@ -1353,6 +1377,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 (vec![], String::new(), false)
             }
         };
+        let _ig = self.ctx.cluster_info.cluster_version_inc();
         if self.is_leader() {
             self.ctx
                 .change_tx

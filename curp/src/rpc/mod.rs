@@ -89,12 +89,14 @@ impl FetchClusterResponse {
         term: u64,
         cluster_id: u64,
         members: Vec<Member>,
+        cluster_version: u64,
     ) -> Self {
         Self {
             leader_id,
             term,
             cluster_id,
             members,
+            cluster_version,
         }
     }
 
@@ -109,9 +111,10 @@ impl FetchClusterResponse {
 
 impl ProposeRequest {
     /// Create a new `Propose` request
-    pub(crate) fn new<C: Command>(cmd: &C) -> Self {
+    pub(crate) fn new<C: Command>(cmd: &C, cluster_version: u64) -> Self {
         Self {
             command: cmd.encode(),
+            cluster_version,
         }
     }
 
@@ -192,9 +195,10 @@ impl ProposeResponse {
 
 impl WaitSyncedRequest {
     /// Create a `WaitSynced` request
-    pub(crate) fn new(propose_id: ProposeId) -> Self {
+    pub(crate) fn new(id: ProposeId, cluster_version: u64) -> Self {
         Self {
-            propose_id: Some(propose_id.into()),
+            propose_id: Some(id.into()),
+            cluster_version,
         }
     }
 
@@ -432,9 +436,10 @@ impl IdSet {
 
 impl FetchReadStateRequest {
     /// Create a new fetch read state request
-    pub(crate) fn new<C: Command>(cmd: &C) -> bincode::Result<Self> {
+    pub(crate) fn new<C: Command>(cmd: &C, cluster_version: u64) -> bincode::Result<Self> {
         Ok(Self {
             command: bincode::serialize(cmd)?,
+            cluster_version,
         })
     }
 
@@ -526,10 +531,11 @@ impl ProposeConfChangeRequest {
     /// Create a new `ProposeConfChangeRequest`
     #[inline]
     #[must_use]
-    pub fn new(id: ProposeId, changes: Vec<ConfChange>) -> Self {
+    pub fn new(id: ProposeId, changes: Vec<ConfChange>, cluster_version: u64) -> Self {
         Self {
             propose_id: Some(id.into()),
             changes,
+            cluster_version,
         }
     }
 

@@ -187,6 +187,7 @@ async fn new_leader_will_recover_spec_cmds_cond1() {
     let cmd1 = Arc::new(TestCommand::new_put(vec![0], 0));
     let req1 = ProposeRequest {
         command: bincode::serialize(&cmd1).unwrap(),
+        cluster_version: 0,
     };
     for id in group
         .all_members
@@ -290,6 +291,7 @@ async fn old_leader_will_keep_original_states() {
     let cmd1 = Arc::new(TestCommand::new_put(vec![0], 1));
     let req1 = ProposeRequest {
         command: bincode::serialize(&cmd1).unwrap(),
+        cluster_version: 0,
     };
     let mut leader1_connect = group.get_connect(&leader1).await;
     leader1_connect.propose(req1).await.unwrap();
