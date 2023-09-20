@@ -1,5 +1,10 @@
 use std::{
-    cmp::Ordering, collections::HashMap, fmt::Debug, iter, marker::PhantomData, sync::Arc,
+    cmp::Ordering,
+    collections::HashMap,
+    fmt::Debug,
+    iter,
+    marker::PhantomData,
+    sync::{atomic::AtomicU64, Arc},
     time::Duration,
 };
 
@@ -17,12 +22,11 @@ use crate::{
     error::{ClientBuildError, ClientError, ERROR_LABEL},
     members::ServerId,
     rpc::{
-        self, connect::ConnectApi, protocol_client::ProtocolClient, ConfChangeError,
-        FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, ProposeConfChangeRequest,
-        ProposeError, ProposeRequest, ReadState as PbReadState, ShutdownRequest, SyncResult,
-        WaitSyncedRequest,
+        self, connect::ConnectApi, protocol_client::ProtocolClient, FetchClusterRequest,
+        FetchClusterResponse, FetchReadStateRequest, ProposeConfChangeRequest, ProposeRequest,
+        ReadState as PbReadState, ShutdownRequest, SyncResult, WaitSyncedRequest,
     },
-    LogIndex, Member,
+    ConfChange, ConfChangeError, LogIndex, Member, ProposeError,
 };
 
 /// Protocol client
@@ -38,6 +42,9 @@ pub struct Client<C: Command> {
     /// All servers's `Connect`
     #[builder(setter(skip))]
     connects: DashMap<ServerId, Arc<dyn ConnectApi>>,
+    /// Cluster version
+    #[builder(setter(skip))]
+    cluster_version: AtomicU64,
     /// Curp client config settings
     config: ClientConfig,
     /// To keep Command type
@@ -71,6 +78,7 @@ impl<C: Command> Builder<C> {
             state: RwLock::new(State::new(leader_id, 0)),
             config,
             connects,
+            cluster_version: AtomicU64::new(0),
             phantom: PhantomData,
         };
         Ok(client)
@@ -128,6 +136,7 @@ impl<C: Command> Builder<C> {
             state: RwLock::new(State::new(res.leader_id, res.term)),
             config,
             connects: rpc::connect(res.into_members_addrs()).await?.collect(),
+            cluster_version: AtomicU64::new(0),
             phantom: PhantomData,
         };
         Ok(client)
@@ -274,6 +283,12 @@ where
         Builder::default()
     }
 
+    /// Get cluster version
+    fn cluster_version(&self) -> u64 {
+        self.cluster_version
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// The fast round of Curp protocol
     /// It broadcast the requests to all the curp servers.
     #[instrument(skip_all)]
@@ -282,7 +297,7 @@ where
         cmd_arc: Arc<C>,
     ) -> Result<(Option<<C as Command>::ER>, bool), ClientError<C>> {
         debug!("fast round for cmd({}) started", cmd_arc.id());
-        let req = ProposeRequest::new(cmd_arc.as_ref());
+        let req = ProposeRequest::new(cmd_arc.as_ref(), self.cluster_version());
 
         let connects = self
             .connects
@@ -363,7 +378,7 @@ where
                 .get_connect(leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .wait_synced(
-                    WaitSyncedRequest::new(cmd.id()),
+                    WaitSyncedRequest::new(cmd.id(), self.cluster_version()),
                     *self.config.wait_synced_timeout(),
                 )
                 .await
@@ -480,7 +495,7 @@ where
                 .get_connect(leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .propose(
-                    ProposeRequest::new(cmd.as_ref()),
+                    ProposeRequest::new(cmd.as_ref(), self.cluster_version()),
                     *self.config.propose_timeout(),
                 )
                 .await;
@@ -713,11 +728,12 @@ where
     #[instrument(skip_all)]
     pub async fn propose_conf_change(
         &self,
-        conf_change: ProposeConfChangeRequest,
+        propose_id: ProposeId,
+        changes: Vec<ConfChange>,
     ) -> Result<Result<Vec<Member>, ConfChangeError>, ClientError<C>> {
         debug!(
             "propose_conf_change with propose_id({}) started",
-            conf_change.id()
+            propose_id
         );
         let mut retry_timeout = self.get_backoff();
         let retry_count = *self.config.retry_count();
@@ -733,7 +749,14 @@ where
             let resp = match self
                 .get_connect(leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
-                .propose_conf_change(conf_change.clone(), *self.config.wait_synced_timeout())
+                .propose_conf_change(
+                    ProposeConfChangeRequest::new(
+                        propose_id,
+                        changes.clone(),
+                        self.cluster_version(),
+                    ),
+                    *self.config.wait_synced_timeout(),
+                )
                 .await
             {
                 Ok(resp) => resp.into_inner(),
@@ -790,7 +813,7 @@ where
                 .get_connect(leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .fetch_read_state(
-                    FetchReadStateRequest::new(cmd)?,
+                    FetchReadStateRequest::new(cmd, self.cluster_version())?,
                     *self.config.wait_synced_timeout(),
                 )
                 .await

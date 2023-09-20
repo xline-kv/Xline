@@ -5,7 +5,6 @@ use curp::{
     members::ClusterInfo,
     ConfChange,
     ConfChangeType::{Add, AddLearner, Promote, Remove, Update},
-    ProposeConfChangeRequest,
 };
 use itertools::Itertools;
 use tonic::{Request, Response, Status};
@@ -49,10 +48,7 @@ impl ClusterServer {
             .map_err(client_err_to_status)?;
         Ok(self
             .client
-            .propose_conf_change(ProposeConfChangeRequest {
-                propose_id: Some(propose_id.into()),
-                changes,
-            })
+            .propose_conf_change(propose_id, changes)
             .await
             .map_err(client_err_to_status)??
             .into_iter()

@@ -372,8 +372,13 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
             // the leader
             Vec::new()
         };
+        let cluster_version = self.curp.cluster().cluster_version();
         Ok(FetchClusterResponse::new(
-            leader_id, term, cluster_id, members,
+            leader_id,
+            term,
+            cluster_id,
+            members,
+            cluster_version,
         ))
     }
 
@@ -625,6 +630,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         let id = connect.id();
         let batch_timeout = curp.cfg().batch_timeout;
         let mut is_shutdown_state = false;
+        let mut is_remove_state = false;
 
         #[allow(clippy::integer_arithmetic)] // tokio select internal triggered
         let leader_retired = loop {
@@ -644,7 +650,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                     }
                 }
                 _ = remove_event.listen() => {
-                    break false;
+                    is_remove_state = true;
                 }
                 _now = ticker.tick() => {
                     hb_opt = false;
@@ -655,6 +661,8 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                     }
                 }
             }
+
+            let can_remove_node = is_remove_state && curp.can_remove_follower_after_hb(id);
 
             let Some(sync_action) = curp.sync(id) else {
                 break true;
@@ -678,6 +686,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                             hb_opt = true;
                         }
                         if is_shutdown_state && is_empty && curp.is_synced() {
+                            break false;
+                        }
+                        if can_remove_node {
+                            curp.remove_node_status(id);
                             break false;
                         }
                     }

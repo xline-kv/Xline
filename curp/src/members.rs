@@ -1,12 +1,17 @@
 use std::{
     collections::{hash_map::DefaultHasher, HashMap},
     hash::Hasher,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
 };
 
 use dashmap::{mapref::one::Ref, DashMap};
 use itertools::Itertools;
 
-use crate::Member;
+use crate::rpc::FetchClusterResponse;
+pub use crate::Member;
 
 /// Server Id
 pub type ServerId = u64;
@@ -67,6 +72,8 @@ pub struct ClusterInfo {
     member_id: ServerId,
     /// all members information
     members: DashMap<ServerId, Member>,
+    /// cluster version
+    cluster_version: Arc<AtomicU64>,
 }
 
 impl ClusterInfo {
@@ -91,9 +98,33 @@ impl ClusterInfo {
             cluster_id: 0,
             member_id,
             members,
+            cluster_version: Arc::new(AtomicU64::new(0)),
         };
         cluster_info.gen_cluster_id();
         cluster_info
+    }
+
+    /// Construct a new `ClusterInfo` from `FetchClusterResponse`
+    #[inline]
+    #[must_use]
+    pub fn from_cluster(cluster: FetchClusterResponse, self_addr: &[String]) -> Self {
+        let mut member_id = 0;
+        let members = cluster
+            .members
+            .into_iter()
+            .map(|member| {
+                if member.addrs == self_addr {
+                    member_id = member.id;
+                }
+                (member.id, member)
+            })
+            .collect();
+        Self {
+            cluster_id: cluster.cluster_id,
+            member_id,
+            members,
+            cluster_version: Arc::new(AtomicU64::new(cluster.cluster_version)),
+        }
     }
 
     /// Get all members
@@ -225,6 +256,20 @@ impl ClusterInfo {
     #[inline]
     pub fn cluster_id(&self) -> u64 {
         self.cluster_id
+    }
+
+    /// Get cluster version
+    #[must_use]
+    #[inline]
+    pub fn cluster_version(&self) -> u64 {
+        self.cluster_version.load(Ordering::Relaxed)
+    }
+
+    /// Increase cluster version
+    #[must_use]
+    #[inline]
+    pub fn cluster_version_inc(&self) -> u64 {
+        self.cluster_version.fetch_add(1, Ordering::Relaxed)
     }
 
     /// Get peers
