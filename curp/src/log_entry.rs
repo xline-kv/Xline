@@ -25,7 +25,7 @@ pub(crate) enum EntryData<C> {
     /// `ConfChange` entry
     ConfChange(ProposeId),
     /// `Shutdown` entry
-    Shutdown(ProposeId),
+    Shutdown,
 }
 
 impl<C> LogEntry<C>
@@ -42,11 +42,11 @@ where
     }
 
     /// Create a new `LogEntry` of `Shutdown`
-    pub(super) fn new_shutdown(index: LogIndex, term: u64, propose_id: ProposeId) -> Self {
+    pub(super) fn new_shutdown(index: LogIndex, term: u64) -> Self {
         Self {
             term,
             index,
-            entry_data: EntryData::Shutdown(propose_id),
+            entry_data: EntryData::Shutdown,
         }
     }
 
@@ -64,7 +64,13 @@ where
     pub(super) fn id(&self) -> &ProposeId {
         match self.entry_data {
             EntryData::Command(ref cmd) => cmd.id(),
-            EntryData::ConfChange(ref id) | EntryData::Shutdown(ref id) => id,
+            EntryData::ConfChange(ref id) => id,
+            EntryData::Shutdown => {
+                unreachable!(
+                    "LogEntry::id() should not be called on {:?} entry",
+                    self.entry_data
+                );
+            }
         }
     }
 }

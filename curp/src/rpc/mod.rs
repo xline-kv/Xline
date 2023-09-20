@@ -166,9 +166,7 @@ impl ProposeResponse {
         Self {
             leader_id,
             term,
-            exe_result: Some(ExeResult::Error(PbProposeErrorOuter {
-                propose_error: Some(error.into()),
-            })),
+            exe_result: Some(ExeResult::Error(error.into())),
         }
     }
 
@@ -443,13 +441,6 @@ impl FetchReadStateResponse {
     }
 }
 
-impl ShutdownRequest {
-    /// Create a new shutdown request
-    pub(crate) fn new(id: ProposeId) -> Self {
-        Self { id }
-    }
-}
-
 #[allow(dead_code)] // TODO: remove this when we implement conf change
 #[allow(clippy::as_conversions)] // ConfChangeType is so small that it won't exceed the range of i32 type.
 impl ConfChange {
@@ -486,6 +477,18 @@ impl ConfChange {
             change_type: ConfChangeType::AddLearner as i32,
             node_id,
             address: vec![address],
+        }
+    }
+}
+
+impl ShutdownResponse {
+    /// Create a new shutdown response
+    pub(crate) fn new(leader_id: Option<ServerId>, term: u64, error: Option<ProposeError>) -> Self {
+        let error = error.map(Into::into);
+        Self {
+            leader_id,
+            term,
+            error,
         }
     }
 }

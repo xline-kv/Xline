@@ -116,10 +116,10 @@ impl TryFrom<PbProposeError> for ProposeError {
     }
 }
 
-impl From<ProposeError> for PbProposeError {
+impl From<ProposeError> for PbProposeErrorOuter {
     #[inline]
     fn from(err: ProposeError) -> Self {
-        match err {
+        let e = match err {
             ProposeError::Timeout => PbProposeError::Timeout(()),
             ProposeError::NotLeader => PbProposeError::NotLeader(()),
             ProposeError::Shutdown => PbProposeError::Shutdown(()),
@@ -129,6 +129,9 @@ impl From<ProposeError> for PbProposeError {
                 wait_sync_error: Some(e.into()),
             }),
             ProposeError::EncodeError(s) => PbProposeError::EncodeError(s),
+        };
+        PbProposeErrorOuter {
+            propose_error: Some(e),
         }
     }
 }
@@ -143,10 +146,7 @@ impl From<PbSerializeError> for ProposeError {
 impl PbCodec for ProposeError {
     #[inline]
     fn encode(&self) -> Vec<u8> {
-        PbProposeErrorOuter {
-            propose_error: Some(self.clone().into()),
-        }
-        .encode_to_vec()
+        PbProposeErrorOuter::from(self.clone()).encode_to_vec()
     }
 
     #[inline]
