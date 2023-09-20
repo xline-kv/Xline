@@ -9,7 +9,7 @@ use curp::{
 };
 use curp_test_utils::{
     init_logger, sleep_millis, sleep_secs,
-    test_cmd::{next_id, TestCommand, TestCommandResult},
+    test_cmd::{TestCommand, TestCommandResult},
 };
 use madsim::rand::{thread_rng, Rng};
 use test_macros::abort_on_panic;
@@ -270,8 +270,7 @@ async fn shutdown_rpc_should_shutdown_the_cluster() {
     });
 
     let client = group.new_client(ClientConfig::default()).await;
-    let id = next_id().to_string();
-    client.shutdown(id).await.unwrap();
+    client.shutdown().await.unwrap();
 
     let res = client
         .propose(TestCommand::new_put(vec![888], 1), false)

@@ -371,7 +371,7 @@ where
 
     /// The shutdown rpc of curp protocol
     #[instrument(skip_all)]
-    pub async fn shutdown(&self, id: ProposeId) -> Result<(), ProposeError> {
+    pub async fn shutdown(&self) -> Result<(), ProposeError> {
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {
             let leader_id = match self.get_leader_id().await {
@@ -386,7 +386,7 @@ where
                 .get_connect(leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .shutdown(
-                    ShutdownRequest::new(id.clone()),
+                    ShutdownRequest::default(),
                     *self.config.wait_synced_timeout(),
                 )
                 .await
@@ -402,7 +402,11 @@ where
                 .write()
                 .check_and_update(resp.leader_id, resp.term);
             match resp.error {
-                Some(e) => return Err(bincode::deserialize(&e)?),
+                Some(e) => {
+                    // Leader may not be correct leader, resend the shutdown request to the new leader
+                    warn!("shutdown error: {:?}", e);
+                    continue;
+                }
                 None => return Ok(()),
             }
         }
