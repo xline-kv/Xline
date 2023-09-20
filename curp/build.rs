@@ -1,15 +1,22 @@
 fn main() {
+    tonic_build::configure()
+        .compile(
+            &[
+                "./proto/common/src/message.proto",
+                "./proto/common/src/error.proto",
+                "./proto/common/src/command.proto",
+            ],
+            &["./proto/common/src"],
+        )
+        .unwrap_or_else(|e| panic!("Failed to compile proto, error is {:?}", e));
+
     let mut prost_config = prost_build::Config::new();
-    prost_config.bytes([".messagepb.InstallSnapshotRequest"]);
+    prost_config.bytes([".inner_messagepb.InstallSnapshotRequest"]);
     tonic_build::configure()
         .compile_with_config(
             prost_config,
-            &[
-                "./proto/src/message.proto",
-                "./proto/src/error.proto",
-                "./proto/src/command.proto",
-            ],
-            &["./proto/src/"],
+            &["./proto/inner_message.proto"],
+            &["./proto/"],
         )
         .unwrap_or_else(|e| panic!("Failed to compile proto, error is {:?}", e));
 }

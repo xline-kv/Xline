@@ -17,10 +17,14 @@ use crate::{
     error::RpcError,
     members::ServerId,
     rpc::{
-        proto::messagepb::protocol_client::ProtocolClient, AppendEntriesRequest,
-        AppendEntriesResponse, FetchLeaderRequest, FetchLeaderResponse, FetchReadStateRequest,
-        FetchReadStateResponse, InstallSnapshotRequest, InstallSnapshotResponse, ProposeRequest,
-        ProposeResponse, VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        proto::{
+            inner_messagepb::inner_protocol_client::InnerProtocolClient,
+            messagepb::protocol_client::ProtocolClient,
+        },
+        AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest, FetchLeaderResponse,
+        FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,
+        InstallSnapshotResponse, ProposeRequest, ProposeResponse, VoteRequest, VoteResponse,
+        WaitSyncedRequest, WaitSyncedResponse,
     },
     snapshot::Snapshot,
 };
@@ -56,7 +60,35 @@ pub(crate) async fn connect(
     })
 }
 
-/// Connect interface
+/// Convert a vec of addr string to a vec of `InnerConnect`
+pub(crate) async fn inner_connect(
+    addrs: HashMap<ServerId, String>,
+) -> impl Iterator<Item = (ServerId, Arc<dyn InnerConnectApi>)> {
+    futures::future::join_all(addrs.into_iter().map(|(id, mut addr)| async move {
+        // Addrs must start with "http" to communicate with the server
+        if !addr.starts_with("http://") {
+            addr.insert_str(0, "http://");
+        }
+        (
+            id,
+            addr.clone(),
+            InnerProtocolClient::connect(addr.clone()).await,
+        )
+    }))
+    .await
+    .into_iter()
+    .map(|(id, addr, conn)| {
+        debug!("successfully establish connection with {addr}");
+        let connect: Arc<dyn InnerConnectApi> = Arc::new(InnerConnect {
+            id,
+            rpc_connect: RwLock::new(conn),
+            addr,
+        });
+        (id, connect)
+    })
+}
+
+/// Connect interface between server and clients
 #[cfg_attr(test, automock)]
 #[async_trait]
 pub(crate) trait ConnectApi: Send + Sync + 'static {
@@ -89,6 +121,33 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
         timeout: Duration,
     ) -> Result<tonic::Response<ShutdownResponse>, RpcError>;
 
+    /// Send `FetchLeaderRequest`
+    async fn fetch_leader(
+        &self,
+        request: FetchLeaderRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<FetchLeaderResponse>, RpcError>;
+
+    /// Send `FetchReadStateRequest`
+    async fn fetch_read_state(
+        &self,
+        request: FetchReadStateRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<FetchReadStateResponse>, RpcError>;
+}
+
+/// Inner Connect interface among different servers
+#[cfg_attr(test, automock)]
+#[async_trait]
+pub(crate) trait InnerConnectApi: Send + Sync + 'static {
+    /// Get server id
+    fn id(&self) -> ServerId;
+
+    /// Get the internal rpc connection/client
+    async fn get(
+        &self,
+    ) -> Result<InnerProtocolClient<tonic::transport::Channel>, tonic::transport::Error>;
+
     /// Send `AppendEntriesRequest`
     async fn append_entries(
         &self,
@@ -103,13 +162,6 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
         timeout: Duration,
     ) -> Result<tonic::Response<VoteResponse>, RpcError>;
 
-    /// Send `FetchLeaderRequest`
-    async fn fetch_leader(
-        &self,
-        request: FetchLeaderRequest,
-        timeout: Duration,
-    ) -> Result<tonic::Response<FetchLeaderResponse>, RpcError>;
-
     /// Send a snapshot
     async fn install_snapshot(
         &self,
@@ -117,13 +169,6 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
         leader_id: ServerId,
         snapshot: Snapshot,
     ) -> Result<tonic::Response<InstallSnapshotResponse>, RpcError>;
-
-    /// Send `FetchReadStateRequest`
-    async fn fetch_read_state(
-        &self,
-        request: FetchReadStateRequest,
-        timeout: Duration,
-    ) -> Result<tonic::Response<FetchReadStateResponse>, RpcError>;
 }
 
 /// The connection struct to hold the real rpc connections, it may failed to connect, but it also
@@ -207,6 +252,72 @@ impl ConnectApi for Connect {
         client.wait_synced(req).await.map_err(Into::into)
     }
 
+    /// Send `FetchLeaderRequest`
+    async fn fetch_leader(
+        &self,
+        request: FetchLeaderRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<FetchLeaderResponse>, RpcError> {
+        let mut client = self.get().await?;
+        let mut req = tonic::Request::new(request);
+        req.set_timeout(timeout);
+        client.fetch_leader(req).await.map_err(Into::into)
+    }
+
+    /// Send `FetchReadStateRequest`
+    async fn fetch_read_state(
+        &self,
+        request: FetchReadStateRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<FetchReadStateResponse>, RpcError> {
+        let mut client = self.get().await?;
+        let mut req = tonic::Request::new(request);
+        req.set_timeout(timeout);
+        client.fetch_read_state(req).await.map_err(Into::into)
+    }
+}
+
+// The inner connection struct to hold the real rpc connections, it may failed to connect, but it also
+/// retries the next time
+#[derive(Debug)]
+pub(crate) struct InnerConnect {
+    /// Server id
+    id: ServerId,
+    /// The rpc connection, if it fails it contains a error, otherwise the rpc client is there
+    rpc_connect:
+        RwLock<Result<InnerProtocolClient<tonic::transport::Channel>, tonic::transport::Error>>,
+    /// The addr used to connect if failing met
+    addr: String,
+}
+
+#[async_trait]
+impl InnerConnectApi for InnerConnect {
+    /// Get server id
+    fn id(&self) -> ServerId {
+        self.id
+    }
+
+    /// Get the internal rpc connection/client
+    async fn get(
+        &self,
+    ) -> Result<InnerProtocolClient<tonic::transport::Channel>, tonic::transport::Error> {
+        if let Ok(ref client) = *self.rpc_connect.read().await {
+            return Ok(client.clone());
+        }
+        let mut connect_write = self.rpc_connect.write().await;
+        if let Ok(ref client) = *connect_write {
+            return Ok(client.clone());
+        }
+        let client = InnerProtocolClient::<_>::connect(self.addr.clone())
+            .await
+            .map(|client| {
+                *connect_write = Ok(client.clone());
+                client
+            })?;
+        *connect_write = Ok(client.clone());
+        Ok(client)
+    }
+
     /// Send `AppendEntriesRequest`
     async fn append_entries(
         &self,
@@ -231,18 +342,6 @@ impl ConnectApi for Connect {
         client.vote(req).await.map_err(Into::into)
     }
 
-    /// Send `FetchLeaderRequest`
-    async fn fetch_leader(
-        &self,
-        request: FetchLeaderRequest,
-        timeout: Duration,
-    ) -> Result<tonic::Response<FetchLeaderResponse>, RpcError> {
-        let mut client = self.get().await?;
-        let mut req = tonic::Request::new(request);
-        req.set_timeout(timeout);
-        client.fetch_leader(req).await.map_err(Into::into)
-    }
-
     async fn install_snapshot(
         &self,
         term: u64,
@@ -252,18 +351,6 @@ impl ConnectApi for Connect {
         let stream = install_snapshot_stream(term, leader_id, snapshot);
         let mut client = self.get().await?;
         client.install_snapshot(stream).await.map_err(Into::into)
-    }
-
-    /// Send `FetchReadStateRequest`
-    async fn fetch_read_state(
-        &self,
-        request: FetchReadStateRequest,
-        timeout: Duration,
-    ) -> Result<tonic::Response<FetchReadStateResponse>, RpcError> {
-        let mut client = self.get().await?;
-        let mut req = tonic::Request::new(request);
-        req.set_timeout(timeout);
-        client.fetch_read_state(req).await.map_err(Into::into)
     }
 }
 

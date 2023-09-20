@@ -111,7 +111,7 @@ where
         let token = get_token(request.metadata());
         let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
         let cmd = command_from_request_wrapper(
-            generate_propose_id(self.cluster_info.self_name()),
+            generate_propose_id(self.cluster_info.self_name().as_str()),
             wrapper,
             Some(self.lease_storage.as_ref()),
         );

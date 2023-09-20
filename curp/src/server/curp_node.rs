@@ -33,7 +33,7 @@ use crate::{
     members::{ClusterInfo, ServerId},
     role_change::RoleChange,
     rpc::{
-        self, connect::ConnectApi, AppendEntriesRequest, AppendEntriesResponse,
+        self, connect::InnerConnectApi, AppendEntriesRequest, AppendEntriesResponse,
         FetchClusterRequest, FetchClusterResponse, FetchLeaderRequest, FetchLeaderResponse,
         FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,
         InstallSnapshotResponse, ProposeConfChangeRequest, ProposeConfChangeResponse,
@@ -338,7 +338,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     #[allow(clippy::integer_arithmetic)]
     async fn election_task(
         curp: Arc<RawCurp<C, RC>>,
-        connects: HashMap<ServerId, Arc<impl ConnectApi + ?Sized>>,
+        connects: HashMap<ServerId, Arc<impl InnerConnectApi + ?Sized>>,
         mut shutdown_listener: shutdown::Listener,
     ) {
         let heartbeat_interval = curp.cfg().heartbeat_interval;
@@ -368,7 +368,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     #[allow(clippy::integer_arithmetic)]
     async fn sync_followers_daemon(
         curp: Arc<RawCurp<C, RC>>,
-        connects: HashMap<u64, Arc<impl ConnectApi + ?Sized>>,
+        connects: HashMap<u64, Arc<impl InnerConnectApi + ?Sized>>,
         shutdown_trigger: shutdown::Trigger,
     ) {
         let mut shutdown_listener = shutdown_trigger.subscribe();
@@ -409,7 +409,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     /// Leader use this task to keep a follower up-to-date, will return if self is no longer leader
     async fn sync_follower_task(
         curp: Arc<RawCurp<C, RC>>,
-        connect: Arc<impl ConnectApi + ?Sized>,
+        connect: Arc<impl InnerConnectApi + ?Sized>,
         sync_event: Arc<Event>,
         mut shutdown_listener: shutdown::Listener,
     ) {
@@ -625,7 +625,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         log_rx: tokio::sync::mpsc::UnboundedReceiver<Arc<LogEntry<C>>>,
     ) {
         let shutdown_listener = shutdown_trigger.subscribe();
-        let connects = rpc::connect(cluster_info.peers_addrs())
+        let connects = rpc::inner_connect(cluster_info.peers_addrs())
             .await
             .collect::<HashMap<_, _>>();
         let _election_task = tokio::spawn(Self::election_task(
@@ -646,7 +646,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     /// Candidate broadcasts votes
     async fn bcast_vote(
         curp: &RawCurp<C, RC>,
-        connects: &HashMap<ServerId, Arc<impl ConnectApi + ?Sized>>,
+        connects: &HashMap<ServerId, Arc<impl InnerConnectApi + ?Sized>>,
         vote: Vote,
     ) {
         debug!("{} broadcasts votes to all servers", curp.id());
@@ -702,7 +702,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     /// Send `append_entries` request
     #[allow(clippy::integer_arithmetic)] // won't overflow
     async fn send_ae(
-        connect: &(impl ConnectApi + ?Sized),
+        connect: &(impl InnerConnectApi + ?Sized),
         curp: &RawCurp<C, RC>,
         ae: AppendEntries<C>,
     ) -> Result<(), SendAEError> {
@@ -742,7 +742,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
 
     /// Send snapshot
     async fn send_snapshot(
-        connect: &(impl ConnectApi + ?Sized),
+        connect: &(impl InnerConnectApi + ?Sized),
         curp: &RawCurp<C, RC>,
         snapshot: Snapshot,
     ) -> Result<(), SendSnapshotError> {
@@ -778,7 +778,7 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::{rpc::connect::MockConnectApi, server::cmd_worker::MockCEEventTxApi};
+    use crate::{rpc::connect::MockInnerConnectApi, server::cmd_worker::MockCEEventTxApi};
 
     #[traced_test]
     #[tokio::test]
@@ -788,7 +788,7 @@ mod tests {
             MockCEEventTxApi::<TestCommand>::default(),
             mock_role_change(),
         ));
-        let mut mock_connect1 = MockConnectApi::default();
+        let mut mock_connect1 = MockInnerConnectApi::default();
         mock_connect1
             .expect_append_entries()
             .times(1..)
@@ -820,7 +820,7 @@ mod tests {
         curp.handle_append_entries(1, s2_id, 0, 0, vec![], 0)
             .unwrap();
 
-        let mut mock_connect1 = MockConnectApi::default();
+        let mut mock_connect1 = MockInnerConnectApi::default();
         mock_connect1.expect_vote().returning(|req, _| {
             Ok(tonic::Response::new(
                 VoteResponse::new_accept::<TestCommand>(req.term, vec![]).unwrap(),
@@ -829,7 +829,7 @@ mod tests {
         let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
         mock_connect1.expect_id().return_const(s1_id);
 
-        let mut mock_connect2 = MockConnectApi::default();
+        let mut mock_connect2 = MockInnerConnectApi::default();
         mock_connect2.expect_vote().returning(|req, _| {
             Ok(tonic::Response::new(
                 VoteResponse::new_accept::<TestCommand>(req.term, vec![]).unwrap(),

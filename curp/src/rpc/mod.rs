@@ -17,18 +17,22 @@ pub(crate) use self::proto::{
         CommandSyncError as PbCommandSyncErrorOuter, ProposeError as PbProposeErrorOuter,
         RedirectData, WaitSyncError as PbWaitSyncErrorOuter,
     },
+    inner_messagepb::{
+        inner_protocol_server::InnerProtocol, AppendEntriesRequest, AppendEntriesResponse,
+        InstallSnapshotRequest, InstallSnapshotResponse, VoteRequest, VoteResponse,
+    },
     messagepb::{
         fetch_read_state_response::ReadState,
         propose_conf_change_request::{ConfChange, ConfChangeType},
         protocol_server::Protocol,
-        AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse,
-        FetchReadStateRequest, FetchReadStateResponse, IdSet, InstallSnapshotRequest,
-        InstallSnapshotResponse, ProposeConfChangeRequest, ProposeConfChangeResponse,
-        ShutdownRequest, ShutdownResponse, VoteRequest, VoteResponse,
+        FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
+        IdSet, ProposeConfChangeRequest, ProposeConfChangeResponse, ShutdownRequest,
+        ShutdownResponse,
     },
 };
 pub use self::proto::{
     commandpb::{ProposeRequest, ProposeResponse},
+    inner_messagepb::inner_protocol_server::InnerProtocolServer,
     messagepb::{
         protocol_client, protocol_server::ProtocolServer, FetchLeaderRequest, FetchLeaderResponse,
     },
@@ -43,7 +47,7 @@ use crate::{
 
 /// Rpc connect
 pub(crate) mod connect;
-pub(crate) use connect::connect;
+pub(crate) use connect::{connect, inner_connect};
 
 // Skip for generated code
 #[allow(
@@ -69,6 +73,9 @@ mod proto {
     }
     pub(crate) mod errorpb {
         tonic::include_proto!("errorpb");
+    }
+    pub(crate) mod inner_messagepb {
+        tonic::include_proto!("inner_messagepb");
     }
 }
 
@@ -345,7 +352,7 @@ impl AppendEntriesResponse {
 
 impl VoteRequest {
     /// Create a new vote request
-    pub fn new(
+    pub(crate) fn new(
         term: u64,
         candidate_id: ServerId,
         last_log_index: LogIndex,
@@ -362,7 +369,7 @@ impl VoteRequest {
 
 impl VoteResponse {
     /// Create a new accepted vote response
-    pub fn new_accept<C: Command + Serialize>(
+    pub(crate) fn new_accept<C: Command + Serialize>(
         term: u64,
         cmds: Vec<Arc<C>>,
     ) -> bincode::Result<Self> {
@@ -377,7 +384,7 @@ impl VoteResponse {
     }
 
     /// Create a new rejected vote response
-    pub fn new_reject(term: u64) -> Self {
+    pub(crate) fn new_reject(term: u64) -> Self {
         Self {
             term,
             vote_granted: false,
@@ -386,7 +393,7 @@ impl VoteResponse {
     }
 
     /// Get spec pool
-    pub fn spec_pool<C: Command + DeserializeOwned>(&self) -> bincode::Result<Vec<C>> {
+    pub(crate) fn spec_pool<C: Command + DeserializeOwned>(&self) -> bincode::Result<Vec<C>> {
         self.spec_pool
             .iter()
             .map(|cmd| bincode::deserialize(cmd))

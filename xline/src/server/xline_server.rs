@@ -2,7 +2,9 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use clippy_utilities::{Cast, OverflowArithmetic};
-use curp::{client::Client, members::ClusterInfo, server::Rpc, ProtocolServer};
+use curp::{
+    client::Client, members::ClusterInfo, server::Rpc, InnerProtocolServer, ProtocolServer,
+};
 use engine::{MemorySnapshotAllocator, RocksSnapshotAllocator, SnapshotAllocator};
 use event_listener::Event;
 use futures::Future;
@@ -223,7 +225,8 @@ impl XlineServer {
             .add_service(RpcAuthServer::new(auth_server))
             .add_service(RpcWatchServer::new(watch_server))
             .add_service(RpcMaintenanceServer::new(maintenance_server))
-            .add_service(ProtocolServer::new(curp_server))
+            .add_service(ProtocolServer::from_arc(Arc::clone(&curp_server)))
+            .add_service(InnerProtocolServer::from_arc(curp_server))
             .add_service(health_server)
             .serve(addr)
             .await?)
@@ -265,7 +268,8 @@ impl XlineServer {
             .add_service(RpcAuthServer::new(auth_server))
             .add_service(RpcWatchServer::new(watch_server))
             .add_service(RpcMaintenanceServer::new(maintenance_server))
-            .add_service(ProtocolServer::new(curp_server))
+            .add_service(ProtocolServer::from_arc(Arc::clone(&curp_server)))
+            .add_service(InnerProtocolServer::from_arc(curp_server))
             .add_service(health_server)
             .serve_with_incoming_shutdown(TcpListenerStream::new(xline_listener), signal)
             .await?)
@@ -285,7 +289,7 @@ impl XlineServer {
         AuthServer<S>,
         WatchServer<S>,
         MaintenanceServer<S>,
-        CurpServer<S>,
+        Arc<CurpServer<S>>,
     )> {
         let (header_gen, id_gen) = Self::construct_generator(&self.cluster_info);
         let lease_collection = Self::construct_lease_collection(
@@ -388,7 +392,7 @@ impl XlineServer {
                 *self.server_timeout.watch_progress_notify_interval(),
             ),
             MaintenanceServer::new(persistent, header_gen),
-            curp_server,
+            Arc::new(curp_server),
         ))
     }
 }
