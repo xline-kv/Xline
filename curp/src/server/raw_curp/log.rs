@@ -298,13 +298,9 @@ impl<C: 'static + Command> Log<C> {
     }
 
     /// Push a shutdown entry to the end of the log, return its index
-    pub(super) fn push_shutdown(
-        &mut self,
-        term: u64,
-        propose_id: ProposeId,
-    ) -> Result<Arc<LogEntry<C>>, bincode::Error> {
+    pub(super) fn push_shutdown(&mut self, term: u64) -> Result<Arc<LogEntry<C>>, bincode::Error> {
         let index = self.last_log_index() + 1;
-        let entry = Arc::new(LogEntry::new_shutdown(index, term, propose_id));
+        let entry = Arc::new(LogEntry::new_shutdown(index, term));
         self.entries.push_back(Arc::clone(&entry))?;
         self.send_persist(Arc::clone(&entry));
         Ok(entry)

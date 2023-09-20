@@ -290,10 +290,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     /// Handle `shutdown` request
-    pub(super) fn handle_shutdown(
-        &self,
-        propose_id: ProposeId,
-    ) -> ((Option<ServerId>, u64), Result<(), ProposeError>) {
+    pub(super) fn handle_shutdown(&self) -> ((Option<ServerId>, u64), Result<(), ProposeError>) {
         let st_r = self.st.read();
         let info = (st_r.leader_id, st_r.term);
         if st_r.role != Role::Leader {
@@ -302,7 +299,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
         let mut log_w = self.log.write();
 
-        let entry = match log_w.push_shutdown(st_r.term, propose_id) {
+        let entry = match log_w.push_shutdown(st_r.term) {
             Ok(entry) => {
                 debug!("{} gets new log[{}]", self.id(), entry.index);
                 entry
@@ -896,12 +893,8 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             .chain([self.id()])
             .collect::<HashSet<_>>();
         let mut config = self.cst.map_lock(|cst_l| cst_l.config.clone());
-        let conf_change_type =
-            ConfChangeType::from_i32(conf_change.change_type).unwrap_or_else(|| {
-                unreachable!("conf change type {} should valid", conf_change.change_type)
-            });
         let node_id = conf_change.node_id;
-        match conf_change_type {
+        match conf_change.change_type() {
             ConfChangeType::Add => {
                 if !statuses_ids.insert(node_id) || !config.insert(node_id) {
                     return Err(ApplyConfChangeError::NodeAlreadyExists(node_id));
@@ -920,6 +913,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             ConfChangeType::AddLearner => {
                 unimplemented!("learner node is not supported yet");
             }
+            ConfChangeType::Promote => {
+                unimplemented!("learner node is not supported yet");
+            }
         }
         if statuses_ids.len() < 3 || config.voters() != &statuses_ids {
             return Err(ApplyConfChangeError::InvalidConfig);
@@ -932,11 +928,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     #[allow(clippy::unwrap_used)] // TODO: refactor this when multi-address is supported
     fn switch_config(&self, mut conf_change: ConfChange) -> bool {
         let node_id = conf_change.node_id;
-        let conf_change_type =
-            ConfChangeType::from_i32(conf_change.change_type).unwrap_or_else(|| {
-                unreachable!("conf change type {} should valid", conf_change.change_type)
-            });
-        match conf_change_type {
+        match conf_change.change_type() {
             ConfChangeType::Add => {
                 let member = Member::new(node_id, "", conf_change.address.pop().unwrap());
                 self.cst
@@ -961,6 +953,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 false
             }
             ConfChangeType::AddLearner => {
+                unimplemented!("learner node is not supported yet");
+            }
+            ConfChangeType::Promote => {
                 unimplemented!("learner node is not supported yet");
             }
         }
