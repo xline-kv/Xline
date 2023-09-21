@@ -159,8 +159,14 @@ where
                 };
                 debug!("Receive LeaseKeepAliveRequest {:?}", keep_alive_req);
                 let ttl = if lease_storage.is_primary() {
-                    lease_storage.wait_synced(keep_alive_req.id).await;
-
+                    tokio::select! {
+                        _ = shutdown_listener.wait_self_shutdown() => {
+                            debug!("Lease keep alive shutdown");
+                            break;
+                        }
+                        _ = lease_storage.wait_synced(keep_alive_req.id) => {
+                        }
+                    };
                     lease_storage.keep_alive(keep_alive_req.id).map_err(Into::into)
                 } else {
                     Err(tonic::Status::failed_precondition("current node is not a leader"))
