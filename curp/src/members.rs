@@ -265,10 +265,8 @@ impl ClusterInfo {
         self.cluster_version.load(Ordering::Relaxed)
     }
 
-    /// Increase cluster version
-    #[must_use]
-    #[inline]
-    pub fn cluster_version_inc(&self) -> u64 {
+    /// cluster version increase
+    pub(super) fn cluster_version_inc(&self) -> u64 {
         self.cluster_version.fetch_add(1, Ordering::Relaxed)
     }
 

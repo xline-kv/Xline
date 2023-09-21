@@ -128,15 +128,15 @@ impl<C: Command> Builder<C> {
         let Some(config) = self.config else {
             return Err(ClientBuildError::invalid_arguments("timeout is required"));
         };
-        let res = self
+        let res: FetchClusterResponse = self
             .fast_fetch_cluster(addrs.clone(), *config.propose_timeout())
             .await?;
         let client = Client::<C> {
             local_server_id: self.local_server_id,
             state: RwLock::new(State::new(res.leader_id, res.term)),
             config,
+            cluster_version: AtomicU64::new(res.cluster_version),
             connects: rpc::connect(res.into_members_addrs()).await?.collect(),
-            cluster_version: AtomicU64::new(0),
             phantom: PhantomData,
         };
         Ok(client)
