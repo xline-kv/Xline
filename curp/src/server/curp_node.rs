@@ -75,6 +75,9 @@ pub(super) enum CurpError {
     /// If client sent a wait synced request to a non-leader
     #[error("redirect to {0:?}, term {1}")]
     Redirect(Option<ServerId>, u64),
+    /// Wrong cluster version
+    #[error("wrong cluster version")]
+    WrongClusterVersion,
 }
 
 impl From<bincode::Error> for CurpError {
@@ -142,6 +145,10 @@ impl From<CurpError> for Status {
                     details.into(),
                     metadata,
                 )
+            }
+            CurpError::WrongClusterVersion => {
+                let metadata = gen_metadata("wrong-cluster-version");
+                Status::with_metadata(Code::FailedPrecondition, "wrong cluster version", metadata)
             }
         }
     }
@@ -249,6 +256,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         if self.curp.is_shutdown() {
             return Err(CurpError::ShuttingDown);
         }
+        let client_cluster_version = req.cluster_version;
+        let server_cluster_version = self.curp.cluster().cluster_version();
+        if client_cluster_version < server_cluster_version {
+            return Err(CurpError::WrongClusterVersion);
+        }
         let cmd: Arc<C> = Arc::new(req.cmd()?);
 
         // handle proposal
@@ -347,6 +359,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     ) -> Result<WaitSyncedResponse, CurpError> {
         if self.curp.is_shutdown() {
             return Err(CurpError::ShuttingDown);
+        }
+        let client_cluster_version = req.cluster_version;
+        let server_cluster_version = self.curp.cluster().cluster_version();
+        if client_cluster_version < server_cluster_version {
+            return Err(CurpError::WrongClusterVersion);
         }
         let id = req.propose_id();
         debug!("{} get wait synced request for cmd({id})", self.curp.id());
