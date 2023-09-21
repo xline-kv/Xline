@@ -78,14 +78,14 @@ impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::Protocol for Rp
         ))
     }
 
-    #[instrument(skip_all, name = "curp_shutdown")]
-    async fn shutdown(
+    #[instrument(skip_all, name = "curp_wait_synced")]
+    async fn wait_synced(
         &self,
-        request: tonic::Request<ShutdownRequest>,
-    ) -> Result<tonic::Response<ShutdownResponse>, tonic::Status> {
+        request: tonic::Request<WaitSyncedRequest>,
+    ) -> Result<tonic::Response<WaitSyncedResponse>, tonic::Status> {
         request.metadata().extract_span();
         Ok(tonic::Response::new(
-            self.inner.shutdown(request.into_inner()).await?,
+            self.inner.wait_synced(request.into_inner()).await?,
         ))
     }
 
@@ -100,14 +100,14 @@ impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::Protocol for Rp
         ))
     }
 
-    #[instrument(skip_all, name = "curp_wait_synced")]
-    async fn wait_synced(
+    #[instrument(skip_all, name = "curp_shutdown")]
+    async fn shutdown(
         &self,
-        request: tonic::Request<WaitSyncedRequest>,
-    ) -> Result<tonic::Response<WaitSyncedResponse>, tonic::Status> {
+        request: tonic::Request<ShutdownRequest>,
+    ) -> Result<tonic::Response<ShutdownResponse>, tonic::Status> {
         request.metadata().extract_span();
         Ok(tonic::Response::new(
-            self.inner.wait_synced(request.into_inner()).await?,
+            self.inner.shutdown(request.into_inner()).await?,
         ))
     }
 
@@ -140,6 +140,19 @@ impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::Protocol for Rp
             self.inner.fetch_read_state(request.into_inner())?,
         ))
     }
+
+    #[instrument(skip_all, name = "curp_client_lease_keep_alive")]
+    async fn client_lease_keep_alive(
+        &self,
+        request: tonic::Request<tonic::Streaming<ClientLeaseKeepAliveRequest>>,
+    ) -> Result<tonic::Response<ClientLeaseKeepAliveResponse>, tonic::Status> {
+        let req_stream = request
+            .into_inner()
+            .map_err(|e| format!("keep-alive transmission failed at client side, {e}"));
+        Ok(tonic::Response::new(
+            self.inner.client_lease_keep_alive(req_stream).await?,
+        ))
+    }
 }
 
 #[tonic::async_trait]
@@ -154,19 +167,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::InnerProtocol f
         ))
     }
 
-    #[instrument(skip_all, name = "curp_install_snapshot")]
-    async fn install_snapshot(
-        &self,
-        request: tonic::Request<tonic::Streaming<InstallSnapshotRequest>>,
-    ) -> Result<tonic::Response<InstallSnapshotResponse>, tonic::Status> {
-        let req_stream = request
-            .into_inner()
-            .map_err(|e| format!("snapshot transmission failed at client side, {e}"));
-        Ok(tonic::Response::new(
-            self.inner.install_snapshot(req_stream).await?,
-        ))
-    }
-
     #[instrument(skip_all, name = "curp_vote")]
     async fn vote(
         &self,
@@ -177,16 +177,16 @@ impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::InnerProtocol f
         ))
     }
 
-    #[instrument(skip_all, name = "curp_client_lease_keep_alive")]
-    async fn client_lease_keep_alive(
+    #[instrument(skip_all, name = "curp_install_snapshot")]
+    async fn install_snapshot(
         &self,
-        request: tonic::Request<tonic::Streaming<ClientLeaseKeepAliveRequest>>,
-    ) -> Result<tonic::Response<ClientLeaseKeepAliveResponse>, tonic::Status> {
+        request: tonic::Request<tonic::Streaming<InstallSnapshotRequest>>,
+    ) -> Result<tonic::Response<InstallSnapshotResponse>, tonic::Status> {
         let req_stream = request
             .into_inner()
-            .map_err(|e| format!("keep-alive transmission failed at client side, {e}"));
+            .map_err(|e| format!("snapshot transmission failed at client side, {e}"));
         Ok(tonic::Response::new(
-            self.inner.client_lease_keep_alive(req_stream).await?,
+            self.inner.install_snapshot(req_stream).await?,
         ))
     }
 }

@@ -17,6 +17,7 @@ pub(crate) type LeaseManagerRef = Arc<RwLock<LeaseManager>>;
 const DEFAULT_LEASE_TTL: Duration = Duration::from_secs(10);
 
 /// Lease manager
+#[derive(Debug)]
 pub(crate) struct LeaseManager {
     /// client_id => expired_at
     /// expiry queue to check the smallest expired_at

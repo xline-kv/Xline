@@ -25,14 +25,9 @@ pub(crate) use self::proto::{
         fetch_read_state_response::ReadState,
         propose_conf_change_request::{ConfChange, ConfChangeType},
         protocol_server::Protocol,
-        FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
-        IdSet, ProposeConfChangeRequest, ProposeConfChangeResponse, ShutdownRequest,
-        ShutdownResponse,
-        fetch_read_state_response::ReadState, protocol_server::Protocol, AppendEntriesRequest,
-        AppendEntriesResponse, ClientLeaseKeepAliveRequest, ClientLeaseKeepAliveResponse,
-        FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
-        IdSet, InstallSnapshotRequest, InstallSnapshotResponse, ShutdownRequest, ShutdownResponse,
-        VoteRequest, VoteResponse,
+        ClientLeaseKeepAliveRequest, ClientLeaseKeepAliveResponse, FetchClusterRequest,
+        FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse, IdSet,
+        ProposeConfChangeRequest, ProposeConfChangeResponse, ShutdownRequest, ShutdownResponse,
     },
 };
 pub use self::proto::{
