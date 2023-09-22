@@ -43,7 +43,7 @@ use super::cmd_worker::CEEventTxApi;
 use crate::{
     cmd::{Command, ProposeId},
     error::{ApplyConfChangeError, ProposeError},
-    log_entry::LogEntry,
+    log_entry::{EntryData, LogEntry},
     members::{ClusterInfo, Member, ServerId},
     role_change::RoleChange,
     rpc::{ConfChange, ConfChangeType, IdSet, ReadState},
@@ -548,6 +548,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
         let prev_last_log_index = log_w.last_log_index();
         self.recover_from_spec_pools(&mut st_w, &mut log_w, spec_pools);
+        self.recover_ucp_from_log(&mut log_w);
         let last_log_index = log_w.last_log_index();
 
         self.become_leader(&mut st_w);
@@ -1009,6 +1010,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             let spec_pools = cst.sps.drain().collect();
             let mut log_w = RwLockUpgradableReadGuard::upgrade(log);
             self.recover_from_spec_pools(st, &mut log_w, spec_pools);
+            self.recover_ucp_from_log(&mut log_w);
             self.become_leader(st);
             None
         } else {
@@ -1137,6 +1139,20 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 entry.id(),
                 entry.index,
             );
+        }
+    }
+
+    /// Recover the ucp from uncommitted log entries
+    fn recover_ucp_from_log(&self, log: &mut Log<C>) {
+        let mut ucp_l = self.ctx.ucp.lock();
+
+        for i in log.commit_index + 1..=log.last_log_index() {
+            let entry = log.get(i).unwrap_or_else(|| {
+                unreachable!("system corrupted, get a `None` value on log[{i}]")
+            });
+            if let EntryData::Command(ref cmd) = entry.entry_data {
+                let _ignore = ucp_l.insert(cmd.id().clone(), Arc::clone(cmd));
+            }
         }
     }
 

@@ -557,6 +557,37 @@ fn recover_from_spec_pools_will_pick_the_correct_cmds() {
     });
 }
 
+#[traced_test]
+#[test]
+fn recover_ucp_from_logs_will_pick_the_correct_cmds() {
+    let curp = {
+        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
+        exe_tx
+            .expect_send_reset()
+            .returning(|_| oneshot::channel().1);
+        Arc::new(RawCurp::new_test(5, exe_tx, mock_role_change()))
+    };
+    curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
+
+    let cmd0 = Arc::new(TestCommand::new_put(vec![1], 1));
+    let cmd1 = Arc::new(TestCommand::new_put(vec![2], 1));
+    let cmd2 = Arc::new(TestCommand::new_put(vec![3], 1));
+    curp.push_cmd(Arc::clone(&cmd0));
+    curp.push_cmd(Arc::clone(&cmd1));
+    curp.push_cmd(Arc::clone(&cmd2));
+    curp.log.map_write(|mut log_w| log_w.commit_index = 1);
+
+    curp.recover_ucp_from_log(&mut *curp.log.write());
+
+    curp.ctx.ucp.map_lock(|ucp| {
+        let mut ids: Vec<_> = ucp.values().map(|c| c.id()).collect();
+        assert_eq!(ids.len(), 2);
+        ids.sort();
+        assert_eq!(ids[0], cmd1.id());
+        assert_eq!(ids[1], cmd2.id());
+    });
+}
+
 /*************** tests for leader retires **************/
 
 /// To ensure #331 is fixed
