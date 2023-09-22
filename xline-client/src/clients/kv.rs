@@ -37,7 +37,8 @@ impl KvClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{error::Result, types::kv::PutRequest, Client, ClientOptions};
+    /// use xline_client::{types::kv::PutRequest, Client, ClientOptions};
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {
@@ -74,7 +75,8 @@ impl KvClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{error::Result, types::kv::RangeRequest, Client, ClientOptions};
+    /// use xline_client::{types::kv::RangeRequest, Client, ClientOptions};
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {
@@ -118,7 +120,8 @@ impl KvClient {
     ///
     /// # Examples
     /// ```no_run
-    /// use xline_client::{error::Result, types::kv::DeleteRangeRequest, Client, ClientOptions};
+    /// use xline_client::{types::kv::DeleteRangeRequest, Client, ClientOptions};
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {
@@ -158,10 +161,10 @@ impl KvClient {
     ///
     /// ```no_run
     /// use xline_client::{
-    ///     error::Result,
     ///     types::kv::{Compare, PutRequest, RangeRequest, TxnOp, TxnRequest, CompareResult},
     ///     Client, ClientOptions,
     /// };
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {
@@ -222,10 +225,10 @@ impl KvClient {
     ///
     ///```no_run
     /// use xline_client::{
-    ///     error::Result,
     ///     types::kv::{CompactionRequest, PutRequest},
     ///     Client, ClientOptions,
     /// };
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {

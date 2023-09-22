@@ -76,10 +76,10 @@ impl LockClient {
     ///
     /// ```no_run
     /// use xline_client::{
-    ///     error::Result,
     ///     types::lock::{LockRequest, UnlockRequest},
     ///     Client, ClientOptions,
     /// };
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {
@@ -206,10 +206,10 @@ impl LockClient {
     ///
     /// ```no_run
     /// use xline_client::{
-    ///     error::Result,
     ///     types::lock::{LockRequest, UnlockRequest},
     ///     Client, ClientOptions,
     /// };
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {

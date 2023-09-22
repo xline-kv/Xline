@@ -65,7 +65,8 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{error::Result, Client, ClientOptions};
+    /// use xline_client::{Client, ClientOptions};
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {
@@ -96,7 +97,8 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{error::Result, Client, ClientOptions};
+    /// use xline_client::{Client, ClientOptions};
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {
@@ -128,7 +130,8 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{error::Result, Client, ClientOptions};
+    /// use xline_client::{Client, ClientOptions};
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {
@@ -162,7 +165,8 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{error::Result, types::auth::AuthenticateRequest, Client, ClientOptions};
+    /// use xline_client::{types::auth::AuthenticateRequest, Client, ClientOptions};
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {
@@ -202,7 +206,8 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{error::Result, types::auth::AuthUserAddRequest, Client, ClientOptions};
+    /// use xline_client::{types::auth::AuthUserAddRequest, Client, ClientOptions};
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {
@@ -248,7 +253,8 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{error::Result, types::auth::AuthUserGetRequest, Client, ClientOptions};
+    /// use xline_client::{types::auth::AuthUserGetRequest, Client, ClientOptions};
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {
@@ -281,7 +287,8 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{error::Result, Client, ClientOptions};
+    /// use xline_client::{Client, ClientOptions};
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {
@@ -315,7 +322,8 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{error::Result, Client, ClientOptions};
+    /// use xline_client::{Client, ClientOptions};
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {
@@ -354,8 +362,9 @@ impl AuthClient {
     ///
     /// ```no_run
     /// use xline_client::{
-    ///     error::Result, types::auth::AuthUserChangePasswordRequest, Client, ClientOptions,
+    ///     types::auth::AuthUserChangePasswordRequest, Client, ClientOptions,
     /// };
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {
@@ -399,7 +408,8 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{error::Result, types::auth::AuthUserGrantRoleRequest, Client, ClientOptions};
+    /// use xline_client::{types::auth::AuthUserGrantRoleRequest, Client, ClientOptions};
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {
@@ -435,7 +445,8 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{error::Result, types::auth::AuthUserRevokeRoleRequest, Client, ClientOptions};
+    /// use xline_client::{types::auth::AuthUserRevokeRoleRequest, Client, ClientOptions};
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {
@@ -472,7 +483,8 @@ impl AuthClient {
     ///
     /// ```no_run
     /// use xline_client::types::auth::AuthRoleAddRequest;
-    /// use xline_client::{error::Result, Client, ClientOptions};
+    /// use xline_client::{Client, ClientOptions};
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {
@@ -507,7 +519,8 @@ impl AuthClient {
     ///
     /// ```no_run
     /// use xline_client::types::auth::AuthRoleGetRequest;
-    /// use xline_client::{error::Result, Client, ClientOptions};
+    /// use xline_client::{Client, ClientOptions};
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {
@@ -541,7 +554,8 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{error::Result, Client, ClientOptions};
+    /// use xline_client::{Client, ClientOptions};
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {
@@ -576,7 +590,8 @@ impl AuthClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{error::Result, types::auth::AuthRoleDeleteRequest, Client, ClientOptions};
+    /// use xline_client::{types::auth::AuthRoleDeleteRequest, Client, ClientOptions};
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {
@@ -613,10 +628,10 @@ impl AuthClient {
     ///
     /// ```no_run
     /// use xline_client::{
-    ///     error::Result,
     ///     types::auth::{AuthRoleGrantPermissionRequest, Permission, PermissionType},
     ///     Client, ClientOptions,
     /// };
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {
@@ -661,8 +676,9 @@ impl AuthClient {
     ///
     /// ```no_run
     /// use xline_client::{
-    ///     error::Result, types::auth::AuthRoleRevokePermissionRequest, Client, ClientOptions,
+    ///     types::auth::AuthRoleRevokePermissionRequest, Client, ClientOptions,
     /// };
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {

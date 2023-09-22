@@ -129,7 +129,7 @@ async fn propose_after_reelect() {
             .unwrap()
             .0
             .values,
-        vec![]
+        Vec::<u32>::new()
     );
 
     let leader1 = group.get_leader().await.0;
@@ -167,7 +167,7 @@ async fn conflict_should_detected_in_new_leader() {
             .unwrap()
             .0
             .values,
-        vec![]
+        Vec::<u32>::new()
     );
 
     // re-elect a new leader

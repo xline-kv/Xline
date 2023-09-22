@@ -1,9 +1,8 @@
 use clap::{arg, value_parser, ArgMatches, Command};
 use xline_client::{error::Result, types::cluster::MemberUpdateRequest, Client};
 
-use crate::utils::printer::Printer;
-
 use super::parse_peer_urls;
+use crate::utils::printer::Printer;
 
 /// Definition of `update` command
 pub(super) fn command() -> Command {
