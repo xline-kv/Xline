@@ -162,7 +162,7 @@ use utils::{
         RotationConfig, ServerTimeout, StorageConfig, TraceConfig, XlineServerConfig,
     },
     parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_rotation,
-    ConfigParseError,
+    ConfigFileError,
 };
 use xline::{server::XlineServer, storage::db::DB};
 
@@ -481,7 +481,7 @@ async fn main() -> Result<()> {
             env::var("XLINE_SERVER_CONFIG").unwrap_or_else(|_| "/etc/xline_server.conf".to_owned());
         let config_file = fs::read_to_string(&path)
             .await
-            .map_err(|err| ConfigParseError::IoError(path, err))?;
+            .map_err(|err| ConfigFileError::FileError(path, err))?;
         toml::from_str(&config_file)?
     } else {
         let server_args: ServerArgs = ServerArgs::parse();
