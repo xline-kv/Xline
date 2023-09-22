@@ -438,12 +438,18 @@ fn install_snapshot_stream(
 fn heartbeat_stream(
     client_id: Arc<RwLock<String>>,
 ) -> impl Stream<Item = ClientLeaseKeepAliveRequest> {
+    /// Keep alive interval
+    const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(1);
+
     stream! {
         loop {
+            let _ig = tokio::time::sleep(HEARTBEAT_INTERVAL).await;
             let id = client_id.read().await.to_string();
             if id.is_empty() {
+                debug!("grant a client id");
                 yield ClientLeaseKeepAliveRequest::grant();
             } else {
+                debug!("keep alive a client id");
                 yield ClientLeaseKeepAliveRequest::keep_alive(id);
             }
         }

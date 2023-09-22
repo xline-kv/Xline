@@ -623,7 +623,6 @@ dependencies = [
  "curp-external-api",
  "curp-test-utils",
  "dashmap",
- "derive_builder",
  "engine",
  "event-listener",
  "flume",

@@ -43,6 +43,7 @@ pub struct AuthClient {
 impl AuthClient {
     /// Creates a new `AuthClient`
     #[inline]
+    #[must_use]
     pub fn new(
         name: String,
         curp_client: Arc<CurpClient<Command>>,

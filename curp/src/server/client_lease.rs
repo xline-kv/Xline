@@ -8,6 +8,7 @@ use std::time::Duration;
 use parking_lot::RwLock;
 use priority_queue::PriorityQueue;
 use tokio::time::Instant;
+use tracing::debug;
 use uuid::Uuid;
 
 /// Ref to lease manager
@@ -34,10 +35,6 @@ impl LeaseManager {
 
     /// Check if the client is alive
     pub(crate) fn check_alive(&self, client_id: &str) -> bool {
-        // TODO: remove
-        if client_id == "test_client_id" {
-            return true;
-        }
         if let Some(expired_at) = self.expiry_queue.get(client_id).map(|(_, v)| v.0) {
             expired_at > Instant::now()
         } else {
@@ -48,6 +45,7 @@ impl LeaseManager {
     /// Generate a new client id and grant a lease
     pub(crate) fn grant(&mut self) -> String {
         let client_id = Uuid::new_v4().to_string();
+        debug!("grant a new client id {client_id}");
         let expiry = Instant::now().add(DEFAULT_LEASE_TTL);
         let _ig = self.expiry_queue.push(client_id.clone(), Reverse(expiry));
         // TODO: move this gc task to background
@@ -68,6 +66,7 @@ impl LeaseManager {
     /// Renew a client id
     pub(crate) fn renew(&mut self, client_id: &str) {
         let expiry = Instant::now().add(DEFAULT_LEASE_TTL);
+        debug!("renew a client id {client_id}");
         let _ig = self
             .expiry_queue
             .change_priority(client_id, Reverse(expiry));
@@ -80,6 +79,7 @@ impl LeaseManager {
 
     /// Revoke a lease
     pub(crate) fn revoke(&mut self, client_id: &str) {
+        debug!("revoke a client id {client_id}");
         let _ig = self.expiry_queue.remove(client_id);
     }
 }

@@ -23,7 +23,6 @@ chrono = { version = "0.4.24", default-features = false, features = [
 clippy-utilities = "0.2.0"
 curp-external-api = { path = "../curp-external-api" }
 dashmap = "5.5.0"
-derive_builder = "0.12.0"
 engine = { path = "../engine" }
 event-listener = "2.5.2"
 flume = "0.10.14"
