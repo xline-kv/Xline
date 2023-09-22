@@ -284,24 +284,77 @@ impl CurpGroup {
             .unwrap()
     }
 
-    // Disconnect the node from the network.
+    /// Disconnect the node from the network.
     pub fn disable_node(&self, id: ServerId) {
-        let handle = madsim::runtime::Handle::current();
         let net = madsim::net::NetSim::current();
-        let Some(node) = handle.get_node(id.to_string()) else {
-            panic!("no node with name {id} in the simulator")
-        };
+        let node = Self::get_node_handle(id);
         net.clog_node(node.id());
     }
 
-    // Reconnect the node to the network.
+    /// Reconnect the node to the network.
     pub fn enable_node(&self, id: ServerId) {
-        let handle = madsim::runtime::Handle::current();
         let net = madsim::net::NetSim::current();
-        let Some(node) = handle.get_node(id.to_string()) else {
-            panic!("no node with name {id} the simulator")
-        };
+        let node = Self::get_node_handle(id);
         net.unclog_node(node.id());
+    }
+
+    /// Disconnect the network link between two nodes
+    pub fn clog_link_nodes(&self, fst: ServerId, snd: ServerId) {
+        let node_fst = Self::get_node_handle(fst);
+        let node_snd = Self::get_node_handle(snd);
+        Self::clog_bidirectional(&node_fst, &node_snd);
+    }
+
+    /// Reconnect the network link between two nodes
+    pub fn unclog_link_nodes(&self, fst: ServerId, snd: ServerId) {
+        let node_fst = Self::get_node_handle(fst);
+        let node_snd = Self::get_node_handle(snd);
+        Self::unclog_bidirectional(&node_fst, &node_snd);
+    }
+
+    /// Disconnect the network link between the client and a list of nodes
+    /// Note: This will affect SimClient
+    pub fn clog_link_client_nodes<'a>(&'a self, server_ids: impl Iterator<Item = &'a ServerId>) {
+        let client_node = &self.client_node;
+        for server_id in server_ids {
+            let server_node = Self::get_node_handle(*server_id);
+            Self::clog_bidirectional(client_node, &server_node);
+        }
+    }
+
+    /// Reconnect the network link between the client and a list of nodes
+    pub fn unclog_link_client_nodes<'a>(&'a self, server_ids: impl Iterator<Item = &'a ServerId>) {
+        let client_node = &self.client_node;
+        for server_id in server_ids {
+            let server_node = Self::get_node_handle(*server_id);
+            Self::unclog_bidirectional(client_node, &server_node);
+        }
+    }
+
+    /// Clog the network bidirectionally
+    fn clog_bidirectional(node_fst: &NodeHandle, node_snd: &NodeHandle) {
+        let net = madsim::net::NetSim::current();
+        let id_fst = node_fst.id();
+        let id_snd = node_snd.id();
+        net.clog_link(id_fst, id_snd);
+        net.clog_link(id_snd, id_fst);
+    }
+
+    /// Unclog the network bidirectionally
+    fn unclog_bidirectional(node_fst: &NodeHandle, node_snd: &NodeHandle) {
+        let net = madsim::net::NetSim::current();
+        let id_fst = node_fst.id();
+        let id_snd = node_snd.id();
+        net.unclog_link(id_fst, id_snd);
+        net.unclog_link(id_snd, id_fst);
+    }
+
+    /// Get the server node handle from ServerId
+    fn get_node_handle(id: ServerId) -> NodeHandle {
+        let handle = madsim::runtime::Handle::current();
+        handle
+            .get_node(id.to_string())
+            .expect("no node with name {id} the simulator")
     }
 
     pub async fn get_connect(&self, id: &ServerId) -> SimProtocolClient {

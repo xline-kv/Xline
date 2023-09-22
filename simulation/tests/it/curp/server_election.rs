@@ -148,3 +148,43 @@ async fn propose_after_reelect() {
         vec![0]
     );
 }
+
+// Verifies that #438 has been fixed
+// This will likely to fail without a fix
+#[madsim::test]
+async fn conflict_should_detected_in_new_leader() {
+    init_logger();
+
+    let group = CurpGroup::new(3).await;
+    let client = group.new_client(ClientConfig::default()).await;
+    let leader1 = group.get_leader().await.0;
+
+    // client only propose to leader
+    group.clog_link_client_nodes(group.nodes.keys().filter(|id| **id != leader1));
+    assert_eq!(
+        client
+            .propose(TestCommand::new_put(vec![0], 0), true)
+            .await
+            .unwrap()
+            .0
+            .values,
+        vec![]
+    );
+
+    // re-elect a new leader
+    group.disable_node(leader1);
+    group.unclog_link_client_nodes(group.nodes.keys().filter(|id| **id != leader1));
+    let (_leader, _term) = wait_for_election(&group).await;
+
+    assert_eq!(
+        client
+            .propose(TestCommand::new_get(vec![0]), true)
+            .await
+            .unwrap()
+            .0
+            .values,
+        vec![0]
+    );
+
+    group.stop().await;
+}
