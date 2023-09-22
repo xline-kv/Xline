@@ -36,8 +36,6 @@ pub(super) struct LockServer<S> {
     client: Arc<Client<Command>>,
     /// Id Generator
     id_gen: Arc<IdGenerator>,
-    /// Cluster information
-    name: String,
     /// Server address
     address: String,
     /// Phantom
@@ -52,13 +50,11 @@ where
     pub(super) fn new(
         client: Arc<Client<Command>>,
         id_gen: Arc<IdGenerator>,
-        name: String,
         address: String,
     ) -> Self {
         Self {
             client,
             id_gen,
-            name,
             address,
             phantom: PhantomData,
         }
@@ -75,7 +71,14 @@ where
         T: Into<RequestWrapper>,
     {
         let wrapper = RequestWithToken::new_with_token(request.into(), token);
-        let cmd = command_from_request_wrapper::<S>(generate_propose_id(&self.name), wrapper, None);
+        let client_id = self
+            .client
+            .get_client_id()
+            .await
+            .map_err(propose_err_to_status)?;
+        let seq_num = self.client.new_seq_num();
+        let propose_id = generate_propose_id(&client_id, seq_num);
+        let cmd = command_from_request_wrapper::<S>(propose_id, wrapper, None);
 
         self.client
             .propose(cmd, use_fast_path)

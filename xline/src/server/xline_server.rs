@@ -370,12 +370,10 @@ impl XlineServer {
                 id_barrier,
                 *self.server_timeout.range_retry_timeout(),
                 Arc::clone(&client),
-                self.cluster_info.self_name(),
             ),
             LockServer::new(
                 Arc::clone(&client),
                 Arc::clone(&id_gen),
-                self.cluster_info.self_name(),
                 self.cluster_info.self_address(),
             ),
             LeaseServer::new(
@@ -385,7 +383,7 @@ impl XlineServer {
                 id_gen,
                 Arc::clone(&self.cluster_info),
             ),
-            AuthServer::new(client, self.cluster_info.self_name()),
+            AuthServer::new(client),
             WatchServer::new(
                 watcher,
                 Arc::clone(&header_gen),

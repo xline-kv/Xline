@@ -10,6 +10,7 @@ use event_listener::Event;
 use periodic_compactor::PeriodicCompactor;
 use revision_compactor::RevisionCompactor;
 use tokio::{sync::mpsc::Receiver, time::sleep};
+use tracing::warn;
 use utils::config::AutoCompactConfig;
 
 use super::{
@@ -59,7 +60,14 @@ impl Compactable for Client<Command> {
             physical: false,
         };
         let request_wrapper = RequestWithToken::new_with_token(request.into(), None);
-        let propose_id = generate_propose_id("auto-compactor");
+        let client_id = loop {
+            if let Ok(client_id) = self.get_client_id().await {
+                break client_id;
+            }
+            warn!("get client id timeout, retrying...");
+        };
+        let seq_num = self.new_seq_num();
+        let propose_id = generate_propose_id(&client_id, seq_num);
         let cmd = Command::new(vec![], request_wrapper, propose_id);
         if let Err(e) = self.propose(cmd, true).await {
             #[allow(clippy::wildcard_enum_match_arm)]

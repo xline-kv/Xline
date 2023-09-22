@@ -39,8 +39,6 @@ where
 {
     /// Consensus client
     client: Arc<Client<Command>>,
-    /// Server name
-    name: String,
     /// Phantom
     phantom: PhantomData<S>,
 }
@@ -58,10 +56,9 @@ where
     S: StorageApi,
 {
     /// New `AuthServer`
-    pub(crate) fn new(client: Arc<Client<Command>>, name: String) -> Self {
+    pub(crate) fn new(client: Arc<Client<Command>>) -> Self {
         Self {
             client,
-            name,
             phantom: PhantomData,
         }
     }
@@ -77,7 +74,14 @@ where
     {
         let token = get_token(request.metadata());
         let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
-        let cmd = command_from_request_wrapper::<S>(generate_propose_id(&self.name), wrapper, None);
+        let client_id = self
+            .client
+            .get_client_id()
+            .await
+            .map_err(propose_err_to_status)?;
+        let seq_num = self.client.new_seq_num();
+        let propose_id = generate_propose_id(&client_id, seq_num);
+        let cmd = command_from_request_wrapper::<S>(propose_id, wrapper, None);
 
         self.client
             .propose(cmd, use_fast_path)

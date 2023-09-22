@@ -213,7 +213,6 @@ impl Client {
             .into_iter()
             .map(|addr| addr.as_ref().to_owned())
             .collect();
-        let name = String::from("client");
         let channel = Self::build_channel(addrs.clone()).await?;
         let curp_client = Arc::new(
             CurpClient::builder()
@@ -225,12 +224,7 @@ impl Client {
 
         let token = match options.user {
             Some((username, password)) => {
-                let mut tmp_auth = AuthClient::new(
-                    name.clone(),
-                    Arc::clone(&curp_client),
-                    channel.clone(),
-                    None,
-                );
+                let mut tmp_auth = AuthClient::new(Arc::clone(&curp_client), channel.clone(), None);
                 let resp = tmp_auth
                     .authenticate(types::auth::AuthenticateRequest::new(username, password))
                     .await?;
@@ -240,22 +234,20 @@ impl Client {
             None => None,
         };
 
-        let kv = KvClient::new(name.clone(), Arc::clone(&curp_client), token.clone());
+        let kv = KvClient::new(Arc::clone(&curp_client), token.clone());
         let lease = LeaseClient::new(
-            name.clone(),
             Arc::clone(&curp_client),
             channel.clone(),
             token.clone(),
             Arc::clone(&id_gen),
         );
         let lock = LockClient::new(
-            name.clone(),
             Arc::clone(&curp_client),
             channel.clone(),
             token.clone(),
             id_gen,
         );
-        let auth = AuthClient::new(name.clone(), curp_client, channel.clone(), token.clone());
+        let auth = AuthClient::new(curp_client, channel.clone(), token.clone());
         let maintenance = MaintenanceClient::new(channel.clone(), token.clone());
         let watch = WatchClient::new(channel, token);
         let cluster = ClusterClient::new();

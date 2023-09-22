@@ -15,8 +15,6 @@ use crate::{
 /// Client for KV operations.
 #[derive(Clone, Debug)]
 pub struct KvClient {
-    /// Name of the kv client, which will be used in CURP propose id generation
-    name: String,
     /// The client running the CURP protocol, communicate with all servers.
     curp_client: Arc<CurpClient<Command>>,
     /// The auth token
@@ -26,16 +24,8 @@ pub struct KvClient {
 impl KvClient {
     /// New `KvClient`
     #[inline]
-    pub(crate) fn new(
-        name: String,
-        curp_client: Arc<CurpClient<Command>>,
-        token: Option<String>,
-    ) -> Self {
-        Self {
-            name,
-            curp_client,
-            token,
-        }
+    pub(crate) fn new(curp_client: Arc<CurpClient<Command>>, token: Option<String>) -> Self {
+        Self { curp_client, token }
     }
 
     /// Put a key-value into the store
@@ -65,7 +55,9 @@ impl KvClient {
     #[inline]
     pub async fn put(&self, request: PutRequest) -> Result<PutResponse> {
         let key_ranges = vec![KeyRange::new_one_key(request.key())];
-        let propose_id = generate_propose_id(&self.name);
+        let client_id = self.curp_client.get_client_id().await?;
+        let seq_num = self.curp_client.new_seq_num();
+        let propose_id = generate_propose_id(&client_id, seq_num);
         let request = RequestWithToken::new_with_token(
             xlineapi::PutRequest::from(request).into(),
             self.token.clone(),
@@ -110,7 +102,9 @@ impl KvClient {
     #[inline]
     pub async fn range(&self, request: RangeRequest) -> Result<RangeResponse> {
         let key_ranges = vec![KeyRange::new(request.key(), request.range_end())];
-        let propose_id = generate_propose_id(&self.name);
+        let client_id = self.curp_client.get_client_id().await?;
+        let seq_num = self.curp_client.new_seq_num();
+        let propose_id = generate_propose_id(&client_id, seq_num);
         let request = RequestWithToken::new_with_token(
             xlineapi::RangeRequest::from(request).into(),
             self.token.clone(),
@@ -148,7 +142,9 @@ impl KvClient {
     #[inline]
     pub async fn delete(&self, request: DeleteRangeRequest) -> Result<DeleteRangeResponse> {
         let key_ranges = vec![KeyRange::new(request.key(), request.range_end())];
-        let propose_id = generate_propose_id(&self.name);
+        let client_id = self.curp_client.get_client_id().await?;
+        let seq_num = self.curp_client.new_seq_num();
+        let propose_id = generate_propose_id(&client_id, seq_num);
         let request = RequestWithToken::new_with_token(
             xlineapi::DeleteRangeRequest::from(request).into(),
             self.token.clone(),
@@ -203,7 +199,9 @@ impl KvClient {
             .iter()
             .map(|cmp| KeyRange::new(cmp.key.as_slice(), cmp.range_end.as_slice()))
             .collect();
-        let propose_id = generate_propose_id(&self.name);
+        let client_id = self.curp_client.get_client_id().await?;
+        let seq_num = self.curp_client.new_seq_num();
+        let propose_id = generate_propose_id(&client_id, seq_num);
         let request = RequestWithToken::new_with_token(
             xlineapi::TxnRequest::from(request).into(),
             self.token.clone(),
@@ -256,7 +254,9 @@ impl KvClient {
     #[inline]
     pub async fn compact(&self, request: CompactionRequest) -> Result<CompactionResponse> {
         let use_fast_path = request.physical();
-        let propose_id = generate_propose_id(&self.name);
+        let client_id = self.curp_client.get_client_id().await?;
+        let seq_num = self.curp_client.new_seq_num();
+        let propose_id = generate_propose_id(&client_id, seq_num);
         let request = RequestWithToken::new_with_token(
             xlineapi::CompactionRequest::from(request).into(),
             self.token.clone(),

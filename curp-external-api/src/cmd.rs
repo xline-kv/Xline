@@ -4,7 +4,6 @@ use async_trait::async_trait;
 use engine::Snapshot;
 use prost::DecodeError;
 use serde::{de::DeserializeOwned, Serialize};
-use uuid::Uuid;
 
 use crate::LogIndex;
 
@@ -79,11 +78,11 @@ pub trait Command:
 /// Command Id wrapper, abstracting underlying implementation
 pub type ProposeId = String;
 
-/// Generate propose id with the given prefix
+/// Generate propose id with client id and seq num
 #[inline]
 #[must_use]
-pub fn generate_propose_id(prefix: &str) -> ProposeId {
-    format!("{}-{}", prefix, Uuid::new_v4())
+pub fn generate_propose_id(client_id: &str, seq_num: u64) -> ProposeId {
+    format!("{client_id}#{seq_num}")
 }
 
 /// Parse propose id to (`client_id`, `seq_num`)

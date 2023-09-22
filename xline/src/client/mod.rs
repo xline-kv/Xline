@@ -95,7 +95,9 @@ impl Client {
     pub async fn put(&mut self, request: PutRequest) -> Result<PutResponse, ClientError> {
         if self.use_curp_client {
             let key_ranges = vec![KeyRange::new_one_key(request.key())];
-            let propose_id = generate_propose_id(&self.name);
+            let client_id = self.curp_client.get_client_id().await?;
+            let seq_num = self.curp_client.new_seq_num();
+            let propose_id = generate_propose_id(&client_id, seq_num);
             let request = RequestWithToken::new(rpc::PutRequest::from(request).into());
             let cmd = Command::new(key_ranges, request, propose_id);
             let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
@@ -119,7 +121,9 @@ impl Client {
     pub async fn range(&mut self, request: RangeRequest) -> Result<RangeResponse, ClientError> {
         if self.use_curp_client {
             let key_ranges = vec![KeyRange::new(request.key(), request.range_end())];
-            let propose_id = generate_propose_id(&self.name);
+            let client_id = self.curp_client.get_client_id().await?;
+            let seq_num = self.curp_client.new_seq_num();
+            let propose_id = generate_propose_id(&client_id, seq_num);
             let request = RequestWithToken::new(rpc::RangeRequest::from(request).into());
             let cmd = Command::new(key_ranges, request, propose_id);
             let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
@@ -143,7 +147,9 @@ impl Client {
     ) -> Result<DeleteRangeResponse, ClientError> {
         if self.use_curp_client {
             let key_ranges = vec![KeyRange::new(request.key(), request.range_end())];
-            let propose_id = generate_propose_id(&self.name);
+            let client_id = self.curp_client.get_client_id().await?;
+            let seq_num = self.curp_client.new_seq_num();
+            let propose_id = generate_propose_id(&client_id, seq_num);
             let request = RequestWithToken::new(rpc::DeleteRangeRequest::from(request).into());
             let cmd = Command::new(key_ranges, request, propose_id);
             let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;

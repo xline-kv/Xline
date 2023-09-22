@@ -28,7 +28,7 @@ impl RequestTracker {
     pub(crate) fn new_seq_num(&mut self) -> u64 {
         let last_sent = self
             .last_sent
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.seq_nums.push_back(Some(last_sent));
         last_sent
     }

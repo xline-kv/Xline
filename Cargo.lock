@@ -664,7 +664,6 @@ dependencies = [
  "prost",
  "serde",
  "thiserror",
- "uuid",
 ]
 
 [[package]]

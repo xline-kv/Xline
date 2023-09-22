@@ -30,8 +30,6 @@ use crate::{
 /// Client for Auth operations.
 #[derive(Clone, Debug)]
 pub struct AuthClient {
-    /// Name of the AuthClient, which will be used in CURP propose id generation
-    name: String,
     /// The client running the CURP protocol, communicate with all servers.
     curp_client: Arc<CurpClient<Command>>,
     /// The auth RPC client, only communicate with one server at a time
@@ -45,13 +43,11 @@ impl AuthClient {
     #[inline]
     #[must_use]
     pub fn new(
-        name: String,
         curp_client: Arc<CurpClient<Command>>,
         channel: Channel,
         token: Option<String>,
     ) -> Self {
         Self {
-            name,
             curp_client,
             auth_client: xlineapi::AuthClient::new(AuthService::new(
                 channel,
@@ -694,7 +690,9 @@ impl AuthClient {
         request: Req,
         use_fast_path: bool,
     ) -> Result<Res> {
-        let propose_id = generate_propose_id(&self.name);
+        let client_id = self.curp_client.get_client_id().await?;
+        let seq_num = self.curp_client.new_seq_num();
+        let propose_id = generate_propose_id(&client_id, seq_num);
         let request = RequestWithToken::new_with_token(request.into(), self.token.clone());
         let cmd = Command::new(vec![], request, propose_id);
 

@@ -773,6 +773,25 @@ impl<C: Command + 'static> ClientInner<C> {
     fn all_connects(&self) -> Vec<Arc<dyn ConnectApi>> {
         self.connects.iter().map(|c| Arc::clone(&c)).collect()
     }
+
+    /// Get the client id
+    async fn get_client_id(&self) -> Result<String, ProposeError> {
+        let retry_timeout = *self.config.retry_timeout();
+        let retry_count = *self.config.retry_count();
+        for _ in 0..retry_count {
+            let client_id = self.client_id.read().await.to_string();
+            if !client_id.is_empty() {
+                return Ok(client_id);
+            }
+            let _ig = timeout(retry_timeout, self.client_id_notifier.listen()).await;
+        }
+        Err(ProposeError::Timeout)
+    }
+
+    /// New a seq num and record it
+    fn new_seq_num(&self) -> u64 {
+        self.tracker.write().new_seq_num()
+    }
 }
 
 impl<C> Client<C>
@@ -824,12 +843,32 @@ where
     pub async fn fetch_read_state(&self, cmd: &C) -> Result<ReadState, ProposeError> {
         self.inner.fetch_read_state(cmd).await
     }
+
     /// Fetch the current leader id without cache
     /// # Errors
     /// `ProposeError::Timeout` if timeout
     #[inline]
     pub async fn get_leader_id_from_curp(&self) -> Result<ServerId, CommandProposeError<C>> {
         self.inner.get_leader_id_from_curp().await
+    }
+
+    /// Get the client id
+    ///
+    /// # Errors
+    ///   `ProposeError::Timeout` if timeout
+    #[inline]
+    pub async fn get_client_id(&self) -> Result<String, CommandProposeError<C>> {
+        self.inner
+            .get_client_id()
+            .await
+            .map_err(|e| CommandProposeError::Propose(e))
+    }
+
+    /// New a seq num and record it
+    #[inline]
+    #[must_use]
+    pub fn new_seq_num(&self) -> u64 {
+        self.inner.new_seq_num()
     }
 
     /// Client lease keep alive background task
