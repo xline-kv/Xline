@@ -84,7 +84,6 @@ async fn synced_propose() {
         assert_eq!(cmd1, cmd);
         assert_eq!(er, TestCommandResult::new(vec![], vec![]));
     }
-
     for as_rx in group.as_rxs() {
         let (cmd1, index) = as_rx.recv().await.unwrap();
         assert_eq!(cmd1, cmd);
@@ -113,7 +112,7 @@ async fn exe_exact_n_times() {
                 .is_err()
         );
         assert_eq!(cmd1, cmd);
-        assert_eq!(er.values, vec![]);
+        assert_eq!(er.values, Vec::<u32>::new());
     }
 
     for as_rx in group.as_rxs() {

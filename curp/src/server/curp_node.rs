@@ -13,6 +13,7 @@ use tokio::{
     task::JoinHandle,
     time::MissedTickBehavior,
 };
+use tonic::{metadata::MetadataMap, Code, Status};
 use tracing::{debug, error, info, trace, warn};
 use utils::{
     config::CurpConfig,
@@ -87,48 +88,59 @@ impl From<PbSerializeError> for CurpError {
     }
 }
 
-impl From<CurpError> for tonic::Status {
+///  Generate metadata for `tonic::Status`
+fn gen_metadata(label: &str) -> MetadataMap {
+    let mut meta = MetadataMap::new();
+    _ = meta.insert(
+        "error-label",
+        label.parse().unwrap_or_else(|e| {
+            unreachable!("convert a empty string to MetadataValue should always success: {e}")
+        }),
+    );
+    meta
+}
+
+impl From<CurpError> for Status {
     #[inline]
     fn from(err: CurpError) -> Self {
         match err {
-            CurpError::EncodeDecode(msg) => tonic::Status::cancelled(msg),
-            CurpError::Internal(msg) => tonic::Status::internal(msg),
-            CurpError::Storage(err) => tonic::Status::internal(err.to_string()),
-            CurpError::IO(err) => tonic::Status::internal(err.to_string()),
+            CurpError::EncodeDecode(msg) => {
+                let metadata = gen_metadata("encode-decode");
+                Status::with_metadata(Code::Cancelled, msg, metadata)
+            }
+            CurpError::Internal(msg) => {
+                let metadata = gen_metadata("internal");
+                Status::with_metadata(Code::Internal, msg, metadata)
+            }
+            CurpError::Storage(err) => {
+                let metadata = gen_metadata("storage");
+                Status::with_metadata(Code::Internal, err.to_string(), metadata)
+            }
+            CurpError::IO(err) => {
+                let metadata = gen_metadata("io");
+                Status::with_metadata(Code::Internal, err.to_string(), metadata)
+            }
             CurpError::Transport(msg) => {
-                let mut status = tonic::Status::unavailable(msg);
-                let meta = status.metadata_mut();
-                _ = meta.insert(
-                    "Transport",
-                    "".parse().unwrap_or_else(|e| {
-                        unreachable!(
-                            "convert a empty string to MetadataValue should always success: {e}"
-                        )
-                    }),
-                );
-                status
+                let metadata = gen_metadata("transport");
+                Status::with_metadata(Code::Unavailable, msg, metadata)
             }
             CurpError::ShuttingDown => {
-                let mut status = tonic::Status::unavailable("CurpServer is shutting down");
-                let meta = status.metadata_mut();
-                _ = meta.insert(
-                    "ShuttingDown",
-                    "".parse().unwrap_or_else(|e| {
-                        unreachable!(
-                            "convert a empty string to MetadataValue should always success: {e}"
-                        )
-                    }),
-                );
-                status
+                let metadata = gen_metadata("shutting-down");
+                Status::with_metadata(Code::Unavailable, "CurpServer is shutting down", metadata)
             }
             CurpError::Redirect(leader_id, term) => {
-                let mut status = tonic::Status::failed_precondition("current node is not a leader");
-                let meta = status.metadata_mut();
-                if let Some(id) = leader_id {
-                    _ = meta.insert("leader_id", id.into());
-                }
-                _ = meta.insert("term", term.into());
-                status
+                let metadata = gen_metadata("redirect");
+                let leader_term = (leader_id, term);
+                let mut details: Vec<u8> = Vec::new();
+                serde_json::to_writer(&mut details, &leader_term).unwrap_or_else(|e| {
+                    unreachable!("serialize a tuple (Option<u64>, u64) should always succeed: {e}")
+                });
+                Status::with_details_and_metadata(
+                    Code::FailedPrecondition,
+                    "current node is not a leader",
+                    details.into(),
+                    metadata,
+                )
             }
         }
     }
@@ -146,20 +158,23 @@ enum SendAEError {
     /// Transport
     #[error("transport error, {0}")]
     Transport(String),
+    /// RpcError
+    #[error("RPC error: {0}")]
+    RpcError(String),
     /// Encode/Decode error
     #[error("encode or decode error")]
     EncodeDecode(String),
 }
 
-impl From<tonic::Status> for SendAEError {
-    fn from(status: tonic::Status) -> Self {
+impl From<Status> for SendAEError {
+    fn from(status: Status) -> Self {
         #[allow(clippy::wildcard_enum_match_arm)]
         // it's ok to do so since only three status can covert to `SendAEError`
         match status.code() {
             tonic::Code::Cancelled => Self::EncodeDecode(status.message().to_owned()),
             tonic::Code::FailedPrecondition => Self::NotLeader,
             tonic::Code::Unavailable => Self::Transport(status.message().to_owned()),
-            _ => unreachable!("This tonic::Status {status:?} cannot covert to SendAEError"),
+            _ => Self::RpcError(status.message().to_owned()),
         }
     }
 }
@@ -173,16 +188,19 @@ enum SendSnapshotError {
     /// Transport
     #[error("transport error, {0}")]
     Transport(String),
+    /// Rpc error
+    #[error("RPC error: {0}")]
+    RpcError(String),
 }
 
-impl From<tonic::Status> for SendSnapshotError {
-    fn from(status: tonic::Status) -> Self {
+impl From<Status> for SendSnapshotError {
+    fn from(status: Status) -> Self {
         #[allow(clippy::wildcard_enum_match_arm)]
         // it's ok to do so since `SendSnapshotError` only has two variants.
         match status.code() {
             tonic::Code::FailedPrecondition => Self::NotLeader,
             tonic::Code::Unavailable => Self::Transport(status.message().to_owned()),
-            _ => unreachable!("This tonic::Status {status:?} cannot covert to SendSnapshotError"),
+            _ => Self::RpcError(status.message().to_owned()),
         }
     }
 }

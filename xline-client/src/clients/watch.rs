@@ -50,10 +50,10 @@ impl WatchClient {
     ///
     /// ```no_run
     /// use xline_client::{
-    ///     error::Result,
     ///     types::{kv::PutRequest, watch::WatchRequest},
     ///     Client, ClientOptions,
     /// };
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {

@@ -63,7 +63,8 @@ impl LeaseClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{error::Result, types::lease::LeaseGrantRequest, Client, ClientOptions};
+    /// use xline_client::{types::lease::LeaseGrantRequest, Client, ClientOptions};
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {
@@ -103,7 +104,8 @@ impl LeaseClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{error::Result, types::lease::LeaseRevokeRequest, Client, ClientOptions};
+    /// use xline_client::{types::lease::LeaseRevokeRequest, Client, ClientOptions};
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {
@@ -136,7 +138,8 @@ impl LeaseClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{error::Result, types::lease::LeaseKeepAliveRequest, Client, ClientOptions};
+    /// use xline_client::{types::lease::LeaseKeepAliveRequest, Client, ClientOptions};
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {
@@ -197,7 +200,8 @@ impl LeaseClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{error::Result, types::lease::LeaseTimeToLiveRequest, Client, ClientOptions};
+    /// use xline_client::{types::lease::LeaseTimeToLiveRequest, Client, ClientOptions};
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {
@@ -237,7 +241,8 @@ impl LeaseClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{error::Result, Client, ClientOptions};
+    /// use xline_client::{Client, ClientOptions};
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {

@@ -218,33 +218,48 @@ pub enum ReadState {
     CommitIndex(LogIndex),
 }
 
-/// get `term` and `leader_id` from a `tonic::Status` (Redirect)
-fn parse_redirect_status(metadata: &tonic::metadata::MetadataMap) -> (Option<ServerId>, u64) {
-    let term = metadata
-        .get("term")
-        .unwrap_or_else(|| unreachable!("The Redirect must contain a valid term"))
-        .to_str()
-        .unwrap_or_else(|err| {
-            unreachable!("a valid term should not includes any non-ascii character: {err}")
-        })
-        .parse::<u64>()
-        .unwrap_or_else(|err| {
-            unreachable!("parse term in a Redirect should always be successful: {err}")
-        });
+/// Unpack `tonic::Status`
+enum UnpackStatus {
+    /// CurpServer is shutting down
+    ShuttingDown,
+    /// Indicate that the client sent a wait synced request to a non-leader
+    Redirect(Option<ServerId>, u64),
+    /// Transport error type
+    Transport,
+    /// Encode decode error type
+    EncodeDecode,
+    /// Storage error type
+    Storage,
+    /// IO error type
+    IO,
+    /// Internal error type
+    Internal,
+}
 
-    if let Some(leader_id) = metadata.get("leader_id") {
-        let leader_id = leader_id
-            .to_str()
-            .unwrap_or_else(|err| {
-                unreachable!("a valid term should not includes any non-ascii character: {err}")
-            })
-            .parse::<u64>()
-            .unwrap_or_else(|err| {
-                unreachable!("parse leader_id in a Redirect should always be successful: {err}")
-            });
-        (Some(leader_id), term)
+/// unpack `tonic::Status` and convert it to `UnpackStatus`
+fn unpack_status(status: &tonic::Status) -> UnpackStatus {
+    let meta = status.metadata();
+    if let Some(label) = meta.get("error-label") {
+        match label.to_str().unwrap_or_else(|err| {
+            unreachable!("error-label should be always able to convert to str: {err:?}")
+        }) {
+            "shutting-down" => UnpackStatus::ShuttingDown,
+            "transport" => UnpackStatus::Transport,
+            "redirect" => {
+                let (leader_id, term) = serde_json::from_slice(status.details()).unwrap_or_else(|err| unreachable!(" deserialize (leader_id, term) from status' detail should always success: {err:?}"));
+                UnpackStatus::Redirect(leader_id, term)
+            }
+            "encode-decode" => UnpackStatus::EncodeDecode,
+            "internal" => UnpackStatus::Internal,
+            "storage" => UnpackStatus::Storage,
+            "io" => UnpackStatus::IO,
+            unsupported_label => {
+                unreachable!("unsupported status label {unsupported_label}")
+            }
+        }
     } else {
-        (None, term)
+        // This transport error comes from `tonic` framework
+        UnpackStatus::Transport
     }
 }
 
@@ -289,11 +304,8 @@ where
             let resp = match resp_result {
                 Ok(resp) => resp.into_inner(),
                 Err(e) => {
-                    if e.code() == tonic::Code::Unavailable {
-                        let meta = e.metadata();
-                        if meta.contains_key("ShuttingDown") {
-                            return Err(ClientError::ShuttingDown);
-                        }
+                    if let UnpackStatus::ShuttingDown = unpack_status(&e) {
+                        return Err(ClientError::ShuttingDown);
                     }
                     warn!("Propose error: {}", e);
                     continue;
@@ -359,23 +371,25 @@ where
                 Ok(resp) => resp.into_inner(),
                 Err(e) => {
                     warn!("wait synced rpc error: {e}");
-                    if e.code() == tonic::Code::Unavailable {
-                        let meta = e.metadata();
-                        if meta.contains_key("ShuttingDown") {
-                            return Err(ClientError::ShuttingDown);
+                    match unpack_status(&e) {
+                        UnpackStatus::ShuttingDown => return Err(ClientError::ShuttingDown),
+                        UnpackStatus::Transport => {
+                            // it's quite likely that the leader has crashed, then we should wait for some time and fetch the leader again
+                            tokio::time::sleep(retry_timeout.next_retry()).await;
+                            self.resend_propose(Arc::clone(&cmd), None).await?;
+                            continue;
                         }
-                    } else if e.code() == tonic::Code::FailedPrecondition {
-                        let metadata = e.metadata();
-                        let (new_leader, term) = parse_redirect_status(metadata);
-                        self.state.write().check_and_update(new_leader, term);
-                        // resend the propose to the new leader
-                        self.resend_propose(Arc::clone(&cmd), new_leader).await?;
-                    } else {
-                        // it's quite likely that the leader has crashed, then we should wait for some time and fetch the leader again
-                        tokio::time::sleep(retry_timeout.next_retry()).await;
-                        self.resend_propose(Arc::clone(&cmd), None).await?;
+                        UnpackStatus::Redirect(new_leader, term) => {
+                            self.state.write().check_and_update(new_leader, term);
+                            // resend the propose to the new leader
+                            self.resend_propose(Arc::clone(&cmd), new_leader).await?;
+                            continue;
+                        }
+                        UnpackStatus::EncodeDecode
+                        | UnpackStatus::Storage
+                        | UnpackStatus::IO
+                        | UnpackStatus::Internal => return Err(e.into()),
                     }
-                    continue;
                 }
             };
 
@@ -415,17 +429,23 @@ where
                 )
                 .await
             {
-                // Leader may not be correct leader, resend the shutdown request to the new leader
-                if e.code() == tonic::Code::FailedPrecondition {
-                    let metadata = e.metadata();
-                    let (new_leader, term) = parse_redirect_status(metadata);
-                    self.state.write().check_and_update(new_leader, term);
-                    warn!("shutdown: redirect to new leader {new_leader:?}, term is {term}",);
-                    continue;
-                }
                 warn!("shutdown rpc error: {e}");
-                tokio::time::sleep(retry_timeout.next_retry()).await;
-                continue;
+                match unpack_status(&e) {
+                    UnpackStatus::ShuttingDown => return Err(ClientError::ShuttingDown),
+                    UnpackStatus::Redirect(new_leader, term) => {
+                        self.state.write().check_and_update(new_leader, term);
+                        warn!("shutdown: redirect to new leader {new_leader:?}, term is {term}",);
+                        continue;
+                    }
+                    UnpackStatus::Transport
+                    | UnpackStatus::EncodeDecode
+                    | UnpackStatus::Storage
+                    | UnpackStatus::IO
+                    | UnpackStatus::Internal => {
+                        tokio::time::sleep(retry_timeout.next_retry()).await;
+                        continue;
+                    }
+                }
             };
             return Ok(());
         }
@@ -722,21 +742,22 @@ where
             {
                 Ok(resp) => resp.into_inner(),
                 Err(e) => {
-                    warn!("wait synced rpc error: {e}");
-                    if e.code() == tonic::Code::Unavailable {
-                        let meta = e.metadata();
-                        if meta.contains_key("ShuttingDown") {
-                            return Err(ClientError::ShuttingDown);
+                    warn!("propose_conf_change rpc error: {e}");
+                    match unpack_status(&e) {
+                        UnpackStatus::ShuttingDown => return Err(ClientError::ShuttingDown),
+                        UnpackStatus::Redirect(new_leader, term) => {
+                            self.state.write().check_and_update(new_leader, term);
+                            continue;
                         }
-                    } else if e.code() == tonic::Code::FailedPrecondition {
-                        let metadata = e.metadata();
-                        let (new_leader, term) = parse_redirect_status(metadata);
-                        self.state.write().check_and_update(new_leader, term);
-                        continue;
-                    } else {
+                        UnpackStatus::Transport
+                        | UnpackStatus::EncodeDecode
+                        | UnpackStatus::Storage
+                        | UnpackStatus::IO
+                        | UnpackStatus::Internal => {
+                            tokio::time::sleep(retry_timeout.next_retry()).await;
+                            continue;
+                        }
                     }
-                    tokio::time::sleep(retry_timeout.next_retry()).await;
-                    continue;
                 }
             };
             self.state
@@ -843,9 +864,7 @@ where
         linearizable: bool,
     ) -> Result<FetchClusterResponse, ClientError<C>> {
         if linearizable {
-            return self
-                .fetch_cluster(true)
-                .await;
+            return self.fetch_cluster(true).await;
         }
         if let Ok(resp) = self.fetch_local_cluster().await {
             return Ok(resp);

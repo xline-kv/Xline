@@ -179,9 +179,15 @@ pub enum ConfigParseError {
     /// Invalid values
     #[error("Invalid Value: {0}")]
     InvalidValue(String),
-    /// Invalid config file path
-    #[error("Couldn't read file {0}")]
-    IoError(String, #[source] std::io::Error),
+}
+
+/// Config File Error
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum ConfigFileError {
+    /// Invalid number when parsing `Duration`
+    #[error("Couldn't read config file {0}")]
+    FileError(String, #[source] std::io::Error),
 }
 
 /// parse members from string like "node1=addr1,addr2,node2=add3,addr4,addr5,node3=addr6"

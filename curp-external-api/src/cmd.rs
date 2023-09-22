@@ -1,5 +1,4 @@
-use std::fmt::Display;
-use std::hash::Hash;
+use std::{fmt::Display, hash::Hash};
 
 use async_trait::async_trait;
 use engine::Snapshot;

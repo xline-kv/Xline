@@ -34,7 +34,8 @@ impl MaintenanceClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{error::Result, Client, ClientOptions};
+    /// use xline_client::{Client, ClientOptions};
+    /// use anyhow::Result;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<()> {

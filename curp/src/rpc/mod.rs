@@ -3,6 +3,18 @@ use std::{collections::HashMap, sync::Arc};
 use curp_external_api::cmd::{PbCodec, PbSerializeError};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
+pub use self::proto::{
+    commandpb::{
+        cmd_result::Result as CmdResultInner,
+        propose_conf_change_request::{ConfChange, ConfChangeType},
+        propose_conf_change_response::Error as ConfChangeError,
+        protocol_client,
+        protocol_server::ProtocolServer,
+        CmdResult, FetchClusterRequest, FetchClusterResponse, Member, ProposeConfChangeRequest,
+        ProposeConfChangeResponse, ProposeRequest, ProposeResponse,
+    },
+    inner_messagepb::inner_protocol_server::InnerProtocolServer,
+};
 pub(crate) use self::proto::{
     commandpb::{
         fetch_read_state_response::{IdSet, ReadState},
@@ -11,25 +23,11 @@ pub(crate) use self::proto::{
         FetchReadStateRequest, FetchReadStateResponse, ProposeId as PbProposeId, ShutdownRequest,
         ShutdownResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
-    errorpb::{
-        propose_error::ProposeError as PbProposeError, ProposeError as PbProposeErrorOuter,
-    },
+    errorpb::{propose_error::ProposeError as PbProposeError, ProposeError as PbProposeErrorOuter},
     inner_messagepb::{
         inner_protocol_server::InnerProtocol, AppendEntriesRequest, AppendEntriesResponse,
         InstallSnapshotRequest, InstallSnapshotResponse, VoteRequest, VoteResponse,
     },
-};
-pub use self::proto::{
-    commandpb::{
-        propose_conf_change_request::{ConfChange, ConfChangeType},
-        propose_conf_change_response::Error as ConfChangeError,
-        cmd_result::Result as CmdResultInner, CmdResult,
-        protocol_client,
-        protocol_server::ProtocolServer,
-        FetchClusterRequest, FetchClusterResponse, Member, ProposeConfChangeRequest,
-        ProposeConfChangeResponse, ProposeRequest, ProposeResponse,
-    },
-    inner_messagepb::inner_protocol_server::InnerProtocolServer,
 };
 use crate::{
     cmd::{Command, ProposeId},
@@ -277,21 +275,27 @@ impl WaitSyncedResponse {
                 if let Some(CmdResultInner::Error(buf)) = er.result {
                     SyncResult::Error(<C as Command>::Error::decode(buf.as_slice())?)
                 } else {
-                    unreachable!("er should not be None")
+                    unreachable!("asr should not be None")
                 }
             }
             (Some(er), Some(asr)) => {
                 let er = if let Some(CmdResultInner::Ok(er)) = er.result {
                     <C as Command>::ER::decode(er.as_slice())?
                 } else {
-                    unreachable!("")
+                    unreachable!("asr should be None when execute failed")
                 };
-                let asr = if let Some(CmdResultInner::Ok(asr)) = asr.result {
-                    <C as Command>::ASR::decode(asr.as_slice())?
-                } else {
-                    unreachable!("")
-                };
-                SyncResult::Success { asr, er }
+                match asr.result {
+                    Some(CmdResultInner::Ok(asr)) => SyncResult::Success {
+                        asr: <C as Command>::ASR::decode(asr.as_slice())?,
+                        er,
+                    },
+                    Some(CmdResultInner::Error(err)) => {
+                        SyncResult::Error(<C as Command>::Error::decode(err.as_slice())?)
+                    }
+                    None => {
+                        unreachable!("result of asr should not be None")
+                    }
+                }
             }
         };
         Ok(res)

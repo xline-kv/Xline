@@ -649,6 +649,7 @@ dependencies = [
  "prost-build",
  "rand",
  "serde",
+ "serde_json",
  "tempfile",
  "test-macros",
  "thiserror",

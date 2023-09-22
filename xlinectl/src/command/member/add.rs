@@ -1,9 +1,8 @@
 use clap::{arg, ArgMatches, Command};
 use xline_client::{error::Result, types::cluster::MemberAddRequest, Client};
 
-use crate::utils::printer::Printer;
-
 use super::parse_peer_urls;
+use crate::utils::printer::Printer;
 
 /// Definition of `add` command
 pub(super) fn command() -> Command {
