@@ -195,6 +195,7 @@ where
         request: tonic::Request<RangeRequest>,
     ) -> Result<tonic::Response<RangeResponse>, tonic::Status> {
         let range_req = request.get_ref();
+        range_req.validation()?;
         debug!("Receive grpc request: {:?}", range_req);
         range_req.validation()?;
         range_req.check_revision(
@@ -235,6 +236,7 @@ where
         request: tonic::Request<PutRequest>,
     ) -> Result<tonic::Response<PutResponse>, tonic::Status> {
         let put_req: &PutRequest = request.get_ref();
+        put_req.validation()?;
         debug!("Receive grpc request: {:?}", put_req);
         put_req.validation()?;
         let is_fast_path = true;
@@ -262,6 +264,7 @@ where
         request: tonic::Request<DeleteRangeRequest>,
     ) -> Result<tonic::Response<DeleteRangeResponse>, tonic::Status> {
         let delete_range_req = request.get_ref();
+        delete_range_req.validation()?;
         debug!("Receive grpc request: {:?}", delete_range_req);
         delete_range_req.validation()?;
         let is_fast_path = true;
@@ -290,6 +293,7 @@ where
         request: tonic::Request<TxnRequest>,
     ) -> Result<tonic::Response<TxnResponse>, tonic::Status> {
         let txn_req = request.get_ref();
+        txn_req.validation()?;
         debug!("Receive grpc request: {:?}", txn_req);
         txn_req.validation()?;
         txn_req.check_revision(

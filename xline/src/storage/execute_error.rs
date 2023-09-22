@@ -4,19 +4,13 @@ use curp::cmd::{PbCodec, PbSerializeError};
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use xlineapi::{PbExecuteError, PbExecuteErrorOuter, PbRevisions, PbValidationError};
-
-use crate::request_validation::ValidationError;
+use xlineapi::{PbExecuteError, PbExecuteErrorOuter, PbRevisions};
 
 /// Error met when executing commands
 #[cfg_attr(test, derive(strum_macros::EnumIter))]
 #[derive(Error, Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum ExecuteError {
-    /// Invalid Request Error
-    #[error("invalid request")]
-    InvalidRequest(ValidationError),
-
     /// Key not found
     #[error("key not found")]
     KeyNotFound,
@@ -106,9 +100,6 @@ impl From<PbExecuteError> for ExecuteError {
     #[inline]
     fn from(err: PbExecuteError) -> Self {
         match err {
-            PbExecuteError::InvalidRequest(s) => ExecuteError::InvalidRequest(
-                PbValidationError::from_i32(s).unwrap_or_default().into(),
-            ),
             PbExecuteError::KeyNotFound(_) => ExecuteError::KeyNotFound,
             PbExecuteError::RevisionTooLarge(revs) => {
                 ExecuteError::RevisionTooLarge(revs.required_revision, revs.current_revision)
@@ -151,9 +142,6 @@ impl From<ExecuteError> for PbExecuteError {
     #[inline]
     fn from(err: ExecuteError) -> Self {
         match err {
-            ExecuteError::InvalidRequest(s) => {
-                PbExecuteError::InvalidRequest(PbValidationError::from(s).into())
-            }
             ExecuteError::KeyNotFound => PbExecuteError::KeyNotFound(()),
             ExecuteError::RevisionTooLarge(required_revision, current_revision) => {
                 PbExecuteError::RevisionTooLarge(PbRevisions {
@@ -227,7 +215,6 @@ impl From<ExecuteError> for tonic::Status {
     #[inline]
     fn from(err: ExecuteError) -> Self {
         let (code, message) = match err {
-            ExecuteError::InvalidRequest(e) => return e.into(),
             ExecuteError::KeyNotFound => (
                 tonic::Code::InvalidArgument,
                 "etcdserver: key not found".to_owned(),

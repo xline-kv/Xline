@@ -24,7 +24,6 @@ use super::{
 };
 use crate::{
     header_gen::HeaderGenerator,
-    request_validation::RequestValidator,
     revision_number::RevisionNumberGenerator,
     rpc::{
         AuthDisableRequest, AuthDisableResponse, AuthEnableRequest, AuthEnableResponse,
@@ -297,7 +296,6 @@ where
         req: &AuthUserAddRequest,
     ) -> Result<AuthUserAddResponse, ExecuteError> {
         debug!("handle_user_add_request");
-        req.validation()?;
         if self.backend.get_user(&req.name).is_ok() {
             return Err(ExecuteError::UserAlreadyExists(req.name.clone()));
         }
@@ -407,7 +405,6 @@ where
         req: &AuthRoleAddRequest,
     ) -> Result<AuthRoleAddResponse, ExecuteError> {
         debug!("handle_role_add_request");
-        req.validation()?;
         if self.backend.get_role(&req.name).is_ok() {
             return Err(ExecuteError::RoleAlreadyExists(req.name.clone()));
         }
@@ -478,7 +475,6 @@ where
         req: &AuthRoleGrantPermissionRequest,
     ) -> Result<AuthRoleGrantPermissionResponse, ExecuteError> {
         debug!("handle_role_grant_permission_request");
-        req.validation()?;
         let _role = self.backend.get_role(&req.name)?;
         Ok(AuthRoleGrantPermissionResponse {
             header: Some(self.header_gen.gen_auth_header()),

@@ -6,11 +6,9 @@ use thiserror::Error;
 use crate::{
     rpc::{
         AuthRoleAddRequest, AuthRoleGrantPermissionRequest, AuthUserAddRequest, DeleteRangeRequest,
-        PbValidationError, PutRequest, RangeRequest, Request, RequestOp, SortOrder, SortTarget,
-        TxnRequest,
+        PutRequest, RangeRequest, Request, RequestOp, SortOrder, SortTarget, TxnRequest,
     },
     server::KeyRange,
-    storage::ExecuteError,
 };
 
 /// Default max txn ops
@@ -220,44 +218,6 @@ pub enum ValidationError {
     PermissionNotGiven,
 }
 
-impl From<PbValidationError> for ValidationError {
-    #[inline]
-    fn from(err: PbValidationError) -> Self {
-        match err {
-            PbValidationError::EmptyKey => ValidationError::EmptyKey,
-            PbValidationError::ValueProvided => ValidationError::ValueProvided,
-            PbValidationError::LeaseProvided => ValidationError::LeaseProvided,
-            PbValidationError::InvalidSortOption => ValidationError::InvalidSortOption,
-            PbValidationError::TooManyOps => ValidationError::TooManyOps,
-            PbValidationError::RequestNotProvided => ValidationError::RequestNotProvided,
-            PbValidationError::DuplicateKey => ValidationError::DuplicateKey,
-            PbValidationError::UserEmpty => ValidationError::UserEmpty,
-            PbValidationError::PasswordEmpty => ValidationError::PasswordEmpty,
-            PbValidationError::RoleEmpty => ValidationError::RoleEmpty,
-            PbValidationError::PermissionNotGiven => ValidationError::PermissionNotGiven,
-        }
-    }
-}
-
-impl From<ValidationError> for PbValidationError {
-    #[inline]
-    fn from(err: ValidationError) -> Self {
-        match err {
-            ValidationError::EmptyKey => PbValidationError::EmptyKey,
-            ValidationError::ValueProvided => PbValidationError::ValueProvided,
-            ValidationError::LeaseProvided => PbValidationError::LeaseProvided,
-            ValidationError::InvalidSortOption => PbValidationError::InvalidSortOption,
-            ValidationError::TooManyOps => PbValidationError::TooManyOps,
-            ValidationError::RequestNotProvided => PbValidationError::RequestNotProvided,
-            ValidationError::DuplicateKey => PbValidationError::DuplicateKey,
-            ValidationError::UserEmpty => PbValidationError::UserEmpty,
-            ValidationError::PasswordEmpty => PbValidationError::PasswordEmpty,
-            ValidationError::RoleEmpty => PbValidationError::RoleEmpty,
-            ValidationError::PermissionNotGiven => PbValidationError::PermissionNotGiven,
-        }
-    }
-}
-
 // The etcd client relies on GRPC error messages for error type interpretation.
 // In order to create an etcd-compatible API with Xline, it is necessary to return exact GRPC statuses to the etcd client.
 // Refer to `https://github.com/etcd-io/etcd/blob/main/api/v3rpc/rpctypes/error.go` for etcd's error parsing mechanism,
@@ -308,13 +268,6 @@ impl From<ValidationError> for tonic::Status {
         };
 
         tonic::Status::new(code, message)
-    }
-}
-
-impl From<ValidationError> for ExecuteError {
-    #[inline]
-    fn from(err: ValidationError) -> Self {
-        ExecuteError::InvalidRequest(err)
     }
 }
 
