@@ -198,8 +198,8 @@ pub use self::{
         RequestWithToken as PbRequestWithToken, SyncResponse as PbSyncResponse,
     },
     errorpb::{
-        execute_error::{Error as PbExecuteError, ValidationError as PbValidationError},
-        ExecuteError as PbExecuteErrorOuter, Revisions as PbRevisions, UserRole as PbUserRole,
+        execute_error::Error as PbExecuteError, ExecuteError as PbExecuteErrorOuter,
+        Revisions as PbRevisions, UserRole as PbUserRole,
     },
     etcdserverpb::{
         auth_client::AuthClient,

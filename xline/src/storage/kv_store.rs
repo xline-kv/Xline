@@ -20,7 +20,6 @@ use super::{
 };
 use crate::{
     header_gen::HeaderGenerator,
-    request_validation::RequestValidator,
     revision_check::RevisionCheck,
     revision_number::RevisionNumberGenerator,
     rpc::{
@@ -493,7 +492,6 @@ where
 
     /// Handle `RangeRequest`
     fn handle_range_request(&self, req: &RangeRequest) -> Result<RangeResponse, ExecuteError> {
-        req.validation()?;
         req.check_revision(self.compacted_revision(), self.revision())?;
 
         let storage_fetch_limit = if (req.sort_order() != SortOrder::None)
@@ -545,8 +543,6 @@ where
 
     /// Handle `PutRequest`
     fn handle_put_request(&self, req: &PutRequest) -> Result<PutResponse, ExecuteError> {
-        req.validation()?;
-
         let mut response = PutResponse {
             header: Some(self.header_gen.gen_header()),
             ..Default::default()
@@ -568,8 +564,6 @@ where
         &self,
         req: &DeleteRangeRequest,
     ) -> Result<DeleteRangeResponse, ExecuteError> {
-        req.validation()?;
-
         let prev_kvs = self.get_range(&req.key, &req.range_end, 0)?;
         let mut response = DeleteRangeResponse {
             header: Some(self.header_gen.gen_header()),
@@ -584,7 +578,6 @@ where
 
     /// Handle `TxnRequest`
     fn handle_txn_request(&self, req: &TxnRequest) -> Result<TxnResponse, ExecuteError> {
-        req.validation()?;
         req.check_revision(self.compacted_revision(), self.revision())?;
 
         let success = req
