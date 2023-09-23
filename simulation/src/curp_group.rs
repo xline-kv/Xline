@@ -99,7 +99,9 @@ impl CurpGroup {
                             StorageConfig::Memory,
                         );
                         store_c.lock().replace(Arc::clone(&ce.store));
-                        let is_leader = "S0" == name;
+                        // we will restart the old leader.
+                        // after the reboot, it may no longer be the leader.
+                        let is_leader = false;
 
                         Rpc::run_from_addr(
                             cluster_info.clone(),
