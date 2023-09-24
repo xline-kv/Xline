@@ -25,3 +25,5 @@ tokio = { version = "0.2.23", package = "madsim-tokio", features = [
 ] }
 utils = { path = "../utils", features = ["parking_lot"] }
 xline = { path = "../xline" }
+clap = { version = "4.4.4", features = ["derive"] }
+xline-client = { path = "../xline-client" }

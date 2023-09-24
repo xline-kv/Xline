@@ -1,7 +1,11 @@
 //! this binary is only used for the validation of lock service
 
 use clap::{Parser, Subcommand};
-use etcd_client::Client;
+use xline_client::{
+    error::Result,
+    types::lock::{LockRequest, UnlockRequest},
+    Client, ClientOptions,
+};
 
 #[derive(Parser, Debug, Clone, PartialEq, Eq)]
 struct ClientArgs {
@@ -29,21 +33,23 @@ pub enum Commands {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     let args: ClientArgs = ClientArgs::parse();
     let endpoints = if args.endpoints.is_empty() {
         vec!["http://127.0.0.1:2379".to_owned()]
     } else {
         args.endpoints
     };
-    let mut client = Client::connect(endpoints, None).await?;
+    let client = Client::connect(endpoints, ClientOptions::default())
+        .await?
+        .lock_client();
     match args.command {
         Commands::Lock { name } => {
-            let lock_res = client.lock(name, None).await?;
-            println!("{}", String::from_utf8_lossy(lock_res.key()))
+            let lock_res = client.lock(LockRequest::new().with_name(name)).await?;
+            println!("{}", String::from_utf8_lossy(&lock_res.key))
         }
         Commands::Unlock { key } => {
-            let _unlock_res = client.unlock(key).await?;
+            let _unlock_res = client.unlock(UnlockRequest::new().with_key(key)).await?;
             println!("unlock success");
         }
     };
