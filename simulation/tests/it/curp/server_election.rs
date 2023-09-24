@@ -185,6 +185,4 @@ async fn conflict_should_detected_in_new_leader() {
             .values,
         vec![0]
     );
-
-    group.stop().await;
 }
