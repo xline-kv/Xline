@@ -3,10 +3,9 @@ use std::{marker::PhantomData, sync::Arc};
 use async_stream::stream;
 use clippy_utilities::OverflowArithmetic;
 use curp::client::Client;
-use etcd_client::EventType;
 use tonic::transport::{Channel, Endpoint};
 use tracing::debug;
-use xlineapi::RequestWithToken;
+use xlineapi::{EventType, RequestWithToken};
 
 use super::{
     auth_server::get_token,

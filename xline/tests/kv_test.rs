@@ -1,11 +1,13 @@
 use std::{error::Error, time::Duration};
 
-use etcd_client::{Client, Compare, CompareOp, GetOptions, KvClient, Txn, TxnOp, TxnOpResponse};
 use test_macros::abort_on_panic;
-use xline::client::kv_types::{
-    DeleteRangeRequest, PutRequest, RangeRequest, SortOrder, SortTarget,
+use xline_test_utils::{
+    types::kv::{
+        Compare, CompareResult, DeleteRangeRequest, PutRequest, RangeRequest, Response, SortOrder,
+        SortTarget, TxnOp, TxnRequest,
+    },
+    Client, ClientOptions, Cluster,
 };
-use xline_test_utils::Cluster;
 
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
@@ -32,7 +34,7 @@ async fn test_kv_put() -> Result<(), Box<dyn Error>> {
 
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;
-    let client = cluster.client().await;
+    let client = cluster.client().await.kv_client();
 
     for test in tests {
         let res = client.put(test.req).await;
@@ -52,7 +54,7 @@ async fn test_kv_get() -> Result<(), Box<dyn Error>> {
 
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;
-    let client = cluster.client().await;
+    let client = cluster.client().await.kv_client();
 
     let kvs = ["a", "b", "c", "c", "c", "foo", "foo/abc", "fop"];
     let want_kvs = ["a", "b", "c", "foo", "foo/abc", "fop"];
@@ -166,12 +168,14 @@ async fn test_range_redirect() -> Result<(), Box<dyn Error>> {
     cluster.start().await;
 
     let addr = cluster.all_members()["server1"].clone();
-    let mut kv_client = Client::connect([addr], None).await?.kv_client();
-    let _ignore = kv_client.put("foo", "bar", None).await?;
+    let kv_client = Client::connect([addr], ClientOptions::default())
+        .await?
+        .kv_client();
+    let _ignore = kv_client.put(PutRequest::new("foo", "bar")).await?;
     tokio::time::sleep(Duration::from_millis(300)).await;
-    let res = kv_client.get("foo", None).await?;
-    assert_eq!(res.kvs().len(), 1);
-    assert_eq!(res.kvs()[0].value(), b"bar");
+    let res = kv_client.range(RangeRequest::new("foo")).await?;
+    assert_eq!(res.kvs.len(), 1);
+    assert_eq!(res.kvs[0].value, b"bar");
 
     Ok(())
 }
@@ -187,7 +191,7 @@ async fn test_kv_delete() -> Result<(), Box<dyn Error>> {
 
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;
-    let client = cluster.client().await;
+    let client = cluster.client().await.kv_client();
 
     let keys = ["a", "b", "c", "c/abc", "d"];
 
@@ -254,49 +258,71 @@ async fn test_kv_delete() -> Result<(), Box<dyn Error>> {
 async fn test_txn() -> Result<(), Box<dyn Error>> {
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;
-    let mut client: KvClient = cluster.client().await.kv_client();
+    let client = cluster.client().await.kv_client();
 
     let kvs = ["a", "b", "c", "d", "e"];
     for key in kvs {
-        client.put(key, "bar", None).await?;
+        client.put(PutRequest::new(key, "bar")).await?;
     }
 
-    let read_write_txn = Txn::new()
-        .when([Compare::value("b", CompareOp::Equal, "bar")])
-        .and_then([TxnOp::put("f", "foo", None)])
-        .or_else([TxnOp::get("a", None)]);
-    let res = client.txn(read_write_txn).await?;
-    assert!(res.succeeded());
-    assert_eq!(res.op_responses().len(), 1);
-    assert!(matches!(res.op_responses()[0], TxnOpResponse::Put(_)));
+    let read_write_txn_req = TxnRequest::new()
+        .when(&[Compare::value("b", CompareResult::Equal, "bar")][..])
+        .and_then(&[TxnOp::put(PutRequest::new("f", "foo"))][..])
+        .or_else(&[TxnOp::range(RangeRequest::new("a"))][..]);
 
-    let read_only_txn = Txn::new()
-        .when([Compare::version("b", CompareOp::Greater, 10)])
-        .and_then([TxnOp::get("a", None)])
-        .or_else([TxnOp::get("b", None)]);
-    let res = client.txn(read_only_txn).await?;
-    assert!(!res.succeeded());
-    assert_eq!(res.op_responses().len(), 1);
-    let Some(TxnOpResponse::Get(get_res)) = res.op_responses().pop() else {
-        panic!("unexpected op response");
+    let res = client.txn(read_write_txn_req).await?;
+    assert!(res.succeeded);
+    assert_eq!(res.responses.len(), 1);
+    assert!(matches!(
+        res.responses[0].response,
+        Some(Response::ResponsePut(_))
+    ));
+
+    let read_only_txn = TxnRequest::new()
+        .when(&[Compare::version("b", CompareResult::Greater, 10)][..])
+        .and_then(&[TxnOp::range(RangeRequest::new("a"))][..])
+        .or_else(&[TxnOp::range(RangeRequest::new("b"))][..]);
+    let mut res = client.txn(read_only_txn).await?;
+    assert!(!res.succeeded);
+    assert_eq!(res.responses.len(), 1);
+
+    if let Some(resp_op) = res.responses.pop() {
+        if let Response::ResponseRange(get_res) = resp_op
+            .response
+            .expect("the inner response should not be None")
+        {
+            assert_eq!(get_res.kvs.len(), 1);
+            assert_eq!(get_res.kvs[0].key, b"b");
+            assert_eq!(get_res.kvs[0].value, b"bar");
+        } else {
+            unreachable!("receive unexpected op response in a read-only transaction");
+        }
+    } else {
+        unreachable!("response in a read_only_txn should not be Nnoe");
     };
-    assert_eq!(get_res.kvs().len(), 1);
-    assert_eq!(get_res.kvs()[0].key(), b"b");
-    assert_eq!(get_res.kvs()[0].value(), b"bar");
 
-    let serializable_txn = Txn::new()
+    let serializable_txn = TxnRequest::new()
         .when([])
-        .and_then([TxnOp::get("c", Some(GetOptions::new().with_serializable()))])
-        .or_else([TxnOp::get("d", Some(GetOptions::new().with_serializable()))]);
-    let res = client.txn(serializable_txn).await?;
-    assert!(res.succeeded());
-    assert_eq!(res.op_responses().len(), 1);
-    let Some(TxnOpResponse::Get(get_res)) = res.op_responses().pop() else {
-        panic!("unexpected op response");
+        .and_then(&[TxnOp::range(RangeRequest::new("c").with_serializable(true))][..])
+        .or_else(&[TxnOp::range(RangeRequest::new("d").with_serializable(true))][..]);
+    let mut res = client.txn(serializable_txn).await?;
+    assert!(res.succeeded);
+    assert_eq!(res.responses.len(), 1);
+
+    if let Some(resp_op) = res.responses.pop() {
+        if let Response::ResponseRange(get_res) = resp_op
+            .response
+            .expect("the inner response should not be None")
+        {
+            assert_eq!(get_res.kvs.len(), 1);
+            assert_eq!(get_res.kvs[0].key, b"c");
+            assert_eq!(get_res.kvs[0].value, b"bar");
+        } else {
+            unreachable!("receive unexpected op response in a read-only transaction");
+        }
+    } else {
+        unreachable!("response in a read_only_txn should not be Nnoe");
     };
-    assert_eq!(get_res.kvs().len(), 1);
-    assert_eq!(get_res.kvs()[0].key(), b"c");
-    assert_eq!(get_res.kvs()[0].value(), b"bar");
 
     Ok(())
 }

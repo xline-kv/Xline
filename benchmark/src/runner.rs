@@ -20,9 +20,9 @@ use tokio::{
 };
 use tracing::debug;
 use utils::config::ClientConfig;
-use xline::client::{kv_types::PutRequest, Client};
+use xline_client::{types::kv::PutRequest, ClientOptions};
 
-use crate::{args::Commands, Benchmark};
+use crate::{args::Commands, bench_client::BenchClient, Benchmark};
 
 /// Result of request
 #[derive(Debug)]
@@ -156,8 +156,16 @@ impl CommandRunner {
     }
 
     /// Create clients
-    async fn create_clients(&self) -> Result<Vec<Client>> {
+    async fn create_clients(&self) -> Result<Vec<BenchClient>> {
         let mut clients = Vec::with_capacity(self.args.clients);
+        let client_options = ClientOptions::default().with_client_config(ClientConfig::new(
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+            Duration::from_millis(250),
+            Duration::from_millis(10_000),
+            3,
+            true,
+        ));
         let addrs = self
             .args
             .endpoints
@@ -171,19 +179,8 @@ impl CommandRunner {
             })
             .collect::<Vec<_>>();
         for _ in 0..self.args.clients {
-            let client = Client::new(
-                addrs.clone(),
-                self.args.use_curp,
-                ClientConfig::new(
-                    Duration::from_secs(10),
-                    Duration::from_secs(5),
-                    Duration::from_millis(250),
-                    Duration::from_millis(10_000),
-                    3,
-                    true,
-                ),
-            )
-            .await?;
+            let client =
+                BenchClient::new(addrs.clone(), self.args.use_curp, client_options.clone()).await?;
             clients.push(client);
         }
         Ok(clients)
@@ -192,7 +189,7 @@ impl CommandRunner {
     /// Run put benchmark
     async fn put_bench(
         &mut self,
-        clients: Vec<Client>,
+        clients: Vec<BenchClient>,
         key_size: usize,
         val_size: usize,
         total: usize,

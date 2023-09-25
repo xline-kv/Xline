@@ -1,10 +1,14 @@
-use itertools::Itertools;
 use std::sync::Arc;
-use tonic::{Request, Response, Status};
 
-use curp::members::ClusterInfo;
-use curp::ConfChangeType::{Add, AddLearner, Promote, Remove, Update};
-use curp::{client::Client, ConfChange, ProposeConfChangeRequest};
+use curp::{
+    client::Client,
+    members::ClusterInfo,
+    ConfChange,
+    ConfChangeType::{Add, AddLearner, Promote, Remove, Update},
+    ProposeConfChangeRequest,
+};
+use itertools::Itertools;
+use tonic::{Request, Response, Status};
 use xlineapi::{
     Cluster, Member, MemberAddRequest, MemberAddResponse, MemberListRequest, MemberListResponse,
     MemberPromoteRequest, MemberPromoteResponse, MemberRemoveRequest, MemberRemoveResponse,

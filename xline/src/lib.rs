@@ -150,8 +150,6 @@
     )
 )]
 
-/// Xline client
-pub mod client;
 /// Header generator
 mod header_gen;
 /// Unique id generator
@@ -160,10 +158,12 @@ mod id_gen;
 mod revision_number;
 /// rpc definition module
 mod rpc {
-    pub use xlineapi::*;
+    pub(crate) use xlineapi::*;
 }
 /// Request validation module
 mod request_validation;
+/// restore module, only for test
+pub mod restore;
 /// Revision check
 mod revision_check;
 /// Xline server

@@ -274,12 +274,15 @@ dependencies = [
  "clap 3.2.25",
  "clippy-utilities 0.2.0",
  "indicatif",
+ "madsim-etcd-client",
  "rand",
+ "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",
  "utils",
  "xline",
+ "xline-client",
 ]
 
 [[package]]
@@ -3418,7 +3421,6 @@ dependencies = [
  "itertools",
  "jsonwebtoken",
  "log",
- "madsim-etcd-client",
  "madsim-tokio",
  "madsim-tonic",
  "madsim-tonic-build",
