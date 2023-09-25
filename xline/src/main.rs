@@ -502,7 +502,7 @@ async fn main() -> Result<()> {
     )
     .await;
 
-    let self_addr_strings = cluster_config
+    let server_addr_str = cluster_config
         .members()
         .get(cluster_config.name())
         .ok_or_else(|| {
@@ -511,7 +511,7 @@ async fn main() -> Result<()> {
                 cluster_config.name()
             )
         })?;
-    let self_addrs = self_addr_strings
+    let server_addr = server_addr_str
         .iter()
         .map(|addr| {
             addr.to_socket_addrs()?
@@ -521,7 +521,7 @@ async fn main() -> Result<()> {
         .collect::<Result<Vec<_>, _>>()?;
 
     debug!("name = {:?}", cluster_config.name());
-    debug!("server_addr = {self_addrs:?}");
+    debug!("server_addr = {server_addr:?}");
     debug!("cluster_peers = {:?}", cluster_config.members());
 
     let name = cluster_config.name().clone();
@@ -539,7 +539,7 @@ async fn main() -> Result<()> {
         *config.compact(),
     );
     debug!("{:?}", server);
-    server.start(self_addrs, db_proxy, key_pair).await?;
+    server.start(server_addr, db_proxy, key_pair).await?;
 
     tokio::signal::ctrl_c().await?;
     info!("received ctrl-c, shutting down, press ctrl-c again to force exit");

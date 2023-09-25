@@ -385,7 +385,7 @@ impl XlineServer {
                 Arc::clone(&client),
                 Arc::clone(&id_gen),
                 self.cluster_info.self_name(),
-                self.cluster_info.self_address(),
+                self.cluster_info.self_addrs(),
             ),
             LeaseServer::new(
                 lease_storage,
