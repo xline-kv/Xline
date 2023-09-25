@@ -795,7 +795,7 @@ fn update_node_should_update_the_address_of_node() {
     };
     let follower_id = curp.cluster().get_id_by_name("S1").unwrap();
     assert_eq!(
-        curp.cluster().address(follower_id),
+        curp.cluster().addrs(follower_id),
         Some(vec!["S1".to_owned()])
     );
     let changes = vec![ConfChange::update(
@@ -805,7 +805,7 @@ fn update_node_should_update_the_address_of_node() {
     let resp = curp.apply_conf_change(changes);
     assert!(resp.is_ok());
     assert_eq!(
-        curp.cluster().address(follower_id),
+        curp.cluster().addrs(follower_id),
         Some(vec!["http://127.0.0.1:4567".to_owned()])
     );
 }

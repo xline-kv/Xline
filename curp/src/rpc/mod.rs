@@ -79,17 +79,6 @@ mod proto {
     }
 }
 
-impl From<Member> for PbMember {
-    fn from(member: Member) -> Self {
-        Self {
-            id: member.id(),
-            name: member.name().to_owned(),
-            addrs: member.addrs().to_vec(),
-            is_learner: member.is_learner(),
-        }
-    }
-}
-
 impl FetchLeaderRequest {
     /// Create a new `FetchLeaderRequest`
     pub(crate) fn new() -> Self {

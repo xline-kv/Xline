@@ -41,68 +41,51 @@ const SNAPSHOT_CHUNK_SIZE: u64 = 64 * 1024;
 /// The default buffer size for rpc connection
 const DEFAULT_BUFFER_SIZE: usize = 1024;
 
+/// Connect implementation
+macro_rules! connect_impl {
+    ($client:ty, $api:path, $members:ident) => {
+        futures::future::join_all($members.into_iter().map(|(id, mut addrs)| async move {
+            let (channel, change_tx) = Channel::balance_channel(DEFAULT_BUFFER_SIZE);
+            // Addrs must start with "http" to communicate with the server
+            for addr in &mut addrs {
+                if !addr.starts_with("http://") {
+                    addr.insert_str(0, "http://");
+                }
+                let endpoint = Endpoint::from_shared(addr.clone())?;
+                let _ig = change_tx
+                    .send(tower::discover::Change::Insert(addr.clone(), endpoint))
+                    .await;
+            }
+            let client = <$client>::new(channel);
+            let connect: Arc<dyn $api> = Arc::new(Connect {
+                id,
+                rpc_connect: client,
+                change_tx,
+                addrs: Mutex::new(addrs),
+            });
+            Ok((id, connect))
+        }))
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, tonic::transport::Error>>()
+        .map(IntoIterator::into_iter)
+    };
+}
+
 /// Convert a vec of addr string to a vec of `Connect`
 /// # Errors
 /// Return error if any of the address format is invalid
 pub(crate) async fn connect(
     members: HashMap<ServerId, Vec<String>>,
 ) -> Result<impl Iterator<Item = (ServerId, Arc<dyn ConnectApi>)>, tonic::transport::Error> {
-    futures::future::join_all(members.into_iter().map(|(id, mut addrs)| async move {
-        let (channel, change_tx) = Channel::balance_channel(DEFAULT_BUFFER_SIZE);
-        // Addrs must start with "http" to communicate with the server
-        for addr in &mut addrs {
-            if !addr.starts_with("http://") {
-                addr.insert_str(0, "http://");
-            }
-            let endpoint = Endpoint::from_shared(addr.clone())?;
-            let _ig = change_tx
-                .send(tower::discover::Change::Insert(addr.clone(), endpoint))
-                .await;
-        }
-        let client = ProtocolClient::new(channel);
-        let connect: Arc<dyn ConnectApi> = Arc::new(Connect {
-            id,
-            rpc_connect: client,
-            change_tx,
-            addrs: Mutex::new(addrs),
-        });
-        Ok((id, connect))
-    }))
-    .await
-    .into_iter()
-    .collect::<Result<Vec<_>, tonic::transport::Error>>()
-    .map(IntoIterator::into_iter)
+    connect_impl!(ProtocolClient<Channel>, ConnectApi, members)
 }
 
 /// Convert a vec of addr string to a vec of `InnerConnect`
 pub(crate) async fn inner_connect(
     members: HashMap<ServerId, Vec<String>>,
 ) -> Result<impl Iterator<Item = (ServerId, Arc<dyn InnerConnectApi>)>, tonic::transport::Error> {
-    futures::future::join_all(members.into_iter().map(|(id, mut addrs)| async move {
-        let (channel, change_tx) = Channel::balance_channel(DEFAULT_BUFFER_SIZE);
-        // Addrs must start with "http" to communicate with the server
-        for addr in &mut addrs {
-            if !addr.starts_with("http://") {
-                addr.insert_str(0, "http://");
-            }
-            let endpoint = Endpoint::from_shared(addr.clone())?;
-            let _ig = change_tx
-                .send(tower::discover::Change::Insert(addr.clone(), endpoint))
-                .await;
-        }
-        let client = InnerProtocolClient::new(channel);
-        let connect: Arc<dyn InnerConnectApi> = Arc::new(Connect {
-            id,
-            rpc_connect: client,
-            change_tx,
-            addrs: Mutex::new(addrs),
-        });
-        Ok((id, connect))
-    }))
-    .await
-    .into_iter()
-    .collect::<Result<Vec<_>, tonic::transport::Error>>()
-    .map(IntoIterator::into_iter)
+    connect_impl!(InnerProtocolClient<Channel>, InnerConnectApi, members)
 }
 
 /// Connect interface between server and clients

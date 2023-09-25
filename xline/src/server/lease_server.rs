@@ -322,7 +322,7 @@ where
             // a follower when it lost the election. Therefore we need to double check here.
             // We can directly invoke leader_keep_alive when a candidate becomes a leader.
             if !self.lease_storage.is_primary() {
-                let leader_addr = self.cluster_info.address(leader_id).unwrap_or_else(|| {
+                let leader_addrs = self.cluster_info.addrs(leader_id).unwrap_or_else(|| {
                     unreachable!(
                         "The address of leader {} not found in all_members {:?}",
                         leader_id, self.cluster_info
@@ -331,7 +331,7 @@ where
                 break self
                     .follower_keep_alive(
                         request_stream,
-                        leader_addr,
+                        leader_addrs,
                         self.shutdown_listener.clone(),
                     )
                     .await?;
@@ -374,14 +374,14 @@ where
                 .get_leader_id_from_curp()
                 .await
                 .map_err(propose_err_to_status)?;
-            let leader_addr = self.cluster_info.address(leader_id).unwrap_or_else(|| {
+            let leader_addrs = self.cluster_info.addrs(leader_id).unwrap_or_else(|| {
                 unreachable!(
                     "The address of leader {} not found in all_members {:?}",
                     leader_id, self.cluster_info
                 )
             });
             if !self.lease_storage.is_primary() {
-                let endpoints = build_endpoints(leader_addr)?;
+                let endpoints = build_endpoints(leader_addrs)?;
                 let channel = tonic::transport::Channel::balance_list(endpoints.into_iter());
                 let mut lease_client = LeaseClient::new(channel);
                 return lease_client.lease_time_to_live(request).await;

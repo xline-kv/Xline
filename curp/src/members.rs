@@ -6,6 +6,8 @@ use std::{
 use dashmap::{mapref::one::Ref, DashMap};
 use itertools::Itertools;
 
+use crate::rpc::PbMember;
+
 /// Server Id
 pub type ServerId = u64;
 
@@ -20,6 +22,17 @@ pub struct Member {
     addrs: Vec<String>,
     /// Learner
     is_learner: bool,
+}
+
+impl From<Member> for PbMember {
+    fn from(member: Member) -> Self {
+        Self {
+            id: member.id,
+            name: member.name,
+            addrs: member.addrs,
+            is_learner: member.is_learner,
+        }
+    }
 }
 
 /// Cluster member
@@ -143,10 +156,10 @@ impl ClusterInfo {
             .addrs = addrs.into();
     }
 
-    /// Get server address via server id
+    /// Get server addresses via server id
     #[must_use]
     #[inline]
-    pub fn address(&self, id: ServerId) -> Option<Vec<String>> {
+    pub fn addrs(&self, id: ServerId) -> Option<Vec<String>> {
         self.members
             .iter()
             .find(|t| t.id == id)
@@ -162,7 +175,7 @@ impl ClusterInfo {
     /// Get the current server address
     #[must_use]
     #[inline]
-    pub fn self_address(&self) -> Vec<String> {
+    pub fn self_addrs(&self) -> Vec<String> {
         self.self_member().addrs.clone()
     }
 
@@ -198,6 +211,7 @@ impl ClusterInfo {
         timestamp: Option<u64>,
     ) -> ServerId {
         let mut hasher = DefaultHasher::new();
+        // to make sure same addrs but different order will get same id
         addrs.sort();
         for addr in addrs {
             hasher.write(addr.as_bytes());
@@ -306,7 +320,7 @@ mod tests {
         let node1 = ClusterInfo::new(all_members, "S1");
         let peers = node1.peers_addrs();
         let node1_id = node1.self_id();
-        let node1_url = node1.self_address();
+        let node1_url = node1.self_addrs();
         assert!(!peers.contains_key(&node1_id));
         assert_eq!(peers.len(), 2);
         assert_eq!(node1.members_len(), peers.len() + 1);
