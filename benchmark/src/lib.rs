@@ -134,6 +134,8 @@
 #![allow(
     clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
 )]
+/// benchmark client
+mod bench_client;
 
 /// args of benchmark
 mod args;

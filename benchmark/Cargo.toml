@@ -16,10 +16,13 @@ repository = "https://github.com/xline-kv/Xline/tree/master/benchmark"
 anyhow = "1.0.66"
 clap = { version = "3.2.16", features = ["derive"] }
 clippy-utilities = "0.2.0"
+etcd-client = { version = "0.3.0", package = "madsim-etcd-client" }
 indicatif = "0.17.1"
 rand = "0.8.5"
+thiserror = "1.0.48"
 tokio = "1.21.2"
 tracing = "0.1.37"
 tracing-subscriber = "0.3.1"
 utils = { path = "../utils", version = "0.1.0" }
 xline = { path = "../xline" }
+xline-client = { path = "../xline-client" }

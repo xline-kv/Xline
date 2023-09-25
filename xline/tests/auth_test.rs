@@ -1,9 +1,17 @@
 use std::error::Error;
 
-use etcd_client::{AuthClient, ConnectOptions, GetOptions, Permission, PermissionType};
 use test_macros::abort_on_panic;
-use xline::client::kv_types::{PutRequest, RangeRequest};
-use xline_test_utils::Cluster;
+use xline_test_utils::{
+    types::{
+        auth::{
+            AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGrantPermissionRequest,
+            AuthUserAddRequest, AuthUserGetRequest, AuthUserGrantRoleRequest, Permission,
+            PermissionType,
+        },
+        kv::{PutRequest, RangeRequest},
+    },
+    Client, ClientOptions, Cluster,
+};
 
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
@@ -11,10 +19,9 @@ async fn test_auth_empty_user_get() -> Result<(), Box<dyn Error>> {
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;
     let client = cluster.client().await;
-    let mut auth_client = client.auth_client();
 
-    enable_auth(&mut auth_client).await?;
-    let res = client.range(RangeRequest::new("foo")).await;
+    enable_auth(client).await?;
+    let res = client.kv_client().range(RangeRequest::new("foo")).await;
     assert!(res.is_err());
 
     Ok(())
@@ -26,10 +33,9 @@ async fn test_auth_empty_user_put() -> Result<(), Box<dyn Error>> {
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;
     let client = cluster.client().await;
-    let mut auth_client = client.auth_client();
 
-    enable_auth(&mut auth_client).await?;
-    let res = client.put(PutRequest::new("foo", "bar")).await;
+    enable_auth(client).await?;
+    let res = client.kv_client().put(PutRequest::new("foo", "bar")).await;
     assert!(res.is_err());
 
     Ok(())
@@ -41,17 +47,17 @@ async fn test_auth_token_with_disable() -> Result<(), Box<dyn Error>> {
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;
     let client = cluster.client().await;
-    let mut auth_client = client.auth_client();
 
-    enable_auth(&mut auth_client).await?;
-    let mut authed_client = etcd_client::Client::connect(
+    enable_auth(client).await?;
+    let authed_client = Client::connect(
         vec![cluster.all_members()["server0"].to_string()],
-        Some(ConnectOptions::new().with_user("root", "123")),
+        ClientOptions::default().with_user("root", "123"),
     )
     .await?;
-    authed_client.put("foo", "bar", None).await?;
-    authed_client.auth_disable().await?;
-    authed_client.put("foo", "bar", None).await?;
+    let kv_client = authed_client.kv_client();
+    kv_client.put(PutRequest::new("foo", "bar")).await?;
+    authed_client.auth_client().auth_disable().await?;
+    kv_client.put(PutRequest::new("foo", "bar")).await?;
 
     Ok(())
 }
@@ -62,11 +68,17 @@ async fn test_auth_revision() -> Result<(), Box<dyn Error>> {
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;
     let client = cluster.client().await;
-    let mut auth_client = client.auth_client();
+    let auth_client = client.auth_client();
 
-    client.put(PutRequest::new("foo", "bar")).await?;
-    let user_add_resp = auth_client.user_add("root", "123", None).await?;
-    let auth_rev = user_add_resp.header().unwrap().revision();
+    client
+        .kv_client()
+        .put(PutRequest::new("foo", "bar"))
+        .await?;
+
+    let user_add_resp = auth_client
+        .user_add(AuthUserAddRequest::new("root").with_pwd("123"))
+        .await?;
+    let auth_rev = user_add_resp.header.unwrap().revision;
     assert_eq!(auth_rev, 2);
 
     Ok(())
@@ -78,12 +90,12 @@ async fn test_auth_non_authorized_rpcs() -> Result<(), Box<dyn Error>> {
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;
     let client = cluster.client().await;
-    let mut auth_client = client.auth_client();
+    let kv_client = client.kv_client();
 
-    let result = client.put(PutRequest::new("foo", "bar")).await;
+    let result = kv_client.put(PutRequest::new("foo", "bar")).await;
     assert!(result.is_ok());
-    enable_auth(&mut auth_client).await?;
-    let result = client.put(PutRequest::new("foo", "bar")).await;
+    enable_auth(client).await?;
+    let result = kv_client.put(PutRequest::new("foo", "bar")).await;
     assert!(result.is_err());
 
     Ok(())
@@ -95,34 +107,35 @@ async fn test_kv_authorization() -> Result<(), Box<dyn Error>> {
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;
     let client = cluster.client().await;
-    let mut auth_client = client.auth_client();
 
-    set_user(&mut auth_client, "u1", "123", "r1", b"foo", &[]).await?;
-    set_user(&mut auth_client, "u2", "123", "r2", b"foo", b"foy").await?;
-    enable_auth(&mut auth_client).await?;
+    set_user(client, "u1", "123", "r1", b"foo", &[]).await?;
+    set_user(client, "u2", "123", "r2", b"foo", b"foy").await?;
+    enable_auth(client).await?;
 
-    let mut u1_client = etcd_client::Client::connect(
+    let u1_client = Client::connect(
         vec![cluster.all_members()["server0"].to_string()],
-        Some(ConnectOptions::new().with_user("u1", "123")),
+        ClientOptions::default().with_user("u1", "123"),
     )
-    .await?;
-    let mut u2_client = etcd_client::Client::connect(
+    .await?
+    .kv_client();
+    let u2_client = Client::connect(
         vec![cluster.all_members()["server0"].to_string()],
-        Some(ConnectOptions::new().with_user("u2", "123")),
+        ClientOptions::default().with_user("u2", "123"),
     )
-    .await?;
+    .await?
+    .kv_client();
 
-    let result = u1_client.put("foo", "bar", None).await;
+    let result = u1_client.put(PutRequest::new("foo", "bar")).await;
     assert!(result.is_ok());
-    let result = u1_client.put("fop", "bar", None).await;
+    let result = u1_client.put(PutRequest::new("fop", "bar")).await;
     assert!(result.is_err());
 
     let result = u2_client
-        .get("foo", Some(GetOptions::new().with_range("fox")))
+        .range(RangeRequest::new("foo").with_range_end("fox"))
         .await;
     assert!(result.is_ok());
     let result = u2_client
-        .get("foo", Some(GetOptions::new().with_range("foz")))
+        .range(RangeRequest::new("foo").with_range_end("foz"))
         .await;
     assert!(result.is_err());
 
@@ -135,14 +148,15 @@ async fn test_role_delete() -> Result<(), Box<dyn Error>> {
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;
     let client = cluster.client().await;
-    let mut auth_client = client.auth_client();
-
-    set_user(&mut auth_client, "u", "123", "r", b"foo", &[]).await?;
-    let user = auth_client.user_get("u").await?;
-    assert_eq!(user.roles().len(), 1);
-    auth_client.role_delete("r").await?;
-    let user = auth_client.user_get("u").await?;
-    assert_eq!(user.roles().len(), 0);
+    let auth_client = client.auth_client();
+    set_user(client, "u", "123", "r", b"foo", &[]).await?;
+    let user = auth_client.user_get(AuthUserGetRequest::new("u")).await?;
+    assert_eq!(user.roles.len(), 1);
+    auth_client
+        .role_delete(AuthRoleDeleteRequest::new("r"))
+        .await?;
+    let user = auth_client.user_get(AuthUserGetRequest::new("u")).await?;
+    assert_eq!(user.roles.len(), 0);
 
     Ok(())
 }
@@ -153,27 +167,32 @@ async fn test_no_root_user_do_admin_ops() -> Result<(), Box<dyn Error>> {
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;
     let client = cluster.client().await;
-    let mut auth_client = client.auth_client();
 
-    set_user(&mut auth_client, "u", "123", "r", &[], &[]).await?;
-    enable_auth(&mut auth_client).await?;
-    let mut user_client = etcd_client::Client::connect(
+    set_user(client, "u", "123", "r", &[], &[]).await?;
+    enable_auth(client).await?;
+    let user_client = Client::connect(
         vec![cluster.all_members()["server0"].to_string()],
-        Some(ConnectOptions::new().with_user("u", "123")),
+        ClientOptions::default().with_user("u", "123"),
     )
-    .await?;
-    let mut root_client = etcd_client::Client::connect(
+    .await?
+    .auth_client();
+    let root_client = Client::connect(
         vec![cluster.all_members()["server0"].to_string()],
-        Some(ConnectOptions::new().with_user("root", "123")),
+        ClientOptions::default().with_user("root", "123"),
     )
-    .await?;
+    .await?
+    .auth_client();
 
-    let result = user_client.user_add("u2", "123", None).await;
+    let result = user_client
+        .user_add(AuthUserAddRequest::new("u2").with_pwd("123"))
+        .await;
     assert!(
         result.is_err(),
         "normal user should not allow to add user when auth is enabled: {result:?}"
     );
-    let result = root_client.user_add("u2", "123", None).await;
+    let result = root_client
+        .user_add(AuthUserAddRequest::new("u2").with_pwd("123"))
+        .await;
     assert!(result.is_ok(), "root user failed to add user: {result:?}");
 
     Ok(())
@@ -185,20 +204,19 @@ async fn test_auth_wrong_password() -> Result<(), Box<dyn Error>> {
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;
     let client = cluster.client().await;
-    let mut auth_client = client.auth_client();
 
-    enable_auth(&mut auth_client).await?;
+    enable_auth(client).await?;
 
-    let result = etcd_client::Client::connect(
+    let result = Client::connect(
         vec![cluster.all_members()["server0"].to_string()],
-        Some(ConnectOptions::new().with_user("root", "456")),
+        ClientOptions::default().with_user("root", "456"),
     )
     .await;
     assert!(result.is_err());
 
-    let result = etcd_client::Client::connect(
+    let result = Client::connect(
         vec![cluster.all_members()["server0"].to_string()],
-        Some(ConnectOptions::new().with_user("root", "123")),
+        ClientOptions::default().with_user("root", "123"),
     )
     .await;
     assert!(result.is_ok());
@@ -207,29 +225,34 @@ async fn test_auth_wrong_password() -> Result<(), Box<dyn Error>> {
 }
 
 async fn set_user(
-    client: &mut AuthClient,
+    client: &Client,
     name: &str,
     password: &str,
     role: &str,
     key: &[u8],
     range_end: &[u8],
 ) -> Result<(), Box<dyn Error>> {
-    client.user_add(name, password, None).await?;
-    client.role_add(role).await?;
-    client.user_grant_role(name, role).await?;
+    let client = client.auth_client();
+    client
+        .user_add(AuthUserAddRequest::new(name).with_pwd(password))
+        .await?;
+    client.role_add(AuthRoleAddRequest::new(role)).await?;
+    client
+        .user_grant_role(AuthUserGrantRoleRequest::new(name, role))
+        .await?;
     if !key.is_empty() {
         client
-            .role_grant_permission(
+            .role_grant_permission(AuthRoleGrantPermissionRequest::new(
                 role,
                 Permission::new(PermissionType::Readwrite, key).with_range_end(range_end),
-            )
+            ))
             .await?;
     }
     Ok(())
 }
 
-async fn enable_auth(client: &mut AuthClient) -> Result<(), Box<dyn Error>> {
+async fn enable_auth(client: &Client) -> Result<(), Box<dyn Error>> {
     set_user(client, "root", "123", "root", &[], &[]).await?;
-    client.auth_enable().await?;
+    client.auth_client().auth_enable().await?;
     Ok(())
 }

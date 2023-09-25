@@ -1,11 +1,11 @@
 use std::path::{Path, PathBuf};
 
+use anyhow::Result;
 use bytes::BytesMut;
 use clippy_utilities::Cast;
 use engine::{Engine, EngineType, Snapshot, SnapshotApi, StorageEngine};
 use tokio_util::io::read_buf;
 
-use super::errors::ClientError;
 use crate::{server::MAINTENANCE_SNAPSHOT_CHUNK_SIZE, storage::db::XLINE_TABLES};
 
 /// Restore snapshot to data dir
@@ -17,7 +17,7 @@ use crate::{server::MAINTENANCE_SNAPSHOT_CHUNK_SIZE, storage::db::XLINE_TABLES};
 pub async fn restore<P: AsRef<Path>, D: Into<PathBuf>>(
     snapshot_path: P,
     data_dir: D,
-) -> Result<(), ClientError> {
+) -> Result<()> {
     let mut snapshot_f = tokio::fs::File::open(snapshot_path).await?;
     let tmp_path = format!("/tmp/snapshot-{}", uuid::Uuid::new_v4());
     let mut rocks_snapshot = Snapshot::new_for_receiving(EngineType::Rocks((&tmp_path).into()))?;

@@ -21,7 +21,6 @@ clippy-utilities = "0.1.0"
 crossbeam-skiplist = "0.1.1"
 curp = { path = "../curp", version = "0.1.0" }
 engine = { path = "../engine" }
-etcd-client = { version = "0.3.0", package = "madsim-etcd-client" }
 event-listener = "2.5.2"
 flume = "0.10.14"
 futures = "0.3.25"

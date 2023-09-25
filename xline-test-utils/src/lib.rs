@@ -14,7 +14,8 @@ use tokio::{
     time::{self, Duration},
 };
 use utils::config::{ClientConfig, CompactConfig, CurpConfig, ServerTimeout, StorageConfig};
-use xline::{client::Client, server::XlineServer, storage::db::DB};
+use xline::{server::XlineServer, storage::db::DB};
+pub use xline_client::{types, Client, ClientOptions};
 
 /// Cluster
 pub struct Cluster {
@@ -108,10 +109,9 @@ impl Cluster {
     /// Create or get the client with the specified index
     pub async fn client(&mut self) -> &mut Client {
         if self.client.is_none() {
-            let client = Client::new(
-                self.all_members.values().cloned().collect(),
-                true,
-                ClientConfig::default(),
+            let client = Client::connect(
+                self.all_members.values().cloned().collect::<Vec<_>>(),
+                ClientOptions::default(),
             )
             .await
             .unwrap_or_else(|e| {
