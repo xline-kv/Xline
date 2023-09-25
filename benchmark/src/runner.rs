@@ -158,9 +158,21 @@ impl CommandRunner {
     /// Create clients
     async fn create_clients(&self) -> Result<Vec<Client>> {
         let mut clients = Vec::with_capacity(self.args.clients);
+        let addrs = self
+            .args
+            .endpoints
+            .iter()
+            .map(|addr| {
+                if let Some((_id, addr)) = addr.split_once('=') {
+                    addr.to_owned()
+                } else {
+                    unreachable!("cannot parse endpoints")
+                }
+            })
+            .collect::<Vec<_>>();
         for _ in 0..self.args.clients {
             let client = Client::new(
-                self.args.endpoints.clone(),
+                addrs.clone(),
                 self.args.use_curp,
                 ClientConfig::new(
                     Duration::from_secs(10),

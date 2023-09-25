@@ -10,8 +10,7 @@ use event_listener::Event;
 use periodic_compactor::PeriodicCompactor;
 use revision_compactor::RevisionCompactor;
 use tokio::{sync::mpsc::Receiver, time::sleep};
-use utils::config::AutoCompactConfig;
-use utils::shutdown;
+use utils::{config::AutoCompactConfig, shutdown};
 
 use super::{
     index::{Index, IndexOperate},

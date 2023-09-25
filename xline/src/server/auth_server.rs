@@ -1,5 +1,4 @@
-use std::marker::PhantomData;
-use std::sync::Arc;
+use std::{marker::PhantomData, sync::Arc};
 
 use curp::{client::Client, cmd::generate_propose_id};
 use pbkdf2::{
