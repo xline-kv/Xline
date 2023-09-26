@@ -187,6 +187,32 @@ impl ConnectApiWrapper {
     pub(crate) fn new_from_arc(connect: Arc<dyn InnerConnectApi>) -> Self {
         Self(connect)
     }
+
+    /// Create a new `ConnectApiWrapper` from id and addrs
+    pub(crate) async fn connect(
+        id: ServerId,
+        mut addrs: Vec<String>,
+    ) -> Result<Self, tonic::transport::Error> {
+        let (channel, change_tx) = Channel::balance_channel(DEFAULT_BUFFER_SIZE);
+        // Addrs must start with "http" to communicate with the server
+        for addr in &mut addrs {
+            if !addr.starts_with("http://") {
+                addr.insert_str(0, "http://");
+            }
+            let endpoint = Endpoint::from_shared(addr.clone())?;
+            let _ig = change_tx
+                .send(tower::discover::Change::Insert(addr.clone(), endpoint))
+                .await;
+        }
+        let client = InnerProtocolClient::new(channel);
+        let connect = ConnectApiWrapper::new_from_arc(Arc::new(Connect {
+            id,
+            rpc_connect: client,
+            change_tx,
+            addrs: Mutex::new(addrs),
+        }));
+        Ok(connect)
+    }
 }
 
 impl Debug for ConnectApiWrapper {
@@ -226,18 +252,13 @@ impl<C> Connect<C> {
         let new_addrs: HashSet<String> = addrs.iter().cloned().collect();
         let diffs = &old_addrs ^ &new_addrs;
         for diff in &diffs {
-            if new_addrs.contains(diff) {
+            let change = if new_addrs.contains(diff) {
                 let endpoint = Endpoint::from_shared(diff.clone())?;
-                let _ig = self
-                    .change_tx
-                    .send(tower::discover::Change::Insert(diff.clone(), endpoint))
-                    .await;
+                tower::discover::Change::Insert(diff.clone(), endpoint)
             } else {
-                let _ig = self
-                    .change_tx
-                    .send(tower::discover::Change::Remove(diff.clone()))
-                    .await;
-            }
+                tower::discover::Change::Remove(diff.clone())
+            };
+            let _ig = self.change_tx.send(change).await;
         }
         *old = addrs;
         Ok(())

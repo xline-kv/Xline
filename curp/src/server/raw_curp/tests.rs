@@ -11,6 +11,7 @@ use utils::config::{
 
 use super::*;
 use crate::rpc::connect::MockInnerConnectApi;
+use crate::ProposeConfChangeRequest;
 use crate::{
     server::{
         cmd_board::CommandBoard,
@@ -811,6 +812,12 @@ async fn update_node_should_update_the_address_of_node() {
         Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
     let follower_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let mut mock_connect = MockInnerConnectApi::new();
+    mock_connect.expect_update_addrs().returning(|_| Ok(()));
+    curp.set_connect(
+        follower_id,
+        ConnectApiWrapper::new_from_arc(Arc::new(mock_connect)),
+    );
     assert_eq!(
         curp.cluster().addrs(follower_id),
         Some(vec!["S1".to_owned()])
@@ -825,4 +832,52 @@ async fn update_node_should_update_the_address_of_node() {
         curp.cluster().addrs(follower_id),
         Some(vec!["http://127.0.0.1:4567".to_owned()])
     );
+}
+
+#[traced_test]
+#[tokio::test]
+async fn leader_handle_propose_conf_change() {
+    let curp = {
+        let exe_tx = MockCEEventTxApi::<TestCommand>::default();
+        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+    };
+    let follower_id = curp.cluster().get_id_by_name("S1").unwrap();
+    assert_eq!(
+        curp.cluster().addrs(follower_id),
+        Some(vec!["S1".to_owned()])
+    );
+    let changes = vec![ConfChange::update(
+        follower_id,
+        "http://127.0.0.1:4567".to_owned(),
+    )];
+    let conf_change_entry = ProposeConfChangeRequest::new("test_id".to_owned(), changes);
+    let ((leader, term), result) = curp.handle_propose_conf_change(conf_change_entry.into());
+    assert_eq!(leader, Some(curp.id().clone()));
+    assert_eq!(term, 1);
+    assert!(result.is_ok());
+}
+
+#[traced_test]
+#[tokio::test]
+async fn follower_handle_propose_conf_change() {
+    let curp = {
+        let exe_tx = MockCEEventTxApi::<TestCommand>::default();
+        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+    };
+    curp.update_to_term_and_become_follower(&mut *curp.st.write(), 2);
+
+    let follower_id = curp.cluster().get_id_by_name("S1").unwrap();
+    assert_eq!(
+        curp.cluster().addrs(follower_id),
+        Some(vec!["S1".to_owned()])
+    );
+    let changes = vec![ConfChange::update(
+        follower_id,
+        "http://127.0.0.1:4567".to_owned(),
+    )];
+    let conf_change_entry = ProposeConfChangeRequest::new("test_id".to_owned(), changes);
+    let ((leader, term), result) = curp.handle_propose_conf_change(conf_change_entry.into());
+    assert_eq!(leader, None);
+    assert_eq!(term, 2);
+    assert!(result.is_err());
 }

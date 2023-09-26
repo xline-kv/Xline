@@ -93,7 +93,7 @@ impl<C: Command> Builder<C> {
                 }
                 async move {
                     let mut protocol_client = ProtocolClient::connect(addr).await?;
-                    let mut req = tonic::Request::new(FetchClusterRequest::new());
+                    let mut req = tonic::Request::new(FetchClusterRequest::default());
                     req.set_timeout(propose_timeout);
                     let fetch_cluster_res = protocol_client.fetch_cluster(req).await?.into_inner();
                     Ok::<FetchClusterResponse, ClientBuildError>(fetch_cluster_res)

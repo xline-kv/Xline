@@ -975,7 +975,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
         self.check_new_config(&conf_change)?;
 
-        Ok(self.switch_config(conf_change).await)
+        self.switch_config(conf_change).await
     }
 
     /// Get a receiver for conf changes
@@ -1268,7 +1268,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
     /// Switch to a new config and return true if self node is removed
     #[allow(clippy::unimplemented)] // TODO: remove this when learner is implemented
-    async fn switch_config(&self, conf_change: ConfChange) -> bool {
+    async fn switch_config(&self, conf_change: ConfChange) -> Result<bool, ConfChangeError> {
         let node_id = conf_change.node_id;
         let remove_self = match conf_change.change_type() {
             ConfChangeType::Add => {
@@ -1278,11 +1278,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 self.lst.insert(node_id);
                 _ = self.ctx.sync_events.insert(node_id, Arc::new(Event::new()));
                 self.ctx.cluster_info.insert(member);
-                // let connect = ConnectApiWrapper::new_from_arc(Arc::new(
-                //     InnerConnect::new(conf_change.node_id, address).await,
-                // ));
-                // _ = self.ctx.connects.insert(connect.id(), connect);
-                // TODO
+                let connect = ConnectApiWrapper::connect(node_id, conf_change.address.clone())
+                    .await
+                    .map_err(|e| ConfChangeError::Other(e.to_string()))?;
+                _ = self.ctx.connects.insert(connect.id(), connect);
                 false
             }
             ConfChangeType::Remove => {
@@ -1298,7 +1297,12 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 self.ctx
                     .cluster_info
                     .update(&node_id, conf_change.address.clone());
-                // TODO: update connect
+                if let Some(connect) = self.ctx.connects.get_mut(&node_id) {
+                    connect
+                        .update_addrs(conf_change.address.clone())
+                        .await
+                        .map_err(|e| ConfChangeError::Other(e.to_string()))?;
+                }
                 false
             }
             ConfChangeType::AddLearner | ConfChangeType::Promote => {
@@ -1309,6 +1313,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             .change_tx
             .send(conf_change)
             .unwrap_or_else(|_e| unreachable!("change_rx should not be dropped"));
-        remove_self
+        Ok(remove_self)
     }
 }
