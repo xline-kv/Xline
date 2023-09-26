@@ -2,6 +2,8 @@
 mod auth_server;
 /// Barriers for range requests
 mod barriers;
+/// Cluster server
+mod cluster_server;
 /// Command to be executed
 pub(crate) mod command;
 /// Xline kv server
