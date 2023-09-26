@@ -127,7 +127,6 @@ impl ClusterInfo {
             .addrs = addrs.into();
     }
 
-    // TODO
     /// Get server addresses via server id
     #[must_use]
     #[inline]

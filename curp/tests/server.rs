@@ -340,7 +340,6 @@ async fn propose_remove_node() {
     assert!(members.iter().all(|m| m.id != node_id));
 }
 
-#[ignore] // TODO: use this test after multi-address and update node is supported
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn propose_update_node() {
@@ -359,7 +358,7 @@ async fn propose_update_node() {
         .unwrap();
     assert_eq!(members.len(), 5);
     let member = members.iter().find(|m| m.id == node_id);
-    assert!(member.is_some_and(|m| &m.addrs == &["new_addr"]));
+    assert!(member.is_some_and(|m| m.addrs == ["new_addr"]));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -436,5 +435,5 @@ async fn propose_conf_change_to_learner() {
         .unwrap();
     assert_eq!(members.len(), 5);
     let member = members.iter().find(|m| m.id == node_id);
-    assert!(member.is_some_and(|m| &m.addrs == &["new_addr"]));
+    assert!(member.is_some_and(|m| m.addrs == ["new_addr"]));
 }
