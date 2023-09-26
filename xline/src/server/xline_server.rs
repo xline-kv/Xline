@@ -22,6 +22,7 @@ use utils::{
 use super::{
     auth_server::AuthServer,
     barriers::{IdBarrier, IndexBarrier},
+    cluster_server::ClusterServer,
     command::{Command, CommandExecutor},
     kv_server::KvServer,
     lease_server::LeaseServer,
@@ -33,9 +34,9 @@ use crate::{
     header_gen::HeaderGenerator,
     id_gen::IdGenerator,
     rpc::{
-        AuthServer as RpcAuthServer, KvServer as RpcKvServer, LeaseServer as RpcLeaseServer,
-        LockServer as RpcLockServer, MaintenanceServer as RpcMaintenanceServer,
-        WatchServer as RpcWatchServer,
+        AuthServer as RpcAuthServer, ClusterServer as RpcClusterServer, KvServer as RpcKvServer,
+        LeaseServer as RpcLeaseServer, LockServer as RpcLockServer,
+        MaintenanceServer as RpcMaintenanceServer, WatchServer as RpcWatchServer,
     },
     state::State,
     storage::{
@@ -214,6 +215,7 @@ impl XlineServer {
             auth_server,
             watch_server,
             maintenance_server,
+            cluster_server,
             curp_server,
         ) = self.init_servers(persistent, key_pair).await?;
         let (mut reporter, health_server) = tonic_health::server::health_reporter();
@@ -229,6 +231,7 @@ impl XlineServer {
                 .add_service(RpcAuthServer::new(auth_server))
                 .add_service(RpcWatchServer::new(watch_server))
                 .add_service(RpcMaintenanceServer::new(maintenance_server))
+                .add_service(RpcClusterServer::new(cluster_server))
                 .add_service(ProtocolServer::from_arc(Arc::clone(&curp_server)))
                 .add_service(InnerProtocolServer::from_arc(curp_server))
                 .add_service(health_server)
@@ -261,6 +264,7 @@ impl XlineServer {
             auth_server,
             watch_server,
             maintenance_server,
+            cluster_server,
             curp_server,
         ) = self.init_servers(persistent, key_pair).await?;
         let (mut reporter, health_server) = tonic_health::server::health_reporter();
@@ -275,6 +279,7 @@ impl XlineServer {
                 .add_service(RpcAuthServer::new(auth_server))
                 .add_service(RpcWatchServer::new(watch_server))
                 .add_service(RpcMaintenanceServer::new(maintenance_server))
+                .add_service(RpcClusterServer::new(cluster_server))
                 .add_service(ProtocolServer::from_arc(Arc::clone(&curp_server)))
                 .add_service(InnerProtocolServer::from_arc(curp_server))
                 .add_service(health_server)
@@ -298,6 +303,7 @@ impl XlineServer {
         AuthServer<S>,
         WatchServer<S>,
         MaintenanceServer<S>,
+        ClusterServer<S>,
         Arc<CurpServer<S>>,
     )> {
         let (header_gen, id_gen) = Self::construct_generator(&self.cluster_info);
@@ -393,14 +399,15 @@ impl XlineServer {
                 Arc::clone(&self.cluster_info),
                 self.shutdown_trigger.subscribe(),
             ),
-            AuthServer::new(client),
+            AuthServer::new(Arc::clone(&client)),
             WatchServer::new(
                 watcher,
                 Arc::clone(&header_gen),
                 *self.server_timeout.watch_progress_notify_interval(),
                 self.shutdown_trigger.subscribe(),
             ),
-            MaintenanceServer::new(persistent, header_gen),
+            MaintenanceServer::new(persistent, Arc::clone(&header_gen)),
+            ClusterServer::new(client, header_gen, self.cluster_info.self_name()),
             Arc::new(curp_server),
         ))
     }

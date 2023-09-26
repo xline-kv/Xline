@@ -19,11 +19,11 @@ use crate::{
         ClientBuildError, CommandProposeError, CommandSyncError, ProposeError, RpcError,
         WaitSyncError,
     },
-    members::ServerId,
+    members::{Member, ServerId},
     rpc::{
-        self, connect::ConnectApi, protocol_client::ProtocolClient, FetchClusterRequest,
-        FetchClusterResponse, FetchReadStateRequest, ProposeRequest, ReadState as PbReadState,
-        ShutdownRequest, SyncResult, WaitSyncedRequest,
+        self, connect::ConnectApi, protocol_client::ProtocolClient, ConfChangeError,
+        FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, ProposeConfChangeRequest,
+        ProposeRequest, ReadState as PbReadState, ShutdownRequest, SyncResult, WaitSyncedRequest,
     },
     LogIndex,
 };
@@ -658,6 +658,17 @@ where
                 Err(e) => Err(e),
             }
         }
+    }
+
+    /// Propose the conf change request to servers
+    #[allow(clippy::unimplemented)] // rebase on #437
+    #[allow(unused_variables)] // rebase on #437
+    #[instrument(skip_all)]
+    pub async fn propose_conf_change(
+        &self,
+        conf_change: ProposeConfChangeRequest,
+    ) -> Result<Result<Vec<Member>, ConfChangeError>, CommandProposeError<C>> {
+        unimplemented!("rebase on #437")
     }
 
     /// Fetch Read state from leader
