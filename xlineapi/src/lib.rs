@@ -204,6 +204,7 @@ pub use self::{
     etcdserverpb::{
         auth_client::AuthClient,
         auth_server::{Auth, AuthServer},
+        cluster_client::ClusterClient,
         cluster_server::{Cluster, ClusterServer},
         compare::{CompareResult, CompareTarget, TargetUnion},
         kv_server::{Kv, KvServer},
