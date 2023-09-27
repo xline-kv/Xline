@@ -6,6 +6,7 @@ pub use xlineapi::{
 /// Request for `MemberAdd`
 #[derive(Debug)]
 pub struct MemberAddRequest {
+    /// The inner request
     inner: xlineapi::MemberAddRequest,
 }
 
@@ -32,12 +33,14 @@ impl From<MemberAddRequest> for xlineapi::MemberAddRequest {
 /// Request for `MemberList`
 #[derive(Debug)]
 pub struct MemberListRequest {
+    /// The inner request
     inner: xlineapi::MemberListRequest,
 }
 
 impl MemberListRequest {
     /// Creates a new `MemberListRequest`
     #[inline]
+    #[must_use]
     pub fn new(linearizable: bool) -> Self {
         Self {
             inner: xlineapi::MemberListRequest { linearizable },
@@ -55,12 +58,14 @@ impl From<MemberListRequest> for xlineapi::MemberListRequest {
 /// Request for `MemberPromote`
 #[derive(Debug)]
 pub struct MemberPromoteRequest {
+    /// The inner request
     inner: xlineapi::MemberPromoteRequest,
 }
 
 impl MemberPromoteRequest {
     /// Creates a new `MemberPromoteRequest`
     #[inline]
+    #[must_use]
     pub fn new(id: u64) -> Self {
         Self {
             inner: xlineapi::MemberPromoteRequest { id },
@@ -78,12 +83,14 @@ impl From<MemberPromoteRequest> for xlineapi::MemberPromoteRequest {
 /// Request for `MemberRemove`
 #[derive(Debug)]
 pub struct MemberRemoveRequest {
+    /// The inner request
     inner: xlineapi::MemberRemoveRequest,
 }
 
 impl MemberRemoveRequest {
     /// Creates a new `MemberRemoveRequest`
     #[inline]
+    #[must_use]
     pub fn new(id: u64) -> Self {
         Self {
             inner: xlineapi::MemberRemoveRequest { id },
@@ -101,6 +108,7 @@ impl From<MemberRemoveRequest> for xlineapi::MemberRemoveRequest {
 /// Request for `MemberUpdate`
 #[derive(Debug)]
 pub struct MemberUpdateRequest {
+    /// The inner request
     inner: xlineapi::MemberUpdateRequest,
 }
 

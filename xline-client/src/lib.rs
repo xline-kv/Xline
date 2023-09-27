@@ -249,8 +249,8 @@ impl Client {
         );
         let auth = AuthClient::new(curp_client, channel.clone(), token.clone());
         let maintenance = MaintenanceClient::new(channel.clone(), token.clone());
+        let cluster = ClusterClient::new(channel.clone(), token.clone());
         let watch = WatchClient::new(channel, token);
-        let cluster = ClusterClient::new();
         let election = ElectionClient::new();
 
         Ok(Self {
