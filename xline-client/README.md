@@ -45,7 +45,7 @@ Official Xline API client for Rust that supports the [CURP](https://github.com/x
   - [ ] MemberAdd
   - [ ] MemberRemove
   - [ ] MemberUpdate
-  - [ ] MemberList
+  - [x] MemberList
   - [ ] MemberPromote
 - Election
   - [ ] Campaign
