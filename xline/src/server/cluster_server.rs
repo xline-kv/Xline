@@ -93,13 +93,10 @@ where
             .await?;
         let resp = MemberAddResponse {
             header: Some(self.header_gen.gen_header()),
-            member: Some(Member {
-                id: 0,
-                name: String::new(), // the added member does not have name yet.
-                peer_ur_ls: req.peer_ur_ls.clone(),
-                client_ur_ls: req.peer_ur_ls,
-                is_learner: req.is_learner,
-            }),
+            member: members
+                .iter()
+                .find(|m| m.peer_ur_ls == req.peer_ur_ls) // we may need to sort peer_ur_ls here.
+                .cloned(),
             members,
         };
         Ok(Response::new(resp))
