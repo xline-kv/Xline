@@ -262,7 +262,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         });
         let mut log_w = self.log.write();
 
-        let entry = match log_w.push_cmd(st_r.term, cmd) {
+        let entry = match log_w.push(st_r.term, cmd) {
             Ok(entry) => {
                 debug!("{} gets new log[{}]", self.id(), entry.index);
                 entry
@@ -313,7 +313,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
         let mut log_w = self.log.write();
 
-        let entry = match log_w.push_shutdown(st_r.term) {
+        let entry = match log_w.push(st_r.term, EntryData::Shutdown) {
             Ok(entry) => {
                 debug!("{} gets new log[{}]", self.id(), entry.index);
                 entry
@@ -375,7 +375,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             );
         }
         let mut log_w = self.log.write();
-        let entry = match log_w.push_conf_change(st_r.term, conf_change) {
+        let entry = match log_w.push(st_r.term, conf_change) {
             Ok(entry) => {
                 debug!("{} gets new log[{}]", self.id(), entry.index);
                 entry
@@ -1162,7 +1162,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             let _ig_spec = sp_l.insert(Arc::clone(&cmd)); // may have been inserted before
             #[allow(clippy::expect_used)]
             let entry = log
-                .push_cmd(term, cmd)
+                .push(term, cmd)
                 .expect("cmd {cmd:?} cannot be serialized");
             debug!(
                 "{} recovers speculatively executed cmd({}) in log[{}]",

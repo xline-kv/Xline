@@ -15,8 +15,7 @@ use tracing::error;
 
 use crate::{
     cmd::{Command, ProposeId},
-    log_entry::LogEntry,
-    rpc::ConfChangeEntry,
+    log_entry::{EntryData, LogEntry},
     snapshot::SnapshotMeta,
     LogIndex,
 };
@@ -284,38 +283,14 @@ impl<C: 'static + Command> Log<C> {
         }
     }
 
-    /// Pack the cmd into a log entry and push it to the end of the log, return its index
-    pub(super) fn push_cmd(
+    /// Push a log entry into the end of log
+    pub(super) fn push(
         &mut self,
         term: u64,
-        cmd: Arc<C>,
+        entry: impl Into<EntryData<C>>,
     ) -> Result<Arc<LogEntry<C>>, bincode::Error> {
         let index = self.last_log_index() + 1;
-        let entry = Arc::new(LogEntry::new_cmd(index, term, cmd));
-
-        self.entries.push_back(Arc::clone(&entry))?;
-        self.send_persist(Arc::clone(&entry));
-        Ok(entry)
-    }
-
-    /// Push a shutdown entry to the end of the log, return its index
-    pub(super) fn push_shutdown(&mut self, term: u64) -> Result<Arc<LogEntry<C>>, bincode::Error> {
-        let index = self.last_log_index() + 1;
-        let entry = Arc::new(LogEntry::new_shutdown(index, term));
-        self.entries.push_back(Arc::clone(&entry))?;
-        self.send_persist(Arc::clone(&entry));
-        Ok(entry)
-    }
-
-    /// Pack the cmd into a log entry and push it to the end of the log, return its index
-    pub(super) fn push_conf_change(
-        &mut self,
-        term: u64,
-        conf_change: ConfChangeEntry,
-    ) -> Result<Arc<LogEntry<C>>, bincode::Error> {
-        let index = self.last_log_index() + 1;
-        let entry = Arc::new(LogEntry::new_conf_change(index, term, conf_change));
-
+        let entry = Arc::new(LogEntry::new(index, term, entry));
         self.entries.push_back(Arc::clone(&entry))?;
         self.send_persist(Arc::clone(&entry));
         Ok(entry)
@@ -427,8 +402,8 @@ mod tests {
             Log::<TestCommand>::new(log_tx, default_batch_max_size(), default_log_entries_cap());
         let result = log.try_append_entries(
             vec![
-                LogEntry::new_cmd(1, 1, Arc::new(TestCommand::default())),
-                LogEntry::new_cmd(2, 1, Arc::new(TestCommand::default())),
+                LogEntry::new(1, 1, Arc::new(TestCommand::default())),
+                LogEntry::new(2, 1, Arc::new(TestCommand::default())),
             ],
             0,
             0,
@@ -449,9 +424,9 @@ mod tests {
             Log::<TestCommand>::new(log_tx, default_batch_max_size(), default_log_entries_cap());
         let result = log.try_append_entries(
             vec![
-                LogEntry::new_cmd(1, 1, Arc::new(TestCommand::default())),
-                LogEntry::new_cmd(2, 1, Arc::new(TestCommand::default())),
-                LogEntry::new_cmd(3, 1, Arc::new(TestCommand::default())),
+                LogEntry::new(1, 1, Arc::new(TestCommand::default())),
+                LogEntry::new(2, 1, Arc::new(TestCommand::default())),
+                LogEntry::new(3, 1, Arc::new(TestCommand::default())),
             ],
             0,
             0,
@@ -460,8 +435,8 @@ mod tests {
 
         let result = log.try_append_entries(
             vec![
-                LogEntry::new_cmd(2, 2, Arc::new(TestCommand::default())),
-                LogEntry::new_cmd(3, 2, Arc::new(TestCommand::default())),
+                LogEntry::new(2, 2, Arc::new(TestCommand::default())),
+                LogEntry::new(3, 2, Arc::new(TestCommand::default())),
             ],
             1,
             1,
@@ -477,7 +452,7 @@ mod tests {
         let mut log =
             Log::<TestCommand>::new(log_tx, default_batch_max_size(), default_log_entries_cap());
         let result = log.try_append_entries(
-            vec![LogEntry::new_cmd(1, 1, Arc::new(TestCommand::default()))],
+            vec![LogEntry::new(1, 1, Arc::new(TestCommand::default()))],
             0,
             0,
         );
@@ -485,8 +460,8 @@ mod tests {
 
         let result = log.try_append_entries(
             vec![
-                LogEntry::new_cmd(4, 2, Arc::new(TestCommand::default())),
-                LogEntry::new_cmd(5, 2, Arc::new(TestCommand::default())),
+                LogEntry::new(4, 2, Arc::new(TestCommand::default())),
+                LogEntry::new(5, 2, Arc::new(TestCommand::default())),
             ],
             3,
             1,
@@ -495,8 +470,8 @@ mod tests {
 
         let result = log.try_append_entries(
             vec![
-                LogEntry::new_cmd(2, 2, Arc::new(TestCommand::default())),
-                LogEntry::new_cmd(3, 2, Arc::new(TestCommand::default())),
+                LogEntry::new(2, 2, Arc::new(TestCommand::default())),
+                LogEntry::new(3, 2, Arc::new(TestCommand::default())),
             ],
             1,
             2,
@@ -514,7 +489,7 @@ mod tests {
         let test_cmd = Arc::new(TestCommand::default());
         let _res = repeat(Arc::clone(&test_cmd))
             .take(10)
-            .map(|cmd| log.push_cmd(1, cmd).unwrap())
+            .map(|cmd| log.push(1, cmd).unwrap())
             .collect::<Vec<_>>();
         let log_entry_size = log.entries.batch_index[1];
 
@@ -590,7 +565,7 @@ mod tests {
         let entries = repeat(Arc::clone(&test_cmd))
             .enumerate()
             .take(10)
-            .map(|(idx, cmd)| LogEntry::new_cmd((idx + 1).numeric_cast(), 1, cmd))
+            .map(|(idx, cmd)| LogEntry::new((idx + 1).numeric_cast(), 1, cmd))
             .collect::<Vec<LogEntry<TestCommand>>>();
         let (tx, _rx) = mpsc::unbounded_channel();
         let mut log =
@@ -624,7 +599,7 @@ mod tests {
         let mut log = Log::<TestCommand>::new(log_tx, default_batch_max_size(), 10);
 
         for _ in 0..30 {
-            log.push_cmd(0, Arc::new(TestCommand::default())).unwrap();
+            log.push(0, Arc::new(TestCommand::default())).unwrap();
         }
         log.last_as = 22;
         log.last_exe = 22;

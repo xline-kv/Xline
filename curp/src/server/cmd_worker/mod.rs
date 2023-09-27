@@ -393,7 +393,7 @@ mod tests {
             l,
         );
 
-        let entry = Arc::new(LogEntry::new_cmd(1, 1, Arc::new(TestCommand::default())));
+        let entry = Arc::new(LogEntry::new(1, 1, Arc::new(TestCommand::default())));
 
         ce_event_tx.send_sp_exe(Arc::clone(&entry));
         assert_eq!(er_rx.recv().await.unwrap().1.values, vec![]);
@@ -432,7 +432,7 @@ mod tests {
         );
 
         let begin = Instant::now();
-        let entry = Arc::new(LogEntry::new_cmd(
+        let entry = Arc::new(LogEntry::new(
             1,
             1,
             Arc::new(TestCommand::default().set_exe_dur(Duration::from_secs(1))),
@@ -478,7 +478,7 @@ mod tests {
             l,
         );
 
-        let entry = Arc::new(LogEntry::new_cmd(
+        let entry = Arc::new(LogEntry::new(
             1,
             1,
             Arc::new(
@@ -529,7 +529,7 @@ mod tests {
             l,
         );
 
-        let entry = Arc::new(LogEntry::new_cmd(1, 1, Arc::new(TestCommand::default())));
+        let entry = Arc::new(LogEntry::new(1, 1, Arc::new(TestCommand::default())));
 
         ce_event_tx.send_after_sync(entry);
 
@@ -566,7 +566,7 @@ mod tests {
             l,
         );
 
-        let entry = Arc::new(LogEntry::new_cmd(
+        let entry = Arc::new(LogEntry::new(
             1,
             1,
             Arc::new(TestCommand::default().set_exe_should_fail()),
@@ -610,16 +610,12 @@ mod tests {
             l,
         );
 
-        let entry1 = Arc::new(LogEntry::new_cmd(
+        let entry1 = Arc::new(LogEntry::new(
             1,
             1,
             Arc::new(TestCommand::new_put(vec![1], 1)),
         ));
-        let entry2 = Arc::new(LogEntry::new_cmd(
-            2,
-            1,
-            Arc::new(TestCommand::new_get(vec![1])),
-        ));
+        let entry2 = Arc::new(LogEntry::new(2, 1, Arc::new(TestCommand::new_get(vec![1]))));
 
         ce_event_tx.send_sp_exe(Arc::clone(&entry1));
         ce_event_tx.send_sp_exe(Arc::clone(&entry2));
@@ -670,16 +666,12 @@ mod tests {
             l,
         );
 
-        let entry1 = Arc::new(LogEntry::new_cmd(
+        let entry1 = Arc::new(LogEntry::new(
             1,
             1,
             Arc::new(TestCommand::new_put(vec![1], 1).set_as_dur(Duration::from_millis(50))),
         ));
-        let entry2 = Arc::new(LogEntry::new_cmd(
-            2,
-            1,
-            Arc::new(TestCommand::new_get(vec![1])),
-        ));
+        let entry2 = Arc::new(LogEntry::new(2, 1, Arc::new(TestCommand::new_get(vec![1]))));
         ce_event_tx.send_sp_exe(Arc::clone(&entry1));
         ce_event_tx.send_sp_exe(Arc::clone(&entry2));
 
@@ -687,11 +679,7 @@ mod tests {
 
         ce_event_tx.send_reset(None);
 
-        let entry3 = Arc::new(LogEntry::new_cmd(
-            3,
-            1,
-            Arc::new(TestCommand::new_get(vec![1])),
-        ));
+        let entry3 = Arc::new(LogEntry::new(3, 1, Arc::new(TestCommand::new_get(vec![1]))));
 
         ce_event_tx.send_after_sync(entry3);
 
@@ -727,7 +715,7 @@ mod tests {
             s2_id,
             0,
             0,
-            vec![LogEntry::new_cmd(1, 1, Arc::new(TestCommand::default()))],
+            vec![LogEntry::new(1, 1, Arc::new(TestCommand::default()))],
             0,
         )
         .unwrap();
@@ -739,7 +727,7 @@ mod tests {
             l.clone(),
         );
 
-        let entry = Arc::new(LogEntry::new_cmd(
+        let entry = Arc::new(LogEntry::new(
             1,
             1,
             Arc::new(TestCommand::new_put(vec![1], 1).set_exe_dur(Duration::from_millis(50))),
@@ -780,11 +768,7 @@ mod tests {
 
         ce_event_tx.send_reset(Some(snapshot)).await.unwrap();
 
-        let entry = Arc::new(LogEntry::new_cmd(
-            1,
-            1,
-            Arc::new(TestCommand::new_get(vec![1])),
-        ));
+        let entry = Arc::new(LogEntry::new(1, 1, Arc::new(TestCommand::new_get(vec![1]))));
         ce_event_tx.send_after_sync(entry);
         assert_eq!(er_rx.recv().await.unwrap().1.revisions, vec![1]);
         t.self_shutdown();

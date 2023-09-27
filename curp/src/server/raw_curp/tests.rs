@@ -96,7 +96,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     pub(crate) fn push_cmd(&self, cmd: Arc<C>) -> LogIndex {
         let st_r = self.st.read();
         let mut log_w = self.log.write();
-        log_w.push_cmd(st_r.term, cmd).unwrap().index
+        log_w.push(st_r.term, cmd).unwrap().index
     }
 }
 
@@ -328,7 +328,7 @@ fn handle_ae_will_reject_wrong_log() {
         s2_id,
         1,
         1,
-        vec![LogEntry::new_cmd(2, 1, Arc::new(TestCommand::default()))],
+        vec![LogEntry::new(2, 1, Arc::new(TestCommand::default()))],
         0,
     );
     assert_eq!(result, Err((1, 1)));
@@ -463,7 +463,7 @@ fn handle_vote_will_reject_outdated_candidate() {
         s2_id,
         0,
         0,
-        vec![LogEntry::new_cmd(1, 1, Arc::new(TestCommand::default()))],
+        vec![LogEntry::new(1, 1, Arc::new(TestCommand::default()))],
         0,
     );
     assert!(result.is_ok());
@@ -618,7 +618,7 @@ fn leader_retires_after_log_compact_will_succeed() {
     let mut log_w = curp.log.write();
     for _ in 1..=20 {
         let cmd = Arc::new(TestCommand::default());
-        log_w.push_cmd(0, cmd).unwrap();
+        log_w.push(0, cmd).unwrap();
     }
     log_w.last_as = 20;
     log_w.last_exe = 20;

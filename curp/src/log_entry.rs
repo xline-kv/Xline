@@ -30,38 +30,28 @@ pub(crate) enum EntryData<C> {
     Shutdown,
 }
 
+impl<C> From<ConfChangeEntry> for EntryData<C> {
+    fn from(conf_change: ConfChangeEntry) -> Self {
+        EntryData::ConfChange(Box::new(conf_change))
+    }
+}
+
+impl<C> From<Arc<C>> for EntryData<C> {
+    fn from(cmd: Arc<C>) -> Self {
+        EntryData::Command(cmd)
+    }
+}
+
 impl<C> LogEntry<C>
 where
     C: Command,
 {
-    /// Create a new `LogEntry` of `Command`
-    pub(super) fn new_cmd(index: LogIndex, term: u64, cmd: Arc<C>) -> Self {
+    /// Create a new `LogEntry`
+    pub(super) fn new(index: LogIndex, term: u64, entry_data: impl Into<EntryData<C>>) -> Self {
         Self {
             term,
             index,
-            entry_data: EntryData::Command(cmd),
-        }
-    }
-
-    /// Create a new `LogEntry` of `Shutdown`
-    pub(super) fn new_shutdown(index: LogIndex, term: u64) -> Self {
-        Self {
-            term,
-            index,
-            entry_data: EntryData::Shutdown,
-        }
-    }
-
-    /// Create a new `LogEntry` of `ConfChangeEntry`
-    pub(super) fn new_conf_change(
-        index: LogIndex,
-        term: u64,
-        conf_change: ConfChangeEntry,
-    ) -> Self {
-        Self {
-            term,
-            index,
-            entry_data: EntryData::ConfChange(Box::new(conf_change)),
+            entry_data: entry_data.into(),
         }
     }
 
