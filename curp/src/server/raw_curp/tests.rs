@@ -61,7 +61,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             .map(|id| {
                 (
                     id,
-                    ConnectApiWrapper::new_from_arc(Arc::new(MockInnerConnectApi::new())),
+                    InnerConnectApiWrapper::new_from_arc(Arc::new(MockInnerConnectApi::new())),
                 )
             })
             .collect();
@@ -88,7 +88,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     /// Set connect for a server
-    pub(crate) fn set_connect(&self, id: ServerId, connect: ConnectApiWrapper) {
+    pub(crate) fn set_connect(&self, id: ServerId, connect: InnerConnectApiWrapper) {
         self.ctx.connects.entry(id).and_modify(|c| *c = connect);
     }
 
@@ -816,7 +816,7 @@ async fn update_node_should_update_the_address_of_node() {
     mock_connect.expect_update_addrs().returning(|_| Ok(()));
     curp.set_connect(
         follower_id,
-        ConnectApiWrapper::new_from_arc(Arc::new(mock_connect)),
+        InnerConnectApiWrapper::new_from_arc(Arc::new(mock_connect)),
     );
     assert_eq!(
         curp.cluster().addrs(follower_id),

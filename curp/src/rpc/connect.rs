@@ -86,9 +86,9 @@ pub(crate) async fn connect(
 /// Convert a vec of addr string to a vec of `InnerConnect`
 pub(crate) async fn inner_connect(
     members: HashMap<ServerId, Vec<String>>,
-) -> Result<impl Iterator<Item = (ServerId, ConnectApiWrapper)>, tonic::transport::Error> {
+) -> Result<impl Iterator<Item = (ServerId, InnerConnectApiWrapper)>, tonic::transport::Error> {
     connect_impl!(InnerProtocolClient<Channel>, InnerConnectApi, members)
-        .map(|iter| iter.map(|(id, connect)| (id, ConnectApiWrapper::new_from_arc(connect))))
+        .map(|iter| iter.map(|(id, connect)| (id, InnerConnectApiWrapper::new_from_arc(connect))))
 }
 
 /// Connect interface between server and clients
@@ -177,18 +177,18 @@ pub(crate) trait InnerConnectApi: Send + Sync + 'static {
     ) -> Result<tonic::Response<InstallSnapshotResponse>, RpcError>;
 }
 
-/// Connect Api Wrapper
+/// Inner Connect Api Wrapper
 /// The solution of [rustc bug](https://github.com/dtolnay/async-trait/issues/141#issuecomment-767978616)
 #[derive(Clone)]
-pub(crate) struct ConnectApiWrapper(Arc<dyn InnerConnectApi>);
+pub(crate) struct InnerConnectApiWrapper(Arc<dyn InnerConnectApi>);
 
-impl ConnectApiWrapper {
-    /// Create a new `ConnectApiWrapper` from `Arc<dyn ConnectApi>`
+impl InnerConnectApiWrapper {
+    /// Create a new `InnerConnectApiWrapper` from `Arc<dyn ConnectApi>`
     pub(crate) fn new_from_arc(connect: Arc<dyn InnerConnectApi>) -> Self {
         Self(connect)
     }
 
-    /// Create a new `ConnectApiWrapper` from id and addrs
+    /// Create a new `InnerConnectApiWrapper` from id and addrs
     pub(crate) async fn connect(
         id: ServerId,
         mut addrs: Vec<String>,
@@ -205,7 +205,7 @@ impl ConnectApiWrapper {
                 .await;
         }
         let client = InnerProtocolClient::new(channel);
-        let connect = ConnectApiWrapper::new_from_arc(Arc::new(Connect {
+        let connect = InnerConnectApiWrapper::new_from_arc(Arc::new(Connect {
             id,
             rpc_connect: client,
             change_tx,
@@ -215,13 +215,13 @@ impl ConnectApiWrapper {
     }
 }
 
-impl Debug for ConnectApiWrapper {
+impl Debug for InnerConnectApiWrapper {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ConnectApiWrapper").finish()
+        f.debug_struct("InnerConnectApiWrapper").finish()
     }
 }
 
-impl Deref for ConnectApiWrapper {
+impl Deref for InnerConnectApiWrapper {
     type Target = Arc<dyn InnerConnectApi>;
 
     fn deref(&self) -> &Self::Target {

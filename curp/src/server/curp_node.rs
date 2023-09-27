@@ -29,17 +29,18 @@ use super::{
 };
 use crate::{
     cmd::{Command, CommandExecutor},
-    connect::ConnectApiWrapper,
     error::{CommandSyncError, ProposeError, RpcError},
     log_entry::LogEntry,
     members::{ClusterInfo, ServerId},
     role_change::RoleChange,
     rpc::{
-        self, connect::InnerConnectApi, AppendEntriesRequest, AppendEntriesResponse,
-        FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
-        InstallSnapshotRequest, InstallSnapshotResponse, ProposeConfChangeRequest,
-        ProposeConfChangeResponse, ProposeRequest, ProposeResponse, ShutdownRequest,
-        ShutdownResponse, VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        self,
+        connect::{InnerConnectApi, InnerConnectApiWrapper},
+        AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse,
+        FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,
+        InstallSnapshotResponse, ProposeConfChangeRequest, ProposeConfChangeResponse,
+        ProposeRequest, ProposeResponse, ShutdownRequest, ShutdownResponse, VoteRequest,
+        VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
     server::{cmd_worker::CEEventTxApi, raw_curp::SyncAction, storage::db::DB},
     snapshot::{Snapshot, SnapshotMeta},
@@ -481,7 +482,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     /// and return true if the leader is retired
     async fn sync_follower_task(
         curp: Arc<RawCurp<C, RC>>,
-        connect: ConnectApiWrapper,
+        connect: InnerConnectApiWrapper,
         sync_event: Arc<Event>,
         remove_event: Arc<Event>,
     ) -> bool {
@@ -864,7 +865,7 @@ mod tests {
         let remove_event = Arc::new(Event::new());
         tokio::spawn(CurpNode::sync_follower_task(
             Arc::clone(&curp),
-            ConnectApiWrapper::new_from_arc(Arc::new(mock_connect1)),
+            InnerConnectApiWrapper::new_from_arc(Arc::new(mock_connect1)),
             Arc::new(Event::new()),
             remove_event,
         ));
@@ -896,7 +897,7 @@ mod tests {
         mock_connect1.expect_id().return_const(s1_id);
         curp.set_connect(
             s1_id,
-            ConnectApiWrapper::new_from_arc(Arc::new(mock_connect1)),
+            InnerConnectApiWrapper::new_from_arc(Arc::new(mock_connect1)),
         );
 
         let mut mock_connect2 = MockInnerConnectApi::default();
@@ -909,7 +910,7 @@ mod tests {
         mock_connect2.expect_id().return_const(s2_id);
         curp.set_connect(
             s2_id,
-            ConnectApiWrapper::new_from_arc(Arc::new(mock_connect2)),
+            InnerConnectApiWrapper::new_from_arc(Arc::new(mock_connect2)),
         );
         tokio::spawn(CurpNode::election_task(Arc::clone(&curp)));
         sleep_secs(3).await;

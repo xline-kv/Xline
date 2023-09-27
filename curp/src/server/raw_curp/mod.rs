@@ -48,8 +48,8 @@ use crate::{
     members::{ClusterInfo, ServerId},
     role_change::RoleChange,
     rpc::{
-        connect::ConnectApiWrapper, ConfChange, ConfChangeEntry, ConfChangeError, ConfChangeType,
-        IdSet, Member, ReadState,
+        connect::InnerConnectApiWrapper, ConfChange, ConfChangeEntry, ConfChangeError,
+        ConfChangeType, IdSet, Member, ReadState,
     },
     server::{cmd_board::CmdBoardRef, raw_curp::state::VoteResult, spec_pool::SpecPoolRef},
     snapshot::{Snapshot, SnapshotMeta},
@@ -166,7 +166,7 @@ struct Context<C: Command, RC: RoleChange> {
     /// Conf change tx, used to update sync tasks
     change_rx: flume::Receiver<ConfChange>,
     /// Connects of peers
-    connects: DashMap<ServerId, ConnectApiWrapper>,
+    connects: DashMap<ServerId, InnerConnectApiWrapper>,
 }
 
 impl<C: Command, RC: RoleChange> Debug for Context<C, RC> {
@@ -726,7 +726,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         log_tx: mpsc::UnboundedSender<Arc<LogEntry<C>>>,
         role_change: RC,
         shutdown_trigger: shutdown::Trigger,
-        connects: DashMap<ServerId, ConnectApiWrapper>,
+        connects: DashMap<ServerId, InnerConnectApiWrapper>,
     ) -> Self {
         let (change_tx, change_rx) = flume::bounded(128);
         let raw_curp = Self {
@@ -785,7 +785,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         last_applied: LogIndex,
         role_change: RC,
         shutdown_trigger: shutdown::Trigger,
-        connects: DashMap<ServerId, ConnectApiWrapper>,
+        connects: DashMap<ServerId, InnerConnectApiWrapper>,
     ) -> Self {
         let raw_curp = Self::new(
             cluster_info,
@@ -984,12 +984,12 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     /// Get all connects
-    pub(super) fn connects(&self) -> &DashMap<ServerId, ConnectApiWrapper> {
+    pub(super) fn connects(&self) -> &DashMap<ServerId, InnerConnectApiWrapper> {
         &self.ctx.connects
     }
 
     /// Get connect
-    pub(super) fn connect(&self, id: ServerId) -> ConnectApiWrapper {
+    pub(super) fn connect(&self, id: ServerId) -> InnerConnectApiWrapper {
         self.ctx
             .connects
             .get(&id)
@@ -1278,7 +1278,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 self.lst.insert(node_id);
                 _ = self.ctx.sync_events.insert(node_id, Arc::new(Event::new()));
                 self.ctx.cluster_info.insert(member);
-                let connect = ConnectApiWrapper::connect(node_id, conf_change.address.clone())
+                let connect = InnerConnectApiWrapper::connect(node_id, conf_change.address.clone())
                     .await
                     .map_err(|e| ConfChangeError::Other(e.to_string()))?;
                 _ = self.ctx.connects.insert(connect.id(), connect);
