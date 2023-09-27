@@ -2,13 +2,18 @@ use std::sync::Arc;
 use tonic::transport::Channel;
 
 use crate::error::Result;
-use crate::types::cluster::*;
+use crate::types::cluster::{
+    MemberAddRequest, MemberAddResponse, MemberListRequest, MemberListResponse,
+    MemberPromoteRequest, MemberPromoteResponse, MemberRemoveRequest, MemberRemoveResponse,
+    MemberUpdateRequest, MemberUpdateResponse,
+};
 use crate::AuthService;
 
 /// Client for Cluster operations.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct ClusterClient {
+    /// Inner client
     inner: xlineapi::ClusterClient<AuthService<Channel>>,
 }
 
@@ -48,7 +53,7 @@ impl ClusterClient {
     ///     let resp = client.member_add(MemberAddRequest::new(vec!["127.0.0.1:2380".to_owned()], true)).await?;
     ///
     ///     println!(
-    ///         "members: {}, added: {}",
+    ///         "members: {:?}, added: {:?}",
     ///         resp.members, resp.member
     ///     );
     ///
@@ -85,7 +90,7 @@ impl ClusterClient {
     ///         .cluster_client();
     ///     let resp = client.member_remove(MemberRemoveRequest::new(1)).await?;
     ///
-    ///     println!("members: {}", resp.members);
+    ///     println!("members: {:?}", resp.members);
     ///
     ///     Ok(())
     ///  }
@@ -123,7 +128,7 @@ impl ClusterClient {
     ///         .cluster_client();
     ///     let resp = client.member_promote(MemberPromoteRequest::new(1)).await?;
     ///
-    ///     println!("members: {}", resp.members);
+    ///     println!("members: {:?}", resp.members);
     ///
     ///     Ok(())
     /// }
@@ -161,7 +166,7 @@ impl ClusterClient {
     ///         .cluster_client();
     ///     let resp = client.member_update(MemberUpdateRequest::new(1, vec!["127.0.0.1:2379".to_owned()])).await?;
     ///
-    ///     println!("members: {}", resp.members);
+    ///     println!("members: {:?}", resp.members);
     ///
     ///     Ok(())
     ///  }
@@ -199,7 +204,7 @@ impl ClusterClient {
     ///         .cluster_client();
     ///     let resp = client.member_list(MemberListRequest::new(false)).await?;
     ///
-    ///     println!("members: {}", resp.members);
+    ///     println!("members: {:?}", resp.members);
     ///
     ///     Ok(())
     /// }
