@@ -4,7 +4,6 @@ use async_trait::async_trait;
 use engine::Snapshot;
 use prost::DecodeError;
 use serde::{de::DeserializeOwned, Serialize};
-use uuid::Uuid;
 
 use crate::LogIndex;
 
@@ -79,11 +78,21 @@ pub trait Command:
 /// Command Id wrapper, abstracting underlying implementation
 pub type ProposeId = String;
 
-/// Generate propose id with the given prefix
+/// Generate propose id with client id and seq num
 #[inline]
 #[must_use]
-pub fn generate_propose_id(prefix: &str) -> ProposeId {
-    format!("{}-{}", prefix, Uuid::new_v4())
+pub fn generate_propose_id(client_id: u64, seq_num: u64) -> ProposeId {
+    format!("{client_id}#{seq_num}")
+}
+
+/// Parse propose id to (`client_id`, `seq_num`)
+#[inline]
+#[must_use]
+pub fn parse_propose_id(id: &ProposeId) -> Option<(u64, u64)> {
+    let mut iter = id.split('#');
+    let client_id = iter.next()?.parse().ok()?;
+    let seq_num: u64 = iter.next()?.parse().ok()?;
+    Some((client_id, seq_num))
 }
 
 /// Check conflict of two keys

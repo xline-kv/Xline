@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use curp::{client::Client as CurpClient, cmd::generate_propose_id};
+use curp::client::Client as CurpClient;
 use pbkdf2::{
     password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
     Pbkdf2,
@@ -30,8 +30,6 @@ use crate::{
 /// Client for Auth operations.
 #[derive(Clone, Debug)]
 pub struct AuthClient {
-    /// Name of the AuthClient, which will be used in CURP propose id generation
-    name: String,
     /// The client running the CURP protocol, communicate with all servers.
     curp_client: Arc<CurpClient<Command>>,
     /// The auth RPC client, only communicate with one server at a time
@@ -44,13 +42,11 @@ impl AuthClient {
     /// Creates a new `AuthClient`
     #[inline]
     pub fn new(
-        name: String,
         curp_client: Arc<CurpClient<Command>>,
         channel: Channel,
         token: Option<String>,
     ) -> Self {
         Self {
-            name,
             curp_client,
             auth_client: xlineapi::AuthClient::new(AuthService::new(
                 channel,
@@ -693,7 +689,7 @@ impl AuthClient {
         request: Req,
         use_fast_path: bool,
     ) -> Result<Res> {
-        let propose_id = generate_propose_id(&self.name);
+        let propose_id = self.curp_client.gen_propose_id().await?;
         let request = RequestWithToken::new_with_token(request.into(), self.token.clone());
         let cmd = Command::new(vec![], request, propose_id);
 

@@ -1,21 +1,19 @@
 use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use curp::{
-    client::Client,
-    cmd::generate_propose_id,
-    error::CommandProposeError::{AfterSync, Execute},
-};
+use curp::client::Client;
+use curp::error::CommandProposeError;
 use event_listener::Event;
 use periodic_compactor::PeriodicCompactor;
 use revision_compactor::RevisionCompactor;
 use tokio::{sync::mpsc::Receiver, time::sleep};
+
 use utils::{config::AutoCompactConfig, shutdown};
 
 use super::{
     index::{Index, IndexOperate},
     storage_api::StorageApi,
-    ExecuteError, KvStore,
+    KvStore,
 };
 use crate::{
     revision_number::RevisionNumberGenerator,
@@ -48,30 +46,21 @@ pub(crate) trait Compactor: std::fmt::Debug + Send + Sync {
 #[async_trait]
 pub(crate) trait Compactable: std::fmt::Debug + Send + Sync {
     /// do compact
-    async fn compact(&self, revision: i64) -> Result<(), ExecuteError>;
+    async fn compact(&self, revision: i64) -> Result<(), CommandProposeError<Command>>;
 }
 
 #[async_trait]
 impl Compactable for Client<Command> {
-    async fn compact(&self, revision: i64) -> Result<(), ExecuteError> {
+    async fn compact(&self, revision: i64) -> Result<(), CommandProposeError<Command>> {
         let request = CompactionRequest {
             revision,
             physical: false,
         };
         let request_wrapper = RequestWithToken::new_with_token(request.into(), None);
-        let propose_id = generate_propose_id("auto-compactor");
+        let propose_id = self.gen_propose_id().await?;
         let cmd = Command::new(vec![], request_wrapper, propose_id);
-        if let Err(e) = self.propose(cmd, true).await {
-            #[allow(clippy::wildcard_enum_match_arm)]
-            match e {
-                Execute(e) | AfterSync(e) => Err(e),
-                _ => {
-                    unreachable!("Compaction should not receive any errors other than ExecuteError, but it receives {e:?}");
-                }
-            }
-        } else {
-            Ok(())
-        }
+        let _ig = self.propose(cmd, true).await?;
+        Ok(())
     }
 }
 

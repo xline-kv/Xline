@@ -2,7 +2,7 @@ use std::{marker::PhantomData, sync::Arc};
 
 use async_stream::stream;
 use clippy_utilities::OverflowArithmetic;
-use curp::{client::Client, cmd::generate_propose_id};
+use curp::client::Client;
 use etcd_client::EventType;
 use tonic::transport::{Channel, Endpoint};
 use tracing::debug;
@@ -37,8 +37,6 @@ pub(super) struct LockServer<S> {
     client: Arc<Client<Command>>,
     /// Id Generator
     id_gen: Arc<IdGenerator>,
-    /// Cluster information
-    name: String,
     /// Server addresses
     addrs: Vec<Endpoint>,
     /// Phantom
@@ -53,7 +51,6 @@ where
     pub(super) fn new(
         client: Arc<Client<Command>>,
         id_gen: Arc<IdGenerator>,
-        name: String,
         addrs: Vec<String>,
     ) -> Self {
         let addrs = addrs
@@ -69,7 +66,6 @@ where
         Self {
             client,
             id_gen,
-            name,
             addrs,
             phantom: PhantomData,
         }
@@ -86,7 +82,12 @@ where
         T: Into<RequestWrapper>,
     {
         let wrapper = RequestWithToken::new_with_token(request.into(), token);
-        let cmd = command_from_request_wrapper::<S>(generate_propose_id(&self.name), wrapper, None);
+        let propose_id = self
+            .client
+            .gen_propose_id()
+            .await
+            .map_err(propose_err_to_status)?;
+        let cmd = command_from_request_wrapper::<S>(propose_id, wrapper, None);
 
         self.client
             .propose(cmd, use_fast_path)

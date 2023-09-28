@@ -2,7 +2,7 @@ use std::{pin::Pin, sync::Arc, time::Duration};
 
 use async_stream::{stream, try_stream};
 use clippy_utilities::Cast;
-use curp::{client::Client, cmd::generate_propose_id, members::ClusterInfo};
+use curp::{client::Client, members::ClusterInfo};
 use futures::stream::Stream;
 use tokio::time;
 use tonic::transport::Endpoint;
@@ -123,11 +123,13 @@ where
     {
         let token = get_token(request.metadata());
         let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
-        let cmd = command_from_request_wrapper(
-            generate_propose_id(self.cluster_info.self_name().as_ref()),
-            wrapper,
-            Some(self.lease_storage.as_ref()),
-        );
+        let propose_id = self
+            .client
+            .gen_propose_id()
+            .await
+            .map_err(propose_err_to_status)?;
+        let cmd =
+            command_from_request_wrapper(propose_id, wrapper, Some(self.lease_storage.as_ref()));
 
         self.client
             .propose(cmd, use_fast_path)

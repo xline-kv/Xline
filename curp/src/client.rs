@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 
-use curp_external_api::cmd::PbSerializeError;
+use curp_external_api::cmd::{generate_propose_id, PbSerializeError};
 use dashmap::DashMap;
 use event_listener::Event;
 use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
@@ -771,6 +771,33 @@ where
     /// Get all connects
     fn all_connects(&self) -> Vec<Arc<dyn ConnectApi>> {
         self.connects.iter().map(|c| Arc::clone(&c)).collect()
+    }
+
+    /// Get the client id
+    ///
+    /// # Errors
+    ///
+    ///   `ProposeError::Timeout` if timeout
+    #[allow(clippy::unused_async)] // TODO: grant a client id from server
+    async fn get_client_id(&self) -> Result<u64, ProposeError> {
+        Ok(rand::random())
+    }
+
+    /// New a seq num and record it
+    #[allow(clippy::unused_self)] // TODO: implement request tracker
+    fn new_seq_num(&self) -> u64 {
+        0
+    }
+
+    /// Generate a propose id
+    ///
+    /// # Errors
+    ///   `ProposeError::Timeout` if timeout
+    #[inline]
+    pub async fn gen_propose_id(&self) -> Result<ProposeId, CommandProposeError<C>> {
+        let client_id = self.get_client_id().await?;
+        let seq_num = self.new_seq_num();
+        Ok(generate_propose_id(client_id, seq_num))
     }
 }
 

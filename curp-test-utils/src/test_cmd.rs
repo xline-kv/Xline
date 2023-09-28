@@ -26,10 +26,14 @@ use crate::{META_TABLE, REVISION_TABLE, TEST_TABLE};
 pub(crate) const APPLIED_INDEX_KEY: &str = "applied_index";
 pub(crate) const LAST_REVISION_KEY: &str = "last_revision";
 
+/// Test client id
+pub const TEST_CLIENT_ID: &str = "test_client_id";
+
 static NEXT_ID: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(1));
 
-pub fn next_id() -> u64 {
-    NEXT_ID.fetch_add(1, Ordering::SeqCst)
+pub fn next_id() -> String {
+    let seq_num = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    format!("{TEST_CLIENT_ID}#{seq_num}")
 }
 
 #[derive(Error, Debug, Clone, Serialize, Deserialize)]
@@ -66,7 +70,7 @@ pub struct TestCommand {
 impl Default for TestCommand {
     fn default() -> Self {
         Self {
-            id: next_id().to_string(),
+            id: next_id(),
             keys: vec![1],
             exe_dur: Duration::ZERO,
             as_dur: Duration::ZERO,
@@ -114,7 +118,7 @@ impl PbCodec for TestCommandResult {
 impl TestCommand {
     pub fn new_get(keys: Vec<u32>) -> Self {
         Self {
-            id: next_id().to_string(),
+            id: next_id(),
             keys,
             exe_dur: Duration::ZERO,
             as_dur: Duration::ZERO,
@@ -126,7 +130,7 @@ impl TestCommand {
 
     pub fn new_put(keys: Vec<u32>, value: u32) -> Self {
         Self {
-            id: next_id().to_string(),
+            id: next_id(),
             keys,
             exe_dur: Duration::ZERO,
             as_dur: Duration::ZERO,

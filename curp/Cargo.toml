@@ -34,6 +34,7 @@ madsim = { version = "0.2.22", features = ["rpc", "macros"] }
 opentelemetry = "0.18.0"
 parking_lot = "0.12.1"
 prost = "0.11"
+rand = "0.8.5"
 serde = { version = "1.0.130", features = ["derive", "rc"] }
 thiserror = "1.0.31"
 tokio = { version = "0.2.23", package = "madsim-tokio", features = [

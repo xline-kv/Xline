@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use curp::{client::Client as CurpClient, cmd::generate_propose_id};
+use curp::client::Client as CurpClient;
 use futures::channel::mpsc::channel;
 use tonic::{transport::Channel, Streaming};
 use xline::server::Command;
@@ -22,8 +22,6 @@ use crate::{
 /// Client for Lease operations.
 #[derive(Clone, Debug)]
 pub struct LeaseClient {
-    /// Name of the LeaseClient, which will be used in CURP propose id generation
-    name: String,
     /// The client running the CURP protocol, communicate with all servers.
     curp_client: Arc<CurpClient<Command>>,
     /// The lease RPC client, only communicate with one server at a time
@@ -38,14 +36,12 @@ impl LeaseClient {
     /// Creates a new `LeaseClient`
     #[inline]
     pub fn new(
-        name: String,
         curp_client: Arc<CurpClient<Command>>,
         channel: Channel,
         token: Option<String>,
         id_gen: Arc<LeaseIdGenerator>,
     ) -> Self {
         Self {
-            name,
             curp_client,
             lease_client: xlineapi::LeaseClient::new(AuthService::new(
                 channel,
@@ -85,7 +81,7 @@ impl LeaseClient {
     /// ```
     #[inline]
     pub async fn grant(&self, mut request: LeaseGrantRequest) -> Result<LeaseGrantResponse> {
-        let propose_id = generate_propose_id(&self.name);
+        let propose_id = self.curp_client.gen_propose_id().await?;
         if request.inner.id == 0 {
             request.inner.id = self.id_gen.next();
         }
@@ -260,7 +256,7 @@ impl LeaseClient {
     /// ```
     #[inline]
     pub async fn leases(&self) -> Result<LeaseLeasesResponse> {
-        let propose_id = generate_propose_id(&self.name);
+        let propose_id = self.curp_client.gen_propose_id().await?;
         let request = RequestWithToken::new_with_token(
             xlineapi::LeaseLeasesRequest {}.into(),
             self.token.clone(),

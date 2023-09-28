@@ -644,6 +644,7 @@ dependencies = [
  "parking_lot",
  "prost",
  "prost-build",
+ "rand",
  "serde",
  "tempfile",
  "test-macros",
@@ -667,7 +668,6 @@ dependencies = [
  "prost",
  "serde",
  "thiserror",
- "uuid",
 ]
 
 [[package]]

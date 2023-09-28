@@ -1,9 +1,6 @@
 use std::{fmt::Debug, sync::Arc, time::Duration};
 
-use curp::{
-    client::{Client, ReadState},
-    cmd::generate_propose_id,
-};
+use curp::client::{Client, ReadState};
 use futures::future::join_all;
 use tokio::time::timeout;
 use tracing::{debug, instrument};
@@ -44,8 +41,6 @@ where
     range_retry_timeout: Duration,
     /// Consensus client
     client: Arc<Client<Command>>,
-    /// Server name
-    name: String,
 }
 
 impl<S> KvServer<S>
@@ -60,7 +55,6 @@ where
         id_barrier: Arc<IdBarrier>,
         range_retry_timeout: Duration,
         client: Arc<Client<Command>>,
-        name: String,
     ) -> Self {
         Self {
             kv_storage,
@@ -69,7 +63,6 @@ where
             id_barrier,
             range_retry_timeout,
             client,
-            name,
         }
     }
 
@@ -101,7 +94,12 @@ where
     {
         let token = get_token(request.metadata());
         let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
-        let cmd = command_from_request_wrapper::<S>(generate_propose_id(&self.name), wrapper, None);
+        let propose_id = self
+            .client
+            .gen_propose_id()
+            .await
+            .map_err(propose_err_to_status)?;
+        let cmd = command_from_request_wrapper::<S>(propose_id, wrapper, None);
 
         self.client
             .propose(cmd, use_fast_path)
@@ -205,7 +203,11 @@ where
         let is_serializable = range_req.serializable;
         let token = get_token(request.metadata());
         let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
-        let propose_id = generate_propose_id(&self.name);
+        let propose_id = self
+            .client
+            .gen_propose_id()
+            .await
+            .map_err(propose_err_to_status)?;
         let cmd = command_from_request_wrapper::<S>(propose_id, wrapper, None);
         if !is_serializable {
             self.wait_read_state(&cmd).await?;
@@ -302,7 +304,11 @@ where
             let is_serializable = txn_req.is_serializable();
             let token = get_token(request.metadata());
             let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
-            let propose_id = generate_propose_id(&self.name);
+            let propose_id = self
+                .client
+                .gen_propose_id()
+                .await
+                .map_err(propose_err_to_status)?;
             let cmd = command_from_request_wrapper::<S>(propose_id, wrapper, None);
             if !is_serializable {
                 self.wait_read_state(&cmd).await?;
