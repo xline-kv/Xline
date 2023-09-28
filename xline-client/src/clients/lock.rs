@@ -7,10 +7,7 @@ use std::{
 };
 
 use clippy_utilities::OverflowArithmetic;
-use curp::{
-    client::Client as CurpClient,
-    cmd::{generate_propose_id, ProposeId},
-};
+use curp::{client::Client as CurpClient, cmd::ProposeId};
 use futures::{Future, FutureExt};
 use tonic::transport::Channel;
 use xline::server::{Command, CommandResponse, KeyRange, SyncResponse};
@@ -35,8 +32,6 @@ use crate::{
 /// Client for Lock operations.
 #[derive(Clone, Debug)]
 pub struct LockClient {
-    /// Name of the LockClient
-    name: String,
     /// The client running the CURP protocol, communicate with all servers.
     curp_client: Arc<CurpClient<Command>>,
     /// The lease client
@@ -53,22 +48,14 @@ impl LockClient {
     /// Creates a new `LockClient`
     #[inline]
     pub fn new(
-        name: String,
         curp_client: Arc<CurpClient<Command>>,
         channel: Channel,
         token: Option<String>,
         id_gen: Arc<LeaseIdGenerator>,
     ) -> Self {
         Self {
-            name: name.clone(),
             curp_client: Arc::clone(&curp_client),
-            lease_client: LeaseClient::new(
-                name,
-                curp_client,
-                channel.clone(),
-                token.clone(),
-                id_gen,
-            ),
+            lease_client: LeaseClient::new(curp_client, channel.clone(), token.clone(), id_gen),
             watch_client: WatchClient::new(channel, token.clone()),
             token,
         }
@@ -277,7 +264,7 @@ impl LockClient {
     {
         let request_with_token =
             RequestWithToken::new_with_token(request.into(), self.token.clone());
-        let propose_id = generate_propose_id(&self.name);
+        let propose_id = self.curp_client.gen_propose_id().await?;
 
         let cmd = Self::command_from_request_wrapper(propose_id, request_with_token);
         self.curp_client

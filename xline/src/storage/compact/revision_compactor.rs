@@ -7,6 +7,7 @@ use std::{
 };
 
 use clippy_utilities::OverflowArithmetic;
+use curp::error::CommandProposeError;
 use tracing::{info, warn};
 use utils::shutdown;
 
@@ -65,31 +66,35 @@ impl<C: Compactable> RevisionCompactor<C> {
             "starting auto revision compaction, revision = {}, retention = {}",
             target_revision, self.retention
         );
-        if let Err(e) = self.client.compact(target_revision).await {
-            if let ExecuteError::RevisionCompacted(_rev, compacted_rev) = e {
-                info!(
-                    "required revision {} has been compacted, the current compacted revision is {},  retention = {:?}",
-                    target_revision,
-                    compacted_rev,
-                    self.retention,
-                );
-                Some(compacted_rev)
-            } else {
-                warn!(
-                    "failed auto revision compaction, revision = {}, retention = {}, error: {:?}",
-                    target_revision, self.retention, e
-                );
-                None
-            }
-        } else {
+
+        let res = self.client.compact(target_revision).await;
+        if res.is_ok() {
             info!(
                 "completed auto revision compaction, revision = {}, retention = {}, took {:?}",
                 target_revision,
                 self.retention,
                 now.elapsed().as_secs()
             );
-            Some(target_revision)
+            return Some(target_revision);
         }
+        if let Err(
+            CommandProposeError::Execute(ExecuteError::RevisionCompacted(_, compacted_rev))
+            | CommandProposeError::AfterSync(ExecuteError::RevisionCompacted(_, compacted_rev)),
+        ) = res
+        {
+            info!(
+                "required revision {} has been compacted, the current compacted revision is {},  retention = {:?}",
+                target_revision,
+                compacted_rev,
+                self.retention,
+            );
+            return Some(compacted_rev);
+        }
+        warn!(
+            "failed auto revision compaction, revision = {}, retention = {}, result: {:?}",
+            target_revision, self.retention, res
+        );
+        None
     }
 }
 

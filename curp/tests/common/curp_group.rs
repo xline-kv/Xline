@@ -60,7 +60,7 @@ pub struct CurpNode {
     pub as_rx: mpsc::UnboundedReceiver<(TestCommand, LogIndex)>,
     pub role_change_arc: Arc<TestRoleChangeInner>,
     pub handle: JoinHandle<Result<(), ServerError>>,
-    pub trigger: shutdown::Trigger,
+    pub trigger: Trigger,
 }
 
 pub struct CurpGroup {

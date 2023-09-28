@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use curp::{client::Client as CurpClient, cmd::generate_propose_id};
+use curp::client::Client as CurpClient;
 use etcd_client::{
     AuthClient, Client as EtcdClient, KvClient, LeaseClient, LeaseKeepAliveStream, LeaseKeeper,
     LockClient, MaintenanceClient, WatchClient,
@@ -95,7 +95,7 @@ impl Client {
     pub async fn put(&mut self, request: PutRequest) -> Result<PutResponse, ClientError> {
         if self.use_curp_client {
             let key_ranges = vec![KeyRange::new_one_key(request.key())];
-            let propose_id = generate_propose_id(&self.name);
+            let propose_id = self.curp_client.gen_propose_id().await?;
             let request = RequestWithToken::new(rpc::PutRequest::from(request).into());
             let cmd = Command::new(key_ranges, request, propose_id);
             let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
@@ -119,7 +119,7 @@ impl Client {
     pub async fn range(&mut self, request: RangeRequest) -> Result<RangeResponse, ClientError> {
         if self.use_curp_client {
             let key_ranges = vec![KeyRange::new(request.key(), request.range_end())];
-            let propose_id = generate_propose_id(&self.name);
+            let propose_id = self.curp_client.gen_propose_id().await?;
             let request = RequestWithToken::new(rpc::RangeRequest::from(request).into());
             let cmd = Command::new(key_ranges, request, propose_id);
             let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
@@ -143,7 +143,7 @@ impl Client {
     ) -> Result<DeleteRangeResponse, ClientError> {
         if self.use_curp_client {
             let key_ranges = vec![KeyRange::new(request.key(), request.range_end())];
-            let propose_id = generate_propose_id(&self.name);
+            let propose_id = self.curp_client.gen_propose_id().await?;
             let request = RequestWithToken::new(rpc::DeleteRangeRequest::from(request).into());
             let cmd = Command::new(key_ranges, request, propose_id);
             let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;

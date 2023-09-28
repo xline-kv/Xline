@@ -8,6 +8,7 @@ use std::{
 };
 
 use clippy_utilities::OverflowArithmetic;
+use curp::error::CommandProposeError;
 use tracing::{info, warn};
 use utils::shutdown;
 
@@ -107,32 +108,35 @@ impl<C: Compactable> PeriodicCompactor<C> {
             revision, self.period
         );
 
-        if let Err(e) = self.client.compact(revision).await {
-            if let ExecuteError::RevisionCompacted(_rev, compacted_rev) = e {
-                info!(
-                    "required revision {} has been compacted, the current compacted revision is {},  period = {:?}, took {:?}",
-                    revision,
-                    compacted_rev,
-                    self.period,
-                    now.elapsed().as_secs()
-                );
-                Some(compacted_rev)
-            } else {
-                warn!(
-                    "failed auto revision compaction, revision = {}, period = {:?}, error: {:?}",
-                    revision, self.period, e
-                );
-                None
-            }
-        } else {
+        let res = self.client.compact(revision).await;
+        if res.is_ok() {
             info!(
                 "completed auto revision compaction, revision = {}, period = {:?}, took {:?}",
                 revision,
                 self.period,
                 now.elapsed().as_secs()
             );
-            target_revision
+            return target_revision;
         }
+        if let Err(
+            CommandProposeError::Execute(ExecuteError::RevisionCompacted(_, compacted_rev))
+            | CommandProposeError::AfterSync(ExecuteError::RevisionCompacted(_, compacted_rev)),
+        ) = res
+        {
+            info!(
+                "required revision {} has been compacted, the current compacted revision is {},  period = {:?}, took {:?}",
+                revision,
+                compacted_rev,
+                self.period,
+                now.elapsed().as_secs()
+            );
+            return Some(compacted_rev);
+        }
+        warn!(
+            "failed auto revision compaction, revision = {}, period = {:?}, result: {:?}",
+            revision, self.period, res
+        );
+        None
     }
 }
 
