@@ -273,13 +273,13 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     /// Handle `shutdown` request
-    pub(super) fn handle_shutdown(&self) -> Result<(), CurpError> {
+    pub(super) fn handle_shutdown(&self, propose_id: ProposeId) -> Result<(), CurpError> {
         let st_r = self.st.read();
         if st_r.role != Role::Leader {
             return Err(CurpError::Redirect(st_r.leader_id, st_r.term));
         }
         let mut log_w = self.log.write();
-        let entry = log_w.push(st_r.term, EntryData::Shutdown)?;
+        let entry = log_w.push(st_r.term, EntryData::Shutdown(propose_id))?;
         debug!("{} gets new log[{}]", self.id(), entry.index);
         self.entry_process(&mut log_w, entry, true);
         Ok(())
@@ -1282,7 +1282,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                     let _ignore =
                         ucp_l.insert(conf_change.id(), conf_change.as_ref().clone().into());
                 }
-                EntryData::Shutdown => {}
+                EntryData::Shutdown(_) => {}
             }
         }
     }

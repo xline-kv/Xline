@@ -10,7 +10,7 @@ use curp::{
     client::{Builder, Client},
     error::ClientError,
     members::ClusterInfo,
-    ConfChange, ConfChangeError, Member,
+    ConfChange, ConfChangeError,
 };
 use curp_test_utils::{
     init_logger, sleep_millis, sleep_secs,
@@ -281,7 +281,8 @@ async fn shutdown_rpc_should_shutdown_the_cluster() {
     });
 
     let client = group.new_client().await;
-    client.shutdown().await.unwrap();
+    let id = client.gen_propose_id().await.unwrap();
+    client.shutdown(id).await.unwrap();
 
     let res = client
         .propose(TestCommand::new_put(vec![888], 1), false)
@@ -428,8 +429,8 @@ async fn shutdown_rpc_should_shutdown_the_cluster_when_client_has_wrong_leader()
         .build_from_all_members(group.all(), Some(follower_id))
         .await
         .unwrap();
-
-    client.shutdown().await.unwrap();
+    let id = client.gen_propose_id().await.unwrap();
+    client.shutdown(id).await.unwrap();
 
     sleep_secs(3).await; // wait for the cluster to shutdown
     assert!(group.is_finished());
@@ -499,32 +500,12 @@ async fn check_new_node(is_learner: bool) {
     /*******  start new node *******/
 
     // 1. fetch cluster from other nodes
-    let leader_id = group.get_leader().await.0;
-    let mut connect = group.get_connect(&leader_id).await;
-    let cluster_res_base = connect
-        .fetch_cluster(tonic::Request::new(FetchClusterRequest::default()))
-        .await
-        .unwrap()
-        .into_inner();
-    let members = cluster_res_base
-        .members
-        .into_iter()
-        .map(|m| Member::new(m.id, m.name, m.addrs, m.is_learner))
-        .collect();
-    let cluster_res = curp::FetchClusterResponse {
-        leader_id: cluster_res_base.leader_id,
-        term: cluster_res_base.term,
-        cluster_id: cluster_res_base.cluster_id,
-        members,
-        cluster_version: cluster_res_base.cluster_version,
-    };
-    let _cluster_info = Arc::new(ClusterInfo::from_cluster(cluster_res, &[addr]));
+    let cluster_info = Arc::new(group.fetch_cluster_info(&[addr]).await);
 
-    // TODO: add run_node method after #448 merged
-    // // 2. start new node
-    // group
-    //     .run_node(listener, "new_node".to_owned(), cluster_info)
-    //     .await;
+    // 2. start new node
+    group
+        .run_node(listener, "new_node".to_owned(), cluster_info)
+        .await;
 
     // 3. fetch and check cluster from new node
     let mut new_connect = group.get_connect(&node_id).await;
@@ -570,4 +551,106 @@ async fn new_follower_node_should_apply_old_cluster_logs() {
 #[ignore = "TODO: enable this test after #448 merged"]
 async fn new_learner_node_should_apply_old_cluster_logs() {
     check_new_node(true).await;
+}
+
+#[tokio::test]
+#[abort_on_panic]
+#[ignore = "enable this test after support run_node method"]
+async fn shutdown_rpc_should_shutdown_the_cluster_when_client_has_wrong_cluster() {
+    init_logger();
+    let tmp_path = tempfile::TempDir::new().unwrap().into_path();
+    let group = CurpGroup::new_rocks(3, tmp_path.clone()).await;
+    let client = group.new_client().await;
+
+    let listener = TcpListener::bind("0.0.0.0:0").await.unwrap();
+    let addrs = vec![listener.local_addr().unwrap().to_string()];
+    let node_id = ClusterInfo::calculate_member_id(addrs.clone(), "", Some(123));
+    let id = client.gen_propose_id().await.unwrap();
+    let changes = vec![ConfChange::add(node_id, addrs.clone())];
+    let members = client
+        .propose_conf_change(id, changes)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(members.len(), 4);
+    assert!(members.iter().any(|m| m.id == node_id));
+
+    let cluster_info = Arc::new(group.fetch_cluster_info(&addrs).await);
+    group
+        .run_node(listener, "new_node".to_owned(), cluster_info)
+        .await;
+    let id = client.gen_propose_id().await.unwrap();
+    client.shutdown(id).await.unwrap();
+
+    sleep_secs(3).await; // wait for the cluster to shutdown
+    assert!(group.is_finished());
+}
+
+#[tokio::test]
+#[abort_on_panic]
+#[ignore = "enable this test after support run_node method"]
+async fn propose_conf_change_rpc_should_work_when_client_has_wrong_cluster() {
+    init_logger();
+    let tmp_path = tempfile::TempDir::new().unwrap().into_path();
+    let group = CurpGroup::new_rocks(3, tmp_path.clone()).await;
+    let client = group.new_client().await;
+
+    let listener = TcpListener::bind("0.0.0.0:0").await.unwrap();
+    let addrs = vec![listener.local_addr().unwrap().to_string()];
+    let node_id = ClusterInfo::calculate_member_id(addrs.clone(), "", Some(123));
+    let id = client.gen_propose_id().await.unwrap();
+    let changes = vec![ConfChange::add(node_id, addrs.clone())];
+    let members = client
+        .propose_conf_change(id, changes)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(members.len(), 4);
+    assert!(members.iter().any(|m| m.id == node_id));
+    let cluster_info = Arc::new(group.fetch_cluster_info(&addrs).await);
+    group
+        .run_node(listener, "new_node".to_owned(), cluster_info)
+        .await;
+    let id = client.gen_propose_id().await.unwrap();
+    let changes = vec![ConfChange::remove(node_id)];
+    let members = client
+        .propose_conf_change(id, changes)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(members.len(), 3);
+    assert!(members.iter().all(|m| m.id != node_id));
+    sleep_secs(3).await;
+    assert!(group.nodes.get(&node_id).unwrap().handle.is_finished());
+}
+
+#[tokio::test]
+#[abort_on_panic]
+#[ignore = "enable this test after support run_node method"]
+async fn fetch_read_state_rpc_should_work_when_client_has_wrong_cluster() {
+    init_logger();
+    let tmp_path = tempfile::TempDir::new().unwrap().into_path();
+    let group = CurpGroup::new_rocks(3, tmp_path.clone()).await;
+    let client = group.new_client().await;
+
+    let listener = TcpListener::bind("0.0.0.0:0").await.unwrap();
+    let addrs = vec![listener.local_addr().unwrap().to_string()];
+    let node_id = ClusterInfo::calculate_member_id(addrs.clone(), "", Some(123));
+    let id = client.gen_propose_id().await.unwrap();
+    let changes = vec![ConfChange::add(node_id, addrs.clone())];
+    let members = client
+        .propose_conf_change(id, changes)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(members.len(), 4);
+    assert!(members.iter().any(|m| m.id == node_id));
+    let cluster_info = Arc::new(group.fetch_cluster_info(&addrs).await);
+    group
+        .run_node(listener, "new_node".to_owned(), cluster_info)
+        .await;
+
+    let cmd = TestCommand::new_get(vec![0]);
+    let res = client.fetch_read_state(&cmd).await;
+    println!("{res:?}");
 }

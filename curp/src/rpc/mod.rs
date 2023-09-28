@@ -587,6 +587,28 @@ impl From<ProposeConfChangeRequest> for ConfChangeEntry {
     }
 }
 
+impl ShutdownRequest {
+    /// Create a new shutdown request
+    pub(crate) fn new(id: ProposeId, cluster_version: u64) -> Self {
+        Self {
+            propose_id: Some(id.into()),
+            cluster_version,
+        }
+    }
+
+    /// Get id of the request
+    #[inline]
+    #[must_use]
+    pub fn id(&self) -> ProposeId {
+        self.propose_id
+            .clone()
+            .unwrap_or_else(|| {
+                unreachable!("propose id should be set in propose conf change request")
+            })
+            .into()
+    }
+}
+
 impl ConfChangeError {
     /// Create a new `ConfChangeError` with `ProposeError`
     pub(crate) fn new_propose(error: ProposeError) -> Self {

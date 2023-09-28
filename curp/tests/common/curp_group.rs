@@ -10,7 +10,7 @@ use curp::{
     error::ServerError,
     members::{ClusterInfo, ServerId},
     server::Rpc,
-    LogIndex,
+    LogIndex, Member,
 };
 use curp_external_api::cmd::ProposeId;
 use curp_test_utils::{
@@ -295,6 +295,40 @@ impl CurpGroup {
             .iter()
             .map(|(k, v)| (*k, vec![v.clone()]))
             .collect()
+    }
+
+    pub async fn fetch_cluster_info(&self, addrs: &[String]) -> ClusterInfo {
+        let leader_id = self.get_leader().await.0;
+        let mut connect = self.get_connect(&leader_id).await;
+        let cluster_res_base = connect
+            .fetch_cluster(tonic::Request::new(FetchClusterRequest {
+                linearizable: false,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        let members = cluster_res_base
+            .members
+            .into_iter()
+            .map(|m| Member::new(m.id, m.name, m.addrs, m.is_learner))
+            .collect();
+        let cluster_res = curp::FetchClusterResponse {
+            leader_id: cluster_res_base.leader_id,
+            term: cluster_res_base.term,
+            cluster_id: cluster_res_base.cluster_id,
+            members,
+            cluster_version: cluster_res_base.cluster_version,
+        };
+        ClusterInfo::from_cluster(cluster_res, addrs)
+    }
+
+    pub async fn run_node(
+        &self,
+        listener: TcpListener,
+        name: String,
+        cluster_info: Arc<ClusterInfo>,
+    ) {
+        unimplemented!("this method will be implemented in #448");
     }
 }
 

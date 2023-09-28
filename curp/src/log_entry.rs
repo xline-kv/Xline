@@ -27,7 +27,7 @@ pub(crate) enum EntryData<C> {
     /// `ConfChange` entry
     ConfChange(Box<ConfChangeEntry>), // Box to fix variant_size_differences
     /// `Shutdown` entry
-    Shutdown,
+    Shutdown(ProposeId),
 }
 
 impl<C> From<ConfChangeEntry> for EntryData<C> {
@@ -69,12 +69,7 @@ where
         match self.entry_data {
             EntryData::Command(ref cmd) => cmd.id(),
             EntryData::ConfChange(ref e) => e.id(),
-            EntryData::Shutdown => {
-                unreachable!(
-                    "LogEntry::id() should not be called on {:?} entry",
-                    self.entry_data
-                );
-            }
+            EntryData::Shutdown(id) => id,
         }
     }
 }

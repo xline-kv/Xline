@@ -276,9 +276,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     /// Handle `Shutdown` requests
     pub(super) async fn shutdown(
         &self,
-        _request: ShutdownRequest,
+        req: ShutdownRequest,
     ) -> Result<ShutdownResponse, CurpError> {
-        self.curp.handle_shutdown()?;
+        self.check_cluster_version(req.cluster_version)?;
+        self.curp.handle_shutdown(req.id())?;
         CommandBoard::wait_for_shutdown_synced(&self.cmd_board).await;
         Ok(ShutdownResponse::default())
     }
@@ -288,6 +289,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         &self,
         req: ProposeConfChangeRequest,
     ) -> Result<ProposeConfChangeResponse, CurpError> {
+        self.check_cluster_version(req.cluster_version)?;
         let id = req.id();
         let ((leader_id, term), result) = self.curp.handle_propose_conf_change(req.into())?;
         let error = match result {
@@ -463,6 +465,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         &self,
         req: FetchReadStateRequest,
     ) -> Result<FetchReadStateResponse, CurpError> {
+        self.check_cluster_version(req.cluster_version)?;
         let cmd = req.cmd()?;
         let state = self.curp.handle_fetch_read_state(&cmd);
         Ok(FetchReadStateResponse::new(state))
