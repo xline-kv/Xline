@@ -437,8 +437,7 @@ where
     }
 
     /// Set the information of current cluster
-    #[allow(unused)]
-    async fn set_cluster(&self, cluster: FetchClusterResponse) {
+    async fn set_cluster(&self, cluster: FetchClusterResponse) -> Result<(), ClientError<C>> {
         debug!("update client by remote cluster: {cluster:?}");
         self.state
             .write()
@@ -449,20 +448,22 @@ where
             .map(|m| (m.id, m.addrs))
             .collect::<HashMap<ServerId, Vec<String>>>();
         self.connects.clear();
-        // TODO
-        #[allow(clippy::unwrap_used)]
-        for (id, connect) in rpc::connect(member_addrs).await.unwrap() {
+        for (id, connect) in rpc::connect(member_addrs)
+            .await
+            .map_err(|e| ClientError::InternalError(format!("connect to cluster failed: {e}")))?
+        {
             let _ig = self.connects.insert(id, connect);
         }
         self.cluster_version.store(
             cluster.cluster_version,
             std::sync::atomic::Ordering::Relaxed,
         );
+        Ok(())
     }
 
     /// The shutdown rpc of curp protocol
     #[instrument(skip_all)]
-    pub async fn shutdown(&self) -> Result<(), ClientError<C>> {
+    pub async fn shutdown(&self, propose_id: ProposeId) -> Result<(), ClientError<C>> {
         let mut retry_timeout = self.get_backoff();
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {
@@ -478,7 +479,7 @@ where
                 .get_connect(leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .shutdown(
-                    ShutdownRequest::default(),
+                    ShutdownRequest::new(propose_id, self.cluster_version()),
                     *self.config.wait_synced_timeout(),
                 )
                 .await
@@ -487,7 +488,9 @@ where
                 match unpack_status(&e) {
                     UnpackStatus::ShuttingDown => return Err(ClientError::ShuttingDown),
                     UnpackStatus::WrongClusterVersion => {
-                        return Err(ClientError::WrongClusterVersion)
+                        let cluster = self.fetch_cluster(false).await?;
+                        self.set_cluster(cluster).await?;
+                        continue;
                     }
                     UnpackStatus::Redirect(new_leader, term) => {
                         self.state.write().check_and_update(new_leader, term);
@@ -556,6 +559,9 @@ where
                 Err(e) => {
                     // if the propose fails again, need to fetch the leader and try again
                     warn!("failed to resend propose, {e}");
+                    if let UnpackStatus::WrongClusterVersion = unpack_status(&e) {
+                        return Err(ClientError::WrongClusterVersion);
+                    }
                     continue;
                 }
             };
@@ -733,6 +739,8 @@ where
                 self.slow_path(Arc::clone(&cmd_arc)).await
             };
             let Some(res) = res_option else {
+                let cluster = self.fetch_cluster(false).await?;
+                self.set_cluster(cluster).await?;
                 continue;
             };
             return res;
@@ -779,13 +787,11 @@ where
             futures::future::Either::Right((slow_result, fast_round)) => match slow_result {
                 Ok((asr, er)) => Some(Ok((er, Some(asr)))),
                 Err(ClientError::WrongClusterVersion) => None,
-                Err(e) => {
-                    if let Ok((Some(er), true)) = fast_round.await {
-                        Some(Ok((er, None)))
-                    } else {
-                        Some(Err(e))
-                    }
-                }
+                Err(err) => match fast_round.await {
+                    Ok((Some(er), true)) => Some(Ok((er, None))),
+                    Err(ClientError::WrongClusterVersion) => None,
+                    _ => Some(Err(err)),
+                },
             },
         }
     }
@@ -850,7 +856,9 @@ where
                     match unpack_status(&e) {
                         UnpackStatus::ShuttingDown => return Err(ClientError::ShuttingDown),
                         UnpackStatus::WrongClusterVersion => {
-                            return Err(ClientError::WrongClusterVersion)
+                            let cluster = self.fetch_cluster(false).await?;
+                            self.set_cluster(cluster).await?;
+                            continue;
                         }
                         UnpackStatus::Redirect(new_leader, term) => {
                             self.state.write().check_and_update(new_leader, term);
@@ -908,6 +916,11 @@ where
             {
                 Ok(resp) => resp.into_inner(),
                 Err(e) => {
+                    if let UnpackStatus::WrongClusterVersion = unpack_status(&e) {
+                        let cluster = self.fetch_cluster(false).await?;
+                        self.set_cluster(cluster).await?;
+                        continue;
+                    }
                     warn!("fetch read state rpc error: {e}");
                     tokio::time::sleep(retry_timeout.next_retry()).await;
                     continue;

@@ -122,7 +122,7 @@ async fn worker_exe<
             );
             er_ok
         }
-        EntryData::ConfChange(_) | EntryData::Shutdown => true,
+        EntryData::ConfChange(_) | EntryData::Shutdown(_) => true,
     }
 }
 
@@ -152,7 +152,7 @@ async fn worker_as<
             debug!("{id} cmd({}) after sync is called", entry.id());
             asr_ok
         }
-        EntryData::Shutdown => {
+        EntryData::Shutdown(_) => {
             curp.enter_shutdown();
             if let Err(e) = ce.set_last_applied(entry.index) {
                 error!("failed to set last_applied, {e}");
