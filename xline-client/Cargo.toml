@@ -25,7 +25,6 @@ tokio = { version = "0.2.23", package = "madsim-tokio", features = ["sync"] }
 tonic = { version = "0.3.0", package = "madsim-tonic" }
 tower = { version = "0.4", features = ["discover"] }
 utils = { path = "../utils", features = ["parking_lot"] }
-xline = { path = "../xline" }
 xlineapi = { path = "../xlineapi" }
 
 [dev-dependencies]
