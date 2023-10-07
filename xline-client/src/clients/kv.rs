@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use curp::client::Client as CurpClient;
+use xlineapi::command::{command_from_request_wrapper, Command};
 use xlineapi::{
-    command::{Command, KeyRange},
     CompactionResponse, DeleteRangeResponse, PutResponse, RangeResponse, RequestWithToken,
     TxnResponse,
 };
@@ -55,13 +55,12 @@ impl KvClient {
     /// ```
     #[inline]
     pub async fn put(&self, request: PutRequest) -> Result<PutResponse> {
-        let key_ranges = vec![KeyRange::new_one_key(request.key())];
         let propose_id = self.curp_client.gen_propose_id().await?;
         let request = RequestWithToken::new_with_token(
             xlineapi::PutRequest::from(request).into(),
             self.token.clone(),
         );
-        let cmd = Command::new(key_ranges, request, propose_id);
+        let cmd = command_from_request_wrapper(propose_id, request);
         let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
         Ok(cmd_res.into_inner().into())
     }
@@ -101,13 +100,12 @@ impl KvClient {
     /// ```
     #[inline]
     pub async fn range(&self, request: RangeRequest) -> Result<RangeResponse> {
-        let key_ranges = vec![KeyRange::new(request.key(), request.range_end())];
         let propose_id = self.curp_client.gen_propose_id().await?;
         let request = RequestWithToken::new_with_token(
             xlineapi::RangeRequest::from(request).into(),
             self.token.clone(),
         );
-        let cmd = Command::new(key_ranges, request, propose_id);
+        let cmd = command_from_request_wrapper(propose_id, request);
         let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
         Ok(cmd_res.into_inner().into())
     }
@@ -140,13 +138,12 @@ impl KvClient {
     /// ```
     #[inline]
     pub async fn delete(&self, request: DeleteRangeRequest) -> Result<DeleteRangeResponse> {
-        let key_ranges = vec![KeyRange::new(request.key(), request.range_end())];
         let propose_id = self.curp_client.gen_propose_id().await?;
         let request = RequestWithToken::new_with_token(
             xlineapi::DeleteRangeRequest::from(request).into(),
             self.token.clone(),
         );
-        let cmd = Command::new(key_ranges, request, propose_id);
+        let cmd = command_from_request_wrapper(propose_id, request);
         let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
         Ok(cmd_res.into_inner().into())
     }
@@ -190,18 +187,12 @@ impl KvClient {
     /// ```
     #[inline]
     pub async fn txn(&self, request: TxnRequest) -> Result<TxnResponse> {
-        let key_ranges = request
-            .inner
-            .compare
-            .iter()
-            .map(|cmp| KeyRange::new(cmp.key.as_slice(), cmp.range_end.as_slice()))
-            .collect();
         let propose_id = self.curp_client.gen_propose_id().await?;
         let request = RequestWithToken::new_with_token(
             xlineapi::TxnRequest::from(request).into(),
             self.token.clone(),
         );
-        let cmd = Command::new(key_ranges, request, propose_id);
+        let cmd = command_from_request_wrapper(propose_id, request);
         let (cmd_res, Some(sync_res)) = self.curp_client.propose(cmd, false).await? else {
             unreachable!("sync_res is always Some when use_fast_path is false");
         };
@@ -254,7 +245,7 @@ impl KvClient {
             xlineapi::CompactionRequest::from(request).into(),
             self.token.clone(),
         );
-        let cmd = Command::new(vec![], request, propose_id);
+        let cmd = command_from_request_wrapper(propose_id, request);
 
         let res_wrapper = if use_fast_path {
             let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;

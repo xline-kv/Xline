@@ -4,8 +4,9 @@ use curp::client::Client as CurpClient;
 use futures::channel::mpsc::channel;
 use tonic::{transport::Channel, Streaming};
 use xlineapi::{
-    command::Command, LeaseGrantResponse, LeaseKeepAliveResponse, LeaseLeasesResponse,
-    LeaseRevokeResponse, LeaseTimeToLiveResponse, RequestWithToken,
+    command::{command_from_request_wrapper, Command},
+    LeaseGrantResponse, LeaseKeepAliveResponse, LeaseLeasesResponse, LeaseRevokeResponse,
+    LeaseTimeToLiveResponse, RequestWithToken,
 };
 
 use crate::{
@@ -89,7 +90,7 @@ impl LeaseClient {
             xlineapi::LeaseGrantRequest::from(request).into(),
             self.token.clone(),
         );
-        let cmd = Command::new(vec![], request, propose_id);
+        let cmd = command_from_request_wrapper(propose_id, request);
         let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
         Ok(cmd_res.into_inner().into())
     }
@@ -265,7 +266,7 @@ impl LeaseClient {
             xlineapi::LeaseLeasesRequest {}.into(),
             self.token.clone(),
         );
-        let cmd = Command::new(vec![], request, propose_id);
+        let cmd = command_from_request_wrapper(propose_id, request);
         let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
         Ok(cmd_res.into_inner().into())
     }
