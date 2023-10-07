@@ -6,7 +6,7 @@ use curp::{
     LogIndex,
 };
 use engine::Snapshot;
-use xlineapi::command::{Command, KeyRange};
+use xlineapi::command::{Command, CommandKeys, KeyRange};
 
 use super::barriers::{IdBarrier, IndexBarrier};
 use crate::{
@@ -231,18 +231,10 @@ where
 {
     #[allow(clippy::wildcard_enum_match_arm)]
     let keys = match wrapper.request {
-        RequestWrapper::RangeRequest(ref req) => {
-            vec![KeyRange::new(req.key.as_slice(), req.range_end.as_slice())]
-        }
-        RequestWrapper::PutRequest(ref req) => vec![KeyRange::new_one_key(req.key.as_slice())],
-        RequestWrapper::DeleteRangeRequest(ref req) => {
-            vec![KeyRange::new(req.key.as_slice(), req.range_end.as_slice())]
-        }
-        RequestWrapper::TxnRequest(ref req) => req
-            .compare
-            .iter()
-            .map(|cmp| KeyRange::new(cmp.key.as_slice(), cmp.range_end.as_slice()))
-            .collect(),
+        RequestWrapper::RangeRequest(ref req) => req.keys(),
+        RequestWrapper::PutRequest(ref req) => req.keys(),
+        RequestWrapper::DeleteRangeRequest(ref req) => req.keys(),
+        RequestWrapper::TxnRequest(ref req) => req.keys(),
         RequestWrapper::LeaseRevokeRequest(ref req) => {
             let Some(lease_storage) = lease_storage else {
                 panic!("lease_storage should be Some(_) when creating command of LeaseRevokeRequest")
