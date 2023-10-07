@@ -9,15 +9,12 @@ use tonic::transport::Endpoint;
 use tracing::{debug, warn};
 use utils::shutdown;
 use xlineapi::{
-    command::{Command, CommandResponse, SyncResponse},
+    command::{Command, CommandResponse, KeyRange, SyncResponse},
     execute_error::ExecuteError,
     RequestWithToken,
 };
 
-use super::{
-    auth_server::get_token,
-    command::{client_err_to_status, command_from_request_wrapper},
-};
+use super::{auth_server::get_token, command::client_err_to_status};
 use crate::{
     id_gen::IdGenerator,
     rpc::{
@@ -124,14 +121,25 @@ where
         T: Into<RequestWrapper>,
     {
         let token = get_token(request.metadata());
-        let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
+        let request_inner = request.into_inner().into();
+        let keys = {
+            if let RequestWrapper::LeaseRevokeRequest(ref req) = request_inner {
+                self.lease_storage
+                    .get_keys(req.id)
+                    .into_iter()
+                    .map(|k| KeyRange::new(k, ""))
+                    .collect()
+            } else {
+                vec![]
+            }
+        };
+        let wrapper = RequestWithToken::new_with_token(request_inner, token);
         let propose_id = self
             .client
             .gen_propose_id()
             .await
             .map_err(client_err_to_status)?;
-        let cmd =
-            command_from_request_wrapper(propose_id, wrapper, Some(self.lease_storage.as_ref()));
+        let cmd = Command::new(keys, wrapper, propose_id);
 
         self.client
             .propose(cmd, use_fast_path)

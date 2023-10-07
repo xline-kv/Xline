@@ -5,7 +5,7 @@ use futures::future::join_all;
 use tokio::time::timeout;
 use tracing::{debug, instrument};
 use xlineapi::{
-    command::{Command, CommandResponse, SyncResponse},
+    command::{command_from_request_wrapper, Command, CommandResponse, SyncResponse},
     execute_error::ExecuteError,
     request_validation::RequestValidator,
     RequestWithToken, ResponseWrapper,
@@ -23,7 +23,6 @@ use crate::{
         PutRequest, PutResponse, RangeRequest, RangeResponse, RequestWrapper, Response, ResponseOp,
         TxnRequest, TxnResponse,
     },
-    server::command::command_from_request_wrapper,
     storage::{storage_api::StorageApi, AuthStore, KvStore},
 };
 
@@ -103,7 +102,7 @@ where
             .gen_propose_id()
             .await
             .map_err(client_err_to_status)?;
-        let cmd = command_from_request_wrapper::<S>(propose_id, wrapper, None);
+        let cmd = command_from_request_wrapper(propose_id, wrapper);
 
         self.client
             .propose(cmd, use_fast_path)
@@ -212,7 +211,7 @@ where
             .gen_propose_id()
             .await
             .map_err(client_err_to_status)?;
-        let cmd = command_from_request_wrapper::<S>(propose_id, wrapper, None);
+        let cmd = command_from_request_wrapper(propose_id, wrapper);
         if !is_serializable {
             self.wait_read_state(&cmd).await?;
             // Double check whether the range request is compacted or not since the compaction request
@@ -313,7 +312,7 @@ where
                 .gen_propose_id()
                 .await
                 .map_err(client_err_to_status)?;
-            let cmd = command_from_request_wrapper::<S>(propose_id, wrapper, None);
+            let cmd = command_from_request_wrapper(propose_id, wrapper);
             if !is_serializable {
                 self.wait_read_state(&cmd).await?;
             }
