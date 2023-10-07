@@ -10,8 +10,9 @@ use prost::Message;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    execute_error::ExecuteError, PbCommand, PbCommandResponse, PbKeyRange, PbSyncResponse, Request,
-    RequestWithToken, RequestWrapper, ResponseWrapper,
+    execute_error::ExecuteError, DeleteRangeRequest, PbCommand, PbCommandResponse, PbKeyRange,
+    PbSyncResponse, PutRequest, RangeRequest, Request, RequestWithToken, RequestWrapper,
+    ResponseWrapper, TxnRequest,
 };
 
 /// Range start and end to get all keys
@@ -505,6 +506,69 @@ impl PbCodec for Command {
                 .unwrap_or_else(|| unreachable!("propose_id should be set in Command"))
                 .into(),
         })
+    }
+}
+
+/// Get command keys from a Request for conflict check
+pub trait CommandKeys {
+    /// Key ranges
+    fn keys(&self) -> Vec<KeyRange>;
+}
+
+impl CommandKeys for RangeRequest {
+    fn keys(&self) -> Vec<KeyRange> {
+        vec![KeyRange::new(
+            self.key.as_slice(),
+            self.range_end.as_slice(),
+        )]
+    }
+}
+
+impl CommandKeys for PutRequest {
+    fn keys(&self) -> Vec<KeyRange> {
+        vec![KeyRange::new_one_key(self.key.as_slice())]
+    }
+}
+
+impl CommandKeys for DeleteRangeRequest {
+    fn keys(&self) -> Vec<KeyRange> {
+        vec![KeyRange::new(
+            self.key.as_slice(),
+            self.range_end.as_slice(),
+        )]
+    }
+}
+
+impl CommandKeys for TxnRequest {
+    fn keys(&self) -> Vec<KeyRange> {
+        let mut keys: Vec<_> = self
+            .compare
+            .iter()
+            .map(|cmp| KeyRange::new(cmp.key.as_slice(), cmp.range_end.as_slice()))
+            .collect();
+
+        for op in self
+            .success
+            .iter()
+            .chain(self.failure.iter())
+            .map(|op| &op.request)
+            .flatten()
+        {
+            match *op {
+                Request::RequestRange(ref req) => {
+                    keys.push(KeyRange::new(req.key.as_slice(), req.range_end.as_slice()));
+                }
+                Request::RequestPut(ref req) => {
+                    keys.push(KeyRange::new_one_key(req.key.as_slice()))
+                }
+                Request::RequestDeleteRange(ref req) => {
+                    keys.push(KeyRange::new(req.key.as_slice(), req.range_end.as_slice()))
+                }
+                Request::RequestTxn(ref req) => keys.append(&mut req.keys()),
+            }
+        }
+
+        keys
     }
 }
 
