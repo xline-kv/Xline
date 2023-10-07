@@ -86,7 +86,7 @@ impl<C: Command> CommandBoard<C> {
     pub(super) fn insert_asr(&mut self, id: &ProposeId, asr: Result<C::ASR, C::Error>) {
         assert!(
             self.asr_buffer.insert(id.clone(), asr).is_none(),
-            "er should not be inserted twice"
+            "asr should not be inserted twice"
         );
 
         self.notify_asr(id);
@@ -96,7 +96,7 @@ impl<C: Command> CommandBoard<C> {
     pub(super) fn insert_conf(&mut self, id: &ProposeId, conf_r: Result<bool, ConfChangeError>) {
         assert!(
             self.conf_buffer.insert(id.clone(), conf_r).is_none(),
-            "er should not be inserted twice"
+            "conf should not be inserted twice"
         );
 
         self.notify_conf(id);
@@ -211,14 +211,14 @@ impl<C: Command> CommandBoard<C> {
         }
     }
 
-    /// Wait for an execution result
+    /// Wait for an conf change result
     pub(super) async fn wait_for_conf(
         cb: &CmdBoardRef<C>,
         id: &ProposeId,
     ) -> Result<bool, ConfChangeError> {
         loop {
-            if let Some(er) = cb.map_read(|cb_r| cb_r.conf_buffer.get(id).cloned()) {
-                return er;
+            if let Some(ccr) = cb.map_read(|cb_r| cb_r.conf_buffer.get(id).cloned()) {
+                return ccr;
             }
             let listener = cb.write().conf_listener(id);
             listener.await;
