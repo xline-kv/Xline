@@ -43,7 +43,7 @@ use self::{
 use super::cmd_worker::CEEventTxApi;
 use crate::{
     cmd::{Command, ProposeId},
-    error::ProposeError,
+    error::{ProposeError, RpcError},
     log_entry::{EntryData, LogEntry},
     members::{ClusterInfo, ServerId},
     role_change::RoleChange,
@@ -964,7 +964,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     /// Apply conf changes and return true if self node is removed
-    pub(super) async fn apply_conf_change(
+    pub(super) fn apply_conf_change(
         &self,
         changes: Vec<ConfChange>,
     ) -> Result<bool, ConfChangeError> {
@@ -975,7 +975,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
         self.check_new_config(&conf_change)?;
 
-        self.switch_config(conf_change).await
+        Ok(self.switch_config(conf_change))
     }
 
     /// Get a receiver for conf changes
@@ -988,14 +988,21 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         &self.ctx.connects
     }
 
+    /// Insert connect
+    pub(super) fn insert_connect(&self, connect: InnerConnectApiWrapper) {
+        let _ig = self.ctx.connects.insert(connect.id(), connect);
+    }
+
     /// Get connect
-    pub(super) fn connect(&self, id: ServerId) -> InnerConnectApiWrapper {
-        self.ctx
-            .connects
-            .get(&id)
-            .unwrap_or_else(|| unreachable!("server id {id} not found"))
-            .value()
-            .clone()
+    pub(super) async fn update_connect(
+        &self,
+        id: ServerId,
+        addrs: Vec<String>,
+    ) -> Result<(), RpcError> {
+        match self.ctx.connects.get(&id) {
+            Some(connect) => connect.update_addrs(addrs).await,
+            None => Ok(()),
+        }
     }
 }
 
@@ -1268,7 +1275,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
     /// Switch to a new config and return true if self node is removed
     #[allow(clippy::unimplemented)] // TODO: remove this when learner is implemented
-    async fn switch_config(&self, conf_change: ConfChange) -> Result<bool, ConfChangeError> {
+    fn switch_config(&self, conf_change: ConfChange) -> bool {
         let node_id = conf_change.node_id;
         let remove_self = match conf_change.change_type() {
             ConfChangeType::Add => {
@@ -1278,10 +1285,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 self.lst.insert(node_id);
                 _ = self.ctx.sync_events.insert(node_id, Arc::new(Event::new()));
                 self.ctx.cluster_info.insert(member);
-                let connect = InnerConnectApiWrapper::connect(node_id, conf_change.address.clone())
-                    .await
-                    .map_err(|e| ConfChangeError::Other(e.to_string()))?;
-                _ = self.ctx.connects.insert(connect.id(), connect);
                 false
             }
             ConfChangeType::Remove => {
@@ -1297,12 +1300,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 self.ctx
                     .cluster_info
                     .update(&node_id, conf_change.address.clone());
-                if let Some(connect) = self.ctx.connects.get_mut(&node_id) {
-                    connect
-                        .update_addrs(conf_change.address.clone())
-                        .await
-                        .map_err(|e| ConfChangeError::Other(e.to_string()))?;
-                }
                 false
             }
             ConfChangeType::AddLearner | ConfChangeType::Promote => {
@@ -1313,6 +1310,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             .change_tx
             .send(conf_change)
             .unwrap_or_else(|_e| unreachable!("change_rx should not be dropped"));
-        Ok(remove_self)
+        remove_self
     }
 }

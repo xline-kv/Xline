@@ -448,7 +448,14 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
 
                     match change.change_type() {
                         ConfChangeType::Add | ConfChangeType::AddLearner => {
-                            let connect = curp.connect(change.node_id);
+                            let connect = match InnerConnectApiWrapper::connect(change.node_id, change.address).await {
+                                Ok(connect) => connect,
+                                Err(e) => {
+                                    error!("connect to {} failed, {}", change.node_id, e);
+                                    continue;
+                                }
+                            };
+                            curp.insert_connect(connect.clone());
                             let sync_event = curp.sync_event(change.node_id);
                             let remove_event = Arc::new(Event::new());
                             sender
@@ -471,7 +478,13 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                             };
                             event.notify(1);
                         }
-                        ConfChangeType::Update | ConfChangeType::Promote => { }   // TODO: update connect when #423 merged
+                        ConfChangeType::Update =>{
+                            if let Err(e) = curp.update_connect(change.node_id,change.address).await {
+                                error!("update connect {} failed, {}", change.node_id, e);
+                                continue;
+                            }
+                        }
+                        ConfChangeType::Promote => {}   // TODO: Support Promote
                     }
                 }
             }

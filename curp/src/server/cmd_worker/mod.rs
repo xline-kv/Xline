@@ -166,7 +166,7 @@ async fn worker_as<
                 error!("failed to set last_applied, {e}");
                 return false;
             }
-            let res = curp.apply_conf_change(changes).await;
+            let res = curp.apply_conf_change(changes);
             let is_ok = res.is_ok();
             let shutdown_self = res.as_ref().is_ok_and(|r| *r);
             cb.write().insert_conf(entry.id(), res);
