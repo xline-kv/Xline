@@ -572,6 +572,19 @@ impl CommandKeys for TxnRequest {
     }
 }
 
+/// Generate `Command` proposal from `Request`
+pub fn command_from_request_wrapper(propose_id: ProposeId, wrapper: RequestWithToken) -> Command {
+    #[allow(clippy::wildcard_enum_match_arm)]
+    let keys = match wrapper.request {
+        RequestWrapper::RangeRequest(ref req) => req.keys(),
+        RequestWrapper::PutRequest(ref req) => req.keys(),
+        RequestWrapper::DeleteRangeRequest(ref req) => req.keys(),
+        RequestWrapper::TxnRequest(ref req) => req.keys(),
+        _ => vec![],
+    };
+    Command::new(keys, wrapper, propose_id)
+}
+
 #[cfg(test)]
 mod test {
     use crate::{Compare, PutResponse};

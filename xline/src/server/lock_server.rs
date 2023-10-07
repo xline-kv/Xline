@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, sync::Arc};
+use std::sync::Arc;
 
 use async_stream::stream;
 use clippy_utilities::OverflowArithmetic;
@@ -6,15 +6,12 @@ use curp::client::Client;
 use tonic::transport::{Channel, Endpoint};
 use tracing::debug;
 use xlineapi::{
-    command::{Command, CommandResponse, KeyRange, SyncResponse},
+    command::{command_from_request_wrapper, Command, CommandResponse, KeyRange, SyncResponse},
     execute_error::ExecuteError,
     EventType, RequestWithToken,
 };
 
-use super::{
-    auth_server::get_token,
-    command::{client_err_to_status, command_from_request_wrapper},
-};
+use super::{auth_server::get_token, command::client_err_to_status};
 use crate::{
     id_gen::IdGenerator,
     rpc::{
@@ -24,7 +21,6 @@ use crate::{
         ResponseHeader, SortOrder, SortTarget, TargetUnion, TxnRequest, TxnResponse, UnlockRequest,
         UnlockResponse, WatchClient, WatchCreateRequest, WatchRequest,
     },
-    storage::storage_api::StorageApi,
 };
 
 /// Default session ttl
@@ -32,21 +28,16 @@ const DEFAULT_SESSION_TTL: i64 = 60;
 
 /// Lock Server
 #[derive(Debug)]
-pub(super) struct LockServer<S> {
+pub(super) struct LockServer {
     /// Consensus client
     client: Arc<Client<Command>>,
     /// Id Generator
     id_gen: Arc<IdGenerator>,
     /// Server addresses
     addrs: Vec<Endpoint>,
-    /// Phantom
-    phantom: PhantomData<S>,
 }
 
-impl<S> LockServer<S>
-where
-    S: StorageApi,
-{
+impl LockServer {
     /// New `LockServer`
     pub(super) fn new(
         client: Arc<Client<Command>>,
@@ -67,7 +58,6 @@ where
             client,
             id_gen,
             addrs,
-            phantom: PhantomData,
         }
     }
 
@@ -87,7 +77,7 @@ where
             .gen_propose_id()
             .await
             .map_err(client_err_to_status)?;
-        let cmd = command_from_request_wrapper::<S>(propose_id, wrapper, None);
+        let cmd = command_from_request_wrapper(propose_id, wrapper);
 
         self.client
             .propose(cmd, use_fast_path)
@@ -218,10 +208,7 @@ where
 }
 
 #[tonic::async_trait]
-impl<S> Lock for LockServer<S>
-where
-    S: StorageApi,
-{
+impl Lock for LockServer {
     /// Lock acquires a distributed shared lock on a given named lock.
     /// On success, it will return a unique key that exists so long as the
     /// lock is held by the caller. This key can be used in conjunction with
