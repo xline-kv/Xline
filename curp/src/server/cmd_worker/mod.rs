@@ -155,18 +155,20 @@ async fn worker_as<
             curp.enter_shutdown();
             if let Err(e) = ce.set_last_applied(entry.index) {
                 error!("failed to set last_applied, {e}");
+                return false;
             }
             cb.write().notify_shutdown();
             true
         }
         EntryData::ConfChange(ref conf_change) => {
             let changes = conf_change.changes().to_owned();
+            if let Err(e) = ce.set_last_applied(entry.index) {
+                error!("failed to set last_applied, {e}");
+                return false;
+            }
             let res = curp.apply_conf_change(changes).await;
             let is_ok = res.is_ok();
             let shutdown_self = res.as_ref().is_ok_and(|r| *r);
-            if let Err(e) = ce.set_last_applied(entry.index) {
-                error!("failed to set last_applied, {e}");
-            }
             cb.write().insert_conf(entry.id(), res);
             if shutdown_self {
                 curp.shutdown_trigger().self_shutdown();

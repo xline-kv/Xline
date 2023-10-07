@@ -292,6 +292,7 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
     }
 
     /// Send `ShutdownRequest`
+    #[instrument(skip(self), name = "client shutdown")]
     async fn shutdown(
         &self,
         request: ShutdownRequest,
