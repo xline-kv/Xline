@@ -731,7 +731,7 @@ async fn add_node_should_add_new_node_to_curp() {
         Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
     let changes = vec![ConfChange::add(1, "http://127.0.0.1:4567".to_owned())];
-    assert!(curp.apply_conf_change(changes).await.is_ok());
+    assert!(curp.apply_conf_change(changes).is_ok());
     assert!(curp.contains(1));
 }
 
@@ -747,7 +747,7 @@ async fn add_exists_node_should_return_node_already_exists_error() {
         exists_node_id,
         "http://127.0.0.1:4567".to_owned(),
     )];
-    let resp = curp.apply_conf_change(changes).await;
+    let resp = curp.apply_conf_change(changes);
     let error_match = matches!(resp, Err(ConfChangeError::NodeAlreadyExists(())));
     assert!(error_match);
 }
@@ -761,21 +761,21 @@ async fn remove_node_should_remove_node_from_curp() {
     };
     let follower_id = curp.cluster().get_id_by_name("S1").unwrap();
     let changes = vec![ConfChange::remove(follower_id)];
-    let resp = curp.apply_conf_change(changes).await;
+    let resp = curp.apply_conf_change(changes);
     assert!(resp.is_ok());
     assert!(!curp.contains(follower_id));
 }
 
 #[traced_test]
 #[tokio::test]
-async fn apply_conf_change_shoulde_return_true_when_remove_self_node() {
+async fn apply_conf_change_should_return_true_when_remove_self_node() {
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         Arc::new(RawCurp::new_test(5, exe_tx, mock_role_change()))
     };
     let self_id = curp.id();
     let changes = vec![ConfChange::remove(self_id)];
-    let resp = curp.apply_conf_change(changes).await;
+    let resp = curp.apply_conf_change(changes);
     assert!(resp.is_ok_and(|b| b));
 }
 
@@ -787,7 +787,7 @@ async fn remove_non_exists_node_should_return_node_not_exists_error() {
         Arc::new(RawCurp::new_test(5, exe_tx, mock_role_change()))
     };
     let changes = vec![ConfChange::remove(1)];
-    let resp = curp.apply_conf_change(changes).await;
+    let resp = curp.apply_conf_change(changes);
     assert!(matches!(resp, Err(ConfChangeError::NodeNotExists(()))));
 }
 
@@ -800,7 +800,7 @@ async fn remove_node_should_return_invalid_config_error_when_nodes_count_less_th
     };
     let follower_id = curp.cluster().get_id_by_name("S1").unwrap();
     let changes = vec![ConfChange::remove(follower_id)];
-    let resp = curp.apply_conf_change(changes).await;
+    let resp = curp.apply_conf_change(changes);
     assert!(matches!(resp, Err(ConfChangeError::InvalidConfig(()))));
 }
 
@@ -826,7 +826,7 @@ async fn update_node_should_update_the_address_of_node() {
         follower_id,
         "http://127.0.0.1:4567".to_owned(),
     )];
-    let resp = curp.apply_conf_change(changes).await;
+    let resp = curp.apply_conf_change(changes);
     assert!(resp.is_ok());
     assert_eq!(
         curp.cluster().addrs(follower_id),
