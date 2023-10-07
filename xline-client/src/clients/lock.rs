@@ -7,11 +7,11 @@ use std::{
 };
 
 use clippy_utilities::OverflowArithmetic;
-use curp::{client::Client as CurpClient, cmd::ProposeId};
+use curp::client::Client as CurpClient;
 use futures::{Future, FutureExt};
 use tonic::transport::Channel;
 use xlineapi::{
-    command::{Command, CommandResponse, KeyRange, SyncResponse},
+    command::{command_from_request_wrapper, Command, CommandResponse, KeyRange, SyncResponse},
     Compare, CompareResult, CompareTarget, DeleteRangeRequest, DeleteRangeResponse, EventType,
     LockResponse, PutRequest, RangeRequest, RangeResponse, Request, RequestOp, RequestWithToken,
     RequestWrapper, Response, ResponseHeader, SortOrder, SortTarget, TargetUnion, TxnRequest,
@@ -233,26 +233,6 @@ impl LockClient {
         Ok(UnlockResponse { header })
     }
 
-    /// Generate `Command` proposal from `Request`
-    fn command_from_request_wrapper(propose_id: ProposeId, wrapper: RequestWithToken) -> Command {
-        #[allow(clippy::wildcard_enum_match_arm)]
-        let keys = match wrapper.request {
-            RequestWrapper::DeleteRangeRequest(ref req) => {
-                vec![KeyRange::new_one_key(req.key.as_slice())]
-            }
-            RequestWrapper::RangeRequest(ref req) => {
-                vec![KeyRange::new(req.key.as_slice(), req.range_end.as_slice())]
-            }
-            RequestWrapper::TxnRequest(ref req) => req
-                .compare
-                .iter()
-                .map(|cmp| KeyRange::new(cmp.key.as_slice(), cmp.range_end.as_slice()))
-                .collect(),
-            _ => vec![],
-        };
-        Command::new(keys, wrapper, propose_id)
-    }
-
     /// Propose request and get result with fast/slow path
     async fn propose<T>(
         &self,
@@ -266,7 +246,7 @@ impl LockClient {
             RequestWithToken::new_with_token(request.into(), self.token.clone());
         let propose_id = self.curp_client.gen_propose_id().await?;
 
-        let cmd = Self::command_from_request_wrapper(propose_id, request_with_token);
+        let cmd = command_from_request_wrapper(propose_id, request_with_token);
         self.curp_client
             .propose(cmd, use_fast_path)
             .await

@@ -7,13 +7,13 @@ use pbkdf2::{
 };
 use tonic::transport::Channel;
 use xlineapi::{
-    command::Command, AuthDisableResponse, AuthEnableResponse, AuthRoleAddResponse,
-    AuthRoleDeleteResponse, AuthRoleGetResponse, AuthRoleGrantPermissionResponse,
-    AuthRoleListResponse, AuthRoleRevokePermissionResponse, AuthStatusResponse,
-    AuthUserAddResponse, AuthUserChangePasswordResponse, AuthUserDeleteResponse,
-    AuthUserGetResponse, AuthUserGrantRoleResponse, AuthUserListResponse,
-    AuthUserRevokeRoleResponse, AuthenticateResponse, RequestWithToken, RequestWrapper,
-    ResponseWrapper,
+    command::{command_from_request_wrapper, Command},
+    AuthDisableResponse, AuthEnableResponse, AuthRoleAddResponse, AuthRoleDeleteResponse,
+    AuthRoleGetResponse, AuthRoleGrantPermissionResponse, AuthRoleListResponse,
+    AuthRoleRevokePermissionResponse, AuthStatusResponse, AuthUserAddResponse,
+    AuthUserChangePasswordResponse, AuthUserDeleteResponse, AuthUserGetResponse,
+    AuthUserGrantRoleResponse, AuthUserListResponse, AuthUserRevokeRoleResponse,
+    AuthenticateResponse, RequestWithToken, RequestWrapper, ResponseWrapper,
 };
 
 use crate::{
@@ -713,7 +713,7 @@ impl AuthClient {
     ) -> Result<Res> {
         let propose_id = self.curp_client.gen_propose_id().await?;
         let request = RequestWithToken::new_with_token(request.into(), self.token.clone());
-        let cmd = Command::new(vec![], request, propose_id);
+        let cmd = command_from_request_wrapper(propose_id, request);
 
         let res_wrapper = if use_fast_path {
             let (cmd_res, _sync_error) = self.curp_client.propose(cmd, true).await?;
