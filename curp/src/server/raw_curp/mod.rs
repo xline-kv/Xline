@@ -1249,17 +1249,17 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         let node_id = conf_change.node_id;
         match conf_change.change_type() {
             ConfChangeType::Add => {
-                if !statuses_ids.insert(node_id) || !config.insert(node_id) {
+                if !statuses_ids.insert(node_id) || !config.voters_mut().insert(node_id) {
                     return Err(ConfChangeError::NodeAlreadyExists(()));
                 }
             }
             ConfChangeType::Remove => {
-                if !statuses_ids.remove(&node_id) || !config.remove(&node_id) {
+                if !statuses_ids.remove(&node_id) || !config.voters_mut().remove(&node_id) {
                     return Err(ConfChangeError::NodeNotExists(()));
                 }
             }
             ConfChangeType::Update | ConfChangeType::Promote => {
-                if statuses_ids.get(&node_id).is_none() || !config.contains(&node_id) {
+                if statuses_ids.get(&node_id).is_none() || !config.voters().contains(&node_id) {
                     return Err(ConfChangeError::NodeNotExists(()));
                 }
             }
@@ -1281,7 +1281,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             ConfChangeType::Add => {
                 let member = Member::new(node_id, "", conf_change.address.clone(), false);
                 self.cst
-                    .map_lock(|mut cst_l| _ = cst_l.config.insert(node_id));
+                    .map_lock(|mut cst_l| _ = cst_l.config.voters_mut().insert(node_id));
                 self.lst.insert(node_id);
                 _ = self.ctx.sync_events.insert(node_id, Arc::new(Event::new()));
                 self.ctx.cluster_info.insert(member);
@@ -1289,7 +1289,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             }
             ConfChangeType::Remove => {
                 self.cst
-                    .map_lock(|mut cst_l| _ = cst_l.config.remove(&node_id));
+                    .map_lock(|mut cst_l| _ = cst_l.config.voters_mut().remove(&node_id));
                 self.lst.remove(node_id);
                 _ = self.ctx.sync_events.remove(&node_id);
                 self.ctx.cluster_info.remove(&node_id);
