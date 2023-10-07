@@ -1,19 +1,18 @@
 use std::sync::Arc;
 
+use super::barriers::{IdBarrier, IndexBarrier};
+use crate::{
+    revision_number::RevisionNumberGenerator,
+    rpc::RequestBackend,
+    storage::{db::WriteOp, storage_api::StorageApi, AuthStore, KvStore, LeaseStore},
+};
 use curp::{
-    cmd::{Command as CurpCommand, CommandExecutor as CurpCommandExecutor, ProposeId},
+    cmd::{Command as CurpCommand, CommandExecutor as CurpCommandExecutor},
     error::ClientError,
     LogIndex,
 };
 use engine::Snapshot;
-use xlineapi::command::{Command, CommandKeys, KeyRange};
-
-use super::barriers::{IdBarrier, IndexBarrier};
-use crate::{
-    revision_number::RevisionNumberGenerator,
-    rpc::{RequestBackend, RequestWithToken, RequestWrapper},
-    storage::{db::WriteOp, storage_api::StorageApi, AuthStore, KvStore, LeaseStore},
-};
+use xlineapi::command::Command;
 
 /// Meta table name
 pub(crate) const META_TABLE: &str = "meta";
@@ -218,36 +217,6 @@ where
             .unwrap_or_else(|e| panic!("cannot decode index from backend, {e:?}"));
         Ok(u64::from_le_bytes(buf))
     }
-}
-
-/// Generate `Command` proposal from `Request`
-pub(super) fn command_from_request_wrapper<S>(
-    propose_id: ProposeId,
-    wrapper: RequestWithToken,
-    lease_storage: Option<&LeaseStore<S>>,
-) -> Command
-where
-    S: StorageApi,
-{
-    #[allow(clippy::wildcard_enum_match_arm)]
-    let keys = match wrapper.request {
-        RequestWrapper::RangeRequest(ref req) => req.keys(),
-        RequestWrapper::PutRequest(ref req) => req.keys(),
-        RequestWrapper::DeleteRangeRequest(ref req) => req.keys(),
-        RequestWrapper::TxnRequest(ref req) => req.keys(),
-        RequestWrapper::LeaseRevokeRequest(ref req) => {
-            let Some(lease_storage) = lease_storage else {
-                panic!("lease_storage should be Some(_) when creating command of LeaseRevokeRequest")
-            };
-            lease_storage
-                .get_keys(req.id)
-                .into_iter()
-                .map(|k| KeyRange::new(k, ""))
-                .collect()
-        }
-        _ => vec![],
-    };
-    Command::new(keys, wrapper, propose_id)
 }
 
 /// Convert `ClientError` to `tonic::Status`
