@@ -3476,7 +3476,6 @@ dependencies = [
  "thiserror",
  "tower",
  "utils",
- "xline",
  "xline-test-utils",
  "xlineapi",
 ]
