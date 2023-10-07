@@ -32,7 +32,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         self.cluster().all_members().contains_key(&id)
             && self.ctx.sync_events.contains_key(&id)
             && self.lst.get_all_statuses().contains_key(&id)
-            && self.cst.lock().config.contains(&id)
+            && self.cst.lock().config.voters().contains(&id)
     }
 
     pub(crate) fn commit_index(&self) -> LogIndex {
