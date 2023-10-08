@@ -3,11 +3,14 @@ use std::{pin::Pin, sync::Arc};
 use async_stream::try_stream;
 use bytes::BytesMut;
 use clippy_utilities::{Cast, OverflowArithmetic};
+use curp::client::Client;
+use curp::members::ClusterInfo;
 use engine::SnapshotApi;
 use futures::stream::Stream;
 use sha2::{Digest, Sha256};
 use tracing::error;
 
+use super::command::{propose_err_to_status, Command};
 use crate::{
     header_gen::HeaderGenerator,
     rpc::{
@@ -34,17 +37,28 @@ where
     persistent: Arc<S>, // TODO: `persistent` is not a good name, rename it in a better way
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
+    /// Consensus client
+    client: Arc<Client<Command>>,
+    /// cluster information
+    cluster_info: Arc<ClusterInfo>,
 }
 
 impl<S> MaintenanceServer<S>
 where
     S: StorageApi,
 {
-    /// New `LeaseServer`
-    pub(crate) fn new(persistent: Arc<S>, header_gen: Arc<HeaderGenerator>) -> Self {
+    /// New `MaintenanceServer`
+    pub(crate) fn new(
+        client: Arc<Client<Command>>,
+        persistent: Arc<S>,
+        header_gen: Arc<HeaderGenerator>,
+        cluster_info: Arc<ClusterInfo>,
+    ) -> Self {
         Self {
             persistent,
             header_gen,
+            client,
+            cluster_info,
         }
     }
 }
@@ -67,9 +81,32 @@ where
         &self,
         _request: tonic::Request<StatusRequest>,
     ) -> Result<tonic::Response<StatusResponse>, tonic::Status> {
-        Err(tonic::Status::unimplemented(
-            "status is unimplemented".to_owned(),
-        ))
+        let cluster = self
+            .client
+            .get_cluster_from_curp(false)
+            .await
+            .map_err(propose_err_to_status)?;
+        let header = self.header_gen.gen_header();
+        let self_id = self.cluster_info.self_id();
+        let is_learner = cluster
+            .members
+            .iter()
+            .find(|member| member.id == self_id)
+            .map_or(false, |member| member.is_learner);
+        // TODO should we add `raft_index` and `raft_applied_index` in FetchClusterResponse?
+        let response = StatusResponse {
+            header: Some(header),
+            version: "NA".to_owned(),
+            db_size: -1,
+            leader: cluster.leader_id.unwrap_or(0), // None means this member believes there is no leader
+            raft_index: 0,
+            raft_term: cluster.term,
+            raft_applied_index: 0,
+            errors: vec![],
+            db_size_in_use: -1,
+            is_learner,
+        };
+        Ok(tonic::Response::new(response))
     }
 
     async fn defragment(
@@ -106,51 +143,7 @@ where
         &self,
         _request: tonic::Request<SnapshotRequest>,
     ) -> Result<tonic::Response<Self::SnapshotStream>, tonic::Status> {
-        let tmp_path = format!("/tmp/snapshot-{}", uuid::Uuid::new_v4());
-        let mut snapshot = self.persistent.get_snapshot(tmp_path).map_err(|e| {
-            error!("get snapshot failed, {e}");
-            tonic::Status::internal("get snapshot failed")
-        })?;
-
-        let header = self.header_gen.gen_header();
-
-        let stream = try_stream! {
-            if let Err(e) = snapshot.rewind() {
-                error!("snapshot rewind failed, {e}");
-                return;
-            }
-
-            let mut remain_size = snapshot.size();
-            let mut checksum_gen = Sha256::new();
-            while remain_size > 0 {
-                let buf_size = std::cmp::min(MAINTENANCE_SNAPSHOT_CHUNK_SIZE, remain_size);
-                let mut buf = BytesMut::with_capacity(buf_size.cast());
-                remain_size = remain_size.overflow_sub(buf_size);
-                snapshot.read_buf_exact(&mut buf).await.map_err(|_e| {tonic::Status::internal("snapshot read failed")})?;
-                // etcd client will use the size of the snapshot to determine whether checksum is included,
-                // and the check method size % 512 == sha256.size, So we need to pad snapshots to multiples
-                // of 512 bytes
-                let padding = MIN_PAGE_SIZE.overflow_sub(buf_size.overflow_rem(MIN_PAGE_SIZE));
-                if padding != 0 {
-                    buf.extend_from_slice(&vec![0; padding.cast()]);
-                }
-                checksum_gen.update(&buf);
-                yield SnapshotResponse {
-                    header: Some(header.clone()),
-                    remaining_bytes: remain_size,
-                    blob: Vec::from(buf)
-                };
-            }
-            let checksum = checksum_gen.finalize().to_vec();
-            yield SnapshotResponse {
-                header: Some(header),
-                remaining_bytes: 0,
-                blob: checksum,
-            };
-            if let Err(e) = snapshot.clean().await {
-                error!("snapshot clean failed, {e}");
-            }
-        };
+        let stream = snapshot_stream(self.header_gen.as_ref(), self.persistent.as_ref())?;
 
         Ok(tonic::Response::new(Box::pin(stream)))
     }
@@ -174,6 +167,60 @@ where
     }
 }
 
+/// Generate snapshot stream
+fn snapshot_stream<S: StorageApi>(
+    header_gen: &HeaderGenerator,
+    persistent: &S,
+) -> Result<impl Stream<Item = Result<SnapshotResponse, tonic::Status>>, tonic::Status> {
+    let tmp_path = format!("/tmp/snapshot-{}", uuid::Uuid::new_v4());
+    let mut snapshot = persistent.get_snapshot(tmp_path).map_err(|e| {
+        error!("get snapshot failed, {e}");
+        tonic::Status::internal("get snapshot failed")
+    })?;
+
+    let header = header_gen.gen_header();
+
+    let stream = try_stream! {
+        if let Err(e) = snapshot.rewind() {
+            error!("snapshot rewind failed, {e}");
+            return;
+        }
+
+        let mut remain_size = snapshot.size();
+        let mut checksum_gen = Sha256::new();
+        while remain_size > 0 {
+            let buf_size = std::cmp::min(MAINTENANCE_SNAPSHOT_CHUNK_SIZE, remain_size);
+            let mut buf = BytesMut::with_capacity(buf_size.cast());
+            remain_size = remain_size.overflow_sub(buf_size);
+            snapshot.read_buf_exact(&mut buf).await.map_err(|_e| {tonic::Status::internal("snapshot read failed")})?;
+            // etcd client will use the size of the snapshot to determine whether checksum is included,
+            // and the check method size % 512 == sha256.size, So we need to pad snapshots to multiples
+            // of 512 bytes
+            let padding = MIN_PAGE_SIZE.overflow_sub(buf_size.overflow_rem(MIN_PAGE_SIZE));
+            if padding != 0 {
+                buf.extend_from_slice(&vec![0; padding.cast()]);
+            }
+            checksum_gen.update(&buf);
+            yield SnapshotResponse {
+                header: Some(header.clone()),
+                remaining_bytes: remain_size,
+                blob: Vec::from(buf)
+            };
+        }
+        let checksum = checksum_gen.finalize().to_vec();
+        yield SnapshotResponse {
+            header: Some(header),
+            remaining_bytes: 0,
+            blob: checksum,
+        };
+        if let Err(e) = snapshot.clean().await {
+            error!("snapshot clean failed, {e}");
+        }
+    };
+
+    Ok(stream)
+}
+
 #[cfg(test)]
 mod test {
     use std::{error::Error, path::PathBuf};
@@ -187,18 +234,15 @@ mod test {
 
     #[tokio::test]
     #[abort_on_panic]
-    async fn test_snapshot_rpc() -> Result<(), Box<dyn Error>> {
+    async fn test_snapshot_stream() -> Result<(), Box<dyn Error>> {
         let dir = PathBuf::from("/tmp/test_snapshot_rpc");
         let db_path = dir.join("db");
         let snapshot_path = dir.join("snapshot");
 
         let persistent = DB::open(&StorageConfig::RocksDB(db_path.clone()))?;
-        let header_gen = Arc::new(HeaderGenerator::new(0, 0));
-        let maintenance_server = MaintenanceServer::new(persistent, header_gen);
-        let mut snap1_stream = maintenance_server
-            .snapshot(tonic::Request::new(SnapshotRequest {}))
-            .await?
-            .into_inner();
+        let header_gen = HeaderGenerator::new(0, 0);
+        let snap1_stream = snapshot_stream(&header_gen, persistent.as_ref())?;
+        tokio::pin!(snap1_stream);
         let mut recv_data = Vec::new();
         while let Some(data) = snap1_stream.next().await {
             recv_data.append(&mut data?.blob);
@@ -208,10 +252,7 @@ mod test {
             Sha256::output_size()
         );
 
-        let mut snap2 = maintenance_server
-            .persistent
-            .get_snapshot(snapshot_path)
-            .unwrap();
+        let mut snap2 = persistent.get_snapshot(snapshot_path).unwrap();
         let size = snap2.size().cast();
         let mut snap2_data = BytesMut::with_capacity(size);
         snap2.read_buf_exact(&mut snap2_data).await.unwrap();
