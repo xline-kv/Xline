@@ -299,7 +299,7 @@ async fn shutdown_rpc_should_shutdown_the_cluster() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
-async fn propose_add_node() {
+async fn propose_add_node_should_success() {
     init_logger();
 
     let group = CurpGroup::new(3).await;
@@ -321,7 +321,7 @@ async fn propose_add_node() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
-async fn propose_remove_node() {
+async fn propose_remove_node_should_success() {
     init_logger();
 
     let group = CurpGroup::new(5).await;
@@ -342,7 +342,7 @@ async fn propose_remove_node() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
-async fn propose_update_node() {
+async fn propose_update_node_should_success() {
     init_logger();
 
     let group = CurpGroup::new(5).await;
@@ -363,7 +363,7 @@ async fn propose_update_node() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
-async fn propose_remove_node_failed() {
+async fn propose_remove_node_should_failed_when_cluster_nodes_equals_to_three() {
     init_logger();
 
     let group = CurpGroup::new(3).await;
@@ -406,7 +406,7 @@ async fn shutdown_rpc_should_shutdown_the_cluster_when_client_has_wrong_leader()
 
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
-async fn propose_conf_change_to_learner() {
+async fn propose_conf_change_to_follower() {
     init_logger();
     let group = CurpGroup::new(5).await;
 

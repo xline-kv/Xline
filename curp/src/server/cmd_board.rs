@@ -82,7 +82,7 @@ impl<C: Command> CommandBoard<C> {
         }
     }
 
-    /// Insert er to internal buffer
+    /// Insert asr to internal buffer
     pub(super) fn insert_asr(&mut self, id: &ProposeId, asr: Result<C::ASR, C::Error>) {
         assert!(
             self.asr_buffer.insert(id.clone(), asr).is_none(),
@@ -92,7 +92,7 @@ impl<C: Command> CommandBoard<C> {
         self.notify_asr(id);
     }
 
-    /// Insert er to internal buffer
+    /// Insert conf change result to internal buffer
     pub(super) fn insert_conf(&mut self, id: &ProposeId, conf_r: Result<bool, ConfChangeError>) {
         assert!(
             self.conf_buffer.insert(id.clone(), conf_r).is_none(),
