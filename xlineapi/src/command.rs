@@ -852,4 +852,52 @@ mod test {
             <SyncResponse as PbCodec>::decode(&sync_resp.encode()).expect("decode should success");
         assert_eq!(sync_resp, decoded_sync_resp);
     }
+
+    #[test]
+    fn txn_command_keys_is_ok() {
+        let txn_req = TxnRequest {
+            compare: vec![Compare {
+                key: b"a".to_vec(),
+                ..Default::default()
+            }],
+            success: vec![
+                RequestOp {
+                    request: Some(Request::RequestRange(RangeRequest {
+                        key: b"1".to_vec(),
+                        ..Default::default()
+                    })),
+                },
+                RequestOp {
+                    request: Some(Request::RequestTxn(TxnRequest {
+                        compare: vec![Compare {
+                            key: b"b".to_vec(),
+                            range_end: b"e".to_vec(),
+                            ..Default::default()
+                        }],
+                        success: vec![RequestOp {
+                            request: Some(Request::RequestRange(RangeRequest {
+                                key: b"3".to_vec(),
+                                range_end: b"4".to_vec(),
+                                ..Default::default()
+                            })),
+                        }],
+                        failure: vec![],
+                    })),
+                },
+            ],
+            failure: vec![RequestOp {
+                request: Some(Request::RequestPut(PutRequest {
+                    key: b"2".to_vec(),
+                    ..Default::default()
+                })),
+            }],
+        };
+
+        let keys = txn_req.keys();
+        assert!(keys.contains(&KeyRange::new_one_key("a")));
+        assert!(keys.contains(&KeyRange::new("b", "e")));
+        assert!(keys.contains(&KeyRange::new_one_key("1")));
+        assert!(keys.contains(&KeyRange::new_one_key("2")));
+        assert!(keys.contains(&KeyRange::new("3", "4")));
+    }
 }
