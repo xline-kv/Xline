@@ -165,6 +165,7 @@ where
     ) -> Result<<Command as CurpCommand>::ASR, <Command as CurpCommand>::Error> {
         let mut ops = vec![WriteOp::PutAppliedIndex(index)];
         let wrapper = cmd.request();
+
         let (res, mut wr_ops) = match wrapper.request.backend() {
             RequestBackend::Kv => self.kv_storage.after_sync(wrapper, revision).await?,
             RequestBackend::Auth => self.auth_storage.after_sync(wrapper, revision)?,
@@ -178,6 +179,7 @@ where
         self.lease_storage.mark_lease_synced(&wrapper.request);
         self.id_barrier.trigger(cmd.id());
         self.index_barrier.trigger(index);
+
         Ok(res)
     }
 

@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     sync::{
         atomic::{AtomicI64, Ordering::Relaxed},
         Arc,
@@ -634,7 +634,7 @@ where
             RequestWrapper::DeleteRangeRequest(ref req) => {
                 self.sync_delete_range_request(req, revision, 0)
             }
-            RequestWrapper::TxnRequest(ref req) => self.sync_txn_request(req, revision)?,
+            RequestWrapper::TxnRequest(ref req) => self.sync_txn_request(req, revision, 0)?,
             RequestWrapper::CompactionRequest(ref req) => {
                 self.sync_compaction_request(req, revision).await?
             }
@@ -679,38 +679,39 @@ where
         &self,
         req: &TxnRequest,
         revision: i64,
+        mut sub_revision: i64,
     ) -> Result<(Vec<WriteOp>, Vec<Event>), ExecuteError> {
-        let mut sub_revision = 0;
-        let mut origin_reqs = VecDeque::from([Request::RequestTxn(req.clone())]);
         let mut all_events = Vec::new();
         let mut all_ops = Vec::new();
-        while let Some(request) = origin_reqs.pop_front() {
-            let (mut ops, mut events) = match request {
+
+        let req_ops = if req
+            .compare
+            .iter()
+            .all(|compare| self.check_compare(compare))
+        {
+            &req.success
+        } else {
+            &req.failure
+        };
+
+        for request in req_ops.iter().filter_map(|op| op.request.as_ref()) {
+            let (mut write_ops, mut events) = match *request {
                 Request::RequestRange(_) => (Vec::new(), Vec::new()),
                 Request::RequestPut(ref put_req) => {
                     self.sync_put_request(put_req, revision, sub_revision)?
                 }
-                Request::RequestDeleteRange(del_req) => {
-                    self.sync_delete_range_request(&del_req, revision, sub_revision)
+                Request::RequestDeleteRange(ref del_req) => {
+                    self.sync_delete_range_request(del_req, revision, sub_revision)
                 }
-                Request::RequestTxn(txn_req) => {
-                    let success = txn_req
-                        .compare
-                        .iter()
-                        .all(|compare| self.check_compare(compare));
-                    let reqs_iter = if success {
-                        txn_req.success.into_iter()
-                    } else {
-                        txn_req.failure.into_iter()
-                    };
-                    origin_reqs.extend(reqs_iter.filter_map(|req_op| req_op.request));
-                    continue;
+                Request::RequestTxn(ref txn_req) => {
+                    self.sync_txn_request(txn_req, revision, sub_revision)?
                 }
             };
             sub_revision = sub_revision.overflow_add(events.len().cast());
             all_events.append(&mut events);
-            all_ops.append(&mut ops);
+            all_ops.append(&mut write_ops);
         }
+
         Ok((all_ops, all_events))
     }
 
