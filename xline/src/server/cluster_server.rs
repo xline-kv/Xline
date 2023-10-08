@@ -2,6 +2,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
+use curp::members::ClusterInfo;
 use curp::ConfChangeType::{Add, AddLearner, Promote, Remove, Update};
 use curp::{client::Client, cmd::generate_propose_id, ConfChange, ProposeConfChangeRequest};
 use xlineapi::{
@@ -27,6 +28,14 @@ where
     header_gen: Arc<HeaderGenerator>,
     /// Phantom
     phantom: PhantomData<S>,
+}
+
+/// Get current timestamp in seconds
+fn timestamp() -> u64 {
+    let now = std::time::SystemTime::now();
+    now.duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_else(|_| unreachable!("Time went backwards"))
+        .as_secs()
 }
 
 impl<S> ClusterServer<S>
@@ -84,10 +93,13 @@ where
         } else {
             i32::from(Add)
         };
+        // calculate node id based on addresses and current timestamp
+        let node_id =
+            ClusterInfo::calculate_member_id(req.peer_ur_ls.clone(), "", Some(timestamp()));
         let members = self
             .propose_conf_change(ConfChange {
                 change_type,
-                node_id: 0, // the added member does not have node id yet
+                node_id,
                 address: req.peer_ur_ls.clone(),
             })
             .await?;
