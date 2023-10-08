@@ -523,7 +523,7 @@ where
                     (
                         connect.id(),
                         connect
-                            .fetch_cluster(FetchClusterRequest::new(), timeout)
+                            .fetch_cluster(FetchClusterRequest::default(), timeout)
                             .await,
                     )
                 })
@@ -677,7 +677,7 @@ where
             "propose_conf_change with propose_id({}) started",
             conf_change.id()
         );
-        let retry_timeout = *self.config.retry_timeout();
+        let retry_timeout = *self.config.initial_retry_timeout();
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {
             let leader_id = match self.get_leader_id().await {
@@ -780,7 +780,7 @@ where
                 .get_connect(local_server)
                 .unwrap_or_else(|| unreachable!("self id {} not found", local_server))
                 .fetch_cluster(
-                    FetchClusterRequest::new(),
+                    FetchClusterRequest::default(),
                     *self.config.initial_retry_timeout(),
                 )
                 .await?
