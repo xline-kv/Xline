@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
@@ -93,22 +94,19 @@ where
         } else {
             i32::from(Add)
         };
+        let peer_url_ls = req.peer_ur_ls.into_iter().sorted().collect_vec();
         // calculate node id based on addresses and current timestamp
-        let node_id =
-            ClusterInfo::calculate_member_id(req.peer_ur_ls.clone(), "", Some(timestamp()));
+        let node_id = ClusterInfo::calculate_member_id(peer_url_ls.clone(), "", Some(timestamp()));
         let members = self
             .propose_conf_change(ConfChange {
                 change_type,
                 node_id,
-                address: req.peer_ur_ls.clone(),
+                address: peer_url_ls,
             })
             .await?;
         let resp = MemberAddResponse {
             header: Some(self.header_gen.gen_header()),
-            member: members
-                .iter()
-                .find(|m| m.peer_ur_ls == req.peer_ur_ls) // we may need to sort peer_ur_ls here.
-                .cloned(),
+            member: members.iter().find(|m| m.id == node_id).cloned(),
             members,
         };
         Ok(Response::new(resp))

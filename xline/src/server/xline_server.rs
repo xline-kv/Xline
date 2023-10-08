@@ -406,7 +406,12 @@ impl XlineServer {
                 *self.server_timeout.watch_progress_notify_interval(),
                 self.shutdown_trigger.subscribe(),
             ),
-            MaintenanceServer::new(persistent, Arc::clone(&header_gen)),
+            MaintenanceServer::new(
+                Arc::clone(&client),
+                persistent,
+                Arc::clone(&header_gen),
+                Arc::clone(&self.cluster_info),
+            ),
             ClusterServer::new(client, header_gen, self.cluster_info.self_name()),
             Arc::new(curp_server),
         ))
