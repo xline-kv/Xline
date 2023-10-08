@@ -11,7 +11,8 @@ pub use self::proto::{
         propose_conf_change_response::Error as ConfChangeError,
         protocol_client,
         protocol_server::ProtocolServer,
-        Member, ProposeConfChangeRequest, ProposeConfChangeResponse,
+        FetchClusterRequest, FetchClusterResponse, Member, ProposeConfChangeRequest,
+        ProposeConfChangeResponse,
     },
 };
 pub(crate) use self::proto::{
@@ -32,9 +33,8 @@ pub(crate) use self::proto::{
         InstallSnapshotRequest, InstallSnapshotResponse, VoteRequest, VoteResponse,
     },
     messagepb::{
-        fetch_read_state_response::ReadState, protocol_server::Protocol, FetchClusterRequest,
-        FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse, IdSet,
-        ShutdownRequest, ShutdownResponse,
+        fetch_read_state_response::ReadState, protocol_server::Protocol, FetchReadStateRequest,
+        FetchReadStateResponse, IdSet, ShutdownRequest, ShutdownResponse,
     },
 };
 use crate::{
@@ -76,13 +76,6 @@ mod proto {
     }
     pub(crate) mod inner_messagepb {
         tonic::include_proto!("inner_messagepb");
-    }
-}
-
-impl FetchClusterRequest {
-    /// Create a new `FetchClusterRequest`
-    pub(crate) fn new() -> Self {
-        Self {}
     }
 }
 
