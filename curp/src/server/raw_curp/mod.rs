@@ -23,7 +23,7 @@ use clippy_utilities::NumericCast;
 use dashmap::DashMap;
 use event_listener::Event;
 use itertools::Itertools;
-use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
+use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockUpgradableReadGuard, RwLockWriteGuard};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::{
     debug, error,
@@ -227,10 +227,8 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             .ctx
             .sp
             .map_lock(|mut spec_l| spec_l.insert(Arc::clone(&cmd)).is_some());
-
         let st_r = self.st.read();
         let info = (st_r.leader_id, st_r.term);
-
         // Non-leader doesn't need to sync or execute
         if st_r.role != Role::Leader {
             return (
@@ -242,15 +240,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 },
             );
         }
-
-        if !self
-            .ctx
-            .cb
-            .map_write(|mut cb_w| cb_w.sync.insert(cmd.id().clone()))
-        {
+        let id = cmd.id().clone();
+        if !self.ctx.cb.map_write(|mut cb_w| cb_w.sync.insert(id)) {
             return (info, Err(ProposeError::Duplicated));
         }
-
         // leader also needs to check if the cmd conflicts un-synced commands
         conflict |= self.ctx.ucp.map_lock(|mut ucp_l| {
             let conflict_uncommitted = ucp_l.values().any(|c| c.is_conflict(cmd.as_ref()));
@@ -260,86 +253,28 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             );
             conflict_uncommitted
         });
-        let mut log_w = self.log.write();
-
-        let entry = match log_w.push(st_r.term, cmd) {
-            Ok(entry) => {
-                debug!("{} gets new log[{}]", self.id(), entry.index);
-                entry
-            }
-            Err(e) => {
-                return (info, Err(e.into()));
-            }
-        };
-
-        let index = entry.index;
-        if !conflict {
-            log_w.last_exe = index;
-            self.ctx.cmd_tx.send_sp_exe(entry);
-        }
-
-        self.ctx.sync_events.iter().for_each(|e| {
-            let next = self.lst.get_next_index(*e.key());
-            if next > log_w.base_index && log_w.has_next_batch(next) {
-                e.notify(1);
-            }
-        });
-
-        // check if commit_index needs to be updated
-        if self.can_update_commit_index_to(&log_w, index, self.term()) && index > log_w.commit_index
-        {
-            log_w.commit_index = index;
-            debug!("{} updates commit index to {index}", self.id());
-            self.apply(&mut *log_w);
-        }
-
-        (
-            info,
+        let log_w = self.log.write();
+        let res = self.entry_process(log_w, &st_r, cmd, conflict).and({
             if conflict {
                 Err(ProposeError::KeyConflict)
             } else {
                 Ok(true)
-            },
-        )
+            }
+        });
+        (info, res)
     }
 
     /// Handle `shutdown` request
     pub(super) fn handle_shutdown(&self) -> ((Option<ServerId>, u64), Result<(), ProposeError>) {
+        debug!("{} gets shutdown proposal", self.id());
         let st_r = self.st.read();
         let info = (st_r.leader_id, st_r.term);
         if st_r.role != Role::Leader {
             return (info, Err(ProposeError::NotLeader));
         }
-
-        let mut log_w = self.log.write();
-
-        let entry = match log_w.push(st_r.term, EntryData::Shutdown) {
-            Ok(entry) => {
-                debug!("{} gets new log[{}]", self.id(), entry.index);
-                entry
-            }
-            Err(e) => {
-                return (info, Err(e.into()));
-            }
-        };
-
-        let index = entry.index;
-        self.ctx.sync_events.iter().for_each(|pair| {
-            let next = self.lst.get_next_index(*pair.key());
-            if next > log_w.base_index && log_w.has_next_batch(next) {
-                pair.notify(1);
-            }
-        });
-
-        // check if commit_index needs to be updated
-        if self.can_update_commit_index_to(&log_w, index, self.term()) && index > log_w.commit_index
-        {
-            log_w.commit_index = index;
-            debug!("{} updates commit index to {index}", self.id());
-            self.apply(&mut *log_w);
-        }
-
-        (info, Ok(()))
+        let log_w = self.log.write();
+        let res = self.entry_process(log_w, &st_r, EntryData::Shutdown, true);
+        (info, res)
     }
 
     /// Handle `propose_conf_change` request
@@ -352,7 +287,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             self.id(),
             conf_change.id()
         );
-
         let st_r = self.st.read();
         let info = (st_r.leader_id, st_r.term);
 
@@ -363,45 +297,18 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 Err(ConfChangeError::new_propose(ProposeError::NotLeader)),
             );
         }
-
-        if !self
-            .ctx
-            .cb
-            .map_write(|mut cb_w| cb_w.sync.insert(conf_change.id().clone()))
-        {
+        let id = conf_change.id().clone();
+        if !self.ctx.cb.map_write(|mut cb_w| cb_w.sync.insert(id)) {
             return (
                 info,
                 Err(ConfChangeError::new_propose(ProposeError::Duplicated)),
             );
         }
-        let mut log_w = self.log.write();
-        let entry = match log_w.push(st_r.term, conf_change) {
-            Ok(entry) => {
-                debug!("{} gets new log[{}]", self.id(), entry.index);
-                entry
-            }
-            Err(e) => {
-                return (info, Err(ConfChangeError::new_propose(e.into())));
-            }
-        };
-
-        let index = entry.index;
-        self.ctx.sync_events.iter().for_each(|pair| {
-            let next = self.lst.get_next_index(*pair.key());
-            if next > log_w.base_index && log_w.has_next_batch(next) {
-                pair.value().notify(1);
-            }
-        });
-
-        // check if commit_index needs to be updated
-        if self.can_update_commit_index_to(&log_w, index, self.term()) && index > log_w.commit_index
-        {
-            log_w.commit_index = index;
-            debug!("{} updates commit index to {index}", self.id());
-            self.apply(&mut *log_w);
-        }
-
-        (info, Ok(()))
+        let log_w = self.log.write();
+        let res = self
+            .entry_process(log_w, &st_r, conf_change, true)
+            .map_err(ConfChangeError::new_propose);
+        (info, res)
     }
 
     /// Handle `append_entries`
@@ -1311,5 +1218,44 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             .send(conf_change)
             .unwrap_or_else(|_e| unreachable!("change_rx should not be dropped"));
         remove_self
+    }
+
+    /// Entry process shared by `handle_xxx`
+    fn entry_process(
+        &self,
+        mut log_w: RwLockWriteGuard<'_, Log<C>>,
+        st_r: &RwLockReadGuard<'_, State>,
+        entry: impl Into<EntryData<C>>,
+        conflict: bool,
+    ) -> Result<(), ProposeError> {
+        let entry = match log_w.push(st_r.term, entry) {
+            Ok(entry) => {
+                debug!("{} gets new log[{}]", self.id(), entry.index);
+                entry
+            }
+            Err(e) => {
+                return Err(e.into());
+            }
+        };
+        let index = entry.index;
+        if !conflict {
+            log_w.last_exe = index;
+            self.ctx.cmd_tx.send_sp_exe(entry);
+        }
+        self.ctx.sync_events.iter().for_each(|e| {
+            let next = self.lst.get_next_index(*e.key());
+            if next > log_w.base_index && log_w.has_next_batch(next) {
+                e.notify(1);
+            }
+        });
+
+        // check if commit_index needs to be updated
+        if self.can_update_commit_index_to(&log_w, index, self.term()) && index > log_w.commit_index
+        {
+            log_w.commit_index = index;
+            debug!("{} updates commit index to {index}", self.id());
+            self.apply(&mut *log_w);
+        }
+        Ok(())
     }
 }

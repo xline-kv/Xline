@@ -219,7 +219,7 @@ impl CurpGroup {
             .spawn(async move {
                 for addr in all.values() {
                     let addr = format!("http://{}", addr);
-                    tracing::warn!("connecing to : {}", addr);
+                    tracing::warn!("connecting to : {}", addr);
                     let mut client = if let Ok(client) = ProtocolClient::connect(addr.clone()).await
                     {
                         client
