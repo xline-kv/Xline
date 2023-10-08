@@ -206,7 +206,9 @@ impl ClusterInfo {
     }
 
     /// Calculate the member id
-    fn calculate_member_id(
+    #[must_use]
+    #[inline]
+    pub fn calculate_member_id(
         mut addrs: Vec<String>,
         cluster_name: &str,
         timestamp: Option<u64>,
