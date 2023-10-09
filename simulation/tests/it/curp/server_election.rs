@@ -1,7 +1,6 @@
 use curp::members::ServerId;
 use curp_test_utils::{init_logger, sleep_secs, test_cmd::TestCommand};
 use simulation::curp_group::CurpGroup;
-use utils::config::ClientConfig;
 
 /// Wait some time for the election to finish, and get the leader to ensure that the election is
 /// completed.
@@ -122,7 +121,7 @@ async fn propose_after_reelect() {
     init_logger();
 
     let group = CurpGroup::new(5).await;
-    let client = group.new_client(ClientConfig::default()).await;
+    let client = group.new_client().await;
     assert_eq!(
         client
             .propose(TestCommand::new_put(vec![0], 0), true)
@@ -156,7 +155,7 @@ async fn conflict_should_detected_in_new_leader() {
     init_logger();
 
     let group = CurpGroup::new(3).await;
-    let client = group.new_client(ClientConfig::default()).await;
+    let client = group.new_client().await;
     let leader1 = group.get_leader().await.0;
 
     // client only propose to leader
