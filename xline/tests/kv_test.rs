@@ -326,3 +326,41 @@ async fn test_txn() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread")]
+#[abort_on_panic]
+async fn single_txn_get_after_put_is_ok() -> Result<(), Box<dyn Error>> {
+    let mut cluster = Cluster::new(3).await;
+    cluster.start().await;
+    let client = cluster.client().await.kv_client();
+
+    let tnx_a = TxnRequest::new().when([]).and_then([
+        TxnOp::put(PutRequest::new("f", "foo")),
+        TxnOp::range(RangeRequest::new("f")),
+    ]);
+    let res = client.txn(tnx_a).await?;
+    let Response::ResponseRange(ref resp) = res.responses[1].response.as_ref().unwrap() else { panic!("invalid response") };
+    assert_eq!(resp.kvs[0].value, b"foo");
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[abort_on_panic]
+async fn single_txn_get_after_delete_is_ok() -> Result<(), Box<dyn Error>> {
+    let mut cluster = Cluster::new(3).await;
+    cluster.start().await;
+    let client = cluster.client().await.kv_client();
+
+    client.put(PutRequest::new("b", "bar")).await?;
+
+    let tnx_a = TxnRequest::new().when([]).and_then([
+        TxnOp::delete(DeleteRangeRequest::new("b")),
+        TxnOp::range(RangeRequest::new("b")),
+    ]);
+    let res = client.txn(tnx_a).await?;
+    let Response::ResponseRange(ref resp) = res.responses[1].response.as_ref().unwrap() else { panic!("invalid response") };
+    assert!(resp.kvs.is_empty());
+
+    Ok(())
+}
