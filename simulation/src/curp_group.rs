@@ -7,7 +7,7 @@ use curp::{
     error::{CommandProposeError, ProposeError},
     members::{ClusterInfo, ServerId},
     server::Rpc,
-    FetchLeaderRequest, FetchLeaderResponse, LogIndex,
+    FetchClusterRequest, FetchClusterResponse, LogIndex,
 };
 pub use curp::{protocol_client::ProtocolClient, ProposeRequest, ProposeResponse};
 use curp_test_utils::{
@@ -226,12 +226,13 @@ impl CurpGroup {
                         continue;
                     };
 
-                    let FetchLeaderResponse { leader_id, term } =
-                        if let Ok(resp) = client.fetch_leader(FetchLeaderRequest {}).await {
-                            resp.into_inner()
-                        } else {
-                            continue;
-                        };
+                    let FetchClusterResponse {
+                        leader_id, term, ..
+                    } = if let Ok(resp) = client.fetch_cluster(FetchClusterRequest {}).await {
+                        resp.into_inner()
+                    } else {
+                        continue;
+                    };
                     if term > max_term {
                         max_term = term;
                         leader = leader_id;
@@ -271,8 +272,8 @@ impl CurpGroup {
                         continue;
                     };
 
-                    let FetchLeaderResponse { leader_id: _, term } =
-                        if let Ok(resp) = client.fetch_leader(FetchLeaderRequest {}).await {
+                    let FetchClusterResponse { term, .. } =
+                        if let Ok(resp) = client.fetch_cluster(FetchClusterRequest {}).await {
                             resp.into_inner()
                         } else {
                             continue;

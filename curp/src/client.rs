@@ -22,8 +22,8 @@ use crate::{
     members::ServerId,
     rpc::{
         self, connect::ConnectApi, protocol_client::ProtocolClient, FetchClusterRequest,
-        FetchClusterResponse, FetchLeaderRequest, FetchReadStateRequest, ProposeRequest,
-        ReadState as PbReadState, ShutdownRequest, SyncResult, WaitSyncedRequest,
+        FetchClusterResponse, FetchReadStateRequest, ProposeRequest, ReadState as PbReadState,
+        ShutdownRequest, SyncResult, WaitSyncedRequest,
     },
     LogIndex,
 };
@@ -78,8 +78,8 @@ impl<C: Command> Builder<C> {
         Ok(client)
     }
 
-    /// Fetch cluster from server
-    async fn fetch_cluster(
+    /// Fetch cluster from server, return the first `FetchClusterResponse`
+    async fn fast_fetch_cluster(
         &self,
         addrs: Vec<String>,
         propose_timeout: Duration,
@@ -123,7 +123,7 @@ impl<C: Command> Builder<C> {
             return Err(ClientBuildError::invalid_arguments("timeout is required"));
         };
         let res = self
-            .fetch_cluster(addrs.clone(), *config.propose_timeout())
+            .fast_fetch_cluster(addrs.clone(), *config.propose_timeout())
             .await?;
         let client = Client::<C> {
             local_server_id: self.local_server_id,
@@ -504,9 +504,12 @@ where
         Err(ProposeError::Timeout)
     }
 
-    /// Send fetch leader requests to all servers until there is a leader
-    /// Note: The fetched leader may still be outdated
-    async fn fetch_leader(&self) -> Result<ServerId, ProposeError> {
+    /// Send linearizable fetch cluster requests to all servers
+    /// Note: The fetched cluster may still be outdated
+    /// # Errors
+    ///   `ProposeError::Timeout` if timeout
+    #[inline]
+    async fn fetch_cluster(&self) -> Result<FetchClusterResponse, ProposeError> {
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {
             let connects = self.all_connects();
@@ -516,57 +519,70 @@ where
                     (
                         connect.id(),
                         connect
-                            .fetch_leader(FetchLeaderRequest::new(), *self.config.retry_timeout())
+                            .fetch_cluster(FetchClusterRequest::new(), *self.config.retry_timeout())
                             .await,
                     )
                 })
                 .collect();
             let mut max_term = 0;
-            let mut leader = None;
+            let mut res = None;
 
             let mut ok_cnt = 0;
             #[allow(clippy::integer_arithmetic)]
             let majority_cnt = connects.len() / 2 + 1;
             while let Some((id, resp)) = rpcs.next().await {
-                let resp = match resp {
+                let inner = match resp {
                     Ok(resp) => resp.into_inner(),
                     Err(e) => {
-                        warn!("fetch leader from {} failed, {:?}", id, e);
+                        warn!("fetch cluster from {} failed, {:?}", id, e);
                         continue;
                     }
                 };
-                if let Some(leader_id) = resp.leader_id {
-                    #[allow(clippy::integer_arithmetic)]
-                    match max_term.cmp(&resp.term) {
-                        Ordering::Less => {
-                            max_term = resp.term;
-                            leader = Some(leader_id);
-                            ok_cnt = 1;
-                        }
-                        Ordering::Equal => {
-                            leader = Some(leader_id);
-                            ok_cnt += 1;
-                        }
-                        Ordering::Greater => {}
+                #[allow(clippy::integer_arithmetic)]
+                match max_term.cmp(&inner.term) {
+                    Ordering::Less => {
+                        max_term = inner.term;
+                        res = Some(inner);
+                        ok_cnt = 1;
                     }
+                    Ordering::Equal => {
+                        res = Some(inner);
+                        ok_cnt += 1;
+                    }
+                    Ordering::Greater => {}
                 }
                 if ok_cnt >= majority_cnt {
                     break;
                 }
             }
 
-            if let Some(leader) = leader {
+            if let Some(res) = res {
                 let mut state = self.state.write();
-                debug!("Fetch leader succeeded, leader set to {}", leader);
-                state.term = max_term;
-                state.set_leader(leader);
-                return Ok(leader);
+                debug!("Fetch cluster succeeded, result: {res:?}");
+                state.check_and_update(res.leader_id, res.term);
+                return Ok(res);
             }
 
             // wait until the election is completed
             // TODO: let user configure it according to average leader election cost
             tokio::time::sleep(*self.config.retry_timeout()).await;
         }
+        Err(ProposeError::Timeout)
+    }
+
+    /// Send fetch leader requests to all servers until there is a leader
+    /// Note: The fetched leader may still be outdated
+    async fn fetch_leader(&self) -> Result<ServerId, ProposeError> {
+        let retry_count = *self.config.retry_count();
+        for _ in 0..retry_count {
+            let res = self.fetch_cluster().await?;
+            if let Some(leader_id) = res.leader_id {
+                return Ok(leader_id);
+            }
+        }
+        // This timeout is a bit different. It refers to the situation where
+        // multiple attempts to fetch the cluster are successful, but there
+        // is no leader id (very rare).
         Err(ProposeError::Timeout)
     }
 
@@ -693,18 +709,20 @@ where
         Err(ProposeError::Timeout)
     }
 
-    /// Fetch the current leader id and term from the curp server where is on the same node.
-    /// Note that this method should not be invoked by an outside client.
+    /// Fetch the current cluster from the curp server where is on the same node.
+    /// Note that this method should not be invoked by an outside client because
+    /// we will fallback to fetch the full cluster for the response if fetching local
+    /// failed.
     #[inline]
-    async fn fetch_local_leader_info(&self) -> Result<(Option<ServerId>, u64), RpcError> {
+    async fn fetch_local_cluster(&self) -> Result<FetchClusterResponse, RpcError> {
         if let Some(local_server) = self.local_server_id {
             let resp = self
                 .get_connect(local_server)
                 .unwrap_or_else(|| unreachable!("self id {} not found", local_server))
-                .fetch_leader(FetchLeaderRequest::new(), *self.config.retry_timeout())
+                .fetch_cluster(FetchClusterRequest::new(), *self.config.retry_timeout())
                 .await?
                 .into_inner();
-            Ok((resp.leader_id, resp.term))
+            Ok(resp)
         } else {
             unreachable!("The outer client shouldn't invoke fetch_local_leader_info");
         }
@@ -715,10 +733,32 @@ where
     /// `ProposeError::Timeout` if timeout
     #[inline]
     pub async fn get_leader_id_from_curp(&self) -> Result<ServerId, CommandProposeError<C>> {
-        if let Ok((Some(leader_id), _term)) = self.fetch_local_leader_info().await {
+        if let Ok(FetchClusterResponse {
+            leader_id: Some(leader_id),
+            ..
+        }) = self.fetch_local_cluster().await
+        {
             return Ok(leader_id);
         }
         self.fetch_leader()
+            .await
+            .map_err(|e| CommandProposeError::Propose(e))
+    }
+
+    /// Fetch the current cluster without cache, return the leader and the members
+    /// # Errors
+    /// `ProposeError::Timeout` if timeout
+    #[inline]
+    pub async fn get_cluster_from_curp(
+        &self,
+        linearizable: bool,
+    ) -> Result<FetchClusterResponse, CommandProposeError<C>> {
+        if !linearizable {
+            if let Ok(resp) = self.fetch_local_cluster().await {
+                return Ok(resp);
+            }
+        }
+        self.fetch_cluster()
             .await
             .map_err(|e| CommandProposeError::Propose(e))
     }
