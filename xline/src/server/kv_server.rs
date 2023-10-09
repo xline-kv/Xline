@@ -81,7 +81,7 @@ where
     /// serializable execute request in current node
     fn do_serializable(&self, wrapper: &RequestWithToken) -> Result<Response, tonic::Status> {
         self.auth_storage.check_permission(wrapper)?;
-        let cmd_res = self.kv_storage.execute(wrapper)?;
+        let cmd_res = self.kv_storage.execute(wrapper, 0)?;
 
         Ok(Self::parse_response_op(cmd_res.into_inner().into()))
     }

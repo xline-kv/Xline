@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     sync::{
         atomic::{AtomicI64, Ordering::Relaxed},
         Arc,
@@ -8,6 +8,7 @@ use std::{
 };
 
 use clippy_utilities::{Cast, OverflowArithmetic};
+use itertools::Itertools;
 use prost::Message;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
@@ -71,8 +72,9 @@ where
     pub(crate) fn execute(
         &self,
         request: &RequestWithToken,
+        revision: i64,
     ) -> Result<CommandResponse, ExecuteError> {
-        self.handle_kv_requests(&request.request)
+        self.handle_kv_requests(&request.request, &mut TxnState::new(revision))
             .map(CommandResponse::new)
     }
 
@@ -407,16 +409,21 @@ where
         revision: i64,
         limit: usize,
         count_only: bool,
+        state: &TxnState,
     ) -> Result<(Vec<KeyValue>, usize), ExecuteError> {
-        let mut revisions = self.index.get(key, range_end, revision);
-        let total = revisions.len();
+        let revisions = self.index.get(key, range_end, revision);
+        let kvs_ori = self.get_values(&revisions)?;
+        let mut kvs = state.update_kvs_get_range(kvs_ori, key, range_end, revision);
+
+        let total = kvs.len();
         if count_only || total == 0 {
             return Ok((vec![], total));
         }
+
         if limit != 0 {
-            revisions.truncate(limit);
+            kvs.truncate(limit);
         }
-        let kvs = self.get_values(&revisions)?;
+
         Ok((kvs, total))
     }
 
@@ -469,18 +476,23 @@ where
     fn handle_kv_requests(
         &self,
         wrapper: &RequestWrapper,
+        state: &mut TxnState,
     ) -> Result<ResponseWrapper, ExecuteError> {
         debug!("Execute {:?}", wrapper);
         #[allow(clippy::wildcard_enum_match_arm)]
         let res = match *wrapper {
-            RequestWrapper::RangeRequest(ref req) => self.handle_range_request(req).map(Into::into),
-            RequestWrapper::PutRequest(ref req) => self.handle_put_request(req).map(Into::into),
+            RequestWrapper::RangeRequest(ref req) => {
+                self.handle_range_request(req, state).map(Into::into)
+            }
+            RequestWrapper::PutRequest(ref req) => {
+                self.handle_put_request(req, state).map(Into::into)
+            }
             RequestWrapper::DeleteRangeRequest(ref req) => {
-                self.handle_delete_range_request(req).map(Into::into)
+                self.handle_delete_range_request(req, state).map(Into::into)
             }
             RequestWrapper::TxnRequest(ref req) => {
                 debug!("Receive TxnRequest {:?}", req);
-                self.handle_txn_request(req).map(Into::into)
+                self.handle_txn_request(req, state).map(Into::into)
             }
             RequestWrapper::CompactionRequest(ref req) => {
                 debug!("Receive CompactionRequest {:?}", req);
@@ -492,7 +504,11 @@ where
     }
 
     /// Handle `RangeRequest`
-    fn handle_range_request(&self, req: &RangeRequest) -> Result<RangeResponse, ExecuteError> {
+    fn handle_range_request(
+        &self,
+        req: &RangeRequest,
+        state: &TxnState,
+    ) -> Result<RangeResponse, ExecuteError> {
         req.check_revision(self.compacted_revision(), self.revision())?;
 
         let storage_fetch_limit = if (req.sort_order() != SortOrder::None)
@@ -512,6 +528,7 @@ where
             req.revision,
             storage_fetch_limit.cast(),
             req.count_only,
+            state,
         )?;
         let mut response = RangeResponse {
             header: Some(self.header_gen.gen_header()),
@@ -543,7 +560,11 @@ where
     }
 
     /// Handle `PutRequest`
-    fn handle_put_request(&self, req: &PutRequest) -> Result<PutResponse, ExecuteError> {
+    fn handle_put_request(
+        &self,
+        req: &PutRequest,
+        state: &mut TxnState,
+    ) -> Result<PutResponse, ExecuteError> {
         let mut response = PutResponse {
             header: Some(self.header_gen.gen_header()),
             ..Default::default()
@@ -557,6 +578,9 @@ where
                 response.prev_kv = prev_kv;
             }
         };
+
+        state.put(req, &self.index);
+
         Ok(response)
     }
 
@@ -564,6 +588,7 @@ where
     fn handle_delete_range_request(
         &self,
         req: &DeleteRangeRequest,
+        state: &mut TxnState,
     ) -> Result<DeleteRangeResponse, ExecuteError> {
         let prev_kvs = self.get_range(&req.key, &req.range_end, 0)?;
         let mut response = DeleteRangeResponse {
@@ -574,11 +599,18 @@ where
         if req.prev_kv {
             response.prev_kvs = prev_kvs;
         }
+
+        state.delete_range(req);
+
         Ok(response)
     }
 
     /// Handle `TxnRequest`
-    fn handle_txn_request(&self, req: &TxnRequest) -> Result<TxnResponse, ExecuteError> {
+    fn handle_txn_request(
+        &self,
+        req: &TxnRequest,
+        state: &mut TxnState,
+    ) -> Result<TxnResponse, ExecuteError> {
         req.check_revision(self.compacted_revision(), self.revision())?;
 
         let success = req
@@ -592,7 +624,7 @@ where
         };
         let mut responses = Vec::with_capacity(requests.len());
         for request_op in requests {
-            let response = self.handle_kv_requests(&request_op.clone().into())?;
+            let response = self.handle_kv_requests(&request_op.clone().into(), state)?;
             responses.push(response.into());
         }
         Ok(TxnResponse {
@@ -849,6 +881,116 @@ where
     }
 }
 
+/// Temporary state when speculatively executing transaction request
+#[derive(Debug)]
+#[cfg_attr(test, derive(Default))]
+struct TxnState {
+    /// Current txn revision
+    revision: i64,
+    /// Put kvs
+    put: BTreeMap<Vec<u8>, Vec<u8>>,
+    /// Deleted kvs
+    deleted: DeleteInterval,
+}
+
+/// The interval of delete range requests
+#[derive(Debug, Default)]
+struct DeleteInterval {
+    /// The inner range
+    inner: Vec<KeyRange>,
+}
+
+impl DeleteInterval {
+    /// Insert an interval
+    fn insert(&mut self, key: KeyRange) {
+        self.inner.push(key);
+    }
+
+    /// Check if a key intersects with the intervals
+    fn intersects(&self, key: &[u8]) -> bool {
+        self.inner.iter().any(|range| range.contains_key(key))
+    }
+}
+
+// NOTE: Some preconditions of the following implementation:
+// 1. Puts does not duplicate
+// 2. Puts and Deletes does not overlap
+// These are guaranteed by `check_interval`
+impl TxnState {
+    /// Creates a new `TxnState`
+    fn new(revision: i64) -> Self {
+        Self {
+            revision,
+            put: BTreeMap::default(),
+            deleted: DeleteInterval::default(),
+        }
+    }
+
+    /// Updates the range kvs using current state
+    fn update_kvs_get_range(
+        &self,
+        kvs: Vec<KeyValue>,
+        key: &[u8],
+        range_end: &[u8],
+        revision: i64,
+    ) -> Vec<KeyValue> {
+        if revision != 0 && revision < self.revision {
+            return kvs;
+        }
+
+        let mut kvs = kvs
+            .into_iter()
+            .filter(|kv| !self.deleted.intersects(&kv.key))
+            .collect_vec();
+        let values = self
+            .put
+            .range(KeyRange::new(key, range_end))
+            .map(|(_, value)| value);
+        let mut txn_kvs: Vec<KeyValue> = values
+            .into_iter()
+            .map(|v| KeyValue::decode(v.as_slice()))
+            .collect::<Result<_, _>>()
+            .unwrap_or_else(|_| unreachable!("Failed to decode key-value"));
+
+        kvs.append(&mut txn_kvs);
+
+        kvs
+    }
+
+    /// Update current state for put requests
+    fn put(&mut self, req: &PutRequest, index: &Arc<Index>) {
+        let revision = self.revision();
+        // we don't need sub revision here
+        let sub_revision = 0;
+        let new_rev = if self.deleted.intersects(&req.key) {
+            KeyRevision::new(revision, 1, revision, sub_revision)
+        } else {
+            index.register_revision(&req.key, revision, sub_revision)
+        };
+        let kv = KeyValue {
+            key: req.key.clone(),
+            value: req.value.clone(),
+            create_revision: new_rev.create_revision,
+            mod_revision: new_rev.mod_revision,
+            version: new_rev.version,
+            lease: req.lease,
+        };
+
+        let _ignore = self.put.insert(req.key.clone(), kv.encode_to_vec());
+    }
+
+    /// Update current state for delete range requests
+    fn delete_range(&mut self, req: &DeleteRangeRequest) {
+        let key_range = KeyRange::new(req.key.clone(), req.range_end.clone());
+        self.deleted.insert(key_range);
+    }
+
+    /// Current revision
+    fn revision(&self) -> i64 {
+        self.revision
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::time::Duration;
@@ -965,7 +1107,7 @@ mod test {
             keys_only: true,
             ..Default::default()
         };
-        let response = store.handle_range_request(&request)?;
+        let response = store.handle_range_request(&request, &TxnState::default())?;
         assert_eq!(response.kvs.len(), 6);
         for kv in response.kvs {
             assert!(kv.value.is_empty());
@@ -987,7 +1129,7 @@ mod test {
             keys_only: true,
             ..Default::default()
         };
-        let response = store.handle_range_request(&request)?;
+        let response = store.handle_range_request(&request, &TxnState::default())?;
         assert_eq!(response.kvs.len(), 0);
         assert_eq!(response.count, 0);
         tx.self_shutdown_and_wait().await;
@@ -1010,7 +1152,7 @@ mod test {
             min_mod_revision: 2,
             ..Default::default()
         };
-        let response = store.handle_range_request(&request)?;
+        let response = store.handle_range_request(&request, &TxnState::default())?;
         assert_eq!(response.count, 6);
         assert_eq!(response.kvs.len(), 2);
         assert_eq!(response.kvs[0].create_revision, 2);
@@ -1036,7 +1178,8 @@ mod test {
                 SortTarget::Mod,
                 SortTarget::Value,
             ] {
-                let response = store.handle_range_request(&sort_req(order, target))?;
+                let response = store
+                    .handle_range_request(&sort_req(order, target), &TxnState::default())?;
                 assert_eq!(response.count, 6);
                 assert_eq!(response.kvs.len(), 6);
                 let expected: [&str; 6] = match order {
@@ -1057,7 +1200,10 @@ mod test {
             }
         }
         for order in [SortOrder::Ascend, SortOrder::Descend, SortOrder::None] {
-            let response = store.handle_range_request(&sort_req(order, SortTarget::Version))?;
+            let response = store.handle_range_request(
+                &sort_req(order, SortTarget::Version),
+                &TxnState::default(),
+            )?;
             assert_eq!(response.count, 6);
             assert_eq!(response.kvs.len(), 6);
             let expected = match order {
@@ -1096,13 +1242,13 @@ mod test {
             range_end: vec![],
             ..Default::default()
         };
-        let res = new_store.handle_range_request(&range_req)?;
+        let res = new_store.handle_range_request(&range_req, &TxnState::default())?;
         assert_eq!(res.kvs.len(), 0);
         assert_eq!(new_store.compacted_revision(), -1);
 
         new_store.recover().await?;
 
-        let res = new_store.handle_range_request(&range_req)?;
+        let res = new_store.handle_range_request(&range_req, &TxnState::default())?;
         assert_eq!(res.kvs.len(), 1);
         assert_eq!(res.kvs[0].key, b"a");
         assert_eq!(new_store.compacted_revision(), 8);
@@ -1162,7 +1308,7 @@ mod test {
             range_end: vec![],
             ..Default::default()
         };
-        let response = store.handle_range_request(&request)?;
+        let response = store.handle_range_request(&request, &TxnState::default())?;
         assert_eq!(response.count, 1);
         assert_eq!(response.kvs.len(), 1);
         assert_eq!(response.kvs[0].value, "1".as_bytes());

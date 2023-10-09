@@ -143,7 +143,7 @@ where
     ) -> Result<<Command as CurpCommand>::ER, <Command as CurpCommand>::Error> {
         let wrapper = cmd.request();
         let res = match wrapper.request.backend() {
-            RequestBackend::Kv => self.kv_storage.execute(wrapper),
+            RequestBackend::Kv => self.kv_storage.execute(wrapper, 0),
             RequestBackend::Auth => self.auth_storage.execute(wrapper),
             RequestBackend::Lease => self.lease_storage.execute(wrapper),
         };
