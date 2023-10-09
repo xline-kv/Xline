@@ -197,7 +197,6 @@ where
         let range_req = request.get_ref();
         range_req.validation()?;
         debug!("Receive grpc request: {:?}", range_req);
-        range_req.validation()?;
         range_req.check_revision(
             self.kv_storage.compacted_revision(),
             self.kv_storage.revision(),
@@ -238,7 +237,6 @@ where
         let put_req: &PutRequest = request.get_ref();
         put_req.validation()?;
         debug!("Receive grpc request: {:?}", put_req);
-        put_req.validation()?;
         let is_fast_path = true;
         let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
 
@@ -266,7 +264,6 @@ where
         let delete_range_req = request.get_ref();
         delete_range_req.validation()?;
         debug!("Receive grpc request: {:?}", delete_range_req);
-        delete_range_req.validation()?;
         let is_fast_path = true;
         let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
 
@@ -295,7 +292,6 @@ where
         let txn_req = request.get_ref();
         txn_req.validation()?;
         debug!("Receive grpc request: {:?}", txn_req);
-        txn_req.validation()?;
         txn_req.check_revision(
             self.kv_storage.compacted_revision(),
             self.kv_storage.revision(),

@@ -8,8 +8,8 @@ fn main() {
                 "proto/src/auth.proto",
                 "proto/src/v3lock.proto",
                 "proto/src/lease.proto",
-                "proto/src/command.proto",
-                "proto/src/error.proto",
+                "proto/src/xline-command.proto",
+                "proto/src/xline-error.proto",
             ],
             &["./proto/src"],
         )
