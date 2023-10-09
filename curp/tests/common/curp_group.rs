@@ -32,7 +32,10 @@ use tokio::{
 };
 use tracing::debug;
 use utils::{
-    config::{ClientConfig, CurpConfigBuilder, StorageConfig},
+    config::{
+        default_client_wait_synced_timeout, default_propose_timeout, default_retry_timeout,
+        ClientConfig, CurpConfigBuilder, StorageConfig,
+    },
     shutdown::{self, Trigger},
 };
 
@@ -179,7 +182,13 @@ impl CurpGroup {
         &self.nodes[id]
     }
 
-    pub async fn new_client(&self, config: ClientConfig) -> Client<TestCommand> {
+    pub async fn new_client(&self) -> Client<TestCommand> {
+        let config = ClientConfig::new(
+            default_client_wait_synced_timeout(),
+            default_propose_timeout(),
+            default_retry_timeout(),
+            usize::MAX,
+        );
         Client::builder()
             .config(config)
             .build_from_addrs(self.all.values().cloned().collect_vec())

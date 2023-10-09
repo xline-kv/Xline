@@ -421,7 +421,7 @@ pub struct ClientConfig {
     #[serde(with = "duration_format", default = "default_retry_timeout")]
     retry_timeout: Duration,
 
-    /// Curp client retry interval
+    /// Curp client retry count
     #[getset(get = "pub")]
     #[serde(default = "default_retry_count")]
     retry_count: usize,
