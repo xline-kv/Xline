@@ -900,7 +900,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         let _ig = self.ctx.connects.insert(connect.id(), connect);
     }
 
-    /// Get connect
+    /// Update connect
     pub(super) async fn update_connect(
         &self,
         id: ServerId,
