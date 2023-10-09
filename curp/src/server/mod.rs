@@ -20,11 +20,10 @@ use crate::{
     role_change::RoleChange,
     rpc::{
         AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse,
-        FetchLeaderRequest, FetchLeaderResponse, FetchReadStateRequest, FetchReadStateResponse,
-        InnerProtocolServer, InstallSnapshotRequest, InstallSnapshotResponse,
-        ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest, ProposeResponse,
-        ProtocolServer, ShutdownRequest, ShutdownResponse, VoteRequest, VoteResponse,
-        WaitSyncedRequest, WaitSyncedResponse,
+        FetchReadStateRequest, FetchReadStateResponse, InnerProtocolServer, InstallSnapshotRequest,
+        InstallSnapshotResponse, ProposeConfChangeRequest, ProposeConfChangeResponse,
+        ProposeRequest, ProposeResponse, ProtocolServer, ShutdownRequest, ShutdownResponse,
+        VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
 };
 
@@ -104,16 +103,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::Protocol for Rp
         request.metadata().extract_span();
         Ok(tonic::Response::new(
             self.inner.wait_synced(request.into_inner()).await?,
-        ))
-    }
-
-    #[instrument(skip_all, name = "curp_fetch_leader")]
-    async fn fetch_leader(
-        &self,
-        request: tonic::Request<FetchLeaderRequest>,
-    ) -> Result<tonic::Response<FetchLeaderResponse>, tonic::Status> {
-        Ok(tonic::Response::new(
-            self.inner.fetch_leader(request.into_inner())?,
         ))
     }
 

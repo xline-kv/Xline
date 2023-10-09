@@ -34,11 +34,10 @@ use crate::{
     role_change::RoleChange,
     rpc::{
         self, connect::InnerConnectApi, AppendEntriesRequest, AppendEntriesResponse,
-        FetchClusterRequest, FetchClusterResponse, FetchLeaderRequest, FetchLeaderResponse,
-        FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,
-        InstallSnapshotResponse, ProposeConfChangeRequest, ProposeConfChangeResponse,
-        ProposeRequest, ProposeResponse, ShutdownRequest, ShutdownResponse, VoteRequest,
-        VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
+        InstallSnapshotRequest, InstallSnapshotResponse, ProposeConfChangeRequest,
+        ProposeConfChangeResponse, ProposeRequest, ProposeResponse, ShutdownRequest,
+        ShutdownResponse, VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
     server::{cmd_worker::CEEventTxApi, raw_curp::SyncAction, storage::db::DB},
     snapshot::{Snapshot, SnapshotMeta},
@@ -226,16 +225,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
 
         debug!("{} wait synced for cmd({id}) finishes", self.curp.id());
         Ok(resp)
-    }
-
-    /// Handle `FetchLeader` requests
-    #[allow(clippy::unnecessary_wraps, clippy::needless_pass_by_value)] // To keep type consistent with other request handlers
-    pub(super) fn fetch_leader(
-        &self,
-        _req: FetchLeaderRequest,
-    ) -> Result<FetchLeaderResponse, CurpError> {
-        let (leader_id, term) = self.curp.leader();
-        Ok(FetchLeaderResponse::new(leader_id, term))
     }
 
     /// Handle `FetchCluster` requests

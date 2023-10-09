@@ -23,18 +23,19 @@ pub(crate) use self::proto::{
     },
     messagepb::{
         fetch_read_state_response::ReadState,
-        propose_conf_change_request::{ConfChange, ConfChangeType},
-        protocol_server::Protocol,
-        FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
-        IdSet, Member as PbMember, ProposeConfChangeRequest, ProposeConfChangeResponse,
-        ShutdownRequest, ShutdownResponse,
+        propose_conf_change_response::Error as ConfChangeError, protocol_server::Protocol,
+        FetchReadStateRequest, FetchReadStateResponse, IdSet, ShutdownRequest, ShutdownResponse,
     },
 };
 pub use self::proto::{
     commandpb::{ProposeRequest, ProposeResponse},
     inner_messagepb::inner_protocol_server::InnerProtocolServer,
     messagepb::{
-        protocol_client, protocol_server::ProtocolServer, FetchLeaderRequest, FetchLeaderResponse,
+        propose_conf_change_request::{ConfChange, ConfChangeType},
+        protocol_client,
+        protocol_server::ProtocolServer,
+        FetchClusterRequest, FetchClusterResponse, Member as PbMember, ProposeConfChangeRequest,
+        ProposeConfChangeResponse,
     },
 };
 use crate::{
@@ -76,20 +77,6 @@ mod proto {
     }
     pub(crate) mod inner_messagepb {
         tonic::include_proto!("inner_messagepb");
-    }
-}
-
-impl FetchLeaderRequest {
-    /// Create a new `FetchLeaderRequest`
-    pub(crate) fn new() -> Self {
-        Self {}
-    }
-}
-
-impl FetchLeaderResponse {
-    /// Create a new `FetchLeaderResponse`
-    pub(crate) fn new(leader_id: Option<ServerId>, term: u64) -> Self {
-        Self { leader_id, term }
     }
 }
 
@@ -498,5 +485,13 @@ impl ShutdownResponse {
             term,
             error,
         }
+    }
+}
+
+impl From<ConfChangeError> for tonic::Status {
+    #[inline]
+    fn from(_err: ConfChangeError) -> Self {
+        // we'd better expose some err messages for client
+        tonic::Status::invalid_argument("")
     }
 }

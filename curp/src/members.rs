@@ -25,6 +25,7 @@ pub struct Member {
 }
 
 impl From<Member> for PbMember {
+    #[inline]
     fn from(member: Member) -> Self {
         Self {
             id: member.id,

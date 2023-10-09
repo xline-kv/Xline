@@ -3,8 +3,8 @@ fn main() {
         .compile(
             &[
                 "./proto/common/src/message.proto",
-                "./proto/common/src/error.proto",
-                "./proto/common/src/command.proto",
+                "./proto/common/src/curp-error.proto",
+                "./proto/common/src/curp-command.proto",
             ],
             &["./proto/common/src"],
         )

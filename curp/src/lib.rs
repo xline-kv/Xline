@@ -157,11 +157,8 @@
 )]
 
 pub use curp_external_api::LogIndex;
-/// Expose for madsim simulation tests.
-pub use rpc::{
-    protocol_client, FetchLeaderRequest, FetchLeaderResponse, InnerProtocolServer, ProposeRequest,
-    ProposeResponse, ProtocolServer,
-};
+/// Expose some rpc payloads
+pub use rpc::*;
 
 /// Client side, sending requests and determining requests' state
 pub mod client;

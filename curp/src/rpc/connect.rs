@@ -27,7 +27,7 @@ use crate::{
             inner_messagepb::inner_protocol_client::InnerProtocolClient,
             messagepb::protocol_client::ProtocolClient,
         },
-        AppendEntriesRequest, AppendEntriesResponse, FetchLeaderRequest, FetchLeaderResponse,
+        AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse,
         FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,
         InstallSnapshotResponse, ProposeRequest, ProposeResponse, VoteRequest, VoteResponse,
         WaitSyncedRequest, WaitSyncedResponse,
@@ -119,12 +119,12 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
         timeout: Duration,
     ) -> Result<tonic::Response<ShutdownResponse>, RpcError>;
 
-    /// Send `FetchLeaderRequest`
-    async fn fetch_leader(
+    /// Send `FetchClusterRequest`
+    async fn fetch_cluster(
         &self,
-        request: FetchLeaderRequest,
+        request: FetchClusterRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<FetchLeaderResponse>, RpcError>;
+    ) -> Result<tonic::Response<FetchClusterResponse>, RpcError>;
 
     /// Send `FetchReadStateRequest`
     async fn fetch_read_state(
@@ -262,15 +262,15 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
     }
 
     /// Send `FetchLeaderRequest`
-    async fn fetch_leader(
+    async fn fetch_cluster(
         &self,
-        request: FetchLeaderRequest,
+        request: FetchClusterRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<FetchLeaderResponse>, RpcError> {
+    ) -> Result<tonic::Response<FetchClusterResponse>, RpcError> {
         let mut client = self.rpc_connect.clone();
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
-        client.fetch_leader(req).await.map_err(Into::into)
+        client.fetch_cluster(req).await.map_err(Into::into)
     }
 
     /// Send `FetchReadStateRequest`
