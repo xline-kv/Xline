@@ -153,10 +153,10 @@ use utils::{
         default_batch_max_size, default_batch_timeout, default_candidate_timeout_ticks,
         default_client_wait_synced_timeout, default_cmd_workers, default_compact_batch_size,
         default_compact_sleep_interval, default_follower_timeout_ticks, default_gc_interval,
-        default_heartbeat_interval, default_log_entries_cap, default_log_level,
-        default_propose_timeout, default_range_retry_timeout, default_retry_count,
-        default_retry_timeout, default_rotation, default_rpc_timeout,
-        default_server_wait_synced_timeout, default_sync_victims_interval,
+        default_heartbeat_interval, default_initial_retry_timeout, default_log_entries_cap,
+        default_log_level, default_max_retry_timeout, default_propose_timeout,
+        default_range_retry_timeout, default_retry_count, default_rotation, default_rpc_timeout,
+        default_server_wait_synced_timeout, default_sync_victims_interval, default_use_backoff,
         default_watch_progress_notify_interval, file_appender, AuthConfig, AutoCompactConfig,
         ClientConfig, ClusterConfig, CompactConfig, CurpConfigBuilder, LevelConfig, LogConfig,
         RotationConfig, ServerTimeout, StorageConfig, TraceConfig, XlineServerConfig,
@@ -242,9 +242,15 @@ struct ServerArgs {
     /// Propose request timeout [default: 1s]
     #[clap(long, value_parser = parse_duration)]
     client_propose_timeout: Option<Duration>,
-    /// Curp client retry timeout [default: 50ms]
+    /// Curp client initial retry timeout [default: 50ms]
     #[clap(long, value_parser = parse_duration)]
-    client_retry_timeout: Option<Duration>,
+    client_initial_retry_timeout: Option<Duration>,
+    /// Curp client max retry timeout [default: 10_000ms]
+    #[clap(long, value_parser = parse_duration)]
+    client_max_retry_timeout: Option<Duration>,
+    /// Curp client use backoff [default: true]
+    #[clap(long)]
+    client_use_backoff: Option<bool>,
     /// How often should the gc task run [default: 20s]
     #[clap(long, value_parser = parse_duration)]
     gc_interval: Option<Duration>,
@@ -305,8 +311,6 @@ impl From<ServerArgs> for XlineServerConfig {
             .unwrap_or_else(default_heartbeat_interval))
         .wait_synced_timeout(args.server_wait_synced_timeout
             .unwrap_or_else(default_server_wait_synced_timeout))
-        .retry_timeout(args.retry_timeout.unwrap_or_else(default_retry_timeout))
-        .retry_count(args.retry_count.unwrap_or_else(default_retry_count))
         .rpc_timeout(args.rpc_timeout.unwrap_or_else(default_rpc_timeout))
         .batch_timeout(args.batch_timeout.unwrap_or_else(default_batch_timeout))
         .batch_max_size(args.batch_max_size.unwrap_or_else(default_batch_max_size))
@@ -322,9 +326,12 @@ impl From<ServerArgs> for XlineServerConfig {
                 .unwrap_or_else(default_client_wait_synced_timeout),
             args.client_propose_timeout
                 .unwrap_or_else(default_propose_timeout),
-            args.client_retry_timeout
-                .unwrap_or_else(default_retry_timeout),
+            args.client_initial_retry_timeout
+                .unwrap_or_else(default_initial_retry_timeout),
+            args.client_max_retry_timeout
+                .unwrap_or_else(default_max_retry_timeout),
             args.retry_count.unwrap_or_else(default_retry_count),
+            args.client_use_backoff.unwrap_or_else(default_use_backoff),
         );
 
         let server_timeout = ServerTimeout::new(

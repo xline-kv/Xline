@@ -197,11 +197,6 @@ pub struct CurpConfig {
     )]
     pub wait_synced_timeout: Duration,
 
-    /// Curp propose retry timeout
-    #[builder(default = "default_retry_timeout()")]
-    #[serde(with = "duration_format", default = "default_retry_timeout")]
-    pub retry_timeout: Duration,
-
     /// Curp propose retry count
     #[builder(default = "default_retry_count()")]
     #[serde(default = "default_retry_count")]
@@ -287,18 +282,40 @@ pub const fn default_server_wait_synced_timeout() -> Duration {
     Duration::from_secs(5)
 }
 
-/// default retry timeout
+/// default initial retry timeout
 #[must_use]
 #[inline]
-pub const fn default_retry_timeout() -> Duration {
+pub const fn default_initial_retry_timeout() -> Duration {
     Duration::from_millis(50)
 }
 
+/// default max retry timeout
+#[must_use]
+#[inline]
+pub const fn default_max_retry_timeout() -> Duration {
+    Duration::from_millis(10_000)
+}
+
 /// default retry count
+#[cfg(not(madsim))]
 #[must_use]
 #[inline]
 pub const fn default_retry_count() -> usize {
     3
+}
+/// default retry count
+#[cfg(madsim)]
+#[must_use]
+#[inline]
+pub const fn default_retry_count() -> usize {
+    10
+}
+
+/// default use backoff
+#[must_use]
+#[inline]
+pub const fn default_use_backoff() -> bool {
+    true
 }
 
 /// default rpc timeout
@@ -384,7 +401,6 @@ impl Default for CurpConfig {
         Self {
             heartbeat_interval: default_heartbeat_interval(),
             wait_synced_timeout: default_server_wait_synced_timeout(),
-            retry_timeout: default_retry_timeout(),
             retry_count: default_retry_count(),
             rpc_timeout: default_rpc_timeout(),
             batch_timeout: default_batch_timeout(),
@@ -416,32 +432,54 @@ pub struct ClientConfig {
     #[serde(with = "duration_format", default = "default_propose_timeout")]
     propose_timeout: Duration,
 
-    /// Curp client retry interval
+    /// Curp client initial retry interval
     #[getset(get = "pub")]
-    #[serde(with = "duration_format", default = "default_retry_timeout")]
-    retry_timeout: Duration,
+    #[serde(with = "duration_format", default = "default_initial_retry_timeout")]
+    initial_retry_timeout: Duration,
+
+    /// Curp client max retry interval
+    #[getset(get = "pub")]
+    #[serde(with = "duration_format", default = "default_max_retry_timeout")]
+    max_retry_timeout: Duration,
 
     /// Curp client retry interval
     #[getset(get = "pub")]
     #[serde(default = "default_retry_count")]
     retry_count: usize,
+
+    /// Whether to use exponential backoff in retries
+    #[getset(get = "pub")]
+    #[serde(default = "default_use_backoff")]
+    use_backoff: bool,
 }
 
 impl ClientConfig {
     /// Create a new client timeout
+    ///
+    /// # Panics
+    ///
+    /// Panics if `initial_retry_timeout` is larger than `max_retry_timeout`
     #[must_use]
     #[inline]
     pub fn new(
         wait_synced_timeout: Duration,
         propose_timeout: Duration,
-        retry_timeout: Duration,
+        initial_retry_timeout: Duration,
+        max_retry_timeout: Duration,
         retry_count: usize,
+        use_backoff: bool,
     ) -> Self {
+        assert!(
+            initial_retry_timeout <= max_retry_timeout,
+            "`initial_retry_timeout` should less or equal to `max_retry_timeout`"
+        );
         Self {
             wait_synced_timeout,
             propose_timeout,
-            retry_timeout,
+            initial_retry_timeout,
+            max_retry_timeout,
             retry_count,
+            use_backoff,
         }
     }
 }
@@ -452,8 +490,10 @@ impl Default for ClientConfig {
         Self {
             wait_synced_timeout: default_client_wait_synced_timeout(),
             propose_timeout: default_propose_timeout(),
-            retry_timeout: default_retry_timeout(),
+            initial_retry_timeout: default_initial_retry_timeout(),
+            max_retry_timeout: default_max_retry_timeout(),
             retry_count: default_retry_count(),
+            use_backoff: default_use_backoff(),
         }
     }
 }
@@ -791,7 +831,9 @@ mod tests {
             retry_timeout = '100ms'
 
             [cluster.client_config]
-            retry_timeout = '5s'
+            initial_retry_timeout = '5s'
+            max_retry_timeout = '50s'
+            use_backoff = false
 
             [storage]
             engine = 'memory'
@@ -822,7 +864,6 @@ mod tests {
         let curp_config = CurpConfigBuilder::default()
             .heartbeat_interval(Duration::from_millis(200))
             .wait_synced_timeout(Duration::from_millis(100))
-            .retry_timeout(Duration::from_millis(100))
             .rpc_timeout(Duration::from_millis(100))
             .build()
             .unwrap();
@@ -831,7 +872,9 @@ mod tests {
             default_client_wait_synced_timeout(),
             default_propose_timeout(),
             Duration::from_secs(5),
+            Duration::from_secs(50),
             default_retry_count(),
+            false,
         );
 
         let server_timeout = ServerTimeout::new(

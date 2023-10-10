@@ -178,7 +178,9 @@ impl CommandRunner {
                     Duration::from_secs(10),
                     Duration::from_secs(5),
                     Duration::from_millis(250),
+                    Duration::from_millis(10_000),
                     3,
+                    true,
                 ),
             )
             .await?;

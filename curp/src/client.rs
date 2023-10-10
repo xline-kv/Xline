@@ -305,7 +305,7 @@ where
         cmd: Arc<C>,
     ) -> Result<(<C as Command>::ASR, <C as Command>::ER), CommandProposeError<C>> {
         debug!("slow round for cmd({}) started", cmd.id());
-        let retry_timeout = *self.config.retry_timeout();
+        let mut retry_timeout = self.get_backoff();
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {
             // fetch leader id
@@ -331,7 +331,7 @@ where
                 Err(e) => {
                     warn!("wait synced rpc error: {e}");
                     // it's quite likely that the leader has crashed, then we should wait for some time and fetch the leader again
-                    tokio::time::sleep(retry_timeout).await;
+                    tokio::time::sleep(retry_timeout.next_retry()).await;
                     self.resend_propose(Arc::clone(&cmd), None).await?;
                     continue;
                 }
@@ -371,6 +371,7 @@ where
     /// The shutdown rpc of curp protocol
     #[instrument(skip_all)]
     pub async fn shutdown(&self) -> Result<(), ProposeError> {
+        let mut retry_timeout = self.get_backoff();
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {
             let leader_id = match self.get_leader_id().await {
@@ -393,7 +394,7 @@ where
                 Ok(resp) => resp.into_inner(),
                 Err(e) => {
                     warn!("shutdown rpc error: {e}");
-                    tokio::time::sleep(*self.config.retry_timeout()).await;
+                    tokio::time::sleep(retry_timeout.next_retry()).await;
                     continue;
                 }
             };
@@ -404,7 +405,6 @@ where
                 Some(e) => {
                     // Leader may not be correct leader, resend the shutdown request to the new leader
                     warn!("shutdown error: {:?}", e);
-                    continue;
                 }
                 None => return Ok(()),
             }
@@ -418,9 +418,10 @@ where
         cmd: Arc<C>,
         mut new_leader: Option<ServerId>,
     ) -> Result<(), ProposeError> {
+        let mut retry_timeout = self.get_backoff();
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {
-            tokio::time::sleep(*self.config.retry_timeout()).await;
+            tokio::time::sleep(retry_timeout.next_retry()).await;
 
             let leader_id = if let Some(id) = new_leader.take() {
                 id
@@ -462,7 +463,6 @@ where
                 Err(e) => {
                     // if the propose fails again, need to fetch the leader and try again
                     warn!("failed to resend propose, {e}");
-                    tokio::time::sleep(*self.config.retry_timeout()).await;
                     continue;
                 }
             };
@@ -510,16 +510,18 @@ where
     ///   `ProposeError::Timeout` if timeout
     #[inline]
     async fn fetch_cluster(&self) -> Result<FetchClusterResponse, ProposeError> {
+        let mut retry_timeout = self.get_backoff();
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {
             let connects = self.all_connects();
+            let timeout = retry_timeout.next_retry();
             let mut rpcs: FuturesUnordered<_> = connects
                 .iter()
                 .map(|connect| async {
                     (
                         connect.id(),
                         connect
-                            .fetch_cluster(FetchClusterRequest::new(), *self.config.retry_timeout())
+                            .fetch_cluster(FetchClusterRequest::new(), timeout)
                             .await,
                     )
                 })
@@ -565,7 +567,7 @@ where
 
             // wait until the election is completed
             // TODO: let user configure it according to average leader election cost
-            tokio::time::sleep(*self.config.retry_timeout()).await;
+            tokio::time::sleep(timeout).await;
         }
         Err(ProposeError::Timeout)
     }
@@ -592,13 +594,16 @@ where
     #[inline]
     pub async fn get_leader_id(&self) -> Result<ServerId, ProposeError> {
         let notify = Arc::clone(&self.state.read().leader_notify);
-        let retry_timeout = *self.config.retry_timeout();
+        let mut retry_timeout = self.get_backoff();
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {
             if let Some(id) = self.state.read().leader {
                 return Ok(id);
             }
-            if timeout(retry_timeout, notify.listen()).await.is_err() {
+            if timeout(retry_timeout.next_retry(), notify.listen())
+                .await
+                .is_err()
+            {
                 return self.fetch_leader().await;
             }
         }
@@ -665,7 +670,7 @@ where
     ///   `ProposeError::EncodingError` encoding error met while deserializing the propose id
     #[inline]
     pub async fn fetch_read_state(&self, cmd: &C) -> Result<ReadState, ProposeError> {
-        let retry_timeout = *self.config.retry_timeout();
+        let mut retry_timeout = self.get_backoff();
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {
             let leader_id = match self.get_leader_id().await {
@@ -688,7 +693,7 @@ where
                 Ok(resp) => resp.into_inner(),
                 Err(e) => {
                     warn!("fetch read state rpc error: {e}");
-                    tokio::time::sleep(retry_timeout).await;
+                    tokio::time::sleep(retry_timeout.next_retry()).await;
                     continue;
                 }
             };
@@ -719,7 +724,10 @@ where
             let resp = self
                 .get_connect(local_server)
                 .unwrap_or_else(|| unreachable!("self id {} not found", local_server))
-                .fetch_cluster(FetchClusterRequest::new(), *self.config.retry_timeout())
+                .fetch_cluster(
+                    FetchClusterRequest::new(),
+                    *self.config.initial_retry_timeout(),
+                )
                 .await?
                 .into_inner();
             Ok(resp)
@@ -798,6 +806,49 @@ where
         let client_id = self.get_client_id().await?;
         let seq_num = self.new_seq_num();
         Ok(generate_propose_id(client_id, seq_num))
+    }
+
+    /// Get the initial backoff config
+    fn get_backoff(&self) -> BackOff {
+        BackOff::new(
+            *self.config.initial_retry_timeout(),
+            *self.config.max_retry_timeout(),
+            *self.config.use_backoff(),
+        )
+    }
+}
+
+/// Generate timeout using exponential backoff algorithm
+struct BackOff {
+    /// Current timeout
+    timeout: Duration,
+    /// Max timeout
+    max_timeout: Duration,
+    /// Whether to use backoff
+    use_backoff: bool,
+}
+
+impl BackOff {
+    /// Creates a new `BackOff`
+    fn new(initial_timeout: Duration, max_timeout: Duration, use_backoff: bool) -> Self {
+        Self {
+            timeout: initial_timeout,
+            max_timeout,
+            use_backoff,
+        }
+    }
+
+    /// Get current timeout
+    fn next_retry(&mut self) -> Duration {
+        let current = self.timeout;
+        if self.use_backoff {
+            self.timeout = self
+                .timeout
+                .checked_mul(2)
+                .unwrap_or(self.timeout)
+                .min(self.max_timeout);
+        }
+        current
     }
 }
 

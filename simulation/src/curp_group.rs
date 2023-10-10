@@ -159,7 +159,8 @@ impl CurpGroup {
         &self.nodes[id]
     }
 
-    pub async fn new_client(&self, config: ClientConfig) -> SimClient<TestCommand> {
+    pub async fn new_client(&self) -> SimClient<TestCommand> {
+        let config = ClientConfig::default();
         let all_members = self
             .nodes
             .iter()
