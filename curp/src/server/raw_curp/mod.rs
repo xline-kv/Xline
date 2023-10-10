@@ -313,6 +313,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 Err(ConfChangeError::new_propose(ProposeError::Duplicated)),
             );
         }
+        let changes = conf_change.changes().to_owned();
         let mut log_w = self.log.write();
         let entry = match log_w.push(st_r.term, conf_change) {
             Ok(entry) => {
@@ -320,6 +321,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 entry
             }
             Err(e) => return (info, Err(ConfChangeError::new_propose(e.into()))),
+        };
+        if let Err(e) = self.apply_conf_change(changes) {
+            return (info, Err(e));
         };
         self.entry_process(&mut log_w, entry, conflict);
         (info, Ok(()))
@@ -373,27 +377,27 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
         // append log entries
         let mut log_w = self.log.write();
-        let append_succeeded = log_w
+        let cc_entry = entries
+            .iter()
+            .find(|e| matches!(e.entry_data, EntryData::ConfChange(_)))
+            .cloned();
+        log_w
             .try_append_entries(entries, prev_log_index, prev_log_term)
-            .is_ok();
-
+            .map_err(|_ig| (term, log_w.commit_index + 1))?;
+        if let Some(e) = cc_entry {
+            let EntryData::ConfChange(ref cc) = e.entry_data else {
+                unreachable!("cc_entry should be conf change entry");
+            };
+            self.apply_conf_change(cc.changes().to_owned())
+                .unwrap_or_else(|_e| unreachable!("apply_conf_change should succeed, because the check of conf change already passed on leader"));
+        }
         // update commit index
         let prev_commit_index = log_w.commit_index;
         log_w.commit_index = min(leader_commit, log_w.last_log_index());
         if prev_commit_index < log_w.commit_index {
             self.apply(&mut *log_w);
         }
-
-        if append_succeeded {
-            Ok(term)
-        } else {
-            debug!(
-                "{} rejects append_entries, term: {term}, hint: {}",
-                self.id(),
-                log_w.commit_index + 1
-            );
-            Err((term, log_w.commit_index + 1))
-        }
+        Ok(term)
     }
 
     /// Handle `append_entries` response
@@ -888,15 +892,14 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     pub(super) fn apply_conf_change(
         &self,
         changes: Vec<ConfChange>,
-    ) -> Result<bool, ConfChangeError> {
+    ) -> Result<(), ConfChangeError> {
         assert_eq!(changes.len(), 1, "Joint consensus is not supported yet");
         let Some(conf_change) = changes.into_iter().next() else {
             unreachable!("conf change is empty");
         };
-
         self.check_new_config(&conf_change)?;
-
-        Ok(self.switch_config(conf_change))
+        self.switch_config(conf_change);
+        Ok(())
     }
 
     /// Get a receiver for conf changes
@@ -1205,9 +1208,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
     /// Switch to a new config and return true if self node is removed
     #[allow(clippy::unimplemented)] // TODO: remove this when learner is implemented
-    fn switch_config(&self, conf_change: ConfChange) -> bool {
+    fn switch_config(&self, conf_change: ConfChange) {
         let node_id = conf_change.node_id;
-        let remove_self = match conf_change.change_type() {
+        match conf_change.change_type() {
             ConfChangeType::Add => {
                 let member = Member::new(node_id, "", conf_change.address.clone(), false);
                 self.cst
@@ -1215,7 +1218,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 self.lst.insert(node_id);
                 _ = self.ctx.sync_events.insert(node_id, Arc::new(Event::new()));
                 self.ctx.cluster_info.insert(member);
-                false
             }
             ConfChangeType::Remove => {
                 self.cst
@@ -1224,13 +1226,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 _ = self.ctx.sync_events.remove(&node_id);
                 self.ctx.cluster_info.remove(&node_id);
                 _ = self.ctx.connects.remove(&node_id);
-                node_id == self.id()
             }
             ConfChangeType::Update => {
                 self.ctx
                     .cluster_info
                     .update(&node_id, conf_change.address.clone());
-                false
             }
             ConfChangeType::AddLearner | ConfChangeType::Promote => {
                 unimplemented!("learner node is not supported yet");
@@ -1240,7 +1240,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             .change_tx
             .send(conf_change)
             .unwrap_or_else(|_e| unreachable!("change_rx should not be dropped"));
-        remove_self
     }
 
     /// Entry process shared by `handle_xxx`

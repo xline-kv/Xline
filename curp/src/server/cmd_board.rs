@@ -5,10 +5,7 @@ use indexmap::{IndexMap, IndexSet};
 use parking_lot::RwLock;
 use utils::parking_lot_lock::RwLockMap;
 
-use crate::{
-    cmd::{Command, ProposeId},
-    rpc::ConfChangeError,
-};
+use crate::cmd::{Command, ProposeId};
 
 /// Ref to the cmd board
 pub(super) type CmdBoardRef<C> = Arc<RwLock<CommandBoard<C>>>;
@@ -25,7 +22,7 @@ pub(super) struct CommandBoard<C: Command> {
     /// Store all notifiers for conf change results
     conf_notifier: HashMap<ProposeId, Event>,
     /// Store all conf change results
-    pub(super) conf_buffer: IndexMap<ProposeId, Result<bool, ConfChangeError>>,
+    pub(super) conf_buffer: IndexSet<ProposeId>,
     /// The cmd has been received before, this is used for dedup
     pub(super) sync: IndexSet<ProposeId>,
     /// Store all execution results
@@ -45,7 +42,7 @@ impl<C: Command> CommandBoard<C> {
             er_buffer: IndexMap::new(),
             asr_buffer: IndexMap::new(),
             conf_notifier: HashMap::new(),
-            conf_buffer: IndexMap::new(),
+            conf_buffer: IndexSet::new(),
         }
     }
 
@@ -93,9 +90,9 @@ impl<C: Command> CommandBoard<C> {
     }
 
     /// Insert conf change result to internal buffer
-    pub(super) fn insert_conf(&mut self, id: &ProposeId, conf_r: Result<bool, ConfChangeError>) {
+    pub(super) fn insert_conf(&mut self, id: &ProposeId) {
         assert!(
-            self.conf_buffer.insert(id.clone(), conf_r).is_none(),
+            self.conf_buffer.insert(id.clone()),
             "conf should not be inserted twice"
         );
 
@@ -140,7 +137,7 @@ impl<C: Command> CommandBoard<C> {
             .entry(id.clone())
             .or_insert_with(Event::new);
         let listener = event.listen();
-        if self.conf_buffer.contains_key(id) {
+        if self.conf_buffer.contains(id) {
             event.notify(usize::MAX);
         }
         listener
@@ -212,13 +209,10 @@ impl<C: Command> CommandBoard<C> {
     }
 
     /// Wait for an conf change result
-    pub(super) async fn wait_for_conf(
-        cb: &CmdBoardRef<C>,
-        id: &ProposeId,
-    ) -> Result<bool, ConfChangeError> {
+    pub(super) async fn wait_for_conf(cb: &CmdBoardRef<C>, id: &ProposeId) {
         loop {
-            if let Some(ccr) = cb.map_read(|cb_r| cb_r.conf_buffer.get(id).cloned()) {
-                return ccr;
+            if let Some(_ccr) = cb.map_read(|cb_r| cb_r.conf_buffer.get(id).cloned()) {
+                return;
             }
             let listener = cb.write().conf_listener(id);
             listener.await;
