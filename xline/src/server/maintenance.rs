@@ -93,10 +93,10 @@ where
             .iter()
             .find(|member| member.id == self_id)
             .map_or(false, |member| member.is_learner);
-        // TODO should we add `raft_index` and `raft_applied_index` in FetchClusterResponse?
+        // TODO bypass CurpNode in client to get more detailed information
         let response = StatusResponse {
             header: Some(header),
-            version: "NA".to_owned(),
+            version: env!("CARGO_PKG_VERSION").to_owned(),
             db_size: -1,
             leader: cluster.leader_id.unwrap_or(0), // None means this member believes there is no leader
             raft_index: 0,
