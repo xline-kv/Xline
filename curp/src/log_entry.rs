@@ -6,7 +6,7 @@ use curp_external_api::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::rpc::ConfChangeEntry;
+use crate::{rpc::ConfChangeEntry, server::PoolEntry};
 
 /// Log entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +39,15 @@ impl<C> From<ConfChangeEntry> for EntryData<C> {
 impl<C> From<Arc<C>> for EntryData<C> {
     fn from(cmd: Arc<C>) -> Self {
         EntryData::Command(cmd)
+    }
+}
+
+impl<C> From<PoolEntry<C>> for EntryData<C> {
+    fn from(value: PoolEntry<C>) -> Self {
+        match value {
+            PoolEntry::Command(cmd) => EntryData::Command(cmd),
+            PoolEntry::ConfChange(conf_change) => EntryData::ConfChange(Box::new(conf_change)),
+        }
     }
 }
 

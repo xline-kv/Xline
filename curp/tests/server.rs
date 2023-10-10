@@ -424,7 +424,7 @@ async fn propose_conf_change_to_follower() {
         .await
         .unwrap();
 
-    let id = generate_propose_id("test");
+    let id = client.gen_propose_id().await.unwrap();
     let node_id = group.nodes.keys().next().copied().unwrap();
     let changes = vec![ConfChange::update(node_id, "new_addr".to_owned())];
     let conf_change = ProposeConfChangeRequest::new(id, changes);

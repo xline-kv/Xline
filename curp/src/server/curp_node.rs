@@ -757,7 +757,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                     error!("can't deserialize spec_pool from vote response, {e}");
                     continue;
                 }
-                Ok(spec_pool) => spec_pool.into_iter().map(|cmd| Arc::new(cmd)).collect(),
+                Ok(spec_pool) => spec_pool.into_iter().collect(),
             };
             let result =
                 curp.handle_vote_resp(id, resp.term, resp.vote_granted, follower_spec_pool);

@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::collections::{HashMap, HashSet};
 
 use dashmap::{
     mapref::one::{Ref, RefMut},
@@ -11,7 +8,7 @@ use madsim::rand::{thread_rng, Rng};
 use tracing::debug;
 
 use super::Role;
-use crate::{members::ServerId, LogIndex};
+use crate::{members::ServerId, server::PoolEntry, LogIndex};
 
 /// Curp state
 #[derive(Debug)]
@@ -43,7 +40,7 @@ pub(super) struct State {
 #[derive(Debug)]
 pub(super) struct CandidateState<C> {
     /// Collected speculative pools, used for recovery
-    pub(super) sps: HashMap<ServerId, Vec<Arc<C>>>,
+    pub(super) sps: HashMap<ServerId, Vec<PoolEntry<C>>>,
     /// config in current cluster
     pub(super) config: MajorityConfig,
     /// Votes received in the election

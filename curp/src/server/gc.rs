@@ -143,28 +143,23 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(100)).await;
         let cmd1 = Arc::new(TestCommand::default());
-        spec.lock()
-            .pool
-            .insert(cmd1.id().clone(), Arc::clone(&cmd1));
+        spec.lock().pool.insert(cmd1.id().clone(), cmd1.into());
 
         tokio::time::sleep(Duration::from_millis(100)).await;
         let cmd2 = Arc::new(TestCommand::default());
-        spec.lock()
-            .pool
-            .insert(cmd2.id().clone(), Arc::clone(&cmd2));
+        spec.lock().pool.insert(cmd2.id().clone(), cmd2.into());
 
         // at 600ms
         tokio::time::sleep(Duration::from_millis(400)).await;
         let cmd3 = Arc::new(TestCommand::default());
-        spec.lock()
-            .pool
-            .insert(cmd3.id().clone(), Arc::clone(&cmd3));
+        let cmd3_id = cmd3.id().clone();
+        spec.lock().pool.insert(cmd3.id().clone(), cmd3.into());
 
         // at 1100ms, the first two kv should be removed
         tokio::time::sleep(Duration::from_millis(500)).await;
         let spec = spec.lock();
         assert_eq!(spec.pool.len(), 1);
-        assert!(spec.pool.contains_key(cmd3.id()));
+        assert!(spec.pool.contains_key(&cmd3_id));
     }
 
     // To verify #206 is fixed
@@ -174,24 +169,19 @@ mod tests {
         let spec: SpecPoolRef<TestCommand> = Arc::new(Mutex::new(SpeculativePool::new()));
 
         let cmd1 = Arc::new(TestCommand::default());
-        spec.lock()
-            .pool
-            .insert(cmd1.id().clone(), Arc::clone(&cmd1));
+        spec.lock().pool.insert(cmd1.id().clone(), cmd1.into());
 
         tokio::time::sleep(Duration::from_millis(100)).await;
         let cmd2 = Arc::new(TestCommand::default());
-        spec.lock()
-            .pool
-            .insert(cmd2.id().clone(), Arc::clone(&cmd2));
+        let cmd2_id = cmd2.id().clone();
+        spec.lock().pool.insert(cmd2_id.clone(), cmd2.into());
 
         let cmd3 = Arc::new(TestCommand::default());
-        spec.lock()
-            .pool
-            .insert(cmd2.id().clone(), Arc::clone(&cmd3));
+        spec.lock().pool.insert(cmd2_id.clone(), cmd3.into());
 
         tokio::spawn(gc_spec_pool(Arc::clone(&spec), Duration::from_millis(500)));
 
-        spec.lock().remove(cmd2.id());
+        spec.lock().remove(&cmd2_id);
 
         sleep_secs(1).await;
     }

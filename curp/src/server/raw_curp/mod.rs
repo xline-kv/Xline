@@ -20,10 +20,11 @@ use std::{
 };
 
 use clippy_utilities::NumericCast;
+use curp_external_api::cmd::ConflictCheck;
 use dashmap::DashMap;
 use event_listener::Event;
 use itertools::Itertools;
-use parking_lot::{Mutex, RwLock, RwLockReadGuard, RwLockUpgradableReadGuard, RwLockWriteGuard};
+use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::{
     debug, error,
@@ -40,7 +41,7 @@ use self::{
     log::Log,
     state::{CandidateState, LeaderState, State},
 };
-use super::cmd_worker::CEEventTxApi;
+use super::{cmd_worker::CEEventTxApi, PoolEntry};
 use crate::{
     cmd::{Command, ProposeId},
     error::{ProposeError, RpcError},
@@ -67,7 +68,7 @@ mod log;
 mod tests;
 
 /// Uncommitted pool type
-pub(super) type UncommittedPool<C> = HashMap<ProposeId, Arc<C>>;
+pub(super) type UncommittedPool<C> = HashMap<ProposeId, PoolEntry<C>>;
 
 /// Reference to uncommitted pool
 pub(super) type UncommittedPoolRef<C> = Arc<Mutex<UncommittedPool<C>>>;
@@ -223,10 +224,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         cmd: Arc<C>,
     ) -> ((Option<ServerId>, u64), Result<bool, ProposeError>) {
         debug!("{} gets proposal for cmd({})", self.id(), cmd.id());
-        let mut conflict = self
-            .ctx
-            .sp
-            .map_lock(|mut spec_l| spec_l.insert(Arc::clone(&cmd)).is_some());
+        let mut conflict = self.insert_sp(Arc::clone(&cmd));
         let st_r = self.st.read();
         let info = (st_r.leader_id, st_r.term);
         // Non-leader doesn't need to sync or execute
@@ -245,23 +243,24 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             return (info, Err(ProposeError::Duplicated));
         }
         // leader also needs to check if the cmd conflicts un-synced commands
-        conflict |= self.ctx.ucp.map_lock(|mut ucp_l| {
-            let conflict_uncommitted = ucp_l.values().any(|c| c.is_conflict(cmd.as_ref()));
-            assert!(
-                ucp_l.insert(cmd.id().clone(), Arc::clone(&cmd)).is_none(),
-                "cmd should never be inserted to uncommitted pool twice"
-            );
-            conflict_uncommitted
-        });
-        let log_w = self.log.write();
-        let res = self.entry_process(log_w, &st_r, cmd, conflict).and({
+        conflict |= self.insert_ucp(Arc::clone(&cmd));
+        let mut log_w = self.log.write();
+        let entry = match log_w.push(st_r.term, cmd) {
+            Ok(entry) => {
+                debug!("{} gets new log[{}]", self.id(), entry.index);
+                entry
+            }
+            Err(e) => return (info, Err(e.into())),
+        };
+        self.entry_process(&mut log_w, entry, conflict);
+        (
+            info,
             if conflict {
                 Err(ProposeError::KeyConflict)
             } else {
                 Ok(true)
-            }
-        });
-        (info, res)
+            },
+        )
     }
 
     /// Handle `shutdown` request
@@ -272,9 +271,16 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         if st_r.role != Role::Leader {
             return (info, Err(ProposeError::NotLeader));
         }
-        let log_w = self.log.write();
-        let res = self.entry_process(log_w, &st_r, EntryData::Shutdown, true);
-        (info, res)
+        let mut log_w = self.log.write();
+        let entry = match log_w.push(st_r.term, EntryData::Shutdown) {
+            Ok(entry) => {
+                debug!("{} gets new log[{}]", self.id(), entry.index);
+                entry
+            }
+            Err(e) => return (info, Err(e.into())),
+        };
+        self.entry_process(&mut log_w, entry, true);
+        (info, Ok(()))
     }
 
     /// Handle `propose_conf_change` request
@@ -297,6 +303,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 Err(ConfChangeError::new_propose(ProposeError::NotLeader)),
             );
         }
+        let pool_entry = PoolEntry::from(conf_change.clone());
+        let mut conflict = self.insert_sp(pool_entry.clone());
+        conflict |= self.insert_ucp(pool_entry);
         let id = conf_change.id().clone();
         if !self.ctx.cb.map_write(|mut cb_w| cb_w.sync.insert(id)) {
             return (
@@ -304,11 +313,16 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 Err(ConfChangeError::new_propose(ProposeError::Duplicated)),
             );
         }
-        let log_w = self.log.write();
-        let res = self
-            .entry_process(log_w, &st_r, conf_change, true)
-            .map_err(ConfChangeError::new_propose);
-        (info, res)
+        let mut log_w = self.log.write();
+        let entry = match log_w.push(st_r.term, conf_change) {
+            Ok(entry) => {
+                debug!("{} gets new log[{}]", self.id(), entry.index);
+                entry
+            }
+            Err(e) => return (info, Err(ConfChangeError::new_propose(e.into()))),
+        };
+        self.entry_process(&mut log_w, entry, conflict);
+        (info, Ok(()))
     }
 
     /// Handle `append_entries`
@@ -443,7 +457,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         candidate_id: ServerId,
         last_log_index: LogIndex,
         last_log_term: u64,
-    ) -> Result<(u64, Vec<Arc<C>>), u64> {
+    ) -> Result<(u64, Vec<PoolEntry<C>>), u64> {
         debug!(
             "{} received vote: term({}), last_log_index({}), last_log_term({}), id({})",
             self.id(),
@@ -499,7 +513,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         id: ServerId,
         term: u64,
         vote_granted: bool,
-        spec_pool: Vec<Arc<C>>,
+        spec_pool: Vec<PoolEntry<C>>,
     ) -> Result<bool, ()> {
         let mut st_w = self.st.write();
         if st_w.term < term {
@@ -606,7 +620,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         let ids = self.ctx.sp.map_lock(|sp| {
             sp.pool
                 .iter()
-                .filter_map(|(id, c)| c.is_conflict(cmd).then_some(id.clone()))
+                .filter_map(|(id, c)| c.is_conflict_with_cmd(cmd).then_some(id.clone()))
                 .collect_vec()
         });
         if ids.is_empty() {
@@ -1035,7 +1049,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         &self,
         st: &mut State,
         log: &mut Log<C>,
-        spec_pools: HashMap<ServerId, Vec<Arc<C>>>,
+        spec_pools: HashMap<ServerId, Vec<PoolEntry<C>>>,
     ) {
         if log_enabled!(Level::Debug) {
             let debug_sps: HashMap<ServerId, String> = spec_pools
@@ -1048,7 +1062,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             debug!("{} collected spec pools: {debug_sps:?}", self.id());
         }
 
-        let mut cmd_cnt: HashMap<ProposeId, (Arc<C>, u64)> = HashMap::new();
+        let mut cmd_cnt: HashMap<ProposeId, (PoolEntry<C>, u64)> = HashMap::new();
         for cmd in spec_pools.into_values().flatten() {
             let entry = cmd_cnt.entry(cmd.id().clone()).or_insert((cmd, 0));
             entry.1 += 1;
@@ -1073,7 +1087,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         let term = st.term;
         for cmd in recovered_cmds {
             let _ig_sync = cb_w.sync.insert(cmd.id().clone()); // may have been inserted before
-            let _ig_spec = sp_l.insert(Arc::clone(&cmd)); // may have been inserted before
+            let _ig_spec = sp_l.insert(cmd.clone()); // may have been inserted before
             #[allow(clippy::expect_used)]
             let entry = log
                 .push(term, cmd)
@@ -1095,8 +1109,17 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             let entry = log.get(i).unwrap_or_else(|| {
                 unreachable!("system corrupted, get a `None` value on log[{i}]")
             });
-            if let EntryData::Command(ref cmd) = entry.entry_data {
-                let _ignore = ucp_l.insert(cmd.id().clone(), Arc::clone(cmd));
+            match entry.entry_data {
+                EntryData::Command(ref cmd) => {
+                    let _ignore = ucp_l.insert(cmd.id().clone(), Arc::clone(cmd).into());
+                }
+                EntryData::ConfChange(ref conf_change) => {
+                    let _ignore = ucp_l.insert(
+                        conf_change.id().clone(),
+                        conf_change.as_ref().clone().into(),
+                    );
+                }
+                EntryData::Shutdown => {}
             }
         }
     }
@@ -1223,20 +1246,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     /// Entry process shared by `handle_xxx`
     fn entry_process(
         &self,
-        mut log_w: RwLockWriteGuard<'_, Log<C>>,
-        st_r: &RwLockReadGuard<'_, State>,
-        entry: impl Into<EntryData<C>>,
+        log_w: &mut RwLockWriteGuard<'_, Log<C>>,
+        entry: Arc<LogEntry<C>>,
         conflict: bool,
-    ) -> Result<(), ProposeError> {
-        let entry = match log_w.push(st_r.term, entry) {
-            Ok(entry) => {
-                debug!("{} gets new log[{}]", self.id(), entry.index);
-                entry
-            }
-            Err(e) => {
-                return Err(e.into());
-            }
-        };
+    ) {
         let index = entry.index;
         if !conflict {
             log_w.last_exe = index;
@@ -1250,12 +1263,31 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         });
 
         // check if commit_index needs to be updated
-        if self.can_update_commit_index_to(&log_w, index, self.term()) && index > log_w.commit_index
+        if self.can_update_commit_index_to(log_w, index, self.term()) && index > log_w.commit_index
         {
             log_w.commit_index = index;
             debug!("{} updates commit index to {index}", self.id());
             self.apply(&mut *log_w);
         }
-        Ok(())
+    }
+
+    /// Insert entry to spec pool
+    fn insert_sp(&self, pool_entry: impl Into<PoolEntry<C>>) -> bool {
+        self.ctx
+            .sp
+            .map_lock(|mut spec_l| spec_l.insert(pool_entry).is_some())
+    }
+
+    /// Insert entry to uncommitted pool
+    fn insert_ucp(&self, pool_entry: impl Into<PoolEntry<C>>) -> bool {
+        let entry = pool_entry.into();
+        self.ctx.ucp.map_lock(|mut ucp_l| {
+            let conflict_uncommitted = ucp_l.values().any(|c| c.is_conflict(&entry));
+            assert!(
+                ucp_l.insert(entry.id().clone(), entry.clone()).is_none(),
+                "cmd should never be inserted to uncommitted pool twice"
+            );
+            conflict_uncommitted
+        })
     }
 }
