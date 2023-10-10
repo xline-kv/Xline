@@ -444,7 +444,7 @@ fn handle_vote_will_reject_smaller_term() {
 
     let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
     let result = curp.handle_vote(1, s1_id, 0, 0);
-    assert_eq!(result, Err(2));
+    assert_eq!(result.unwrap_err(), 2);
 }
 
 #[traced_test]
@@ -470,7 +470,7 @@ fn handle_vote_will_reject_outdated_candidate() {
 
     let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
     let result = curp.handle_vote(3, s1_id, 0, 0);
-    assert_eq!(result, Err(3));
+    assert_eq!(result.unwrap_err(), 3);
 }
 
 #[traced_test]
@@ -557,10 +557,13 @@ fn recover_from_spec_pools_will_pick_the_correct_cmds() {
     let s4_id = curp.cluster().get_id_by_name("S4").unwrap();
 
     let spec_pools = HashMap::from([
-        (s0_id, vec![Arc::clone(&cmd1), Arc::clone(&cmd2)]),
-        (s1_id, vec![Arc::clone(&cmd1)]),
-        (s2_id, vec![Arc::clone(&cmd1)]),
-        (s3_id, vec![Arc::clone(&cmd1)]),
+        (
+            s0_id,
+            vec![Arc::clone(&cmd1).into(), Arc::clone(&cmd2).into()],
+        ),
+        (s1_id, vec![Arc::clone(&cmd1).into()]),
+        (s2_id, vec![Arc::clone(&cmd1).into()]),
+        (s3_id, vec![Arc::clone(&cmd1).into()]),
         (s4_id, vec![]),
     ]);
 
@@ -596,7 +599,7 @@ fn recover_ucp_from_logs_will_pick_the_correct_cmds() {
     curp.recover_ucp_from_log(&mut *curp.log.write());
 
     curp.ctx.ucp.map_lock(|ucp| {
-        let mut ids: Vec<_> = ucp.values().map(|c| c.id()).collect();
+        let mut ids: Vec<_> = ucp.values().map(PoolEntry::id).collect();
         assert_eq!(ids.len(), 2);
         ids.sort();
         assert_eq!(ids[0], cmd1.id());
@@ -838,7 +841,8 @@ async fn update_node_should_update_the_address_of_node() {
 #[tokio::test]
 async fn leader_handle_propose_conf_change() {
     let curp = {
-        let exe_tx = MockCEEventTxApi::<TestCommand>::default();
+        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
+        exe_tx.expect_send_sp_exe().returning(|_| {});
         Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
     let follower_id = curp.cluster().get_id_by_name("S1").unwrap();

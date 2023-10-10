@@ -42,6 +42,7 @@ use crate::{
     error::{CommandSyncError, ProposeError, WaitSyncError},
     log_entry::LogEntry,
     members::ServerId,
+    server::PoolEntry,
     LogIndex,
 };
 
@@ -356,7 +357,7 @@ impl VoteResponse {
     /// Create a new accepted vote response
     pub(crate) fn new_accept<C: Command + Serialize>(
         term: u64,
-        cmds: Vec<Arc<C>>,
+        cmds: Vec<PoolEntry<C>>,
     ) -> bincode::Result<Self> {
         Ok(Self {
             term,
@@ -378,7 +379,9 @@ impl VoteResponse {
     }
 
     /// Get spec pool
-    pub(crate) fn spec_pool<C: Command + DeserializeOwned>(&self) -> bincode::Result<Vec<C>> {
+    pub(crate) fn spec_pool<C: Command + DeserializeOwned>(
+        &self,
+    ) -> bincode::Result<Vec<PoolEntry<C>>> {
         self.spec_pool
             .iter()
             .map(|cmd| bincode::deserialize(cmd))

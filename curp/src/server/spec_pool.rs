@@ -1,8 +1,10 @@
 use std::{collections::HashMap, sync::Arc};
 
+use curp_external_api::cmd::ConflictCheck;
 use parking_lot::Mutex;
 use tracing::{debug, warn};
 
+use super::PoolEntry;
 use crate::cmd::{Command, ProposeId};
 
 /// A reference to the speculative pool
@@ -12,7 +14,7 @@ pub(super) type SpecPoolRef<C> = Arc<Mutex<SpeculativePool<C>>>;
 #[derive(Debug)]
 pub(super) struct SpeculativePool<C> {
     /// Store
-    pub(super) pool: HashMap<ProposeId, Arc<C>>,
+    pub(super) pool: HashMap<ProposeId, PoolEntry<C>>,
 }
 
 impl<C: Command + 'static> SpeculativePool<C> {
@@ -24,12 +26,13 @@ impl<C: Command + 'static> SpeculativePool<C> {
     }
 
     /// Push a new command into spec pool if it has no conflict. Return Some if it conflicts with spec pool or the cmd is already in the pool.
-    pub(super) fn insert(&mut self, cmd: Arc<C>) -> Option<Arc<C>> {
-        if self.has_conflict_with(cmd.as_ref()) {
-            Some(cmd)
+    pub(super) fn insert(&mut self, entry: impl Into<PoolEntry<C>>) -> Option<PoolEntry<C>> {
+        let entry = entry.into();
+        if self.has_conflict_with(&entry) {
+            Some(entry)
         } else {
-            let id = cmd.id().clone();
-            let result = self.pool.insert(id.clone(), cmd);
+            let id = entry.id().clone();
+            let result = self.pool.insert(id.clone(), entry);
             if result.is_none() {
                 debug!("insert cmd({id}) into spec pool");
             } else {
@@ -40,7 +43,7 @@ impl<C: Command + 'static> SpeculativePool<C> {
     }
 
     /// Check whether the command pool has conflict with the new command
-    fn has_conflict_with(&self, cmd: &C) -> bool {
+    fn has_conflict_with(&self, cmd: &PoolEntry<C>) -> bool {
         self.pool.values().any(|spec_cmd| spec_cmd.is_conflict(cmd))
     }
 
