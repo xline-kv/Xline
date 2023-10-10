@@ -412,7 +412,7 @@ impl XlineServer {
                 Arc::clone(&header_gen),
                 Arc::clone(&self.cluster_info),
             ),
-            ClusterServer::new(client, header_gen, self.cluster_info.self_name()),
+            ClusterServer::new(client, header_gen),
             Arc::new(curp_server),
         ))
     }
