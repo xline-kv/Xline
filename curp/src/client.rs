@@ -504,7 +504,7 @@ where
         Err(ProposeError::Timeout)
     }
 
-    /// Send linearizable fetch cluster requests to all servers
+    /// Send fetch cluster requests to all servers
     /// Note: The fetched cluster may still be outdated
     /// # Errors
     ///   `ProposeError::Timeout` if timeout
@@ -756,18 +756,15 @@ where
             .map_err(|e| CommandProposeError::Propose(e))
     }
 
-    /// Fetch the current cluster without cache, return the leader and the members
+    /// Fetch the current cluster without cache
     /// # Errors
     /// `ProposeError::Timeout` if timeout
     #[inline]
     pub async fn get_cluster_from_curp(
         &self,
-        linearizable: bool,
     ) -> Result<FetchClusterResponse, CommandProposeError<C>> {
-        if !linearizable {
-            if let Ok(resp) = self.fetch_local_cluster().await {
-                return Ok(resp);
-            }
+        if let Ok(resp) = self.fetch_local_cluster().await {
+            return Ok(resp);
         }
         self.fetch_cluster()
             .await
