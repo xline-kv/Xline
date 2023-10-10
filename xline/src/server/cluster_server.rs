@@ -4,7 +4,7 @@ use tonic::{Request, Response, Status};
 
 use curp::members::ClusterInfo;
 use curp::ConfChangeType::{Add, AddLearner, Promote, Remove, Update};
-use curp::{client::Client, cmd::generate_propose_id, ConfChange, ProposeConfChangeRequest};
+use curp::{client::Client, ConfChange, ProposeConfChangeRequest};
 use xlineapi::{
     Cluster, Member, MemberAddRequest, MemberAddResponse, MemberListRequest, MemberListResponse,
     MemberPromoteRequest, MemberPromoteResponse, MemberRemoveRequest, MemberRemoveResponse,
@@ -18,8 +18,6 @@ use crate::header_gen::HeaderGenerator;
 pub(crate) struct ClusterServer {
     /// Consensus client
     client: Arc<Client<Command>>,
-    /// Server name
-    name: String,
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
 }
@@ -34,24 +32,21 @@ fn timestamp() -> u64 {
 
 impl ClusterServer {
     /// New `ClusterServer`
-    pub(crate) fn new(
-        client: Arc<Client<Command>>,
-        header_gen: Arc<HeaderGenerator>,
-        name: String,
-    ) -> Self {
-        Self {
-            client,
-            name,
-            header_gen,
-        }
+    pub(crate) fn new(client: Arc<Client<Command>>, header_gen: Arc<HeaderGenerator>) -> Self {
+        Self { client, header_gen }
     }
 
     /// Send propose conf change request
     async fn propose_conf_change(&self, change: ConfChange) -> Result<Vec<Member>, Status> {
+        let propose_id = self
+            .client
+            .gen_propose_id()
+            .await
+            .map_err(propose_err_to_status)?;
         Ok(self
             .client
             .propose_conf_change(ProposeConfChangeRequest {
-                id: generate_propose_id(&self.name),
+                id: propose_id,
                 changes: vec![change],
             })
             .await
