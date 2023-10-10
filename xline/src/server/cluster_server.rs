@@ -37,7 +37,7 @@ impl ClusterServer {
     }
 
     /// Send propose conf change request
-    async fn propose_conf_change(&self, change: ConfChange) -> Result<Vec<Member>, Status> {
+    async fn propose_conf_change(&self, changes: Vec<ConfChange>) -> Result<Vec<Member>, Status> {
         let propose_id = self
             .client
             .gen_propose_id()
@@ -47,7 +47,7 @@ impl ClusterServer {
             .client
             .propose_conf_change(ProposeConfChangeRequest {
                 id: propose_id,
-                changes: vec![change],
+                changes,
             })
             .await
             .map_err(propose_err_to_status)??
@@ -79,11 +79,11 @@ impl Cluster for ClusterServer {
         // calculate node id based on addresses and current timestamp
         let node_id = ClusterInfo::calculate_member_id(peer_url_ls.clone(), "", Some(timestamp()));
         let members = self
-            .propose_conf_change(ConfChange {
+            .propose_conf_change(vec![ConfChange {
                 change_type,
                 node_id,
                 address: peer_url_ls,
-            })
+            }])
             .await?;
         let resp = MemberAddResponse {
             header: Some(self.header_gen.gen_header()),
@@ -99,11 +99,11 @@ impl Cluster for ClusterServer {
     ) -> Result<Response<MemberRemoveResponse>, Status> {
         let req = request.into_inner();
         let members = self
-            .propose_conf_change(ConfChange {
+            .propose_conf_change(vec![ConfChange {
                 change_type: i32::from(Remove),
                 node_id: req.id,
                 address: vec![],
-            })
+            }])
             .await?;
         let resp = MemberRemoveResponse {
             header: Some(self.header_gen.gen_header()),
@@ -118,11 +118,11 @@ impl Cluster for ClusterServer {
     ) -> Result<Response<MemberUpdateResponse>, Status> {
         let req = request.into_inner();
         let members = self
-            .propose_conf_change(ConfChange {
+            .propose_conf_change(vec![ConfChange {
                 change_type: i32::from(Update),
                 node_id: req.id,
                 address: req.peer_ur_ls,
-            })
+            }])
             .await?;
         let resp = MemberUpdateResponse {
             header: Some(self.header_gen.gen_header()),
@@ -136,14 +136,23 @@ impl Cluster for ClusterServer {
         request: Request<MemberListRequest>,
     ) -> Result<Response<MemberListResponse>, Status> {
         let req = request.into_inner();
+        let header = self.header_gen.gen_header();
+        if req.linearizable {
+            let members = self.propose_conf_change(vec![]).await?;
+            let resp = MemberListResponse {
+                header: Some(header),
+                members,
+            };
+            return Ok(Response::new(resp));
+        }
         let members = self
             .client
-            .get_cluster_from_curp(req.linearizable)
+            .get_cluster_from_curp()
             .await
             .map_err(propose_err_to_status)?
             .members;
         let resp = MemberListResponse {
-            header: Some(self.header_gen.gen_header()),
+            header: Some(header),
             members: members
                 .into_iter()
                 .map(|member| Member {
@@ -164,11 +173,11 @@ impl Cluster for ClusterServer {
     ) -> Result<Response<MemberPromoteResponse>, Status> {
         let req = request.into_inner();
         let members = self
-            .propose_conf_change(ConfChange {
+            .propose_conf_change(vec![ConfChange {
                 change_type: i32::from(Promote),
                 node_id: req.id,
                 address: vec![],
-            })
+            }])
             .await?;
         let resp = MemberPromoteResponse {
             header: Some(self.header_gen.gen_header()),
