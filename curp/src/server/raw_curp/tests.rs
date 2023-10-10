@@ -771,19 +771,6 @@ async fn remove_node_should_remove_node_from_curp() {
 
 #[traced_test]
 #[tokio::test]
-async fn apply_conf_change_should_return_true_when_remove_self_node() {
-    let curp = {
-        let exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        Arc::new(RawCurp::new_test(5, exe_tx, mock_role_change()))
-    };
-    let self_id = curp.id();
-    let changes = vec![ConfChange::remove(self_id)];
-    let resp = curp.apply_conf_change(changes);
-    assert!(resp.is_ok_and(|b| b));
-}
-
-#[traced_test]
-#[tokio::test]
 async fn remove_non_exists_node_should_return_node_not_exists_error() {
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();

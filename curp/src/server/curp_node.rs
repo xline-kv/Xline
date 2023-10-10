@@ -171,8 +171,8 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         let ((leader_id, term), result) = self.curp.handle_propose_conf_change(req.into());
         let error = match result {
             Ok(()) => {
-                let apply_result = CommandBoard::wait_for_conf(&self.cmd_board, &id).await;
-                apply_result.err()
+                CommandBoard::wait_for_conf(&self.cmd_board, &id).await;
+                None
             }
             Err(err) => Some(err),
         };

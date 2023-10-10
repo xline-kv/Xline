@@ -19,6 +19,7 @@ use crate::{
     role_change::RoleChange,
     server::cmd_worker::conflict_checked_mpmc::TaskType,
     snapshot::{Snapshot, SnapshotMeta},
+    ConfChangeType,
 };
 
 /// The special conflict checked mpmc
@@ -155,25 +156,26 @@ async fn worker_as<
             curp.enter_shutdown();
             if let Err(e) = ce.set_last_applied(entry.index) {
                 error!("failed to set last_applied, {e}");
-                return false;
             }
             cb.write().notify_shutdown();
             true
         }
         EntryData::ConfChange(ref conf_change) => {
-            let changes = conf_change.changes().to_owned();
             if let Err(e) = ce.set_last_applied(entry.index) {
                 error!("failed to set last_applied, {e}");
                 return false;
             }
-            let res = curp.apply_conf_change(changes);
-            let is_ok = res.is_ok();
-            let shutdown_self = res.as_ref().is_ok_and(|r| *r);
-            cb.write().insert_conf(entry.id(), res);
+            let change = conf_change
+                .changes()
+                .first()
+                .unwrap_or_else(|| unreachable!("conf change should always have at one change"));
+            let shutdown_self =
+                change.change_type() == ConfChangeType::Remove && change.node_id == id;
+            cb.write().insert_conf(entry.id());
             if shutdown_self {
                 curp.shutdown_trigger().self_shutdown();
             }
-            is_ok
+            true
         }
     }
 }
