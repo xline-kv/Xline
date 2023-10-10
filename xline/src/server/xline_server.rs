@@ -303,7 +303,7 @@ impl XlineServer {
         AuthServer<S>,
         WatchServer<S>,
         MaintenanceServer<S>,
-        ClusterServer<S>,
+        ClusterServer,
         Arc<CurpServer<S>>,
     )> {
         let (header_gen, id_gen) = Self::construct_generator(&self.cluster_info);

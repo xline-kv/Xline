@@ -1,5 +1,4 @@
 use itertools::Itertools;
-use std::marker::PhantomData;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
@@ -14,21 +13,15 @@ use xlineapi::{
 
 use super::command::{propose_err_to_status, Command};
 use crate::header_gen::HeaderGenerator;
-use crate::storage::storage_api::StorageApi;
 
 /// Cluster Server
-pub(crate) struct ClusterServer<S>
-where
-    S: StorageApi,
-{
+pub(crate) struct ClusterServer {
     /// Consensus client
     client: Arc<Client<Command>>,
     /// Server name
     name: String,
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
-    /// Phantom
-    phantom: PhantomData<S>,
 }
 
 /// Get current timestamp in seconds
@@ -39,10 +32,7 @@ fn timestamp() -> u64 {
         .as_secs()
 }
 
-impl<S> ClusterServer<S>
-where
-    S: StorageApi,
-{
+impl ClusterServer {
     /// New `ClusterServer`
     pub(crate) fn new(
         client: Arc<Client<Command>>,
@@ -53,7 +43,6 @@ where
             client,
             name,
             header_gen,
-            phantom: PhantomData,
         }
     }
 
@@ -80,10 +69,7 @@ where
 }
 
 #[tonic::async_trait]
-impl<S> Cluster for ClusterServer<S>
-where
-    S: StorageApi,
-{
+impl Cluster for ClusterServer {
     async fn member_add(
         &self,
         request: Request<MemberAddRequest>,
