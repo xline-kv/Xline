@@ -21,10 +21,7 @@ use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tracing::debug;
 use utils::{
-    config::{
-        default_client_wait_synced_timeout, default_propose_timeout, default_retry_timeout,
-        ClientConfig, CurpConfigBuilder, StorageConfig,
-    },
+    config::{ClientConfig, CurpConfigBuilder, StorageConfig},
     shutdown,
 };
 
@@ -162,13 +159,7 @@ impl CurpGroup {
         &self.nodes[id]
     }
 
-    pub async fn new_client(&self) -> SimClient<TestCommand> {
-        let config = ClientConfig::new(
-            default_client_wait_synced_timeout(),
-            default_propose_timeout(),
-            default_retry_timeout(),
-            usize::MAX,
-        );
+    pub async fn new_client(&self, config: ClientConfig) -> SimClient<TestCommand> {
         let all_members = self
             .nodes
             .iter()

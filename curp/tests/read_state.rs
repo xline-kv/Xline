@@ -6,6 +6,7 @@ use curp_test_utils::{
     test_cmd::{TestCommand, TestCommandResult},
 };
 use test_macros::abort_on_panic;
+use utils::config::ClientConfig;
 
 use crate::common::curp_group::CurpGroup;
 
@@ -16,7 +17,7 @@ mod common;
 async fn read_state() {
     init_logger();
     let group = CurpGroup::new(3).await;
-    let put_client = group.new_client().await;
+    let put_client = group.new_client(ClientConfig::default()).await;
     let put_cmd = TestCommand::new_put(vec![0], 0).set_exe_dur(Duration::from_millis(100));
     let put_id = put_cmd.id().clone();
     tokio::spawn(async move {
@@ -25,7 +26,7 @@ async fn read_state() {
             TestCommandResult::default(),
         );
     });
-    let get_client = group.new_client().await;
+    let get_client = group.new_client(ClientConfig::default()).await;
     let res = get_client
         .fetch_read_state(&TestCommand::new_get(vec![0]))
         .await

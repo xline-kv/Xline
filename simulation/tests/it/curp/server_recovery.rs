@@ -7,13 +7,14 @@ use engine::StorageEngine;
 use itertools::Itertools;
 use simulation::curp_group::{CurpGroup, ProposeRequest};
 use tracing::debug;
+use utils::config::ClientConfig;
 
 #[madsim::test]
 async fn leader_crash_and_recovery() {
     init_logger();
 
     let mut group = CurpGroup::new(5).await;
-    let client = group.new_client().await;
+    let client = group.new_client(ClientConfig::default()).await;
 
     let leader = group.try_get_leader().await.unwrap().0;
     group.crash(leader).await;
@@ -57,7 +58,7 @@ async fn follower_crash_and_recovery() {
     init_logger();
 
     let mut group = CurpGroup::new(5).await;
-    let client = group.new_client().await;
+    let client = group.new_client(ClientConfig::default()).await;
 
     let leader = group.try_get_leader().await.unwrap().0;
     let follower = *group.nodes.keys().find(|&id| id != &leader).unwrap();
@@ -102,7 +103,7 @@ async fn leader_and_follower_both_crash_and_recovery() {
     init_logger();
 
     let mut group = CurpGroup::new(5).await;
-    let client = group.new_client().await;
+    let client = group.new_client(ClientConfig::default()).await;
 
     let leader = group.try_get_leader().await.unwrap().0;
     let follower = *group.nodes.keys().find(|&id| id != &leader).unwrap();
@@ -173,7 +174,7 @@ async fn new_leader_will_recover_spec_cmds_cond1() {
     init_logger();
 
     let mut group = CurpGroup::new(5).await;
-    let client = group.new_client().await;
+    let client = group.new_client(ClientConfig::default()).await;
 
     let leader1 = group.get_leader().await.0;
 
@@ -226,7 +227,7 @@ async fn new_leader_will_recover_spec_cmds_cond2() {
     init_logger();
 
     let group = CurpGroup::new(5).await;
-    let client = group.new_client().await;
+    let client = group.new_client(ClientConfig::default()).await;
 
     let leader1 = group.get_leader().await.0;
 
@@ -266,7 +267,7 @@ async fn old_leader_will_keep_original_states() {
     init_logger();
 
     let group = CurpGroup::new(5).await;
-    let client = group.new_client().await;
+    let client = group.new_client(ClientConfig::default()).await;
 
     // 0: let's first propose an initial cmd0
     let cmd0 = TestCommand::new_put(vec![0], 0);
@@ -334,7 +335,7 @@ async fn minority_crash_and_recovery() {
 
     let mut group = CurpGroup::new(NODES).await;
 
-    let client = group.new_client().await;
+    let client = group.new_client(ClientConfig::default()).await;
 
     assert_eq!(
         client
@@ -403,7 +404,7 @@ async fn recovery_after_compaction() {
     init_logger();
 
     let mut group = CurpGroup::new(5).await;
-    let client = group.new_client().await;
+    let client = group.new_client(Default::default()).await;
     let (leader, _term) = group.get_leader().await;
     let node_id = group
         .nodes
