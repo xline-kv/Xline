@@ -179,9 +179,9 @@ impl CurpGroup {
         &self.nodes[id]
     }
 
-    pub async fn new_client(&self, config: ClientConfig) -> Client<TestCommand> {
+    pub async fn new_client(&self) -> Client<TestCommand> {
         Client::builder()
-            .config(config)
+            .config(ClientConfig::default())
             .build_from_addrs(self.all.values().cloned().collect_vec())
             .await
             .unwrap()

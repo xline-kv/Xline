@@ -209,11 +209,16 @@ fn cli() -> Command {
             .help_heading(GLOBAL_HEADING)
             .value_parser(value_parser!(u64))
             .default_value("1"))
-        .arg(arg!(--retry_timeout <TIMEOUT> "The timeout for Curp client retry interval(in millis)")
+        .arg(arg!(--initial_retry_timeout <TIMEOUT> "The initial timeout for Curp client retry interval(in millis)")
             .global(true)
             .help_heading(GLOBAL_HEADING)
             .value_parser(value_parser!(u64))
             .default_value("50"))
+        .arg(arg!(--max_retry_timeout <TIMEOUT> "The max retry timeout(used in the exponential backoff algorithm) for Curp client retry interval(in millis)")
+            .global(true)
+            .help_heading(GLOBAL_HEADING)
+            .value_parser(value_parser!(u64))
+            .default_value("10_000"))
         .arg(arg!(--retry_count <COUNT> "The count of Curp client retry times")
             .global(true)
             .help_heading(GLOBAL_HEADING)
@@ -243,8 +248,10 @@ async fn main() -> Result<()> {
     let client_config = ClientConfig::new(
         Duration::from_secs(*matches.get_one("wait_synced_timeout").expect("Required")),
         Duration::from_secs(*matches.get_one("propose_timeout").expect("Required")),
-        Duration::from_millis(*matches.get_one("retry_timeout").expect("Required")),
+        Duration::from_millis(*matches.get_one("initial_retry_timeout").expect("Required")),
+        Duration::from_millis(*matches.get_one("max_retry_timeout").expect("Required")),
         *matches.get_one("retry_count").expect("Required"),
+        true,
     );
     let options = ClientOptions::new(user_opt, client_config);
     let printer_type = match matches
