@@ -1,5 +1,7 @@
 /// Auth command
 pub(crate) mod auth;
+/// Compaction command
+pub(crate) mod compaction;
 /// Delete command
 pub(crate) mod delete;
 /// Get command
