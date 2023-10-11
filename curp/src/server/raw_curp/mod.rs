@@ -1275,8 +1275,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         Ok(())
     }
 
-    /// Switch to a new config and return true if self node is removed
-    /// and return old member infos for fallback
+    /// Switch to a new config and return old member infos for fallback
     #[allow(clippy::unimplemented)] // TODO: remove this when learner is implemented
     fn switch_config(&self, conf_change: ConfChange) -> (Vec<String>, String, bool) {
         let node_id = conf_change.node_id;

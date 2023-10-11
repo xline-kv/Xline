@@ -165,10 +165,9 @@ async fn worker_as<
                 error!("failed to set last_applied, {e}");
                 return false;
             }
-            let change = conf_change
-                .changes()
-                .first()
-                .unwrap_or_else(|| unreachable!("conf change should always have at one change"));
+            let change = conf_change.changes().first().unwrap_or_else(|| {
+                unreachable!("conf change should always have at least one change")
+            });
             let shutdown_self =
                 change.change_type() == ConfChangeType::Remove && change.node_id == id;
             cb.write().insert_conf(entry.id());
