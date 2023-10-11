@@ -417,6 +417,19 @@ impl<C: 'static + Command> Log<C> {
             }
         }
     }
+
+    /// Commit to log index and return the fallback contexts
+    pub(super) fn commit_to(&mut self, commit_index: LogIndex) {
+        assert!(
+            commit_index >= self.commit_index,
+            "commit_index {} is smaller than current commit_index {}",
+            commit_index,
+            self.commit_index
+        );
+        self.commit_index = commit_index;
+        self.fallback_contexts
+            .retain(|&idx, _| idx > self.commit_index);
+    }
 }
 
 #[cfg(test)]

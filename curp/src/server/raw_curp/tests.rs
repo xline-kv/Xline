@@ -10,16 +10,15 @@ use utils::config::{
 };
 
 use super::*;
-use crate::rpc::connect::MockInnerConnectApi;
-use crate::ProposeConfChangeRequest;
 use crate::{
+    rpc::connect::MockInnerConnectApi,
     server::{
         cmd_board::CommandBoard,
         cmd_worker::{CEEventTxApi, MockCEEventTxApi},
         raw_curp::UncommittedPool,
         spec_pool::SpeculativePool,
     },
-    LogIndex,
+    LogIndex, ProposeConfChangeRequest,
 };
 
 // Hooks for tests

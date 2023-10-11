@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 use event_listener::{Event, EventListener};
 use indexmap::{IndexMap, IndexSet};
@@ -25,7 +22,7 @@ pub(super) struct CommandBoard<C: Command> {
     /// Store all notifiers for conf change results
     conf_notifier: HashMap<ProposeId, Event>,
     /// Store all conf change propose ids
-    pub(super) conf_buffer: HashSet<ProposeId>,
+    pub(super) conf_buffer: IndexSet<ProposeId>,
     /// The cmd has been received before, this is used for dedup
     pub(super) sync: IndexSet<ProposeId>,
     /// Store all execution results
@@ -45,7 +42,7 @@ impl<C: Command> CommandBoard<C> {
             er_buffer: IndexMap::new(),
             asr_buffer: IndexMap::new(),
             conf_notifier: HashMap::new(),
-            conf_buffer: HashSet::new(),
+            conf_buffer: IndexSet::new(),
         }
     }
 

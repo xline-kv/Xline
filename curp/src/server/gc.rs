@@ -42,6 +42,7 @@ async fn gc_cmd_board<C: Command + 'static>(cmd_board: CmdBoardRef<C>, interval:
     let mut last_check_len_er = 0;
     let mut last_check_len_asr = 0;
     let mut last_check_len_sync = 0;
+    let mut last_check_len_conf = 0;
     loop {
         tokio::time::sleep(interval).await;
         let mut board = cmd_board.write();
@@ -64,6 +65,12 @@ async fn gc_cmd_board<C: Command + 'static>(cmd_board: CmdBoardRef<C>, interval:
             let new_sync = board.sync.split_off(last_check_len_sync);
             board.sync = new_sync;
             last_check_len_sync = board.sync.len();
+        }
+
+        if last_check_len_conf <= board.conf_buffer.len() {
+            let new_conf = board.conf_buffer.split_off(last_check_len_conf);
+            board.conf_buffer = new_conf;
+            last_check_len_conf = board.conf_buffer.len();
         }
     }
 }
