@@ -11,7 +11,7 @@ mod common;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn lock_unlock_should_success_in_normal_path() -> Result<()> {
-    let (_cluster, client) = get_cluster_client().await?;
+    let (_cluster, client) = get_cluster_client().await.unwrap();
     let client = client.lock_client();
 
     let resp = client.lock(LockRequest::new("lock-test")).await?;
@@ -24,7 +24,7 @@ async fn lock_unlock_should_success_in_normal_path() -> Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn lock_contention_should_occur_when_acquire_by_two() -> Result<()> {
-    let (_cluster, client) = get_cluster_client().await?;
+    let (_cluster, client) = get_cluster_client().await.unwrap();
     let client = client.lock_client();
     let client_c = client.clone();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -59,7 +59,7 @@ async fn lock_contention_should_occur_when_acquire_by_two() -> Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn lock_should_timeout_when_ttl_is_set() -> Result<()> {
-    let (_cluster, client) = get_cluster_client().await?;
+    let (_cluster, client) = get_cluster_client().await.unwrap();
     let client = client.lock_client();
 
     let _resp = client
@@ -82,7 +82,7 @@ async fn lock_should_timeout_when_ttl_is_set() -> Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn lock_should_unlock_after_cancelled() -> Result<()> {
-    let (_cluster, client) = get_cluster_client().await?;
+    let (_cluster, client) = get_cluster_client().await.unwrap();
     let client = client.lock_client();
     let client_c = client.clone();
     // first acquire the lock

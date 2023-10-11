@@ -3,8 +3,9 @@ use std::fmt::Debug;
 use anyhow::Result;
 use etcd_client::{Client as EtcdClient, PutOptions};
 use thiserror::Error;
+use xline::server::Command;
 use xline_client::{
-    error::ClientError,
+    error::XlineClientError as ClientError,
     types::kv::{PutRequest, PutResponse},
     Client, ClientOptions,
 };
@@ -18,7 +19,7 @@ pub(crate) enum BenchClientError {
     EtcdError(#[from] etcd_client::Error),
     /// Error from `xline_client`
     #[error("xline_client error: {0}")]
-    XlineError(#[from] ClientError),
+    XlineError(#[from] ClientError<Command>),
 }
 
 /// Benchmark client

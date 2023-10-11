@@ -1,5 +1,5 @@
+use anyhow::Result;
 use xline_client::{
-    error::Result,
     types::auth::{
         AuthUserAddRequest, AuthUserChangePasswordRequest, AuthUserDeleteRequest,
         AuthUserGetRequest, AuthUserGrantRoleRequest, AuthUserRevokeRoleRequest,

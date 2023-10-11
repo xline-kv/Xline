@@ -9,7 +9,7 @@ use xlineapi::ResponseWrapper;
 use super::{
     auth_server::get_token,
     barriers::{IdBarrier, IndexBarrier},
-    command::{propose_err_to_status, Command, CommandResponse, SyncResponse},
+    command::{client_err_to_status, Command, CommandResponse, SyncResponse},
 };
 use crate::{
     request_validation::RequestValidator,
@@ -98,13 +98,13 @@ where
             .client
             .gen_propose_id()
             .await
-            .map_err(propose_err_to_status)?;
+            .map_err(client_err_to_status)?;
         let cmd = command_from_request_wrapper::<S>(propose_id, wrapper, None);
 
         self.client
             .propose(cmd, use_fast_path)
             .await
-            .map_err(propose_err_to_status)
+            .map_err(client_err_to_status)
     }
 
     /// Update revision of `ResponseHeader`
@@ -207,7 +207,7 @@ where
             .client
             .gen_propose_id()
             .await
-            .map_err(propose_err_to_status)?;
+            .map_err(client_err_to_status)?;
         let cmd = command_from_request_wrapper::<S>(propose_id, wrapper, None);
         if !is_serializable {
             self.wait_read_state(&cmd).await?;
@@ -308,7 +308,7 @@ where
                 .client
                 .gen_propose_id()
                 .await
-                .map_err(propose_err_to_status)?;
+                .map_err(client_err_to_status)?;
             let cmd = command_from_request_wrapper::<S>(propose_id, wrapper, None);
             if !is_serializable {
                 self.wait_read_state(&cmd).await?;

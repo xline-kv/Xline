@@ -29,7 +29,6 @@ use super::{
 };
 use crate::{
     cmd::{Command, CommandExecutor},
-    error::{CommandSyncError, ProposeError, RpcError},
     log_entry::LogEntry,
     members::{ClusterInfo, ServerId},
     role_change::RoleChange,
@@ -62,9 +61,18 @@ pub(super) enum CurpError {
     /// Io error
     #[error("io error, {0}")]
     IO(#[from] io::Error),
-    /// Internal error
+    /// Currently, Internal Error includes the following three types of errors:
+    /// 1. failed to allocate a new snapshot
+    /// 2. failed to reset the command executor by snapshot
+    /// 3. failed to get last applied index from command executor.
     #[error("internal error, {0}")]
     Internal(String),
+    /// Curp Server is shutting down
+    #[error("cluster shutdown")]
+    ShuttingDown,
+    /// If client sent a wait synced request to a non-leader
+    #[error("redirect to {0:?}, term {1}")]
+    Redirect(Option<ServerId>, u64),
 }
 
 impl From<bincode::Error> for CurpError {
@@ -72,9 +80,57 @@ impl From<bincode::Error> for CurpError {
         Self::EncodeDecode(err.to_string())
     }
 }
+
 impl From<PbSerializeError> for CurpError {
     fn from(err: PbSerializeError) -> Self {
         Self::EncodeDecode(err.to_string())
+    }
+}
+
+impl From<CurpError> for tonic::Status {
+    #[inline]
+    fn from(err: CurpError) -> Self {
+        match err {
+            CurpError::EncodeDecode(msg) => tonic::Status::cancelled(msg),
+            CurpError::Internal(msg) => tonic::Status::internal(msg),
+            CurpError::Storage(err) => tonic::Status::internal(err.to_string()),
+            CurpError::IO(err) => tonic::Status::internal(err.to_string()),
+            CurpError::Transport(msg) => {
+                let mut status = tonic::Status::unavailable(msg);
+                let meta = status.metadata_mut();
+                _ = meta.insert(
+                    "Transport",
+                    "".parse().unwrap_or_else(|e| {
+                        unreachable!(
+                            "convert a empty string to MetadataValue should always success: {e}"
+                        )
+                    }),
+                );
+                status
+            }
+            CurpError::ShuttingDown => {
+                let mut status = tonic::Status::unavailable("CurpServer is shutting down");
+                let meta = status.metadata_mut();
+                _ = meta.insert(
+                    "ShuttingDown",
+                    "".parse().unwrap_or_else(|e| {
+                        unreachable!(
+                            "convert a empty string to MetadataValue should always success: {e}"
+                        )
+                    }),
+                );
+                status
+            }
+            CurpError::Redirect(leader_id, term) => {
+                let mut status = tonic::Status::failed_precondition("current node is not a leader");
+                let meta = status.metadata_mut();
+                if let Some(id) = leader_id {
+                    _ = meta.insert("leader_id", id.into());
+                }
+                _ = meta.insert("term", term.into());
+                status
+            }
+        }
     }
 }
 
@@ -89,10 +145,23 @@ enum SendAEError {
     Rejected,
     /// Transport
     #[error("transport error, {0}")]
-    Transport(#[from] RpcError),
+    Transport(String),
     /// Encode/Decode error
     #[error("encode or decode error")]
-    EncodeDecode(#[from] bincode::Error),
+    EncodeDecode(String),
+}
+
+impl From<tonic::Status> for SendAEError {
+    fn from(status: tonic::Status) -> Self {
+        #[allow(clippy::wildcard_enum_match_arm)]
+        // it's ok to do so since only three status can covert to `SendAEError`
+        match status.code() {
+            tonic::Code::Cancelled => Self::EncodeDecode(status.message().to_owned()),
+            tonic::Code::FailedPrecondition => Self::NotLeader,
+            tonic::Code::Unavailable => Self::Transport(status.message().to_owned()),
+            _ => unreachable!("This tonic::Status {status:?} cannot covert to SendAEError"),
+        }
+    }
 }
 
 /// Internal error encountered when sending snapshot
@@ -103,7 +172,19 @@ enum SendSnapshotError {
     NotLeader,
     /// Transport
     #[error("transport error, {0}")]
-    Transport(#[from] RpcError),
+    Transport(String),
+}
+
+impl From<tonic::Status> for SendSnapshotError {
+    fn from(status: tonic::Status) -> Self {
+        #[allow(clippy::wildcard_enum_match_arm)]
+        // it's ok to do so since `SendSnapshotError` only has two variants.
+        match status.code() {
+            tonic::Code::FailedPrecondition => Self::NotLeader,
+            tonic::Code::Unavailable => Self::Transport(status.message().to_owned()),
+            _ => unreachable!("This tonic::Status {status:?} cannot covert to SendSnapshotError"),
+        }
+    }
 }
 
 /// `CurpNode` represents a single node of curp cluster
@@ -127,12 +208,12 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     /// Handle `Propose` requests
     pub(super) async fn propose(&self, req: ProposeRequest) -> Result<ProposeResponse, CurpError> {
         if self.curp.is_shutdown() {
-            return Ok(ProposeResponse::new_error(None, 0, ProposeError::Shutdown));
+            return Err(CurpError::ShuttingDown);
         }
         let cmd: Arc<C> = Arc::new(req.cmd()?);
 
         // handle proposal
-        let ((leader_id, term), result) = self.curp.handle_propose(Arc::clone(&cmd));
+        let ((leader_id, term), result) = self.curp.handle_propose(Arc::clone(&cmd))?;
         let resp = match result {
             Ok(true) => {
                 let er_res = CommandBoard::wait_for_er(&self.cmd_board, cmd.id()).await;
@@ -150,16 +231,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         &self,
         _request: ShutdownRequest,
     ) -> Result<ShutdownResponse, CurpError> {
-        let ((leader_id, term), result) = self.curp.handle_shutdown();
-        let error = match result {
-            Ok(()) => {
-                CommandBoard::wait_for_shutdown_synced(&self.cmd_board).await;
-                None
-            }
-            Err(err) => Some(err),
-        };
-        let resp = ShutdownResponse::new(leader_id, term, error);
-        Ok(resp)
+        self.curp.handle_shutdown()?;
+        CommandBoard::wait_for_shutdown_synced(&self.cmd_board).await;
+        Ok(ShutdownResponse::default())
     }
 
     /// Handle `ProposeConfChange` requests
@@ -168,7 +242,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         req: ProposeConfChangeRequest,
     ) -> Result<ProposeConfChangeResponse, CurpError> {
         let id = req.id();
-        let ((leader_id, term), result) = self.curp.handle_propose_conf_change(req.into());
+        let ((leader_id, term), result) = self.curp.handle_propose_conf_change(req.into())?;
         let error = match result {
             Ok(()) => {
                 CommandBoard::wait_for_conf(&self.cmd_board, id).await;
@@ -233,18 +307,14 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         req: WaitSyncedRequest,
     ) -> Result<WaitSyncedResponse, CurpError> {
         if self.curp.is_shutdown() {
-            return Ok(WaitSyncedResponse::new_error::<C>(
-                CommandSyncError::Shutdown,
-            ));
+            return Err(CurpError::ShuttingDown);
         }
         let id = req.propose_id();
         debug!("{} get wait synced request for cmd({id})", self.curp.id());
 
         let (er, asr) = CommandBoard::wait_for_er_asr(&self.cmd_board, id).await;
-        let resp = WaitSyncedResponse::new_from_result::<C>(Some(er), asr);
-
         debug!("{} wait synced for cmd({id}) finishes", self.curp.id());
-        Ok(resp)
+        Ok(WaitSyncedResponse::new_from_result::<C>(er, asr))
     }
 
     /// Handle `FetchCluster` requests
@@ -798,7 +868,8 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
             ae.prev_log_term,
             ae.entries,
             ae.leader_commit,
-        )?;
+        )
+        .map_err(|err| SendAEError::EncodeDecode(err.to_string()))?;
 
         if is_heartbeat {
             trace!("{} send heartbeat to {}", curp.id(), connect.id());

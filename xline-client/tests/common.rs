@@ -1,7 +1,7 @@
-use xline_client::{error::Result, Client, ClientOptions};
+use xline_client::{error::XlineClientBuildError, Client, ClientOptions};
 use xline_test_utils::Cluster;
 
-pub async fn get_cluster_client() -> Result<(Cluster, Client)> {
+pub async fn get_cluster_client() -> Result<(Cluster, Client), XlineClientBuildError> {
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;
     let client = Client::connect(cluster.addrs(), ClientOptions::default()).await?;

@@ -1,5 +1,5 @@
+use anyhow::Result;
 use xline_client::{
-    error::Result,
     types::lease::{
         LeaseGrantRequest, LeaseKeepAliveRequest, LeaseRevokeRequest, LeaseTimeToLiveRequest,
     },

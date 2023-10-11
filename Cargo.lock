@@ -3458,6 +3458,7 @@ dependencies = [
 name = "xline-client"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-stream",
  "clippy-utilities 0.1.0",
  "curp",
@@ -3482,6 +3483,7 @@ dependencies = [
 name = "xline-test-utils"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "clap 4.4.6",
  "curp",
  "futures",

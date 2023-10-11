@@ -10,7 +10,7 @@ use xlineapi::{EventType, RequestWithToken};
 use super::{
     auth_server::get_token,
     command::{
-        command_from_request_wrapper, propose_err_to_status, Command, CommandResponse, KeyRange,
+        client_err_to_status, command_from_request_wrapper, Command, CommandResponse, KeyRange,
         SyncResponse,
     },
 };
@@ -85,13 +85,13 @@ where
             .client
             .gen_propose_id()
             .await
-            .map_err(propose_err_to_status)?;
+            .map_err(client_err_to_status)?;
         let cmd = command_from_request_wrapper::<S>(propose_id, wrapper, None);
 
         self.client
             .propose(cmd, use_fast_path)
             .await
-            .map_err(propose_err_to_status)
+            .map_err(client_err_to_status)
     }
 
     /// Crate txn for try acquire lock

@@ -1,8 +1,8 @@
 //! this binary is only used for the validation of lock service
 
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use xline_client::{
-    error::Result,
     types::lock::{LockRequest, UnlockRequest},
     Client, ClientOptions,
 };

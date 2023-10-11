@@ -1,5 +1,5 @@
+use anyhow::Result;
 use xline_client::{
-    error::ClientError as Error,
     types::kv::{
         CompactionRequest, Compare, CompareResult, DeleteRangeRequest, PutRequest, RangeRequest,
         TxnOp, TxnRequest,
@@ -8,7 +8,7 @@ use xline_client::{
 };
 
 #[tokio::main]
-async fn main() -> Result<(), Error> {
+async fn main() -> Result<()> {
     // the name and address of all curp members
     let curp_members = ["10.0.0.1:2379", "10.0.0.2:2379", "10.0.0.3:2379"];
 

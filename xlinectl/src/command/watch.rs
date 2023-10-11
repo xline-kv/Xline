@@ -2,8 +2,9 @@ use std::io;
 
 use anyhow::{anyhow, Result};
 use clap::{arg, value_parser, ArgMatches, Command};
+use xline::server::Command as XlineCommand;
 use xline_client::{
-    error::ClientError,
+    error::XlineClientError,
     types::watch::{WatchRequest, Watcher},
     Client,
 };
@@ -74,7 +75,7 @@ pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result
         while let Some(resp) = stream
             .message()
             .await
-            .map_err(|e| ClientError::WatchError(e.to_string()))?
+            .map_err(|e| XlineClientError::<XlineCommand>::WatchError(e.to_string()))?
         {
             resp.print();
         }
@@ -123,7 +124,7 @@ async fn exec_interactive(client: &mut Client, matches: &ArgMatches) -> Result<(
                     while let Some(resp) = stream.message().await? {
                         resp.print();
                     }
-                    Ok::<(), ClientError>(())
+                    Ok::<(), XlineClientError<XlineCommand>>(())
                 });
             }
             "cancel" => {

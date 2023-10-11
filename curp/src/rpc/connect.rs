@@ -21,7 +21,6 @@ use utils::tracing::Inject;
 
 use super::{ShutdownRequest, ShutdownResponse};
 use crate::{
-    error::RpcError,
     members::ServerId,
     rpc::{
         proto::{
@@ -110,49 +109,49 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
     fn id(&self) -> ServerId;
 
     /// Update server addresses, the new addresses will override the old ones
-    async fn update_addrs(&self, addrs: Vec<String>) -> Result<(), RpcError>;
+    async fn update_addrs(&self, addrs: Vec<String>) -> Result<(), tonic::transport::Error>;
 
     /// Send `ProposeRequest`
     async fn propose(
         &self,
         request: ProposeRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<ProposeResponse>, RpcError>;
+    ) -> Result<tonic::Response<ProposeResponse>, tonic::Status>;
 
     /// Send `ProposeRequest`
     async fn propose_conf_change(
         &self,
         request: ProposeConfChangeRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<ProposeConfChangeResponse>, RpcError>;
+    ) -> Result<tonic::Response<ProposeConfChangeResponse>, tonic::Status>;
 
     /// Send `WaitSyncedRequest`
     async fn wait_synced(
         &self,
         request: WaitSyncedRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<WaitSyncedResponse>, RpcError>;
+    ) -> Result<tonic::Response<WaitSyncedResponse>, tonic::Status>;
 
     /// Send `ShutdownRequest`
     async fn shutdown(
         &self,
         request: ShutdownRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<ShutdownResponse>, RpcError>;
+    ) -> Result<tonic::Response<ShutdownResponse>, tonic::Status>;
 
     /// Send `FetchClusterRequest`
     async fn fetch_cluster(
         &self,
         request: FetchClusterRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<FetchClusterResponse>, RpcError>;
+    ) -> Result<tonic::Response<FetchClusterResponse>, tonic::Status>;
 
     /// Send `FetchReadStateRequest`
     async fn fetch_read_state(
         &self,
         request: FetchReadStateRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<FetchReadStateResponse>, RpcError>;
+    ) -> Result<tonic::Response<FetchReadStateResponse>, tonic::Status>;
 }
 
 /// Inner Connect interface among different servers
@@ -163,21 +162,21 @@ pub(crate) trait InnerConnectApi: Send + Sync + 'static {
     fn id(&self) -> ServerId;
 
     /// Update server addresses, the new addresses will override the old ones
-    async fn update_addrs(&self, addrs: Vec<String>) -> Result<(), RpcError>;
+    async fn update_addrs(&self, addrs: Vec<String>) -> Result<(), tonic::transport::Error>;
 
     /// Send `AppendEntriesRequest`
     async fn append_entries(
         &self,
         request: AppendEntriesRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<AppendEntriesResponse>, RpcError>;
+    ) -> Result<tonic::Response<AppendEntriesResponse>, tonic::Status>;
 
     /// Send `VoteRequest`
     async fn vote(
         &self,
         request: VoteRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<VoteResponse>, RpcError>;
+    ) -> Result<tonic::Response<VoteResponse>, tonic::Status>;
 
     /// Send a snapshot
     async fn install_snapshot(
@@ -185,7 +184,7 @@ pub(crate) trait InnerConnectApi: Send + Sync + 'static {
         term: u64,
         leader_id: ServerId,
         snapshot: Snapshot,
-    ) -> Result<tonic::Response<InstallSnapshotResponse>, RpcError>;
+    ) -> Result<tonic::Response<InstallSnapshotResponse>, tonic::Status>;
 }
 
 /// Inner Connect Api Wrapper
@@ -241,7 +240,7 @@ pub(crate) struct Connect<C> {
 
 impl<C> Connect<C> {
     /// Update server addresses, the new addresses will override the old ones
-    async fn inner_update_addrs(&self, addrs: Vec<String>) -> Result<(), RpcError> {
+    async fn inner_update_addrs(&self, addrs: Vec<String>) -> Result<(), tonic::transport::Error> {
         let mut old = self.addrs.lock().await;
         let old_addrs: HashSet<String> = old.iter().cloned().collect();
         let new_addrs: HashSet<String> = addrs.iter().cloned().collect();
@@ -268,7 +267,7 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
     }
 
     /// Update server addresses, the new addresses will override the old ones
-    async fn update_addrs(&self, addrs: Vec<String>) -> Result<(), RpcError> {
+    async fn update_addrs(&self, addrs: Vec<String>) -> Result<(), tonic::transport::Error> {
         self.inner_update_addrs(addrs).await
     }
 
@@ -278,12 +277,12 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         &self,
         request: ProposeRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<ProposeResponse>, RpcError> {
+    ) -> Result<tonic::Response<ProposeResponse>, tonic::Status> {
         let mut client = self.rpc_connect.clone();
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
         req.metadata_mut().inject_current();
-        client.propose(req).await.map_err(Into::into)
+        client.propose(req).await
     }
 
     /// Send `ShutdownRequest`
@@ -292,12 +291,12 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         &self,
         request: ShutdownRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<ShutdownResponse>, RpcError> {
+    ) -> Result<tonic::Response<ShutdownResponse>, tonic::Status> {
         let mut client = self.rpc_connect.clone();
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
         req.metadata_mut().inject_current();
-        client.shutdown(req).await.map_err(Into::into)
+        client.shutdown(req).await
     }
 
     /// Send `ProposeRequest`
@@ -306,12 +305,12 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         &self,
         request: ProposeConfChangeRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<ProposeConfChangeResponse>, RpcError> {
+    ) -> Result<tonic::Response<ProposeConfChangeResponse>, tonic::Status> {
         let mut client = self.rpc_connect.clone();
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
         req.metadata_mut().inject_current();
-        client.propose_conf_change(req).await.map_err(Into::into)
+        client.propose_conf_change(req).await
     }
 
     /// Send `WaitSyncedRequest`
@@ -320,24 +319,24 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         &self,
         request: WaitSyncedRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<WaitSyncedResponse>, RpcError> {
+    ) -> Result<tonic::Response<WaitSyncedResponse>, tonic::Status> {
         let mut client = self.rpc_connect.clone();
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
         req.metadata_mut().inject_current();
-        client.wait_synced(req).await.map_err(Into::into)
+        client.wait_synced(req).await
     }
 
-    /// Send `FetchClusterRequest`
+    /// Send `FetchLeaderRequest`
     async fn fetch_cluster(
         &self,
         request: FetchClusterRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<FetchClusterResponse>, RpcError> {
+    ) -> Result<tonic::Response<FetchClusterResponse>, tonic::Status> {
         let mut client = self.rpc_connect.clone();
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
-        client.fetch_cluster(req).await.map_err(Into::into)
+        client.fetch_cluster(req).await
     }
 
     /// Send `FetchReadStateRequest`
@@ -345,11 +344,11 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         &self,
         request: FetchReadStateRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<FetchReadStateResponse>, RpcError> {
+    ) -> Result<tonic::Response<FetchReadStateResponse>, tonic::Status> {
         let mut client = self.rpc_connect.clone();
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
-        client.fetch_read_state(req).await.map_err(Into::into)
+        client.fetch_read_state(req).await
     }
 }
 
@@ -361,7 +360,7 @@ impl InnerConnectApi for Connect<InnerProtocolClient<Channel>> {
     }
 
     /// Update server addresses, the new addresses will override the old ones
-    async fn update_addrs(&self, addrs: Vec<String>) -> Result<(), RpcError> {
+    async fn update_addrs(&self, addrs: Vec<String>) -> Result<(), tonic::transport::Error> {
         self.inner_update_addrs(addrs).await
     }
 
@@ -370,11 +369,11 @@ impl InnerConnectApi for Connect<InnerProtocolClient<Channel>> {
         &self,
         request: AppendEntriesRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<AppendEntriesResponse>, RpcError> {
+    ) -> Result<tonic::Response<AppendEntriesResponse>, tonic::Status> {
         let mut client = self.rpc_connect.clone();
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
-        client.append_entries(req).await.map_err(Into::into)
+        client.append_entries(req).await
     }
 
     /// Send `VoteRequest`
@@ -382,11 +381,11 @@ impl InnerConnectApi for Connect<InnerProtocolClient<Channel>> {
         &self,
         request: VoteRequest,
         timeout: Duration,
-    ) -> Result<tonic::Response<VoteResponse>, RpcError> {
+    ) -> Result<tonic::Response<VoteResponse>, tonic::Status> {
         let mut client = self.rpc_connect.clone();
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
-        client.vote(req).await.map_err(Into::into)
+        client.vote(req).await
     }
 
     async fn install_snapshot(
@@ -394,10 +393,10 @@ impl InnerConnectApi for Connect<InnerProtocolClient<Channel>> {
         term: u64,
         leader_id: ServerId,
         snapshot: Snapshot,
-    ) -> Result<tonic::Response<InstallSnapshotResponse>, RpcError> {
+    ) -> Result<tonic::Response<InstallSnapshotResponse>, tonic::Status> {
         let stream = install_snapshot_stream(term, leader_id, snapshot);
         let mut client = self.rpc_connect.clone();
-        client.install_snapshot(stream).await.map_err(Into::into)
+        client.install_snapshot(stream).await
     }
 }
 

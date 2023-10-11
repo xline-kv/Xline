@@ -13,7 +13,7 @@ mod common;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn watch_should_receive_consistent_events() -> Result<()> {
-    let (_cluster, client) = get_cluster_client().await?;
+    let (_cluster, client) = get_cluster_client().await.unwrap();
     let mut watch_client = client.watch_client();
     let kv_client = client.kv_client();
 

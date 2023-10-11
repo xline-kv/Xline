@@ -5,7 +5,7 @@ use tonic::transport::Channel;
 use xlineapi::{self, RequestUnion, WatchResponse};
 
 use crate::{
-    error::{ClientError, Result},
+    error::{Result, XlineClientError},
     types::watch::{WatchRequest, Watcher},
     AuthService,
 };
@@ -95,7 +95,7 @@ impl WatchClient {
 
         request_sender
             .try_send(request)
-            .map_err(|e| ClientError::WatchError(e.to_string()))?;
+            .map_err(|e| XlineClientError::WatchError(e.to_string()))?;
 
         let mut response_stream = self.inner.watch(request_receiver).await?.into_inner();
 
@@ -105,7 +105,7 @@ impl WatchClient {
                 resp.watch_id
             }
             None => {
-                return Err(ClientError::WatchError(String::from(
+                return Err(XlineClientError::WatchError(String::from(
                     "failed to create watch",
                 )));
             }

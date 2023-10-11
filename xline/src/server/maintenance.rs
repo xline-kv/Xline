@@ -9,7 +9,7 @@ use futures::stream::Stream;
 use sha2::{Digest, Sha256};
 use tracing::error;
 
-use super::command::{propose_err_to_status, Command};
+use super::command::{client_err_to_status, Command};
 use crate::{
     header_gen::HeaderGenerator,
     rpc::{
@@ -84,7 +84,7 @@ where
             .client
             .get_cluster_from_curp(false)
             .await
-            .map_err(propose_err_to_status)?;
+            .map_err(client_err_to_status)?;
         let header = self.header_gen.gen_header();
         let self_id = self.cluster_info.self_id();
         let is_learner = cluster

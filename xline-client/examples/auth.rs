@@ -1,4 +1,5 @@
-use xline_client::{error::Result, Client, ClientOptions};
+use anyhow::Result;
+use xline_client::{Client, ClientOptions};
 
 #[tokio::main]
 async fn main() -> Result<()> {

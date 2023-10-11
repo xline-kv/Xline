@@ -125,7 +125,7 @@ fn leader_handle_propose_will_succeed() {
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
     let cmd = Arc::new(TestCommand::default());
-    let ((leader_id, term), result) = curp.handle_propose(cmd);
+    let ((leader_id, term), result) = curp.handle_propose(cmd).unwrap();
     assert_eq!(leader_id, Some(curp.id().clone()));
     assert_eq!(term, 1);
     assert!(matches!(result, Ok(true)));
@@ -141,20 +141,20 @@ fn leader_handle_propose_will_reject_conflicted() {
     };
 
     let cmd1 = Arc::new(TestCommand::new_put(vec![1], 0));
-    let ((leader_id, term), result) = curp.handle_propose(cmd1);
+    let ((leader_id, term), result) = curp.handle_propose(cmd1).unwrap();
     assert_eq!(leader_id, Some(curp.id().clone()));
     assert_eq!(term, 1);
     assert!(matches!(result, Ok(true)));
 
     let cmd2 = Arc::new(TestCommand::new_put(vec![1, 2], 1));
-    let ((leader_id, term), result) = curp.handle_propose(cmd2);
+    let ((leader_id, term), result) = curp.handle_propose(cmd2).unwrap();
     assert_eq!(leader_id, Some(curp.id().clone()));
     assert_eq!(term, 1);
     assert!(matches!(result, Err(ProposeError::KeyConflict)));
 
     // leader will also reject cmds that conflict un-synced cmds
     let cmd3 = Arc::new(TestCommand::new_put(vec![2], 1));
-    let ((leader_id, term), result) = curp.handle_propose(cmd3);
+    let ((leader_id, term), result) = curp.handle_propose(cmd3).unwrap();
     assert_eq!(leader_id, Some(curp.id().clone()));
     assert_eq!(term, 1);
     assert!(matches!(result, Err(ProposeError::KeyConflict)));
@@ -169,12 +169,12 @@ fn leader_handle_propose_will_reject_duplicated() {
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
     let cmd = Arc::new(TestCommand::default());
-    let ((leader_id, term), result) = curp.handle_propose(Arc::clone(&cmd));
+    let ((leader_id, term), result) = curp.handle_propose(Arc::clone(&cmd)).unwrap();
     assert_eq!(leader_id, Some(curp.id().clone()));
     assert_eq!(term, 1);
     assert!(matches!(result, Ok(true)));
 
-    let ((leader_id, term), result) = curp.handle_propose(cmd);
+    let ((leader_id, term), result) = curp.handle_propose(cmd).unwrap();
     assert_eq!(leader_id, Some(curp.id().clone()));
     assert_eq!(term, 1);
     assert!(matches!(result, Err(ProposeError::Duplicated)));
@@ -192,7 +192,7 @@ fn follower_handle_propose_will_succeed() {
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
     let cmd = Arc::new(TestCommand::new_get(vec![1]));
-    let ((leader_id, term), result) = curp.handle_propose(cmd);
+    let ((leader_id, term), result) = curp.handle_propose(cmd).unwrap();
     assert_eq!(leader_id, None);
     assert_eq!(term, 1);
     assert!(matches!(result, Ok(false)));
@@ -211,13 +211,13 @@ fn follower_handle_propose_will_reject_conflicted() {
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
     let cmd1 = Arc::new(TestCommand::new_get(vec![1]));
-    let ((leader_id, term), result) = curp.handle_propose(cmd1);
+    let ((leader_id, term), result) = curp.handle_propose(cmd1).unwrap();
     assert_eq!(leader_id, None);
     assert_eq!(term, 1);
     assert!(matches!(result, Ok(false)));
 
     let cmd2 = Arc::new(TestCommand::new_get(vec![1]));
-    let ((leader_id, term), result) = curp.handle_propose(cmd2);
+    let ((leader_id, term), result) = curp.handle_propose(cmd2).unwrap();
     assert_eq!(leader_id, None);
     assert_eq!(term, 1);
     assert!(matches!(result, Err(ProposeError::KeyConflict)));
@@ -691,10 +691,7 @@ async fn leader_handle_shutdown_will_succeed() {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
-    let ((leader_id, term), result) = curp.handle_shutdown();
-    assert_eq!(leader_id, Some(curp.id().clone()));
-    assert_eq!(term, 1);
-    assert!(matches!(result, Ok(())));
+    assert!(curp.handle_shutdown().is_ok());
 }
 
 #[traced_test]
@@ -706,10 +703,9 @@ fn follower_handle_shutdown_will_reject() {
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
-    let ((leader_id, term), result) = curp.handle_shutdown();
-    assert_eq!(leader_id, None);
-    assert_eq!(term, 1);
-    assert!(matches!(result, Err(ProposeError::NotLeader)));
+    let res = curp.handle_shutdown();
+    assert!(res.is_err());
+    assert!(matches!(res, Err(CurpError::Redirect(None, 1))));
 }
 
 #[traced_test]
@@ -917,7 +913,9 @@ fn leader_handle_propose_conf_change() {
         vec!["http://127.0.0.1:4567".to_owned()],
     )];
     let conf_change_entry = ProposeConfChangeRequest::new(ProposeId(0, 0), changes);
-    let ((leader, term), result) = curp.handle_propose_conf_change(conf_change_entry.into());
+    let ((leader, term), result) = curp
+        .handle_propose_conf_change(conf_change_entry.into())
+        .unwrap();
     assert_eq!(leader, Some(curp.id().clone()));
     assert_eq!(term, 1);
     assert!(result.is_ok());
@@ -942,8 +940,6 @@ fn follower_handle_propose_conf_change() {
         vec!["http://127.0.0.1:4567".to_owned()],
     )];
     let conf_change_entry = ProposeConfChangeRequest::new(ProposeId(0, 0), changes);
-    let ((leader, term), result) = curp.handle_propose_conf_change(conf_change_entry.into());
-    assert_eq!(leader, None);
-    assert_eq!(term, 2);
-    assert!(result.is_err());
+    let result = curp.handle_propose_conf_change(conf_change_entry.into());
+    assert!(matches!(result, Err(CurpError::Redirect(None, 2))));
 }

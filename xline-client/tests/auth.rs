@@ -14,7 +14,7 @@ mod common;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn role_operations_should_success_in_normal_path() -> Result<()> {
-    let (_cluster, client) = get_cluster_client().await?;
+    let (_cluster, client) = get_cluster_client().await.unwrap();
     let client = client.auth_client();
     let role1 = "role1";
     let role2 = "role2";
@@ -52,7 +52,7 @@ async fn role_operations_should_success_in_normal_path() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn permission_operations_should_success_in_normal_path() -> Result<()> {
-    let (_cluster, client) = get_cluster_client().await?;
+    let (_cluster, client) = get_cluster_client().await.unwrap();
     let client = client.auth_client();
 
     let role1 = "role1";
@@ -122,7 +122,7 @@ async fn permission_operations_should_success_in_normal_path() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn user_operations_should_success_in_normal_path() -> Result<()> {
-    let (_cluster, client) = get_cluster_client().await?;
+    let (_cluster, client) = get_cluster_client().await.unwrap();
     let client = client.auth_client();
 
     let name1 = "usr1";
@@ -154,7 +154,7 @@ async fn user_operations_should_success_in_normal_path() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn user_role_operations_should_success_in_normal_path() -> Result<()> {
-    let (_cluster, client) = get_cluster_client().await?;
+    let (_cluster, client) = get_cluster_client().await.unwrap();
     let client = client.auth_client();
 
     let name1 = "usr1";

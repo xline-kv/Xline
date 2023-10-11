@@ -13,7 +13,7 @@ use xlineapi::RequestWithToken;
 use super::{
     auth_server::get_token,
     command::{
-        command_from_request_wrapper, propose_err_to_status, Command, CommandResponse, SyncResponse,
+        client_err_to_status, command_from_request_wrapper, Command, CommandResponse, SyncResponse,
     },
 };
 use crate::{
@@ -127,14 +127,14 @@ where
             .client
             .gen_propose_id()
             .await
-            .map_err(propose_err_to_status)?;
+            .map_err(client_err_to_status)?;
         let cmd =
             command_from_request_wrapper(propose_id, wrapper, Some(self.lease_storage.as_ref()));
 
         self.client
             .propose(cmd, use_fast_path)
             .await
-            .map_err(propose_err_to_status)
+            .map_err(client_err_to_status)
     }
 
     /// Handle keep alive at leader
@@ -319,7 +319,7 @@ where
                 .client
                 .get_leader_id_from_curp()
                 .await
-                .map_err(propose_err_to_status)?;
+                .map_err(client_err_to_status)?;
             // Given that a candidate server may become a leader when it won the election or
             // a follower when it lost the election. Therefore we need to double check here.
             // We can directly invoke leader_keep_alive when a candidate becomes a leader.
@@ -375,7 +375,7 @@ where
                 .client
                 .get_leader_id_from_curp()
                 .await
-                .map_err(propose_err_to_status)?;
+                .map_err(client_err_to_status)?;
             let leader_addrs = self.cluster_info.addrs(leader_id).unwrap_or_else(|| {
                 unreachable!(
                     "The address of leader {} not found in all_members {:?}",

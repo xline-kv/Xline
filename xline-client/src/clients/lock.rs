@@ -20,7 +20,7 @@ use xlineapi::{
 
 use crate::{
     clients::{lease::LeaseClient, watch::WatchClient},
-    error::{ClientError, Result},
+    error::{Result, XlineClientError},
     lease_gen::LeaseIdGenerator,
     types::{
         lease::LeaseGrantRequest,
@@ -174,7 +174,7 @@ impl LockClient {
                 Ok(res) => {
                     let res = Into::<RangeResponse>::into(res.0.into_inner());
                     if res.kvs.is_empty() {
-                        return Err(ClientError::RpcError(String::from("session expired")));
+                        return Err(XlineClientError::RpcError(String::from("session expired")));
                     }
                     res.header
                 }

@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use curp::{client::Client, error::CommandProposeError};
+use curp::{client::Client, error::ClientError};
 use event_listener::Event;
 use periodic_compactor::PeriodicCompactor;
 use revision_compactor::RevisionCompactor;
@@ -44,12 +44,12 @@ pub(crate) trait Compactor: std::fmt::Debug + Send + Sync {
 #[async_trait]
 pub(crate) trait Compactable: std::fmt::Debug + Send + Sync {
     /// do compact
-    async fn compact(&self, revision: i64) -> Result<(), CommandProposeError<Command>>;
+    async fn compact(&self, revision: i64) -> Result<(), ClientError<Command>>;
 }
 
 #[async_trait]
 impl Compactable for Client<Command> {
-    async fn compact(&self, revision: i64) -> Result<(), CommandProposeError<Command>> {
+    async fn compact(&self, revision: i64) -> Result<(), ClientError<Command>> {
         let request = CompactionRequest {
             revision,
             physical: false,

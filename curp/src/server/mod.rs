@@ -360,13 +360,6 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
     }
 }
 
-impl From<CurpError> for tonic::Status {
-    #[inline]
-    fn from(err: CurpError) -> Self {
-        tonic::Status::internal(err.to_string())
-    }
-}
-
 /// Entry of speculative pool
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum PoolEntry<C> {
