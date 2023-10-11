@@ -168,7 +168,7 @@ struct Context<C: Command, RC: RoleChange> {
     role_change: RC,
     /// Conf change tx, used to update sync tasks
     change_tx: flume::Sender<ConfChange>,
-    /// Conf change tx, used to update sync tasks
+    /// Conf change rx, used to update sync tasks
     change_rx: flume::Receiver<ConfChange>,
     /// Connects of peers
     connects: DashMap<ServerId, InnerConnectApiWrapper>,
@@ -334,7 +334,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             entry.index,
             FallbackContext::new(Arc::clone(&entry), addrs, name, is_learner),
         );
-        self.entry_process(&mut log_w, entry, true);
+        self.entry_process(&mut log_w, entry, conflict);
         (info, Ok(()))
     }
 
