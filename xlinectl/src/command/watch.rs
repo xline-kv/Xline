@@ -15,7 +15,7 @@ pub(crate) fn command() -> Command {
     Command::new("watch")
         .about("Watches events stream on keys or prefixes")
         .arg(
-            arg!([key] "The key or preifx, not needed in interactive mode")
+            arg!([key] "The key or prefix, not needed in interactive mode")
                 .required_unless_present("interactive"),
         )
         .arg(arg!([range_end] "The range end"))

@@ -51,7 +51,7 @@ pub(crate) fn build_request(matches: &ArgMatches) -> Result<TxnRequest> {
         if args.len() != 3 {
             bail!("the arg length should be 3");
         }
-        #[allow(clippy::indexing_slicing)] // checked above so its safe to index
+        #[allow(clippy::indexing_slicing)] // checked above so it's safe to index
         (
             args[0].lines().map(ToOwned::to_owned).collect(),
             args[1].lines().map(ToOwned::to_owned).collect(),
@@ -85,7 +85,7 @@ fn parse_cmp_line(line: &str) -> Result<Compare> {
     let re = Regex::new(r#"(\w+)\("([^"]+)"\) ([<=>]) "([^"]+)"$"#).unwrap();
 
     match re.captures(line) {
-        #[allow(clippy::indexing_slicing)] // checked in regex so its safe to index
+        #[allow(clippy::indexing_slicing)] // checked in regex so it's safe to index
         Some(cap) => {
             let target = &cap[1];
             let key = &cap[2];
