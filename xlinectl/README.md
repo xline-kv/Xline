@@ -266,6 +266,35 @@ failure request:
 put key1 "val1"
 put key2 "some-val"
 ```
+### COMPACTION
+COMPACTION discards all Xline event history prior to a given revision. Since Xline uses a multiversion concurrency control model, it preserves all key updates as event history. When the event history up to some revision is no longer needed, all superseded keys may be compacted away to reclaim storage space in the Xline backend database.
+
+#### Usage
+
+```bash
+compaction [options] <revision>
+```
+
+#### Options
+- physical -- To wait for compaction to physically remove all old revisions
+
+#### Output
+
+```
+Compacted
+...
+```
+
+#### Examples
+
+```bash
+# compact revision less than 123
+./xlinectl compaction 123
+Compacted
+# wait for compaction to physically remove all old revisions
+./xlinectl compaction 234 --physical
+Compacted
+```
 
 ### WATCH
 Watches events stream on keys or prefixes

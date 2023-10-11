@@ -717,7 +717,7 @@ impl From<TxnRequest> for xlineapi::TxnRequest {
 /// For example, here is a revision list: [(A, 1), (A, 2), (A, 3), (A, 4), (A, 5)].
 /// We compact at revision 3. After the compaction, the revision list will become [(A, 3), (A, 4), (A, 5)].
 /// All revisions less than 3 are deleted. The latest revision, 3, will be kept.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct CompactionRequest {
     /// The inner request
     inner: xlineapi::CompactionRequest,

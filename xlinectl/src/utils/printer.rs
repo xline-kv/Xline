@@ -6,9 +6,9 @@ use xlineapi::{
     AuthRoleRevokePermissionResponse, AuthStatusResponse, AuthUserAddResponse,
     AuthUserChangePasswordResponse, AuthUserDeleteResponse, AuthUserGetResponse,
     AuthUserGrantRoleResponse, AuthUserListResponse, AuthUserRevokeRoleResponse,
-    DeleteRangeResponse, KeyValue, LeaseGrantResponse, LeaseKeepAliveResponse, LeaseLeasesResponse,
-    LeaseRevokeResponse, LeaseTimeToLiveResponse, LockResponse, PutResponse, RangeResponse,
-    ResponseHeader, TxnResponse, WatchResponse,
+    CompactionResponse, DeleteRangeResponse, KeyValue, LeaseGrantResponse, LeaseKeepAliveResponse,
+    LeaseLeasesResponse, LeaseRevokeResponse, LeaseTimeToLiveResponse, LockResponse, PutResponse,
+    RangeResponse, ResponseHeader, TxnResponse, WatchResponse,
 };
 
 /// The global printer type config
@@ -122,6 +122,17 @@ impl Printer for TxnResponse {
                 }
             }
         }
+    }
+}
+
+impl Printer for CompactionResponse {
+    fn simple(&self) {
+        println!("Compacted");
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        println!("Compacted");
     }
 }
 

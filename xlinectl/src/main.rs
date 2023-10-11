@@ -155,6 +155,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::{arg, value_parser, Command};
+use command::compaction;
 use ext_utils::config::ClientConfig;
 use xline_client::{Client, ClientOptions};
 
@@ -218,7 +219,7 @@ fn cli() -> Command {
             .global(true)
             .help_heading(GLOBAL_HEADING)
             .value_parser(value_parser!(u64))
-            .default_value("10_000"))
+            .default_value("10000"))
         .arg(arg!(--retry_count <COUNT> "The count of Curp client retry times")
             .global(true)
             .help_heading(GLOBAL_HEADING)
@@ -239,6 +240,7 @@ fn cli() -> Command {
         .subcommand(user::command())
         .subcommand(role::command())
         .subcommand(txn::command())
+        .subcommand(compaction::command())
         .subcommand(watch::command())
         .subcommand(lock::command())
 }
@@ -269,7 +271,7 @@ async fn main() -> Result<()> {
     set_printer_type(printer_type);
 
     let mut client = Client::connect(endpoints, options).await?;
-    handle_matches!(matches, client, { get, put, delete, txn, lease, snapshot, auth, user, role, watch, lock });
+    handle_matches!(matches, client, { get, put, delete, txn, compaction, lease, snapshot, auth, user, role, watch, lock });
 
     Ok(())
 }
