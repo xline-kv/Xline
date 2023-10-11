@@ -1,11 +1,11 @@
+use anyhow::Result;
 use xline_client::{
-    error::ClientError as Error,
     types::{kv::PutRequest, watch::WatchRequest},
     Client, ClientOptions,
 };
 
 #[tokio::main]
-async fn main() -> Result<(), Error> {
+async fn main() -> Result<()> {
     // the name and address of all curp members
     let curp_members = ["10.0.0.1:2379", "10.0.0.2:2379", "10.0.0.3:2379"];
 

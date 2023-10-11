@@ -9,7 +9,7 @@ use curp::{
         Command as CurpCommand, CommandExecutor as CurpCommandExecutor, ConflictCheck, PbCodec,
         PbSerializeError, ProposeId,
     },
-    error::{CommandProposeError, ProposeError},
+    error::ClientError,
     LogIndex,
 };
 use engine::Snapshot;
@@ -757,11 +757,11 @@ where
     Command::new(keys, wrapper, propose_id)
 }
 
-/// Convert `CommandProposeError` to `tonic::Status`
-pub(super) fn propose_err_to_status(err: CommandProposeError<Command>) -> tonic::Status {
+/// Convert `ClientError` to `tonic::Status`
+pub(super) fn client_err_to_status(err: ClientError<Command>) -> tonic::Status {
     #[allow(clippy::wildcard_enum_match_arm)]
     match err {
-        CommandProposeError::Execute(e) | CommandProposeError::AfterSync(e) => {
+        ClientError::CommandError(e) => {
             // If an error occurs during the `prepare` or `execute` stages, `after_sync` will
             // not be invoked. In this case, `wait_synced` will return the errors generated
             // in the first two stages. Therefore, if the response from `slow_round` arrives
@@ -769,13 +769,12 @@ pub(super) fn propose_err_to_status(err: CommandProposeError<Command>) -> tonic:
             // even though `after_sync` is not called.
             tonic::Status::from(e)
         }
-        CommandProposeError::Propose(ProposeError::SyncedError(e)) => {
-            tonic::Status::unknown(e.to_string())
-        }
-        CommandProposeError::Propose(ProposeError::EncodeError(e)) => tonic::Status::internal(e),
-        CommandProposeError::Propose(ProposeError::Timeout) => tonic::Status::internal("timeout"),
+        ClientError::ShuttingDown => tonic::Status::unavailable("Curp Server is shutting down"),
+        ClientError::OutOfBound(status) => status,
+        ClientError::EncodeDecode(msg) => tonic::Status::internal(msg),
+        ClientError::Timeout => tonic::Status::unavailable("request timed out"),
 
-        _ => unreachable!("propose err {err:?}"),
+        _ => unreachable!("curp client error {err:?}"),
     }
 }
 

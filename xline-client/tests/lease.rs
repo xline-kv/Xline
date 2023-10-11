@@ -10,7 +10,7 @@ mod common;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn grant_revoke_should_success_in_normal_path() -> Result<()> {
-    let (_cluster, client) = get_cluster_client().await?;
+    let (_cluster, client) = get_cluster_client().await.unwrap();
     let mut client = client.lease_client();
 
     let resp = client.grant(LeaseGrantRequest::new(123)).await?;
@@ -23,7 +23,7 @@ async fn grant_revoke_should_success_in_normal_path() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn keep_alive_should_success_in_normal_path() -> Result<()> {
-    let (_cluster, client) = get_cluster_client().await?;
+    let (_cluster, client) = get_cluster_client().await.unwrap();
     let mut client = client.lease_client();
 
     let resp = client.grant(LeaseGrantRequest::new(60)).await?;
@@ -44,7 +44,7 @@ async fn keep_alive_should_success_in_normal_path() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn time_to_live_ttl_is_consistent_in_normal_path() -> Result<()> {
-    let (_cluster, client) = get_cluster_client().await?;
+    let (_cluster, client) = get_cluster_client().await.unwrap();
     let mut client = client.lease_client();
 
     let lease_id = 200;
@@ -71,7 +71,7 @@ async fn leases_should_include_granted_in_normal_path() -> Result<()> {
     let lease2 = 101;
     let lease3 = 102;
 
-    let (_cluster, client) = get_cluster_client().await?;
+    let (_cluster, client) = get_cluster_client().await.unwrap();
     let mut client = client.lease_client();
 
     let resp = client

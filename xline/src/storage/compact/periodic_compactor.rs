@@ -8,7 +8,7 @@ use std::{
 };
 
 use clippy_utilities::OverflowArithmetic;
-use curp::error::CommandProposeError;
+use curp::error::ClientError;
 use tracing::{info, warn};
 use utils::shutdown;
 
@@ -118,10 +118,8 @@ impl<C: Compactable> PeriodicCompactor<C> {
             );
             return target_revision;
         }
-        if let Err(
-            CommandProposeError::Execute(ExecuteError::RevisionCompacted(_, compacted_rev))
-            | CommandProposeError::AfterSync(ExecuteError::RevisionCompacted(_, compacted_rev)),
-        ) = res
+        if let Err(ClientError::CommandError(ExecuteError::RevisionCompacted(_, compacted_rev))) =
+            res
         {
             info!(
                 "required revision {} has been compacted, the current compacted revision is {},  period = {:?}, took {:?}",

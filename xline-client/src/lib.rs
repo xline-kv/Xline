@@ -163,17 +163,18 @@ use crate::{
         AuthClient, ClusterClient, ElectionClient, KvClient, LeaseClient, LockClient,
         MaintenanceClient, WatchClient,
     },
-    error::{ClientError, Result},
+    error::XlineClientBuildError,
 };
 
 /// Sub-clients for each type of API
 pub mod clients;
-/// Error definitions for `xline-client`.
-pub mod error;
 /// Lease Id generator
 mod lease_gen;
 /// Request type definitions.
 pub mod types;
+
+/// Error definitions for `xline-client`.
+pub mod error;
 
 /// Xline client
 #[derive(Clone, Debug)]
@@ -204,7 +205,10 @@ impl Client {
     /// If `Self::build_channel` fails.
     #[inline]
     #[allow(clippy::pattern_type_mismatch)] // allow mismatch in map
-    pub async fn connect<E, S>(all_members: S, options: ClientOptions) -> Result<Self>
+    pub async fn connect<E, S>(
+        all_members: S,
+        options: ClientOptions,
+    ) -> Result<Self, XlineClientBuildError>
     where
         E: AsRef<str>,
         S: IntoIterator<Item = E>,
@@ -227,7 +231,8 @@ impl Client {
                 let mut tmp_auth = AuthClient::new(Arc::clone(&curp_client), channel.clone(), None);
                 let resp = tmp_auth
                     .authenticate(types::auth::AuthenticateRequest::new(username, password))
-                    .await?;
+                    .await
+                    .map_err(|err| XlineClientBuildError::AuthError(err.to_string()))?;
 
                 Some(resp.token)
             }
@@ -266,17 +271,16 @@ impl Client {
     }
 
     /// Build a tonic load balancing channel.
-    async fn build_channel(addrs: Vec<String>) -> Result<Channel> {
+    async fn build_channel(addrs: Vec<String>) -> Result<Channel, XlineClientBuildError> {
         let (channel, tx) = Channel::balance_channel(64);
 
         for mut addr in addrs {
             if !addr.starts_with("http://") {
                 addr.insert_str(0, "http://");
             }
-            let endpoint = Channel::builder(
-                addr.parse()
-                    .map_err(|_e| ClientError::InvalidArgs(String::from("Invalid uri")))?,
-            );
+            let endpoint = Channel::builder(addr.parse().map_err(|_e| {
+                XlineClientBuildError::InvalidArguments(String::from("Invalid uri"))
+            })?);
 
             tx.send(tower::discover::Change::Insert(
                 endpoint.uri().clone(),
@@ -427,7 +431,7 @@ where
     type Future = S::Future;
 
     #[inline]
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<std::result::Result<(), Self::Error>> {
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
     }
 

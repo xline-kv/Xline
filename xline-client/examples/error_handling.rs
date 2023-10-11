@@ -1,11 +1,7 @@
 //! An example to show how the errors are organized in `xline-client`
-use curp::error::CommandProposeError;
+use anyhow::Result;
 use xline::storage::ExecuteError;
-use xline_client::{
-    error::{ClientError, Result},
-    types::kv::PutRequest,
-    Client, ClientOptions,
-};
+use xline_client::{error::XlineClientError, types::kv::PutRequest, Client, ClientOptions};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -24,14 +20,10 @@ async fn main() -> Result<()> {
         .await;
     let err = resp.unwrap_err();
 
-    // We first match the client error
-    let ClientError::ProposeError(pe) = err else {
-        unreachable!("client.put should not return any errors other than PropseError, but it receives {err:?}")
-    };
-    // Then we match the inner error returned by the Curp server.
+    // We match the inner error returned by the Curp server.
     // The command should failed at execution stage.
-    let CommandProposeError::Execute(ee) = pe else {
-        unreachable!("the propose error should be an Execute error, but it is {pe:?}")
+    let XlineClientError::CommandError(ee) = err else {
+        unreachable!("the propose error should be an Execute error, but it is {err:?}")
     };
 
     assert!(

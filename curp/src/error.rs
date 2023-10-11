@@ -5,13 +5,7 @@ use prost::Message;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{
-    members::ServerId,
-    rpc::{
-        PbCommandSyncError, PbCommandSyncErrorOuter, PbProposeError, PbProposeErrorOuter,
-        PbWaitSyncError, PbWaitSyncErrorOuter, RedirectData,
-    },
-};
+use crate::rpc::{PbProposeError, PbProposeErrorOuter};
 
 /// Error type of client builder
 #[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
@@ -68,31 +62,16 @@ pub enum ServerError {
 }
 
 /// The error met during propose phase
-#[derive(Error, Debug, Clone, Serialize, Deserialize)]
+#[derive(Error, Debug, Clone, Copy, Serialize, Deserialize)]
 #[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
 #[non_exhaustive]
 pub enum ProposeError {
-    /// Current node is not leader
-    #[error("not leader")]
-    NotLeader,
-    /// Cluster already shutdown
-    #[error("cluster shutdown")]
-    Shutdown,
-    /// Propose timeout
-    #[error("timeout")]
-    Timeout,
     /// The command conflicts with keys in the speculative commands
     #[error("key conflict error")]
     KeyConflict,
     /// The command has already been proposed before
     #[error("duplicated, the cmd might have already been proposed")]
     Duplicated,
-    /// Command syncing error
-    #[error("syncing error {0}")]
-    SyncedError(WaitSyncError),
-    /// Encode error
-    #[error("encode error: {0}")]
-    EncodeError(String),
 }
 
 impl TryFrom<PbProposeError> for ProposeError {
@@ -101,17 +80,8 @@ impl TryFrom<PbProposeError> for ProposeError {
     #[inline]
     fn try_from(err: PbProposeError) -> Result<ProposeError, Self::Error> {
         Ok(match err {
-            PbProposeError::Timeout(_) => ProposeError::Timeout,
-            PbProposeError::NotLeader(_) => ProposeError::NotLeader,
-            PbProposeError::Shutdown(_) => ProposeError::Shutdown,
             PbProposeError::KeyConflict(_) => ProposeError::KeyConflict,
             PbProposeError::Duplicated(_) => ProposeError::Duplicated,
-            PbProposeError::WaitSyncError(e) => ProposeError::SyncedError(
-                e.wait_sync_error
-                    .ok_or(PbSerializeError::EmptyField)?
-                    .into(),
-            ),
-            PbProposeError::EncodeError(s) => ProposeError::EncodeError(s),
         })
     }
 }
@@ -120,15 +90,8 @@ impl From<ProposeError> for PbProposeErrorOuter {
     #[inline]
     fn from(err: ProposeError) -> Self {
         let e = match err {
-            ProposeError::Timeout => PbProposeError::Timeout(()),
-            ProposeError::NotLeader => PbProposeError::NotLeader(()),
-            ProposeError::Shutdown => PbProposeError::Shutdown(()),
             ProposeError::KeyConflict => PbProposeError::KeyConflict(()),
             ProposeError::Duplicated => PbProposeError::Duplicated(()),
-            ProposeError::SyncedError(e) => PbProposeError::WaitSyncError(PbWaitSyncErrorOuter {
-                wait_sync_error: Some(e.into()),
-            }),
-            ProposeError::EncodeError(s) => PbProposeError::EncodeError(s),
         };
         PbProposeErrorOuter {
             propose_error: Some(e),
@@ -136,17 +99,10 @@ impl From<ProposeError> for PbProposeErrorOuter {
     }
 }
 
-impl From<PbSerializeError> for ProposeError {
-    #[inline]
-    fn from(err: PbSerializeError) -> Self {
-        ProposeError::EncodeError(err.to_string())
-    }
-}
-
 impl PbCodec for ProposeError {
     #[inline]
     fn encode(&self) -> Vec<u8> {
-        PbProposeErrorOuter::from(self.clone()).encode_to_vec()
+        PbProposeErrorOuter::from(*self).encode_to_vec()
     }
 
     #[inline]
@@ -158,156 +114,53 @@ impl PbCodec for ProposeError {
     }
 }
 
-/// The error met during propose phase
-#[derive(Error, Debug, Serialize, Deserialize)]
-#[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
-#[error("rcp error {0}")]
-pub struct RpcError(String);
-
-impl From<tonic::transport::Error> for RpcError {
-    #[inline]
-    fn from(e: tonic::transport::Error) -> Self {
-        Self(e.to_string())
-    }
-}
-
-impl From<tonic::Status> for RpcError {
-    #[inline]
-    fn from(e: tonic::Status) -> Self {
-        Self(e.to_string())
-    }
-}
-
-impl From<bincode::Error> for ProposeError {
-    #[inline]
-    fn from(e: bincode::Error) -> Self {
-        Self::EncodeError(e.to_string())
-    }
-}
-
 /// The union error which includes propose errors and user-defined errors.
-#[derive(Error, Debug, Serialize, Deserialize)]
+#[derive(Error, Debug)]
 #[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
 #[non_exhaustive]
-pub enum CommandProposeError<C: Command> {
-    /// Curp propose error
-    #[error("propose error: {0:?}")]
-    Propose(#[from] ProposeError),
-    /// User defined execute error
-    #[error("execute error: {0}")]
-    Execute(C::Error),
-    /// User defined after sync error
-    #[error("after sync error: {0}")]
-    AfterSync(C::Error),
+pub enum ClientError<C: Command> {
+    /// Command error
+    #[error("command execute error {0}")]
+    CommandError(C::Error),
+    /// Io error
+    #[error("IO error {0}")]
+    IoError(String),
+    /// Rpc error
+    #[error("RPC error: {0}")]
+    OutOfBound(#[from] tonic::Status),
+    /// Arguments invalid error，it's for outer client
+    #[error("Invalid arguments: {0}")]
+    InvalidArgs(String),
+    /// Internal Error in client
+    #[error("Client Internal error: {0}")]
+    InternalError(String),
+    /// Request Timeout
+    #[error("Request timeout")]
+    Timeout,
+    /// Server is shutting down
+    #[error("Curp Server is shutting down")]
+    ShuttingDown,
+    /// Serialize and Deserialize Error
+    #[error("EncodeDecode error: {0}")]
+    EncodeDecode(String),
 }
 
-/// Wait synced error
-#[derive(Clone, Error, Serialize, Deserialize, Debug)]
-#[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
-#[non_exhaustive]
-pub enum WaitSyncError {
-    /// If client sent a wait synced request to a non-leader
-    #[error("redirect to {0:?}, term {1}")]
-    Redirect(Option<ServerId>, u64),
-    /// Other error
-    #[error("other: {0}")]
-    Other(String),
-}
-
-impl From<PbWaitSyncError> for WaitSyncError {
+impl<C: Command> From<PbSerializeError> for ClientError<C> {
     #[inline]
-    fn from(err: PbWaitSyncError) -> Self {
-        match err {
-            PbWaitSyncError::Redirect(data) => WaitSyncError::Redirect(data.server_id, data.term),
-            PbWaitSyncError::Other(s) => WaitSyncError::Other(s),
-        }
+    fn from(err: PbSerializeError) -> Self {
+        Self::EncodeDecode(err.to_string())
     }
 }
 
-impl From<WaitSyncError> for PbWaitSyncError {
-    fn from(err: WaitSyncError) -> Self {
-        match err {
-            WaitSyncError::Redirect(server_id, term) => {
-                PbWaitSyncError::Redirect(RedirectData { server_id, term })
-            }
-            WaitSyncError::Other(s) => PbWaitSyncError::Other(s),
-        }
-    }
-}
-
-/// The union error which includes sync errors and user-defined errors.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub(crate) enum CommandSyncError<C: Command> {
-    /// Cluster already shutdown
-    Shutdown,
-    /// If wait sync went wrong
-    WaitSync(WaitSyncError),
-    /// If the execution of the cmd went wrong
-    Execute(C::Error),
-    /// If after sync of the cmd went wrong
-    AfterSync(C::Error),
-}
-
-impl<C: Command> From<CommandSyncError<C>> for PbCommandSyncError {
-    fn from(err: CommandSyncError<C>) -> Self {
-        match err {
-            CommandSyncError::Shutdown => PbCommandSyncError::Shutdown(()),
-            CommandSyncError::WaitSync(e) => PbCommandSyncError::WaitSync(PbWaitSyncErrorOuter {
-                wait_sync_error: Some(e.into()),
-            }),
-            CommandSyncError::Execute(e) => PbCommandSyncError::Execute(e.encode()),
-            CommandSyncError::AfterSync(e) => PbCommandSyncError::AfterSync(e.encode()),
-        }
-    }
-}
-
-impl<C: Command> TryFrom<PbCommandSyncError> for CommandSyncError<C> {
-    type Error = PbSerializeError;
-
-    fn try_from(err: PbCommandSyncError) -> Result<Self, Self::Error> {
-        Ok(match err {
-            PbCommandSyncError::Shutdown(_) => CommandSyncError::Shutdown,
-            PbCommandSyncError::WaitSync(e) => CommandSyncError::WaitSync(
-                e.wait_sync_error
-                    .ok_or(PbSerializeError::EmptyField)?
-                    .into(),
-            ),
-            PbCommandSyncError::Execute(e) => {
-                CommandSyncError::Execute(<C as Command>::Error::decode(&e)?)
-            }
-            PbCommandSyncError::AfterSync(e) => {
-                CommandSyncError::AfterSync(<C as Command>::Error::decode(&e)?)
-            }
-        })
-    }
-}
-
-impl<C: Command> PbCodec for CommandSyncError<C> {
-    fn encode(&self) -> Vec<u8> {
-        PbCommandSyncErrorOuter {
-            command_sync_error: Some(self.clone().into()),
-        }
-        .encode_to_vec()
-    }
-
-    fn decode(buf: &[u8]) -> Result<Self, PbSerializeError> {
-        PbCommandSyncErrorOuter::decode(buf)?
-            .command_sync_error
-            .ok_or(PbSerializeError::EmptyField)?
-            .try_into()
-    }
-}
-
-impl<C: Command> From<WaitSyncError> for CommandSyncError<C> {
-    fn from(err: WaitSyncError) -> Self {
-        Self::WaitSync(err)
+impl<C: Command> From<bincode::Error> for ClientError<C> {
+    #[inline]
+    fn from(err: bincode::Error) -> Self {
+        Self::EncodeDecode(err.to_string())
     }
 }
 
 #[cfg(test)]
 mod test {
-    use curp_test_utils::test_cmd::{ExecuteError, TestCommand};
-
     use super::*;
 
     #[test]
@@ -316,20 +169,5 @@ mod test {
         let _decoded_err =
             <ProposeError as PbCodec>::decode(&err.encode()).expect("decode should success");
         assert!(matches!(err, _decoded_err));
-    }
-
-    #[test]
-    fn cmd_sync_error_serialization_is_ok() {
-        let err: CommandSyncError<TestCommand> =
-            CommandSyncError::WaitSync(WaitSyncError::Other("msg".to_owned()));
-        let _decoded_err = <CommandSyncError<TestCommand> as PbCodec>::decode(&err.encode())
-            .expect("decode should success");
-        assert!(matches!(err, _decoded_err));
-
-        let err1: CommandSyncError<TestCommand> =
-            CommandSyncError::Execute(ExecuteError("msg".to_owned()));
-        let _decoded_err1 = <CommandSyncError<TestCommand> as PbCodec>::decode(&err1.encode())
-            .expect("decode should success");
-        assert!(matches!(err1, _decoded_err1));
     }
 }

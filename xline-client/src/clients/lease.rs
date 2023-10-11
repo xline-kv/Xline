@@ -10,7 +10,7 @@ use xlineapi::{
 };
 
 use crate::{
-    error::{ClientError, Result},
+    error::{Result, XlineClientError},
     lease_gen::LeaseIdGenerator,
     types::lease::{
         LeaseGrantRequest, LeaseKeepAliveRequest, LeaseKeeper, LeaseRevokeRequest,
@@ -168,7 +168,7 @@ impl LeaseClient {
 
         sender
             .try_send(request.into())
-            .map_err(|e| ClientError::LeaseError(e.to_string()))?;
+            .map_err(|e| XlineClientError::LeaseError(e.to_string()))?;
 
         let mut stream = self
             .lease_client
@@ -179,7 +179,7 @@ impl LeaseClient {
         let id = match stream.message().await? {
             Some(resp) => resp.id,
             None => {
-                return Err(ClientError::LeaseError(String::from(
+                return Err(XlineClientError::LeaseError(String::from(
                     "failed to create lease keeper",
                 )));
             }

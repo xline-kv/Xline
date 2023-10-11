@@ -15,7 +15,7 @@ use xlineapi::{
     MemberUpdateRequest, MemberUpdateResponse,
 };
 
-use super::command::{propose_err_to_status, Command};
+use super::command::{client_err_to_status, Command};
 use crate::header_gen::HeaderGenerator;
 
 /// Cluster Server
@@ -46,7 +46,7 @@ impl ClusterServer {
             .client
             .gen_propose_id()
             .await
-            .map_err(propose_err_to_status)?;
+            .map_err(client_err_to_status)?;
         Ok(self
             .client
             .propose_conf_change(ProposeConfChangeRequest {
@@ -54,7 +54,7 @@ impl ClusterServer {
                 changes,
             })
             .await
-            .map_err(propose_err_to_status)??
+            .map_err(client_err_to_status)??
             .into_iter()
             .map(|member| Member {
                 id: member.id(),
@@ -145,7 +145,7 @@ impl Cluster for ClusterServer {
             .client
             .get_cluster_from_curp(req.linearizable)
             .await
-            .map_err(propose_err_to_status)?
+            .map_err(client_err_to_status)?
             .members;
         let resp = MemberListResponse {
             header: Some(header),

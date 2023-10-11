@@ -3,10 +3,7 @@ use std::{fmt::Debug, sync::Arc};
 use tonic::{transport::Channel, Streaming};
 use xlineapi::{SnapshotRequest, SnapshotResponse};
 
-use crate::{
-    error::{ClientError, Result},
-    AuthService,
-};
+use crate::{error::Result, AuthService};
 
 /// Client for Maintenance operations.
 #[derive(Clone, Debug)]
@@ -66,11 +63,6 @@ impl MaintenanceClient {
     /// ```
     #[inline]
     pub async fn snapshot(&mut self) -> Result<Streaming<SnapshotResponse>> {
-        Ok(self
-            .inner
-            .snapshot(SnapshotRequest {})
-            .await
-            .map_err(Into::<ClientError>::into)?
-            .into_inner())
+        Ok(self.inner.snapshot(SnapshotRequest {}).await?.into_inner())
     }
 }

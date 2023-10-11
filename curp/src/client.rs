@@ -15,10 +15,7 @@ use utils::config::ClientConfig;
 
 use crate::{
     cmd::{Command, ProposeId},
-    error::{
-        ClientBuildError, CommandProposeError, CommandSyncError, ProposeError, RpcError,
-        WaitSyncError,
-    },
+    error::{ClientBuildError, ClientError, ProposeError},
     members::ServerId,
     rpc::{
         self, connect::ConnectApi, protocol_client::ProtocolClient, ConfChangeError,
@@ -221,6 +218,36 @@ pub enum ReadState {
     CommitIndex(LogIndex),
 }
 
+/// get `term` and `leader_id` from a `tonic::Status` (Redirect)
+fn parse_redirect_status(metadata: &tonic::metadata::MetadataMap) -> (Option<ServerId>, u64) {
+    let term = metadata
+        .get("term")
+        .unwrap_or_else(|| unreachable!("The Redirect must contain a valid term"))
+        .to_str()
+        .unwrap_or_else(|err| {
+            unreachable!("a valid term should not includes any non-ascii character: {err}")
+        })
+        .parse::<u64>()
+        .unwrap_or_else(|err| {
+            unreachable!("parse term in a Redirect should always be successful: {err}")
+        });
+
+    if let Some(leader_id) = metadata.get("leader_id") {
+        let leader_id = leader_id
+            .to_str()
+            .unwrap_or_else(|err| {
+                unreachable!("a valid term should not includes any non-ascii character: {err}")
+            })
+            .parse::<u64>()
+            .unwrap_or_else(|err| {
+                unreachable!("parse leader_id in a Redirect should always be successful: {err}")
+            });
+        (Some(leader_id), term)
+    } else {
+        (None, term)
+    }
+}
+
 impl<C> Client<C>
 where
     C: Command + 'static,
@@ -238,7 +265,7 @@ where
     async fn fast_round(
         &self,
         cmd_arc: Arc<C>,
-    ) -> Result<(Option<<C as Command>::ER>, bool), CommandProposeError<C>> {
+    ) -> Result<(Option<<C as Command>::ER>, bool), ClientError<C>> {
         debug!("fast round for cmd({}) started", cmd_arc.id());
         let req = ProposeRequest::new(cmd_arc.as_ref());
 
@@ -262,6 +289,12 @@ where
             let resp = match resp_result {
                 Ok(resp) => resp.into_inner(),
                 Err(e) => {
+                    if e.code() == tonic::Code::Unavailable {
+                        let meta = e.metadata();
+                        if meta.contains_key("ShuttingDown") {
+                            return Err(ClientError::ShuttingDown);
+                        }
+                    }
                     warn!("Propose error: {}", e);
                     continue;
                 }
@@ -269,11 +302,11 @@ where
             self.state
                 .write()
                 .check_and_update(resp.leader_id, resp.term);
-            resp.map_or_else::<C, _, _, _>(
+            resp.map_or_else::<C, _, _, Result<(), ClientError<C>>>(
                 |res| {
                     if let Some(er) = res
                         .transpose()
-                        .map_err(|e| CommandProposeError::Execute(e))?
+                        .map_err(|e| ClientError::CommandError::<C>(e))?
                     {
                         assert!(execute_result.is_none(), "should not set exe result twice");
                         execute_result = Some(er);
@@ -282,15 +315,10 @@ where
                     Ok(())
                 },
                 |err| {
-                    if matches!(err, ProposeError::Shutdown) {
-                        Err(CommandProposeError::Propose(ProposeError::Shutdown))
-                    } else {
-                        warn!("Propose error: {}", err);
-                        Ok(())
-                    }
+                    warn!("Propose error: {}", err);
+                    Ok(())
                 },
-            )
-            .map_err(Into::<ProposeError>::into)??;
+            )??;
             if (ok_cnt >= superquorum) && execute_result.is_some() {
                 debug!("fast round for cmd({}) succeed", cmd_arc.id());
                 return Ok((execute_result, true));
@@ -304,7 +332,7 @@ where
     async fn slow_round(
         &self,
         cmd: Arc<C>,
-    ) -> Result<(<C as Command>::ASR, <C as Command>::ER), CommandProposeError<C>> {
+    ) -> Result<(<C as Command>::ASR, <C as Command>::ER), ClientError<C>> {
         debug!("slow round for cmd({}) started", cmd.id());
         let mut retry_timeout = self.get_backoff();
         let retry_count = *self.config.retry_count();
@@ -331,47 +359,42 @@ where
                 Ok(resp) => resp.into_inner(),
                 Err(e) => {
                     warn!("wait synced rpc error: {e}");
-                    // it's quite likely that the leader has crashed, then we should wait for some time and fetch the leader again
-                    tokio::time::sleep(retry_timeout.next_retry()).await;
-                    self.resend_propose(Arc::clone(&cmd), None).await?;
+                    if e.code() == tonic::Code::Unavailable {
+                        let meta = e.metadata();
+                        if meta.contains_key("ShuttingDown") {
+                            return Err(ClientError::ShuttingDown);
+                        }
+                    } else if e.code() == tonic::Code::FailedPrecondition {
+                        let metadata = e.metadata();
+                        let (new_leader, term) = parse_redirect_status(metadata);
+                        self.state.write().check_and_update(new_leader, term);
+                        // resend the propose to the new leader
+                        self.resend_propose(Arc::clone(&cmd), new_leader).await?;
+                    } else {
+                        // it's quite likely that the leader has crashed, then we should wait for some time and fetch the leader again
+                        tokio::time::sleep(retry_timeout.next_retry()).await;
+                        self.resend_propose(Arc::clone(&cmd), None).await?;
+                    }
                     continue;
                 }
             };
 
-            match resp.into::<C>().map_err(Into::<ProposeError>::into)? {
+            match resp.into::<C>().map_err(Into::<ClientError<C>>::into)? {
                 SyncResult::Success { er, asr } => {
                     debug!("slow round for cmd({}) succeeded", cmd.id());
                     return Ok((asr, er));
                 }
-                SyncResult::Error(CommandSyncError::Shutdown) => {
-                    return Err(CommandProposeError::Propose(ProposeError::Shutdown));
-                }
-                SyncResult::Error(CommandSyncError::WaitSync(WaitSyncError::Redirect(
-                    new_leader,
-                    term,
-                ))) => {
-                    self.state.write().check_and_update(new_leader, term);
-                    self.resend_propose(Arc::clone(&cmd), new_leader).await?; // resend the propose to the new leader
-                }
-                SyncResult::Error(CommandSyncError::WaitSync(e)) => {
-                    return Err(
-                        ProposeError::SyncedError(WaitSyncError::Other(e.to_string())).into(),
-                    );
-                }
-                SyncResult::Error(CommandSyncError::Execute(e)) => {
-                    return Err(CommandProposeError::Execute(e));
-                }
-                SyncResult::Error(CommandSyncError::AfterSync(e)) => {
-                    return Err(CommandProposeError::AfterSync(e));
+                SyncResult::Error(e) => {
+                    return Err(ClientError::CommandError(e));
                 }
             }
         }
-        Err(CommandProposeError::Propose(ProposeError::Timeout))
+        Err(ClientError::Timeout)
     }
 
     /// The shutdown rpc of curp protocol
     #[instrument(skip_all)]
-    pub async fn shutdown(&self) -> Result<(), ProposeError> {
+    pub async fn shutdown(&self) -> Result<(), ClientError<C>> {
         let mut retry_timeout = self.get_backoff();
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {
@@ -383,7 +406,7 @@ where
                 }
             };
             debug!("shutdown request sent to {}", leader_id);
-            let resp = match self
+            if let Err(e) = self
                 .get_connect(leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .shutdown(
@@ -392,26 +415,21 @@ where
                 )
                 .await
             {
-                Ok(resp) => resp.into_inner(),
-                Err(e) => {
-                    warn!("shutdown rpc error: {e}");
-                    tokio::time::sleep(retry_timeout.next_retry()).await;
+                // Leader may not be correct leader, resend the shutdown request to the new leader
+                if e.code() == tonic::Code::FailedPrecondition {
+                    let metadata = e.metadata();
+                    let (new_leader, term) = parse_redirect_status(metadata);
+                    self.state.write().check_and_update(new_leader, term);
+                    warn!("shutdown: redirect to new leader {new_leader:?}, term is {term}",);
                     continue;
                 }
+                warn!("shutdown rpc error: {e}");
+                tokio::time::sleep(retry_timeout.next_retry()).await;
+                continue;
             };
-            self.state
-                .write()
-                .check_and_update(resp.leader_id, resp.term);
-
-            match resp.error {
-                Some(e) => {
-                    // Leader may not be correct leader, resend the shutdown request to the new leader
-                    warn!("shutdown error: {:?}", e);
-                }
-                None => return Ok(()),
-            }
+            return Ok(());
         }
-        Err(ProposeError::Timeout)
+        Err(ClientError::Timeout)
     }
 
     /// Resend the propose only to the leader. This is used when leader changes and we need to ensure that the propose is received by the new leader.
@@ -419,7 +437,7 @@ where
         &self,
         cmd: Arc<C>,
         mut new_leader: Option<ServerId>,
-    ) -> Result<(), ProposeError> {
+    ) -> Result<(), ClientError<C>> {
         let mut retry_timeout = self.get_backoff();
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {
@@ -503,18 +521,18 @@ where
                 Ordering::Greater => {}
             }
         }
-        Err(ProposeError::Timeout)
+        Err(ClientError::Timeout)
     }
 
     /// Send fetch cluster requests to all servers
     /// Note: The fetched cluster may still be outdated if `linearizable` is false
     /// # Errors
-    ///   `ProposeError::Timeout` if timeout
+    ///   `ClientError<C>::Timeout` if timeout
     #[inline]
     async fn fetch_cluster(
         &self,
         linearizable: bool,
-    ) -> Result<FetchClusterResponse, ProposeError> {
+    ) -> Result<FetchClusterResponse, ClientError<C>> {
         let mut retry_timeout = self.get_backoff();
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {
@@ -579,12 +597,12 @@ where
             // TODO: let user configure it according to average leader election cost
             tokio::time::sleep(timeout).await;
         }
-        Err(ProposeError::Timeout)
+        Err(ClientError::Timeout)
     }
 
     /// Send fetch leader requests to all servers until there is a leader
     /// Note: The fetched leader may still be outdated
-    async fn fetch_leader(&self) -> Result<ServerId, ProposeError> {
+    async fn fetch_leader(&self) -> Result<ServerId, ClientError<C>> {
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {
             let res = self.fetch_cluster(false).await?;
@@ -595,14 +613,14 @@ where
         // This timeout is a bit different. It refers to the situation where
         // multiple attempts to fetch the cluster are successful, but there
         // is no leader id (very rare).
-        Err(ProposeError::Timeout)
+        Err(ClientError::Timeout)
     }
 
     /// Get leader id from the state or fetch it from servers
     /// # Errors
-    /// `ProposeError::Timeout` if timeout
+    /// `ClientError::Timeout` if timeout
     #[inline]
-    pub async fn get_leader_id(&self) -> Result<ServerId, ProposeError> {
+    pub async fn get_leader_id(&self) -> Result<ServerId, ClientError<C>> {
         let notify = Arc::clone(&self.state.read().leader_notify);
         let mut retry_timeout = self.get_backoff();
         let retry_count = *self.config.retry_count();
@@ -617,13 +635,13 @@ where
                 return self.fetch_leader().await;
             }
         }
-        Err(ProposeError::Timeout)
+        Err(ClientError::Timeout)
     }
 
     /// Propose the request to servers, if use_fast_path is false, it will wait for the synced index
     /// # Errors
-    ///   `CommandProposeError::Execute` if execution error is met
-    ///   `CommandProposeError::AfterSync` error met while syncing logs to followers
+    ///   `ClientError::Execute` if execution error is met
+    ///   `ClientError::AfterSync` error met while syncing logs to followers
     /// # Panics
     ///   If leader index is out of bound of all the connections, panic
     #[inline]
@@ -633,7 +651,7 @@ where
         &self,
         cmd: C,
         use_fast_path: bool,
-    ) -> Result<(C::ER, Option<C::ASR>), CommandProposeError<C>> {
+    ) -> Result<(C::ER, Option<C::ASR>), ClientError<C>> {
         let cmd_arc = Arc::new(cmd);
         let fast_round = self.fast_round(Arc::clone(&cmd_arc));
         let slow_round = self.slow_round(cmd_arc);
@@ -680,12 +698,12 @@ where
     pub async fn propose_conf_change(
         &self,
         conf_change: ProposeConfChangeRequest,
-    ) -> Result<Result<Vec<Member>, ConfChangeError>, CommandProposeError<C>> {
+    ) -> Result<Result<Vec<Member>, ConfChangeError>, ClientError<C>> {
         debug!(
             "propose_conf_change with propose_id({}) started",
             conf_change.id()
         );
-        let retry_timeout = *self.config.initial_retry_timeout();
+        let mut retry_timeout = self.get_backoff();
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {
             let leader_id = match self.get_leader_id().await {
@@ -705,7 +723,19 @@ where
                 Ok(resp) => resp.into_inner(),
                 Err(e) => {
                     warn!("wait synced rpc error: {e}");
-                    tokio::time::sleep(retry_timeout).await;
+                    if e.code() == tonic::Code::Unavailable {
+                        let meta = e.metadata();
+                        if meta.contains_key("ShuttingDown") {
+                            return Err(ClientError::ShuttingDown);
+                        }
+                    } else if e.code() == tonic::Code::FailedPrecondition {
+                        let metadata = e.metadata();
+                        let (new_leader, term) = parse_redirect_status(metadata);
+                        self.state.write().check_and_update(new_leader, term);
+                        continue;
+                    } else {
+                    }
+                    tokio::time::sleep(retry_timeout.next_retry()).await;
                     continue;
                 }
             };
@@ -715,24 +745,19 @@ where
             return match resp.error {
                 Some(e) => {
                     warn!("propose conf change error: {:?}", e);
-                    if let ConfChangeError::Propose(ref nl) = e {
-                        if *nl == ProposeError::NotLeader.into() {
-                            continue;
-                        }
-                    }
                     Ok(Err(e))
                 }
                 None => Ok(Ok(resp.members)),
             };
         }
-        Err(CommandProposeError::Propose(ProposeError::Timeout))
+        Err(ClientError::Timeout)
     }
 
     /// Fetch Read state from leader
     /// # Errors
-    ///   `ProposeError::EncodingError` encoding error met while deserializing the propose id
+    ///   `ClientError::EncodingError` encoding error met while deserializing the propose id
     #[inline]
-    pub async fn fetch_read_state(&self, cmd: &C) -> Result<ReadState, ProposeError> {
+    pub async fn fetch_read_state(&self, cmd: &C) -> Result<ReadState, ClientError<C>> {
         let mut retry_timeout = self.get_backoff();
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {
@@ -769,7 +794,7 @@ where
             };
             return Ok(state);
         }
-        Err(ProposeError::Timeout)
+        Err(ClientError::Timeout)
     }
 
     /// Fetch the current cluster from the curp server where is on the same node.
@@ -777,7 +802,7 @@ where
     /// we will fallback to fetch the full cluster for the response if fetching local
     /// failed.
     #[inline]
-    async fn fetch_local_cluster(&self) -> Result<FetchClusterResponse, RpcError> {
+    async fn fetch_local_cluster(&self) -> Result<FetchClusterResponse, ClientError<C>> {
         if let Some(local_server) = self.local_server_id {
             let resp = self
                 .get_connect(local_server)
@@ -796,9 +821,9 @@ where
 
     /// Fetch the current leader id without cache
     /// # Errors
-    /// `ProposeError::Timeout` if timeout
+    /// `ClientError::Timeout` if timeout
     #[inline]
-    pub async fn get_leader_id_from_curp(&self) -> Result<ServerId, CommandProposeError<C>> {
+    pub async fn get_leader_id_from_curp(&self) -> Result<ServerId, ClientError<C>> {
         if let Ok(FetchClusterResponse {
             leader_id: Some(leader_id),
             ..
@@ -806,31 +831,26 @@ where
         {
             return Ok(leader_id);
         }
-        self.fetch_leader()
-            .await
-            .map_err(|e| CommandProposeError::Propose(e))
+        self.fetch_leader().await
     }
 
     /// Fetch the current cluster without cache
     /// # Errors
-    /// `ProposeError::Timeout` if timeout
+    /// `ClientError::Timeout` if timeout
     #[inline]
     pub async fn get_cluster_from_curp(
         &self,
         linearizable: bool,
-    ) -> Result<FetchClusterResponse, CommandProposeError<C>> {
+    ) -> Result<FetchClusterResponse, ClientError<C>> {
         if linearizable {
             return self
                 .fetch_cluster(true)
-                .await
-                .map_err(|e| CommandProposeError::Propose(e));
+                .await;
         }
         if let Ok(resp) = self.fetch_local_cluster().await {
             return Ok(resp);
         }
-        self.fetch_cluster(false)
-            .await
-            .map_err(|e| CommandProposeError::Propose(e))
+        self.fetch_cluster(false).await
     }
 
     /// Get the connect by server id
@@ -847,9 +867,9 @@ where
     ///
     /// # Errors
     ///
-    ///   `ProposeError::Timeout` if timeout
+    ///   `ClientError::Timeout` if timeout
     #[allow(clippy::unused_async)] // TODO: grant a client id from server
-    async fn get_client_id(&self) -> Result<u64, ProposeError> {
+    async fn get_client_id(&self) -> Result<u64, ClientError<C>> {
         Ok(rand::random())
     }
 
@@ -862,9 +882,9 @@ where
     /// Generate a propose id
     ///
     /// # Errors
-    ///   `ProposeError::Timeout` if timeout
+    ///   `ClientError::Timeout` if timeout
     #[inline]
-    pub async fn gen_propose_id(&self) -> Result<ProposeId, CommandProposeError<C>> {
+    pub async fn gen_propose_id(&self) -> Result<ProposeId, ClientError<C>> {
         let client_id = self.get_client_id().await?;
         let seq_num = self.new_seq_num();
         Ok(ProposeId(client_id, seq_num))

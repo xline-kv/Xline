@@ -4,7 +4,7 @@ use clap::{arg, value_parser, ArgMatches, Command};
 use tokio::signal::ctrl_c;
 use tonic::Streaming;
 use xline_client::{
-    error::{ClientError, Result},
+    error::{Result, XlineClientError},
     types::lease::{LeaseKeepAliveRequest, LeaseKeeper},
     Client,
 };
@@ -62,7 +62,7 @@ async fn keep_alive_loop(
         if let Some(resp) = stream.message().await? {
             resp.print();
             if resp.ttl < 0 {
-                return Err(ClientError::InvalidArgs(String::from(
+                return Err(XlineClientError::InvalidArgs(String::from(
                     "lease keepalive response has negative ttl",
                 )));
             }

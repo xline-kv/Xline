@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use curp::{
     client::{Client, ReadState},
     cmd::Command,
-    error::{CommandProposeError, ProposeError},
+    error::ClientError,
     members::{ClusterInfo, ServerId},
     server::Rpc,
     ConfChangeError, FetchClusterRequest, FetchClusterResponse, LogIndex, Member,
@@ -449,7 +449,7 @@ impl<C: Command + 'static> SimClient<C> {
         &self,
         cmd: C,
         use_fast_path: bool,
-    ) -> Result<(C::ER, Option<C::ASR>), CommandProposeError<C>> {
+    ) -> Result<(C::ER, Option<C::ASR>), ClientError<C>> {
         let inner = self.inner.clone();
         self.handle
             .spawn(async move { inner.propose(cmd, use_fast_path).await })
@@ -461,7 +461,7 @@ impl<C: Command + 'static> SimClient<C> {
     pub async fn propose_conf_change(
         &self,
         conf_change: ProposeConfChangeRequest,
-    ) -> Result<Result<Vec<Member>, ConfChangeError>, CommandProposeError<C>> {
+    ) -> Result<Result<Vec<Member>, ConfChangeError>, ClientError<C>> {
         let inner = self.inner.clone();
         self.handle
             .spawn(async move { inner.propose_conf_change(conf_change).await })
@@ -470,7 +470,7 @@ impl<C: Command + 'static> SimClient<C> {
     }
 
     #[inline]
-    pub async fn fetch_read_state(&self, cmd: &C) -> Result<ReadState, ProposeError> {
+    pub async fn fetch_read_state(&self, cmd: &C) -> Result<ReadState, ClientError<C>> {
         let inner = self.inner.clone();
         let cmd = cmd.clone();
         self.handle

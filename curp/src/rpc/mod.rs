@@ -8,16 +8,11 @@ pub(crate) use self::proto::{
         fetch_read_state_response::{IdSet, ReadState},
         propose_response::ExeResult,
         protocol_server::Protocol,
-        wait_synced_response::{Success, SyncResult as SyncResultRaw},
         FetchReadStateRequest, FetchReadStateResponse, ProposeId as PbProposeId, ShutdownRequest,
         ShutdownResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
     errorpb::{
-        command_sync_error::CommandSyncError as PbCommandSyncError,
-        propose_error::ProposeError as PbProposeError,
-        wait_sync_error::WaitSyncError as PbWaitSyncError,
-        CommandSyncError as PbCommandSyncErrorOuter, ProposeError as PbProposeErrorOuter,
-        RedirectData, WaitSyncError as PbWaitSyncErrorOuter,
+        propose_error::ProposeError as PbProposeError, ProposeError as PbProposeErrorOuter,
     },
     inner_messagepb::{
         inner_protocol_server::InnerProtocol, AppendEntriesRequest, AppendEntriesResponse,
@@ -28,7 +23,7 @@ pub use self::proto::{
     commandpb::{
         propose_conf_change_request::{ConfChange, ConfChangeType},
         propose_conf_change_response::Error as ConfChangeError,
-        propose_response::{cmd_result::Result as CmdResultInner, CmdResult},
+        cmd_result::Result as CmdResultInner, CmdResult,
         protocol_client,
         protocol_server::ProtocolServer,
         FetchClusterRequest, FetchClusterResponse, Member, ProposeConfChangeRequest,
@@ -38,7 +33,7 @@ pub use self::proto::{
 };
 use crate::{
     cmd::{Command, ProposeId},
-    error::{CommandSyncError, ProposeError, WaitSyncError},
+    error::ProposeError,
     log_entry::LogEntry,
     members::ServerId,
     server::PoolEntry,
@@ -141,7 +136,7 @@ impl ProposeResponse {
     ) -> Self {
         let exe_result = match *result {
             Ok(ref er) => Some(ExeResult::Result(CmdResult {
-                result: Some(CmdResultInner::Er(er.encode())),
+                result: Some(CmdResultInner::Ok(er.encode())),
             })),
             Err(ref e) => Some(ExeResult::Result(CmdResult {
                 result: Some(CmdResultInner::Error(e.encode())),
@@ -187,7 +182,7 @@ impl ProposeResponse {
             Some(ExeResult::Result(ref rv)) => {
                 let result = rv.result.as_ref().ok_or(PbSerializeError::EmptyField)?;
                 let cmd_result = match *result {
-                    CmdResultInner::Er(ref buf) => Ok(<C as Command>::ER::decode(buf)?),
+                    CmdResultInner::Ok(ref buf) => Ok(<C as Command>::ER::decode(buf)?),
                     CmdResultInner::Error(ref buf) => Err(<C as Command>::Error::decode(buf)?),
                 };
                 Ok(success(Some(cmd_result)))
@@ -228,65 +223,75 @@ impl WaitSyncedResponse {
     /// Create a success response
     pub(crate) fn new_success<C: Command>(asr: &C::ASR, er: &C::ER) -> Self {
         Self {
-            sync_result: Some(SyncResultRaw::Success(Success {
-                after_sync_result: asr.encode(),
-                exe_result: er.encode(),
-            })),
+            after_sync_result: Some(CmdResult {
+                result: Some(CmdResultInner::Ok(asr.encode())),
+            }),
+            exe_result: Some(CmdResult {
+                result: Some(CmdResultInner::Ok(er.encode())),
+            }),
         }
     }
 
-    /// Create an error response
-    pub(crate) fn new_error<C: Command>(err: CommandSyncError<C>) -> Self {
+    /// Create an error response which includes an execution error
+    pub(crate) fn new_er_error<C: Command>(er: &C::Error) -> Self {
         Self {
-            sync_result: Some(SyncResultRaw::Error(PbCommandSyncErrorOuter {
-                command_sync_error: Some(err.into()),
-            })),
+            after_sync_result: None,
+            exe_result: Some(CmdResult {
+                result: Some(CmdResultInner::Error(er.encode())),
+            }),
+        }
+    }
+
+    /// Create an error response which includes an `after_sync` error
+    pub(crate) fn new_asr_error<C: Command>(er: &C::ER, asr_err: &C::Error) -> Self {
+        Self {
+            after_sync_result: Some(CmdResult {
+                result: Some(CmdResultInner::Error(asr_err.encode())),
+            }),
+            exe_result: Some(CmdResult {
+                result: Some(CmdResultInner::Ok(er.encode())),
+            }),
         }
     }
 
     /// Create a new response from execution result and `after_sync` result
     pub(crate) fn new_from_result<C: Command>(
-        er: Option<Result<C::ER, C::Error>>,
+        er: Result<C::ER, C::Error>,
         asr: Option<Result<C::ASR, C::Error>>,
     ) -> Self {
         match (er, asr) {
-            (None | Some(Err(_)), Some(_)) => {
-                unreachable!("should not call after sync if execution fails")
+            (Ok(ref er), Some(Err(ref asr_err))) => {
+                WaitSyncedResponse::new_asr_error::<C>(er, asr_err)
             }
-            (None, None) => WaitSyncedResponse::new_error::<C>(
-                WaitSyncError::Other("can't get er result".to_owned()).into(),
-            ), // this is highly unlikely to happen,
-            (Some(Err(err)), None) => {
-                WaitSyncedResponse::new_error(CommandSyncError::<C>::Execute(err))
-            }
-            // The er is ignored as the propose has failed
-            (Some(Ok(_er)), Some(Err(err))) => {
-                WaitSyncedResponse::new_error(CommandSyncError::<C>::AfterSync(err))
-            }
-            (Some(Ok(er)), Some(Ok(asr))) => WaitSyncedResponse::new_success::<C>(&asr, &er),
-            // The er is ignored as the propose has failed
-            (Some(Ok(_er)), None) => {
-                WaitSyncedResponse::new_error::<C>(
-                    WaitSyncError::Other("can't get after sync result".to_owned()).into(),
-                ) // this is highly unlikely to happen,
-            }
+            (Ok(ref er), Some(Ok(ref asr))) => WaitSyncedResponse::new_success::<C>(asr, er),
+            (Ok(ref _er), None) => unreachable!("can't get after sync result"),
+            (Err(ref err), _) => WaitSyncedResponse::new_er_error::<C>(err),
         }
     }
 
     /// Into deserialized result
     pub(crate) fn into<C: Command>(self) -> Result<SyncResult<C>, PbSerializeError> {
-        let res = match self.sync_result {
-            None => unreachable!("WaitSyncedResponse should contain valid sync_result"),
-            Some(SyncResultRaw::Success(success)) => SyncResult::Success {
-                asr: <C as Command>::ASR::decode(&success.after_sync_result)?,
-                er: <C as Command>::ER::decode(&success.exe_result)?,
-            },
-            Some(SyncResultRaw::Error(err)) => {
-                let cmd_sync_err = err
-                    .command_sync_error
-                    .ok_or(PbSerializeError::EmptyField)?
-                    .try_into()?;
-                SyncResult::Error(cmd_sync_err)
+        let res = match (self.exe_result, self.after_sync_result) {
+            (None, _) => unreachable!("WaitSyncedResponse should contain a valid exe_result"),
+            (Some(er), None) => {
+                if let Some(CmdResultInner::Error(buf)) = er.result {
+                    SyncResult::Error(<C as Command>::Error::decode(buf.as_slice())?)
+                } else {
+                    unreachable!("er should not be None")
+                }
+            }
+            (Some(er), Some(asr)) => {
+                let er = if let Some(CmdResultInner::Ok(er)) = er.result {
+                    <C as Command>::ER::decode(er.as_slice())?
+                } else {
+                    unreachable!("")
+                };
+                let asr = if let Some(CmdResultInner::Ok(asr)) = asr.result {
+                    <C as Command>::ASR::decode(asr.as_slice())?
+                } else {
+                    unreachable!("")
+                };
+                SyncResult::Success { asr, er }
             }
         };
         Ok(res)
@@ -303,7 +308,7 @@ pub(crate) enum SyncResult<C: Command> {
         er: C::ER,
     },
     /// If sync fails, return `SyncError`
-    Error(CommandSyncError<C>),
+    Error(C::Error),
 }
 
 impl AppendEntriesRequest {
@@ -574,18 +579,6 @@ impl From<ProposeConfChangeRequest> for ConfChangeEntry {
                 })
                 .into(),
             changes: req.changes,
-        }
-    }
-}
-
-impl ShutdownResponse {
-    /// Create a new shutdown response
-    pub(crate) fn new(leader_id: Option<ServerId>, term: u64, error: Option<ProposeError>) -> Self {
-        let error = error.map(Into::into);
-        Self {
-            leader_id,
-            term,
-            error,
         }
     }
 }

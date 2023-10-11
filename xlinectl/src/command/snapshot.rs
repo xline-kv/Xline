@@ -1,7 +1,10 @@
 use std::{fs::File, io::Write, path::PathBuf};
 
 use clap::{arg, ArgMatches, Command};
-use xline_client::{error::Result, Client};
+use xline_client::{
+    error::{Result, XlineClientError},
+    Client,
+};
 
 /// Definition of `snapshot` command
 pub(crate) fn command() -> Command {
@@ -26,14 +29,16 @@ pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result
             return Ok(());
         }
 
-        let mut file = File::create(path)?;
+        let mut file =
+            File::create(path).map_err(|err| XlineClientError::IoError(err.to_string()))?;
 
         let mut all = Vec::new();
         while let Some(data) = resp.message().await? {
             all.extend_from_slice(&data.blob);
         }
 
-        file.write_all(&all)?;
+        file.write_all(&all)
+            .map_err(|err| XlineClientError::IoError(err.to_string()))?;
 
         println!("snapshot saved to: {filename}");
     }

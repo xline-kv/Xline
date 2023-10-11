@@ -17,7 +17,7 @@ use xlineapi::{
 };
 
 use crate::{
-    error::{ClientError, Result},
+    error::{Result, XlineClientError},
     types::auth::{
         AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGetRequest,
         AuthRoleGrantPermissionRequest, AuthRoleRevokePermissionRequest, AuthUserAddRequest,
@@ -219,7 +219,9 @@ impl AuthClient {
     #[inline]
     pub async fn user_add(&self, mut request: AuthUserAddRequest) -> Result<AuthUserAddResponse> {
         if request.inner.name.is_empty() {
-            return Err(ClientError::InvalidArgs(String::from("user name is empty")));
+            return Err(XlineClientError::InvalidArgs(String::from(
+                "user name is empty",
+            )));
         }
         let need_password = request
             .inner
@@ -227,7 +229,7 @@ impl AuthClient {
             .as_ref()
             .map_or(true, |o| !o.no_password);
         if need_password && request.inner.password.is_empty() {
-            return Err(ClientError::InvalidArgs(String::from(
+            return Err(XlineClientError::InvalidArgs(String::from(
                 "password is required but not provided",
             )));
         }
@@ -378,7 +380,9 @@ impl AuthClient {
         mut request: AuthUserChangePasswordRequest,
     ) -> Result<AuthUserChangePasswordResponse> {
         if request.inner.password.is_empty() {
-            return Err(ClientError::InvalidArgs(String::from("role name is empty")));
+            return Err(XlineClientError::InvalidArgs(String::from(
+                "role name is empty",
+            )));
         }
         let hashed_password = Self::hash_password(request.inner.password.as_bytes());
         request.inner.hashed_password = hashed_password;
@@ -486,7 +490,9 @@ impl AuthClient {
     #[inline]
     pub async fn role_add(&self, request: AuthRoleAddRequest) -> Result<AuthRoleAddResponse> {
         if request.inner.name.is_empty() {
-            return Err(ClientError::InvalidArgs(String::from("role name is empty")));
+            return Err(XlineClientError::InvalidArgs(String::from(
+                "role name is empty",
+            )));
         }
         self.handle_req(request.inner, false).await
     }
@@ -638,7 +644,7 @@ impl AuthClient {
         request: AuthRoleGrantPermissionRequest,
     ) -> Result<AuthRoleGrantPermissionResponse> {
         if request.inner.perm.is_none() {
-            return Err(ClientError::InvalidArgs(String::from(
+            return Err(XlineClientError::InvalidArgs(String::from(
                 "Permission not given",
             )));
         }

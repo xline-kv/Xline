@@ -5,7 +5,7 @@ use xline::server::KeyRange;
 pub use xlineapi::{Event, EventType, KeyValue, WatchResponse};
 use xlineapi::{RequestUnion, WatchCancelRequest, WatchProgressRequest};
 
-use crate::error::{ClientError, Result};
+use crate::error::{Result, XlineClientError};
 
 /// The watching handle.
 #[derive(Debug)]
@@ -44,7 +44,7 @@ impl Watcher {
 
         self.sender
             .try_send(request)
-            .map_err(|e| ClientError::WatchError(e.to_string()))
+            .map_err(|e| XlineClientError::WatchError(e.to_string()))
     }
 
     /// Cancels this watcher.
@@ -62,7 +62,7 @@ impl Watcher {
 
         self.sender
             .try_send(request)
-            .map_err(|e| ClientError::WatchError(e.to_string()))
+            .map_err(|e| XlineClientError::WatchError(e.to_string()))
     }
 
     /// Cancels watch by specified `watch_id`.
@@ -78,7 +78,7 @@ impl Watcher {
 
         self.sender
             .try_send(request)
-            .map_err(|e| ClientError::WatchError(e.to_string()))
+            .map_err(|e| XlineClientError::WatchError(e.to_string()))
     }
 
     /// Requests a watch stream progress status be sent in the watch response stream as soon as
@@ -95,7 +95,7 @@ impl Watcher {
 
         self.sender
             .try_send(request)
-            .map_err(|e| ClientError::WatchError(e.to_string()))
+            .map_err(|e| XlineClientError::WatchError(e.to_string()))
     }
 }
 

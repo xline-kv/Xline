@@ -8,7 +8,7 @@ use std::{
 use clippy_utilities::NumericCast;
 use curp::{
     client::{Builder, Client},
-    error::{CommandProposeError, ProposeError},
+    error::ClientError,
     members::ClusterInfo,
     ConfChange, ConfChangeError, ProposeConfChangeRequest,
 };
@@ -280,10 +280,7 @@ async fn shutdown_rpc_should_shutdown_the_cluster() {
     let res = client
         .propose(TestCommand::new_put(vec![888], 1), false)
         .await;
-    assert!(matches!(
-        res,
-        Err(CommandProposeError::Propose(ProposeError::Shutdown))
-    ));
+    assert!(matches!(res, Err(ClientError::ShuttingDown)));
 
     let collection = collection_task.await.unwrap();
     sleep_secs(3).await; // wait for the cluster to shutdown

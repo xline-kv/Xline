@@ -4,7 +4,7 @@ pub use xlineapi::{
     LeaseStatus, LeaseTimeToLiveResponse,
 };
 
-use crate::error::{ClientError, Result};
+use crate::error::{Result, XlineClientError};
 
 /// The lease keep alive handle.
 #[derive(Debug)]
@@ -39,7 +39,7 @@ impl LeaseKeeper {
     pub fn keep_alive(&mut self) -> Result<()> {
         self.sender
             .try_send(LeaseKeepAliveRequest::new(self.id).into())
-            .map_err(|e| ClientError::LeaseError(e.to_string()))
+            .map_err(|e| XlineClientError::LeaseError(e.to_string()))
     }
 }
 

@@ -1,5 +1,5 @@
+use anyhow::Result;
 use xline_client::{
-    error::Result,
     types::cluster::{
         MemberAddRequest, MemberListRequest, MemberPromoteRequest, MemberRemoveRequest,
         MemberUpdateRequest,

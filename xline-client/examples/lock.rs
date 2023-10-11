@@ -1,5 +1,5 @@
+use anyhow::Result;
 use xline_client::{
-    error::Result,
     types::lock::{LockRequest, UnlockRequest},
     Client, ClientOptions,
 };
