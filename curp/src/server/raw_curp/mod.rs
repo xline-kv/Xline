@@ -77,6 +77,9 @@ pub(super) type UncommittedPool<C> = HashMap<ProposeId, PoolEntry<C>>;
 /// Reference to uncommitted pool
 pub(super) type UncommittedPoolRef<C> = Arc<Mutex<UncommittedPool<C>>>;
 
+/// Default Size of channel
+const CHANGE_CHANNEL_SIZE: usize = 128;
+
 /// The curp state machine
 #[derive(Debug)]
 pub(super) struct RawCurp<C: Command, RC: RoleChange> {
@@ -405,7 +408,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             let EntryData::ConfChange(ref cc) = e.entry_data else {
                 unreachable!("cc_entry should be conf change entry");
             };
-            let (addrs,name,is_learner) = self.apply_conf_change(cc.changes().to_owned())
+            let (addrs, name, is_learner) = self.apply_conf_change(cc.changes().to_owned())
                 .unwrap_or_else(|_e| unreachable!("apply_conf_change should succeed, because the check of conf change already passed on leader"));
             let _ig = log_w.fallback_contexts.insert(
                 e.index,
@@ -461,10 +464,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         self.lst.update_match_index(follower_id, last_sent_index);
 
         // check if commit_index needs to be updated
-        if self.can_update_commit_index_to(&self.log.read(), last_sent_index, cur_term) {
-            let mut log_w = self.log.write();
+        let log_r = self.log.upgradable_read();
+        if self.can_update_commit_index_to(&log_r, last_sent_index, cur_term) {
+            let mut log_w = RwLockUpgradableReadGuard::upgrade(log_r);
             if last_sent_index > log_w.commit_index {
-                log_w.commit_index = last_sent_index;
+                log_w.commit_to(last_sent_index);
                 debug!("{} updates commit index to {last_sent_index}", self.id());
                 self.apply(&mut *log_w);
             }
@@ -674,7 +678,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         shutdown_trigger: shutdown::Trigger,
         connects: DashMap<ServerId, InnerConnectApiWrapper>,
     ) -> Self {
-        let (change_tx, change_rx) = flume::bounded(128);
+        let (change_tx, change_rx) = flume::bounded(CHANGE_CHANNEL_SIZE);
         let raw_curp = Self {
             st: RwLock::new(State::new(
                 0,
@@ -1344,7 +1348,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         // check if commit_index needs to be updated
         if self.can_update_commit_index_to(log_w, index, self.term()) && index > log_w.commit_index
         {
-            log_w.commit_index = index;
+            log_w.commit_to(index);
             debug!("{} updates commit index to {index}", self.id());
             self.apply(&mut *log_w);
         }
