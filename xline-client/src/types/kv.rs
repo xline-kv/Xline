@@ -1,7 +1,7 @@
 use xline::server::KeyRange;
 pub use xlineapi::{
-    CompareResult, CompareTarget, DeleteRangeResponse, PutResponse, RangeResponse, Response,
-    ResponseOp, SortOrder, SortTarget, TargetUnion, TxnResponse,
+    CompactionResponse, CompareResult, CompareTarget, DeleteRangeResponse, PutResponse,
+    RangeResponse, Response, ResponseOp, SortOrder, SortTarget, TargetUnion, TxnResponse,
 };
 
 /// Request type for `Put`

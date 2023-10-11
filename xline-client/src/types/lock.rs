@@ -1,3 +1,5 @@
+pub use xlineapi::{LockResponse, UnlockResponse};
+
 /// Default session ttl
 const DEFAULT_SESSION_TTL: i64 = 60;
 
