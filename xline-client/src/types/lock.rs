@@ -14,16 +14,14 @@ impl LockRequest {
     /// Creates a new `LockRequest`
     #[inline]
     #[must_use]
-    pub fn new() -> Self {
-        LockRequest::default()
-    }
-
-    /// Set name.
-    #[inline]
-    #[must_use]
-    pub fn with_name(mut self, name: impl Into<Vec<u8>>) -> Self {
-        self.inner.name = name.into();
-        self
+    pub fn new(name: impl Into<Vec<u8>>) -> Self {
+        Self {
+            inner: xlineapi::LockRequest {
+                name: name.into(),
+                lease: 0,
+            },
+            ttl: DEFAULT_SESSION_TTL,
+        }
     }
 
     /// Set lease.
@@ -41,19 +39,6 @@ impl LockRequest {
     pub const fn with_ttl(mut self, ttl: i64) -> Self {
         self.ttl = ttl;
         self
-    }
-}
-
-impl Default for LockRequest {
-    #[inline]
-    fn default() -> Self {
-        Self {
-            inner: xlineapi::LockRequest {
-                name: Vec::new(),
-                lease: 0,
-            },
-            ttl: DEFAULT_SESSION_TTL,
-        }
     }
 }
 
@@ -75,18 +60,10 @@ impl UnlockRequest {
     /// Creates a new `UnlockRequest`
     #[inline]
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new(key: impl Into<Vec<u8>>) -> Self {
         Self {
-            inner: xlineapi::UnlockRequest { key: Vec::new() },
+            inner: xlineapi::UnlockRequest { key: key.into() },
         }
-    }
-
-    /// Set key.
-    #[inline]
-    #[must_use]
-    pub fn with_key(mut self, key: impl Into<Vec<u8>>) -> Self {
-        self.inner.key = key.into();
-        self
     }
 }
 

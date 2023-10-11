@@ -92,7 +92,7 @@ impl LockClient {
     ///
     ///     // acquire a lock
     ///     let resp = client
-    ///         .lock(LockRequest::new().with_name("lock-test"))
+    ///         .lock(LockRequest::new("lock-test"))
     ///         .await?;
     ///
     ///     let key = resp.key;
@@ -222,7 +222,7 @@ impl LockClient {
     ///
     ///     // acquire a lock first
     ///
-    ///     client.unlock(UnlockRequest::new().with_key("lock_key")).await?;
+    ///     client.unlock(UnlockRequest::new("lock_key")).await?;
     ///
     ///     Ok(())
     /// }
