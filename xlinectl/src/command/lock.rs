@@ -47,7 +47,7 @@ mod tests {
     test_case_struct!(LockRequest);
 
     #[test]
-    fn valid() {
+    fn command_parse_should_be_valid() {
         let test_cases = vec![TestCase::new(
             vec!["lock", "my_lock"],
             Some(LockRequest::new().with_name("my_lock".as_bytes())),

@@ -35,7 +35,7 @@ mod tests {
     test_case_struct!(AuthUserRevokeRoleRequest);
 
     #[test]
-    fn valid() {
+    fn command_parse_should_be_valid() {
         let test_cases = vec![TestCase::new(
             vec!["revoke_role", "JohnDoe", "Admin"],
             Some(AuthUserRevokeRoleRequest::new("JohnDoe", "Admin")),

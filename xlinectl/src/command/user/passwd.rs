@@ -36,7 +36,7 @@ mod tests {
     test_case_struct!(AuthUserChangePasswordRequest);
 
     #[test]
-    fn valid() {
+    fn command_parse_should_be_valid() {
         let test_cases = vec![TestCase::new(
             vec!["passwd", "JohnDoe", "new_password"],
             Some(AuthUserChangePasswordRequest::new(

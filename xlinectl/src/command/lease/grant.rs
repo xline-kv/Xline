@@ -33,7 +33,7 @@ mod tests {
     test_case_struct!(LeaseGrantRequest);
 
     #[test]
-    fn valid() {
+    fn command_parse_should_be_valid() {
         let test_cases = vec![TestCase::new(
             vec!["grant", "100"],
             Some(LeaseGrantRequest::new(100)),

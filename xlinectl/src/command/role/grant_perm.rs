@@ -73,7 +73,7 @@ mod tests {
     test_case_struct!(AuthRoleGrantPermissionRequest);
 
     #[test]
-    fn valid() {
+    fn command_parse_should_be_valid() {
         let test_cases = vec![
             TestCase::new(
                 vec!["grant_perm", "Admin", "Read", "key1", "key2"],
