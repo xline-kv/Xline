@@ -18,7 +18,7 @@ pub(crate) fn command() -> Command {
 /// Build request from matches
 pub(crate) fn build_request(matches: &ArgMatches) -> LockRequest {
     let name = matches.get_one::<String>("lockname").expect("required");
-    LockRequest::new().with_name(name.as_bytes())
+    LockRequest::new(name.as_bytes())
 }
 
 /// Execute the command
@@ -33,7 +33,7 @@ pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result
 
     println!("releasing the lock");
 
-    let unlock_req = UnlockRequest::new().with_key(resp.key);
+    let unlock_req = UnlockRequest::new(resp.key);
     let _unlock_resp = client.lock_client().unlock(unlock_req).await?;
 
     Ok(())
@@ -50,7 +50,7 @@ mod tests {
     fn command_parse_should_be_valid() {
         let test_cases = vec![TestCase::new(
             vec!["lock", "my_lock"],
-            Some(LockRequest::new().with_name("my_lock".as_bytes())),
+            Some(LockRequest::new("my_lock")),
         )];
 
         for case in test_cases {

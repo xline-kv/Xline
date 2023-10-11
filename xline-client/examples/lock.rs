@@ -14,16 +14,14 @@ async fn main() -> Result<()> {
         .lock_client();
 
     // acquire a lock
-    let resp = client
-        .lock(LockRequest::new().with_name("lock-test"))
-        .await?;
+    let resp = client.lock(LockRequest::new("lock-test")).await?;
 
     let key = resp.key;
 
     println!("lock key: {:?}", String::from_utf8_lossy(&key));
 
     // release the lock
-    client.unlock(UnlockRequest::new().with_key(key)).await?;
+    client.unlock(UnlockRequest::new(key)).await?;
 
     Ok(())
 }
