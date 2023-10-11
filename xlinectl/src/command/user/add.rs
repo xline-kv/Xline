@@ -45,7 +45,7 @@ mod tests {
     test_case_struct!(AuthUserAddRequest);
 
     #[test]
-    fn valid() {
+    fn command_parse_should_be_valid() {
         let test_cases = vec![
             TestCase::new(
                 vec!["add", "JaneSmith", "password123"],
@@ -63,7 +63,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid() {
+    fn command_parse_should_be_invalid() {
         let test_cases = vec![TestCase::new(vec!["add", "JaneSmith"], None)];
 
         for case in test_cases {

@@ -33,7 +33,7 @@ mod tests {
     test_case_struct!(LeaseTimeToLiveRequest);
 
     #[test]
-    fn valid() {
+    fn command_parse_should_be_valid() {
         let test_cases = vec![TestCase::new(
             vec!["timetolive", "123"],
             Some(LeaseTimeToLiveRequest::new(123)),

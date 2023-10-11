@@ -33,7 +33,7 @@ mod tests {
     test_case_struct!(AuthRoleAddRequest);
 
     #[test]
-    fn valid() {
+    fn command_parse_should_be_valid() {
         let test_cases = vec![TestCase::new(
             vec!["add", "Admin"],
             Some(AuthRoleAddRequest::new("Admin")),
