@@ -436,11 +436,11 @@ impl ConfChange {
     /// Create a new `ConfChange` to add a node
     #[must_use]
     #[inline]
-    pub fn add(node_id: ServerId, address: String) -> Self {
+    pub fn add(node_id: ServerId, address: Vec<String>) -> Self {
         Self {
             change_type: ConfChangeType::Add as i32,
             node_id,
-            address: vec![address],
+            address,
         }
     }
 
@@ -458,22 +458,22 @@ impl ConfChange {
     /// Create a new `ConfChange` to update a node
     #[must_use]
     #[inline]
-    pub fn update(node_id: ServerId, address: String) -> Self {
+    pub fn update(node_id: ServerId, address: Vec<String>) -> Self {
         Self {
             change_type: ConfChangeType::Update as i32,
             node_id,
-            address: vec![address],
+            address,
         }
     }
 
     /// Create a new `ConfChange` to add a learner node
     #[must_use]
     #[inline]
-    pub fn add_learner(node_id: ServerId, address: String) -> Self {
+    pub fn add_learner(node_id: ServerId, address: Vec<String>) -> Self {
         Self {
             change_type: ConfChangeType::AddLearner as i32,
             node_id,
-            address: vec![address],
+            address,
         }
     }
 

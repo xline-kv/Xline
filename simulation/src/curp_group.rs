@@ -7,7 +7,8 @@ use curp::{
     error::{CommandProposeError, ProposeError},
     members::{ClusterInfo, ServerId},
     server::Rpc,
-    FetchClusterRequest, FetchClusterResponse, LogIndex,
+    ConfChangeError, FetchClusterRequest, FetchClusterResponse, LogIndex, Member,
+    ProposeConfChangeRequest, ProposeConfChangeResponse,
 };
 pub use curp::{protocol_client::ProtocolClient, ProposeRequest, ProposeResponse};
 use curp_test_utils::{
@@ -400,6 +401,39 @@ impl SimProtocolClient {
             .await
             .unwrap()
     }
+
+    #[inline]
+    pub async fn propose_conf_change(
+        &self,
+        conf_change: impl tonic::IntoRequest<ProposeConfChangeRequest>,
+        timeout: Duration,
+    ) -> Result<tonic::Response<ProposeConfChangeResponse>, tonic::Status> {
+        let mut req = conf_change.into_request();
+        req.set_timeout(timeout);
+        let addr = self.addr.clone();
+        self.handle
+            .spawn(async move {
+                let mut client = ProtocolClient::connect(addr).await.unwrap();
+                client.propose_conf_change(req).await
+            })
+            .await
+            .unwrap()
+    }
+
+    #[inline]
+    pub async fn fetch_cluster(
+        &self,
+    ) -> Result<tonic::Response<FetchClusterResponse>, tonic::Status> {
+        let req = FetchClusterRequest::default();
+        let addr = self.addr.clone();
+        self.handle
+            .spawn(async move {
+                let mut client = ProtocolClient::connect(addr).await.unwrap();
+                client.fetch_cluster(req).await
+            })
+            .await
+            .unwrap()
+    }
 }
 
 pub struct SimClient<C: Command> {
@@ -417,6 +451,18 @@ impl<C: Command + 'static> SimClient<C> {
         let inner = self.inner.clone();
         self.handle
             .spawn(async move { inner.propose(cmd, use_fast_path).await })
+            .await
+            .unwrap()
+    }
+
+    #[inline]
+    pub async fn propose_conf_change(
+        &self,
+        conf_change: ProposeConfChangeRequest,
+    ) -> Result<Result<Vec<Member>, ConfChangeError>, CommandProposeError<C>> {
+        let inner = self.inner.clone();
+        self.handle
+            .spawn(async move { inner.propose_conf_change(conf_change).await })
             .await
             .unwrap()
     }

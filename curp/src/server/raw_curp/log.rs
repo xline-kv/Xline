@@ -1,10 +1,11 @@
 #![allow(clippy::integer_arithmetic)] // u64 is large enough and won't overflow
 
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     fmt::Debug,
     ops::Range,
     sync::Arc,
+    vec,
 };
 
 use bincode::serialized_size;
@@ -37,10 +38,41 @@ pub(super) struct Log<C: Command> {
     pub(super) last_as: LogIndex,
     /// Index of highest log entry sent to speculatively exe. `last_exe` should always be greater than or equal to `last_as`.
     pub(super) last_exe: LogIndex,
+    /// Contexts of fallback log entries
+    pub(super) fallback_contexts: HashMap<LogIndex, FallbackContext<C>>,
     /// Tx to send log entries to persist task
     log_tx: mpsc::UnboundedSender<Arc<LogEntry<C>>>,
     /// Entries to keep in memory
     entries_cap: usize,
+}
+
+/// Context of fallback conf change entry
+pub(super) struct FallbackContext<C: Command> {
+    /// The origin entry
+    pub(super) origin_entry: Arc<LogEntry<C>>,
+    /// The addresses of the old config
+    pub(super) addrs: Vec<String>,
+    /// The name of the old config
+    pub(super) name: String,
+    /// Whether the old config is a learner
+    pub(super) is_learner: bool,
+}
+
+impl<C: Command> FallbackContext<C> {
+    /// Create a new fallback context
+    pub(super) fn new(
+        origin_entry: Arc<LogEntry<C>>,
+        addrs: Vec<String>,
+        name: String,
+        is_leader: bool,
+    ) -> Self {
+        Self {
+            origin_entry,
+            addrs,
+            name,
+            is_learner: is_leader,
+        }
+    }
 }
 
 /// That's a struct to store log entries and calculate batch of log
@@ -173,6 +205,12 @@ impl<C: Command> Debug for Log<C> {
     }
 }
 
+// TODO
+/// Conf change entries type
+type ConfChangeEntries<C> = Vec<Arc<LogEntry<C>>>;
+/// Fallback indexes type
+type FallbackIndexes = HashSet<LogIndex>;
+
 impl<C: 'static + Command> Log<C> {
     /// Create a new log
     pub(super) fn new(
@@ -189,6 +227,7 @@ impl<C: 'static + Command> Log<C> {
             last_exe: 0,
             log_tx,
             entries_cap,
+            fallback_contexts: HashMap::new(),
         }
     }
 
@@ -224,13 +263,16 @@ impl<C: 'static + Command> Log<C> {
     }
 
     /// Try to append log entries, hand back the entries if they can't be appended
+    /// and return conf change entries if any
     #[allow(clippy::unwrap_in_result)]
     pub(super) fn try_append_entries(
         &mut self,
         entries: Vec<LogEntry<C>>,
         prev_log_index: LogIndex,
         prev_log_term: u64,
-    ) -> Result<(), Vec<LogEntry<C>>> {
+    ) -> Result<(ConfChangeEntries<C>, FallbackIndexes), Vec<LogEntry<C>>> {
+        let mut conf_changes = vec![];
+        let mut need_fallback_indexes = HashSet::new();
         // check if entries can be appended
         if self.get(prev_log_index).map_or_else(
             || (self.base_index, self.base_term) != (prev_log_index, prev_log_term),
@@ -238,7 +280,6 @@ impl<C: 'static + Command> Log<C> {
         ) {
             return Err(entries);
         }
-
         // append log entries, will erase inconsistencies
         let mut li = prev_log_index;
         for entry in entries {
@@ -252,7 +293,14 @@ impl<C: 'static + Command> Log<C> {
             {
                 continue;
             }
-
+            for e in self.entries.range(pi..) {
+                if matches!(e.entry_data, EntryData::ConfChange(_)) {
+                    let _ig = need_fallback_indexes.insert(e.index);
+                }
+            }
+            if matches!(entry.entry_data, EntryData::ConfChange(_)) {
+                conf_changes.push(Arc::clone(&entry));
+            }
             self.entries.truncate(pi);
             #[allow(clippy::expect_used)] // It's safe to expect here.
             self.entries
@@ -262,7 +310,7 @@ impl<C: 'static + Command> Log<C> {
             self.send_persist(entry);
         }
 
-        Ok(())
+        Ok((conf_changes, need_fallback_indexes))
     }
 
     /// Send log entries to persist task

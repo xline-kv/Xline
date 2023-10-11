@@ -52,7 +52,11 @@ use crate::{
         connect::InnerConnectApiWrapper, ConfChange, ConfChangeEntry, ConfChangeError,
         ConfChangeType, IdSet, Member, ReadState,
     },
-    server::{cmd_board::CmdBoardRef, raw_curp::state::VoteResult, spec_pool::SpecPoolRef},
+    server::{
+        cmd_board::CmdBoardRef,
+        raw_curp::{log::FallbackContext, state::VoteResult},
+        spec_pool::SpecPoolRef,
+    },
     snapshot::{Snapshot, SnapshotMeta},
     LogIndex,
 };
@@ -322,10 +326,15 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             }
             Err(e) => return (info, Err(ConfChangeError::new_propose(e.into()))),
         };
-        if let Err(e) = self.apply_conf_change(changes) {
-            return (info, Err(e));
+        let (addrs, name, is_learner) = match self.apply_conf_change(changes) {
+            Ok(fallback_info) => fallback_info,
+            Err(e) => return (info, Err(e)),
         };
-        self.entry_process(&mut log_w, entry, conflict);
+        let _ig = log_w.fallback_contexts.insert(
+            entry.index,
+            FallbackContext::new(Arc::clone(&entry), addrs, name, is_learner),
+        );
+        self.entry_process(&mut log_w, entry, true);
         (info, Ok(()))
     }
 
@@ -377,19 +386,31 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
         // append log entries
         let mut log_w = self.log.write();
-        let cc_entry = entries
-            .iter()
-            .find(|e| matches!(e.entry_data, EntryData::ConfChange(_)))
-            .cloned();
-        log_w
+        let (cc_entries, fallback_indexes) = log_w
             .try_append_entries(entries, prev_log_index, prev_log_term)
             .map_err(|_ig| (term, log_w.commit_index + 1))?;
-        if let Some(e) = cc_entry {
+        // fallback overwritten conf change entries
+        for idx in fallback_indexes.iter().sorted().rev() {
+            let info = log_w.fallback_contexts.remove(idx).unwrap_or_else(|| {
+                unreachable!("fall_back_infos should contain the entry need to fallback")
+            });
+            let EntryData::ConfChange(ref conf_change) = info.origin_entry.entry_data else {
+                unreachable!("the entry in the fallback_info should be conf change entry");
+            };
+            let changes = conf_change.changes().to_owned();
+            self.fallback_conf_change(changes, info.addrs, info.name, info.is_learner);
+        }
+        // apply conf change entries
+        for e in cc_entries {
             let EntryData::ConfChange(ref cc) = e.entry_data else {
                 unreachable!("cc_entry should be conf change entry");
             };
-            self.apply_conf_change(cc.changes().to_owned())
+            let (addrs,name,is_learner) = self.apply_conf_change(cc.changes().to_owned())
                 .unwrap_or_else(|_e| unreachable!("apply_conf_change should succeed, because the check of conf change already passed on leader"));
+            let _ig = log_w.fallback_contexts.insert(
+                e.index,
+                FallbackContext::new(Arc::clone(&e), addrs, name, is_learner),
+            );
         }
         // update commit index
         let prev_commit_index = log_w.commit_index;
@@ -892,14 +913,62 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     pub(super) fn apply_conf_change(
         &self,
         changes: Vec<ConfChange>,
-    ) -> Result<(), ConfChangeError> {
+    ) -> Result<(Vec<String>, String, bool), ConfChangeError> {
         assert_eq!(changes.len(), 1, "Joint consensus is not supported yet");
         let Some(conf_change) = changes.into_iter().next() else {
             unreachable!("conf change is empty");
         };
         self.check_new_config(&conf_change)?;
-        self.switch_config(conf_change);
-        Ok(())
+        Ok(self.switch_config(conf_change))
+    }
+
+    /// Fallback conf change
+    #[allow(clippy::unimplemented)] // TODO: remove this when learner is implemented
+    pub(super) fn fallback_conf_change(
+        &self,
+        changes: Vec<ConfChange>,
+        old_addrs: Vec<String>,
+        name: String,
+        is_learner: bool,
+    ) {
+        assert_eq!(changes.len(), 1, "Joint consensus is not supported yet");
+        let Some(conf_change) = changes.into_iter().next() else {
+            unreachable!("conf change is empty");
+        };
+        let node_id = conf_change.node_id;
+        let fallback_change = match conf_change.change_type() {
+            ConfChangeType::Add => {
+                self.cst
+                    .map_lock(|mut cst_l| _ = cst_l.config.voters_mut().remove(&node_id));
+                self.lst.remove(node_id);
+                _ = self.ctx.sync_events.remove(&node_id);
+                let _ig = self.ctx.cluster_info.remove(&node_id);
+                _ = self.ctx.connects.remove(&node_id);
+                ConfChange::remove(node_id)
+            }
+            ConfChangeType::Remove => {
+                let member = Member::new(node_id, name, old_addrs.clone(), is_learner);
+                // TODO: Add node to Learner when learner is supported
+                self.cst
+                    .map_lock(|mut cst_l| _ = cst_l.config.voters_mut().insert(node_id));
+                self.lst.insert(node_id);
+                _ = self.ctx.sync_events.insert(node_id, Arc::new(Event::new()));
+                self.ctx.cluster_info.insert(member);
+                // TODO: add leaner when learner is supported
+                ConfChange::add(node_id, old_addrs)
+            }
+            ConfChangeType::Update => {
+                _ = self.ctx.cluster_info.update(&node_id, old_addrs.clone());
+                ConfChange::update(node_id, old_addrs)
+            }
+            ConfChangeType::AddLearner | ConfChangeType::Promote => {
+                unimplemented!("learner node is not supported yet");
+            }
+        };
+        self.ctx
+            .change_tx
+            .send(fallback_change)
+            .unwrap_or_else(|_e| unreachable!("change_rx should not be dropped"));
     }
 
     /// Get a receiver for conf changes
@@ -1207,10 +1276,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     /// Switch to a new config and return true if self node is removed
+    /// and return old member infos for fallback
     #[allow(clippy::unimplemented)] // TODO: remove this when learner is implemented
-    fn switch_config(&self, conf_change: ConfChange) {
+    fn switch_config(&self, conf_change: ConfChange) -> (Vec<String>, String, bool) {
         let node_id = conf_change.node_id;
-        match conf_change.change_type() {
+        let fallback_info = match conf_change.change_type() {
             ConfChangeType::Add => {
                 let member = Member::new(node_id, "", conf_change.address.clone(), false);
                 self.cst
@@ -1218,19 +1288,29 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 self.lst.insert(node_id);
                 _ = self.ctx.sync_events.insert(node_id, Arc::new(Event::new()));
                 self.ctx.cluster_info.insert(member);
+                (vec![], String::new(), false)
             }
             ConfChangeType::Remove => {
                 self.cst
                     .map_lock(|mut cst_l| _ = cst_l.config.voters_mut().remove(&node_id));
                 self.lst.remove(node_id);
                 _ = self.ctx.sync_events.remove(&node_id);
-                self.ctx.cluster_info.remove(&node_id);
+                let m = self.ctx.cluster_info.remove(&node_id);
                 _ = self.ctx.connects.remove(&node_id);
+                let removed_member =
+                    m.unwrap_or_else(|| unreachable!("the member should exist before remove"));
+                (
+                    removed_member.addrs,
+                    removed_member.name,
+                    removed_member.is_learner,
+                )
             }
             ConfChangeType::Update => {
-                self.ctx
+                let old_addrs = self
+                    .ctx
                     .cluster_info
                     .update(&node_id, conf_change.address.clone());
+                (old_addrs, String::new(), false)
             }
             ConfChangeType::AddLearner | ConfChangeType::Promote => {
                 unimplemented!("learner node is not supported yet");
@@ -1240,6 +1320,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             .change_tx
             .send(conf_change)
             .unwrap_or_else(|_e| unreachable!("change_rx should not be dropped"));
+        fallback_info
     }
 
     /// Entry process shared by `handle_xxx`

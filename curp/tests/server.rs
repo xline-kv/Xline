@@ -311,7 +311,7 @@ async fn propose_add_node_should_success() {
         .unwrap()
         .as_secs();
     let node_id = ClusterInfo::calculate_member_id(vec!["address".to_owned()], "", Some(timestamp));
-    let changes = vec![ConfChange::add(node_id, "address".to_string())];
+    let changes = vec![ConfChange::add(node_id, vec!["address".to_string()])];
     let conf_change = ProposeConfChangeRequest::new(id, changes);
     let res = client.propose_conf_change(conf_change).await;
     let members = res.unwrap().unwrap();
@@ -349,7 +349,7 @@ async fn propose_update_node_should_success() {
     let client = group.new_client().await;
     let id = client.gen_propose_id().await.unwrap();
     let node_id = group.nodes.keys().next().copied().unwrap();
-    let changes = vec![ConfChange::update(node_id, "new_addr".to_owned())];
+    let changes = vec![ConfChange::update(node_id, vec!["new_addr".to_owned()])];
     let conf_change = ProposeConfChangeRequest::new(id, changes);
     let members = client
         .propose_conf_change(conf_change)
@@ -427,7 +427,7 @@ async fn propose_conf_change_to_follower() {
 
     let id = client.gen_propose_id().await.unwrap();
     let node_id = group.nodes.keys().next().copied().unwrap();
-    let changes = vec![ConfChange::update(node_id, "new_addr".to_owned())];
+    let changes = vec![ConfChange::update(node_id, vec!["new_addr".to_owned()])];
     let conf_change = ProposeConfChangeRequest::new(id, changes);
     let members = client
         .propose_conf_change(conf_change)
