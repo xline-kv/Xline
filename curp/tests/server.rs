@@ -374,7 +374,6 @@ async fn propose_remove_node_should_failed_when_cluster_nodes_equals_to_three() 
     let changes = vec![ConfChange::remove(node_id)];
     let conf_change = ProposeConfChangeRequest::new(id, changes);
     let res = client.propose_conf_change(conf_change).await.unwrap();
-    println!("{res:?}");
     assert!(matches!(res, Err(ConfChangeError::InvalidConfig(()))));
 }
 

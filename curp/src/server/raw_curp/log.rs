@@ -205,7 +205,6 @@ impl<C: Command> Debug for Log<C> {
     }
 }
 
-// TODO
 /// Conf change entries type
 type ConfChangeEntries<C> = Vec<Arc<LogEntry<C>>>;
 /// Fallback indexes type
