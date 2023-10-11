@@ -733,9 +733,23 @@ async fn add_node_should_add_new_node_to_curp() {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
-    let changes = vec![ConfChange::add(1, "http://127.0.0.1:4567".to_owned())];
-    assert!(curp.apply_conf_change(changes).is_ok());
+    let old_cluster = curp.cluster().clone();
+    let changes = vec![ConfChange::add(1, vec!["http://127.0.0.1:4567".to_owned()])];
+    let resp = curp.apply_conf_change(changes.clone());
+    let infos = resp.unwrap();
+    assert_eq!(infos, (vec![], String::new(), false));
     assert!(curp.contains(1));
+    curp.fallback_conf_change(changes, infos.0, infos.1, infos.2);
+    let cluster_after_fallback = curp.cluster();
+    assert_eq!(
+        old_cluster.cluster_id(),
+        cluster_after_fallback.cluster_id()
+    );
+    assert_eq!(old_cluster.self_id(), cluster_after_fallback.self_id());
+    assert_eq!(
+        old_cluster.all_members(),
+        cluster_after_fallback.all_members()
+    );
 }
 
 #[traced_test]
@@ -748,7 +762,7 @@ async fn add_exists_node_should_return_node_already_exists_error() {
     let exists_node_id = curp.cluster().get_id_by_name("S1").unwrap();
     let changes = vec![ConfChange::add(
         exists_node_id,
-        "http://127.0.0.1:4567".to_owned(),
+        vec!["http://127.0.0.1:4567".to_owned()],
     )];
     let resp = curp.apply_conf_change(changes);
     let error_match = matches!(resp, Err(ConfChangeError::NodeAlreadyExists(())));
@@ -762,11 +776,24 @@ async fn remove_node_should_remove_node_from_curp() {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         Arc::new(RawCurp::new_test(5, exe_tx, mock_role_change()))
     };
+    let old_cluster = curp.cluster().clone();
     let follower_id = curp.cluster().get_id_by_name("S1").unwrap();
     let changes = vec![ConfChange::remove(follower_id)];
-    let resp = curp.apply_conf_change(changes);
-    assert!(resp.is_ok());
+    let resp = curp.apply_conf_change(changes.clone());
+    let infos = resp.unwrap();
+    assert_eq!(infos, (vec!["S1".to_owned()], "S1".to_owned(), false));
     assert!(!curp.contains(follower_id));
+    curp.fallback_conf_change(changes, infos.0, infos.1, infos.2);
+    let cluster_after_fallback = curp.cluster();
+    assert_eq!(
+        old_cluster.cluster_id(),
+        cluster_after_fallback.cluster_id()
+    );
+    assert_eq!(old_cluster.self_id(), cluster_after_fallback.self_id());
+    assert_eq!(
+        old_cluster.all_members(),
+        cluster_after_fallback.all_members()
+    );
 }
 
 #[traced_test]
@@ -801,6 +828,7 @@ async fn update_node_should_update_the_address_of_node() {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
+    let old_cluster = curp.cluster().clone();
     let follower_id = curp.cluster().get_id_by_name("S1").unwrap();
     let mut mock_connect = MockInnerConnectApi::new();
     mock_connect.expect_update_addrs().returning(|_| Ok(()));
@@ -814,13 +842,25 @@ async fn update_node_should_update_the_address_of_node() {
     );
     let changes = vec![ConfChange::update(
         follower_id,
-        "http://127.0.0.1:4567".to_owned(),
+        vec!["http://127.0.0.1:4567".to_owned()],
     )];
-    let resp = curp.apply_conf_change(changes);
-    assert!(resp.is_ok());
+    let resp = curp.apply_conf_change(changes.clone());
+    let infos = resp.unwrap();
+    assert_eq!(infos, (vec!["S1".to_owned()], String::new(), false));
     assert_eq!(
         curp.cluster().addrs(follower_id),
         Some(vec!["http://127.0.0.1:4567".to_owned()])
+    );
+    curp.fallback_conf_change(changes, infos.0, infos.1, infos.2);
+    let cluster_after_fallback = curp.cluster();
+    assert_eq!(
+        old_cluster.cluster_id(),
+        cluster_after_fallback.cluster_id()
+    );
+    assert_eq!(old_cluster.self_id(), cluster_after_fallback.self_id());
+    assert_eq!(
+        old_cluster.all_members(),
+        cluster_after_fallback.all_members()
     );
 }
 
@@ -839,7 +879,7 @@ async fn leader_handle_propose_conf_change() {
     );
     let changes = vec![ConfChange::update(
         follower_id,
-        "http://127.0.0.1:4567".to_owned(),
+        vec!["http://127.0.0.1:4567".to_owned()],
     )];
     let conf_change_entry = ProposeConfChangeRequest::new("test_id".to_owned(), changes);
     let ((leader, term), result) = curp.handle_propose_conf_change(conf_change_entry.into());
@@ -864,7 +904,7 @@ async fn follower_handle_propose_conf_change() {
     );
     let changes = vec![ConfChange::update(
         follower_id,
-        "http://127.0.0.1:4567".to_owned(),
+        vec!["http://127.0.0.1:4567".to_owned()],
     )];
     let conf_change_entry = ProposeConfChangeRequest::new("test_id".to_owned(), changes);
     let ((leader, term), result) = curp.handle_propose_conf_change(conf_change_entry.into());

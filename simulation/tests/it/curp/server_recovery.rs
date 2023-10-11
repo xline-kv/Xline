@@ -1,11 +1,17 @@
 //! Integration test for the curp server
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration, vec};
 
-use curp_test_utils::{init_logger, sleep_secs, test_cmd::TestCommand, TEST_TABLE};
+use curp::{ConfChange, ProposeConfChangeRequest};
+use curp_test_utils::{
+    init_logger, sleep_secs,
+    test_cmd::{next_id, TestCommand},
+    TEST_TABLE,
+};
 use engine::StorageEngine;
 use itertools::Itertools;
 use simulation::curp_group::{CurpGroup, ProposeRequest};
+use tonic::Code;
 use tracing::debug;
 
 #[madsim::test]
@@ -447,4 +453,52 @@ async fn recovery_after_compaction() {
             assert_eq!(val, kv);
         }
     }
+}
+
+#[madsim::test]
+async fn overwritten_config_should_fallback() {
+    init_logger();
+    let group = CurpGroup::new(5).await;
+    let leader1 = group.get_leader().await.0;
+    for node in group.nodes.values().filter(|node| node.id != leader1) {
+        group.disable_node(node.id);
+    }
+    let leader_conn = group.get_connect(&leader1).await;
+    let cluster = leader_conn.fetch_cluster().await.unwrap().into_inner();
+    assert_eq!(cluster.members.len(), 5);
+
+    let id = next_id();
+    let node_id = 123;
+    let address = vec!["127.0.0.1:4567".to_owned()];
+    let changes = vec![ConfChange::add(node_id, address)];
+    let res = leader_conn
+        .propose_conf_change(
+            ProposeConfChangeRequest::new(id, changes),
+            Duration::from_secs(3),
+        )
+        .await;
+    assert_eq!(res.unwrap_err().code(), Code::DeadlineExceeded);
+    let cluster = leader_conn.fetch_cluster().await.unwrap().into_inner();
+    assert_eq!(cluster.members.len(), 6);
+
+    group.disable_node(leader1);
+    for node in group.nodes.values().filter(|node| node.id != leader1) {
+        group.enable_node(node.id);
+    }
+    // wait for election
+    sleep_secs(15).await;
+    let leader2 = group.get_leader().await.0;
+    assert_ne!(leader2, leader1);
+    group.enable_node(leader1);
+    // wait old leader demote
+    sleep_secs(3).await;
+    let client = group.new_client().await;
+    let _res = client
+        .propose(TestCommand::new_put(vec![1], 1), true)
+        .await
+        .unwrap();
+    // wait fallback
+    sleep_secs(3).await;
+    let cluster = leader_conn.fetch_cluster().await.unwrap().into_inner();
+    assert_eq!(cluster.members.len(), 5);
 }

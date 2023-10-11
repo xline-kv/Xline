@@ -114,17 +114,21 @@ impl ClusterInfo {
 
     /// Remove a member
     #[inline]
-    pub fn remove(&self, id: &ServerId) {
-        _ = self.members.remove(id);
+    #[must_use]
+    pub fn remove(&self, id: &ServerId) -> Option<Member> {
+        self.members.remove(id).map(|(_id, m)| m)
     }
 
-    /// Update a member
+    /// Update a member and return old addrs
     #[inline]
-    pub fn update(&self, id: &ServerId, addrs: impl Into<Vec<String>>) {
-        self.members
+    pub fn update(&self, id: &ServerId, addrs: impl Into<Vec<String>>) -> Vec<String> {
+        let mut addrs = addrs.into();
+        let mut member = self
+            .members
             .get_mut(id)
-            .unwrap_or_else(|| unreachable!("member {} not found", id))
-            .addrs = addrs.into();
+            .unwrap_or_else(|| unreachable!("member {} not found", id));
+        std::mem::swap(&mut addrs, &mut member.addrs);
+        addrs
     }
 
     /// Get server addresses via server id
