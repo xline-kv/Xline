@@ -249,7 +249,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 },
             );
         }
-        let id = cmd.id().clone();
+        let id = cmd.id();
         if !self.ctx.cb.map_write(|mut cb_w| cb_w.sync.insert(id)) {
             return (info, Err(ProposeError::Duplicated));
         }
@@ -320,7 +320,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         let pool_entry = PoolEntry::from(conf_change.clone());
         let mut conflict = self.insert_sp(pool_entry.clone());
         conflict |= self.insert_ucp(pool_entry);
-        let id = conf_change.id().clone();
+        let id = conf_change.id();
         if !self.ctx.cb.map_write(|mut cb_w| cb_w.sync.insert(id)) {
             return (
                 info,
@@ -648,17 +648,17 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     /// Handle `fetch_read_state`
-    pub(super) fn handle_fetch_read_state(&self, cmd: &C) -> bincode::Result<ReadState> {
+    pub(super) fn handle_fetch_read_state(&self, cmd: &C) -> ReadState {
         let ids = self.ctx.sp.map_lock(|sp| {
             sp.pool
                 .iter()
-                .filter_map(|(id, c)| c.is_conflict_with_cmd(cmd).then_some(id.clone()))
+                .filter_map(|(id, c)| c.is_conflict_with_cmd(cmd).then_some(*id))
                 .collect_vec()
         });
         if ids.is_empty() {
-            Ok(ReadState::CommitIndex(self.log.read().commit_index))
+            ReadState::CommitIndex(self.log.read().commit_index)
         } else {
-            Ok(ReadState::Ids(IdSet::new(ids)?))
+            ReadState::Ids(IdSet::new(ids))
         }
     }
 }
@@ -1220,7 +1220,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
         let mut cmd_cnt: HashMap<ProposeId, (PoolEntry<C>, u64)> = HashMap::new();
         for cmd in spec_pools.into_values().flatten() {
-            let entry = cmd_cnt.entry(cmd.id().clone()).or_insert((cmd, 0));
+            let entry = cmd_cnt.entry(cmd.id()).or_insert((cmd, 0));
             entry.1 += 1;
         }
 
@@ -1233,7 +1233,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             // dedup in current logs
             .filter(|cmd| {
                 // TODO: better dedup mechanism
-                !existing_log_ids.contains(cmd.id())
+                !existing_log_ids.contains(&cmd.id())
             })
             .collect_vec();
 
@@ -1242,7 +1242,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
         let term = st.term;
         for cmd in recovered_cmds {
-            let _ig_sync = cb_w.sync.insert(cmd.id().clone()); // may have been inserted before
+            let _ig_sync = cb_w.sync.insert(cmd.id()); // may have been inserted before
             let _ig_spec = sp_l.insert(cmd.clone()); // may have been inserted before
             #[allow(clippy::expect_used)]
             let entry = log
@@ -1267,13 +1267,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             });
             match entry.entry_data {
                 EntryData::Command(ref cmd) => {
-                    let _ignore = ucp_l.insert(cmd.id().clone(), Arc::clone(cmd).into());
+                    let _ignore = ucp_l.insert(cmd.id(), Arc::clone(cmd).into());
                 }
                 EntryData::ConfChange(ref conf_change) => {
-                    let _ignore = ucp_l.insert(
-                        conf_change.id().clone(),
-                        conf_change.as_ref().clone().into(),
-                    );
+                    let _ignore =
+                        ucp_l.insert(conf_change.id(), conf_change.as_ref().clone().into());
                 }
                 EntryData::Shutdown => {}
             }
@@ -1420,7 +1418,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         self.ctx.ucp.map_lock(|mut ucp_l| {
             let conflict_uncommitted = ucp_l.values().any(|c| c.is_conflict(&entry));
             assert!(
-                ucp_l.insert(entry.id().clone(), entry.clone()).is_none(),
+                ucp_l.insert(entry.id(), entry.clone()).is_none(),
                 "cmd should never be inserted to uncommitted pool twice"
             );
             conflict_uncommitted

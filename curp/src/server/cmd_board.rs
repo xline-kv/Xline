@@ -67,7 +67,7 @@ impl<C: Command> CommandBoard<C> {
     pub(super) fn insert_er(&mut self, id: &ProposeId, er: Result<C::ER, C::Error>) {
         let er_ok = er.is_ok();
         assert!(
-            self.er_buffer.insert(id.clone(), er).is_none(),
+            self.er_buffer.insert(*id, er).is_none(),
             "er should not be inserted twice"
         );
 
@@ -82,7 +82,7 @@ impl<C: Command> CommandBoard<C> {
     /// Insert asr to internal buffer
     pub(super) fn insert_asr(&mut self, id: &ProposeId, asr: Result<C::ASR, C::Error>) {
         assert!(
-            self.asr_buffer.insert(id.clone(), asr).is_none(),
+            self.asr_buffer.insert(*id, asr).is_none(),
             "asr should not be inserted twice"
         );
 
@@ -92,7 +92,7 @@ impl<C: Command> CommandBoard<C> {
     /// Insert conf change result to internal buffer
     pub(super) fn insert_conf(&mut self, id: &ProposeId) {
         assert!(
-            self.conf_buffer.insert(id.clone()),
+            self.conf_buffer.insert(*id),
             "conf should not be inserted twice"
         );
 
@@ -101,10 +101,7 @@ impl<C: Command> CommandBoard<C> {
 
     /// Get a listener for execution result
     fn er_listener(&mut self, id: &ProposeId) -> EventListener {
-        let event = self
-            .er_notifiers
-            .entry(id.clone())
-            .or_insert_with(Event::new);
+        let event = self.er_notifiers.entry(*id).or_insert_with(Event::new);
         let listener = event.listen();
         if self.er_buffer.contains_key(id) {
             event.notify(usize::MAX);
@@ -119,10 +116,7 @@ impl<C: Command> CommandBoard<C> {
 
     /// Get a listener for after sync result
     fn asr_listener(&mut self, id: &ProposeId) -> EventListener {
-        let event = self
-            .asr_notifiers
-            .entry(id.clone())
-            .or_insert_with(Event::new);
+        let event = self.asr_notifiers.entry(*id).or_insert_with(Event::new);
         let listener = event.listen();
         if self.asr_buffer.contains_key(id) {
             event.notify(usize::MAX);
@@ -132,10 +126,7 @@ impl<C: Command> CommandBoard<C> {
 
     /// Get a listener for conf change result
     fn conf_listener(&mut self, id: &ProposeId) -> EventListener {
-        let event = self
-            .conf_notifier
-            .entry(id.clone())
-            .or_insert_with(Event::new);
+        let event = self.conf_notifier.entry(*id).or_insert_with(Event::new);
         let listener = event.listen();
         if self.conf_buffer.contains(id) {
             event.notify(usize::MAX);
@@ -211,7 +202,7 @@ impl<C: Command> CommandBoard<C> {
     /// Wait for an conf change result
     pub(super) async fn wait_for_conf(cb: &CmdBoardRef<C>, id: &ProposeId) {
         loop {
-            if let Some(_ccr) = cb.map_read(|cb_r| cb_r.conf_buffer.get(id).cloned()) {
+            if let Some(_ccr) = cb.map_read(|cb_r| cb_r.conf_buffer.get(id).copied()) {
                 return;
             }
             let listener = cb.write().conf_listener(id);

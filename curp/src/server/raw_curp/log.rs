@@ -356,7 +356,7 @@ impl<C: 'static + Command> Log<C> {
     }
 
     /// Get existing cmd ids
-    pub(super) fn get_cmd_ids(&self) -> HashSet<&ProposeId> {
+    pub(super) fn get_cmd_ids(&self) -> HashSet<ProposeId> {
         self.entries.iter().map(|entry| entry.id()).collect()
     }
 

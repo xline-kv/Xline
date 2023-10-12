@@ -3,23 +3,14 @@ use std::{collections::HashMap, sync::Arc};
 use curp_external_api::cmd::{PbCodec, PbSerializeError};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-pub use self::proto::{
-    commandpb::{cmd_result::Result as CmdResultInner, CmdResult, ProposeRequest, ProposeResponse},
-    inner_messagepb::inner_protocol_server::InnerProtocolServer,
-    messagepb::{
-        propose_conf_change_request::{ConfChange, ConfChangeType},
-        propose_conf_change_response::Error as ConfChangeError,
-        protocol_client,
-        protocol_server::ProtocolServer,
-        FetchClusterRequest, FetchClusterResponse, Member, ProposeConfChangeRequest,
-        ProposeConfChangeResponse,
-    },
-};
 pub(crate) use self::proto::{
     commandpb::{
+        fetch_read_state_response::{IdSet, ReadState},
         propose_response::ExeResult,
+        protocol_server::Protocol,
         wait_synced_response::{Success, SyncResult as SyncResultRaw},
-        WaitSyncedRequest, WaitSyncedResponse,
+        FetchReadStateRequest, FetchReadStateResponse, ProposeId as PbProposeId, ShutdownRequest,
+        ShutdownResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
     errorpb::{
         command_sync_error::CommandSyncError as PbCommandSyncError,
@@ -32,10 +23,18 @@ pub(crate) use self::proto::{
         inner_protocol_server::InnerProtocol, AppendEntriesRequest, AppendEntriesResponse,
         InstallSnapshotRequest, InstallSnapshotResponse, VoteRequest, VoteResponse,
     },
-    messagepb::{
-        fetch_read_state_response::ReadState, protocol_server::Protocol, FetchReadStateRequest,
-        FetchReadStateResponse, IdSet, ShutdownRequest, ShutdownResponse,
+};
+pub use self::proto::{
+    commandpb::{
+        propose_conf_change_request::{ConfChange, ConfChangeType},
+        propose_conf_change_response::Error as ConfChangeError,
+        propose_response::{cmd_result::Result as CmdResultInner, CmdResult},
+        protocol_client,
+        protocol_server::ProtocolServer,
+        FetchClusterRequest, FetchClusterResponse, Member, ProposeConfChangeRequest,
+        ProposeConfChangeResponse, ProposeRequest, ProposeResponse,
     },
+    inner_messagepb::inner_protocol_server::InnerProtocolServer,
 };
 use crate::{
     cmd::{Command, ProposeId},
@@ -66,9 +65,6 @@ pub(crate) use connect::{connect, inner_connect};
     unused_results
 )]
 mod proto {
-    pub(crate) mod messagepb {
-        tonic::include_proto!("messagepb");
-    }
     pub(crate) mod commandpb {
         tonic::include_proto!("commandpb");
     }
@@ -77,6 +73,23 @@ mod proto {
     }
     pub(crate) mod inner_messagepb {
         tonic::include_proto!("inner_messagepb");
+    }
+}
+
+impl From<PbProposeId> for ProposeId {
+    #[inline]
+    fn from(id: PbProposeId) -> Self {
+        Self(id.client_id, id.seq_num)
+    }
+}
+
+impl From<ProposeId> for PbProposeId {
+    #[inline]
+    fn from(id: ProposeId) -> Self {
+        Self {
+            client_id: id.0,
+            seq_num: id.1,
+        }
     }
 }
 
@@ -195,12 +208,19 @@ impl ProposeResponse {
 impl WaitSyncedRequest {
     /// Create a `WaitSynced` request
     pub(crate) fn new(propose_id: ProposeId) -> Self {
-        Self { propose_id }
+        Self {
+            propose_id: Some(propose_id.into()),
+        }
     }
 
     /// Get the `propose_id` reference
-    pub(crate) fn propose_id(&self) -> &ProposeId {
-        &self.propose_id
+    pub(crate) fn propose_id(&self) -> ProposeId {
+        self.propose_id
+            .clone()
+            .unwrap_or_else(|| {
+                unreachable!("propose id should be set in propose wait synced request")
+            })
+            .into()
     }
 }
 
@@ -400,13 +420,10 @@ impl InstallSnapshotResponse {
 
 impl IdSet {
     /// Create a new `IdSet`
-    pub fn new(ids: Vec<ProposeId>) -> bincode::Result<Self> {
-        Ok(Self {
-            ids: ids
-                .into_iter()
-                .map(|id| bincode::serialize(&id))
-                .collect::<bincode::Result<Vec<Vec<u8>>>>()?,
-        })
+    pub fn new(ids: Vec<ProposeId>) -> Self {
+        Self {
+            ids: ids.into_iter().map(Into::into).collect(),
+        }
     }
 }
 
@@ -506,15 +523,23 @@ impl ProposeConfChangeRequest {
     /// Create a new `ProposeConfChangeRequest`
     #[inline]
     #[must_use]
-    pub fn new(id: String, changes: Vec<ConfChange>) -> Self {
-        Self { id, changes }
+    pub fn new(id: ProposeId, changes: Vec<ConfChange>) -> Self {
+        Self {
+            propose_id: Some(id.into()),
+            changes,
+        }
     }
 
     /// Get id of the request
     #[inline]
     #[must_use]
-    pub fn id(&self) -> &str {
-        &self.id
+    pub fn id(&self) -> ProposeId {
+        self.propose_id
+            .clone()
+            .unwrap_or_else(|| {
+                unreachable!("propose id should be set in propose conf change request")
+            })
+            .into()
     }
 }
 
@@ -529,8 +554,8 @@ pub(crate) struct ConfChangeEntry {
 
 impl ConfChangeEntry {
     /// Get id of the entry
-    pub(crate) fn id(&self) -> &ProposeId {
-        &self.id
+    pub(crate) fn id(&self) -> ProposeId {
+        self.id
     }
 
     /// Get changes of the entry
@@ -542,7 +567,12 @@ impl ConfChangeEntry {
 impl From<ProposeConfChangeRequest> for ConfChangeEntry {
     fn from(req: ProposeConfChangeRequest) -> Self {
         Self {
-            id: req.id,
+            id: req
+                .propose_id
+                .unwrap_or_else(|| {
+                    unreachable!("propose id should be set in propose conf change request")
+                })
+                .into(),
             changes: req.changes,
         }
     }

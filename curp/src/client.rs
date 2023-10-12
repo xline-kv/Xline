@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 
-use curp_external_api::cmd::{generate_propose_id, PbSerializeError};
+use curp_external_api::cmd::PbSerializeError;
 use dashmap::DashMap;
 use event_listener::Event;
 use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
@@ -323,7 +323,7 @@ where
                 .get_connect(leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .wait_synced(
-                    WaitSyncedRequest::new(cmd.id().clone()),
+                    WaitSyncedRequest::new(cmd.id()),
                     *self.config.wait_synced_timeout(),
                 )
                 .await
@@ -765,12 +765,7 @@ where
                 .unwrap_or_else(|| unreachable!("read state should be some"));
             let state = match pb_state {
                 PbReadState::CommitIndex(i) => ReadState::CommitIndex(i),
-                PbReadState::Ids(i) => ReadState::Ids(
-                    i.ids
-                        .into_iter()
-                        .map(|id| bincode::deserialize(&id))
-                        .collect::<bincode::Result<Vec<ProposeId>>>()?,
-                ),
+                PbReadState::Ids(i) => ReadState::Ids(i.ids.into_iter().map(Into::into).collect()),
             };
             return Ok(state);
         }
@@ -872,7 +867,7 @@ where
     pub async fn gen_propose_id(&self) -> Result<ProposeId, CommandProposeError<C>> {
         let client_id = self.get_client_id().await?;
         let seq_num = self.new_seq_num();
-        Ok(generate_propose_id(client_id, seq_num))
+        Ok(ProposeId(client_id, seq_num))
     }
 
     /// Get the initial backoff config

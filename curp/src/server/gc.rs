@@ -27,13 +27,13 @@ pub(super) fn run_gc_tasks<C: Command + 'static>(
 /// Cleanup spec pool
 async fn gc_spec_pool<C: Command + 'static>(sp: SpecPoolRef<C>, interval: Duration) {
     let mut last_check: HashSet<ProposeId> =
-        sp.map_lock(|sp_l| sp_l.pool.keys().cloned().collect());
+        sp.map_lock(|sp_l| sp_l.pool.keys().copied().collect());
     loop {
         tokio::time::sleep(interval).await;
         let mut sp = sp.lock();
         sp.pool.retain(|k, _v| !last_check.contains(k));
 
-        last_check = sp.pool.keys().cloned().collect();
+        last_check = sp.pool.keys().copied().collect();
     }
 }
 
@@ -106,40 +106,40 @@ mod tests {
         board
             .write()
             .er_buffer
-            .insert(ProposeId::from("1"), Ok(TestCommandResult::default()));
+            .insert(ProposeId(1, 1), Ok(TestCommandResult::default()));
         tokio::time::sleep(Duration::from_millis(100)).await;
         board
             .write()
             .er_buffer
-            .insert(ProposeId::from("2"), Ok(TestCommandResult::default()));
+            .insert(ProposeId(2, 2), Ok(TestCommandResult::default()));
         board
             .write()
             .asr_buffer
-            .insert(ProposeId::from("1"), Ok(0.into()));
+            .insert(ProposeId(1, 1), Ok(0.into()));
         tokio::time::sleep(Duration::from_millis(100)).await;
         board
             .write()
             .asr_buffer
-            .insert(ProposeId::from("2"), Ok(0.into()));
+            .insert(ProposeId(2, 2), Ok(0.into()));
 
         // at 600ms
         tokio::time::sleep(Duration::from_millis(400)).await;
         board
             .write()
             .er_buffer
-            .insert(ProposeId::from("3"), Ok(TestCommandResult::default()));
+            .insert(ProposeId(3, 3), Ok(TestCommandResult::default()));
         board
             .write()
             .asr_buffer
-            .insert(ProposeId::from("3"), Ok(0.into()));
+            .insert(ProposeId(3, 3), Ok(0.into()));
 
         // at 1100ms, the first two kv should be removed
         tokio::time::sleep(Duration::from_millis(500)).await;
         let board = board.write();
         assert_eq!(board.er_buffer.len(), 1);
-        assert_eq!(board.er_buffer.get_index(0).unwrap().0, "3");
+        assert_eq!(*board.er_buffer.get_index(0).unwrap().0, ProposeId(3, 3));
         assert_eq!(board.asr_buffer.len(), 1);
-        assert_eq!(board.asr_buffer.get_index(0).unwrap().0, "3");
+        assert_eq!(*board.asr_buffer.get_index(0).unwrap().0, ProposeId(3, 3));
     }
 
     #[tokio::test]
