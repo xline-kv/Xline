@@ -40,7 +40,7 @@ async fn read_state() {
         );
     }
 
-    sleep_millis(100).await;
+    sleep_millis(500).await;
 
     let res = get_client
         .fetch_read_state(&TestCommand::new_get(vec![0]))

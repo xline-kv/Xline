@@ -141,17 +141,9 @@ impl Cluster for ClusterServer {
     ) -> Result<Response<MemberListResponse>, Status> {
         let req = request.into_inner();
         let header = self.header_gen.gen_header();
-        if req.linearizable {
-            let members = self.propose_conf_change(vec![]).await?;
-            let resp = MemberListResponse {
-                header: Some(header),
-                members,
-            };
-            return Ok(Response::new(resp));
-        }
         let members = self
             .client
-            .get_cluster_from_curp()
+            .get_cluster_from_curp(req.linearizable)
             .await
             .map_err(propose_err_to_status)?
             .members;

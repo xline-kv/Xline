@@ -772,8 +772,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     /// Get the leader id, attached with the term
-    pub(super) fn leader(&self) -> (Option<ServerId>, u64) {
-        self.st.map_read(|st_r| (st_r.leader_id, st_r.term))
+    pub(super) fn leader(&self) -> (Option<ServerId>, u64, bool) {
+        self.st
+            .map_read(|st_r| (st_r.leader_id, st_r.term, st_r.role == Role::Leader))
     }
 
     /// Get cluster info

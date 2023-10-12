@@ -233,7 +233,7 @@ impl CurpGroup {
 
             let FetchClusterResponse {
                 leader_id, term, ..
-            } = if let Ok(resp) = client.fetch_cluster(FetchClusterRequest {}).await {
+            } = if let Ok(resp) = client.fetch_cluster(FetchClusterRequest::default()).await {
                 resp.into_inner()
             } else {
                 continue;
@@ -271,7 +271,7 @@ impl CurpGroup {
 
             let FetchClusterResponse {
                 leader_id, term, ..
-            } = if let Ok(resp) = client.fetch_cluster(FetchClusterRequest {}).await {
+            } = if let Ok(resp) = client.fetch_cluster(FetchClusterRequest::default()).await {
                 resp.into_inner()
             } else {
                 continue;
