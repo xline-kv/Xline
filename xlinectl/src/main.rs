@@ -228,7 +228,7 @@ fn cli() -> Command {
         .arg(arg!(--printer_type <TYPE> "The format of the result that will be printed")
             .global(true)
             .help_heading(GLOBAL_HEADING)
-            .value_parser(["SIMPLE", "FIELD"])
+            .value_parser(["SIMPLE", "FIELD", "JSON"])
             .default_value("SIMPLE"))
 
         .subcommand(get::command())
@@ -267,6 +267,7 @@ async fn main() -> Result<()> {
     {
         "SIMPLE" => PrinterType::Simple,
         "FIELD" => PrinterType::Field,
+        "JSON" => PrinterType::Json,
         _ => unreachable!("already checked by clap"),
     };
     set_printer_type(printer_type);
