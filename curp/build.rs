@@ -6,7 +6,6 @@ fn main() {
         )
         .compile(
             &[
-                "./proto/common/src/message.proto",
                 "./proto/common/src/curp-error.proto",
                 "./proto/common/src/curp-command.proto",
             ],

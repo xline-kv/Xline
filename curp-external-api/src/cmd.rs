@@ -1,9 +1,10 @@
+use std::fmt::Display;
 use std::hash::Hash;
 
 use async_trait::async_trait;
 use engine::Snapshot;
 use prost::DecodeError;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::LogIndex;
 
@@ -40,7 +41,7 @@ pub trait Command:
     fn keys(&self) -> &[Self::K];
 
     /// Get propose id
-    fn id(&self) -> &ProposeId;
+    fn id(&self) -> ProposeId;
 
     /// Prepare the command
     #[inline]
@@ -75,24 +76,19 @@ pub trait Command:
     }
 }
 
-/// Command Id wrapper, abstracting underlying implementation
-pub type ProposeId = String;
+/// Command Id wrapper, which is used to identify a command
+/// The underlying data is a tuple of (`client_id`, `seq_num`)
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Ord, PartialOrd, Default,
+)]
+#[allow(clippy::exhaustive_structs)] // It is exhaustive
+pub struct ProposeId(pub u64, pub u64);
 
-/// Generate propose id with client id and seq num
-#[inline]
-#[must_use]
-pub fn generate_propose_id(client_id: u64, seq_num: u64) -> ProposeId {
-    format!("{client_id}#{seq_num}")
-}
-
-/// Parse propose id to (`client_id`, `seq_num`)
-#[inline]
-#[must_use]
-pub fn parse_propose_id(id: &ProposeId) -> Option<(u64, u64)> {
-    let mut iter = id.split('#');
-    let client_id = iter.next()?.parse().ok()?;
-    let seq_num: u64 = iter.next()?.parse().ok()?;
-    Some((client_id, seq_num))
+impl Display for ProposeId {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}#{}", self.0, self.1)
+    }
 }
 
 /// Check conflict of two keys

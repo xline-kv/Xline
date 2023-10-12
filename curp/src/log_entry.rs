@@ -65,7 +65,7 @@ where
     }
 
     /// Get the id of the entry
-    pub(super) fn id(&self) -> &ProposeId {
+    pub(super) fn id(&self) -> ProposeId {
         match self.entry_data {
             EntryData::Command(ref cmd) => cmd.id(),
             EntryData::ConfChange(ref e) => e.id(),

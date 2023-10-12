@@ -27,13 +27,13 @@ pub(crate) const APPLIED_INDEX_KEY: &str = "applied_index";
 pub(crate) const LAST_REVISION_KEY: &str = "last_revision";
 
 /// Test client id
-pub const TEST_CLIENT_ID: &str = "test_client_id";
+pub const TEST_CLIENT_ID: u64 = 12345;
 
 static NEXT_ID: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(1));
 
-pub fn next_id() -> String {
+pub fn next_id() -> ProposeId {
     let seq_num = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    format!("{TEST_CLIENT_ID}#{seq_num}")
+    ProposeId(TEST_CLIENT_ID, seq_num)
 }
 
 #[derive(Error, Debug, Clone, Serialize, Deserialize)]
@@ -207,8 +207,8 @@ impl Command for TestCommand {
         &self.keys
     }
 
-    fn id(&self) -> &ProposeId {
-        &self.id
+    fn id(&self) -> ProposeId {
+        self.id
     }
 }
 

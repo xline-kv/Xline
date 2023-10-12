@@ -114,13 +114,13 @@ mod test {
             .map(|i| {
                 let id_barrier = Arc::clone(&id_barrier);
                 tokio::spawn(async move {
-                    id_barrier.wait(i.to_string()).await;
+                    id_barrier.wait(ProposeId(i, i)).await;
                 })
             })
             .collect::<Vec<_>>();
         sleep(Duration::from_millis(10)).await;
         for i in 0..5 {
-            id_barrier.trigger(&i.to_string());
+            id_barrier.trigger(&ProposeId(i, i));
         }
         timeout(Duration::from_millis(100), join_all(barriers))
             .await

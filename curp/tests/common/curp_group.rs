@@ -35,20 +35,17 @@ use utils::{
     config::{ClientConfig, CurpConfigBuilder, StorageConfig},
     shutdown::{self, Trigger},
 };
-
-pub mod proto {
-    tonic::include_proto!("messagepb");
-}
 pub mod commandpb {
     tonic::include_proto!("commandpb");
 }
 pub mod errorpb {
     tonic::include_proto!("errorpb");
 }
-pub use commandpb::{ProposeRequest, ProposeResponse};
-pub use proto::protocol_client::ProtocolClient;
 
-use self::proto::{FetchClusterRequest, FetchClusterResponse};
+pub use commandpb::{
+    protocol_client::ProtocolClient, FetchClusterRequest, FetchClusterResponse, ProposeRequest,
+    ProposeResponse,
+};
 
 pub struct CurpNode {
     pub id: ServerId,

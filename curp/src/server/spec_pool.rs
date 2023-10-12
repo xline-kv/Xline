@@ -31,8 +31,8 @@ impl<C: Command + 'static> SpeculativePool<C> {
         if self.has_conflict_with(&entry) {
             Some(entry)
         } else {
-            let id = entry.id().clone();
-            let result = self.pool.insert(id.clone(), entry);
+            let id = entry.id();
+            let result = self.pool.insert(id, entry);
             if result.is_none() {
                 debug!("insert cmd({id}) into spec pool");
             } else {

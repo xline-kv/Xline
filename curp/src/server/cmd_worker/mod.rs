@@ -111,10 +111,10 @@ async fn worker_exe<
                 ce.execute(cmd, entry.index).await
             };
             let er_ok = er.is_ok();
-            cb.write().insert_er(entry.id(), er);
+            cb.write().insert_er(&entry.id(), er);
             if !er_ok {
-                sp.lock().remove(entry.id());
-                let _ig = ucp.lock().remove(entry.id());
+                sp.lock().remove(&entry.id());
+                let _ig = ucp.lock().remove(&entry.id());
             }
             debug!(
                 "{id} cmd({}) is speculatively executed, exe status: {er_ok}",
@@ -146,9 +146,9 @@ async fn worker_as<
         };
             let asr = ce.after_sync(cmd.as_ref(), entry.index, prepare).await;
             let asr_ok = asr.is_ok();
-            cb.write().insert_asr(entry.id(), asr);
-            sp.lock().remove(entry.id());
-            let _ig = ucp.lock().remove(entry.id());
+            cb.write().insert_asr(&entry.id(), asr);
+            sp.lock().remove(&entry.id());
+            let _ig = ucp.lock().remove(&entry.id());
             debug!("{id} cmd({}) after sync is called", entry.id());
             asr_ok
         }
@@ -170,7 +170,7 @@ async fn worker_as<
             });
             let shutdown_self =
                 change.change_type() == ConfChangeType::Remove && change.node_id == id;
-            cb.write().insert_conf(entry.id());
+            cb.write().insert_conf(&entry.id());
             if shutdown_self {
                 curp.shutdown_trigger().self_shutdown();
             }

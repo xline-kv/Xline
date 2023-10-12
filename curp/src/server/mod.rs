@@ -381,7 +381,7 @@ where
     C: Command,
 {
     /// Propose id
-    pub(crate) fn id(&self) -> &ProposeId {
+    pub(crate) fn id(&self) -> ProposeId {
         match *self {
             Self::Command(ref cmd) => cmd.id(),
             Self::ConfChange(ref conf_change) => conf_change.id(),

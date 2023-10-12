@@ -25,8 +25,8 @@ use crate::{
     members::ServerId,
     rpc::{
         proto::{
+            commandpb::protocol_client::ProtocolClient,
             inner_messagepb::inner_protocol_client::InnerProtocolClient,
-            messagepb::protocol_client::ProtocolClient,
         },
         AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse,
         FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,

@@ -50,7 +50,7 @@ impl ClusterServer {
         Ok(self
             .client
             .propose_conf_change(ProposeConfChangeRequest {
-                id: propose_id,
+                propose_id: Some(propose_id.into()),
                 changes,
             })
             .await
