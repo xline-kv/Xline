@@ -7,8 +7,9 @@ use xlineapi::{
     AuthUserChangePasswordResponse, AuthUserDeleteResponse, AuthUserGetResponse,
     AuthUserGrantRoleResponse, AuthUserListResponse, AuthUserRevokeRoleResponse,
     CompactionResponse, DeleteRangeResponse, KeyValue, LeaseGrantResponse, LeaseKeepAliveResponse,
-    LeaseLeasesResponse, LeaseRevokeResponse, LeaseTimeToLiveResponse, LockResponse, PutResponse,
-    RangeResponse, ResponseHeader, TxnResponse, WatchResponse,
+    LeaseLeasesResponse, LeaseRevokeResponse, LeaseTimeToLiveResponse, LockResponse, Member,
+    MemberAddResponse, MemberListResponse, MemberPromoteResponse, MemberRemoveResponse,
+    MemberUpdateResponse, PutResponse, RangeResponse, ResponseHeader, TxnResponse, WatchResponse,
 };
 
 /// The global printer type config
@@ -466,6 +467,70 @@ impl Printer for WatchResponse {
     }
 }
 
+impl Printer for MemberAddResponse {
+    fn simple(&self) {
+        if let Some(member) = self.member.as_ref() {
+            SimplePrinter::member(member);
+        }
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        if let Some(member) = self.member.as_ref() {
+            FieldPrinter::member(member);
+        }
+    }
+}
+
+impl Printer for MemberUpdateResponse {
+    fn simple(&self) {
+        println!("Member updated");
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        println!("Member updated");
+    }
+}
+
+impl Printer for MemberRemoveResponse {
+    fn simple(&self) {
+        println!("Member removed");
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        println!("Member removed");
+    }
+}
+
+impl Printer for MemberListResponse {
+    fn simple(&self) {
+        for member in &self.members {
+            SimplePrinter::member(member);
+        }
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        println!("members:");
+        for member in &self.members {
+            FieldPrinter::member(member);
+        }
+    }
+}
+
+impl Printer for MemberPromoteResponse {
+    fn simple(&self) {
+        println!("Member promoted");
+    }
+
+    fn field(&self) {
+        FieldPrinter::header(self.header.as_ref());
+        println!("Member promoted");
+    }
+}
+
 /// convert event type to string
 fn event_type(event: i32) -> String {
     match event {
@@ -494,6 +559,11 @@ impl SimplePrinter {
     /// Print utf8 bytes as string
     fn utf8(vec: &[u8]) {
         println!("{}", String::from_utf8_lossy(vec));
+    }
+
+    /// Prints the member
+    fn member(member: &Member) {
+        println!("{}", member.id);
     }
 }
 
@@ -534,5 +604,19 @@ impl FieldPrinter {
             String::from_utf8_lossy(&kv.key),
             String::from_utf8_lossy(&kv.value)
         );
+    }
+
+    /// Prints the member
+    fn member(member: &Member) {
+        println!("member id: {}", member.id);
+        println!("is learner: {}", member.is_learner);
+        println!("peer urls:");
+        for peer_url in &member.peer_ur_ls {
+            println!("{peer_url}");
+        }
+        println!("client urls:");
+        for client_url in &member.client_ur_ls {
+            println!("{client_url}");
+        }
     }
 }

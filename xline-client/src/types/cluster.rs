@@ -4,7 +4,7 @@ pub use xlineapi::{
 };
 
 /// Request for `MemberAdd`
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct MemberAddRequest {
     /// The inner request
     inner: xlineapi::MemberAddRequest,
@@ -31,7 +31,7 @@ impl From<MemberAddRequest> for xlineapi::MemberAddRequest {
 }
 
 /// Request for `MemberList`
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct MemberListRequest {
     /// The inner request
     inner: xlineapi::MemberListRequest,
@@ -56,7 +56,7 @@ impl From<MemberListRequest> for xlineapi::MemberListRequest {
 }
 
 /// Request for `MemberPromote`
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct MemberPromoteRequest {
     /// The inner request
     inner: xlineapi::MemberPromoteRequest,
@@ -81,7 +81,7 @@ impl From<MemberPromoteRequest> for xlineapi::MemberPromoteRequest {
 }
 
 /// Request for `MemberRemove`
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct MemberRemoveRequest {
     /// The inner request
     inner: xlineapi::MemberRemoveRequest,
@@ -106,7 +106,7 @@ impl From<MemberRemoveRequest> for xlineapi::MemberRemoveRequest {
 }
 
 /// Request for `MemberUpdate`
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct MemberUpdateRequest {
     /// The inner request
     inner: xlineapi::MemberUpdateRequest,

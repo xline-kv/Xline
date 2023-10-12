@@ -492,6 +492,132 @@ keep_alive [options] <leaseId>
 
 ## Cluster maintenance commands
 
+### MEMBER
+MEMBER provides commands for managing Xline cluster membership.
+
+### MEMBER ADD
+MEMBER ADD introduces a new member into the Xline cluster as a new peer.
+
+#### Usage
+
+```bash
+member add [options] <peer_urls>
+```
+
+#### Options
+- is_learner -- Add as learner
+
+
+#### Output
+
+```
+<member_id>
+```
+
+#### Examples
+```bash
+# Add a member whose addresses are [127.0.0.1:2379, 127.0.0.1:2380]
+./xlinectl member add "10.0.0.1:2379,10.0.0.2:2379"
+16151281779493828828
+```
+
+### MEMBER UPDATE
+MEMBER UPDATE sets the peer URLs for an existing member in the Xline cluster.
+
+#### Usage
+
+```bash
+member update <ID> <peer_urls>
+```
+
+#### Output
+
+```
+Member updated
+```
+
+#### Examples
+```bash
+./xlinectl member add "10.0.0.1:2379,10.0.0.2:2379"
+16151281779493828828
+# Add a member whose addresses are [127.0.0.1:2379, 127.0.0.1:2380]
+./xlinectl member update 16151281779493828828 "10.0.0.3:2379,10.0.0.4:2379"
+```
+
+### MEMBER LIST
+MEMBER ADD introduces a new member into the Xline cluster as a new peer.
+
+#### Usage
+
+```bash
+member list
+```
+
+#### Options
+- linearizable -- to use linearizable fetch
+
+
+#### Output
+
+```
+<member_id1>
+<member_id2>
+...
+```
+
+#### Examples
+```bash
+# List all members
+./xlinectl member list
+16151281779493828828
+16375331871075283369
+16171997749406652082
+```
+
+### MEMBER REMOVE
+MEMBER REMOVE removes a member of an Xline cluster from participating in cluster consensus.
+
+#### Usage
+
+```bash
+member remove <ID>
+```
+
+#### Output
+
+```
+Member removed
+```
+
+#### Examples
+```bash
+# Remove a member
+./xlinectl member remove 16151281779493828828
+Member removed
+```
+
+### MEMBER PROMOTE
+MEMBER PROMOTE promotes a learner of an Xline cluster to member
+
+#### Usage
+
+```bash
+member promote <ID>
+```
+
+#### Output
+
+```
+Member promoted
+```
+
+#### Examples
+```bash
+# Remove a member
+./xlinectl member promote 16151281779493828828
+Member promoted
+```
+
 ### SNAPSHOT
 Get snapshots of xline nodes
 
