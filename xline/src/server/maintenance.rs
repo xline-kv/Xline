@@ -82,7 +82,7 @@ where
     ) -> Result<tonic::Response<StatusResponse>, tonic::Status> {
         let cluster = self
             .client
-            .get_cluster_from_curp()
+            .get_cluster_from_curp(false)
             .await
             .map_err(propose_err_to_status)?;
         let header = self.header_gen.gen_header();

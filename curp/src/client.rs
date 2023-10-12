@@ -507,11 +507,14 @@ where
     }
 
     /// Send fetch cluster requests to all servers
-    /// Note: The fetched cluster may still be outdated
+    /// Note: The fetched cluster may still be outdated if `linearizable` is false
     /// # Errors
     ///   `ProposeError::Timeout` if timeout
     #[inline]
-    async fn fetch_cluster(&self) -> Result<FetchClusterResponse, ProposeError> {
+    async fn fetch_cluster(
+        &self,
+        linearizable: bool,
+    ) -> Result<FetchClusterResponse, ProposeError> {
         let mut retry_timeout = self.get_backoff();
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {
@@ -523,7 +526,7 @@ where
                     (
                         connect.id(),
                         connect
-                            .fetch_cluster(FetchClusterRequest::default(), timeout)
+                            .fetch_cluster(FetchClusterRequest { linearizable }, timeout)
                             .await,
                     )
                 })
@@ -542,15 +545,20 @@ where
                         continue;
                     }
                 };
+
                 #[allow(clippy::integer_arithmetic)]
                 match max_term.cmp(&inner.term) {
                     Ordering::Less => {
                         max_term = inner.term;
-                        res = Some(inner);
+                        if !inner.members.is_empty() {
+                            res = Some(inner);
+                        }
                         ok_cnt = 1;
                     }
                     Ordering::Equal => {
-                        res = Some(inner);
+                        if !inner.members.is_empty() {
+                            res = Some(inner);
+                        }
                         ok_cnt += 1;
                     }
                     Ordering::Greater => {}
@@ -579,7 +587,7 @@ where
     async fn fetch_leader(&self) -> Result<ServerId, ProposeError> {
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {
-            let res = self.fetch_cluster().await?;
+            let res = self.fetch_cluster(false).await?;
             if let Some(leader_id) = res.leader_id {
                 return Ok(leader_id);
             }
@@ -814,11 +822,18 @@ where
     #[inline]
     pub async fn get_cluster_from_curp(
         &self,
+        linearizable: bool,
     ) -> Result<FetchClusterResponse, CommandProposeError<C>> {
+        if linearizable {
+            return self
+                .fetch_cluster(true)
+                .await
+                .map_err(|e| CommandProposeError::Propose(e));
+        }
         if let Ok(resp) = self.fetch_local_cluster().await {
             return Ok(resp);
         }
-        self.fetch_cluster()
+        self.fetch_cluster(false)
             .await
             .map_err(|e| CommandProposeError::Propose(e))
     }

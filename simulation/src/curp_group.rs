@@ -230,7 +230,8 @@ impl CurpGroup {
 
                     let FetchClusterResponse {
                         leader_id, term, ..
-                    } = if let Ok(resp) = client.fetch_cluster(FetchClusterRequest {}).await {
+                    } = if let Ok(resp) = client.fetch_cluster(FetchClusterRequest::default()).await
+                    {
                         resp.into_inner()
                     } else {
                         continue;
@@ -274,12 +275,13 @@ impl CurpGroup {
                         continue;
                     };
 
-                    let FetchClusterResponse { term, .. } =
-                        if let Ok(resp) = client.fetch_cluster(FetchClusterRequest {}).await {
-                            resp.into_inner()
-                        } else {
-                            continue;
-                        };
+                    let FetchClusterResponse { term, .. } = if let Ok(resp) =
+                        client.fetch_cluster(FetchClusterRequest::default()).await
+                    {
+                        resp.into_inner()
+                    } else {
+                        continue;
+                    };
 
                     if let Some(max_term) = max_term {
                         assert_eq!(max_term, term);

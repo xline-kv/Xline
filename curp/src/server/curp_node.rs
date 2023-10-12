@@ -251,11 +251,18 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     #[allow(clippy::unnecessary_wraps, clippy::needless_pass_by_value)] // To keep type consistent with other request handlers
     pub(super) fn fetch_cluster(
         &self,
-        _req: FetchClusterRequest,
+        req: FetchClusterRequest,
     ) -> Result<FetchClusterResponse, CurpError> {
-        let (leader_id, term) = self.curp.leader();
+        let (leader_id, term, is_leader) = self.curp.leader();
         let cluster_id = self.curp.cluster().cluster_id();
-        let members = self.curp.cluster().all_members_vec();
+        let members = if is_leader || !req.linearizable {
+            self.curp.cluster().all_members_vec()
+        } else {
+            // if it is a follower and enabled linearizable read, return empty members
+            // the client will ignore empty members and retry util it gets response from
+            // the leader
+            Vec::new()
+        };
         Ok(FetchClusterResponse::new(
             leader_id, term, cluster_id, members,
         ))
@@ -712,7 +719,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     fn run_bg_tasks(
         curp: Arc<RawCurp<C, RC>>,
         storage: Arc<impl StorageApi<Command = C> + 'static>,
-        log_rx: tokio::sync::mpsc::UnboundedReceiver<Arc<LogEntry<C>>>,
+        log_rx: mpsc::UnboundedReceiver<Arc<LogEntry<C>>>,
     ) {
         let shutdown_listener = curp.shutdown_listener();
         let _election_task = tokio::spawn(Self::election_task(Arc::clone(&curp)));

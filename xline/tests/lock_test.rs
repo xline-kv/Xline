@@ -21,20 +21,15 @@ async fn test_lock() -> Result<(), Box<dyn Error>> {
     let lock_handle = tokio::spawn({
         let c = lock_client.clone();
         async move {
-            let res = c.lock(LockRequest::new().with_name("test")).await.unwrap();
+            let res = c.lock(LockRequest::new("test")).await.unwrap();
             time::sleep(Duration::from_secs(3)).await;
-            let _res = c
-                .unlock(UnlockRequest::new().with_key(res.key))
-                .await
-                .unwrap();
+            let _res = c.unlock(UnlockRequest::new(res.key)).await.unwrap();
         }
     });
 
     time::sleep(Duration::from_secs(1)).await;
     let now = time::Instant::now();
-    let res = lock_client
-        .lock(LockRequest::new().with_name("test"))
-        .await?;
+    let res = lock_client.lock(LockRequest::new("test")).await?;
     let elapsed = now.elapsed();
     assert!(res.key.starts_with(b"test"));
     assert!(elapsed >= Duration::from_secs(1));
@@ -57,12 +52,12 @@ async fn test_lock_timeout() -> Result<(), Box<dyn Error>> {
         .await?
         .id;
     let _res = lock_client
-        .lock(LockRequest::new().with_name("test").with_lease(lease_id))
+        .lock(LockRequest::new("test").with_lease(lease_id))
         .await?;
 
     let res = timeout(
         Duration::from_secs(3),
-        lock_client.lock(LockRequest::new().with_name("test")),
+        lock_client.lock(LockRequest::new("test")),
     )
     .await??;
     assert!(res.key.starts_with(b"test"));
