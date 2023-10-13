@@ -720,7 +720,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     /// Handle `fetch_read_state`
-    pub(super) fn handle_fetch_read_state(&self, cmd: &C) -> ReadState {
+    pub(super) fn handle_fetch_read_state(&self, cmd: &C) -> Result<ReadState, CurpError> {
+        if self.st.read().role != Role::Leader {
+            return Err(CurpError::Internal("not leader".to_owned()));
+        }
+
         let ids = {
             let sp_l = self.ctx.sp.lock();
             let ucp_l = self.ctx.ucp.lock();
@@ -735,9 +739,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 .collect_vec()
         };
         if ids.is_empty() {
-            ReadState::CommitIndex(self.log.read().commit_index)
+            Ok(ReadState::CommitIndex(self.log.read().commit_index))
         } else {
-            ReadState::Ids(IdSet::new(ids))
+            Ok(ReadState::Ids(IdSet::new(ids)))
         }
     }
 }
