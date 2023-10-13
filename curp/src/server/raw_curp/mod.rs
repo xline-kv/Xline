@@ -314,16 +314,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 Err(ConfChangeError::new_propose(ProposeError::NotLeader)),
             );
         }
-        if let Some(change) = conf_change.changes().first() {
-            if let ConfChangeType::Promote = change.change_type() {
-                let learner_index = self.lst.get_match_index(change.node_id);
-                let leader_index = self.log.read().last_log_index();
-                if leader_index.overflow_sub(learner_index) > MAX_PROMOTE_GAP {
-                    return (info, Err(ConfChangeError::LearnerNotCatchUp(())));
-                }
-            }
+        if let Err(e) = self.check_new_config(conf_change.changes()) {
+            return (info, Err(e));
         }
-
         let pool_entry = PoolEntry::from(conf_change.clone());
         let mut conflict = self.insert_sp(pool_entry.clone());
         conflict |= self.insert_ucp(pool_entry);
@@ -343,10 +336,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             }
             Err(e) => return (info, Err(ConfChangeError::new_propose(e.into()))),
         };
-        let (addrs, name, is_learner) = match self.apply_conf_change(changes) {
-            Ok(fallback_info) => fallback_info,
-            Err(e) => return (info, Err(e)),
-        };
+        let (addrs, name, is_learner) = self.apply_conf_change(changes);
         let _ig = log_w.fallback_contexts.insert(
             entry.index,
             FallbackContext::new(Arc::clone(&entry), addrs, name, is_learner),
@@ -422,8 +412,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             let EntryData::ConfChange(ref cc) = e.entry_data else {
                 unreachable!("cc_entry should be conf change entry");
             };
-            let (addrs, name, is_learner) = self.apply_conf_change(cc.changes().to_owned())
-                .unwrap_or_else(|_e| unreachable!("apply_conf_change should succeed, because the check of conf change already passed on leader"));
+            let (addrs, name, is_learner) = self.apply_conf_change(cc.changes().to_owned());
             let _ig = log_w.fallback_contexts.insert(
                 e.index,
                 FallbackContext::new(Arc::clone(&e), addrs, name, is_learner),
@@ -927,17 +916,75 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         self.lst.check_all(|f| f.match_index == leader_commit_index)
     }
 
+    /// Check if the new config is valid
+    pub(super) fn check_new_config(&self, changes: &[ConfChange]) -> Result<(), ConfChangeError> {
+        assert_eq!(changes.len(), 1, "Joint consensus is not supported yet");
+        let Some(conf_change) = changes.iter().next() else {
+            unreachable!("conf change is empty");
+        };
+        let mut statuses_ids = self
+            .lst
+            .get_all_statuses()
+            .keys()
+            .copied()
+            .chain([self.id()])
+            .collect::<HashSet<_>>();
+        let mut config = self.cst.map_lock(|cst_l| cst_l.config.clone());
+        let node_id = conf_change.node_id;
+        match conf_change.change_type() {
+            ConfChangeType::Add => {
+                if !statuses_ids.insert(node_id) || !config.insert(node_id, false) {
+                    return Err(ConfChangeError::NodeAlreadyExists(()));
+                }
+            }
+            ConfChangeType::Remove => {
+                if !statuses_ids.remove(&node_id) || !config.remove(node_id) {
+                    return Err(ConfChangeError::NodeNotExists(()));
+                }
+            }
+            ConfChangeType::Update => {
+                if statuses_ids.get(&node_id).is_none() || !config.contains(node_id) {
+                    return Err(ConfChangeError::NodeNotExists(()));
+                }
+            }
+            ConfChangeType::AddLearner => {
+                if !statuses_ids.insert(node_id) || !config.insert(node_id, true) {
+                    return Err(ConfChangeError::NodeAlreadyExists(()));
+                }
+            }
+            ConfChangeType::Promote => {
+                if statuses_ids.get(&node_id).is_none() || !config.contains(node_id) {
+                    return Err(ConfChangeError::NodeNotExists(()));
+                }
+                let learner_index = self.lst.get_match_index(node_id);
+                let leader_index = self.log.read().last_log_index();
+                if leader_index.overflow_sub(learner_index) > MAX_PROMOTE_GAP {
+                    return Err(ConfChangeError::LearnerNotCatchUp(()));
+                }
+            }
+        }
+        let mut all_nodes = HashSet::new();
+        all_nodes.extend(config.voters());
+        all_nodes.extend(&config.learners);
+        if statuses_ids.len() < 3
+            || all_nodes != statuses_ids
+            || !config.voters().is_disjoint(&config.learners)
+        {
+            return Err(ConfChangeError::InvalidConfig(()));
+        }
+        Ok(())
+    }
+
     /// Apply conf changes and return true if self node is removed
     pub(super) fn apply_conf_change(
         &self,
         changes: Vec<ConfChange>,
-    ) -> Result<(Vec<String>, String, bool), ConfChangeError> {
+    ) -> (Vec<String>, String, bool) {
         assert_eq!(changes.len(), 1, "Joint consensus is not supported yet");
         let Some(conf_change) = changes.into_iter().next() else {
             unreachable!("conf change is empty");
         };
-        self.check_new_config(&conf_change)?;
-        Ok(self.switch_config(conf_change))
+        self.switch_config(conf_change)
     }
 
     /// Fallback conf change
@@ -1271,51 +1318,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         debug!("leader {} retires", self.id());
         self.ctx.cb.write().clear();
         self.ctx.ucp.lock().clear();
-    }
-
-    /// Check if the new config is valid
-    fn check_new_config(&self, conf_change: &ConfChange) -> Result<(), ConfChangeError> {
-        let mut statuses_ids = self
-            .lst
-            .get_all_statuses()
-            .keys()
-            .copied()
-            .chain([self.id()])
-            .collect::<HashSet<_>>();
-        let mut config = self.cst.map_lock(|cst_l| cst_l.config.clone());
-        let node_id = conf_change.node_id;
-        match conf_change.change_type() {
-            ConfChangeType::Add => {
-                if !statuses_ids.insert(node_id) || !config.insert(node_id, false) {
-                    return Err(ConfChangeError::NodeAlreadyExists(()));
-                }
-            }
-            ConfChangeType::Remove => {
-                if !statuses_ids.remove(&node_id) || !config.remove(node_id) {
-                    return Err(ConfChangeError::NodeNotExists(()));
-                }
-            }
-            ConfChangeType::Update | ConfChangeType::Promote => {
-                if statuses_ids.get(&node_id).is_none() || !config.contains(node_id) {
-                    return Err(ConfChangeError::NodeNotExists(()));
-                }
-            }
-            ConfChangeType::AddLearner => {
-                if !statuses_ids.insert(node_id) || !config.insert(node_id, true) {
-                    return Err(ConfChangeError::NodeAlreadyExists(()));
-                }
-            }
-        }
-        let mut all_nodes = HashSet::new();
-        all_nodes.extend(config.voters());
-        all_nodes.extend(&config.learners);
-        if statuses_ids.len() < 3
-            || all_nodes != statuses_ids
-            || !config.voters().is_disjoint(&config.learners)
-        {
-            return Err(ConfChangeError::InvalidConfig(()));
-        }
-        Ok(())
     }
 
     /// Switch to a new config and return old member infos for fallback
