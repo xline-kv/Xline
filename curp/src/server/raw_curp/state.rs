@@ -291,7 +291,7 @@ impl Config {
         res1 || res2
     }
 
-    /// Check if a voter exists
+    /// Check if a server exists
     pub(super) fn contains(&self, id: ServerId) -> bool {
         self.majority_config.voters.contains(&id) || self.learners.contains(&id)
     }
