@@ -44,6 +44,7 @@ use self::{
 use super::{cmd_worker::CEEventTxApi, PoolEntry};
 use crate::{
     cmd::{Command, ProposeId},
+    connect::InnerConnectApi,
     error::{ProposeError, RpcError},
     log_entry::{EntryData, LogEntry},
     members::{ClusterInfo, ServerId},
@@ -1024,9 +1025,15 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         }
     }
 
-    /// Get voters set
-    pub(super) fn voters(&self) -> HashSet<ServerId> {
-        self.cst.lock().config.voters().clone()
+    /// Get voters connects
+    pub(super) fn voters_connects(&self) -> Vec<Arc<dyn InnerConnectApi>> {
+        let cst_r = self.cst.lock();
+        let voters = cst_r.config.voters();
+        self.connects()
+            .iter()
+            .filter(|c| voters.contains(c.key()))
+            .map(|c| Arc::clone(c.value()))
+            .collect()
     }
 }
 

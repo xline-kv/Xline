@@ -725,24 +725,20 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     async fn bcast_vote(curp: &RawCurp<C, RC>, vote: Vote) {
         debug!("{} broadcasts votes to all servers", curp.id());
         let rpc_timeout = curp.cfg().rpc_timeout;
-        let voters = curp.voters();
-        let resps = curp
-            .connects()
-            .iter()
-            .filter_map(|c| {
-                voters.contains(c.key()).then(|| {
-                    let req = VoteRequest::new(
-                        vote.term,
-                        vote.candidate_id,
-                        vote.last_log_index,
-                        vote.last_log_term,
-                    );
-                    let connect = Arc::clone(c.value());
-                    async move {
-                        let resp = connect.vote(req, rpc_timeout).await;
-                        (connect.id(), resp)
-                    }
-                })
+        let voters_connects = curp.voters_connects();
+        let resps = voters_connects
+            .into_iter()
+            .map(|connect| {
+                let req = VoteRequest::new(
+                    vote.term,
+                    vote.candidate_id,
+                    vote.last_log_index,
+                    vote.last_log_term,
+                );
+                async move {
+                    let resp = connect.vote(req, rpc_timeout).await;
+                    (connect.id(), resp)
+                }
             })
             .collect::<FuturesUnordered<_>>()
             .filter_map(|(id, resp)| async move {
