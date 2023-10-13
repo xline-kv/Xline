@@ -318,7 +318,7 @@ mod tests {
         let node1_url = node1.self_addrs();
         assert!(!peers.contains_key(&node1_id));
         assert_eq!(peers.len(), 2);
-        assert_eq!(node1.voters_len(), peers.len() + 1); // TODO fix test
+        assert_eq!(node1.voters_len(), peers.len() + 1);
 
         let peer_urls = peers.values().collect::<Vec<_>>();
 
