@@ -940,7 +940,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     /// Fallback conf change
-    #[allow(clippy::unimplemented)] // TODO: remove this when learner is implemented
     pub(super) fn fallback_conf_change(
         &self,
         changes: Vec<ConfChange>,
@@ -961,7 +960,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 _ = self.ctx.sync_events.remove(&node_id);
                 let _ig = self.ctx.cluster_info.remove(&node_id);
                 _ = self.ctx.connects.remove(&node_id);
-                ConfChange::remove(node_id)
+                Some(ConfChange::remove(node_id))
             }
             ConfChangeType::Remove => {
                 let member = Member::new(node_id, name, old_addrs.clone(), is_learner);
@@ -971,23 +970,31 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 _ = self.ctx.sync_events.insert(node_id, Arc::new(Event::new()));
                 self.ctx.cluster_info.insert(member);
                 if is_learner {
-                    ConfChange::add_learner(node_id, old_addrs)
+                    Some(ConfChange::add_learner(node_id, old_addrs))
                 } else {
-                    ConfChange::add(node_id, old_addrs)
+                    Some(ConfChange::add(node_id, old_addrs))
                 }
             }
             ConfChangeType::Update => {
                 _ = self.ctx.cluster_info.update(&node_id, old_addrs.clone());
-                ConfChange::update(node_id, old_addrs)
+                Some(ConfChange::update(node_id, old_addrs))
             }
             ConfChangeType::Promote => {
-                unimplemented!("learner node is not supported yet");
+                self.cst.map_lock(|mut cst_l| {
+                    _ = cst_l.config.remove(node_id);
+                    _ = cst_l.config.insert(node_id, true);
+                });
+                self.ctx.cluster_info.demote(node_id);
+                self.lst.demote(node_id);
+                None
             }
         };
-        self.ctx
-            .change_tx
-            .send(fallback_change)
-            .unwrap_or_else(|_e| unreachable!("change_rx should not be dropped"));
+        if let Some(c) = fallback_change {
+            self.ctx
+                .change_tx
+                .send(c)
+                .unwrap_or_else(|_e| unreachable!("change_rx should not be dropped"));
+        }
     }
 
     /// Get a receiver for conf changes

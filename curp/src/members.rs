@@ -271,6 +271,13 @@ impl ClusterInfo {
             s.is_learner = false;
         }
     }
+
+    /// Demote a voter to learner
+    pub(crate) fn demote(&self, node_id: ServerId) {
+        if let Some(mut s) = self.members.get_mut(&node_id) {
+            s.is_learner = true;
+        }
+    }
 }
 
 #[cfg(test)]
