@@ -21,6 +21,8 @@ jobs:
         with:
           submodules: recursive
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "xline"
       - run: sudo bash ./.github/scripts/install_deps.sh
       - name: Install Rust
         run: rustup update stable
