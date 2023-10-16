@@ -1,8 +1,11 @@
-use xline_client::types::cluster::{
-    MemberAddRequest, MemberListRequest, MemberPromoteRequest, MemberRemoveRequest,
-    MemberUpdateRequest,
+use xline_client::{
+    error::Result,
+    types::cluster::{
+        MemberAddRequest, MemberListRequest, MemberPromoteRequest, MemberRemoveRequest,
+        MemberUpdateRequest,
+    },
+    Client, ClientOptions,
 };
-use xline_client::{error::Result, Client, ClientOptions};
 
 #[tokio::main]
 async fn main() -> Result<()> {

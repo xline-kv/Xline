@@ -45,11 +45,11 @@ async fn main() -> Result<()> {
         .lock_client();
     match args.command {
         Commands::Lock { name } => {
-            let lock_res = client.lock(LockRequest::new().with_name(name)).await?;
+            let lock_res = client.lock(LockRequest::new(name)).await?;
             println!("{}", String::from_utf8_lossy(&lock_res.key))
         }
         Commands::Unlock { key } => {
-            let _unlock_res = client.unlock(UnlockRequest::new().with_key(key)).await?;
+            let _unlock_res = client.unlock(UnlockRequest::new(key)).await?;
             println!("unlock success");
         }
     };
