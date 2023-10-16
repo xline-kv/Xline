@@ -1,13 +1,16 @@
 use std::sync::Arc;
+
 use tonic::transport::Channel;
 
-use crate::error::Result;
-use crate::types::cluster::{
-    MemberAddRequest, MemberAddResponse, MemberListRequest, MemberListResponse,
-    MemberPromoteRequest, MemberPromoteResponse, MemberRemoveRequest, MemberRemoveResponse,
-    MemberUpdateRequest, MemberUpdateResponse,
+use crate::{
+    error::Result,
+    types::cluster::{
+        MemberAddRequest, MemberAddResponse, MemberListRequest, MemberListResponse,
+        MemberPromoteRequest, MemberPromoteResponse, MemberRemoveRequest, MemberRemoveResponse,
+        MemberUpdateRequest, MemberUpdateResponse,
+    },
+    AuthService,
 };
-use crate::AuthService;
 
 /// Client for Cluster operations.
 #[derive(Clone, Debug)]
