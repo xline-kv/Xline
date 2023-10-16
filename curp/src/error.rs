@@ -120,6 +120,9 @@ pub enum ClientError<C: Command> {
     /// Serialize and Deserialize Error
     #[error("EncodeDecode error: {0}")]
     EncodeDecode(String),
+    /// Wrong cluster version
+    #[error("wrong cluster version")]
+    WrongClusterVersion,
 }
 
 impl<C: Command> From<PbSerializeError> for ClientError<C> {

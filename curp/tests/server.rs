@@ -323,22 +323,54 @@ async fn propose_add_node_should_success() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
-async fn propose_remove_node_should_success() {
+async fn propose_remove_follower_should_success() {
     init_logger();
 
     let group = CurpGroup::new(5).await;
     let client = group.new_client().await;
 
     let id = client.gen_propose_id().await.unwrap();
-    let node_id = group.nodes.keys().next().copied().unwrap();
-    let changes = vec![ConfChange::remove(node_id)];
+    let leader_id = group.get_leader().await.0;
+    let follower_id = *group.all.keys().find(|&id| &leader_id != id).unwrap();
+    let changes = vec![ConfChange::remove(follower_id)];
     let members = client
         .propose_conf_change(id, changes)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(members.len(), 4);
-    assert!(members.iter().all(|m| m.id != node_id));
+    assert!(members.iter().all(|m| m.id != follower_id));
+    sleep_millis(500).await;
+    assert!(group.nodes.get(&follower_id).unwrap().handle.is_finished());
+    // check if the old client can propose to the new cluster
+    let res = client.propose(TestCommand::new_get(vec![1]), true).await;
+    assert!(res.is_ok());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[abort_on_panic]
+async fn propose_remove_leader_should_success() {
+    init_logger();
+
+    let group = CurpGroup::new(5).await;
+    let client = group.new_client().await;
+    let id = client.gen_propose_id().await.unwrap();
+    let leader_id = group.get_leader().await.0;
+    let changes = vec![ConfChange::remove(leader_id)];
+    let members = client
+        .propose_conf_change(id, changes)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(members.len(), 4);
+    assert!(members.iter().all(|m| m.id != leader_id));
+    sleep_secs(3).await; // wait for the new leader to be elected
+    assert!(group.nodes.get(&leader_id).unwrap().handle.is_finished());
+    let new_leader_id = group.get_leader().await.0;
+    assert_ne!(new_leader_id, leader_id);
+    // check if the old client can propose to the new cluster
+    let res = client.propose(TestCommand::new_get(vec![1]), true).await;
+    assert!(res.is_ok());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -520,6 +552,10 @@ async fn check_new_node(is_learner: bool) {
         }
     );
     assert!(res.values.is_empty());
+
+    // 5. check if the old client can propose to the new cluster
+    let res = client.propose(TestCommand::new_get(vec![1]), true).await;
+    assert!(res.is_ok());
 }
 
 #[tokio::test(flavor = "multi_thread")]
