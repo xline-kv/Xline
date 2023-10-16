@@ -52,6 +52,8 @@ jobs:
           toolchain: ${{ env.CI_RUST_TOOLCHAIN }}
           override: true
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "xline"
       - name: ${{ matrix.config.name }}
         uses: actions-rs/cargo@v1
         with:
@@ -94,6 +96,8 @@ jobs:
           toolchain: ${{ env.CI_RUST_TOOLCHAIN }}
           override: true
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "xline"
       - name: ${{ matrix.config.name }}
         uses: actions-rs/cargo@v1
         with:
@@ -121,6 +125,8 @@ jobs:
           toolchain: ${{ env.CI_RUST_TOOLCHAIN }}
           override: true
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "xline"
       - name: ${{ matrix.config.name }}
         uses: actions-rs/cargo@v1
         with:
@@ -138,7 +144,6 @@ jobs:
         with:
           fetch-depth: 0
       - run: git show-ref
-      - uses: Swatinem/rust-cache@v2
       - uses: actions-rs/install@v0.1
         with:
           crate: git-cz

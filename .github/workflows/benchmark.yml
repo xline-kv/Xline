@@ -23,6 +23,8 @@ jobs:
           toolchain: ${{ env.CI_RUST_TOOLCHAIN }}
           override: true
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "xline"
       - uses: actions-rs/cargo@v1
         with:
           command: build
