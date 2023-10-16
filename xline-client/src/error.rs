@@ -92,6 +92,9 @@ pub enum XlineClientError<C: CurpCommand> {
     /// Serialize and Deserialize Error
     #[error("EncodeDecode error: {0}")]
     EncodeDecode(String),
+    /// Wrong cluster version
+    #[error("Wrong cluster version")]
+    WrongClusterVersion,
 }
 
 impl From<tonic::transport::Error> for XlineClientError<Command> {
@@ -120,7 +123,8 @@ impl From<ClientError<Command>> for XlineClientError<Command> {
             ClientError::Timeout => Self::Timeout,
             ClientError::ShuttingDown => Self::ShuttingDown,
             ClientError::EncodeDecode(e) => Self::EncodeDecode(e),
-            _ => unreachable!("unknow ClientError type"),
+            ClientError::WrongClusterVersion => Self::RpcError("wrong cluster version".to_owned()),
+            _ => unreachable!("unknown ClientError type"),
         }
     }
 }

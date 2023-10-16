@@ -243,6 +243,8 @@ enum UnpackStatus {
     IO,
     /// Internal error type
     Internal,
+    /// Wrong Cluster Version
+    WrongClusterVersion,
 }
 
 /// unpack `tonic::Status` and convert it to `UnpackStatus`
@@ -262,6 +264,7 @@ fn unpack_status(status: &tonic::Status) -> UnpackStatus {
             "internal" => UnpackStatus::Internal,
             "storage" => UnpackStatus::Storage,
             "io" => UnpackStatus::IO,
+            "wrong-cluster-version" => UnpackStatus::WrongClusterVersion,
             unsupported_label => {
                 unreachable!("unsupported status label {unsupported_label}")
             }
@@ -318,12 +321,21 @@ where
         while let Some(resp_result) = rpcs.next().await {
             let resp = match resp_result {
                 Ok(resp) => resp.into_inner(),
+
                 Err(e) => {
-                    if let UnpackStatus::ShuttingDown = unpack_status(&e) {
-                        return Err(ClientError::ShuttingDown);
-                    }
                     warn!("Propose error: {}", e);
-                    continue;
+                    match unpack_status(&e) {
+                        UnpackStatus::ShuttingDown => return Err(ClientError::ShuttingDown),
+                        UnpackStatus::WrongClusterVersion => {
+                            return Err(ClientError::WrongClusterVersion)
+                        }
+                        UnpackStatus::Redirect(..)
+                        | UnpackStatus::Transport
+                        | UnpackStatus::EncodeDecode
+                        | UnpackStatus::Storage
+                        | UnpackStatus::IO
+                        | UnpackStatus::Internal => continue,
+                    }
                 }
             };
             self.state
@@ -388,6 +400,9 @@ where
                     warn!("wait synced rpc error: {e}");
                     match unpack_status(&e) {
                         UnpackStatus::ShuttingDown => return Err(ClientError::ShuttingDown),
+                        UnpackStatus::WrongClusterVersion => {
+                            return Err(ClientError::WrongClusterVersion)
+                        }
                         UnpackStatus::Transport => {
                             // it's quite likely that the leader has crashed, then we should wait for some time and fetch the leader again
                             tokio::time::sleep(retry_timeout.next_retry()).await;
@@ -421,6 +436,30 @@ where
         Err(ClientError::Timeout)
     }
 
+    /// Set the information of current cluster
+    #[allow(unused)]
+    async fn set_cluster(&self, cluster: FetchClusterResponse) {
+        debug!("update client by remote cluster: {cluster:?}");
+        self.state
+            .write()
+            .check_and_update(cluster.leader_id, cluster.term);
+        let member_addrs = cluster
+            .members
+            .into_iter()
+            .map(|m| (m.id, m.addrs))
+            .collect::<HashMap<ServerId, Vec<String>>>();
+        self.connects.clear();
+        // TODO
+        #[allow(clippy::unwrap_used)]
+        for (id, connect) in rpc::connect(member_addrs).await.unwrap() {
+            let _ig = self.connects.insert(id, connect);
+        }
+        self.cluster_version.store(
+            cluster.cluster_version,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+
     /// The shutdown rpc of curp protocol
     #[instrument(skip_all)]
     pub async fn shutdown(&self) -> Result<(), ClientError<C>> {
@@ -447,6 +486,9 @@ where
                 warn!("shutdown rpc error: {e}");
                 match unpack_status(&e) {
                     UnpackStatus::ShuttingDown => return Err(ClientError::ShuttingDown),
+                    UnpackStatus::WrongClusterVersion => {
+                        return Err(ClientError::WrongClusterVersion)
+                    }
                     UnpackStatus::Redirect(new_leader, term) => {
                         self.state.write().check_and_update(new_leader, term);
                         warn!("shutdown: redirect to new leader {new_leader:?}, term is {term}",);
@@ -684,43 +726,86 @@ where
         use_fast_path: bool,
     ) -> Result<(C::ER, Option<C::ASR>), ClientError<C>> {
         let cmd_arc = Arc::new(cmd);
+        loop {
+            let res_option = if use_fast_path {
+                self.fast_path(Arc::clone(&cmd_arc)).await
+            } else {
+                self.slow_path(Arc::clone(&cmd_arc)).await
+            };
+            let Some(res) = res_option else {
+                continue;
+            };
+            return res;
+        }
+    }
+
+    /// Fast path of propose
+    async fn fast_path(
+        &self,
+        cmd_arc: Arc<C>,
+    ) -> Option<Result<(C::ER, Option<C::ASR>), ClientError<C>>> {
         let fast_round = self.fast_round(Arc::clone(&cmd_arc));
         let slow_round = self.slow_round(cmd_arc);
-        if use_fast_path {
-            pin_mut!(fast_round);
-            pin_mut!(slow_round);
+        pin_mut!(fast_round);
+        pin_mut!(slow_round);
 
-            // Wait for the fast and slow round at the same time
-            match futures::future::select(fast_round, slow_round).await {
-                futures::future::Either::Left((fast_result, slow_round)) => {
-                    let (fast_er, success) = fast_result?;
-                    if success {
-                        #[allow(clippy::unwrap_used)]
-                        // when success is true fast_er must be Some
-                        Ok((fast_er.unwrap(), None))
+        // Wait for the fast and slow round at the same time
+        match futures::future::select(fast_round, slow_round).await {
+            futures::future::Either::Left((fast_result, slow_round)) => {
+                let (fast_er, success) = match fast_result {
+                    Ok(resp) => resp,
+                    Err(ClientError::WrongClusterVersion) => {
+                        return None;
+                    }
+                    Err(e) => return Some(Err(e)),
+                };
+
+                let res = if success {
+                    #[allow(clippy::unwrap_used)]
+                    // when success is true fast_er must be Some
+                    Ok((fast_er.unwrap(), None))
+                } else {
+                    let (asr, er) = match slow_round.await {
+                        Ok(res) => res,
+                        Err(ClientError::WrongClusterVersion) => {
+                            return None;
+                        }
+                        Err(e) => return Some(Err(e)),
+                    };
+                    Ok((er, Some(asr)))
+                };
+                Some(res)
+            }
+            futures::future::Either::Right((slow_result, fast_round)) => match slow_result {
+                Ok((asr, er)) => Some(Ok((er, Some(asr)))),
+                Err(ClientError::WrongClusterVersion) => None,
+                Err(e) => {
+                    if let Ok((Some(er), true)) = fast_round.await {
+                        Some(Ok((er, None)))
                     } else {
-                        let (_asr, er) = slow_round.await?;
-                        Ok((er, None))
+                        Some(Err(e))
                     }
                 }
-                futures::future::Either::Right((slow_result, fast_round)) => match slow_result {
-                    Ok((asr, er)) => Ok((er, Some(asr))),
-                    Err(e) => {
-                        if let Ok((Some(er), true)) = fast_round.await {
-                            return Ok((er, None));
-                        }
-                        Err(e)
-                    }
-                },
-            }
-        } else {
-            #[allow(clippy::integer_arithmetic)] // tokio framework triggers
-            let (_fast_result, slow_result) = tokio::join!(fast_round, slow_round);
+            },
+        }
+    }
 
-            match slow_result {
-                Ok((asr, er)) => Ok((er, Some(asr))),
-                Err(e) => Err(e),
-            }
+    /// Slow path of propose
+    async fn slow_path(
+        &self,
+        cmd_arc: Arc<C>,
+    ) -> Option<Result<(C::ER, Option<C::ASR>), ClientError<C>>> {
+        let fast_round = self.fast_round(Arc::clone(&cmd_arc));
+        let slow_round = self.slow_round(cmd_arc);
+        #[allow(clippy::integer_arithmetic)] // tokio framework triggers
+        let (fast_result, slow_result) = tokio::join!(fast_round, slow_round);
+        if let Err(ClientError::WrongClusterVersion) = fast_result {
+            return None;
+        }
+        match slow_result {
+            Ok((asr, er)) => Some(Ok((er, Some(asr)))),
+            Err(ClientError::WrongClusterVersion) => None,
+            Err(e) => Some(Err(e)),
         }
     }
 
@@ -764,6 +849,9 @@ where
                     warn!("propose_conf_change rpc error: {e}");
                     match unpack_status(&e) {
                         UnpackStatus::ShuttingDown => return Err(ClientError::ShuttingDown),
+                        UnpackStatus::WrongClusterVersion => {
+                            return Err(ClientError::WrongClusterVersion)
+                        }
                         UnpackStatus::Redirect(new_leader, term) => {
                             self.state.write().check_and_update(new_leader, term);
                             continue;
