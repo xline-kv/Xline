@@ -763,6 +763,7 @@ fn add_node_should_add_new_node_to_curp() {
         old_cluster.all_members(),
         cluster_after_fallback.all_members()
     );
+    assert_eq!(cluster_after_fallback.cluster_version(), 0);
 }
 
 #[traced_test]
@@ -782,8 +783,10 @@ fn add_learner_node_and_promote_should_success() {
 
     let changes = vec![ConfChange::promote(1)];
     assert!(curp.check_new_config(&changes).is_ok());
-    curp.apply_conf_change(changes);
+    let infos = curp.apply_conf_change(changes.clone());
     assert!(curp.check_learner(1, false));
+    curp.fallback_conf_change(changes, infos.0, infos.1, infos.2);
+    assert!(curp.check_learner(1, true));
 }
 
 #[traced_test]

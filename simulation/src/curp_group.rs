@@ -7,7 +7,7 @@ use curp::{
     error::ClientError,
     members::{ClusterInfo, ServerId},
     server::Rpc,
-    ConfChangeError, FetchClusterRequest, FetchClusterResponse, LogIndex, Member,
+    ConfChange, ConfChangeError, FetchClusterRequest, FetchClusterResponse, LogIndex, Member,
     ProposeConfChangeRequest, ProposeConfChangeResponse,
 };
 pub use curp::{protocol_client::ProtocolClient, ProposeRequest, ProposeResponse};
@@ -460,11 +460,12 @@ impl<C: Command + 'static> SimClient<C> {
     #[inline]
     pub async fn propose_conf_change(
         &self,
-        conf_change: ProposeConfChangeRequest,
+        propose_id: ProposeId,
+        changes: Vec<ConfChange>,
     ) -> Result<Result<Vec<Member>, ConfChangeError>, ClientError<C>> {
         let inner = self.inner.clone();
         self.handle
-            .spawn(async move { inner.propose_conf_change(conf_change).await })
+            .spawn(async move { inner.propose_conf_change(propose_id, changes).await })
             .await
             .unwrap()
     }

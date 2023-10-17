@@ -475,7 +475,7 @@ async fn overwritten_config_should_fallback() {
     let changes = vec![ConfChange::add(node_id, address)];
     let res = leader_conn
         .propose_conf_change(
-            ProposeConfChangeRequest::new(id, changes),
+            ProposeConfChangeRequest::new(id, changes, cluster.cluster_version),
             Duration::from_secs(3),
         )
         .await;
