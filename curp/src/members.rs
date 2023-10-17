@@ -266,8 +266,13 @@ impl ClusterInfo {
     }
 
     /// cluster version increase
-    pub(super) fn cluster_version_inc(&self) -> u64 {
+    pub(crate) fn cluster_version_inc(&self) -> u64 {
         self.cluster_version.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// cluster version decrease
+    pub(crate) fn cluster_version_dec(&self) -> u64 {
+        self.cluster_version.fetch_sub(1, Ordering::Relaxed)
     }
 
     /// Get peers

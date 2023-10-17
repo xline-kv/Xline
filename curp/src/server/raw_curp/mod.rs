@@ -1044,6 +1044,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 None
             }
         };
+        let _ig = self.ctx.cluster_info.cluster_version_dec();
         if let Some(c) = fallback_change {
             self.ctx
                 .change_tx
