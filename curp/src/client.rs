@@ -22,11 +22,11 @@ use crate::{
     error::{ClientBuildError, ClientError, ERROR_LABEL},
     members::ServerId,
     rpc::{
-        self, connect::ConnectApi, protocol_client::ProtocolClient, FetchClusterRequest,
-        FetchClusterResponse, FetchReadStateRequest, ProposeConfChangeRequest, ProposeRequest,
-        ReadState as PbReadState, ShutdownRequest, SyncResult, WaitSyncedRequest,
+        self, connect::ConnectApi, protocol_client::ProtocolClient, ConfChangeError,
+        FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, ProposeConfChangeRequest,
+        ProposeRequest, ShutdownRequest, SyncResult, WaitSyncedRequest,
     },
-    ConfChange, ConfChangeError, LogIndex, Member, ProposeError,
+    ConfChange, LogIndex, Member, ProposeError,
 };
 
 /// Protocol client
@@ -220,11 +220,11 @@ impl State {
 /// Read state of a command
 #[derive(Debug)]
 #[non_exhaustive]
-pub enum ReadState {
+pub struct ReadState {
     /// need to wait other proposals
-    Ids(Vec<ProposeId>),
+    pub ids: Vec<ProposeId>,
     /// need to wait the commit index
-    CommitIndex(LogIndex),
+    pub index: LogIndex,
 }
 
 /// Unpack `tonic::Status`
@@ -926,14 +926,10 @@ where
                     continue;
                 }
             };
-            let pb_state = resp
-                .read_state
-                .unwrap_or_else(|| unreachable!("read state should be some"));
-            let state = match pb_state {
-                PbReadState::CommitIndex(i) => ReadState::CommitIndex(i),
-                PbReadState::Ids(i) => ReadState::Ids(i.ids.into_iter().map(Into::into).collect()),
-            };
-            return Ok(state);
+            return Ok(ReadState {
+                index: resp.commit_index,
+                ids: resp.ids.into_iter().map(Into::into).collect(),
+            });
         }
         Err(ClientError::Timeout)
     }

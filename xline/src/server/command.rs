@@ -113,8 +113,8 @@ where
     ) -> Result<<Command as CurpCommand>::PR, <Command as CurpCommand>::Error> {
         let wrapper = cmd.request();
         if let Err(e) = self.auth_storage.check_permission(wrapper) {
-            self.id_barrier.trigger(cmd.id());
-            self.index_barrier.trigger(index);
+            self.id_barrier.trigger(cmd.id(), -1);
+            self.index_barrier.trigger(index, -1);
             return Err(e);
         }
         let revision = match wrapper.request.backend() {
@@ -150,8 +150,8 @@ where
         match res {
             Ok(res) => Ok(res),
             Err(e) => {
-                self.id_barrier.trigger(cmd.id());
-                self.index_barrier.trigger(index);
+                self.id_barrier.trigger(cmd.id(), -1);
+                self.index_barrier.trigger(index, -1);
                 Err(e)
             }
         }
@@ -177,8 +177,8 @@ where
             self.kv_storage.insert_index(key_revisions);
         }
         self.lease_storage.mark_lease_synced(&wrapper.request);
-        self.id_barrier.trigger(cmd.id());
-        self.index_barrier.trigger(index);
+        self.id_barrier.trigger(cmd.id(), revision);
+        self.index_barrier.trigger(index, revision);
 
         Ok(res)
     }

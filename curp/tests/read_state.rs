@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use curp::{client::ReadState, cmd::Command};
+use curp::cmd::Command;
 use curp_test_utils::{
     init_logger, sleep_millis,
     test_cmd::{TestCommand, TestCommandResult},
@@ -30,15 +30,9 @@ async fn read_state() {
         .fetch_read_state(&TestCommand::new_get(vec![0]))
         .await
         .unwrap();
-    if let ReadState::Ids(v) = res {
-        assert_eq!(v, vec![put_id])
-    } else {
-        unreachable!(
-            "expected result should be ReadState::Ids({:?}), but received {:?}",
-            vec![put_id],
-            res
-        );
-    }
+
+    assert_eq!(res.ids, vec![put_id]);
+    assert_eq!(res.index, 0);
 
     sleep_millis(500).await;
 
@@ -46,12 +40,5 @@ async fn read_state() {
         .fetch_read_state(&TestCommand::new_get(vec![0]))
         .await
         .unwrap();
-    if let ReadState::CommitIndex(index) = res {
-        assert_eq!(index, 1);
-    } else {
-        unreachable!(
-            "expected result should be ReadState::CommitIndex({:?}), but received {:?}",
-            1, res
-        );
-    }
+    assert_eq!(res.index, 1);
 }

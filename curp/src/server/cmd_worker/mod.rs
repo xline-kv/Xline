@@ -147,8 +147,12 @@ async fn worker_as<
             let asr = ce.after_sync(cmd.as_ref(), entry.index, prepare).await;
             let asr_ok = asr.is_ok();
             cb.write().insert_asr(entry.id(), asr);
-            sp.lock().remove(&entry.id());
-            let _ig = ucp.lock().remove(&entry.id());
+            {
+                let mut sp_l = sp.lock();
+                let mut ucp_l = ucp.lock();
+                sp_l.remove(&entry.id());
+                let _ig = ucp_l.remove(&entry.id());
+            }
             debug!("{id} cmd({}) after sync is called", entry.id());
             asr_ok
         }

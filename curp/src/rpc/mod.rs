@@ -17,11 +17,9 @@ pub use self::proto::{
 };
 pub(crate) use self::proto::{
     commandpb::{
-        fetch_read_state_response::{IdSet, ReadState},
-        propose_response::ExeResult,
-        protocol_server::Protocol,
-        FetchReadStateRequest, FetchReadStateResponse, ProposeError, ProposeId as PbProposeId,
-        ShutdownRequest, ShutdownResponse, WaitSyncedRequest, WaitSyncedResponse,
+        propose_response::ExeResult, protocol_server::Protocol, FetchReadStateRequest,
+        FetchReadStateResponse, ProposeError, ProposeId as PbProposeId, ShutdownRequest,
+        ShutdownResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
     inner_messagepb::{
         inner_protocol_server::InnerProtocol, AppendEntriesRequest, AppendEntriesResponse,
@@ -427,15 +425,6 @@ impl InstallSnapshotResponse {
     }
 }
 
-impl IdSet {
-    /// Create a new `IdSet`
-    pub fn new(ids: Vec<ProposeId>) -> Self {
-        Self {
-            ids: ids.into_iter().map(Into::into).collect(),
-        }
-    }
-}
-
 impl FetchReadStateRequest {
     /// Create a new fetch read state request
     pub(crate) fn new<C: Command>(cmd: &C, cluster_version: u64) -> bincode::Result<Self> {
@@ -448,15 +437,6 @@ impl FetchReadStateRequest {
     /// Get command
     pub(crate) fn cmd<C: Command>(&self) -> bincode::Result<C> {
         bincode::deserialize(&self.command)
-    }
-}
-
-impl FetchReadStateResponse {
-    /// Create a new fetch read state response
-    pub(crate) fn new(state: ReadState) -> Self {
-        Self {
-            read_state: Some(state),
-        }
     }
 }
 

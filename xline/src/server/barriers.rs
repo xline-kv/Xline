@@ -1,6 +1,9 @@
 use std::{
-    cmp::Reverse,
     collections::{BinaryHeap, HashMap},
+    sync::{
+        atomic::{AtomicI64, Ordering},
+        Arc,
+    },
 };
 
 use clippy_utilities::OverflowArithmetic;
@@ -23,39 +26,55 @@ impl IndexBarrier {
                 next: 1,
                 indices: BinaryHeap::new(),
                 barriers: HashMap::new(),
+                latest_rev: 1,
             }),
         }
     }
 
     /// Wait for the index until it is triggered.
-    pub(crate) async fn wait(&self, index: u64) {
-        let listener = {
+    pub(crate) async fn wait(&self, index: u64) -> i64 {
+        if index == 0 {
+            return 0;
+        }
+        let (listener, revision) = {
             let mut inner_l = self.inner.lock();
             if inner_l.next > index {
-                return;
+                return inner_l.latest_rev;
             }
-            inner_l
+            let Trigger {
+                ref event,
+                ref revision,
+            } = *inner_l
                 .barriers
                 .entry(index)
-                .or_insert_with(Event::new)
-                .listen()
+                .or_insert_with(Trigger::default);
+            (event.listen(), Arc::clone(revision))
         };
         listener.await;
+        revision.load(Ordering::SeqCst)
     }
 
     /// Trigger all barriers whose index is less than or equal to the given index.
-    pub(crate) fn trigger(&self, index: u64) {
+    pub(crate) fn trigger(&self, index: u64, rev: i64) {
         let mut inner_l = self.inner.lock();
-        inner_l.indices.push(Reverse(index));
+        inner_l.indices.push(IndexRevision {
+            index,
+            revision: rev,
+        });
         while inner_l
             .indices
             .peek()
-            .map_or(false, |i| i.0.eq(&inner_l.next))
+            .map_or(false, |i| i.index.eq(&inner_l.next))
         {
             let next = inner_l.next;
-            let _ignore = inner_l.indices.pop();
-            if let Some(event) = inner_l.barriers.remove(&next) {
-                event.notify(usize::MAX);
+            let IndexRevision { revision, .. } = inner_l
+                .indices
+                .pop()
+                .unwrap_or_else(|| unreachable!("IndexRevision should be Some"));
+            inner_l.latest_rev = revision;
+            if let Some(trigger) = inner_l.barriers.remove(&next) {
+                trigger.revision.store(revision, Ordering::SeqCst);
+                trigger.event.notify(usize::MAX);
             }
             inner_l.next = next.overflow_add(1);
         }
@@ -68,16 +87,18 @@ struct IndexBarrierInner {
     /// The next index that haven't been triggered
     next: u64,
     /// Store all indices that larger than `next`
-    indices: BinaryHeap<Reverse<u64>>,
+    indices: BinaryHeap<IndexRevision>,
     /// Events
-    barriers: HashMap<u64, Event>,
+    barriers: HashMap<u64, Trigger>,
+    /// latest revision of the last triggered log index
+    latest_rev: i64,
 }
 
 /// Barrier for id
 #[derive(Debug)]
 pub(crate) struct IdBarrier {
     /// Barriers of id
-    barriers: Mutex<HashMap<ProposeId, Event>>,
+    barriers: Mutex<HashMap<ProposeId, Trigger>>,
 }
 
 impl IdBarrier {
@@ -89,22 +110,57 @@ impl IdBarrier {
     }
 
     /// Wait for the id until it is triggered.
-    pub(crate) async fn wait(&self, id: ProposeId) {
-        let listener = self
-            .barriers
-            .lock()
-            .entry(id)
-            .or_insert_with(Event::new)
-            .listen();
+    pub(crate) async fn wait(&self, id: ProposeId) -> i64 {
+        let (listener, revision) = {
+            let mut barriers_l = self.barriers.lock();
+            let Trigger {
+                ref event,
+                ref revision,
+            } = *barriers_l.entry(id).or_insert_with(Trigger::default);
+            (event.listen(), Arc::clone(revision))
+        };
         listener.await;
+        revision.load(Ordering::SeqCst)
     }
 
     /// Trigger the barrier of the given id.
-    pub(crate) fn trigger(&self, id: ProposeId) {
-        if let Some(event) = self.barriers.lock().remove(&id) {
+    pub(crate) fn trigger(&self, id: ProposeId, rev: i64) {
+        if let Some(trigger) = self.barriers.lock().remove(&id) {
+            let Trigger { event, revision } = trigger;
+            revision.store(rev, Ordering::SeqCst);
             event.notify(usize::MAX);
         }
     }
+}
+
+/// Index and revision pair type
+#[derive(Debug, PartialEq, Eq)]
+struct IndexRevision {
+    /// The log index
+    index: u64,
+    /// The revision correspond to the index
+    revision: i64,
+}
+
+impl PartialOrd for IndexRevision {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        other.index.partial_cmp(&self.index)
+    }
+}
+
+impl Ord for IndexRevision {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        other.index.cmp(&self.index)
+    }
+}
+
+/// The event trigger with revision
+#[derive(Debug, Default)]
+struct Trigger {
+    /// The event
+    event: Event,
+    /// Revision passed between trigger task and wait task
+    revision: Arc<AtomicI64>,
 }
 
 #[cfg(test)]
@@ -131,7 +187,7 @@ mod test {
             .collect::<Vec<_>>();
         sleep(Duration::from_millis(10)).await;
         for i in 0..5 {
-            id_barrier.trigger(ProposeId(i, i));
+            id_barrier.trigger(ProposeId(i, i), 0);
         }
         timeout(Duration::from_millis(100), join_all(barriers))
             .await
@@ -148,27 +204,30 @@ mod test {
                 let index_barrier = Arc::clone(&index_barrier);
                 let done_tx_c = done_tx.clone();
                 tokio::spawn(async move {
-                    index_barrier.wait(i).await;
-                    done_tx_c.send(i).unwrap();
+                    let rev = index_barrier.wait(i).await;
+                    done_tx_c.send(rev).unwrap();
                 })
             })
             .collect::<Vec<_>>();
 
-        index_barrier.trigger(2);
-        index_barrier.trigger(3);
+        index_barrier.trigger(2, 2);
+        index_barrier.trigger(3, 3);
         sleep(Duration::from_millis(100)).await;
         assert!(done_rx.try_recv().is_err());
-        index_barrier.trigger(1);
+        index_barrier.trigger(1, 1);
         sleep(Duration::from_millis(100)).await;
         assert_eq!(done_rx.try_recv().unwrap(), 1);
         assert_eq!(done_rx.try_recv().unwrap(), 2);
         assert_eq!(done_rx.try_recv().unwrap(), 3);
-        index_barrier.trigger(4);
-        index_barrier.trigger(5);
+        index_barrier.trigger(4, 4);
+        index_barrier.trigger(5, 5);
 
-        timeout(Duration::from_millis(100), index_barrier.wait(3))
-            .await
-            .unwrap();
+        assert_eq!(
+            timeout(Duration::from_millis(100), index_barrier.wait(3))
+                .await
+                .unwrap(),
+            5
+        );
 
         timeout(Duration::from_millis(100), join_all(barriers))
             .await

@@ -50,7 +50,7 @@ use crate::{
     role_change::RoleChange,
     rpc::{
         connect::InnerConnectApiWrapper, ConfChange, ConfChangeEntry, ConfChangeError,
-        ConfChangeType, IdSet, Member, ProposeError, ReadState,
+        ConfChangeType, Member, ProposeError,
     },
     server::{
         cmd_board::CmdBoardRef,
@@ -58,7 +58,7 @@ use crate::{
         spec_pool::SpecPoolRef,
     },
     snapshot::{Snapshot, SnapshotMeta},
-    LogIndex,
+    FetchReadStateResponse, LogIndex,
 };
 
 /// Curp state
@@ -720,7 +720,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     /// Handle `fetch_read_state`
-    pub(super) fn handle_fetch_read_state(&self, cmd: &C) -> Result<ReadState, CurpError> {
+    pub(super) fn handle_fetch_read_state(
+        &self,
+        cmd: &C,
+    ) -> Result<FetchReadStateResponse, CurpError> {
         if self.st.read().role != Role::Leader {
             return Err(CurpError::Internal("not leader".to_owned()));
         }
@@ -739,11 +742,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 .unique()
                 .collect_vec()
         };
-        if ids.is_empty() {
-            Ok(ReadState::CommitIndex(self.log.read().commit_index))
-        } else {
-            Ok(ReadState::Ids(IdSet::new(ids)))
-        }
+        Ok(FetchReadStateResponse {
+            ids: ids.into_iter().map(Into::into).collect(),
+            commit_index: self.log.read().commit_index,
+        })
     }
 }
 
