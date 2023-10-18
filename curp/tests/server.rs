@@ -510,7 +510,9 @@ async fn check_new_node(is_learner: bool) {
     // 3. fetch and check cluster from new node
     let mut new_connect = group.get_connect(&node_id).await;
     let res = new_connect
-        .fetch_cluster(tonic::Request::new(FetchClusterRequest::default()))
+        .fetch_cluster(tonic::Request::new(FetchClusterRequest {
+            linearizable: false,
+        }))
         .await
         .unwrap()
         .into_inner();

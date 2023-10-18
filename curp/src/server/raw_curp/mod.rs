@@ -323,7 +323,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         let (addrs, name, is_learner) = self.apply_conf_change(changes);
         self.ctx
             .last_conf_change_idx
-            .store(entry.index, Ordering::Relaxed);
+            .store(entry.index, Ordering::Release);
         let _ig = log_w.fallback_contexts.insert(
             entry.index,
             FallbackContext::new(Arc::clone(&entry), addrs, name, is_learner),
@@ -786,7 +786,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             return false;
         }
         let match_index = self.lst.get_match_index(follower_id);
-        let last_conf_change_idx = self.ctx.last_conf_change_idx.load(Ordering::Relaxed);
+        let last_conf_change_idx = self.ctx.last_conf_change_idx.load(Ordering::Acquire);
         if match_index >= last_conf_change_idx {
             return true;
         }
