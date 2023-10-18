@@ -89,8 +89,8 @@ impl IdBarrier {
     }
 
     /// Trigger the barrier of the given id.
-    pub(crate) fn trigger(&self, id: &ProposeId) {
-        if let Some(event) = self.barriers.lock().remove(id) {
+    pub(crate) fn trigger(&self, id: ProposeId) {
+        if let Some(event) = self.barriers.lock().remove(&id) {
             event.notify(usize::MAX);
         }
     }
@@ -120,7 +120,7 @@ mod test {
             .collect::<Vec<_>>();
         sleep(Duration::from_millis(10)).await;
         for i in 0..5 {
-            id_barrier.trigger(&ProposeId(i, i));
+            id_barrier.trigger(ProposeId(i, i));
         }
         timeout(Duration::from_millis(100), join_all(barriers))
             .await
