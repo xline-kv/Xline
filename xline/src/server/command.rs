@@ -309,7 +309,7 @@ where
     ) -> Result<<Command as CurpCommand>::PR, <Command as CurpCommand>::Error> {
         let wrapper = cmd.request();
         if let Err(e) = self.auth_storage.check_permission(wrapper) {
-            self.id_barrier.trigger(&cmd.id());
+            self.id_barrier.trigger(cmd.id());
             self.index_barrier.trigger(index);
             return Err(e);
         }
@@ -346,7 +346,7 @@ where
         match res {
             Ok(res) => Ok(res),
             Err(e) => {
-                self.id_barrier.trigger(&cmd.id());
+                self.id_barrier.trigger(cmd.id());
                 self.index_barrier.trigger(index);
                 Err(e)
             }
@@ -372,7 +372,7 @@ where
             self.kv_storage.insert_index(key_revisions);
         }
         self.lease_storage.mark_lease_synced(&wrapper.request);
-        self.id_barrier.trigger(&cmd.id());
+        self.id_barrier.trigger(cmd.id());
         self.index_barrier.trigger(index);
         Ok(res)
     }
