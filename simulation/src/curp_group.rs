@@ -3,7 +3,7 @@ use std::{collections::HashMap, error::Error, path::PathBuf, sync::Arc, time::Du
 use async_trait::async_trait;
 use curp::{
     client::{Client, ReadState},
-    cmd::Command,
+    cmd::{Command, ProposeId},
     error::ClientError,
     members::{ClusterInfo, ServerId},
     server::Rpc,

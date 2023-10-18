@@ -984,9 +984,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     /// Check cluster version and return new cluster
     fn check_cluster_version(&self, client_cluster_version: u64) -> Result<(), CurpError> {
         let server_cluster_version = self.curp.cluster().cluster_version();
-        if client_cluster_version < server_cluster_version {
+        if client_cluster_version != server_cluster_version {
             debug!(
-                "client cluster version({}) is lower than server cluster version({})",
+                "client cluster version({}) and server cluster version({}) not match",
                 client_cluster_version, server_cluster_version
             );
             return Err(CurpError::WrongClusterVersion);
