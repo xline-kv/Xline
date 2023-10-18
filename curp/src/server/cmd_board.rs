@@ -1,4 +1,6 @@
-use std::{collections::HashMap, sync::Arc};
+#![allow(unused)] // TODO remove
+
+use std::{collections::HashMap, collections::HashSet, sync::Arc};
 
 use event_listener::{Event, EventListener};
 use indexmap::{IndexMap, IndexSet};
@@ -6,6 +8,7 @@ use parking_lot::RwLock;
 use utils::parking_lot_lock::RwLockMap;
 
 use crate::cmd::{Command, ProposeId};
+use crate::tracker::Tracker;
 
 /// Ref to the cmd board
 pub(super) type CmdBoardRef<C> = Arc<RwLock<CommandBoard<C>>>;
@@ -21,6 +24,8 @@ pub(super) struct CommandBoard<C: Command> {
     shutdown_notifier: Event,
     /// Store all notifiers for conf change results
     conf_notifier: HashMap<ProposeId, Event>,
+    /// The result trackers track all cmd, this is used for dedup
+    trackers: HashMap<u64, Tracker>,
     /// Store all conf change propose ids
     pub(super) conf_buffer: IndexSet<ProposeId>,
     /// The cmd has been received before, this is used for dedup
@@ -38,12 +43,27 @@ impl<C: Command> CommandBoard<C> {
             er_notifiers: HashMap::new(),
             asr_notifiers: HashMap::new(),
             shutdown_notifier: Event::new(),
+            trackers: HashMap::new(),
             sync: IndexSet::new(),
             er_buffer: IndexMap::new(),
             asr_buffer: IndexMap::new(),
             conf_notifier: HashMap::new(),
             conf_buffer: IndexSet::new(),
         }
+    }
+
+    /// filter duplication, return true if duplicated
+    pub(super) fn filter_dup(&mut self, client_id: u64, seq_num: u64) -> bool {
+        let tracker = self
+            .trackers
+            .entry(client_id)
+            .or_insert_with(Tracker::default);
+        tracker.record(seq_num)
+    }
+
+    /// Remove client result tracker from trackers if it is expired
+    pub(super) fn client_expired(&mut self, client_id: u64) {
+        let _ig = self.trackers.remove(&client_id);
     }
 
     /// Release notifiers
@@ -56,10 +76,11 @@ impl<C: Command> CommandBoard<C> {
             .for_each(|(_, event)| event.notify(usize::MAX));
     }
 
-    /// Clear
+    /// Clear, called when leader retires
     pub(super) fn clear(&mut self) {
         self.er_buffer.clear();
         self.asr_buffer.clear();
+        self.trackers.clear();
         self.release_notifiers();
     }
 
