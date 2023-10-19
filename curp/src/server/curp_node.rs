@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fmt::Debug, io, sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
-use curp_external_api::cmd::PbSerializeError;
+use curp_external_api::cmd::{CommandExecutor, PbSerializeError};
 use engine::{SnapshotAllocator, SnapshotApi};
 use event_listener::Event;
 use futures::{pin_mut, stream::FuturesUnordered, Stream, StreamExt};
@@ -29,7 +29,7 @@ use super::{
     storage::{StorageApi, StorageError},
 };
 use crate::{
-    cmd::{Command, CommandExecutor},
+    cmd::Command,
     error::ERROR_LABEL,
     log_entry::LogEntry,
     members::{ClusterInfo, ServerId},
@@ -234,9 +234,9 @@ impl From<Status> for SendSnapshotError {
 }
 
 /// `CurpNode` represents a single node of curp cluster
-pub(super) struct CurpNode<C: Command, RC: RoleChange> {
+pub(super) struct CurpNode<C: Command, CE, RC: RoleChange> {
     /// `RawCurp` state machine
-    curp: Arc<RawCurp<C, RC>>,
+    curp: Arc<RawCurp<C, CE, RC>>,
     /// The speculative cmd pool, shared with executor
     spec_pool: SpecPoolRef<C>,
     /// Cmd watch board for tracking the cmd sync results
@@ -250,7 +250,7 @@ pub(super) struct CurpNode<C: Command, RC: RoleChange> {
 }
 
 // handlers
-impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
+impl<C: 'static + Command, CE, RC: RoleChange + 'static> CurpNode<C, CE, RC> {
     /// Handle `Propose` requests
     pub(super) async fn propose(&self, req: ProposeRequest) -> Result<ProposeResponse, CurpError> {
         if self.curp.is_shutdown() {
@@ -473,10 +473,15 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
 }
 
 /// Spawned tasks
-impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
+impl<C, CE, RC> CurpNode<C, CE, RC>
+where
+    C: 'static + Command,
+    CE: CommandExecutor<C> + 'static,
+    RC: RoleChange + 'static,
+{
     /// Tick periodically
     #[allow(clippy::integer_arithmetic)]
-    async fn election_task(curp: Arc<RawCurp<C, RC>>) {
+    async fn election_task(curp: Arc<RawCurp<C, CE, RC>>) {
         let mut shutdown_listener = curp.shutdown_listener();
         let heartbeat_interval = curp.cfg().heartbeat_interval;
         // wait for some random time before tick starts to minimize vote split possibility
@@ -503,7 +508,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
 
     /// Responsible for bringing up `sync_follower_task` when self becomes leader
     #[allow(clippy::integer_arithmetic)]
-    async fn sync_followers_daemon(curp: Arc<RawCurp<C, RC>>) {
+    async fn sync_followers_daemon(curp: Arc<RawCurp<C, CE, RC>>) {
         let mut shutdown_listener = curp.shutdown_listener();
         let leader_event = curp.leader_event();
         loop {
@@ -565,7 +570,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
 
     /// Handler of conf
     async fn conf_change_handler(
-        curp: Arc<RawCurp<C, RC>>,
+        curp: Arc<RawCurp<C, CE, RC>>,
         mut remove_events: HashMap<ServerId, Arc<Event>>,
         sender: mpsc::Sender<JoinHandle<bool>>,
     ) {
@@ -629,7 +634,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     /// Leader use this task to keep a follower up-to-date, will return if self is no longer leader,
     /// and return true if the leader is retired
     async fn sync_follower_task(
-        curp: Arc<RawCurp<C, RC>>,
+        curp: Arc<RawCurp<C, CE, RC>>,
         connect: InnerConnectApiWrapper,
         sync_event: Arc<Event>,
         remove_event: Arc<Event>,
@@ -745,10 +750,15 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
 }
 
 // utils
-impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
+impl<C, CE, RC> CurpNode<C, CE, RC>
+where
+    C: 'static + Command,
+    CE: CommandExecutor<C> + 'static,
+    RC: RoleChange + 'static,
+{
     /// Create a new server instance
     #[inline]
-    pub(super) async fn new<CE: CommandExecutor<C> + 'static>(
+    pub(super) async fn new(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         cmd_executor: Arc<CE>,
@@ -795,6 +805,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                 role_change,
                 shutdown_trigger,
                 connects,
+                Arc::clone(&cmd_executor),
             ))
         } else {
             info!(
@@ -819,6 +830,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                 role_change,
                 shutdown_trigger,
                 connects,
+                Arc::clone(&cmd_executor),
             ))
         };
 
@@ -850,7 +862,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
 
     /// Run background tasks for Curp server
     fn run_bg_tasks(
-        curp: Arc<RawCurp<C, RC>>,
+        curp: Arc<RawCurp<C, CE, RC>>,
         storage: Arc<impl StorageApi<Command = C> + 'static>,
         log_rx: mpsc::UnboundedReceiver<Arc<LogEntry<C>>>,
     ) {
@@ -862,7 +874,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     }
 
     /// Candidate broadcasts votes
-    async fn bcast_vote(curp: &RawCurp<C, RC>, vote: Vote) {
+    async fn bcast_vote(curp: &RawCurp<C, CE, RC>, vote: Vote) {
         debug!("{} broadcasts votes to all servers", curp.id());
         let rpc_timeout = curp.cfg().rpc_timeout;
         let voters_connects = curp.voters_connects();
@@ -918,7 +930,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     #[allow(clippy::integer_arithmetic)] // won't overflow
     async fn send_ae(
         connect: &(impl InnerConnectApi + ?Sized),
-        curp: &RawCurp<C, RC>,
+        curp: &RawCurp<C, CE, RC>,
         ae: AppendEntries<C>,
     ) -> Result<(), SendAEError> {
         let last_sent_index = (!ae.entries.is_empty())
@@ -964,7 +976,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     /// Send snapshot
     async fn send_snapshot(
         connect: &(impl InnerConnectApi + ?Sized),
-        curp: &RawCurp<C, RC>,
+        curp: &RawCurp<C, CE, RC>,
         snapshot: Snapshot,
     ) -> Result<(), SendSnapshotError> {
         let meta = snapshot.meta;
@@ -995,7 +1007,12 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     }
 }
 
-impl<C: Command, RC: RoleChange> Debug for CurpNode<C, RC> {
+impl<C, CE, RC> Debug for CurpNode<C, CE, RC>
+where
+    C: Command,
+    CE: Debug,
+    RC: RoleChange,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CurpNode")
             .field("raw_curp", &self.curp)

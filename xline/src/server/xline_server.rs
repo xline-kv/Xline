@@ -50,7 +50,7 @@ use crate::{
 };
 
 /// Rpc Server of curp protocol
-type CurpServer<S> = Rpc<Command, State<S>>;
+type CurpServer<S> = Rpc<Command, CommandExecutor<S>, State<S>>;
 
 /// Rpc Client of curp protocol
 type CurpClient = Client<Command>;

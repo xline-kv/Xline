@@ -20,7 +20,7 @@ use std::{
 };
 
 use clippy_utilities::{NumericCast, OverflowArithmetic};
-use curp_external_api::cmd::ConflictCheck;
+use curp_external_api::cmd::{CommandExecutor, ConflictCheck};
 use dashmap::DashMap;
 use event_listener::Event;
 use itertools::Itertools;
@@ -85,7 +85,7 @@ const MAX_PROMOTE_GAP: u64 = 500;
 
 /// The curp state machine
 #[derive(Debug)]
-pub(super) struct RawCurp<C: Command, RC: RoleChange> {
+pub(super) struct RawCurp<C: Command, CE, RC: RoleChange> {
     /// Curp state
     st: RwLock<State>,
     /// Additional leader state
@@ -95,7 +95,7 @@ pub(super) struct RawCurp<C: Command, RC: RoleChange> {
     /// Curp logs
     log: RwLock<Log<C>>,
     /// Relevant context
-    ctx: Context<C, RC>,
+    ctx: Context<C, CE, RC>,
     /// Shutdown trigger
     shutdown_trigger: shutdown::Trigger,
 }
@@ -149,7 +149,7 @@ enum Role {
 }
 
 /// Relevant context for Curp
-struct Context<C: Command, RC: RoleChange> {
+struct Context<C: Command, CE, RC: RoleChange> {
     /// Cluster information
     cluster_info: Arc<ClusterInfo>,
     /// Config
@@ -180,9 +180,11 @@ struct Context<C: Command, RC: RoleChange> {
     connects: DashMap<ServerId, InnerConnectApiWrapper>,
     /// last conf change idx
     last_conf_change_idx: AtomicU64,
+    /// Command executor
+    cmd_executor: Arc<CE>,
 }
 
-impl<C: Command, RC: RoleChange> Debug for Context<C, RC> {
+impl<C: Command, CE, RC: RoleChange> Debug for Context<C, CE, RC> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Context")
             .field("cluster_info", &self.cluster_info)
@@ -201,7 +203,12 @@ impl<C: Command, RC: RoleChange> Debug for Context<C, RC> {
 }
 
 // Tick
-impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
+impl<C, CE, RC> RawCurp<C, CE, RC>
+where
+    C: 'static + Command,
+    CE: CommandExecutor<C> + 'static,
+    RC: RoleChange + 'static,
+{
     /// Tick
     pub(super) fn tick_election(&self) -> Option<Vote> {
         let timeout = {
@@ -226,7 +233,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 }
 
 // Curp handlers
-impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
+impl<C, CE, RC> RawCurp<C, CE, RC>
+where
+    C: 'static + Command,
+    RC: RoleChange + 'static,
+{
     /// Handle `propose` request
     /// Return `((leader_id, term), Ok(spec_executed))` if the proposal succeeds, `Ok(true)` if leader speculatively executed the command
     /// Return `((leader_id, term), Err(ProposeError))` if the cmd cannot be speculatively executed or is duplicated
@@ -651,7 +662,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 }
 
 /// Other small public interface
-impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
+impl<C, CE, RC> RawCurp<C, CE, RC>
+where
+    C: 'static + Command,
+    RC: RoleChange + 'static,
+{
     /// Create a new `RawCurp`
     #[allow(clippy::too_many_arguments)] // only called once
     pub(super) fn new(
@@ -667,6 +682,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         role_change: RC,
         shutdown_trigger: shutdown::Trigger,
         connects: DashMap<ServerId, InnerConnectApiWrapper>,
+        cmd_executor: Arc<CE>,
     ) -> Self {
         let (change_tx, change_rx) = flume::bounded(CHANGE_CHANNEL_SIZE);
         let raw_curp = Self {
@@ -697,6 +713,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 change_rx,
                 connects,
                 last_conf_change_idx: AtomicU64::new(0),
+                cmd_executor,
             },
             shutdown_trigger,
         };
@@ -727,6 +744,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         role_change: RC,
         shutdown_trigger: shutdown::Trigger,
         connects: DashMap<ServerId, InnerConnectApiWrapper>,
+        cmd_executor: Arc<CE>,
     ) -> Self {
         let raw_curp = Self::new(
             cluster_info,
@@ -741,6 +759,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             role_change,
             shutdown_trigger,
             connects,
+            cmd_executor,
         );
 
         if let Some((term, server_id)) = voted_for {
@@ -1097,7 +1116,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
 // Utils
 // Don't grab lock in the following functions(except cb or sp's lock)
-impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
+impl<C, CE, RC> RawCurp<C, CE, RC>
+where
+    C: 'static + Command,
+    RC: RoleChange + 'static,
+{
     /// Server becomes a candidate
     fn become_candidate(
         &self,

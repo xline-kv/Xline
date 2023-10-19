@@ -77,7 +77,7 @@ impl<C: Command> FallbackContext<C> {
 
 /// That's a struct to store log entries and calculate batch of log
 #[derive(Debug)]
-struct LogEntryVecDeque<C: Command> {
+struct LogEntryVecDeque<C> {
     /// A VecDeque to store log entries, it will be serialized and persisted
     entries: VecDeque<Arc<LogEntry<C>>>,
     /// The sum of serialized size of previous log entries
