@@ -62,7 +62,7 @@ async fn cmd_worker<
 >(
     dispatch_rx: impl TaskRxApi<C>,
     done_tx: flume::Sender<(Task<C>, bool)>,
-    curp: Arc<RawCurp<C, RC>>,
+    curp: Arc<RawCurp<C, CE, RC>>,
     ce: Arc<CE>,
     // This task will safely exit when the dispatch_rx is dropped, but we still
     // need to keep the shutdown_listener here to notify the shutdown trigger
@@ -99,7 +99,7 @@ async fn worker_exe<
     entry: Arc<LogEntry<C>>,
     pre_err: Option<C::Error>,
     ce: &CE,
-    curp: &RawCurp<C, RC>,
+    curp: &RawCurp<C, CE, RC>,
 ) -> bool {
     let (cb, sp, ucp) = (curp.cmd_board(), curp.spec_pool(), curp.uncommitted_pool());
     let id = curp.id();
@@ -135,7 +135,7 @@ async fn worker_as<
     entry: Arc<LogEntry<C>>,
     prepare: Option<C::PR>,
     ce: &CE,
-    curp: &RawCurp<C, RC>,
+    curp: &RawCurp<C, CE, RC>,
 ) -> bool {
     let (cb, sp, ucp) = (curp.cmd_board(), curp.spec_pool(), curp.uncommitted_pool());
     let id = curp.id();
@@ -192,7 +192,7 @@ async fn worker_reset<
     snapshot: Option<Snapshot>,
     finish_tx: oneshot::Sender<()>,
     ce: &CE,
-    curp: &RawCurp<C, RC>,
+    curp: &RawCurp<C, CE, RC>,
 ) -> bool {
     let id = curp.id();
     if let Some(snapshot) = snapshot {
@@ -232,7 +232,7 @@ async fn worker_snapshot<
     meta: SnapshotMeta,
     tx: oneshot::Sender<Snapshot>,
     ce: &CE,
-    curp: &RawCurp<C, RC>,
+    curp: &RawCurp<C, CE, RC>,
 ) -> bool {
     match ce.snapshot().await {
         Ok(snapshot) => {
@@ -336,7 +336,7 @@ pub(super) fn start_cmd_workers<
     RC: RoleChange + 'static,
 >(
     cmd_executor: Arc<CE>,
-    curp: Arc<RawCurp<C, RC>>,
+    curp: Arc<RawCurp<C, CE, RC>>,
     task_rx: flume::Receiver<Task<C>>,
     done_tx: flume::Sender<(Task<C>, bool)>,
     shutdown_listener: shutdown::Listener,

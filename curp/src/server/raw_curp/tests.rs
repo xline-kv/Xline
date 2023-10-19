@@ -2,30 +2,29 @@ use std::time::Instant;
 
 use curp_test_utils::{
     mock_role_change,
-    test_cmd::{next_id, TestCommand},
+    test_cmd::{next_id, TestCE, TestCommand},
+    TestRoleChange,
 };
 use test_macros::abort_on_panic;
 use tokio::{sync::oneshot, time::sleep};
 use tracing_test::traced_test;
 use utils::config::{
     default_candidate_timeout_ticks, default_follower_timeout_ticks, default_heartbeat_interval,
-    CurpConfigBuilder,
+    CurpConfigBuilder, StorageConfig,
 };
 
 use super::*;
 use crate::{
     rpc::connect::MockInnerConnectApi,
     server::{
-        cmd_board::CommandBoard,
-        cmd_worker::{CEEventTxApi, MockCEEventTxApi},
-        raw_curp::UncommittedPool,
+        cmd_board::CommandBoard, cmd_worker::MockCEEventTxApi, raw_curp::UncommittedPool,
         spec_pool::SpeculativePool,
     },
     LogIndex, ProposeConfChangeRequest,
 };
 
 // Hooks for tests
-impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
+impl RawCurp<TestCommand, TestCE, TestRoleChange> {
     fn role(&self) -> Role {
         self.st.read().role
     }
@@ -41,7 +40,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         self.log.read().commit_index
     }
 
-    pub(crate) fn new_test<Tx: CEEventTxApi<C>>(n: u64, exe_tx: Tx, role_change: RC) -> Self {
+    pub(crate) fn new_test(
+        n: u64,
+        exe_tx: impl CEEventTxApi<TestCommand>,
+        role_change: TestRoleChange,
+    ) -> RawCurp<TestCommand, TestCE, TestRoleChange> {
         let all_members: HashMap<_, _> = (0..n)
             .map(|i| (format!("S{i}"), vec![format!("S{i}")]))
             .collect();
@@ -73,7 +76,16 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             .unwrap();
         let (shutdown_trigger, _) = shutdown::channel();
 
-        Self::new(
+        let (er_tx, _er_rx) = mpsc::unbounded_channel();
+        let (as_tx, _as_rx) = mpsc::unbounded_channel();
+        let ce = Arc::new(TestCE::new(
+            "S1".to_owned(),
+            er_tx,
+            as_tx,
+            StorageConfig::Memory,
+        ));
+
+        RawCurp::<TestCommand, TestCE, TestRoleChange>::new(
             cluster_info,
             true,
             cmd_board,
@@ -86,6 +98,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             role_change,
             shutdown_trigger,
             connects,
+            ce,
         )
     }
 
@@ -95,7 +108,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     /// Add a new cmd to the log, will return log entry index
-    pub(crate) fn push_cmd(&self, cmd: Arc<C>) -> LogIndex {
+    pub(crate) fn push_cmd(&self, cmd: Arc<TestCommand>) -> LogIndex {
         let st_r = self.st.read();
         let mut log_w = self.log.write();
         log_w.push(st_r.term, cmd).unwrap().index

@@ -58,13 +58,18 @@ static DEFAULT_SERVER_PORT: u16 = 12345;
 /// The Rpc Server to handle rpc requests
 /// This Wrapper is introduced due to the `MadSim` rpc lib
 #[derive(Clone, Debug)]
-pub struct Rpc<C: Command + 'static, RC: RoleChange + 'static> {
+pub struct Rpc<C: Command + 'static, CE, RC: RoleChange + 'static> {
     /// The inner server is wrapped in an Arc so that its state can be shared while cloning the rpc wrapper
-    inner: Arc<CurpNode<C, RC>>,
+    inner: Arc<CurpNode<C, CE, RC>>,
 }
 
 #[tonic::async_trait]
-impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::Protocol for Rpc<C, RC> {
+impl<C, CE, RC> crate::rpc::Protocol for Rpc<C, CE, RC>
+where
+    C: 'static + Command,
+    CE: CommandExecutor<C> + 'static,
+    RC: RoleChange + 'static,
+{
     #[instrument(skip_all, name = "curp_propose")]
     async fn propose(
         &self,
@@ -131,7 +136,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::Protocol for Rp
 }
 
 #[tonic::async_trait]
-impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::InnerProtocol for Rpc<C, RC> {
+impl<C: 'static + Command, CE: CommandExecutor<C> + 'static, RC: RoleChange + 'static>
+    crate::rpc::InnerProtocol for Rpc<C, CE, RC>
+{
     #[instrument(skip_all, name = "curp_append_entries")]
     async fn append_entries(
         &self,
@@ -166,13 +173,18 @@ impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::InnerProtocol f
     }
 }
 
-impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
+impl<C, CE, RC> Rpc<C, CE, RC>
+where
+    C: Command + 'static,
+    CE: CommandExecutor<C> + 'static,
+    RC: RoleChange + 'static,
+{
     /// New `Rpc`
     ///
     /// # Panics
     /// Panic if storage creation failed
     #[inline]
-    pub async fn new<CE: CommandExecutor<C> + 'static>(
+    pub async fn new(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         executor: CE,
@@ -212,7 +224,7 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
     #[cfg(not(madsim))]
     #[allow(clippy::too_many_arguments)]
     #[inline]
-    pub async fn run<CE>(
+    pub async fn run(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         server_port: Option<u16>,
@@ -221,10 +233,7 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
         shutdown_trigger: shutdown::Trigger,
-    ) -> Result<(), ServerError>
-    where
-        CE: 'static + CommandExecutor<C>,
-    {
+    ) -> Result<(), ServerError> {
         let port = server_port.unwrap_or(DEFAULT_SERVER_PORT);
         let id = cluster_info.self_id();
         info!("RPC server {id} started, listening on port {port}");
@@ -262,7 +271,7 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
     #[cfg(not(madsim))]
     #[allow(clippy::too_many_arguments)]
     #[inline]
-    pub async fn run_from_listener<CE>(
+    pub async fn run_from_listener(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         listener: TcpListener,
