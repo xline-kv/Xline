@@ -182,6 +182,8 @@ struct Context<C: Command, CE, RC: RoleChange> {
     last_conf_change_idx: AtomicU64,
     /// Command executor
     cmd_executor: Arc<CE>,
+    /// Prepare board for storing prepare result
+    pb: Mutex<HashMap<LogIndex, C::PR>>,
 }
 
 impl<C: Command, CE, RC: RoleChange> Debug for Context<C, CE, RC> {
@@ -236,6 +238,7 @@ where
 impl<C, CE, RC> RawCurp<C, CE, RC>
 where
     C: 'static + Command,
+    CE: CommandExecutor<C> + 'static,
     RC: RoleChange + 'static,
 {
     /// Handle `propose` request
@@ -268,8 +271,21 @@ where
         // leader also needs to check if the cmd conflicts un-synced commands
         conflict |= self.insert_ucp(Arc::clone(&cmd));
         let mut log_w = self.log.write();
-        let entry = log_w.push(st_r.term, cmd)?;
+        let entry = log_w.push(st_r.term, Arc::clone(&cmd))?;
         debug!("{} gets new log[{}]", self.id(), entry.index);
+
+        let index = entry.index;
+        let prepare_res = self.ctx.cmd_executor.prepare(cmd.as_ref(), index);
+        let prepare = match prepare_res {
+            Ok(prepare) => prepare,
+            Err(e) => {
+                self.ctx.cb.map_write(|mut cb| {
+                    cb.insert_er(cmd.id(), Err(e));
+                });
+                return Ok((info, Ok(true)));
+            }
+        };
+        let _ignore = self.ctx.pb.lock().insert(index, prepare);
 
         self.entry_process(&mut log_w, entry, conflict);
 
@@ -420,6 +436,19 @@ where
         let prev_commit_index = log_w.commit_index;
         log_w.commit_index = min(leader_commit, log_w.last_log_index());
         if prev_commit_index < log_w.commit_index {
+            for i in (log_w.last_as + 1)..=log_w.commit_index {
+                let entry = log_w.get(i).unwrap_or_else(|| {
+                    unreachable!(
+                        "system corrupted, apply log[{i}] when we only have {} log entries",
+                        log_w.last_log_index()
+                    )
+                });
+                if let EntryData::Command(ref cmd) = entry.entry_data {
+                    if let Ok(prepare) = self.ctx.cmd_executor.prepare(cmd.as_ref(), i) {
+                        let _ignore = self.ctx.pb.lock().insert(i, prepare);
+                    }
+                }
+            }
             self.apply(&mut *log_w);
         }
         Ok(term)
@@ -714,6 +743,7 @@ where
                 connects,
                 last_conf_change_idx: AtomicU64::new(0),
                 cmd_executor,
+                pb: Mutex::new(HashMap::new()),
             },
             shutdown_trigger,
         };
@@ -1320,7 +1350,11 @@ where
                     log.last_log_index()
                 )
             });
-            self.ctx.cmd_tx.send_after_sync(Arc::clone(entry));
+            if let Some(prepare_res) = self.ctx.pb.lock().remove(&i) {
+                self.ctx
+                    .cmd_tx
+                    .send_after_sync(Arc::clone(entry), prepare_res);
+            }
             log.last_as = i;
             if log.last_exe < log.last_as {
                 log.last_exe = log.last_as;

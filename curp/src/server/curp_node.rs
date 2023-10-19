@@ -250,7 +250,12 @@ pub(super) struct CurpNode<C: Command, CE, RC: RoleChange> {
 }
 
 // handlers
-impl<C: 'static + Command, CE, RC: RoleChange + 'static> CurpNode<C, CE, RC> {
+impl<C, CE, RC> CurpNode<C, CE, RC>
+where
+    C: 'static + Command,
+    CE: CommandExecutor<C> + 'static,
+    RC: RoleChange + 'static,
+{
     /// Handle `Propose` requests
     pub(super) async fn propose(&self, req: ProposeRequest) -> Result<ProposeResponse, CurpError> {
         if self.curp.is_shutdown() {
@@ -785,7 +790,7 @@ where
             .last_applied()
             .map_err(|e| CurpError::Internal(format!("get applied index error, {e}")))?;
         let (ce_event_tx, task_rx, done_tx) =
-            conflict_checked_mpmc::channel(Arc::clone(&cmd_executor), shutdown_trigger.clone());
+            conflict_checked_mpmc::channel(shutdown_trigger.clone());
         let ce_event_tx: Arc<dyn CEEventTxApi<C>> = Arc::new(ce_event_tx);
         let storage = Arc::new(DB::open(&curp_cfg.storage_cfg)?);
 
