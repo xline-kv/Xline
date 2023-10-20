@@ -332,6 +332,41 @@ where
         Ok(revision)
     }
 
+    fn prepare_commit(
+        &self,
+        cmd: &Command,
+        index: LogIndex,
+    ) -> Result<<Command as CurpCommand>::PR, <Command as CurpCommand>::Error> {
+        let wrapper = cmd.request();
+        if let Err(e) = self.auth_storage.check_permission(wrapper) {
+            self.id_barrier.trigger(cmd.id());
+            self.index_barrier.trigger(index);
+            return Err(e);
+        }
+        let revision = match wrapper.request.backend() {
+            RequestBackend::Auth => {
+                if wrapper.request.skip_auth_revision() {
+                    -1
+                } else {
+                    self.auth_rev.next_commit()
+                }
+            }
+            RequestBackend::Kv | RequestBackend::Lease => {
+                if wrapper.request.skip_general_revision() {
+                    -1
+                } else {
+                    self.general_rev.next_commit()
+                }
+            }
+        };
+        Ok(revision)
+    }
+
+    fn prepare_reset(&self) {
+        let _ignore = self.auth_rev.reset();
+        let _ignore = self.general_rev.reset();
+    }
+
     async fn execute(
         &self,
         cmd: &Command,
