@@ -3,7 +3,6 @@ use std::{
     time::Duration,
 };
 
-use curp_external_api::cmd::PbSerializeError;
 use dashmap::DashMap;
 use event_listener::Event;
 use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
@@ -15,12 +14,13 @@ use utils::config::ClientConfig;
 
 use crate::{
     cmd::{Command, ProposeId},
-    error::{ClientBuildError, ClientError, ProposeError},
+    error::{ClientBuildError, ClientError},
     members::ServerId,
     rpc::{
         self, connect::ConnectApi, protocol_client::ProtocolClient, ConfChangeError,
         FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, ProposeConfChangeRequest,
-        ProposeRequest, ReadState as PbReadState, ShutdownRequest, SyncResult, WaitSyncedRequest,
+        ProposeError, ProposeRequest, ReadState as PbReadState, ShutdownRequest, SyncResult,
+        WaitSyncedRequest,
     },
     LogIndex, Member,
 };
@@ -393,7 +393,7 @@ where
                 }
             };
 
-            match resp.into::<C>().map_err(Into::<ClientError<C>>::into)? {
+            match SyncResult::<C>::try_from(resp).map_err(Into::<ClientError<C>>::into)? {
                 SyncResult::Success { er, asr } => {
                     debug!("slow round for cmd({}) succeeded", cmd.id());
                     return Ok((asr, er));
@@ -488,12 +488,8 @@ where
             let resp = match resp {
                 Ok(resp) => {
                     let resp = resp.into_inner();
-                    if let Some(rpc::ExeResult::Error(ref e)) = resp.exe_result {
-                        let err: ProposeError = e
-                            .clone()
-                            .propose_error
-                            .ok_or(PbSerializeError::EmptyField)?
-                            .try_into()?;
+                    if let Some(rpc::ExeResult::Error(e)) = resp.exe_result {
+                        let err: ProposeError = e.into();
                         if matches!(err, ProposeError::Duplicated) {
                             return Ok(());
                         }

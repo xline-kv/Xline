@@ -20,10 +20,9 @@ pub(crate) use self::proto::{
         fetch_read_state_response::{IdSet, ReadState},
         propose_response::ExeResult,
         protocol_server::Protocol,
-        FetchReadStateRequest, FetchReadStateResponse, ProposeId as PbProposeId, ShutdownRequest,
-        ShutdownResponse, WaitSyncedRequest, WaitSyncedResponse,
+        FetchReadStateRequest, FetchReadStateResponse, ProposeError, ProposeId as PbProposeId,
+        ShutdownRequest, ShutdownResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
-    errorpb::{propose_error::ProposeError as PbProposeError, ProposeError as PbProposeErrorOuter},
     inner_messagepb::{
         inner_protocol_server::InnerProtocol, AppendEntriesRequest, AppendEntriesResponse,
         InstallSnapshotRequest, InstallSnapshotResponse, VoteRequest, VoteResponse,
@@ -31,7 +30,6 @@ pub(crate) use self::proto::{
 };
 use crate::{
     cmd::{Command, ProposeId},
-    error::ProposeError,
     log_entry::LogEntry,
     members::ServerId,
     server::PoolEntry,
@@ -61,9 +59,7 @@ mod proto {
     pub(crate) mod commandpb {
         tonic::include_proto!("commandpb");
     }
-    pub(crate) mod errorpb {
-        tonic::include_proto!("errorpb");
-    }
+
     pub(crate) mod inner_messagepb {
         tonic::include_proto!("inner_messagepb");
     }
@@ -185,12 +181,8 @@ impl ProposeResponse {
                 };
                 Ok(success(Some(cmd_result)))
             }
-            Some(ExeResult::Error(ref err)) => {
-                let propose_error = err
-                    .clone()
-                    .propose_error
-                    .ok_or(PbSerializeError::EmptyField)?
-                    .try_into()?;
+            Some(ExeResult::Error(err)) => {
+                let propose_error = err.into();
                 Ok(failure(propose_error))
             }
             None => Ok(success(None)),
@@ -266,10 +258,12 @@ impl WaitSyncedResponse {
             (Err(ref err), _) => WaitSyncedResponse::new_er_error::<C>(err),
         }
     }
+}
 
-    /// Into deserialized result
-    pub(crate) fn into<C: Command>(self) -> Result<SyncResult<C>, PbSerializeError> {
-        let res = match (self.exe_result, self.after_sync_result) {
+impl<C: Command> TryFrom<WaitSyncedResponse> for SyncResult<C> {
+    type Error = PbSerializeError;
+    fn try_from(value: WaitSyncedResponse) -> Result<Self, PbSerializeError> {
+        let res = match (value.exe_result, value.after_sync_result) {
             (None, _) => unreachable!("WaitSyncedResponse should contain a valid exe_result"),
             (Some(er), None) => {
                 if let Some(CmdResultInner::Error(buf)) = er.result {

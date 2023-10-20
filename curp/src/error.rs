@@ -1,11 +1,9 @@
 use std::io;
 
-use curp_external_api::cmd::{Command, PbCodec, PbSerializeError};
-use prost::Message;
-use serde::{Deserialize, Serialize};
+use curp_external_api::cmd::{Command, PbSerializeError};
 use thiserror::Error;
 
-use crate::rpc::{PbProposeError, PbProposeErrorOuter};
+use crate::rpc::ProposeError;
 
 /// Error type of client builder
 #[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
@@ -61,56 +59,31 @@ pub enum ServerError {
     RpcError(#[from] tonic::transport::Error),
 }
 
-/// The error met during propose phase
-#[derive(Error, Debug, Clone, Copy, Serialize, Deserialize)]
-#[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
-#[non_exhaustive]
-pub enum ProposeError {
-    /// The command conflicts with keys in the speculative commands
-    #[error("key conflict error")]
-    KeyConflict,
-    /// The command has already been proposed before
-    #[error("duplicated, the cmd might have already been proposed")]
-    Duplicated,
-}
-
-impl TryFrom<PbProposeError> for ProposeError {
-    type Error = PbSerializeError;
-
-    #[inline]
-    fn try_from(err: PbProposeError) -> Result<ProposeError, Self::Error> {
-        Ok(match err {
-            PbProposeError::KeyConflict(_) => ProposeError::KeyConflict,
-            PbProposeError::Duplicated(_) => ProposeError::Duplicated,
-        })
-    }
-}
-
-impl From<ProposeError> for PbProposeErrorOuter {
-    #[inline]
-    fn from(err: ProposeError) -> Self {
-        let e = match err {
-            ProposeError::KeyConflict => PbProposeError::KeyConflict(()),
-            ProposeError::Duplicated => PbProposeError::Duplicated(()),
-        };
-        PbProposeErrorOuter {
-            propose_error: Some(e),
+impl std::fmt::Display for ProposeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            Self::KeyConflict => write!(f, "ProposeError: Key Conflict"),
+            Self::Duplicated => write!(f, "ProposeError: Duplicated"),
         }
     }
 }
 
-impl PbCodec for ProposeError {
-    #[inline]
-    fn encode(&self) -> Vec<u8> {
-        PbProposeErrorOuter::from(*self).encode_to_vec()
+impl std::error::Error for ProposeError {
+    fn description(&self) -> &str {
+        match *self {
+            Self::KeyConflict => "key conflict error",
+            Self::Duplicated => "duplicated, the cmd might have already been proposed",
+        }
     }
+}
 
-    #[inline]
-    fn decode(buf: &[u8]) -> Result<Self, PbSerializeError> {
-        PbProposeErrorOuter::decode(buf)?
-            .propose_error
-            .ok_or(PbSerializeError::EmptyField)?
-            .try_into()
+impl From<i32> for ProposeError {
+    fn from(value: i32) -> Self {
+        match value {
+            0 => Self::KeyConflict,
+            1 => Self::Duplicated,
+            _ => unreachable!("Unknown ProposeError Type"),
+        }
     }
 }
 
@@ -156,18 +129,5 @@ impl<C: Command> From<bincode::Error> for ClientError<C> {
     #[inline]
     fn from(err: bincode::Error) -> Self {
         Self::EncodeDecode(err.to_string())
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn propose_error_serialization_is_ok() {
-        let err = ProposeError::Duplicated;
-        let _decoded_err =
-            <ProposeError as PbCodec>::decode(&err.encode()).expect("decode should success");
-        assert!(matches!(err, _decoded_err));
     }
 }
