@@ -179,6 +179,12 @@ impl From<Status> for SendAEError {
     }
 }
 
+impl From<bincode::Error> for SendAEError {
+    fn from(err: bincode::Error) -> Self {
+        Self::EncodeDecode(err.to_string())
+    }
+}
+
 /// Internal error encountered when sending snapshot
 #[derive(Debug, Error)]
 enum SendSnapshotError {
@@ -886,8 +892,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
             ae.prev_log_term,
             ae.entries,
             ae.leader_commit,
-        )
-        .map_err(|err| SendAEError::EncodeDecode(err.to_string()))?;
+        )?;
 
         if is_heartbeat {
             trace!("{} send heartbeat to {}", curp.id(), connect.id());
@@ -950,6 +955,8 @@ impl<C: Command, RC: RoleChange> Debug for CurpNode<C, RC> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Error, ErrorKind};
+
     use curp_test_utils::{mock_role_change, sleep_secs, test_cmd::TestCommand};
     use tokio::sync::oneshot;
     use tracing_test::traced_test;
@@ -958,6 +965,15 @@ mod tests {
     use crate::{
         rpc::connect::MockInnerConnectApi, server::cmd_worker::MockCEEventTxApi, ConfChange,
     };
+
+    fn get_error_label(status: &Status) -> &str {
+        let metadata = status.metadata();
+        metadata
+            .get("error-label")
+            .expect("error-label should not be None in CurpError")
+            .to_str()
+            .expect("error-label must be construct by ascii char")
+    }
 
     #[traced_test]
     #[tokio::test]
@@ -1086,5 +1102,49 @@ mod tests {
         sleep_secs(3).await;
         assert!(curp.is_leader());
         curp.shutdown_trigger().self_shutdown_and_wait().await;
+    }
+
+    #[test]
+    fn curp_error_convert_to_tonic_status_should_success() {
+        let encode_decode = CurpError::EncodeDecode("CurpError::EncodeDecode".to_owned());
+        let status: Status = encode_decode.into();
+        assert_eq!("encode-decode", get_error_label(&status));
+
+        let internal = CurpError::Internal("CurpError::Internal".to_owned());
+        let status: Status = internal.into();
+        assert_eq!("internal", get_error_label(&status));
+
+        let transport = CurpError::Transport("CurpError::Transport".to_owned());
+        let status: Status = transport.into();
+        assert_eq!("transport", get_error_label(&status));
+
+        let shutdown = CurpError::ShuttingDown;
+        let status: Status = shutdown.into();
+        assert_eq!("shutting-down", get_error_label(&status));
+
+        let redirect_1 = CurpError::Redirect(Some(1), 2);
+        let status: Status = redirect_1.into();
+        assert_eq!("redirect", get_error_label(&status));
+        let (leader_id, term): (Option<u64>, u64) = serde_json::from_slice(status.details())
+            .expect(" deserialize (leader_id, term) from status' detail should always success");
+        assert_eq!(leader_id, Some(1));
+        assert_eq!(term, 2);
+
+        let redirect_2 = CurpError::Redirect(None, 2);
+        let status: Status = redirect_2.into();
+        assert_eq!("redirect", get_error_label(&status));
+        let (leader_id, term): (Option<u64>, u64) = serde_json::from_slice(status.details())
+            .expect(" deserialize (leader_id, term) from status' detail should always success");
+        assert_eq!(leader_id, None);
+        assert_eq!(term, 2);
+
+        let io = CurpError::IO(Error::new(ErrorKind::Other, "oh no!"));
+        let status: Status = io.into();
+        assert_eq!("io", get_error_label(&status));
+
+        let bincode_err = Box::new(bincode::ErrorKind::Custom("StorageError".to_owned()));
+        let storage = CurpError::Storage(bincode_err.into());
+        let status: Status = storage.into();
+        assert_eq!("storage", get_error_label(&status));
     }
 }

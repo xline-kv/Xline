@@ -327,7 +327,7 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         client.wait_synced(req).await
     }
 
-    /// Send `FetchLeaderRequest`
+    /// Send `FetchClusterRequest`
     async fn fetch_cluster(
         &self,
         request: FetchClusterRequest,

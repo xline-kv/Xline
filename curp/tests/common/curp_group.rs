@@ -38,9 +38,6 @@ use utils::{
 pub mod commandpb {
     tonic::include_proto!("commandpb");
 }
-pub mod errorpb {
-    tonic::include_proto!("errorpb");
-}
 
 pub use commandpb::{
     protocol_client::ProtocolClient, FetchClusterRequest, FetchClusterResponse, ProposeRequest,
