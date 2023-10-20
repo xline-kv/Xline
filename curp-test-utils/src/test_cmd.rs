@@ -271,6 +271,22 @@ impl CommandExecutor<TestCommand> for TestCE {
         Ok(rev)
     }
 
+    // FIXME: properly implement revision revertion in `prepare_commit` and `prepare_reset`
+    fn prepare_commit(
+        &self,
+        cmd: &TestCommand,
+        _index: LogIndex,
+    ) -> Result<<TestCommand as Command>::PR, <TestCommand as Command>::Error> {
+        let rev = if let TestCommandType::Put(_) = cmd.cmd_type {
+            self.revision.load(Ordering::Relaxed) - 1
+        } else {
+            -1
+        };
+        Ok(rev)
+    }
+
+    fn prepare_reset(&self) {}
+
     async fn execute(
         &self,
         cmd: &TestCommand,

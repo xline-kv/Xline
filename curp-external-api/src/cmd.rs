@@ -124,6 +124,12 @@ where
     /// Prepare the command
     fn prepare(&self, cmd: &C, index: LogIndex) -> Result<C::PR, C::Error>;
 
+    /// Commit the prepare
+    fn prepare_commit(&self, cmd: &C, index: LogIndex) -> Result<C::PR, C::Error>;
+
+    /// Reset the prepare
+    fn prepare_reset(&self);
+
     /// Execute the command
     async fn execute(&self, cmd: &C, index: LogIndex) -> Result<C::ER, C::Error>;
 
