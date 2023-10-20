@@ -1535,6 +1535,7 @@ where
         debug!("leader {} retires", self.id());
         self.ctx.cb.write().clear();
         self.ctx.ucp.lock().clear();
+        self.ctx.pb.lock().clear();
     }
 
     /// Switch to a new config and return old member infos for fallback
