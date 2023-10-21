@@ -30,6 +30,7 @@ use super::{
 };
 use crate::{
     cmd::{Command, CommandExecutor},
+    error::ERROR_LABEL,
     log_entry::LogEntry,
     members::{ClusterInfo, ServerId},
     role_change::RoleChange,
@@ -92,7 +93,7 @@ impl From<PbSerializeError> for CurpError {
 fn gen_metadata(label: &str) -> MetadataMap {
     let mut meta = MetadataMap::new();
     _ = meta.insert(
-        "error-label",
+        ERROR_LABEL,
         label.parse().unwrap_or_else(|e| {
             unreachable!("convert a empty string to MetadataValue should always success: {e}")
         }),
@@ -170,11 +171,18 @@ impl From<Status> for SendAEError {
     fn from(status: Status) -> Self {
         #[allow(clippy::wildcard_enum_match_arm)]
         // it's ok to do so since only three status can covert to `SendAEError`
-        match status.code() {
-            tonic::Code::Cancelled => Self::EncodeDecode(status.message().to_owned()),
-            tonic::Code::FailedPrecondition => Self::NotLeader,
-            tonic::Code::Unavailable => Self::Transport(status.message().to_owned()),
-            _ => Self::RpcError(status.message().to_owned()),
+        let metadata = status.metadata();
+        if let Some(label) = metadata.get(ERROR_LABEL) {
+            match label.to_str().unwrap_or_else(|err| {
+                unreachable!("error-label should be always able to convert to str: {err:?}")
+            }) {
+                "transport" => Self::Transport(status.message().to_owned()),
+                "redirect" => Self::NotLeader,
+                "encode-decode" => Self::EncodeDecode(status.message().to_owned()),
+                _ => Self::RpcError(status.message().to_owned()),
+            }
+        } else {
+            Self::Transport(status.message().to_owned())
         }
     }
 }
@@ -203,10 +211,17 @@ impl From<Status> for SendSnapshotError {
     fn from(status: Status) -> Self {
         #[allow(clippy::wildcard_enum_match_arm)]
         // it's ok to do so since `SendSnapshotError` only has two variants.
-        match status.code() {
-            tonic::Code::FailedPrecondition => Self::NotLeader,
-            tonic::Code::Unavailable => Self::Transport(status.message().to_owned()),
-            _ => Self::RpcError(status.message().to_owned()),
+        let metadata = status.metadata();
+        if let Some(label) = metadata.get(ERROR_LABEL) {
+            match label.to_str().unwrap_or_else(|err| {
+                unreachable!("error-label should be always able to convert to str: {err:?}")
+            }) {
+                "transport" => Self::Transport(status.message().to_owned()),
+                "redirect" => Self::NotLeader,
+                _ => Self::RpcError(status.message().to_owned()),
+            }
+        } else {
+            Self::Transport(status.message().to_owned())
         }
     }
 }
@@ -969,7 +984,7 @@ mod tests {
     fn get_error_label(status: &Status) -> &str {
         let metadata = status.metadata();
         metadata
-            .get("error-label")
+            .get(ERROR_LABEL)
             .expect("error-label should not be None in CurpError")
             .to_str()
             .expect("error-label must be construct by ascii char")
