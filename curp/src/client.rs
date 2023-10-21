@@ -14,7 +14,7 @@ use utils::config::ClientConfig;
 
 use crate::{
     cmd::{Command, ProposeId},
-    error::{ClientBuildError, ClientError},
+    error::{ClientBuildError, ClientError, ERROR_LABEL},
     members::ServerId,
     rpc::{
         self, connect::ConnectApi, protocol_client::ProtocolClient, ConfChangeError,
@@ -239,7 +239,7 @@ enum UnpackStatus {
 /// unpack `tonic::Status` and convert it to `UnpackStatus`
 fn unpack_status(status: &tonic::Status) -> UnpackStatus {
     let meta = status.metadata();
-    if let Some(label) = meta.get("error-label") {
+    if let Some(label) = meta.get(ERROR_LABEL) {
         match label.to_str().unwrap_or_else(|err| {
             unreachable!("error-label should be always able to convert to str: {err:?}")
         }) {

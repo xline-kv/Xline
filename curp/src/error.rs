@@ -5,6 +5,10 @@ use thiserror::Error;
 
 use crate::rpc::ProposeError;
 
+/// Since there are some different statuses with the same code, Xline using "error-label"
+/// to tell apart them.
+pub const ERROR_LABEL: &str = "error-label";
+
 /// Error type of client builder
 #[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
 #[derive(Debug, Error)]
