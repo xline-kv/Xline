@@ -10,6 +10,7 @@ use std::{
 use curp_external_api::role_change::RoleChange;
 use tracing_subscriber::fmt::time::uptime;
 
+mod revision_number;
 pub mod test_cmd;
 
 pub const TEST_TABLE: &str = "test";

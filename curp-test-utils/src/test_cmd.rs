@@ -1,7 +1,7 @@
 use std::{
     fmt::Display,
     sync::{
-        atomic::{AtomicI64, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
         Arc,
     },
     time::Duration,
@@ -21,7 +21,7 @@ use tokio::{sync::mpsc, time::sleep};
 use tracing::debug;
 use utils::config::StorageConfig;
 
-use crate::{META_TABLE, REVISION_TABLE, TEST_TABLE};
+use crate::{revision_number::RevisionNumberGenerator, META_TABLE, REVISION_TABLE, TEST_TABLE};
 
 pub(crate) const APPLIED_INDEX_KEY: &str = "applied_index";
 pub(crate) const LAST_REVISION_KEY: &str = "last_revision";
@@ -241,7 +241,7 @@ impl PbCodec for TestCommand {
 #[derive(Debug, Clone)]
 pub struct TestCE {
     server_id: String,
-    revision: Arc<AtomicI64>,
+    revision: Arc<RevisionNumberGenerator>,
     pub store: Arc<Engine>,
     exe_sender: mpsc::UnboundedSender<(TestCommand, TestCommandResult)>,
     after_sync_sender: mpsc::UnboundedSender<(TestCommand, LogIndex)>,
@@ -255,7 +255,7 @@ impl CommandExecutor<TestCommand> for TestCE {
         _index: LogIndex,
     ) -> Result<<TestCommand as Command>::PR, <TestCommand as Command>::Error> {
         let rev = if let TestCommandType::Put(_) = cmd.cmd_type {
-            let rev = self.revision.fetch_add(1, Ordering::Relaxed);
+            let rev = self.revision.next();
             let wr_ops = vec![WriteOperation::new_put(
                 META_TABLE,
                 LAST_REVISION_KEY.into(),
@@ -278,14 +278,16 @@ impl CommandExecutor<TestCommand> for TestCE {
         _index: LogIndex,
     ) -> Result<<TestCommand as Command>::PR, <TestCommand as Command>::Error> {
         let rev = if let TestCommandType::Put(_) = cmd.cmd_type {
-            self.revision.load(Ordering::Relaxed) - 1
+            self.revision.next_commit()
         } else {
             -1
         };
         Ok(rev)
     }
 
-    fn prepare_reset(&self) {}
+    fn prepare_reset(&self) {
+        self.revision.reset();
+    }
 
     async fn execute(
         &self,
@@ -464,10 +466,10 @@ impl TestCE {
             .get(META_TABLE, LAST_REVISION_KEY)
             .unwrap()
             .map(|r| i64::from_le_bytes(r.as_slice().try_into().unwrap()))
-            .unwrap_or(0);
+            .unwrap_or(-1);
         Self {
             server_id,
-            revision: Arc::new(AtomicI64::new(rev + 1)),
+            revision: Arc::new(RevisionNumberGenerator::new(rev + 1)),
             store,
             exe_sender,
             after_sync_sender,
