@@ -8,7 +8,6 @@ use std::{
 };
 
 use clippy_utilities::{Cast, OverflowArithmetic};
-use itertools::Itertools;
 use prost::Message;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
@@ -326,7 +325,7 @@ where
     /// Check result of a `Compare`
     fn check_compare(&self, cmp: &Compare, state: &mut TxnState) -> bool {
         let kvs_ori = self
-            .get_range(&cmp.key, &cmp.range_end, 0)
+            .get_range(&cmp.key, &cmp.range_end, state.read_rev)
             .unwrap_or_default();
         let kvs = state.update_kvs_get_range(kvs_ori, &cmp.key, &cmp.range_end, 0);
         if kvs.is_empty() {
@@ -961,23 +960,24 @@ impl TxnState {
             return kvs;
         }
 
-        let mut kvs = kvs
+        let mut kvs: HashMap<_, _> = kvs
             .into_iter()
             .filter(|kv| !self.deleted.intersects(&kv.key))
-            .collect_vec();
+            .map(|kv| (kv.key.clone(), kv))
+            .collect();
         let values = self
             .put
             .range(KeyRange::new(key, range_end))
             .map(|(_, value)| value);
-        let mut txn_kvs: Vec<KeyValue> = values
+        let txn_kvs: Vec<KeyValue> = values
             .into_iter()
             .map(|v| KeyValue::decode(v.as_slice()))
             .collect::<Result<_, _>>()
             .unwrap_or_else(|_| unreachable!("Failed to decode key-value"));
 
-        kvs.append(&mut txn_kvs);
+        kvs.extend(txn_kvs.into_iter().map(|kv| (kv.key.clone(), kv)));
 
-        kvs
+        kvs.into_values().collect()
     }
 
     /// Update current state for put requests
