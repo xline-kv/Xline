@@ -287,6 +287,12 @@ where
             Err(e) => {
                 self.ctx.cb.map_write(|mut cb| {
                     cb.insert_er(cmd.id(), Err(e));
+                    {
+                        let mut sp_l = self.ctx.sp.lock();
+                        let mut ucp_l = self.ctx.ucp.lock();
+                        sp_l.remove(&entry.id());
+                        let _ig = ucp_l.remove(&entry.id());
+                    }
                 });
                 return Ok((info, Ok(true)));
             }
