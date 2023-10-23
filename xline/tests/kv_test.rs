@@ -390,3 +390,42 @@ async fn nested_txn_compare_value_is_ok() -> Result<(), Box<dyn Error>> {
     assert_eq!(resp.kvs.first().unwrap().value, b"baz");
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread")]
+#[abort_on_panic]
+async fn nested_txn_compare_rev_is_ok() -> Result<(), Box<dyn Error>> {
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", "debug");
+    }
+    _ = tracing_subscriber::fmt()
+        .compact()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let mut cluster = Cluster::new(3).await;
+    cluster.start().await;
+    let client = cluster.client().await.kv_client();
+    client.put(PutRequest::new("a", "foo")).await?;
+    client.put(PutRequest::new("a", "foo1")).await?;
+
+    let txn_inner_a = TxnRequest::new()
+        .when([
+            Compare::create_revision("a", CompareResult::Equal, 2),
+            Compare::mod_revision("a", CompareResult::Equal, 4),
+            Compare::version("a", CompareResult::Equal, 3),
+            Compare::create_revision("b", CompareResult::Equal, 4),
+            Compare::mod_revision("b", CompareResult::Equal, 4),
+            Compare::version("b", CompareResult::Equal, 1),
+        ])
+        .and_then([TxnOp::put(PutRequest::new("c", "cc"))]);
+    let tnx_a = TxnRequest::new().when([]).and_then([
+        TxnOp::put(PutRequest::new("a", "foo2")),
+        TxnOp::put(PutRequest::new("b", "bar")),
+        TxnOp::txn(txn_inner_a),
+    ]);
+    let res = client.txn(tnx_a).await?;
+    let Response::ResponseTxn(ref resp) = res.responses[2].response.as_ref().unwrap() else { panic!("invalid response") };
+
+    assert!(resp.succeeded);
+    Ok(())
+}
