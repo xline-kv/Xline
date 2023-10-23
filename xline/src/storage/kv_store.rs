@@ -73,8 +73,9 @@ where
         &self,
         request: &RequestWithToken,
         read_rev: i64,
+        write_rev: i64,
     ) -> Result<CommandResponse, ExecuteError> {
-        self.handle_kv_requests(&request.request, &mut TxnState::new(read_rev, 0))
+        self.handle_kv_requests(&request.request, &mut TxnState::new(read_rev, write_rev))
             .map(CommandResponse::new)
     }
 

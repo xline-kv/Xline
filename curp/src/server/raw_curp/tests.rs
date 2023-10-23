@@ -137,7 +137,7 @@ impl RawCurp<TestCommand, TestCE, TestRoleChange> {
 fn leader_handle_propose_will_succeed() {
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        exe_tx.expect_send_sp_exe().returning(|_| {});
+        exe_tx.expect_send_sp_exe().returning(|_, _| {});
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
     let cmd = Arc::new(TestCommand::default());
@@ -152,7 +152,7 @@ fn leader_handle_propose_will_succeed() {
 fn leader_handle_propose_will_reject_conflicted() {
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        exe_tx.expect_send_sp_exe().returning(|_| {});
+        exe_tx.expect_send_sp_exe().returning(|_, _| {});
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
 
@@ -181,7 +181,7 @@ fn leader_handle_propose_will_reject_conflicted() {
 fn leader_handle_propose_will_reject_duplicated() {
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        exe_tx.expect_send_sp_exe().returning(|_| {});
+        exe_tx.expect_send_sp_exe().returning(|_, _| {});
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
     let cmd = Arc::new(TestCommand::default());
@@ -677,7 +677,7 @@ fn leader_retires_after_log_compact_will_succeed() {
 fn leader_retires_should_cleanup() {
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        exe_tx.expect_send_sp_exe().returning(|_| {});
+        exe_tx.expect_send_sp_exe().returning(|_, _| {});
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
 
@@ -724,7 +724,7 @@ async fn leader_handle_shutdown_will_succeed() {
 fn follower_handle_shutdown_will_reject() {
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        exe_tx.expect_send_sp_exe().returning(|_| {});
+        exe_tx.expect_send_sp_exe().returning(|_, _| {});
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
@@ -928,7 +928,7 @@ fn update_node_should_update_the_address_of_node() {
 fn leader_handle_propose_conf_change() {
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        exe_tx.expect_send_sp_exe().returning(|_| {});
+        exe_tx.expect_send_sp_exe().returning(|_, _| {});
         Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
     let follower_id = curp.cluster().get_id_by_name("S1").unwrap();

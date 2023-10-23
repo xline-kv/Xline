@@ -59,7 +59,7 @@ pub(in crate::server) struct Task<C: Command> {
 /// Task Type
 pub(super) enum TaskType<C: Command> {
     /// Execute a cmd
-    SpecExe(Arc<LogEntry<C>>),
+    SpecExe(Arc<LogEntry<C>>, Option<C::PR>),
     /// After sync a cmd
     AS(Arc<LogEntry<C>>, Option<C::PR>),
     /// Reset the CE
@@ -117,7 +117,7 @@ enum VertexInner<C: Command> {
         /// Entry
         entry: Arc<LogEntry<C>>,
         /// Execution state
-        exe_st: ExeState,
+        exe_st: ExeState<C>,
         /// After sync state
         as_st: AsState<C>,
     },
@@ -139,9 +139,9 @@ enum VertexInner<C: Command> {
 
 /// Execute state of a cmd
 #[derive(Debug, Clone, Copy)]
-enum ExeState {
+enum ExeState<C: Command> {
     /// Is ready to execute
-    ExecuteReady,
+    ExecuteReady(Option<C::PR>),
     /// Executing
     Executing,
     /// Has been executed, and the result
@@ -313,12 +313,15 @@ impl<C: Command> Filter<C> {
                 ref entry,
                 ref mut exe_st,
                 ref mut as_st,
-            } => match (*exe_st, as_st.clone()) {
-                (ExeState::ExecuteReady, AsState::NotSynced(_) | AsState::AfterSyncReady(_)) => {
+            } => match (exe_st.clone(), as_st.clone()) {
+                (
+                    ExeState::ExecuteReady(prepare),
+                    AsState::NotSynced(_) | AsState::AfterSyncReady(_),
+                ) => {
                     *exe_st = ExeState::Executing;
                     let task = Task {
                         vid,
-                        inner: Cart::new(TaskType::SpecExe(Arc::clone(entry))),
+                        inner: Cart::new(TaskType::SpecExe(Arc::clone(entry), prepare)),
                     };
                     if let Err(e) = self.filter_tx.send(task) {
                         error!("failed to send task through filter, {e}");
@@ -398,7 +401,7 @@ impl<C: Command> Filter<C> {
     fn handle_event(&mut self, event: CEEvent<C>) {
         debug!("new ce event: {event:?}");
         let vid = match event {
-            CEEvent::SpecExeReady(entry) => {
+            CEEvent::SpecExeReady((entry, prepare)) => {
                 let new_vid = self.next_vertex_id();
                 assert!(
                     self.entry_vid.insert(entry.index, new_vid).is_none(),
@@ -408,7 +411,7 @@ impl<C: Command> Filter<C> {
                     successors: HashSet::new(),
                     predecessor_cnt: 0,
                     inner: VertexInner::Entry {
-                        exe_st: ExeState::ExecuteReady,
+                        exe_st: ExeState::ExecuteReady(prepare),
                         as_st: AsState::NotSynced(None),
                         entry,
                     },
@@ -436,7 +439,7 @@ impl<C: Command> Filter<C> {
                         successors: HashSet::new(),
                         predecessor_cnt: 0,
                         inner: VertexInner::Entry {
-                            exe_st: ExeState::ExecuteReady,
+                            exe_st: ExeState::ExecuteReady(prepare.clone()),
                             as_st: AsState::AfterSyncReady(prepare),
                             entry,
                         },

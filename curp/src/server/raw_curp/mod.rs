@@ -297,9 +297,9 @@ where
                 return Ok((info, Ok(true)));
             }
         };
-        let _ignore = self.ctx.pb.lock().insert(index, prepare);
+        let _ignore = self.ctx.pb.lock().insert(index, prepare.clone());
 
-        self.entry_process(&mut log_w, entry, conflict);
+        self.entry_process(&mut log_w, entry, conflict, Some(prepare));
 
         Ok((
             info,
@@ -320,7 +320,7 @@ where
         let mut log_w = self.log.write();
         let entry = log_w.push(st_r.term, EntryData::Shutdown(propose_id))?;
         debug!("{} gets new log[{}]", self.id(), entry.index);
-        self.entry_process(&mut log_w, entry, true);
+        self.entry_process(&mut log_w, entry, true, None);
         Ok(())
     }
 
@@ -367,7 +367,7 @@ where
             entry.index,
             FallbackContext::new(Arc::clone(&entry), addrs, name, is_learner),
         );
-        self.entry_process(&mut log_w, entry, conflict);
+        self.entry_process(&mut log_w, entry, conflict, None);
         Ok((info, Ok(())))
     }
 
@@ -1634,11 +1634,12 @@ where
         log_w: &mut RwLockWriteGuard<'_, Log<C>>,
         entry: Arc<LogEntry<C>>,
         conflict: bool,
+        prepare: Option<C::PR>,
     ) {
         let index = entry.index;
         if !conflict {
             log_w.last_exe = index;
-            self.ctx.cmd_tx.send_sp_exe(entry);
+            self.ctx.cmd_tx.send_sp_exe(entry, prepare);
         }
         self.ctx.sync_events.iter().for_each(|e| {
             let next = self.lst.get_next_index(*e.key());

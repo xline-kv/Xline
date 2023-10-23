@@ -293,6 +293,7 @@ impl CommandExecutor<TestCommand> for TestCE {
         &self,
         cmd: &TestCommand,
         _index: LogIndex,
+        _revision: i64,
     ) -> Result<<TestCommand as Command>::ER, <TestCommand as Command>::Error> {
         sleep(cmd.exe_dur).await;
         if cmd.exe_should_fail {

@@ -53,11 +53,16 @@ pub trait Command:
 
     /// Execute the command according to the executor
     #[inline]
-    async fn execute<E>(&self, e: &E, index: LogIndex) -> Result<Self::ER, Self::Error>
+    async fn execute<E>(
+        &self,
+        e: &E,
+        index: LogIndex,
+        prepare_res: Self::PR,
+    ) -> Result<Self::ER, Self::Error>
     where
         E: CommandExecutor<Self> + Send + Sync,
     {
-        <E as CommandExecutor<Self>>::execute(e, self, index).await
+        <E as CommandExecutor<Self>>::execute(e, self, index, prepare_res).await
     }
 
     /// Execute the command after_sync callback
@@ -131,7 +136,12 @@ where
     fn prepare_reset(&self);
 
     /// Execute the command
-    async fn execute(&self, cmd: &C, index: LogIndex) -> Result<C::ER, C::Error>;
+    async fn execute(
+        &self,
+        cmd: &C,
+        index: LogIndex,
+        prepare_res: C::PR,
+    ) -> Result<C::ER, C::Error>;
 
     /// Execute the after_sync callback
     async fn after_sync(

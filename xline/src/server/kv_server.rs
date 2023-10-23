@@ -85,7 +85,7 @@ where
         revision: i64,
     ) -> Result<Response, tonic::Status> {
         self.auth_storage.check_permission(wrapper)?;
-        let cmd_res = self.kv_storage.execute(wrapper, revision)?;
+        let cmd_res = self.kv_storage.execute(wrapper, revision, 0)?;
 
         Ok(Self::parse_response_op(cmd_res.into_inner().into()))
     }
