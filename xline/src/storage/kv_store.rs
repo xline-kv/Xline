@@ -511,7 +511,9 @@ where
         state: &TxnState,
     ) -> Result<RangeResponse, ExecuteError> {
         let mut req = req.clone();
-        req.revision = state.revision;
+        if req.revision == 0 {
+            req.revision = state.revision;
+        }
 
         req.check_revision(self.compacted_revision(), self.revision())?;
 
