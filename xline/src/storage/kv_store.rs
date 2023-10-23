@@ -72,9 +72,9 @@ where
     pub(crate) fn execute(
         &self,
         request: &RequestWithToken,
-        revision: i64,
+        read_rev: i64,
     ) -> Result<CommandResponse, ExecuteError> {
-        self.handle_kv_requests(&request.request, &mut TxnState::new(revision))
+        self.handle_kv_requests(&request.request, &mut TxnState::new(read_rev, 0))
             .map(CommandResponse::new)
     }
 
@@ -84,7 +84,7 @@ where
         request: &RequestWithToken,
         revision: i64,
     ) -> Result<(SyncResponse, Vec<WriteOp>), ExecuteError> {
-        self.sync_request(&request.request, revision, &mut TxnState::new(revision))
+        self.sync_request(&request.request, revision, &mut TxnState::new(0, revision))
             .await
             .map(|(rev, ops)| (SyncResponse::new(rev), ops))
     }
@@ -512,7 +512,7 @@ where
     ) -> Result<RangeResponse, ExecuteError> {
         let mut req = req.clone();
         if req.revision == 0 {
-            req.revision = state.revision;
+            req.revision = state.read_rev;
         }
 
         req.check_revision(self.compacted_revision(), self.revision())?;
@@ -904,8 +904,10 @@ where
 #[derive(Debug)]
 #[cfg_attr(test, derive(Default))]
 struct TxnState {
-    /// Current txn revision
-    revision: i64,
+    /// Revision used for reading
+    read_rev: i64,
+    /// Revision used for writing
+    write_rev: i64,
     /// Put kvs
     put: BTreeMap<Vec<u8>, Vec<u8>>,
     /// Deleted kvs
@@ -937,9 +939,10 @@ impl DeleteInterval {
 // These are guaranteed by `check_interval`
 impl TxnState {
     /// Creates a new `TxnState`
-    fn new(revision: i64) -> Self {
+    fn new(read_rev: i64, write_rev: i64) -> Self {
         Self {
-            revision,
+            read_rev,
+            write_rev,
             put: BTreeMap::default(),
             deleted: DeleteInterval::default(),
         }
@@ -953,7 +956,7 @@ impl TxnState {
         range_end: &[u8],
         revision: i64,
     ) -> Vec<KeyValue> {
-        if revision != 0 && revision < self.revision {
+        if revision != 0 && revision < self.write_rev {
             return kvs;
         }
 
@@ -978,7 +981,7 @@ impl TxnState {
 
     /// Update current state for put requests
     fn put(&mut self, req: &PutRequest, index: &Arc<Index>) {
-        let revision = self.revision();
+        let revision = self.write_rev;
         // we don't need sub revision here
         let sub_revision = 0;
         let new_rev = if self.deleted.intersects(&req.key) {
@@ -1002,11 +1005,6 @@ impl TxnState {
     fn delete_range(&mut self, req: &DeleteRangeRequest) {
         let key_range = KeyRange::new(req.key.clone(), req.range_end.clone());
         self.deleted.insert(key_range);
-    }
-
-    /// Current revision
-    fn revision(&self) -> i64 {
-        self.revision
     }
 }
 
@@ -1197,8 +1195,8 @@ mod test {
                 SortTarget::Mod,
                 SortTarget::Value,
             ] {
-                let response = store
-                    .handle_range_request(&sort_req(order, target), &TxnState::default())?;
+                let response =
+                    store.handle_range_request(&sort_req(order, target), &TxnState::default())?;
                 assert_eq!(response.count, 6);
                 assert_eq!(response.kvs.len(), 6);
                 let expected: [&str; 6] = match order {
