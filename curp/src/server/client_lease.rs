@@ -44,7 +44,7 @@ impl LeaseManager {
         let client_id: u64 = rand::random();
         let expiry = Instant::now().add(DEFAULT_LEASE_TTL);
         let _ig = self.expiry_queue.push(client_id, Reverse(expiry));
-        // TODO: move this gc task to background
+        // gc all expired client id while granting a new client id
         self.gc_expired();
         client_id
     }
