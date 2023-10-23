@@ -439,6 +439,7 @@ fn handle_vote_will_calibrate_term() {
             .returning(|_| oneshot::channel().1);
         Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
     };
+    curp.st.write().leader_id = None;
 
     let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
     let result = curp.handle_vote(2, s1_id, 0, 0).unwrap();
@@ -465,7 +466,7 @@ fn handle_vote_will_reject_smaller_term() {
     assert_eq!(result.unwrap_err(), 2);
 }
 
-#[traced_test]
+// #[traced_test]
 #[test]
 fn handle_vote_will_reject_outdated_candidate() {
     let curp = {
@@ -477,7 +478,7 @@ fn handle_vote_will_reject_outdated_candidate() {
     };
     let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
     let result = curp.handle_append_entries(
-        1,
+        2,
         s2_id,
         0,
         0,
@@ -485,7 +486,7 @@ fn handle_vote_will_reject_outdated_candidate() {
         0,
     );
     assert!(result.is_ok());
-
+    curp.st.write().leader_id = None;
     let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
     let result = curp.handle_vote(3, s1_id, 0, 0);
     assert_eq!(result.unwrap_err(), 3);

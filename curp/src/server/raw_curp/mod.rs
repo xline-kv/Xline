@@ -494,6 +494,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             return Err(st_w.term);
         }
         if term > st_w.term {
+            let timeout = st_w.follower_timeout_ticks;
+            if st_w.leader_id.is_some() && self.ctx.election_tick.load(Ordering::Acquire) < timeout
+            {
+                return Err(st_w.term);
+            }
             self.update_to_term_and_become_follower(&mut st_w, term);
         }
 
