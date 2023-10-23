@@ -421,7 +421,7 @@ impl<C: Command> Filter<C> {
                     let v = self.get_vertex_mut(vid);
                     match v.inner {
                         VertexInner::Entry { ref mut as_st, .. } => {
-                            *as_st = AsState::AfterSyncReady(Some(prepare));
+                            *as_st = AsState::AfterSyncReady(prepare);
                         }
                         _ => unreachable!("impossible vertex type"),
                     }
@@ -437,7 +437,7 @@ impl<C: Command> Filter<C> {
                         predecessor_cnt: 0,
                         inner: VertexInner::Entry {
                             exe_st: ExeState::ExecuteReady,
-                            as_st: AsState::AfterSyncReady(Some(prepare)),
+                            as_st: AsState::AfterSyncReady(prepare),
                             entry,
                         },
                     };

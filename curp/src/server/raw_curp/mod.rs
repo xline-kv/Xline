@@ -1364,10 +1364,14 @@ where
                     log.last_log_index()
                 )
             });
-            if let Some(prepare_res) = self.ctx.pb.lock().remove(&i) {
-                self.ctx
-                    .cmd_tx
-                    .send_after_sync(Arc::clone(entry), prepare_res);
+            if let EntryData::Command(_) = entry.entry_data {
+                if let Some(prepare_res) = self.ctx.pb.lock().remove(&i) {
+                    self.ctx
+                        .cmd_tx
+                        .send_after_sync(Arc::clone(entry), Some(prepare_res));
+                }
+            } else {
+                self.ctx.cmd_tx.send_after_sync(Arc::clone(entry), None);
             }
             log.last_as = i;
             if log.last_exe < log.last_as {
