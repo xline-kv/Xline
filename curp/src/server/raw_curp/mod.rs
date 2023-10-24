@@ -1316,16 +1316,18 @@ where
         for cmd in recovered_cmds {
             let _ig_sync = cb_w.sync.insert(cmd.id()); // may have been inserted before
             let _ig_spec = sp_l.insert(cmd.clone()); // may have been inserted before
-            #[allow(clippy::expect_used)]
-            let entry = log
-                .push(term, cmd.clone())
-                .expect("cmd {cmd:?} cannot be serialized");
-            let index = entry.index;
-            if let PoolEntry::Command(c) = cmd {
+            let index = log.last_log_index() + 1;
+            if let PoolEntry::Command(ref c) = cmd {
                 if let Ok(prepare) = self.ctx.cmd_executor.prepare(c.as_ref(), index) {
                     let _ignore = self.ctx.pb.lock().insert(index, prepare);
+                } else {
+                    continue;
                 }
             }
+            #[allow(clippy::expect_used)]
+            let entry = log
+                .push(term, cmd)
+                .expect("cmd {cmd:?} cannot be serialized");
             debug!(
                 "{} recovers speculatively executed cmd({}) in log[{}]",
                 self.id(),
