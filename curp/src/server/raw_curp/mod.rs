@@ -119,6 +119,8 @@ pub(super) struct Vote {
     pub(super) last_log_index: LogIndex,
     /// Candidate's last log term
     pub(super) last_log_term: u64,
+    /// Is this a pre vote
+    pub(super) is_pre_vote: bool,
 }
 
 /// Invoked by leader to replicate log entries; also used as heartbeat
@@ -142,6 +144,8 @@ pub(super) struct AppendEntries<C> {
 enum Role {
     /// Follower
     Follower,
+    /// PreCandidate
+    PreCandidate,
     /// Candidate
     Candidate,
     /// Leader
@@ -204,24 +208,26 @@ impl<C: Command, RC: RoleChange> Debug for Context<C, RC> {
 impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     /// Tick
     pub(super) fn tick_election(&self) -> Option<Vote> {
-        let timeout = {
-            let st_r = self.st.read();
-            match st_r.role {
-                Role::Follower => st_r.follower_timeout_ticks,
-                Role::Candidate => st_r.candidate_timeout_ticks,
-                Role::Leader => return None,
-            }
+        let st_r = self.st.upgradable_read();
+        let timeout = match st_r.role {
+            Role::Follower => st_r.follower_timeout_ticks,
+            Role::PreCandidate | Role::Candidate => st_r.candidate_timeout_ticks,
+            Role::Leader => return None,
         };
         let tick = self.ctx.election_tick.fetch_add(1, Ordering::AcqRel);
         if tick < timeout {
             return None;
         }
-
-        self.become_candidate(
-            &mut self.st.write(),
-            &mut self.cst.lock(),
-            self.log.upgradable_read(),
-        )
+        let mut st_w = RwLockUpgradableReadGuard::upgrade(st_r);
+        let mut cst_l = self.cst.lock();
+        let log_r = self.log.upgradable_read();
+        match st_w.role {
+            Role::Follower | Role::PreCandidate => {
+                self.become_pre_candidate(&mut st_w, &mut cst_l, log_r)
+            }
+            Role::Candidate => self.become_candidate(&mut st_w, &mut cst_l, log_r),
+            Role::Leader => unreachable!("leader should not tick election"),
+        }
     }
 }
 
@@ -529,6 +535,51 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         Ok((st_w.term, self_spec_pool))
     }
 
+    /// Handle `pre_vote`
+    /// Return `Ok(term, spec_pool)` if the vote is granted
+    /// Return `Err(term)` if the vote is rejected
+    pub(super) fn handle_pre_vote(
+        &self,
+        term: u64,
+        candidate_id: ServerId,
+        last_log_index: LogIndex,
+        last_log_term: u64,
+    ) -> Result<(u64, Vec<PoolEntry<C>>), u64> {
+        debug!(
+            "{} received vote: term({}), last_log_index({}), last_log_term({}), id({})",
+            self.id(),
+            term,
+            last_log_index,
+            last_log_term,
+            candidate_id
+        );
+
+        let st_r = self.st.read();
+        let log_r = self.log.read();
+
+        // calibrate term
+        if term < st_r.term {
+            return Err(st_r.term);
+        }
+        if term > st_r.term {
+            let timeout = st_r.follower_timeout_ticks;
+            if st_r.leader_id.is_some() && self.ctx.election_tick.load(Ordering::Acquire) < timeout
+            {
+                return Err(st_r.term);
+            }
+        }
+
+        // check if the candidate's log is up-to-date
+        if !log_r.log_up_to_date(last_log_term, last_log_index) {
+            return Err(st_r.term);
+        }
+
+        // grant the vote
+        debug!("{} pre votes for server {}", self.id(), candidate_id);
+        self.reset_election_tick();
+        Ok((st_r.term, vec![]))
+    }
+
     /// Handle `vote` responses
     /// Return `Ok(election_ends)` if succeeds
     /// Return `Err(())` if self is no longer a candidate
@@ -591,6 +642,41 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         }
 
         Ok(true)
+    }
+
+    /// Handle `pre_vote` responses
+    /// Return `Ok(election_ends)` if succeeds
+    /// Return `Err(())` if self is no longer a pre candidate
+    pub(super) fn handle_pre_vote_resp(
+        &self,
+        id: ServerId,
+        term: u64,
+        vote_granted: bool,
+    ) -> Result<Option<Vote>, ()> {
+        let mut st_w = self.st.write();
+        if st_w.term < term && !vote_granted {
+            self.update_to_term_and_become_follower(&mut st_w, term);
+            return Err(());
+        }
+        if st_w.role != Role::PreCandidate {
+            return Err(());
+        }
+
+        let mut cst_w = self.cst.lock();
+        let _ig = cst_w.votes_received.insert(id, vote_granted);
+
+        if !vote_granted {
+            return Ok(None);
+        }
+
+        debug!("{}'s pre vote is granted by server {}", self.id(), id);
+
+        if !matches!(cst_w.check_vote(), VoteResult::Won) {
+            return Ok(None);
+        }
+
+        let log_r = self.log.upgradable_read();
+        Ok(self.become_candidate(&mut st_w, &mut cst_w, log_r))
     }
 
     /// Verify `install_snapshot` request
@@ -1103,6 +1189,50 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 // Utils
 // Don't grab lock in the following functions(except cb or sp's lock)
 impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
+    /// Server becomes a pre candidate
+    fn become_pre_candidate(
+        &self,
+        st: &mut State,
+        cst: &mut CandidateState<C>,
+        log: RwLockUpgradableReadGuard<'_, Log<C>>,
+    ) -> Option<Vote> {
+        let prev_role = st.role;
+        assert_ne!(prev_role, Role::Leader, "leader can't start election");
+        assert_ne!(
+            prev_role,
+            Role::Candidate,
+            "candidate can't become pre candidate"
+        );
+
+        st.role = Role::PreCandidate;
+        cst.votes_received = HashMap::from([(self.id(), true)]);
+        st.leader_id = None;
+        let _ig = self.ctx.leader_tx.send(None).ok();
+        self.reset_election_tick();
+
+        if prev_role == Role::Follower {
+            debug!("Follower {} starts pre election", self.id());
+        } else {
+            debug!("PreCandidate {} restarts pre election", self.id());
+        }
+
+        // vote to self
+        debug!("{}'s vote is granted by server {}", self.id(), self.id());
+        cst.votes_received = HashMap::from([(self.id(), true)]);
+
+        if matches!(cst.check_vote(), VoteResult::Won) {
+            self.become_candidate(st, cst, log)
+        } else {
+            Some(Vote {
+                term: st.term.overflow_add(1),
+                candidate_id: self.id(),
+                last_log_index: log.last_log_index(),
+                last_log_term: log.last_log_term(),
+                is_pre_vote: true,
+            })
+        }
+    }
+
     /// Server becomes a candidate
     fn become_candidate(
         &self,
@@ -1112,6 +1242,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     ) -> Option<Vote> {
         let prev_role = st.role;
         assert_ne!(prev_role, Role::Leader, "leader can't start election");
+        assert_ne!(
+            prev_role,
+            Role::Follower,
+            "follower can't directly become a candidate"
+        );
 
         st.term += 1;
         st.role = Role::Candidate;
@@ -1125,8 +1260,8 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             .sp
             .map_lock(|sp| sp.pool.values().cloned().collect());
 
-        if prev_role == Role::Follower {
-            debug!("Follower {} starts election", self.id());
+        if prev_role == Role::PreCandidate {
+            debug!("PreCandidate {} starts election", self.id());
         } else {
             debug!("Candidate {} restarts election", self.id());
         }
@@ -1151,6 +1286,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 candidate_id: self.id(),
                 last_log_index: log.last_log_index(),
                 last_log_term: log.last_log_term(),
+                is_pre_vote: false,
             })
         }
     }

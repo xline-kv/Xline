@@ -388,7 +388,7 @@ async fn follower_will_not_start_election_when_heartbeats_are_received() {
 #[traced_test]
 #[tokio::test]
 #[abort_on_panic]
-async fn follower_or_candidate_will_start_election_if_timeout() {
+async fn follower_or_pre_candidate_will_start_election_if_timeout() {
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx
@@ -414,7 +414,7 @@ async fn follower_or_candidate_will_start_election_if_timeout() {
             );
             follower_election = Some(now);
         }
-        if matches!(action, Some(_)) && role == Role::Candidate {
+        if matches!(action, Some(_)) && role == Role::PreCandidate {
             let prev = follower_election.unwrap();
             let now = Instant::now();
 
@@ -494,7 +494,7 @@ fn handle_vote_will_reject_outdated_candidate() {
 
 #[traced_test]
 #[test]
-fn candidate_will_become_leader_after_election_succeeds() {
+fn pre_candidate_will_become_candidate_then_become_leader_after_election_succeeds() {
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx
@@ -505,16 +505,24 @@ fn candidate_will_become_leader_after_election_succeeds() {
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
     // tick till election starts
-    while curp.role() != Role::Candidate {
+    while curp.role() != Role::PreCandidate {
         let _ig = curp.tick_election();
     }
 
     let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let result = curp.handle_pre_vote_resp(s1_id, 2, true).unwrap();
+    assert!(result.is_some());
+    assert_eq!(curp.role(), Role::Candidate);
+
+    let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
+    let result = curp.handle_pre_vote_resp(s2_id, 2, true);
+    assert!(result.is_err());
+    assert_eq!(curp.role(), Role::Candidate);
+
     let result = curp.handle_vote_resp(s1_id, 2, true, vec![]).unwrap();
     assert!(result);
     assert_eq!(curp.role(), Role::Leader);
 
-    let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
     let result = curp.handle_vote_resp(s2_id, 2, true, vec![]);
     assert!(result.is_err());
     assert_eq!(curp.role(), Role::Leader);
@@ -522,7 +530,7 @@ fn candidate_will_become_leader_after_election_succeeds() {
 
 #[traced_test]
 #[test]
-fn vote_will_calibrate_candidate_term() {
+fn vote_will_calibrate_pre_candidate_term() {
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx
@@ -533,7 +541,7 @@ fn vote_will_calibrate_candidate_term() {
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
     // tick till election starts
-    while curp.role() != Role::Candidate {
+    while curp.role() != Role::PreCandidate {
         let _ig = curp.tick_election();
     }
 

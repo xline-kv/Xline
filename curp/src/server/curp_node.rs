@@ -333,15 +333,27 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
 
     /// Handle `Vote` requests
     pub(super) async fn vote(&self, req: VoteRequest) -> Result<VoteResponse, CurpError> {
-        let result = self.curp.handle_vote(
-            req.term,
-            req.candidate_id,
-            req.last_log_index,
-            req.last_log_term,
-        );
+        let result = if req.is_pre_vote {
+            self.curp.handle_pre_vote(
+                req.term,
+                req.candidate_id,
+                req.last_log_index,
+                req.last_log_term,
+            )
+        } else {
+            self.curp.handle_vote(
+                req.term,
+                req.candidate_id,
+                req.last_log_index,
+                req.last_log_term,
+            )
+        };
+
         let resp = match result {
             Ok((term, sp)) => {
-                self.storage.flush_voted_for(term, req.candidate_id).await?;
+                if !req.is_pre_vote {
+                    self.storage.flush_voted_for(term, req.candidate_id).await?;
+                }
                 VoteResponse::new_accept(term, sp)?
             }
             Err(term) => VoteResponse::new_reject(term),
@@ -495,8 +507,18 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                     return;
                 }
             }
-            if let Some(vote) = curp.tick_election() {
-                Self::bcast_vote(curp.as_ref(), vote).await;
+            if let Some(pre_vote_or_vote) = curp.tick_election() {
+                // bcast pre vote or vote, if it is a pre vote and success, it will return Some(vote)
+                // then we need to bcast normal vote, and bcast normal vote always return None
+                if let Some(vote) = Self::bcast_vote(curp.as_ref(), pre_vote_or_vote.clone()).await
+                {
+                    debug_assert!(
+                        !vote.is_pre_vote,
+                        "bcast pre vote should return Some(normal_vote)"
+                    );
+                    let opt = Self::bcast_vote(curp.as_ref(), vote).await;
+                    debug_assert!(opt.is_none(), "bcast normal vote should always return None");
+                }
             }
         }
     }
@@ -861,9 +883,15 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
             tokio::spawn(Self::log_persist_task(log_rx, storage, shutdown_listener));
     }
 
-    /// Candidate broadcasts votes
-    async fn bcast_vote(curp: &RawCurp<C, RC>, vote: Vote) {
-        debug!("{} broadcasts votes to all servers", curp.id());
+    /// Candidate or pre candidate broadcasts votes
+    /// Return `Some(vote)` if bcast pre vote and success
+    /// Return `None` if bcast pre vote and fail or bcast vote
+    async fn bcast_vote(curp: &RawCurp<C, RC>, vote: Vote) -> Option<Vote> {
+        if vote.is_pre_vote {
+            debug!("{} broadcasts pre votes to all servers", curp.id());
+        } else {
+            debug!("{} broadcasts votes to all servers", curp.id());
+        }
         let rpc_timeout = curp.cfg().rpc_timeout;
         let voters_connects = curp.voters_connects();
         let resps = voters_connects
@@ -874,6 +902,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                     vote.candidate_id,
                     vote.last_log_index,
                     vote.last_log_term,
+                    vote.is_pre_vote,
                 );
                 async move {
                     let resp = connect.vote(req, rpc_timeout).await;
@@ -892,21 +921,31 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
             });
         pin_mut!(resps);
         while let Some((id, resp)) = resps.next().await {
-            // collect follower spec pool
-            let follower_spec_pool = match resp.spec_pool() {
-                Err(e) => {
-                    error!("can't deserialize spec_pool from vote response, {e}");
-                    continue;
+            if vote.is_pre_vote {
+                let result = curp.handle_pre_vote_resp(id, resp.term, resp.vote_granted);
+                match result {
+                    Ok(None) => {}
+                    Ok(Some(v)) => return Some(v),
+                    Err(()) => return None,
                 }
-                Ok(spec_pool) => spec_pool.into_iter().collect(),
+            } else {
+                // collect follower spec pool
+                let follower_spec_pool = match resp.spec_pool() {
+                    Err(e) => {
+                        error!("can't deserialize spec_pool from vote response, {e}");
+                        continue;
+                    }
+                    Ok(spec_pool) => spec_pool.into_iter().collect(),
+                };
+                let result =
+                    curp.handle_vote_resp(id, resp.term, resp.vote_granted, follower_spec_pool);
+                match result {
+                    Ok(false) => {}
+                    Ok(true) | Err(()) => return None,
+                }
             };
-            let result =
-                curp.handle_vote_resp(id, resp.term, resp.vote_granted, follower_spec_pool);
-            match result {
-                Ok(false) => {}
-                Ok(true) | Err(()) => return,
-            }
         }
+        None
     }
 
     /// Get a rx for leader changes
@@ -1064,7 +1103,7 @@ mod tests {
             Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
         };
         let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
-        curp.handle_append_entries(1, s2_id, 0, 0, vec![], 0)
+        curp.handle_append_entries(2, s2_id, 0, 0, vec![], 0)
             .unwrap();
 
         let mut mock_connect1 = MockInnerConnectApi::default();
