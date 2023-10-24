@@ -271,13 +271,12 @@ where
         // leader also needs to check if the cmd conflicts un-synced commands
         conflict |= self.insert_ucp(Arc::clone(&cmd));
         let mut log_w = self.log.write();
-        let entry = log_w.push(st_r.term, Arc::clone(&cmd))?;
-        debug!("{} gets new log[{}]", self.id(), entry.index);
-
-        let index = entry.index;
+        let index = log_w.last_log_index() + 1;
         let prepare_res = self.ctx.cmd_executor.prepare(cmd.as_ref(), index);
-        let prepare = match prepare_res {
-            Ok(prepare) => prepare,
+        match prepare_res {
+            Ok(prepare) => {
+                let _ignore = self.ctx.pb.lock().insert(index, prepare);
+            }
             Err(e) => {
                 self.ctx.cb.map_write(|mut cb| {
                     cb.insert_er(cmd.id(), Err(e));
@@ -285,7 +284,9 @@ where
                 return Ok((info, Ok(true)));
             }
         };
-        let _ignore = self.ctx.pb.lock().insert(index, prepare);
+
+        let entry = log_w.push(st_r.term, cmd)?;
+        debug!("{} gets new log[{}]", self.id(), entry.index);
 
         self.entry_process(&mut log_w, entry, conflict);
 

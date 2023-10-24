@@ -52,10 +52,9 @@ impl RevisionNumberGenerator {
     }
 
     /// Revert the revision number
-    pub(crate) fn reset(&self) -> i64 {
+    pub(crate) fn reset(&self) {
         let mut inner_w = self.inner.write();
         inner_w.pre_revision = inner_w.revision;
-        inner_w.revision
     }
 
     /// Set the revision number

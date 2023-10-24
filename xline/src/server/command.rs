@@ -363,8 +363,8 @@ where
     }
 
     fn prepare_reset(&self) {
-        let _ignore = self.auth_rev.reset();
-        let _ignore = self.general_rev.reset();
+        self.auth_rev.reset();
+        self.general_rev.reset();
     }
 
     async fn execute(
