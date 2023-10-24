@@ -372,12 +372,14 @@ impl VoteRequest {
         candidate_id: ServerId,
         last_log_index: LogIndex,
         last_log_term: u64,
+        is_pre_vote: bool,
     ) -> Self {
         Self {
             term,
             candidate_id,
             last_log_index,
             last_log_term,
+            is_pre_vote,
         }
     }
 }

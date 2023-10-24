@@ -70,8 +70,7 @@ async fn reelect() {
     let group = CurpGroup::new(5).await;
 
     // check whether there is exact one leader in the group
-    let leader1 = group.get_leader().await.0;
-    let term1 = group.get_term_checked().await;
+    let (leader1, term1) = group.get_leader().await;
     check_role_state(&group, 5, leader1);
     // disable leader 1
     group.disable_node(leader1);
@@ -113,7 +112,8 @@ async fn reelect() {
 
     let (final_leader, final_term) = wait_for_election(&group).await;
     check_role_state(&group, 5, final_leader);
-    assert!(final_term > term3);
+    // After we implement the pre vote, the term will not be changed if the cluster can't elect a new leader.
+    assert_eq!(final_term, term3);
 }
 
 #[madsim::test]
