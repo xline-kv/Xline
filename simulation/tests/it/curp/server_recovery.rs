@@ -47,7 +47,7 @@ async fn leader_crash_and_recovery() {
     group.restart(leader, false).await;
     let old_leader = group.nodes.get_mut(&leader).unwrap();
 
-    // new leader will push a empty log to commit previous logs, the empty log does
+    // new leader will push an empty log to commit previous logs, the empty log does
     // not call ce.execute and ce.after_sync, therefore, the index of the first item
     // received by as_rx is 2
     let (_cmd, er) = old_leader.exe_rx.recv().await.unwrap();

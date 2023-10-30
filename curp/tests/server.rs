@@ -341,7 +341,7 @@ async fn propose_remove_follower_should_success() {
         .unwrap();
     assert_eq!(members.len(), 4);
     assert!(members.iter().all(|m| m.id != follower_id));
-    sleep_millis(500).await;
+    sleep_secs(3).await; // wait the removed node start election and detect it is removed
     assert!(group.nodes.get(&follower_id).unwrap().handle.is_finished());
     // check if the old client can propose to the new cluster
     let res = client.propose(TestCommand::new_get(vec![1]), true).await;
@@ -639,5 +639,5 @@ async fn fetch_read_state_rpc_should_work_when_client_has_wrong_cluster() {
 
     let cmd = TestCommand::new_get(vec![0]);
     let res = client.fetch_read_state(&cmd).await;
-    println!("{res:?}");
+    assert!(res.is_ok());
 }
