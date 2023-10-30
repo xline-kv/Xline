@@ -326,6 +326,11 @@ impl ClusterInfo {
             s.is_learner = true;
         }
     }
+
+    /// Check if cluster contains a node
+    pub(crate) fn contains(&self, node_id: ServerId) -> bool {
+        self.members.contains_key(&node_id)
+    }
 }
 
 #[cfg(test)]

@@ -29,6 +29,7 @@ message VoteResponse {
     uint64 term = 1;
     bool vote_granted = 2;
     repeated bytes spec_pool = 3;
+    bool shutdown_candidate = 4;
 }
 
 message InstallSnapshotRequest {

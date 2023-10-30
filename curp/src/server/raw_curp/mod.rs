@@ -29,7 +29,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::{
     debug, error,
     log::{log_enabled, Level},
-    trace,
+    trace, warn,
 };
 use utils::{
     config::CurpConfig,
@@ -475,14 +475,15 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
     /// Handle `vote`
     /// Return `Ok(term, spec_pool)` if the vote is granted
-    /// Return `Err(term)` if the vote is rejected
+    /// Return `Err(Some(term))` if the vote is rejected
+    /// The `Err(None)` will never be returned here, just to keep the return type consistent with the `handle_pre_vote`
     pub(super) fn handle_vote(
         &self,
         term: u64,
         candidate_id: ServerId,
         last_log_index: LogIndex,
         last_log_term: u64,
-    ) -> Result<(u64, Vec<PoolEntry<C>>), u64> {
+    ) -> Result<(u64, Vec<PoolEntry<C>>), Option<u64>> {
         debug!(
             "{} received vote: term({}), last_log_index({}), last_log_term({}), id({})",
             self.id(),
@@ -497,7 +498,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
         // calibrate term
         if term < st_w.term {
-            return Err(st_w.term);
+            return Err(Some(st_w.term));
         }
         if term > st_w.term {
             self.update_to_term_and_become_follower(&mut st_w, term);
@@ -505,7 +506,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
         // check self role
         if !matches!(st_w.role, Role::Follower | Role::PreCandidate) {
-            return Err(st_w.term);
+            return Err(Some(st_w.term));
         }
 
         // check if voted before
@@ -514,12 +515,12 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             .as_ref()
             .map_or(false, |id| id != &candidate_id)
         {
-            return Err(st_w.term);
+            return Err(Some(st_w.term));
         }
 
         // check if the candidate's log is up-to-date
         if !log_r.log_up_to_date(last_log_term, last_log_index) {
-            return Err(st_w.term);
+            return Err(Some(st_w.term));
         }
 
         // grant the vote
@@ -532,14 +533,15 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
     /// Handle `pre_vote`
     /// Return `Ok(term, spec_pool)` if the vote is granted
-    /// Return `Err(term)` if the vote is rejected
+    /// Return `Err(Some(term))` if the vote is rejected
+    /// Return `Err(None)` if the candidate is removed from the cluster
     pub(super) fn handle_pre_vote(
         &self,
         term: u64,
         candidate_id: ServerId,
         last_log_index: LogIndex,
         last_log_term: u64,
-    ) -> Result<(u64, Vec<PoolEntry<C>>), u64> {
+    ) -> Result<(u64, Vec<PoolEntry<C>>), Option<u64>> {
         debug!(
             "{} received pre vote: term({}), last_log_index({}), last_log_term({}), id({})",
             self.id(),
@@ -551,22 +553,43 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
         let st_r = self.st.read();
         let log_r = self.log.read();
+        let contains_candidate = self.cluster().contains(candidate_id);
+        let remove_candidate_is_not_committed =
+            log_r
+                .fallback_contexts
+                .iter()
+                .any(|(_, ctx)| match ctx.origin_entry.entry_data {
+                    EntryData::ConfChange(ref cc) => cc.changes().iter().any(|c| {
+                        matches!(c.change_type(), ConfChangeType::Remove)
+                            && c.node_id == candidate_id
+                    }),
+                    EntryData::Empty(_) | EntryData::Command(_) | EntryData::Shutdown(_) => false,
+                });
+        // extra check to shutdown removed node
+        if !contains_candidate && !remove_candidate_is_not_committed {
+            debug!(
+                "{} received pre vote from removed node {}",
+                self.id(),
+                candidate_id
+            );
+            return Err(None);
+        }
 
         // calibrate term
         if term < st_r.term {
-            return Err(st_r.term);
+            return Err(Some(st_r.term));
         }
         if term > st_r.term {
             let timeout = st_r.follower_timeout_ticks;
             if st_r.leader_id.is_some() && self.ctx.election_tick.load(Ordering::Acquire) < timeout
             {
-                return Err(st_r.term);
+                return Err(Some(st_r.term));
             }
         }
 
         // check if the candidate's log is up-to-date
         if !log_r.log_up_to_date(last_log_term, last_log_index) {
-            return Err(st_r.term);
+            return Err(Some(st_r.term));
         }
 
         // grant the vote
@@ -618,6 +641,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
         let prev_last_log_index = log_w.last_log_index();
         self.recover_from_spec_pools(&mut st_w, &mut log_w, spec_pools);
+        // TODO: Generate client id in the same way as client
         let propose_id = ProposeId(rand::random(), 0);
         let _ignore = log_w.push(st_w.term, EntryData::Empty(propose_id));
         self.recover_ucp_from_log(&mut log_w);
@@ -867,24 +891,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         self.ctx.leader_tx.subscribe()
     }
 
-    /// Check on the leader that the remove node conf change entry has been synced to the removed follower
-    pub(super) fn can_remove_follower_after_hb(&self, follower_id: ServerId) -> bool {
-        if self.ctx.connects.contains_key(&follower_id) {
-            return false;
-        }
-        let match_index = self.lst.get_match_index(follower_id);
-        let last_conf_change_idx = self.ctx.last_conf_change_idx.load(Ordering::Acquire);
-        if match_index >= last_conf_change_idx {
-            return true;
-        }
-        false
-    }
-
-    /// Remove a follower's status
-    pub(super) fn remove_node_status(&self, follower_id: ServerId) {
-        self.lst.remove(follower_id);
-    }
-
     /// Get `append_entries` request for `follower_id` that contains the latest log entries
     pub(super) fn sync(&self, follower_id: ServerId) -> Option<SyncAction<C>> {
         let term = {
@@ -895,7 +901,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             lst_r.term
         };
 
-        let next_index = self.lst.get_next_index(follower_id);
+        let Some(next_index) = self.lst.get_next_index(follower_id) else {
+            warn!("follower {} is not found, it maybe has been removed", follower_id);
+            return None;
+        };
         let log_r = self.log.read();
         if next_index <= log_r.base_index {
             // the log has already been compacted
@@ -1050,7 +1059,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 if statuses_ids.get(&node_id).is_none() || !config.contains(node_id) {
                     return Err(ConfChangeError::NodeNotExists(()));
                 }
-                let learner_index = self.lst.get_match_index(node_id);
+                let learner_index = self
+                    .lst
+                    .get_match_index(node_id)
+                    .unwrap_or_else(|| unreachable!("learner should exist here"));
                 let leader_index = self.log.read().last_log_index();
                 if leader_index.overflow_sub(learner_index) > MAX_PROMOTE_GAP {
                     return Err(ConfChangeError::LearnerNotCatchUp(()));
@@ -1481,12 +1493,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 (vec![], String::new(), is_learner)
             }
             ConfChangeType::Remove => {
-                // the removed follower need to commit the conf change entry, so when leader applies
-                // the conf change entry, it will not remove the follower status, and after the log
-                // entry is committed on the removed follower, leader will remove the follower status
-                // and stop the sync_follower_task.
                 self.cst
                     .map_lock(|mut cst_l| _ = cst_l.config.remove(node_id));
+                self.lst.remove(node_id);
                 let m = self.ctx.cluster_info.remove(&node_id);
                 _ = self.ctx.sync_events.remove(&node_id);
                 _ = self.ctx.connects.remove(&node_id);
@@ -1538,9 +1547,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             self.ctx.cmd_tx.send_sp_exe(entry);
         }
         self.ctx.sync_events.iter().for_each(|e| {
-            let next = self.lst.get_next_index(*e.key());
-            if next > log_w.base_index && log_w.has_next_batch(next) {
-                e.notify(1);
+            if let Some(next) = self.lst.get_next_index(*e.key()) {
+                if next > log_w.base_index && log_w.has_next_batch(next) {
+                    e.notify(1);
+                }
             }
         });
 

@@ -356,7 +356,8 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                 }
                 VoteResponse::new_accept(term, sp)?
             }
-            Err(term) => VoteResponse::new_reject(term),
+            Err(Some(term)) => VoteResponse::new_reject(term),
+            Err(None) => VoteResponse::new_shutdown(),
         };
 
         Ok(resp)
@@ -664,7 +665,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         let id = connect.id();
         let batch_timeout = curp.cfg().batch_timeout;
         let mut is_shutdown_state = false;
-        let mut is_remove_state = false;
 
         #[allow(clippy::integer_arithmetic)] // tokio select internal triggered
         let leader_retired = loop {
@@ -684,7 +684,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                     }
                 }
                 _ = remove_event.listen() => {
-                    is_remove_state = true;
+                    break false;
                 }
                 _now = ticker.tick() => {
                     hb_opt = false;
@@ -695,8 +695,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                     }
                 }
             }
-
-            let can_remove_node = is_remove_state && curp.can_remove_follower_after_hb(id);
 
             let Some(sync_action) = curp.sync(id) else {
                 break true;
@@ -720,10 +718,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                             hb_opt = true;
                         }
                         if is_shutdown_state && is_empty && curp.is_synced() {
-                            break false;
-                        }
-                        if can_remove_node {
-                            curp.remove_node_status(id);
                             break false;
                         }
                     }
@@ -922,6 +916,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         pin_mut!(resps);
         while let Some((id, resp)) = resps.next().await {
             if vote.is_pre_vote {
+                if resp.shutdown_candidate {
+                    curp.shutdown_trigger().self_shutdown();
+                    return None;
+                }
                 let result = curp.handle_pre_vote_resp(id, resp.term, resp.vote_granted);
                 match result {
                     Ok(None) => {}

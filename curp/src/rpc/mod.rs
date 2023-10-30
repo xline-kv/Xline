@@ -397,6 +397,7 @@ impl VoteResponse {
                 .into_iter()
                 .map(|c| bincode::serialize(&c))
                 .collect::<bincode::Result<Vec<Vec<u8>>>>()?,
+            shutdown_candidate: false,
         })
     }
 
@@ -406,6 +407,17 @@ impl VoteResponse {
             term,
             vote_granted: false,
             spec_pool: vec![],
+            shutdown_candidate: false,
+        }
+    }
+
+    /// Create a new shutdown vote response
+    pub(crate) fn new_shutdown() -> Self {
+        Self {
+            term: 0,
+            vote_granted: false,
+            spec_pool: vec![],
+            shutdown_candidate: true,
         }
     }
 

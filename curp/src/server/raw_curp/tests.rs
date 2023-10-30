@@ -263,7 +263,7 @@ fn heartbeat_will_calibrate_next_index() {
 
     let st_r = curp.st.read();
     assert_eq!(st_r.term, 1);
-    assert_eq!(curp.lst.get_next_index(s1_id), 1);
+    assert_eq!(curp.lst.get_next_index(s1_id), Some(1));
 }
 
 #[traced_test]
@@ -463,7 +463,7 @@ fn handle_vote_will_reject_smaller_term() {
 
     let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
     let result = curp.handle_vote(1, s1_id, 0, 0);
-    assert_eq!(result.unwrap_err(), 2);
+    assert_eq!(result.unwrap_err(), Some(2));
 }
 
 // #[traced_test]
@@ -489,7 +489,7 @@ fn handle_vote_will_reject_outdated_candidate() {
     curp.st.write().leader_id = None;
     let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
     let result = curp.handle_vote(3, s1_id, 0, 0);
-    assert_eq!(result.unwrap_err(), 3);
+    assert_eq!(result.unwrap_err(), Some(3));
 }
 
 #[traced_test]

@@ -8,7 +8,7 @@ use dashmap::{
     DashMap,
 };
 use madsim::rand::{thread_rng, Rng};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use super::Role;
 use crate::{members::ServerId, server::PoolEntry, LogIndex};
@@ -155,17 +155,13 @@ impl LeaderState {
     }
 
     /// Get status for a server
-    fn get_status(&self, id: ServerId) -> Ref<'_, u64, FollowerStatus> {
-        self.statuses
-            .get(&id)
-            .unwrap_or_else(|| unreachable!("no status for {id}"))
+    fn get_status(&self, id: ServerId) -> Option<Ref<'_, u64, FollowerStatus>> {
+        self.statuses.get(&id)
     }
 
     /// Get status for a server
-    fn get_status_mut(&self, id: ServerId) -> RefMut<'_, u64, FollowerStatus> {
-        self.statuses
-            .get_mut(&id)
-            .unwrap_or_else(|| unreachable!("no status for {id}"))
+    fn get_status_mut(&self, id: ServerId) -> Option<RefMut<'_, u64, FollowerStatus>> {
+        self.statuses.get_mut(&id)
     }
 
     /// Check all followers by `f`
@@ -174,23 +170,30 @@ impl LeaderState {
     }
 
     /// Get `next_index` for server
-    pub(super) fn get_next_index(&self, id: ServerId) -> LogIndex {
-        self.get_status(id).next_index
+    pub(super) fn get_next_index(&self, id: ServerId) -> Option<LogIndex> {
+        self.get_status(id).map(|s| s.next_index)
     }
 
     /// Get `match_index` for server
-    pub(super) fn get_match_index(&self, id: ServerId) -> LogIndex {
-        self.get_status(id).match_index
+    pub(super) fn get_match_index(&self, id: ServerId) -> Option<LogIndex> {
+        self.get_status(id).map(|s| s.match_index)
     }
 
     /// Update `next_index` for server
     pub(super) fn update_next_index(&self, id: ServerId, index: LogIndex) {
-        self.get_status_mut(id).next_index = index;
+        let Some(mut status) = self.get_status_mut(id) else {
+            warn!("follower {} is not found, it maybe has been removed", id);
+            return;
+        };
+        status.next_index = index;
     }
 
     /// Update `match_index` for server, will update `next_index` if possible
     pub(super) fn update_match_index(&self, id: ServerId, index: LogIndex) {
-        let mut status = self.get_status_mut(id);
+        let Some(mut status) = self.get_status_mut(id) else {
+            warn!("follower {} is not found, it maybe has been removed", id);
+            return;
+        };
         if status.match_index >= index {
             return;
         }
