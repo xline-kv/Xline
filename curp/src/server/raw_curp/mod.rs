@@ -500,16 +500,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             return Err(st_w.term);
         }
         if term > st_w.term {
-            let timeout = st_w.follower_timeout_ticks;
-            if st_w.leader_id.is_some() && self.ctx.election_tick.load(Ordering::Acquire) < timeout
-            {
-                return Err(st_w.term);
-            }
             self.update_to_term_and_become_follower(&mut st_w, term);
         }
 
         // check self role
-        if st_w.role != Role::Follower {
+        if !matches!(st_w.role, Role::Follower | Role::PreCandidate) {
             return Err(st_w.term);
         }
 
@@ -546,7 +541,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         last_log_term: u64,
     ) -> Result<(u64, Vec<PoolEntry<C>>), u64> {
         debug!(
-            "{} received vote: term({}), last_log_index({}), last_log_term({}), id({})",
+            "{} received pre vote: term({}), last_log_index({}), last_log_term({}), id({})",
             self.id(),
             term,
             last_log_index,
@@ -576,7 +571,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
         // grant the vote
         debug!("{} pre votes for server {}", self.id(), candidate_id);
-        self.reset_election_tick();
         Ok((st_r.term, vec![]))
     }
 
