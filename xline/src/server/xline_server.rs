@@ -416,7 +416,7 @@ impl XlineServer {
 
         Ok((
             KvServer::new(
-                kv_storage,
+                Arc::clone(&kv_storage),
                 Arc::clone(&auth_storage),
                 index_barrier,
                 id_barrier,
@@ -446,6 +446,7 @@ impl XlineServer {
                 self.shutdown_trigger.subscribe(),
             ),
             MaintenanceServer::new(
+                kv_storage,
                 Arc::clone(&client),
                 persistent,
                 Arc::clone(&header_gen),
