@@ -25,7 +25,7 @@ pub(super) struct CommandBoard<C: Command> {
     /// Store all notifiers for conf change results
     conf_notifier: HashMap<ProposeId, Event>,
     /// The result trackers track all cmd, this is used for dedup
-    trackers: HashMap<u64, Tracker>,
+    pub(super) trackers: HashMap<u64, Tracker>,
     /// Store all conf change propose ids
     pub(super) conf_buffer: IndexSet<ProposeId>,
     /// The cmd has been received before, this is used for dedup
@@ -52,13 +52,11 @@ impl<C: Command> CommandBoard<C> {
         }
     }
 
-    /// filter duplication, return true if duplicated
-    pub(super) fn filter_dup(&mut self, client_id: u64, seq_num: u64) -> bool {
-        let tracker = self
-            .trackers
+    /// Get the tracker for a client id
+    pub(super) fn tracker(&mut self, client_id: u64) -> &mut Tracker {
+        self.trackers
             .entry(client_id)
-            .or_insert_with(Tracker::default);
-        tracker.record(seq_num)
+            .or_insert_with(Tracker::default)
     }
 
     /// Remove client result tracker from trackers if it is expired

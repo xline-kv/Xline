@@ -112,10 +112,11 @@ impl FetchClusterResponse {
 
 impl ProposeRequest {
     /// Create a new `Propose` request
-    pub(crate) fn new<C: Command>(cmd: &C, cluster_version: u64) -> Self {
+    pub(crate) fn new<C: Command>(cmd: &C, cluster_version: u64, first_incomplete: u64) -> Self {
         Self {
             command: cmd.encode(),
             cluster_version,
+            first_incomplete,
         }
     }
 
@@ -534,11 +535,17 @@ impl ProposeConfChangeRequest {
     /// Create a new `ProposeConfChangeRequest`
     #[inline]
     #[must_use]
-    pub fn new(id: ProposeId, changes: Vec<ConfChange>, cluster_version: u64) -> Self {
+    pub fn new(
+        id: ProposeId,
+        changes: Vec<ConfChange>,
+        cluster_version: u64,
+        first_incomplete: u64,
+    ) -> Self {
         Self {
             propose_id: Some(id.into()),
             changes,
             cluster_version,
+            first_incomplete,
         }
     }
 
@@ -614,6 +621,7 @@ impl ShutdownRequest {
 
 impl ConfChangeError {
     /// Create a new `ConfChangeError` with `ProposeError`
+    #[allow(unused)]
     pub(crate) fn new_propose(error: ProposeError) -> Self {
         Self::Propose(error.into())
     }

@@ -42,6 +42,7 @@ use self::{
     state::{CandidateState, LeaderState, State},
 };
 use super::{cmd_worker::CEEventTxApi, CurpError, PoolEntry};
+use crate::server::client_lease::LeaseManagerRef;
 use crate::{
     cmd::{Command, ProposeId},
     connect::InnerConnectApi,
@@ -158,6 +159,8 @@ struct Context<C: Command, RC: RoleChange> {
     cluster_info: Arc<ClusterInfo>,
     /// Config
     cfg: Arc<CurpConfig>,
+    /// Lease manager for client id
+    lm: LeaseManagerRef,
     /// Cmd board for tracking the cmd sync results
     cb: CmdBoardRef<C>,
     /// Speculative pool
@@ -191,6 +194,7 @@ impl<C: Command, RC: RoleChange> Debug for Context<C, RC> {
         f.debug_struct("Context")
             .field("cluster_info", &self.cluster_info)
             .field("cfg", &self.cfg)
+            .field("lm", &self.lm)
             .field("cb", &self.cb)
             .field("sp", &self.sp)
             .field("ucp", &self.ucp)
@@ -240,6 +244,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     pub(super) fn handle_propose(
         &self,
         cmd: Arc<C>,
+        first_incomplete: u64,
     ) -> Result<((Option<ServerId>, u64), Result<bool, ProposeError>), CurpError> {
         debug!("{} gets proposal for cmd({})", self.id(), cmd.id());
         let mut conflict = self.insert_sp(Arc::clone(&cmd));
@@ -256,10 +261,22 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 },
             ));
         }
-        let id = cmd.id();
-        if !self.ctx.cb.map_write(|mut cb_w| cb_w.sync.insert(id)) {
-            return Ok((info, Err(ProposeError::Duplicated)));
+
+        let ProposeId(client_id, seq_num) = cmd.id();
+        // deduplication
+        if self.ctx.lm.read().check_alive(client_id) {
+            let mut cb_w = self.ctx.cb.write();
+            let tracker = cb_w.tracker(client_id);
+            // TODO if a duplicated cmd has result in cmd_board, then get the result and return
+            if tracker.record(seq_num) {
+                return Ok((info, Err(ProposeError::Duplicated)));
+            }
+            tracker.must_advance_to(first_incomplete);
+        } else {
+            self.ctx.cb.write().client_expired(client_id);
+            return Ok((info, Err(ProposeError::ExpiredClientId)));
         }
+
         // leader also needs to check if the cmd conflicts un-synced commands
         conflict |= self.insert_ucp(Arc::clone(&cmd));
         let mut log_w = self.log.write();
@@ -296,6 +313,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     pub(super) fn handle_propose_conf_change(
         &self,
         conf_change: ConfChangeEntry,
+        first_incomplete: u64,
     ) -> Result<((Option<ServerId>, u64), Result<(), ConfChangeError>), CurpError> {
         debug!(
             "{} gets conf change for with id {}",
@@ -315,13 +333,31 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         let pool_entry = PoolEntry::from(conf_change.clone());
         let mut conflict = self.insert_sp(pool_entry.clone());
         conflict |= self.insert_ucp(pool_entry);
-        let id = conf_change.id();
-        if !self.ctx.cb.map_write(|mut cb_w| cb_w.sync.insert(id)) {
+
+        let ProposeId(client_id, seq_num) = conf_change.id();
+        // deduplication
+        if self.ctx.lm.read().check_alive(client_id) {
+            let mut cb_w = self.ctx.cb.write();
+            let tracker = cb_w.tracker(client_id);
+            if tracker.record(seq_num) {
+                return Ok((
+                    info,
+                    Err(ConfChangeError::Propose(i32::from(
+                        ProposeError::Duplicated,
+                    ))),
+                ));
+            }
+            tracker.must_advance_to(first_incomplete);
+        } else {
+            self.ctx.cb.write().client_expired(client_id);
             return Ok((
                 info,
-                Err(ConfChangeError::new_propose(ProposeError::Duplicated)),
+                Err(ConfChangeError::Propose(i32::from(
+                    ProposeError::ExpiredClientId,
+                ))),
             ));
         }
+
         let changes = conf_change.changes().to_owned();
         let mut log_w = self.log.write();
         let entry = log_w.push(st_r.term, conf_change)?;
@@ -742,6 +778,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     pub(super) fn new(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
+        lease_manager: LeaseManagerRef,
         cmd_board: CmdBoardRef<C>,
         spec_pool: SpecPoolRef<C>,
         uncommitted_pool: UncommittedPoolRef<C>,
@@ -782,6 +819,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 change_rx,
                 connects,
                 last_conf_change_idx: AtomicU64::new(0),
+                lm: lease_manager,
             },
             shutdown_trigger,
         };
@@ -799,6 +837,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     pub(super) fn recover_from(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
+        lease_manager: LeaseManagerRef,
         cmd_board: CmdBoardRef<C>,
         spec_pool: SpecPoolRef<C>,
         uncommitted_pool: UncommittedPoolRef<C>,
@@ -816,6 +855,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         let raw_curp = Self::new(
             cluster_info,
             is_leader,
+            lease_manager,
             cmd_board,
             spec_pool,
             uncommitted_pool,
@@ -1387,7 +1427,8 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
         let term = st.term;
         for cmd in recovered_cmds {
-            let _ig_sync = cb_w.sync.insert(cmd.id()); // may have been inserted before
+            let ProposeId(client_id, seq_num) = cmd.id();
+            let _ig_cb = cb_w.tracker(client_id).record(seq_num); // may have been inserted before
             let _ig_spec = sp_l.insert(cmd.clone()); // may have been inserted before
             #[allow(clippy::expect_used)]
             let entry = log

@@ -264,7 +264,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         let cmd: Arc<C> = Arc::new(req.cmd()?);
 
         // handle proposal
-        let ((leader_id, term), result) = self.curp.handle_propose(Arc::clone(&cmd))?;
+        let ((leader_id, term), result) = self
+            .curp
+            .handle_propose(Arc::clone(&cmd), req.first_incomplete)?;
         let resp = match result {
             Ok(true) => {
                 let er_res = CommandBoard::wait_for_er(&self.cmd_board, cmd.id()).await;
@@ -295,7 +297,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     ) -> Result<ProposeConfChangeResponse, CurpError> {
         self.check_cluster_version(req.cluster_version)?;
         let id = req.id();
-        let ((leader_id, term), result) = self.curp.handle_propose_conf_change(req.into())?;
+        let first_incomplete = req.first_incomplete;
+        let ((leader_id, term), result) = self
+            .curp
+            .handle_propose_conf_change(req.into(), first_incomplete)?;
         let error = match result {
             Ok(()) => {
                 CommandBoard::wait_for_conf(&self.cmd_board, id).await;
@@ -496,20 +501,31 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
             }
             let req = req.map_err(CurpError::Transport)?;
             if req.client_id == 0 {
-                let client_id = self.lease_manager.write().grant();
+                let (client_id, expired) = self.lease_manager.write().grant();
+                if !expired.is_empty() {
+                    let mut cb_w = self.cmd_board.write();
+                    for expired_id in expired {
+                        cb_w.client_expired(expired_id);
+                    }
+                }
                 return Ok(ClientLeaseKeepAliveResponse::set_client_id(client_id));
             }
-            let client_id = self.lease_manager.map_write(|mut lm_w| {
+            let granted = self.lease_manager.map_write(|mut lm_w| {
                 if lm_w.check_alive(req.client_id) {
                     lm_w.renew(req.client_id);
                     None
                 } else {
                     lm_w.revoke(req.client_id);
-                    let client_id = lm_w.grant();
-                    Some(client_id)
+                    Some(lm_w.grant())
                 }
             });
-            if let Some(client_id) = client_id {
+            if let Some((client_id, expired)) = granted {
+                if !expired.is_empty() {
+                    let mut cb_w = self.cmd_board.write();
+                    for expired_id in expired {
+                        cb_w.client_expired(expired_id);
+                    }
+                }
                 return Ok(ClientLeaseKeepAliveResponse::set_client_id(client_id));
             }
         }
@@ -843,6 +859,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
             Arc::new(RawCurp::new(
                 Arc::clone(&cluster_info),
                 is_leader,
+                Arc::clone(&lease_manager),
                 Arc::clone(&cmd_board),
                 Arc::clone(&spec_pool),
                 uncommitted_pool,
@@ -864,6 +881,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
             Arc::new(RawCurp::recover_from(
                 Arc::clone(&cluster_info),
                 is_leader,
+                Arc::clone(&lease_manager),
                 Arc::clone(&cmd_board),
                 Arc::clone(&spec_pool),
                 uncommitted_pool,

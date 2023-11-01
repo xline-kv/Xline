@@ -135,7 +135,6 @@ impl Tracker {
     /// Record a sequence number, return whether it is duplicated
     #[allow(clippy::as_conversions)]
     #[allow(clippy::cast_possible_truncation)] // TODO: support 32 bits computers?
-    #[allow(clippy::indexing_slicing)] // it is checked
     pub(crate) fn record(&mut self, seq_num: u64) -> bool {
         if seq_num < self.first_incomplete {
             return true;
@@ -167,6 +166,21 @@ impl Tracker {
             self.first_incomplete.add_assign(1);
         }
         false
+    }
+
+    /// Advance first incomplete without a check
+    pub(crate) fn must_advance_to(&mut self, first_incomplete: u64) {
+        if self.first_incomplete >= first_incomplete {
+            return;
+        }
+        for _ in 0..first_incomplete.sub(self.first_incomplete) {
+            self.inflight.pop();
+            self.first_incomplete.add_assign(1);
+        }
+        while self.inflight.front() == Some(true) {
+            self.inflight.pop();
+            self.first_incomplete.add_assign(1);
+        }
     }
 
     /// Reset the tracker
@@ -233,5 +247,15 @@ mod test {
             assert!(!tracker.record(i));
         }
         assert_eq!(tracker.inflight.len(), 0);
+    }
+
+    #[test]
+    fn test_must_advance_first_incomplete() {
+        let mut tracker = Tracker::default();
+        tracker.record(5);
+        tracker.record(6);
+        tracker.record(8);
+        tracker.must_advance_to(5);
+        assert_eq!(tracker.first_incomplete, 7);
     }
 }
