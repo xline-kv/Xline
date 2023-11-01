@@ -976,7 +976,8 @@ impl TxnState {
             return kvs;
         }
 
-        let mut kvs: HashMap<_, _> = kvs
+        // We use a BTreeMap here because the kvs need to be sorted by default
+        let mut kvs: BTreeMap<_, _> = kvs
             .into_iter()
             .filter(|kv| !self.deleted.intersects(&kv.key))
             .map(|kv| (kv.key.clone(), kv))

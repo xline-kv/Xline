@@ -147,15 +147,18 @@ async fn test_kv_get() -> Result<(), Box<dyn Error>> {
         client.put(PutRequest::new(key, "bar")).await?;
     }
 
-    for test in tests {
+    for (i, test) in tests.into_iter().enumerate() {
         let res = client.range(test.req).await?;
         assert_eq!(res.kvs.len(), test.want_kvs.len());
-        let is_identical = res
-            .kvs
-            .iter()
-            .zip(test.want_kvs.iter())
-            .all(|(kv, want)| kv.key == want.as_bytes());
-        assert!(is_identical);
+
+        for (kv, want) in res.kvs.iter().zip(test.want_kvs.iter()) {
+            assert!(
+                kv.key == want.as_bytes(),
+                "test: {i} failed, key: {:?}, want: {}",
+                kv.key,
+                want
+            );
+        }
     }
 
     Ok(())
