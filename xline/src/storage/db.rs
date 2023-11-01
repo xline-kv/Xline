@@ -203,6 +203,21 @@ impl StorageApi for DB {
             .map_err(|e| ExecuteError::DbError(format!("Failed to flush ops, error: {e}")))?;
         Ok(revs)
     }
+
+    fn hash(&self) -> Result<u32, ExecuteError> {
+        let mut hasher = crc32fast::Hasher::new();
+        for table in XLINE_TABLES {
+            hasher.update(table.as_bytes());
+            let kv_pairs = self.engine.get_all(table).map_err(|e| {
+                ExecuteError::DbError(format!("Failed to get all keys from {table:?}: {e}"))
+            })?;
+            for (k, v) in kv_pairs {
+                hasher.update(&k);
+                hasher.update(&v);
+            }
+        }
+        Ok(hasher.finalize())
+    }
 }
 
 /// Buffered Write Operation

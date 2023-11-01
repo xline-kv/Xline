@@ -18,7 +18,7 @@ use crate::{
         MoveLeaderRequest, MoveLeaderResponse, SnapshotRequest, SnapshotResponse, StatusRequest,
         StatusResponse,
     },
-    storage::storage_api::StorageApi,
+    storage::{storage_api::StorageApi, KvStore},
 };
 
 /// Minimum page size
@@ -31,6 +31,8 @@ pub(crate) struct MaintenanceServer<S>
 where
     S: StorageApi,
 {
+    /// Kv Storage
+    kv_store: Arc<KvStore<S>>,
     /// persistent storage
     persistent: Arc<S>, // TODO: `persistent` is not a good name, rename it in a better way
     /// Header generator
@@ -47,12 +49,14 @@ where
 {
     /// New `MaintenanceServer`
     pub(crate) fn new(
+        kv_store: Arc<KvStore<S>>,
         client: Arc<CurpClient>,
         persistent: Arc<S>,
         header_gen: Arc<HeaderGenerator>,
         cluster_info: Arc<ClusterInfo>,
     ) -> Self {
         Self {
+            kv_store,
             persistent,
             header_gen,
             client,
@@ -116,18 +120,24 @@ where
         &self,
         _request: tonic::Request<HashRequest>,
     ) -> Result<tonic::Response<HashResponse>, tonic::Status> {
-        Err(tonic::Status::unimplemented(
-            "hash is unimplemented".to_owned(),
-        ))
+        Ok(tonic::Response::new(HashResponse {
+            header: Some(self.header_gen.gen_header()),
+            hash: self.persistent.hash()?,
+        }))
     }
 
     async fn hash_kv(
         &self,
-        _request: tonic::Request<HashKvRequest>,
+        request: tonic::Request<HashKvRequest>,
     ) -> Result<tonic::Response<HashKvResponse>, tonic::Status> {
-        Err(tonic::Status::unimplemented(
-            "hash_kv is unimplemented".to_owned(),
-        ))
+        let revision = request.get_ref().revision;
+        let (hash, compact_revision, _hash_revision) = self.kv_store.hash_kv(revision)?;
+        Ok(tonic::Response::new(HashKvResponse {
+            header: Some(self.header_gen.gen_header()),
+            hash,
+            compact_revision,
+            // TODO: hash_revision was introduced in etcd 3.6, and xline is currently compatible with etcd 3.5
+        }))
     }
 
     type SnapshotStream =

@@ -479,6 +479,43 @@ where
         _ = self.inner.db.flush_ops(ops)?;
         Ok(())
     }
+
+    /// Calculate hash of kv storage
+    pub(crate) fn hash_kv(&self, mut rev: i64) -> Result<(u32, i64, i64), tonic::Status> {
+        let (compact_rev, current_rev) = (self.compacted_revision(), self.revision());
+        if rev > 0 && rev < compact_rev {
+            return Err(tonic::Status::out_of_range(
+                "etcdserver: mvcc: required revision has been compacted",
+            ));
+        }
+        if rev > 0 && rev > current_rev {
+            return Err(tonic::Status::out_of_range(
+                "etcdserver: mvcc: required revision is a future revision",
+            ));
+        }
+        if rev == 0 {
+            rev = current_rev;
+        }
+        let keep = self.inner.index.keep(rev);
+        let mut hasher = crc32fast::Hasher::new();
+        hasher.update(KV_TABLE.as_bytes());
+        let kv_pairs = self.inner.db.get_all(KV_TABLE)?;
+        for (k, v) in kv_pairs {
+            let kr = Revision::decode(&k);
+            let upper = Revision::new(rev.overflow_add(1), 0);
+            if upper <= kr {
+                continue;
+            }
+            let lower = Revision::new(compact_rev.overflow_add(1), 0);
+            if lower > kr && !keep.is_empty() && !keep.contains(&kr) {
+                continue;
+            }
+            hasher.update(&k);
+            hasher.update(&v);
+        }
+        let hash = hasher.finalize();
+        Ok((hash, compact_rev, rev))
+    }
 }
 
 /// handle and sync kv requests
