@@ -429,3 +429,25 @@ async fn nested_txn_compare_rev_is_ok() -> Result<(), Box<dyn Error>> {
     assert!(resp.succeeded);
     Ok(())
 }
+
+// Test for https://github.com/xline-kv/Xline/issues/468
+#[tokio::test(flavor = "multi_thread")]
+#[abort_on_panic]
+#[ignore]
+async fn txn_multiple_deletes_should_delete_once() -> Result<(), Box<dyn Error>> {
+    let mut cluster = Cluster::new(3).await;
+    cluster.start().await;
+    let client = cluster.client().await.kv_client();
+    client.put(PutRequest::new("a", "foo")).await?;
+
+    let txn = TxnRequest::new().when([]).and_then([
+        TxnOp::delete(DeleteRangeRequest::new("a")),
+        TxnOp::delete(DeleteRangeRequest::new("a")),
+    ]);
+    let res = client.txn(txn).await?;
+    let Response::ResponseDeleteRange(ref resp) = res.responses[0] .response.as_ref().unwrap() else { panic!("invalid response") };
+    assert_eq!(resp.deleted, 1);
+    let Response::ResponseDeleteRange(ref resp) = res.responses[1] .response.as_ref().unwrap() else { panic!("invalid response") };
+    assert_eq!(resp.deleted, 0);
+    Ok(())
+}
