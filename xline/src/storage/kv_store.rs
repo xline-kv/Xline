@@ -193,37 +193,53 @@ where
 
     /// Sort kvs by sort target and order
     fn sort_kvs(kvs: &mut [KeyValue], sort_order: SortOrder, sort_target: SortTarget) {
+        let sort_key_default = |a: &KeyValue, b: &KeyValue| a.key.cmp(&b.key);
         match (sort_target, sort_order) {
-            (SortTarget::Key, SortOrder::None) => {}
-            (SortTarget::Key, SortOrder::Ascend) => {
+            (SortTarget::Key, SortOrder::None | SortOrder::Ascend) => {
                 kvs.sort_by(|a, b| a.key.cmp(&b.key));
             }
             (SortTarget::Key, SortOrder::Descend) => {
                 kvs.sort_by(|a, b| b.key.cmp(&a.key));
             }
             (SortTarget::Version, SortOrder::Ascend | SortOrder::None) => {
-                kvs.sort_by(|a, b| a.version.cmp(&b.version));
+                kvs.sort_by(|a, b| a.version.cmp(&b.version).then(sort_key_default(a, b)));
             }
             (SortTarget::Version, SortOrder::Descend) => {
-                kvs.sort_by(|a, b| b.version.cmp(&a.version));
+                kvs.sort_by(|a, b| b.version.cmp(&a.version).then(sort_key_default(a, b)));
             }
             (SortTarget::Create, SortOrder::Ascend | SortOrder::None) => {
-                kvs.sort_by(|a, b| a.create_revision.cmp(&b.create_revision));
+                kvs.sort_by(|a, b| {
+                    a.create_revision
+                        .cmp(&b.create_revision)
+                        .then(sort_key_default(a, b))
+                });
             }
             (SortTarget::Create, SortOrder::Descend) => {
-                kvs.sort_by(|a, b| b.create_revision.cmp(&a.create_revision));
+                kvs.sort_by(|a, b| {
+                    b.create_revision
+                        .cmp(&a.create_revision)
+                        .then(sort_key_default(a, b))
+                });
             }
             (SortTarget::Mod, SortOrder::Ascend | SortOrder::None) => {
-                kvs.sort_by(|a, b| a.mod_revision.cmp(&b.mod_revision));
+                kvs.sort_by(|a, b| {
+                    a.mod_revision
+                        .cmp(&b.mod_revision)
+                        .then(sort_key_default(a, b))
+                });
             }
             (SortTarget::Mod, SortOrder::Descend) => {
-                kvs.sort_by(|a, b| b.mod_revision.cmp(&a.mod_revision));
+                kvs.sort_by(|a, b| {
+                    b.mod_revision
+                        .cmp(&a.mod_revision)
+                        .then(sort_key_default(a, b))
+                });
             }
             (SortTarget::Value, SortOrder::Ascend | SortOrder::None) => {
-                kvs.sort_by(|a, b| a.value.cmp(&b.value));
+                kvs.sort_by(|a, b| a.value.cmp(&b.value).then(sort_key_default(a, b)));
             }
             (SortTarget::Value, SortOrder::Descend) => {
-                kvs.sort_by(|a, b| b.value.cmp(&a.value));
+                kvs.sort_by(|a, b| b.value.cmp(&a.value).then(sort_key_default(a, b)));
             }
         };
     }
