@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use clippy_utilities::OverflowArithmetic;
 use crossbeam_skiplist::SkipMap;
 use itertools::Itertools;
@@ -61,6 +63,30 @@ impl Index {
         let del_rev = KeyRevision::new_deletion(revision, sub_revision);
         revs.push(del_rev);
         Some((last_available_rev, del_rev.as_revision()))
+    }
+
+    /// Get all revisions that need to be kept after compact at the given revision
+    pub(crate) fn keep(&self, at_rev: i64) -> HashSet<Revision> {
+        let mut revs = HashSet::new();
+        self.inner.iter().for_each(|entry| {
+            entry.value().map_read(|revisions| {
+                if let Some(revision) = revisions.first() {
+                    if revision.mod_revision < at_rev {
+                        let pivot = revisions.partition_point(|rev| rev.mod_revision <= at_rev);
+                        let compacted_last_idx = pivot.overflow_sub(1);
+                        let key_rev = revisions.get(compacted_last_idx).unwrap_or_else(|| {
+                            unreachable!(
+                                "Oops, the key revision at {compacted_last_idx} should not be None",
+                            )
+                        });
+                        if !key_rev.is_deleted() {
+                            _ = revs.insert(key_rev.as_revision());
+                        }
+                    }
+                }
+            });
+        });
+        revs
     }
 }
 

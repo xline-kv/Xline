@@ -50,4 +50,7 @@ pub trait StorageApi: Send + Sync + 'static + std::fmt::Debug {
 
     /// Flush the operations to storage
     fn flush_ops(&self, ops: Vec<WriteOp>) -> Result<Vec<(Vec<u8>, KeyRevision)>, ExecuteError>;
+
+    /// Calculate the hash of the storage
+    fn hash(&self) -> Result<u32, ExecuteError>;
 }
