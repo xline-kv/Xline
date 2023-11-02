@@ -6,11 +6,9 @@ use jsonwebtoken::{
 use merged_range::MergedRange;
 use serde::{Deserialize, Serialize};
 use utils::timestamp;
+use xlineapi::command::KeyRange;
 
-use crate::{
-    rpc::{Permission, Type},
-    server::command::KeyRange,
-};
+use crate::rpc::{Permission, Type};
 
 /// default token ttl
 const DEFAULT_TOKEN_TTL: u64 = 300;

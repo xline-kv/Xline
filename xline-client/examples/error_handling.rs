@@ -1,7 +1,7 @@
 //! An example to show how the errors are organized in `xline-client`
 use anyhow::Result;
-use xline::storage::ExecuteError;
 use xline_client::{error::XlineClientError, types::kv::PutRequest, Client, ClientOptions};
+use xlineapi::execute_error::ExecuteError;
 
 #[tokio::main]
 async fn main() -> Result<()> {

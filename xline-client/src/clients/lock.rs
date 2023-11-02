@@ -10,8 +10,8 @@ use clippy_utilities::OverflowArithmetic;
 use curp::{client::Client as CurpClient, cmd::ProposeId};
 use futures::{Future, FutureExt};
 use tonic::transport::Channel;
-use xline::server::{Command, CommandResponse, KeyRange, SyncResponse};
 use xlineapi::{
+    command::{Command, CommandResponse, KeyRange, SyncResponse},
     Compare, CompareResult, CompareTarget, DeleteRangeRequest, DeleteRangeResponse, EventType,
     LockResponse, PutRequest, RangeRequest, RangeResponse, Request, RequestOp, RequestWithToken,
     RequestWrapper, Response, ResponseHeader, SortOrder, SortTarget, TargetUnion, TxnRequest,

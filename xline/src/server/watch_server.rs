@@ -9,8 +9,8 @@ use tokio::sync::mpsc;
 use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
 use tracing::{debug, warn};
 use utils::shutdown;
+use xlineapi::command::KeyRange;
 
-use super::command::KeyRange;
 use crate::{
     header_gen::HeaderGenerator,
     rpc::{

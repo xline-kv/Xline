@@ -17,6 +17,10 @@ use pbkdf2::{
     Pbkdf2,
 };
 use utils::parking_lot_lock::RwLockMap;
+use xlineapi::{
+    command::{CommandResponse, KeyRange, SyncResponse},
+    execute_error::ExecuteError,
+};
 
 use super::{
     backend::{ROOT_ROLE, ROOT_USER},
@@ -40,13 +44,11 @@ use crate::{
         RangeRequest, Request, RequestOp, RequestWithToken, RequestWrapper, Role, TxnRequest, Type,
         User,
     },
-    server::command::{CommandResponse, KeyRange, SyncResponse},
     storage::{
         auth_store::backend::AuthStoreBackend,
         db::WriteOp,
         lease_store::{Lease, LeaseCollection},
         storage_api::StorageApi,
-        ExecuteError,
     },
 };
 

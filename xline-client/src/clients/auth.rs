@@ -6,14 +6,14 @@ use pbkdf2::{
     Pbkdf2,
 };
 use tonic::transport::Channel;
-use xline::server::Command;
 use xlineapi::{
-    AuthDisableResponse, AuthEnableResponse, AuthRoleAddResponse, AuthRoleDeleteResponse,
-    AuthRoleGetResponse, AuthRoleGrantPermissionResponse, AuthRoleListResponse,
-    AuthRoleRevokePermissionResponse, AuthStatusResponse, AuthUserAddResponse,
-    AuthUserChangePasswordResponse, AuthUserDeleteResponse, AuthUserGetResponse,
-    AuthUserGrantRoleResponse, AuthUserListResponse, AuthUserRevokeRoleResponse,
-    AuthenticateResponse, RequestWithToken, RequestWrapper, ResponseWrapper,
+    command::Command, AuthDisableResponse, AuthEnableResponse, AuthRoleAddResponse,
+    AuthRoleDeleteResponse, AuthRoleGetResponse, AuthRoleGrantPermissionResponse,
+    AuthRoleListResponse, AuthRoleRevokePermissionResponse, AuthStatusResponse,
+    AuthUserAddResponse, AuthUserChangePasswordResponse, AuthUserDeleteResponse,
+    AuthUserGetResponse, AuthUserGrantRoleResponse, AuthUserListResponse,
+    AuthUserRevokeRoleResponse, AuthenticateResponse, RequestWithToken, RequestWrapper,
+    ResponseWrapper,
 };
 
 use crate::{

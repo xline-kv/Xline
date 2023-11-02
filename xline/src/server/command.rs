@@ -1,28 +1,18 @@
-use std::{
-    collections::{HashSet, VecDeque},
-    ops::{Bound, RangeBounds},
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use curp::{
-    cmd::{
-        Command as CurpCommand, CommandExecutor as CurpCommandExecutor, ConflictCheck, PbCodec,
-        PbSerializeError, ProposeId,
-    },
+    cmd::{Command as CurpCommand, CommandExecutor as CurpCommandExecutor, ProposeId},
     error::ClientError,
     LogIndex,
 };
 use engine::Snapshot;
-use itertools::Itertools;
-use prost::Message;
-use serde::{Deserialize, Serialize};
-use xlineapi::{PbCommand, PbCommandResponse, PbKeyRange, PbSyncResponse};
+use xlineapi::command::{Command, KeyRange};
 
 use super::barriers::{IdBarrier, IndexBarrier};
 use crate::{
     revision_number::RevisionNumberGenerator,
-    rpc::{Request, RequestBackend, RequestWithToken, RequestWrapper, ResponseWrapper},
-    storage::{db::WriteOp, storage_api::StorageApi, AuthStore, ExecuteError, KvStore, LeaseStore},
+    rpc::{RequestBackend, RequestWithToken, RequestWrapper},
+    storage::{db::WriteOp, storage_api::StorageApi, AuthStore, KvStore, LeaseStore},
 };
 
 /// Meta table name

@@ -5,14 +5,15 @@ use clippy_utilities::OverflowArithmetic;
 use curp::client::Client;
 use tonic::transport::{Channel, Endpoint};
 use tracing::debug;
-use xlineapi::{EventType, RequestWithToken};
+use xlineapi::{
+    command::{Command, CommandResponse, KeyRange, SyncResponse},
+    execute_error::ExecuteError,
+    EventType, RequestWithToken,
+};
 
 use super::{
     auth_server::get_token,
-    command::{
-        client_err_to_status, command_from_request_wrapper, Command, CommandResponse, KeyRange,
-        SyncResponse,
-    },
+    command::{client_err_to_status, command_from_request_wrapper},
 };
 use crate::{
     id_gen::IdGenerator,
@@ -23,7 +24,7 @@ use crate::{
         ResponseHeader, SortOrder, SortTarget, TargetUnion, TxnRequest, TxnResponse, UnlockRequest,
         UnlockResponse, WatchClient, WatchCreateRequest, WatchRequest,
     },
-    storage::{storage_api::StorageApi, ExecuteError},
+    storage::storage_api::StorageApi,
 };
 
 /// Default session ttl

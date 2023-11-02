@@ -1,10 +1,11 @@
 use std::{fmt, sync::Arc};
 
 use prost::Message;
+use xlineapi::execute_error::ExecuteError;
 
 use crate::{
     rpc::{Role, User},
-    storage::{storage_api::StorageApi, ExecuteError},
+    storage::storage_api::StorageApi,
 };
 
 /// User table

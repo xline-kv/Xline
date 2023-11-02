@@ -1,7 +1,6 @@
-use crate::{
-    rpc::{CompactionRequest, RangeRequest, Request, TxnRequest},
-    storage::ExecuteError,
-};
+use xlineapi::execute_error::ExecuteError;
+
+use crate::rpc::{CompactionRequest, RangeRequest, Request, TxnRequest};
 
 /// A union of requests that need revision check
 pub(crate) enum RevisionRequest<'a> {

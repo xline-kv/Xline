@@ -11,9 +11,10 @@ use clippy_utilities::OverflowArithmetic;
 use curp::error::ClientError;
 use tracing::{info, warn};
 use utils::shutdown;
+use xlineapi::execute_error::ExecuteError;
 
 use super::{Compactable, Compactor};
-use crate::{revision_number::RevisionNumberGenerator, storage::ExecuteError};
+use crate::revision_number::RevisionNumberGenerator;
 
 /// `RevisionWindow` is a ring buffer used to store periodically sampled revision.
 struct RevisionWindow {

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use curp::client::Client as CurpClient;
-use xline::server::{Command, KeyRange};
 use xlineapi::{
+    command::{Command, KeyRange},
     CompactionResponse, DeleteRangeResponse, PutResponse, RangeResponse, RequestWithToken,
     TxnResponse,
 };

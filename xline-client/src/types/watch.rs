@@ -4,9 +4,8 @@ use std::{
 };
 
 use futures::channel::mpsc::Sender;
-use xline::server::KeyRange;
+use xlineapi::{command::KeyRange, RequestUnion, WatchCancelRequest, WatchProgressRequest};
 pub use xlineapi::{Event, EventType, KeyValue, WatchResponse};
-use xlineapi::{RequestUnion, WatchCancelRequest, WatchProgressRequest};
 
 use crate::error::{Result, XlineClientError};
 
