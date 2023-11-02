@@ -112,8 +112,8 @@ async fn reelect() {
 
     let (final_leader, final_term) = wait_for_election(&group).await;
     check_role_state(&group, 5, final_leader);
-    // After we implement the pre vote, the term will not be changed if the cluster can't elect a new leader.
-    assert_eq!(final_term, term3);
+    // After restart other nodes, the cluster may be taken over by the leader of term3, or another node may be successfully elected with term4
+    assert!(final_term >= term3);
 }
 
 #[madsim::test]
