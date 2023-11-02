@@ -11,11 +11,19 @@ categories = ["RPC"]
 keywords = ["RPC", "Interfaces"]
 
 [dependencies]
+async-trait = "0.1.53"
+curp = { path = "../curp" }
 curp-external-api = { path = "../curp-external-api" }
 etcd-client = { version = "0.3.0", package = "madsim-etcd-client" }
+itertools = "0.10.3"
 prost = "0.11"
 serde = { version = "1.0.137", features = ["derive"] }
+thiserror = "1.0.37"
 tonic = { version = "0.3.0", package = "madsim-tonic" }
 
 [build-dependencies]
 tonic-build = { version = "0.3.0", package = "madsim-tonic-build" }
+
+[dev-dependencies]
+strum = "0.25"
+strum_macros = "0.25"

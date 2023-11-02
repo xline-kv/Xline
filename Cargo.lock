@@ -3613,12 +3613,18 @@ dependencies = [
 name = "xlineapi"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "curp",
  "curp-external-api",
+ "itertools",
  "madsim-etcd-client",
  "madsim-tonic",
  "madsim-tonic-build",
  "prost 0.11.9",
  "serde",
+ "strum",
+ "strum_macros",
+ "thiserror",
 ]
 
 [[package]]
