@@ -483,7 +483,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                 }
             }
             CEEvent::Reset(snapshot, finish_tx) => {
-                // since a reset is needed, all other vertexes doesn't matter anymore, so delete them all
+                // since a reset is needed, all other vertices doesn't matter anymore, so delete them all
                 self.entry_vid.clear();
                 self.vs.clear();
 
