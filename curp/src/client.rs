@@ -31,39 +31,79 @@ use crate::{
 };
 
 /// Protocol client
-#[derive(derive_builder::Builder)]
-#[builder(build_fn(skip), name = "Builder")]
+#[derive(Debug)]
 pub struct Client<C: Command> {
+    /// Inner
+    inner: Arc<ClientInner<C>>,
+}
+
+/// Client inner
+struct ClientInner<C: Command> {
     /// local server id. Only use in an inner client.
-    #[builder(field(type = "Option<ServerId>"), setter(custom))]
     local_server_id: Option<ServerId>,
     /// Current leader and term
-    #[builder(setter(skip))]
     state: RwLock<State>,
+    /// Current client id
+    client_id: Arc<tokio::sync::RwLock<u64>>,
+    /// Notify when a new client id is set
+    client_id_notifier: Arc<Event>,
     /// Request tracker
-    #[builder(setter(skip))]
     tracker: RwLock<Tracker>,
     /// Last sent sequence number
-    #[builder(setter(skip))]
     last_sent_seq: AtomicU64,
     /// All servers's `Connect`
-    #[builder(setter(skip))]
     connects: DashMap<ServerId, Arc<dyn ConnectApi>>,
     /// Cluster version
-    #[builder(setter(skip))]
     cluster_version: AtomicU64,
     /// Curp client config settings
     config: ClientConfig,
     /// To keep Command type
-    #[builder(setter(skip))]
     phantom: PhantomData<C>,
 }
 
-impl<C: Command> Builder<C> {
+/// Client builder
+pub struct Builder<C> {
+    /// Curp client config settings
+    config: Option<ClientConfig>,
+    /// local server id. Only use in an inner client.
+    local_server_id: Option<ServerId>,
+    /// To keep Command type
+    phantom: PhantomData<C>,
+}
+
+impl<C> Default for Builder<C> {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            config: None,
+            local_server_id: None,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<C> Debug for Builder<C> {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Builder")
+            .field("config", &self.config)
+            .field("local_server_id", &self.local_server_id)
+            .finish()
+    }
+}
+
+impl<C: Command + 'static> Builder<C> {
     /// Set local server id.
     #[inline]
     pub fn local_server_id(&mut self, value: ServerId) -> &mut Self {
         self.local_server_id = Some(value);
+        self
+    }
+
+    /// Set the client config
+    #[inline]
+    pub fn config(&mut self, config: ClientConfig) -> &mut Self {
+        self.config = Some(config);
         self
     }
 
@@ -80,17 +120,20 @@ impl<C: Command> Builder<C> {
             return Err(ClientBuildError::invalid_arguments("timeout is required"));
         };
         let connects = rpc::connect(all_members).await?.collect();
-        let client = Client::<C> {
+        let inner = Arc::new(ClientInner::<C> {
             local_server_id: self.local_server_id,
             state: RwLock::new(State::new(leader_id, 0)),
+            client_id: Arc::new(tokio::sync::RwLock::new(0)),
+            client_id_notifier: Arc::new(Event::new()),
             tracker: RwLock::new(Tracker::default()),
             config,
             connects,
             cluster_version: AtomicU64::new(0),
             phantom: PhantomData,
             last_sent_seq: AtomicU64::new(0),
-        };
-        Ok(client)
+        });
+        let _ig = tokio::spawn(Client::client_lease_keep_alive(Arc::clone(&inner)));
+        Ok(Client { inner })
     }
 
     /// Fetch cluster from server, return the first `FetchClusterResponse`
@@ -140,21 +183,24 @@ impl<C: Command> Builder<C> {
         let res: FetchClusterResponse = self
             .fast_fetch_cluster(addrs.clone(), *config.propose_timeout())
             .await?;
-        let client = Client::<C> {
+        let inner = Arc::new(ClientInner::<C> {
             local_server_id: self.local_server_id,
             state: RwLock::new(State::new(res.leader_id, res.term)),
+            client_id: Arc::new(tokio::sync::RwLock::new(0)),
+            client_id_notifier: Arc::new(Event::new()),
             tracker: RwLock::new(Tracker::default()),
             config,
             cluster_version: AtomicU64::new(res.cluster_version),
             connects: rpc::connect(res.into_members_addrs()).await?.collect(),
             phantom: PhantomData,
             last_sent_seq: AtomicU64::new(0),
-        };
-        Ok(client)
+        });
+        let _ig = tokio::spawn(Client::client_lease_keep_alive(Arc::clone(&inner)));
+        Ok(Client { inner })
     }
 }
 
-impl<C: Command> Debug for Client<C> {
+impl<C: Command> Debug for ClientInner<C> {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Client")
@@ -297,6 +343,127 @@ where
         Builder::default()
     }
 
+    /// The shutdown rpc of curp protocol
+    #[instrument(skip_all)]
+    pub async fn shutdown(&self, propose_id: ProposeId) -> Result<(), ClientError<C>> {
+        self.inner.shutdown(propose_id).await
+    }
+
+    /// Get leader id from the state or fetch it from servers
+    /// # Errors
+    /// `ClientError::Timeout` if timeout
+    #[inline]
+    pub async fn get_leader_id(&self) -> Result<ServerId, ClientError<C>> {
+        self.inner.get_leader_id().await
+    }
+
+    /// Propose the request to servers, if use_fast_path is false, it will wait for the synced index
+    /// # Errors
+    ///   `ClientError::Execute` if execution error is met
+    ///   `ClientError::AfterSync` error met while syncing logs to followers
+    /// # Panics
+    ///   If leader index is out of bound of all the connections, panic
+    #[inline]
+    #[instrument(skip_all, fields(cmd_id=%cmd.id()))]
+    #[allow(clippy::type_complexity)] // This type is not complex
+    pub async fn propose(
+        &self,
+        cmd: C,
+        use_fast_path: bool,
+    ) -> Result<(C::ER, Option<C::ASR>), ClientError<C>> {
+        self.inner.propose(cmd, use_fast_path).await
+    }
+
+    /// Propose the conf change request to servers
+    #[instrument(skip_all)]
+    pub async fn propose_conf_change(
+        &self,
+        propose_id: ProposeId,
+        changes: Vec<ConfChange>,
+    ) -> Result<Result<Vec<Member>, ConfChangeError>, ClientError<C>> {
+        self.inner.propose_conf_change(propose_id, changes).await
+    }
+
+    /// Fetch Read state from leader
+    /// # Errors
+    ///   `ClientError::EncodingError` encoding error met while deserializing the propose id
+    #[inline]
+    pub async fn fetch_read_state(&self, cmd: &C) -> Result<ReadState, ClientError<C>> {
+        self.inner.fetch_read_state(cmd).await
+    }
+
+    /// Fetch the current leader id without cache
+    /// # Errors
+    /// `ClientError::Timeout` if timeout
+    #[inline]
+    pub async fn get_leader_id_from_curp(&self) -> Result<ServerId, ClientError<C>> {
+        self.inner.get_leader_id_from_curp().await
+    }
+
+    /// Fetch the current cluster without cache
+    /// # Errors
+    /// `ClientError::Timeout` if timeout
+    #[inline]
+    pub async fn get_cluster_from_curp(
+        &self,
+        linearizable: bool,
+    ) -> Result<FetchClusterResponse, ClientError<C>> {
+        self.inner.get_cluster_from_curp(linearizable).await
+    }
+
+    /// Generate a propose id
+    ///
+    /// # Errors
+    ///   `ClientError::Timeout` if timeout
+    #[inline]
+    pub async fn gen_propose_id(&self) -> Result<ProposeId, ClientError<C>> {
+        self.inner.gen_propose_id().await
+    }
+
+    /// Client lease keep alive background task
+    async fn client_lease_keep_alive(inner: Arc<ClientInner<C>>) {
+        loop {
+            let leader_id = match inner.get_leader_id().await {
+                Ok(id) => id,
+                Err(e) => {
+                    warn!("failed to fetch leader, {e}");
+                    tokio::time::sleep(*inner.config.max_retry_timeout()).await;
+                    continue;
+                }
+            };
+            let connect = inner
+                .get_connect(leader_id)
+                .unwrap_or_else(|| unreachable!("leader {leader_id} not found"));
+            let (new_leader_id, term, cluster_shutdown) = match connect
+                .lease_keep_alive(
+                    Arc::clone(&inner.client_id),
+                    Arc::clone(&inner.client_id_notifier),
+                )
+                .await
+            {
+                Ok(resp) => resp,
+                Err(e) => {
+                    warn!("client_lease_keep_alive rpc error: {e}");
+                    tokio::time::sleep(*inner.config.max_retry_timeout()).await;
+                    continue;
+                }
+            };
+            if cluster_shutdown {
+                debug!("cluster shutdown, close client lease keep alive task");
+                return;
+            }
+            inner
+                .state
+                .write()
+                .check_and_update(Some(new_leader_id), term);
+        }
+    }
+}
+
+impl<C> ClientInner<C>
+where
+    C: Command + 'static,
+{
     /// Get cluster version
     fn cluster_version(&self) -> u64 {
         self.cluster_version
@@ -477,8 +644,7 @@ where
     }
 
     /// The shutdown rpc of curp protocol
-    #[instrument(skip_all)]
-    pub async fn shutdown(&self, propose_id: ProposeId) -> Result<(), ClientError<C>> {
+    async fn shutdown(&self, propose_id: ProposeId) -> Result<(), ClientError<C>> {
         let ProposeId(_, seq_num) = propose_id;
         let _ig = self.tracker.write().record(seq_num);
         let mut retry_timeout = self.get_backoff();
@@ -639,7 +805,6 @@ where
     /// Note: The fetched cluster may still be outdated if `linearizable` is false
     /// # Errors
     ///   `ClientError<C>::Timeout` if timeout
-    #[inline]
     async fn fetch_cluster(
         &self,
         linearizable: bool,
@@ -730,8 +895,7 @@ where
     /// Get leader id from the state or fetch it from servers
     /// # Errors
     /// `ClientError::Timeout` if timeout
-    #[inline]
-    pub async fn get_leader_id(&self) -> Result<ServerId, ClientError<C>> {
+    async fn get_leader_id(&self) -> Result<ServerId, ClientError<C>> {
         let notify = Arc::clone(&self.state.read().leader_notify);
         let mut retry_timeout = self.get_backoff();
         let retry_count = *self.config.retry_count();
@@ -749,16 +913,13 @@ where
         Err(ClientError::Timeout)
     }
 
-    /// Propose the request to servers, if use_fast_path is false, it will wait for the synced index
+    /// Propose the request to servers, if `use_fast_path` is false, it will wait for the synced index
     /// # Errors
     ///   `ClientError::Execute` if execution error is met
     ///   `ClientError::AfterSync` error met while syncing logs to followers
     /// # Panics
     ///   If leader index is out of bound of all the connections, panic
-    #[inline]
-    #[instrument(skip_all, fields(cmd_id=%cmd.id()))]
-    #[allow(clippy::type_complexity)] // This type is not complex
-    pub async fn propose(
+    async fn propose(
         &self,
         cmd: C,
         use_fast_path: bool,
@@ -853,8 +1014,7 @@ where
     }
 
     /// Propose the conf change request to servers
-    #[instrument(skip_all)]
-    pub async fn propose_conf_change(
+    async fn propose_conf_change(
         &self,
         propose_id: ProposeId,
         changes: Vec<ConfChange>,
@@ -933,8 +1093,7 @@ where
     /// Fetch Read state from leader
     /// # Errors
     ///   `ClientError::EncodingError` encoding error met while deserializing the propose id
-    #[inline]
-    pub async fn fetch_read_state(&self, cmd: &C) -> Result<ReadState, ClientError<C>> {
+    async fn fetch_read_state(&self, cmd: &C) -> Result<ReadState, ClientError<C>> {
         let mut retry_timeout = self.get_backoff();
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {
@@ -983,7 +1142,6 @@ where
     /// Note that this method should not be invoked by an outside client because
     /// we will fallback to fetch the full cluster for the response if fetching local
     /// failed.
-    #[inline]
     async fn fetch_local_cluster(&self) -> Result<FetchClusterResponse, ClientError<C>> {
         if let Some(local_server) = self.local_server_id {
             let resp = self
@@ -1004,8 +1162,7 @@ where
     /// Fetch the current leader id without cache
     /// # Errors
     /// `ClientError::Timeout` if timeout
-    #[inline]
-    pub async fn get_leader_id_from_curp(&self) -> Result<ServerId, ClientError<C>> {
+    async fn get_leader_id_from_curp(&self) -> Result<ServerId, ClientError<C>> {
         if let Ok(FetchClusterResponse {
             leader_id: Some(leader_id),
             ..
@@ -1019,8 +1176,7 @@ where
     /// Fetch the current cluster without cache
     /// # Errors
     /// `ClientError::Timeout` if timeout
-    #[inline]
-    pub async fn get_cluster_from_curp(
+    async fn get_cluster_from_curp(
         &self,
         linearizable: bool,
     ) -> Result<FetchClusterResponse, ClientError<C>> {
@@ -1050,7 +1206,16 @@ where
     ///   `ClientError::Timeout` if timeout
     #[allow(clippy::unused_async)] // TODO: grant a client id from server
     async fn get_client_id(&self) -> Result<u64, ClientError<C>> {
-        Ok(rand::random())
+        let mut retry_timeout = self.get_backoff();
+        let retry_count = *self.config.retry_count();
+        for _ in 0..retry_count {
+            let client_id = *self.client_id.read().await;
+            if client_id != 0 {
+                return Ok(client_id);
+            }
+            let _ig = timeout(retry_timeout.next_retry(), self.client_id_notifier.listen()).await;
+        }
+        Err(ClientError::Timeout)
     }
 
     /// New a seq num and record it
@@ -1063,8 +1228,7 @@ where
     ///
     /// # Errors
     ///   `ClientError::Timeout` if timeout
-    #[inline]
-    pub async fn gen_propose_id(&self) -> Result<ProposeId, ClientError<C>> {
+    async fn gen_propose_id(&self) -> Result<ProposeId, ClientError<C>> {
         let client_id = self.get_client_id().await?;
         let seq_num = self.new_seq_num();
         Ok(ProposeId(client_id, seq_num))

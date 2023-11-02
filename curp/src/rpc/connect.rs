@@ -11,12 +11,13 @@ use async_trait::async_trait;
 use bytes::BytesMut;
 use clippy_utilities::NumericCast;
 use engine::SnapshotApi;
+use event_listener::Event;
 use futures::Stream;
 #[cfg(test)]
 use mockall::automock;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tonic::transport::{Channel, Endpoint};
-use tracing::{error, instrument};
+use tracing::{debug, error, instrument};
 use utils::tracing::Inject;
 
 use super::{ShutdownRequest, ShutdownResponse};
@@ -34,6 +35,7 @@ use crate::{
         WaitSyncedResponse,
     },
     snapshot::Snapshot,
+    ClientLeaseKeepAliveRequest,
 };
 
 /// Install snapshot chunk size: 64KB
@@ -152,6 +154,15 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
         request: FetchReadStateRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<FetchReadStateResponse>, tonic::Status>;
+
+    /// Keep send lease keep alive to server and mutate the client id
+    /// Return RpcError if failed to get response
+    /// Return leader_id and term if leadership changed
+    async fn lease_keep_alive(
+        &self,
+        client_id: Arc<RwLock<u64>>,
+        client_id_notifier: Arc<Event>,
+    ) -> Result<(ServerId, u64, bool), tonic::Status>;
 }
 
 /// Inner Connect interface among different servers
@@ -350,6 +361,30 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         req.set_timeout(timeout);
         client.fetch_read_state(req).await
     }
+
+    /// Keep send lease keep alive to server and mutate the client id
+    /// Return RpcError if failed to get response
+    /// Return leader_id and term if leadership changed
+    async fn lease_keep_alive(
+        &self,
+        client_id: Arc<RwLock<u64>>,
+        client_id_notifier: Arc<Event>,
+    ) -> Result<(ServerId, u64, bool), tonic::Status> {
+        let mut client = self.rpc_connect.clone();
+        loop {
+            let stream = heartbeat_stream(Arc::clone(&client_id));
+            let resp = client.client_lease_keep_alive(stream).await?.into_inner();
+            if resp.cluster_shutdown {
+                return Ok((0, 0, true));
+            }
+            if let Some(leader_id) = resp.leader_id {
+                return Ok((leader_id, resp.term, false));
+            }
+            let mut client_id = client_id.write().await;
+            *client_id = resp.client_id;
+            client_id_notifier.notify(usize::MAX);
+        }
+    }
 }
 
 #[async_trait]
@@ -438,6 +473,31 @@ fn install_snapshot_stream(
         // TODO: Shall we clean snapshot after stream generation complete
         if let Err(e) = snapshot.clean().await {
             error!("snapshot clean error, {e}");
+        }
+    }
+}
+
+/// Generate heartbeat stream
+fn heartbeat_stream(
+    client_id: Arc<RwLock<u64>>,
+) -> impl Stream<Item = ClientLeaseKeepAliveRequest> {
+    /// Keep alive interval
+    const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(1);
+
+    let mut ticker = tokio::time::interval(HEARTBEAT_INTERVAL);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+    stream! {
+        loop {
+            _ = ticker.tick().await;
+            let id = *client_id.read().await;
+            if id == 0 {
+                debug!("grant a client id");
+                yield ClientLeaseKeepAliveRequest::grant();
+            } else {
+                debug!("keep alive the client id({id})");
+                yield ClientLeaseKeepAliveRequest::keep_alive(id);
+            }
         }
     }
 }
