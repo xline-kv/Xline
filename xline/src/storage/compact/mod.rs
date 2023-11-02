@@ -7,6 +7,7 @@ use periodic_compactor::PeriodicCompactor;
 use revision_compactor::RevisionCompactor;
 use tokio::{sync::mpsc::Receiver, time::sleep};
 use utils::{config::AutoCompactConfig, shutdown};
+use xlineapi::command::Command;
 
 use super::{
     index::{Index, IndexOperate},
@@ -16,7 +17,6 @@ use super::{
 use crate::{
     revision_number::RevisionNumberGenerator,
     rpc::{CompactionRequest, RequestWithToken},
-    server::command::Command,
 };
 
 /// mod revision compactor;

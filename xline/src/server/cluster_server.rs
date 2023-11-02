@@ -9,12 +9,12 @@ use curp::{
 use itertools::Itertools;
 use tonic::{Request, Response, Status};
 use xlineapi::{
-    Cluster, Member, MemberAddRequest, MemberAddResponse, MemberListRequest, MemberListResponse,
-    MemberPromoteRequest, MemberPromoteResponse, MemberRemoveRequest, MemberRemoveResponse,
-    MemberUpdateRequest, MemberUpdateResponse,
+    command::Command, Cluster, Member, MemberAddRequest, MemberAddResponse, MemberListRequest,
+    MemberListResponse, MemberPromoteRequest, MemberPromoteResponse, MemberRemoveRequest,
+    MemberRemoveResponse, MemberUpdateRequest, MemberUpdateResponse,
 };
 
-use super::command::{client_err_to_status, Command};
+use super::command::client_err_to_status;
 use crate::header_gen::HeaderGenerator;
 
 /// Cluster Server

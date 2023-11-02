@@ -159,6 +159,8 @@
 
 pub mod command;
 pub mod etcd_convert;
+pub mod execute_error;
+pub mod request_validation;
 
 mod etcdserverpb {
     tonic::include_proto!("etcdserverpb");

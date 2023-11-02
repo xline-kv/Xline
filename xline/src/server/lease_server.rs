@@ -8,13 +8,15 @@ use tokio::time;
 use tonic::transport::Endpoint;
 use tracing::{debug, warn};
 use utils::shutdown;
-use xlineapi::RequestWithToken;
+use xlineapi::{
+    command::{Command, CommandResponse, SyncResponse},
+    execute_error::ExecuteError,
+    RequestWithToken,
+};
 
 use super::{
     auth_server::get_token,
-    command::{
-        client_err_to_status, command_from_request_wrapper, Command, CommandResponse, SyncResponse,
-    },
+    command::{client_err_to_status, command_from_request_wrapper},
 };
 use crate::{
     id_gen::IdGenerator,
@@ -23,7 +25,7 @@ use crate::{
         LeaseKeepAliveResponse, LeaseLeasesRequest, LeaseLeasesResponse, LeaseRevokeRequest,
         LeaseRevokeResponse, LeaseTimeToLiveRequest, LeaseTimeToLiveResponse, RequestWrapper,
     },
-    storage::{storage_api::StorageApi, AuthStore, ExecuteError, LeaseStore},
+    storage::{storage_api::StorageApi, AuthStore, LeaseStore},
 };
 
 /// Default Lease Request Time

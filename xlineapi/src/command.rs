@@ -10,8 +10,8 @@ use prost::Message;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    PbCommand, PbCommandResponse, PbKeyRange, PbSyncResponse, Request, RequestWithToken,
-    RequestWrapper, ResponseWrapper,
+    execute_error::ExecuteError, PbCommand, PbCommandResponse, PbKeyRange, PbSyncResponse, Request,
+    RequestWithToken, RequestWrapper, ResponseWrapper,
 };
 
 /// Range start and end to get all keys
@@ -510,10 +510,10 @@ impl PbCodec for Command {
 
 #[cfg(test)]
 mod test {
-    use xlineapi::{Compare, PutResponse};
+    use crate::{Compare, PutResponse};
 
     use super::*;
-    use crate::rpc::{
+    use crate::{
         AuthEnableRequest, AuthStatusRequest, CompactionRequest, LeaseGrantRequest,
         LeaseLeasesRequest, LeaseRevokeRequest, PutRequest, RangeRequest, RequestOp, TxnRequest,
     };

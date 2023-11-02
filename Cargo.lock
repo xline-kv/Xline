@@ -283,6 +283,7 @@ dependencies = [
  "utils",
  "xline",
  "xline-client",
+ "xlineapi",
 ]
 
 [[package]]

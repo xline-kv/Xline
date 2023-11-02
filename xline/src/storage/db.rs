@@ -3,6 +3,7 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 use engine::{Engine, EngineType, Snapshot, StorageEngine, WriteOperation};
 use prost::Message;
 use utils::config::StorageConfig;
+use xlineapi::execute_error::ExecuteError;
 
 use super::{
     auth_store::{AUTH_ENABLE_KEY, AUTH_REVISION_KEY, AUTH_TABLE, ROLE_TABLE, USER_TABLE},
@@ -10,7 +11,6 @@ use super::{
     lease_store::LEASE_TABLE,
     revision::KeyRevision,
     storage_api::StorageApi,
-    ExecuteError,
 };
 use crate::{
     rpc::{KeyValue, PbLease, Role, User},

@@ -18,12 +18,13 @@ use utils::{
     config::{ClientConfig, CompactConfig, CurpConfig, ServerTimeout, StorageConfig},
     shutdown,
 };
+use xlineapi::command::Command;
 
 use super::{
     auth_server::AuthServer,
     barriers::{IdBarrier, IndexBarrier},
     cluster_server::ClusterServer,
-    command::{Command, CommandExecutor},
+    command::CommandExecutor,
     kv_server::KvServer,
     lease_server::LeaseServer,
     lock_server::LockServer,

@@ -3,12 +3,12 @@ use std::fmt::Debug;
 use anyhow::Result;
 use etcd_client::{Client as EtcdClient, PutOptions};
 use thiserror::Error;
-use xline::server::Command;
 use xline_client::{
     error::XlineClientError as ClientError,
     types::kv::{PutRequest, PutResponse},
     Client, ClientOptions,
 };
+use xlineapi::command::Command;
 
 /// The client used in benchmark
 #[derive(Error, Debug)]

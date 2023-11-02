@@ -1,10 +1,10 @@
 #![allow(clippy::integer_arithmetic)] // introduced by `strum_macros::EnumIter`
 
+use crate::{PbExecuteError, PbExecuteErrorOuter, PbRevisions, PbUserRole};
 use curp::cmd::{PbCodec, PbSerializeError};
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use xlineapi::{PbExecuteError, PbExecuteErrorOuter, PbRevisions};
 
 /// Error met when executing commands
 #[cfg_attr(test, derive(strum_macros::EnumIter))]
@@ -164,7 +164,7 @@ impl From<ExecuteError> for PbExecuteError {
             ExecuteError::UserNotFound(u) => PbExecuteError::UserNotFound(u),
             ExecuteError::UserAlreadyExists(u) => PbExecuteError::UserAlreadyExists(u),
             ExecuteError::UserAlreadyHasRole(user, role) => {
-                PbExecuteError::UserAlreadyHasRole(xlineapi::PbUserRole { user, role })
+                PbExecuteError::UserAlreadyHasRole(PbUserRole { user, role })
             }
             ExecuteError::NoPasswordUser => PbExecuteError::NoPasswordUser(()),
             ExecuteError::RoleNotFound(r) => PbExecuteError::RoleNotFound(r),
