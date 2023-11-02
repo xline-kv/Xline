@@ -18,11 +18,11 @@ use tokio::{
 };
 use tracing::debug;
 use utils::{parking_lot_lock::RwLockMap, shutdown};
+use xlineapi::command::KeyRange;
 
 use super::storage_api::StorageApi;
 use crate::{
     rpc::{Event, KeyValue},
-    server::command::KeyRange,
     storage::kv_store::KvStore,
 };
 

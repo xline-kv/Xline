@@ -3,7 +3,6 @@ use std::fmt::Debug;
 use anyhow::Result;
 use etcd_client::{Client as EtcdClient, PutOptions};
 use thiserror::Error;
-use xline::server::Command;
 #[cfg(test)]
 use xline_client::types::kv::{RangeRequest, RangeResponse};
 use xline_client::{
@@ -11,6 +10,7 @@ use xline_client::{
     types::kv::{PutRequest, PutResponse},
     Client, ClientOptions,
 };
+use xlineapi::command::Command;
 
 /// The client used in benchmark
 #[derive(Error, Debug)]

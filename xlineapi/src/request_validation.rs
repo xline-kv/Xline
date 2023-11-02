@@ -4,18 +4,16 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    rpc::{
-        AuthRoleAddRequest, AuthRoleGrantPermissionRequest, AuthUserAddRequest, DeleteRangeRequest,
-        PutRequest, RangeRequest, Request, RequestOp, SortOrder, SortTarget, TxnRequest,
-    },
-    server::KeyRange,
+    command::KeyRange, AuthRoleAddRequest, AuthRoleGrantPermissionRequest, AuthUserAddRequest,
+    DeleteRangeRequest, PutRequest, RangeRequest, Request, RequestOp, SortOrder, SortTarget,
+    TxnRequest,
 };
 
 /// Default max txn ops
 const DEFAULT_MAX_TXN_OPS: usize = 128;
 
 /// Trait for request validation
-pub(crate) trait RequestValidator {
+pub trait RequestValidator {
     /// Validate the request
     fn validation(&self) -> Result<(), ValidationError>;
 }
@@ -274,7 +272,7 @@ impl From<ValidationError> for tonic::Status {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::rpc::{Compare, RequestOp, UserAddOptions};
+    use crate::{Compare, RequestOp, UserAddOptions};
 
     struct TestCase<T: RequestValidator> {
         req: T,

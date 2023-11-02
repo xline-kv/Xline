@@ -1,4 +1,4 @@
-use xline::server::KeyRange;
+use xlineapi::command::KeyRange;
 pub use xlineapi::{
     CompactionResponse, CompareResult, CompareTarget, DeleteRangeResponse, PutResponse,
     RangeResponse, Response, ResponseOp, SortOrder, SortTarget, TargetUnion, TxnResponse,

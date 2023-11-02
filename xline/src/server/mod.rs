@@ -20,7 +20,4 @@ mod watch_server;
 mod xline_server;
 
 pub(crate) use self::maintenance::MAINTENANCE_SNAPSHOT_CHUNK_SIZE;
-pub use self::{
-    command::{Command, CommandResponse, KeyRange, SyncResponse},
-    xline_server::XlineServer,
-};
+pub use self::xline_server::XlineServer;

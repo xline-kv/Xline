@@ -18,9 +18,13 @@ use log::debug;
 use parking_lot::RwLock;
 use prost::Message;
 use tokio::sync::mpsc;
+use xlineapi::{
+    command::{CommandResponse, SyncResponse},
+    execute_error::ExecuteError,
+};
 
 pub(crate) use self::{lease::Lease, lease_collection::LeaseCollection};
-use super::{db::WriteOp, index::Index, storage_api::StorageApi, ExecuteError};
+use super::{db::WriteOp, index::Index, storage_api::StorageApi};
 use crate::{
     header_gen::HeaderGenerator,
     rpc::{
@@ -28,7 +32,6 @@ use crate::{
         LeaseRevokeRequest, LeaseRevokeResponse, LeaseStatus, PbLease, RequestWithToken,
         RequestWrapper, ResponseHeader, ResponseWrapper,
     },
-    server::command::{CommandResponse, SyncResponse},
     storage::KvStore,
 };
 

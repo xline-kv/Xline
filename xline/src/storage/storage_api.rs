@@ -1,8 +1,9 @@
 use std::path::Path;
 
 use engine::Snapshot;
+use xlineapi::execute_error::ExecuteError;
 
-use super::{db::WriteOp, revision::KeyRevision, ExecuteError};
+use super::{db::WriteOp, revision::KeyRevision};
 
 /// The Stable Storage Api
 #[async_trait::async_trait]

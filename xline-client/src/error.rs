@@ -3,7 +3,7 @@ use curp::{
     error::{ClientBuildError, ClientError},
 };
 use thiserror::Error;
-use xline::server::Command;
+use xlineapi::command::Command;
 
 /// The result type for `xline-client`
 pub type Result<T> = std::result::Result<T, XlineClientError<Command>>;

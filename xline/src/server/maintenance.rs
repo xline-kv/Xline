@@ -8,8 +8,9 @@ use engine::SnapshotApi;
 use futures::stream::Stream;
 use sha2::{Digest, Sha256};
 use tracing::error;
+use xlineapi::command::Command;
 
-use super::command::{client_err_to_status, Command};
+use super::command::client_err_to_status;
 use crate::{
     header_gen::HeaderGenerator,
     rpc::{

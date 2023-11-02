@@ -7,9 +7,10 @@ use clippy_utilities::Cast;
 use itertools::Itertools;
 use parking_lot::RwLock;
 use utils::parking_lot_lock::RwLockMap;
+use xlineapi::execute_error::ExecuteError;
 
 use super::{lease_queue::LeaseQueue, Lease};
-use crate::{rpc::PbLease, storage::ExecuteError};
+use crate::rpc::PbLease;
 
 /// Collection of lease related data
 #[derive(Debug)]

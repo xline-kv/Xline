@@ -160,8 +160,6 @@ mod revision_number;
 mod rpc {
     pub(crate) use xlineapi::*;
 }
-/// Request validation module
-mod request_validation;
 /// restore module, only for test
 pub mod restore;
 /// Revision check

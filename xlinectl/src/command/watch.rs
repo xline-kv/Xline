@@ -2,12 +2,12 @@ use std::io;
 
 use anyhow::{anyhow, Result};
 use clap::{arg, value_parser, ArgMatches, Command};
-use xline::server::Command as XlineCommand;
 use xline_client::{
     error::XlineClientError,
     types::watch::{WatchRequest, Watcher},
     Client,
 };
+use xlineapi::command::Command as XlineCommand;
 
 use crate::utils::printer::Printer;
 

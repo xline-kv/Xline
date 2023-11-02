@@ -3,9 +3,10 @@ use crossbeam_skiplist::SkipMap;
 use itertools::Itertools;
 use parking_lot::RwLock;
 use utils::parking_lot_lock::RwLockMap;
+use xlineapi::command::KeyRange;
 
 use super::revision::{KeyRevision, Revision};
-use crate::server::command::{KeyRange, RangeType};
+use crate::server::command::RangeType;
 
 /// Keys to revisions mapping
 #[derive(Debug)]

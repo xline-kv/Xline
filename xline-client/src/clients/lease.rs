@@ -3,10 +3,9 @@ use std::sync::Arc;
 use curp::client::Client as CurpClient;
 use futures::channel::mpsc::channel;
 use tonic::{transport::Channel, Streaming};
-use xline::server::Command;
 use xlineapi::{
-    LeaseGrantResponse, LeaseKeepAliveResponse, LeaseLeasesResponse, LeaseRevokeResponse,
-    LeaseTimeToLiveResponse, RequestWithToken,
+    command::Command, LeaseGrantResponse, LeaseKeepAliveResponse, LeaseLeasesResponse,
+    LeaseRevokeResponse, LeaseTimeToLiveResponse, RequestWithToken,
 };
 
 use crate::{
