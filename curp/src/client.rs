@@ -492,7 +492,7 @@ where
                 }
             };
             debug!("shutdown request sent to {}", leader_id);
-            if let Err(e) = self
+            let resp = match self
                 .get_connect(leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .shutdown(
@@ -501,30 +501,44 @@ where
                 )
                 .await
             {
-                warn!("shutdown rpc error: {e}");
-                match unpack_status(&e) {
-                    UnpackStatus::ShuttingDown => return Err(ClientError::ShuttingDown),
-                    UnpackStatus::WrongClusterVersion => {
-                        let cluster = self.fetch_cluster(false).await?;
-                        self.set_cluster(cluster).await?;
-                        continue;
-                    }
-                    UnpackStatus::Redirect(new_leader, term) => {
-                        self.state.write().check_and_update(new_leader, term);
-                        warn!("shutdown: redirect to new leader {new_leader:?}, term is {term}",);
-                        continue;
-                    }
-                    UnpackStatus::Transport
-                    | UnpackStatus::EncodeDecode
-                    | UnpackStatus::Storage
-                    | UnpackStatus::IO
-                    | UnpackStatus::Internal => {
-                        tokio::time::sleep(retry_timeout.next_retry()).await;
-                        continue;
+                Ok(resp) => resp.into_inner(),
+                Err(e) => {
+                    warn!("shutdown rpc error: {e}");
+                    match unpack_status(&e) {
+                        UnpackStatus::ShuttingDown => return Err(ClientError::ShuttingDown),
+                        UnpackStatus::WrongClusterVersion => {
+                            let cluster = self.fetch_cluster(false).await?;
+                            self.set_cluster(cluster).await?;
+                            continue;
+                        }
+                        UnpackStatus::Redirect(new_leader, term) => {
+                            self.state.write().check_and_update(new_leader, term);
+                            warn!(
+                                "shutdown: redirect to new leader {new_leader:?}, term is {term}",
+                            );
+                            continue;
+                        }
+                        UnpackStatus::Transport
+                        | UnpackStatus::EncodeDecode
+                        | UnpackStatus::Storage
+                        | UnpackStatus::IO
+                        | UnpackStatus::Internal => {
+                            tokio::time::sleep(retry_timeout.next_retry()).await;
+                            continue;
+                        }
                     }
                 }
             };
-            return Ok(());
+            return match resp.error {
+                Some(e) => {
+                    if ProposeError::from(e) == ProposeError::Duplicated {
+                        return Ok(());
+                    }
+                    warn!("shutdown error: {:?}", ProposeError::from(e));
+                    continue;
+                }
+                None => Ok(()),
+            };
         }
         Err(ClientError::Timeout)
     }

@@ -262,20 +262,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             ));
         }
 
-        let ProposeId(client_id, seq_num) = cmd.id();
         // deduplication
-        if self.ctx.lm.read().check_alive(client_id) {
-            let mut cb_w = self.ctx.cb.write();
-            let tracker = cb_w.tracker(client_id);
-            // TODO if a duplicated cmd has result in cmd_board, then get the result and return
-            if tracker.record(seq_num) {
-                return Ok((info, Err(ProposeError::Duplicated)));
-            }
-            tracker.must_advance_to(first_incomplete);
-        } else {
-            self.ctx.cb.write().client_expired(client_id);
-            return Ok((info, Err(ProposeError::ExpiredClientId)));
-        }
+        if let Err(e) = self.deduplicate(cmd.id(), Some(first_incomplete)) {
+            return Ok((info, Err(e)));
+        };
 
         // leader also needs to check if the cmd conflicts un-synced commands
         conflict |= self.insert_ucp(Arc::clone(&cmd));
@@ -296,16 +286,24 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     /// Handle `shutdown` request
-    pub(super) fn handle_shutdown(&self, propose_id: ProposeId) -> Result<(), CurpError> {
+    pub(super) fn handle_shutdown(
+        &self,
+        propose_id: ProposeId,
+    ) -> Result<Result<(), ProposeError>, CurpError> {
         let st_r = self.st.read();
         if st_r.role != Role::Leader {
             return Err(CurpError::Redirect(st_r.leader_id, st_r.term));
         }
+        // deduplication
+        if let Err(e) = self.deduplicate(propose_id, None) {
+            return Ok(Err(e));
+        };
+
         let mut log_w = self.log.write();
         let entry = log_w.push(st_r.term, EntryData::Shutdown(propose_id))?;
         debug!("{} gets new log[{}]", self.id(), entry.index);
         self.entry_process(&mut log_w, entry, true);
-        Ok(())
+        Ok(Ok(()))
     }
 
     /// Handle `propose_conf_change` request
@@ -334,29 +332,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         let mut conflict = self.insert_sp(pool_entry.clone());
         conflict |= self.insert_ucp(pool_entry);
 
-        let ProposeId(client_id, seq_num) = conf_change.id();
         // deduplication
-        if self.ctx.lm.read().check_alive(client_id) {
-            let mut cb_w = self.ctx.cb.write();
-            let tracker = cb_w.tracker(client_id);
-            if tracker.record(seq_num) {
-                return Ok((
-                    info,
-                    Err(ConfChangeError::Propose(i32::from(
-                        ProposeError::Duplicated,
-                    ))),
-                ));
-            }
-            tracker.must_advance_to(first_incomplete);
-        } else {
-            self.ctx.cb.write().client_expired(client_id);
-            return Ok((
-                info,
-                Err(ConfChangeError::Propose(i32::from(
-                    ProposeError::ExpiredClientId,
-                ))),
-            ));
-        }
+        if let Err(e) = self.deduplicate(conf_change.id(), Some(first_incomplete)) {
+            return Ok((info, Err(ConfChangeError::Propose(i32::from(e)))));
+        };
 
         let changes = conf_change.changes().to_owned();
         let mut log_w = self.log.write();
@@ -1221,7 +1200,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 }
 
 // Utils
-// Don't grab lock in the following functions(except cb or sp's lock)
+// Don't grab lock in the following functions(except cb, ucp, lm or sp's lock)
 impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     /// Server becomes a pre candidate
     fn become_pre_candidate(
@@ -1610,5 +1589,28 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             );
             conflict_uncommitted
         })
+    }
+
+    /// Process deduplication
+    fn deduplicate(
+        &self,
+        ProposeId(client_id, seq_num): ProposeId,
+        first_incomplete: Option<u64>,
+    ) -> Result<(), ProposeError> {
+        // deduplication
+        if self.ctx.lm.read().check_alive(client_id) {
+            let mut cb_w = self.ctx.cb.write();
+            let tracker = cb_w.tracker(client_id);
+            if tracker.record(seq_num) {
+                return Err(ProposeError::Duplicated);
+            }
+            if let Some(first_incomplete) = first_incomplete {
+                tracker.must_advance_to(first_incomplete);
+            }
+        } else {
+            self.ctx.cb.write().client_expired(client_id);
+            return Err(ProposeError::ExpiredClientId);
+        }
+        Ok(())
     }
 }

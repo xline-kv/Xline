@@ -1,3 +1,6 @@
+use std::cmp::Reverse;
+use std::ops::Add;
+use std::time::{Duration, Instant};
 use std::{fmt::Debug, sync::Arc};
 
 use curp_external_api::cmd::{ConflictCheck, ProposeId};
@@ -306,6 +309,12 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
             .await,
         );
 
+        // grant a lease for test client id
+        let _ig = server.inner.lease_manager.write().expiry_queue.push(
+            curp_test_utils::test_cmd::TEST_CLIENT_ID,
+            Reverse(Instant::now().add(Duration::from_nanos(u64::MAX))),
+        );
+
         tonic::transport::Server::builder()
             .add_service(ProtocolServer::from_arc(Arc::clone(&server)))
             .add_service(InnerProtocolServer::from_arc(server))
@@ -350,6 +359,12 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
                 shutdown_trigger,
             )
             .await,
+        );
+
+        // grant a lease for test client id
+        let _ig = server.inner.lease_manager.write().expiry_queue.push(
+            curp_test_utils::test_cmd::TEST_CLIENT_ID,
+            Reverse(Instant::now().add(Duration::from_nanos(u64::MAX))),
         );
 
         tonic::transport::Server::builder()

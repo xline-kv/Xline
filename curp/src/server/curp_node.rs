@@ -242,7 +242,7 @@ pub(super) struct CurpNode<C: Command, RC: RoleChange> {
     /// The speculative cmd pool, shared with executor
     spec_pool: SpecPoolRef<C>,
     /// The client lease manager
-    lease_manager: LeaseManagerRef,
+    pub(super) lease_manager: LeaseManagerRef,
     /// Cmd watch board for tracking the cmd sync results
     cmd_board: CmdBoardRef<C>,
     /// CE event tx,
@@ -285,7 +285,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         req: ShutdownRequest,
     ) -> Result<ShutdownResponse, CurpError> {
         self.check_cluster_version(req.cluster_version)?;
-        self.curp.handle_shutdown(req.id())?;
+        if let Err(e) = self.curp.handle_shutdown(req.id())? {
+            return Ok(ShutdownResponse {
+                error: Some(i32::from(e)),
+            });
+        }
         CommandBoard::wait_for_shutdown_synced(&self.cmd_board).await;
         Ok(ShutdownResponse::default())
     }
