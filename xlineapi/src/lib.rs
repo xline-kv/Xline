@@ -157,6 +157,7 @@
     )
 )]
 
+pub mod command;
 pub mod etcd_convert;
 
 mod etcdserverpb {
