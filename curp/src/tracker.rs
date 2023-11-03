@@ -16,7 +16,7 @@ const USIZE_BITS: usize = std::mem::size_of::<usize>() * 8;
 ///  |        |________________|____|
 ///  |________|         len    |____|
 ///     head                    tail
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct BitVecQueue {
     /// Bits store
     store: VecDeque<usize>,
@@ -122,7 +122,7 @@ impl BitVecQueue {
 }
 
 /// Track sequence number for commands
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(super) struct Tracker {
     /// First incomplete seq num, it will be advanced by client
     first_incomplete: u64,

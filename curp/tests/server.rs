@@ -651,3 +651,61 @@ async fn fetch_read_state_rpc_should_work_when_client_has_wrong_cluster() {
     let res = client.fetch_read_state(&cmd).await;
     println!("{res:?}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+#[abort_on_panic]
+async fn client_should_grant_client_id() {
+    init_logger();
+
+    let group = CurpGroup::new(3).await;
+    let client = group.new_client().await;
+
+    let client_id = loop {
+        if let Ok(id) = client.gen_propose_id().await {
+            break id.0;
+        }
+    };
+
+    assert!(client_id != 0)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[abort_on_panic]
+async fn test_client_should_advance_first_incomplete() {
+    init_logger();
+
+    let group = CurpGroup::new(3).await;
+    let client = group.new_client().await;
+
+    assert_eq!(client.first_incomplete(), 0);
+
+    assert_eq!(
+        client
+            .propose(
+                TestCommand::new_put(vec![0], 0)
+                    .set_propose_id(client.gen_propose_id().await.unwrap()),
+                true
+            )
+            .await
+            .unwrap()
+            .0,
+        TestCommandResult::new(vec![], vec![])
+    );
+
+    assert_eq!(client.first_incomplete(), 1);
+
+    assert_eq!(
+        client
+            .propose(
+                TestCommand::new_get(vec![0])
+                    .set_propose_id(client.gen_propose_id().await.unwrap()),
+                true
+            )
+            .await
+            .unwrap()
+            .0,
+        TestCommandResult::new(vec![0], vec![1])
+    );
+
+    assert_eq!(client.first_incomplete(), 2);
+}

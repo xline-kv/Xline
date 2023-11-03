@@ -140,6 +140,11 @@ impl TestCommand {
         }
     }
 
+    pub fn set_propose_id(mut self, id: ProposeId) -> Self {
+        self.id = id;
+        self
+    }
+
     pub fn set_exe_dur(mut self, dur: Duration) -> Self {
         self.exe_dur = dur;
         self

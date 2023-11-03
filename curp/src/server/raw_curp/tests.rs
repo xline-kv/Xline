@@ -25,6 +25,7 @@ use crate::{
         raw_curp::UncommittedPool,
         spec_pool::SpeculativePool,
     },
+    tracker::Tracker,
     LogIndex, ProposeConfChangeRequest,
 };
 
@@ -43,6 +44,16 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
     pub(crate) fn commit_index(&self) -> LogIndex {
         self.log.read().commit_index
+    }
+
+    pub(crate) fn tracker(&self, client_id: u64) -> Tracker {
+        self.ctx
+            .cb
+            .read()
+            .trackers
+            .get(&client_id)
+            .cloned()
+            .unwrap_or_else(|| unreachable!("cannot find {client_id} in result trackers"))
     }
 
     pub(crate) fn new_test<Tx: CEEventTxApi<C>>(n: u64, exe_tx: Tx, role_change: RC) -> Self {
@@ -193,6 +204,71 @@ fn leader_handle_propose_will_reject_duplicated() {
     assert_eq!(leader_id, Some(curp.id().clone()));
     assert_eq!(term, 1);
     assert!(matches!(result, Err(ProposeError::Duplicated)));
+}
+
+#[traced_test]
+#[test]
+fn leader_handle_propose_will_reject_gc_completed_cmd() {
+    let curp = {
+        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
+        exe_tx.expect_send_sp_exe().returning(|_| {});
+        RawCurp::new_test(3, exe_tx, mock_role_change())
+    };
+    let cmd0 = Arc::new(TestCommand::new_get(vec![0]).set_propose_id(ProposeId(TEST_CLIENT_ID, 0)));
+    let cmd1 = Arc::new(TestCommand::new_get(vec![1]).set_propose_id(ProposeId(TEST_CLIENT_ID, 1)));
+    let cmd2 = Arc::new(TestCommand::new_get(vec![2]).set_propose_id(ProposeId(TEST_CLIENT_ID, 2)));
+    let ((leader_id, term), result) = curp.handle_propose(Arc::clone(&cmd0), 0).unwrap();
+    assert_eq!(leader_id, Some(curp.id().clone()));
+    assert_eq!(term, 1);
+    assert!(matches!(result, Ok(true)));
+    let ((leader_id, term), result) = curp.handle_propose(cmd1, 1).unwrap();
+    assert_eq!(leader_id, Some(curp.id().clone()));
+    assert_eq!(term, 1);
+    assert!(matches!(result, Ok(true)));
+    let ((leader_id, term), result) = curp.handle_propose(cmd2, 2).unwrap();
+    assert_eq!(leader_id, Some(curp.id().clone()));
+    assert_eq!(term, 1);
+    assert!(matches!(result, Ok(true)));
+
+    let ((leader_id, term), result) = curp.handle_propose(cmd0, 0).unwrap();
+    assert_eq!(leader_id, Some(curp.id().clone()));
+    assert_eq!(term, 1);
+    assert!(matches!(result, Err(ProposeError::Duplicated)));
+
+    assert_eq!(curp.tracker(TEST_CLIENT_ID).first_incomplete(), 3);
+}
+
+#[traced_test]
+#[test]
+fn leader_handle_propose_will_reject_expired_client_id() {
+    let curp = {
+        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
+        exe_tx.expect_send_sp_exe().returning(|_| {});
+        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+    };
+    let cmd = Arc::new(TestCommand::default().set_propose_id(ProposeId(0, 0)));
+    let ((_leader_id, _term), result) = curp.handle_propose(Arc::clone(&cmd), 0).unwrap();
+    assert!(matches!(result, Err(ProposeError::ExpiredClientId)));
+}
+
+#[traced_test]
+#[test]
+fn leader_handle_propose_will_gc_completed_cmd() {
+    let curp = {
+        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
+        exe_tx.expect_send_sp_exe().returning(|_| {});
+        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+    };
+    let cmd1 = Arc::new(TestCommand::new_get(vec![1]).set_propose_id(ProposeId(TEST_CLIENT_ID, 1))); // seq_num: 1
+    let cmd2 = Arc::new(TestCommand::new_get(vec![2]).set_propose_id(ProposeId(TEST_CLIENT_ID, 2))); // seq_num: 2
+
+    let ((_leader_id, _term), res1) = curp.handle_propose(Arc::clone(&cmd1), 1).unwrap();
+    assert!(matches!(res1, Ok(true)));
+    let ((_leader_id, _term), res2) = curp.handle_propose(Arc::clone(&cmd2), 2).unwrap();
+    assert!(matches!(res2, Ok(true)));
+
+    let tracker = curp.tracker(TEST_CLIENT_ID);
+    assert_eq!(tracker.first_incomplete(), 3);
 }
 
 #[traced_test]

@@ -420,6 +420,13 @@ where
         self.inner.gen_propose_id().await
     }
 
+    /// Get the `first_incomplete` of this client, test used.
+    #[inline]
+    #[must_use]
+    pub fn first_incomplete(&self) -> u64 {
+        self.inner.tracker.read().first_incomplete()
+    }
+
     /// Client lease keep alive background task
     async fn client_lease_keep_alive(inner: Arc<ClientInner<C>>) {
         loop {
