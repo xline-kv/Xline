@@ -617,12 +617,10 @@ where
             header: Some(self.header_gen.gen_header()),
             ..DeleteRangeResponse::default()
         };
-        response.deleted = prev_kvs.len().cast();
+        response.deleted = state.delete_range(req, prev_kvs.as_slice());
         if req.prev_kv {
             response.prev_kvs = prev_kvs;
         }
-
-        state.delete_range(req);
 
         Ok(response)
     }
@@ -874,7 +872,7 @@ where
         sub_revision: i64,
         state: &mut TxnState,
     ) -> (Vec<WriteOp>, Vec<Event>) {
-        state.delete_range(req);
+        let _ignore = state.delete_range(req, &[]);
 
         Self::delete_keys(
             &self.index,
@@ -1020,9 +1018,14 @@ impl TxnState {
     }
 
     /// Update current state for delete range requests
-    fn delete_range(&mut self, req: &DeleteRangeRequest) {
+    fn delete_range(&mut self, req: &DeleteRangeRequest, prev_kvs: &[KeyValue]) -> i64 {
         let key_range = KeyRange::new(req.key.clone(), req.range_end.clone());
+        let deleted = prev_kvs
+            .iter()
+            .filter(|kv| !self.deleted.intersects(&kv.key))
+            .count();
         self.deleted.insert(key_range);
+        deleted.cast()
     }
 }
 
