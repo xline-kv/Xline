@@ -1016,9 +1016,9 @@ fn leader_handle_propose_conf_change() {
         follower_id,
         vec!["http://127.0.0.1:4567".to_owned()],
     )];
-    let conf_change_entry = ProposeConfChangeRequest::new(next_id(), changes, 0, 0);
+    let conf_change_entry = ProposeConfChangeRequest::new(next_id(), changes, 0);
     let ((leader, term), result) = curp
-        .handle_propose_conf_change(conf_change_entry.into(), 0)
+        .handle_propose_conf_change(conf_change_entry.into())
         .unwrap();
     assert_eq!(leader, Some(curp.id().clone()));
     assert_eq!(term, 1);
@@ -1043,7 +1043,7 @@ fn follower_handle_propose_conf_change() {
         follower_id,
         vec!["http://127.0.0.1:4567".to_owned()],
     )];
-    let conf_change_entry = ProposeConfChangeRequest::new(next_id(), changes, 0, 0);
-    let result = curp.handle_propose_conf_change(conf_change_entry.into(), 0);
+    let conf_change_entry = ProposeConfChangeRequest::new(next_id(), changes, 0);
+    let result = curp.handle_propose_conf_change(conf_change_entry.into());
     assert!(matches!(result, Err(CurpError::Redirect(None, 2))));
 }

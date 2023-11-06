@@ -1032,7 +1032,6 @@ where
         );
         let ProposeId(_, seq_num) = propose_id;
         let _ig = self.tracker.write().record(seq_num);
-        let first_incomplete = self.tracker.read().first_incomplete();
         let mut retry_timeout = self.get_backoff();
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {
@@ -1052,7 +1051,6 @@ where
                         propose_id,
                         changes.clone(),
                         self.cluster_version(),
-                        first_incomplete,
                     ),
                     *self.config.wait_synced_timeout(),
                 )

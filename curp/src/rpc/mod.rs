@@ -539,13 +539,11 @@ impl ProposeConfChangeRequest {
         id: ProposeId,
         changes: Vec<ConfChange>,
         cluster_version: u64,
-        first_incomplete: u64,
     ) -> Self {
         Self {
             propose_id: Some(id.into()),
             changes,
             cluster_version,
-            first_incomplete,
         }
     }
 

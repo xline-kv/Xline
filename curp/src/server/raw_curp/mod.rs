@@ -311,7 +311,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     pub(super) fn handle_propose_conf_change(
         &self,
         conf_change: ConfChangeEntry,
-        first_incomplete: u64,
     ) -> Result<((Option<ServerId>, u64), Result<(), ConfChangeError>), CurpError> {
         debug!(
             "{} gets conf change for with id {}",
@@ -333,7 +332,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         conflict |= self.insert_ucp(pool_entry);
 
         // deduplication
-        if let Err(e) = self.deduplicate(conf_change.id(), Some(first_incomplete)) {
+        if let Err(e) = self.deduplicate(conf_change.id(), None) {
             return Ok((info, Err(ConfChangeError::Propose(i32::from(e)))));
         };
 
