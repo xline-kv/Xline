@@ -1,4 +1,7 @@
-use std::fmt::Debug;
+use std::{
+    fmt::Debug,
+    ops::{Deref, DerefMut},
+};
 
 use futures::channel::mpsc::Sender;
 use xline::server::KeyRange;
@@ -234,5 +237,45 @@ impl From<WatchFilterType> for i32 {
             WatchFilterType::NoPut => 0,
             WatchFilterType::NoDelete => 1,
         }
+    }
+}
+
+/// Watch response stream
+#[derive(Debug)]
+pub struct WatchStreaming {
+    /// Inner tonic stream
+    inner: tonic::Streaming<WatchResponse>,
+    /// A sender of WatchResponse, used to keep response stream alive
+    _sender: Sender<xlineapi::WatchRequest>,
+}
+
+impl WatchStreaming {
+    /// Create a new watch streaming
+    #[inline]
+    #[must_use]
+    pub fn new(
+        inner: tonic::Streaming<WatchResponse>,
+        sender: Sender<xlineapi::WatchRequest>,
+    ) -> Self {
+        Self {
+            inner,
+            _sender: sender,
+        }
+    }
+}
+
+impl Deref for WatchStreaming {
+    type Target = tonic::Streaming<WatchResponse>;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl DerefMut for WatchStreaming {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
     }
 }
