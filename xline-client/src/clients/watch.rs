@@ -2,11 +2,11 @@ use std::{fmt::Debug, sync::Arc};
 
 use futures::channel::mpsc::channel;
 use tonic::transport::Channel;
-use xlineapi::{self, RequestUnion, WatchResponse};
+use xlineapi::{self, RequestUnion};
 
 use crate::{
     error::{Result, XlineClientError},
-    types::watch::{WatchRequest, Watcher},
+    types::watch::{WatchRequest, WatchStreaming, Watcher},
     AuthService,
 };
 
@@ -82,10 +82,7 @@ impl WatchClient {
     /// }
     /// ```
     #[inline]
-    pub async fn watch(
-        &mut self,
-        request: WatchRequest,
-    ) -> Result<(Watcher, tonic::Streaming<WatchResponse>)> {
+    pub async fn watch(&mut self, request: WatchRequest) -> Result<(Watcher, WatchStreaming)> {
         let (mut request_sender, request_receiver) =
             channel::<xlineapi::WatchRequest>(CHANNEL_SIZE);
 
@@ -111,6 +108,9 @@ impl WatchClient {
             }
         };
 
-        Ok((Watcher::new(watch_id, request_sender), response_stream))
+        Ok((
+            Watcher::new(watch_id, request_sender.clone()),
+            WatchStreaming::new(response_stream, request_sender),
+        ))
     }
 }
