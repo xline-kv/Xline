@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::{
         atomic::{AtomicI64, Ordering::Relaxed},
         Arc,
@@ -617,7 +617,7 @@ where
             header: Some(self.header_gen.gen_header()),
             ..DeleteRangeResponse::default()
         };
-        response.deleted = state.delete_range(req, prev_kvs.as_slice());
+        response.deleted = state.delete_range(req, prev_kvs.clone());
         if req.prev_kv {
             response.prev_kvs = prev_kvs;
         }
@@ -687,7 +687,7 @@ where
                 self.sync_put_request(req, revision, 0, state)?
             }
             RequestWrapper::DeleteRangeRequest(ref req) => {
-                self.sync_delete_range_request(req, revision, 0, state)
+                self.sync_delete_range_request(req, revision, 0, state)?
             }
             RequestWrapper::TxnRequest(ref req) => {
                 self.sync_txn_request(req, revision, 0, state)?
@@ -759,7 +759,7 @@ where
                     self.sync_put_request(put_req, revision, sub_revision, state)?
                 }
                 Request::RequestDeleteRange(ref del_req) => {
-                    self.sync_delete_range_request(del_req, revision, sub_revision, state)
+                    self.sync_delete_range_request(del_req, revision, sub_revision, state)?
                 }
                 Request::RequestTxn(ref txn_req) => {
                     self.sync_txn_request(txn_req, revision, sub_revision, state)?
@@ -871,17 +871,18 @@ where
         revision: i64,
         sub_revision: i64,
         state: &mut TxnState,
-    ) -> (Vec<WriteOp>, Vec<Event>) {
-        let _ignore = state.delete_range(req, &[]);
+    ) -> Result<(Vec<WriteOp>, Vec<Event>), ExecuteError> {
+        let prev_kvs = self.get_range(&req.key, &req.range_end, 0)?;
+        let _ingore = state.delete_range(req, prev_kvs);
 
-        Self::delete_keys(
+        Ok(Self::delete_keys(
             &self.index,
             &self.lease_collection,
             &req.key,
             &req.range_end,
             revision,
             sub_revision,
-        )
+        ))
     }
 
     /// Delete keys from index and detach them in lease collection, return all the write operations and events
@@ -922,29 +923,8 @@ struct TxnState {
     read_rev: i64,
     /// Revision used for writing
     write_rev: i64,
-    /// Put kvs
-    put: BTreeMap<Vec<u8>, Vec<u8>>,
-    /// Deleted kvs
-    deleted: DeleteInterval,
-}
-
-/// The interval of delete range requests
-#[derive(Debug, Default)]
-struct DeleteInterval {
-    /// The inner range
-    inner: Vec<KeyRange>,
-}
-
-impl DeleteInterval {
-    /// Insert an interval
-    fn insert(&mut self, key: KeyRange) {
-        self.inner.push(key);
-    }
-
-    /// Check if a key intersects with the intervals
-    fn intersects(&self, key: &[u8]) -> bool {
-        self.inner.iter().any(|range| range.contains_key(key))
-    }
+    /// kvs
+    inner: BTreeMap<Vec<u8>, Option<KeyValue>>,
 }
 
 // NOTE: Some preconditions of the following implementation:
@@ -957,8 +937,7 @@ impl TxnState {
         Self {
             read_rev,
             write_rev,
-            put: BTreeMap::default(),
-            deleted: DeleteInterval::default(),
+            inner: BTreeMap::default(),
         }
     }
 
@@ -973,38 +952,20 @@ impl TxnState {
         if revision != 0 && revision < self.write_rev {
             return kvs;
         }
-
-        // We use a BTreeMap here because the kvs need to be sorted by default
+        let key_range = KeyRange::new(key.to_vec(), range_end.to_vec());
+        let state_range = self.inner.range(key_range);
+        // We need to keep keys sorted so we use BTreeMap instead of HashMap here
         let mut kvs: BTreeMap<_, _> = kvs
             .into_iter()
-            .filter(|kv| !self.deleted.intersects(&kv.key))
-            .map(|kv| (kv.key.clone(), kv))
+            .map(|kv| (kv.key.clone(), Some(kv)))
             .collect();
-        let values = self
-            .put
-            .range(KeyRange::new(key, range_end))
-            .map(|(_, value)| value);
-        let txn_kvs: Vec<KeyValue> = values
-            .into_iter()
-            .map(|v| KeyValue::decode(v.as_slice()))
-            .collect::<Result<_, _>>()
-            .unwrap_or_else(|_| unreachable!("Failed to decode key-value"));
-
-        kvs.extend(txn_kvs.into_iter().map(|kv| (kv.key.clone(), kv)));
-
-        kvs.into_values().collect()
+        kvs.extend(state_range.map(|(k, kv)| (k.clone(), kv.clone())));
+        kvs.into_values().flatten().collect()
     }
 
     /// Update current state for put requests
     fn put(&mut self, req: &PutRequest, index: &Arc<Index>) {
-        let revision = self.write_rev;
-        // we don't need sub revision here
-        let sub_revision = 0;
-        let new_rev = if self.deleted.intersects(&req.key) {
-            KeyRevision::new(revision, 1, revision, sub_revision)
-        } else {
-            index.register_revision(&req.key, revision, sub_revision)
-        };
+        let new_rev = index.register_revision(&req.key, self.write_rev, 0);
         let kv = KeyValue {
             key: req.key.clone(),
             value: req.value.clone(),
@@ -1013,19 +974,37 @@ impl TxnState {
             version: new_rev.version,
             lease: req.lease,
         };
-
-        let _ignore = self.put.insert(req.key.clone(), kv.encode_to_vec());
+        let _ignore = self.inner.insert(req.key.clone(), Some(kv));
     }
 
     /// Update current state for delete range requests
-    fn delete_range(&mut self, req: &DeleteRangeRequest, prev_kvs: &[KeyValue]) -> i64 {
+    fn delete_range(&mut self, req: &DeleteRangeRequest, prev_kvs: Vec<KeyValue>) -> i64 {
         let key_range = KeyRange::new(req.key.clone(), req.range_end.clone());
-        let deleted = prev_kvs
-            .iter()
-            .filter(|kv| !self.deleted.intersects(&kv.key))
-            .count();
-        self.deleted.insert(key_range);
-        deleted.cast()
+        let state_range = self.inner.range(key_range);
+
+        let to_delete: HashSet<_> = state_range
+            .map(|(key, _)| key.clone())
+            .chain(prev_kvs.into_iter().map(|kv| kv.key))
+            .collect();
+
+        let mut deleted = 0;
+        for key in to_delete {
+            let _ignore = self
+                .inner
+                .entry(key)
+                .and_modify(|v| {
+                    if v.is_some() {
+                        deleted = deleted.overflow_add(1);
+                        *v = None;
+                    }
+                })
+                .or_insert_with(|| {
+                    deleted = deleted.overflow_add(1);
+                    None
+                });
+        }
+
+        deleted
     }
 }
 
