@@ -146,6 +146,11 @@ where
 
     /// Reset the command executor using the snapshot or to the initial state if None
     async fn reset(&self, snapshot: Option<(Snapshot, LogIndex)>) -> Result<(), C::Error>;
+
+    /// Trigger the barrier of the given id.
+    fn trigger_id(&self, id: ProposeId);
+    /// Trigger the barrier of the given index.
+    fn trigger_index(&self, index: u64);
 }
 
 /// Codec for encoding and decoding data into/from the Protobuf format

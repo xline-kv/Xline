@@ -566,7 +566,7 @@ async fn shutdown_rpc_should_shutdown_the_cluster_when_client_has_wrong_cluster(
     let id = client.gen_propose_id().await.unwrap();
     client.shutdown(id).await.unwrap();
 
-    sleep_secs(3).await; // wait for the cluster to shutdown
+    sleep_secs(5).await; // wait for the cluster to shutdown
     assert!(group.is_finished());
 }
 
@@ -603,7 +603,7 @@ async fn propose_conf_change_rpc_should_work_when_client_has_wrong_cluster() {
         .unwrap();
     assert_eq!(members.len(), 3);
     assert!(members.iter().all(|m| m.id != node_id));
-    sleep_secs(3).await;
+    sleep_secs(5).await;
     assert!(group.nodes.get(&node_id).unwrap().handle.is_finished());
 }
 

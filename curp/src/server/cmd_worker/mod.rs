@@ -166,6 +166,8 @@ async fn worker_as<
             true
         }
         EntryData::ConfChange(ref conf_change) => {
+            ce.trigger_id(conf_change.id());
+            ce.trigger_index(entry.index);
             if let Err(e) = ce.set_last_applied(entry.index) {
                 error!("failed to set last_applied, {e}");
                 return false;
@@ -176,6 +178,8 @@ async fn worker_as<
             let shutdown_self =
                 change.change_type() == ConfChangeType::Remove && change.node_id == id;
             cb.write().insert_conf(entry.id());
+            sp.lock().remove(&entry.id());
+            let _ig = ucp.lock().remove(&entry.id());
             if shutdown_self {
                 curp.shutdown_trigger().self_shutdown();
             }

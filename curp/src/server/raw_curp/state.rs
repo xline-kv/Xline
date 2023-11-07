@@ -287,8 +287,8 @@ impl Config {
     pub(super) fn remove(&mut self, id: ServerId) -> bool {
         let res1 = self.majority_config.voters.remove(&id);
         let res2 = self.learners.remove(&id);
-        debug_assert_ne!(
-            res1, res2,
+        debug_assert!(
+            !(res1 && res2),
             "a node should not exist in both voters and learners"
         );
         res1 || res2

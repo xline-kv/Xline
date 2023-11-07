@@ -413,6 +413,14 @@ where
             .unwrap_or_else(|e| panic!("cannot decode index from backend, {e:?}"));
         Ok(u64::from_le_bytes(buf))
     }
+
+    fn trigger_id(&self, id: ProposeId) {
+        self.id_barrier.trigger(id);
+    }
+
+    fn trigger_index(&self, index: u64) {
+        self.index_barrier.trigger(index);
+    }
 }
 
 /// Command to run consensus protocol

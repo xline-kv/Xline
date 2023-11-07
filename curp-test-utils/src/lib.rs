@@ -50,7 +50,7 @@ impl TestRoleChangeInner {
 
 pub fn init_logger() {
     if env::var("RUST_LOG").is_err() {
-        env::set_var("RUST_LOG", "curp,server");
+        env::set_var("RUST_LOG", "curp=debug,xline=debug");
     }
     _ = tracing_subscriber::fmt()
         .with_timer(uptime())
