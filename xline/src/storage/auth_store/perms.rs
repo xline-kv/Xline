@@ -1,14 +1,11 @@
-use std::{
-    collections::HashMap,
-    fmt::Debug,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{collections::HashMap, fmt::Debug};
 
 use jsonwebtoken::{
     errors::Error as JwtError, Algorithm, DecodingKey, EncodingKey, Header, Validation,
 };
 use merged_range::MergedRange;
 use serde::{Deserialize, Serialize};
+use utils::timestamp;
 
 use crate::{
     rpc::{Permission, Type},
@@ -77,10 +74,7 @@ impl TokenOperate for JwtTokenManager {
     type Claims = TokenClaims;
 
     fn assign(&self, username: &str, revision: i64) -> Result<String, Self::Error> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_else(|e| panic!("SystemTime before UNIX EPOCH! {e}"))
-            .as_secs();
+        let now = timestamp();
         let claims = TokenClaims {
             username: username.to_owned(),
             revision,

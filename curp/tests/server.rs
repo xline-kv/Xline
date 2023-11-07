@@ -1,9 +1,6 @@
 //! Integration test for the curp server
 
-use std::{
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::{sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
 use curp::{
@@ -19,7 +16,7 @@ use curp_test_utils::{
 use madsim::rand::{thread_rng, Rng};
 use test_macros::abort_on_panic;
 use tokio::net::TcpListener;
-use utils::config::ClientConfig;
+use utils::{config::ClientConfig, timestamp};
 
 use crate::common::curp_group::{
     commandpb::propose_response::ExeResult, CurpGroup, FetchClusterRequest, ProposeRequest,
@@ -310,11 +307,8 @@ async fn propose_add_node_should_success() {
     let client = group.new_client().await;
 
     let id = client.gen_propose_id().await.unwrap();
-    let timestamp = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let node_id = ClusterInfo::calculate_member_id(vec!["address".to_owned()], "", Some(timestamp));
+    let node_id =
+        ClusterInfo::calculate_member_id(vec!["address".to_owned()], "", Some(timestamp()));
     let changes = vec![ConfChange::add(node_id, vec!["address".to_string()])];
     let res = client.propose_conf_change(id, changes).await;
     let members = res.unwrap().unwrap();

@@ -8,6 +8,7 @@ use curp::{
 };
 use itertools::Itertools;
 use tonic::{Request, Response, Status};
+use utils::timestamp;
 use xlineapi::{
     Cluster, Member, MemberAddRequest, MemberAddResponse, MemberListRequest, MemberListResponse,
     MemberPromoteRequest, MemberPromoteResponse, MemberRemoveRequest, MemberRemoveResponse,
@@ -23,14 +24,6 @@ pub(crate) struct ClusterServer {
     client: Arc<Client<Command>>,
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
-}
-
-/// Get current timestamp in seconds
-fn timestamp() -> u64 {
-    let now = std::time::SystemTime::now();
-    now.duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_else(|_| unreachable!("Time went backwards"))
-        .as_secs()
 }
 
 impl ClusterServer {

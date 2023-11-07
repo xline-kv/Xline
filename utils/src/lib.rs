@@ -384,6 +384,16 @@ pub fn parse_batch_bytes(s: &str) -> Result<u64, ConfigParseError> {
     }
 }
 
+/// Get current timestamp in seconds
+#[must_use]
+#[inline]
+pub fn timestamp() -> u64 {
+    let now = std::time::SystemTime::now();
+    now.duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_else(|_| unreachable!("Time went backwards"))
+        .as_secs()
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
