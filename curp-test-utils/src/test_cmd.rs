@@ -428,6 +428,10 @@ impl CommandExecutor<TestCommand> for TestCE {
             .unwrap();
         Ok(())
     }
+
+    fn trigger_id(&self, _id: ProposeId) {}
+
+    fn trigger_index(&self, _index: u64) {}
 }
 
 impl TestCE {

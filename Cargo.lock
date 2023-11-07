@@ -646,8 +646,8 @@ dependencies = [
  "once_cell",
  "opentelemetry",
  "parking_lot",
- "prost",
- "prost-build",
+ "prost 0.11.9",
+ "prost-build 0.11.9",
  "rand",
  "serde",
  "serde_json",
@@ -670,7 +670,7 @@ dependencies = [
  "async-trait",
  "engine",
  "mockall",
- "prost",
+ "prost 0.11.9",
  "serde",
  "thiserror",
 ]
@@ -690,7 +690,7 @@ dependencies = [
  "mockall",
  "once_cell",
  "parking_lot",
- "prost",
+ "prost 0.11.9",
  "serde",
  "thiserror",
  "tracing",
@@ -919,11 +919,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f4b0ea5ef6dc2388a4b1669fa32097249bc03a15417b97cb75e38afb309e4a89"
 dependencies = [
  "http",
- "prost",
+ "prost 0.11.9",
  "tokio",
  "tokio-stream 0.1.14",
- "tonic",
- "tonic-build",
+ "tonic 0.9.2",
+ "tonic-build 0.9.2",
+ "tower",
+ "tower-service",
+]
+
+[[package]]
+name = "etcd-client"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d982a3b3088a5f95d19882d298b352a2e0be20703e3080c1e6767731d5dec79"
+dependencies = [
+ "http",
+ "prost 0.12.1",
+ "tokio",
+ "tokio-stream 0.1.14",
+ "tonic 0.10.2",
+ "tonic-build 0.10.2",
  "tower",
  "tower-service",
 ]
@@ -1501,7 +1517,7 @@ version = "0.3.0+0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c26d21c8d69c25db9d461ab7dfa4b09bd982687546c8ca2c43d743533a8f1c3f"
 dependencies = [
- "etcd-client",
+ "etcd-client 0.11.1",
  "futures-util",
  "http",
  "madsim",
@@ -1511,7 +1527,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "toml 0.7.6",
- "tonic",
+ "tonic 0.9.2",
  "tracing",
 ]
 
@@ -1546,7 +1562,7 @@ dependencies = [
  "futures-util",
  "madsim",
  "tokio",
- "tonic",
+ "tonic 0.9.2",
  "tower",
  "tracing",
 ]
@@ -1558,10 +1574,10 @@ source = "git+https://github.com/madsim-rs/madsim.git?rev=5eb4198#5eb4198b9fdb0c
 dependencies = [
  "prettyplease 0.1.25",
  "proc-macro2",
- "prost-build",
+ "prost-build 0.11.9",
  "quote",
  "syn 1.0.109",
- "tonic-build",
+ "tonic-build 0.9.2",
 ]
 
 [[package]]
@@ -2129,7 +2145,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b82eaa1d779e9a4bc1c3217db8ffbeabaae1dca241bf70183242128d48681cd"
 dependencies = [
  "bytes",
- "prost-derive",
+ "prost-derive 0.11.9",
+]
+
+[[package]]
+name = "prost"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f4fdd22f3b9c31b53c060df4a0613a1c7f062d4115a2b984dd15b1858f7e340d"
+dependencies = [
+ "bytes",
+ "prost-derive 0.12.1",
 ]
 
 [[package]]
@@ -2146,10 +2172,32 @@ dependencies = [
  "multimap",
  "petgraph",
  "prettyplease 0.1.25",
- "prost",
- "prost-types",
+ "prost 0.11.9",
+ "prost-types 0.11.9",
  "regex",
  "syn 1.0.109",
+ "tempfile",
+ "which",
+]
+
+[[package]]
+name = "prost-build"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bdf592881d821b83d471f8af290226c8d51402259e9bb5be7f9f8bdebbb11ac"
+dependencies = [
+ "bytes",
+ "heck",
+ "itertools",
+ "log",
+ "multimap",
+ "once_cell",
+ "petgraph",
+ "prettyplease 0.2.14",
+ "prost 0.12.1",
+ "prost-types 0.12.1",
+ "regex",
+ "syn 2.0.31",
  "tempfile",
  "which",
 ]
@@ -2168,12 +2216,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "prost-derive"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "265baba7fabd416cf5078179f7d2cbeca4ce7a9041111900675ea7c4cb8a4c32"
+dependencies = [
+ "anyhow",
+ "itertools",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.31",
+]
+
+[[package]]
 name = "prost-types"
 version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "213622a1460818959ac1181aaeb2dc9c7f63df720db7d788b3e24eacd1983e13"
 dependencies = [
- "prost",
+ "prost 0.11.9",
+]
+
+[[package]]
+name = "prost-types"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e081b29f63d83a4bc75cfc9f3fe424f9156cf92d8a4f0c9407cce9a1b67327cf"
+dependencies = [
+ "prost 0.12.1",
 ]
 
 [[package]]
@@ -2478,7 +2548,7 @@ dependencies = [
  "madsim-tonic-build",
  "once_cell",
  "parking_lot",
- "prost",
+ "prost 0.11.9",
  "serde",
  "tempfile",
  "thiserror",
@@ -2857,7 +2927,34 @@ dependencies = [
  "hyper-timeout",
  "percent-encoding",
  "pin-project",
- "prost",
+ "prost 0.11.9",
+ "tokio",
+ "tokio-stream 0.1.14",
+ "tower",
+ "tower-layer",
+ "tower-service",
+ "tracing",
+]
+
+[[package]]
+name = "tonic"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d560933a0de61cf715926b9cac824d4c883c2c43142f787595e48280c40a1d0e"
+dependencies = [
+ "async-stream",
+ "async-trait",
+ "axum",
+ "base64 0.21.3",
+ "bytes",
+ "h2",
+ "http",
+ "http-body",
+ "hyper",
+ "hyper-timeout",
+ "percent-encoding",
+ "pin-project",
+ "prost 0.12.1",
  "tokio",
  "tokio-stream 0.1.14",
  "tower",
@@ -2874,9 +2971,22 @@ checksum = "a6fdaae4c2c638bb70fe42803a26fbd6fc6ac8c72f5c59f67ecc2a2dcabf4b07"
 dependencies = [
  "prettyplease 0.1.25",
  "proc-macro2",
- "prost-build",
+ "prost-build 0.11.9",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "tonic-build"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d021fc044c18582b9a2408cd0dd05b1596e3ecdb5c4df822bb0183545683889"
+dependencies = [
+ "prettyplease 0.2.14",
+ "proc-macro2",
+ "prost-build 0.12.1",
+ "quote",
+ "syn 2.0.31",
 ]
 
 [[package]]
@@ -2886,10 +2996,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "080964d45894b90273d2b1dd755fdd114560db8636bb41cea615213c45043c4d"
 dependencies = [
  "async-stream",
- "prost",
+ "prost 0.11.9",
  "tokio",
  "tokio-stream 0.1.14",
- "tonic",
+ "tonic 0.9.2",
 ]
 
 [[package]]
@@ -3415,6 +3525,7 @@ dependencies = [
  "crossbeam-skiplist",
  "curp",
  "engine",
+ "etcd-client 0.12.1",
  "event-listener",
  "flume",
  "futures",
@@ -3434,7 +3545,7 @@ dependencies = [
  "parking_lot",
  "pbkdf2",
  "priority-queue",
- "prost",
+ "prost 0.11.9",
  "rand",
  "serde",
  "sha2",
@@ -3452,6 +3563,7 @@ dependencies = [
  "tracing-subscriber",
  "utils",
  "uuid",
+ "xline-client",
  "xline-test-utils",
  "xlineapi",
 ]
@@ -3505,7 +3617,7 @@ dependencies = [
  "madsim-etcd-client",
  "madsim-tonic",
  "madsim-tonic-build",
- "prost",
+ "prost 0.11.9",
  "serde",
 ]
 
@@ -3523,7 +3635,7 @@ dependencies = [
  "shlex",
  "thiserror",
  "tokio",
- "tonic",
+ "tonic 0.9.2",
  "utils",
  "xline",
  "xline-client",
