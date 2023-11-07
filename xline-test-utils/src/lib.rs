@@ -4,13 +4,11 @@ use std::{
     sync::Arc,
 };
 
-use curp::members::ClusterInfo;
+use curp::members::{get_cluster_info_from_remote, ClusterInfo};
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use tokio::{
     net::TcpListener,
-    runtime::Handle,
-    task::block_in_place,
     time::{self, Duration},
 };
 use utils::config::{ClientConfig, CompactConfig, CurpConfig, ServerTimeout, StorageConfig};
@@ -22,15 +20,13 @@ pub struct Cluster {
     /// listeners of members
     listeners: BTreeMap<usize, TcpListener>,
     /// address of members
-    all_members: HashMap<String, String>,
+    all_members: HashMap<usize, String>,
     /// Client of cluster
     client: Option<Client>,
-    /// Xline servers
-    servers: Vec<XlineServer>,
     /// Cluster size
     size: usize,
     /// storage paths
-    paths: Vec<PathBuf>,
+    paths: HashMap<usize, PathBuf>,
 }
 
 impl Cluster {
@@ -42,20 +38,18 @@ impl Cluster {
         }
         let all_members = listeners
             .iter()
-            .map(|(i, l)| (format!("server{}", i), l.local_addr().unwrap().to_string()))
+            .map(|(i, l)| (*i, l.local_addr().unwrap().to_string()))
             .collect();
-
         Self {
             listeners,
             all_members,
             client: None,
-            servers: vec![],
             size,
-            paths: vec![],
+            paths: HashMap::new(),
         }
     }
 
-    pub fn set_paths(&mut self, paths: Vec<PathBuf>) {
+    pub fn set_paths(&mut self, paths: HashMap<usize, PathBuf>) {
         self.paths = paths;
     }
 
@@ -65,11 +59,11 @@ impl Cluster {
             let name = format!("server{}", i);
             let is_leader = i == 0;
             let listener = self.listeners.remove(&i).unwrap();
-            let path = if let Some(path) = self.paths.get(i) {
+            let path = if let Some(path) = self.paths.get(&i) {
                 path.clone()
             } else {
                 let path = PathBuf::from(format!("/tmp/xline-{}", random_id()));
-                self.paths.push(path.clone());
+                self.paths.insert(i, path.clone());
                 path
             };
             let db: Arc<DB> = DB::open(&StorageConfig::RocksDB(path.clone())).unwrap();
@@ -77,7 +71,7 @@ impl Cluster {
                 self.all_members
                     .clone()
                     .into_iter()
-                    .map(|(id, addr)| (id, vec![addr]))
+                    .map(|(id, addr)| (format!("server{}", id), vec![addr]))
                     .collect(),
                 &name,
             );
@@ -106,6 +100,52 @@ impl Cluster {
         time::sleep(Duration::from_millis(300)).await;
     }
 
+    pub async fn run_node(&mut self, listener: TcpListener, idx: usize) {
+        let self_addr = listener.local_addr().unwrap().to_string();
+        _ = self.all_members.insert(idx, self_addr.clone());
+        let name = format!("server{}", idx);
+        let path = if let Some(path) = self.paths.get(&idx) {
+            path.clone()
+        } else {
+            let path = PathBuf::from(format!("/tmp/xline-{}", random_id()));
+            self.paths.insert(idx, path.clone());
+            path
+        };
+        let db: Arc<DB> = DB::open(&StorageConfig::RocksDB(path.clone())).unwrap();
+        let init_cluster_info = ClusterInfo::new(
+            self.all_members
+                .clone()
+                .into_iter()
+                .map(|(id, addr)| (format!("server{id}"), vec![addr]))
+                .collect(),
+            &name,
+        );
+        let cluster_info =
+            get_cluster_info_from_remote(&init_cluster_info, &[self_addr], Duration::from_secs(3))
+                .await
+                .unwrap();
+        tokio::spawn(async move {
+            let server = XlineServer::new(
+                cluster_info.into(),
+                false,
+                CurpConfig {
+                    storage_cfg: StorageConfig::RocksDB(path.join("curp")),
+                    ..Default::default()
+                },
+                ClientConfig::default(),
+                ServerTimeout::default(),
+                StorageConfig::Memory,
+                CompactConfig::default(),
+            );
+            let result = server
+                .start_from_listener(listener, db, Self::test_key_pair())
+                .await;
+            if let Err(e) = result {
+                panic!("Server start error: {e}");
+            }
+        });
+    }
+
     /// Create or get the client with the specified index
     pub async fn client(&mut self) -> &mut Client {
         if self.client.is_none() {
@@ -122,19 +162,16 @@ impl Cluster {
         self.client.as_mut().unwrap()
     }
 
-    pub fn all_members(&self) -> &HashMap<String, String> {
+    pub fn all_members(&self) -> &HashMap<usize, String> {
         &self.all_members
+    }
+
+    pub fn get_addr(&self, idx: usize) -> String {
+        self.all_members[&idx].clone()
     }
 
     pub fn addrs(&self) -> Vec<String> {
         self.all_members.values().cloned().collect()
-    }
-
-    async fn stop(&mut self) {
-        futures::future::join_all(self.servers.iter_mut().map(|s| s.stop())).await;
-        for path in &self.paths {
-            let _ignore = tokio::fs::remove_dir_all(path).await;
-        }
     }
 
     fn test_key_pair() -> Option<(EncodingKey, DecodingKey)> {
@@ -148,11 +185,9 @@ impl Cluster {
 
 impl Drop for Cluster {
     fn drop(&mut self) {
-        block_in_place(move || {
-            Handle::current().block_on(async move {
-                self.stop().await;
-            });
-        });
+        for path in self.paths.values() {
+            let _ignore = std::fs::remove_dir_all(path);
+        }
     }
 }
 

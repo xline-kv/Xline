@@ -167,7 +167,7 @@ async fn test_range_redirect() -> Result<(), Box<dyn Error>> {
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;
 
-    let addr = cluster.all_members()["server1"].clone();
+    let addr = cluster.get_addr(1);
     let kv_client = Client::connect([addr], ClientOptions::default())
         .await?
         .kv_client();
@@ -298,7 +298,7 @@ async fn test_txn() -> Result<(), Box<dyn Error>> {
             unreachable!("receive unexpected op response in a read-only transaction");
         }
     } else {
-        unreachable!("response in a read_only_txn should not be Nnoe");
+        unreachable!("response in a read_only_txn should not be None");
     };
 
     let serializable_txn = TxnRequest::new()
@@ -321,7 +321,7 @@ async fn test_txn() -> Result<(), Box<dyn Error>> {
             unreachable!("receive unexpected op response in a read-only transaction");
         }
     } else {
-        unreachable!("response in a read_only_txn should not be Nnoe");
+        unreachable!("response in a read_only_txn should not be None");
     };
 
     Ok(())

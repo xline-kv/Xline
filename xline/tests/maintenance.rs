@@ -13,29 +13,31 @@ use xline_test_utils::{
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn test_snapshot_and_restore() -> Result<(), Box<dyn std::error::Error>> {
+    use std::collections::HashMap;
+
     let dir = PathBuf::from("/tmp/test_snapshot_and_restore");
     tokio::fs::create_dir_all(&dir).await?;
     let snapshot_path = dir.join("snapshot");
-    let restore_dirs = (0..3).map(|i| dir.join(format!("restore_{}", i))).collect();
+    let restore_dirs: HashMap<usize, PathBuf> = (0..3)
+        .map(|i| (i, dir.join(format!("restore_{}", i))))
+        .collect();
     {
         let mut cluster = Cluster::new(3).await;
         cluster.start().await;
         let client = cluster.client().await.kv_client();
         let _ignore = client.put(PutRequest::new("key", "value")).await?;
         tokio::time::sleep(Duration::from_millis(100)).await; // TODO: use `propose_index` and remove this sleep after we finished our client.
-        let mut maintenance_client = Client::connect(
-            vec![cluster.all_members()["server0"].to_string()],
-            ClientOptions::default(),
-        )
-        .await?
-        .maintenance_client();
+        let mut maintenance_client =
+            Client::connect(vec![cluster.get_addr(0)], ClientOptions::default())
+                .await?
+                .maintenance_client();
         let mut stream = maintenance_client.snapshot().await?;
         let mut snapshot = tokio::fs::File::create(&snapshot_path).await?;
         while let Some(chunk) = stream.message().await? {
             snapshot.write_all(chunk.blob.as_slice()).await?;
         }
     }
-    for restore_dir in &restore_dirs {
+    for restore_dir in restore_dirs.values() {
         restore(&snapshot_path, &restore_dir).await?;
     }
     let mut new_cluster = Cluster::new(3).await;

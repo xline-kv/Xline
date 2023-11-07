@@ -50,7 +50,7 @@ async fn test_auth_token_with_disable() -> Result<(), Box<dyn Error>> {
 
     enable_auth(client).await?;
     let authed_client = Client::connect(
-        vec![cluster.all_members()["server0"].to_string()],
+        vec![cluster.get_addr(0)],
         ClientOptions::default().with_user("root", "123"),
     )
     .await?;
@@ -113,13 +113,13 @@ async fn test_kv_authorization() -> Result<(), Box<dyn Error>> {
     enable_auth(client).await?;
 
     let u1_client = Client::connect(
-        vec![cluster.all_members()["server0"].to_string()],
+        vec![cluster.get_addr(0)],
         ClientOptions::default().with_user("u1", "123"),
     )
     .await?
     .kv_client();
     let u2_client = Client::connect(
-        vec![cluster.all_members()["server0"].to_string()],
+        vec![cluster.get_addr(0)],
         ClientOptions::default().with_user("u2", "123"),
     )
     .await?
@@ -171,13 +171,13 @@ async fn test_no_root_user_do_admin_ops() -> Result<(), Box<dyn Error>> {
     set_user(client, "u", "123", "r", &[], &[]).await?;
     enable_auth(client).await?;
     let user_client = Client::connect(
-        vec![cluster.all_members()["server0"].to_string()],
+        vec![cluster.get_addr(0)],
         ClientOptions::default().with_user("u", "123"),
     )
     .await?
     .auth_client();
     let root_client = Client::connect(
-        vec![cluster.all_members()["server0"].to_string()],
+        vec![cluster.get_addr(0)],
         ClientOptions::default().with_user("root", "123"),
     )
     .await?
@@ -208,14 +208,14 @@ async fn test_auth_wrong_password() -> Result<(), Box<dyn Error>> {
     enable_auth(client).await?;
 
     let result = Client::connect(
-        vec![cluster.all_members()["server0"].to_string()],
+        vec![cluster.get_addr(0)],
         ClientOptions::default().with_user("root", "456"),
     )
     .await;
     assert!(result.is_err());
 
     let result = Client::connect(
-        vec![cluster.all_members()["server0"].to_string()],
+        vec![cluster.get_addr(0)],
         ClientOptions::default().with_user("root", "123"),
     )
     .await;
