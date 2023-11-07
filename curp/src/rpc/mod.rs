@@ -535,11 +535,7 @@ impl ProposeConfChangeRequest {
     /// Create a new `ProposeConfChangeRequest`
     #[inline]
     #[must_use]
-    pub fn new(
-        id: ProposeId,
-        changes: Vec<ConfChange>,
-        cluster_version: u64,
-    ) -> Self {
+    pub fn new(id: ProposeId, changes: Vec<ConfChange>, cluster_version: u64) -> Self {
         Self {
             propose_id: Some(id.into()),
             changes,

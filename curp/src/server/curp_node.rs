@@ -301,9 +301,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     ) -> Result<ProposeConfChangeResponse, CurpError> {
         self.check_cluster_version(req.cluster_version)?;
         let id = req.id();
-        let ((leader_id, term), result) = self
-            .curp
-            .handle_propose_conf_change(req.into())?;
+        let ((leader_id, term), result) = self.curp.handle_propose_conf_change(req.into())?;
         let error = match result {
             Ok(()) => {
                 CommandBoard::wait_for_conf(&self.cmd_board, id).await;
