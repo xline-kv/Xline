@@ -53,12 +53,12 @@ async fn leader_crash_and_recovery() {
     let (_cmd, er) = old_leader.exe_rx.recv().await.unwrap();
     assert_eq!(er.values, Vec::<u32>::new());
     let asr = old_leader.as_rx.recv().await.unwrap();
-    assert_eq!(asr.1, 2); // log index 1 is the empty log
+    assert_eq!(asr.1, 3); // log index 1 and 2 is the empty log
 
     let (_cmd, er) = old_leader.exe_rx.recv().await.unwrap();
     assert_eq!(er.values, vec![0]);
     let asr = old_leader.as_rx.recv().await.unwrap();
-    assert_eq!(asr.1, 4); // log index 3 is the empty log
+    assert_eq!(asr.1, 4); // log index 1 and 2 is the empty log
 }
 
 #[madsim::test]
