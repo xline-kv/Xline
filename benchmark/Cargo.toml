@@ -26,3 +26,4 @@ tracing-subscriber = "0.3.1"
 utils = { path = "../utils", version = "0.1.0" }
 xline = { path = "../xline" }
 xline-client = { path = "../xline-client" }
+xline-test-utils = { path = "../xline-test-utils" }
