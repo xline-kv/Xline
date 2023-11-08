@@ -238,6 +238,40 @@ compact_validation() {
     echo "compact validation test pass..."
 }
 
+cluster_validation() {
+    echo "cluster validation test running..."
+    command="${ETCDCTL} member list"
+    out=$(eval ${command})
+    pattern="[0-9a-z]+, started, node[0-9], 172.20.0.[0-9]:2379,172.20.0.[0-9]:2380, 172.20.0.[0-9]:2379,172.20.0.[0-9]:2380, false"
+    if [[ ${out} =~ ${pattern} ]]; then
+        echo "command run success"
+    else
+        echo "command run failed"
+        echo "command: ${command}"
+        echo "expect: ${pattern}"
+        echo "result: ${out}"
+        exit 1
+    fi
+    command="${ETCDCTL} member add node4 --peer-urls=http://172.20.0.6:2379 --learner=true"
+    out=$(eval ${command})
+    pattern="Member [a-zA-Z0-9]+ added to cluster [a-zA-Z0-9]+"
+    if [[ ${out} =~ ${pattern} ]]; then
+        echo "command run success"
+    else
+        echo "command run failed"
+        echo "command: ${command}"
+        echo "expect: ${pattern}"
+        echo "result: ${out}"
+        exit 1
+    fi
+    node_id=$(echo ${out} | awk '{print $2}')
+    cluster_id=$(echo ${out} | awk '{print $6}')
+    run_with_expect "${ETCDCTL} member promote ${node_id}" "Member ${node_id} promoted in cluster ${cluster_id}"
+    run_with_expect "${ETCDCTL} member update ${node_id} --peer-urls=http://172.20.0.6:2379" "Member ${node_id} updated in cluster ${cluster_id}"
+    run_with_expect "${ETCDCTL} member remove ${node_id}" "Member ${node_id} removed from cluster ${cluster_id}"
+    echo "cluster validation test passed"
+}
+
 compact_validation
 kv_validation
 watch_validation
@@ -246,3 +280,4 @@ auth_validation
 lock_validation
 lock_rpc_validation
 maintenance_validation
+cluster_validation
