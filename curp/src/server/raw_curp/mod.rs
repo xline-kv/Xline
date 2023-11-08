@@ -640,10 +640,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         let mut log_w = self.log.write();
 
         let prev_last_log_index = log_w.last_log_index();
-        self.recover_from_spec_pools(&mut st_w, &mut log_w, spec_pools);
         // TODO: Generate client id in the same way as client
         let propose_id = ProposeId(rand::random(), 0);
         let _ignore = log_w.push(st_w.term, EntryData::Empty(propose_id));
+        self.recover_from_spec_pools(&mut st_w, &mut log_w, spec_pools);
         self.recover_ucp_from_log(&mut log_w);
         let last_log_index = log_w.last_log_index();
 
