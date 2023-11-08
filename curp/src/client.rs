@@ -652,8 +652,8 @@ where
 
     /// The shutdown rpc of curp protocol
     async fn shutdown(&self, propose_id: ProposeId) -> Result<(), ClientError<C>> {
-        let ProposeId(_, seq_num) = propose_id;
-        let _ig = self.tracker.write().record(seq_num);
+        // let ProposeId(_, seq_num) = propose_id;
+        // let _ig = self.tracker.write().record(seq_num);
         let mut retry_timeout = self.get_backoff();
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {
@@ -932,8 +932,8 @@ where
         use_fast_path: bool,
     ) -> Result<(C::ER, Option<C::ASR>), ClientError<C>> {
         let first_incomplete = self.tracker.read().first_incomplete();
-        let ProposeId(_, seq_num) = cmd.id();
-        let _ig = self.tracker.write().record(seq_num);
+        // let ProposeId(_, seq_num) = cmd.id();
+        // let _ig = self.tracker.write().record(seq_num);
         let cmd_arc = Arc::new(cmd);
         loop {
             let res_option = if use_fast_path {
@@ -1030,8 +1030,8 @@ where
             "propose_conf_change with propose_id({}) started",
             propose_id
         );
-        let ProposeId(_, seq_num) = propose_id;
-        let _ig = self.tracker.write().record(seq_num);
+        // let ProposeId(_, seq_num) = propose_id;
+        // let _ig = self.tracker.write().record(seq_num);
         let mut retry_timeout = self.get_backoff();
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {

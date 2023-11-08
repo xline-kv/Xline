@@ -1400,13 +1400,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             })
             .collect_vec();
 
-        let mut cb_w = self.ctx.cb.write();
         let mut sp_l = self.ctx.sp.lock();
 
         let term = st.term;
         for cmd in recovered_cmds {
-            let ProposeId(client_id, seq_num) = cmd.id();
-            let _ig_cb = cb_w.tracker(client_id).record(seq_num); // may have been inserted before
             let _ig_spec = sp_l.insert(cmd.clone()); // may have been inserted before
             #[allow(clippy::expect_used)]
             let entry = log
@@ -1590,7 +1587,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         })
     }
 
-    /// Process deduplication
+    /// Process deduplication and acknowldge the `first_incomplete` for this client id
     fn deduplicate(
         &self,
         ProposeId(client_id, seq_num): ProposeId,
@@ -1600,11 +1597,16 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         if self.ctx.lm.read().check_alive(client_id) {
             let mut cb_w = self.ctx.cb.write();
             let tracker = cb_w.tracker(client_id);
-            if tracker.record(seq_num) {
+            if tracker.only_record(seq_num) {
                 return Err(ProposeError::Duplicated);
             }
             if let Some(first_incomplete) = first_incomplete {
-                tracker.must_advance_to(first_incomplete);
+                let before = tracker.first_incomplete();
+                if tracker.must_advance_to(first_incomplete) {
+                    for seq_num_ack in before..first_incomplete {
+                        self.ack(ProposeId(client_id, seq_num_ack));
+                    }
+                }
             }
         } else {
             self.ctx.cb.write().client_expired(client_id);
@@ -1612,4 +1614,8 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         }
         Ok(())
     }
+
+    /// Acknowldge the propose id and GC it's cmd board result
+    #[allow(clippy::unused_self)] // TODO refactor cmd board gc
+    fn ack(&self, _id: ProposeId) {}
 }

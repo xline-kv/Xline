@@ -1,10 +1,14 @@
-#![allow(unused)] // TODO remove
-
 use std::collections::VecDeque;
 use std::ops::{AddAssign, Sub};
 
+use clippy_utilities::NumericCast;
+
 /// Bits of usize
 const USIZE_BITS: usize = std::mem::size_of::<usize>() * 8;
+
+/// Default bit vec queue capacity, this is the number of inflight requests that a client expects.
+/// It can reduce about `log_2(DEFAULT_BIT_VEC_QUEUE_CAP)` `VecDequeue` memory reallocations.
+const DEFAULT_BIT_VEC_QUEUE_CAP: usize = 1024;
 
 /// A one-direction bit vector queue
 /// It use a ring buffer `VecDeque<usize>` to store bits
@@ -16,7 +20,7 @@ const USIZE_BITS: usize = std::mem::size_of::<usize>() * 8;
 ///  |        |________________|____|
 ///  |________|         len    |____|
 ///     head                    tail
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 struct BitVecQueue {
     /// Bits store
     store: VecDeque<usize>,
@@ -24,6 +28,13 @@ struct BitVecQueue {
     head: usize,
     /// Tail length indicator
     tail: usize,
+}
+
+impl Default for BitVecQueue {
+    #[inline]
+    fn default() -> Self {
+        Self::with_capacity(DEFAULT_BIT_VEC_QUEUE_CAP)
+    }
 }
 
 #[allow(clippy::integer_arithmetic, clippy::unwrap_used)] // They are checked
@@ -99,18 +110,59 @@ impl BitVecQueue {
         Some(front & (1 << (USIZE_BITS - 1 - self.head)) != 0)
     }
 
+    /// Peek the front usize in store and take a function to check it,
+    /// Used to batch accelerate check.
+    fn front_by(&self, f: impl Fn(usize) -> bool) -> Option<bool> {
+        self.store.front().copied().map(f)
+    }
+
     /// Pop a value from front
     fn pop(&mut self) {
         let len = self.store.len();
-        if self.head == (USIZE_BITS - 1) || len == 0 {
-            self.head = 0;
-            let _ig = self.store.pop_front();
+        if len == 0 {
             return;
         }
         if len == 1 && self.head == self.tail {
             self.clear();
+            return;
+        }
+        if self.head == (USIZE_BITS - 1) {
+            self.head = 0;
+            let _ig = self.store.pop_front();
+            return;
         }
         self.head += 1;
+    }
+
+    /// Batch pop, return it poped bits count
+    fn pop_batch(&mut self) -> usize {
+        let len = self.store.len();
+        if len == 0 {
+            return 0;
+        }
+        if len == 1 {
+            let cnt = self.tail - self.head + 1;
+            self.clear();
+            return cnt;
+        }
+        let _ig = self.store.pop_front();
+        let cnt = USIZE_BITS - self.head;
+        self.head = 0;
+        cnt
+    }
+
+    /// Split this bit vec queue to `at`
+    /// e.g.
+    /// 001100 -> `split_at(2)` -> 1100
+    fn split_at(&mut self, at: usize) {
+        let idx = self.head + at;
+        let index = idx / USIZE_BITS;
+        let slot = idx % USIZE_BITS;
+        if index == self.store.len() - 1 && slot > self.tail {
+            return;
+        }
+        self.store = self.store.split_off(index);
+        self.head = slot;
     }
 
     /// Clear the bit queue
@@ -127,25 +179,38 @@ pub(super) struct Tracker {
     /// First incomplete seq num, it will be advanced by client
     first_incomplete: u64,
     /// inflight seq nums proposed by the client, each bit
-    /// represent the received status starting from `first_incomplete`
+    /// represent the received status starting from `first_incomplete`.
+    /// `BitVecQueue` has a better memory compression ratio than `HashSet`
+    /// if the requested seq_num is very compact.
     inflight: BitVecQueue,
 }
 
 impl Tracker {
     /// Record a sequence number, return whether it is duplicated
-    #[allow(clippy::as_conversions)]
-    #[allow(clippy::cast_possible_truncation)] // TODO: support 32 bits computers?
     pub(crate) fn record(&mut self, seq_num: u64) -> bool {
+        if self.only_record(seq_num) {
+            return true;
+        }
+        // first try to batch accelerate
+        while self.inflight.front_by(|bits| bits == usize::MAX) == Some(true) {
+            self.first_incomplete
+                .add_assign(self.inflight.pop_batch().numeric_cast::<u64>());
+        }
+        // then try pop one by one
+        while self.inflight.front() == Some(true) {
+            self.inflight.pop();
+            self.first_incomplete.add_assign(1);
+        }
+        false
+    }
+
+    /// Like `record`, but not advance the `first_incomplete`
+    pub(crate) fn only_record(&mut self, seq_num: u64) -> bool {
         if seq_num < self.first_incomplete {
             return true;
         }
-        let gap = seq_num.sub(self.first_incomplete) as usize;
-        if gap == 0 {
-            // received the next sequence number, advanced the first_incomplete
-            // and pop the front of inflight
-            self.first_incomplete.add_assign(1);
-            self.inflight.pop();
-        } else if gap < self.inflight.len() {
+        let gap = seq_num.sub(self.first_incomplete).numeric_cast();
+        if gap < self.inflight.len() {
             // received the sequence number that is recorded in inflight
             // check its status to determine whether it is duplicated
             if self.inflight.get(gap) == Some(true) {
@@ -156,31 +221,24 @@ impl Tracker {
         } else {
             // received the sequence number that exceed inflight, extend
             // the inflight and record the inflight[gap] as received
+            // TODO: batch accelerate
             for _ in 0..gap.sub(self.inflight.len()) {
                 self.inflight.push(false);
             }
             self.inflight.push(true);
         }
-        while self.inflight.front() == Some(true) {
-            self.inflight.pop();
-            self.first_incomplete.add_assign(1);
-        }
         false
     }
 
-    /// Advance first incomplete without a check
-    pub(crate) fn must_advance_to(&mut self, first_incomplete: u64) {
+    /// Advance `first_incomplete` without a check, return if it advanced
+    pub(crate) fn must_advance_to(&mut self, first_incomplete: u64) -> bool {
         if self.first_incomplete >= first_incomplete {
-            return;
+            return false;
         }
-        for _ in 0..first_incomplete.sub(self.first_incomplete) {
-            self.inflight.pop();
-            self.first_incomplete.add_assign(1);
-        }
-        while self.inflight.front() == Some(true) {
-            self.inflight.pop();
-            self.first_incomplete.add_assign(1);
-        }
+        self.inflight
+            .split_at(first_incomplete.sub(self.first_incomplete).numeric_cast());
+        self.first_incomplete = first_incomplete;
+        true
     }
 
     /// Reset the tracker
@@ -255,7 +313,37 @@ mod test {
         tracker.record(5);
         tracker.record(6);
         tracker.record(8);
-        tracker.must_advance_to(5);
-        assert_eq!(tracker.first_incomplete, 7);
+        assert_eq!(tracker.inflight.len(), 9); // 0-8
+        assert!(tracker.must_advance_to(5));
+        assert_eq!(tracker.first_incomplete, 5);
+        assert_eq!(tracker.inflight.len(), 4); // 5,6,7,8
+
+        assert!(tracker.record(8));
+        assert!(tracker.record(6));
+        assert!(tracker.record(5));
+        assert!(!tracker.record(7));
+    }
+
+    #[test]
+    fn test_batch_accelerate_record() {
+        let mut tracker = Tracker::default();
+        for i in 1..1024 {
+            tracker.record(i);
+        }
+        assert_eq!(tracker.first_incomplete, 0);
+        tracker.record(0);
+        assert_eq!(tracker.first_incomplete, 1024);
+    }
+
+    #[test]
+    fn test_only_record_should_not_advance() {
+        let mut tracker = Tracker::default();
+        for i in 0..512 {
+            assert!(!tracker.only_record(i));
+        }
+        for i in 0..512 {
+            assert!(tracker.only_record(i));
+        }
+        assert_eq!(tracker.first_incomplete, 0);
     }
 }
