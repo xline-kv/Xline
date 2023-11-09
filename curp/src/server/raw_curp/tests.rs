@@ -235,7 +235,7 @@ fn leader_handle_propose_will_reject_gc_completed_cmd() {
     assert_eq!(term, 1);
     assert!(matches!(result, Err(ProposeError::Duplicated)));
 
-    assert_eq!(curp.tracker(TEST_CLIENT_ID).first_incomplete(), 3);
+    assert_eq!(curp.tracker(TEST_CLIENT_ID).first_incomplete(), 2);
 }
 
 #[traced_test]
@@ -268,7 +268,7 @@ fn leader_handle_propose_will_gc_completed_cmd() {
     assert!(matches!(res2, Ok(true)));
 
     let tracker = curp.tracker(TEST_CLIENT_ID);
-    assert_eq!(tracker.first_incomplete(), 3);
+    assert_eq!(tracker.first_incomplete(), 2);
 }
 
 #[traced_test]

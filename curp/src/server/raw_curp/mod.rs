@@ -1587,7 +1587,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         })
     }
 
-    /// Process deduplication and acknowldge the `first_incomplete` for this client id
+    /// Process deduplication and acknowledge the `first_incomplete` for this client id
     fn deduplicate(
         &self,
         ProposeId(client_id, seq_num): ProposeId,
@@ -1615,7 +1615,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         Ok(())
     }
 
-    /// Acknowldge the propose id and GC it's cmd board result
+    /// Acknowledge the propose id and GC it's cmd board result
     #[allow(clippy::unused_self)] // TODO refactor cmd board gc
     fn ack(&self, _id: ProposeId) {}
 }

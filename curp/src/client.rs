@@ -346,7 +346,10 @@ where
     /// The shutdown rpc of curp protocol
     #[instrument(skip_all)]
     pub async fn shutdown(&self, propose_id: ProposeId) -> Result<(), ClientError<C>> {
-        self.inner.shutdown(propose_id).await
+        let ProposeId(_, seq_num) = propose_id;
+        let res = self.inner.shutdown(propose_id).await;
+        let _ig = self.inner.tracker.write().record(seq_num);
+        res
     }
 
     /// Get leader id from the state or fetch it from servers
@@ -371,7 +374,10 @@ where
         cmd: C,
         use_fast_path: bool,
     ) -> Result<(C::ER, Option<C::ASR>), ClientError<C>> {
-        self.inner.propose(cmd, use_fast_path).await
+        let ProposeId(_, seq_num) = cmd.id();
+        let res = self.inner.propose(cmd, use_fast_path).await;
+        let _ig = self.inner.tracker.write().record(seq_num);
+        res
     }
 
     /// Propose the conf change request to servers
@@ -381,7 +387,10 @@ where
         propose_id: ProposeId,
         changes: Vec<ConfChange>,
     ) -> Result<Result<Vec<Member>, ConfChangeError>, ClientError<C>> {
-        self.inner.propose_conf_change(propose_id, changes).await
+        let ProposeId(_, seq_num) = propose_id;
+        let res = self.inner.propose_conf_change(propose_id, changes).await;
+        let _ig = self.inner.tracker.write().record(seq_num);
+        res
     }
 
     /// Fetch Read state from leader
@@ -652,8 +661,6 @@ where
 
     /// The shutdown rpc of curp protocol
     async fn shutdown(&self, propose_id: ProposeId) -> Result<(), ClientError<C>> {
-        // let ProposeId(_, seq_num) = propose_id;
-        // let _ig = self.tracker.write().record(seq_num);
         let mut retry_timeout = self.get_backoff();
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {
@@ -932,8 +939,6 @@ where
         use_fast_path: bool,
     ) -> Result<(C::ER, Option<C::ASR>), ClientError<C>> {
         let first_incomplete = self.tracker.read().first_incomplete();
-        // let ProposeId(_, seq_num) = cmd.id();
-        // let _ig = self.tracker.write().record(seq_num);
         let cmd_arc = Arc::new(cmd);
         loop {
             let res_option = if use_fast_path {
@@ -1030,8 +1035,6 @@ where
             "propose_conf_change with propose_id({}) started",
             propose_id
         );
-        // let ProposeId(_, seq_num) = propose_id;
-        // let _ig = self.tracker.write().record(seq_num);
         let mut retry_timeout = self.get_backoff();
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {

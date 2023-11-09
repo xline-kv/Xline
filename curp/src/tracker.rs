@@ -134,7 +134,7 @@ impl BitVecQueue {
         self.head += 1;
     }
 
-    /// Batch pop, return it poped bits count
+    /// Batch pop, return it pops bits count
     fn pop_batch(&mut self) -> usize {
         let len = self.store.len();
         if len == 0 {
