@@ -1,19 +1,16 @@
-use std::{collections::HashMap, fmt::Debug, io, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
-use curp_external_api::cmd::PbSerializeError;
 use engine::{SnapshotAllocator, SnapshotApi};
 use event_listener::Event;
 use futures::{pin_mut, stream::FuturesUnordered, Stream, StreamExt};
 use madsim::rand::{thread_rng, Rng};
 use parking_lot::{Mutex, RwLock};
-use thiserror::Error;
 use tokio::{
     sync::{broadcast, mpsc},
     task::JoinHandle,
     time::MissedTickBehavior,
 };
-use tonic::{metadata::MetadataMap, Code, Status};
 use tracing::{debug, error, info, trace, warn};
 use utils::{
     config::CurpConfig,
@@ -26,213 +23,26 @@ use super::{
     gc::run_gc_tasks,
     raw_curp::{AppendEntries, RawCurp, UncommittedPool, Vote},
     spec_pool::{SpecPoolRef, SpeculativePool},
-    storage::{StorageApi, StorageError},
+    storage::StorageApi,
 };
 use crate::{
     cmd::{Command, CommandExecutor},
-    error::ERROR_LABEL,
     log_entry::{EntryData, LogEntry},
     members::{ClusterInfo, ServerId},
     role_change::RoleChange,
     rpc::{
         self,
         connect::{InnerConnectApi, InnerConnectApiWrapper},
-        AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse,
-        FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,
-        InstallSnapshotResponse, ProposeConfChangeRequest, ProposeConfChangeResponse,
-        ProposeRequest, ProposeResponse, ShutdownRequest, ShutdownResponse, VoteRequest,
-        VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        AppendEntriesRequest, AppendEntriesResponse, ConfChangeType, CurpError,
+        FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
+        InstallSnapshotRequest, InstallSnapshotResponse, ProposeConfChangeRequest,
+        ProposeConfChangeResponse, ProposeRequest, ProposeResponse, PublishRequest,
+        PublishResponse, ShutdownRequest, ShutdownResponse, TriggerShutdownRequest,
+        TriggerShutdownResponse, VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
     server::{cmd_worker::CEEventTxApi, raw_curp::SyncAction, storage::db::DB},
     snapshot::{Snapshot, SnapshotMeta},
-    ConfChangeType, PublishRequest, PublishResponse, TriggerShutdownRequest,
-    TriggerShutdownResponse,
 };
-
-/// Curp error
-#[derive(Debug, Error)]
-pub(super) enum CurpError {
-    /// Encode or decode error
-    #[error("encode or decode error")]
-    EncodeDecode(String),
-    /// Storage error
-    #[error("storage error, {0}")]
-    Storage(#[from] StorageError),
-    /// Transport error
-    #[error("transport error, {0}")]
-    Transport(String),
-    /// Io error
-    #[error("io error, {0}")]
-    IO(#[from] io::Error),
-    /// Currently, Internal Error includes the following three types of errors:
-    /// 1. failed to allocate a new snapshot
-    /// 2. failed to reset the command executor by snapshot
-    /// 3. failed to get last applied index from command executor.
-    #[error("internal error, {0}")]
-    Internal(String),
-    /// Curp Server is shutting down
-    #[error("cluster shutdown")]
-    ShuttingDown,
-    /// If client sent a wait synced request to a non-leader
-    #[error("redirect to {0:?}, term {1}")]
-    Redirect(Option<ServerId>, u64),
-    /// Wrong cluster version
-    #[error("wrong cluster version")]
-    WrongClusterVersion,
-}
-
-impl From<bincode::Error> for CurpError {
-    fn from(err: bincode::Error) -> Self {
-        Self::EncodeDecode(err.to_string())
-    }
-}
-
-impl From<PbSerializeError> for CurpError {
-    fn from(err: PbSerializeError) -> Self {
-        Self::EncodeDecode(err.to_string())
-    }
-}
-
-///  Generate metadata for `tonic::Status`
-fn gen_metadata(label: &str) -> MetadataMap {
-    let mut meta = MetadataMap::new();
-    _ = meta.insert(
-        ERROR_LABEL,
-        label.parse().unwrap_or_else(|e| {
-            unreachable!("convert a empty string to MetadataValue should always success: {e}")
-        }),
-    );
-    meta
-}
-
-impl From<CurpError> for Status {
-    #[inline]
-    fn from(err: CurpError) -> Self {
-        match err {
-            CurpError::EncodeDecode(msg) => {
-                let metadata = gen_metadata("encode-decode");
-                Status::with_metadata(Code::Cancelled, msg, metadata)
-            }
-            CurpError::Internal(msg) => {
-                let metadata = gen_metadata("internal");
-                Status::with_metadata(Code::Internal, msg, metadata)
-            }
-            CurpError::Storage(err) => {
-                let metadata = gen_metadata("storage");
-                Status::with_metadata(Code::Internal, err.to_string(), metadata)
-            }
-            CurpError::IO(err) => {
-                let metadata = gen_metadata("io");
-                Status::with_metadata(Code::Internal, err.to_string(), metadata)
-            }
-            CurpError::Transport(msg) => {
-                let metadata = gen_metadata("transport");
-                Status::with_metadata(Code::Unavailable, msg, metadata)
-            }
-            CurpError::ShuttingDown => {
-                let metadata = gen_metadata("shutting-down");
-                Status::with_metadata(Code::Unavailable, "CurpServer is shutting down", metadata)
-            }
-            CurpError::Redirect(leader_id, term) => {
-                let metadata = gen_metadata("redirect");
-                let leader_term = (leader_id, term);
-                let mut details: Vec<u8> = Vec::new();
-                serde_json::to_writer(&mut details, &leader_term).unwrap_or_else(|e| {
-                    unreachable!("serialize a tuple (Option<u64>, u64) should always succeed: {e}")
-                });
-                Status::with_details_and_metadata(
-                    Code::FailedPrecondition,
-                    "current node is not a leader",
-                    details.into(),
-                    metadata,
-                )
-            }
-            CurpError::WrongClusterVersion => {
-                let metadata = gen_metadata("wrong-cluster-version");
-                Status::with_metadata(Code::FailedPrecondition, "wrong cluster version", metadata)
-            }
-        }
-    }
-}
-
-/// Internal error encountered when sending `append_entries`
-#[derive(Debug, Error)]
-enum SendAEError {
-    /// When self is no longer leader
-    #[error("self is no longer leader")]
-    NotLeader,
-    /// When the follower rejects
-    #[error("follower rejected")]
-    Rejected,
-    /// Transport
-    #[error("transport error, {0}")]
-    Transport(String),
-    /// RpcError
-    #[error("RPC error: {0}")]
-    RpcError(String),
-    /// Encode/Decode error
-    #[error("encode or decode error")]
-    EncodeDecode(String),
-}
-
-impl From<Status> for SendAEError {
-    fn from(status: Status) -> Self {
-        #[allow(clippy::wildcard_enum_match_arm)]
-        // it's ok to do so since only three status can covert to `SendAEError`
-        let metadata = status.metadata();
-        if let Some(label) = metadata.get(ERROR_LABEL) {
-            match label.to_str().unwrap_or_else(|err| {
-                unreachable!("error-label should be always able to convert to str: {err:?}")
-            }) {
-                "transport" => Self::Transport(status.message().to_owned()),
-                "redirect" => Self::NotLeader,
-                "encode-decode" => Self::EncodeDecode(status.message().to_owned()),
-                _ => Self::RpcError(status.message().to_owned()),
-            }
-        } else {
-            Self::Transport(status.message().to_owned())
-        }
-    }
-}
-
-impl From<bincode::Error> for SendAEError {
-    fn from(err: bincode::Error) -> Self {
-        Self::EncodeDecode(err.to_string())
-    }
-}
-
-/// Internal error encountered when sending snapshot
-#[derive(Debug, Error)]
-enum SendSnapshotError {
-    /// When self is no longer leader
-    #[error("self is no longer leader")]
-    NotLeader,
-    /// Transport
-    #[error("transport error, {0}")]
-    Transport(String),
-    /// Rpc error
-    #[error("RPC error: {0}")]
-    RpcError(String),
-}
-
-impl From<Status> for SendSnapshotError {
-    fn from(status: Status) -> Self {
-        #[allow(clippy::wildcard_enum_match_arm)]
-        // it's ok to do so since `SendSnapshotError` only has two variants.
-        let metadata = status.metadata();
-        if let Some(label) = metadata.get(ERROR_LABEL) {
-            match label.to_str().unwrap_or_else(|err| {
-                unreachable!("error-label should be always able to convert to str: {err:?}")
-            }) {
-                "transport" => Self::Transport(status.message().to_owned()),
-                "redirect" => Self::NotLeader,
-                _ => Self::RpcError(status.message().to_owned()),
-            }
-        } else {
-            Self::Transport(status.message().to_owned())
-        }
-    }
-}
 
 /// `CurpNode` represents a single node of curp cluster
 pub(super) struct CurpNode<C: Command, RC: RoleChange> {
@@ -250,28 +60,26 @@ pub(super) struct CurpNode<C: Command, RC: RoleChange> {
     snapshot_allocator: Box<dyn SnapshotAllocator>,
 }
 
-// handlers
+/// Handlers for clients
 impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     /// Handle `Propose` requests
     pub(super) async fn propose(&self, req: ProposeRequest) -> Result<ProposeResponse, CurpError> {
         if self.curp.is_shutdown() {
-            return Err(CurpError::ShuttingDown);
+            return Err(CurpError::shuting_down());
         }
         self.check_cluster_version(req.cluster_version)?;
         let cmd: Arc<C> = Arc::new(req.cmd()?);
 
         // handle proposal
-        let ((leader_id, term), result) = self.curp.handle_propose(Arc::clone(&cmd))?;
-        let resp = match result {
-            Ok(true) => {
-                let er_res = CommandBoard::wait_for_er(&self.cmd_board, cmd.id()).await;
-                ProposeResponse::new_result::<C>(leader_id, term, &er_res)
-            }
-            Ok(false) => ProposeResponse::new_empty(leader_id, term),
-            Err(err) => ProposeResponse::new_error(leader_id, term, err),
-        };
+        let sp_exec = self.curp.handle_propose(Arc::clone(&cmd))?;
 
-        Ok(resp)
+        // if speculatively executed, wait for the result and return
+        if sp_exec {
+            let er_res = CommandBoard::wait_for_er(&self.cmd_board, cmd.id()).await;
+            return Ok(ProposeResponse::new_result::<C>(&er_res));
+        }
+
+        Ok(ProposeResponse::new_empty())
     }
 
     /// Handle `Shutdown` requests
@@ -292,21 +100,65 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     ) -> Result<ProposeConfChangeResponse, CurpError> {
         self.check_cluster_version(req.cluster_version)?;
         let id = req.id();
-        let ((leader_id, term), result) = self.curp.handle_propose_conf_change(req.into())?;
-        let error = match result {
-            Ok(()) => {
-                CommandBoard::wait_for_conf(&self.cmd_board, id).await;
-                None
-            }
-            Err(err) => Some(err),
-        };
+        self.curp.handle_propose_conf_change(req.into())?;
+        CommandBoard::wait_for_conf(&self.cmd_board, id).await;
         let members = self.curp.cluster().all_members_vec();
-        Ok(ProposeConfChangeResponse {
-            members,
+        Ok(ProposeConfChangeResponse { members })
+    }
+
+    /// handle `WaitSynced` requests
+    pub(super) async fn wait_synced(
+        &self,
+        req: WaitSyncedRequest,
+    ) -> Result<WaitSyncedResponse, CurpError> {
+        if self.curp.is_shutdown() {
+            return Err(CurpError::shuting_down());
+        }
+        self.check_cluster_version(req.cluster_version)?;
+        let id = req.propose_id();
+        debug!("{} get wait synced request for cmd({id})", self.curp.id());
+
+        let (er, asr) = CommandBoard::wait_for_er_asr(&self.cmd_board, id).await;
+        debug!("{} wait synced for cmd({id}) finishes", self.curp.id());
+        Ok(WaitSyncedResponse::new_from_result::<C>(er, asr))
+    }
+
+    /// Handle `FetchCluster` requests
+    #[allow(clippy::unnecessary_wraps, clippy::needless_pass_by_value)] // To keep type consistent with other request handlers
+    pub(super) fn fetch_cluster(
+        &self,
+        req: FetchClusterRequest,
+    ) -> Result<FetchClusterResponse, CurpError> {
+        let (leader_id, term, is_leader) = self.curp.leader();
+        let cluster_id = self.curp.cluster().cluster_id();
+        let members = if is_leader || !req.linearizable {
+            self.curp.cluster().all_members_vec()
+        } else {
+            // if it is a follower and enabled linearizable read, return empty members
+            // the client will ignore empty members and retry util it gets response from
+            // the leader
+            Vec::new()
+        };
+        let cluster_version = self.curp.cluster().cluster_version();
+        Ok(FetchClusterResponse::new(
             leader_id,
             term,
-            error,
-        })
+            cluster_id,
+            members,
+            cluster_version,
+        ))
+    }
+
+    /// Handle `FetchReadState` requests
+    #[allow(clippy::needless_pass_by_value)] // To keep type consistent with other request handlers
+    pub(super) fn fetch_read_state(
+        &self,
+        req: FetchReadStateRequest,
+    ) -> Result<FetchReadStateResponse, CurpError> {
+        self.check_cluster_version(req.cluster_version)?;
+        let cmd = req.cmd()?;
+        let state = self.curp.handle_fetch_read_state(&cmd);
+        Ok(FetchReadStateResponse::new(state))
     }
 
     /// Handle `Publish` requests
@@ -314,7 +166,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         self.curp.handle_publish(req)?;
         Ok(PublishResponse::default())
     }
+}
 
+/// Handlers for peers
+impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     /// Handle `AppendEntries` requests
     pub(super) fn append_entries(
         &self,
@@ -381,54 +236,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         TriggerShutdownResponse::default()
     }
 
-    /// handle `WaitSynced` requests
-    pub(super) async fn wait_synced(
-        &self,
-        req: WaitSyncedRequest,
-    ) -> Result<WaitSyncedResponse, CurpError> {
-        if self.curp.is_shutdown() {
-            return Err(CurpError::ShuttingDown);
-        }
-        self.check_cluster_version(req.cluster_version)?;
-        let id = req.propose_id();
-        debug!("{} get wait synced request for cmd({id})", self.curp.id());
-
-        let (er, asr) = CommandBoard::wait_for_er_asr(&self.cmd_board, id).await;
-        debug!("{} wait synced for cmd({id}) finishes", self.curp.id());
-        Ok(WaitSyncedResponse::new_from_result::<C>(er, asr))
-    }
-
-    /// Handle `FetchCluster` requests
-    #[allow(clippy::unnecessary_wraps, clippy::needless_pass_by_value)] // To keep type consistent with other request handlers
-    pub(super) fn fetch_cluster(
-        &self,
-        req: FetchClusterRequest,
-    ) -> Result<FetchClusterResponse, CurpError> {
-        let (leader_id, term, is_leader) = self.curp.leader();
-        let cluster_id = self.curp.cluster().cluster_id();
-        let members = if is_leader || !req.linearizable {
-            self.curp.cluster().all_members_vec()
-        } else {
-            // if it is a follower and enabled linearizable read, return empty members
-            // the client will ignore empty members and retry util it gets response from
-            // the leader
-            Vec::new()
-        };
-        let cluster_version = self.curp.cluster().cluster_version();
-        Ok(FetchClusterResponse::new(
-            leader_id,
-            term,
-            cluster_id,
-            members,
-            cluster_version,
-        ))
-    }
-
     /// Handle `InstallSnapshot` stream
     #[allow(clippy::integer_arithmetic)] // can't overflow
-    pub(super) async fn install_snapshot(
+    pub(super) async fn install_snapshot<E: std::error::Error + 'static>(
         &self,
-        req_stream: impl Stream<Item = Result<InstallSnapshotRequest, String>>,
+        req_stream: impl Stream<Item = Result<InstallSnapshotRequest, E>>,
     ) -> Result<InstallSnapshotResponse, CurpError> {
         pin_mut!(req_stream);
         let mut snapshot = self
@@ -436,14 +248,11 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
             .allocate_new_snapshot()
             .await
             .map_err(|err| {
-                error!("failed to allocate a new snapshot, {err:?}");
-                CurpError::Internal("failed to allocate a new snapshot".to_owned())
+                error!("failed to allocate a new snapshot, error: {err}");
+                CurpError::internal(format!("failed to allocate a new snapshot, error: {err}"))
             })?;
         while let Some(req) = req_stream.next().await {
-            let req = req.map_err(|e| {
-                warn!("snapshot stream error, {e}");
-                CurpError::Transport(e)
-            })?;
+            let req = req?;
             if !self.curp.verify_install_snapshot(
                 req.term,
                 req.leader_id,
@@ -476,30 +285,17 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                     .send_reset(Some(snapshot))
                     .await
                     .map_err(|err| {
-                        let err = CurpError::Internal(format!(
+                        error!("failed to reset the command executor by snapshot, {err}");
+                        CurpError::internal(format!(
                             "failed to reset the command executor by snapshot, {err}"
-                        ));
-                        error!("{err}");
-                        err
+                        ))
                     })?;
                 return Ok(InstallSnapshotResponse::new(self.curp.term()));
             }
         }
-        Err(CurpError::Transport(
+        Err(CurpError::internal(
             "failed to receive a complete snapshot".to_owned(),
         ))
-    }
-
-    /// Handle `FetchReadState` requests
-    #[allow(clippy::needless_pass_by_value)] // To keep type consistent with other request handlers
-    pub(super) fn fetch_read_state(
-        &self,
-        req: FetchReadStateRequest,
-    ) -> Result<FetchReadStateResponse, CurpError> {
-        self.check_cluster_version(req.cluster_version)?;
-        let cmd = req.cmd()?;
-        let state = self.curp.handle_fetch_read_state(&cmd);
-        Ok(FetchReadStateResponse::new(state))
     }
 }
 
@@ -656,7 +452,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                         }
                         ConfChangeType::Update =>{
                             if let Err(e) = curp.update_connect(change.node_id,change.address).await {
-                                error!("update connect {} failed, {}", change.node_id, e);
+                                error!("update connect {} failed, err {:?}", change.node_id, e);
                                 continue;
                             }
                         }
@@ -731,49 +527,51 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                     // (true, empty) => indicates that `batch_timeout` expired, and during this period there is not any log generated. Do nothing
                     // (true | false, not empty) => send append entries
                     if !hb_opt || !is_empty {
-                        let result = Self::send_ae(connect.as_ref(), curp.as_ref(), ae).await;
-                        if let Err(err) = result {
-                            warn!("ae to {} failed, {err}", connect_id);
-                            if matches!(err, SendAEError::NotLeader) {
-                                break true;
-                            }
-                            if is_shutdown_state {
-                                ae_fail_count += 1;
-                                if ae_fail_count >= 5 {
-                                    warn!("the follower {} may have been shutdown", connect_id);
+                        match Self::send_ae(connect.as_ref(), curp.as_ref(), ae).await {
+                            Ok((true, _)) => break true,
+                            Ok((false, ae_succeed)) => {
+                                if ae_succeed {
+                                    hb_opt = true;
+                                } else {
+                                    debug!("ae rejected by {}", connect.id());
+                                }
+                                // Check Follower shutdown
+                                // When the leader is in the shutdown state, its last log must be shutdown, and if the follower is
+                                // already synced with leader and current AE is a heartbeat, then the follower will commit the shutdown
+                                // log after AE, or when the follower is not synced with the leader, the current AE will send and directly commit
+                                // shutdown log.
+                                if is_shutdown_state
+                                    && ((curp.is_synced(connect_id) && is_empty)
+                                        || (!curp.is_synced(connect_id) && is_commit_shutdown))
+                                {
+                                    if let Err(e) = connect.trigger_shutdown().await {
+                                        warn!("trigger shutdown to {} failed, {e}", connect_id);
+                                    } else {
+                                        debug!("trigger shutdown to {} success", connect_id);
+                                    }
                                     break false;
                                 }
                             }
-                        } else {
-                            hb_opt = true;
-                        }
-                        // Check Follower shutdown
-                        // When the leader is in the shutdown state, its last log must be shutdown, and if the follower is
-                        // already synced with leader and current AE is a heartbeat, then the follower will commit the shutdown
-                        // log after AE, or when the follower is not synced with the leader, the current AE will send and directly commit
-                        // shutdown log.
-                        if is_shutdown_state
-                            && ((curp.is_synced(connect_id) && is_empty)
-                                || (!curp.is_synced(connect_id) && is_commit_shutdown))
-                        {
-                            if let Err(e) = connect.trigger_shutdown().await {
-                                warn!("trigger shutdown to {} failed, {e}", connect_id);
-                            } else {
-                                debug!("trigger shutdown to {} success", connect_id);
+                            Err(err) => {
+                                warn!("ae to {} failed, {err:?}", connect.id());
+                                if is_shutdown_state {
+                                    ae_fail_count += 1;
+                                    if ae_fail_count >= 5 {
+                                        // ae_fail_count = 0; RESET?
+                                        warn!("the follower {} may have been shutdown", connect_id);
+                                        break false;
+                                    }
+                                }
                             }
-                            break false;
-                        }
+                        };
                     }
                 }
                 SyncAction::Snapshot(rx) => match rx.await {
                     Ok(snapshot) => {
-                        let result =
-                            Self::send_snapshot(connect.as_ref(), curp.as_ref(), snapshot).await;
-                        if let Err(err) = result {
-                            warn!("snapshot to {} failed, {err}", connect.id());
-                            if matches!(err, SendSnapshotError::NotLeader) {
-                                break true;
-                            }
+                        match Self::send_snapshot(connect.as_ref(), curp.as_ref(), snapshot).await {
+                            Ok(true) => break true,
+                            Err(err) => warn!("snapshot to {} failed, {err:?}", connect.id()),
+                            Ok(false) => {}
                         }
                     }
                     Err(err) => {
@@ -824,7 +622,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
             .collect();
         let connects = rpc::inner_connects(cluster_info.peers_addrs())
             .await
-            .map_err(|e| CurpError::Internal(format!("parse peers addresses failed, err {e:?}")))?
+            .map_err(|e| CurpError::internal(format!("parse peers addresses failed, err {e:?}")))?
             .collect();
         let (log_tx, log_rx) = mpsc::unbounded_channel();
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
@@ -832,7 +630,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
         let last_applied = cmd_executor
             .last_applied()
-            .map_err(|e| CurpError::Internal(format!("get applied index error, {e}")))?;
+            .map_err(|e| CurpError::internal(format!("get applied index error, {e}")))?;
         let (ce_event_tx, task_rx, done_tx) =
             conflict_checked_mpmc::channel(Arc::clone(&cmd_executor), shutdown_trigger.clone());
         let ce_event_tx: Arc<dyn CEEventTxApi<C>> = Arc::new(ce_event_tx);
@@ -994,12 +792,14 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     }
 
     /// Send `append_entries` request
+    /// Return `tonic::Error` if meet network issue
+    /// Return (`leader_retires`, `ae_succeed`)
     #[allow(clippy::integer_arithmetic)] // won't overflow
     async fn send_ae(
         connect: &(impl InnerConnectApi + ?Sized),
         curp: &RawCurp<C, RC>,
         ae: AppendEntries<C>,
-    ) -> Result<(), SendAEError> {
+    ) -> Result<(bool, bool), CurpError> {
         let last_sent_index = (!ae.entries.is_empty())
             .then(|| ae.prev_log_index + ae.entries.len().numeric_cast::<u64>());
         let is_heartbeat = ae.entries.is_empty();
@@ -1023,36 +823,35 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
             .await?
             .into_inner();
 
-        let succeeded = curp
-            .handle_append_entries_resp(
-                connect.id(),
-                last_sent_index,
-                resp.term,
-                resp.success,
-                resp.hint_index,
-            )
-            .map_err(|_e| SendAEError::NotLeader)?;
+        let Ok(ae_succeed) = curp.handle_append_entries_resp(
+            connect.id(),
+            last_sent_index,
+            resp.term,
+            resp.success,
+            resp.hint_index,
+        ) else {
+            return Ok((true, false));
+        };
 
-        if succeeded {
-            Ok(())
-        } else {
-            Err(SendAEError::Rejected)
-        }
+        Ok((false, ae_succeed))
     }
 
     /// Send snapshot
+    /// Return `tonic::Error` if meet network issue
+    /// Return `leader_retires`
     async fn send_snapshot(
         connect: &(impl InnerConnectApi + ?Sized),
         curp: &RawCurp<C, RC>,
         snapshot: Snapshot,
-    ) -> Result<(), SendSnapshotError> {
+    ) -> Result<bool, CurpError> {
         let meta = snapshot.meta;
         let resp = connect
             .install_snapshot(curp.term(), curp.id(), snapshot)
             .await?
             .into_inner();
-        curp.handle_snapshot_resp(connect.id(), meta, resp.term)
-            .map_err(|_e| SendSnapshotError::NotLeader)
+        Ok(curp
+            .handle_snapshot_resp(connect.id(), meta, resp.term)
+            .is_err())
     }
 
     /// Get a shutdown listener
@@ -1068,7 +867,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                 "client cluster version({}) and server cluster version({}) not match",
                 client_cluster_version, server_cluster_version
             );
-            return Err(CurpError::WrongClusterVersion);
+            return Err(CurpError::wrong_cluster_version());
         }
         Ok(())
     }
@@ -1086,8 +885,6 @@ impl<C: Command, RC: RoleChange> Debug for CurpNode<C, RC> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{Error, ErrorKind};
-
     use curp_test_utils::{mock_role_change, sleep_secs, test_cmd::TestCommand};
     use tracing_test::traced_test;
 
@@ -1095,15 +892,6 @@ mod tests {
     use crate::{
         rpc::connect::MockInnerConnectApi, server::cmd_worker::MockCEEventTxApi, ConfChange,
     };
-
-    fn get_error_label(status: &Status) -> &str {
-        let metadata = status.metadata();
-        metadata
-            .get(ERROR_LABEL)
-            .expect("error-label should not be None in CurpError")
-            .to_str()
-            .expect("error-label must be construct by ascii char")
-    }
 
     #[traced_test]
     #[tokio::test]
@@ -1229,49 +1017,5 @@ mod tests {
         sleep_secs(3).await;
         assert!(curp.is_leader());
         curp.shutdown_trigger().self_shutdown_and_wait().await;
-    }
-
-    #[test]
-    fn curp_error_convert_to_tonic_status_should_success() {
-        let encode_decode = CurpError::EncodeDecode("CurpError::EncodeDecode".to_owned());
-        let status: Status = encode_decode.into();
-        assert_eq!("encode-decode", get_error_label(&status));
-
-        let internal = CurpError::Internal("CurpError::Internal".to_owned());
-        let status: Status = internal.into();
-        assert_eq!("internal", get_error_label(&status));
-
-        let transport = CurpError::Transport("CurpError::Transport".to_owned());
-        let status: Status = transport.into();
-        assert_eq!("transport", get_error_label(&status));
-
-        let shutdown = CurpError::ShuttingDown;
-        let status: Status = shutdown.into();
-        assert_eq!("shutting-down", get_error_label(&status));
-
-        let redirect_1 = CurpError::Redirect(Some(1), 2);
-        let status: Status = redirect_1.into();
-        assert_eq!("redirect", get_error_label(&status));
-        let (leader_id, term): (Option<u64>, u64) = serde_json::from_slice(status.details())
-            .expect(" deserialize (leader_id, term) from status' detail should always success");
-        assert_eq!(leader_id, Some(1));
-        assert_eq!(term, 2);
-
-        let redirect_2 = CurpError::Redirect(None, 2);
-        let status: Status = redirect_2.into();
-        assert_eq!("redirect", get_error_label(&status));
-        let (leader_id, term): (Option<u64>, u64) = serde_json::from_slice(status.details())
-            .expect(" deserialize (leader_id, term) from status' detail should always success");
-        assert_eq!(leader_id, None);
-        assert_eq!(term, 2);
-
-        let io = CurpError::IO(Error::new(ErrorKind::Other, "oh no!"));
-        let status: Status = io.into();
-        assert_eq!("io", get_error_label(&status));
-
-        let bincode_err = Box::new(bincode::ErrorKind::Custom("StorageError".to_owned()));
-        let storage = CurpError::Storage(bincode_err.into());
-        let status: Status = storage.into();
-        assert_eq!("storage", get_error_label(&status));
     }
 }
