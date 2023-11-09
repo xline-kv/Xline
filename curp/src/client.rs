@@ -19,14 +19,15 @@ use utils::config::ClientConfig;
 
 use crate::{
     cmd::{Command, ProposeId},
-    error::{ClientBuildError, ClientError, ERROR_LABEL},
+    error::{ClientBuildError, ClientError},
     members::ServerId,
     rpc::{
-        self, connect::ConnectApi, protocol_client::ProtocolClient, FetchClusterRequest,
-        FetchClusterResponse, FetchReadStateRequest, ProposeConfChangeRequest, ProposeRequest,
-        ReadState as PbReadState, ShutdownRequest, SyncResult, WaitSyncedRequest,
+        self, connect::ConnectApi, protocol_client::ProtocolClient, ConfChange, CurpError,
+        FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, Member,
+        ProposeConfChangeRequest, ProposeRequest, PublishRequest, ReadState as PbReadState,
+        Redirect, ShutdownRequest, WaitSyncedRequest,
     },
-    ConfChange, ConfChangeError, LogIndex, Member, ProposeError, PublishRequest,
+    LogIndex,
 };
 
 /// Protocol client
@@ -227,54 +228,7 @@ pub enum ReadState {
     CommitIndex(LogIndex),
 }
 
-/// Unpack `tonic::Status`
-enum UnpackStatus {
-    /// CurpServer is shutting down
-    ShuttingDown,
-    /// Indicate that the client sent a wait synced request to a non-leader
-    Redirect(Option<ServerId>, u64),
-    /// Transport error type
-    Transport,
-    /// Encode decode error type
-    EncodeDecode,
-    /// Storage error type
-    Storage,
-    /// IO error type
-    IO,
-    /// Internal error type
-    Internal,
-    /// Wrong Cluster Version
-    WrongClusterVersion,
-}
-
-/// unpack `tonic::Status` and convert it to `UnpackStatus`
-fn unpack_status(status: &tonic::Status) -> UnpackStatus {
-    let meta = status.metadata();
-    if let Some(label) = meta.get(ERROR_LABEL) {
-        match label.to_str().unwrap_or_else(|err| {
-            unreachable!("error-label should be always able to convert to str: {err:?}")
-        }) {
-            "shutting-down" => UnpackStatus::ShuttingDown,
-            "transport" => UnpackStatus::Transport,
-            "redirect" => {
-                let (leader_id, term) = serde_json::from_slice(status.details()).unwrap_or_else(|err| unreachable!(" deserialize (leader_id, term) from status' detail should always success: {err:?}"));
-                UnpackStatus::Redirect(leader_id, term)
-            }
-            "encode-decode" => UnpackStatus::EncodeDecode,
-            "internal" => UnpackStatus::Internal,
-            "storage" => UnpackStatus::Storage,
-            "io" => UnpackStatus::IO,
-            "wrong-cluster-version" => UnpackStatus::WrongClusterVersion,
-            unsupported_label => {
-                unreachable!("unsupported status label {unsupported_label}")
-            }
-        }
-    } else {
-        // This transport error comes from `tonic` framework
-        UnpackStatus::Transport
-    }
-}
-
+#[allow(clippy::wildcard_enum_match_arm)] // TODO: wait refactoring
 impl<C> Client<C>
 where
     C: Command + 'static,
@@ -321,43 +275,28 @@ where
         while let Some(resp_result) = rpcs.next().await {
             let resp = match resp_result {
                 Ok(resp) => resp.into_inner(),
-
                 Err(e) => {
-                    warn!("Propose error: {}", e);
-                    match unpack_status(&e) {
-                        UnpackStatus::ShuttingDown => return Err(ClientError::ShuttingDown),
-                        UnpackStatus::WrongClusterVersion => {
+                    warn!("Propose error: {e:?}");
+                    match e {
+                        CurpError::ShuttingDown(_) => return Err(ClientError::ShuttingDown),
+                        CurpError::WrongClusterVersion(_) => {
                             return Err(ClientError::WrongClusterVersion)
                         }
-                        UnpackStatus::Redirect(..)
-                        | UnpackStatus::Transport
-                        | UnpackStatus::EncodeDecode
-                        | UnpackStatus::Storage
-                        | UnpackStatus::IO
-                        | UnpackStatus::Internal => continue,
+                        _ => continue,
                     }
                 }
             };
-            self.state
-                .write()
-                .check_and_update(resp.leader_id, resp.term);
-            resp.map_or_else::<C, _, _, Result<(), ClientError<C>>>(
-                |res| {
-                    if let Some(er) = res
-                        .transpose()
-                        .map_err(|e| ClientError::CommandError::<C>(e))?
-                    {
-                        assert!(execute_result.is_none(), "should not set exe result twice");
-                        execute_result = Some(er);
-                    }
-                    ok_cnt = ok_cnt.wrapping_add(1);
-                    Ok(())
-                },
-                |err| {
-                    warn!("Propose error: {}", err);
-                    Ok(())
-                },
-            )??;
+            resp.map_result::<C, _, Result<(), ClientError<C>>>(|res| {
+                if let Some(er) = res
+                    .transpose()
+                    .map_err(|e| ClientError::CommandError::<C>(e))?
+                {
+                    assert!(execute_result.is_none(), "should not set exe result twice");
+                    execute_result = Some(er);
+                }
+                ok_cnt = ok_cnt.wrapping_add(1);
+                Ok(())
+            })??;
             if (ok_cnt >= superquorum) && execute_result.is_some() {
                 debug!("fast round for cmd({}) succeed", cmd_arc.id());
                 return Ok((execute_result, true));
@@ -397,41 +336,34 @@ where
             {
                 Ok(resp) => resp.into_inner(),
                 Err(e) => {
-                    warn!("wait synced rpc error: {e}");
-                    match unpack_status(&e) {
-                        UnpackStatus::ShuttingDown => return Err(ClientError::ShuttingDown),
-                        UnpackStatus::WrongClusterVersion => {
+                    warn!("wait synced rpc error: {e:?}");
+                    match e {
+                        CurpError::ShuttingDown(_) => return Err(ClientError::ShuttingDown),
+                        CurpError::WrongClusterVersion(_) => {
                             return Err(ClientError::WrongClusterVersion)
                         }
-                        UnpackStatus::Transport => {
+                        CurpError::RpcTransport(_) => {
                             // it's quite likely that the leader has crashed, then we should wait for some time and fetch the leader again
                             tokio::time::sleep(retry_timeout.next_retry()).await;
                             self.resend_propose(Arc::clone(&cmd), None).await?;
                             continue;
                         }
-                        UnpackStatus::Redirect(new_leader, term) => {
+                        CurpError::Redirect(Redirect {
+                            leader_id: new_leader,
+                            term,
+                        }) => {
                             self.state.write().check_and_update(new_leader, term);
                             // resend the propose to the new leader
                             self.resend_propose(Arc::clone(&cmd), new_leader).await?;
                             continue;
                         }
-                        UnpackStatus::EncodeDecode
-                        | UnpackStatus::Storage
-                        | UnpackStatus::IO
-                        | UnpackStatus::Internal => return Err(e.into()),
+                        _ => return Err(ClientError::InternalError(format!("{e:?}"))),
                     }
                 }
             };
 
-            match SyncResult::<C>::try_from(resp).map_err(Into::<ClientError<C>>::into)? {
-                SyncResult::Success { er, asr } => {
-                    debug!("slow round for cmd({}) succeeded", cmd.id());
-                    return Ok((asr, er));
-                }
-                SyncResult::Error(e) => {
-                    return Err(ClientError::CommandError(e));
-                }
-            }
+            return resp
+                .map_result::<C, _, _>(|res| res.map_err(|e| ClientError::CommandError(e)))?;
         }
         Err(ClientError::Timeout)
     }
@@ -484,24 +416,23 @@ where
                 )
                 .await
             {
-                warn!("shutdown rpc error: {e}");
-                match unpack_status(&e) {
-                    UnpackStatus::ShuttingDown => return Err(ClientError::ShuttingDown),
-                    UnpackStatus::WrongClusterVersion => {
+                warn!("shutdown rpc error: {e:?}");
+                match e {
+                    CurpError::ShuttingDown(_) => return Err(ClientError::ShuttingDown),
+                    CurpError::WrongClusterVersion(_) => {
                         let cluster = self.fetch_cluster(false).await?;
                         self.set_cluster(cluster).await?;
                         continue;
                     }
-                    UnpackStatus::Redirect(new_leader, term) => {
+                    CurpError::Redirect(Redirect {
+                        leader_id: new_leader,
+                        term,
+                    }) => {
                         self.state.write().check_and_update(new_leader, term);
                         warn!("shutdown: redirect to new leader {new_leader:?}, term is {term}",);
                         continue;
                     }
-                    UnpackStatus::Transport
-                    | UnpackStatus::EncodeDecode
-                    | UnpackStatus::Storage
-                    | UnpackStatus::IO
-                    | UnpackStatus::Internal => {
+                    _ => {
                         tokio::time::sleep(retry_timeout.next_retry()).await;
                         continue;
                     }
@@ -545,60 +476,23 @@ where
                 )
                 .await;
 
-            let resp = match resp {
-                Ok(resp) => {
-                    let resp = resp.into_inner();
-                    if let Some(rpc::ExeResult::Error(e)) = resp.exe_result {
-                        let err: ProposeError = e.into();
-                        if matches!(err, ProposeError::Duplicated) {
-                            return Ok(());
-                        }
-                    }
-                    resp
-                }
-                Err(e) => {
-                    // if the propose fails again, need to fetch the leader and try again
-                    warn!("failed to resend propose, {e}");
-                    if let UnpackStatus::WrongClusterVersion = unpack_status(&e) {
+            if let Err(e) = resp {
+                match e {
+                    CurpError::ShuttingDown(_) => return Err(ClientError::ShuttingDown),
+                    CurpError::WrongClusterVersion(_) => {
                         return Err(ClientError::WrongClusterVersion);
                     }
-                    continue;
-                }
-            };
-
-            let mut state_w = self.state.write();
-
-            match state_w.term.cmp(&resp.term) {
-                Ordering::Less => {
-                    // reset term only when the resp has leader id to prevent:
-                    // If a server loses contact with its leader, it will update its term for election. Since other servers are all right, the election will not succeed.
-                    // But if the client learns about the new term and updates its term to it, it will never get the true leader.
-                    if let Some(id) = resp.leader_id {
-                        state_w.update_to_term(resp.term);
-                        let done = id == leader_id;
-                        state_w.set_leader(leader_id);
-                        if done {
-                            return Ok(());
-                        }
+                    CurpError::Duplicated(_) => {
+                        return Ok(());
                     }
+                    _ => {}
                 }
-                Ordering::Equal => {
-                    if let Some(id) = resp.leader_id {
-                        let done = id == leader_id;
-                        debug_assert!(
-                            state_w.leader.as_ref().map_or(true, |leader| leader == &id),
-                            "there should never be two leader in one term"
-                        );
-                        if state_w.leader.is_none() {
-                            state_w.set_leader(id);
-                        }
-                        if done {
-                            return Ok(());
-                        }
-                    }
-                }
-                Ordering::Greater => {}
+                // if the propose fails again, need to fetch the leader and try again
+                warn!("failed to resend propose, {e:?}");
+                continue;
             }
+
+            break;
         }
         Err(ClientError::Timeout)
     }
@@ -821,7 +715,7 @@ where
         &self,
         propose_id: ProposeId,
         changes: Vec<ConfChange>,
-    ) -> Result<Result<Vec<Member>, ConfChangeError>, ClientError<C>> {
+    ) -> Result<Result<Vec<Member>, CurpError>, ClientError<C>> {
         debug!(
             "propose_conf_change with propose_id({}) started",
             propose_id
@@ -837,7 +731,7 @@ where
                 }
             };
             debug!("propose_conf_change request sent to {}", leader_id);
-            let resp = match self
+            match self
                 .get_connect(leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .propose_conf_change(
@@ -850,40 +744,38 @@ where
                 )
                 .await
             {
-                Ok(resp) => resp.into_inner(),
+                Ok(resp) => return Ok(Ok(resp.into_inner().members)),
                 Err(e) => {
-                    warn!("propose_conf_change rpc error: {e}");
-                    match unpack_status(&e) {
-                        UnpackStatus::ShuttingDown => return Err(ClientError::ShuttingDown),
-                        UnpackStatus::WrongClusterVersion => {
+                    warn!("propose_conf_change rpc error: {e:?}");
+                    match e {
+                        CurpError::ShuttingDown(_) => return Err(ClientError::ShuttingDown),
+                        CurpError::WrongClusterVersion(_) => {
                             let cluster = self.fetch_cluster(false).await?;
                             self.set_cluster(cluster).await?;
                             continue;
                         }
-                        UnpackStatus::Redirect(new_leader, term) => {
+                        CurpError::Redirect(Redirect {
+                            leader_id: new_leader,
+                            term,
+                        }) => {
                             self.state.write().check_and_update(new_leader, term);
+                            warn!(
+                                "propose_conf_change: redirect to new leader {new_leader:?}, term is {term}",
+                            );
                             continue;
                         }
-                        UnpackStatus::Transport
-                        | UnpackStatus::EncodeDecode
-                        | UnpackStatus::Storage
-                        | UnpackStatus::IO
-                        | UnpackStatus::Internal => {
+                        CurpError::InvalidConfig(_)
+                        | CurpError::LearnerNotCatchUp(_)
+                        | CurpError::NodeAlreadyExists(_)
+                        | CurpError::NodeNotExists(_)
+                        | CurpError::Duplicated(_)
+                        | CurpError::ExpiredClientId(_) => return Ok(Err(e)),
+                        _ => {
                             tokio::time::sleep(retry_timeout.next_retry()).await;
                             continue;
                         }
                     }
                 }
-            };
-            self.state
-                .write()
-                .check_and_update(resp.leader_id, resp.term);
-            return match resp.error {
-                Some(e) => {
-                    warn!("propose conf change error: {:?}", e);
-                    Ok(Err(e))
-                }
-                None => Ok(Ok(resp.members)),
             };
         }
         Err(ClientError::Timeout)
@@ -918,23 +810,31 @@ where
                 )
                 .await
             {
-                warn!("propose_conf_change rpc error: {e}");
-                match unpack_status(&e) {
-                    UnpackStatus::ShuttingDown => return Err(ClientError::ShuttingDown),
-                    UnpackStatus::WrongClusterVersion => {
+                warn!("publish rpc error: {e}");
+                match e {
+                    CurpError::ShuttingDown(_) => return Err(ClientError::ShuttingDown),
+                    CurpError::WrongClusterVersion(_) => {
                         let cluster = self.fetch_cluster(false).await?;
                         self.set_cluster(cluster).await?;
                         continue;
                     }
-                    UnpackStatus::Redirect(new_leader, term) => {
+                    CurpError::Redirect(Redirect {
+                        leader_id: new_leader,
+                        term,
+                    }) => {
                         self.state.write().check_and_update(new_leader, term);
+                        warn!(
+                            "propose_conf_change: redirect to new leader {new_leader:?}, term is {term}",
+                        );
                         continue;
                     }
-                    UnpackStatus::Transport
-                    | UnpackStatus::EncodeDecode
-                    | UnpackStatus::Storage
-                    | UnpackStatus::IO
-                    | UnpackStatus::Internal => {
+                    CurpError::InvalidConfig(_)
+                    | CurpError::LearnerNotCatchUp(_)
+                    | CurpError::NodeAlreadyExists(_)
+                    | CurpError::NodeNotExists(_)
+                    | CurpError::Duplicated(_)
+                    | CurpError::ExpiredClientId(_) => return Ok(Err(e)),
+                    _ => {
                         tokio::time::sleep(retry_timeout.next_retry()).await;
                         continue;
                     }
@@ -971,16 +871,19 @@ where
                 .await
             {
                 Ok(resp) => resp.into_inner(),
-                Err(e) => {
-                    if let UnpackStatus::WrongClusterVersion = unpack_status(&e) {
+                Err(e) => match e {
+                    CurpError::ShuttingDown(_) => return Err(ClientError::ShuttingDown),
+                    CurpError::WrongClusterVersion(_) => {
                         let cluster = self.fetch_cluster(false).await?;
                         self.set_cluster(cluster).await?;
                         continue;
                     }
-                    warn!("fetch read state rpc error: {e}");
-                    tokio::time::sleep(retry_timeout.next_retry()).await;
-                    continue;
-                }
+                    _ => {
+                        warn!("fetch read state rpc error: {e:?}");
+                        tokio::time::sleep(retry_timeout.next_retry()).await;
+                        continue;
+                    }
+                },
             };
             let pb_state = resp
                 .read_state
@@ -1008,7 +911,8 @@ where
                     FetchClusterRequest::default(),
                     *self.config.initial_retry_timeout(),
                 )
-                .await?
+                .await
+                .map_err(|e| ClientError::InternalError(format!("{e:?}")))?
                 .into_inner();
             Ok(resp)
         } else {
