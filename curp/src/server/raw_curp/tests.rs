@@ -21,7 +21,7 @@ use crate::{
         raw_curp::UncommittedPool,
         spec_pool::SpeculativePool,
     },
-    LogIndex, ProposeConfChangeRequest,
+    LogIndex, ProposeConfChangeRequest, Redirect,
 };
 
 // Hooks for tests
@@ -128,10 +128,7 @@ fn leader_handle_propose_will_succeed() {
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
     let cmd = Arc::new(TestCommand::default());
-    let ((leader_id, term), result) = curp.handle_propose(cmd).unwrap();
-    assert_eq!(leader_id, Some(curp.id().clone()));
-    assert_eq!(term, 1);
-    assert!(matches!(result, Ok(true)));
+    assert!(curp.handle_propose(cmd).unwrap());
 }
 
 #[traced_test]
@@ -144,23 +141,16 @@ fn leader_handle_propose_will_reject_conflicted() {
     };
 
     let cmd1 = Arc::new(TestCommand::new_put(vec![1], 0));
-    let ((leader_id, term), result) = curp.handle_propose(cmd1).unwrap();
-    assert_eq!(leader_id, Some(curp.id().clone()));
-    assert_eq!(term, 1);
-    assert!(matches!(result, Ok(true)));
+    assert!(curp.handle_propose(cmd1).unwrap());
 
     let cmd2 = Arc::new(TestCommand::new_put(vec![1, 2], 1));
-    let ((leader_id, term), result) = curp.handle_propose(cmd2).unwrap();
-    assert_eq!(leader_id, Some(curp.id().clone()));
-    assert_eq!(term, 1);
-    assert!(matches!(result, Err(ProposeError::KeyConflict)));
+    let res = curp.handle_propose(cmd2);
+    assert!(matches!(res, Err(CurpError::KeyConflict(_))));
 
     // leader will also reject cmds that conflict un-synced cmds
     let cmd3 = Arc::new(TestCommand::new_put(vec![2], 1));
-    let ((leader_id, term), result) = curp.handle_propose(cmd3).unwrap();
-    assert_eq!(leader_id, Some(curp.id().clone()));
-    assert_eq!(term, 1);
-    assert!(matches!(result, Err(ProposeError::KeyConflict)));
+    let res = curp.handle_propose(cmd3);
+    assert!(matches!(res, Err(CurpError::KeyConflict(_))));
 }
 
 #[traced_test]
@@ -172,15 +162,10 @@ fn leader_handle_propose_will_reject_duplicated() {
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
     let cmd = Arc::new(TestCommand::default());
-    let ((leader_id, term), result) = curp.handle_propose(Arc::clone(&cmd)).unwrap();
-    assert_eq!(leader_id, Some(curp.id().clone()));
-    assert_eq!(term, 1);
-    assert!(matches!(result, Ok(true)));
+    assert!(curp.handle_propose(Arc::clone(&cmd)).unwrap());
 
-    let ((leader_id, term), result) = curp.handle_propose(cmd).unwrap();
-    assert_eq!(leader_id, Some(curp.id().clone()));
-    assert_eq!(term, 1);
-    assert!(matches!(result, Err(ProposeError::Duplicated)));
+    let res = curp.handle_propose(cmd);
+    assert!(matches!(res, Err(CurpError::Duplicated(_))));
 }
 
 #[traced_test]
@@ -195,10 +180,7 @@ fn follower_handle_propose_will_succeed() {
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
     let cmd = Arc::new(TestCommand::new_get(vec![1]));
-    let ((leader_id, term), result) = curp.handle_propose(cmd).unwrap();
-    assert_eq!(leader_id, None);
-    assert_eq!(term, 1);
-    assert!(matches!(result, Ok(false)));
+    assert!(!curp.handle_propose(cmd).unwrap());
 }
 
 #[traced_test]
@@ -214,16 +196,11 @@ fn follower_handle_propose_will_reject_conflicted() {
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
     let cmd1 = Arc::new(TestCommand::new_get(vec![1]));
-    let ((leader_id, term), result) = curp.handle_propose(cmd1).unwrap();
-    assert_eq!(leader_id, None);
-    assert_eq!(term, 1);
-    assert!(matches!(result, Ok(false)));
+    assert!(!curp.handle_propose(cmd1).unwrap());
 
     let cmd2 = Arc::new(TestCommand::new_get(vec![1]));
-    let ((leader_id, term), result) = curp.handle_propose(cmd2).unwrap();
-    assert_eq!(leader_id, None);
-    assert_eq!(term, 1);
-    assert!(matches!(result, Err(ProposeError::KeyConflict)));
+    let res = curp.handle_propose(cmd2);
+    assert!(matches!(res, Err(CurpError::KeyConflict(_))));
 }
 
 /*************** tests for append_entries(heartbeat) **************/
@@ -715,8 +692,13 @@ fn follower_handle_shutdown_will_reject() {
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
     let res = curp.handle_shutdown(next_id());
-    assert!(res.is_err());
-    assert!(matches!(res, Err(CurpError::Redirect(None, 1))));
+    assert!(matches!(
+        res,
+        Err(CurpError::Redirect(Redirect {
+            leader_id: None,
+            term: 1,
+        }))
+    ));
 }
 
 #[traced_test]
@@ -813,7 +795,7 @@ fn add_exists_node_should_return_node_already_exists_error() {
         vec!["http://127.0.0.1:4567".to_owned()],
     )];
     let resp = curp.check_new_config(&changes);
-    let error_match = matches!(resp, Err(ConfChangeError::NodeAlreadyExists(())));
+    let error_match = matches!(resp, Err(CurpError::NodeAlreadyExists(())));
     assert!(error_match);
 }
 
@@ -853,7 +835,7 @@ fn remove_non_exists_node_should_return_node_not_exists_error() {
     };
     let changes = vec![ConfChange::remove(1)];
     let resp = curp.check_new_config(&changes);
-    assert!(matches!(resp, Err(ConfChangeError::NodeNotExists(()))));
+    assert!(matches!(resp, Err(CurpError::NodeNotExists(()))));
 }
 
 #[traced_test]
@@ -866,7 +848,7 @@ fn remove_node_should_return_invalid_config_error_when_nodes_count_less_than_3()
     let follower_id = curp.cluster().get_id_by_name("S1").unwrap();
     let changes = vec![ConfChange::remove(follower_id)];
     let resp = curp.check_new_config(&changes);
-    assert!(matches!(resp, Err(ConfChangeError::InvalidConfig(()))));
+    assert!(matches!(resp, Err(CurpError::InvalidConfig(()))));
 }
 
 #[traced_test]
@@ -930,12 +912,8 @@ fn leader_handle_propose_conf_change() {
         vec!["http://127.0.0.1:4567".to_owned()],
     )];
     let conf_change_entry = ProposeConfChangeRequest::new(ProposeId(0, 0), changes, 0);
-    let ((leader, term), result) = curp
-        .handle_propose_conf_change(conf_change_entry.into())
+    curp.handle_propose_conf_change(conf_change_entry.into())
         .unwrap();
-    assert_eq!(leader, Some(curp.id().clone()));
-    assert_eq!(term, 1);
-    assert!(result.is_ok());
 }
 
 #[traced_test]
@@ -958,5 +936,11 @@ fn follower_handle_propose_conf_change() {
     )];
     let conf_change_entry = ProposeConfChangeRequest::new(ProposeId(0, 0), changes, 0);
     let result = curp.handle_propose_conf_change(conf_change_entry.into());
-    assert!(matches!(result, Err(CurpError::Redirect(None, 2))));
+    assert!(matches!(
+        result,
+        Err(CurpError::Redirect(Redirect {
+            leader_id: None,
+            term: 2,
+        }))
+    ));
 }
