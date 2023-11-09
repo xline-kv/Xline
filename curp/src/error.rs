@@ -3,12 +3,6 @@ use std::io;
 use curp_external_api::cmd::{Command, PbSerializeError};
 use thiserror::Error;
 
-use crate::rpc::ProposeError;
-
-/// Since there are some different statuses with the same code, Xline using "error-label"
-/// to tell apart them.
-pub const ERROR_LABEL: &str = "error-label";
-
 /// Error type of client builder
 #[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
 #[derive(Debug, Error)]
@@ -61,34 +55,6 @@ pub enum ServerError {
     /// Rpc Error
     #[error("rpc error: {0}")]
     RpcError(#[from] tonic::transport::Error),
-}
-
-impl std::fmt::Display for ProposeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match *self {
-            Self::KeyConflict => write!(f, "ProposeError: Key Conflict"),
-            Self::Duplicated => write!(f, "ProposeError: Duplicated"),
-        }
-    }
-}
-
-impl std::error::Error for ProposeError {
-    fn description(&self) -> &str {
-        match *self {
-            Self::KeyConflict => "key conflict error",
-            Self::Duplicated => "duplicated, the cmd might have already been proposed",
-        }
-    }
-}
-
-impl From<i32> for ProposeError {
-    fn from(value: i32) -> Self {
-        match value {
-            0 => Self::KeyConflict,
-            1 => Self::Duplicated,
-            _ => unreachable!("Unknown ProposeError Type"),
-        }
-    }
 }
 
 /// The union error which includes propose errors and user-defined errors.
