@@ -557,7 +557,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                                 if is_shutdown_state {
                                     ae_fail_count += 1;
                                     if ae_fail_count >= 5 {
-                                        // ae_fail_count = 0; RESET?
                                         warn!("the follower {} may have been shutdown", connect_id);
                                         break false;
                                     }
