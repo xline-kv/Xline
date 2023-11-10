@@ -24,6 +24,10 @@ following features:
 - Geo-distributed friendly deployment.
 - Compatible with K8s.
 
+![cncf-logo](./img/cncf-logo.png)
+
+Xline is a sandbox project of the [Cloud Native Computing Foundation](https://cncf.io/) (CNCF).
+
 ## Motivation
 
 With the wide adoption of cloud computing, multi-cloud has become the mainstream IT architecture for enterprise customers.
@@ -59,7 +63,7 @@ We adopt a new consensus protocol named
 issue. Please refer to the paper for a detailed description. The main benefit of
 the protocol is reducing 1 RTT when contention is not too high. As far as we
 know, Xline is the first product to use CURP. For more protocol comparison, please
-refer to the [blog](https://xline.cloud/#/blog/2023-01-07-CURP%20%E2%80%94%20Revisit-the-Consensus-Protocol)
+refer to the [blog](https://datenlord.github.io/xline-home/#/blog/2023-01-07-Curp:-Revisit-the-Consensus-Protocol)
 
 ## Performance Comparison
 
