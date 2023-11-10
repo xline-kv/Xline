@@ -9,7 +9,7 @@ use engine::{MemorySnapshotAllocator, RocksSnapshotAllocator, SnapshotAllocator}
 use futures::stream::select_all;
 use hyper::server::conn::AddrStream;
 use jsonwebtoken::{DecodingKey, EncodingKey};
-use tokio::{net::TcpListener, sync::mpsc::channel};
+use tokio::{net::TcpListener, sync::mpsc::channel, task::JoinHandle};
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::{server::TcpIncoming, Server};
 use tonic_health::ServingStatus;
@@ -203,7 +203,7 @@ impl XlineServer {
         addrs: Vec<SocketAddr>,
         persistent: Arc<S>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
-    ) -> Result<()> {
+    ) -> Result<JoinHandle<Result<(), tonic::transport::Error>>> {
         let mut shutdown_listener = self.shutdown_trigger.subscribe();
         let signal = async move {
             let _r = shutdown_listener.wait_self_shutdown().await;
@@ -223,7 +223,7 @@ impl XlineServer {
             .set_service_status("", ServingStatus::Serving)
             .await;
         let incoming = bind_addrs(addrs.into_iter())?;
-        let _h = tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             Server::builder()
                 .add_service(RpcLockServer::new(lock_server))
                 .add_service(RpcKvServer::new(kv_server))
@@ -238,7 +238,7 @@ impl XlineServer {
                 .serve_with_incoming_shutdown(incoming, signal)
                 .await
         });
-        Ok(())
+        Ok(handle)
     }
 
     /// Start `XlineServer` from listeners

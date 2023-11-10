@@ -140,7 +140,7 @@ use std::{collections::HashMap, env, net::ToSocketAddrs, path::PathBuf, time::Du
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
-use curp::members::ClusterInfo;
+use curp::members::{get_cluster_info_from_remote, ClusterInfo};
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use opentelemetry::{global, runtime::Tokio, sdk::propagation::TraceContextPropagator};
 use opentelemetry_contrib::trace::exporter::jaeger_json::JaegerJsonExporter;
@@ -158,10 +158,11 @@ use utils::{
         default_range_retry_timeout, default_retry_count, default_rotation, default_rpc_timeout,
         default_server_wait_synced_timeout, default_sync_victims_interval, default_use_backoff,
         default_watch_progress_notify_interval, file_appender, AuthConfig, AutoCompactConfig,
-        ClientConfig, ClusterConfig, CompactConfig, CurpConfigBuilder, LevelConfig, LogConfig,
-        RotationConfig, ServerTimeout, StorageConfig, TraceConfig, XlineServerConfig,
+        ClientConfig, ClusterConfig, CompactConfig, CurpConfigBuilder, InitialClusterState,
+        LevelConfig, LogConfig, RotationConfig, ServerTimeout, StorageConfig, TraceConfig,
+        XlineServerConfig,
     },
-    parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_rotation,
+    parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_rotation, parse_state,
     ConfigFileError,
 };
 use xline::{server::XlineServer, storage::db::DB};
@@ -289,6 +290,9 @@ struct ServerArgs {
     /// Auto revision compact retention
     #[clap(long)]
     auto_revision_retention: Option<i64>,
+    /// Initial cluster state
+    #[clap(long,value_parser = parse_state)]
+    initial_cluster_state: Option<InitialClusterState>,
 }
 
 impl From<ServerArgs> for XlineServerConfig {
@@ -342,6 +346,7 @@ impl From<ServerArgs> for XlineServerConfig {
             args.watch_progress_notify_interval
                 .unwrap_or_else(default_watch_progress_notify_interval),
         );
+        let initial_cluster_state = args.initial_cluster_state.unwrap_or_default();
         let cluster = ClusterConfig::new(
             args.name,
             args.members,
@@ -349,6 +354,7 @@ impl From<ServerArgs> for XlineServerConfig {
             curp_config,
             client_config,
             server_timeout,
+            initial_cluster_state,
         );
         let log = LogConfig::new(args.log_file, args.log_rotate, args.log_level);
         let trace = TraceConfig::new(
@@ -521,19 +527,36 @@ async fn main() -> Result<()> {
     let server_addr = server_addr_str
         .iter()
         .map(|addr| {
-            addr.to_socket_addrs()?
+            // TODO: update this after we support https
+            let address = if let Some(address) = addr.strip_prefix("http://") {
+                address
+            } else {
+                addr
+            };
+            address
+                .to_socket_addrs()?
                 .next()
                 .ok_or_else(|| anyhow!("failed to resolve self address {}", addr))
         })
         .collect::<Result<Vec<_>, _>>()?;
-
     debug!("name = {:?}", cluster_config.name());
     debug!("server_addr = {server_addr:?}");
     debug!("cluster_peers = {:?}", cluster_config.members());
 
     let name = cluster_config.name().clone();
     let all_members = cluster_config.members().clone();
-    let cluster_info = ClusterInfo::new(all_members, &name);
+    let init_cluster_info = ClusterInfo::new(all_members, &name);
+    let cluster_info = match *cluster_config.initial_cluster_state() {
+        InitialClusterState::New => init_cluster_info,
+        InitialClusterState::Existing => get_cluster_info_from_remote(
+            &init_cluster_info,
+            server_addr_str,
+            Duration::from_secs(3),
+        )
+        .await
+        .ok_or_else(|| anyhow!("Failed to get cluster info from remote"))?,
+        _ => unreachable!("xline only supports two initial cluster states: new, existing"),
+    };
 
     let db_proxy = DB::open(storage_config)?;
     let server = XlineServer::new(
@@ -546,10 +569,17 @@ async fn main() -> Result<()> {
         *config.compact(),
     );
     debug!("{:?}", server);
-    server.start(server_addr, db_proxy, key_pair).await?;
+    let handle = server.start(server_addr, db_proxy, key_pair).await?;
 
-    tokio::signal::ctrl_c().await?;
-    info!("received ctrl-c, shutting down, press ctrl-c again to force exit");
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            info!("received ctrl-c, shutting down, press ctrl-c again to force exit");
+        }
+        _ = handle => {
+            info!("server exited");
+            return Ok(());
+        }
+    }
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {

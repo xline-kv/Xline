@@ -96,6 +96,40 @@ pub struct ClusterConfig {
     #[getset(get = "pub")]
     #[serde(default = "ServerTimeout::default")]
     server_timeout: ServerTimeout,
+    /// Xline server initial state
+    #[getset(get = "pub")]
+    #[serde(with = "state_format", default = "InitialClusterState::default")]
+    initial_cluster_state: InitialClusterState,
+}
+
+/// Initial cluster state of xline server
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[non_exhaustive]
+pub enum InitialClusterState {
+    /// Create a new cluster
+    #[default]
+    New,
+    /// Join an existing cluster
+    Existing,
+}
+
+/// `InitialClusterState` deserialization formatter
+pub mod state_format {
+    use serde::{self, Deserialize, Deserializer};
+
+    use crate::parse_state;
+
+    use super::InitialClusterState;
+
+    /// deserializes a cluster log rotation strategy
+    #[allow(single_use_lifetimes)]
+    pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<InitialClusterState, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        parse_state(&s).map_err(serde::de::Error::custom)
+    }
 }
 
 impl ClusterConfig {
@@ -109,6 +143,7 @@ impl ClusterConfig {
         curp: CurpConfig,
         client_config: ClientConfig,
         server_timeout: ServerTimeout,
+        initial_cluster_state: InitialClusterState,
     ) -> Self {
         Self {
             name,
@@ -117,6 +152,7 @@ impl ClusterConfig {
             curp_config: curp,
             client_config,
             server_timeout,
+            initial_cluster_state,
         }
     }
 }
@@ -813,6 +849,7 @@ mod tests {
             r#"[cluster]
             name = 'node1'
             is_leader = true
+            initial_cluster_state = 'new'
 
             [cluster.server_timeout]
             range_retry_timeout = '3s'
@@ -898,7 +935,8 @@ mod tests {
                 true,
                 curp_config,
                 client_config,
-                server_timeout
+                server_timeout,
+                InitialClusterState::New
             )
         );
 
@@ -982,7 +1020,8 @@ mod tests {
                 true,
                 CurpConfigBuilder::default().build().unwrap(),
                 ClientConfig::default(),
-                ServerTimeout::default()
+                ServerTimeout::default(),
+                InitialClusterState::default()
             )
         );
 

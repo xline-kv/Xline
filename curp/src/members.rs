@@ -5,13 +5,19 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
+    time::Duration,
 };
 
 use dashmap::{mapref::one::Ref, DashMap};
+use futures::{stream::FuturesUnordered, StreamExt};
 use itertools::Itertools;
+use tracing::debug;
 
-use crate::rpc::FetchClusterResponse;
 pub use crate::Member;
+use crate::{
+    rpc::{self, FetchClusterResponse},
+    FetchClusterRequest,
+};
 
 /// Server Id
 pub type ServerId = u64;
@@ -113,7 +119,19 @@ impl ClusterInfo {
             .members
             .into_iter()
             .map(|member| {
-                if member.addrs == self_addr {
+                // TODO: update this after we support https
+                let addrs = member
+                    .addrs
+                    .iter()
+                    .map(|addr| {
+                        if let Some(a) = addr.strip_prefix("http://") {
+                            a.to_owned()
+                        } else {
+                            addr.clone()
+                        }
+                    })
+                    .collect_vec();
+                if addrs == self_addr {
                     member_id = member.id;
                 }
                 (member.id, member)
@@ -331,6 +349,41 @@ impl ClusterInfo {
     pub(crate) fn contains(&self, node_id: ServerId) -> bool {
         self.members.contains_key(&node_id)
     }
+}
+
+/// Get cluster info from remote servers
+#[inline]
+pub async fn get_cluster_info_from_remote(
+    init_cluster_info: &ClusterInfo,
+    self_addr: &[String],
+    timeout: Duration,
+) -> Option<ClusterInfo> {
+    let peers = init_cluster_info.peers_addrs();
+    let connects = rpc::connect(peers)
+        .await
+        .ok()?
+        .map(|pair| pair.1)
+        .collect_vec();
+    let mut futs = connects
+        .iter()
+        .map(|c| {
+            c.fetch_cluster(
+                FetchClusterRequest {
+                    linearizable: false,
+                },
+                timeout,
+            )
+        })
+        .collect::<FuturesUnordered<_>>();
+    let mut res = None;
+    while let Some(Ok(cluster_res)) = futs.next().await {
+        res = Some(ClusterInfo::from_cluster(
+            cluster_res.into_inner(),
+            self_addr,
+        ));
+        debug!("get cluster info from remote success: {:?}", res);
+    }
+    res
 }
 
 #[cfg(test)]
