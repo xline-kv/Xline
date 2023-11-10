@@ -139,6 +139,7 @@
 use std::{collections::HashMap, time::Duration};
 
 use clippy_utilities::OverflowArithmetic;
+use config::InitialClusterState;
 use thiserror::Error;
 
 use crate::config::{ClusterRange, LevelConfig, RotationConfig};
@@ -297,6 +298,20 @@ pub fn parse_duration(s: &str) -> Result<Duration, ConfigParseError> {
         Err(ConfigParseError::InvalidUnit(format!(
             "the unit of time should be one of 'us', 'ms', 's', 'm', 'h' or 'd' ({s})"
         )))
+    }
+}
+
+/// Parse `InitialClusterState` from string
+/// # Errors
+/// Return error when parsing the given string to `InitialClusterState` failed
+#[inline]
+pub fn parse_state(s: &str) -> Result<InitialClusterState, ConfigParseError> {
+    match s {
+        "new" => Ok(InitialClusterState::New),
+        "existing" => Ok(InitialClusterState::Existing),
+        _ => Err(ConfigParseError::InvalidValue(format!(
+            "the initial cluster state should be one of 'new' or 'existing' ({s})"
+        ))),
     }
 }
 
