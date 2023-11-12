@@ -632,6 +632,7 @@ impl CurpError {
     }
 
     /// `ExpiredClientId` error
+    #[allow(unused)] // TODO: used in dedup
     pub(crate) fn expired_client_id() -> Self {
         Self::ExpiredClientId(())
     }
@@ -657,7 +658,7 @@ impl CurpError {
     }
 
     /// `ShuttingDown` error
-    pub(crate) fn shuting_down() -> Self {
+    pub(crate) fn shutting_down() -> Self {
         Self::ShuttingDown(())
     }
 
@@ -682,6 +683,8 @@ impl<E: std::error::Error + 'static> From<E> for CurpError {
     fn from(value: E) -> Self {
         let err: &dyn std::error::Error = &value;
         if let Some(status) = err.downcast_ref::<tonic::Status>() {
+            // Unavailable code often occurs in rpc connection errors,
+            // Please DO NOT use this code in CurpError to tonic::Status.
             if status.code() == tonic::Code::Unavailable {
                 return Self::RpcTransport(());
             }
@@ -733,7 +736,7 @@ impl From<CurpError> for tonic::Status {
                 "Learner not caught up error: The learner has not caught up.",
             ),
             CurpError::ShuttingDown(_) => (
-                tonic::Code::Unavailable,
+                tonic::Code::FailedPrecondition,
                 "Shutting down error: The service is currently shutting down.",
             ),
             CurpError::WrongClusterVersion(_) => (

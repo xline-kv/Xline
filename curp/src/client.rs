@@ -810,7 +810,7 @@ where
                 )
                 .await
             {
-                warn!("publish rpc error: {e}");
+                warn!("publish rpc error: {e:?}");
                 match e {
                     CurpError::ShuttingDown(_) => return Err(ClientError::ShuttingDown),
                     CurpError::WrongClusterVersion(_) => {
@@ -828,12 +828,6 @@ where
                         );
                         continue;
                     }
-                    CurpError::InvalidConfig(_)
-                    | CurpError::LearnerNotCatchUp(_)
-                    | CurpError::NodeAlreadyExists(_)
-                    | CurpError::NodeNotExists(_)
-                    | CurpError::Duplicated(_)
-                    | CurpError::ExpiredClientId(_) => return Ok(Err(e)),
                     _ => {
                         tokio::time::sleep(retry_timeout.next_retry()).await;
                         continue;
