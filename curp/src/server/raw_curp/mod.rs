@@ -324,7 +324,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         debug!("{} gets publish with propose id {}", self.id(), req.id());
         let st_r = self.st.read();
         if st_r.role != Role::Leader {
-            return Err(CurpError::Redirect(st_r.leader_id, st_r.term));
+            return Err(CurpError::redirect(st_r.leader_id, st_r.term));
         }
         let mut log_w = self.log.write();
         let entry = log_w.push(st_r.term, req)?;
