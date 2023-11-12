@@ -65,7 +65,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     /// Handle `Propose` requests
     pub(super) async fn propose(&self, req: ProposeRequest) -> Result<ProposeResponse, CurpError> {
         if self.curp.is_shutdown() {
-            return Err(CurpError::shuting_down());
+            return Err(CurpError::shutting_down());
         }
         self.check_cluster_version(req.cluster_version)?;
         let cmd: Arc<C> = Arc::new(req.cmd()?);
@@ -112,7 +112,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         req: WaitSyncedRequest,
     ) -> Result<WaitSyncedResponse, CurpError> {
         if self.curp.is_shutdown() {
-            return Err(CurpError::shuting_down());
+            return Err(CurpError::shutting_down());
         }
         self.check_cluster_version(req.cluster_version)?;
         let id = req.propose_id();
