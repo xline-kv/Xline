@@ -53,4 +53,10 @@ pub trait StorageApi: Send + Sync + 'static + std::fmt::Debug {
 
     /// Calculate the hash of the storage
     fn hash(&self) -> Result<u32, ExecuteError>;
+
+    /// Get the cached size of the engine
+    fn size(&self) -> u64;
+
+    /// Get the file size of the engine
+    fn file_size(&self) -> Result<u64, ExecuteError>;
 }

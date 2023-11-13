@@ -115,6 +115,19 @@ impl StorageEngine for Engine {
             },
         }
     }
+
+    #[inline]
+    fn size(&self) -> u64 {
+        0
+    }
+
+    #[inline]
+    fn file_size(&self) -> Result<u64, EngineError> {
+        match *self {
+            Engine::Memory(ref e) => e.file_size(),
+            Engine::Rocks(ref e) => e.file_size(),
+        }
+    }
 }
 
 /// `Snapshot` is designed to mask the different type of `MemorySnapshot` and `RocksSnapshot`
