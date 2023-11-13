@@ -138,6 +138,9 @@ where
 
     /// Trigger the barrier of the given trigger id (based on propose id) and log index.
     fn trigger(&self, id: InflightId, index: LogIndex);
+
+    /// Check if the command executor has enough quota to execute the command
+    fn check_quota(&self, cmd: &C) -> bool;
 }
 
 /// Codec for encoding and decoding data into/from the Protobuf format
