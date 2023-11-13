@@ -402,6 +402,10 @@ impl CommandExecutor<TestCommand> for TestCE {
     }
 
     fn trigger(&self, _id: InflightId, _index: LogIndex) {}
+
+    fn check_quota(&self, _cmd: &TestCommand) -> bool {
+        true
+    }
 }
 
 impl TestCE {
