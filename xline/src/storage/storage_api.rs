@@ -50,4 +50,10 @@ pub trait StorageApi: Send + Sync + 'static + std::fmt::Debug {
 
     /// Flush the operations to storage
     fn flush_ops(&self, ops: Vec<WriteOp>) -> Result<Vec<(Vec<u8>, KeyRevision)>, ExecuteError>;
+
+    /// Get the cached size of the engine
+    fn size(&self) -> u64;
+
+    /// Get the file size of the engine
+    fn file_size(&self) -> Result<u64, ExecuteError>;
 }

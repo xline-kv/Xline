@@ -4,7 +4,7 @@ use std::{
     io::{Cursor, Error as IoError, ErrorKind},
     iter::repeat,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{atomic::AtomicU64, Arc},
 };
 
 use bytes::{Buf, Bytes, BytesMut};
@@ -54,6 +54,10 @@ impl From<RocksError> for EngineError {
 pub struct RocksEngine {
     /// The inner storage engine of `RocksDB`
     inner: Arc<DB>,
+    /// The tables of current engine
+    tables: Vec<String>,
+    /// The size cache of the engine
+    size: Arc<AtomicU64>,
 }
 
 impl RocksEngine {
@@ -67,9 +71,29 @@ impl RocksEngine {
         let mut db_opts = Options::default();
         db_opts.create_missing_column_families(true);
         db_opts.create_if_missing(true);
+        let db = Arc::new(DB::open_cf(&db_opts, data_dir, tables)?);
+        let size = Self::get_db_size(&db, tables)?;
         Ok(Self {
-            inner: Arc::new(DB::open_cf(&db_opts, data_dir, tables)?),
+            inner: db,
+            tables: tables.iter().map(|s| (*s).to_owned()).collect(),
+            size: Arc::new(AtomicU64::new(size)),
         })
+    }
+
+    /// Get the total sst file size of all tables
+    fn get_db_size<T: AsRef<str>, V: AsRef<[T]>>(db: &DB, tables: V) -> Result<u64, EngineError> {
+        let mut size = 0;
+        for table in tables.as_ref() {
+            let cf = db
+                .cf_handle(table.as_ref())
+                .ok_or_else(|| EngineError::TableNotFound(table.as_ref().to_owned()))?;
+            db.flush_cf(&cf)?;
+            size = db
+                .property_int_value_cf(&cf, rocksdb::properties::TOTAL_SST_FILES_SIZE)?
+                .unwrap_or(0)
+                .overflow_add(size);
+        }
+        Ok(size)
     }
 }
 
@@ -120,7 +144,7 @@ impl StorageEngine for RocksEngine {
     #[inline]
     fn write_batch(&self, wr_ops: Vec<WriteOperation<'_>>, sync: bool) -> Result<(), EngineError> {
         let mut batch = WriteBatchWithTransaction::<false>::default();
-
+        let mut size = 0;
         for op in wr_ops {
             match op {
                 WriteOperation::Put { table, key, value } => {
@@ -128,6 +152,12 @@ impl StorageEngine for RocksEngine {
                         .inner
                         .cf_handle(table)
                         .ok_or(EngineError::TableNotFound(table.to_owned()))?;
+                    // max write data size = 2 * key + value + 1008
+                    size = size
+                        .overflow_add(key.len().overflow_mul(2))
+                        .overflow_add(value.len())
+                        .overflow_add(table.len())
+                        .overflow_add(1008);
                     batch.put_cf(&cf, key, value);
                 }
                 WriteOperation::Delete { table, key } => {
@@ -148,7 +178,13 @@ impl StorageEngine for RocksEngine {
         }
         let mut opt = WriteOptions::default();
         opt.set_sync(sync);
-        self.inner.write_opt(batch, &opt).map_err(EngineError::from)
+        let res = self.inner.write_opt(batch, &opt).map_err(EngineError::from);
+        if res.is_ok() {
+            _ = self
+                .size
+                .fetch_add(size.numeric_cast(), std::sync::atomic::Ordering::Relaxed);
+        }
+        res
     }
 
     #[inline]
@@ -208,6 +244,17 @@ impl StorageEngine for RocksEngine {
         }
         snapshot.clean().await?;
         Ok(())
+    }
+
+    fn size(&self) -> u64 {
+        self.size.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Get the file size of the engine. This method need to flush memtable to disk. do not call it frequently.
+    fn file_size(&self) -> Result<u64, EngineError> {
+        let size = Self::get_db_size(&self.inner, &self.tables)?;
+        self.size.store(size, std::sync::atomic::Ordering::Relaxed);
+        Ok(size)
     }
 }
 
@@ -551,6 +598,8 @@ impl SnapshotApi for RocksSnapshot {
 
 #[cfg(test)]
 mod test {
+    use std::env::temp_dir;
+
     use test_macros::abort_on_panic;
 
     use super::*;
@@ -581,5 +630,25 @@ mod test {
         let res = engine.apply_snapshot(fake_snapshot, &["not_exist"]).await;
         assert!(res.is_err());
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_engine_size() {
+        let path = temp_dir().join("test_engine_size");
+        let engine = RocksEngine::new(path.clone(), &TEST_TABLES).unwrap();
+        let size1 = engine.file_size().unwrap();
+        engine
+            .write_batch(
+                vec![WriteOperation::new_put(
+                    "t1",
+                    b"key".to_vec(),
+                    b"value".to_vec(),
+                )],
+                true,
+            )
+            .unwrap();
+        let size2 = engine.file_size().unwrap();
+        assert!(size2 > size1);
+        fs::remove_dir_all(path).unwrap();
     }
 }

@@ -203,6 +203,16 @@ impl StorageApi for DB {
             .map_err(|e| ExecuteError::DbError(format!("Failed to flush ops, error: {e}")))?;
         Ok(revs)
     }
+
+    fn size(&self) -> u64 {
+        self.engine.size()
+    }
+
+    fn file_size(&self) -> Result<u64, ExecuteError> {
+        self.engine
+            .file_size()
+            .map_err(|e| ExecuteError::DbError(format!("Failed to get file size, error: {e}")))
+    }
 }
 
 /// Buffered Write Operation

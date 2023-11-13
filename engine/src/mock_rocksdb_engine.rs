@@ -114,6 +114,16 @@ impl StorageEngine for RocksEngine {
         self.inner.apply_snapshot(snapshot.inner, tables).await?;
         self.fs_sync()
     }
+
+    #[inline]
+    fn size(&self) -> u64 {
+        0
+    }
+
+    #[inline]
+    fn file_size(&self) -> Result<u64, EngineError> {
+        Ok(0)
+    }
 }
 
 /// A mock snapshot of the `RocksEngine`

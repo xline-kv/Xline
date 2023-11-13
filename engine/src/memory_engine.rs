@@ -164,6 +164,14 @@ impl StorageEngine for MemoryEngine {
         *db = new_db;
         Ok(())
     }
+
+    fn size(&self) -> u64 {
+        0
+    }
+
+    fn file_size(&self) -> Result<u64, EngineError> {
+        Ok(0)
+    }
 }
 
 /// A snapshot of the `MemoryEngine`
