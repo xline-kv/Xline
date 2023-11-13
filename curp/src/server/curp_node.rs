@@ -52,6 +52,8 @@ pub(super) struct CurpNode<C: Command, RC: RoleChange> {
     spec_pool: SpecPoolRef<C>,
     /// Cmd watch board for tracking the cmd sync results
     cmd_board: CmdBoardRef<C>,
+    /// Command executor
+    ce: Arc<dyn CommandExecutor<C>>,
     /// CE event tx,
     ce_event_tx: Arc<dyn CEEventTxApi<C>>,
     /// Storage
@@ -70,7 +72,14 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         let id = req.propose_id();
         self.check_cluster_version(req.cluster_version)?;
         let cmd: Arc<C> = Arc::new(req.cmd()?);
-
+        if !self.ce.check_quota(cmd.as_ref()) {
+            warn!(
+                "{} has no enough quota to execute cmd({:?})",
+                self.curp.id(),
+                cmd
+            );
+            return Err(CurpError::Internal("Quota exceeded".to_owned()));
+        }
         // handle proposal
         let sp_exec = self.curp.handle_propose(id, Arc::clone(&cmd))?;
 
@@ -679,7 +688,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         };
 
         start_cmd_workers(
-            cmd_executor,
+            Arc::clone(&cmd_executor),
             Arc::clone(&curp),
             task_rx,
             done_tx,
@@ -701,6 +710,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
             ce_event_tx,
             storage,
             snapshot_allocator,
+            ce: cmd_executor,
         })
     }
 

@@ -1,11 +1,6 @@
 use std::sync::Arc;
 
-use super::barriers::{IdBarrier, IndexBarrier};
-use crate::{
-    revision_number::RevisionNumberGenerator,
-    rpc::RequestBackend,
-    storage::{db::WriteOp, storage_api::StorageApi, AuthStore, KvStore, LeaseStore},
-};
+use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{
     cmd::{Command as CurpCommand, CommandExecutor as CurpCommandExecutor},
     error::ClientError,
@@ -14,7 +9,18 @@ use curp::{
 use dashmap::DashMap;
 use engine::Snapshot;
 use event_listener::Event;
-use xlineapi::{command::Command, RequestWrapper};
+use xlineapi::{
+    execute_error::ExecuteError,
+    PutRequest, Request, TxnRequest,
+    {command::Command, RequestWrapper},
+};
+
+use super::barriers::{IdBarrier, IndexBarrier};
+use crate::{
+    revision_number::RevisionNumberGenerator,
+    rpc::RequestBackend,
+    storage::{db::WriteOp, storage_api::StorageApi, AuthStore, KvStore, LeaseStore},
+};
 
 /// Meta table name
 pub(crate) const META_TABLE: &str = "meta";
@@ -74,6 +80,8 @@ where
     auth_rev: Arc<RevisionNumberGenerator>,
     /// Compact events
     compact_events: Arc<DashMap<u64, Arc<Event>>>,
+    /// Quota size
+    quota: u64,
 }
 
 impl<S> CommandExecutor<S>
@@ -103,6 +111,74 @@ where
             general_rev,
             auth_rev,
             compact_events,
+            quota: 0,
+        }
+    }
+
+    /// Estimate the put size
+    fn put_size(req: &PutRequest) -> u64 {
+        let rev_size = 16; // size of `Revision` struct
+        let kv_size = req.key.len().overflow_add(req.value.len()).overflow_add(32); // size of `KeyValue` struct
+        1010 // padding(1008) + cf_handle(2)
+            .overflow_add(rev_size.overflow_mul(2))
+            .overflow_add(kv_size.cast())
+    }
+
+    /// Estimate the txn size
+    fn txn_size(req: &TxnRequest) -> u64 {
+        let success_size = req
+            .success
+            .iter()
+            .map(|req_op| match req_op.request {
+                Some(Request::RequestPut(ref r)) => Self::put_size(r),
+                Some(Request::RequestTxn(ref r)) => Self::txn_size(r),
+                _ => 0,
+            })
+            .sum::<u64>();
+        let failure_size = req
+            .failure
+            .iter()
+            .map(|req_op| match req_op.request {
+                Some(Request::RequestPut(ref r)) => Self::put_size(r),
+                Some(Request::RequestTxn(ref r)) => Self::txn_size(r),
+                _ => 0,
+            })
+            .sum::<u64>();
+
+        success_size.max(failure_size)
+    }
+
+    /// Estimate the size that may increase after the request is written
+    fn cmd_size(req: &RequestWrapper) -> u64 {
+        match *req {
+            RequestWrapper::PutRequest(ref req) => Self::put_size(req),
+            RequestWrapper::TxnRequest(ref req) => Self::txn_size(req),
+            RequestWrapper::LeaseGrantRequest(_) => {
+                // padding(1008) + cf_handle(5) + lease_id_size(8) * 2 + lease_size(24)
+                1053
+            }
+            RequestWrapper::RangeRequest(_)
+            | RequestWrapper::DeleteRangeRequest(_)
+            | RequestWrapper::CompactionRequest(_)
+            | RequestWrapper::AuthEnableRequest(_)
+            | RequestWrapper::AuthDisableRequest(_)
+            | RequestWrapper::AuthStatusRequest(_)
+            | RequestWrapper::AuthRoleAddRequest(_)
+            | RequestWrapper::AuthRoleDeleteRequest(_)
+            | RequestWrapper::AuthRoleGetRequest(_)
+            | RequestWrapper::AuthRoleGrantPermissionRequest(_)
+            | RequestWrapper::AuthRoleListRequest(_)
+            | RequestWrapper::AuthRoleRevokePermissionRequest(_)
+            | RequestWrapper::AuthUserAddRequest(_)
+            | RequestWrapper::AuthUserChangePasswordRequest(_)
+            | RequestWrapper::AuthUserDeleteRequest(_)
+            | RequestWrapper::AuthUserGetRequest(_)
+            | RequestWrapper::AuthUserGrantRoleRequest(_)
+            | RequestWrapper::AuthUserListRequest(_)
+            | RequestWrapper::AuthUserRevokeRoleRequest(_)
+            | RequestWrapper::AuthenticateRequest(_)
+            | RequestWrapper::LeaseRevokeRequest(_)
+            | RequestWrapper::LeaseLeasesRequest(_) => 0,
         }
     }
 }
@@ -155,6 +231,7 @@ where
         index: LogIndex,
         revision: i64,
     ) -> Result<<Command as CurpCommand>::ASR, <Command as CurpCommand>::Error> {
+        let quota_enough = self.check_quota(cmd);
         let mut ops = vec![WriteOp::PutAppliedIndex(index)];
         let wrapper = cmd.request();
         let (res, mut wr_ops) = match wrapper.request.backend() {
@@ -175,6 +252,9 @@ where
             self.kv_storage.insert_index(key_revisions);
         }
         self.lease_storage.mark_lease_synced(&wrapper.request);
+        if !quota_enough {
+            return Err(ExecuteError::DbError("Quota exceeded".to_owned()));
+        }
         Ok(res)
     }
 
@@ -218,6 +298,18 @@ where
     fn trigger(&self, id: InflightId, index: LogIndex) {
         self.id_barrier.trigger(id);
         self.index_barrier.trigger(index);
+    }
+
+    fn check_quota(&self, cmd: &Command) -> bool {
+        let cmd_size = Self::cmd_size(&cmd.request().request);
+        if self.persistent.size().overflow_add(cmd_size) > self.quota {
+            if let Ok(file_size) = self.persistent.file_size() {
+                if file_size.overflow_add(cmd_size) > self.quota {
+                    return false;
+                }
+            }
+        }
+        true
     }
 }
 
