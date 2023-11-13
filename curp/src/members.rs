@@ -375,15 +375,16 @@ pub async fn get_cluster_info_from_remote(
             )
         })
         .collect::<FuturesUnordered<_>>();
-    let mut res = None;
-    while let Some(Ok(cluster_res)) = futs.next().await {
-        res = Some(ClusterInfo::from_cluster(
-            cluster_res.into_inner(),
-            self_addr,
-        ));
-        debug!("get cluster info from remote success: {:?}", res);
+    while let Some(result) = futs.next().await {
+        if let Ok(cluster_res) = result {
+            debug!("get cluster info from remote success: {:?}", cluster_res);
+            return Some(ClusterInfo::from_cluster(
+                cluster_res.into_inner(),
+                self_addr,
+            ));
+        }
     }
-    res
+    None
 }
 
 #[cfg(test)]

@@ -141,6 +141,7 @@ use std::{collections::HashMap, env, net::ToSocketAddrs, path::PathBuf, time::Du
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use curp::members::{get_cluster_info_from_remote, ClusterInfo};
+use itertools::Itertools;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use opentelemetry::{global, runtime::Tokio, sdk::propagation::TraceContextPropagator};
 use opentelemetry_contrib::trace::exporter::jaeger_json::JaegerJsonExporter;
@@ -533,12 +534,12 @@ async fn main() -> Result<()> {
             } else {
                 addr
             };
-            address
-                .to_socket_addrs()?
-                .next()
-                .ok_or_else(|| anyhow!("failed to resolve self address {}", addr))
+            address.to_socket_addrs()
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .collect_vec();
     debug!("name = {:?}", cluster_config.name());
     debug!("server_addr = {server_addr:?}");
     debug!("cluster_peers = {:?}", cluster_config.members());
