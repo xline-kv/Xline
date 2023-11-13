@@ -149,6 +149,9 @@ where
 
     /// Trigger the barrier of the given id and index.
     fn trigger(&self, id: ProposeId, index: u64);
+
+    /// Check if the command executor has enough quota to execute the command
+    fn check_quota(&self, cmd: &C) -> bool;
 }
 
 /// Codec for encoding and decoding data into/from the Protobuf format

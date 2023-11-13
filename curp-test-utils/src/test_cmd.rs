@@ -428,6 +428,10 @@ impl CommandExecutor<TestCommand> for TestCE {
     }
 
     fn trigger(&self, _id: ProposeId, _index: u64) {}
+
+    fn check_quota(&self, _cmd: &TestCommand) -> bool {
+        true
+    }
 }
 
 impl TestCE {
