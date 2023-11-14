@@ -552,6 +552,7 @@ async fn main() -> Result<()> {
         InitialClusterState::Existing => get_cluster_info_from_remote(
             &init_cluster_info,
             server_addr_str,
+            &name,
             Duration::from_secs(3),
         )
         .await

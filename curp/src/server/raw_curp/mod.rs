@@ -58,7 +58,7 @@ use crate::{
         spec_pool::SpecPoolRef,
     },
     snapshot::{Snapshot, SnapshotMeta},
-    LogIndex,
+    LogIndex, PublishRequest,
 };
 
 /// Curp state
@@ -338,6 +338,20 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         Ok((info, Ok(())))
     }
 
+    /// Handle `publish` request
+    pub(super) fn handle_publish(&self, req: PublishRequest) -> Result<(), CurpError> {
+        debug!("{} gets publish with propose id {}", self.id(), req.id());
+        let st_r = self.st.read();
+        if st_r.role != Role::Leader {
+            return Err(CurpError::Redirect(st_r.leader_id, st_r.term));
+        }
+        let mut log_w = self.log.write();
+        let entry = log_w.push(st_r.term, req)?;
+        debug!("{} gets new log[{}]", self.id(), entry.index);
+        self.entry_process(&mut log_w, entry, false);
+        Ok(())
+    }
+
     /// Handle `append_entries`
     /// Return `Ok(term)` if succeeds
     /// Return `Err(term, hint_index)` if fails
@@ -563,7 +577,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                         matches!(c.change_type(), ConfChangeType::Remove)
                             && c.node_id == candidate_id
                     }),
-                    EntryData::Empty(_) | EntryData::Command(_) | EntryData::Shutdown(_) => false,
+                    EntryData::Empty(_)
+                    | EntryData::Command(_)
+                    | EntryData::Shutdown(_)
+                    | EntryData::SetName(_, _, _) => false,
                 });
         // extra check to shutdown removed node
         if !contains_candidate && !remove_candidate_is_not_committed {
@@ -1432,7 +1449,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                     let _ignore =
                         ucp_l.insert(conf_change.id(), conf_change.as_ref().clone().into());
                 }
-                EntryData::Shutdown(_) | EntryData::Empty(_) => {}
+                EntryData::Shutdown(_) | EntryData::Empty(_) | EntryData::SetName(_, _, _) => {}
             }
         }
     }

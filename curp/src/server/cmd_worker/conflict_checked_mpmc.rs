@@ -347,9 +347,10 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                                 Err(err) => Some(err),
                             }
                         }
-                        EntryData::ConfChange(_) | EntryData::Shutdown(_) | EntryData::Empty(_) => {
-                            None
-                        }
+                        EntryData::ConfChange(_)
+                        | EntryData::Shutdown(_)
+                        | EntryData::Empty(_)
+                        | EntryData::SetName(_, _, _) => None,
                     };
                     *exe_st = ExeState::Executing;
                     let task = Task {

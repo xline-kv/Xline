@@ -45,7 +45,7 @@ use crate::{
     },
     server::{cmd_worker::CEEventTxApi, raw_curp::SyncAction, storage::db::DB},
     snapshot::{Snapshot, SnapshotMeta},
-    ConfChangeType,
+    ConfChangeType, PublishRequest, PublishResponse,
 };
 
 /// Curp error
@@ -306,6 +306,12 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
             term,
             error,
         })
+    }
+
+    /// Handle `Publish` requests
+    pub(super) fn publish(&self, req: PublishRequest) -> Result<PublishResponse, CurpError> {
+        self.curp.handle_publish(req)?;
+        Ok(PublishResponse::default())
     }
 
     /// Handle `AppendEntries` requests
@@ -922,9 +928,8 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                 }
                 let result = curp.handle_pre_vote_resp(id, resp.term, resp.vote_granted);
                 match result {
-                    Ok(None) => {}
+                    Ok(None) | Err(()) => {}
                     Ok(Some(v)) => return Some(v),
-                    Err(()) => return None,
                 }
             } else {
                 // collect follower spec pool

@@ -3,7 +3,8 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use anyhow::{anyhow, Result};
 use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{
-    client::Client, members::ClusterInfo, server::Rpc, InnerProtocolServer, ProtocolServer,
+    client::Client, error::ClientError, members::ClusterInfo, server::Rpc, InnerProtocolServer,
+    ProtocolServer,
 };
 use engine::{MemorySnapshotAllocator, RocksSnapshotAllocator, SnapshotAllocator};
 use futures::stream::select_all;
@@ -13,7 +14,7 @@ use tokio::{net::TcpListener, sync::mpsc::channel, task::JoinHandle};
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::{server::TcpIncoming, Server};
 use tonic_health::ServingStatus;
-use tracing::error;
+use tracing::{error, warn};
 use utils::{
     config::{ClientConfig, CompactConfig, CurpConfig, ServerTimeout, StorageConfig},
     shutdown,
@@ -217,6 +218,7 @@ impl XlineServer {
             maintenance_server,
             cluster_server,
             curp_server,
+            curp_client,
         ) = self.init_servers(persistent, key_pair).await?;
         let (mut reporter, health_server) = tonic_health::server::health_reporter();
         reporter
@@ -238,6 +240,9 @@ impl XlineServer {
                 .serve_with_incoming_shutdown(incoming, signal)
                 .await
         });
+        if let Err(e) = self.publish(curp_client).await {
+            warn!("publish name to cluster failed: {:?}", e);
+        };
         Ok(handle)
     }
 
@@ -266,6 +271,7 @@ impl XlineServer {
             maintenance_server,
             cluster_server,
             curp_server,
+            curp_client,
         ) = self.init_servers(persistent, key_pair).await?;
         let (mut reporter, health_server) = tonic_health::server::health_reporter();
         reporter
@@ -286,6 +292,9 @@ impl XlineServer {
                 .serve_with_incoming_shutdown(TcpListenerStream::new(xline_listener), signal)
                 .await
         });
+        if let Err(e) = self.publish(curp_client).await {
+            warn!("publish name to cluster failed: {:?}", e);
+        };
         Ok(())
     }
 
@@ -305,6 +314,7 @@ impl XlineServer {
         MaintenanceServer<S>,
         ClusterServer,
         Arc<CurpServer<S>>,
+        Arc<CurpClient>,
     )> {
         let (header_gen, id_gen) = Self::construct_generator(&self.cluster_info);
         let lease_collection = Self::construct_lease_collection(
@@ -412,9 +422,22 @@ impl XlineServer {
                 Arc::clone(&header_gen),
                 Arc::clone(&self.cluster_info),
             ),
-            ClusterServer::new(client, header_gen),
+            ClusterServer::new(Arc::clone(&client), header_gen),
             Arc::new(curp_server),
+            client,
         ))
+    }
+
+    /// Publish the name of current node to cluster
+    async fn publish(&self, curp_client: Arc<CurpClient>) -> Result<(), ClientError<Command>> {
+        let propose_id = curp_client.gen_propose_id().await?;
+        curp_client
+            .publish(
+                propose_id,
+                self.cluster_info.self_id(),
+                self.cluster_info.self_name(),
+            )
+            .await
     }
 
     /// Check if `XlineServer` is stopped
