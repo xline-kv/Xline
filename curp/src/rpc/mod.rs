@@ -10,8 +10,9 @@ pub use self::proto::{
         propose_conf_change_response::Error as ConfChangeError,
         protocol_client,
         protocol_server::ProtocolServer,
-        CmdResult, FetchClusterRequest, FetchClusterResponse, Member, ProposeConfChangeRequest,
-        ProposeConfChangeResponse, ProposeRequest, ProposeResponse,
+        ClientLeaseKeepAliveRequest, ClientLeaseKeepAliveResponse, CmdResult, FetchClusterRequest,
+        FetchClusterResponse, Member, ProposeConfChangeRequest, ProposeConfChangeResponse,
+        ProposeRequest, ProposeResponse,
     },
     inner_messagepb::inner_protocol_server::InnerProtocolServer,
 };
@@ -111,10 +112,11 @@ impl FetchClusterResponse {
 
 impl ProposeRequest {
     /// Create a new `Propose` request
-    pub(crate) fn new<C: Command>(cmd: &C, cluster_version: u64) -> Self {
+    pub(crate) fn new<C: Command>(cmd: &C, cluster_version: u64, first_incomplete: u64) -> Self {
         Self {
             command: cmd.encode(),
             cluster_version,
+            first_incomplete,
         }
     }
 
@@ -625,6 +627,7 @@ impl ShutdownRequest {
 
 impl ConfChangeError {
     /// Create a new `ConfChangeError` with `ProposeError`
+    #[allow(unused)]
     pub(crate) fn new_propose(error: ProposeError) -> Self {
         Self::Propose(error.into())
     }
@@ -635,5 +638,50 @@ impl From<ConfChangeError> for tonic::Status {
     fn from(_err: ConfChangeError) -> Self {
         // we'd better expose some err messages for client
         tonic::Status::invalid_argument("")
+    }
+}
+
+#[allow(unused)] // TODO: Remove
+impl ClientLeaseKeepAliveRequest {
+    /// Create a new keep alive request
+    pub(crate) fn keep_alive(client_id: u64) -> Self {
+        Self { client_id }
+    }
+
+    /// Create a new lease grant request
+    pub(crate) fn grant() -> Self {
+        Self { client_id: 0 }
+    }
+}
+
+impl ClientLeaseKeepAliveResponse {
+    /// Return this if it is not a leader
+    pub(crate) fn not_leader(leader_id: Option<ServerId>, term: u64) -> Self {
+        Self {
+            leader_id,
+            term,
+            client_id: 0,
+            cluster_shutdown: false,
+        }
+    }
+
+    /// Return this if the client id needs to be set
+    pub(crate) fn set_client_id(client_id: u64) -> Self {
+        Self {
+            leader_id: None,
+            term: 0,
+            client_id,
+            cluster_shutdown: false,
+        }
+    }
+
+    /// Return this if the cluster is shutting down
+    pub(crate) fn cluster_shutdown() -> Self {
+        Self {
+            leader_id: None,
+            term: 0,
+            client_id: 0,
+            cluster_shutdown: true,
+        }
     }
 }

@@ -15,7 +15,7 @@ use curp::{
 use curp_external_api::cmd::ProposeId;
 use curp_test_utils::{
     sleep_secs,
-    test_cmd::{next_id, TestCE, TestCommand, TestCommandResult},
+    test_cmd::{TestCE, TestCommand, TestCommandResult},
     TestRoleChange, TestRoleChangeInner,
 };
 use engine::{

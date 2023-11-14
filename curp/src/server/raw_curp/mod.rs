@@ -42,6 +42,7 @@ use self::{
     state::{CandidateState, LeaderState, State},
 };
 use super::{cmd_worker::CEEventTxApi, CurpError, PoolEntry};
+use crate::server::client_lease::LeaseManagerRef;
 use crate::{
     cmd::{Command, ProposeId},
     connect::InnerConnectApi,
@@ -158,6 +159,8 @@ struct Context<C: Command, RC: RoleChange> {
     cluster_info: Arc<ClusterInfo>,
     /// Config
     cfg: Arc<CurpConfig>,
+    /// Lease manager for client id
+    lm: LeaseManagerRef,
     /// Cmd board for tracking the cmd sync results
     cb: CmdBoardRef<C>,
     /// Speculative pool
@@ -191,6 +194,7 @@ impl<C: Command, RC: RoleChange> Debug for Context<C, RC> {
         f.debug_struct("Context")
             .field("cluster_info", &self.cluster_info)
             .field("cfg", &self.cfg)
+            .field("lm", &self.lm)
             .field("cb", &self.cb)
             .field("sp", &self.sp)
             .field("ucp", &self.ucp)
@@ -240,6 +244,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     pub(super) fn handle_propose(
         &self,
         cmd: Arc<C>,
+        first_incomplete: u64,
     ) -> Result<((Option<ServerId>, u64), Result<bool, ProposeError>), CurpError> {
         debug!("{} gets proposal for cmd({})", self.id(), cmd.id());
         let mut conflict = self.insert_sp(Arc::clone(&cmd));
@@ -256,10 +261,12 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 },
             ));
         }
-        let id = cmd.id();
-        if !self.ctx.cb.map_write(|mut cb_w| cb_w.sync.insert(id)) {
-            return Ok((info, Err(ProposeError::Duplicated)));
-        }
+
+        // deduplication
+        if let Err(e) = self.deduplicate(cmd.id(), Some(first_incomplete)) {
+            return Ok((info, Err(e)));
+        };
+
         // leader also needs to check if the cmd conflicts un-synced commands
         conflict |= self.insert_ucp(Arc::clone(&cmd));
         let mut log_w = self.log.write();
@@ -279,16 +286,24 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     /// Handle `shutdown` request
-    pub(super) fn handle_shutdown(&self, propose_id: ProposeId) -> Result<(), CurpError> {
+    pub(super) fn handle_shutdown(
+        &self,
+        propose_id: ProposeId,
+    ) -> Result<Result<(), ProposeError>, CurpError> {
         let st_r = self.st.read();
         if st_r.role != Role::Leader {
             return Err(CurpError::Redirect(st_r.leader_id, st_r.term));
         }
+        // deduplication
+        if let Err(e) = self.deduplicate(propose_id, None) {
+            return Ok(Err(e));
+        };
+
         let mut log_w = self.log.write();
         let entry = log_w.push(st_r.term, EntryData::Shutdown(propose_id))?;
         debug!("{} gets new log[{}]", self.id(), entry.index);
         self.entry_process(&mut log_w, entry, true);
-        Ok(())
+        Ok(Ok(()))
     }
 
     /// Handle `propose_conf_change` request
@@ -315,13 +330,12 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         let pool_entry = PoolEntry::from(conf_change.clone());
         let mut conflict = self.insert_sp(pool_entry.clone());
         conflict |= self.insert_ucp(pool_entry);
-        let id = conf_change.id();
-        if !self.ctx.cb.map_write(|mut cb_w| cb_w.sync.insert(id)) {
-            return Ok((
-                info,
-                Err(ConfChangeError::new_propose(ProposeError::Duplicated)),
-            ));
-        }
+
+        // deduplication
+        if let Err(e) = self.deduplicate(conf_change.id(), None) {
+            return Ok((info, Err(ConfChangeError::Propose(i32::from(e)))));
+        };
+
         let changes = conf_change.changes().to_owned();
         let mut log_w = self.log.write();
         let entry = log_w.push(st_r.term, conf_change)?;
@@ -768,6 +782,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     pub(super) fn new(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
+        lease_manager: LeaseManagerRef,
         cmd_board: CmdBoardRef<C>,
         spec_pool: SpecPoolRef<C>,
         uncommitted_pool: UncommittedPoolRef<C>,
@@ -808,6 +823,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 change_rx,
                 connects,
                 last_conf_change_idx: AtomicU64::new(0),
+                lm: lease_manager,
             },
             shutdown_trigger,
         };
@@ -825,6 +841,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     pub(super) fn recover_from(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
+        lease_manager: LeaseManagerRef,
         cmd_board: CmdBoardRef<C>,
         spec_pool: SpecPoolRef<C>,
         uncommitted_pool: UncommittedPoolRef<C>,
@@ -842,6 +859,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         let raw_curp = Self::new(
             cluster_info,
             is_leader,
+            lease_manager,
             cmd_board,
             spec_pool,
             uncommitted_pool,
@@ -1195,7 +1213,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 }
 
 // Utils
-// Don't grab lock in the following functions(except cb or sp's lock)
+// Don't grab lock in the following functions(except cb, ucp, lm or sp's lock)
 impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     /// Server becomes a pre candidate
     fn become_pre_candidate(
@@ -1396,12 +1414,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             })
             .collect_vec();
 
-        let mut cb_w = self.ctx.cb.write();
         let mut sp_l = self.ctx.sp.lock();
 
         let term = st.term;
         for cmd in recovered_cmds {
-            let _ig_sync = cb_w.sync.insert(cmd.id()); // may have been inserted before
             let _ig_spec = sp_l.insert(cmd.clone()); // may have been inserted before
             #[allow(clippy::expect_used)]
             let entry = log
@@ -1582,4 +1598,36 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             conflict_uncommitted
         })
     }
+
+    /// Process deduplication and acknowledge the `first_incomplete` for this client id
+    fn deduplicate(
+        &self,
+        ProposeId(client_id, seq_num): ProposeId,
+        first_incomplete: Option<u64>,
+    ) -> Result<(), ProposeError> {
+        // deduplication
+        if self.ctx.lm.read().check_alive(client_id) {
+            let mut cb_w = self.ctx.cb.write();
+            let tracker = cb_w.tracker(client_id);
+            if tracker.only_record(seq_num) {
+                return Err(ProposeError::Duplicated);
+            }
+            if let Some(first_incomplete) = first_incomplete {
+                let before = tracker.first_incomplete();
+                if tracker.must_advance_to(first_incomplete) {
+                    for seq_num_ack in before..first_incomplete {
+                        self.ack(ProposeId(client_id, seq_num_ack));
+                    }
+                }
+            }
+        } else {
+            self.ctx.cb.write().client_expired(client_id);
+            return Err(ProposeError::ExpiredClientId);
+        }
+        Ok(())
+    }
+
+    /// Acknowledge the propose id and GC it's cmd board result
+    #[allow(clippy::unused_self)] // TODO refactor cmd board gc
+    fn ack(&self, _id: ProposeId) {}
 }

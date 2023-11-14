@@ -190,3 +190,6 @@ mod rpc;
 
 /// Snapshot
 mod snapshot;
+
+/// Command tracker shared between client and server
+mod tracker;

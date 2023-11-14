@@ -1,3 +1,6 @@
+use std::cmp::Reverse;
+use std::ops::Add;
+use std::time::{Duration, Instant};
 use std::{fmt::Debug, sync::Arc};
 
 use curp_external_api::cmd::{ConflictCheck, ProposeId};
@@ -21,7 +24,8 @@ use crate::{
     members::{ClusterInfo, ServerId},
     role_change::RoleChange,
     rpc::{
-        AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse,
+        AppendEntriesRequest, AppendEntriesResponse, ClientLeaseKeepAliveRequest,
+        ClientLeaseKeepAliveResponse, FetchClusterRequest, FetchClusterResponse,
         FetchReadStateRequest, FetchReadStateResponse, InnerProtocolServer, InstallSnapshotRequest,
         InstallSnapshotResponse, ProposeConfChangeRequest, ProposeConfChangeResponse,
         ProposeRequest, ProposeResponse, ProtocolServer, ShutdownRequest, ShutdownResponse,
@@ -51,6 +55,9 @@ mod curp_node;
 /// Storage
 mod storage;
 
+/// Client id lease manager
+mod client_lease;
+
 /// Default server serving port
 #[cfg(not(madsim))]
 static DEFAULT_SERVER_PORT: u16 = 12345;
@@ -76,14 +83,14 @@ impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::Protocol for Rp
         ))
     }
 
-    #[instrument(skip_all, name = "curp_shutdown")]
-    async fn shutdown(
+    #[instrument(skip_all, name = "curp_wait_synced")]
+    async fn wait_synced(
         &self,
-        request: tonic::Request<ShutdownRequest>,
-    ) -> Result<tonic::Response<ShutdownResponse>, tonic::Status> {
+        request: tonic::Request<WaitSyncedRequest>,
+    ) -> Result<tonic::Response<WaitSyncedResponse>, tonic::Status> {
         request.metadata().extract_span();
         Ok(tonic::Response::new(
-            self.inner.shutdown(request.into_inner()).await?,
+            self.inner.wait_synced(request.into_inner()).await?,
         ))
     }
 
@@ -98,14 +105,14 @@ impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::Protocol for Rp
         ))
     }
 
-    #[instrument(skip_all, name = "curp_wait_synced")]
-    async fn wait_synced(
+    #[instrument(skip_all, name = "curp_shutdown")]
+    async fn shutdown(
         &self,
-        request: tonic::Request<WaitSyncedRequest>,
-    ) -> Result<tonic::Response<WaitSyncedResponse>, tonic::Status> {
+        request: tonic::Request<ShutdownRequest>,
+    ) -> Result<tonic::Response<ShutdownResponse>, tonic::Status> {
         request.metadata().extract_span();
         Ok(tonic::Response::new(
-            self.inner.wait_synced(request.into_inner()).await?,
+            self.inner.shutdown(request.into_inner()).await?,
         ))
     }
 
@@ -128,6 +135,19 @@ impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::Protocol for Rp
             self.inner.fetch_read_state(request.into_inner())?,
         ))
     }
+
+    #[instrument(skip_all, name = "client_lease_keep_alive")]
+    async fn client_lease_keep_alive(
+        &self,
+        request: tonic::Request<tonic::Streaming<ClientLeaseKeepAliveRequest>>,
+    ) -> Result<tonic::Response<ClientLeaseKeepAliveResponse>, tonic::Status> {
+        let req_stream = request.into_inner().map_err(|e| {
+            format!("client lease keep alive transmission failed at client side, {e}")
+        });
+        Ok(tonic::Response::new(
+            self.inner.client_lease_keep_alive(req_stream).await?,
+        ))
+    }
 }
 
 #[tonic::async_trait]
@@ -142,6 +162,16 @@ impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::InnerProtocol f
         ))
     }
 
+    #[instrument(skip_all, name = "curp_vote")]
+    async fn vote(
+        &self,
+        request: tonic::Request<VoteRequest>,
+    ) -> Result<tonic::Response<VoteResponse>, tonic::Status> {
+        Ok(tonic::Response::new(
+            self.inner.vote(request.into_inner()).await?,
+        ))
+    }
+
     #[instrument(skip_all, name = "curp_install_snapshot")]
     async fn install_snapshot(
         &self,
@@ -152,16 +182,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::InnerProtocol f
             .map_err(|e| format!("snapshot transmission failed at client side, {e}"));
         Ok(tonic::Response::new(
             self.inner.install_snapshot(req_stream).await?,
-        ))
-    }
-
-    #[instrument(skip_all, name = "curp_vote")]
-    async fn vote(
-        &self,
-        request: tonic::Request<VoteRequest>,
-    ) -> Result<tonic::Response<VoteResponse>, tonic::Status> {
-        Ok(tonic::Response::new(
-            self.inner.vote(request.into_inner()).await?,
         ))
     }
 }
@@ -289,6 +309,12 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
             .await,
         );
 
+        // grant a lease for test client id
+        let _ig = server.inner.lease_manager.write().expiry_queue.push(
+            curp_test_utils::test_cmd::TEST_CLIENT_ID,
+            Reverse(Instant::now().add(Duration::from_nanos(u64::MAX))),
+        );
+
         tonic::transport::Server::builder()
             .add_service(ProtocolServer::from_arc(Arc::clone(&server)))
             .add_service(InnerProtocolServer::from_arc(server))
@@ -333,6 +359,12 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
                 shutdown_trigger,
             )
             .await,
+        );
+
+        // grant a lease for test client id
+        let _ig = server.inner.lease_manager.write().expiry_queue.push(
+            curp_test_utils::test_cmd::TEST_CLIENT_ID,
+            Reverse(Instant::now().add(Duration::from_nanos(u64::MAX))),
         );
 
         tonic::transport::Server::builder()

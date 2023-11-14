@@ -68,6 +68,7 @@ impl std::fmt::Display for ProposeError {
         match *self {
             Self::KeyConflict => write!(f, "ProposeError: Key Conflict"),
             Self::Duplicated => write!(f, "ProposeError: Duplicated"),
+            Self::ExpiredClientId => write!(f, "ProposeError: ExpiredClientId"),
         }
     }
 }
@@ -77,6 +78,7 @@ impl std::error::Error for ProposeError {
         match *self {
             Self::KeyConflict => "key conflict error",
             Self::Duplicated => "duplicated, the cmd might have already been proposed",
+            Self::ExpiredClientId => "client id expired",
         }
     }
 }
@@ -86,6 +88,7 @@ impl From<i32> for ProposeError {
         match value {
             0 => Self::KeyConflict,
             1 => Self::Duplicated,
+            2 => Self::ExpiredClientId,
             _ => unreachable!("Unknown ProposeError Type"),
         }
     }
