@@ -50,6 +50,9 @@ mod curp_node;
 /// Storage
 mod storage;
 
+/// Curp metrics
+mod metrics;
+
 /// Default server serving port
 #[cfg(not(madsim))]
 static DEFAULT_SERVER_PORT: u16 = 12345;
@@ -180,6 +183,7 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
     /// # Panics
     /// Panic if storage creation failed
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub async fn new<CE: CommandExecutor<C> + 'static>(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
@@ -338,6 +342,7 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
                 snapshot_allocator,
                 role_change,
                 curp_cfg,
+                &opentelemetry::global::meter("curp_tests"),
                 shutdown_trigger,
             )
             .await,

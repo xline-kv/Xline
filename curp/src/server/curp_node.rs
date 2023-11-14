@@ -23,7 +23,7 @@ use super::{
     gc::run_gc_tasks,
     raw_curp::{AppendEntries, RawCurp, UncommittedPool, Vote},
     spec_pool::{SpecPoolRef, SpeculativePool},
-    storage::StorageApi,
+    storage::StorageApi, metrics::Metrics,
 };
 use crate::{
     cmd::{Command, CommandExecutor},
@@ -40,7 +40,7 @@ use crate::{
         PublishResponse, ShutdownRequest, ShutdownResponse, VoteRequest, VoteResponse,
         WaitSyncedRequest, WaitSyncedResponse,
     },
-    server::{cmd_worker::CEEventTxApi, raw_curp::SyncAction, storage::db::DB},
+    server::{cmd_worker::CEEventTxApi, raw_curp::SyncAction, storage::db::DB, metrics},
     snapshot::{Snapshot, SnapshotMeta},
 };
 
@@ -231,6 +231,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         &self,
         req_stream: impl Stream<Item = Result<InstallSnapshotRequest, E>>,
     ) -> Result<InstallSnapshotResponse, CurpError> {
+        metrics::get()
+            .apply_snapshot_in_progress
+            .observe(1, &[]);
         pin_mut!(req_stream);
         let mut snapshot = self
             .snapshot_allocator
@@ -279,6 +282,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                             "failed to reset the command executor by snapshot, {err}"
                         ))
                     })?;
+                metrics::get()
+                    .apply_snapshot_in_progress
+                    .observe(0, &[]);
                 return Ok(InstallSnapshotResponse::new(self.curp.term()));
             }
         }
@@ -521,6 +527,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                                 }
                             }
                             Err(err) => {
+                                if is_empty {
+                                    metrics::get().heartbeat_send_failures.add(1, &[]);
+                                }
                                 warn!("ae to {} failed, {err:?}", connect.id());
                             }
                         };
@@ -568,6 +577,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
 impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
     /// Create a new server instance
     #[inline]
+    #[allow(clippy::too_many_arguments)] // only called once
     pub(super) async fn new<CE: CommandExecutor<C> + 'static>(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
@@ -641,6 +651,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                 connects,
             ))
         };
+        Metrics::register_callback(metrics::get_meter(), Arc::clone(&curp))?;
 
         start_cmd_workers(
             Arc::clone(&cmd_executor),

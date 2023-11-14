@@ -13,6 +13,7 @@ use std::{
     cmp::min,
     collections::{HashMap, HashSet},
     fmt::Debug,
+    ops::Sub,
     sync::{
         atomic::{AtomicU64, AtomicU8, Ordering},
         Arc,
@@ -24,6 +25,7 @@ use curp_external_api::cmd::ConflictCheck;
 use dashmap::DashMap;
 use event_listener::Event;
 use itertools::Itertools;
+use opentelemetry::KeyValue;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::{
@@ -41,7 +43,7 @@ use self::{
     log::Log,
     state::{CandidateState, LeaderState, State},
 };
-use super::{cmd_worker::CEEventTxApi, PoolEntry};
+use super::{cmd_worker::CEEventTxApi, metrics, PoolEntry};
 use crate::{
     cmd::{Command, ProposeId},
     connect::InnerConnectApi,
@@ -200,6 +202,7 @@ impl<C: Command, RC: RoleChange> Debug for Context<C, RC> {
             .field("sync_events", &self.sync_events)
             .field("leader_event", &self.leader_event)
             .field("role_change", &self.role_change)
+            .field("last_conf_change_idx", &self.last_conf_change_idx)
             .finish()
     }
 }
@@ -242,6 +245,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         // Non-leader doesn't need to sync or execute
         if st_r.role != Role::Leader {
             if conflict {
+                metrics::get()
+                    .proposals_failed
+                    .add(1, &[KeyValue::new("reason", "follower key conflict")]);
                 return Err(CurpError::key_conflict());
             }
             return Ok(false);
@@ -249,18 +255,29 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
         let id = cmd.id();
         if !self.ctx.cb.map_write(|mut cb_w| cb_w.sync.insert(id)) {
+            metrics::get()
+                .proposals_failed
+                .add(1, &[KeyValue::new("reason", "duplicated proposal")]);
             return Err(CurpError::duplicated());
         }
 
         // leader also needs to check if the cmd conflicts un-synced commands
         conflict |= self.insert_ucp(Arc::clone(&cmd));
         let mut log_w = self.log.write();
-        let entry = log_w.push(st_r.term, cmd)?;
+        let entry = log_w.push(st_r.term, cmd).map_err(|e| {
+            metrics::get()
+                .proposals_failed
+                .add(1, &[KeyValue::new("reason", "log serialize failed")]);
+            e
+        })?;
         debug!("{} gets new log[{}]", self.id(), entry.index);
 
         self.entry_process(&mut log_w, entry, conflict);
 
         if conflict {
+            metrics::get()
+                .proposals_failed
+                .add(1, &[KeyValue::new("reason", "leader key conflict")]);
             return Err(CurpError::key_conflict());
         }
 
@@ -275,7 +292,14 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         }
 
         let mut log_w = self.log.write();
-        let entry = log_w.push(st_r.term, EntryData::Shutdown(propose_id))?;
+        let entry = log_w
+            .push(st_r.term, EntryData::Shutdown(propose_id))
+            .map_err(|e| {
+                metrics::get()
+                    .proposals_failed
+                    .add(1, &[KeyValue::new("reason", "log serialize failed")]);
+                e
+            })?;
         debug!("{} gets new log[{}]", self.id(), entry.index);
         self.entry_process(&mut log_w, entry, true);
         Ok(())
@@ -305,7 +329,13 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
         let changes = conf_change.changes().to_owned();
         let mut log_w = self.log.write();
-        let entry = log_w.push(st_r.term, conf_change)?;
+        let entry = log_w.push(st_r.term, conf_change).map_err(|e| {
+            metrics::get()
+                .proposals_failed
+                .add(1, &[KeyValue::new("reason", "log serialize failed")]);
+            e
+        })?;
+
         debug!("{} gets new log[{}]", self.id(), entry.index);
         let (addrs, name, is_learner) = self.apply_conf_change(changes);
         self.ctx
@@ -461,6 +491,12 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             if last_sent_index > log_w.commit_index {
                 log_w.commit_to(last_sent_index);
                 debug!("{} updates commit index to {last_sent_index}", self.id());
+                metrics::get()
+                    .proposals_committed
+                    .observe(last_sent_index, &[]);
+                metrics::get()
+                    .proposals_pending
+                    .observe(log_w.last_log_index().sub(last_sent_index), &[]);
                 self.apply(&mut *log_w);
             }
         }
@@ -1055,6 +1091,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             }
             ConfChangeType::Promote => {
                 if statuses_ids.get(&node_id).is_none() || !config.contains(node_id) {
+                    metrics::get()
+                        .learner_promote_failed
+                        .add(1, &[KeyValue::new("reason", "learner not exist")]);
                     return Err(CurpError::node_not_exist());
                 }
                 let learner_index = self
@@ -1063,6 +1102,9 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                     .unwrap_or_else(|| unreachable!("learner should exist here"));
                 let leader_index = self.log.read().last_log_index();
                 if leader_index.overflow_sub(learner_index) > MAX_PROMOTE_GAP {
+                    metrics::get()
+                        .learner_promote_failed
+                        .add(1, &[KeyValue::new("reason", "learner not catch up")]);
                     return Err(CurpError::learner_not_catch_up());
                 }
             }
@@ -1100,6 +1142,15 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         is_learner: bool,
     ) {
         assert_eq!(changes.len(), 1, "Joint consensus is not supported yet");
+        if is_learner {
+            metrics::get().learner_promote_failed.add(
+                1,
+                &[KeyValue::new(
+                    "reason",
+                    "configuration revert by new leader",
+                )],
+            );
+        }
         let Some(conf_change) = changes.into_iter().next() else {
             unreachable!("conf change is empty");
         };
@@ -1296,6 +1347,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
     /// Server becomes a leader
     fn become_leader(&self, st: &mut State) {
+        metrics::get().leader_changes.add(1, &[]);
         st.role = Role::Leader;
         st.leader_id = Some(self.id());
         let _ig = self.ctx.leader_tx.send(Some(self.id())).ok();
@@ -1318,6 +1370,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             self.ctx.role_change.on_calibrate();
         }
         st.term = term;
+        if st.role == Role::Leader {
+            // a leader fallback into the follower
+            metrics::get().leader_changes.add(1, &[]);
+        }
         st.role = Role::Follower;
         st.voted_for = None;
         st.leader_id = None;
@@ -1435,6 +1491,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     /// Apply new logs
     fn apply(&self, log: &mut Log<C>) {
         for i in (log.last_as + 1)..=log.commit_index {
+            metrics::get().proposals_applied.observe(i, &[]);
             let entry = log.get(i).unwrap_or_else(|| {
                 unreachable!(
                     "system corrupted, apply log[{i}] when we only have {} log entries",
@@ -1553,6 +1610,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         if self.can_update_commit_index_to(log_w, index, self.term()) && index > log_w.commit_index
         {
             log_w.commit_to(index);
+            metrics::get().proposals_committed.observe(index, &[]);
+            metrics::get()
+                .proposals_pending
+                .observe(log_w.last_log_index().sub(index), &[]);
             debug!("{} updates commit index to {index}", self.id());
             self.apply(&mut *log_w);
         }
