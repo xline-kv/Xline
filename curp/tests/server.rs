@@ -490,7 +490,7 @@ async fn check_new_node(is_learner: bool) {
     /*******  start new node *******/
 
     // 1. fetch cluster from other nodes
-    let cluster_info = Arc::new(group.fetch_cluster_info(&[addr]).await);
+    let cluster_info = Arc::new(group.fetch_cluster_info(&[addr], "new_node").await);
 
     // 2. start new node
     group
@@ -510,7 +510,7 @@ async fn check_new_node(is_learner: bool) {
     assert!(res
         .members
         .iter()
-        .any(|m| m.id == node_id && is_learner == m.is_learner));
+        .any(|m| m.id == node_id && m.name == "new_node" && is_learner == m.is_learner));
 
     // 4. check if the new node executes the command from old cluster
     let new_node = group.nodes.get_mut(&node_id).unwrap();
@@ -564,7 +564,7 @@ async fn shutdown_rpc_should_shutdown_the_cluster_when_client_has_wrong_cluster(
     assert_eq!(members.len(), 4);
     assert!(members.iter().any(|m| m.id == node_id));
 
-    let cluster_info = Arc::new(group.fetch_cluster_info(&addrs).await);
+    let cluster_info = Arc::new(group.fetch_cluster_info(&addrs, "new_node").await);
     group
         .run_node(listener, "new_node".to_owned(), cluster_info)
         .await;
@@ -595,7 +595,7 @@ async fn propose_conf_change_rpc_should_work_when_client_has_wrong_cluster() {
         .unwrap();
     assert_eq!(members.len(), 4);
     assert!(members.iter().any(|m| m.id == node_id));
-    let cluster_info = Arc::new(group.fetch_cluster_info(&addrs).await);
+    let cluster_info = Arc::new(group.fetch_cluster_info(&addrs, "new_node").await);
     group
         .run_node(listener, "new_node".to_owned(), cluster_info)
         .await;
@@ -632,7 +632,7 @@ async fn fetch_read_state_rpc_should_work_when_client_has_wrong_cluster() {
         .unwrap();
     assert_eq!(members.len(), 4);
     assert!(members.iter().any(|m| m.id == node_id));
-    let cluster_info = Arc::new(group.fetch_cluster_info(&addrs).await);
+    let cluster_info = Arc::new(group.fetch_cluster_info(&addrs, "new_node").await);
     group
         .run_node(listener, "new_node".to_owned(), cluster_info)
         .await;

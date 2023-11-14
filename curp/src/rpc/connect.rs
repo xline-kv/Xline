@@ -34,6 +34,7 @@ use crate::{
         WaitSyncedResponse,
     },
     snapshot::Snapshot,
+    PublishRequest, PublishResponse,
 };
 
 /// Install snapshot chunk size: 64KB
@@ -124,6 +125,13 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
         request: ProposeConfChangeRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<ProposeConfChangeResponse>, tonic::Status>;
+
+    /// Send `PublishRequest`
+    async fn publish(
+        &self,
+        request: PublishRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<PublishResponse>, tonic::Status>;
 
     /// Send `WaitSyncedRequest`
     async fn wait_synced(
@@ -311,6 +319,20 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         req.set_timeout(timeout);
         req.metadata_mut().inject_current();
         client.propose_conf_change(req).await
+    }
+
+    /// Send `PublishRequest`
+    #[instrument(skip(self), name = "client publish")]
+    async fn publish(
+        &self,
+        request: PublishRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<PublishResponse>, tonic::Status> {
+        let mut client = self.rpc_connect.clone();
+        let mut req = tonic::Request::new(request);
+        req.set_timeout(timeout);
+        req.metadata_mut().inject_current();
+        client.publish(req).await
     }
 
     /// Send `WaitSyncedRequest`

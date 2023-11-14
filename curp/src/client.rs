@@ -26,7 +26,7 @@ use crate::{
         FetchClusterResponse, FetchReadStateRequest, ProposeConfChangeRequest, ProposeRequest,
         ReadState as PbReadState, ShutdownRequest, SyncResult, WaitSyncedRequest,
     },
-    ConfChange, ConfChangeError, LogIndex, Member, ProposeError,
+    ConfChange, ConfChangeError, LogIndex, Member, ProposeError, PublishRequest,
 };
 
 /// Protocol client
@@ -885,6 +885,62 @@ where
                 }
                 None => Ok(Ok(resp.members)),
             };
+        }
+        Err(ClientError::Timeout)
+    }
+
+    /// publish new node's name
+    #[instrument(skip_all)]
+    pub async fn publish(
+        &self,
+        propose_id: ProposeId,
+        node_id: ServerId,
+        node_name: String,
+    ) -> Result<(), ClientError<C>> {
+        debug!("publish with propose_id({}) started", propose_id);
+        let mut retry_timeout = self.get_backoff();
+        let retry_count = *self.config.retry_count();
+        for _ in 0..retry_count {
+            let leader_id = match self.get_leader_id().await {
+                Ok(leader_id) => leader_id,
+                Err(e) => {
+                    warn!("failed to fetch leader, {e}");
+                    continue;
+                }
+            };
+            debug!("propose_conf_change request sent to {}", leader_id);
+            if let Err(e) = self
+                .get_connect(leader_id)
+                .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
+                .publish(
+                    PublishRequest::new(propose_id, node_id, node_name.clone()),
+                    *self.config.wait_synced_timeout(),
+                )
+                .await
+            {
+                warn!("propose_conf_change rpc error: {e}");
+                match unpack_status(&e) {
+                    UnpackStatus::ShuttingDown => return Err(ClientError::ShuttingDown),
+                    UnpackStatus::WrongClusterVersion => {
+                        let cluster = self.fetch_cluster(false).await?;
+                        self.set_cluster(cluster).await?;
+                        continue;
+                    }
+                    UnpackStatus::Redirect(new_leader, term) => {
+                        self.state.write().check_and_update(new_leader, term);
+                        continue;
+                    }
+                    UnpackStatus::Transport
+                    | UnpackStatus::EncodeDecode
+                    | UnpackStatus::Storage
+                    | UnpackStatus::IO
+                    | UnpackStatus::Internal => {
+                        tokio::time::sleep(retry_timeout.next_retry()).await;
+                        continue;
+                    }
+                }
+            };
+            return Ok(());
         }
         Err(ClientError::Timeout)
     }

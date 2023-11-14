@@ -6,7 +6,7 @@ use curp_external_api::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{rpc::ConfChangeEntry, server::PoolEntry};
+use crate::{members::ServerId, rpc::ConfChangeEntry, server::PoolEntry, PublishRequest};
 
 /// Log entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,6 +30,8 @@ pub(crate) enum EntryData<C> {
     ConfChange(Box<ConfChangeEntry>), // Box to fix variant_size_differences
     /// `Shutdown` entry
     Shutdown(ProposeId),
+    /// `SetName` entry
+    SetName(ProposeId, ServerId, String),
 }
 
 impl<C> From<ConfChangeEntry> for EntryData<C> {
@@ -53,6 +55,12 @@ impl<C> From<PoolEntry<C>> for EntryData<C> {
     }
 }
 
+impl<C> From<PublishRequest> for EntryData<C> {
+    fn from(value: PublishRequest) -> Self {
+        EntryData::SetName(value.id(), value.node_id, value.name)
+    }
+}
+
 impl<C> LogEntry<C>
 where
     C: Command,
@@ -71,7 +79,7 @@ where
         match self.entry_data {
             EntryData::Command(ref cmd) => cmd.id(),
             EntryData::ConfChange(ref e) => e.id(),
-            EntryData::Shutdown(id) | EntryData::Empty(id) => id,
+            EntryData::Shutdown(id) | EntryData::Empty(id) | EntryData::SetName(id, _, _) => id,
         }
     }
 }

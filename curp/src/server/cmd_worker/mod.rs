@@ -124,7 +124,10 @@ async fn worker_exe<
             );
             er_ok
         }
-        EntryData::ConfChange(_) | EntryData::Shutdown(_) | EntryData::Empty(_) => true,
+        EntryData::ConfChange(_)
+        | EntryData::Shutdown(_)
+        | EntryData::Empty(_)
+        | EntryData::SetName(_, _, _) => true,
     }
 }
 
@@ -176,6 +179,14 @@ async fn worker_as<
             if shutdown_self {
                 curp.shutdown_trigger().self_shutdown();
             }
+            true
+        }
+        EntryData::SetName(_, node_id, ref name) => {
+            if let Err(e) = ce.set_last_applied(entry.index) {
+                error!("failed to set last_applied, {e}");
+                return false;
+            }
+            curp.cluster().set_name(node_id, name.clone());
             true
         }
         EntryData::Empty(_) => true,

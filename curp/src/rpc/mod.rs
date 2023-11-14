@@ -11,7 +11,8 @@ pub use self::proto::{
         protocol_client,
         protocol_server::ProtocolServer,
         CmdResult, FetchClusterRequest, FetchClusterResponse, Member, ProposeConfChangeRequest,
-        ProposeConfChangeResponse, ProposeRequest, ProposeResponse,
+        ProposeConfChangeResponse, ProposeRequest, ProposeResponse, PublishRequest,
+        PublishResponse,
     },
     inner_messagepb::inner_protocol_server::InnerProtocolServer,
 };
@@ -635,5 +636,30 @@ impl From<ConfChangeError> for tonic::Status {
     fn from(_err: ConfChangeError) -> Self {
         // we'd better expose some err messages for client
         tonic::Status::invalid_argument("")
+    }
+}
+
+impl PublishRequest {
+    /// Create a new `PublishRequest`
+    #[inline]
+    #[must_use]
+    pub fn new(id: ProposeId, node_id: ServerId, name: String) -> Self {
+        Self {
+            propose_id: Some(id.into()),
+            node_id,
+            name,
+        }
+    }
+
+    /// Get id of the request
+    #[inline]
+    #[must_use]
+    pub fn id(&self) -> ProposeId {
+        self.propose_id
+            .clone()
+            .unwrap_or_else(|| {
+                unreachable!("propose id should be set in propose conf change request")
+            })
+            .into()
     }
 }

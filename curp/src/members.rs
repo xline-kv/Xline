@@ -113,12 +113,16 @@ impl ClusterInfo {
     /// Construct a new `ClusterInfo` from `FetchClusterResponse`
     #[inline]
     #[must_use]
-    pub fn from_cluster(cluster: FetchClusterResponse, self_addr: &[String]) -> Self {
+    pub fn from_cluster(
+        cluster: FetchClusterResponse,
+        self_addr: &[String],
+        self_name: &str,
+    ) -> Self {
         let mut member_id = 0;
         let members = cluster
             .members
             .into_iter()
-            .map(|member| {
+            .map(|mut member| {
                 // TODO: update this after we support https
                 let addrs = member
                     .addrs
@@ -133,6 +137,7 @@ impl ClusterInfo {
                     .collect_vec();
                 if addrs == self_addr {
                     member_id = member.id;
+                    member.name = self_name.to_owned();
                 }
                 (member.id, member)
             })
@@ -349,6 +354,14 @@ impl ClusterInfo {
     pub(crate) fn contains(&self, node_id: ServerId) -> bool {
         self.members.contains_key(&node_id)
     }
+
+    /// Set name for a node
+    pub(crate) fn set_name(&self, node_id: ServerId, name: String) {
+        if let Some(mut s) = self.members.get_mut(&node_id) {
+            debug!("set name for node {} to {}", node_id, name);
+            s.name = name;
+        }
+    }
 }
 
 /// Get cluster info from remote servers
@@ -356,6 +369,7 @@ impl ClusterInfo {
 pub async fn get_cluster_info_from_remote(
     init_cluster_info: &ClusterInfo,
     self_addr: &[String],
+    self_name: &str,
     timeout: Duration,
 ) -> Option<ClusterInfo> {
     let peers = init_cluster_info.peers_addrs();
@@ -381,6 +395,7 @@ pub async fn get_cluster_info_from_remote(
             return Some(ClusterInfo::from_cluster(
                 cluster_res.into_inner(),
                 self_addr,
+                self_name,
             ));
         }
     }
