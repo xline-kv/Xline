@@ -44,20 +44,20 @@ pub trait Command:
 
     /// Prepare the command
     #[inline]
-    fn prepare<E>(&self, e: &E, index: LogIndex) -> Result<Self::PR, Self::Error>
+    fn prepare<E>(&self, e: &E) -> Result<Self::PR, Self::Error>
     where
         E: CommandExecutor<Self> + Send + Sync,
     {
-        <E as CommandExecutor<Self>>::prepare(e, self, index)
+        <E as CommandExecutor<Self>>::prepare(e, self)
     }
 
     /// Execute the command according to the executor
     #[inline]
-    async fn execute<E>(&self, e: &E, index: LogIndex) -> Result<Self::ER, Self::Error>
+    async fn execute<E>(&self, e: &E) -> Result<Self::ER, Self::Error>
     where
         E: CommandExecutor<Self> + Send + Sync,
     {
-        <E as CommandExecutor<Self>>::execute(e, self, index).await
+        <E as CommandExecutor<Self>>::execute(e, self).await
     }
 
     /// Execute the command after_sync callback
@@ -122,10 +122,10 @@ where
     C: Command,
 {
     /// Prepare the command
-    fn prepare(&self, cmd: &C, index: LogIndex) -> Result<C::PR, C::Error>;
+    fn prepare(&self, cmd: &C) -> Result<C::PR, C::Error>;
 
     /// Execute the command
-    async fn execute(&self, cmd: &C, index: LogIndex) -> Result<C::ER, C::Error>;
+    async fn execute(&self, cmd: &C) -> Result<C::ER, C::Error>;
 
     /// Execute the after_sync callback
     async fn after_sync(
@@ -147,10 +147,8 @@ where
     /// Reset the command executor using the snapshot or to the initial state if None
     async fn reset(&self, snapshot: Option<(Snapshot, LogIndex)>) -> Result<(), C::Error>;
 
-    /// Trigger the barrier of the given id.
-    fn trigger_id(&self, id: ProposeId);
-    /// Trigger the barrier of the given index.
-    fn trigger_index(&self, index: u64);
+    /// Trigger the barrier of the given id and index.
+    fn trigger(&self, id: ProposeId, index: u64);
 }
 
 /// Codec for encoding and decoding data into/from the Protobuf format

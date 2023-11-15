@@ -120,10 +120,14 @@ impl Cluster {
                 .collect(),
             &name,
         );
-        let cluster_info =
-            get_cluster_info_from_remote(&init_cluster_info, &[self_addr], Duration::from_secs(3))
-                .await
-                .unwrap();
+        let cluster_info = get_cluster_info_from_remote(
+            &init_cluster_info,
+            &[self_addr],
+            &name,
+            Duration::from_secs(3),
+        )
+        .await
+        .unwrap();
         tokio::spawn(async move {
             let server = XlineServer::new(
                 cluster_info.into(),

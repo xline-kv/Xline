@@ -63,7 +63,6 @@ async fn xline_update_node() -> Result<(), Box<dyn Error>> {
     let old_list_res = cluster_client
         .member_list(MemberListRequest::new(false))
         .await?;
-    println!("{:?}", old_list_res.members);
     assert_eq!(old_list_res.members.len(), 3);
     let update_id = old_list_res.members[0].id;
     let new_listener = TcpListener::bind("0.0.0.0:0").await?;
@@ -75,7 +74,6 @@ async fn xline_update_node() -> Result<(), Box<dyn Error>> {
     let new_list_res = cluster_client
         .member_list(MemberListRequest::new(false))
         .await?;
-    println!("{:?}", new_list_res.members);
     assert_eq!(new_list_res.members.len(), 3);
     let old_addr = &old_list_res
         .members

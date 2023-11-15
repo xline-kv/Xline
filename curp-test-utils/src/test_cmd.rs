@@ -252,7 +252,6 @@ impl CommandExecutor<TestCommand> for TestCE {
     fn prepare(
         &self,
         cmd: &TestCommand,
-        _index: LogIndex,
     ) -> Result<<TestCommand as Command>::PR, <TestCommand as Command>::Error> {
         let rev = if let TestCommandType::Put(_) = cmd.cmd_type {
             let rev = self.revision.fetch_add(1, Ordering::Relaxed);
@@ -274,7 +273,6 @@ impl CommandExecutor<TestCommand> for TestCE {
     async fn execute(
         &self,
         cmd: &TestCommand,
-        _index: LogIndex,
     ) -> Result<<TestCommand as Command>::ER, <TestCommand as Command>::Error> {
         sleep(cmd.exe_dur).await;
         if cmd.exe_should_fail {
@@ -429,9 +427,7 @@ impl CommandExecutor<TestCommand> for TestCE {
         Ok(())
     }
 
-    fn trigger_id(&self, _id: ProposeId) {}
-
-    fn trigger_index(&self, _index: u64) {}
+    fn trigger(&self, _id: ProposeId, _index: u64) {}
 }
 
 impl TestCE {

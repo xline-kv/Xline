@@ -288,7 +288,7 @@ impl Config {
         let res1 = self.majority_config.voters.remove(&id);
         let res2 = self.learners.remove(&id);
         debug_assert!(
-            !(res1 && res2),
+            res1 ^ res2,
             "a node should not exist in both voters and learners"
         );
         res1 || res2

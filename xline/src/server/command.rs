@@ -305,14 +305,9 @@ where
     fn prepare(
         &self,
         cmd: &Command,
-        index: LogIndex,
     ) -> Result<<Command as CurpCommand>::PR, <Command as CurpCommand>::Error> {
         let wrapper = cmd.request();
-        if let Err(e) = self.auth_storage.check_permission(wrapper) {
-            self.id_barrier.trigger(cmd.id());
-            self.index_barrier.trigger(index);
-            return Err(e);
-        }
+        self.auth_storage.check_permission(wrapper)?;
         let revision = match wrapper.request.backend() {
             RequestBackend::Auth => {
                 if wrapper.request.skip_auth_revision() {
@@ -335,21 +330,12 @@ where
     async fn execute(
         &self,
         cmd: &Command,
-        index: LogIndex,
     ) -> Result<<Command as CurpCommand>::ER, <Command as CurpCommand>::Error> {
         let wrapper = cmd.request();
-        let res = match wrapper.request.backend() {
+        match wrapper.request.backend() {
             RequestBackend::Kv => self.kv_storage.execute(wrapper),
             RequestBackend::Auth => self.auth_storage.execute(wrapper),
             RequestBackend::Lease => self.lease_storage.execute(wrapper),
-        };
-        match res {
-            Ok(res) => Ok(res),
-            Err(e) => {
-                self.id_barrier.trigger(cmd.id());
-                self.index_barrier.trigger(index);
-                Err(e)
-            }
         }
     }
 
@@ -372,8 +358,6 @@ where
             self.kv_storage.insert_index(key_revisions);
         }
         self.lease_storage.mark_lease_synced(&wrapper.request);
-        self.id_barrier.trigger(cmd.id());
-        self.index_barrier.trigger(index);
         Ok(res)
     }
 
@@ -414,11 +398,8 @@ where
         Ok(u64::from_le_bytes(buf))
     }
 
-    fn trigger_id(&self, id: ProposeId) {
+    fn trigger(&self, id: ProposeId, index: u64) {
         self.id_barrier.trigger(id);
-    }
-
-    fn trigger_index(&self, index: u64) {
         self.index_barrier.trigger(index);
     }
 }
