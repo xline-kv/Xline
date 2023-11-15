@@ -4,7 +4,7 @@ use clippy_utilities::NumericCast;
 use curp_external_api::{cmd::Command, role_change::RoleChange};
 use opentelemetry::{
     global::meter_with_version,
-    metrics::{Counter, Meter, MetricsError, ObservableGauge},
+    metrics::{Counter, Histogram, Meter, MetricsError, ObservableGauge},
     KeyValue,
 };
 
@@ -18,9 +18,7 @@ static METRICS_METER: OnceLock<Meter> = OnceLock::new();
 
 /// Get the curp metrics
 pub(super) fn get() -> &'static Metrics {
-    METRICS.get_or_init(|| {        
-        Metrics::new(get_meter())
-    })
+    METRICS.get_or_init(|| Metrics::new(get_meter()))
 }
 
 /// Get the curp metrics meter
@@ -63,6 +61,8 @@ pub(super) struct Metrics {
     pub(super) proposals_applied: ObservableGauge<u64>,
     /// The current number of pending proposals to commit.
     pub(super) proposals_pending: ObservableGauge<u64>,
+    /// The total latency distributions of save called by install_snapshot.
+    pub(super) snapshot_install_total_duration_seconds: Histogram<u64>,
 }
 
 impl Metrics {
@@ -105,18 +105,10 @@ impl Metrics {
                 .u64_counter("proposals_failed")
                 .with_description("The total number of failed proposals seen.")
                 .init(),
-            // slow_read_index: meter
-            //     .u64_counter("slow_read_index")
-            //     .with_description("The total number of pending read indexes not in sync with leader's or timed out read index requests.")
-            //     .init(),
-            // read_index_failed: meter
-            //     .u64_counter("read_index_failed")
-            //     .with_description("The total number of failed read indexes seen.")
-            //     .init(),
-            // lease_expired: meter
-            //     .u64_counter("lease_expired")
-            //     .with_description("The total number of expired leases.")
-            //     .init(),
+            snapshot_install_total_duration_seconds: meter
+                .u64_histogram("snapshot_install_total_duration_seconds")
+                .with_description("The total latency distributions of save called by install_snapshot.")
+                .init(),
         }
     }
 

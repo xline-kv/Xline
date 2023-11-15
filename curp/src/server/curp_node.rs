@@ -1,4 +1,9 @@
-use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    fmt::Debug,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use clippy_utilities::NumericCast;
 use engine::{SnapshotAllocator, SnapshotApi};
@@ -21,9 +26,10 @@ use super::{
     cmd_board::{CmdBoardRef, CommandBoard},
     cmd_worker::{conflict_checked_mpmc, start_cmd_workers},
     gc::run_gc_tasks,
+    metrics::Metrics,
     raw_curp::{AppendEntries, RawCurp, UncommittedPool, Vote},
     spec_pool::{SpecPoolRef, SpeculativePool},
-    storage::StorageApi, metrics::Metrics,
+    storage::StorageApi,
 };
 use crate::{
     cmd::{Command, CommandExecutor},
@@ -40,7 +46,7 @@ use crate::{
         PublishResponse, ShutdownRequest, ShutdownResponse, VoteRequest, VoteResponse,
         WaitSyncedRequest, WaitSyncedResponse,
     },
-    server::{cmd_worker::CEEventTxApi, raw_curp::SyncAction, storage::db::DB, metrics},
+    server::{cmd_worker::CEEventTxApi, metrics, raw_curp::SyncAction, storage::db::DB},
     snapshot::{Snapshot, SnapshotMeta},
 };
 
@@ -231,9 +237,8 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         &self,
         req_stream: impl Stream<Item = Result<InstallSnapshotRequest, E>>,
     ) -> Result<InstallSnapshotResponse, CurpError> {
-        metrics::get()
-            .apply_snapshot_in_progress
-            .observe(1, &[]);
+        metrics::get().apply_snapshot_in_progress.observe(1, &[]);
+        let start = Instant::now();
         pin_mut!(req_stream);
         let mut snapshot = self
             .snapshot_allocator
@@ -282,9 +287,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                             "failed to reset the command executor by snapshot, {err}"
                         ))
                     })?;
+                metrics::get().apply_snapshot_in_progress.observe(0, &[]);
                 metrics::get()
-                    .apply_snapshot_in_progress
-                    .observe(0, &[]);
+                    .snapshot_install_total_duration_seconds
+                    .record(Instant::now().duration_since(start).as_secs(), &[]);
                 return Ok(InstallSnapshotResponse::new(self.curp.term()));
             }
         }

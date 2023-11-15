@@ -161,6 +161,8 @@ mod api;
 mod error;
 /// Memory Storage Engine, it's test only
 mod memory_engine;
+/// Metrics layer
+mod metrics;
 #[cfg(madsim)]
 /// Mock `RocksDB` Storage Engine
 mod mock_rocksdb_engine;

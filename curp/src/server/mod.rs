@@ -342,7 +342,6 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
                 snapshot_allocator,
                 role_change,
                 curp_cfg,
-                &opentelemetry::global::meter("curp_tests"),
                 shutdown_trigger,
             )
             .await,
