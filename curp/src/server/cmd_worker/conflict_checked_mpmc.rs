@@ -339,12 +339,15 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                     assert!(prepare.is_none(), "The prepare result of a given cmd can only be calculated when exe_state change from ExecuteReady to Executing");
                     let prepare_err = match entry.entry_data {
                         EntryData::Command(ref cmd) => {
-                            match self.cmd_executor.prepare(cmd.as_ref(), entry.index) {
+                            match self.cmd_executor.prepare(cmd.as_ref()) {
                                 Ok(pre_res) => {
                                     as_st.set_prepare_result(pre_res);
                                     None
                                 }
-                                Err(err) => Some(err),
+                                Err(err) => {
+                                    self.cmd_executor.trigger(cmd.id(), entry.index);
+                                    Some(err)
+                                }
                             }
                         }
                         EntryData::ConfChange(_)

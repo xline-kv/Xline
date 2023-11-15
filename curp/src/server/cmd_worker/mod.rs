@@ -105,12 +105,12 @@ async fn worker_exe<
 ) -> bool {
     let (cb, sp, ucp) = (curp.cmd_board(), curp.spec_pool(), curp.uncommitted_pool());
     let id = curp.id();
-    match entry.entry_data {
+    let (propose_id, success) = match entry.entry_data {
         EntryData::Command(ref cmd) => {
             let er = if let Some(err_msg) = pre_err {
                 Err(err_msg)
             } else {
-                ce.execute(cmd, entry.index).await
+                ce.execute(cmd).await
             };
             let er_ok = er.is_ok();
             cb.write().insert_er(entry.id(), er);
@@ -122,13 +122,17 @@ async fn worker_exe<
                 "{id} cmd({}) is speculatively executed, exe status: {er_ok}",
                 entry.id()
             );
-            er_ok
+            (cmd.id(), er_ok)
         }
-        EntryData::ConfChange(_)
-        | EntryData::Shutdown(_)
-        | EntryData::Empty(_)
-        | EntryData::SetName(_, _, _) => true,
+        EntryData::ConfChange(ref cc) => (cc.id(), true),
+        EntryData::Shutdown(propose_id)
+        | EntryData::Empty(propose_id)
+        | EntryData::SetName(propose_id, _, _) => (propose_id, true),
+    };
+    if !success {
+        ce.trigger(propose_id, entry.index);
     }
+    success
 }
 
 /// Cmd worker after sync handler
@@ -144,7 +148,7 @@ async fn worker_as<
 ) -> bool {
     let (cb, sp, ucp) = (curp.cmd_board(), curp.spec_pool(), curp.uncommitted_pool());
     let id = curp.id();
-    match entry.entry_data {
+    let (propose_id, success) = match entry.entry_data {
         EntryData::Command(ref cmd) => {
             let Some(prepare) = prepare else {
             unreachable!("prepare should always be Some(_) when entry is a command");
@@ -155,19 +159,17 @@ async fn worker_as<
             sp.lock().remove(&entry.id());
             let _ig = ucp.lock().remove(&entry.id());
             debug!("{id} cmd({}) after sync is called", entry.id());
-            asr_ok
+            (cmd.id(), asr_ok)
         }
-        EntryData::Shutdown(_) => {
+        EntryData::Shutdown(propose_id) => {
             curp.enter_shutdown();
             if let Err(e) = ce.set_last_applied(entry.index) {
                 error!("failed to set last_applied, {e}");
             }
             cb.write().notify_shutdown();
-            true
+            (propose_id, true)
         }
         EntryData::ConfChange(ref conf_change) => {
-            ce.trigger_id(conf_change.id());
-            ce.trigger_index(entry.index);
             if let Err(e) = ce.set_last_applied(entry.index) {
                 error!("failed to set last_applied, {e}");
                 return false;
@@ -183,18 +185,20 @@ async fn worker_as<
             if shutdown_self {
                 curp.shutdown_trigger().self_shutdown();
             }
-            true
+            (conf_change.id(), true)
         }
-        EntryData::SetName(_, node_id, ref name) => {
+        EntryData::SetName(propose_id, node_id, ref name) => {
             if let Err(e) = ce.set_last_applied(entry.index) {
                 error!("failed to set last_applied, {e}");
                 return false;
             }
             curp.cluster().set_name(node_id, name.clone());
-            true
+            (propose_id, true)
         }
-        EntryData::Empty(_) => true,
-    }
+        EntryData::Empty(propose_id) => (propose_id, true),
+    };
+    ce.trigger(propose_id, entry.index);
+    success
 }
 
 /// Cmd worker reset handler
