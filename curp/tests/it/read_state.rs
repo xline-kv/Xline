@@ -23,6 +23,7 @@ async fn read_state() {
             TestCommandResult::default(),
         );
     });
+    sleep_millis(10).await;
     let get_client = group.new_client().await;
     let res = get_client
         .fetch_read_state(&TestCommand::new_get(vec![0]))
