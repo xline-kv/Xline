@@ -290,7 +290,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                 metrics::get().apply_snapshot_in_progress.observe(0, &[]);
                 metrics::get()
                     .snapshot_install_total_duration_seconds
-                    .record(Instant::now().duration_since(start).as_secs(), &[]);
+                    .record(start.elapsed().as_secs(), &[]);
                 return Ok(InstallSnapshotResponse::new(self.curp.term()));
             }
         }
@@ -657,7 +657,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                 connects,
             ))
         };
-        Metrics::register_callback(metrics::get_meter(), Arc::clone(&curp))?;
+        Metrics::register_callback(Arc::clone(&curp))?;
 
         start_cmd_workers(
             Arc::clone(&cmd_executor),

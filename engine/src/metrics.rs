@@ -75,7 +75,7 @@ where
         let batch_size = wr_ops.len().to_string();
         let res = self.engine.write_batch(wr_ops, sync);
         metrics().engine_write_batch_duration_seconds.record(
-            Instant::now().duration_since(start).as_secs(),
+            start.elapsed().as_secs(),
             &[
                 KeyValue::new("batch_size", batch_size),
                 KeyValue::new("sync", u8::from(sync).to_string()),
@@ -109,7 +109,7 @@ where
         let res = self.engine.apply_snapshot(snapshot.engine, tables).await;
         metrics()
             .engine_apply_snapshot_duration_seconds
-            .record(Instant::now().duration_since(start).as_secs(), &[]);
+            .record(start.elapsed().as_secs(), &[]);
         res
     }
 }

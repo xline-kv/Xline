@@ -27,6 +27,10 @@ pub struct XlineServerConfig {
     /// compactor configuration object
     #[getset(get = "pub")]
     compact: CompactConfig,
+    /// Metrics config
+    #[getset(get = "pub")]
+    #[serde(default = "MetricsConfig::default")]
+    metrics: MetricsConfig,
 }
 
 /// Cluster Range type alias
@@ -789,7 +793,7 @@ impl TraceConfig {
     }
 }
 
-/// Xline tracing configuration object
+/// Xline auth configuration object
 #[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
 pub struct AuthConfig {
@@ -814,6 +818,65 @@ impl AuthConfig {
     }
 }
 
+/// Xline metrics configuration object
+#[allow(clippy::module_name_repetitions)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
+pub struct MetricsConfig {
+    /// Enable or not
+    #[getset(get = "pub")]
+    #[serde(default = "default_metrics_enable")]
+    enable: bool,
+    /// The http port to expose
+    #[getset(get = "pub")]
+    #[serde(default = "default_metrics_port")]
+    port: u16,
+    /// The http path to expose
+    #[getset(get = "pub")]
+    #[serde(default = "default_metrics_path")]
+    path: String,
+}
+
+impl MetricsConfig {
+    /// Create a new `MetricsConfig`
+    #[must_use]
+    #[inline]
+    pub fn new(enable: bool, port: u16, path: String) -> Self {
+        Self { enable, port, path }
+    }
+}
+
+impl Default for MetricsConfig {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            enable: default_metrics_enable(),
+            port: default_metrics_port(),
+            path: default_metrics_path(),
+        }
+    }
+}
+
+/// Default metrics enable
+#[must_use]
+#[inline]
+pub const fn default_metrics_enable() -> bool {
+    true
+}
+
+/// Default metrics port
+#[must_use]
+#[inline]
+pub const fn default_metrics_port() -> u16 {
+    9100
+}
+
+/// Default metrics path
+#[must_use]
+#[inline]
+pub fn default_metrics_path() -> String {
+    "/metrics".to_owned()
+}
+
 impl XlineServerConfig {
     /// Generates a new `XlineServerConfig` object
     #[must_use]
@@ -825,6 +888,7 @@ impl XlineServerConfig {
         trace: TraceConfig,
         auth: AuthConfig,
         compact: CompactConfig,
+        metrics: MetricsConfig,
     ) -> Self {
         Self {
             cluster,
@@ -833,6 +897,7 @@ impl XlineServerConfig {
             trace,
             auth,
             compact,
+            metrics,
         }
     }
 }
@@ -894,7 +959,13 @@ mod tests {
             jaeger_output_dir = './jaeger_jsons'
             jaeger_level = 'info'
 
-            [auth]"#,
+            [auth]
+            
+            [metrics]
+            enable = true
+            port = 9100
+            path = "/metrics"
+            "#,
         )
         .unwrap();
 
@@ -968,6 +1039,15 @@ mod tests {
                 auto_compact_config: Some(AutoCompactConfig::Periodic(Duration::from_secs(
                     10 * 60 * 60
                 )))
+            }
+        );
+
+        assert_eq!(
+            config.metrics,
+            MetricsConfig {
+                enable: true,
+                port: 9100,
+                path: "/metrics".to_owned(),
             }
         );
     }

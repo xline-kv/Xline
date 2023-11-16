@@ -18,6 +18,7 @@ use super::{
 };
 use crate::{
     id_gen::IdGenerator,
+    metrics,
     rpc::{
         Lease, LeaseClient, LeaseGrantRequest, LeaseGrantResponse, LeaseKeepAliveRequest,
         LeaseKeepAliveResponse, LeaseLeasesRequest, LeaseLeasesResponse, LeaseRevokeRequest,
@@ -294,6 +295,7 @@ where
                 header.revision = revision;
             }
         }
+        metrics::get().lease_expired_total.add(1, &[]);
         Ok(tonic::Response::new(res))
     }
 

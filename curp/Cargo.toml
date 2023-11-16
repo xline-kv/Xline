@@ -31,7 +31,6 @@ futures = "0.3.21"
 indexmap = "1.9.2"
 itertools = "0.10.3"
 madsim = { version = "0.2.22", features = ["rpc", "macros"] }
-nix = "0.22.0"
 opentelemetry = { version = "0.21.0", features = ["metrics"] }
 parking_lot = "0.12.1"
 prost = "0.11"

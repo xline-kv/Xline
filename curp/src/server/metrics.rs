@@ -18,11 +18,11 @@ static METRICS_METER: OnceLock<Meter> = OnceLock::new();
 
 /// Get the curp metrics
 pub(super) fn get() -> &'static Metrics {
-    METRICS.get_or_init(|| Metrics::new(get_meter()))
+    METRICS.get_or_init(|| Metrics::new(meter()))
 }
 
 /// Get the curp metrics meter
-pub(super) fn get_meter() -> &'static Meter {
+fn meter() -> &'static Meter {
     METRICS_METER.get_or_init(|| {
         meter_with_version(
             env!("CARGO_PKG_NAME"),
@@ -45,12 +45,6 @@ pub(super) struct Metrics {
     pub(super) learner_promote_succeed: Counter<u64>,
     /// The total number of leader heartbeat send failures (likely overloaded from slow disk).
     pub(super) heartbeat_send_failures: Counter<u64>,
-    // /// The total number of pending read indexes not in sync with leader's or timed out read index requests.
-    // pub(super) slow_read_index: Counter<u64>,
-    // /// The total number of failed read indexes seen.
-    // pub(super) read_index_failed: Counter<u64>,
-    // /// The total number of expired leases.
-    // pub(super) lease_expired: Counter<u64>,
     /// 1 if the server is applying the incoming snapshot. 0 if none.
     pub(super) apply_snapshot_in_progress: ObservableGauge<u64>,
     /// The total number of consensus proposals committed.
@@ -63,6 +57,16 @@ pub(super) struct Metrics {
     pub(super) proposals_pending: ObservableGauge<u64>,
     /// The total latency distributions of save called by install_snapshot.
     pub(super) snapshot_install_total_duration_seconds: Histogram<u64>,
+    // /// The total number of bytes send to peers.
+    // pub(super) peer_sent_bytes_total: Counter<u64>,
+    // /// The total number of bytes received from peers.
+    // pub(super) peer_received_bytes_total: Counter<u64>,
+    // /// The total number of send failures to peers.
+    // pub(super) peer_sent_failures_total: Counter<u64>
+    // /// The total number of receive failures from peers.
+    // pub(super) peer_received_failures_total: Counter<u64>
+    // /// The round-trip-time histogram between peers.
+    // pub(super) peer_round_trip_time_seconds: Histogram<u64>
 }
 
 impl Metrics {
@@ -114,18 +118,14 @@ impl Metrics {
 
     /// Register observable instruments
     pub(super) fn register_callback<C: Command + 'static, RC: RoleChange + 'static>(
-        meter: &Meter,
         curp: Arc<RawCurp<C, RC>>,
     ) -> Result<(), MetricsError> {
+        let meter = meter();
         let (
             has_leader,
             is_leader,
             is_learner,
-            current_version,
-            current_rust_version,
             server_id,
-            fd_used,
-            fd_limit,
             sp_total,
         ) = (
             meter
@@ -141,24 +141,8 @@ impl Metrics {
                 .with_description("Whether or not this member is a learner. 1 if is, 0 otherwise.")
                 .init(),
             meter
-                .u64_observable_gauge("current_version")
-                .with_description("Which version is running. 1 for 'server_version' label with current version.")
-                .init(),
-            meter
-                .u64_observable_gauge("current_rust_version")
-                .with_description("Which Rust version server is running with. 1 for 'server_rust_version' label with current version.")
-                .init(),
-            meter
                 .u64_observable_gauge("server_id")
                 .with_description("Server or member ID in hexadecimal format. 1 for 'server_id' label with current ID.")
-                .init(),
-            meter
-                .u64_observable_gauge("fd_used")
-                .with_description("The number of used file descriptors.")
-                .init(),
-            meter
-                .u64_observable_gauge("fd_limit")
-                .with_description("The file descriptor limit.")
                 .init(),
             meter
                 .u64_observable_gauge("sp_total")
@@ -188,40 +172,6 @@ impl Metrics {
                 observer.observe_u64(&sp_total, sp_size.numeric_cast(), &[]);
             },
         )?;
-
-        _ = meter.register_callback(
-            &[current_version.as_any(), current_rust_version.as_any()],
-            move |observer| {
-                let crate_version: &str = env!("CARGO_PKG_VERSION");
-                let rust_version: &str = env!("CARGO_PKG_RUST_VERSION");
-                observer.observe_u64(
-                    &current_version,
-                    1,
-                    &[KeyValue::new("server_version", crate_version)],
-                );
-                observer.observe_u64(
-                    &current_rust_version,
-                    1,
-                    &[KeyValue::new("server_rust_version", rust_version)],
-                );
-            },
-        )?;
-
-        _ = meter.register_callback(&[fd_used.as_any(), fd_limit.as_any()], move |observer| {
-            #[allow(unsafe_code)] // we need this
-            #[allow(clippy::multiple_unsafe_ops_per_block)] // Is it bad?
-            let (used, limit) = unsafe {
-                let mut rlimit = nix::libc::rlimit {
-                    rlim_cur: 0,
-                    rlim_max: 0,
-                };
-                let _ig = nix::libc::getrlimit(nix::libc::RLIMIT_NOFILE, &mut rlimit);
-                (nix::libc::getdtablesize(), rlimit.rlim_cur)
-            };
-
-            observer.observe_u64(&fd_used, used.numeric_cast(), &[]);
-            observer.observe_u64(&fd_limit, limit, &[]);
-        })?;
 
         Ok(())
     }
