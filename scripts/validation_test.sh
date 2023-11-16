@@ -2,8 +2,8 @@
 DIR="$(dirname $0)"
 QUICK_START="${DIR}/quick_start.sh"
 bash ${QUICK_START}
-ETCDCTL="docker exec -i node4 etcdctl --endpoints=http://172.20.0.3:2379,http://172.20.0.4:2380"
-LOCK_CLIENT="docker exec -i node4 /mnt/validation_lock_client --endpoints=http://172.20.0.3:2379"
+ETCDCTL="docker exec -i client etcdctl --endpoints=http://172.20.0.3:2379,http://172.20.0.4:2380"
+LOCK_CLIENT="docker exec -i client /mnt/validation_lock_client --endpoints=http://172.20.0.3:2379"
 
 # run a command with expect output
 # args:
@@ -219,7 +219,7 @@ lock_rpc_validation() {
 # validate maintenance requests
 maintenance_validation() {
     # snapshot save request only works on one endpoint
-    local _ETCDCTL="docker exec -i node4 etcdctl --endpoints=http://172.20.0.3:2379"
+    local _ETCDCTL="docker exec -i client etcdctl --endpoints=http://172.20.0.3:2379"
     echo "maintenance validation test running..."
     run_with_expect "${_ETCDCTL} snapshot save snap.db" "Snapshot saved at snap.db"
     echo "maintenance validation test passed"
@@ -252,7 +252,7 @@ cluster_validation() {
         echo "result: ${out}"
         exit 1
     fi
-    command="${ETCDCTL} member add node4 --peer-urls=http://172.20.0.6:2379 --learner=true"
+    command="${ETCDCTL} member add client --peer-urls=http://172.20.0.6:2379 --learner=true"
     out=$(eval ${command})
     pattern="Member [a-zA-Z0-9]+ added to cluster [a-zA-Z0-9]+"
     if [[ ${out} =~ ${pattern} ]]; then

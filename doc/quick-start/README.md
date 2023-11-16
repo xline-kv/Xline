@@ -97,10 +97,62 @@ cp ./xline-test-utils/{private,public}.pem ./scripts
 
 ```bash
 # Set Key A's value to 1
-docker exec node4 /bin/sh -c "/usr/local/bin/etcdctl --endpoints=\"http://172.20.0.3:2379\" put A 1"
+docker exec client /bin/sh -c "/usr/local/bin/etcdctl --endpoints=\"http://172.20.0.3:2379\" put A 1"
 
 # Get Key A's value
-docker exec node4 /bin/sh -c "/usr/local/bin/etcdctl --endpoints=\"http://172.20.0.3:2379\" get A"
+docker exec client /bin/sh -c "/usr/local/bin/etcdctl --endpoints=\"http://172.20.0.3:2379\" get A"
+```
+
+### Membership Change
+```bash
+# Before member add
+$ docker exec client /bin/sh -c "/usr/local/bin/etcdctl --endpoints=\"http://172.20.0.3:2379\" member list -w table"
++------------------+---------+-------+---------------------------------+---------------------------------+------------+
+|        ID        | STATUS  | NAME  |           PEER ADDRS            |          CLIENT ADDRS           | IS LEARNER |
++------------------+---------+-------+---------------------------------+---------------------------------+------------+
+| c446f1764cf82129 | started | node3 | 172.20.0.5:2379,172.20.0.5:2380 | 172.20.0.5:2379,172.20.0.5:2380 |      false |
+| 536070dcd739623d | started | node1 | 172.20.0.3:2379,172.20.0.3:2380 | 172.20.0.3:2379,172.20.0.3:2380 |      false |
+| c58a7f879100c944 | started | node2 | 172.20.0.4:2379,172.20.0.4:2380 | 172.20.0.4:2379,172.20.0.4:2380 |      false |
++------------------+---------+-------+---------------------------------+---------------------------------+------------+
+
+# do the member add
+$ docker exec client /bin/sh -c "/usr/local/bin/etcdctl --endpoints=\"http://172.20.0.3:2379\" member add node4 --peer-urls=http://172.20.0.6:2379,http://172.20.0.6:2380"
+Member 7bcbb7db4adc6890 added to cluster 73917cf4cbc75001
+
+ETCD_NAME="node4"
+ETCD_INITIAL_CLUSTER="node4=http://172.20.0.6:2379,node4=http://172.20.0.6:2380,node2=172.20.0.4:2379,node2=172.20.0.4:2380,node3=172.20.0.5:2379,node3=172.20.0.5:2380,node1=172.20.0.3:2379,node1=172.20.0.3:2380"
+ETCD_INITIAL_ADVERTISE_PEER_URLS="http://172.20.0.6:2379,http://172.20.0.6:2380"
+ETCD_INITIAL_CLUSTER_STATE="existing"
+
+# boot up a new node
+$ docker run -d -it --rm --name=node4 --net=xline_net --ip=172.20.0.6 --cap-add=NET_ADMIN --cpu-shares=1024 -m=512M -v /home/jiawei/Xline/scripts:/mnt ghcr.io/xline-kv/xline:latest bash
+
+$ docker exec -e RUST_LOG=debug -d node4 "/usr/local/bin/xline --name node4 --members node1=172.20.0.3:2379,172.20.0.3:2380,node2=172.20.0.4:2379,172.20.0.4:2380,node3=172.20.0.5:2379,172.20.0.5:2380,node4=172.20.0.6:2379,172.20.0.6:2380 --storage-engine rocksdb --data-dir /usr/local/xline/data-dir --auth-public-key /mnt/public.pem --auth-private-key /mnt/private.pem --initial-cluster-state=existing"
+
+# check whether the new member adding success or not
+$ docker exec client /bin/sh -c "/usr/local/bin/etcdctl --endpoints=\"http://172.20.0.3:2379\" member list -w table"
++------------------+---------+-------+-----------------------------------------------+-----------------------------------------------+------------+
+|        ID        | STATUS  | NAME  |                  PEER ADDRS                   |                 CLIENT ADDRS                  | IS LEARNER |
++------------------+---------+-------+-----------------------------------------------+-----------------------------------------------+------------+
+| 7bcbb7db4adc6890 | started | node4 | http://172.20.0.6:2379,http://172.20.0.6:2380 | http://172.20.0.6:2379,http://172.20.0.6:2380 |      false |
+| c58a7f879100c944 | started | node2 |               172.20.0.4:2379,172.20.0.4:2380 |               172.20.0.4:2379,172.20.0.4:2380 |      false |
+| c446f1764cf82129 | started | node3 |               172.20.0.5:2379,172.20.0.5:2380 |               172.20.0.5:2379,172.20.0.5:2380 |      false |
+| 536070dcd739623d | started | node1 |               172.20.0.3:2379,172.20.0.3:2380 |               172.20.0.3:2379,172.20.0.3:2380 |      false |
++------------------+---------+-------+-----------------------------------------------+-----------------------------------------------+------------+
+
+# do the member remove
+$ docker exec client /bin/sh -c "/usr/local/bin/etcdctl --endpoints=\"http://172.20.0.3:2379\" member remove 7bcbb7db4adc6890"
+Member 7bcbb7db4adc6890 removed from cluster 73917cf4cbc75001
+
+# check whether the target member removed success or not
+$ docker exec client /bin/sh -c "/usr/local/bin/etcdctl --endpoints=\"http://172.20.0.3:2379\" member list -w table"
++------------------+---------+-------+---------------------------------+---------------------------------+------------+
+|        ID        | STATUS  | NAME  |           PEER ADDRS            |          CLIENT ADDRS           | IS LEARNER |
++------------------+---------+-------+---------------------------------+---------------------------------+------------+
+| c58a7f879100c944 | started | node2 | 172.20.0.4:2379,172.20.0.4:2380 | 172.20.0.4:2379,172.20.0.4:2380 |      false |
+| c446f1764cf82129 | started | node3 | 172.20.0.5:2379,172.20.0.5:2380 | 172.20.0.5:2379,172.20.0.5:2380 |      false |
+| 536070dcd739623d | started | node1 | 172.20.0.3:2379,172.20.0.3:2380 | 172.20.0.3:2379,172.20.0.3:2380 |      false |
++------------------+---------+-------+---------------------------------+---------------------------------+------------+
 ```
 
 ### Validation test
