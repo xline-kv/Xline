@@ -1,5 +1,56 @@
 # ChangeLog
 
+## v0.6.0
+
+### Features
+
+* support pre vote phase a3c6840
+* discover cluster in shutdown propose_conf_change and fetch_read_state bfb009e
+* client update cluster info 9a95915
+* return new cluster at server side a85df5a
+* add cluster version to client 7728bb3
+* add JSON printer in xlinectl 342d83f
+* implement member command in xlinectl d6fa954
+* implement `compaction` command in xlinectl 44b2249
+* fallback promote conf change deb1eff
+* implement `lock` command in `xlinectl` f9a0bbc
+* implement `watch` command in `xlinectl` fd1f4e3
+* implement `txn` command in `xlinectl` bfe038f
+* merge fetch leader into fetch cluster 58c619b
+* implement cluster client 5dbb9f6
+* implement basic exponential backoff for client retires ce68124
+* implement a portion of status rpc bed768c
+* merge fetch leader into fetch cluster 24af599
+* add cluster server ce578d1
+* implement `role` commands in `xlinectl` 51c19bc
+* support multiple address listening ae7742c
+* implement `user` commands in `xlinectl` 0aca7ab
+* implement `auth` command in `xlinectl` 6dbffa9
+* implement `snapshot` command in `xlinectl` 7e7fad5
+* implement `lease` commands in `xlinectl` 7b394ac
+* implement `delete` command in `xlinectl` bda9797
+* add `EntryData`, `LogEntry` can contain content other than commands 22f34e8
+
+### Fixes
+
+* fix watcher ac6a56c, closes #505
+* fix reelect test fe5b7de
+* add linearizable parameter in FetchClusterRequest 452c245
+* fix linearizable read in member_list e726fa8
+* fix member add aea430c
+* fix blocking in madsim f0ffc88
+* benchmark client cannot connect to server 18ca614
+* remove `stop` in simulation tests 2bc596a
+* add ucp recovery after new leader is elected 32694b0, closes #438
+* fix shutdown in leader keep alive 6d05901
+* check the password on leader 0f30a29
+* CURP TLA+ quorum calculation ef35c2c
+* improve readability of bootstrap errors 6b94865
+* improve readability of bootstrap errors 1b6ff5c
+* remove recovery of uncommitted pool 2a034e9
+* CURP TLA+ quorum calculation & property check fadc656
+* fix propose doesn't handle SyncedError and reduce code duplication 5126802
+
 ## v0.5.0
 
 ### Features
