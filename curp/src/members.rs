@@ -169,8 +169,9 @@ impl ClusterInfo {
 
     /// Insert a member
     #[inline]
-    pub fn insert(&self, member: Member) {
-        _ = self.members.insert(member.id, member);
+    #[must_use]
+    pub fn insert(&self, member: Member) -> Option<Member> {
+        self.members.insert(member.id, member)
     }
 
     /// Remove a member
@@ -337,10 +338,12 @@ impl ClusterInfo {
     }
 
     /// Promote a learner to voter
-    pub(crate) fn promote(&self, node_id: ServerId) {
+    pub(crate) fn promote(&self, node_id: ServerId) -> bool {
         if let Some(mut s) = self.members.get_mut(&node_id) {
             s.is_learner = false;
+            return true;
         }
+        false
     }
 
     /// Demote a voter to learner
