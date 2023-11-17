@@ -1139,7 +1139,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                     .map_lock(|mut cst_l| _ = cst_l.config.insert(node_id, is_learner));
                 self.lst.insert(node_id, is_learner);
                 _ = self.ctx.sync_events.insert(node_id, Arc::new(Event::new()));
-                self.ctx.cluster_info.insert(member);
+                let _ig = self.ctx.cluster_info.insert(member);
                 if is_learner {
                     Some(ConfChange::add_learner(node_id, old_addrs))
                 } else {
@@ -1498,7 +1498,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     /// Switch to a new config and return old member infos for fallback
     fn switch_config(&self, conf_change: ConfChange) -> (Vec<String>, String, bool) {
         let node_id = conf_change.node_id;
-        let fallback_info = match conf_change.change_type() {
+        let (modified, fallback_info) = match conf_change.change_type() {
             ConfChangeType::Add | ConfChangeType::AddLearner => {
                 let is_learner = matches!(conf_change.change_type(), ConfChangeType::AddLearner);
                 let member = Member::new(node_id, "", conf_change.address.clone(), is_learner);
@@ -1506,8 +1506,8 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                     .map_lock(|mut cst_l| _ = cst_l.config.insert(node_id, is_learner));
                 self.lst.insert(node_id, is_learner);
                 _ = self.ctx.sync_events.insert(node_id, Arc::new(Event::new()));
-                self.ctx.cluster_info.insert(member);
-                (vec![], String::new(), is_learner)
+                let m = self.ctx.cluster_info.insert(member);
+                (m.is_none(), (vec![], String::new(), is_learner))
             }
             ConfChangeType::Remove => {
                 self.cst
@@ -1516,12 +1516,16 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                 let m = self.ctx.cluster_info.remove(&node_id);
                 _ = self.ctx.sync_events.remove(&node_id);
                 _ = self.ctx.connects.remove(&node_id);
+                let modified = m.is_some();
                 let removed_member =
                     m.unwrap_or_else(|| unreachable!("the member should exist before remove"));
                 (
-                    removed_member.addrs,
-                    removed_member.name,
-                    removed_member.is_learner,
+                    modified,
+                    (
+                        removed_member.addrs,
+                        removed_member.name,
+                        removed_member.is_learner,
+                    ),
                 )
             }
             ConfChangeType::Update => {
@@ -1529,19 +1533,25 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                     .ctx
                     .cluster_info
                     .update(&node_id, conf_change.address.clone());
-                (old_addrs, String::new(), false)
+
+                (
+                    old_addrs != conf_change.address,
+                    (old_addrs, String::new(), false),
+                )
             }
             ConfChangeType::Promote => {
                 self.cst.map_lock(|mut cst_l| {
                     _ = cst_l.config.learners.remove(&node_id);
                     _ = cst_l.config.insert(node_id, false);
                 });
-                self.ctx.cluster_info.promote(node_id);
+                let modified = self.ctx.cluster_info.promote(node_id);
                 self.lst.promote(node_id);
-                (vec![], String::new(), false)
+                (modified, (vec![], String::new(), false))
             }
         };
-        let _ig = self.ctx.cluster_info.cluster_version_inc();
+        if modified {
+            let _ig = self.ctx.cluster_info.cluster_version_inc();
+        }
         if self.is_leader() {
             self.ctx
                 .change_tx
