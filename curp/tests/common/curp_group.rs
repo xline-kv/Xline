@@ -194,7 +194,7 @@ impl CurpGroup {
 
         let (exe_tx, exe_rx) = mpsc::unbounded_channel();
         let (as_tx, as_rx) = mpsc::unbounded_channel();
-        let ce = TestCE::new(name, exe_tx, as_tx, xline_storage_config);
+        let ce = TestCE::new(name.clone(), exe_tx, as_tx, xline_storage_config);
 
         let id = cluster_info.self_id();
         let role_change_cb = TestRoleChange::default();
@@ -227,6 +227,9 @@ impl CurpGroup {
                 trigger,
             },
         );
+        let client = self.new_client().await;
+        let propose_id = client.gen_propose_id().await.unwrap();
+        client.publish(propose_id, id, name).await;
     }
 
     pub fn all_addrs(&self) -> impl Iterator<Item = &String> {

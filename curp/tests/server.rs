@@ -496,6 +496,7 @@ async fn check_new_node(is_learner: bool) {
     group
         .run_node(listener, "new_node".to_owned(), cluster_info)
         .await;
+    sleep_millis(500).await; // wait new node publish it's name to cluster
 
     // 3. fetch and check cluster from new node
     let mut new_connect = group.get_connect(&node_id).await;
