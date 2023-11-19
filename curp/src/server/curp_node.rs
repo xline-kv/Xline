@@ -61,7 +61,7 @@ pub(super) struct CurpNode<C: Command, RC: RoleChange> {
 }
 
 /// Handlers for clients
-impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
+impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     /// Handle `Propose` requests
     pub(super) async fn propose(&self, req: ProposeRequest) -> Result<ProposeResponse, CurpError> {
         if self.curp.is_shutdown() {
@@ -169,7 +169,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
 }
 
 /// Handlers for peers
-impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
+impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     /// Handle `AppendEntries` requests
     pub(super) fn append_entries(
         &self,
@@ -289,7 +289,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
 }
 
 /// Spawned tasks
-impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
+impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     /// Tick periodically
     #[allow(clippy::integer_arithmetic)]
     async fn election_task(curp: Arc<RawCurp<C, RC>>) {
@@ -565,10 +565,10 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
 }
 
 // utils
-impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
+impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     /// Create a new server instance
     #[inline]
-    pub(super) async fn new<CE: CommandExecutor<C> + 'static>(
+    pub(super) async fn new<CE: CommandExecutor<C>>(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         cmd_executor: Arc<CE>,
