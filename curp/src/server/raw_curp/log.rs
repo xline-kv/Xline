@@ -15,8 +15,9 @@ use tokio::sync::mpsc;
 use tracing::error;
 
 use crate::{
-    cmd::{Command, ProposeId},
+    cmd::Command,
     log_entry::{EntryData, LogEntry},
+    rpc::ProposeId,
     snapshot::SnapshotMeta,
     LogIndex,
 };
