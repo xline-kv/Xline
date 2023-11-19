@@ -43,14 +43,14 @@ use self::{
 };
 use super::cmd_worker::CEEventTxApi;
 use crate::{
-    cmd::{Command, ProposeId},
+    cmd::Command,
     connect::InnerConnectApi,
     log_entry::{EntryData, LogEntry},
     members::{ClusterInfo, ServerId},
     role_change::RoleChange,
     rpc::{
         connect::InnerConnectApiWrapper, ConfChange, ConfChangeType, CurpError, IdSet, Member,
-        PoolEntry, ReadState,
+        PoolEntry, ProposeId, ReadState,
     },
     server::{
         cmd_board::CmdBoardRef,

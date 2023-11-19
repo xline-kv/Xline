@@ -38,12 +38,7 @@ pub(crate) use self::proto::{
         InstallSnapshotRequest, InstallSnapshotResponse, VoteRequest, VoteResponse,
     },
 };
-use crate::{
-    cmd::{Command, ProposeId},
-    log_entry::LogEntry,
-    members::ServerId,
-    LogIndex,
-};
+use crate::{cmd::Command, log_entry::LogEntry, members::ServerId, LogIndex};
 
 /// Rpc connect
 pub(crate) mod connect;
@@ -419,7 +414,7 @@ impl InstallSnapshotResponse {
 
 impl IdSet {
     /// Create a new `IdSet`
-    pub fn new(ids: Vec<ProposeId>) -> Self {
+    pub(crate) fn new(ids: Vec<ProposeId>) -> Self {
         Self {
             trigger_ids: ids.into_iter().map(|id| id.0 ^ id.1).collect(),
         }
@@ -521,9 +516,7 @@ impl ConfChange {
 
 impl ProposeConfChangeRequest {
     /// Create a new `ProposeConfChangeRequest`
-    #[inline]
-    #[must_use]
-    pub fn new(id: ProposeId, changes: Vec<ConfChange>, cluster_version: u64) -> Self {
+    pub(crate) fn new(id: ProposeId, changes: Vec<ConfChange>, cluster_version: u64) -> Self {
         Self {
             propose_id: Some(id.into()),
             changes,
@@ -532,9 +525,7 @@ impl ProposeConfChangeRequest {
     }
 
     /// Get id of the request
-    #[inline]
-    #[must_use]
-    pub fn propose_id(&self) -> ProposeId {
+    pub(crate) fn propose_id(&self) -> ProposeId {
         self.propose_id
             .clone()
             .unwrap_or_else(|| {
@@ -554,9 +545,7 @@ impl ShutdownRequest {
     }
 
     /// Get id of the request
-    #[inline]
-    #[must_use]
-    pub fn id(&self) -> ProposeId {
+    pub(crate) fn id(&self) -> ProposeId {
         self.propose_id
             .clone()
             .unwrap_or_else(|| {
@@ -568,9 +557,7 @@ impl ShutdownRequest {
 
 impl PublishRequest {
     /// Create a new `PublishRequest`
-    #[inline]
-    #[must_use]
-    pub fn new(id: ProposeId, node_id: ServerId, name: String) -> Self {
+    pub(crate) fn new(id: ProposeId, node_id: ServerId, name: String) -> Self {
         Self {
             propose_id: Some(id.into()),
             node_id,
@@ -579,9 +566,7 @@ impl PublishRequest {
     }
 
     /// Get id of the request
-    #[inline]
-    #[must_use]
-    pub fn propose_id(&self) -> ProposeId {
+    pub(crate) fn propose_id(&self) -> ProposeId {
         self.propose_id
             .clone()
             .unwrap_or_else(|| {
@@ -796,5 +781,20 @@ impl<C> From<Arc<C>> for PoolEntryInner<C> {
 impl<C> From<Vec<ConfChange>> for PoolEntryInner<C> {
     fn from(value: Vec<ConfChange>) -> Self {
         Self::ConfChange(value)
+    }
+}
+
+/// Command Id wrapper, which is used to identify a command
+/// The underlying data is a tuple of (`client_id`, `seq_num`)
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Ord, PartialOrd, Default,
+)]
+#[allow(clippy::exhaustive_structs)] // It is exhaustive
+pub(crate) struct ProposeId(pub(crate) u64, pub(crate) u64);
+
+impl std::fmt::Display for ProposeId {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}#{}", self.0, self.1)
     }
 }

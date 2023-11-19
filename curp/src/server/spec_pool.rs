@@ -4,8 +4,8 @@ use curp_external_api::cmd::ConflictCheck;
 use parking_lot::Mutex;
 use tracing::{debug, warn};
 
-use crate::cmd::{Command, ProposeId};
-use crate::rpc::PoolEntry;
+use crate::cmd::Command;
+use crate::rpc::{PoolEntry, ProposeId};
 
 /// A reference to the speculative pool
 pub(super) type SpecPoolRef<C> = Arc<Mutex<SpeculativePool<C>>>;

@@ -3,10 +3,7 @@ use std::{collections::HashSet, time::Duration};
 use utils::{parking_lot_lock::MutexMap, shutdown};
 
 use super::spec_pool::SpecPoolRef;
-use crate::{
-    cmd::{Command, ProposeId},
-    server::cmd_board::CmdBoardRef,
-};
+use crate::{cmd::Command, rpc::ProposeId, server::cmd_board::CmdBoardRef};
 
 /// Run background GC tasks for Curp server
 pub(super) fn run_gc_tasks<C: Command>(
@@ -88,7 +85,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        cmd::ProposeId,
+        rpc::ProposeId,
         server::{
             cmd_board::{CmdBoardRef, CommandBoard},
             gc::gc_cmd_board,
