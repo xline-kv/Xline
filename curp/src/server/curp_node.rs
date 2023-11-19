@@ -890,7 +890,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        rpc::connect::MockInnerConnectApi, server::cmd_worker::MockCEEventTxApi, ConfChange,
+        rpc::{connect::MockInnerConnectApi, ConfChange},
+        server::cmd_worker::MockCEEventTxApi,
     };
 
     #[traced_test]

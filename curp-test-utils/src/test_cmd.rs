@@ -10,7 +10,7 @@ use std::{
 use async_trait::async_trait;
 use curp_external_api::{
     cmd::{Command, CommandExecutor, ConflictCheck, PbCodec},
-    LogIndex,
+    LogIndex, InflightId,
 };
 use engine::{Engine, EngineType, Snapshot, SnapshotApi, StorageEngine, WriteOperation};
 use itertools::Itertools;
@@ -401,7 +401,7 @@ impl CommandExecutor<TestCommand> for TestCE {
         Ok(())
     }
 
-    fn trigger(&self, _id: u64, _index: u64) {}
+    fn trigger(&self, _id: InflightId, _index: LogIndex) {}
 }
 
 impl TestCE {

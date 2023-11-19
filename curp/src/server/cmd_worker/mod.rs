@@ -17,9 +17,9 @@ use crate::{
     cmd::{Command, CommandExecutor},
     log_entry::{EntryData, LogEntry},
     role_change::RoleChange,
+    rpc::ConfChangeType,
     server::cmd_worker::conflict_checked_mpmc::TaskType,
     snapshot::{Snapshot, SnapshotMeta},
-    ConfChangeType,
 };
 
 /// The special conflict checked mpmc
@@ -120,7 +120,7 @@ async fn worker_exe<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
         EntryData::Shutdown | EntryData::Empty | EntryData::SetName(_, _) => true,
     };
     if !success {
-        ce.trigger(entry.trigger_id(), entry.index);
+        ce.trigger(entry.inflight_id(), entry.index);
     }
     success
 }
@@ -186,7 +186,7 @@ async fn worker_as<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
         }
         EntryData::Empty => true,
     };
-    ce.trigger(entry.trigger_id(), entry.index);
+    ce.trigger(entry.inflight_id(), entry.index);
     success
 }
 

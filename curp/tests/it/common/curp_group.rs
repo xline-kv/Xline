@@ -9,8 +9,9 @@ use curp::{
     client::Client,
     error::ServerError,
     members::{ClusterInfo, ServerId},
+    rpc::Member,
     server::Rpc,
-    LogIndex, Member,
+    LogIndex,
 };
 use curp_test_utils::{
     sleep_secs,
@@ -373,7 +374,7 @@ impl CurpGroup {
             .into_iter()
             .map(|m| Member::new(m.id, m.name, m.addrs, m.is_learner))
             .collect();
-        let cluster_res = curp::FetchClusterResponse {
+        let cluster_res = curp::rpc::FetchClusterResponse {
             leader_id: cluster_res_base.leader_id,
             term: cluster_res_base.term,
             cluster_id: cluster_res_base.cluster_id,

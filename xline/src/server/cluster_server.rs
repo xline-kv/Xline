@@ -3,8 +3,10 @@ use std::sync::Arc;
 use curp::{
     client::Client,
     members::ClusterInfo,
-    ConfChange,
-    ConfChangeType::{Add, AddLearner, Promote, Remove, Update},
+    rpc::{
+        ConfChange,
+        ConfChangeType::{Add, AddLearner, Promote, Remove, Update},
+    },
 };
 use itertools::Itertools;
 use tonic::{Request, Response, Status};
