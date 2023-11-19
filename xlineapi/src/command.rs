@@ -4,7 +4,7 @@ use std::{
 };
 
 use curp::cmd::Command as CurpCommand;
-use curp_external_api::cmd::{ConflictCheck, PbCodec, PbSerializeError, ProposeId};
+use curp_external_api::cmd::{ConflictCheck, PbCodec, PbSerializeError};
 use itertools::Itertools;
 use prost::Message;
 use serde::{Deserialize, Serialize};
@@ -213,8 +213,6 @@ pub struct Command {
     keys: Vec<KeyRange>,
     /// Request data
     request: RequestWithToken,
-    /// Propose id
-    id: ProposeId,
 }
 
 /// get all lease ids in the request wrapper
@@ -280,9 +278,6 @@ fn get_lease_ids(wrapper: &RequestWrapper) -> HashSet<i64> {
 impl ConflictCheck for Command {
     #[inline]
     fn is_conflict(&self, other: &Self) -> bool {
-        if self.id == other.id {
-            return true;
-        }
         let this_req = &self.request.request;
         let other_req = &other.request.request;
         // auth read request will not conflict with any request except the auth write request
@@ -351,8 +346,8 @@ impl Command {
     /// New `Command`
     #[must_use]
     #[inline]
-    pub fn new(keys: Vec<KeyRange>, request: RequestWithToken, id: ProposeId) -> Self {
-        Self { keys, request, id }
+    pub fn new(keys: Vec<KeyRange>, request: RequestWithToken) -> Self {
+        Self { keys, request }
     }
 
     /// get request
@@ -473,11 +468,6 @@ impl CurpCommand for Command {
     fn keys(&self) -> &[Self::K] {
         self.keys.as_slice()
     }
-
-    #[inline]
-    fn id(&self) -> ProposeId {
-        self.id
-    }
 }
 
 impl PbCodec for Command {
@@ -487,7 +477,6 @@ impl PbCodec for Command {
         let rpc_cmd = PbCommand {
             keys: cmd.keys.into_iter().map(Into::into).collect(),
             request: Some(cmd.request.into()),
-            propose_id: Some(cmd.id.into()),
         };
         rpc_cmd.encode_to_vec()
     }
@@ -501,10 +490,6 @@ impl PbCodec for Command {
                 .request
                 .ok_or(PbSerializeError::EmptyField)?
                 .try_into()?,
-            id: rpc_cmd
-                .propose_id
-                .unwrap_or_else(|| unreachable!("propose_id should be set in Command"))
-                .into(),
         })
     }
 }
@@ -573,7 +558,7 @@ impl CommandKeys for TxnRequest {
 }
 
 /// Generate `Command` proposal from `Request`
-pub fn command_from_request_wrapper(propose_id: ProposeId, wrapper: RequestWithToken) -> Command {
+pub fn command_from_request_wrapper(wrapper: RequestWithToken) -> Command {
     #[allow(clippy::wildcard_enum_match_arm)]
     let keys = match wrapper.request {
         RequestWrapper::RangeRequest(ref req) => req.keys(),
@@ -582,7 +567,7 @@ pub fn command_from_request_wrapper(propose_id: ProposeId, wrapper: RequestWithT
         RequestWrapper::TxnRequest(ref req) => req.keys(),
         _ => vec![],
     };
-    Command::new(keys, wrapper, propose_id)
+    Command::new(keys, wrapper)
 }
 
 #[cfg(test)]
@@ -632,26 +617,22 @@ mod test {
         let cmd1 = Command::new(
             vec![KeyRange::new("a", "e")],
             RequestWithToken::new(RequestWrapper::PutRequest(PutRequest::default())),
-            ProposeId(0, 0),
         );
         let cmd2 = Command::new(
             vec![],
             RequestWithToken::new(RequestWrapper::AuthStatusRequest(
                 AuthStatusRequest::default(),
             )),
-            ProposeId(0, 0),
         );
         let cmd3 = Command::new(
             vec![KeyRange::new("c", "g")],
             RequestWithToken::new(RequestWrapper::PutRequest(PutRequest::default())),
-            ProposeId(2, 2),
         );
         let cmd4 = Command::new(
             vec![],
             RequestWithToken::new(RequestWrapper::AuthEnableRequest(
                 AuthEnableRequest::default(),
             )),
-            ProposeId(3, 3),
         );
         let cmd5 = Command::new(
             vec![],
@@ -659,14 +640,12 @@ mod test {
                 ttl: 1,
                 id: 1,
             })),
-            ProposeId(3, 3),
         );
         let cmd6 = Command::new(
             vec![],
             RequestWithToken::new(RequestWrapper::LeaseRevokeRequest(LeaseRevokeRequest {
                 id: 1,
             })),
-            ProposeId(3, 3),
         );
 
         let lease_grant_cmd = Command::new(
@@ -675,7 +654,6 @@ mod test {
                 ttl: 1,
                 id: 123,
             })),
-            ProposeId(4, 4),
         );
         let put_with_lease_cmd = Command::new(
             vec![KeyRange::new_one_key("foo")],
@@ -685,7 +663,6 @@ mod test {
                 lease: 123,
                 ..Default::default()
             })),
-            ProposeId(5, 5),
         );
         let txn_with_lease_id_cmd = Command::new(
             vec![KeyRange::new_one_key("key")],
@@ -701,18 +678,16 @@ mod test {
                 }],
                 failure: vec![],
             })),
-            ProposeId(6, 6),
         );
         let lease_leases_cmd = Command::new(
             vec![],
             RequestWithToken::new(RequestWrapper::LeaseLeasesRequest(LeaseLeasesRequest {})),
-            ProposeId(4, 4),
         );
 
         assert!(lease_grant_cmd.is_conflict(&put_with_lease_cmd)); // lease id
         assert!(lease_grant_cmd.is_conflict(&txn_with_lease_id_cmd)); // lease id
         assert!(put_with_lease_cmd.is_conflict(&txn_with_lease_id_cmd)); // lease id
-        assert!(cmd1.is_conflict(&cmd2)); // id
+
         assert!(cmd1.is_conflict(&cmd3)); // keys
         assert!(!cmd2.is_conflict(&cmd3)); // auth read and kv
         assert!(cmd2.is_conflict(&cmd4)); // auth and auth
@@ -726,7 +701,6 @@ mod test {
         compare: Vec<Compare>,
         success: Vec<RequestOp>,
         failure: Vec<RequestOp>,
-        propose_id: ProposeId,
     ) -> Command {
         Command::new(
             keys,
@@ -735,7 +709,6 @@ mod test {
                 success,
                 failure,
             })),
-            propose_id,
         )
     }
 
@@ -747,7 +720,6 @@ mod test {
                 revision: 3,
                 physical: false,
             })),
-            ProposeId(11, 11),
         );
 
         let compaction_cmd_2 = Command::new(
@@ -756,7 +728,6 @@ mod test {
                 revision: 5,
                 physical: false,
             })),
-            ProposeId(12, 12),
         );
 
         let txn_with_lease_id_cmd = generate_txn_command(
@@ -771,7 +742,6 @@ mod test {
                 })),
             }],
             vec![],
-            ProposeId(6, 6),
         );
 
         let txn_cmd_1 = generate_txn_command(
@@ -784,7 +754,6 @@ mod test {
                 })),
             }],
             vec![],
-            ProposeId(13, 13),
         );
 
         let txn_cmd_2 = generate_txn_command(
@@ -798,7 +767,6 @@ mod test {
                 })),
             }],
             vec![],
-            ProposeId(14, 14),
         );
 
         let txn_cmd_3 = generate_txn_command(
@@ -812,7 +780,6 @@ mod test {
                 })),
             }],
             vec![],
-            ProposeId(15, 15),
         );
 
         assert!(compaction_cmd_1.is_conflict(&compaction_cmd_2));
@@ -830,7 +797,6 @@ mod test {
         let cmd = Command::new(
             vec![KeyRange::new("a", "e")],
             RequestWithToken::new(RequestWrapper::PutRequest(PutRequest::default())),
-            ProposeId(0, 0),
         );
         let decoded_cmd =
             <Command as PbCodec>::decode(&cmd.encode()).expect("decode should success");

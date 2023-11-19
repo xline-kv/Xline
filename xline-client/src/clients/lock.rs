@@ -244,9 +244,8 @@ impl LockClient {
     {
         let request_with_token =
             RequestWithToken::new_with_token(request.into(), self.token.clone());
-        let propose_id = self.curp_client.gen_propose_id().await?;
 
-        let cmd = command_from_request_wrapper(propose_id, request_with_token);
+        let cmd = command_from_request_wrapper(request_with_token);
         self.curp_client
             .propose(cmd, use_fast_path)
             .await

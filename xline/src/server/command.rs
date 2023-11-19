@@ -202,7 +202,7 @@ where
         Ok(u64::from_le_bytes(buf))
     }
 
-    fn trigger(&self, id: ProposeId, index: u64) {
+    fn trigger(&self, id: u64, index: u64) {
         self.id_barrier.trigger(id);
         self.index_barrier.trigger(index);
     }

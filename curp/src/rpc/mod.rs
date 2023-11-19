@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use curp_external_api::cmd::{PbCodec, PbSerializeError};
+use curp_external_api::cmd::{ConflictCheck, PbCodec, PbSerializeError};
 use prost::Message;
 use serde::{Deserialize, Serialize};
 
@@ -18,6 +18,7 @@ pub use self::proto::{
         Member,
         ProposeConfChangeRequest,
         ProposeConfChangeResponse,
+        ProposeId as PbProposeId,
         ProposeRequest,
         ProposeResponse,
         PublishRequest,
@@ -30,8 +31,7 @@ pub(crate) use self::proto::{
         fetch_read_state_response::{IdSet, ReadState},
         protocol_server::Protocol,
         CurpError as CurpErrorWrapper, FetchReadStateRequest, FetchReadStateResponse,
-        ProposeId as PbProposeId, ShutdownRequest, ShutdownResponse, WaitSyncedRequest,
-        WaitSyncedResponse,
+        ShutdownRequest, ShutdownResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
     inner_messagepb::{
         inner_protocol_server::InnerProtocol, AppendEntriesRequest, AppendEntriesResponse,
@@ -43,7 +43,6 @@ use crate::{
     cmd::{Command, ProposeId},
     log_entry::LogEntry,
     members::ServerId,
-    server::PoolEntry,
     LogIndex,
 };
 
@@ -122,11 +121,20 @@ impl FetchClusterResponse {
 
 impl ProposeRequest {
     /// Create a new `Propose` request
-    pub(crate) fn new<C: Command>(cmd: &C, cluster_version: u64) -> Self {
+    pub(crate) fn new<C: Command>(propose_id: ProposeId, cmd: &C, cluster_version: u64) -> Self {
         Self {
+            propose_id: Some(propose_id.into()),
             command: cmd.encode(),
             cluster_version,
         }
+    }
+
+    /// Get the propose id
+    pub(crate) fn propose_id(&self) -> ProposeId {
+        self.propose_id
+            .clone()
+            .unwrap_or_else(|| unreachable!("propose id must be set in ProposeRequest"))
+            .into()
     }
 
     /// Get command
@@ -414,7 +422,7 @@ impl IdSet {
     /// Create a new `IdSet`
     pub fn new(ids: Vec<ProposeId>) -> Self {
         Self {
-            ids: ids.into_iter().map(Into::into).collect(),
+            trigger_ids: ids.into_iter().map(|id| id.0 ^ id.1).collect(),
         }
     }
 }
@@ -527,49 +535,13 @@ impl ProposeConfChangeRequest {
     /// Get id of the request
     #[inline]
     #[must_use]
-    pub fn id(&self) -> ProposeId {
+    pub fn propose_id(&self) -> ProposeId {
         self.propose_id
             .clone()
             .unwrap_or_else(|| {
                 unreachable!("propose id should be set in propose conf change request")
             })
             .into()
-    }
-}
-
-/// Conf change data in log entry
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[cfg_attr(test, derive(PartialEq))]
-pub(crate) struct ConfChangeEntry {
-    /// Propose id
-    id: ProposeId,
-    /// Conf changes
-    changes: Vec<ConfChange>,
-}
-
-impl ConfChangeEntry {
-    /// Get id of the entry
-    pub(crate) fn id(&self) -> ProposeId {
-        self.id
-    }
-
-    /// Get changes of the entry
-    pub(crate) fn changes(&self) -> &[ConfChange] {
-        &self.changes
-    }
-}
-
-impl From<ProposeConfChangeRequest> for ConfChangeEntry {
-    fn from(req: ProposeConfChangeRequest) -> Self {
-        Self {
-            id: req
-                .propose_id
-                .unwrap_or_else(|| {
-                    unreachable!("propose id should be set in propose conf change request")
-                })
-                .into(),
-            changes: req.changes,
-        }
     }
 }
 
@@ -610,7 +582,7 @@ impl PublishRequest {
     /// Get id of the request
     #[inline]
     #[must_use]
-    pub fn id(&self) -> ProposeId {
+    pub fn propose_id(&self) -> ProposeId {
         self.propose_id
             .clone()
             .unwrap_or_else(|| {
@@ -757,5 +729,73 @@ impl From<CurpError> for tonic::Status {
         let details = CurpErrorWrapper { err: Some(err) }.encode_to_vec();
 
         tonic::Status::with_details(code, msg, details.into())
+    }
+}
+
+// User defined types
+
+/// Entry of speculative pool
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct PoolEntry<C> {
+    /// Propose id
+    pub(crate) id: ProposeId,
+    /// Inner entry
+    pub(crate) inner: PoolEntryInner<C>,
+}
+
+/// Inner entry of speculative pool
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) enum PoolEntryInner<C> {
+    /// Command entry
+    Command(Arc<C>),
+    /// ConfChange entry
+    ConfChange(Vec<ConfChange>),
+}
+
+impl<C> PoolEntry<C>
+where
+    C: Command,
+{
+    /// Create a new pool entry
+    pub(crate) fn new(id: ProposeId, inner: impl Into<PoolEntryInner<C>>) -> Self {
+        Self {
+            id,
+            inner: inner.into(),
+        }
+    }
+
+    /// Check if the entry is conflict with the command
+    pub(crate) fn is_conflict_with_cmd(&self, c: &C) -> bool {
+        match self.inner {
+            PoolEntryInner::Command(ref cmd) => cmd.is_conflict(c),
+            PoolEntryInner::ConfChange(ref _conf_change) => true,
+        }
+    }
+}
+
+impl<C> ConflictCheck for PoolEntry<C>
+where
+    C: ConflictCheck,
+{
+    fn is_conflict(&self, other: &Self) -> bool {
+        let PoolEntryInner::Command(ref cmd1) = self.inner else {
+            return true;
+        };
+        let PoolEntryInner::Command(ref cmd2) = other.inner else {
+            return true;
+        };
+        cmd1.is_conflict(cmd2)
+    }
+}
+
+impl<C> From<Arc<C>> for PoolEntryInner<C> {
+    fn from(value: Arc<C>) -> Self {
+        Self::Command(value)
+    }
+}
+
+impl<C> From<Vec<ConfChange>> for PoolEntryInner<C> {
+    fn from(value: Vec<ConfChange>) -> Self {
+        Self::ConfChange(value)
     }
 }

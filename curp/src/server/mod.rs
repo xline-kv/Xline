@@ -1,8 +1,6 @@
 use std::{fmt::Debug, sync::Arc};
 
-use curp_external_api::cmd::{ConflictCheck, ProposeId};
 use engine::SnapshotAllocator;
-use serde::{Deserialize, Serialize};
 #[cfg(not(madsim))]
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
@@ -20,13 +18,13 @@ use crate::{
     members::{ClusterInfo, ServerId},
     role_change::RoleChange,
     rpc::{
-        AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse,
-        FetchReadStateRequest, FetchReadStateResponse, InnerProtocolServer, InstallSnapshotRequest,
-        InstallSnapshotResponse, ProposeConfChangeRequest, ProposeConfChangeResponse,
-        ProposeRequest, ProposeResponse, ProtocolServer, ShutdownRequest, ShutdownResponse,
-        TriggerShutdownRequest, VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        AppendEntriesRequest, AppendEntriesResponse, ConfChangeEntry, FetchClusterRequest,
+        FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse, InnerProtocolServer,
+        InstallSnapshotRequest, InstallSnapshotResponse, ProposeConfChangeRequest,
+        ProposeConfChangeResponse, ProposeRequest, ProposeResponse, ProtocolServer, PublishRequest,
+        PublishResponse, ShutdownRequest, ShutdownResponse, TriggerShutdownRequest,
+        TriggerShutdownResponse, VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
-    ConfChangeEntry, PublishRequest, PublishResponse, TriggerShutdownResponse,
 };
 
 /// Command worker to do execution and after sync
@@ -375,62 +373,5 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
     #[inline]
     pub fn shutdown_listener(&self) -> shutdown::Listener {
         self.inner.shutdown_listener()
-    }
-}
-
-/// Entry of speculative pool
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) enum PoolEntry<C> {
-    /// Command entry
-    Command(Arc<C>),
-    /// ConfChange entry
-    ConfChange(ConfChangeEntry),
-}
-
-impl<C> PoolEntry<C>
-where
-    C: Command,
-{
-    /// Propose id
-    pub(crate) fn id(&self) -> ProposeId {
-        match *self {
-            Self::Command(ref cmd) => cmd.id(),
-            Self::ConfChange(ref conf_change) => conf_change.id(),
-        }
-    }
-
-    /// Check if the entry is conflict with the command
-    pub(crate) fn is_conflict_with_cmd(&self, c: &C) -> bool {
-        match *self {
-            Self::Command(ref cmd) => cmd.is_conflict(c),
-            Self::ConfChange(ref _conf_change) => true,
-        }
-    }
-}
-
-impl<C> ConflictCheck for PoolEntry<C>
-where
-    C: ConflictCheck,
-{
-    fn is_conflict(&self, other: &Self) -> bool {
-        let Self::Command(ref cmd1) = *self else {
-            return true;
-        };
-        let Self::Command(ref cmd2) = *other else {
-            return true;
-        };
-        cmd1.is_conflict(cmd2)
-    }
-}
-
-impl<C> From<Arc<C>> for PoolEntry<C> {
-    fn from(value: Arc<C>) -> Self {
-        Self::Command(value)
-    }
-}
-
-impl<C> From<ConfChangeEntry> for PoolEntry<C> {
-    fn from(value: ConfChangeEntry) -> Self {
-        Self::ConfChange(value)
     }
 }
