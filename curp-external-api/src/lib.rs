@@ -135,6 +135,9 @@
 /// Log Index
 pub type LogIndex = u64;
 
+/// An id for a inflight command, used to wait for this command to complete
+pub type InflightId = u64;
+
 /// The command to be executed
 pub mod cmd;
 /// The command to be executed

@@ -44,13 +44,12 @@ use self::{
 use super::cmd_worker::CEEventTxApi;
 use crate::{
     cmd::Command,
-    connect::InnerConnectApi,
     log_entry::{EntryData, LogEntry},
     members::{ClusterInfo, ServerId},
     role_change::RoleChange,
     rpc::{
-        connect::InnerConnectApiWrapper, ConfChange, ConfChangeType, CurpError, IdSet, Member,
-        PoolEntry, ProposeId, ReadState,
+        connect::InnerConnectApi, connect::InnerConnectApiWrapper, ConfChange, ConfChangeType,
+        CurpError, IdSet, Member, PoolEntry, PoolEntryInner, ProposeId, PublishRequest, ReadState,
     },
     server::{
         cmd_board::CmdBoardRef,
@@ -58,7 +57,7 @@ use crate::{
         spec_pool::SpecPoolRef,
     },
     snapshot::{Snapshot, SnapshotMeta},
-    LogIndex, PoolEntryInner, PublishRequest,
+    LogIndex,
 };
 
 /// Curp state
@@ -761,7 +760,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         if ids.is_empty() {
             ReadState::CommitIndex(self.log.read().commit_index)
         } else {
-            ReadState::Ids(IdSet::new(ids))
+            ReadState::Ids(IdSet::new(
+                ids.into_iter()
+                    .map(crate::log_entry::propose_id_to_inflight_id)
+                    .collect(),
+            ))
         }
     }
 }

@@ -85,13 +85,12 @@ mod tests {
 
     use super::*;
     use crate::{
-        rpc::ProposeId,
+        rpc::{PoolEntry, ProposeId},
         server::{
             cmd_board::{CmdBoardRef, CommandBoard},
             gc::gc_cmd_board,
             spec_pool::{SpecPoolRef, SpeculativePool},
         },
-        PoolEntry,
     };
 
     #[tokio::test]

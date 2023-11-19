@@ -348,7 +348,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                                     None
                                 }
                                 Err(err) => {
-                                    self.cmd_executor.trigger(entry.trigger_id(), entry.index);
+                                    self.cmd_executor.trigger(entry.inflight_id(), entry.index);
                                     Some(err)
                                 }
                             }

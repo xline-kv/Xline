@@ -1,6 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
 
-use curp_external_api::cmd::{ConflictCheck, PbCodec, PbSerializeError};
+use curp_external_api::{
+    cmd::{ConflictCheck, PbCodec, PbSerializeError},
+    InflightId,
+};
 use prost::Message;
 use serde::{Deserialize, Serialize};
 
@@ -414,10 +417,8 @@ impl InstallSnapshotResponse {
 
 impl IdSet {
     /// Create a new `IdSet`
-    pub(crate) fn new(ids: Vec<ProposeId>) -> Self {
-        Self {
-            trigger_ids: ids.into_iter().map(|id| id.0 ^ id.1).collect(),
-        }
+    pub(crate) fn new(inflight_ids: Vec<InflightId>) -> Self {
+        Self { inflight_ids }
     }
 }
 

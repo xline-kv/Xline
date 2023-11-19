@@ -3,8 +3,11 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use anyhow::{anyhow, Result};
 use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{
-    client::Client, error::ClientError, members::ClusterInfo, server::Rpc, InnerProtocolServer,
-    ProtocolServer,
+    client::Client,
+    error::ClientError,
+    members::ClusterInfo,
+    rpc::{InnerProtocolServer, ProtocolServer},
+    server::Rpc,
 };
 use engine::{MemorySnapshotAllocator, RocksSnapshotAllocator, SnapshotAllocator};
 use futures::stream::select_all;

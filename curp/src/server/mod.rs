@@ -21,10 +21,10 @@ use crate::{
         AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse,
         FetchReadStateRequest, FetchReadStateResponse, InnerProtocolServer, InstallSnapshotRequest,
         InstallSnapshotResponse, ProposeConfChangeRequest, ProposeConfChangeResponse,
-        ProposeRequest, ProposeResponse, ProtocolServer, ShutdownRequest, ShutdownResponse,
-        VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        ProposeRequest, ProposeResponse, ProtocolServer, PublishRequest, PublishResponse,
+        ShutdownRequest, ShutdownResponse, VoteRequest, VoteResponse, WaitSyncedRequest,
+        WaitSyncedResponse,
     },
-    PublishRequest, PublishResponse,
 };
 
 /// Command worker to do execution and after sync
