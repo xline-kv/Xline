@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
 use clippy_utilities::OverflowArithmetic;
-use curp::cmd::ProposeId;
 use event_listener::Event;
 use parking_lot::Mutex;
 
@@ -66,7 +65,7 @@ struct IndexBarrierInner {
 #[derive(Debug)]
 pub(crate) struct IdBarrier {
     /// Barriers of id
-    barriers: Mutex<HashMap<ProposeId, Event>>,
+    barriers: Mutex<HashMap<u64, Event>>,
 }
 
 impl IdBarrier {
@@ -78,7 +77,7 @@ impl IdBarrier {
     }
 
     /// Wait for the id until it is triggered.
-    pub(crate) async fn wait(&self, id: ProposeId) {
+    pub(crate) async fn wait(&self, id: u64) {
         let listener = self
             .barriers
             .lock()
@@ -89,7 +88,7 @@ impl IdBarrier {
     }
 
     /// Trigger the barrier of the given id.
-    pub(crate) fn trigger(&self, id: ProposeId) {
+    pub(crate) fn trigger(&self, id: u64) {
         if let Some(event) = self.barriers.lock().remove(&id) {
             event.notify(usize::MAX);
         }
@@ -114,13 +113,13 @@ mod test {
             .map(|i| {
                 let id_barrier = Arc::clone(&id_barrier);
                 tokio::spawn(async move {
-                    id_barrier.wait(ProposeId(i, i)).await;
+                    id_barrier.wait(i).await;
                 })
             })
             .collect::<Vec<_>>();
         sleep(Duration::from_millis(10)).await;
         for i in 0..5 {
-            id_barrier.trigger(ProposeId(i, i));
+            id_barrier.trigger(i);
         }
         timeout(Duration::from_millis(100), join_all(barriers))
             .await

@@ -452,13 +452,8 @@ impl XlineServer {
 
     /// Publish the name of current node to cluster
     async fn publish(&self, curp_client: Arc<CurpClient>) -> Result<(), ClientError<Command>> {
-        let propose_id = curp_client.gen_propose_id().await?;
         curp_client
-            .publish(
-                propose_id,
-                self.cluster_info.self_id(),
-                self.cluster_info.self_name(),
-            )
+            .publish(self.cluster_info.self_id(), self.cluster_info.self_name())
             .await
     }
 

@@ -1,7 +1,7 @@
 use std::{
     fmt::Display,
     sync::{
-        atomic::{AtomicI64, AtomicU64, Ordering},
+        atomic::{AtomicI64, Ordering},
         Arc,
     },
     time::Duration,
@@ -9,12 +9,11 @@ use std::{
 
 use async_trait::async_trait;
 use curp_external_api::{
-    cmd::{Command, CommandExecutor, ConflictCheck, PbCodec, ProposeId},
+    cmd::{Command, CommandExecutor, ConflictCheck, PbCodec},
     LogIndex,
 };
 use engine::{Engine, EngineType, Snapshot, SnapshotApi, StorageEngine, WriteOperation};
 use itertools::Itertools;
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::{sync::mpsc, time::sleep};
@@ -25,16 +24,6 @@ use crate::{META_TABLE, REVISION_TABLE, TEST_TABLE};
 
 pub(crate) const APPLIED_INDEX_KEY: &str = "applied_index";
 pub(crate) const LAST_REVISION_KEY: &str = "last_revision";
-
-/// Test client id
-pub const TEST_CLIENT_ID: u64 = 12345;
-
-static NEXT_ID: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(1));
-
-pub fn next_id() -> ProposeId {
-    let seq_num = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    ProposeId(TEST_CLIENT_ID, seq_num)
-}
 
 #[derive(Error, Debug, Clone, Serialize, Deserialize)]
 pub struct ExecuteError(pub String);
@@ -58,7 +47,6 @@ impl PbCodec for ExecuteError {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct TestCommand {
-    pub id: ProposeId,
     pub keys: Vec<u32>,
     pub exe_dur: Duration,
     pub as_dur: Duration,
@@ -70,7 +58,6 @@ pub struct TestCommand {
 impl Default for TestCommand {
     fn default() -> Self {
         Self {
-            id: next_id(),
             keys: vec![1],
             exe_dur: Duration::ZERO,
             as_dur: Duration::ZERO,
@@ -118,7 +105,6 @@ impl PbCodec for TestCommandResult {
 impl TestCommand {
     pub fn new_get(keys: Vec<u32>) -> Self {
         Self {
-            id: next_id(),
             keys,
             exe_dur: Duration::ZERO,
             as_dur: Duration::ZERO,
@@ -130,7 +116,6 @@ impl TestCommand {
 
     pub fn new_put(keys: Vec<u32>, value: u32) -> Self {
         Self {
-            id: next_id(),
             keys,
             exe_dur: Duration::ZERO,
             as_dur: Duration::ZERO,
@@ -206,10 +191,6 @@ impl Command for TestCommand {
     fn keys(&self) -> &[Self::K] {
         &self.keys
     }
-
-    fn id(&self) -> ProposeId {
-        self.id
-    }
 }
 
 impl ConflictCheck for TestCommand {
@@ -279,7 +260,7 @@ impl CommandExecutor<TestCommand> for TestCE {
             return Err(ExecuteError("fail".to_owned()));
         }
 
-        debug!("{} execute cmd({})", self.server_name, cmd.id());
+        debug!("{} execute cmd({:?})", self.server_name, cmd);
 
         let keys = cmd
             .keys
@@ -334,12 +315,7 @@ impl CommandExecutor<TestCommand> for TestCE {
             index.to_le_bytes().to_vec(),
         )];
         if let TestCommandType::Put(v) = cmd.cmd_type {
-            debug!(
-                "cmd {:?}-{} revision is {}",
-                cmd.cmd_type,
-                cmd.id(),
-                revision
-            );
+            debug!("cmd {:?}-{:?} revision is {}", cmd.cmd_type, cmd, revision);
             let value = v.to_be_bytes().to_vec();
             let keys = cmd
                 .keys
@@ -363,10 +339,8 @@ impl CommandExecutor<TestCommand> for TestCE {
                 .map_err(|e| ExecuteError(e.to_string()))?;
         }
         debug!(
-            "{} after sync cmd({:?} - {}), index: {index}",
-            self.server_name,
-            cmd.cmd_type,
-            cmd.id()
+            "{} after sync cmd({:?} - {:?}), index: {index}",
+            self.server_name, cmd.cmd_type, cmd
         );
         Ok(index.into())
     }
@@ -427,7 +401,7 @@ impl CommandExecutor<TestCommand> for TestCE {
         Ok(())
     }
 
-    fn trigger(&self, _id: ProposeId, _index: u64) {}
+    fn trigger(&self, _id: u64, _index: u64) {}
 }
 
 impl TestCE {

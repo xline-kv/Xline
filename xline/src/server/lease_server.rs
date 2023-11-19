@@ -134,13 +134,7 @@ where
             }
         };
         let wrapper = RequestWithToken::new_with_token(request_inner, token);
-        let propose_id = self
-            .client
-            .gen_propose_id()
-            .await
-            .map_err(client_err_to_status)?;
-        let cmd = Command::new(keys, wrapper, propose_id);
-
+        let cmd = Command::new(keys, wrapper);
         self.client
             .propose(cmd, use_fast_path)
             .await

@@ -222,8 +222,8 @@ impl State {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum ReadState {
-    /// need to wait other proposals
-    Ids(Vec<ProposeId>),
+    /// need to wait other command
+    Ids(Vec<u64>),
     /// need to wait the commit index
     CommitIndex(LogIndex),
 }
@@ -251,10 +251,11 @@ where
     #[instrument(skip_all)]
     async fn fast_round(
         &self,
+        propose_id: ProposeId,
         cmd_arc: Arc<C>,
     ) -> Result<(Option<<C as Command>::ER>, bool), ClientError<C>> {
-        debug!("fast round for cmd({}) started", cmd_arc.id());
-        let req = ProposeRequest::new(cmd_arc.as_ref(), self.cluster_version());
+        debug!("fast round for cmd({}) started", propose_id);
+        let req = ProposeRequest::new(propose_id, cmd_arc.as_ref(), self.cluster_version());
 
         let connects = self
             .connects
@@ -298,7 +299,7 @@ where
                 Ok(())
             })??;
             if (ok_cnt >= superquorum) && execute_result.is_some() {
-                debug!("fast round for cmd({}) succeed", cmd_arc.id());
+                debug!("fast round for cmd({}) succeed", propose_id);
                 return Ok((execute_result, true));
             }
         }
@@ -309,9 +310,10 @@ where
     #[instrument(skip_all)]
     async fn slow_round(
         &self,
+        propose_id: ProposeId,
         cmd: Arc<C>,
     ) -> Result<(<C as Command>::ASR, <C as Command>::ER), ClientError<C>> {
-        debug!("slow round for cmd({}) started", cmd.id());
+        debug!("slow round for cmd({}) started", propose_id);
         let mut retry_timeout = self.get_backoff();
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {
@@ -329,7 +331,7 @@ where
                 .get_connect(leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .wait_synced(
-                    WaitSyncedRequest::new(cmd.id(), self.cluster_version()),
+                    WaitSyncedRequest::new(propose_id, self.cluster_version()),
                     *self.config.wait_synced_timeout(),
                 )
                 .await
@@ -345,7 +347,8 @@ where
                         CurpError::RpcTransport(_) => {
                             // it's quite likely that the leader has crashed, then we should wait for some time and fetch the leader again
                             tokio::time::sleep(retry_timeout.next_retry()).await;
-                            self.resend_propose(Arc::clone(&cmd), None).await?;
+                            self.resend_propose(propose_id, Arc::clone(&cmd), None)
+                                .await?;
                             continue;
                         }
                         CurpError::Redirect(Redirect {
@@ -354,7 +357,8 @@ where
                         }) => {
                             self.state.write().check_and_update(new_leader, term);
                             // resend the propose to the new leader
-                            self.resend_propose(Arc::clone(&cmd), new_leader).await?;
+                            self.resend_propose(propose_id, Arc::clone(&cmd), new_leader)
+                                .await?;
                             continue;
                         }
                         _ => return Err(ClientError::InternalError(format!("{e:?}"))),
@@ -395,7 +399,8 @@ where
 
     /// The shutdown rpc of curp protocol
     #[instrument(skip_all)]
-    pub async fn shutdown(&self, propose_id: ProposeId) -> Result<(), ClientError<C>> {
+    pub async fn shutdown(&self) -> Result<(), ClientError<C>> {
+        let propose_id = self.gen_propose_id().await?;
         let mut retry_timeout = self.get_backoff();
         let retry_count = *self.config.retry_count();
         for _ in 0..retry_count {
@@ -446,6 +451,7 @@ where
     /// Resend the propose only to the leader. This is used when leader changes and we need to ensure that the propose is received by the new leader.
     async fn resend_propose(
         &self,
+        propose_id: ProposeId,
         cmd: Arc<C>,
         mut new_leader: Option<ServerId>,
     ) -> Result<(), ClientError<C>> {
@@ -471,7 +477,7 @@ where
                 .get_connect(leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
                 .propose(
-                    ProposeRequest::new(cmd.as_ref(), self.cluster_version()),
+                    ProposeRequest::new(propose_id, cmd.as_ref(), self.cluster_version()),
                     *self.config.propose_timeout(),
                 )
                 .await;
@@ -618,19 +624,20 @@ where
     /// # Panics
     ///   If leader index is out of bound of all the connections, panic
     #[inline]
-    #[instrument(skip_all, fields(cmd_id=%cmd.id()))]
+    #[instrument(skip_all)]
     #[allow(clippy::type_complexity)] // This type is not complex
     pub async fn propose(
         &self,
         cmd: C,
         use_fast_path: bool,
     ) -> Result<(C::ER, Option<C::ASR>), ClientError<C>> {
+        let propose_id = self.gen_propose_id().await?;
         let cmd_arc = Arc::new(cmd);
         loop {
             let res_option = if use_fast_path {
-                self.fast_path(Arc::clone(&cmd_arc)).await
+                self.fast_path(propose_id, Arc::clone(&cmd_arc)).await
             } else {
-                self.slow_path(Arc::clone(&cmd_arc)).await
+                self.slow_path(propose_id, Arc::clone(&cmd_arc)).await
             };
             let Some(res) = res_option else {
                 let cluster = self.fetch_cluster(false).await?;
@@ -644,10 +651,11 @@ where
     /// Fast path of propose
     async fn fast_path(
         &self,
+        propose_id: ProposeId,
         cmd_arc: Arc<C>,
     ) -> Option<Result<(C::ER, Option<C::ASR>), ClientError<C>>> {
-        let fast_round = self.fast_round(Arc::clone(&cmd_arc));
-        let slow_round = self.slow_round(cmd_arc);
+        let fast_round = self.fast_round(propose_id, Arc::clone(&cmd_arc));
+        let slow_round = self.slow_round(propose_id, cmd_arc);
         pin_mut!(fast_round);
         pin_mut!(slow_round);
 
@@ -693,10 +701,11 @@ where
     /// Slow path of propose
     async fn slow_path(
         &self,
+        propose_id: ProposeId,
         cmd_arc: Arc<C>,
     ) -> Option<Result<(C::ER, Option<C::ASR>), ClientError<C>>> {
-        let fast_round = self.fast_round(Arc::clone(&cmd_arc));
-        let slow_round = self.slow_round(cmd_arc);
+        let fast_round = self.fast_round(propose_id, Arc::clone(&cmd_arc));
+        let slow_round = self.slow_round(propose_id, cmd_arc);
         #[allow(clippy::integer_arithmetic)] // tokio framework triggers
         let (fast_result, slow_result) = tokio::join!(fast_round, slow_round);
         if let Err(ClientError::WrongClusterVersion) = fast_result {
@@ -713,9 +722,9 @@ where
     #[instrument(skip_all)]
     pub async fn propose_conf_change(
         &self,
-        propose_id: ProposeId,
         changes: Vec<ConfChange>,
     ) -> Result<Result<Vec<Member>, CurpError>, ClientError<C>> {
+        let propose_id = self.gen_propose_id().await?;
         debug!(
             "propose_conf_change with propose_id({}) started",
             propose_id
@@ -785,10 +794,10 @@ where
     #[instrument(skip_all)]
     pub async fn publish(
         &self,
-        propose_id: ProposeId,
         node_id: ServerId,
         node_name: String,
     ) -> Result<(), ClientError<C>> {
+        let propose_id = self.gen_propose_id().await?;
         debug!("publish with propose_id({}) started", propose_id);
         let mut retry_timeout = self.get_backoff();
         let retry_count = *self.config.retry_count();
@@ -884,7 +893,7 @@ where
                 .unwrap_or_else(|| unreachable!("read state should be some"));
             let state = match pb_state {
                 PbReadState::CommitIndex(i) => ReadState::CommitIndex(i),
-                PbReadState::Ids(i) => ReadState::Ids(i.ids.into_iter().map(Into::into).collect()),
+                PbReadState::Ids(i) => ReadState::Ids(i.trigger_ids),
             };
             return Ok(state);
         }
@@ -976,8 +985,7 @@ where
     ///
     /// # Errors
     ///   `ClientError::Timeout` if timeout
-    #[inline]
-    pub async fn gen_propose_id(&self) -> Result<ProposeId, ClientError<C>> {
+    async fn gen_propose_id(&self) -> Result<ProposeId, ClientError<C>> {
         let client_id = self.get_client_id().await?;
         let seq_num = self.new_seq_num();
         Ok(ProposeId(client_id, seq_num))

@@ -97,12 +97,7 @@ where
     {
         let token = get_token(request.metadata());
         let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
-        let propose_id = self
-            .client
-            .gen_propose_id()
-            .await
-            .map_err(client_err_to_status)?;
-        let cmd = command_from_request_wrapper(propose_id, wrapper);
+        let cmd = command_from_request_wrapper(wrapper);
 
         self.client
             .propose(cmd, use_fast_path)
@@ -161,9 +156,9 @@ where
                 .map_err(|e| tonic::Status::internal(e.to_string()))?;
             let wait_future = async move {
                 match rd_state {
-                    ReadState::Ids(ids) => {
-                        debug!(?ids, "Range wait for command ids");
-                        let fus = ids
+                    ReadState::Ids(trigger_ids) => {
+                        debug!(?trigger_ids, "Range wait for command ids");
+                        let fus = trigger_ids
                             .into_iter()
                             .map(|id| self.id_barrier.wait(id))
                             .collect::<Vec<_>>();
@@ -206,12 +201,7 @@ where
         let is_serializable = range_req.serializable;
         let token = get_token(request.metadata());
         let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
-        let propose_id = self
-            .client
-            .gen_propose_id()
-            .await
-            .map_err(client_err_to_status)?;
-        let cmd = command_from_request_wrapper(propose_id, wrapper);
+        let cmd = command_from_request_wrapper(wrapper);
         if !is_serializable {
             self.wait_read_state(&cmd).await?;
             // Double check whether the range request is compacted or not since the compaction request
@@ -307,12 +297,7 @@ where
             let is_serializable = txn_req.is_serializable();
             let token = get_token(request.metadata());
             let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
-            let propose_id = self
-                .client
-                .gen_propose_id()
-                .await
-                .map_err(client_err_to_status)?;
-            let cmd = command_from_request_wrapper(propose_id, wrapper);
+            let cmd = command_from_request_wrapper(wrapper);
             if !is_serializable {
                 self.wait_read_state(&cmd).await?;
             }

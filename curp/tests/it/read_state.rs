@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use curp::{client::ReadState, cmd::Command};
+use curp::client::ReadState;
 use curp_test_utils::{
     init_logger, sleep_millis,
     test_cmd::{TestCommand, TestCommandResult},
@@ -16,7 +16,6 @@ async fn read_state() {
     let group = CurpGroup::new(3).await;
     let put_client = group.new_client().await;
     let put_cmd = TestCommand::new_put(vec![0], 0).set_exe_dur(Duration::from_millis(100));
-    let put_id = put_cmd.id();
     tokio::spawn(async move {
         assert_eq!(
             put_client.propose(put_cmd, true).await.unwrap().0,
@@ -30,11 +29,10 @@ async fn read_state() {
         .await
         .unwrap();
     if let ReadState::Ids(v) = res {
-        assert_eq!(v, vec![put_id])
+        assert_eq!(v.len(), 1);
     } else {
         unreachable!(
-            "expected result should be ReadState::Ids({:?}), but received {:?}",
-            vec![put_id],
+            "expected result should be ReadState::Ids(v) where len(v) = 1, but received {:?}",
             res
         );
     }

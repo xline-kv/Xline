@@ -55,8 +55,7 @@ impl Compactable for Client<Command> {
             physical: false,
         };
         let request_wrapper = RequestWithToken::new_with_token(request.into(), None);
-        let propose_id = self.gen_propose_id().await?;
-        let cmd = Command::new(vec![], request_wrapper, propose_id);
+        let cmd = Command::new(vec![], request_wrapper);
         let _ig = self.propose(cmd, true).await?;
         Ok(())
     }
