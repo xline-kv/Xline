@@ -49,9 +49,6 @@ pub trait Command: pri::Serializable + ConflictCheck + PbCodec {
     /// Get keys of the command
     fn keys(&self) -> &[Self::K];
 
-    /// Get propose id
-    fn id(&self) -> ProposeId;
-
     /// Prepare the command
     #[inline]
     fn prepare<E>(&self, e: &E) -> Result<Self::PR, Self::Error>
@@ -157,8 +154,8 @@ where
     /// Reset the command executor using the snapshot or to the initial state if None
     async fn reset(&self, snapshot: Option<(Snapshot, LogIndex)>) -> Result<(), C::Error>;
 
-    /// Trigger the barrier of the given id and index.
-    fn trigger(&self, id: ProposeId, index: u64);
+    /// Trigger the barrier of the given trigger id (each command is different) and log index.
+    fn trigger(&self, id: u64, index: LogIndex);
 }
 
 /// Codec for encoding and decoding data into/from the Protobuf format

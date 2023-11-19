@@ -41,7 +41,7 @@ use self::{
     log::Log,
     state::{CandidateState, LeaderState, State},
 };
-use super::{cmd_worker::CEEventTxApi, PoolEntry};
+use super::cmd_worker::CEEventTxApi;
 use crate::{
     cmd::{Command, ProposeId},
     connect::InnerConnectApi,
@@ -49,8 +49,8 @@ use crate::{
     members::{ClusterInfo, ServerId},
     role_change::RoleChange,
     rpc::{
-        connect::InnerConnectApiWrapper, ConfChange, ConfChangeEntry, ConfChangeType, CurpError,
-        IdSet, Member, ReadState,
+        connect::InnerConnectApiWrapper, ConfChange, ConfChangeType, CurpError, IdSet, Member,
+        PoolEntry, ReadState,
     },
     server::{
         cmd_board::CmdBoardRef,
@@ -58,7 +58,7 @@ use crate::{
         spec_pool::SpecPoolRef,
     },
     snapshot::{Snapshot, SnapshotMeta},
-    LogIndex, PublishRequest,
+    LogIndex, PoolEntryInner, PublishRequest,
 };
 
 /// Curp state
@@ -235,9 +235,13 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Handle `propose` request
     /// Return `true` if the leader speculatively executed the command
-    pub(super) fn handle_propose(&self, cmd: Arc<C>) -> Result<bool, CurpError> {
-        debug!("{} gets proposal for cmd({})", self.id(), cmd.id());
-        let mut conflict = self.insert_sp(Arc::clone(&cmd));
+    pub(super) fn handle_propose(
+        &self,
+        propose_id: ProposeId,
+        cmd: Arc<C>,
+    ) -> Result<bool, CurpError> {
+        debug!("{} gets proposal for cmd({})", self.id(), propose_id);
+        let mut conflict = self.insert_sp(propose_id, Arc::clone(&cmd));
         let st_r = self.st.read();
         // Non-leader doesn't need to sync or execute
         if st_r.role != Role::Leader {
@@ -247,15 +251,18 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             return Ok(false);
         }
 
-        let id = cmd.id();
-        if !self.ctx.cb.map_write(|mut cb_w| cb_w.sync.insert(id)) {
+        if !self
+            .ctx
+            .cb
+            .map_write(|mut cb_w| cb_w.sync.insert(propose_id))
+        {
             return Err(CurpError::duplicated());
         }
 
         // leader also needs to check if the cmd conflicts un-synced commands
-        conflict |= self.insert_ucp(Arc::clone(&cmd));
+        conflict |= self.insert_ucp(propose_id, Arc::clone(&cmd));
         let mut log_w = self.log.write();
-        let entry = log_w.push(st_r.term, cmd)?;
+        let entry = log_w.push(st_r.term, propose_id, cmd)?;
         debug!("{} gets new log[{}]", self.id(), entry.index);
 
         self.entry_process(&mut log_w, entry, conflict);
@@ -275,7 +282,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         }
 
         let mut log_w = self.log.write();
-        let entry = log_w.push(st_r.term, EntryData::Shutdown(propose_id))?;
+        let entry = log_w.push(st_r.term, propose_id, EntryData::Shutdown)?;
         debug!("{} gets new log[{}]", self.id(), entry.index);
         self.entry_process(&mut log_w, entry, true);
         Ok(())
@@ -284,13 +291,10 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Handle `propose_conf_change` request
     pub(super) fn handle_propose_conf_change(
         &self,
-        conf_change: ConfChangeEntry,
+        propose_id: ProposeId,
+        conf_changes: Vec<ConfChange>,
     ) -> Result<(), CurpError> {
-        debug!(
-            "{} gets conf change for with id {}",
-            self.id(),
-            conf_change.id()
-        );
+        debug!("{} gets conf change for with id {}", self.id(), propose_id);
         let st_r = self.st.read();
 
         // Non-leader doesn't need to sync or execute
@@ -298,16 +302,15 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             return Err(CurpError::redirect(st_r.leader_id, st_r.term));
         }
 
-        self.check_new_config(conf_change.changes())?;
+        self.check_new_config(&conf_changes)?;
 
-        let mut conflict = self.insert_sp(conf_change.clone());
-        conflict |= self.insert_ucp(conf_change.clone());
+        let mut conflict = self.insert_sp(propose_id, conf_changes.clone());
+        conflict |= self.insert_ucp(propose_id, conf_changes.clone());
 
-        let changes = conf_change.changes().to_owned();
         let mut log_w = self.log.write();
-        let entry = log_w.push(st_r.term, conf_change)?;
+        let entry = log_w.push(st_r.term, propose_id, conf_changes.clone())?;
         debug!("{} gets new log[{}]", self.id(), entry.index);
-        let (addrs, name, is_learner) = self.apply_conf_change(changes);
+        let (addrs, name, is_learner) = self.apply_conf_change(conf_changes);
         self.ctx
             .last_conf_change_idx
             .store(entry.index, Ordering::Release);
@@ -321,13 +324,17 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
     /// Handle `publish` request
     pub(super) fn handle_publish(&self, req: PublishRequest) -> Result<(), CurpError> {
-        debug!("{} gets publish with propose id {}", self.id(), req.id());
+        debug!(
+            "{} gets publish with propose id {}",
+            self.id(),
+            req.propose_id()
+        );
         let st_r = self.st.read();
         if st_r.role != Role::Leader {
             return Err(CurpError::redirect(st_r.leader_id, st_r.term));
         }
         let mut log_w = self.log.write();
-        let entry = log_w.push(st_r.term, req)?;
+        let entry = log_w.push(st_r.term, req.propose_id(), req)?;
         debug!("{} gets new log[{}]", self.id(), entry.index);
         self.entry_process(&mut log_w, entry, false);
         Ok(())
@@ -392,7 +399,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             let EntryData::ConfChange(ref conf_change) = info.origin_entry.entry_data else {
                 unreachable!("the entry in the fallback_info should be conf change entry");
             };
-            let changes = conf_change.changes().to_owned();
+            let changes = conf_change.clone();
             self.fallback_conf_change(changes, info.addrs, info.name, info.is_learner);
         }
         // apply conf change entries
@@ -400,7 +407,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             let EntryData::ConfChange(ref cc) = e.entry_data else {
                 unreachable!("cc_entry should be conf change entry");
             };
-            let (addrs, name, is_learner) = self.apply_conf_change(cc.changes().to_owned());
+            let (addrs, name, is_learner) = self.apply_conf_change(cc.clone());
             let _ig = log_w.fallback_contexts.insert(
                 e.index,
                 FallbackContext::new(Arc::clone(&e), addrs, name, is_learner),
@@ -554,14 +561,14 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 .fallback_contexts
                 .iter()
                 .any(|(_, ctx)| match ctx.origin_entry.entry_data {
-                    EntryData::ConfChange(ref cc) => cc.changes().iter().any(|c| {
+                    EntryData::ConfChange(ref cc) => cc.iter().any(|c| {
                         matches!(c.change_type(), ConfChangeType::Remove)
                             && c.node_id == candidate_id
                     }),
-                    EntryData::Empty(_)
+                    EntryData::Empty
                     | EntryData::Command(_)
-                    | EntryData::Shutdown(_)
-                    | EntryData::SetName(_, _, _) => false,
+                    | EntryData::Shutdown
+                    | EntryData::SetName(_, _) => false,
                 });
         // extra check to shutdown removed node
         if !contains_candidate && !remove_candidate_is_not_committed {
@@ -640,7 +647,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let prev_last_log_index = log_w.last_log_index();
         // TODO: Generate client id in the same way as client
         let propose_id = ProposeId(rand::random(), 0);
-        let _ignore = log_w.push(st_w.term, EntryData::Empty(propose_id));
+        let _ignore = log_w.push(st_w.term, propose_id, EntryData::Empty);
         self.recover_from_spec_pools(&mut st_w, &mut log_w, spec_pools);
         self.recover_ucp_from_log(&mut log_w);
         let last_log_index = log_w.last_log_index();
@@ -1365,29 +1372,32 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             let debug_sps: HashMap<ServerId, String> = spec_pools
                 .iter()
                 .map(|(id, sp)| {
-                    let sp: Vec<String> = sp.iter().map(|cmd| cmd.id().to_string()).collect();
+                    let sp: Vec<String> = sp
+                        .iter()
+                        .map(|entry: &PoolEntry<C>| entry.id.to_string())
+                        .collect();
                     (*id, sp.join(","))
                 })
                 .collect();
             debug!("{} collected spec pools: {debug_sps:?}", self.id());
         }
 
-        let mut cmd_cnt: HashMap<ProposeId, (PoolEntry<C>, u64)> = HashMap::new();
-        for cmd in spec_pools.into_values().flatten() {
-            let entry = cmd_cnt.entry(cmd.id()).or_insert((cmd, 0));
+        let mut entry_cnt: HashMap<ProposeId, (PoolEntry<C>, u64)> = HashMap::new();
+        for entry in spec_pools.into_values().flatten() {
+            let entry = entry_cnt.entry(entry.id).or_insert((entry, 0));
             entry.1 += 1;
         }
 
-        // get all possibly executed(fast path) commands
+        // get all possibly executed(fast path) entries
         let existing_log_ids = log.get_cmd_ids();
-        let recovered_cmds = cmd_cnt
+        let recovered_cmds = entry_cnt
             .into_values()
             // only cmds whose cnt >= ( f + 1 ) / 2 + 1 can be recovered
             .filter_map(|(cmd, cnt)| (cnt >= self.recover_quorum()).then_some(cmd))
             // dedup in current logs
-            .filter(|cmd| {
+            .filter(|entry| {
                 // TODO: better dedup mechanism
-                !existing_log_ids.contains(&cmd.id())
+                !existing_log_ids.contains(&entry.id)
             })
             .collect_vec();
 
@@ -1395,17 +1405,17 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let mut sp_l = self.ctx.sp.lock();
 
         let term = st.term;
-        for cmd in recovered_cmds {
-            let _ig_sync = cb_w.sync.insert(cmd.id()); // may have been inserted before
-            let _ig_spec = sp_l.insert(cmd.clone()); // may have been inserted before
+        for entry in recovered_cmds {
+            let _ig_sync = cb_w.sync.insert(entry.id); // may have been inserted before
+            let _ig_spec = sp_l.insert(entry.clone()); // may have been inserted before
             #[allow(clippy::expect_used)]
             let entry = log
-                .push(term, cmd)
+                .push(term, entry.id, entry.inner)
                 .expect("cmd {cmd:?} cannot be serialized");
             debug!(
                 "{} recovers speculatively executed cmd({}) in log[{}]",
                 self.id(),
-                entry.id(),
+                entry.propose_id,
                 entry.index,
             );
         }
@@ -1419,15 +1429,17 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             let entry = log.get(i).unwrap_or_else(|| {
                 unreachable!("system corrupted, get a `None` value on log[{i}]")
             });
+            let propose_id = entry.propose_id;
             match entry.entry_data {
                 EntryData::Command(ref cmd) => {
-                    let _ignore = ucp_l.insert(cmd.id(), Arc::clone(cmd).into());
+                    let _ignore =
+                        ucp_l.insert(propose_id, PoolEntry::new(propose_id, Arc::clone(cmd)));
                 }
                 EntryData::ConfChange(ref conf_change) => {
                     let _ignore =
-                        ucp_l.insert(conf_change.id(), conf_change.as_ref().clone().into());
+                        ucp_l.insert(propose_id, PoolEntry::new(propose_id, conf_change.clone()));
                 }
-                EntryData::Shutdown(_) | EntryData::Empty(_) | EntryData::SetName(_, _, _) => {}
+                EntryData::Shutdown | EntryData::Empty | EntryData::SetName(_, _) => {}
             }
         }
     }
@@ -1559,19 +1571,19 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Insert entry to spec pool
-    fn insert_sp(&self, pool_entry: impl Into<PoolEntry<C>>) -> bool {
+    fn insert_sp(&self, propose_id: ProposeId, inner: impl Into<PoolEntryInner<C>>) -> bool {
         self.ctx
             .sp
-            .map_lock(|mut spec_l| spec_l.insert(pool_entry).is_some())
+            .map_lock(|mut spec_l| spec_l.insert(PoolEntry::new(propose_id, inner)).is_some())
     }
 
     /// Insert entry to uncommitted pool
-    fn insert_ucp(&self, pool_entry: impl Into<PoolEntry<C>>) -> bool {
-        let entry = pool_entry.into();
+    fn insert_ucp(&self, propose_id: ProposeId, inner: impl Into<PoolEntryInner<C>>) -> bool {
+        let entry = PoolEntry::new(propose_id, inner);
         self.ctx.ucp.map_lock(|mut ucp_l| {
             let conflict_uncommitted = ucp_l.values().any(|c| c.is_conflict(&entry));
             assert!(
-                ucp_l.insert(entry.id(), entry.clone()).is_none(),
+                ucp_l.insert(propose_id, entry.clone()).is_none(),
                 "cmd should never be inserted to uncommitted pool twice"
             );
             conflict_uncommitted

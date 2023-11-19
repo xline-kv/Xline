@@ -1,9 +1,6 @@
 use std::time::Instant;
 
-use curp_test_utils::{
-    mock_role_change,
-    test_cmd::{next_id, TestCommand},
-};
+use curp_test_utils::{mock_role_change, test_cmd::TestCommand};
 use test_macros::abort_on_panic;
 use tokio::{sync::oneshot, time::sleep};
 use tracing_test::traced_test;
@@ -21,7 +18,7 @@ use crate::{
         raw_curp::UncommittedPool,
         spec_pool::SpeculativePool,
     },
-    LogIndex, ProposeConfChangeRequest, Redirect,
+    LogIndex, Redirect,
 };
 
 // Hooks for tests
@@ -95,10 +92,10 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Add a new cmd to the log, will return log entry index
-    pub(crate) fn push_cmd(&self, cmd: Arc<C>) -> LogIndex {
+    pub(crate) fn push_cmd(&self, propose_id: ProposeId, cmd: Arc<C>) -> LogIndex {
         let st_r = self.st.read();
         let mut log_w = self.log.write();
-        log_w.push(st_r.term, cmd).unwrap().index
+        log_w.push(st_r.term, propose_id, cmd).unwrap().index
     }
 
     pub(crate) fn check_learner(&self, node_id: ServerId, is_learner: bool) -> bool {
@@ -128,7 +125,7 @@ fn leader_handle_propose_will_succeed() {
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
     let cmd = Arc::new(TestCommand::default());
-    assert!(curp.handle_propose(cmd).unwrap());
+    assert!(curp.handle_propose(ProposeId(0, 0), cmd).unwrap());
 }
 
 #[traced_test]
@@ -141,15 +138,15 @@ fn leader_handle_propose_will_reject_conflicted() {
     };
 
     let cmd1 = Arc::new(TestCommand::new_put(vec![1], 0));
-    assert!(curp.handle_propose(cmd1).unwrap());
+    assert!(curp.handle_propose(ProposeId(0, 0), cmd1).unwrap());
 
     let cmd2 = Arc::new(TestCommand::new_put(vec![1, 2], 1));
-    let res = curp.handle_propose(cmd2);
+    let res = curp.handle_propose(ProposeId(0, 1), cmd2);
     assert!(matches!(res, Err(CurpError::KeyConflict(_))));
 
     // leader will also reject cmds that conflict un-synced cmds
     let cmd3 = Arc::new(TestCommand::new_put(vec![2], 1));
-    let res = curp.handle_propose(cmd3);
+    let res = curp.handle_propose(ProposeId(0, 2), cmd3);
     assert!(matches!(res, Err(CurpError::KeyConflict(_))));
 }
 
@@ -162,9 +159,11 @@ fn leader_handle_propose_will_reject_duplicated() {
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
     let cmd = Arc::new(TestCommand::default());
-    assert!(curp.handle_propose(Arc::clone(&cmd)).unwrap());
+    assert!(curp
+        .handle_propose(ProposeId(0, 0), Arc::clone(&cmd))
+        .unwrap());
 
-    let res = curp.handle_propose(cmd);
+    let res = curp.handle_propose(ProposeId(0, 0), cmd);
     assert!(matches!(res, Err(CurpError::Duplicated(_))));
 }
 
@@ -180,7 +179,7 @@ fn follower_handle_propose_will_succeed() {
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
     let cmd = Arc::new(TestCommand::new_get(vec![1]));
-    assert!(!curp.handle_propose(cmd).unwrap());
+    assert!(!curp.handle_propose(ProposeId(0, 0), cmd).unwrap());
 }
 
 #[traced_test]
@@ -196,10 +195,10 @@ fn follower_handle_propose_will_reject_conflicted() {
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
     let cmd1 = Arc::new(TestCommand::new_get(vec![1]));
-    assert!(!curp.handle_propose(cmd1).unwrap());
+    assert!(!curp.handle_propose(ProposeId(0, 0), cmd1).unwrap());
 
     let cmd2 = Arc::new(TestCommand::new_get(vec![1]));
-    let res = curp.handle_propose(cmd2);
+    let res = curp.handle_propose(ProposeId(0, 1), cmd2);
     assert!(matches!(res, Err(CurpError::KeyConflict(_))));
 }
 
@@ -323,7 +322,12 @@ fn handle_ae_will_reject_wrong_log() {
         s2_id,
         1,
         1,
-        vec![LogEntry::new(2, 1, Arc::new(TestCommand::default()))],
+        vec![LogEntry::new(
+            2,
+            1,
+            ProposeId(0, 0),
+            Arc::new(TestCommand::default()),
+        )],
         0,
     );
     assert_eq!(result, Err((1, 1)));
@@ -459,7 +463,12 @@ fn handle_vote_will_reject_outdated_candidate() {
         s2_id,
         0,
         0,
-        vec![LogEntry::new(1, 1, Arc::new(TestCommand::default()))],
+        vec![LogEntry::new(
+            1,
+            1,
+            ProposeId(0, 0),
+            Arc::new(TestCommand::default()),
+        )],
         0,
     );
     assert!(result.is_ok());
@@ -551,7 +560,7 @@ fn recover_from_spec_pools_will_pick_the_correct_cmds() {
     let cmd1 = Arc::new(TestCommand::new_put(vec![2], 1));
     // cmd3 has been speculatively successfully by the leader but not stored by the superquorum of the followers
     let cmd2 = Arc::new(TestCommand::new_put(vec![3], 1));
-    curp.push_cmd(Arc::clone(&cmd0));
+    curp.push_cmd(ProposeId(0, 0), Arc::clone(&cmd0));
     curp.log.map_write(|mut log_w| log_w.commit_index = 1);
 
     let s0_id = curp.cluster().get_id_by_name("S0").unwrap();
@@ -563,19 +572,31 @@ fn recover_from_spec_pools_will_pick_the_correct_cmds() {
     let spec_pools = HashMap::from([
         (
             s0_id,
-            vec![Arc::clone(&cmd1).into(), Arc::clone(&cmd2).into()],
+            vec![
+                PoolEntry::new(ProposeId(0, 1), Arc::clone(&cmd1)),
+                PoolEntry::new(ProposeId(0, 2), Arc::clone(&cmd2)),
+            ],
         ),
-        (s1_id, vec![Arc::clone(&cmd1).into()]),
-        (s2_id, vec![Arc::clone(&cmd1).into()]),
-        (s3_id, vec![Arc::clone(&cmd1).into()]),
+        (
+            s1_id,
+            vec![PoolEntry::new(ProposeId(0, 1), Arc::clone(&cmd1))],
+        ),
+        (
+            s2_id,
+            vec![PoolEntry::new(ProposeId(0, 1), Arc::clone(&cmd1))],
+        ),
+        (
+            s3_id,
+            vec![PoolEntry::new(ProposeId(0, 1), Arc::clone(&cmd1))],
+        ),
         (s4_id, vec![]),
     ]);
 
     curp.recover_from_spec_pools(&mut *curp.st.write(), &mut *curp.log.write(), spec_pools);
 
     curp.log.map_read(|log_r| {
-        assert_eq!(log_r[1].id(), cmd0.id());
-        assert_eq!(log_r[2].id(), cmd1.id());
+        assert_eq!(log_r[1].propose_id, ProposeId(0, 0));
+        assert_eq!(log_r[2].propose_id, ProposeId(0, 1));
         assert_eq!(log_r.last_log_index(), 2);
     });
 }
@@ -595,19 +616,19 @@ fn recover_ucp_from_logs_will_pick_the_correct_cmds() {
     let cmd0 = Arc::new(TestCommand::new_put(vec![1], 1));
     let cmd1 = Arc::new(TestCommand::new_put(vec![2], 1));
     let cmd2 = Arc::new(TestCommand::new_put(vec![3], 1));
-    curp.push_cmd(Arc::clone(&cmd0));
-    curp.push_cmd(Arc::clone(&cmd1));
-    curp.push_cmd(Arc::clone(&cmd2));
+    curp.push_cmd(ProposeId(0, 0), Arc::clone(&cmd0));
+    curp.push_cmd(ProposeId(0, 1), Arc::clone(&cmd1));
+    curp.push_cmd(ProposeId(0, 2), Arc::clone(&cmd2));
     curp.log.map_write(|mut log_w| log_w.commit_index = 1);
 
     curp.recover_ucp_from_log(&mut *curp.log.write());
 
     curp.ctx.ucp.map_lock(|ucp| {
-        let mut ids: Vec<_> = ucp.values().map(PoolEntry::id).collect();
+        let mut ids: Vec<_> = ucp.values().map(|entry| entry.id).collect();
         assert_eq!(ids.len(), 2);
         ids.sort();
-        assert_eq!(ids[0], cmd1.id());
-        assert_eq!(ids[1], cmd2.id());
+        assert_eq!(ids[0], ProposeId(0, 1));
+        assert_eq!(ids[1], ProposeId(0, 2));
     });
 }
 
@@ -622,9 +643,9 @@ fn leader_retires_after_log_compact_will_succeed() {
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
     let mut log_w = curp.log.write();
-    for _ in 1..=20 {
+    for i in 1..=20 {
         let cmd = Arc::new(TestCommand::default());
-        log_w.push(0, cmd).unwrap();
+        log_w.push(0, ProposeId(0, i), cmd).unwrap();
     }
     log_w.last_as = 20;
     log_w.last_exe = 20;
@@ -644,8 +665,8 @@ fn leader_retires_should_cleanup() {
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
 
-    let _ignore = curp.handle_propose(Arc::new(TestCommand::new_put(vec![1], 0)));
-    let _ignore = curp.handle_propose(Arc::new(TestCommand::new_get(vec![1])));
+    let _ignore = curp.handle_propose(ProposeId(0, 0), Arc::new(TestCommand::new_put(vec![1], 0)));
+    let _ignore = curp.handle_propose(ProposeId(0, 1), Arc::new(TestCommand::new_get(vec![1])));
 
     curp.leader_retires();
 
@@ -679,7 +700,7 @@ async fn leader_handle_shutdown_will_succeed() {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
-    assert!(curp.handle_shutdown(next_id()).is_ok());
+    assert!(curp.handle_shutdown(ProposeId(0, 0)).is_ok());
 }
 
 #[traced_test]
@@ -691,7 +712,7 @@ fn follower_handle_shutdown_will_reject() {
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
-    let res = curp.handle_shutdown(next_id());
+    let res = curp.handle_shutdown(ProposeId(0, 0));
     assert!(matches!(
         res,
         Err(CurpError::Redirect(Redirect {
@@ -908,8 +929,7 @@ fn leader_handle_propose_conf_change() {
         follower_id,
         vec!["http://127.0.0.1:4567".to_owned()],
     )];
-    let conf_change_entry = ProposeConfChangeRequest::new(ProposeId(0, 0), changes, 0);
-    curp.handle_propose_conf_change(conf_change_entry.into())
+    curp.handle_propose_conf_change(ProposeId(0, 0), changes)
         .unwrap();
 }
 
@@ -931,8 +951,7 @@ fn follower_handle_propose_conf_change() {
         follower_id,
         vec!["http://127.0.0.1:4567".to_owned()],
     )];
-    let conf_change_entry = ProposeConfChangeRequest::new(ProposeId(0, 0), changes, 0);
-    let result = curp.handle_propose_conf_change(conf_change_entry.into());
+    let result = curp.handle_propose_conf_change(ProposeId(0, 0), changes);
     assert!(matches!(
         result,
         Err(CurpError::Redirect(Redirect {

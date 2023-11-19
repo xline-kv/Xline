@@ -187,7 +187,7 @@ mod errorpb {
     tonic::include_proto!("errorpb");
 }
 
-use curp_external_api::cmd::{PbSerializeError, ProposeId};
+use curp_external_api::cmd::PbSerializeError;
 use serde::{Deserialize, Serialize};
 
 pub use self::{
@@ -195,8 +195,7 @@ pub use self::{
     commandpb::{
         command_response::ResponseWrapper, request_with_token::RequestWrapper,
         Command as PbCommand, CommandResponse as PbCommandResponse, KeyRange as PbKeyRange,
-        ProposeId as PbProposeId, RequestWithToken as PbRequestWithToken,
-        SyncResponse as PbSyncResponse,
+        RequestWithToken as PbRequestWithToken, SyncResponse as PbSyncResponse,
     },
     errorpb::{
         execute_error::Error as PbExecuteError, ExecuteError as PbExecuteErrorOuter,
@@ -249,23 +248,6 @@ pub use self::{
         LockRequest, LockResponse, UnlockRequest, UnlockResponse,
     },
 };
-
-impl From<PbProposeId> for ProposeId {
-    #[inline]
-    fn from(id: PbProposeId) -> Self {
-        Self(id.client_id, id.seq_num)
-    }
-}
-
-impl From<ProposeId> for PbProposeId {
-    #[inline]
-    fn from(id: ProposeId) -> Self {
-        Self {
-            client_id: id.0,
-            seq_num: id.1,
-        }
-    }
-}
 
 impl User {
     /// Check if user has the given role

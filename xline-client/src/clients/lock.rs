@@ -7,7 +7,7 @@ use std::{
 };
 
 use clippy_utilities::OverflowArithmetic;
-use curp::{client::Client as CurpClient, cmd::ProposeId};
+use curp::client::Client as CurpClient;
 use futures::{Future, FutureExt};
 use tonic::transport::Channel;
 use xline::server::{Command, CommandResponse, KeyRange, SyncResponse};
@@ -234,7 +234,7 @@ impl LockClient {
     }
 
     /// Generate `Command` proposal from `Request`
-    fn command_from_request_wrapper(propose_id: ProposeId, wrapper: RequestWithToken) -> Command {
+    fn command_from_request_wrapper(wrapper: RequestWithToken) -> Command {
         #[allow(clippy::wildcard_enum_match_arm)]
         let keys = match wrapper.request {
             RequestWrapper::DeleteRangeRequest(ref req) => {
@@ -250,7 +250,7 @@ impl LockClient {
                 .collect(),
             _ => vec![],
         };
-        Command::new(keys, wrapper, propose_id)
+        Command::new(keys, wrapper)
     }
 
     /// Propose request and get result with fast/slow path
@@ -264,9 +264,8 @@ impl LockClient {
     {
         let request_with_token =
             RequestWithToken::new_with_token(request.into(), self.token.clone());
-        let propose_id = self.curp_client.gen_propose_id().await?;
 
-        let cmd = Self::command_from_request_wrapper(propose_id, request_with_token);
+        let cmd = Self::command_from_request_wrapper(request_with_token);
         self.curp_client
             .propose(cmd, use_fast_path)
             .await

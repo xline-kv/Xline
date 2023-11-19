@@ -82,7 +82,6 @@ impl LeaseClient {
     /// ```
     #[inline]
     pub async fn grant(&self, mut request: LeaseGrantRequest) -> Result<LeaseGrantResponse> {
-        let propose_id = self.curp_client.gen_propose_id().await?;
         if request.inner.id == 0 {
             request.inner.id = self.id_gen.next();
         }
@@ -90,7 +89,7 @@ impl LeaseClient {
             xlineapi::LeaseGrantRequest::from(request).into(),
             self.token.clone(),
         );
-        let cmd = Command::new(vec![], request, propose_id);
+        let cmd = Command::new(vec![], request);
         let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
         Ok(cmd_res.into_inner().into())
     }
@@ -261,12 +260,11 @@ impl LeaseClient {
     /// ```
     #[inline]
     pub async fn leases(&self) -> Result<LeaseLeasesResponse> {
-        let propose_id = self.curp_client.gen_propose_id().await?;
         let request = RequestWithToken::new_with_token(
             xlineapi::LeaseLeasesRequest {}.into(),
             self.token.clone(),
         );
-        let cmd = Command::new(vec![], request, propose_id);
+        let cmd = Command::new(vec![], request);
         let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
         Ok(cmd_res.into_inner().into())
     }

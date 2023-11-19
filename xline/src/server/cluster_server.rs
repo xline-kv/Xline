@@ -34,14 +34,9 @@ impl ClusterServer {
 
     /// Send propose conf change request
     async fn propose_conf_change(&self, changes: Vec<ConfChange>) -> Result<Vec<Member>, Status> {
-        let propose_id = self
-            .client
-            .gen_propose_id()
-            .await
-            .map_err(client_err_to_status)?;
         Ok(self
             .client
-            .propose_conf_change(propose_id, changes)
+            .propose_conf_change(changes)
             .await
             .map_err(client_err_to_status)??
             .into_iter()
