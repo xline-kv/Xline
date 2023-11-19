@@ -1,12 +1,9 @@
-use std::{
-    fmt::{Debug, Display},
-    hash::Hash,
-};
+use std::{fmt::Debug, hash::Hash};
 
 use async_trait::async_trait;
 use engine::Snapshot;
 use prost::DecodeError;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Serialize};
 
 use crate::LogIndex;
 
@@ -79,21 +76,6 @@ pub trait Command: pri::Serializable + ConflictCheck + PbCodec {
         E: CommandExecutor<Self> + Send + Sync,
     {
         <E as CommandExecutor<Self>>::after_sync(e, self, index, prepare_res).await
-    }
-}
-
-/// Command Id wrapper, which is used to identify a command
-/// The underlying data is a tuple of (`client_id`, `seq_num`)
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Ord, PartialOrd, Default,
-)]
-#[allow(clippy::exhaustive_structs)] // It is exhaustive
-pub struct ProposeId(pub u64, pub u64);
-
-impl Display for ProposeId {
-    #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}#{}", self.0, self.1)
     }
 }
 

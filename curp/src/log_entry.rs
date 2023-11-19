@@ -1,14 +1,11 @@
 use std::sync::Arc;
 
-use curp_external_api::{
-    cmd::{Command, ProposeId},
-    LogIndex,
-};
+use curp_external_api::{cmd::Command, LogIndex};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     members::ServerId,
-    rpc::{ConfChange, PoolEntryInner},
+    rpc::{ConfChange, PoolEntryInner, ProposeId},
     PublishRequest,
 };
 
