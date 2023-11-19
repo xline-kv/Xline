@@ -687,7 +687,6 @@ mod test {
         assert!(lease_grant_cmd.is_conflict(&put_with_lease_cmd)); // lease id
         assert!(lease_grant_cmd.is_conflict(&txn_with_lease_id_cmd)); // lease id
         assert!(put_with_lease_cmd.is_conflict(&txn_with_lease_id_cmd)); // lease id
-
         assert!(cmd1.is_conflict(&cmd3)); // keys
         assert!(!cmd2.is_conflict(&cmd3)); // auth read and kv
         assert!(cmd2.is_conflict(&cmd4)); // auth and auth

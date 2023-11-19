@@ -5,13 +5,13 @@ use engine::Snapshot;
 use prost::DecodeError;
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::{LogIndex, InflightId};
+use crate::{InflightId, LogIndex};
 
 /// Private
 mod pri {
     use super::{Debug, DeserializeOwned, Serialize};
 
-    /// Trait bound fot thread safety
+    /// Trait bound for thread safety
     #[allow(unreachable_pub)]
     pub trait ThreadSafe: Debug + Send + Sync + 'static {}
 

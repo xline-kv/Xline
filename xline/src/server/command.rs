@@ -7,9 +7,9 @@ use crate::{
     storage::{db::WriteOp, storage_api::StorageApi, AuthStore, KvStore, LeaseStore},
 };
 use curp::{
-    cmd::{Command as CurpCommand, CommandExecutor as CurpCommandExecutor, ProposeId},
+    cmd::{Command as CurpCommand, CommandExecutor as CurpCommandExecutor},
     error::ClientError,
-    LogIndex, InflightId,
+    InflightId, LogIndex,
 };
 use engine::Snapshot;
 use xlineapi::command::Command;
