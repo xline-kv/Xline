@@ -4,7 +4,7 @@ use mockall::automock;
 #[allow(clippy::indexing_slicing)]
 #[allow(clippy::integer_arithmetic)]
 #[automock]
-pub trait RoleChange: Send + Sync + std::fmt::Debug {
+pub trait RoleChange: Send + Sync + std::fmt::Debug + 'static {
     /// The `on_election_win` will be invoked when the current server win the election.
     /// It means that the current server's role will change from Candidate to Leader.
     fn on_election_win(&self);

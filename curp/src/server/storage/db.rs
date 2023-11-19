@@ -22,7 +22,7 @@ pub(in crate::server) struct DB<C> {
 }
 
 #[async_trait]
-impl<C: 'static + Command> StorageApi for DB<C> {
+impl<C: Command> StorageApi for DB<C> {
     /// Command
     type Command = C;
 

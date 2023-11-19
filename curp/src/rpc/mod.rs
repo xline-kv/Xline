@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use curp_external_api::cmd::{PbCodec, PbSerializeError};
 use prost::Message;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
 pub use self::proto::{
     commandpb::{
@@ -288,7 +288,7 @@ impl WaitSyncedResponse {
 
 impl AppendEntriesRequest {
     /// Create a new `append_entries` request
-    pub(crate) fn new<C: Command + Serialize>(
+    pub(crate) fn new<C: Command>(
         term: u64,
         leader_id: ServerId,
         prev_log_index: LogIndex,
@@ -359,7 +359,7 @@ impl VoteRequest {
 
 impl VoteResponse {
     /// Create a new accepted vote response
-    pub(crate) fn new_accept<C: Command + Serialize>(
+    pub(crate) fn new_accept<C: Command>(
         term: u64,
         cmds: Vec<PoolEntry<C>>,
     ) -> bincode::Result<Self> {
@@ -395,9 +395,7 @@ impl VoteResponse {
     }
 
     /// Get spec pool
-    pub(crate) fn spec_pool<C: Command + DeserializeOwned>(
-        &self,
-    ) -> bincode::Result<Vec<PoolEntry<C>>> {
+    pub(crate) fn spec_pool<C: Command>(&self) -> bincode::Result<Vec<PoolEntry<C>>> {
         self.spec_pool
             .iter()
             .map(|cmd| bincode::deserialize(cmd))

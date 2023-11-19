@@ -55,11 +55,7 @@ impl<C: Command> Debug for CEEvent<C> {
 }
 
 /// Worker that execute commands
-async fn cmd_worker<
-    C: Command + 'static,
-    CE: CommandExecutor<C> + 'static,
-    RC: RoleChange + 'static,
->(
+async fn cmd_worker<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     dispatch_rx: impl TaskRxApi<C>,
     done_tx: flume::Sender<(Task<C>, bool)>,
     curp: Arc<RawCurp<C, RC>>,
@@ -93,11 +89,7 @@ async fn cmd_worker<
 }
 
 /// Cmd worker execute handler
-async fn worker_exe<
-    C: Command + 'static,
-    CE: CommandExecutor<C> + 'static,
-    RC: RoleChange + 'static,
->(
+async fn worker_exe<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     entry: Arc<LogEntry<C>>,
     pre_err: Option<C::Error>,
     ce: &CE,
@@ -136,11 +128,7 @@ async fn worker_exe<
 }
 
 /// Cmd worker after sync handler
-async fn worker_as<
-    C: Command + 'static,
-    CE: CommandExecutor<C> + 'static,
-    RC: RoleChange + 'static,
->(
+async fn worker_as<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     entry: Arc<LogEntry<C>>,
     prepare: Option<C::PR>,
     ce: &CE,
@@ -205,11 +193,7 @@ async fn worker_as<
 }
 
 /// Cmd worker reset handler
-async fn worker_reset<
-    C: Command + 'static,
-    CE: CommandExecutor<C> + 'static,
-    RC: RoleChange + 'static,
->(
+async fn worker_reset<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     snapshot: Option<Snapshot>,
     finish_tx: oneshot::Sender<()>,
     ce: &CE,
@@ -245,11 +229,7 @@ async fn worker_reset<
 }
 
 /// Cmd worker snapshot handler
-async fn worker_snapshot<
-    C: Command + 'static,
-    CE: CommandExecutor<C> + 'static,
-    RC: RoleChange + 'static,
->(
+async fn worker_snapshot<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     meta: SnapshotMeta,
     tx: oneshot::Sender<Snapshot>,
     ce: &CE,
@@ -286,7 +266,7 @@ struct TaskRx<C: Command>(flume::Receiver<Task<C>>);
 
 /// Send cmd to background execution worker
 #[cfg_attr(test, automock)]
-pub(super) trait CEEventTxApi<C: Command + 'static>: Send + Sync + 'static {
+pub(super) trait CEEventTxApi<C: Command>: Send + Sync + 'static {
     /// Send cmd to background cmd worker for speculative execution
     fn send_sp_exe(&self, entry: Arc<LogEntry<C>>);
 
@@ -300,7 +280,7 @@ pub(super) trait CEEventTxApi<C: Command + 'static>: Send + Sync + 'static {
     fn send_snapshot(&self, meta: SnapshotMeta) -> oneshot::Receiver<Snapshot>;
 }
 
-impl<C: Command + 'static> CEEventTx<C> {
+impl<C: Command> CEEventTx<C> {
     /// Send ce event
     fn send_event(&self, event: CEEvent<C>) {
         if let Err(e) = self.0.send(event) {
@@ -313,7 +293,7 @@ impl<C: Command + 'static> CEEventTx<C> {
     }
 }
 
-impl<C: Command + 'static> CEEventTxApi<C> for CEEventTx<C> {
+impl<C: Command> CEEventTxApi<C> for CEEventTx<C> {
     fn send_sp_exe(&self, entry: Arc<LogEntry<C>>) {
         let event = CEEvent::SpecExeReady(Arc::clone(&entry));
         self.send_event(event);
@@ -342,13 +322,13 @@ impl<C: Command + 'static> CEEventTxApi<C> for CEEventTx<C> {
 /// Cmd exe recv interface
 #[cfg_attr(test, automock)]
 #[async_trait]
-trait TaskRxApi<C: Command + 'static> {
+trait TaskRxApi<C: Command> {
     /// Recv execute msg and done notifier
     async fn recv(&self) -> Result<Task<C>, flume::RecvError>;
 }
 
 #[async_trait]
-impl<C: Command + 'static> TaskRxApi<C> for TaskRx<C> {
+impl<C: Command> TaskRxApi<C> for TaskRx<C> {
     /// Recv execute msg and done notifier
     async fn recv(&self) -> Result<Task<C>, flume::RecvError> {
         self.0.recv_async().await
@@ -356,11 +336,7 @@ impl<C: Command + 'static> TaskRxApi<C> for TaskRx<C> {
 }
 
 /// Run cmd execute workers. Each cmd execute worker will continually fetch task to perform from `task_rx`.
-pub(super) fn start_cmd_workers<
-    C: Command + 'static,
-    CE: 'static + CommandExecutor<C>,
-    RC: RoleChange + 'static,
->(
+pub(super) fn start_cmd_workers<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     cmd_executor: Arc<CE>,
     curp: Arc<RawCurp<C, RC>>,
     task_rx: flume::Receiver<Task<C>>,

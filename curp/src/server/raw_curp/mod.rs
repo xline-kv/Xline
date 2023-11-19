@@ -205,7 +205,7 @@ impl<C: Command, RC: RoleChange> Debug for Context<C, RC> {
 }
 
 // Tick
-impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
+impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Tick
     pub(super) fn tick_election(&self) -> Option<Vote> {
         let st_r = self.st.upgradable_read();
@@ -232,7 +232,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 }
 
 // Curp handlers
-impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
+impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Handle `propose` request
     /// Return `true` if the leader speculatively executed the command
     pub(super) fn handle_propose(&self, cmd: Arc<C>) -> Result<bool, CurpError> {
@@ -760,7 +760,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 }
 
 /// Other small public interface
-impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
+impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Create a new `RawCurp`
     #[allow(clippy::too_many_arguments)] // only called once
     pub(super) fn new(
@@ -1194,7 +1194,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
 // Utils
 // Don't grab lock in the following functions(except cb or sp's lock)
-impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
+impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Server becomes a pre candidate
     fn become_pre_candidate(
         &self,
