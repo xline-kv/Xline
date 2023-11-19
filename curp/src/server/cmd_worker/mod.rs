@@ -360,7 +360,6 @@ pub(super) fn start_cmd_workers<C: Command, CE: CommandExecutor<C>, RC: RoleChan
 mod tests {
     use std::time::Duration;
 
-    use curp_external_api::cmd::ProposeId;
     use curp_test_utils::{
         mock_role_change, sleep_millis, sleep_secs,
         test_cmd::{TestCE, TestCommand},
@@ -371,7 +370,7 @@ mod tests {
     use utils::config::StorageConfig;
 
     use super::*;
-    use crate::log_entry::LogEntry;
+    use crate::{log_entry::LogEntry, rpc::ProposeId};
 
     // This should happen in fast path in most cases
     #[traced_test]

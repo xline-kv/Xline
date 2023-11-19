@@ -9,7 +9,6 @@ use std::{
     sync::Arc,
 };
 
-use curp_external_api::cmd::ProposeId;
 use tokio::sync::oneshot;
 use tracing::{debug, error};
 use utils::shutdown::{self, Signal};
@@ -19,6 +18,7 @@ use super::{CEEvent, CEEventTx};
 use crate::{
     cmd::{Command, CommandExecutor},
     log_entry::{EntryData, LogEntry},
+    rpc::ProposeId,
     snapshot::{Snapshot, SnapshotMeta},
 };
 

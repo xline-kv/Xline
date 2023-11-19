@@ -12,7 +12,6 @@ use curp::{
     server::Rpc,
     LogIndex, Member,
 };
-use curp_external_api::cmd::ProposeId;
 use curp_test_utils::{
     sleep_secs,
     test_cmd::{TestCE, TestCommand, TestCommandResult},

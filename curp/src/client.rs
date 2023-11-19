@@ -18,14 +18,14 @@ use tracing::{debug, instrument, warn};
 use utils::config::ClientConfig;
 
 use crate::{
-    cmd::{Command, ProposeId},
+    cmd::Command,
     error::{ClientBuildError, ClientError},
     members::ServerId,
     rpc::{
         self, connect::ConnectApi, protocol_client::ProtocolClient, ConfChange, CurpError,
         FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, Member,
-        ProposeConfChangeRequest, ProposeRequest, PublishRequest, ReadState as PbReadState,
-        Redirect, ShutdownRequest, WaitSyncedRequest,
+        ProposeConfChangeRequest, ProposeId, ProposeRequest, PublishRequest,
+        ReadState as PbReadState, Redirect, ShutdownRequest, WaitSyncedRequest,
     },
     LogIndex,
 };

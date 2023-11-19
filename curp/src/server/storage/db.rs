@@ -92,10 +92,11 @@ impl<C> DB<C> {
 mod tests {
     use std::{error::Error, sync::Arc};
 
-    use curp_external_api::cmd::ProposeId;
     use curp_test_utils::{sleep_secs, test_cmd::TestCommand};
     use test_macros::abort_on_panic;
     use tokio::fs::remove_dir_all;
+
+    use crate::rpc::ProposeId;
 
     use super::*;
 
