@@ -443,7 +443,7 @@ pub struct SimClient<C: Command> {
     handle: NodeHandle,
 }
 
-impl<C: Command + 'static> SimClient<C> {
+impl<C: Command> SimClient<C> {
     #[inline]
     pub async fn propose(
         &self,

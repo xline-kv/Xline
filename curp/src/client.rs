@@ -231,7 +231,7 @@ pub enum ReadState {
 #[allow(clippy::wildcard_enum_match_arm)] // TODO: wait refactoring
 impl<C> Client<C>
 where
-    C: Command + 'static,
+    C: Command,
 {
     /// Client builder
     #[inline]

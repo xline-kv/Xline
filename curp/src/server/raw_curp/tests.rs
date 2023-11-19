@@ -25,7 +25,7 @@ use crate::{
 };
 
 // Hooks for tests
-impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
+impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     fn role(&self) -> Role {
         self.st.read().role
     }

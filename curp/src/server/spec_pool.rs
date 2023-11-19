@@ -17,7 +17,7 @@ pub(super) struct SpeculativePool<C> {
     pub(super) pool: HashMap<ProposeId, PoolEntry<C>>,
 }
 
-impl<C: Command + 'static> SpeculativePool<C> {
+impl<C: Command> SpeculativePool<C> {
     /// Create a new speculative pool
     pub(super) fn new() -> Self {
         Self {
