@@ -67,15 +67,16 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         if self.curp.is_shutdown() {
             return Err(CurpError::shutting_down());
         }
+        let id = req.propose_id();
         self.check_cluster_version(req.cluster_version)?;
         let cmd: Arc<C> = Arc::new(req.cmd()?);
 
         // handle proposal
-        let sp_exec = self.curp.handle_propose(Arc::clone(&cmd))?;
+        let sp_exec = self.curp.handle_propose(id, Arc::clone(&cmd))?;
 
         // if speculatively executed, wait for the result and return
         if sp_exec {
-            let er_res = CommandBoard::wait_for_er(&self.cmd_board, cmd.id()).await;
+            let er_res = CommandBoard::wait_for_er(&self.cmd_board, id).await;
             return Ok(ProposeResponse::new_result::<C>(&er_res));
         }
 
@@ -99,8 +100,8 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         req: ProposeConfChangeRequest,
     ) -> Result<ProposeConfChangeResponse, CurpError> {
         self.check_cluster_version(req.cluster_version)?;
-        let id = req.id();
-        self.curp.handle_propose_conf_change(req.into())?;
+        let id = req.propose_id();
+        self.curp.handle_propose_conf_change(id, req.changes)?;
         CommandBoard::wait_for_conf(&self.cmd_board, id).await;
         let members = self.curp.cluster().all_members_vec();
         Ok(ProposeConfChangeResponse { members })

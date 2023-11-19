@@ -296,7 +296,10 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                 .remove(&vid)
                 .expect("no such vertex in conflict graph");
             if let VertexInner::Entry { ref entry, .. } = v.inner {
-                assert!(self.cmd_vid.remove(&entry.id()).is_some(), "no such cmd");
+                assert!(
+                    self.cmd_vid.remove(&entry.propose_id).is_some(),
+                    "no such cmd"
+                );
             }
             self.update_successors(&v);
         }
@@ -345,15 +348,15 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                                     None
                                 }
                                 Err(err) => {
-                                    self.cmd_executor.trigger(cmd.id(), entry.index);
+                                    self.cmd_executor.trigger(entry.trigger_id(), entry.index);
                                     Some(err)
                                 }
                             }
                         }
                         EntryData::ConfChange(_)
-                        | EntryData::Shutdown(_)
-                        | EntryData::Empty(_)
-                        | EntryData::SetName(_, _, _) => None,
+                        | EntryData::Shutdown
+                        | EntryData::Empty
+                        | EntryData::SetName(_, _) => None,
                     };
                     *exe_st = ExeState::Executing;
                     let task = Task {
@@ -441,7 +444,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
             CEEvent::SpecExeReady(entry) => {
                 let new_vid = self.next_vertex_id();
                 assert!(
-                    self.cmd_vid.insert(entry.id(), new_vid).is_none(),
+                    self.cmd_vid.insert(entry.propose_id, new_vid).is_none(),
                     "cannot insert a cmd twice"
                 );
                 let new_v = Vertex {
@@ -457,7 +460,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                 new_vid
             }
             CEEvent::ASReady(entry) => {
-                if let Some(vid) = self.cmd_vid.get(&entry.id()).copied() {
+                if let Some(vid) = self.cmd_vid.get(&entry.propose_id).copied() {
                     let v = self.get_vertex_mut(vid);
                     match v.inner {
                         VertexInner::Entry { ref mut as_st, .. } => {
@@ -472,7 +475,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                 } else {
                     let new_vid = self.next_vertex_id();
                     assert!(
-                        self.cmd_vid.insert(entry.id(), new_vid).is_none(),
+                        self.cmd_vid.insert(entry.propose_id, new_vid).is_none(),
                         "cannot insert a cmd twice"
                     );
                     let new_v = Vertex {

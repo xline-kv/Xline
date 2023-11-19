@@ -4,8 +4,8 @@ use curp_external_api::cmd::ConflictCheck;
 use parking_lot::Mutex;
 use tracing::{debug, warn};
 
-use super::PoolEntry;
 use crate::cmd::{Command, ProposeId};
+use crate::rpc::PoolEntry;
 
 /// A reference to the speculative pool
 pub(super) type SpecPoolRef<C> = Arc<Mutex<SpeculativePool<C>>>;
@@ -26,12 +26,11 @@ impl<C: Command> SpeculativePool<C> {
     }
 
     /// Push a new command into spec pool if it has no conflict. Return Some if it conflicts with spec pool or the cmd is already in the pool.
-    pub(super) fn insert(&mut self, entry: impl Into<PoolEntry<C>>) -> Option<PoolEntry<C>> {
-        let entry = entry.into();
+    pub(super) fn insert(&mut self, entry: PoolEntry<C>) -> Option<PoolEntry<C>> {
         if self.has_conflict_with(&entry) {
             Some(entry)
         } else {
-            let id = entry.id();
+            let id = entry.id;
             let result = self.pool.insert(id, entry);
             if result.is_none() {
                 debug!("insert cmd({id}) into spec pool");

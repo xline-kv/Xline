@@ -6,7 +6,11 @@ use curp_external_api::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{members::ServerId, rpc::ConfChangeEntry, server::PoolEntry, PublishRequest};
+use crate::{
+    members::ServerId,
+    rpc::{ConfChange, PoolEntryInner},
+    PublishRequest,
+};
 
 /// Log entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,6 +19,8 @@ pub(crate) struct LogEntry<C> {
     pub(crate) term: u64,
     /// Index
     pub(crate) index: LogIndex,
+    /// Propose id
+    pub(crate) propose_id: ProposeId,
     /// Entry data
     pub(crate) entry_data: EntryData<C>,
 }
@@ -23,21 +29,15 @@ pub(crate) struct LogEntry<C> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum EntryData<C> {
     /// Empty entry
-    Empty(ProposeId),
+    Empty,
     /// `Command` entry
     Command(Arc<C>),
     /// `ConfChange` entry
-    ConfChange(Box<ConfChangeEntry>), // Box to fix variant_size_differences
+    ConfChange(Vec<ConfChange>), // Box to fix variant_size_differences
     /// `Shutdown` entry
-    Shutdown(ProposeId),
+    Shutdown,
     /// `SetName` entry
-    SetName(ProposeId, ServerId, String),
-}
-
-impl<C> From<ConfChangeEntry> for EntryData<C> {
-    fn from(conf_change: ConfChangeEntry) -> Self {
-        EntryData::ConfChange(Box::new(conf_change))
-    }
+    SetName(ServerId, String),
 }
 
 impl<C> From<Arc<C>> for EntryData<C> {
@@ -46,18 +46,24 @@ impl<C> From<Arc<C>> for EntryData<C> {
     }
 }
 
-impl<C> From<PoolEntry<C>> for EntryData<C> {
-    fn from(value: PoolEntry<C>) -> Self {
+impl<C> From<Vec<ConfChange>> for EntryData<C> {
+    fn from(value: Vec<ConfChange>) -> Self {
+        Self::ConfChange(value)
+    }
+}
+
+impl<C> From<PoolEntryInner<C>> for EntryData<C> {
+    fn from(value: PoolEntryInner<C>) -> Self {
         match value {
-            PoolEntry::Command(cmd) => EntryData::Command(cmd),
-            PoolEntry::ConfChange(conf_change) => EntryData::ConfChange(Box::new(conf_change)),
+            PoolEntryInner::Command(cmd) => EntryData::Command(cmd),
+            PoolEntryInner::ConfChange(conf_change) => EntryData::ConfChange(conf_change),
         }
     }
 }
 
 impl<C> From<PublishRequest> for EntryData<C> {
     fn from(value: PublishRequest) -> Self {
-        EntryData::SetName(value.id(), value.node_id, value.name)
+        EntryData::SetName(value.node_id, value.name)
     }
 }
 
@@ -66,20 +72,23 @@ where
     C: Command,
 {
     /// Create a new `LogEntry`
-    pub(super) fn new(index: LogIndex, term: u64, entry_data: impl Into<EntryData<C>>) -> Self {
+    pub(super) fn new(
+        index: LogIndex,
+        term: u64,
+        propose_id: ProposeId,
+        entry_data: impl Into<EntryData<C>>,
+    ) -> Self {
         Self {
             term,
             index,
+            propose_id,
             entry_data: entry_data.into(),
         }
     }
 
-    /// Get the id of the entry
-    pub(super) fn id(&self) -> ProposeId {
-        match self.entry_data {
-            EntryData::Command(ref cmd) => cmd.id(),
-            EntryData::ConfChange(ref e) => e.id(),
-            EntryData::Shutdown(id) | EntryData::Empty(id) | EntryData::SetName(id, _, _) => id,
-        }
+    /// Get the trigger id of this log entry
+    pub(super) fn trigger_id(&self) -> u64 {
+        // TODO: Will this significantly increase the probability of collision?
+        self.propose_id.0 ^ self.propose_id.1
     }
 }

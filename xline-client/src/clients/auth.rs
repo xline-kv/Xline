@@ -711,9 +711,8 @@ impl AuthClient {
         request: Req,
         use_fast_path: bool,
     ) -> Result<Res> {
-        let propose_id = self.curp_client.gen_propose_id().await?;
         let request = RequestWithToken::new_with_token(request.into(), self.token.clone());
-        let cmd = Command::new(vec![], request, propose_id);
+        let cmd = Command::new(vec![], request);
 
         let res_wrapper = if use_fast_path {
             let (cmd_res, _sync_error) = self.curp_client.propose(cmd, true).await?;
