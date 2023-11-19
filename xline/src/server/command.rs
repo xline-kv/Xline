@@ -10,7 +10,7 @@ use curp::{
         PbSerializeError,
     },
     error::ClientError,
-    LogIndex,
+    LogIndex, InflightId,
 };
 use engine::Snapshot;
 use itertools::Itertools;
@@ -398,7 +398,7 @@ where
         Ok(u64::from_le_bytes(buf))
     }
 
-    fn trigger(&self, id: u64, index: u64) {
+    fn trigger(&self, id: InflightId, index: LogIndex) {
         self.id_barrier.trigger(id);
         self.index_barrier.trigger(index);
     }
