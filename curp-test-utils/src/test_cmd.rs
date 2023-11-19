@@ -10,7 +10,7 @@ use std::{
 use async_trait::async_trait;
 use curp_external_api::{
     cmd::{Command, CommandExecutor, ConflictCheck, PbCodec},
-    LogIndex, InflightId,
+    InflightId, LogIndex,
 };
 use engine::{Engine, EngineType, Snapshot, SnapshotApi, StorageEngine, WriteOperation};
 use itertools::Itertools;

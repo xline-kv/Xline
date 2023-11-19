@@ -1,16 +1,21 @@
 use std::{collections::HashMap, error::Error, path::PathBuf, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
+pub use curp::rpc::{
+    protocol_client::ProtocolClient, PbProposeId, ProposeRequest, ProposeResponse,
+};
 use curp::{
     client::{Client, ReadState},
-    cmd::{Command, ProposeId},
+    cmd::Command,
     error::ClientError,
     members::{ClusterInfo, ServerId},
+    rpc::{
+        ConfChange, CurpError, FetchClusterRequest, FetchClusterResponse, Member,
+        ProposeConfChangeRequest, ProposeConfChangeResponse,
+    },
     server::Rpc,
-    ConfChange, CurpError, FetchClusterRequest, FetchClusterResponse, LogIndex, Member,
-    ProposeConfChangeRequest, ProposeConfChangeResponse,
+    LogIndex,
 };
-pub use curp::{protocol_client::ProtocolClient, ProposeRequest, ProposeResponse};
 use curp_test_utils::{
     test_cmd::{TestCE, TestCommand, TestCommandResult},
     TestRoleChange, TestRoleChangeInner,
@@ -460,12 +465,11 @@ impl<C: Command> SimClient<C> {
     #[inline]
     pub async fn propose_conf_change(
         &self,
-        propose_id: ProposeId,
         changes: Vec<ConfChange>,
     ) -> Result<Result<Vec<Member>, CurpError>, ClientError<C>> {
         let inner = self.inner.clone();
         self.handle
-            .spawn(async move { inner.propose_conf_change(propose_id, changes).await })
+            .spawn(async move { inner.propose_conf_change(changes).await })
             .await
             .unwrap()
     }

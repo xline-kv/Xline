@@ -10,7 +10,7 @@ use curp::{
         PbSerializeError,
     },
     error::ClientError,
-    LogIndex, InflightId,
+    InflightId, LogIndex,
 };
 use engine::Snapshot;
 use itertools::Itertools;
