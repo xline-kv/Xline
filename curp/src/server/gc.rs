@@ -9,7 +9,7 @@ use crate::{
 };
 
 /// Run background GC tasks for Curp server
-pub(super) fn run_gc_tasks<C: Command + 'static>(
+pub(super) fn run_gc_tasks<C: Command>(
     cmd_board: CmdBoardRef<C>,
     spec: SpecPoolRef<C>,
     gc_interval: Duration,
@@ -25,7 +25,7 @@ pub(super) fn run_gc_tasks<C: Command + 'static>(
 }
 
 /// Cleanup spec pool
-async fn gc_spec_pool<C: Command + 'static>(sp: SpecPoolRef<C>, interval: Duration) {
+async fn gc_spec_pool<C: Command>(sp: SpecPoolRef<C>, interval: Duration) {
     let mut last_check: HashSet<ProposeId> =
         sp.map_lock(|sp_l| sp_l.pool.keys().copied().collect());
     loop {
@@ -38,7 +38,7 @@ async fn gc_spec_pool<C: Command + 'static>(sp: SpecPoolRef<C>, interval: Durati
 }
 
 /// Cleanup cmd board
-async fn gc_cmd_board<C: Command + 'static>(cmd_board: CmdBoardRef<C>, interval: Duration) {
+async fn gc_cmd_board<C: Command>(cmd_board: CmdBoardRef<C>, interval: Duration) {
     let mut last_check_len_er = 0;
     let mut last_check_len_asr = 0;
     let mut last_check_len_sync = 0;

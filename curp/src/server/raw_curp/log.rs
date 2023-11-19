@@ -210,7 +210,7 @@ type ConfChangeEntries<C> = Vec<Arc<LogEntry<C>>>;
 /// Fallback indexes type
 type FallbackIndexes = HashSet<LogIndex>;
 
-impl<C: 'static + Command> Log<C> {
+impl<C: Command> Log<C> {
     /// Create a new log
     pub(super) fn new(
         log_tx: mpsc::UnboundedSender<Arc<LogEntry<C>>>,
@@ -442,7 +442,7 @@ mod tests {
     use super::*;
 
     // impl index for test is handy
-    impl<C: 'static + Command> Index<usize> for Log<C> {
+    impl<C: Command> Index<usize> for Log<C> {
         type Output = LogEntry<C>;
 
         fn index(&self, i: usize) -> &Self::Output {

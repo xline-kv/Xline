@@ -530,7 +530,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
 // Message flow:
 // send_tx -> filter_rx -> filter -> filter_tx -> recv_rx -> done_tx -> done_rx
 #[allow(clippy::type_complexity)] // it's clear
-pub(in crate::server) fn channel<C: 'static + Command, CE: 'static + CommandExecutor<C>>(
+pub(in crate::server) fn channel<C: Command, CE: CommandExecutor<C>>(
     ce: Arc<CE>,
     shutdown_trigger: shutdown::Trigger,
 ) -> (
@@ -556,7 +556,7 @@ pub(in crate::server) fn channel<C: 'static + Command, CE: 'static + CommandExec
 }
 
 /// Conflict checked mpmc task
-async fn conflict_checked_mpmc_task<C: 'static + Command, CE: 'static + CommandExecutor<C>>(
+async fn conflict_checked_mpmc_task<C: Command, CE: CommandExecutor<C>>(
     filter_tx: flume::Sender<Task<C>>,
     filter_rx: flume::Receiver<CEEvent<C>>,
     ce: Arc<CE>,
