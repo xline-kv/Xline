@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
-use curp_external_api::{cmd::Command, LogIndex};
+use curp_external_api::{cmd::Command, InflightId, LogIndex};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     members::ServerId,
-    rpc::{ConfChange, PoolEntryInner, ProposeId},
-    PublishRequest,
+    rpc::{ConfChange, PoolEntryInner, ProposeId, PublishRequest},
 };
 
 /// Log entry
@@ -85,9 +84,14 @@ where
         }
     }
 
-    /// Get the trigger id of this log entry
-    pub(super) fn trigger_id(&self) -> u64 {
-        // TODO: Will this significantly increase the probability of collision?
-        self.propose_id.0 ^ self.propose_id.1
+    /// Get the inflight id of this log entry
+    pub(super) fn inflight_id(&self) -> InflightId {
+        propose_id_to_inflight_id(self.propose_id)
     }
+}
+
+/// Propose id to inflight id
+pub(super) fn propose_id_to_inflight_id(id: ProposeId) -> InflightId {
+    // TODO: Will this significantly increase the probability of collision?
+    id.0 ^ id.1
 }

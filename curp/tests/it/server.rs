@@ -7,7 +7,7 @@ use curp::{
     client::{Builder, Client},
     error::ClientError,
     members::ClusterInfo,
-    ConfChange, CurpError,
+    rpc::{ConfChange, CurpError},
 };
 use curp_test_utils::{
     init_logger, sleep_millis, sleep_secs,

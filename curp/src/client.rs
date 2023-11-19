@@ -222,7 +222,7 @@ impl State {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum ReadState {
-    /// need to wait other command
+    /// need to wait the inflight commands
     Ids(Vec<u64>),
     /// need to wait the commit index
     CommitIndex(LogIndex),
@@ -893,7 +893,7 @@ where
                 .unwrap_or_else(|| unreachable!("read state should be some"));
             let state = match pb_state {
                 PbReadState::CommitIndex(i) => ReadState::CommitIndex(i),
-                PbReadState::Ids(i) => ReadState::Ids(i.trigger_ids),
+                PbReadState::Ids(i) => ReadState::Ids(i.inflight_ids),
             };
             return Ok(state);
         }

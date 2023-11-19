@@ -11,14 +11,14 @@ use utils::config::{
 
 use super::*;
 use crate::{
-    rpc::connect::MockInnerConnectApi,
+    rpc::{connect::MockInnerConnectApi, Redirect},
     server::{
         cmd_board::CommandBoard,
         cmd_worker::{CEEventTxApi, MockCEEventTxApi},
         raw_curp::UncommittedPool,
         spec_pool::SpeculativePool,
     },
-    LogIndex, Redirect,
+    LogIndex,
 };
 
 // Hooks for tests

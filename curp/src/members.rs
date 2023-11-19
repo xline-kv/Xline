@@ -13,11 +13,7 @@ use futures::{stream::FuturesUnordered, StreamExt};
 use itertools::Itertools;
 use tracing::debug;
 
-pub use crate::Member;
-use crate::{
-    rpc::{self, FetchClusterResponse},
-    FetchClusterRequest,
-};
+use crate::rpc::{self, FetchClusterRequest, FetchClusterResponse, Member};
 
 /// Server Id
 pub type ServerId = u64;

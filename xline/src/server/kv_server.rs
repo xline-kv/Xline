@@ -156,9 +156,9 @@ where
                 .map_err(|e| tonic::Status::internal(e.to_string()))?;
             let wait_future = async move {
                 match rd_state {
-                    ReadState::Ids(trigger_ids) => {
-                        debug!(?trigger_ids, "Range wait for command ids");
-                        let fus = trigger_ids
+                    ReadState::Ids(inflight_ids) => {
+                        debug!(?inflight_ids, "Range wait for command ids");
+                        let fus = inflight_ids
                             .into_iter()
                             .map(|id| self.id_barrier.wait(id))
                             .collect::<Vec<_>>();

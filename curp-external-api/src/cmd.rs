@@ -5,7 +5,7 @@ use engine::Snapshot;
 use prost::DecodeError;
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::LogIndex;
+use crate::{LogIndex, InflightId};
 
 /// Private
 mod pri {
@@ -136,8 +136,8 @@ where
     /// Reset the command executor using the snapshot or to the initial state if None
     async fn reset(&self, snapshot: Option<(Snapshot, LogIndex)>) -> Result<(), C::Error>;
 
-    /// Trigger the barrier of the given trigger id (each command is different) and log index.
-    fn trigger(&self, id: u64, index: LogIndex);
+    /// Trigger the barrier of the given trigger id (based on propose id) and log index.
+    fn trigger(&self, id: InflightId, index: LogIndex);
 }
 
 /// Codec for encoding and decoding data into/from the Protobuf format

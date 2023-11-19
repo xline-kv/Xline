@@ -30,11 +30,11 @@ use crate::{
         AppendEntriesRequest, AppendEntriesResponse, CurpError, FetchClusterRequest,
         FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
         InstallSnapshotRequest, InstallSnapshotResponse, ProposeConfChangeRequest,
-        ProposeConfChangeResponse, ProposeRequest, ProposeResponse, VoteRequest, VoteResponse,
+        ProposeConfChangeResponse, ProposeRequest, ProposeResponse, PublishRequest, PublishRequest,
+        PublishResponse, PublishResponse, TriggerShutdownRequest, VoteRequest, VoteResponse,
         WaitSyncedRequest, WaitSyncedResponse,
     },
     snapshot::Snapshot,
-    PublishRequest, PublishResponse, TriggerShutdownRequest,
 };
 
 /// Install snapshot chunk size: 64KB
