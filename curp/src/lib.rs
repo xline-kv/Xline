@@ -156,8 +156,8 @@
     )
 )]
 
-pub use curp_external_api::LogIndex;
 pub use curp_external_api::InflightId;
+pub use curp_external_api::LogIndex;
 
 /// Client side, sending requests and determining requests' state
 pub mod client;
