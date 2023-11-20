@@ -8,13 +8,20 @@ use your help.
 
 **No contribution is too small and all contributions are valued.**
 
+Here are some things you can do today to get started contributing:
+- Help improve the Xline documentation
+- Clarify code, variables, or functions that can be renamed or commented on
+- Improve test coverage
+
+If the above suggestions don't appeal to you, you can browse the issues labeled as a `good first issue` and `help wanted`. These issues do not need a thorough understanding of the project to contribute to. The label also indicates that Xline community members have committed to providing assistance for new contributors. Another way to get started is to find a documentation improvement, such as a missing/broken link, which will give you exposure to the code submission/review process without the added complication of technical depth.
+
 This guide will help you get started. **Do not let this guide intimidate you**.
 It should be considered a map to help you navigate the process.
 
 The [dev channel][dev] is available for any concerns not covered in this guide, please join
 us!
 
-[dev]: https://gitter.im/datenlord/Xline
+[dev]: https://discord.gg/hqDRtYkWzm
 
 ## Conduct
 
@@ -36,7 +43,7 @@ the _minimum_ behavior expected from all contributors.
 For any issue, there are fundamentally three ways an individual can contribute:
 
 1. By opening the issue for discussion: For instance, if you believe that you
-   have discovered a bug in Xline, creating a new issue in [the datenlord/Xline
+   have discovered a bug in Xline, creating a new issue in [the xline-kv/Xline
    issue tracker][issue] is the way to report it.
 
 2. By helping to triage the issue: This can be done by providing
@@ -49,7 +56,7 @@ For any issue, there are fundamentally three ways an individual can contribute:
    often, by opening a Pull Request that changes some bit of something in
    Xline in a concrete and reviewable manner.
 
-[issue]: https://github.com/datenlord/Xline/issues
+[issue]: https://github.com/xline-kv/Xline/issues
 
 **Anybody can participate in any stage of contribution**. We urge you to
 participate in the discussion around bugs and participate in reviewing PRs.
@@ -62,7 +69,7 @@ having problems, you can [open a discussion] asking for help.
 In exchange for receiving help, we ask that you contribute back a documentation
 PR that helps others avoid the problems that you encountered.
 
-[open a discussion]: https://gitter.im/datenlord/Xline
+[open a discussion]: https://discord.gg/hqDRtYkWzm
 
 ### Submitting a Bug Report
 
