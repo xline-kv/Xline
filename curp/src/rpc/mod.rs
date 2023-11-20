@@ -46,7 +46,7 @@ use crate::{cmd::Command, log_entry::LogEntry, members::ServerId, LogIndex};
 
 /// Rpc connect
 pub(crate) mod connect;
-pub(crate) use connect::{connects, inner_connects};
+pub(crate) use connect::{connect, connects, inner_connects};
 
 // Skip for generated code
 #[allow(
@@ -163,16 +163,16 @@ impl ProposeResponse {
     /// Deserialize result in response and take a map function
     pub(crate) fn map_result<C: Command, F, R>(self, f: F) -> Result<R, PbSerializeError>
     where
-        F: FnOnce(Option<Result<C::ER, C::Error>>) -> R,
+        F: FnOnce(Result<Option<C::ER>, C::Error>) -> R,
     {
         let Some(res) = self.result.and_then(|res| res.result) else {
-            return Ok(f(None));
+            return Ok(f(Ok(None)));
         };
         let res = match res {
             CmdResultInner::Ok(ref buf) => Ok(<C as Command>::ER::decode(buf)?),
             CmdResultInner::Error(ref buf) => Err(<C as Command>::Error::decode(buf)?),
         };
-        Ok(f(Some(res)))
+        Ok(f(res.map(Some)))
     }
 }
 
@@ -633,6 +633,23 @@ impl CurpError {
     /// `Internal` error
     pub(crate) fn internal(reason: impl Into<String>) -> Self {
         Self::Internal(reason.into())
+    }
+
+    /// Errors that should return early to the retry layer when we
+    /// got the error at propose stage
+    pub(crate) fn return_early(&self) -> bool {
+        matches!(
+            *self,
+            CurpError::Duplicated(_)
+                | CurpError::ShuttingDown(_)
+                | CurpError::InvalidConfig(_)
+                | CurpError::NodeAlreadyExists(_)
+                | CurpError::NodeNotExists(_)
+                | CurpError::LearnerNotCatchUp(_)
+                | CurpError::ExpiredClientId(_)
+                | CurpError::WrongClusterVersion(_)
+                | CurpError::Redirect(_)
+        )
     }
 }
 
