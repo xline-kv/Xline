@@ -17,31 +17,30 @@
 [openssf-badge]: https://bestpractices.coreinfrastructure.org/projects/7571/badge
 [openssf-url]: https://bestpractices.coreinfrastructure.org/projects/7571
 
-`Xline` is a geo-distributed KV store for metadata management. It provides the
-following features:
+Welcome to the Xline Project!
 
-- Etcd compatible API.
-- Geo-distributed friendly deployment.
-- Compatible with K8s.
+`Xline` is meant to provide high-performance, strongly consistent metadata management for data centers in WAN.
+
+## Scope
+At a high level, we expect the scope of Xline to be restricted to the following functionalities:
+- Cloud-native, compatible with the Kubernetes ecosystem.
+- Support geo-distributed friendly deployment.
+- Supports a rich set of key-value (KV) interfaces, fully compatible with etcd's API.
+- Ensures high performance and strong consistency in a wide-area network environment, using the CURP protocol as the underlying consensus protocol.
 
 ![cncf-logo](./img/cncf-logo.png)
 
 Xline is a sandbox project of the [Cloud Native Computing Foundation](https://cncf.io/) (CNCF).
 
+If you have any questions, suggestions, or would like to join the xline's discussions, please feel free to join our [Discord channel](discord-url).
+
 ## Motivation
 
-With the wide adoption of cloud computing, multi-cloud has become the mainstream IT architecture for enterprise customers.
-Multi-cloud (or similarly multi-datacenter), however, obstacles data access across different cloud (or data center) providers to some extent.
-Further, data isolation and data fragmentation resulting from cloud barriers have become
-impediments to business growth. The biggest challenge of multi-datacenter
-architecture is how to maintain **strong data consistency** and ensure **high
-performance** in the race condition of multi-datacenter scenario.
-Traditional single datacenter solutions cannot meet the
-availability, performance, and consistency requirements of multi-data center
-scenarios. This project targets the multi-datacenter scenario, aiming to
-realize a high-performance multi-cloud metadata management solution, which is
-critical for businesses with geo-distributed and multi-active
-deployment requirements.
+With the widespread adoption of cloud computing, multi-cloud platforms (multiple public or hybrid clouds) have become the mainstream IT architecture for enterprise customers. However, multi-cloud platform architecture hinders data access between different clouds to some extent.
+
+In addition, data isolation and data fragmentation due to cloud barriers have become obstacles to business growth. The biggest challenge of multi-cloud architectures is how to maintain strong data consistency and ensure high performance in the competitive conditions of multi-data center scenarios. Traditional single data center solutions cannot meet the availability, performance, and consistency requirements of multi-data center scenarios.
+
+This project aims to enable a high-performance multi-cloud metadata management solution for multi-cloud scenarios, which is critical for organizations with geo-distributed and multi-active deployment requirements.
 
 ## Innovation
 
@@ -83,20 +82,22 @@ multi-cluster environment.
 
 ## Xline client
 
-Read the document [README.md](xline-client/README.md) for more details about the Xline client SDK.
-Read the document [README.md](xlinectl/README.md) for more details about the Xline client command line tool.
+For more information about the Xline client SDK, or the Xline client command line tool, please refer to the following documents:
+
+* [Xline client sdk](xline-client/README.md)
+* [xlinectl](xlinectl/README.md)
 
 ## Quick Start
 
-Read the document [QUICK_START.md](doc/quick-start/README.md) for more details.
+To get started, check out the document [QUICK_START.md](doc/quick-start/README.md) for in-depth information and step-by-step instructions.
 
 ## Contribute Guide
 
-Read the document [CONTRIBUTING.md](./CONTRIBUTING.md) for more details.
+Our project welcomes contributions from any member of our community. To get started contributing, please see our [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## Code of Conduct
 
-Read the document [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) for more details.
+The Xline project adheres to [the CNCF Community Code of Conduct](./CODE_OF_CONDUCT.md) . It describes the minimum behavior expected from all contributors.
 
 
 ## Roadmap
