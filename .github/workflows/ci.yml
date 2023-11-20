@@ -18,7 +18,7 @@ jobs:
       - uses: actions-rs/install@v0.1
         with:
           crate: cargo-outdated
-          version: latest
+          version: 0.13.1
       - run: cargo outdated
 
   audit:
