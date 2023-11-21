@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use bytes::BytesMut;
 use clippy_utilities::NumericCast;
 use engine::SnapshotApi;
-use futures::Stream;
+use futures::{stream::FuturesUnordered, Stream};
 #[cfg(test)]
 use mockall::automock;
 use tokio::sync::Mutex;
@@ -43,63 +43,100 @@ const SNAPSHOT_CHUNK_SIZE: u64 = 64 * 1024;
 /// The default buffer size for rpc connection
 const DEFAULT_BUFFER_SIZE: usize = 1024;
 
-/// Connect implementation
-macro_rules! connect_impl {
-    ($client:ty, $api:path, $members:ident) => {
-        futures::future::join_all(
-            $members
-                .into_iter()
-                .map(|(id, mut addrs)| single_connect_impl!($client, $api, id, addrs)),
-        )
+/// For protocol client
+trait FromTonicChannel {
+    /// New from channel
+    fn from_channel(channel: Channel) -> Self;
+}
+
+impl FromTonicChannel for ProtocolClient<Channel> {
+    fn from_channel(channel: Channel) -> Self {
+        ProtocolClient::new(channel)
+    }
+}
+
+impl FromTonicChannel for InnerProtocolClient<Channel> {
+    fn from_channel(channel: Channel) -> Self {
+        InnerProtocolClient::new(channel)
+    }
+}
+
+/// Connect to a server
+async fn connect_to<Client: FromTonicChannel>(
+    id: ServerId,
+    mut addrs: Vec<String>,
+) -> Result<Arc<Connect<Client>>, tonic::transport::Error> {
+    let (channel, change_tx) = Channel::balance_channel(DEFAULT_BUFFER_SIZE);
+    for addr in &mut addrs {
+        // TODO: support TLS
+        if !addr.starts_with("http://") {
+            addr.insert_str(0, "http://");
+        }
+        let endpoint = Endpoint::from_shared(addr.clone())?;
+        let _ig = change_tx
+            .send(tower::discover::Change::Insert(addr.clone(), endpoint))
+            .await;
+    }
+    let client = Client::from_channel(channel);
+    let connect = Arc::new(Connect {
+        id,
+        rpc_connect: client,
+        change_tx,
+        addrs: Mutex::new(addrs),
+    });
+    Ok(connect)
+}
+
+/// Connect to a map of members
+async fn connect_all<Client: FromTonicChannel>(
+    members: HashMap<ServerId, Vec<String>>,
+) -> Result<Vec<(u64, Arc<Connect<Client>>)>, tonic::transport::Error> {
+    let conns_to: FuturesUnordered<_> =
+        members
+            .into_iter()
+            .map(|(id, addrs)| async move {
+                connect_to::<Client>(id, addrs).await.map(|conn| (id, conn))
+            })
+            .collect();
+    futures::StreamExt::collect::<Vec<_>>(conns_to)
         .await
         .into_iter()
-        .collect::<Result<Vec<_>, tonic::transport::Error>>()
-        .map(IntoIterator::into_iter)
-    };
+        .collect::<Result<Vec<_>, _>>()
 }
 
-/// Single Connect implementation
-macro_rules! single_connect_impl {
-    ($client:ty, $api:path, $id:ident, $addrs:ident) => {
-        async move {
-            let (channel, change_tx) = Channel::balance_channel(DEFAULT_BUFFER_SIZE);
-            // Addrs must start with "http" to communicate with the server
-            for addr in &mut $addrs {
-                if !addr.starts_with("http://") {
-                    addr.insert_str(0, "http://");
-                }
-                let endpoint = Endpoint::from_shared(addr.clone())?;
-                let _ig = change_tx
-                    .send(tower::discover::Change::Insert(addr.clone(), endpoint))
-                    .await;
-            }
-            let client = <$client>::new(channel);
-            let connect: Arc<dyn $api> = Arc::new(Connect {
-                $id,
-                rpc_connect: client,
-                change_tx,
-                addrs: Mutex::new($addrs),
-            });
-            Ok(($id, connect))
-        }
-    };
-}
-
-/// Convert a vec of addr string to a vec of `Connect`
-/// # Errors
-/// Return error if any of the address format is invalid
+/// A wrapper of [`connect_to`], hide the detailed [`Connect<ProtocolClient>`]
+#[allow(unused)] // TODO: will be used in curp client refactor
 pub(crate) async fn connect(
+    id: ServerId,
+    addrs: Vec<String>,
+) -> Result<Arc<dyn ConnectApi>, tonic::transport::Error> {
+    let conn = connect_to::<ProtocolClient<Channel>>(id, addrs).await?;
+    Ok(conn)
+}
+
+/// Wrapper of [`connect_all`], hide the details of [`Connect<ProtocolClient>`]
+pub(crate) async fn connects(
     members: HashMap<ServerId, Vec<String>>,
 ) -> Result<impl Iterator<Item = (ServerId, Arc<dyn ConnectApi>)>, tonic::transport::Error> {
-    connect_impl!(ProtocolClient<Channel>, ConnectApi, members)
+    // It seems that casting high-rank types cannot be inferred, so we allow trivial_casts to cast manually
+    #[allow(trivial_casts)]
+    #[allow(clippy::as_conversions)]
+    let conns = connect_all(members)
+        .await?
+        .into_iter()
+        .map(|(id, conn)| (id, conn as Arc<dyn ConnectApi>));
+    Ok(conns)
 }
 
-/// Convert a vec of addr string to a vec of `InnerConnect`
-pub(crate) async fn inner_connect(
+/// Wrapper of [`connect_all`], hide the details of [`Connect<InnerProtocolClient>`]
+pub(crate) async fn inner_connects(
     members: HashMap<ServerId, Vec<String>>,
 ) -> Result<impl Iterator<Item = (ServerId, InnerConnectApiWrapper)>, tonic::transport::Error> {
-    connect_impl!(InnerProtocolClient<Channel>, InnerConnectApi, members)
-        .map(|iter| iter.map(|(id, connect)| (id, InnerConnectApiWrapper::new_from_arc(connect))))
+    let conns = connect_all(members)
+        .await?
+        .into_iter()
+        .map(|(id, conn)| (id, InnerConnectApiWrapper::new_from_arc(conn)));
+    Ok(conns)
 }
 
 /// Connect interface between server and clients
@@ -209,11 +246,10 @@ impl InnerConnectApiWrapper {
     /// Create a new `InnerConnectApiWrapper` from id and addrs
     pub(crate) async fn connect(
         id: ServerId,
-        mut addrs: Vec<String>,
+        addrs: Vec<String>,
     ) -> Result<Self, tonic::transport::Error> {
-        let (_id, connect) =
-            single_connect_impl!(InnerProtocolClient<Channel>, InnerConnectApi, id, addrs).await?;
-        Ok(InnerConnectApiWrapper::new_from_arc(connect))
+        let conn = connect_to::<InnerProtocolClient<Channel>>(id, addrs).await?;
+        Ok(InnerConnectApiWrapper::new_from_arc(conn))
     }
 }
 
