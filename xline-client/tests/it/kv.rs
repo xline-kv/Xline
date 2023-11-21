@@ -1,5 +1,5 @@
 //! The following tests are originally from `etcd-client`
-use common::get_cluster_client;
+use super::common::get_cluster_client;
 use test_macros::abort_on_panic;
 use xline_client::{
     error::Result,
@@ -8,8 +8,6 @@ use xline_client::{
         TxnOp, TxnRequest,
     },
 };
-
-mod common;
 
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]

@@ -23,8 +23,6 @@ use crate::common::curp_group::{
     ProposeResponse,
 };
 
-mod common;
-
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn basic_propose() {
