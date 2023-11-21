@@ -1030,10 +1030,12 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     /// Check if all followers have caught up with the leader
-    pub(super) fn is_synced(&self) -> bool {
+    pub(super) fn is_synced(&self, node_id: ServerId) -> bool {
         let log_r = self.log.read();
         let leader_commit_index = log_r.commit_index;
-        self.lst.check_all(|f| f.match_index == leader_commit_index)
+        self.lst
+            .get_match_index(node_id)
+            .is_some_and(|match_index| match_index == leader_commit_index)
     }
 
     /// Check if the new config is valid

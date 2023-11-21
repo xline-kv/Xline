@@ -738,14 +738,17 @@ fn is_synced_should_return_true_when_followers_caught_up_with_leader() {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
-    curp.log.write().commit_index = 3;
-    assert!(!curp.is_synced());
 
     let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
     let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
+    curp.log.write().commit_index = 3;
+    assert!(!curp.is_synced(s1_id));
+    assert!(!curp.is_synced(s2_id));
+
     curp.lst.update_match_index(s1_id, 3);
     curp.lst.update_match_index(s2_id, 3);
-    assert!(curp.is_synced());
+    assert!(curp.is_synced(s1_id));
+    assert!(curp.is_synced(s2_id));
 }
 
 #[traced_test]

@@ -34,7 +34,7 @@ use crate::{
         WaitSyncedResponse,
     },
     snapshot::Snapshot,
-    PublishRequest, PublishResponse,
+    PublishRequest, PublishResponse, TriggerShutdownRequest,
 };
 
 /// Install snapshot chunk size: 64KB
@@ -230,6 +230,9 @@ pub(crate) trait InnerConnectApi: Send + Sync + 'static {
         leader_id: ServerId,
         snapshot: Snapshot,
     ) -> Result<tonic::Response<InstallSnapshotResponse>, tonic::Status>;
+
+    /// Trigger follower shutdown
+    async fn trigger_shutdown(&self) -> Result<(), tonic::Status>;
 }
 
 /// Inner Connect Api Wrapper
@@ -455,6 +458,13 @@ impl InnerConnectApi for Connect<InnerProtocolClient<Channel>> {
         let stream = install_snapshot_stream(term, leader_id, snapshot);
         let mut client = self.rpc_connect.clone();
         client.install_snapshot(stream).await
+    }
+
+    async fn trigger_shutdown(&self) -> Result<(), tonic::Status> {
+        let mut client = self.rpc_connect.clone();
+        let req = tonic::Request::new(TriggerShutdownRequest::default());
+        _ = client.trigger_shutdown(req).await?;
+        Ok(())
     }
 }
 

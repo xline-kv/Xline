@@ -164,11 +164,6 @@ impl LeaderState {
         self.statuses.get_mut(&id)
     }
 
-    /// Check all followers by `f`
-    pub(super) fn check_all(&self, f: impl Fn(&FollowerStatus) -> bool) -> bool {
-        self.statuses.iter().all(|s| f(s.value()))
-    }
-
     /// Get `next_index` for server
     pub(super) fn get_next_index(&self, id: ServerId) -> Option<LogIndex> {
         self.get_status(id).map(|s| s.next_index)

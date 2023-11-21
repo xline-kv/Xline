@@ -25,9 +25,9 @@ use crate::{
         FetchReadStateRequest, FetchReadStateResponse, InnerProtocolServer, InstallSnapshotRequest,
         InstallSnapshotResponse, ProposeConfChangeRequest, ProposeConfChangeResponse,
         ProposeRequest, ProposeResponse, ProtocolServer, ShutdownRequest, ShutdownResponse,
-        VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        TriggerShutdownRequest, VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
-    ConfChangeEntry, PublishRequest, PublishResponse,
+    ConfChangeEntry, PublishRequest, PublishResponse, TriggerShutdownResponse,
 };
 
 /// Command worker to do execution and after sync
@@ -173,6 +173,16 @@ impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::InnerProtocol f
     ) -> Result<tonic::Response<VoteResponse>, tonic::Status> {
         Ok(tonic::Response::new(
             self.inner.vote(request.into_inner()).await?,
+        ))
+    }
+
+    #[instrument(skip_all, name = "curp_trigger_shutdown")]
+    async fn trigger_shutdown(
+        &self,
+        request: tonic::Request<TriggerShutdownRequest>,
+    ) -> Result<tonic::Response<TriggerShutdownResponse>, tonic::Status> {
+        Ok(tonic::Response::new(
+            self.inner.trigger_shutdown(request.get_ref()),
         ))
     }
 }
