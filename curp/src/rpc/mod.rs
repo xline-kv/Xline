@@ -39,7 +39,7 @@ use crate::{
 
 /// Rpc connect
 pub(crate) mod connect;
-pub(crate) use connect::{connect, inner_connect};
+pub(crate) use connect::{connects, inner_connects};
 
 // Skip for generated code
 #[allow(

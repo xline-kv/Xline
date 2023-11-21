@@ -72,7 +72,7 @@ impl<C: Command> Builder<C> {
         let Some(config) = self.config else {
             return Err(ClientBuildError::invalid_arguments("timeout is required"));
         };
-        let connects = rpc::connect(all_members).await?.collect();
+        let connects = rpc::connects(all_members).await?.collect();
         let client = Client::<C> {
             local_server_id: self.local_server_id,
             state: RwLock::new(State::new(leader_id, 0)),
@@ -136,7 +136,7 @@ impl<C: Command> Builder<C> {
             state: RwLock::new(State::new(res.leader_id, res.term)),
             config,
             cluster_version: AtomicU64::new(res.cluster_version),
-            connects: rpc::connect(res.into_members_addrs()).await?.collect(),
+            connects: rpc::connects(res.into_members_addrs()).await?.collect(),
             phantom: PhantomData,
         };
         Ok(client)
@@ -448,7 +448,7 @@ where
             .map(|m| (m.id, m.addrs))
             .collect::<HashMap<ServerId, Vec<String>>>();
         self.connects.clear();
-        for (id, connect) in rpc::connect(member_addrs)
+        for (id, connect) in rpc::connects(member_addrs)
             .await
             .map_err(|e| ClientError::InternalError(format!("connect to cluster failed: {e}")))?
         {

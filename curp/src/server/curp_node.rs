@@ -785,7 +785,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
             .into_iter()
             .map(|server_id| (server_id, Arc::new(Event::new())))
             .collect();
-        let connects = rpc::inner_connect(cluster_info.peers_addrs())
+        let connects = rpc::inner_connects(cluster_info.peers_addrs())
             .await
             .map_err(|e| CurpError::Internal(format!("parse peers addresses failed, err {e:?}")))?
             .collect();
