@@ -163,6 +163,9 @@ async fn worker_as<
         }
         EntryData::Shutdown(propose_id) => {
             curp.enter_shutdown();
+            if curp.is_leader() {
+                curp.shutdown_trigger().mark_leader_notified();
+            }
             if let Err(e) = ce.set_last_applied(entry.index) {
                 error!("failed to set last_applied, {e}");
             }

@@ -31,7 +31,7 @@ use super::{
 use crate::{
     cmd::{Command, CommandExecutor},
     error::ERROR_LABEL,
-    log_entry::LogEntry,
+    log_entry::{EntryData, LogEntry},
     members::{ClusterInfo, ServerId},
     role_change::RoleChange,
     rpc::{
@@ -45,7 +45,8 @@ use crate::{
     },
     server::{cmd_worker::CEEventTxApi, raw_curp::SyncAction, storage::db::DB},
     snapshot::{Snapshot, SnapshotMeta},
-    ConfChangeType, PublishRequest, PublishResponse,
+    ConfChangeType, PublishRequest, PublishResponse, TriggerShutdownRequest,
+    TriggerShutdownResponse,
 };
 
 /// Curp error
@@ -369,6 +370,17 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         Ok(resp)
     }
 
+    /// Handle `TriggerShutdown` requests
+    pub(super) fn trigger_shutdown(
+        &self,
+        _req: &TriggerShutdownRequest,
+    ) -> TriggerShutdownResponse {
+        let shutdown_trigger = self.curp.shutdown_trigger();
+        shutdown_trigger.mark_leader_notified();
+        shutdown_trigger.check_and_shutdown();
+        TriggerShutdownResponse::default()
+    }
+
     /// handle `WaitSynced` requests
     pub(super) async fn wait_synced(
         &self,
@@ -668,7 +680,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         let mut hb_opt = false;
         let mut ticker = tokio::time::interval(curp.cfg().heartbeat_interval);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        let id = connect.id();
+        let connect_id = connect.id();
         let batch_timeout = curp.cfg().batch_timeout;
         let mut is_shutdown_state = false;
 
@@ -702,13 +714,17 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                 }
             }
 
-            let Some(sync_action) = curp.sync(id) else {
+            let Some(sync_action) = curp.sync(connect_id) else {
                 break true;
             };
 
             match sync_action {
                 SyncAction::AppendEntries(ae) => {
                     let is_empty = ae.entries.is_empty();
+                    let is_commit_shutdown = ae.entries.last().is_some_and(|e| {
+                        matches!(e.entry_data, EntryData::Shutdown(_))
+                            && e.index == ae.leader_commit
+                    });
                     // (hb_opt, entries) status combination
                     // (false, empty) => send heartbeat to followers
                     // (true, empty) => indicates that `batch_timeout` expired, and during this period there is not any log generated. Do nothing
@@ -716,14 +732,25 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                     if !hb_opt || !is_empty {
                         let result = Self::send_ae(connect.as_ref(), curp.as_ref(), ae).await;
                         if let Err(err) = result {
-                            warn!("ae to {} failed, {err}", connect.id());
+                            warn!("ae to {} failed, {err}", connect_id);
                             if matches!(err, SendAEError::NotLeader) {
                                 break true;
                             }
                         } else {
                             hb_opt = true;
                         }
-                        if is_shutdown_state && is_empty && curp.is_synced() {
+                        // Check Follower shutdown
+                        if is_shutdown_state
+                            && ((curp.is_synced(connect_id) && is_empty)
+                                || (!curp.is_synced(connect_id) && is_commit_shutdown))
+                        {
+                            let _ig = tokio::spawn(async move {
+                                if let Err(e) = connect.trigger_shutdown().await {
+                                    warn!("trigger shutdown to {} failed, {e}", connect_id);
+                                } else {
+                                    debug!("trigger shutdown to {} success", connect_id);
+                                }
+                            });
                             break false;
                         }
                     }
@@ -745,7 +772,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                 },
             }
         };
-        debug!("{} to {} sync follower task exits", curp.id(), connect.id());
+        debug!("{} to {} sync follower task exits", curp.id(), connect_id);
         leader_retired
     }
 

@@ -34,6 +34,8 @@ pub struct TriggerInner {
     mpmc_channel_shutdown: AtomicBool,
     /// State of sync follower daemon.
     sync_follower_daemon_shutdown: AtomicBool,
+    /// Shutdown Applied
+    leader_notified: AtomicBool,
 }
 
 impl Trigger {
@@ -71,6 +73,13 @@ impl Trigger {
             .store(true, Ordering::Relaxed);
     }
 
+    /// Mark leader notified
+    #[inline]
+    pub fn mark_leader_notified(&self) {
+        debug!("mark leader notified");
+        self.inner.leader_notified.store(true, Ordering::Relaxed);
+    }
+
     /// Reset sync daemon shutdown.
     #[inline]
     pub fn reset_sync_daemon_shutdown(&self) {
@@ -89,6 +98,7 @@ impl Trigger {
                 .inner
                 .sync_follower_daemon_shutdown
                 .load(Ordering::Relaxed)
+            && self.inner.leader_notified.load(Ordering::Relaxed)
         {
             self.self_shutdown();
         }
@@ -187,6 +197,7 @@ pub fn channel() -> (Trigger, Listener) {
             trigger: tx,
             mpmc_channel_shutdown: AtomicBool::new(false),
             sync_follower_daemon_shutdown: AtomicBool::new(false),
+            leader_notified: AtomicBool::new(false),
         }),
     };
     let listener = Listener { listener: rx };

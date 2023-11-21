@@ -26,7 +26,8 @@ pub(crate) use self::proto::{
     },
     inner_messagepb::{
         inner_protocol_server::InnerProtocol, AppendEntriesRequest, AppendEntriesResponse,
-        InstallSnapshotRequest, InstallSnapshotResponse, VoteRequest, VoteResponse,
+        InstallSnapshotRequest, InstallSnapshotResponse, TriggerShutdownRequest,
+        TriggerShutdownResponse, VoteRequest, VoteResponse,
     },
 };
 use crate::{
