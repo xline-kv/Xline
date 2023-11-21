@@ -376,7 +376,7 @@ pub async fn get_cluster_info_from_remote(
     timeout: Duration,
 ) -> Option<ClusterInfo> {
     let peers = init_cluster_info.peers_addrs();
-    let connects = rpc::connect(peers)
+    let connects = rpc::connects(peers)
         .await
         .ok()?
         .map(|pair| pair.1)
