@@ -9,8 +9,6 @@ use test_macros::abort_on_panic;
 
 use crate::common::curp_group::CurpGroup;
 
-mod common;
-
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn read_state() {

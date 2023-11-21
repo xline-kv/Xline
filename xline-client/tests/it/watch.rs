@@ -7,9 +7,7 @@ use xline_client::{
     },
 };
 
-use crate::common::get_cluster_client;
-
-mod common;
+use super::common::get_cluster_client;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn watch_should_receive_consistent_events() -> Result<()> {

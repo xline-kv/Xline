@@ -1,5 +1,5 @@
 //! The following tests are originally from `etcd-client`
-use common::get_cluster_client;
+use super::common::get_cluster_client;
 use xline_client::{
     error::Result,
     types::auth::{
@@ -9,8 +9,6 @@ use xline_client::{
         AuthUserGrantRoleRequest, AuthUserRevokeRoleRequest, Permission, PermissionType,
     },
 };
-
-mod common;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn role_operations_should_success_in_normal_path() -> Result<()> {
