@@ -9,7 +9,6 @@ use std::{
     sync::Arc,
 };
 
-use curp_external_api::cmd::ProposeId;
 use tokio::sync::oneshot;
 use tracing::{debug, error};
 use utils::shutdown::{self, Signal};
@@ -19,6 +18,7 @@ use super::{CEEvent, CEEventTx};
 use crate::{
     cmd::{Command, CommandExecutor},
     log_entry::{EntryData, LogEntry},
+    rpc::ProposeId,
     snapshot::{Snapshot, SnapshotMeta},
 };
 
@@ -296,7 +296,10 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                 .remove(&vid)
                 .expect("no such vertex in conflict graph");
             if let VertexInner::Entry { ref entry, .. } = v.inner {
-                assert!(self.cmd_vid.remove(&entry.id()).is_some(), "no such cmd");
+                assert!(
+                    self.cmd_vid.remove(&entry.propose_id).is_some(),
+                    "no such cmd"
+                );
             }
             self.update_successors(&v);
         }
@@ -345,15 +348,15 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                                     None
                                 }
                                 Err(err) => {
-                                    self.cmd_executor.trigger(cmd.id(), entry.index);
+                                    self.cmd_executor.trigger(entry.inflight_id(), entry.index);
                                     Some(err)
                                 }
                             }
                         }
                         EntryData::ConfChange(_)
-                        | EntryData::Shutdown(_)
-                        | EntryData::Empty(_)
-                        | EntryData::SetName(_, _, _) => None,
+                        | EntryData::Shutdown
+                        | EntryData::Empty
+                        | EntryData::SetName(_, _) => None,
                     };
                     *exe_st = ExeState::Executing;
                     let task = Task {
@@ -441,7 +444,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
             CEEvent::SpecExeReady(entry) => {
                 let new_vid = self.next_vertex_id();
                 assert!(
-                    self.cmd_vid.insert(entry.id(), new_vid).is_none(),
+                    self.cmd_vid.insert(entry.propose_id, new_vid).is_none(),
                     "cannot insert a cmd twice"
                 );
                 let new_v = Vertex {
@@ -457,7 +460,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                 new_vid
             }
             CEEvent::ASReady(entry) => {
-                if let Some(vid) = self.cmd_vid.get(&entry.id()).copied() {
+                if let Some(vid) = self.cmd_vid.get(&entry.propose_id).copied() {
                     let v = self.get_vertex_mut(vid);
                     match v.inner {
                         VertexInner::Entry { ref mut as_st, .. } => {
@@ -472,7 +475,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                 } else {
                     let new_vid = self.next_vertex_id();
                     assert!(
-                        self.cmd_vid.insert(entry.id(), new_vid).is_none(),
+                        self.cmd_vid.insert(entry.propose_id, new_vid).is_none(),
                         "cannot insert a cmd twice"
                     );
                     let new_v = Vertex {
@@ -530,7 +533,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
 // Message flow:
 // send_tx -> filter_rx -> filter -> filter_tx -> recv_rx -> done_tx -> done_rx
 #[allow(clippy::type_complexity)] // it's clear
-pub(in crate::server) fn channel<C: 'static + Command, CE: 'static + CommandExecutor<C>>(
+pub(in crate::server) fn channel<C: Command, CE: CommandExecutor<C>>(
     ce: Arc<CE>,
     shutdown_trigger: shutdown::Trigger,
 ) -> (
@@ -555,7 +558,7 @@ pub(in crate::server) fn channel<C: 'static + Command, CE: 'static + CommandExec
 }
 
 /// Conflict checked mpmc task
-async fn conflict_checked_mpmc_task<C: 'static + Command, CE: 'static + CommandExecutor<C>>(
+async fn conflict_checked_mpmc_task<C: Command, CE: CommandExecutor<C>>(
     filter_tx: flume::Sender<Task<C>>,
     filter_rx: flume::Receiver<CEEvent<C>>,
     ce: Arc<CE>,

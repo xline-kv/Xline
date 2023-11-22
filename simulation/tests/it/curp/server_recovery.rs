@@ -2,15 +2,11 @@
 
 use std::{sync::Arc, time::Duration, vec};
 
-use curp::{ConfChange, ProposeConfChangeRequest};
-use curp_test_utils::{
-    init_logger, sleep_secs,
-    test_cmd::{next_id, TestCommand},
-    TEST_TABLE,
-};
+use curp::rpc::{ConfChange, ProposeConfChangeRequest};
+use curp_test_utils::{init_logger, sleep_secs, test_cmd::TestCommand, TEST_TABLE};
 use engine::StorageEngine;
 use itertools::Itertools;
-use simulation::curp_group::{CurpGroup, ProposeRequest};
+use simulation::curp_group::{CurpGroup, PbProposeId, ProposeRequest};
 use tonic::Code;
 use tracing::debug;
 
@@ -180,6 +176,10 @@ async fn new_leader_will_recover_spec_cmds_cond1() {
     // 1: send cmd1 to all others except the leader
     let cmd1 = Arc::new(TestCommand::new_put(vec![0], 0));
     let req1 = ProposeRequest {
+        propose_id: Some(PbProposeId {
+            client_id: 0,
+            seq_num: 0,
+        }),
         command: bincode::serialize(&cmd1).unwrap(),
         cluster_version: 0,
     };
@@ -284,6 +284,10 @@ async fn old_leader_will_keep_original_states() {
     // 2: send the cmd1 to the leader, it should be speculatively executed
     let cmd1 = Arc::new(TestCommand::new_put(vec![0], 1));
     let req1 = ProposeRequest {
+        propose_id: Some(PbProposeId {
+            client_id: 0,
+            seq_num: 0,
+        }),
         command: bincode::serialize(&cmd1).unwrap(),
         cluster_version: 0,
     };
@@ -463,13 +467,19 @@ async fn overwritten_config_should_fallback() {
     let cluster = leader_conn.fetch_cluster().await.unwrap().into_inner();
     assert_eq!(cluster.members.len(), 5);
 
-    let id = next_id();
     let node_id = 123;
     let address = vec!["127.0.0.1:4567".to_owned()];
     let changes = vec![ConfChange::add(node_id, address)];
     let res = leader_conn
         .propose_conf_change(
-            ProposeConfChangeRequest::new(id, changes, cluster.cluster_version),
+            ProposeConfChangeRequest {
+                propose_id: Some(PbProposeId {
+                    client_id: 0,
+                    seq_num: 0,
+                }),
+                changes,
+                cluster_version: cluster.cluster_version,
+            },
             Duration::from_secs(3),
         )
         .await;

@@ -3,8 +3,11 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use anyhow::{anyhow, Result};
 use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{
-    client::Client, error::ClientError, members::ClusterInfo, server::Rpc, InnerProtocolServer,
-    ProtocolServer,
+    client::Client,
+    error::ClientError,
+    members::ClusterInfo,
+    rpc::{InnerProtocolServer, ProtocolServer},
+    server::Rpc,
 };
 use engine::{MemorySnapshotAllocator, RocksSnapshotAllocator, SnapshotAllocator};
 use futures::stream::select_all;
@@ -430,13 +433,8 @@ impl XlineServer {
 
     /// Publish the name of current node to cluster
     async fn publish(&self, curp_client: Arc<CurpClient>) -> Result<(), ClientError<Command>> {
-        let propose_id = curp_client.gen_propose_id().await?;
         curp_client
-            .publish(
-                propose_id,
-                self.cluster_info.self_id(),
-                self.cluster_info.self_name(),
-            )
+            .publish(self.cluster_info.self_id(), self.cluster_info.self_name())
             .await
     }
 

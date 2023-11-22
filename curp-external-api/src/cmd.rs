@@ -1,46 +1,50 @@
-use std::{fmt::Display, hash::Hash};
+use std::{fmt::Debug, hash::Hash};
 
 use async_trait::async_trait;
 use engine::Snapshot;
 use prost::DecodeError;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Serialize};
 
-use crate::LogIndex;
+use crate::{InflightId, LogIndex};
+
+/// Private
+mod pri {
+    use super::{Debug, DeserializeOwned, Serialize};
+
+    /// Trait bound for thread safety
+    #[allow(unreachable_pub)]
+    pub trait ThreadSafe: Debug + Send + Sync + 'static {}
+
+    /// Trait bound for serializable
+    #[allow(unreachable_pub)]
+    pub trait Serializable: ThreadSafe + Clone + Serialize + DeserializeOwned {}
+}
+
+impl<T> pri::ThreadSafe for T where T: Debug + Send + Sync + 'static {}
+
+impl<T> pri::Serializable for T where T: pri::ThreadSafe + Clone + Serialize + DeserializeOwned {}
 
 /// Command to execute on the server side
 #[async_trait]
-pub trait Command:
-    Sync + Send + DeserializeOwned + Serialize + std::fmt::Debug + Clone + ConflictCheck + PbCodec
-{
+pub trait Command: pri::Serializable + ConflictCheck + PbCodec {
     /// Error type
-    type Error: Send + Sync + Clone + std::error::Error + Serialize + DeserializeOwned + PbCodec;
+    type Error: pri::Serializable + PbCodec + std::error::Error;
 
     /// K (key) is used to tell confliction
     /// The key can be a single key or a key range
-    type K: std::fmt::Debug
-        + Eq
-        + Hash
-        + Send
-        + Sync
-        + Clone
-        + Serialize
-        + DeserializeOwned
-        + ConflictCheck;
+    type K: pri::Serializable + Eq + Hash + ConflictCheck;
 
     /// Prepare result
-    type PR: std::fmt::Debug + Send + Sync + Clone + Serialize + DeserializeOwned;
+    type PR: pri::Serializable;
 
     /// Execution result
-    type ER: std::fmt::Debug + Send + Sync + Clone + Serialize + DeserializeOwned + PbCodec;
+    type ER: pri::Serializable + PbCodec;
 
     /// After_sync result
-    type ASR: std::fmt::Debug + Send + Sync + Clone + Serialize + DeserializeOwned + PbCodec;
+    type ASR: pri::Serializable + PbCodec;
 
     /// Get keys of the command
     fn keys(&self) -> &[Self::K];
-
-    /// Get propose id
-    fn id(&self) -> ProposeId;
 
     /// Prepare the command
     #[inline]
@@ -75,21 +79,6 @@ pub trait Command:
     }
 }
 
-/// Command Id wrapper, which is used to identify a command
-/// The underlying data is a tuple of (`client_id`, `seq_num`)
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Ord, PartialOrd, Default,
-)]
-#[allow(clippy::exhaustive_structs)] // It is exhaustive
-pub struct ProposeId(pub u64, pub u64);
-
-impl Display for ProposeId {
-    #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}#{}", self.0, self.1)
-    }
-}
-
 /// Check conflict of two keys
 pub trait ConflictCheck {
     /// check if this keys conflicts with the `other` key
@@ -117,7 +106,7 @@ impl ConflictCheck for u32 {
 /// Command executor which actually executes the command.
 /// It is usually defined by the protocol user.
 #[async_trait]
-pub trait CommandExecutor<C>: Sync + Send + std::fmt::Debug
+pub trait CommandExecutor<C>: pri::ThreadSafe
 where
     C: Command,
 {
@@ -147,8 +136,8 @@ where
     /// Reset the command executor using the snapshot or to the initial state if None
     async fn reset(&self, snapshot: Option<(Snapshot, LogIndex)>) -> Result<(), C::Error>;
 
-    /// Trigger the barrier of the given id and index.
-    fn trigger(&self, id: ProposeId, index: u64);
+    /// Trigger the barrier of the given trigger id (based on propose id) and log index.
+    fn trigger(&self, id: InflightId, index: LogIndex);
 }
 
 /// Codec for encoding and decoding data into/from the Protobuf format

@@ -17,9 +17,9 @@ use crate::{
     cmd::{Command, CommandExecutor},
     log_entry::{EntryData, LogEntry},
     role_change::RoleChange,
+    rpc::ConfChangeType,
     server::cmd_worker::conflict_checked_mpmc::TaskType,
     snapshot::{Snapshot, SnapshotMeta},
-    ConfChangeType,
 };
 
 /// The special conflict checked mpmc
@@ -55,11 +55,7 @@ impl<C: Command> Debug for CEEvent<C> {
 }
 
 /// Worker that execute commands
-async fn cmd_worker<
-    C: Command + 'static,
-    CE: CommandExecutor<C> + 'static,
-    RC: RoleChange + 'static,
->(
+async fn cmd_worker<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     dispatch_rx: impl TaskRxApi<C>,
     done_tx: flume::Sender<(Task<C>, bool)>,
     curp: Arc<RawCurp<C, RC>>,
@@ -93,11 +89,7 @@ async fn cmd_worker<
 }
 
 /// Cmd worker execute handler
-async fn worker_exe<
-    C: Command + 'static,
-    CE: CommandExecutor<C> + 'static,
-    RC: RoleChange + 'static,
->(
+async fn worker_exe<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     entry: Arc<LogEntry<C>>,
     pre_err: Option<C::Error>,
     ce: &CE,
@@ -105,7 +97,7 @@ async fn worker_exe<
 ) -> bool {
     let (cb, sp, ucp) = (curp.cmd_board(), curp.spec_pool(), curp.uncommitted_pool());
     let id = curp.id();
-    let (propose_id, success) = match entry.entry_data {
+    let success = match entry.entry_data {
         EntryData::Command(ref cmd) => {
             let er = if let Some(err_msg) = pre_err {
                 Err(err_msg)
@@ -113,34 +105,28 @@ async fn worker_exe<
                 ce.execute(cmd).await
             };
             let er_ok = er.is_ok();
-            cb.write().insert_er(entry.id(), er);
+            cb.write().insert_er(entry.propose_id, er);
             if !er_ok {
-                sp.lock().remove(&entry.id());
-                let _ig = ucp.lock().remove(&entry.id());
+                sp.lock().remove(&entry.propose_id);
+                let _ig = ucp.lock().remove(&entry.propose_id);
             }
             debug!(
                 "{id} cmd({}) is speculatively executed, exe status: {er_ok}",
-                entry.id()
+                entry.propose_id
             );
-            (cmd.id(), er_ok)
+            er_ok
         }
-        EntryData::ConfChange(ref cc) => (cc.id(), true),
-        EntryData::Shutdown(propose_id)
-        | EntryData::Empty(propose_id)
-        | EntryData::SetName(propose_id, _, _) => (propose_id, true),
+        EntryData::ConfChange(ref _cc) => true,
+        EntryData::Shutdown | EntryData::Empty | EntryData::SetName(_, _) => true,
     };
     if !success {
-        ce.trigger(propose_id, entry.index);
+        ce.trigger(entry.inflight_id(), entry.index);
     }
     success
 }
 
 /// Cmd worker after sync handler
-async fn worker_as<
-    C: Command + 'static,
-    CE: CommandExecutor<C> + 'static,
-    RC: RoleChange + 'static,
->(
+async fn worker_as<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     entry: Arc<LogEntry<C>>,
     prepare: Option<C::PR>,
     ce: &CE,
@@ -148,65 +134,61 @@ async fn worker_as<
 ) -> bool {
     let (cb, sp, ucp) = (curp.cmd_board(), curp.spec_pool(), curp.uncommitted_pool());
     let id = curp.id();
-    let (propose_id, success) = match entry.entry_data {
+    let success = match entry.entry_data {
         EntryData::Command(ref cmd) => {
             let Some(prepare) = prepare else {
             unreachable!("prepare should always be Some(_) when entry is a command");
         };
             let asr = ce.after_sync(cmd.as_ref(), entry.index, prepare).await;
             let asr_ok = asr.is_ok();
-            cb.write().insert_asr(entry.id(), asr);
-            sp.lock().remove(&entry.id());
-            let _ig = ucp.lock().remove(&entry.id());
-            debug!("{id} cmd({}) after sync is called", entry.id());
-            (cmd.id(), asr_ok)
+            cb.write().insert_asr(entry.propose_id, asr);
+            sp.lock().remove(&entry.propose_id);
+            let _ig = ucp.lock().remove(&entry.propose_id);
+            debug!("{id} cmd({}) after sync is called", entry.propose_id);
+            asr_ok
         }
-        EntryData::Shutdown(propose_id) => {
+        EntryData::Shutdown => {
             curp.enter_shutdown();
             if let Err(e) = ce.set_last_applied(entry.index) {
                 error!("failed to set last_applied, {e}");
             }
             cb.write().notify_shutdown();
-            (propose_id, true)
+            true
         }
         EntryData::ConfChange(ref conf_change) => {
             if let Err(e) = ce.set_last_applied(entry.index) {
                 error!("failed to set last_applied, {e}");
                 return false;
             }
-            let change = conf_change.changes().first().unwrap_or_else(|| {
+            let change = conf_change.first().unwrap_or_else(|| {
                 unreachable!("conf change should always have at least one change")
             });
             let shutdown_self =
                 change.change_type() == ConfChangeType::Remove && change.node_id == id;
-            cb.write().insert_conf(entry.id());
-            sp.lock().remove(&entry.id());
-            let _ig = ucp.lock().remove(&entry.id());
+            cb.write().insert_conf(entry.propose_id);
+            sp.lock().remove(&entry.propose_id);
+            let _ig = ucp.lock().remove(&entry.propose_id);
             if shutdown_self {
                 curp.shutdown_trigger().self_shutdown();
             }
-            (conf_change.id(), true)
+            true
         }
-        EntryData::SetName(propose_id, node_id, ref name) => {
+        EntryData::SetName(node_id, ref name) => {
             if let Err(e) = ce.set_last_applied(entry.index) {
                 error!("failed to set last_applied, {e}");
                 return false;
             }
             curp.cluster().set_name(node_id, name.clone());
-            (propose_id, true)
+            true
         }
-        EntryData::Empty(propose_id) => (propose_id, true),
+        EntryData::Empty => true,
     };
-    ce.trigger(propose_id, entry.index);
+    ce.trigger(entry.inflight_id(), entry.index);
     success
 }
 
 /// Cmd worker reset handler
-async fn worker_reset<
-    C: Command + 'static,
-    CE: CommandExecutor<C> + 'static,
-    RC: RoleChange + 'static,
->(
+async fn worker_reset<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     snapshot: Option<Snapshot>,
     finish_tx: oneshot::Sender<()>,
     ce: &CE,
@@ -242,11 +224,7 @@ async fn worker_reset<
 }
 
 /// Cmd worker snapshot handler
-async fn worker_snapshot<
-    C: Command + 'static,
-    CE: CommandExecutor<C> + 'static,
-    RC: RoleChange + 'static,
->(
+async fn worker_snapshot<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     meta: SnapshotMeta,
     tx: oneshot::Sender<Snapshot>,
     ce: &CE,
@@ -283,7 +261,7 @@ struct TaskRx<C: Command>(flume::Receiver<Task<C>>);
 
 /// Send cmd to background execution worker
 #[cfg_attr(test, automock)]
-pub(super) trait CEEventTxApi<C: Command + 'static>: Send + Sync + 'static {
+pub(super) trait CEEventTxApi<C: Command>: Send + Sync + 'static {
     /// Send cmd to background cmd worker for speculative execution
     fn send_sp_exe(&self, entry: Arc<LogEntry<C>>);
 
@@ -297,7 +275,7 @@ pub(super) trait CEEventTxApi<C: Command + 'static>: Send + Sync + 'static {
     fn send_snapshot(&self, meta: SnapshotMeta) -> oneshot::Receiver<Snapshot>;
 }
 
-impl<C: Command + 'static> CEEventTxApi<C> for CEEventTx<C> {
+impl<C: Command> CEEventTxApi<C> for CEEventTx<C> {
     fn send_sp_exe(&self, entry: Arc<LogEntry<C>>) {
         let event = CEEvent::SpecExeReady(Arc::clone(&entry));
         if let Err(e) = self.0.send(event) {
@@ -334,13 +312,13 @@ impl<C: Command + 'static> CEEventTxApi<C> for CEEventTx<C> {
 /// Cmd exe recv interface
 #[cfg_attr(test, automock)]
 #[async_trait]
-trait TaskRxApi<C: Command + 'static> {
+trait TaskRxApi<C: Command> {
     /// Recv execute msg and done notifier
     async fn recv(&self) -> Result<Task<C>, flume::RecvError>;
 }
 
 #[async_trait]
-impl<C: Command + 'static> TaskRxApi<C> for TaskRx<C> {
+impl<C: Command> TaskRxApi<C> for TaskRx<C> {
     /// Recv execute msg and done notifier
     async fn recv(&self) -> Result<Task<C>, flume::RecvError> {
         self.0.recv_async().await
@@ -348,11 +326,7 @@ impl<C: Command + 'static> TaskRxApi<C> for TaskRx<C> {
 }
 
 /// Run cmd execute workers. Each cmd execute worker will continually fetch task to perform from `task_rx`.
-pub(super) fn start_cmd_workers<
-    C: Command + 'static,
-    CE: 'static + CommandExecutor<C>,
-    RC: RoleChange + 'static,
->(
+pub(super) fn start_cmd_workers<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     cmd_executor: Arc<CE>,
     curp: Arc<RawCurp<C, RC>>,
     task_rx: flume::Receiver<Task<C>>,
@@ -388,7 +362,7 @@ mod tests {
     use utils::config::StorageConfig;
 
     use super::*;
-    use crate::log_entry::LogEntry;
+    use crate::{log_entry::LogEntry, rpc::ProposeId};
 
     // This should happen in fast path in most cases
     #[traced_test]
@@ -418,7 +392,12 @@ mod tests {
             l,
         );
 
-        let entry = Arc::new(LogEntry::new(1, 1, Arc::new(TestCommand::default())));
+        let entry = Arc::new(LogEntry::new(
+            1,
+            1,
+            ProposeId(0, 0),
+            Arc::new(TestCommand::default()),
+        ));
 
         ce_event_tx.send_sp_exe(Arc::clone(&entry));
         assert_eq!(er_rx.recv().await.unwrap().1.values, Vec::<u32>::new());
@@ -460,6 +439,7 @@ mod tests {
         let entry = Arc::new(LogEntry::new(
             1,
             1,
+            ProposeId(0, 0),
             Arc::new(TestCommand::default().set_exe_dur(Duration::from_secs(1))),
         ));
 
@@ -506,6 +486,7 @@ mod tests {
         let entry = Arc::new(LogEntry::new(
             1,
             1,
+            ProposeId(0, 0),
             Arc::new(
                 TestCommand::default()
                     .set_exe_dur(Duration::from_secs(1))
@@ -554,7 +535,12 @@ mod tests {
             l,
         );
 
-        let entry = Arc::new(LogEntry::new(1, 1, Arc::new(TestCommand::default())));
+        let entry = Arc::new(LogEntry::new(
+            1,
+            1,
+            ProposeId(0, 0),
+            Arc::new(TestCommand::default()),
+        ));
 
         ce_event_tx.send_after_sync(entry);
 
@@ -594,6 +580,7 @@ mod tests {
         let entry = Arc::new(LogEntry::new(
             1,
             1,
+            ProposeId(0, 0),
             Arc::new(TestCommand::default().set_exe_should_fail()),
         ));
 
@@ -638,9 +625,15 @@ mod tests {
         let entry1 = Arc::new(LogEntry::new(
             1,
             1,
+            ProposeId(0, 0),
             Arc::new(TestCommand::new_put(vec![1], 1)),
         ));
-        let entry2 = Arc::new(LogEntry::new(2, 1, Arc::new(TestCommand::new_get(vec![1]))));
+        let entry2 = Arc::new(LogEntry::new(
+            2,
+            1,
+            ProposeId(0, 1),
+            Arc::new(TestCommand::new_get(vec![1])),
+        ));
 
         ce_event_tx.send_sp_exe(Arc::clone(&entry1));
         ce_event_tx.send_sp_exe(Arc::clone(&entry2));
@@ -694,9 +687,15 @@ mod tests {
         let entry1 = Arc::new(LogEntry::new(
             1,
             1,
+            ProposeId(0, 0),
             Arc::new(TestCommand::new_put(vec![1], 1).set_as_dur(Duration::from_millis(50))),
         ));
-        let entry2 = Arc::new(LogEntry::new(2, 1, Arc::new(TestCommand::new_get(vec![1]))));
+        let entry2 = Arc::new(LogEntry::new(
+            2,
+            1,
+            ProposeId(0, 1),
+            Arc::new(TestCommand::new_get(vec![1])),
+        ));
         ce_event_tx.send_sp_exe(Arc::clone(&entry1));
         ce_event_tx.send_sp_exe(Arc::clone(&entry2));
 
@@ -704,7 +703,12 @@ mod tests {
 
         ce_event_tx.send_reset(None);
 
-        let entry3 = Arc::new(LogEntry::new(3, 1, Arc::new(TestCommand::new_get(vec![1]))));
+        let entry3 = Arc::new(LogEntry::new(
+            3,
+            1,
+            ProposeId(0, 2),
+            Arc::new(TestCommand::new_get(vec![1])),
+        ));
 
         ce_event_tx.send_after_sync(entry3);
 
@@ -740,7 +744,12 @@ mod tests {
             s2_id,
             0,
             0,
-            vec![LogEntry::new(1, 1, Arc::new(TestCommand::default()))],
+            vec![LogEntry::new(
+                1,
+                1,
+                ProposeId(0, 0),
+                Arc::new(TestCommand::default()),
+            )],
             0,
         )
         .unwrap();
@@ -755,6 +764,7 @@ mod tests {
         let entry = Arc::new(LogEntry::new(
             1,
             1,
+            ProposeId(0, 1),
             Arc::new(TestCommand::new_put(vec![1], 1).set_exe_dur(Duration::from_millis(50))),
         ));
 
@@ -793,7 +803,12 @@ mod tests {
 
         ce_event_tx.send_reset(Some(snapshot)).await.unwrap();
 
-        let entry = Arc::new(LogEntry::new(1, 1, Arc::new(TestCommand::new_get(vec![1]))));
+        let entry = Arc::new(LogEntry::new(
+            1,
+            1,
+            ProposeId(0, 2),
+            Arc::new(TestCommand::new_get(vec![1])),
+        ));
         ce_event_tx.send_after_sync(entry);
         assert_eq!(er_rx.recv().await.unwrap().1.revisions, vec![1]);
         t.self_shutdown();
