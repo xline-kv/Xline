@@ -22,7 +22,7 @@ pub(in crate::server) struct DB<C> {
 }
 
 #[async_trait]
-impl<C: 'static + Command> StorageApi for DB<C> {
+impl<C: Command> StorageApi for DB<C> {
     /// Command
     type Command = C;
 
@@ -96,6 +96,8 @@ mod tests {
     use test_macros::abort_on_panic;
     use tokio::fs::remove_dir_all;
 
+    use crate::rpc::ProposeId;
+
     use super::*;
 
     #[tokio::test]
@@ -107,9 +109,9 @@ mod tests {
             let s = DB::<TestCommand>::open(&storage_cfg)?;
             s.flush_voted_for(1, 222).await?;
             s.flush_voted_for(3, 111).await?;
-            let entry0 = LogEntry::new(1, 3, Arc::new(TestCommand::default()));
-            let entry1 = LogEntry::new(2, 3, Arc::new(TestCommand::default()));
-            let entry2 = LogEntry::new(3, 3, Arc::new(TestCommand::default()));
+            let entry0 = LogEntry::new(1, 3, ProposeId(1, 1), Arc::new(TestCommand::default()));
+            let entry1 = LogEntry::new(2, 3, ProposeId(1, 2), Arc::new(TestCommand::default()));
+            let entry2 = LogEntry::new(3, 3, ProposeId(1, 3), Arc::new(TestCommand::default()));
             s.put_log_entry(&entry0).await?;
             s.put_log_entry(&entry1).await?;
             s.put_log_entry(&entry2).await?;

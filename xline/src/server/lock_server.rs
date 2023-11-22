@@ -81,12 +81,7 @@ where
         T: Into<RequestWrapper>,
     {
         let wrapper = RequestWithToken::new_with_token(request.into(), token);
-        let propose_id = self
-            .client
-            .gen_propose_id()
-            .await
-            .map_err(client_err_to_status)?;
-        let cmd = command_from_request_wrapper::<S>(propose_id, wrapper, None);
+        let cmd = command_from_request_wrapper::<S>(wrapper, None);
 
         self.client
             .propose(cmd, use_fast_path)

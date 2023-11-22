@@ -156,12 +156,14 @@
     )
 )]
 
+pub use curp_external_api::InflightId;
 pub use curp_external_api::LogIndex;
-/// Expose some rpc payloads
-pub use rpc::*;
 
 /// Client side, sending requests and determining requests' state
 pub mod client;
+
+/// Client side, sending requests and determining requests' state
+pub mod client_new;
 
 /// Server side, handling request and sync requests to the log
 pub mod server;
@@ -186,7 +188,7 @@ pub mod role_change {
 mod log_entry;
 
 /// Protobuf generated types that are used in RPC
-mod rpc;
+pub mod rpc;
 
 /// Snapshot
 mod snapshot;

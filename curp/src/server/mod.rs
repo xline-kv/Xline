@@ -1,9 +1,6 @@
 use std::{fmt::Debug, sync::Arc};
 
-use curp_external_api::cmd::{ConflictCheck, ProposeId};
 use engine::SnapshotAllocator;
-use futures::TryStreamExt;
-use serde::{Deserialize, Serialize};
 #[cfg(not(madsim))]
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
@@ -14,7 +11,7 @@ use tracing::info;
 use tracing::instrument;
 use utils::{config::CurpConfig, shutdown, tracing::Extract};
 
-use self::curp_node::{CurpError, CurpNode};
+use self::curp_node::CurpNode;
 use crate::{
     cmd::{Command, CommandExecutor},
     error::ServerError,
@@ -24,10 +21,10 @@ use crate::{
         AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse,
         FetchReadStateRequest, FetchReadStateResponse, InnerProtocolServer, InstallSnapshotRequest,
         InstallSnapshotResponse, ProposeConfChangeRequest, ProposeConfChangeResponse,
-        ProposeRequest, ProposeResponse, ProtocolServer, ShutdownRequest, ShutdownResponse,
-        VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        ProposeRequest, ProposeResponse, ProtocolServer, PublishRequest, PublishResponse,
+        ShutdownRequest, ShutdownResponse, VoteRequest, VoteResponse, WaitSyncedRequest,
+        WaitSyncedResponse,
     },
-    ConfChangeEntry, PublishRequest, PublishResponse,
 };
 
 /// Command worker to do execution and after sync
@@ -58,13 +55,13 @@ static DEFAULT_SERVER_PORT: u16 = 12345;
 /// The Rpc Server to handle rpc requests
 /// This Wrapper is introduced due to the `MadSim` rpc lib
 #[derive(Clone, Debug)]
-pub struct Rpc<C: Command + 'static, RC: RoleChange + 'static> {
+pub struct Rpc<C: Command, RC: RoleChange> {
     /// The inner server is wrapped in an Arc so that its state can be shared while cloning the rpc wrapper
     inner: Arc<CurpNode<C, RC>>,
 }
 
 #[tonic::async_trait]
-impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::Protocol for Rpc<C, RC> {
+impl<C: Command, RC: RoleChange> crate::rpc::Protocol for Rpc<C, RC> {
     #[instrument(skip_all, name = "curp_propose")]
     async fn propose(
         &self,
@@ -142,7 +139,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::Protocol for Rp
 }
 
 #[tonic::async_trait]
-impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::InnerProtocol for Rpc<C, RC> {
+impl<C: Command, RC: RoleChange> crate::rpc::InnerProtocol for Rpc<C, RC> {
     #[instrument(skip_all, name = "curp_append_entries")]
     async fn append_entries(
         &self,
@@ -150,19 +147,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::InnerProtocol f
     ) -> Result<tonic::Response<AppendEntriesResponse>, tonic::Status> {
         Ok(tonic::Response::new(
             self.inner.append_entries(request.get_ref())?,
-        ))
-    }
-
-    #[instrument(skip_all, name = "curp_install_snapshot")]
-    async fn install_snapshot(
-        &self,
-        request: tonic::Request<tonic::Streaming<InstallSnapshotRequest>>,
-    ) -> Result<tonic::Response<InstallSnapshotResponse>, tonic::Status> {
-        let req_stream = request
-            .into_inner()
-            .map_err(|e| format!("snapshot transmission failed at client side, {e}"));
-        Ok(tonic::Response::new(
-            self.inner.install_snapshot(req_stream).await?,
         ))
     }
 
@@ -175,15 +159,26 @@ impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::InnerProtocol f
             self.inner.vote(request.into_inner()).await?,
         ))
     }
+
+    #[instrument(skip_all, name = "curp_install_snapshot")]
+    async fn install_snapshot(
+        &self,
+        request: tonic::Request<tonic::Streaming<InstallSnapshotRequest>>,
+    ) -> Result<tonic::Response<InstallSnapshotResponse>, tonic::Status> {
+        let req_stream = request.into_inner();
+        Ok(tonic::Response::new(
+            self.inner.install_snapshot(req_stream).await?,
+        ))
+    }
 }
 
-impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
+impl<C: Command, RC: RoleChange> Rpc<C, RC> {
     /// New `Rpc`
     ///
     /// # Panics
     /// Panic if storage creation failed
     #[inline]
-    pub async fn new<CE: CommandExecutor<C> + 'static>(
+    pub async fn new<CE: CommandExecutor<C>>(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         executor: CE,
@@ -206,7 +201,7 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
         {
             Ok(n) => n,
             Err(err) => {
-                panic!("failed to create curp service, {err}");
+                panic!("failed to create curp service, {err:?}");
             }
         };
 
@@ -234,7 +229,7 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
         shutdown_trigger: shutdown::Trigger,
     ) -> Result<(), ServerError>
     where
-        CE: 'static + CommandExecutor<C>,
+        CE: CommandExecutor<C>,
     {
         let port = server_port.unwrap_or(DEFAULT_SERVER_PORT);
         let id = cluster_info.self_id();
@@ -284,7 +279,7 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
         shutdown_trigger: shutdown::Trigger,
     ) -> Result<(), ServerError>
     where
-        CE: 'static + CommandExecutor<C>,
+        CE: CommandExecutor<C>,
     {
         let mut shutdown_listener = shutdown_trigger.subscribe();
         let server = Arc::new(
@@ -330,7 +325,7 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
         shutdown_trigger: shutdown::Trigger,
     ) -> Result<(), ServerError>
     where
-        CE: 'static + CommandExecutor<C>,
+        CE: CommandExecutor<C>,
     {
         let mut shutdown_listener = shutdown_trigger.subscribe();
         let server = Arc::new(
@@ -368,62 +363,5 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
     #[inline]
     pub fn shutdown_listener(&self) -> shutdown::Listener {
         self.inner.shutdown_listener()
-    }
-}
-
-/// Entry of speculative pool
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) enum PoolEntry<C> {
-    /// Command entry
-    Command(Arc<C>),
-    /// ConfChange entry
-    ConfChange(ConfChangeEntry),
-}
-
-impl<C> PoolEntry<C>
-where
-    C: Command,
-{
-    /// Propose id
-    pub(crate) fn id(&self) -> ProposeId {
-        match *self {
-            Self::Command(ref cmd) => cmd.id(),
-            Self::ConfChange(ref conf_change) => conf_change.id(),
-        }
-    }
-
-    /// Check if the entry is conflict with the command
-    pub(crate) fn is_conflict_with_cmd(&self, c: &C) -> bool {
-        match *self {
-            Self::Command(ref cmd) => cmd.is_conflict(c),
-            Self::ConfChange(ref _conf_change) => true,
-        }
-    }
-}
-
-impl<C> ConflictCheck for PoolEntry<C>
-where
-    C: ConflictCheck,
-{
-    fn is_conflict(&self, other: &Self) -> bool {
-        let Self::Command(ref cmd1) = *self else {
-            return true;
-        };
-        let Self::Command(ref cmd2) = *other else {
-            return true;
-        };
-        cmd1.is_conflict(cmd2)
-    }
-}
-
-impl<C> From<Arc<C>> for PoolEntry<C> {
-    fn from(value: Arc<C>) -> Self {
-        Self::Command(value)
-    }
-}
-
-impl<C> From<ConfChangeEntry> for PoolEntry<C> {
-    fn from(value: ConfChangeEntry) -> Self {
-        Self::ConfChange(value)
     }
 }

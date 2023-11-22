@@ -3,13 +3,10 @@ use std::{collections::HashSet, time::Duration};
 use utils::{parking_lot_lock::MutexMap, shutdown};
 
 use super::spec_pool::SpecPoolRef;
-use crate::{
-    cmd::{Command, ProposeId},
-    server::cmd_board::CmdBoardRef,
-};
+use crate::{cmd::Command, rpc::ProposeId, server::cmd_board::CmdBoardRef};
 
 /// Run background GC tasks for Curp server
-pub(super) fn run_gc_tasks<C: Command + 'static>(
+pub(super) fn run_gc_tasks<C: Command>(
     cmd_board: CmdBoardRef<C>,
     spec: SpecPoolRef<C>,
     gc_interval: Duration,
@@ -25,7 +22,7 @@ pub(super) fn run_gc_tasks<C: Command + 'static>(
 }
 
 /// Cleanup spec pool
-async fn gc_spec_pool<C: Command + 'static>(sp: SpecPoolRef<C>, interval: Duration) {
+async fn gc_spec_pool<C: Command>(sp: SpecPoolRef<C>, interval: Duration) {
     let mut last_check: HashSet<ProposeId> =
         sp.map_lock(|sp_l| sp_l.pool.keys().copied().collect());
     loop {
@@ -38,7 +35,7 @@ async fn gc_spec_pool<C: Command + 'static>(sp: SpecPoolRef<C>, interval: Durati
 }
 
 /// Cleanup cmd board
-async fn gc_cmd_board<C: Command + 'static>(cmd_board: CmdBoardRef<C>, interval: Duration) {
+async fn gc_cmd_board<C: Command>(cmd_board: CmdBoardRef<C>, interval: Duration) {
     let mut last_check_len_er = 0;
     let mut last_check_len_asr = 0;
     let mut last_check_len_sync = 0;
@@ -88,7 +85,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        cmd::ProposeId,
+        rpc::{PoolEntry, ProposeId},
         server::{
             cmd_board::{CmdBoardRef, CommandBoard},
             gc::gc_cmd_board,
@@ -150,23 +147,28 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(100)).await;
         let cmd1 = Arc::new(TestCommand::default());
-        spec.lock().pool.insert(cmd1.id().clone(), cmd1.into());
+        spec.lock()
+            .pool
+            .insert(ProposeId(0, 1), PoolEntry::new(ProposeId(0, 1), cmd1));
 
         tokio::time::sleep(Duration::from_millis(100)).await;
         let cmd2 = Arc::new(TestCommand::default());
-        spec.lock().pool.insert(cmd2.id().clone(), cmd2.into());
+        spec.lock()
+            .pool
+            .insert(ProposeId(0, 2), PoolEntry::new(ProposeId(0, 2), cmd2));
 
         // at 600ms
         tokio::time::sleep(Duration::from_millis(400)).await;
         let cmd3 = Arc::new(TestCommand::default());
-        let cmd3_id = cmd3.id().clone();
-        spec.lock().pool.insert(cmd3.id().clone(), cmd3.into());
+        spec.lock()
+            .pool
+            .insert(ProposeId(0, 3), PoolEntry::new(ProposeId(0, 3), cmd3));
 
         // at 1100ms, the first two kv should be removed
         tokio::time::sleep(Duration::from_millis(500)).await;
         let spec = spec.lock();
         assert_eq!(spec.pool.len(), 1);
-        assert!(spec.pool.contains_key(&cmd3_id));
+        assert!(spec.pool.contains_key(&ProposeId(0, 3)));
     }
 
     // To verify #206 is fixed
@@ -176,19 +178,24 @@ mod tests {
         let spec: SpecPoolRef<TestCommand> = Arc::new(Mutex::new(SpeculativePool::new()));
 
         let cmd1 = Arc::new(TestCommand::default());
-        spec.lock().pool.insert(cmd1.id().clone(), cmd1.into());
+        spec.lock()
+            .pool
+            .insert(ProposeId(0, 1), PoolEntry::new(ProposeId(0, 1), cmd1));
 
         tokio::time::sleep(Duration::from_millis(100)).await;
         let cmd2 = Arc::new(TestCommand::default());
-        let cmd2_id = cmd2.id().clone();
-        spec.lock().pool.insert(cmd2_id.clone(), cmd2.into());
+        spec.lock()
+            .pool
+            .insert(ProposeId(0, 2), PoolEntry::new(ProposeId(0, 2), cmd2));
 
         let cmd3 = Arc::new(TestCommand::default());
-        spec.lock().pool.insert(cmd2_id.clone(), cmd3.into());
+        spec.lock()
+            .pool
+            .insert(ProposeId(0, 2), PoolEntry::new(ProposeId(0, 3), cmd3));
 
         tokio::spawn(gc_spec_pool(Arc::clone(&spec), Duration::from_millis(500)));
 
-        spec.lock().remove(&cmd2_id);
+        spec.lock().remove(&ProposeId(0, 2));
 
         sleep_secs(1).await;
     }

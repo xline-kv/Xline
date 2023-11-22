@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use clippy_utilities::OverflowArithmetic;
-use curp::cmd::ProposeId;
+use curp::{InflightId, LogIndex};
 use event_listener::Event;
 use parking_lot::Mutex;
 
@@ -24,7 +24,7 @@ impl IndexBarrier {
     }
 
     /// Wait for the index until it is triggered.
-    pub(crate) async fn wait(&self, index: u64) {
+    pub(crate) async fn wait(&self, index: LogIndex) {
         let listener = {
             let mut inner_l = self.inner.lock();
             if inner_l.last_trigger_index >= index {
@@ -40,7 +40,7 @@ impl IndexBarrier {
     }
 
     /// Trigger all barriers whose index is less than or equal to the given index.
-    pub(crate) fn trigger(&self, index: u64) {
+    pub(crate) fn trigger(&self, index: LogIndex) {
         let mut inner_l = self.inner.lock();
         if inner_l.last_trigger_index < index {
             inner_l.last_trigger_index = index;
@@ -57,16 +57,16 @@ impl IndexBarrier {
 #[derive(Debug)]
 struct IndexBarrierInner {
     /// The last index that the barrier has triggered.
-    last_trigger_index: u64,
+    last_trigger_index: LogIndex,
     /// Barrier of index.
-    barriers: BTreeMap<u64, Event>,
+    barriers: BTreeMap<LogIndex, Event>,
 }
 
 /// Barrier for id
 #[derive(Debug)]
 pub(crate) struct IdBarrier {
     /// Barriers of id
-    barriers: Mutex<HashMap<ProposeId, Event>>,
+    barriers: Mutex<HashMap<InflightId, Event>>,
 }
 
 impl IdBarrier {
@@ -78,7 +78,7 @@ impl IdBarrier {
     }
 
     /// Wait for the id until it is triggered.
-    pub(crate) async fn wait(&self, id: ProposeId) {
+    pub(crate) async fn wait(&self, id: InflightId) {
         let listener = self
             .barriers
             .lock()
@@ -88,8 +88,8 @@ impl IdBarrier {
         listener.await;
     }
 
-    /// Trigger the barrier of the given id.
-    pub(crate) fn trigger(&self, id: ProposeId) {
+    /// Trigger the barrier of the given inflight id.
+    pub(crate) fn trigger(&self, id: InflightId) {
         if let Some(event) = self.barriers.lock().remove(&id) {
             event.notify(usize::MAX);
         }
@@ -114,13 +114,13 @@ mod test {
             .map(|i| {
                 let id_barrier = Arc::clone(&id_barrier);
                 tokio::spawn(async move {
-                    id_barrier.wait(ProposeId(i, i)).await;
+                    id_barrier.wait(i).await;
                 })
             })
             .collect::<Vec<_>>();
         sleep(Duration::from_millis(10)).await;
         for i in 0..5 {
-            id_barrier.trigger(ProposeId(i, i));
+            id_barrier.trigger(i);
         }
         timeout(Duration::from_millis(100), join_all(barriers))
             .await

@@ -13,11 +13,7 @@ use futures::{stream::FuturesUnordered, StreamExt};
 use itertools::Itertools;
 use tracing::debug;
 
-pub use crate::Member;
-use crate::{
-    rpc::{self, FetchClusterResponse},
-    FetchClusterRequest,
-};
+use crate::rpc::{self, FetchClusterRequest, FetchClusterResponse, Member};
 
 /// Server Id
 pub type ServerId = u64;
@@ -376,7 +372,7 @@ pub async fn get_cluster_info_from_remote(
     timeout: Duration,
 ) -> Option<ClusterInfo> {
     let peers = init_cluster_info.peers_addrs();
-    let connects = rpc::connect(peers)
+    let connects = rpc::connects(peers)
         .await
         .ok()?
         .map(|pair| pair.1)

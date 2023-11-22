@@ -5,7 +5,7 @@ use indexmap::{IndexMap, IndexSet};
 use parking_lot::RwLock;
 use utils::parking_lot_lock::RwLockMap;
 
-use crate::cmd::{Command, ProposeId};
+use crate::{cmd::Command, rpc::ProposeId};
 
 /// Ref to the cmd board
 pub(super) type CmdBoardRef<C> = Arc<RwLock<CommandBoard<C>>>;
