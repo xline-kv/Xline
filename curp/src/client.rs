@@ -289,7 +289,6 @@ where
             };
             resp.map_result::<C, _, Result<(), ClientError<C>>>(|res| {
                 if let Some(er) = res
-                    .transpose()
                     .map_err(|e| ClientError::CommandError::<C>(e))?
                 {
                     assert!(execute_result.is_none(), "should not set exe result twice");

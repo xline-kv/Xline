@@ -1,8 +1,8 @@
 /// Unary rpc client
 mod unary;
 
-/// Client errors
-mod errors;
+/// Retry rpc client
+mod retry;
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -19,12 +19,18 @@ use crate::{
     },
 };
 
-use self::errors::*;
+/// The response of propose command, deserialized from [`crate::rpc::ProposeResponse`] or
+/// [`crate::rpc::WaitSyncedResponse`].
+#[allow(type_alias_bounds)] // that's not bad
+type ProposeResponse<C: Command> = Result<(C::ER, Option<C::ASR>), C::Error>;
 
 /// `ClientApi`, a higher wrapper for `ConnectApi`, providing some methods for communicating to
 /// the whole curp cluster. Automatically discovery curp server to update it's quorum.
 #[async_trait]
 pub trait ClientApi<C: Command> {
+    /// The client error
+    type Error;
+
     /// Get the local connection when the client is on the server node.
     fn local_connect(&self) -> Option<Arc<dyn ConnectApi>>;
 
@@ -32,32 +38,30 @@ pub trait ClientApi<C: Command> {
     /// requests (event the requests are commutative).
     async fn propose(
         &self,
-        cmd: C,
+        cmd: &C,
         use_fast_path: bool,
-    ) -> Result<(C::ER, Option<C::ASR>), ProposeCmdError>;
+    ) -> Result<ProposeResponse<C>, Self::Error>;
 
     /// Send propose configuration changes to the cluster
     async fn propose_conf_change(
         &self,
         changes: Vec<ConfChange>,
-    ) -> Result<Vec<Member>, ProposeConfChangeError>;
+    ) -> Result<Vec<Member>, Self::Error>;
 
     /// Send propose to shutdown cluster
-    async fn propose_shutdown(&self) -> Result<(), ProposeShutdownError>;
+    async fn propose_shutdown(&self) -> Result<(), Self::Error>;
 
     /// Send fetch read state from leader
-    async fn fetch_read_state(&self, cmd: &C) -> Result<ReadState, FetchReadStateError>;
+    async fn fetch_read_state(&self, cmd: &C) -> Result<ReadState, Self::Error>;
 
     /// Send fetch cluster requests to all servers (That's because initially, we didn't
     /// know who the leader is.)
     /// Note: The fetched cluster may still be outdated if `linearizable` is false
-    async fn fetch_cluster(
-        &self,
-        linearizable: bool,
-    ) -> Result<FetchClusterResponse, FetchClusterError>;
+    async fn fetch_cluster(&self, linearizable: bool) -> Result<FetchClusterResponse, Self::Error>;
 
     /// Fetch leader id
-    async fn fetch_leader_id(&self, linearizable: bool) -> Result<ServerId, FetchClusterError> {
+    #[inline]
+    async fn fetch_leader_id(&self, linearizable: bool) -> Result<ServerId, Self::Error> {
         if linearizable {
             let resp = self.fetch_cluster(true).await?;
             return Ok(resp.leader_id.unwrap_or_else(|| {
