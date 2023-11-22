@@ -12,19 +12,18 @@ keywords = ["Client", "Xline", "RPC"]
 
 [dependencies]
 anyhow = "1.0.75"
-async-stream = "0.3.5"
 clippy-utilities = "0.1.0"
 curp = { path = "../curp" }
 futures = "0.3.25"
 getrandom = "0.2"
 http = "0.2.9"
-itertools = "0.10.3"
 pbkdf2 = { version = "0.11.0", features = ["std"] }
 thiserror = "1.0.37"
 tokio = { version = "0.2.23", package = "madsim-tokio", features = ["sync"] }
 tonic = { version = "0.3.0", package = "madsim-tonic" }
 tower = { version = "0.4", features = ["discover"] }
 utils = { path = "../utils", features = ["parking_lot"] }
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 xlineapi = { path = "../xlineapi" }
 
 [dev-dependencies]
