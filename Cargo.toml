@@ -1,5 +1,4 @@
 [workspace]
-
 members = [
     "benchmark",
     "curp",
@@ -9,12 +8,19 @@ members = [
     "simulation",
     "test-macros",
     "utils",
+    "workspace-hack",
     "xline",
     "xline-client",
     "xline-test-utils",
     "xlineapi",
     "xlinectl",
 ]
+resolver = "2"
+
+# TODO: when cargo-machete support ignore workspace member crate, then add it into pre commit hook & CI
+# ISSUE: https://github.com/bnjbvr/cargo-machete/issues/94
+[workspace.metadata.cargo-machete]
+ignored = ["prost", "workspace-hack"]
 
 # TODO: We should remove it when the madsim updates its release in the crate.io
 [patch.crates-io]

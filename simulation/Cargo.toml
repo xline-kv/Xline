@@ -13,19 +13,14 @@ keywords = ["Test", "Deterministic Simulation"]
 [dependencies]
 async-trait = "0.1.53"
 bincode = "1.3.3"
-clippy-utilities = "0.2.0"
 curp = { path = "../curp" }
 curp-test-utils = { path = "../curp-test-utils" }
 engine = { path = "../engine" }
-futures = "0.3.21"
 itertools = "0.10.3"
 madsim = "0.2.22"
-once_cell = "1.17.0"
 parking_lot = "0.12.1"
 prost = "0.11"
-serde = { version = "1.0.130", features = ["derive", "rc"] }
 tempfile = "3"
-thiserror = "1.0.31"
 tokio = { version = "0.2.23", package = "madsim-tokio", features = [
     "rt",
     "rt-multi-thread",
@@ -37,8 +32,8 @@ tokio = { version = "0.2.23", package = "madsim-tokio", features = [
 ] }
 tonic = { version = "0.3.0", package = "madsim-tonic" }
 tracing = { version = "0.1.34", features = ["std", "log", "attributes"] }
-tracing-subscriber = { version = "0.3.16", features = ["env-filter", "time"] }
 utils = { path = "../utils", version = "0.1.0", features = ["parking_lot"] }
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [build-dependencies]
 tonic-build = { version = "0.3.0", package = "madsim-tonic-build" }
