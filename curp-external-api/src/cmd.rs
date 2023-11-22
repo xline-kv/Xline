@@ -1,4 +1,4 @@
-use std::{fmt::Debug, hash::Hash};
+use std::{fmt::Debug, hash::Hash, sync::Arc};
 
 use async_trait::async_trait;
 use engine::Snapshot;
@@ -103,6 +103,29 @@ impl ConflictCheck for u32 {
     }
 }
 
+/// Quota checker
+pub trait QuotaChecker<C>: Sync + Send + Debug
+where
+    C: Command,
+{
+    /// Check if the command executor has enough quota to execute the command
+    fn check(&self, cmd: &C) -> bool;
+}
+
+/// Pass through quota checker
+#[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
+pub struct PassThrough;
+impl<C> QuotaChecker<C> for PassThrough
+where
+    C: Command,
+{
+    #[inline]
+    fn check(&self, _cmd: &C) -> bool {
+        true
+    }
+}
+
 /// Command executor which actually executes the command.
 /// It is usually defined by the protocol user.
 #[async_trait]
@@ -139,8 +162,8 @@ where
     /// Trigger the barrier of the given trigger id (based on propose id) and log index.
     fn trigger(&self, id: InflightId, index: LogIndex);
 
-    /// Check if the command executor has enough quota to execute the command
-    fn check_quota(&self, cmd: &C) -> bool;
+    /// Get quota checker
+    fn quota_checker(&self) -> Arc<dyn QuotaChecker<C>>;
 }
 
 /// Codec for encoding and decoding data into/from the Protobuf format
