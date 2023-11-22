@@ -5,6 +5,7 @@ WORKDIR /build
 COPY . .
 
 RUN set -eux && \
+  sed -i s@/deb.debian.org/@/mirrors.aliyun.com/@g /etc/apt/sources.list && \
   apt-get update && apt-get install -y git build-essential autoconf autogen libtool clang && \
   git clone --branch v3.21.12 --recurse-submodules https://github.com/protocolbuffers/protobuf && \
   cd protobuf && ./autogen.sh && ./configure && make -j4 && make install && cd .. && ldconfig && \
@@ -19,6 +20,7 @@ RUN set -eux && \
 
 COPY --from=builder /build/target/release/xline /usr/local/bin
 COPY --from=builder /build/target/release/benchmark /usr/local/bin
-COPY --from=builder /build/target/release/lock_client /usr/local/bin
+COPY --from=builder /build/target/release/validation_lock_client /usr/local/bin
+COPY --from=builder /build/scripts/start_xline.sh /usr/local/bin
 
-CMD ["/usr/local/bin/xline"]
+CMD ["/bin/bash", "/usr/local/bin/start_xline.sh"]
