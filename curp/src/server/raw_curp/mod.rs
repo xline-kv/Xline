@@ -1107,6 +1107,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         let Some(conf_change) = changes.into_iter().next() else {
             unreachable!("conf change is empty");
         };
+        debug!("{} applies conf change {:?}", self.id(), conf_change);
         self.switch_config(conf_change)
     }
 
