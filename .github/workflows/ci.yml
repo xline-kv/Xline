@@ -7,7 +7,8 @@ on:
     branches: [ master ]
 
 env:
-  CI_RUST_TOOLCHAIN: 1.70.0
+  XLINE_COMPILE_TOOLCHAIN: 1.70.0
+  CI_COMPONENT_TOOLCHAIN: 1.72.0
 
 jobs:
   outdated:
@@ -15,10 +16,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: default
+          toolchain: ${{ env.CI_COMPONENT_TOOLCHAIN }}
+          override: true
       - uses: actions-rs/install@v0.1
         with:
           crate: cargo-outdated
-          version: 0.13.1
+          version: latest
       - run: cargo outdated
 
   audit:
@@ -49,7 +55,7 @@ jobs:
       - uses: actions-rs/toolchain@v1
         with:
           profile: default
-          toolchain: ${{ env.CI_RUST_TOOLCHAIN }}
+          toolchain: ${{ env.XLINE_COMPILE_TOOLCHAIN }}
           override: true
       - uses: Swatinem/rust-cache@v2
         with:
@@ -70,7 +76,7 @@ jobs:
       - uses: actions-rs/toolchain@v1
         with:
           profile: default
-          toolchain: ${{ env.CI_RUST_TOOLCHAIN }}
+          toolchain: ${{ env.XLINE_COMPILE_TOOLCHAIN }}
           override: true
       - uses: actions-rs/cargo@v1
         with:
@@ -93,7 +99,7 @@ jobs:
       - uses: actions-rs/toolchain@v1
         with:
           profile: default
-          toolchain: ${{ env.CI_RUST_TOOLCHAIN }}
+          toolchain: ${{ env.XLINE_COMPILE_TOOLCHAIN }}
           override: true
       - uses: Swatinem/rust-cache@v2
         with:
@@ -122,7 +128,7 @@ jobs:
       - uses: actions-rs/toolchain@v1
         with:
           profile: default
-          toolchain: ${{ env.CI_RUST_TOOLCHAIN }}
+          toolchain: ${{ env.XLINE_COMPILE_TOOLCHAIN }}
           override: true
       - uses: Swatinem/rust-cache@v2
         with:
