@@ -908,7 +908,7 @@ where
                     continue;
                 }
             };
-            debug!("propose_conf_change request sent to {}", leader_id);
+            debug!("publish request sent to {}", leader_id);
             if let Err(e) = self
                 .get_connect(leader_id)
                 .unwrap_or_else(|| unreachable!("leader {leader_id} not found"))
@@ -918,7 +918,7 @@ where
                 )
                 .await
             {
-                warn!("propose_conf_change rpc error: {e}");
+                warn!("publish rpc error: {e}");
                 match unpack_status(&e) {
                     UnpackStatus::ShuttingDown => return Err(ClientError::ShuttingDown),
                     UnpackStatus::WrongClusterVersion => {

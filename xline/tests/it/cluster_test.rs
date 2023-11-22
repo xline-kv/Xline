@@ -65,9 +65,17 @@ async fn xline_update_node() -> Result<(), Box<dyn Error>> {
         .await?;
     assert_eq!(old_list_res.members.len(), 3);
     let update_id = old_list_res.members[0].id;
-    let new_listener = TcpListener::bind("0.0.0.0:0").await?;
-    let new_addrs = vec![new_listener.local_addr()?.to_string()];
-    let update_req = MemberUpdateRequest::new(update_id, new_addrs.clone());
+    let port = old_list_res.members[0]
+        .peer_ur_ls
+        .first()
+        .unwrap()
+        .split(':')
+        .last()
+        .unwrap()
+        .parse::<u16>()
+        .unwrap();
+    let update_req =
+        MemberUpdateRequest::new(update_id, vec![format!("http://localhost:{}", port)]);
     let update_res = cluster_client.member_update(update_req).await?;
     assert_eq!(update_res.members.len(), 3);
     sleep(Duration::from_secs(3)).await;
