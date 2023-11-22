@@ -1,3 +1,5 @@
+#![allow(unused)] // TODO: remove
+
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},

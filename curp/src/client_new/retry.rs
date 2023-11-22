@@ -1,3 +1,5 @@
+#![allow(unused)] // TODO: remove
+
 use std::{marker::PhantomData, ops::SubAssign, sync::Arc, time::Duration};
 
 use async_trait::async_trait;

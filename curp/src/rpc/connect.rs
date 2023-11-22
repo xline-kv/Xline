@@ -466,6 +466,7 @@ pub(crate) struct BypassedConnect<T: Protocol> {
 
 impl<T: Protocol> BypassedConnect<T> {
     /// Create a bypassed connect
+    #[allow(unused)] // TODO: remove
     pub(crate) fn new(id: ServerId, server: T) -> Self {
         Self { server, id }
     }
