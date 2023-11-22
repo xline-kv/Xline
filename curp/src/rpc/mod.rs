@@ -1,17 +1,26 @@
 use std::{collections::HashMap, sync::Arc};
 
 use curp_external_api::cmd::{PbCodec, PbSerializeError};
+use prost::Message;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 pub use self::proto::{
     commandpb::{
         cmd_result::Result as CmdResultInner,
+        curp_error::Err as CurpError, // easy for match
+        curp_error::Redirect,
         propose_conf_change_request::{ConfChange, ConfChangeType},
-        propose_conf_change_response::Error as ConfChangeError,
         protocol_client,
         protocol_server::ProtocolServer,
-        CmdResult, FetchClusterRequest, FetchClusterResponse, Member, ProposeConfChangeRequest,
-        ProposeConfChangeResponse, ProposeRequest, ProposeResponse, PublishRequest,
+        CmdResult,
+        FetchClusterRequest,
+        FetchClusterResponse,
+        Member,
+        ProposeConfChangeRequest,
+        ProposeConfChangeResponse,
+        ProposeRequest,
+        ProposeResponse,
+        PublishRequest,
         PublishResponse,
     },
     inner_messagepb::inner_protocol_server::InnerProtocolServer,
@@ -19,10 +28,10 @@ pub use self::proto::{
 pub(crate) use self::proto::{
     commandpb::{
         fetch_read_state_response::{IdSet, ReadState},
-        propose_response::ExeResult,
         protocol_server::Protocol,
-        FetchReadStateRequest, FetchReadStateResponse, ProposeError, ProposeId as PbProposeId,
-        ShutdownRequest, ShutdownResponse, WaitSyncedRequest, WaitSyncedResponse,
+        CurpError as CurpErrorWrapper, FetchReadStateRequest, FetchReadStateResponse,
+        ProposeId as PbProposeId, ShutdownRequest, ShutdownResponse, WaitSyncedRequest,
+        WaitSyncedResponse,
     },
     inner_messagepb::{
         inner_protocol_server::InnerProtocol, AppendEntriesRequest, AppendEntriesResponse,
@@ -127,70 +136,36 @@ impl ProposeRequest {
 
 impl ProposeResponse {
     /// Create an ok propose response
-    pub(crate) fn new_result<C: Command>(
-        leader_id: Option<ServerId>,
-        term: u64,
-        result: &Result<C::ER, C::Error>,
-    ) -> Self {
-        let exe_result = match *result {
-            Ok(ref er) => Some(ExeResult::Result(CmdResult {
+    pub(crate) fn new_result<C: Command>(result: &Result<C::ER, C::Error>) -> Self {
+        let result = match *result {
+            Ok(ref er) => Some(CmdResult {
                 result: Some(CmdResultInner::Ok(er.encode())),
-            })),
-            Err(ref e) => Some(ExeResult::Result(CmdResult {
+            }),
+            Err(ref e) => Some(CmdResult {
                 result: Some(CmdResultInner::Error(e.encode())),
-            })),
+            }),
         };
-        Self {
-            leader_id,
-            term,
-            exe_result,
-        }
+        Self { result }
     }
 
     /// Create an empty propose response
-    #[allow(clippy::unnecessary_wraps)] // To keep the new functions return the same type
-    pub(crate) fn new_empty(leader_id: Option<ServerId>, term: u64) -> Self {
-        Self {
-            leader_id,
-            term,
-            exe_result: None,
-        }
+    pub(crate) fn new_empty() -> Self {
+        Self { result: None }
     }
 
-    /// Create an error propose response
-    pub(crate) fn new_error(leader_id: Option<ServerId>, term: u64, error: ProposeError) -> Self {
-        Self {
-            leader_id,
-            term,
-            exe_result: Some(ExeResult::Error(error.into())),
-        }
-    }
-
-    /// Map response to functions `success` and `failure`
-    pub(crate) fn map_or_else<C: Command, SF, FF, R>(
-        &self,
-        success: SF,
-        failure: FF,
-    ) -> Result<R, PbSerializeError>
+    /// Deserialize result in response and take a map function
+    pub(crate) fn map_result<C: Command, F, R>(self, f: F) -> Result<R, PbSerializeError>
     where
-        SF: FnOnce(Option<Result<C::ER, C::Error>>) -> R,
-        FF: FnOnce(ProposeError) -> R,
+        F: FnOnce(Option<Result<C::ER, C::Error>>) -> R,
     {
-        match self.exe_result {
-            Some(ExeResult::Result(ref rv)) => {
-                let result = rv.result.as_ref().ok_or(PbSerializeError::EmptyField)?;
-                let cmd_result = match *result {
-                    CmdResultInner::Ok(ref buf) => Ok(<C as Command>::ER::decode(buf)?),
-                    CmdResultInner::Error(ref buf) => Err(<C as Command>::Error::decode(buf)?),
-                };
-                Ok(success(Some(cmd_result)))
-            }
-            Some(ExeResult::Error(err)) => {
-                let propose_error = err.into();
-                Ok(failure(propose_error))
-            }
-            None => Ok(success(None)),
-        }
+        let Some(res) = self.result.and_then(|res| res.result) else {
+            return Ok(f(None));
+        };
+        let res = match res {
+            CmdResultInner::Ok(ref buf) => Ok(<C as Command>::ER::decode(buf)?),
+            CmdResultInner::Error(ref buf) => Err(<C as Command>::Error::decode(buf)?),
+        };
+        Ok(f(Some(res)))
     }
 }
 
@@ -216,7 +191,7 @@ impl WaitSyncedRequest {
 
 impl WaitSyncedResponse {
     /// Create a success response
-    pub(crate) fn new_success<C: Command>(asr: &C::ASR, er: &C::ER) -> Self {
+    fn new_success<C: Command>(asr: &C::ASR, er: &C::ER) -> Self {
         Self {
             after_sync_result: Some(CmdResult {
                 result: Some(CmdResultInner::Ok(asr.encode())),
@@ -228,7 +203,7 @@ impl WaitSyncedResponse {
     }
 
     /// Create an error response which includes an execution error
-    pub(crate) fn new_er_error<C: Command>(er: &C::Error) -> Self {
+    fn new_er_error<C: Command>(er: &C::Error) -> Self {
         Self {
             after_sync_result: None,
             exe_result: Some(CmdResult {
@@ -238,7 +213,7 @@ impl WaitSyncedResponse {
     }
 
     /// Create an error response which includes an `after_sync` error
-    pub(crate) fn new_asr_error<C: Command>(er: &C::ER, asr_err: &C::Error) -> Self {
+    fn new_asr_error<C: Command>(er: &C::ER, asr_err: &C::Error) -> Self {
         Self {
             after_sync_result: Some(CmdResult {
                 result: Some(CmdResultInner::Error(asr_err.encode())),
@@ -263,55 +238,51 @@ impl WaitSyncedResponse {
             (Err(ref err), _) => WaitSyncedResponse::new_er_error::<C>(err),
         }
     }
-}
 
-impl<C: Command> TryFrom<WaitSyncedResponse> for SyncResult<C> {
-    type Error = PbSerializeError;
-    fn try_from(value: WaitSyncedResponse) -> Result<Self, PbSerializeError> {
-        let res = match (value.exe_result, value.after_sync_result) {
-            (None, _) => unreachable!("WaitSyncedResponse should contain a valid exe_result"),
-            (Some(er), None) => {
-                if let Some(CmdResultInner::Error(buf)) = er.result {
-                    SyncResult::Error(<C as Command>::Error::decode(buf.as_slice())?)
-                } else {
-                    unreachable!("asr should not be None")
-                }
+    /// Similar to `ProposeResponse::map_result`
+    pub(crate) fn map_result<C: Command, F, R>(self, f: F) -> Result<R, PbSerializeError>
+    where
+        F: FnOnce(Result<(C::ASR, C::ER), C::Error>) -> R,
+    {
+        // according to the above methods, we can only get the following response union
+        // ER: Some(OK), ASR: Some(OK)  <-  WaitSyncedResponse::new_success
+        // ER: Some(Err), ASR: None     <-  WaitSyncedResponse::new_er_error
+        // ER: Some(OK), ASR: Some(Err) <- WaitSyncedResponse::new_asr_error
+        let res = match (self.exe_result, self.after_sync_result) {
+            (
+                Some(CmdResult {
+                    result: Some(CmdResultInner::Ok(ref er)),
+                }),
+                Some(CmdResult {
+                    result: Some(CmdResultInner::Ok(ref asr)),
+                }),
+            ) => {
+                let er = <C as Command>::ER::decode(er)?;
+                let asr = <C as Command>::ASR::decode(asr)?;
+                Ok((asr, er))
             }
-            (Some(er), Some(asr)) => {
-                let er = if let Some(CmdResultInner::Ok(er)) = er.result {
-                    <C as Command>::ER::decode(er.as_slice())?
-                } else {
-                    unreachable!("asr should be None when execute failed")
-                };
-                match asr.result {
-                    Some(CmdResultInner::Ok(asr)) => SyncResult::Success {
-                        asr: <C as Command>::ASR::decode(asr.as_slice())?,
-                        er,
-                    },
-                    Some(CmdResultInner::Error(err)) => {
-                        SyncResult::Error(<C as Command>::Error::decode(err.as_slice())?)
-                    }
-                    None => {
-                        unreachable!("result of asr should not be None")
-                    }
-                }
+            (
+                Some(CmdResult {
+                    result: Some(CmdResultInner::Error(ref buf)),
+                }),
+                None,
+            )
+            | (
+                Some(CmdResult {
+                    result: Some(CmdResultInner::Ok(_)),
+                }),
+                Some(CmdResult {
+                    result: Some(CmdResultInner::Error(ref buf)),
+                }),
+            ) => {
+                let er = <C as Command>::Error::decode(buf.as_slice())?;
+                Err(er)
             }
+            _ => unreachable!("got unexpected WaitSyncedResponse"),
         };
-        Ok(res)
-    }
-}
 
-/// Sync Result
-pub(crate) enum SyncResult<C: Command> {
-    /// If sync succeeds, return asr and er
-    Success {
-        /// After Sync Result
-        asr: C::ASR,
-        /// Execution Result
-        er: C::ER,
-    },
-    /// If sync fails, return `SyncError`
-    Error(C::Error),
+        Ok(f(res))
+    }
 }
 
 impl AppendEntriesRequest {
@@ -624,21 +595,6 @@ impl ShutdownRequest {
     }
 }
 
-impl ConfChangeError {
-    /// Create a new `ConfChangeError` with `ProposeError`
-    pub(crate) fn new_propose(error: ProposeError) -> Self {
-        Self::Propose(error.into())
-    }
-}
-
-impl From<ConfChangeError> for tonic::Status {
-    #[inline]
-    fn from(_err: ConfChangeError) -> Self {
-        // we'd better expose some err messages for client
-        tonic::Status::invalid_argument("")
-    }
-}
-
 impl PublishRequest {
     /// Create a new `PublishRequest`
     #[inline]
@@ -661,5 +617,145 @@ impl PublishRequest {
                 unreachable!("propose id should be set in propose conf change request")
             })
             .into()
+    }
+}
+
+impl CurpError {
+    /// `KeyConflict` error
+    pub(crate) fn key_conflict() -> Self {
+        Self::KeyConflict(())
+    }
+
+    /// `Duplicated` error
+    pub(crate) fn duplicated() -> Self {
+        Self::Duplicated(())
+    }
+
+    /// `ExpiredClientId` error
+    #[allow(unused)] // TODO: used in dedup
+    pub(crate) fn expired_client_id() -> Self {
+        Self::ExpiredClientId(())
+    }
+
+    /// `InvalidConfig` error
+    pub(crate) fn invalid_config() -> Self {
+        Self::InvalidConfig(())
+    }
+
+    /// `NodeNotExists` error
+    pub(crate) fn node_not_exist() -> Self {
+        Self::NodeNotExists(())
+    }
+
+    /// `NodeAlreadyExists` error
+    pub(crate) fn node_already_exists() -> Self {
+        Self::NodeAlreadyExists(())
+    }
+
+    /// `LearnerNotCatchUp` error
+    pub(crate) fn learner_not_catch_up() -> Self {
+        Self::LearnerNotCatchUp(())
+    }
+
+    /// `ShuttingDown` error
+    pub(crate) fn shutting_down() -> Self {
+        Self::ShuttingDown(())
+    }
+
+    /// `Duplicated` error
+    pub(crate) fn wrong_cluster_version() -> Self {
+        Self::WrongClusterVersion(())
+    }
+
+    /// `Redirect` error
+    pub(crate) fn redirect(leader_id: Option<ServerId>, term: u64) -> Self {
+        Self::Redirect(Redirect { leader_id, term })
+    }
+
+    /// `Internal` error
+    pub(crate) fn internal(reason: impl Into<String>) -> Self {
+        Self::Internal(reason.into())
+    }
+}
+
+impl<E: std::error::Error + 'static> From<E> for CurpError {
+    #[inline]
+    fn from(value: E) -> Self {
+        let err: &dyn std::error::Error = &value;
+        if let Some(status) = err.downcast_ref::<tonic::Status>() {
+            // Unavailable code often occurs in rpc connection errors,
+            // Please DO NOT use this code in CurpError to tonic::Status.
+            if status.code() == tonic::Code::Unavailable {
+                return Self::RpcTransport(());
+            }
+            if !status.details().is_empty() {
+                return match CurpErrorWrapper::decode(status.details()) {
+                    Ok(e) => e
+                        .err
+                        .unwrap_or_else(|| unreachable!("err must be set in CurpErrorWrapper")),
+                    Err(dec_err) => Self::internal(dec_err.to_string()),
+                };
+            }
+        }
+        // Errors that are not created manually by `CurpError::xxx()` are trivial,
+        // and errors that need to be known to the client are best created manually.
+        Self::internal(value.to_string())
+    }
+}
+
+impl From<CurpError> for tonic::Status {
+    #[inline]
+    fn from(err: CurpError) -> Self {
+        let (code, msg) = match err {
+            CurpError::KeyConflict(_) => (
+                tonic::Code::AlreadyExists,
+                "Key conflict error: A key conflict occurred.",
+            ),
+            CurpError::Duplicated(_) => (
+                tonic::Code::AlreadyExists,
+                "Duplicated error: The request already sent.",
+            ),
+            CurpError::ExpiredClientId(_) => (
+                tonic::Code::FailedPrecondition,
+                "Expired client ID error: The client ID has expired, we cannot tell if this request is duplicated.",
+            ),
+            CurpError::InvalidConfig(_) => (
+                tonic::Code::InvalidArgument,
+                "Invalid config error: The provided configuration is invalid.",
+            ),
+            CurpError::NodeNotExists(_) => (
+                tonic::Code::NotFound,
+                "Node not found error: The specified node does not exist.",
+            ),
+            CurpError::NodeAlreadyExists(_) => (
+                tonic::Code::AlreadyExists,
+                "Node already exists error: The node already exists.",
+            ),
+            CurpError::LearnerNotCatchUp(_) => (
+                tonic::Code::FailedPrecondition,
+                "Learner not caught up error: The learner has not caught up.",
+            ),
+            CurpError::ShuttingDown(_) => (
+                tonic::Code::FailedPrecondition,
+                "Shutting down error: The service is currently shutting down.",
+            ),
+            CurpError::WrongClusterVersion(_) => (
+                tonic::Code::FailedPrecondition,
+                "Wrong cluster version error: The cluster version is incorrect.",
+            ),
+            CurpError::Redirect(_) => (
+                tonic::Code::ResourceExhausted,
+                "Redirect error: The request should be redirected to another node.",
+            ),
+            CurpError::Internal(_) => (
+                tonic::Code::Internal,
+                "Internal error: An internal error occurred.",
+            ),
+            CurpError::RpcTransport(_) => (tonic::Code::Cancelled, "Rpc error: Request cancelled"),
+        };
+
+        let details = CurpErrorWrapper { err: Some(err) }.encode_to_vec();
+
+        tonic::Status::with_details(code, msg, details.into())
     }
 }

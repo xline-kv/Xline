@@ -2,7 +2,6 @@ use std::{fmt::Debug, sync::Arc};
 
 use curp_external_api::cmd::{ConflictCheck, ProposeId};
 use engine::SnapshotAllocator;
-use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 #[cfg(not(madsim))]
 use tokio::net::TcpListener;
@@ -14,7 +13,7 @@ use tracing::info;
 use tracing::instrument;
 use utils::{config::CurpConfig, shutdown, tracing::Extract};
 
-use self::curp_node::{CurpError, CurpNode};
+use self::curp_node::CurpNode;
 use crate::{
     cmd::{Command, CommandExecutor},
     error::ServerError,
@@ -50,6 +49,9 @@ mod curp_node;
 
 /// Storage
 mod storage;
+
+/// Curp metrics
+mod metrics;
 
 /// Default server serving port
 #[cfg(not(madsim))]
@@ -153,19 +155,6 @@ impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::InnerProtocol f
         ))
     }
 
-    #[instrument(skip_all, name = "curp_install_snapshot")]
-    async fn install_snapshot(
-        &self,
-        request: tonic::Request<tonic::Streaming<InstallSnapshotRequest>>,
-    ) -> Result<tonic::Response<InstallSnapshotResponse>, tonic::Status> {
-        let req_stream = request
-            .into_inner()
-            .map_err(|e| format!("snapshot transmission failed at client side, {e}"));
-        Ok(tonic::Response::new(
-            self.inner.install_snapshot(req_stream).await?,
-        ))
-    }
-
     #[instrument(skip_all, name = "curp_vote")]
     async fn vote(
         &self,
@@ -173,6 +162,17 @@ impl<C: 'static + Command, RC: RoleChange + 'static> crate::rpc::InnerProtocol f
     ) -> Result<tonic::Response<VoteResponse>, tonic::Status> {
         Ok(tonic::Response::new(
             self.inner.vote(request.into_inner()).await?,
+        ))
+    }
+
+    #[instrument(skip_all, name = "curp_install_snapshot")]
+    async fn install_snapshot(
+        &self,
+        request: tonic::Request<tonic::Streaming<InstallSnapshotRequest>>,
+    ) -> Result<tonic::Response<InstallSnapshotResponse>, tonic::Status> {
+        let req_stream = request.into_inner();
+        Ok(tonic::Response::new(
+            self.inner.install_snapshot(req_stream).await?,
         ))
     }
 }
@@ -183,6 +183,7 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
     /// # Panics
     /// Panic if storage creation failed
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub async fn new<CE: CommandExecutor<C> + 'static>(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
@@ -206,7 +207,7 @@ impl<C: Command + 'static, RC: RoleChange + 'static> Rpc<C, RC> {
         {
             Ok(n) => n,
             Err(err) => {
-                panic!("failed to create curp service, {err}");
+                panic!("failed to create curp service, {err:?}");
             }
         };
 

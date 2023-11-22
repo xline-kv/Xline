@@ -14,6 +14,7 @@ use itertools::Itertools;
 use tokio::sync::mpsc;
 use tracing::error;
 
+use super::metrics;
 use crate::{
     cmd::{Command, ProposeId},
     log_entry::{EntryData, LogEntry},
@@ -64,13 +65,13 @@ impl<C: Command> FallbackContext<C> {
         origin_entry: Arc<LogEntry<C>>,
         addrs: Vec<String>,
         name: String,
-        is_leader: bool,
+        is_learner: bool,
     ) -> Self {
         Self {
             origin_entry,
             addrs,
             name,
-            is_learner: is_leader,
+            is_learner,
         }
     }
 }
@@ -427,8 +428,15 @@ impl<C: 'static + Command> Log<C> {
             self.commit_index
         );
         self.commit_index = commit_index;
-        self.fallback_contexts
-            .retain(|&idx, _| idx > self.commit_index);
+        self.fallback_contexts.retain(|&idx, c| {
+            if idx > self.commit_index {
+                return true;
+            }
+            if c.is_learner {
+                metrics::get().learner_promote_succeed.add(1, &[]);
+            }
+            false
+        });
     }
 }
 

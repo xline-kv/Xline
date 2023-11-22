@@ -13,7 +13,10 @@ use jsonwebtoken::{DecodingKey, EncodingKey};
 use tokio::{net::TcpListener, sync::mpsc::channel, task::JoinHandle};
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::{server::TcpIncoming, Server};
-use tonic_health::ServingStatus;
+use tonic_health::{
+    pb::health_server::{Health, HealthServer},
+    ServingStatus,
+};
 use tracing::{error, warn};
 use utils::{
     config::{ClientConfig, CompactConfig, CurpConfig, ServerTimeout, StorageConfig},
@@ -34,6 +37,7 @@ use super::{
 use crate::{
     header_gen::HeaderGenerator,
     id_gen::IdGenerator,
+    metrics::Metrics,
     rpc::{
         AuthServer as RpcAuthServer, ClusterServer as RpcClusterServer, KvServer as RpcKvServer,
         LeaseServer as RpcLeaseServer, LockServer as RpcLockServer,
@@ -217,13 +221,11 @@ impl XlineServer {
             watch_server,
             maintenance_server,
             cluster_server,
+            health_server,
             curp_server,
             curp_client,
         ) = self.init_servers(persistent, key_pair).await?;
-        let (mut reporter, health_server) = tonic_health::server::health_reporter();
-        reporter
-            .set_service_status("", ServingStatus::Serving)
-            .await;
+
         let incoming = bind_addrs(addrs.into_iter())?;
         let handle = tokio::spawn(async move {
             Server::builder()
@@ -270,13 +272,11 @@ impl XlineServer {
             watch_server,
             maintenance_server,
             cluster_server,
+            health_server,
             curp_server,
             curp_client,
         ) = self.init_servers(persistent, key_pair).await?;
-        let (mut reporter, health_server) = tonic_health::server::health_reporter();
-        reporter
-            .set_service_status("", ServingStatus::Serving)
-            .await;
+
         let _h = tokio::spawn(async move {
             Server::builder()
                 .add_service(RpcLockServer::new(lock_server))
@@ -313,6 +313,7 @@ impl XlineServer {
         WatchServer<S>,
         MaintenanceServer<S>,
         ClusterServer,
+        HealthServer<impl Health>,
         Arc<CurpServer<S>>,
         Arc<CurpClient>,
     )> {
@@ -387,6 +388,14 @@ impl XlineServer {
         )
         .await;
 
+        let (mut reporter, health_server) = tonic_health::server::health_reporter();
+        // TODO: we could set as serving when the node join the cluster and be ready for request.
+        reporter
+            .set_service_status("", ServingStatus::Serving)
+            .await;
+
+        Metrics::register_callback()?;
+
         Ok((
             KvServer::new(
                 kv_storage,
@@ -423,6 +432,7 @@ impl XlineServer {
                 Arc::clone(&self.cluster_info),
             ),
             ClusterServer::new(Arc::clone(&client), header_gen),
+            health_server,
             Arc::new(curp_server),
             client,
         ))

@@ -143,34 +143,40 @@ use clap::Parser;
 use curp::members::{get_cluster_info_from_remote, ClusterInfo};
 use itertools::Itertools;
 use jsonwebtoken::{DecodingKey, EncodingKey};
-use opentelemetry::{global, runtime::Tokio, sdk::propagation::TraceContextPropagator};
+use opentelemetry::global;
 use opentelemetry_contrib::trace::exporter::jaeger_json::JaegerJsonExporter;
+use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::runtime::Tokio;
+use opentelemetry_sdk::{metrics::MeterProvider, propagation::TraceContextPropagator};
 use tokio::fs;
 use tracing::{debug, error, info};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{fmt::format, prelude::*};
+use utils::config::{MetricsConfig, MetricsPushProtocol};
 use utils::{
     config::{
         default_batch_max_size, default_batch_timeout, default_candidate_timeout_ticks,
         default_client_wait_synced_timeout, default_cmd_workers, default_compact_batch_size,
         default_compact_sleep_interval, default_follower_timeout_ticks, default_gc_interval,
         default_heartbeat_interval, default_initial_retry_timeout, default_log_entries_cap,
-        default_log_level, default_max_retry_timeout, default_propose_timeout,
-        default_range_retry_timeout, default_retry_count, default_rotation, default_rpc_timeout,
-        default_server_wait_synced_timeout, default_sync_victims_interval, default_use_backoff,
-        default_watch_progress_notify_interval, file_appender, AuthConfig, AutoCompactConfig,
-        ClientConfig, ClusterConfig, CompactConfig, CurpConfigBuilder, InitialClusterState,
-        LevelConfig, LogConfig, RotationConfig, ServerTimeout, StorageConfig, TraceConfig,
-        XlineServerConfig,
+        default_log_level, default_max_retry_timeout, default_metrics_enable, default_metrics_path,
+        default_metrics_port, default_metrics_push_endpoint, default_metrics_push_protocol,
+        default_propose_timeout, default_range_retry_timeout, default_retry_count,
+        default_rotation, default_rpc_timeout, default_server_wait_synced_timeout,
+        default_sync_victims_interval, default_use_backoff, default_watch_progress_notify_interval,
+        file_appender, AuthConfig, AutoCompactConfig, ClientConfig, ClusterConfig, CompactConfig,
+        CurpConfigBuilder, InitialClusterState, LevelConfig, LogConfig, RotationConfig,
+        ServerTimeout, StorageConfig, TraceConfig, XlineServerConfig,
     },
-    parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_rotation, parse_state,
-    ConfigFileError,
+    parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_metrics_push_protocol,
+    parse_rotation, parse_state, ConfigFileError,
 };
 use xline::{server::XlineServer, storage::db::DB};
 
 /// Command line arguments
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
+#[allow(clippy::struct_excessive_bools)]
 struct ServerArgs {
     /// Node name
     #[clap(long)]
@@ -194,8 +200,30 @@ struct ServerArgs {
     #[clap(long, default_value = "./jaeger_jsons")]
     jaeger_output_dir: PathBuf,
     /// Open jaeger online
+    /// - `OTEL_EXPORTER_JAEGER_AGENT_HOST`, set the host of the agent. If the `OTEL_EXPORTER_JAEGER_AGENT_HOST`
+    /// is not set, the value will be ignored.
+    /// - `OTEL_EXPORTER_JAEGER_AGENT_PORT`, set the port of the agent. If the `OTEL_EXPORTER_JAEGER_AGENT_HOST`
+    /// is not set, the exporter will use 127.0.0.1 as the host.
     #[clap(long)]
     jaeger_online: bool,
+    /// Whether to enable metrics
+    #[clap(long, default_value_t = default_metrics_enable())]
+    metrics_enable: bool,
+    /// Metrics port, default to "9100"
+    #[clap(long, default_value_t = default_metrics_port())]
+    metrics_port: u16,
+    /// Metrics path, default to "/metrics"
+    #[clap(long, default_value_t = default_metrics_path())]
+    metrics_path: String,
+    /// Whether to enable metrics
+    #[clap(long)]
+    metrics_push: bool,
+    /// Collector endpoint to collect metrics
+    #[clap(long, default_value_t = default_metrics_push_endpoint())]
+    metrics_push_endpoint: String,
+    /// Collector endpoint to collect metrics
+    #[clap(long, value_parser = parse_metrics_push_protocol, default_value_t = default_metrics_push_protocol())]
+    metrics_push_protocol: MetricsPushProtocol,
     /// Trace level of jaeger
     #[clap(long, value_parser = parse_log_level, default_value_t = default_log_level())]
     jaeger_level: LevelConfig,
@@ -392,7 +420,16 @@ impl From<ServerArgs> for XlineServerConfig {
                 .unwrap_or_else(default_compact_sleep_interval),
             auto_compactor_cfg,
         );
-        XlineServerConfig::new(cluster, storage, log, trace, auth, compact)
+        let metrics = MetricsConfig::new(
+            args.metrics_enable,
+            args.metrics_port,
+            args.metrics_path,
+            args.metrics_push,
+            args.metrics_push_endpoint,
+            args.metrics_push_protocol,
+        );
+        debug!("metrics config, {metrics:?}");
+        XlineServerConfig::new(cluster, storage, log, trace, auth, compact, metrics)
     }
 }
 
@@ -490,6 +527,7 @@ async fn read_key_pair(
 #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
 async fn main() -> Result<()> {
     global::set_text_map_propagator(TraceContextPropagator::new());
+
     let config: XlineServerConfig = if env::args_os().len() == 1 {
         let path =
             env::var("XLINE_SERVER_CONFIG").unwrap_or_else(|_| "/etc/xline_server.conf".to_owned());
@@ -507,6 +545,7 @@ async fn main() -> Result<()> {
     let trace_config = config.trace();
     let cluster_config = config.cluster();
     let auth_config = config.auth();
+    let metrics_config = config.metrics();
 
     let _guard = init_subscriber(cluster_config.name(), log_config, trace_config)?;
 
@@ -572,6 +611,7 @@ async fn main() -> Result<()> {
     );
     debug!("{:?}", server);
     let handle = server.start(server_addr, db_proxy, key_pair).await?;
+    init_metrics(metrics_config)?;
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
@@ -593,5 +633,73 @@ async fn main() -> Result<()> {
     }
 
     global::shutdown_tracer_provider();
+    global::shutdown_meter_provider();
+
     Ok(())
+}
+
+/// Start metrics server
+fn init_metrics(config: &MetricsConfig) -> Result<()> {
+    if !config.enable() {
+        return Ok(());
+    }
+    if *config.push() {
+        debug!(
+            "enable metrics push mode, protocol {}",
+            config.push_protocol()
+        );
+
+        // push mode
+        let _ig = match *config.push_protocol() {
+            MetricsPushProtocol::HTTP => opentelemetry_otlp::new_pipeline()
+                .metrics(Tokio)
+                .with_exporter(
+                    opentelemetry_otlp::new_exporter()
+                        .http()
+                        .with_endpoint(config.push_endpoint()),
+                )
+                .build(),
+            MetricsPushProtocol::GRPC => opentelemetry_otlp::new_pipeline()
+                .metrics(Tokio)
+                .with_exporter(
+                    opentelemetry_otlp::new_exporter()
+                        .tonic()
+                        .with_endpoint(config.push_endpoint()),
+                )
+                .build(),
+            _ => unreachable!("only 'http' or 'gRPC' will be accepted"),
+        }?;
+        return Ok(());
+    }
+    // pull mode
+    let exporter = opentelemetry_prometheus::exporter()
+        .with_registry(prometheus::default_registry().clone())
+        .build()?;
+    let provider = MeterProvider::builder().with_reader(exporter).build();
+    global::set_meter_provider(provider);
+
+    let addr = format!("0.0.0.0:{}", config.port())
+        .parse()
+        .unwrap_or_else(|_| {
+            unreachable!("local address 0.0.0.0:{} should be parsed", config.port())
+        });
+    debug!("metrics server start on {addr:?}");
+    let app = axum::Router::new().route(config.path(), axum::routing::any(metrics));
+    let _ig = tokio::spawn(async move {
+        axum::Server::bind(&addr)
+            .serve(app.into_make_service())
+            .await
+    });
+
+    Ok(())
+}
+
+/// Metrics handler
+#[allow(clippy::unused_async)] // required by axum
+async fn metrics() -> Result<String, hyper::StatusCode> {
+    let encoder = prometheus::TextEncoder::new();
+    let metrics_families = prometheus::gather();
+    encoder
+        .encode_to_string(&metrics_families)
+        .map_err(|_e| hyper::StatusCode::INTERNAL_SERVER_ERROR)
 }

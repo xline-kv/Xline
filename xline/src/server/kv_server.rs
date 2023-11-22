@@ -12,6 +12,7 @@ use super::{
     command::{client_err_to_status, Command, CommandResponse, SyncResponse},
 };
 use crate::{
+    metrics,
     request_validation::RequestValidator,
     revision_check::RevisionCheck,
     rpc::{
@@ -155,7 +156,11 @@ where
                 .client
                 .fetch_read_state(cmd)
                 .await
-                .map_err(|e| tonic::Status::internal(e.to_string()))?;
+                .map_err(|e| tonic::Status::internal(e.to_string()))
+                .map_err(|e| {
+                    metrics::get().read_indexes_failed_total.add(1, &[]);
+                    e
+                })?;
             let wait_future = async move {
                 match rd_state {
                     ReadState::Ids(ids) => {
@@ -175,7 +180,8 @@ where
             };
             if timeout(self.range_retry_timeout, wait_future).await.is_ok() {
                 break;
-            };
+            }
+            metrics::get().slow_read_indexes_total.add(1, &[]);
         }
         Ok(())
     }

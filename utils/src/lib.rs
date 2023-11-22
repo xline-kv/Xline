@@ -139,7 +139,7 @@
 use std::{collections::HashMap, time::Duration};
 
 use clippy_utilities::OverflowArithmetic;
-use config::InitialClusterState;
+use config::{InitialClusterState, MetricsPushProtocol};
 use thiserror::Error;
 
 use crate::config::{ClusterRange, LevelConfig, RotationConfig};
@@ -381,6 +381,20 @@ pub fn parse_batch_bytes(s: &str) -> Result<u64, ConfigParseError> {
         Err(ConfigParseError::InvalidUnit(format!(
             "the unit of size should be one of 'kb' or 'mb'({s})"
         )))
+    }
+}
+
+/// Get the metrics push protocol
+/// # Errors
+/// Return error when parsing the given string to `MetricsPushProtocol` failed
+#[inline]
+pub fn parse_metrics_push_protocol(s: &str) -> Result<MetricsPushProtocol, ConfigParseError> {
+    match s {
+        "http" => Ok(MetricsPushProtocol::HTTP),
+        "grpc" => Ok(MetricsPushProtocol::GRPC),
+        _ => Err(ConfigParseError::InvalidValue(format!(
+            "the metrics push protocol should be one of 'http' or 'grpc' ({s})"
+        ))),
     }
 }
 

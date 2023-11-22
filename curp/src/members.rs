@@ -202,7 +202,7 @@ impl ClusterInfo {
 
     /// Get the current member
     #[allow(clippy::unwrap_used)] // self member id must be in members
-    fn self_member(&self) -> Ref<'_, u64, Member> {
+    pub(crate) fn self_member(&self) -> Ref<'_, u64, Member> {
         self.members.get(&self.member_id).unwrap()
     }
 
