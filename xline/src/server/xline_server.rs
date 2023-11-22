@@ -51,6 +51,9 @@ use crate::{
     },
 };
 
+/// Default backend quota (8GB)
+const DEFAULT_QUOTA: u64 = 8 * 1024 * 1024 * 1024; // TODO: make it configurable
+
 /// Rpc Server of curp protocol
 type CurpServer<S> = Rpc<Command, State<S>>;
 
@@ -344,6 +347,7 @@ impl XlineServer {
             Arc::clone(&id_barrier),
             header_gen.general_revision_arc(),
             header_gen.auth_revision_arc(),
+            DEFAULT_QUOTA,
         );
         let snapshot_allocator: Box<dyn SnapshotAllocator> = match self.storage_cfg {
             StorageConfig::Memory => Box::<MemorySnapshotAllocator>::default(),
