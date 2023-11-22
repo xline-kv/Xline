@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{
-    cmd::{Command as CurpCommand, CommandExecutor as CurpCommandExecutor},
+    cmd::{Command as CurpCommand, CommandExecutor as CurpCommandExecutor, QuotaChecker},
     error::ClientError,
     InflightId, LogIndex,
 };
@@ -80,39 +80,29 @@ where
     auth_rev: Arc<RevisionNumberGenerator>,
     /// Compact events
     compact_events: Arc<DashMap<u64, Arc<Event>>>,
-    /// Quota size
-    quota: u64,
+    /// Quota checker
+    quota_checker: Arc<dyn QuotaChecker<Command>>,
 }
 
-impl<S> CommandExecutor<S>
+/// Quota checker for `Command`
+#[derive(Debug)]
+struct CommandQuotaChecker<S>
 where
     S: StorageApi,
 {
-    /// New `CommandExecutor`
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
-        kv_storage: Arc<KvStore<S>>,
-        auth_storage: Arc<AuthStore<S>>,
-        lease_storage: Arc<LeaseStore<S>>,
-        persistent: Arc<S>,
-        index_barrier: Arc<IndexBarrier>,
-        id_barrier: Arc<IdBarrier>,
-        general_rev: Arc<RevisionNumberGenerator>,
-        auth_rev: Arc<RevisionNumberGenerator>,
-        compact_events: Arc<DashMap<u64, Arc<Event>>>,
-    ) -> Self {
-        Self {
-            kv_storage,
-            auth_storage,
-            lease_storage,
-            persistent,
-            index_barrier,
-            id_barrier,
-            general_rev,
-            auth_rev,
-            compact_events,
-            quota: 0,
-        }
+    /// Quota size
+    quota: u64,
+    /// persistent storage
+    persistent: Arc<S>,
+}
+
+impl<S> CommandQuotaChecker<S>
+where
+    S: StorageApi,
+{
+    /// Create a new `CommandQuotaChecker`
+    fn new(quota: u64, persistent: Arc<S>) -> Self {
+        Self { quota, persistent }
     }
 
     /// Estimate the put size
@@ -183,6 +173,57 @@ where
     }
 }
 
+impl<S> QuotaChecker<Command> for CommandQuotaChecker<S>
+where
+    S: StorageApi,
+{
+    fn check(&self, cmd: &Command) -> bool {
+        let cmd_size = Self::cmd_size(&cmd.request().request);
+        if self.persistent.size().overflow_add(cmd_size) > self.quota {
+            if let Ok(file_size) = self.persistent.file_size() {
+                if file_size.overflow_add(cmd_size) > self.quota {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+}
+
+impl<S> CommandExecutor<S>
+where
+    S: StorageApi,
+{
+    /// New `CommandExecutor`
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        kv_storage: Arc<KvStore<S>>,
+        auth_storage: Arc<AuthStore<S>>,
+        lease_storage: Arc<LeaseStore<S>>,
+        persistent: Arc<S>,
+        index_barrier: Arc<IndexBarrier>,
+        id_barrier: Arc<IdBarrier>,
+        general_rev: Arc<RevisionNumberGenerator>,
+        auth_rev: Arc<RevisionNumberGenerator>,
+        compact_events: Arc<DashMap<u64, Arc<Event>>>,
+        quota: u64,
+    ) -> Self {
+        let quota_checker = Arc::new(CommandQuotaChecker::new(quota, Arc::clone(&persistent)));
+        Self {
+            kv_storage,
+            auth_storage,
+            lease_storage,
+            persistent,
+            index_barrier,
+            id_barrier,
+            general_rev,
+            auth_rev,
+            compact_events,
+            quota_checker,
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl<S> CurpCommandExecutor<Command> for CommandExecutor<S>
 where
@@ -231,7 +272,7 @@ where
         index: LogIndex,
         revision: i64,
     ) -> Result<<Command as CurpCommand>::ASR, <Command as CurpCommand>::Error> {
-        let quota_enough = self.check_quota(cmd);
+        let quota_enough = self.quota_checker.check(cmd);
         let mut ops = vec![WriteOp::PutAppliedIndex(index)];
         let wrapper = cmd.request();
         let (res, mut wr_ops) = match wrapper.request.backend() {
@@ -300,16 +341,8 @@ where
         self.index_barrier.trigger(index);
     }
 
-    fn check_quota(&self, cmd: &Command) -> bool {
-        let cmd_size = Self::cmd_size(&cmd.request().request);
-        if self.persistent.size().overflow_add(cmd_size) > self.quota {
-            if let Ok(file_size) = self.persistent.file_size() {
-                if file_size.overflow_add(cmd_size) > self.quota {
-                    return false;
-                }
-            }
-        }
-        true
+    fn quota_checker(&self) -> Arc<dyn QuotaChecker<Command>> {
+        Arc::clone(&self.quota_checker)
     }
 }
 
