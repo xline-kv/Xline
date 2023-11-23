@@ -1140,7 +1140,7 @@ mod test {
     use std::collections::HashMap;
 
     use merged_range::MergedRange;
-    use utils::config::StorageConfig;
+    use utils::config::EngineConfig;
 
     use super::*;
     use crate::{
@@ -1157,7 +1157,7 @@ mod test {
 
     #[test]
     fn test_token_assign_and_verify() {
-        let db = DB::open(&StorageConfig::Memory).unwrap();
+        let db = DB::open(&EngineConfig::Memory).unwrap();
         let store = init_auth_store(db);
         let current_revision = store.revision();
         let token = store.assign("xline").unwrap();
@@ -1168,7 +1168,7 @@ mod test {
 
     #[test]
     fn test_role_grant_permission() -> Result<(), ExecuteError> {
-        let db = DB::open(&StorageConfig::Memory)?;
+        let db = DB::open(&EngineConfig::Memory)?;
         let store = init_auth_store(db);
         let req = RequestWithToken::new(
             AuthRoleGrantPermissionRequest {
@@ -1204,7 +1204,7 @@ mod test {
 
     #[test]
     fn test_role_revoke_permission() -> Result<(), ExecuteError> {
-        let db = DB::open(&StorageConfig::Memory)?;
+        let db = DB::open(&EngineConfig::Memory)?;
         let store = init_auth_store(db);
         let req = RequestWithToken::new(
             AuthRoleRevokePermissionRequest {
@@ -1227,7 +1227,7 @@ mod test {
 
     #[test]
     fn test_role_delete() -> Result<(), ExecuteError> {
-        let db = DB::open(&StorageConfig::Memory)?;
+        let db = DB::open(&EngineConfig::Memory)?;
         let store = init_auth_store(db);
         let req = RequestWithToken::new(
             AuthRoleDeleteRequest {
@@ -1248,7 +1248,7 @@ mod test {
 
     #[test]
     fn test_user_delete() -> Result<(), ExecuteError> {
-        let db = DB::open(&StorageConfig::Memory)?;
+        let db = DB::open(&EngineConfig::Memory)?;
         let store = init_auth_store(db);
         let req = RequestWithToken::new(
             AuthUserDeleteRequest {
@@ -1269,7 +1269,7 @@ mod test {
 
     #[test]
     fn test_auth_enable_and_disable() {
-        let db = DB::open(&StorageConfig::Memory).unwrap();
+        let db = DB::open(&EngineConfig::Memory).unwrap();
         let store = init_auth_store(db);
         let revision = store.revision();
         let rev_gen = Arc::clone(&store.revision);
@@ -1320,7 +1320,7 @@ mod test {
 
     #[test]
     fn test_recover() -> Result<(), ExecuteError> {
-        let db = DB::open(&StorageConfig::Memory).unwrap();
+        let db = DB::open(&EngineConfig::Memory).unwrap();
         let store = init_auth_store(Arc::clone(&db));
 
         let new_store = init_empty_store(db);

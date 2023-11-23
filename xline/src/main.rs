@@ -156,12 +156,12 @@ use utils::{
         default_compact_sleep_interval, default_compact_timeout, default_follower_timeout_ticks,
         default_gc_interval, default_heartbeat_interval, default_initial_retry_timeout,
         default_log_entries_cap, default_log_level, default_max_retry_timeout,
-        default_propose_timeout, default_range_retry_timeout, default_retry_count,
+        default_propose_timeout, default_quota, default_range_retry_timeout, default_retry_count,
         default_rotation, default_rpc_timeout, default_server_wait_synced_timeout,
         default_sync_victims_interval, default_use_backoff, default_watch_progress_notify_interval,
         file_appender, AuthConfig, AutoCompactConfig, ClientConfig, ClusterConfig, CompactConfig,
-        CurpConfigBuilder, InitialClusterState, LevelConfig, LogConfig, RotationConfig,
-        ServerTimeout, StorageConfig, TraceConfig, XlineServerConfig,
+        CurpConfigBuilder, EngineConfig, InitialClusterState, LevelConfig, LogConfig,
+        RotationConfig, ServerTimeout, StorageConfig, TraceConfig, XlineServerConfig,
     },
     parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_rotation, parse_state,
     ConfigFileError,
@@ -297,15 +297,18 @@ struct ServerArgs {
     /// Initial cluster state
     #[clap(long,value_parser = parse_state)]
     initial_cluster_state: Option<InitialClusterState>,
+    /// Quota
+    #[clap(long)]
+    quota: Option<u64>,
 }
 
 impl From<ServerArgs> for XlineServerConfig {
     fn from(args: ServerArgs) -> Self {
-        let (storage, curp_storage) = match args.storage_engine.as_str() {
-            "memory" => (StorageConfig::Memory, StorageConfig::Memory),
+        let (engine, curp_engine) = match args.storage_engine.as_str() {
+            "memory" => (EngineConfig::Memory, EngineConfig::Memory),
             "rocksdb" => (
-                StorageConfig::RocksDB(args.data_dir.clone()),
-                StorageConfig::RocksDB(args.curp_dir.unwrap_or_else(|| {
+                EngineConfig::RocksDB(args.data_dir.clone()),
+                EngineConfig::RocksDB(args.curp_dir.unwrap_or_else(|| {
                     let mut path = args.data_dir;
                     path.push("curp");
                     path
@@ -314,6 +317,7 @@ impl From<ServerArgs> for XlineServerConfig {
             &_ => unreachable!("xline only supports memory and rocksdb engine"),
         };
 
+        let storage = StorageConfig::new(engine, args.quota.unwrap_or_else(default_quota));
         let Ok(curp_config) = CurpConfigBuilder::default()
         .heartbeat_interval(args.heartbeat_interval
             .unwrap_or_else(default_heartbeat_interval))
@@ -324,7 +328,7 @@ impl From<ServerArgs> for XlineServerConfig {
         .batch_max_size(args.batch_max_size.unwrap_or_else(default_batch_max_size))
         .follower_timeout_ticks(args.follower_timeout_ticks)
         .candidate_timeout_ticks(args.candidate_timeout_ticks)
-        .storage_cfg(curp_storage)
+        .engine_cfg(curp_engine)
         .gc_interval(args.gc_interval.unwrap_or_else(default_gc_interval))
         .cmd_workers(args.cmd_workers)
         .build() else { panic!("failed to create curp config") };
@@ -564,7 +568,7 @@ async fn main() -> Result<()> {
         _ => unreachable!("xline only supports two initial cluster states: new, existing"),
     };
 
-    let db_proxy = DB::open(storage_config)?;
+    let db_proxy = DB::open(&storage_config.engine)?;
     let server = XlineServer::new(
         cluster_info.into(),
         *cluster_config.is_leader(),

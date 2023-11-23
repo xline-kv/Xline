@@ -16,7 +16,7 @@ use tokio::{sync::mpsc::channel, task::JoinHandle};
 use tonic::transport::{server::Router, Server};
 use tracing::{error, warn};
 use utils::{
-    config::{ClientConfig, CompactConfig, CurpConfig, ServerTimeout, StorageConfig},
+    config::{ClientConfig, CompactConfig, CurpConfig, EngineConfig, ServerTimeout, StorageConfig},
     shutdown,
 };
 use xlineapi::command::Command;
@@ -51,9 +51,6 @@ use crate::{
         AuthStore, KvStore, LeaseStore,
     },
 };
-
-/// Default backend quota (8GB)
-const DEFAULT_QUOTA: u64 = 8 * 1024 * 1024 * 1024; // TODO: make it configurable
 
 /// Rpc Server of curp protocol
 type CurpServer<S> = Rpc<Command, State<S>>;
@@ -373,11 +370,11 @@ impl XlineServer {
             header_gen.general_revision_arc(),
             header_gen.auth_revision_arc(),
             Arc::clone(&compact_events),
-            DEFAULT_QUOTA,
+            self.storage_cfg.quota,
         );
-        let snapshot_allocator: Box<dyn SnapshotAllocator> = match self.storage_cfg {
-            StorageConfig::Memory => Box::<MemorySnapshotAllocator>::default(),
-            StorageConfig::RocksDB(_) => Box::<RocksSnapshotAllocator>::default(),
+        let snapshot_allocator: Box<dyn SnapshotAllocator> = match self.storage_cfg.engine {
+            EngineConfig::Memory => Box::<MemorySnapshotAllocator>::default(),
+            EngineConfig::RocksDB(_) => Box::<RocksSnapshotAllocator>::default(),
             #[allow(clippy::unimplemented)]
             _ => unimplemented!(),
         };
