@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use async_trait::async_trait;
 use engine::{Engine, EngineType, StorageEngine, WriteOperation};
-use utils::config::StorageConfig;
+use utils::config::EngineConfig;
 
 use super::{StorageApi, StorageError};
 use crate::{cmd::Command, log_entry::LogEntry, members::ServerId};
@@ -74,10 +74,10 @@ impl<C: Command> StorageApi for DB<C> {
 
 impl<C> DB<C> {
     /// Create a new CURP `DB`
-    pub(in crate::server) fn open(config: &StorageConfig) -> Result<Self, StorageError> {
+    pub(in crate::server) fn open(config: &EngineConfig) -> Result<Self, StorageError> {
         let engine_type = match *config {
-            StorageConfig::Memory => EngineType::Memory,
-            StorageConfig::RocksDB(ref path) => EngineType::Rocks(path.clone()),
+            EngineConfig::Memory => EngineType::Memory,
+            EngineConfig::RocksDB(ref path) => EngineType::Rocks(path.clone()),
             _ => unreachable!("Not supported storage type"),
         };
         let db = Engine::new(engine_type, &[CF])?;
@@ -104,7 +104,7 @@ mod tests {
     #[abort_on_panic]
     async fn create_and_recover() -> Result<(), Box<dyn Error>> {
         let db_dir = tempfile::tempdir().unwrap().into_path();
-        let storage_cfg = StorageConfig::RocksDB(db_dir.clone());
+        let storage_cfg = EngineConfig::RocksDB(db_dir.clone());
         {
             let s = DB::<TestCommand>::open(&storage_cfg)?;
             s.flush_voted_for(1, 222).await?;

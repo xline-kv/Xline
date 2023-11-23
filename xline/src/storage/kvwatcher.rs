@@ -588,7 +588,7 @@ mod test {
     use clippy_utilities::Cast;
     use test_macros::abort_on_panic;
     use tokio::time::{sleep, timeout};
-    use utils::config::StorageConfig;
+    use utils::config::EngineConfig;
 
     use super::*;
     use crate::{
@@ -602,7 +602,7 @@ mod test {
 
     fn init_empty_store(rx: shutdown::Listener) -> (Arc<KvStore<DB>>, Arc<DB>, Arc<KvWatcher<DB>>) {
         let (compact_tx, _compact_rx) = mpsc::channel(COMPACT_CHANNEL_SIZE);
-        let db = DB::open(&StorageConfig::Memory).unwrap();
+        let db = DB::open(&EngineConfig::Memory).unwrap();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let index = Arc::new(Index::new());
         let lease_collection = Arc::new(LeaseCollection::new(0));
