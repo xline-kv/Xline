@@ -32,7 +32,7 @@ At a high level, we expect the scope of Xline to be restricted to the following 
 
 Xline is a sandbox project of the [Cloud Native Computing Foundation](https://cncf.io/) (CNCF).
 
-If you have any questions, suggestions, or would like to join the xline's discussions, please feel free to join our [Discord channel](discord-url).
+If you have any questions, suggestions, or would like to join the xline's discussions, please feel free to join our [Discord channel][discord-url].
 
 ## Motivation
 
@@ -103,9 +103,9 @@ The Xline project adheres to [the CNCF Community Code of Conduct](./CODE_OF_COND
 ## Roadmap
 
 - v0.1 ~ v0.2
-    - Support all major ETCD APIs
+    - Support all major Etcd APIs
     - Support configuration file
-    - Pass validation tests (All the supported etcd APIs and their validation test results can be viewed in [VALIDATION_REPORT.md](./VALIDATION_REPORT.md))
+    - Pass validation tests (All the supported Etcd APIs and their validation test results can be viewed in [VALIDATION_REPORT.md](./VALIDATION_REPORT.md))
 - v0.3 ~ v0.5
     - Enable persistent storage
     - Enable snapshot
