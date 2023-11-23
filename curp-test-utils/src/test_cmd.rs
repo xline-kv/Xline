@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::{sync::mpsc, time::sleep};
 use tracing::debug;
-use utils::config::StorageConfig;
+use utils::config::{EngineConfig, StorageConfig};
 
 use crate::{META_TABLE, REVISION_TABLE, TEST_TABLE};
 
@@ -424,9 +424,9 @@ impl TestCE {
         after_sync_sender: mpsc::UnboundedSender<(TestCommand, LogIndex)>,
         storage_cfg: StorageConfig,
     ) -> Self {
-        let engine_type = match storage_cfg {
-            StorageConfig::Memory => EngineType::Memory,
-            StorageConfig::RocksDB(path) => EngineType::Rocks(path),
+        let engine_type = match storage_cfg.engine {
+            EngineConfig::Memory => EngineType::Memory,
+            EngineConfig::RocksDB(path) => EngineType::Rocks(path),
             _ => unreachable!("Not supported storage type"),
         };
         let store =

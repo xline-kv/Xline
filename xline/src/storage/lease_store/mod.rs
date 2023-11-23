@@ -374,7 +374,7 @@ mod test {
     use std::{error::Error, time::Duration};
 
     use test_macros::abort_on_panic;
-    use utils::config::StorageConfig;
+    use utils::config::EngineConfig;
 
     use super::*;
     use crate::storage::db::DB;
@@ -382,7 +382,7 @@ mod test {
     #[tokio::test(flavor = "multi_thread")]
     #[abort_on_panic]
     async fn test_lease_storage() -> Result<(), Box<dyn Error>> {
-        let db = DB::open(&StorageConfig::Memory)?;
+        let db = DB::open(&EngineConfig::Memory)?;
         let lease_store = init_store(db);
         let revision_gen = lease_store.header_gen.general_revision_arc();
 
@@ -427,7 +427,7 @@ mod test {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_lease_sync() -> Result<(), Box<dyn Error>> {
-        let db = DB::open(&StorageConfig::Memory)?;
+        let db = DB::open(&EngineConfig::Memory)?;
         let lease_store = init_store(db);
         let wait_duration = Duration::from_millis(1);
 
@@ -479,7 +479,7 @@ mod test {
     #[tokio::test]
     #[abort_on_panic]
     async fn test_recover() -> Result<(), ExecuteError> {
-        let db = DB::open(&StorageConfig::Memory)?;
+        let db = DB::open(&EngineConfig::Memory)?;
         let store = init_store(Arc::clone(&db));
 
         let req1 = RequestWithToken::new(LeaseGrantRequest { ttl: 10, id: 1 }.into());

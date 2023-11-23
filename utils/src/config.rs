@@ -269,9 +269,9 @@ pub struct CurpConfig {
     pub candidate_timeout_ticks: u8,
 
     /// Curp storage path
-    #[builder(default = "StorageConfig::default()")]
-    #[serde(default = "StorageConfig::default")]
-    pub storage_cfg: StorageConfig,
+    #[builder(default = "EngineConfig::default()")]
+    #[serde(default = "EngineConfig::default")]
+    pub engine_cfg: EngineConfig,
 
     /// Number of command execute workers
     #[builder(default = "default_cmd_workers()")]
@@ -450,7 +450,7 @@ impl Default for CurpConfig {
             batch_max_size: default_batch_max_size(),
             follower_timeout_ticks: default_follower_timeout_ticks(),
             candidate_timeout_ticks: default_candidate_timeout_ticks(),
-            storage_cfg: StorageConfig::default(),
+            engine_cfg: EngineConfig::default(),
             cmd_workers: default_cmd_workers(),
             gc_interval: default_gc_interval(),
             log_entries_cap: default_log_entries_cap(),
@@ -613,27 +613,67 @@ pub enum AutoCompactConfig {
     Revision(i64),
 }
 
-/// Storage Configuration
+/// Engine Configuration
 #[allow(clippy::module_name_repetitions)]
 #[non_exhaustive]
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(
-    tag = "engine",
+    tag = "type",
     content = "data_dir",
     rename_all(deserialize = "lowercase")
 )]
-pub enum StorageConfig {
+pub enum EngineConfig {
     /// Memory Storage Engine
     Memory,
     /// RocksDB Storage Engine
     RocksDB(PathBuf),
 }
 
-impl Default for StorageConfig {
+impl Default for EngineConfig {
     #[inline]
     fn default() -> Self {
         Self::Memory
     }
+}
+
+/// /// Storage Configuration
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[allow(clippy::module_name_repetitions)]
+#[non_exhaustive]
+pub struct StorageConfig {
+    /// Engine Configuration
+    #[serde(default = "EngineConfig::default")]
+    pub engine: EngineConfig,
+    /// Quota
+    #[serde(default = "default_quota")]
+    pub quota: u64,
+}
+
+impl StorageConfig {
+    /// Create a new storage config
+    #[inline]
+    #[must_use]
+    pub fn new(engine: EngineConfig, quota: u64) -> Self {
+        Self { engine, quota }
+    }
+}
+
+impl Default for StorageConfig {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            engine: EngineConfig::default(),
+            quota: default_quota(),
+        }
+    }
+}
+
+/// Default quota: 8GB
+#[inline]
+#[must_use]
+pub fn default_quota() -> u64 {
+    // 8 * 1024 * 1024 * 1024
+    0x0002_0000_0000
 }
 
 /// Log configuration object
@@ -888,7 +928,7 @@ mod tests {
             use_backoff = false
 
             [storage]
-            engine = 'memory'
+            engine = { type = 'memory'}
 
             [compact]
             compact_batch_size = 123
@@ -956,7 +996,10 @@ mod tests {
             )
         );
 
-        assert_eq!(config.storage, StorageConfig::Memory);
+        assert_eq!(
+            config.storage,
+            StorageConfig::new(EngineConfig::Memory, default_quota())
+        );
 
         assert_eq!(
             config.log,
@@ -1007,8 +1050,7 @@ mod tests {
                 path = '/var/log/xline'
 
                 [storage]
-                engine = 'rocksdb'
-                data_dir = '/usr/local/xline/data-dir'
+                engine = { type = 'rocksdb', data_dir = '/usr/local/xline/data-dir' }
 
                 [compact]
 
@@ -1041,7 +1083,7 @@ mod tests {
             )
         );
 
-        if let StorageConfig::RocksDB(path) = config.storage {
+        if let EngineConfig::RocksDB(path) = config.storage.engine {
             assert_eq!(path, PathBuf::from("/usr/local/xline/data-dir"));
         } else {
             unreachable!();
@@ -1086,7 +1128,7 @@ mod tests {
                 path = '/var/log/xline'
 
                 [storage]
-                engine = 'memory'
+                engine = { type = 'memory' }
 
                 [compact]
 
