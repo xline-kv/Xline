@@ -227,7 +227,7 @@ mod test {
 
     use test_macros::abort_on_panic;
     use tokio_stream::StreamExt;
-    use utils::config::StorageConfig;
+    use utils::config::EngineConfig;
 
     use super::*;
     use crate::storage::db::DB;
@@ -239,7 +239,7 @@ mod test {
         let db_path = dir.join("db");
         let snapshot_path = dir.join("snapshot");
 
-        let persistent = DB::open(&StorageConfig::RocksDB(db_path.clone()))?;
+        let persistent = DB::open(&EngineConfig::RocksDB(db_path.clone()))?;
         let header_gen = HeaderGenerator::new(0, 0);
         let snap1_stream = snapshot_stream(&header_gen, persistent.as_ref())?;
         tokio::pin!(snap1_stream);

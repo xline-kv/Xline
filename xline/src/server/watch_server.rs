@@ -435,7 +435,7 @@ mod test {
         sync::mpsc,
         time::{sleep, timeout},
     };
-    use utils::config::{default_watch_progress_notify_interval, StorageConfig};
+    use utils::config::{default_watch_progress_notify_interval, EngineConfig};
 
     use super::*;
     use crate::{
@@ -594,7 +594,7 @@ mod test {
         let (tx, rx) = shutdown::channel();
         let (compact_tx, _compact_rx) = mpsc::channel(COMPACT_CHANNEL_SIZE);
         let index = Arc::new(Index::new());
-        let db = DB::open(&StorageConfig::Memory).unwrap();
+        let db = DB::open(&EngineConfig::Memory).unwrap();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let lease_collection = Arc::new(LeaseCollection::new(0));
         let next_id_gen = Arc::new(WatchIdGenerator::new(1));
@@ -776,7 +776,7 @@ mod test {
         let (tx, rx) = shutdown::channel();
         let (compact_tx, _compact_rx) = mpsc::channel(COMPACT_CHANNEL_SIZE);
         let index = Arc::new(Index::new());
-        let db = DB::open(&StorageConfig::Memory).unwrap();
+        let db = DB::open(&EngineConfig::Memory).unwrap();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let lease_collection = Arc::new(LeaseCollection::new(0));
         let next_id_gen = Arc::new(WatchIdGenerator::new(1));

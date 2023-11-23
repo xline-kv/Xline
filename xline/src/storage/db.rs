@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 
 use engine::{Engine, EngineType, Snapshot, StorageEngine, WriteOperation};
 use prost::Message;
-use utils::config::StorageConfig;
+use utils::config::EngineConfig;
 use xlineapi::execute_error::ExecuteError;
 
 use super::{
@@ -44,10 +44,10 @@ impl DB {
     /// # Errors
     /// Return `ExecuteError::DbError` when open db failed
     #[inline]
-    pub fn open(config: &StorageConfig) -> Result<Arc<Self>, ExecuteError> {
+    pub fn open(config: &EngineConfig) -> Result<Arc<Self>, ExecuteError> {
         let engine_type = match *config {
-            StorageConfig::Memory => EngineType::Memory,
-            StorageConfig::RocksDB(ref path) => EngineType::Rocks(path.clone()),
+            EngineConfig::Memory => EngineType::Memory,
+            EngineConfig::RocksDB(ref path) => EngineType::Rocks(path.clone()),
             _ => unreachable!("Not supported storage type"),
         };
         let engine = Engine::new(engine_type, &XLINE_TABLES)
@@ -258,7 +258,7 @@ mod test {
     #[abort_on_panic]
     async fn test_reset() -> Result<(), ExecuteError> {
         let data_dir = PathBuf::from("/tmp/test_reset");
-        let db = DB::open(&StorageConfig::RocksDB(data_dir.clone()))?;
+        let db = DB::open(&EngineConfig::RocksDB(data_dir.clone()))?;
 
         let revision = Revision::new(1, 1);
         let key = revision.encode_to_vec();
@@ -289,7 +289,7 @@ mod test {
         let origin_db_path = dir.join("origin_db");
         let new_db_path = dir.join("new_db");
         let snapshot_path = dir.join("snapshot");
-        let origin_db = DB::open(&StorageConfig::RocksDB(origin_db_path))?;
+        let origin_db = DB::open(&EngineConfig::RocksDB(origin_db_path))?;
 
         let revision = Revision::new(1, 1);
         let key = revision.encode_to_vec();
@@ -302,7 +302,7 @@ mod test {
 
         let snapshot = origin_db.get_snapshot(snapshot_path)?;
 
-        let new_db = DB::open(&StorageConfig::RocksDB(new_db_path))?;
+        let new_db = DB::open(&EngineConfig::RocksDB(new_db_path))?;
         new_db.reset(Some(snapshot)).await?;
 
         let res = new_db.get_values(KV_TABLE, &[&key])?;
@@ -318,8 +318,8 @@ mod test {
         let dir = PathBuf::from("/tmp/test_db_snapshot_wrong_type");
         let db_path = dir.join("db");
         let snapshot_path = dir.join("snapshot");
-        let rocks_db = DB::open(&StorageConfig::RocksDB(db_path))?;
-        let mem_db = DB::open(&StorageConfig::Memory)?;
+        let rocks_db = DB::open(&EngineConfig::RocksDB(db_path))?;
+        let mem_db = DB::open(&EngineConfig::Memory)?;
 
         let rocks_snap = rocks_db.get_snapshot(snapshot_path)?;
         let res = mem_db.reset(Some(rocks_snap)).await;
@@ -335,7 +335,7 @@ mod test {
         let dir = PathBuf::from("/tmp/test_get_snapshot");
         let data_path = dir.join("data");
         let snapshot_path = dir.join("snapshot");
-        let db = DB::open(&StorageConfig::RocksDB(data_path))?;
+        let db = DB::open(&EngineConfig::RocksDB(data_path))?;
         let mut res = db.get_snapshot(snapshot_path)?;
         assert_ne!(res.size(), 0);
         res.clean().await.unwrap();
@@ -347,7 +347,7 @@ mod test {
     #[tokio::test]
     #[abort_on_panic]
     async fn test_db_write_ops() {
-        let db = DB::open(&StorageConfig::Memory).unwrap();
+        let db = DB::open(&EngineConfig::Memory).unwrap();
         let lease = PbLease {
             id: 1,
             ttl: 10,

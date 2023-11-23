@@ -32,7 +32,7 @@ use tokio::{
 };
 use tracing::debug;
 use utils::{
-    config::{ClientConfig, CurpConfigBuilder, StorageConfig},
+    config::{default_quota, ClientConfig, CurpConfigBuilder, EngineConfig, StorageConfig},
     shutdown::{self, Trigger},
 };
 pub mod commandpb {
@@ -93,22 +93,27 @@ impl CurpGroup {
                         Some(ref path) => {
                             let storage_path = path.join(&name);
                             (
-                                StorageConfig::RocksDB(storage_path.join("curp")),
-                                StorageConfig::RocksDB(storage_path.join("xline")),
+                                EngineConfig::RocksDB(storage_path.join("curp")),
+                                EngineConfig::RocksDB(storage_path.join("xline")),
                                 Box::<RocksSnapshotAllocator>::default()
                                     as Box<dyn SnapshotAllocator>,
                             )
                         }
                         None => (
-                            StorageConfig::Memory,
-                            StorageConfig::Memory,
+                            EngineConfig::Memory,
+                            EngineConfig::Memory,
                             Box::<MemorySnapshotAllocator>::default() as Box<dyn SnapshotAllocator>,
                         ),
                     };
 
                 let (exe_tx, exe_rx) = mpsc::unbounded_channel();
                 let (as_tx, as_rx) = mpsc::unbounded_channel();
-                let ce = TestCE::new(name.clone(), exe_tx, as_tx, xline_storage_config);
+                let ce = TestCE::new(
+                    name.clone(),
+                    exe_tx,
+                    as_tx,
+                    StorageConfig::new(xline_storage_config, default_quota()),
+                );
 
                 let cluster_info = Arc::new(ClusterInfo::new(
                     all_members
@@ -136,7 +141,7 @@ impl CurpGroup {
                     role_change_cb,
                     Arc::new(
                         CurpConfigBuilder::default()
-                            .storage_cfg(curp_storage_config)
+                            .engine_cfg(curp_storage_config)
                             .log_entries_cap(10)
                             .build()
                             .unwrap(),
@@ -180,21 +185,26 @@ impl CurpGroup {
                 Some(ref path) => {
                     let storage_path = path.join(&name);
                     (
-                        StorageConfig::RocksDB(storage_path.join("curp")),
-                        StorageConfig::RocksDB(storage_path.join("xline")),
+                        EngineConfig::RocksDB(storage_path.join("curp")),
+                        EngineConfig::RocksDB(storage_path.join("xline")),
                         Box::<RocksSnapshotAllocator>::default() as Box<dyn SnapshotAllocator>,
                     )
                 }
                 None => (
-                    StorageConfig::Memory,
-                    StorageConfig::Memory,
+                    EngineConfig::Memory,
+                    EngineConfig::Memory,
                     Box::<MemorySnapshotAllocator>::default() as Box<dyn SnapshotAllocator>,
                 ),
             };
 
         let (exe_tx, exe_rx) = mpsc::unbounded_channel();
         let (as_tx, as_rx) = mpsc::unbounded_channel();
-        let ce = TestCE::new(name.clone(), exe_tx, as_tx, xline_storage_config);
+        let ce = TestCE::new(
+            name.clone(),
+            exe_tx,
+            as_tx,
+            StorageConfig::new(xline_storage_config, default_quota()),
+        );
 
         let id = cluster_info.self_id();
         let role_change_cb = TestRoleChange::default();
@@ -208,7 +218,7 @@ impl CurpGroup {
             role_change_cb,
             Arc::new(
                 CurpConfigBuilder::default()
-                    .storage_cfg(curp_storage_config)
+                    .engine_cfg(curp_storage_config)
                     .log_entries_cap(10)
                     .build()
                     .unwrap(),

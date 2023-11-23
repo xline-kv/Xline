@@ -11,7 +11,9 @@ use tokio::{
     net::TcpListener,
     time::{self, Duration},
 };
-use utils::config::{ClientConfig, CompactConfig, CurpConfig, ServerTimeout, StorageConfig};
+use utils::config::{
+    ClientConfig, CompactConfig, CurpConfig, EngineConfig, ServerTimeout, StorageConfig,
+};
 use xline::{server::XlineServer, storage::db::DB};
 pub use xline_client::{types, Client, ClientOptions};
 
@@ -66,7 +68,7 @@ impl Cluster {
                 self.paths.insert(i, path.clone());
                 path
             };
-            let db: Arc<DB> = DB::open(&StorageConfig::RocksDB(path.clone())).unwrap();
+            let db: Arc<DB> = DB::open(&EngineConfig::RocksDB(path.clone())).unwrap();
             let cluster_info = ClusterInfo::new(
                 self.all_members
                     .clone()
@@ -80,12 +82,12 @@ impl Cluster {
                     cluster_info.into(),
                     is_leader,
                     CurpConfig {
-                        storage_cfg: StorageConfig::RocksDB(path.join("curp")),
+                        engine_cfg: EngineConfig::RocksDB(path.join("curp")),
                         ..Default::default()
                     },
                     ClientConfig::default(),
                     ServerTimeout::default(),
-                    StorageConfig::Memory,
+                    StorageConfig::default(),
                     CompactConfig::default(),
                 );
                 let result = server
@@ -111,7 +113,7 @@ impl Cluster {
             self.paths.insert(idx, path.clone());
             path
         };
-        let db: Arc<DB> = DB::open(&StorageConfig::RocksDB(path.clone())).unwrap();
+        let db: Arc<DB> = DB::open(&EngineConfig::RocksDB(path.clone())).unwrap();
         let init_cluster_info = ClusterInfo::new(
             self.all_members
                 .clone()
@@ -133,12 +135,12 @@ impl Cluster {
                 cluster_info.into(),
                 false,
                 CurpConfig {
-                    storage_cfg: StorageConfig::RocksDB(path.join("curp")),
+                    engine_cfg: EngineConfig::RocksDB(path.join("curp")),
                     ..Default::default()
                 },
                 ClientConfig::default(),
                 ServerTimeout::default(),
-                StorageConfig::Memory,
+                StorageConfig::default(),
                 CompactConfig::default(),
             );
             let result = server

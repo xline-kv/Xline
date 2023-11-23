@@ -853,7 +853,7 @@ mod test {
     use std::time::Duration;
 
     use test_macros::abort_on_panic;
-    use utils::{config::StorageConfig, shutdown};
+    use utils::{config::EngineConfig, shutdown};
 
     use super::*;
     use crate::{
@@ -955,7 +955,7 @@ mod test {
     #[abort_on_panic]
     async fn test_keys_only() -> Result<(), ExecuteError> {
         let (tx, rx) = shutdown::channel();
-        let db = DB::open(&StorageConfig::Memory)?;
+        let db = DB::open(&EngineConfig::Memory)?;
         let (store, _rev) = init_store(db, rx).await?;
 
         let request = RangeRequest {
@@ -977,7 +977,7 @@ mod test {
     #[abort_on_panic]
     async fn test_range_empty() -> Result<(), ExecuteError> {
         let (tx, rx) = shutdown::channel();
-        let db = DB::open(&StorageConfig::Memory)?;
+        let db = DB::open(&EngineConfig::Memory)?;
         let (store, _rev) = init_store(db, rx).await?;
 
         let request = RangeRequest {
@@ -997,7 +997,7 @@ mod test {
     #[abort_on_panic]
     async fn test_range_filter() -> Result<(), ExecuteError> {
         let (tx, rx) = shutdown::channel();
-        let db = DB::open(&StorageConfig::Memory)?;
+        let db = DB::open(&EngineConfig::Memory)?;
         let (store, _rev) = init_store(db, rx).await?;
 
         let request = RangeRequest {
@@ -1022,7 +1022,7 @@ mod test {
     #[abort_on_panic]
     async fn test_range_sort() -> Result<(), ExecuteError> {
         let (tx, rx) = shutdown::channel();
-        let db = DB::open(&StorageConfig::Memory)?;
+        let db = DB::open(&EngineConfig::Memory)?;
         let (store, _rev) = init_store(db, rx).await?;
         let keys = ["a", "b", "c", "d", "e", "z"];
         let reversed_keys = ["z", "e", "d", "c", "b", "a"];
@@ -1082,7 +1082,7 @@ mod test {
     #[abort_on_panic]
     async fn test_recover() -> Result<(), ExecuteError> {
         let (tx, rx) = shutdown::channel();
-        let db = DB::open(&StorageConfig::Memory)?;
+        let db = DB::open(&EngineConfig::Memory)?;
         let ops = vec![WriteOp::PutCompactRevision(8)];
         db.flush_ops(ops)?;
         let (store, _rev_gen) = init_store(Arc::clone(&db), rx.clone()).await?;
@@ -1153,7 +1153,7 @@ mod test {
             }
             .into(),
         );
-        let db = DB::open(&StorageConfig::Memory)?;
+        let db = DB::open(&EngineConfig::Memory)?;
         let (store, rev) = init_store(db, rx).await?;
         exe_as_and_flush(&store, &txn_req, rev.next()).await?;
         let request = RangeRequest {
@@ -1173,7 +1173,7 @@ mod test {
     #[abort_on_panic]
     async fn test_kv_store_index_available() {
         let (tx, rx) = shutdown::channel();
-        let db = DB::open(&StorageConfig::Memory).unwrap();
+        let db = DB::open(&EngineConfig::Memory).unwrap();
         let (store, revision) = init_store(Arc::clone(&db), rx).await.unwrap();
         let handle = tokio::spawn({
             let store = Arc::clone(&store);
@@ -1208,7 +1208,7 @@ mod test {
     #[tokio::test]
     async fn test_compaction() -> Result<(), ExecuteError> {
         let (tx, rx) = shutdown::channel();
-        let db = DB::open(&StorageConfig::Memory)?;
+        let db = DB::open(&EngineConfig::Memory)?;
         let store = init_empty_store(db, rx);
         let revision = RevisionNumberGenerator::default();
         // sample requests: (a, 1) (b, 2) (a, 3) (del a)

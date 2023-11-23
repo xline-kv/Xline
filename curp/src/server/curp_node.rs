@@ -835,7 +835,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         let (ce_event_tx, task_rx, done_tx) =
             conflict_checked_mpmc::channel(Arc::clone(&cmd_executor), shutdown_trigger.clone());
         let ce_event_tx: Arc<dyn CEEventTxApi<C>> = Arc::new(ce_event_tx);
-        let storage = Arc::new(DB::open(&curp_cfg.storage_cfg)?);
+        let storage = Arc::new(DB::open(&curp_cfg.engine_cfg)?);
 
         // create curp state machine
         let (voted_for, entries) = storage.recover().await?;
