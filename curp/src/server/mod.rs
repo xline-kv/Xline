@@ -333,7 +333,7 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         addr: std::net::SocketAddr,
-        executor: CE,
+        executor: Arc<CE>,
         snapshot_allocator: Box<dyn SnapshotAllocator>,
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,

@@ -42,7 +42,7 @@ impl<DB> AlarmStore<DB>
 where
     DB: StorageApi,
 {
-    /// execute a kv request
+    /// execute a alarm request
     pub(crate) fn execute(&self, request: &RequestWithToken) -> CommandResponse {
         #[allow(clippy::wildcard_enum_match_arm)]
         let alarms = match request.request {
