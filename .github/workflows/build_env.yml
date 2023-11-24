@@ -11,13 +11,11 @@ jobs:
     name: Try to build env
     steps:
       - uses: actions/checkout@v3
-
       - name: Get changed files in ci
         id: changed-files-ci
         uses: tj-actions/changed-files@v40
         with:
           files: ci/{Dockerfile,build-env.sh}
-      
       - name: Run build env if changes
         if: steps.changed-files-ci.outputs.any_changed == 'true'
         env:
