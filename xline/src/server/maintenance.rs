@@ -1,4 +1,4 @@
-use std::{pin::Pin, sync::Arc};
+use std::{fmt::Debug, pin::Pin, sync::Arc};
 
 use async_stream::try_stream;
 use bytes::BytesMut;
@@ -7,10 +7,13 @@ use curp::{client::Client, members::ClusterInfo};
 use engine::SnapshotApi;
 use futures::stream::Stream;
 use sha2::{Digest, Sha256};
-use tracing::error;
-use xlineapi::command::Command;
+use tracing::{debug, error};
+use xlineapi::{
+    command::{command_from_request_wrapper, Command, CommandResponse, SyncResponse},
+    RequestWithToken, RequestWrapper,
+};
 
-use super::command::client_err_to_status;
+use super::{auth_server::get_token, command::client_err_to_status};
 use crate::{
     header_gen::HeaderGenerator,
     rpc::{
@@ -65,6 +68,24 @@ where
             cluster_info,
         }
     }
+
+    /// Propose request and get result with fast/slow path
+    async fn propose<T>(
+        &self,
+        request: tonic::Request<T>,
+        use_fast_path: bool,
+    ) -> Result<(CommandResponse, Option<SyncResponse>), tonic::Status>
+    where
+        T: Into<RequestWrapper> + Debug,
+    {
+        let token = get_token(request.metadata());
+        let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
+        let cmd = command_from_request_wrapper(wrapper);
+        self.client
+            .propose(cmd, use_fast_path)
+            .await
+            .map_err(client_err_to_status)
+    }
 }
 
 #[tonic::async_trait]
@@ -74,11 +95,19 @@ where
 {
     async fn alarm(
         &self,
-        _request: tonic::Request<AlarmRequest>,
+        request: tonic::Request<AlarmRequest>,
     ) -> Result<tonic::Response<AlarmResponse>, tonic::Status> {
-        Err(tonic::Status::unimplemented(
-            "alarm is unimplemented".to_owned(),
-        ))
+        let is_fast_path = true;
+        let (res, sync_res) = self.propose(request, is_fast_path).await?;
+        let mut res: AlarmResponse = res.into_inner().into();
+        if let Some(sync_res) = sync_res {
+            let revision = sync_res.revision();
+            debug!("Get revision {:?} for AlarmResponse", revision);
+            if let Some(mut header) = res.header.as_mut() {
+                header.revision = revision;
+            }
+        }
+        Ok(tonic::Response::new(res))
     }
 
     async fn status(

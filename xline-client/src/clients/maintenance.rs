@@ -1,7 +1,7 @@
 use std::{fmt::Debug, sync::Arc};
 
 use tonic::{transport::Channel, Streaming};
-use xlineapi::{SnapshotRequest, SnapshotResponse};
+use xlineapi::{AlarmRequest, AlarmResponse, SnapshotRequest, SnapshotResponse};
 
 use crate::{error::Result, AuthService};
 
@@ -69,5 +69,36 @@ impl MaintenanceClient {
     #[inline]
     pub async fn snapshot(&mut self) -> Result<Streaming<SnapshotResponse>> {
         Ok(self.inner.snapshot(SnapshotRequest {}).await?.into_inner())
+    }
+
+    /// Sends a alarm request
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the inner RPC client encountered a propose failure
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{Client, ClientOptions};
+    /// use anyhow::Result;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     // the name and address of all curp members
+    ///     let curp_members = ["10.0.0.1:2379", "10.0.0.2:2379", "10.0.0.3:2379"];
+    ///
+    ///     let mut client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .maintenance_client();
+    ///
+    ///     client.alarm(AlarmRequest::new(AlarmAction::Get, 0, AlarmType::None)).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    #[inline]
+    pub async fn alarm(&mut self, request: AlarmRequest) -> Result<AlarmResponse> {
+        Ok(self.inner.alarm(request).await?.into_inner())
     }
 }

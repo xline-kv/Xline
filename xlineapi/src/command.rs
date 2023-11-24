@@ -273,7 +273,8 @@ fn get_lease_ids(wrapper: &RequestWrapper) -> HashSet<i64> {
         | RequestWrapper::AuthUserListRequest(_)
         | RequestWrapper::AuthUserRevokeRoleRequest(_)
         | RequestWrapper::AuthenticateRequest(_)
-        | RequestWrapper::LeaseLeasesRequest(_) => HashSet::new(),
+        | RequestWrapper::LeaseLeasesRequest(_)
+        | RequestWrapper::AlarmRequest(_) => HashSet::new(),
     }
 }
 
@@ -291,7 +292,11 @@ impl ConflictCheck for Command {
         }
         // any two requests that don't meet the above conditions will conflict with each other
         // because the auth write request will make all previous token invalid
-        if (this_req.is_auth_request()) || (other_req.is_auth_request()) {
+        if this_req.is_auth_request()
+            || other_req.is_auth_request()
+            || this_req.is_alarm_request()
+            || other_req.is_alarm_request()
+        {
             return true;
         }
 
@@ -376,6 +381,18 @@ impl Command {
     #[inline]
     pub fn request(&self) -> &RequestWithToken {
         &self.request
+    }
+
+    /// need check quota
+    #[must_use]
+    #[inline]
+    pub fn need_check_quota(&self) -> bool {
+        matches!(
+            self.request.request,
+            RequestWrapper::LeaseGrantRequest(_)
+                | RequestWrapper::PutRequest(_)
+                | RequestWrapper::TxnRequest(_)
+        )
     }
 }
 

@@ -4,12 +4,13 @@ use test_macros::abort_on_panic;
 use tokio::io::AsyncWriteExt;
 #[cfg(test)]
 use xline::restore::restore;
+use xline_client::error::XlineClientError;
 use xline_test_utils::{
     types::kv::{PutRequest, RangeRequest},
     Client, ClientOptions, Cluster,
 };
+use xlineapi::{AlarmAction, AlarmRequest, AlarmType, execute_error::ExecuteError};
 
-#[cfg(test)]
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn test_snapshot_and_restore() -> Result<(), Box<dyn std::error::Error>> {
@@ -50,4 +51,45 @@ async fn test_snapshot_and_restore() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(res.kvs[0].value, b"value");
     tokio::fs::remove_dir_all(&dir).await?;
     Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[abort_on_panic]
+async fn leader_should_detect_no_space_alarm() {
+    test_alarm(0).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[abort_on_panic]
+async fn follower_should_detect_no_space_alarm() {
+    test_alarm(1).await;
+}
+
+async fn test_alarm(idx: usize) {
+    let q = 8 * 1024;
+    let mut cluster = Cluster::new(3).await;
+    _ = cluster.quotas.insert(idx, q);
+    cluster.start().await;
+    let client = cluster.client().await;
+    let mut m_client = client.maintenance_client();
+    let k_client = client.kv_client();
+
+    for i in 1..100u8 {
+        let key: Vec<u8> = vec![i];
+        let value: Vec<u8> = vec![i];
+        let req = PutRequest::new(key, value);
+        if let Err(err) = k_client.put(req).await {
+            assert!(matches!(
+                err,
+                XlineClientError::CommandError(ExecuteError::Nospace)
+            ));
+            break;
+        }
+    }
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    let res = m_client
+        .alarm(AlarmRequest::new(AlarmAction::Get, 0, AlarmType::None))
+        .await
+        .unwrap();
+    assert!(!res.alarms.is_empty());
 }

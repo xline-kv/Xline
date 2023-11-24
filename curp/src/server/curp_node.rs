@@ -636,7 +636,6 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
 
         // create curp state machine
         let (voted_for, entries) = storage.recover().await?;
-        let quota_checker = cmd_executor.quota_checker();
         let curp = if voted_for.is_none() && entries.is_empty() {
             Arc::new(RawCurp::new(
                 Arc::clone(&cluster_info),
@@ -651,7 +650,6 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                 role_change,
                 shutdown_trigger,
                 connects,
-                quota_checker,
             ))
         } else {
             info!(
@@ -676,7 +674,6 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                 role_change,
                 shutdown_trigger,
                 connects,
-                quota_checker,
             ))
         };
 
