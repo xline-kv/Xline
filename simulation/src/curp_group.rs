@@ -26,7 +26,7 @@ use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tracing::debug;
 use utils::{
-    config::{ClientConfig, CurpConfigBuilder, StorageConfig},
+    config::{ClientConfig, CurpConfigBuilder, EngineConfig},
     shutdown,
 };
 
@@ -86,7 +86,7 @@ impl CurpGroup {
                     .map(|(k, mut v)| (k, v.pop().unwrap()))
                     .collect();
                 let id = cluster_info.self_id();
-                let storage_cfg = StorageConfig::RocksDB(storage_path.clone());
+                let engine_cfg = EngineConfig::RocksDB(storage_path.clone());
                 let store_c = Arc::clone(&store);
                 let role_change_cb = TestRoleChange::default();
                 let role_change_arc = role_change_cb.get_inner_arc();
@@ -97,12 +97,12 @@ impl CurpGroup {
                     .ip(format!("192.168.1.{}", i + 1).parse().unwrap())
                     .init(move || {
                         let (trigger, _listener) = shutdown::channel();
-                        let ce = TestCE::new(
+                        let ce = Arc::new(TestCE::new(
                             name.clone(),
                             exe_tx.clone(),
                             as_tx.clone(),
-                            StorageConfig::Memory,
-                        );
+                            EngineConfig::Memory,
+                        ));
                         store_c.lock().replace(Arc::clone(&ce.store));
                         // we will restart the old leader.
                         // after the reboot, it may no longer be the leader.
@@ -119,7 +119,7 @@ impl CurpGroup {
                             },
                             Arc::new(
                                 CurpConfigBuilder::default()
-                                    .storage_cfg(storage_cfg.clone())
+                                    .engine_cfg(engine_cfg.clone())
                                     .log_entries_cap(10)
                                     .build()
                                     .unwrap(),

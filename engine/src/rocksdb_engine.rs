@@ -81,6 +81,8 @@ impl RocksEngine {
     }
 
     /// Get the total sst file size of all tables
+    /// # WARNING
+    /// This method need to flush memtable to disk. it may be slow. do not call it frequently.
     fn get_db_size<T: AsRef<str>, V: AsRef<[T]>>(db: &DB, tables: V) -> Result<u64, EngineError> {
         let mut size = 0;
         for table in tables.as_ref() {
