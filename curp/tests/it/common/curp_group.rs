@@ -108,12 +108,7 @@ impl CurpGroup {
 
                 let (exe_tx, exe_rx) = mpsc::unbounded_channel();
                 let (as_tx, as_rx) = mpsc::unbounded_channel();
-                let ce = TestCE::new(
-                    name.clone(),
-                    exe_tx,
-                    as_tx,
-                    StorageConfig::new(xline_storage_config, default_quota()),
-                );
+                let ce = TestCE::new(name.clone(), exe_tx, as_tx, xline_storage_config);
 
                 let cluster_info = Arc::new(ClusterInfo::new(
                     all_members
@@ -199,12 +194,7 @@ impl CurpGroup {
 
         let (exe_tx, exe_rx) = mpsc::unbounded_channel();
         let (as_tx, as_rx) = mpsc::unbounded_channel();
-        let ce = TestCE::new(
-            name.clone(),
-            exe_tx,
-            as_tx,
-            StorageConfig::new(xline_storage_config, default_quota()),
-        );
+        let ce = TestCE::new(name.clone(), exe_tx, as_tx, xline_storage_config);
 
         let id = cluster_info.self_id();
         let role_change_cb = TestRoleChange::default();

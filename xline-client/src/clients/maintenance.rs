@@ -77,6 +77,7 @@ impl MaintenanceClient {
     ///
     /// ```no_run
     /// use xline_client::{Client, ClientOptions};
+    /// use xlineapi::{AlarmAction, AlarmRequest, AlarmType};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]

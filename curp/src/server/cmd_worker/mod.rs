@@ -388,7 +388,7 @@ mod tests {
     use test_macros::abort_on_panic;
     use tokio::{sync::mpsc, time::Instant};
     use tracing_test::traced_test;
-    use utils::config::{default_quota, EngineConfig, StorageConfig};
+    use utils::config::EngineConfig;
 
     use super::*;
     use crate::log_entry::LogEntry;
@@ -404,7 +404,7 @@ mod tests {
             "S1".to_owned(),
             er_tx,
             as_tx,
-            StorageConfig::new(EngineConfig::Memory, default_quota()),
+            EngineConfig::Memory,
         ));
         let (t, l) = shutdown::channel();
         let (ce_event_tx, task_rx, done_tx) =
@@ -442,7 +442,7 @@ mod tests {
             "S1".to_owned(),
             er_tx,
             as_tx,
-            StorageConfig::new(EngineConfig::Memory, default_quota()),
+            EngineConfig::Memory,
         ));
         let (t, l) = shutdown::channel();
         let (ce_event_tx, task_rx, done_tx) =
@@ -489,7 +489,7 @@ mod tests {
             "S1".to_owned(),
             er_tx,
             as_tx,
-            StorageConfig::new(EngineConfig::Memory, default_quota()),
+            EngineConfig::Memory,
         ));
         let (t, l) = shutdown::channel();
         let (ce_event_tx, task_rx, done_tx) =
@@ -540,7 +540,7 @@ mod tests {
             "S1".to_owned(),
             er_tx,
             as_tx,
-            StorageConfig::new(EngineConfig::Memory, default_quota()),
+            EngineConfig::Memory,
         ));
         let (t, l) = shutdown::channel();
         let (ce_event_tx, task_rx, done_tx) =
@@ -577,7 +577,7 @@ mod tests {
             "S1".to_owned(),
             er_tx,
             as_tx,
-            StorageConfig::new(EngineConfig::Memory, default_quota()),
+            EngineConfig::Memory,
         ));
         let (t, l) = shutdown::channel();
         let (ce_event_tx, task_rx, done_tx) =
@@ -621,7 +621,7 @@ mod tests {
             "S1".to_owned(),
             er_tx,
             as_tx,
-            StorageConfig::new(EngineConfig::Memory, default_quota()),
+            EngineConfig::Memory,
         ));
         let (t, l) = shutdown::channel();
         let (ce_event_tx, task_rx, done_tx) =
@@ -677,7 +677,7 @@ mod tests {
             "S1".to_owned(),
             er_tx,
             as_tx,
-            StorageConfig::new(EngineConfig::Memory, default_quota()),
+            EngineConfig::Memory,
         ));
         let (t, l) = shutdown::channel();
         let (ce_event_tx, task_rx, done_tx) =
@@ -732,7 +732,7 @@ mod tests {
             "S1".to_owned(),
             er_tx,
             as_tx,
-            StorageConfig::new(EngineConfig::Memory, default_quota()),
+            EngineConfig::Memory,
         ));
         let (ce_event_tx, task_rx, done_tx) =
             conflict_checked_mpmc::channel(Arc::clone(&ce1), t.clone());
@@ -778,7 +778,7 @@ mod tests {
             "S1".to_owned(),
             er_tx,
             as_tx,
-            StorageConfig::new(EngineConfig::Memory, default_quota()),
+            EngineConfig::Memory,
         ));
         let (ce_event_tx, task_rx, done_tx) =
             conflict_checked_mpmc::channel(Arc::clone(&ce2), t.clone());
