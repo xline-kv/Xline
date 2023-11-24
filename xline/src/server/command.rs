@@ -2,20 +2,25 @@ use std::sync::Arc;
 
 use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{
-    cmd::{
-        Command as CurpCommand, CommandExecutor as CurpCommandExecutor, ProposeId, QuotaChecker,
-    },
+    client::Client,
+    cmd::{Command as CurpCommand, CommandExecutor as CurpCommandExecutor, ProposeId},
     error::ClientError,
+    members::ServerId,
     LogIndex,
 };
 use engine::Snapshot;
-use xlineapi::{command::Command, execute_error::ExecuteError, PutRequest, Request, TxnRequest};
+use tracing::warn;
+use xlineapi::{
+    command::{Command, KeyRange},
+    execute_error::ExecuteError,
+    AlarmAction, AlarmRequest, AlarmType, PutRequest, Request, TxnRequest,
+};
 
 use super::barriers::{IdBarrier, IndexBarrier};
 use crate::{
     revision_number::RevisionNumberGenerator,
-    rpc::{RequestBackend, RequestWrapper},
-    storage::{db::WriteOp, storage_api::StorageApi, AuthStore, KvStore, LeaseStore},
+    rpc::{RequestBackend, RequestWithToken, RequestWrapper},
+    storage::{db::WriteOp, storage_api::StorageApi, AlarmStore, AuthStore, KvStore, LeaseStore},
 };
 
 /// Meta table name
@@ -64,6 +69,8 @@ where
     auth_storage: Arc<AuthStore<S>>,
     /// Lease Storage
     lease_storage: Arc<LeaseStore<S>>,
+    /// Alarm Storage
+    alarm_storage: Arc<AlarmStore<S>>,
     /// persistent storage
     persistent: Arc<S>,
     /// Barrier for applied index
@@ -75,7 +82,15 @@ where
     /// Revision Number generator for Auth request
     auth_rev: Arc<RevisionNumberGenerator>,
     /// Quota checker
-    quota_checker: Arc<dyn QuotaChecker<Command>>,
+    quota_checker: Arc<dyn QuotaChecker>,
+    /// Alarmer
+    alarmer: Alarmer,
+}
+
+/// Quota checker
+pub(crate) trait QuotaChecker: Sync + Send + std::fmt::Debug {
+    /// Check if the command executor has enough quota to execute the command
+    fn check(&self, cmd: &Command) -> bool;
 }
 
 /// Quota checker for `Command`
@@ -162,25 +177,71 @@ where
             | RequestWrapper::AuthUserRevokeRoleRequest(_)
             | RequestWrapper::AuthenticateRequest(_)
             | RequestWrapper::LeaseRevokeRequest(_)
-            | RequestWrapper::LeaseLeasesRequest(_) => 0,
+            | RequestWrapper::LeaseLeasesRequest(_)
+            | RequestWrapper::AlarmRequest(_) => 0,
         }
     }
 }
 
-impl<S> QuotaChecker<Command> for CommandQuotaChecker<S>
+impl<S> QuotaChecker for CommandQuotaChecker<S>
 where
     S: StorageApi,
 {
     fn check(&self, cmd: &Command) -> bool {
+        if !cmd.need_check_quota() {
+            return true;
+        }
         let cmd_size = Self::cmd_size(&cmd.request().request);
         if self.persistent.size().overflow_add(cmd_size) > self.quota {
             if let Ok(file_size) = self.persistent.file_size() {
                 if file_size.overflow_add(cmd_size) > self.quota {
+                    warn!(
+                        "Quota exceeded, file size: {}, cmd size: {}, quota: {}",
+                        file_size, cmd_size, self.quota
+                    );
                     return false;
                 }
             }
         }
         true
+    }
+}
+
+/// Alarmer
+#[derive(Debug, Clone)]
+struct Alarmer {
+    /// Node id
+    id: ServerId,
+    /// Client
+    client: Arc<Client<Command>>,
+}
+
+impl Alarmer {
+    /// Create a new `Alarmer`
+    fn new(id: ServerId, client: Arc<Client<Command>>) -> Self {
+        Self { id, client }
+    }
+
+    /// Propose alarm request to other nodes
+    async fn alarm(
+        &self,
+        action: AlarmAction,
+        alarm: AlarmType,
+    ) -> Result<(), ClientError<Command>> {
+        let id = self.client.gen_propose_id().await?;
+        let alarm_req = AlarmRequest::new(action, self.id, alarm);
+        _ = self
+            .client
+            .propose(
+                Command::new(
+                    vec![],
+                    RequestWithToken::new(RequestWrapper::AlarmRequest(alarm_req)),
+                    id,
+                ),
+                true,
+            )
+            .await?;
+        Ok(())
     }
 }
 
@@ -194,24 +255,54 @@ where
         kv_storage: Arc<KvStore<S>>,
         auth_storage: Arc<AuthStore<S>>,
         lease_storage: Arc<LeaseStore<S>>,
+        alarm_storage: Arc<AlarmStore<S>>,
         persistent: Arc<S>,
         index_barrier: Arc<IndexBarrier>,
         id_barrier: Arc<IdBarrier>,
         general_rev: Arc<RevisionNumberGenerator>,
         auth_rev: Arc<RevisionNumberGenerator>,
         quota: u64,
+        node_id: ServerId,
+        client: Arc<Client<Command>>,
     ) -> Self {
+        let alarmer = Alarmer::new(node_id, client);
         let quota_checker = Arc::new(CommandQuotaChecker::new(quota, Arc::clone(&persistent)));
         Self {
             kv_storage,
             auth_storage,
             lease_storage,
+            alarm_storage,
             persistent,
             index_barrier,
             id_barrier,
             general_rev,
             auth_rev,
             quota_checker,
+            alarmer,
+        }
+    }
+
+    /// Check if the alarm is activated
+    fn check_alarm(&self, cmd: &Command) -> Result<(), ExecuteError> {
+        #[allow(clippy::wildcard_enum_match_arm)]
+        match cmd.request().request {
+            RequestWrapper::PutRequest(_)
+            | RequestWrapper::TxnRequest(_)
+            | RequestWrapper::LeaseGrantRequest(_) => match self.alarm_storage.current_alarm() {
+                AlarmType::Corrupt => Err(ExecuteError::DbError("Corrupt".to_owned())),
+                AlarmType::Nospace => Err(ExecuteError::Nospace),
+                AlarmType::None => Ok(()),
+            },
+
+            RequestWrapper::RangeRequest(_)
+            | RequestWrapper::DeleteRangeRequest(_)
+            | RequestWrapper::LeaseRevokeRequest(_)
+            | RequestWrapper::CompactionRequest(_) => match self.alarm_storage.current_alarm() {
+                AlarmType::Corrupt => Err(ExecuteError::DbError("Corrupt".to_owned())),
+                AlarmType::Nospace | AlarmType::None => Ok(()),
+            },
+
+            _ => Ok(()),
         }
     }
 }
@@ -225,6 +316,7 @@ where
         &self,
         cmd: &Command,
     ) -> Result<<Command as CurpCommand>::PR, <Command as CurpCommand>::Error> {
+        self.check_alarm(cmd)?;
         let wrapper = cmd.request();
         self.auth_storage.check_permission(wrapper)?;
         let revision = match wrapper.request.backend() {
@@ -242,6 +334,7 @@ where
                     self.general_rev.next()
                 }
             }
+            RequestBackend::Alarm => -1,
         };
         Ok(revision)
     }
@@ -255,6 +348,7 @@ where
             RequestBackend::Kv => self.kv_storage.execute(wrapper),
             RequestBackend::Auth => self.auth_storage.execute(wrapper),
             RequestBackend::Lease => self.lease_storage.execute(wrapper),
+            RequestBackend::Alarm => Ok(self.alarm_storage.execute(wrapper)),
         }
     }
 
@@ -271,6 +365,7 @@ where
             RequestBackend::Kv => self.kv_storage.after_sync(wrapper, revision).await?,
             RequestBackend::Auth => self.auth_storage.after_sync(wrapper, revision)?,
             RequestBackend::Lease => self.lease_storage.after_sync(wrapper, revision).await?,
+            RequestBackend::Alarm => self.alarm_storage.after_sync(wrapper, revision),
         };
         ops.append(&mut wr_ops);
         let key_revisions = self.persistent.flush_ops(ops)?;
@@ -279,7 +374,15 @@ where
         }
         self.lease_storage.mark_lease_synced(&wrapper.request);
         if !quota_enough {
-            return Err(ExecuteError::DbError("Quota exceeded".to_owned()));
+            let alarmer = self.alarmer.clone();
+            let _ig = tokio::spawn(async move {
+                if let Err(e) = alarmer
+                    .alarm(AlarmAction::Activate, AlarmType::Nospace)
+                    .await
+                {
+                    warn!("{} propose alarm failed: {:?}", alarmer.id, e);
+                }
+            });
         }
         Ok(res)
     }
@@ -325,10 +428,44 @@ where
         self.id_barrier.trigger(id);
         self.index_barrier.trigger(index);
     }
+}
 
-    fn quota_checker(&self) -> Arc<dyn QuotaChecker<Command>> {
-        Arc::clone(&self.quota_checker)
-    }
+/// Generate `Command` proposal from `Request`
+pub(super) fn command_from_request_wrapper<S>(
+    propose_id: ProposeId,
+    wrapper: RequestWithToken,
+    lease_storage: Option<&LeaseStore<S>>,
+) -> Command
+where
+    S: StorageApi,
+{
+    #[allow(clippy::wildcard_enum_match_arm)]
+    let keys = match wrapper.request {
+        RequestWrapper::RangeRequest(ref req) => {
+            vec![KeyRange::new(req.key.as_slice(), req.range_end.as_slice())]
+        }
+        RequestWrapper::PutRequest(ref req) => vec![KeyRange::new_one_key(req.key.as_slice())],
+        RequestWrapper::DeleteRangeRequest(ref req) => {
+            vec![KeyRange::new(req.key.as_slice(), req.range_end.as_slice())]
+        }
+        RequestWrapper::TxnRequest(ref req) => req
+            .compare
+            .iter()
+            .map(|cmp| KeyRange::new(cmp.key.as_slice(), cmp.range_end.as_slice()))
+            .collect(),
+        RequestWrapper::LeaseRevokeRequest(ref req) => {
+            let Some(lease_storage) = lease_storage else {
+                panic!("lease_storage should be Some(_) when creating command of LeaseRevokeRequest")
+            };
+            lease_storage
+                .get_keys(req.id)
+                .into_iter()
+                .map(|k| KeyRange::new(k, ""))
+                .collect()
+        }
+        _ => vec![],
+    };
+    Command::new(keys, wrapper, propose_id)
 }
 
 /// Convert `ClientError` to `tonic::Status`

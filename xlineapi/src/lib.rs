@@ -206,6 +206,7 @@ pub use self::{
         Revisions as PbRevisions, UserRole as PbUserRole,
     },
     etcdserverpb::{
+        alarm_request::AlarmAction,
         auth_client::AuthClient,
         auth_server::{Auth, AuthServer},
         cluster_client::ClusterClient,
@@ -222,14 +223,15 @@ pub use self::{
         watch_client::WatchClient,
         watch_request::RequestUnion,
         watch_server::{Watch, WatchServer},
-        AlarmRequest, AlarmResponse, AuthDisableRequest, AuthDisableResponse, AuthEnableRequest,
-        AuthEnableResponse, AuthRoleAddRequest, AuthRoleAddResponse, AuthRoleDeleteRequest,
-        AuthRoleDeleteResponse, AuthRoleGetRequest, AuthRoleGetResponse,
-        AuthRoleGrantPermissionRequest, AuthRoleGrantPermissionResponse, AuthRoleListRequest,
-        AuthRoleListResponse, AuthRoleRevokePermissionRequest, AuthRoleRevokePermissionResponse,
-        AuthStatusRequest, AuthStatusResponse, AuthUserAddRequest, AuthUserAddResponse,
-        AuthUserChangePasswordRequest, AuthUserChangePasswordResponse, AuthUserDeleteRequest,
-        AuthUserDeleteResponse, AuthUserGetRequest, AuthUserGetResponse, AuthUserGrantRoleRequest,
+        AlarmMember, AlarmRequest, AlarmResponse, AlarmType, AuthDisableRequest,
+        AuthDisableResponse, AuthEnableRequest, AuthEnableResponse, AuthRoleAddRequest,
+        AuthRoleAddResponse, AuthRoleDeleteRequest, AuthRoleDeleteResponse, AuthRoleGetRequest,
+        AuthRoleGetResponse, AuthRoleGrantPermissionRequest, AuthRoleGrantPermissionResponse,
+        AuthRoleListRequest, AuthRoleListResponse, AuthRoleRevokePermissionRequest,
+        AuthRoleRevokePermissionResponse, AuthStatusRequest, AuthStatusResponse,
+        AuthUserAddRequest, AuthUserAddResponse, AuthUserChangePasswordRequest,
+        AuthUserChangePasswordResponse, AuthUserDeleteRequest, AuthUserDeleteResponse,
+        AuthUserGetRequest, AuthUserGetResponse, AuthUserGrantRoleRequest,
         AuthUserGrantRoleResponse, AuthUserListRequest, AuthUserListResponse,
         AuthUserRevokeRoleRequest, AuthUserRevokeRoleResponse, AuthenticateRequest,
         AuthenticateResponse, CompactionRequest, CompactionResponse, Compare, DefragmentRequest,
@@ -339,6 +341,7 @@ impl ResponseWrapper {
             ResponseWrapper::LeaseGrantResponse(ref mut resp) => &mut resp.header,
             ResponseWrapper::LeaseRevokeResponse(ref mut resp) => &mut resp.header,
             ResponseWrapper::LeaseLeasesResponse(ref mut resp) => &mut resp.header,
+            ResponseWrapper::AlarmResponse(ref mut resp) => &mut resp.header,
         };
         if let Some(ref mut header) = *header {
             header.revision = revision;
@@ -355,6 +358,8 @@ pub enum RequestBackend {
     Auth,
     /// Lease backend
     Lease,
+    /// Alarm backend
+    Alarm,
 }
 
 impl RequestWrapper {
@@ -386,6 +391,7 @@ impl RequestWrapper {
             RequestWrapper::LeaseGrantRequest(_)
             | RequestWrapper::LeaseRevokeRequest(_)
             | RequestWrapper::LeaseLeasesRequest(_) => RequestBackend::Lease,
+            RequestWrapper::AlarmRequest(_) => RequestBackend::Alarm,
         }
     }
 
@@ -448,6 +454,10 @@ impl RequestWrapper {
             *self,
             RequestWrapper::LeaseGrantRequest(_) | RequestWrapper::LeaseRevokeRequest(_)
         )
+    }
+
+    pub fn is_alarm_request(&self) -> bool {
+        matches!(*self, RequestWrapper::AlarmRequest(_))
     }
 }
 
@@ -520,7 +530,8 @@ impl_from_requests!(
     AuthenticateRequest,
     LeaseGrantRequest,
     LeaseRevokeRequest,
-    LeaseLeasesRequest
+    LeaseLeasesRequest,
+    AlarmRequest
 );
 
 impl_from_responses!(
@@ -548,7 +559,8 @@ impl_from_responses!(
     AuthenticateResponse,
     LeaseGrantResponse,
     LeaseRevokeResponse,
-    LeaseLeasesResponse
+    LeaseLeasesResponse,
+    AlarmResponse
 );
 
 impl From<RequestOp> for RequestWrapper {
@@ -657,6 +669,25 @@ impl TxnRequest {
             }
         };
         self.success.iter().any(conflict_checker) || self.failure.iter().any(conflict_checker)
+    }
+}
+
+impl AlarmRequest {
+    pub fn new(action: AlarmAction, member_id: u64, alarm: AlarmType) -> Self {
+        Self {
+            action: i32::from(action),
+            member_id,
+            alarm: i32::from(alarm),
+        }
+    }
+}
+
+impl AlarmMember {
+    pub fn new(member_id: u64, alarm: AlarmType) -> Self {
+        Self {
+            member_id,
+            alarm: i32::from(alarm),
+        }
     }
 }
 

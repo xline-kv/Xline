@@ -4,8 +4,10 @@ use engine::{Engine, EngineType, Snapshot, StorageEngine, WriteOperation};
 use prost::Message;
 use utils::config::EngineConfig;
 use xlineapi::execute_error::ExecuteError;
+use xlineapi::AlarmMember;
 
 use super::{
+    alarm_store::ALARM_TABLE,
     auth_store::{AUTH_ENABLE_KEY, AUTH_REVISION_KEY, AUTH_TABLE, ROLE_TABLE, USER_TABLE},
     kv_store::KV_TABLE,
     lease_store::LEASE_TABLE,
@@ -19,13 +21,14 @@ use crate::{
 };
 
 /// Xline Server Storage Table
-pub(crate) const XLINE_TABLES: [&str; 6] = [
+pub(crate) const XLINE_TABLES: [&str; 7] = [
     META_TABLE,
     KV_TABLE,
     LEASE_TABLE,
     AUTH_TABLE,
     USER_TABLE,
     ROLE_TABLE,
+    ALARM_TABLE,
 ];
 
 /// Key of compacted revision
@@ -134,6 +137,16 @@ impl StorageApi for DB {
                 }
             })
             .collect::<HashMap<_, _>>();
+        let del_alarm_buffer = ops
+            .iter()
+            .find_map(|op| {
+                if let WriteOp::DeleteAlarm(ref key) = *op {
+                    Some(key.encode_to_vec())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
         for op in ops {
             let wop = match op {
                 WriteOp::PutKeyValue(rev, value) => {
@@ -195,6 +208,13 @@ impl StorageApi for DB {
                 WriteOp::DeleteRole(name) => {
                     WriteOperation::new_delete(ROLE_TABLE, name.as_bytes())
                 }
+                WriteOp::PutAlarm(alarm) => {
+                    let key = alarm.encode_to_vec();
+                    WriteOperation::new_put(ALARM_TABLE, key, vec![])
+                }
+                WriteOp::DeleteAlarm(_key) => {
+                    WriteOperation::new_delete(ALARM_TABLE, del_alarm_buffer.as_ref())
+                }
             };
             wr_ops.push(wop);
         }
@@ -243,6 +263,10 @@ pub enum WriteOp<'a> {
     PutRole(Role),
     /// Delete a role from role table
     DeleteRole(&'a str),
+    /// Put a alarm member to alarm table
+    PutAlarm(AlarmMember),
+    /// Delete a alarm member from alarm table
+    DeleteAlarm(AlarmMember),
 }
 
 #[cfg(test)]

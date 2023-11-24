@@ -29,6 +29,8 @@ pub struct Cluster {
     size: usize,
     /// storage paths
     paths: HashMap<usize, PathBuf>,
+    /// Cluster quotas
+    pub quotas: HashMap<usize, u64>,
 }
 
 impl Cluster {
@@ -48,6 +50,7 @@ impl Cluster {
             client: None,
             size,
             paths: HashMap::new(),
+            quotas: HashMap::new(),
         }
     }
 
@@ -77,17 +80,19 @@ impl Cluster {
                     .collect(),
                 &name,
             );
+            let storage_config = if let Some(quota) = self.quotas.get(&i) {
+                StorageConfig::new(EngineConfig::default(), *quota)
+            } else {
+                StorageConfig::default()
+            };
             tokio::spawn(async move {
                 let server = XlineServer::new(
                     cluster_info.into(),
                     is_leader,
-                    CurpConfig {
-                        engine_cfg: EngineConfig::RocksDB(path.join("curp")),
-                        ..Default::default()
-                    },
+                    CurpConfig::default(),
                     ClientConfig::default(),
                     ServerTimeout::default(),
-                    StorageConfig::default(),
+                    storage_config,
                     CompactConfig::default(),
                 );
                 let result = server
