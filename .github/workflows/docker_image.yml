@@ -1,4 +1,4 @@
-name: Docker
+name: Push Docker Image
 
 on:
   workflow_dispatch: { }

@@ -1,0 +1,147 @@
+name: Trivial Checks
+
+on:
+  schedule:
+    - cron: "00 19 * * *" # run ci periodically at 3 am
+  pull_request:
+    branches: [master]
+
+env:
+  XLINE_COMPILE_TOOLCHAIN: 1.70.0
+  CI_COMPONENT_TOOLCHAIN: 1.72.0
+
+jobs:
+  outdated:
+    name: Outdated
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: default
+          toolchain: ${{ env.CI_COMPONENT_TOOLCHAIN }}
+          override: true
+      - uses: actions-rs/install@v0.1
+        with:
+          crate: cargo-outdated
+          version: latest
+      - run: cargo outdated
+
+  audit:
+    name: Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          crate: cargo-audit
+          use-tool-cache: true
+      - uses: actions-rs/audit-check@v1.2.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: default
+          toolchain: ${{ env.XLINE_COMPILE_TOOLCHAIN }}
+          override: true
+      - uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+
+  spell-check:
+    name: Spell Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Actions Repository
+        uses: actions/checkout@v2
+      - name: Check Spelling
+        uses: crate-ci/typos@master
+
+  cargo-sort:
+    name: Check Crate Sort
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/install@v0.1
+        with:
+          crate: cargo-sort
+          version: latest
+      - run: cargo sort --check --workspace
+
+  hakari-fix:
+    name: Hakari fix
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install cargo-hakari
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-hakari
+      - name: Hakari generate
+        run: cargo hakari generate
+      - name: Show diff
+        run: git diff
+      - uses: stefanzweifel/git-auto-commit-action@v4
+        with:
+          commit_message: "chore: fix workspace-hack"
+
+  commit:
+    name: Commit Message Validation
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'schedule' }}
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - run: git show-ref
+      - uses: actions-rs/install@v0.1
+        with:
+          crate: git-cz
+          version: latest
+      - name: Validate commit messages
+        run: git-cz check ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+
+  clippy:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        config:
+          - {
+              name: "Normal",
+              args: "--all-targets --all-features -- -D warnings",
+              rustflags: "",
+            }
+          - {
+              name: "Madsim",
+              args: "--package=simulation --all-targets --all-features -- -D warnings",
+              rustflags: "--cfg madsim",
+            }
+    name: Clippy ${{ matrix.config.name }}
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: recursive
+      - run: sudo bash ./.github/scripts/install_deps.sh
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: default
+          toolchain: ${{ env.XLINE_COMPILE_TOOLCHAIN }}
+          override: true
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "xline"
+      - name: ${{ matrix.config.name }}
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: ${{ matrix.config.args }}
+        env:
+          RUSTFLAGS: ${{ matrix.config.rustflags }}

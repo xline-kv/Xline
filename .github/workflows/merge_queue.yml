@@ -1,0 +1,72 @@
+name: Validate Changes
+
+on:
+  merge_group:
+    types: [checks_requested]
+
+env:
+  XLINE_COMPILE_TOOLCHAIN: 1.70.0
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        config:
+          - { name: "Normal", args: "-- --nocapture", rustflags: "" }
+          - {
+              name: "Madsim",
+              args: "--package=simulation -- --nocapture",
+              rustflags: "--cfg madsim",
+            }
+    name: Test ${{ matrix.config.name }}
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: recursive
+      - run: sudo bash ./.github/scripts/install_deps.sh
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: default
+          toolchain: ${{ env.XLINE_COMPILE_TOOLCHAIN }}
+          override: true
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "xline"
+      - name: ${{ matrix.config.name }}
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: ${{ matrix.config.args }}
+        env:
+          RUSTFLAGS: ${{ matrix.config.rustflags }}
+
+  validation:
+    name: Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: recursive
+      - run: sudo bash ./.github/scripts/install_deps.sh
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: default
+          toolchain: ${{ env.XLINE_COMPILE_TOOLCHAIN }}
+          override: true
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "xline"
+      - run: cargo build --release --bin validation_lock_client --target x86_64-unknown-linux-gnu
+      - uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release
+      - run: |
+          cd scripts
+          cp ../target/release/{xline,benchmark} .
+          cp ../target/x86_64-unknown-linux-gnu/release/validation_lock_client .
+          cp ../xline-test-utils/{private,public}.pem .
+          docker build . -t ghcr.io/xline-kv/xline:latest
+          docker pull gcr.io/etcd-development/etcd:v3.5.5
+          bash ./validation_test.sh
