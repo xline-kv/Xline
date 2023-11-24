@@ -27,7 +27,7 @@ unify-target-host = "unify-if-both"
 
 [traversal-excludes]
 third-party = [
-    # Why regex and prost might be compile multipy times?
+    # Why regex and prost might be compile multiply times?
     { name = "regex" },
     { name = "prost" },
 ]
