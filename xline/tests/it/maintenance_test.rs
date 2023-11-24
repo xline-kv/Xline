@@ -9,7 +9,7 @@ use xline_test_utils::{
     types::kv::{PutRequest, RangeRequest},
     Client, ClientOptions, Cluster,
 };
-use xlineapi::{AlarmAction, AlarmRequest, AlarmType, execute_error::ExecuteError};
+use xlineapi::{execute_error::ExecuteError, AlarmAction, AlarmRequest, AlarmType};
 
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
