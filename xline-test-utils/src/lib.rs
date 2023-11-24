@@ -33,6 +33,8 @@ pub struct Cluster {
     paths: HashMap<usize, PathBuf>,
     /// Xline servers
     servers: Vec<Arc<XlineServer>>,
+    /// Cluster quotas
+    pub quotas: HashMap<usize, u64>,
 }
 
 impl Cluster {
@@ -53,6 +55,7 @@ impl Cluster {
             size,
             paths: HashMap::new(),
             servers: Vec::new(),
+            quotas: HashMap::new(),
         }
     }
 
@@ -82,20 +85,21 @@ impl Cluster {
                     .collect(),
                 &name,
             );
-            let server = Arc::new(XlineServer::new(
-                cluster_info.into(),
-                is_leader,
-                CurpConfig {
-                    engine_cfg: EngineConfig::RocksDB(path.join("curp")),
-                    ..Default::default()
-                },
-                ClientConfig::default(),
-                ServerTimeout::default(),
-                StorageConfig::default(),
-                CompactConfig::default(),
-            ));
-            self.servers.push(server.clone());
+            let storage_config = if let Some(quota) = self.quotas.get(&i) {
+                StorageConfig::new(EngineConfig::default(), *quota)
+            } else {
+                StorageConfig::default()
+            };
             tokio::spawn(async move {
+                let server = XlineServer::new(
+                    cluster_info.into(),
+                    is_leader,
+                    CurpConfig::default(),
+                    ClientConfig::default(),
+                    ServerTimeout::default(),
+                    storage_config,
+                    CompactConfig::default(),
+                );
                 let result = server
                     .start_from_listener(listener, db, Self::test_key_pair())
                     .await;

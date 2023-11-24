@@ -9,7 +9,7 @@ use std::{
 
 use async_trait::async_trait;
 use curp_external_api::{
-    cmd::{Command, CommandExecutor, ConflictCheck, PassThrough, PbCodec, QuotaChecker},
+    cmd::{Command, CommandExecutor, ConflictCheck, PbCodec},
     InflightId, LogIndex,
 };
 use engine::{Engine, EngineType, Snapshot, SnapshotApi, StorageEngine, WriteOperation};
@@ -228,15 +228,6 @@ pub struct TestCE {
     after_sync_sender: mpsc::UnboundedSender<(TestCommand, LogIndex)>,
 }
 
-impl<C> QuotaChecker<C> for TestCE
-where
-    C: Command,
-{
-    fn check(&self, _cmd: &C) -> bool {
-        true
-    }
-}
-
 #[async_trait]
 impl CommandExecutor<TestCommand> for TestCE {
     fn prepare(
@@ -411,10 +402,6 @@ impl CommandExecutor<TestCommand> for TestCE {
     }
 
     fn trigger(&self, _id: InflightId, _index: LogIndex) {}
-
-    fn quota_checker(&self) -> Arc<dyn QuotaChecker<TestCommand>> {
-        Arc::new(PassThrough::default())
-    }
 }
 
 impl TestCE {

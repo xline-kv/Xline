@@ -1,24 +1,27 @@
-use std::sync::Arc;
+use std::{fmt::Debug, sync::Arc};
 
 use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{
-    cmd::{Command as CurpCommand, CommandExecutor as CurpCommandExecutor, QuotaChecker},
+    cmd::{Command as CurpCommand, CommandExecutor as CurpCommandExecutor},
+    members::ServerId,
     InflightId, LogIndex,
 };
 use dashmap::DashMap;
 use engine::Snapshot;
 use event_listener::Event;
+use parking_lot::RwLock;
+use tracing::warn;
 use xlineapi::{
+    command::{Command, CurpClient},
     execute_error::ExecuteError,
-    PutRequest, Request, TxnRequest,
-    {command::Command, RequestWrapper},
+    AlarmAction, AlarmRequest, AlarmType, PutRequest, Request, TxnRequest,
 };
 
 use super::barriers::{IdBarrier, IndexBarrier};
 use crate::{
     revision_number::RevisionNumberGenerator,
-    rpc::RequestBackend,
-    storage::{db::WriteOp, storage_api::StorageApi, AuthStore, KvStore, LeaseStore},
+    rpc::{RequestBackend, RequestWithToken, RequestWrapper},
+    storage::{db::WriteOp, storage_api::StorageApi, AlarmStore, AuthStore, KvStore, LeaseStore},
 };
 
 /// Meta table name
@@ -67,6 +70,8 @@ where
     auth_storage: Arc<AuthStore<S>>,
     /// Lease Storage
     lease_storage: Arc<LeaseStore<S>>,
+    /// Alarm Storage
+    alarm_storage: Arc<AlarmStore<S>>,
     /// persistent storage
     persistent: Arc<S>,
     /// Barrier for applied index
@@ -80,7 +85,15 @@ where
     /// Compact events
     compact_events: Arc<DashMap<u64, Arc<Event>>>,
     /// Quota checker
-    quota_checker: Arc<dyn QuotaChecker<Command>>,
+    quota_checker: Arc<dyn QuotaChecker>,
+    /// Alarmer
+    alarmer: RwLock<Option<Alarmer>>,
+}
+
+/// Quota checker
+pub(crate) trait QuotaChecker: Sync + Send + Debug {
+    /// Check if the command executor has enough quota to execute the command
+    fn check(&self, cmd: &Command) -> bool;
 }
 
 /// Quota checker for `Command`
@@ -167,25 +180,66 @@ where
             | RequestWrapper::AuthUserRevokeRoleRequest(_)
             | RequestWrapper::AuthenticateRequest(_)
             | RequestWrapper::LeaseRevokeRequest(_)
-            | RequestWrapper::LeaseLeasesRequest(_) => 0,
+            | RequestWrapper::LeaseLeasesRequest(_)
+            | RequestWrapper::AlarmRequest(_) => 0,
         }
     }
 }
 
-impl<S> QuotaChecker<Command> for CommandQuotaChecker<S>
+impl<S> QuotaChecker for CommandQuotaChecker<S>
 where
     S: StorageApi,
 {
     fn check(&self, cmd: &Command) -> bool {
+        if !cmd.need_check_quota() {
+            return true;
+        }
         let cmd_size = Self::cmd_size(&cmd.request().request);
         if self.persistent.size().overflow_add(cmd_size) > self.quota {
             if let Ok(file_size) = self.persistent.file_size() {
                 if file_size.overflow_add(cmd_size) > self.quota {
+                    warn!(
+                        "Quota exceeded, file size: {}, cmd size: {}, quota: {}",
+                        file_size, cmd_size, self.quota
+                    );
                     return false;
                 }
             }
         }
         true
+    }
+}
+
+/// Alarmer
+#[derive(Clone)]
+pub(crate) struct Alarmer {
+    /// Node id
+    id: ServerId,
+    /// Client
+    client: Arc<CurpClient>,
+}
+
+impl Debug for Alarmer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Alarmer").field("id", &self.id).finish()
+    }
+}
+
+impl Alarmer {
+    /// Create a new `Alarmer`
+    pub(super) fn new(id: ServerId, client: Arc<CurpClient>) -> Self {
+        Self { id, client }
+    }
+
+    /// Propose alarm request to other nodes
+    async fn alarm(&self, action: AlarmAction, alarm: AlarmType) -> Result<(), tonic::Status> {
+        let alarm_req = AlarmRequest::new(action, self.id, alarm);
+        let cmd = Command::new(
+            vec![],
+            RequestWithToken::new(RequestWrapper::AlarmRequest(alarm_req)),
+        );
+        let _ig = self.client.propose(&cmd, true).await?;
+        Ok(())
     }
 }
 
@@ -199,6 +253,7 @@ where
         kv_storage: Arc<KvStore<S>>,
         auth_storage: Arc<AuthStore<S>>,
         lease_storage: Arc<LeaseStore<S>>,
+        alarm_storage: Arc<AlarmStore<S>>,
         persistent: Arc<S>,
         index_barrier: Arc<IndexBarrier>,
         id_barrier: Arc<IdBarrier>,
@@ -207,11 +262,13 @@ where
         compact_events: Arc<DashMap<u64, Arc<Event>>>,
         quota: u64,
     ) -> Self {
+        let alarmer = RwLock::new(None);
         let quota_checker = Arc::new(CommandQuotaChecker::new(quota, Arc::clone(&persistent)));
         Self {
             kv_storage,
             auth_storage,
             lease_storage,
+            alarm_storage,
             persistent,
             index_barrier,
             id_barrier,
@@ -219,6 +276,36 @@ where
             auth_rev,
             compact_events,
             quota_checker,
+            alarmer,
+        }
+    }
+
+    /// Set alarmer
+    pub(crate) fn set_alarmer(&self, alarmer: Alarmer) {
+        *self.alarmer.write() = Some(alarmer);
+    }
+
+    /// Check if the alarm is activated
+    fn check_alarm(&self, cmd: &Command) -> Result<(), ExecuteError> {
+        #[allow(clippy::wildcard_enum_match_arm)]
+        match cmd.request().request {
+            RequestWrapper::PutRequest(_)
+            | RequestWrapper::TxnRequest(_)
+            | RequestWrapper::LeaseGrantRequest(_) => match self.alarm_storage.current_alarm() {
+                AlarmType::Corrupt => Err(ExecuteError::DbError("Corrupt".to_owned())),
+                AlarmType::Nospace => Err(ExecuteError::Nospace),
+                AlarmType::None => Ok(()),
+            },
+
+            RequestWrapper::RangeRequest(_)
+            | RequestWrapper::DeleteRangeRequest(_)
+            | RequestWrapper::LeaseRevokeRequest(_)
+            | RequestWrapper::CompactionRequest(_) => match self.alarm_storage.current_alarm() {
+                AlarmType::Corrupt => Err(ExecuteError::DbError("Corrupt".to_owned())),
+                AlarmType::Nospace | AlarmType::None => Ok(()),
+            },
+
+            _ => Ok(()),
         }
     }
 }
@@ -232,6 +319,7 @@ where
         &self,
         cmd: &Command,
     ) -> Result<<Command as CurpCommand>::PR, <Command as CurpCommand>::Error> {
+        self.check_alarm(cmd)?;
         let wrapper = cmd.request();
         self.auth_storage.check_permission(wrapper)?;
         let revision = match wrapper.request.backend() {
@@ -249,6 +337,7 @@ where
                     self.general_rev.next()
                 }
             }
+            RequestBackend::Alarm => -1,
         };
         Ok(revision)
     }
@@ -262,6 +351,7 @@ where
             RequestBackend::Kv => self.kv_storage.execute(wrapper),
             RequestBackend::Auth => self.auth_storage.execute(wrapper),
             RequestBackend::Lease => self.lease_storage.execute(wrapper),
+            RequestBackend::Alarm => Ok(self.alarm_storage.execute(wrapper)),
         }
     }
 
@@ -278,6 +368,14 @@ where
             RequestBackend::Kv => self.kv_storage.after_sync(wrapper, revision).await?,
             RequestBackend::Auth => self.auth_storage.after_sync(wrapper, revision)?,
             RequestBackend::Lease => self.lease_storage.after_sync(wrapper, revision).await?,
+            RequestBackend::Alarm => self.alarm_storage.after_sync(wrapper, revision),
+        };
+        if let RequestWrapper::CompactionRequest(ref compact_req) = wrapper.request {
+            if compact_req.physical {
+                if let Some(n) = self.compact_events.get(&cmd.compact_id()) {
+                    n.notify(usize::MAX);
+                }
+            }
         };
         if let RequestWrapper::CompactionRequest(ref compact_req) = wrapper.request {
             if compact_req.physical {
@@ -293,7 +391,16 @@ where
         }
         self.lease_storage.mark_lease_synced(&wrapper.request);
         if !quota_enough {
-            return Err(ExecuteError::DbError("Quota exceeded".to_owned()));
+            if let Some(alarmer) = self.alarmer.read().clone() {
+                let _ig = tokio::spawn(async move {
+                    if let Err(e) = alarmer
+                        .alarm(AlarmAction::Activate, AlarmType::Nospace)
+                        .await
+                    {
+                        warn!("{} propose alarm failed: {:?}", alarmer.id, e);
+                    }
+                });
+            }
         }
         Ok(res)
     }
@@ -338,9 +445,5 @@ where
     fn trigger(&self, id: InflightId, index: LogIndex) {
         self.id_barrier.trigger(id);
         self.index_barrier.trigger(index);
-    }
-
-    fn quota_checker(&self) -> Arc<dyn QuotaChecker<Command>> {
-        Arc::clone(&self.quota_checker)
     }
 }

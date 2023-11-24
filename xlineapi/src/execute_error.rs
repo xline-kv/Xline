@@ -94,6 +94,10 @@ pub enum ExecuteError {
     /// Permission denied Error
     #[error("permission denied")]
     PermissionDenied,
+
+    /// no space left in quota
+    #[error("no space left in quota")]
+    Nospace,
 }
 
 impl From<PbExecuteError> for ExecuteError {
@@ -134,6 +138,7 @@ impl From<PbExecuteError> for ExecuteError {
             }
             PbExecuteError::DbError(e) => ExecuteError::DbError(e),
             PbExecuteError::PermissionDenied(_) => ExecuteError::PermissionDenied,
+            PbExecuteError::Nospace(_) => ExecuteError::Nospace,
         }
     }
 }
@@ -185,6 +190,7 @@ impl From<ExecuteError> for PbExecuteError {
             }
             ExecuteError::DbError(e) => PbExecuteError::DbError(e),
             ExecuteError::PermissionDenied => PbExecuteError::PermissionDenied(()),
+            ExecuteError::Nospace => PbExecuteError::Nospace(()),
         }
     }
 }
@@ -290,6 +296,10 @@ impl From<ExecuteError> for tonic::Status {
             ExecuteError::InvalidAuthManagement => (
                 tonic::Code::InvalidArgument,
                 "etcdserver: invalid auth management".to_owned(),
+            ),
+            ExecuteError::Nospace => (
+                tonic::Code::ResourceExhausted,
+                "etcdserver: mvcc: database space exceeded".to_owned(),
             ),
             ExecuteError::LeaseExpired(_) => (tonic::Code::DeadlineExceeded, err.to_string()),
             ExecuteError::UserAlreadyHasRole(_, _)
