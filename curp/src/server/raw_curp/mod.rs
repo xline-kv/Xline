@@ -20,7 +20,7 @@ use std::{
 };
 
 use clippy_utilities::{NumericCast, OverflowArithmetic};
-use curp_external_api::cmd::{ConflictCheck, QuotaChecker};
+use curp_external_api::cmd::ConflictCheck;
 use dashmap::DashMap;
 use event_listener::Event;
 use itertools::Itertools;
@@ -97,8 +97,6 @@ pub(super) struct RawCurp<C: Command, RC: RoleChange> {
     ctx: Context<C, RC>,
     /// Shutdown trigger
     shutdown_trigger: shutdown::Trigger,
-    /// Quota checker
-    quota_checker: Arc<dyn QuotaChecker<C>>,
 }
 
 /// Actions of syncing
@@ -250,14 +248,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 return Err(CurpError::key_conflict());
             }
             return Ok(false);
-        }
-        if !self.quota_checker.check(cmd.as_ref()) {
-            warn!(
-                "{} has no enough quota to execute cmd({:?})",
-                self.id(),
-                cmd
-            );
-            return Err(CurpError::Internal("Quota exceeded".to_owned()));
         }
         if !self
             .ctx
@@ -795,7 +785,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         role_change: RC,
         shutdown_trigger: shutdown::Trigger,
         connects: DashMap<ServerId, InnerConnectApiWrapper>,
-        quota_checker: Arc<dyn QuotaChecker<C>>,
     ) -> Self {
         let (change_tx, change_rx) = flume::bounded(CHANGE_CHANNEL_SIZE);
         let raw_curp = Self {
@@ -828,7 +817,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 last_conf_change_idx: AtomicU64::new(0),
             },
             shutdown_trigger,
-            quota_checker,
         };
         if is_leader {
             let mut st_w = raw_curp.st.write();
@@ -857,7 +845,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         role_change: RC,
         shutdown_trigger: shutdown::Trigger,
         connects: DashMap<ServerId, InnerConnectApiWrapper>,
-        quota_checker: Arc<dyn QuotaChecker<C>>,
     ) -> Self {
         let raw_curp = Self::new(
             cluster_info,
@@ -872,7 +859,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             role_change,
             shutdown_trigger,
             connects,
-            quota_checker,
         );
 
         if let Some((term, server_id)) = voted_for {
