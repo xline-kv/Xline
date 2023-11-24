@@ -118,7 +118,10 @@ impl StorageEngine for Engine {
 
     #[inline]
     fn size(&self) -> u64 {
-        0
+        match *self {
+            Engine::Memory(ref e) => e.size(),
+            Engine::Rocks(ref e) => e.size(),
+        }
     }
 
     #[inline]

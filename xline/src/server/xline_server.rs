@@ -24,7 +24,7 @@ use super::{
     auth_server::AuthServer,
     barriers::{IdBarrier, IndexBarrier},
     cluster_server::ClusterServer,
-    command::CommandExecutor,
+    command::{Alarmer, CommandExecutor},
     kv_server::KvServer,
     lease_server::LeaseServer,
     lock_server::LockServer,
@@ -47,7 +47,7 @@ use crate::{
         kvwatcher::KvWatcher,
         lease_store::LeaseCollection,
         storage_api::StorageApi,
-        AuthStore, KvStore, LeaseStore,
+        AlarmStore, AuthStore, KvStore, LeaseStore,
     },
 };
 
@@ -132,6 +132,7 @@ impl XlineServer {
         Arc<KvStore<S>>,
         Arc<LeaseStore<S>>,
         Arc<AuthStore<S>>,
+        Arc<AlarmStore<S>>,
         Arc<KvWatcher<S>>,
     )> {
         let (compact_task_tx, compact_task_rx) = channel(COMPACT_CHANNEL_SIZE);
@@ -167,9 +168,11 @@ impl XlineServer {
         let auth_storage = Arc::new(AuthStore::new(
             lease_collection,
             key_pair,
-            header_gen,
-            persistent,
+            Arc::clone(&header_gen),
+            Arc::clone(&persistent),
         ));
+        let alarm_storage = Arc::new(AlarmStore::new(header_gen, persistent));
+
         let watcher = KvWatcher::new_arc(
             kv_store_inner,
             kv_update_rx,
@@ -180,7 +183,14 @@ impl XlineServer {
         lease_storage.recover()?;
         kv_storage.recover().await?;
         auth_storage.recover()?;
-        Ok((kv_storage, lease_storage, auth_storage, watcher))
+        alarm_storage.recover()?;
+        Ok((
+            kv_storage,
+            lease_storage,
+            auth_storage,
+            alarm_storage,
+            watcher,
+        ))
     }
 
     /// Construct a header generator
@@ -346,7 +356,7 @@ impl XlineServer {
             self.curp_cfg.candidate_timeout_ticks,
         );
 
-        let (kv_storage, lease_storage, auth_storage, watcher) = self
+        let (kv_storage, lease_storage, auth_storage, alarm_storage, watcher) = self
             .construct_underlying_storages(
                 Arc::clone(&persistent),
                 lease_collection,
@@ -358,10 +368,11 @@ impl XlineServer {
         let index_barrier = Arc::new(IndexBarrier::new());
         let id_barrier = Arc::new(IdBarrier::new());
         let compact_events = Arc::new(DashMap::new());
-        let ce = CommandExecutor::new(
+        let ce = Arc::new(CommandExecutor::new(
             Arc::clone(&kv_storage),
             Arc::clone(&auth_storage),
             Arc::clone(&lease_storage),
+            Arc::clone(&alarm_storage),
             Arc::clone(&persistent),
             Arc::clone(&index_barrier),
             Arc::clone(&id_barrier),
@@ -369,7 +380,7 @@ impl XlineServer {
             header_gen.auth_revision_arc(),
             Arc::clone(&compact_events),
             self.storage_cfg.quota,
-        );
+        ));
         let snapshot_allocator: Box<dyn SnapshotAllocator> = match self.storage_cfg.engine {
             EngineConfig::Memory => Box::<MemorySnapshotAllocator>::default(),
             EngineConfig::RocksDB(_) => Box::<RocksSnapshotAllocator>::default(),
@@ -399,7 +410,7 @@ impl XlineServer {
         let curp_server = CurpServer::new(
             Arc::clone(&self.cluster_info),
             self.is_leader,
-            ce,
+            Arc::clone(&ce),
             snapshot_allocator,
             state,
             Arc::clone(&self.curp_cfg),
@@ -419,6 +430,10 @@ impl XlineServer {
         if let Some(compactor) = auto_compactor_c {
             compactor.set_compactable(Arc::clone(&client)).await;
         }
+        ce.set_alarmer(Alarmer::new(
+            self.cluster_info.self_id(),
+            Arc::clone(&client),
+        ));
 
         Ok((
             KvServer::new(

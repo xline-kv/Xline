@@ -1,6 +1,5 @@
 use std::time::Instant;
 
-use curp_external_api::cmd::PassThrough;
 use curp_test_utils::{mock_role_change, test_cmd::TestCommand};
 use test_macros::abort_on_panic;
 use tokio::{sync::oneshot, time::sleep};
@@ -70,7 +69,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             .build()
             .unwrap();
         let (shutdown_trigger, _) = shutdown::channel();
-        let quota_checker = Arc::new(PassThrough::default());
         Self::new(
             cluster_info,
             true,
@@ -84,7 +82,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             role_change,
             shutdown_trigger,
             connects,
-            quota_checker,
         )
     }
 
