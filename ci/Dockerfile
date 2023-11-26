@@ -20,6 +20,8 @@ ENV PATH=/root/.cargo/bin/:$PATH
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 
 # Install stuff
+# The vast majority of the cache comes from rocksdb, so we choose to 
+# precompile directly here to reduce the number of sccache cache hit checks.
 RUN echo "=== Install rusty stuff 🦀️ ===" && \
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --no-modify-path --default-toolchain none -y && \
     rustup component add rustfmt llvm-tools clippy && \
@@ -51,3 +53,6 @@ ENV CARGO_INCREMENTAL=0
 ENV CARGO_PROFILE_DEV_DEBUG=0
 ENV CARGO_HOME=/xline/.cargo
 ENV CARGO_TERM_COLOR=always
+
+# Enable sccache
+ENV RUSTC_WRAPPER="sccache"
