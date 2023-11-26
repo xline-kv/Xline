@@ -11,8 +11,18 @@ cat rust-toolchain.toml
 export DOCKER_BUILDKIT=1
 
 # Change this version to update the build env image
-export BUILD_ENV_VERSION=v20231124
+export BUILD_ENV_VERSION=v20231127
 export BUILD_TAG="ghcr.io/igxnon/build-env:${BUILD_ENV_VERSION}"
+set +e
+workflows=("pull_request.yml")
+for workflow in "${workflows[@]}"
+do
+    if ! grep "${BUILD_TAG}" "../.github/workflows/${workflow}" > /dev/null; then
+        echo "container: ${BUILD_TAG} is not set up for ${workflow}, please update ${workflow}"
+        exit 1
+    fi
+done
+set -e
 
 # Change this version if rust-rocksdb updates in `engine`
 export LIB_ROCKS_SYS_VER="0.11.0+8.1.1"
@@ -29,7 +39,6 @@ set +e
 docker image rm ${BUILD_TAG}
 # check manifest
 if docker manifest inspect "${BUILD_TAG}"; then
-    echo "=== Image already exists ==="
     echo "${BUILD_TAG} already exists -- skipping build image"
     exit 0
 fi

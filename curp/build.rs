@@ -1,6 +1,5 @@
 fn main() {
     tonic_build::configure()
-        .protoc_arg("--experimental_allow_proto3_optional")
         .type_attribute(
             "ProposeConfChangeRequest.ConfChange",
             "#[derive(serde::Deserialize, serde::Serialize)]",

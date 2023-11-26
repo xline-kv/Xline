@@ -1,43 +1,130 @@
-name: Trivial Checks
+name: PR Checks
 
 on:
   pull_request:
     branches: [master]
-  workflow_dispatch: {}
+  workflow_dispatch: {} # TODO remove
 
 jobs:
-  checks:
-    name: Trivial Checks
+  hakari-fix:
+    name: Hakari fix
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cargo-hakari
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-hakari
+      - name: Hakari generate
+        run: cargo hakari generate
+      - name: Show diff
+        run: git diff
+      - uses: stefanzweifel/git-auto-commit-action@v4
+        with:
+          commit_message: "chore: fix workspace-hack (automated by GHA)"
+          commit_options: "--no-verify --signoff"
+
+  build-env:
+    runs-on: ubuntu-latest
+    name: Try to build env
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get changed files in ci
+        id: changed-files-ci
+        uses: tj-actions/changed-files@v40
+        with:
+          files: ci/{Dockerfile,build-env.sh}
+      - name: Run build env if changes
+        if: steps.changed-files-ci.outputs.any_changed == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ci/build-env.sh
+
+  checks:
+    name: Checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    needs:
+      - hakari-fix
+      - build-env
     env:
       SCCACHE_GHA_ENABLED: "on"
-    container: ghcr.io/igxnon/build-env:v20231124
+    container: ghcr.io/igxnon/build-env:v20231127
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
       - name: Configure sccache
         uses: actions/github-script@v6
         with:
           script: |
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-      - run: ci/scripts/check-trailing-spaces.sh
-      - run: cargo audit
-      - run: cargo fmt --all -- --check
-      - run: cargo sort --check --workspace
-      - run: cargo hakari verify
+
+      - name: Trailing spaces check
+        run: ci/scripts/check-trailing-spaces.sh
+
+      - name: Audit
+        run: cargo audit
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Sort crates
+        run: cargo sort --check --workspace
+
+      - name: Workspace hack check
+        run: cargo hakari generate --diff && cargo hakari manage-deps --dry-run && cargo hakari verify
+
       - run: sccache --zero-stats > /dev/null
-      - run: cargo clippy --all-targets --all-features -- -D warnings
-      - run: sccache --show-stats && sccache --zero-stats > /dev/null
-      - run: env RUSTFLAGS="--cfg madsim" cargo clippy --package=simulation --all-targets --all-features -- -D warnings
-      - run: sccache --show-stats
+
+      - name: Clippy (normal)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Sccache stats (normal)
+        run: sccache --show-stats && sccache --zero-stats > /dev/null
+
+      - name: Test (normal)
+        run: cargo llvm-cov nextest --all-features --workspace --lcov --output-path lcov.info
+
+      - name: Sccache stats (normal)
+        run: sccache --show-stats && sccache --zero-stats > /dev/null
+
+      - name: Upload coverage to Codecov
+        run: |
+          curl -Os https://uploader.codecov.io/latest/linux/codecov && chmod +x codecov
+          max_retry=5
+          counter=0
+          until ./codecov -t ${{ secrets.CODECOV_TOKEN }} -f lcov.info
+          do
+            sleep 1
+            [[ counter -eq $max_retry ]] && echo "Upload failed!" && exit 1
+            echo "Uploading again. Try #$counter"
+            ((counter++))
+          done
+
+      - name: Clippy (madsim)
+        run: env RUSTFLAGS="--cfg madsim" cargo clippy --package=simulation --all-targets --all-features -- -D warnings
+
+      - name: Sccache stats (madsim)
+        run: sccache --show-stats && sccache --zero-stats > /dev/null
+
+      - name: Test (madsim)
+        run: env RUSTFLAGS="--cfg madsim" cargo nextest run --package=simulation
+
+      - name: Sccache stats (madsim)
+        run: sccache --show-stats
 
   commit:
     name: Commit Message Validation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - run: git show-ref
@@ -52,27 +139,6 @@ jobs:
     name: Spell Check
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Actions Repository
-        uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Check Spelling
         uses: crate-ci/typos@master
-
-  hakari-fix:
-    name: Hakari fix
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v2
-      - name: Install cargo-hakari
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-hakari
-      - name: Hakari generate
-        run: cargo hakari generate
-      - name: Show diff
-        run: git diff
-      - uses: stefanzweifel/git-auto-commit-action@v4
-        with:
-          commit_message: "chore: fix workspace-hack (automated by GHA)"
-          commit_options: "--no-verify --signoff"
