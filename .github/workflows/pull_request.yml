@@ -53,7 +53,7 @@ jobs:
       - build-env
     env:
       SCCACHE_GHA_ENABLED: "on"
-    container: ghcr.io/igxnon/build-env:v20231127
+    container: ghcr.io/igxnon/build-env:v20231128
     steps:
       - uses: actions/checkout@v4
         with:

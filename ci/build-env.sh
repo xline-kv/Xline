@@ -11,7 +11,7 @@ cat rust-toolchain.toml
 export DOCKER_BUILDKIT=1
 
 # Change this version to update the build env image
-export BUILD_ENV_VERSION=v20231127
+export BUILD_ENV_VERSION=v20231128
 export BUILD_TAG="ghcr.io/igxnon/build-env:${BUILD_ENV_VERSION}"
 set +e
 workflows=("pull_request.yml")

@@ -4,7 +4,7 @@ ARG LIB_ROCKS_SYS_VER
 
 RUN apt-get update -yy && \
     DEBIAN_FRONTEND=noninteractive \
-    apt-get install -yy make build-essential cmake curl pkg-config \
+    apt-get install -yy make build-essential cmake curl pkg-config expect \
     openssl libssl-dev lld wget unzip git bash zstd libzstd-dev clang && \
     rm -rf /var/lib/{apt,dpkg,cache,log}/
 

@@ -13,28 +13,33 @@ jobs:
     name: benchmark
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - run: sudo bash ./.github/scripts/install_deps.sh
-      - uses: actions-rs/toolchain@v1
+
+      - name: Configure sccache
+        uses: actions/github-script@v6
         with:
-          profile: default
-          toolchain: ${{ env.CI_RUST_TOOLCHAIN }}
-          override: true
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: "xline"
-      - uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: --release
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Build xline
+        run: |
+          docker run -q -it --rm -v $(pwd):/xline \
+            -e SCCACHE_GHA_ENABLED=on \
+            -e ACTIONS_CACHE_URL=${ACTIONS_CACHE_URL} \
+            -e ACTIONS_RUNTIME_TOKEN=${ACTIONS_RUNTIME_TOKEN} \
+            ghcr.io/igxnon/build-env:v20231128 \
+            cargo build --release --bin xline --bin benchmark
+
       - run: |
           cd scripts
           cp ../target/release/{xline,benchmark} .
           docker build . -t ghcr.io/xline-kv/xline:latest
           docker pull datenlord/etcd:v3.5.5
           bash ./benchmark.sh
+
       - uses: actions/upload-artifact@v1
         with:
           name: benchmark-output
