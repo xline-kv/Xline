@@ -12,9 +12,9 @@ export DOCKER_BUILDKIT=1
 
 # Change this version to update the build env image
 export BUILD_ENV_VERSION=v20231128
-export BUILD_TAG="ghcr.io/igxnon/build-env:${BUILD_ENV_VERSION}"
+export BUILD_TAG="ghcr.io/xline-kv/build-env:${BUILD_ENV_VERSION}"
 set +e
-workflows=("pull_request.yml")
+workflows=("pull_request.yml" "merge_queue.yml")
 for workflow in "${workflows[@]}"
 do
     if ! grep "${BUILD_TAG}" "../.github/workflows/${workflow}" > /dev/null; then
@@ -31,7 +31,7 @@ echo "=== Arch ==="
 arch
 
 echo "=== Docker login ==="
-echo -n $GITHUB_TOKEN | docker login --username igxnon --password-stdin ghcr.io/igxnon
+echo -n $GITHUB_TOKEN | docker login --username igxnon --password-stdin ghcr.io/xline-kv
 
 echo "=== Check image existence ==="
 set +e

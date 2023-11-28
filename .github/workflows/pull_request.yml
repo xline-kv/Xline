@@ -29,6 +29,8 @@ jobs:
   build-env:
     runs-on: ubuntu-latest
     name: Try to build env
+    permissions:
+      packages: write
     steps:
       - uses: actions/checkout@v4
       - name: Get changed files in ci
@@ -53,7 +55,7 @@ jobs:
       - build-env
     env:
       SCCACHE_GHA_ENABLED: "on"
-    container: ghcr.io/igxnon/build-env:v20231128
+    container: ghcr.io/xline-kv/build-env:v20231128
     steps:
       - uses: actions/checkout@v4
         with:

@@ -30,7 +30,7 @@ jobs:
             -e SCCACHE_GHA_ENABLED=on \
             -e ACTIONS_CACHE_URL=${ACTIONS_CACHE_URL} \
             -e ACTIONS_RUNTIME_TOKEN=${ACTIONS_RUNTIME_TOKEN} \
-            ghcr.io/igxnon/build-env:v20231128 \
+            ghcr.io/xline-kv/build-env:v20231128 \
             cargo build --release --bin xline --bin benchmark
 
       - run: |
