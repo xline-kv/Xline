@@ -69,8 +69,8 @@ jobs:
         if: matrix.job.cross_image
         uses: docker/build-push-action@v2
         with:
-          context: .github/scripts
-          file: .github/scripts/Dockerfile.${{ matrix.job.target }}
+          context: ci/cross
+          file: ci/cross/Dockerfile.${{ matrix.job.target }}
           tags: ${{ matrix.job.cross_image }}:latest
           load: true
           cache-from: type=gha
@@ -79,7 +79,7 @@ jobs:
       - name: Install Packages (macOS)
         if: matrix.job.os == 'macos-latest'
         run: |
-          .github/scripts/install_macos_deps.sh
+          ci/scripts/install_macos_deps.sh
 
       - name: Install Toolchain
         uses: dtolnay/rust-toolchain@v1
