@@ -41,7 +41,7 @@ use self::{
     log::Log,
     state::{CandidateState, LeaderState, State},
 };
-use super::{cmd_worker::CEEventTxApi, CurpError, PoolEntry};
+use super::{cmd_worker::CEEventTxApi, PoolEntry};
 use crate::{
     cmd::{Command, ProposeId},
     connect::InnerConnectApi,
@@ -49,8 +49,8 @@ use crate::{
     members::{ClusterInfo, ServerId},
     role_change::RoleChange,
     rpc::{
-        connect::InnerConnectApiWrapper, ConfChange, ConfChangeEntry, ConfChangeError,
-        ConfChangeType, IdSet, Member, ProposeError, ReadState,
+        connect::InnerConnectApiWrapper, ConfChange, ConfChangeEntry, ConfChangeType, CurpError,
+        IdSet, Member, ReadState,
     },
     server::{
         cmd_board::CmdBoardRef,
@@ -234,32 +234,24 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 // Curp handlers
 impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     /// Handle `propose` request
-    /// Return `((leader_id, term), Ok(spec_executed))` if the proposal succeeds, `Ok(true)` if leader speculatively executed the command
-    /// Return `((leader_id, term), Err(ProposeError))` if the cmd cannot be speculatively executed or is duplicated
-    #[allow(clippy::type_complexity)] // it's clear
-    pub(super) fn handle_propose(
-        &self,
-        cmd: Arc<C>,
-    ) -> Result<((Option<ServerId>, u64), Result<bool, ProposeError>), CurpError> {
+    /// Return `true` if the leader speculatively executed the command
+    pub(super) fn handle_propose(&self, cmd: Arc<C>) -> Result<bool, CurpError> {
         debug!("{} gets proposal for cmd({})", self.id(), cmd.id());
         let mut conflict = self.insert_sp(Arc::clone(&cmd));
         let st_r = self.st.read();
-        let info = (st_r.leader_id, st_r.term);
         // Non-leader doesn't need to sync or execute
         if st_r.role != Role::Leader {
-            return Ok((
-                info,
-                if conflict {
-                    Err(ProposeError::KeyConflict)
-                } else {
-                    Ok(false)
-                },
-            ));
+            if conflict {
+                return Err(CurpError::key_conflict());
+            }
+            return Ok(false);
         }
+
         let id = cmd.id();
         if !self.ctx.cb.map_write(|mut cb_w| cb_w.sync.insert(id)) {
-            return Ok((info, Err(ProposeError::Duplicated)));
+            return Err(CurpError::duplicated());
         }
+
         // leader also needs to check if the cmd conflicts un-synced commands
         conflict |= self.insert_ucp(Arc::clone(&cmd));
         let mut log_w = self.log.write();
@@ -268,22 +260,20 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
 
         self.entry_process(&mut log_w, entry, conflict);
 
-        Ok((
-            info,
-            if conflict {
-                Err(ProposeError::KeyConflict)
-            } else {
-                Ok(true)
-            },
-        ))
+        if conflict {
+            return Err(CurpError::key_conflict());
+        }
+
+        Ok(true)
     }
 
     /// Handle `shutdown` request
     pub(super) fn handle_shutdown(&self, propose_id: ProposeId) -> Result<(), CurpError> {
         let st_r = self.st.read();
         if st_r.role != Role::Leader {
-            return Err(CurpError::Redirect(st_r.leader_id, st_r.term));
+            return Err(CurpError::redirect(st_r.leader_id, st_r.term));
         }
+
         let mut log_w = self.log.write();
         let entry = log_w.push(st_r.term, EntryData::Shutdown(propose_id))?;
         debug!("{} gets new log[{}]", self.id(), entry.index);
@@ -292,36 +282,27 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     /// Handle `propose_conf_change` request
-    #[allow(clippy::type_complexity)] // it's clear that the `CurpError` is an out-of-bound error
     pub(super) fn handle_propose_conf_change(
         &self,
         conf_change: ConfChangeEntry,
-    ) -> Result<((Option<ServerId>, u64), Result<(), ConfChangeError>), CurpError> {
+    ) -> Result<(), CurpError> {
         debug!(
             "{} gets conf change for with id {}",
             self.id(),
             conf_change.id()
         );
         let st_r = self.st.read();
-        let info = (st_r.leader_id, st_r.term);
 
         // Non-leader doesn't need to sync or execute
         if st_r.role != Role::Leader {
-            return Err(CurpError::Redirect(st_r.leader_id, st_r.term));
+            return Err(CurpError::redirect(st_r.leader_id, st_r.term));
         }
-        if let Err(e) = self.check_new_config(conf_change.changes()) {
-            return Ok((info, Err(e)));
-        }
-        let pool_entry = PoolEntry::from(conf_change.clone());
-        let mut conflict = self.insert_sp(pool_entry.clone());
-        conflict |= self.insert_ucp(pool_entry);
-        let id = conf_change.id();
-        if !self.ctx.cb.map_write(|mut cb_w| cb_w.sync.insert(id)) {
-            return Ok((
-                info,
-                Err(ConfChangeError::new_propose(ProposeError::Duplicated)),
-            ));
-        }
+
+        self.check_new_config(conf_change.changes())?;
+
+        let mut conflict = self.insert_sp(conf_change.clone());
+        conflict |= self.insert_ucp(conf_change.clone());
+
         let changes = conf_change.changes().to_owned();
         let mut log_w = self.log.write();
         let entry = log_w.push(st_r.term, conf_change)?;
@@ -335,7 +316,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             FallbackContext::new(Arc::clone(&entry), addrs, name, is_learner),
         );
         self.entry_process(&mut log_w, entry, conflict);
-        Ok((info, Ok(())))
+        Ok(())
     }
 
     /// Handle `publish` request
@@ -343,7 +324,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         debug!("{} gets publish with propose id {}", self.id(), req.id());
         let st_r = self.st.read();
         if st_r.role != Role::Leader {
-            return Err(CurpError::Redirect(st_r.leader_id, st_r.term));
+            return Err(CurpError::redirect(st_r.leader_id, st_r.term));
         }
         let mut log_w = self.log.write();
         let entry = log_w.push(st_r.term, req)?;
@@ -1037,7 +1018,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
     }
 
     /// Check if the new config is valid
-    pub(super) fn check_new_config(&self, changes: &[ConfChange]) -> Result<(), ConfChangeError> {
+    pub(super) fn check_new_config(&self, changes: &[ConfChange]) -> Result<(), CurpError> {
         assert_eq!(changes.len(), 1, "Joint consensus is not supported yet");
         let Some(conf_change) = changes.iter().next() else {
             unreachable!("conf change is empty");
@@ -1054,27 +1035,27 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         match conf_change.change_type() {
             ConfChangeType::Add => {
                 if !statuses_ids.insert(node_id) || !config.insert(node_id, false) {
-                    return Err(ConfChangeError::NodeAlreadyExists(()));
+                    return Err(CurpError::node_already_exists());
                 }
             }
             ConfChangeType::Remove => {
                 if !statuses_ids.remove(&node_id) || !config.remove(node_id) {
-                    return Err(ConfChangeError::NodeNotExists(()));
+                    return Err(CurpError::node_not_exist());
                 }
             }
             ConfChangeType::Update => {
                 if statuses_ids.get(&node_id).is_none() || !config.contains(node_id) {
-                    return Err(ConfChangeError::NodeNotExists(()));
+                    return Err(CurpError::node_not_exist());
                 }
             }
             ConfChangeType::AddLearner => {
                 if !statuses_ids.insert(node_id) || !config.insert(node_id, true) {
-                    return Err(ConfChangeError::NodeAlreadyExists(()));
+                    return Err(CurpError::node_already_exists());
                 }
             }
             ConfChangeType::Promote => {
                 if statuses_ids.get(&node_id).is_none() || !config.contains(node_id) {
-                    return Err(ConfChangeError::NodeNotExists(()));
+                    return Err(CurpError::node_not_exist());
                 }
                 let learner_index = self
                     .lst
@@ -1082,7 +1063,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
                     .unwrap_or_else(|| unreachable!("learner should exist here"));
                 let leader_index = self.log.read().last_log_index();
                 if leader_index.overflow_sub(learner_index) > MAX_PROMOTE_GAP {
-                    return Err(ConfChangeError::LearnerNotCatchUp(()));
+                    return Err(CurpError::learner_not_catch_up());
                 }
             }
         }
@@ -1093,7 +1074,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
             || all_nodes != statuses_ids
             || !config.voters().is_disjoint(&config.learners)
         {
-            return Err(ConfChangeError::InvalidConfig(()));
+            return Err(CurpError::invalid_config());
         }
         Ok(())
     }
@@ -1192,10 +1173,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         addrs: Vec<String>,
     ) -> Result<(), CurpError> {
         match self.ctx.connects.get(&id) {
-            Some(connect) => connect
-                .update_addrs(addrs)
-                .await
-                .map_err(|err| CurpError::Transport(err.to_string())),
+            Some(connect) => Ok(connect.update_addrs(addrs).await?),
             None => Ok(()),
         }
     }

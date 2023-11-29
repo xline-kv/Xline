@@ -47,8 +47,7 @@ message InstallSnapshotResponse {
 }
 
 service InnerProtocol {
-    rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
-    rpc Vote(VoteRequest) returns (VoteResponse);
-    rpc InstallSnapshot(stream InstallSnapshotRequest)
-        returns (InstallSnapshotResponse);
+  rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
+  rpc Vote(VoteRequest) returns (VoteResponse);
+  rpc InstallSnapshot(stream InstallSnapshotRequest) returns (InstallSnapshotResponse);
 }

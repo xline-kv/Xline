@@ -7,7 +7,7 @@ use curp::{
     client::{Builder, Client},
     error::ClientError,
     members::ClusterInfo,
-    ConfChange, ConfChangeError,
+    ConfChange, CurpError,
 };
 use curp_test_utils::{
     init_logger, sleep_millis, sleep_secs,
@@ -18,10 +18,7 @@ use test_macros::abort_on_panic;
 use tokio::net::TcpListener;
 use utils::{config::ClientConfig, timestamp};
 
-use crate::common::curp_group::{
-    commandpb::propose_response::ExeResult, CurpGroup, FetchClusterRequest, ProposeRequest,
-    ProposeResponse,
-};
+use crate::common::curp_group::{CurpGroup, FetchClusterRequest, ProposeRequest, ProposeResponse};
 
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
@@ -162,7 +159,7 @@ async fn fast_round_is_slower_than_slow_round() {
         .await
         .unwrap()
         .into_inner();
-    assert!(resp.exe_result.is_none());
+    assert!(resp.result.is_none());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -194,19 +191,15 @@ async fn concurrent_cmd_order() {
             command: bincode::serialize(&cmd1).unwrap(),
             cluster_version: 0,
         })
-        .await
-        .expect("propose failed")
-        .into_inner();
-    assert!(matches!(response.exe_result.unwrap(), ExeResult::Error(_)));
+        .await;
+    assert!(response.is_err());
     let response = leader_connect
         .propose(ProposeRequest {
             command: bincode::serialize(&cmd2).unwrap(),
             cluster_version: 0,
         })
-        .await
-        .expect("propose failed")
-        .into_inner();
-    assert!(matches!(response.exe_result.unwrap(), ExeResult::Error(_)));
+        .await;
+    assert!(response.is_err());
 
     sleep_secs(1).await;
 
@@ -398,7 +391,7 @@ async fn propose_remove_node_should_failed_when_cluster_nodes_equals_to_three() 
     let node_id = group.nodes.keys().next().copied().unwrap();
     let changes = vec![ConfChange::remove(node_id)];
     let res = client.propose_conf_change(id, changes).await.unwrap();
-    assert!(matches!(res, Err(ConfChangeError::InvalidConfig(()))));
+    assert!(matches!(res, Err(CurpError::InvalidConfig(()))));
 }
 
 #[tokio::test(flavor = "multi_thread")]
