@@ -25,7 +25,11 @@ pub struct LeaseClient {
     /// The client running the CURP protocol, communicate with all servers.
     curp_client: Arc<CurpClient<Command>>,
     /// The lease RPC client, only communicate with one server at a time
+    #[cfg(not(madsim))]
     lease_client: xlineapi::LeaseClient<AuthService<Channel>>,
+    /// The lease RPC client, only communicate with one server at a time
+    #[cfg(madsim)]
+    lease_client: xlineapi::LeaseClient<Channel>,
     /// Auth token
     token: Option<String>,
     /// Lease Id generator

@@ -17,7 +17,11 @@ const CHANNEL_SIZE: usize = 128;
 #[derive(Clone, Debug)]
 pub struct WatchClient {
     /// The watch RPC client, only communicate with one server at a time
+    #[cfg(not(madsim))]
     inner: xlineapi::WatchClient<AuthService<Channel>>,
+    /// The watch RPC client, only communicate with one server at a time
+    #[cfg(madsim)]
+    inner: xlineapi::WatchClient<Channel>,
 }
 
 impl WatchClient {

@@ -9,7 +9,11 @@ use crate::{error::Result, AuthService};
 #[derive(Clone, Debug)]
 pub struct MaintenanceClient {
     /// The maintenance RPC client, only communicate with one server at a time
+    #[cfg(not(madsim))]
     inner: xlineapi::MaintenanceClient<AuthService<Channel>>,
+    /// The maintenance RPC client, only communicate with one server at a time
+    #[cfg(madsim)]
+    inner: xlineapi::MaintenanceClient<Channel>,
 }
 
 impl MaintenanceClient {
