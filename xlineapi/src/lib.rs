@@ -143,7 +143,8 @@
     variant_size_differences,
     missing_copy_implementations,
     missing_docs,
-    unused_results
+    unused_results,
+    trivial_casts
 )]
 #![cfg_attr(
     test,
@@ -158,7 +159,6 @@
 )]
 
 pub mod command;
-pub mod etcd_convert;
 pub mod execute_error;
 pub mod request_validation;
 

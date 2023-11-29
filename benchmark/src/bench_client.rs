@@ -1,9 +1,8 @@
 use std::fmt::Debug;
 
 use anyhow::Result;
-use etcd_client::{Client as EtcdClient, PutOptions};
+use etcd_client::Client as EtcdClient;
 use thiserror::Error;
-#[cfg(test)]
 use xline_client::types::kv::{RangeRequest, RangeResponse};
 use xline_client::{
     error::XlineClientError as ClientError,
@@ -60,21 +59,6 @@ impl Debug for BenchClient {
     }
 }
 
-/// transform `PutRequest` into `PutOptions`
-fn from_request_to_option(req: &PutRequest) -> PutOptions {
-    let mut opts = PutOptions::new().with_lease(req.lease());
-    if req.prev_kv() {
-        opts = opts.with_prev_key();
-    }
-    if req.ignore_value() {
-        opts = opts.with_ignore_value();
-    }
-    if req.ignore_lease() {
-        opts = opts.with_ignore_lease();
-    }
-    opts
-}
-
 impl BenchClient {
     /// New `Client`
     ///
@@ -112,11 +96,11 @@ impl BenchClient {
                 Ok(response)
             }
             KVClient::Etcd(ref mut etcd_client) => {
-                let opts = from_request_to_option(&request);
+                let opts = convert::put_req(&request);
                 let response = etcd_client
                     .put(request.key(), request.value(), Some(opts))
                     .await?;
-                Ok(response.into())
+                Ok(convert::put_res(response))
             }
         }
     }
@@ -127,7 +111,7 @@ impl BenchClient {
     ///
     /// If `XlineClient` or `EtcdClient` failed to send request
     #[inline]
-    #[cfg(test)]
+    #[allow(unused)]
     pub(crate) async fn get(
         &mut self,
         request: RangeRequest,
@@ -139,8 +123,77 @@ impl BenchClient {
             }
             KVClient::Etcd(ref mut etcd_client) => {
                 let response = etcd_client.get(request.key(), None).await?;
-                Ok(response.into())
+                Ok(convert::get_res(response))
             }
+        }
+    }
+}
+
+/// Convert utils
+mod convert {
+    use xline_client::types::kv::PutRequest;
+    use xlineapi::{KeyValue, PutResponse, RangeResponse, ResponseHeader};
+
+    /// transform `PutRequest` into `PutOptions`
+    pub(super) fn put_req(req: &PutRequest) -> etcd_client::PutOptions {
+        let mut opts = etcd_client::PutOptions::new().with_lease(req.lease());
+        if req.prev_kv() {
+            opts = opts.with_prev_key();
+        }
+        if req.ignore_value() {
+            opts = opts.with_ignore_value();
+        }
+        if req.ignore_lease() {
+            opts = opts.with_ignore_lease();
+        }
+        opts
+    }
+
+    /// transform `etcd_client::PutResponse` into `PutResponse`
+    pub(super) fn put_res(res: etcd_client::PutResponse) -> PutResponse {
+        let mut res = res;
+        PutResponse {
+            header: res.take_header().map(|h| ResponseHeader {
+                cluster_id: h.cluster_id(),
+                member_id: h.member_id(),
+                revision: h.revision(),
+                raft_term: h.raft_term(),
+            }),
+            prev_kv: res.take_prev_key().map(|kv| KeyValue {
+                key: kv.key().to_vec(),
+                create_revision: kv.create_revision(),
+                mod_revision: kv.mod_revision(),
+                version: kv.version(),
+                value: kv.value().to_vec(),
+                lease: kv.lease(),
+            }),
+        }
+    }
+
+    /// transform `etcd_client::GetResponse` into `RangeResponse`
+    pub(super) fn get_res(res: etcd_client::GetResponse) -> RangeResponse {
+        let mut res = res;
+        RangeResponse {
+            header: res.take_header().map(|h| ResponseHeader {
+                cluster_id: h.cluster_id(),
+                member_id: h.member_id(),
+                revision: h.revision(),
+                raft_term: h.raft_term(),
+            }),
+            kvs: res
+                .kvs()
+                .iter()
+                .map(|kv| KeyValue {
+                    key: kv.key().to_vec(),
+                    create_revision: kv.create_revision(),
+                    mod_revision: kv.mod_revision(),
+                    version: kv.version(),
+                    value: kv.value().to_vec(),
+                    lease: kv.lease(),
+                })
+                .collect(),
+            count: res.count(),
+            more: res.more(),
         }
     }
 }
