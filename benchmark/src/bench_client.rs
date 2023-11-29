@@ -3,6 +3,7 @@ use std::fmt::Debug;
 use anyhow::Result;
 use etcd_client::Client as EtcdClient;
 use thiserror::Error;
+#[cfg(test)]
 use xline_client::types::kv::{RangeRequest, RangeResponse};
 use xline_client::{
     error::XlineClientError as ClientError,
@@ -111,7 +112,7 @@ impl BenchClient {
     ///
     /// If `XlineClient` or `EtcdClient` failed to send request
     #[inline]
-    #[allow(unused)]
+    #[cfg(test)]
     pub(crate) async fn get(
         &mut self,
         request: RangeRequest,
@@ -132,7 +133,7 @@ impl BenchClient {
 /// Convert utils
 mod convert {
     use xline_client::types::kv::PutRequest;
-    use xlineapi::{KeyValue, PutResponse, RangeResponse, ResponseHeader};
+    use xlineapi::{KeyValue, PutResponse, ResponseHeader};
 
     /// transform `PutRequest` into `PutOptions`
     pub(super) fn put_req(req: &PutRequest) -> etcd_client::PutOptions {
@@ -171,9 +172,10 @@ mod convert {
     }
 
     /// transform `etcd_client::GetResponse` into `RangeResponse`
-    pub(super) fn get_res(res: etcd_client::GetResponse) -> RangeResponse {
+    #[cfg(test)]
+    pub(super) fn get_res(res: etcd_client::GetResponse) -> xlineapi::RangeResponse {
         let mut res = res;
-        RangeResponse {
+        xlineapi::RangeResponse {
             header: res.take_header().map(|h| ResponseHeader {
                 cluster_id: h.cluster_id(),
                 member_id: h.member_id(),
