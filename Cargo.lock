@@ -3674,7 +3674,6 @@ dependencies = [
  "curp",
  "curp-external-api",
  "itertools 0.10.5",
- "madsim-etcd-client",
  "madsim-tonic",
  "madsim-tonic-build",
  "prost 0.11.9",
