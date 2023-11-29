@@ -239,6 +239,7 @@ impl XlineServer {
     ///
     /// Will return `Err` when `tonic::Server` serve return an error
     #[inline]
+    #[cfg(madsim)]
     pub async fn start_from_single_addr<S: StorageApi>(
         &self,
         addr: SocketAddr,
@@ -247,7 +248,7 @@ impl XlineServer {
     ) -> Result<JoinHandle<Result<(), tonic::transport::Error>>> {
         let mut shutdown_listener = self.shutdown_trigger.subscribe();
         let signal = async move {
-            let _r = shutdown_listener.wait_self_shutdown().await;
+            shutdown_listener.wait_self_shutdown().await;
         };
         let (router, curp_client) = self.init_router(persistent, key_pair).await?;
         let handle = tokio::spawn(async move { router.serve_with_shutdown(addr, signal).await });
