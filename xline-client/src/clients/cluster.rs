@@ -17,7 +17,11 @@ use crate::{
 #[non_exhaustive]
 pub struct ClusterClient {
     /// Inner client
+    #[cfg(not(madsim))]
     inner: xlineapi::ClusterClient<AuthService<Channel>>,
+    /// Inner client
+    #[cfg(madsim)]
+    inner: xlineapi::ClusterClient<Channel>,
 }
 
 impl ClusterClient {

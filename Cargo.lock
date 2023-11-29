@@ -2562,6 +2562,9 @@ dependencies = [
  "tracing",
  "utils",
  "workspace-hack",
+ "xline",
+ "xline-client",
+ "xlineapi",
 ]
 
 [[package]]

@@ -153,8 +153,8 @@ use std::{
 };
 
 use curp::client::Client as CurpClient;
-use http::{header::AUTHORIZATION, HeaderValue, Request};
-use tonic::transport::Channel;
+use http::{header::AUTHORIZATION, HeaderValue, Request, Uri};
+use tonic::transport::{Channel, Endpoint};
 use tower::Service;
 use utils::config::ClientConfig;
 
@@ -278,13 +278,13 @@ impl Client {
             if !addr.starts_with("http://") {
                 addr.insert_str(0, "http://");
             }
-            let endpoint = Channel::builder(addr.parse().map_err(|_e| {
+            let uri: Uri = addr.parse().map_err(|_e| {
                 XlineClientBuildError::InvalidArguments(String::from("Invalid uri"))
-            })?);
+            })?;
 
             tx.send(tower::discover::Change::Insert(
-                endpoint.uri().clone(),
-                endpoint,
+                uri.clone(),
+                Endpoint::from(uri),
             ))
             .await
             .unwrap_or_else(|_| unreachable!("The channel will not closed"));
@@ -417,8 +417,17 @@ struct AuthService<S> {
 impl<S> AuthService<S> {
     /// Create a new `AuthService`
     #[inline]
+    #[cfg(not(madsim))]
     fn new(inner: S, token: Option<Arc<HeaderValue>>) -> Self {
         Self { inner, token }
+    }
+
+    /// Create a new `AuthService`
+    #[inline]
+    #[cfg(madsim)]
+    #[allow(clippy::needless_pass_by_value, clippy::new_ret_no_self)]
+    fn new(inner: S, _token: Option<Arc<HeaderValue>>) -> S {
+        inner
     }
 }
 

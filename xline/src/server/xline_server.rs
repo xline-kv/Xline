@@ -1,19 +1,15 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{
     client::Client, error::ClientError, members::ClusterInfo, server::Rpc, InnerProtocolServer,
     ProtocolServer,
 };
 use engine::{MemorySnapshotAllocator, RocksSnapshotAllocator, SnapshotAllocator};
-use futures::stream::select_all;
-use hyper::server::conn::AddrStream;
 use jsonwebtoken::{DecodingKey, EncodingKey};
-use tokio::{net::TcpListener, sync::mpsc::channel, task::JoinHandle};
-use tokio_stream::wrappers::TcpListenerStream;
-use tonic::transport::{server::TcpIncoming, Server};
-use tonic_health::ServingStatus;
+use tokio::{sync::mpsc::channel, task::JoinHandle};
+use tonic::transport::{server::Router, Server};
 use tracing::{error, warn};
 use utils::{
     config::{ClientConfig, CompactConfig, CurpConfig, ServerTimeout, StorageConfig},
@@ -194,22 +190,17 @@ impl XlineServer {
         )
     }
 
-    /// Start `XlineServer`
+    /// Init router
     ///
     /// # Errors
     ///
-    /// Will return `Err` when `tonic::Server` serve return an error
+    /// Will return `Err` when `init_servers` return an error
     #[inline]
-    pub async fn start<S: StorageApi>(
+    pub async fn init_router<S: StorageApi>(
         &self,
-        addrs: Vec<SocketAddr>,
         persistent: Arc<S>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
-    ) -> Result<JoinHandle<Result<(), tonic::transport::Error>>> {
-        let mut shutdown_listener = self.shutdown_trigger.subscribe();
-        let signal = async move {
-            let _r = shutdown_listener.wait_self_shutdown().await;
-        };
+    ) -> Result<(Router, Arc<CurpClient>)> {
         let (
             kv_server,
             lock_server,
@@ -221,26 +212,74 @@ impl XlineServer {
             curp_server,
             curp_client,
         ) = self.init_servers(persistent, key_pair).await?;
-        let (mut reporter, health_server) = tonic_health::server::health_reporter();
-        reporter
-            .set_service_status("", ServingStatus::Serving)
-            .await;
+        let router = Server::builder()
+            .add_service(RpcLockServer::new(lock_server))
+            .add_service(RpcKvServer::new(kv_server))
+            .add_service(RpcLeaseServer::from_arc(lease_server))
+            .add_service(RpcAuthServer::new(auth_server))
+            .add_service(RpcWatchServer::new(watch_server))
+            .add_service(RpcMaintenanceServer::new(maintenance_server))
+            .add_service(RpcClusterServer::new(cluster_server))
+            .add_service(ProtocolServer::from_arc(Arc::clone(&curp_server)))
+            .add_service(InnerProtocolServer::from_arc(curp_server));
+        #[cfg(not(madsim))]
+        let router = {
+            let (mut reporter, health_server) = tonic_health::server::health_reporter();
+            reporter
+                .set_service_status("", tonic_health::ServingStatus::Serving)
+                .await;
+            router.add_service(health_server)
+        };
+        Ok((router, curp_client))
+    }
+
+    /// Start `XlineServer`
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` when `tonic::Server` serve return an error
+    #[inline]
+    pub async fn start_from_single_addr<S: StorageApi>(
+        &self,
+        addr: SocketAddr,
+        persistent: Arc<S>,
+        key_pair: Option<(EncodingKey, DecodingKey)>,
+    ) -> Result<JoinHandle<Result<(), tonic::transport::Error>>> {
+        let mut shutdown_listener = self.shutdown_trigger.subscribe();
+        let signal = async move {
+            let _r = shutdown_listener.wait_self_shutdown().await;
+        };
+        let (router, curp_client) = self.init_router(persistent, key_pair).await?;
+        let handle = tokio::spawn(async move { router.serve_with_shutdown(addr, signal).await });
+        if let Err(e) = self.publish(curp_client).await {
+            warn!("publish name to cluster failed: {:?}", e);
+        };
+        Ok(handle)
+    }
+
+    /// Start `XlineServer`
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` when `tonic::Server` serve return an error
+    #[inline]
+    #[cfg(not(madsim))]
+    pub async fn start<S: StorageApi>(
+        &self,
+        addrs: Vec<SocketAddr>,
+        persistent: Arc<S>,
+        key_pair: Option<(EncodingKey, DecodingKey)>,
+    ) -> Result<JoinHandle<Result<(), tonic::transport::Error>>> {
+        let mut shutdown_listener = self.shutdown_trigger.subscribe();
+        let signal = async move {
+            let _r = shutdown_listener.wait_self_shutdown().await;
+        };
+        let (router, curp_client) = self.init_router(persistent, key_pair).await?;
         let incoming = bind_addrs(addrs.into_iter())?;
-        let handle = tokio::spawn(async move {
-            Server::builder()
-                .add_service(RpcLockServer::new(lock_server))
-                .add_service(RpcKvServer::new(kv_server))
-                .add_service(RpcLeaseServer::from_arc(lease_server))
-                .add_service(RpcAuthServer::new(auth_server))
-                .add_service(RpcWatchServer::new(watch_server))
-                .add_service(RpcMaintenanceServer::new(maintenance_server))
-                .add_service(RpcClusterServer::new(cluster_server))
-                .add_service(ProtocolServer::from_arc(Arc::clone(&curp_server)))
-                .add_service(InnerProtocolServer::from_arc(curp_server))
-                .add_service(health_server)
-                .serve_with_incoming_shutdown(incoming, signal)
-                .await
-        });
+        let handle =
+            tokio::spawn(
+                async move { router.serve_with_incoming_shutdown(incoming, signal).await },
+            );
         if let Err(e) = self.publish(curp_client).await {
             warn!("publish name to cluster failed: {:?}", e);
         };
@@ -253,9 +292,10 @@ impl XlineServer {
     ///
     /// Will return `Err` when `tonic::Server` serve return an error
     #[inline]
+    #[cfg(not(madsim))]
     pub async fn start_from_listener<S: StorageApi>(
         &self,
-        xline_listener: TcpListener,
+        xline_listener: tokio::net::TcpListener,
         persistent: Arc<S>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
     ) -> Result<()> {
@@ -263,36 +303,12 @@ impl XlineServer {
         let signal = async move {
             shutdown_listener.wait_self_shutdown().await;
         };
-        let (
-            kv_server,
-            lock_server,
-            lease_server,
-            auth_server,
-            watch_server,
-            maintenance_server,
-            cluster_server,
-            curp_server,
-            curp_client,
-        ) = self.init_servers(persistent, key_pair).await?;
-        let (mut reporter, health_server) = tonic_health::server::health_reporter();
-        reporter
-            .set_service_status("", ServingStatus::Serving)
-            .await;
-        let _h = tokio::spawn(async move {
-            Server::builder()
-                .add_service(RpcLockServer::new(lock_server))
-                .add_service(RpcKvServer::new(kv_server))
-                .add_service(RpcLeaseServer::from_arc(lease_server))
-                .add_service(RpcAuthServer::new(auth_server))
-                .add_service(RpcWatchServer::new(watch_server))
-                .add_service(RpcMaintenanceServer::new(maintenance_server))
-                .add_service(RpcClusterServer::new(cluster_server))
-                .add_service(ProtocolServer::from_arc(Arc::clone(&curp_server)))
-                .add_service(InnerProtocolServer::from_arc(curp_server))
-                .add_service(health_server)
-                .serve_with_incoming_shutdown(TcpListenerStream::new(xline_listener), signal)
-                .await
-        });
+        let (router, curp_client) = self.init_router(persistent, key_pair).await?;
+        let incoming = tokio_stream::wrappers::TcpListenerStream::new(xline_listener);
+        let _h =
+            tokio::spawn(
+                async move { router.serve_with_incoming_shutdown(incoming, signal).await },
+            );
         if let Err(e) = self.publish(curp_client).await {
             warn!("publish name to cluster failed: {:?}", e);
         };
@@ -469,14 +485,15 @@ impl Drop for XlineServer {
 }
 
 /// Bind multiple addresses
+#[cfg(not(madsim))]
 fn bind_addrs<T: Iterator<Item = SocketAddr>>(
     addrs: T,
-) -> Result<impl futures::Stream<Item = Result<AddrStream, std::io::Error>>> {
+) -> Result<impl futures::Stream<Item = Result<hyper::server::conn::AddrStream, std::io::Error>>> {
     let incoming = addrs
         .map(|addr| {
-            TcpIncoming::new(addr, true, None)
-                .map_err(|e| anyhow!("Failed to bind to {}, err: {e}", addr))
+            tonic::transport::server::TcpIncoming::new(addr, true, None)
+                .map_err(|e| anyhow::anyhow!("Failed to bind to {}, err: {e}", addr))
         })
         .collect::<Result<Vec<_>>>()?;
-    Ok(select_all(incoming.into_iter()))
+    Ok(futures::stream::select_all(incoming.into_iter()))
 }
