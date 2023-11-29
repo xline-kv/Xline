@@ -34,7 +34,8 @@ jobs:
       - run: |
           cd scripts
           cp ../target/release/{xline,benchmark} .
-          cp ../target/x86_64-unknown-linux-gnu/release/validation_lock_client .
+          ldd ./xline
+          ldd ./benchmark
           cp ../xline-test-utils/{private,public}.pem .
           docker build . -t ghcr.io/xline-kv/xline:latest
           docker pull gcr.io/etcd-development/etcd:v3.5.5

@@ -87,11 +87,8 @@ jobs:
           toolchain: ${{ env.CI_RUST_TOOLCHAIN }}
           target: ${{ matrix.job.target }}
 
-      - name: Install cross
-        uses: baptiste0928/cargo-install@v2
-        with:
-          crate: cross
-          cache-key: "${{ matrix.job.target }}"
+      - name: Install cross from binary
+        uses: taiki-e/install-action@cross
 
       - name: Build Xline Binary
         run: |

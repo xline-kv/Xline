@@ -14,7 +14,7 @@ export DOCKER_BUILDKIT=1
 export BUILD_ENV_VERSION=v20231128
 export BUILD_TAG="ghcr.io/xline-kv/build-env:${BUILD_ENV_VERSION}"
 set +e
-workflows=("pull_request.yml" "merge_queue.yml")
+workflows=("pull_request.yml" "merge_queue.yml" "benchmark.yml")
 for workflow in "${workflows[@]}"
 do
     if ! grep "${BUILD_TAG}" "../.github/workflows/${workflow}" > /dev/null; then
@@ -31,7 +31,7 @@ echo "=== Arch ==="
 arch
 
 echo "=== Docker login ==="
-echo -n $GITHUB_TOKEN | docker login --username igxnon --password-stdin ghcr.io/xline-kv
+echo -n $GITHUB_TOKEN | docker login --username xline-kv --password-stdin ghcr.io/xline-kv
 
 echo "=== Check image existence ==="
 set +e

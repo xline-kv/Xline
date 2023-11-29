@@ -45,11 +45,12 @@ RUN echo "=== Install rusty stuff 🦀️ ===" && \
     echo "=== Prebuilt rocksdb ===" && \
     curl -L --proto '=https' --tlsv1.2 -sSf https://crates.io/api/v1/crates/librocksdb-sys/$LIB_ROCKS_SYS_VER/download | tar -zxf - && \
     cd librocksdb-sys-$LIB_ROCKS_SYS_VER/rocksdb/ && \
-    make install-shared && ldconfig && \
+    make install && \
     cd /xline && \
     rm -rf librocksdb-sys-$LIB_ROCKS_SYS_VER/
 
 # Set some environments that librocksdb-sys will use them to skip building rocksdb
+ENV ROCKSDB_STATIC=1
 ENV ROCKSDB_INCLUDE_DIR=/usr/local/include
 ENV ROCKSDB_LIB_DIR=/usr/local/lib
 
