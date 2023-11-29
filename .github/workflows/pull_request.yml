@@ -3,7 +3,6 @@ name: PR Checks
 on:
   pull_request:
     branches: [master]
-  workflow_dispatch: {} # TODO remove
 
 jobs:
   hakari-fix:

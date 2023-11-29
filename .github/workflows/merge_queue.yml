@@ -3,7 +3,6 @@ name: Queue Checks
 on:
   merge_group:
     types: [checks_requested]
-  workflow_dispatch: {} # TODO remove
 
 jobs:
   checks:

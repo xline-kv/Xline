@@ -54,11 +54,6 @@ jobs:
           toolchain: ${{ env.CI_RUST_TOOLCHAIN }}
           target: ${{ matrix.job.target }}
 
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-          key: '${{ matrix.job.target }}'
-
       - name: Install cross
         uses: baptiste0928/cargo-install@v2
         with:
