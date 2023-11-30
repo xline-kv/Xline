@@ -1,16 +1,14 @@
-name: Benchmark
+name: Queue Checks
 
 on:
-  workflow_dispatch: {}
-  schedule:
-    - cron: "00 00 * * 1"
-
-env:
-  CI_RUST_TOOLCHAIN: 1.70.0
+  merge_group:
+    types: [checks_requested]
 
 jobs:
-  benchmark:
-    name: benchmark
+  checks:
+    # NOTICE: It should keep the same name with `jobs.checks` in `pull_request.yml`
+    # Refer: https://twitter.com/igxnon/status/1728889064571682883
+    name: Checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,11 +34,9 @@ jobs:
       - run: |
           cd scripts
           cp ../target/release/{xline,benchmark} .
+          ldd ./xline
+          ldd ./benchmark
+          cp ../xline-test-utils/{private,public}.pem .
           docker build . -t ghcr.io/xline-kv/xline:latest
-          docker pull datenlord/etcd:v3.5.5
-          bash ./benchmark.sh
-
-      - uses: actions/upload-artifact@v1
-        with:
-          name: benchmark-output
-          path: scripts/out
+          docker pull gcr.io/etcd-development/etcd:v3.5.5
+          bash ./validation_test.sh
