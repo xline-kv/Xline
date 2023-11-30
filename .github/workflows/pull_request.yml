@@ -2,6 +2,7 @@ name: PR Checks
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened]
     branches: [master]
 
 jobs:
@@ -12,15 +13,26 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - name: Get changed files in ci
+        id: changed-files-ci
+        uses: tj-actions/changed-files@v40
+        with:
+          files_yaml: |
+            detect:
+              - '**/Cargo.toml'
+              - Cargo.lock
       - name: Install cargo-hakari
+        if: steps.changed-files-ci.outputs.detect_any_changed == 'true'
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-hakari
       - name: Hakari generate
+        if: steps.changed-files-ci.outputs.detect_any_changed == 'true'
         run: cargo hakari generate
       - name: Show diff
         run: git diff
       - uses: stefanzweifel/git-auto-commit-action@v4
+        if: steps.changed-files-ci.outputs.detect_any_changed == 'true'
         with:
           commit_message: "chore: fix workspace-hack (automated by GHA)"
           commit_options: "--no-verify --signoff"
