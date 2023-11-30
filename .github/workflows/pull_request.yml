@@ -1,0 +1,106 @@
+name: PR Checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [master]
+
+jobs:
+  checks:
+    name: Checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      SCCACHE_GHA_ENABLED: "on"
+    container: ghcr.io/xline-kv/build-env:latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure sccache
+        uses: actions/github-script@v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Trailing spaces check
+        run: ci/scripts/check-trailing-spaces.sh
+
+      - name: Audit
+        run: cargo audit
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Sort crates
+        run: cargo sort --check --workspace
+
+      - name: Workspace hack check
+        run: cargo hakari generate --diff && cargo hakari manage-deps --dry-run && cargo hakari verify
+
+      - run: sccache --zero-stats > /dev/null
+
+      - name: Clippy (normal)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Sccache stats (normal)
+        run: sccache --show-stats && sccache --zero-stats > /dev/null
+
+      - name: Test (normal)
+        run: cargo llvm-cov nextest --all-features --workspace --lcov --output-path lcov.info
+
+      - name: Sccache stats (normal)
+        run: sccache --show-stats && sccache --zero-stats > /dev/null
+
+      - name: Upload coverage to Codecov
+        run: |
+          set -euo pipefail
+          curl -Os https://uploader.codecov.io/latest/linux/codecov && chmod +x codecov
+          max_retry=5
+          counter=0
+          until ./codecov -t ${{ secrets.CODECOV_TOKEN }} -f lcov.info 2>&1 | grep -q 'Uploading'
+          do
+            sleep 1
+            [[ counter -eq $max_retry ]] && echo "Upload failed!" && exit 1
+            echo "Uploading again. Try #$counter"
+            ((counter++))
+          done
+
+      - name: Clippy (madsim)
+        run: env RUSTFLAGS="--cfg madsim" cargo clippy --package=simulation --all-targets --all-features -- -D warnings
+
+      - name: Sccache stats (madsim)
+        run: sccache --show-stats && sccache --zero-stats > /dev/null
+
+      - name: Test (madsim)
+        run: env RUSTFLAGS="--cfg madsim" cargo nextest run --package=simulation
+
+      - name: Sccache stats (madsim)
+        run: sccache --show-stats
+
+  commit:
+    name: Commit Message Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: git show-ref
+      - uses: actions-rs/install@v0.1
+        with:
+          crate: git-cz
+          version: latest
+      - name: Validate commit messages
+        run: git-cz check ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+
+  spell-check:
+    name: Spell Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Spelling
+        uses: crate-ci/typos@master
