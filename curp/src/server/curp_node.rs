@@ -882,7 +882,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         };
 
         start_cmd_workers(
-            Arc::clone(&cmd_executor),
+            cmd_executor,
             Arc::clone(&curp),
             task_rx,
             done_tx,

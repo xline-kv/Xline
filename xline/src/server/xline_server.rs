@@ -40,6 +40,7 @@ use crate::{
     storage::{
         compact::{auto_compactor, compact_bg_task, COMPACT_CHANNEL_SIZE},
         index::Index,
+        kv_store::KvStoreInner,
         kvwatcher::KvWatcher,
         lease_store::LeaseCollection,
         storage_api::StorageApi,
@@ -136,9 +137,12 @@ impl XlineServer {
         let (compact_task_tx, compact_task_rx) = channel(COMPACT_CHANNEL_SIZE);
         let index = Arc::new(Index::new());
         let (kv_update_tx, kv_update_rx) = channel(CHANNEL_SIZE);
-        let kv_storage = Arc::new(KvStore::new(
+        let kv_store_inner = Arc::new(KvStoreInner::new(
             Arc::clone(&index),
             Arc::clone(&persistent),
+        ));
+        let kv_storage = Arc::new(KvStore::new(
+            Arc::clone(&kv_store_inner),
             Arc::clone(&header_gen),
             kv_update_tx.clone(),
             compact_task_tx,
@@ -167,7 +171,7 @@ impl XlineServer {
             persistent,
         ));
         let watcher = KvWatcher::new_arc(
-            Arc::clone(&kv_storage),
+            kv_store_inner,
             kv_update_rx,
             *self.server_timeout.sync_victims_interval(),
             self.shutdown_trigger.subscribe(),

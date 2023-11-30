@@ -441,8 +441,8 @@ mod test {
     use crate::{
         rpc::{PutRequest, RequestWithToken, WatchProgressRequest},
         storage::{
-            compact::COMPACT_CHANNEL_SIZE, db::DB, index::Index, kvwatcher::MockKvWatcherOps,
-            lease_store::LeaseCollection, KvStore,
+            compact::COMPACT_CHANNEL_SIZE, db::DB, index::Index, kv_store::KvStoreInner,
+            kvwatcher::MockKvWatcherOps, lease_store::LeaseCollection, KvStore,
         },
     };
 
@@ -599,16 +599,16 @@ mod test {
         let lease_collection = Arc::new(LeaseCollection::new(0));
         let next_id_gen = Arc::new(WatchIdGenerator::new(1));
         let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
+        let kv_store_inner = Arc::new(KvStoreInner::new(index, Arc::clone(&db)));
         let kv_store = Arc::new(KvStore::new(
-            index,
-            Arc::clone(&db),
+            Arc::clone(&kv_store_inner),
             Arc::clone(&header_gen),
             kv_update_tx,
             compact_tx,
             lease_collection,
         ));
         let kv_watcher = KvWatcher::new_arc(
-            Arc::clone(&kv_store),
+            kv_store_inner,
             kv_update_rx,
             Duration::from_millis(10),
             rx.clone(),
@@ -654,7 +654,7 @@ mod test {
                 assert!(has_prev);
             }
         }
-
+        drop(kv_store);
         tx.self_shutdown_and_wait().await;
     }
 
@@ -781,16 +781,16 @@ mod test {
         let lease_collection = Arc::new(LeaseCollection::new(0));
         let next_id_gen = Arc::new(WatchIdGenerator::new(1));
         let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
+        let kv_store_inner = Arc::new(KvStoreInner::new(index, Arc::clone(&db)));
         let kv_store = Arc::new(KvStore::new(
-            index,
-            Arc::clone(&db),
+            Arc::clone(&kv_store_inner),
             Arc::clone(&header_gen),
             kv_update_tx,
             compact_tx,
             lease_collection,
         ));
         let kv_watcher = KvWatcher::new_arc(
-            Arc::clone(&kv_store),
+            kv_store_inner,
             kv_update_rx,
             Duration::from_millis(10),
             rx.clone(),
@@ -842,6 +842,7 @@ mod test {
         assert!(!watch_event_res.canceled);
         assert_eq!(watch_event_res.compact_revision, 0);
         assert_eq!(watch_event_res.watch_id, 2);
+        drop(kv_store);
         tx.self_shutdown_and_wait().await;
     }
 }
