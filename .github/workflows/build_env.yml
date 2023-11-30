@@ -1,0 +1,17 @@
+name: Build CI Env Image
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build_env:
+    name: Build
+    permissions:
+      packages: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run build scripts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ci/build-env.sh
