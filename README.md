@@ -28,7 +28,7 @@ At a high level, we expect the scope of Xline to be restricted to the following 
 - Supports a rich set of key-value (KV) interfaces, fully compatible with etcd's API.
 - Ensures high performance and strong consistency in a wide-area network environment, using the CURP protocol as the underlying consensus protocol.
 
-![cncf-logo](./img/cncf-logo.png)
+![cncf-logo](./doc/img/cncf-logo.png)
 
 Xline is a sandbox project of the [Cloud Native Computing Foundation](https://cncf.io/) (CNCF).
 
@@ -69,12 +69,12 @@ refer to the [blog](https://datenlord.github.io/xline-home/#/blog/2023-01-07-Cur
 We compared Xline with Etcd in a simulated multi-cluster environment. The
 details of the deployment is shown below.
 
-![test deployment](./img/xline_test_deployment.jpg)
+![test deployment](./doc/img/xline_test_deployment.jpg)
 
 We compared the performance with two different workloads. One is 1 key case, the
 other is 100K key space case. Here's the test result.
 
-![xline key perf](./img/xline-key-perf.png)
+![xline key perf](./doc/img/xline-key-perf.png)
 
 
 It's easy to tell Xline has a better performance than Etcd in a geo-distributed
