@@ -45,12 +45,8 @@ pub(crate) struct KvStore<DB>
 where
     DB: StorageApi,
 {
-    /// Key Index
-    index: Arc<Index>,
-    /// DB to store key value
-    db: Arc<DB>,
-    /// Compacted Revision
-    compacted_rev: AtomicI64,
+    /// Kv storage inner
+    inner: Arc<KvStoreInner<DB>>,
     /// Revision
     revision: Arc<RevisionNumberGenerator>,
     /// Header generator
@@ -61,6 +57,110 @@ where
     compact_task_tx: mpsc::Sender<(i64, Option<Arc<event_listener::Event>>)>,
     /// Lease collection
     lease_collection: Arc<LeaseCollection>,
+}
+
+/// KV store inner, shared by `KvStore` and `KvWatcher`
+#[derive(Debug)]
+pub(crate) struct KvStoreInner<DB>
+where
+    DB: StorageApi,
+{
+    /// Key Index
+    index: Arc<Index>,
+    /// DB to store key value
+    db: Arc<DB>,
+    /// Compacted Revision
+    compacted_rev: AtomicI64,
+}
+
+impl<DB> KvStoreInner<DB>
+where
+    DB: StorageApi,
+{
+    /// Create new `KvStoreInner`
+    pub(crate) fn new(index: Arc<Index>, db: Arc<DB>) -> Self {
+        Self {
+            index,
+            db,
+            compacted_rev: AtomicI64::new(-1),
+        }
+    }
+
+    /// Get `KeyValue` from the `KvStore`
+    fn get_values(&self, revisions: &[Revision]) -> Result<Vec<KeyValue>, ExecuteError> {
+        let revisions = revisions
+            .iter()
+            .map(Revision::encode_to_vec)
+            .collect::<Vec<Vec<u8>>>();
+        let values = self.db.get_values(KV_TABLE, &revisions)?;
+        let kvs: Vec<KeyValue> = values
+            .into_iter()
+            .flatten()
+            .map(|v| KeyValue::decode(v.as_slice()))
+            .collect::<Result<_, _>>()
+            .map_err(|e| {
+                ExecuteError::DbError(format!("Failed to decode key-value from DB, error: {e}"))
+            })?;
+        debug_assert_eq!(kvs.len(), revisions.len(), "index does not match with db");
+        Ok(kvs)
+    }
+
+    /// Get `KeyValue` of a range
+    ///
+    /// If `range_end` is `&[]`, this function will return one or zero `KeyValue`.
+    fn get_range(
+        &self,
+        key: &[u8],
+        range_end: &[u8],
+        revision: i64,
+    ) -> Result<Vec<KeyValue>, ExecuteError> {
+        let revisions = self.index.get(key, range_end, revision);
+        self.get_values(&revisions)
+    }
+
+    /// Get `KeyValue` start from a revision and convert to `Event`
+    pub(crate) fn get_event_from_revision(
+        &self,
+        key_range: KeyRange,
+        revision: i64,
+    ) -> Result<Vec<Event>, ExecuteError> {
+        let revisions =
+            self.index
+                .get_from_rev(key_range.range_start(), key_range.range_end(), revision);
+        let events: Vec<Event> = self
+            .get_values(&revisions)?
+            .into_iter()
+            .map(|kv| {
+                // Delete
+                #[allow(clippy::as_conversions)] // This cast is always valid
+                let event_type = if kv.version == 0 && kv.create_revision == 0 {
+                    EventType::Delete
+                } else {
+                    EventType::Put
+                };
+                let mut event = Event {
+                    kv: Some(kv),
+                    prev_kv: None,
+                    ..Default::default()
+                };
+                event.set_type(event_type);
+                event
+            })
+            .collect();
+        Ok(events)
+    }
+
+    /// Get previous `KeyValue` of a `KeyValue`
+    pub(crate) fn get_prev_kv(&self, kv: &KeyValue) -> Option<KeyValue> {
+        self.get_range(&kv.key, &[], kv.mod_revision.overflow_sub(1))
+            .ok()?
+            .pop()
+    }
+
+    /// Get compacted revision of  KV store
+    pub(crate) fn compacted_revision(&self) -> i64 {
+        self.compacted_rev.load(Relaxed)
+    }
 }
 
 impl<DB> KvStore<DB>
@@ -90,7 +190,7 @@ where
     /// Recover data from persistent storage
     pub(crate) async fn recover(&self) -> Result<(), ExecuteError> {
         let mut key_to_lease: HashMap<Vec<u8>, i64> = HashMap::new();
-        let kvs = self.db.get_all(KV_TABLE)?;
+        let kvs = self.inner.db.get_all(KV_TABLE)?;
 
         let current_rev = kvs
             .last()
@@ -108,7 +208,7 @@ where
                 let _ignore = key_to_lease.insert(kv.key.clone(), kv.lease);
             }
 
-            self.index.restore(
+            self.inner.index.restore(
                 kv.key,
                 rev.revision(),
                 rev.sub_revision(),
@@ -121,7 +221,7 @@ where
             self.attach(lease_id, key)?;
         }
 
-        if let Some(revision_bytes) = self.db.get_value(META_TABLE, COMPACT_REVISION)? {
+        if let Some(revision_bytes) = self.inner.db.get_value(META_TABLE, COMPACT_REVISION)? {
             let compacted_revision =
                 i64::from_le_bytes(revision_bytes.try_into().map_err(|e| {
                     ExecuteError::DbError(format!(
@@ -147,17 +247,14 @@ where
 {
     /// New `KvStore`
     pub(crate) fn new(
-        index: Arc<Index>,
-        db: Arc<DB>,
+        inner: Arc<KvStoreInner<DB>>,
         header_gen: Arc<HeaderGenerator>,
         kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
         compact_task_tx: mpsc::Sender<(i64, Option<Arc<event_listener::Event>>)>,
         lease_collection: Arc<LeaseCollection>,
     ) -> Self {
         Self {
-            index,
-            db,
-            compacted_rev: AtomicI64::new(-1),
+            inner,
             revision: header_gen.general_revision_arc(),
             header_gen,
             kv_update_tx,
@@ -173,12 +270,12 @@ where
 
     /// Get compacted revision of  KV store
     pub(crate) fn compacted_revision(&self) -> i64 {
-        self.compacted_rev.load(Relaxed)
+        self.inner.compacted_rev.load(Relaxed)
     }
 
     /// Update compacted revision of KV store
     pub(crate) fn update_compacted_revision(&self, revision: i64) {
-        self.compacted_rev.store(revision, Relaxed);
+        self.inner.compacted_rev.store(revision, Relaxed);
     }
 
     /// Notify KV changes to KV watcher
@@ -323,6 +420,7 @@ where
     /// Check result of a `Compare`
     fn check_compare(&self, cmp: &Compare) -> bool {
         let kvs = self
+            .inner
             .get_range(&cmp.key, &cmp.range_end, 0)
             .unwrap_or_default();
         if kvs.is_empty() {
@@ -357,7 +455,7 @@ where
         revisions
             .iter()
             .for_each(|rev| ops.push(WriteOp::DeleteKeyValue(rev.as_ref())));
-        _ = self.db.flush_ops(ops)?;
+        _ = self.inner.db.flush_ops(ops)?;
         Ok(())
     }
 }
@@ -367,38 +465,6 @@ impl<DB> KvStore<DB>
 where
     DB: StorageApi,
 {
-    /// Get `KeyValue` from the `KvStore`
-    fn get_values(&self, revisions: &[Revision]) -> Result<Vec<KeyValue>, ExecuteError> {
-        let revisions = revisions
-            .iter()
-            .map(Revision::encode_to_vec)
-            .collect::<Vec<Vec<u8>>>();
-        let values = self.db.get_values(KV_TABLE, &revisions)?;
-        let kvs: Vec<KeyValue> = values
-            .into_iter()
-            .flatten()
-            .map(|v| KeyValue::decode(v.as_slice()))
-            .collect::<Result<_, _>>()
-            .map_err(|e| {
-                ExecuteError::DbError(format!("Failed to decode key-value from DB, error: {e}"))
-            })?;
-        debug_assert_eq!(kvs.len(), revisions.len(), "index does not match with db");
-        Ok(kvs)
-    }
-
-    /// Get `KeyValue` of a range
-    ///
-    /// If `range_end` is `&[]`, this function will return one or zero `KeyValue`.
-    fn get_range(
-        &self,
-        key: &[u8],
-        range_end: &[u8],
-        revision: i64,
-    ) -> Result<Vec<KeyValue>, ExecuteError> {
-        let revisions = self.index.get(key, range_end, revision);
-        self.get_values(&revisions)
-    }
-
     /// Get `KeyValue` of a range with limit and count only, return kvs and total count
     fn get_range_with_opts(
         &self,
@@ -408,7 +474,7 @@ where
         limit: usize,
         count_only: bool,
     ) -> Result<(Vec<KeyValue>, usize), ExecuteError> {
-        let mut revisions = self.index.get(key, range_end, revision);
+        let mut revisions = self.inner.index.get(key, range_end, revision);
         let total = revisions.len();
         if count_only || total == 0 {
             return Ok((vec![], total));
@@ -416,47 +482,8 @@ where
         if limit != 0 {
             revisions.truncate(limit);
         }
-        let kvs = self.get_values(&revisions)?;
+        let kvs = self.inner.get_values(&revisions)?;
         Ok((kvs, total))
-    }
-
-    /// Get previous `KeyValue` of a `KeyValue`
-    pub(crate) fn get_prev_kv(&self, kv: &KeyValue) -> Option<KeyValue> {
-        self.get_range(&kv.key, &[], kv.mod_revision.overflow_sub(1))
-            .ok()?
-            .pop()
-    }
-
-    /// Get `KeyValue` start from a revision and convert to `Event`
-    pub(crate) fn get_event_from_revision(
-        &self,
-        key_range: KeyRange,
-        revision: i64,
-    ) -> Result<Vec<Event>, ExecuteError> {
-        let revisions =
-            self.index
-                .get_from_rev(key_range.range_start(), key_range.range_end(), revision);
-        let events = self
-            .get_values(&revisions)?
-            .into_iter()
-            .map(|kv| {
-                // Delete
-                #[allow(clippy::as_conversions)] // This cast is always valid
-                let event_type = if kv.version == 0 && kv.create_revision == 0 {
-                    EventType::Delete
-                } else {
-                    EventType::Put
-                };
-                let mut event = Event {
-                    kv: Some(kv),
-                    prev_kv: None,
-                    ..Default::default()
-                };
-                event.set_type(event_type);
-                event
-            })
-            .collect();
-        Ok(events)
     }
 }
 
@@ -549,7 +576,7 @@ where
             ..Default::default()
         };
         if req.prev_kv || req.ignore_lease || req.ignore_value {
-            let prev_kv = self.get_range(&req.key, &[], 0)?.pop();
+            let prev_kv = self.inner.get_range(&req.key, &[], 0)?.pop();
             if prev_kv.is_none() && (req.ignore_lease || req.ignore_value) {
                 return Err(ExecuteError::KeyNotFound);
             }
@@ -565,7 +592,7 @@ where
         &self,
         req: &DeleteRangeRequest,
     ) -> Result<DeleteRangeResponse, ExecuteError> {
-        let prev_kvs = self.get_range(&req.key, &req.range_end, 0)?;
+        let prev_kvs = self.inner.get_range(&req.key, &req.range_end, 0)?;
         let mut response = DeleteRangeResponse {
             header: Some(self.header_gen.gen_header()),
             ..DeleteRangeResponse::default()
@@ -723,6 +750,7 @@ where
     ) -> Result<(Vec<WriteOp>, Vec<Event>), ExecuteError> {
         let mut ops = Vec::new();
         let new_rev = self
+            .inner
             .index
             .register_revision(&req.key, revision, sub_revision);
         let mut kv = KeyValue {
@@ -734,7 +762,7 @@ where
             lease: req.lease,
         };
         if req.ignore_lease || req.ignore_value {
-            let prev_kv = self.get_range(&req.key, &[], 0)?.pop();
+            let prev_kv = self.inner.get_range(&req.key, &[], 0)?.pop();
             let prev = prev_kv.as_ref().ok_or(ExecuteError::KeyNotFound)?;
             if req.ignore_lease {
                 kv.lease = prev.lease;
@@ -809,7 +837,7 @@ where
         sub_revision: i64,
     ) -> (Vec<WriteOp>, Vec<Event>) {
         Self::delete_keys(
-            &self.index,
+            &self.inner.index,
             &self.lease_collection,
             &req.key,
             &req.range_end,
@@ -844,7 +872,7 @@ where
     /// Insert the given pairs (key, `KeyRevision`) into the index
     #[inline]
     pub(crate) fn insert_index(&self, key_revisions: Vec<(Vec<u8>, KeyRevision)>) {
-        self.index.insert(key_revisions);
+        self.inner.index.insert(key_revisions);
     }
 }
 
@@ -853,6 +881,7 @@ mod test {
     use std::time::Duration;
 
     use test_macros::abort_on_panic;
+    use tokio::{runtime::Handle, task::block_in_place};
     use utils::{config::StorageConfig, shutdown};
 
     use super::*;
@@ -868,6 +897,33 @@ mod test {
 
     const CHANNEL_SIZE: usize = 1024;
 
+    struct StoreWrapper(Option<Arc<KvStore<DB>>>, shutdown::Trigger);
+
+    impl Drop for StoreWrapper {
+        fn drop(&mut self) {
+            drop(self.0.take());
+            block_in_place(move || {
+                Handle::current().block_on(async move {
+                    self.1.self_shutdown_and_wait().await;
+                });
+            });
+        }
+    }
+
+    impl std::ops::Deref for StoreWrapper {
+        type Target = Arc<KvStore<DB>>;
+
+        fn deref(&self) -> &Self::Target {
+            self.0.as_ref().unwrap()
+        }
+    }
+
+    impl std::ops::DerefMut for StoreWrapper {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            self.0.as_mut().unwrap()
+        }
+    }
+
     fn sort_req(sort_order: SortOrder, sort_target: SortTarget) -> RangeRequest {
         RangeRequest {
             key: vec![0],
@@ -880,9 +936,8 @@ mod test {
 
     async fn init_store(
         db: Arc<DB>,
-        shutdown_listener: shutdown::Listener,
-    ) -> Result<(Arc<KvStore<DB>>, RevisionNumberGenerator), ExecuteError> {
-        let store = init_empty_store(db, shutdown_listener);
+    ) -> Result<(StoreWrapper, RevisionNumberGenerator), ExecuteError> {
+        let store = init_empty_store(db);
         let keys = vec!["a", "b", "c", "d", "e", "z", "z", "z"];
         let vals = vec!["a", "b", "c", "d", "e", "z1", "z2", "z3"];
         let revision = RevisionNumberGenerator::default();
@@ -900,22 +955,23 @@ mod test {
         Ok((store, revision))
     }
 
-    fn init_empty_store(db: Arc<DB>, shutdown_listener: shutdown::Listener) -> Arc<KvStore<DB>> {
+    fn init_empty_store(db: Arc<DB>) -> StoreWrapper {
+        let (shutdown_trigger, shutdown_listener) = shutdown::channel();
         let (compact_tx, compact_rx) = mpsc::channel(COMPACT_CHANNEL_SIZE);
         let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
         let lease_collection = Arc::new(LeaseCollection::new(0));
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let index = Arc::new(Index::new());
+        let kv_store_inner = Arc::new(KvStoreInner::new(Arc::clone(&index), db));
         let storage = Arc::new(KvStore::new(
-            Arc::clone(&index),
-            db,
+            Arc::clone(&kv_store_inner),
             header_gen,
             kv_update_tx,
             compact_tx,
             lease_collection,
         ));
         let _watcher = KvWatcher::new_arc(
-            Arc::clone(&storage),
+            kv_store_inner,
             kv_update_rx,
             Duration::from_millis(10),
             shutdown_listener.clone(),
@@ -928,7 +984,7 @@ mod test {
             compact_rx,
             shutdown_listener,
         ));
-        storage
+        StoreWrapper(Some(storage), shutdown_trigger)
     }
 
     async fn exe_as_and_flush(
@@ -937,13 +993,14 @@ mod test {
         revision: i64,
     ) -> Result<(), ExecuteError> {
         let (_sync_res, ops) = store.after_sync(request, revision).await?;
-        let key_revs = store.db.flush_ops(ops)?;
+        let key_revs = store.inner.db.flush_ops(ops)?;
         store.insert_index(key_revs);
         Ok(())
     }
 
     fn index_compact(store: &Arc<KvStore<DB>>, at_rev: i64) -> Vec<Vec<u8>> {
         store
+            .inner
             .index
             .compact(at_rev)
             .into_iter()
@@ -951,13 +1008,11 @@ mod test {
             .collect::<Vec<Vec<_>>>()
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     #[abort_on_panic]
     async fn test_keys_only() -> Result<(), ExecuteError> {
-        let (tx, rx) = shutdown::channel();
         let db = DB::open(&StorageConfig::Memory)?;
-        let (store, _rev) = init_store(db, rx).await?;
-
+        let (store, _rev) = init_store(db).await?;
         let request = RangeRequest {
             key: vec![0],
             range_end: vec![0],
@@ -969,16 +1024,14 @@ mod test {
         for kv in response.kvs {
             assert!(kv.value.is_empty());
         }
-        tx.self_shutdown_and_wait().await;
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     #[abort_on_panic]
     async fn test_range_empty() -> Result<(), ExecuteError> {
-        let (tx, rx) = shutdown::channel();
         let db = DB::open(&StorageConfig::Memory)?;
-        let (store, _rev) = init_store(db, rx).await?;
+        let (store, _rev) = init_store(db).await?;
 
         let request = RangeRequest {
             key: "x".into(),
@@ -989,16 +1042,14 @@ mod test {
         let response = store.handle_range_request(&request)?;
         assert_eq!(response.kvs.len(), 0);
         assert_eq!(response.count, 0);
-        tx.self_shutdown_and_wait().await;
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     #[abort_on_panic]
     async fn test_range_filter() -> Result<(), ExecuteError> {
-        let (tx, rx) = shutdown::channel();
         let db = DB::open(&StorageConfig::Memory)?;
-        let (store, _rev) = init_store(db, rx).await?;
+        let (store, _rev) = init_store(db).await?;
 
         let request = RangeRequest {
             key: vec![0],
@@ -1014,16 +1065,14 @@ mod test {
         assert_eq!(response.kvs.len(), 2);
         assert_eq!(response.kvs[0].create_revision, 2);
         assert_eq!(response.kvs[1].create_revision, 3);
-        tx.self_shutdown_and_wait().await;
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     #[abort_on_panic]
     async fn test_range_sort() -> Result<(), ExecuteError> {
-        let (tx, rx) = shutdown::channel();
         let db = DB::open(&StorageConfig::Memory)?;
-        let (store, _rev) = init_store(db, rx).await?;
+        let (store, _rev) = init_store(db).await?;
         let keys = ["a", "b", "c", "d", "e", "z"];
         let reversed_keys = ["z", "e", "d", "c", "b", "a"];
         let version_keys = ["z", "a", "b", "c", "d", "e"];
@@ -1074,21 +1123,19 @@ mod test {
                 );
             }
         }
-        tx.self_shutdown_and_wait().await;
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     #[abort_on_panic]
     async fn test_recover() -> Result<(), ExecuteError> {
-        let (tx, rx) = shutdown::channel();
         let db = DB::open(&StorageConfig::Memory)?;
         let ops = vec![WriteOp::PutCompactRevision(8)];
         db.flush_ops(ops)?;
-        let (store, _rev_gen) = init_store(Arc::clone(&db), rx.clone()).await?;
-        assert_eq!(store.index.get_from_rev(b"z", b"", 5).len(), 3);
+        let (store, _rev_gen) = init_store(Arc::clone(&db)).await?;
+        assert_eq!(store.inner.index.get_from_rev(b"z", b"", 5).len(), 3);
 
-        let new_store = init_empty_store(db, rx);
+        let new_store = init_empty_store(db);
 
         let range_req = RangeRequest {
             key: "a".into(),
@@ -1106,15 +1153,14 @@ mod test {
         assert_eq!(res.kvs[0].key, b"a");
         assert_eq!(new_store.compacted_revision(), 8);
         tokio::time::sleep(Duration::from_millis(500)).await;
-        assert_eq!(new_store.index.get_from_rev(b"z", b"", 5).len(), 2);
-        tx.self_shutdown_and_wait().await;
+        assert_eq!(new_store.inner.index.get_from_rev(b"z", b"", 5).len(), 2);
+
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     #[abort_on_panic]
     async fn test_txn() -> Result<(), ExecuteError> {
-        let (tx, rx) = shutdown::channel();
         let txn_req = RequestWithToken::new(
             TxnRequest {
                 compare: vec![Compare {
@@ -1154,7 +1200,7 @@ mod test {
             .into(),
         );
         let db = DB::open(&StorageConfig::Memory)?;
-        let (store, rev) = init_store(db, rx).await?;
+        let (store, rev) = init_store(db).await?;
         exe_as_and_flush(&store, &txn_req, rev.next()).await?;
         let request = RangeRequest {
             key: "success".into(),
@@ -1165,16 +1211,15 @@ mod test {
         assert_eq!(response.count, 1);
         assert_eq!(response.kvs.len(), 1);
         assert_eq!(response.kvs[0].value, "1".as_bytes());
-        tx.self_shutdown_and_wait().await;
+
         Ok(())
     }
 
     #[tokio::test(flavor = "multi_thread")]
     #[abort_on_panic]
     async fn test_kv_store_index_available() {
-        let (tx, rx) = shutdown::channel();
         let db = DB::open(&StorageConfig::Memory).unwrap();
-        let (store, revision) = init_store(Arc::clone(&db), rx).await.unwrap();
+        let (store, revision) = init_store(Arc::clone(&db)).await.unwrap();
         let handle = tokio::spawn({
             let store = Arc::clone(&store);
             async move {
@@ -1194,22 +1239,20 @@ mod test {
             }
         });
         tokio::time::sleep(std::time::Duration::from_micros(50)).await;
-        let revs = store.index.get_from_rev(b"foo", b"", 1);
-        let kvs = store.get_values(&revs).unwrap();
+        let revs = store.inner.index.get_from_rev(b"foo", b"", 1);
+        let kvs = store.inner.get_values(&revs).unwrap();
         assert_eq!(
             kvs.len(),
             revs.len(),
             "kvs.len() != revs.len(), maybe some operations already inserted into index, but not flushed to db"
         );
         handle.await.unwrap();
-        tx.self_shutdown_and_wait().await;
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_compaction() -> Result<(), ExecuteError> {
-        let (tx, rx) = shutdown::channel();
         let db = DB::open(&StorageConfig::Memory)?;
-        let store = init_empty_store(db, rx);
+        let store = init_empty_store(db);
         let revision = RevisionNumberGenerator::default();
         // sample requests: (a, 1) (b, 2) (a, 3) (del a)
         // their revisions:     2      3      4       5
@@ -1256,12 +1299,12 @@ mod test {
         let target_revisions = index_compact(&store, 3);
         store.compact(target_revisions.as_ref())?;
         assert_eq!(
-            store.get_range(b"a", b"", 2).unwrap().len(),
+            store.inner.get_range(b"a", b"", 2).unwrap().len(),
             1,
             "(a, 1) should not be removed"
         );
         assert_eq!(
-            store.get_range(b"b", b"", 3).unwrap().len(),
+            store.inner.get_range(b"b", b"", 3).unwrap().len(),
             1,
             "(b, 2) should not be removed"
         );
@@ -1269,16 +1312,16 @@ mod test {
         let target_revisions = index_compact(&store, 4);
         store.compact(target_revisions.as_ref())?;
         assert!(
-            store.get_range(b"a", b"", 2).unwrap().is_empty(),
+            store.inner.get_range(b"a", b"", 2).unwrap().is_empty(),
             "(a, 1) should be removed"
         );
         assert_eq!(
-            store.get_range(b"b", b"", 3).unwrap().len(),
+            store.inner.get_range(b"b", b"", 3).unwrap().len(),
             1,
             "(b, 2) should not be removed"
         );
         assert_eq!(
-            store.get_range(b"a", b"", 4).unwrap().len(),
+            store.inner.get_range(b"a", b"", 4).unwrap().len(),
             1,
             "(a, 3) should not be removed"
         );
@@ -1286,23 +1329,23 @@ mod test {
         let target_revisions = index_compact(&store, 5);
         store.compact(target_revisions.as_ref())?;
         assert!(
-            store.get_range(b"a", b"", 2).unwrap().is_empty(),
+            store.inner.get_range(b"a", b"", 2).unwrap().is_empty(),
             "(a, 1) should be removed"
         );
         assert_eq!(
-            store.get_range(b"b", b"", 3).unwrap().len(),
+            store.inner.get_range(b"b", b"", 3).unwrap().len(),
             1,
             "(b, 2) should not be removed"
         );
         assert!(
-            store.get_range(b"a", b"", 4).unwrap().is_empty(),
+            store.inner.get_range(b"a", b"", 4).unwrap().is_empty(),
             "(a, 3) should be removed"
         );
         assert!(
-            store.get_range(b"a", b"", 5).unwrap().is_empty(),
+            store.inner.get_range(b"a", b"", 5).unwrap().is_empty(),
             "(a, 4) should be removed"
         );
-        tx.self_shutdown_and_wait().await;
+
         Ok(())
     }
 
