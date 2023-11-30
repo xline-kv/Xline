@@ -11,6 +11,17 @@ cat rust-toolchain.toml
 export DOCKER_BUILDKIT=1
 export GHCR_ORG=xline-kv
 export BUILD_TAG="ghcr.io/${GHCR_ORG}/build-env:latest"
+set +e
+workflows=("pull_request.yml" "merge_queue.yml" "benchmark.yml")
+for workflow in "${workflows[@]}"
+do
+    if ! grep "${BUILD_TAG}" "../.github/workflows/${workflow}" > /dev/null; then
+        echo "container: ${BUILD_TAG} is not set up for ${workflow}, please update ${workflow}"
+        exit 1
+    fi
+done
+set -e
+
 # Change this version if rust-rocksdb updates in `engine`
 export LIB_ROCKS_SYS_VER="0.11.0+8.1.1"
 
