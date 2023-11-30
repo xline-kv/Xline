@@ -9,6 +9,8 @@ use jsonwebtoken::{DecodingKey, EncodingKey};
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use tokio::{
     net::TcpListener,
+    runtime::Handle,
+    task::block_in_place,
     time::{self, Duration},
 };
 use utils::config::{ClientConfig, CompactConfig, CurpConfig, ServerTimeout, StorageConfig};
@@ -27,6 +29,8 @@ pub struct Cluster {
     size: usize,
     /// storage paths
     paths: HashMap<usize, PathBuf>,
+    /// Xline servers
+    servers: HashMap<usize, Arc<XlineServer>>,
 }
 
 impl Cluster {
@@ -46,6 +50,7 @@ impl Cluster {
             client: None,
             size,
             paths: HashMap::new(),
+            servers: HashMap::new(),
         }
     }
 
@@ -75,19 +80,20 @@ impl Cluster {
                     .collect(),
                 &name,
             );
+            let server = Arc::new(XlineServer::new(
+                cluster_info.into(),
+                is_leader,
+                CurpConfig {
+                    storage_cfg: StorageConfig::RocksDB(path.join("curp")),
+                    ..Default::default()
+                },
+                ClientConfig::default(),
+                ServerTimeout::default(),
+                StorageConfig::Memory,
+                CompactConfig::default(),
+            ));
+            self.servers.insert(i, server.clone());
             tokio::spawn(async move {
-                let server = XlineServer::new(
-                    cluster_info.into(),
-                    is_leader,
-                    CurpConfig {
-                        storage_cfg: StorageConfig::RocksDB(path.join("curp")),
-                        ..Default::default()
-                    },
-                    ClientConfig::default(),
-                    ServerTimeout::default(),
-                    StorageConfig::Memory,
-                    CompactConfig::default(),
-                );
                 let result = server
                     .start_from_listener(listener, db, Self::test_key_pair())
                     .await;
@@ -189,9 +195,16 @@ impl Cluster {
 
 impl Drop for Cluster {
     fn drop(&mut self) {
-        for path in self.paths.values() {
-            let _ignore = std::fs::remove_dir_all(path);
-        }
+        block_in_place(move || {
+            Handle::current().block_on(async move {
+                for xline in self.servers.values() {
+                    xline.stop().await;
+                }
+                for path in self.paths.values() {
+                    let _ignore = tokio::fs::remove_dir_all(path).await;
+                }
+            });
+        });
     }
 }
 
