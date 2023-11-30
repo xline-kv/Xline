@@ -1,3 +1,5 @@
+name: Merge Multi-platform Image Manifests
+
 on:
   workflow_call:
     inputs:
