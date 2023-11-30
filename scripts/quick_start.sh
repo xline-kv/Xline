@@ -50,5 +50,6 @@ run_container() {
 
 stop_all
 docker network create --subnet=172.20.0.0/24 xline_net >/dev/null 2>&1
+echo "A Docker network named 'xline_net' is created for communication among various xline nodes. You can use the command 'docker network rm xline_net' to remove it after use."
 
 run_container 3
