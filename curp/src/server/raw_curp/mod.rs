@@ -1029,7 +1029,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> RawCurp<C, RC> {
         self.shutdown_trigger.subscribe()
     }
 
-    /// Check if all followers have caught up with the leader
+    /// Check if the specified follower has caught up with the leader
     pub(super) fn is_synced(&self, node_id: ServerId) -> bool {
         let log_r = self.log.read();
         let leader_commit_index = log_r.commit_index;

@@ -740,17 +740,19 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                             hb_opt = true;
                         }
                         // Check Follower shutdown
+                        // When the leader is in the shutdown state, its last log must be shutdown, and if the follower is
+                        // already synced with leader and current AE is a heartbeat, then the follower will commit the shutdown
+                        // log after AE, or when the follower is not synced with the leader, the current AE will send and directly commit
+                        // shutdown log.
                         if is_shutdown_state
                             && ((curp.is_synced(connect_id) && is_empty)
                                 || (!curp.is_synced(connect_id) && is_commit_shutdown))
                         {
-                            let _ig = tokio::spawn(async move {
-                                if let Err(e) = connect.trigger_shutdown().await {
-                                    warn!("trigger shutdown to {} failed, {e}", connect_id);
-                                } else {
-                                    debug!("trigger shutdown to {} success", connect_id);
-                                }
-                            });
+                            if let Err(e) = connect.trigger_shutdown().await {
+                                warn!("trigger shutdown to {} failed, {e}", connect_id);
+                            } else {
+                                debug!("trigger shutdown to {} success", connect_id);
+                            }
                             break false;
                         }
                     }
