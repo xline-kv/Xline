@@ -683,6 +683,7 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
         let connect_id = connect.id();
         let batch_timeout = curp.cfg().batch_timeout;
         let mut is_shutdown_state = false;
+        let mut ae_fail_count = 0;
 
         #[allow(clippy::integer_arithmetic)] // tokio select internal triggered
         let leader_retired = loop {
@@ -735,6 +736,13 @@ impl<C: 'static + Command, RC: RoleChange + 'static> CurpNode<C, RC> {
                             warn!("ae to {} failed, {err}", connect_id);
                             if matches!(err, SendAEError::NotLeader) {
                                 break true;
+                            }
+                            if is_shutdown_state {
+                                ae_fail_count += 1;
+                                if ae_fail_count >= 5 {
+                                    warn!("the follower {} may have been shutdown", connect_id);
+                                    break false;
+                                }
                             }
                         } else {
                             hb_opt = true;
