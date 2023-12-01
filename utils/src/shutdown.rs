@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use tokio::sync::watch;
-use tracing::{debug, warn};
+use tracing::{info, warn};
 
 /// Shutdown Signal
 #[derive(Debug, Clone, Copy)]
@@ -27,7 +27,7 @@ pub struct Trigger {
 
 /// Shutdown trigger Inner.
 #[derive(Debug)]
-pub struct TriggerInner {
+struct TriggerInner {
     /// Sender for shutdown signal.
     trigger: watch::Sender<Signal>,
     /// State of mpsc channel.
@@ -49,7 +49,7 @@ impl Trigger {
     /// Send the shutdown signal
     #[inline]
     pub fn self_shutdown(&self) {
-        debug!("send self shutdown signal");
+        info!("send self shutdown signal");
         if self.inner.trigger.send(Signal::SelfShutdown).is_err() {
             warn!("no listener waiting for shutdown");
         };
@@ -58,7 +58,7 @@ impl Trigger {
     /// Mark mpsc channel shutdown.
     #[inline]
     pub fn mark_channel_shutdown(&self) {
-        debug!("mark mpmc channel shutdown");
+        info!("mark mpmc channel shutdown");
         self.inner
             .mpmc_channel_shutdown
             .store(true, Ordering::Relaxed);
@@ -67,7 +67,7 @@ impl Trigger {
     /// Mark sync daemon shutdown.
     #[inline]
     pub fn mark_sync_daemon_shutdown(&self) {
-        debug!("mark sync followers daemon shutdown");
+        info!("mark sync followers daemon shutdown");
         self.inner
             .sync_follower_daemon_shutdown
             .store(true, Ordering::Relaxed);
@@ -76,14 +76,14 @@ impl Trigger {
     /// Mark leader notified
     #[inline]
     pub fn mark_leader_notified(&self) {
-        debug!("mark leader notified");
+        info!("mark leader notified");
         self.inner.leader_notified.store(true, Ordering::Relaxed);
     }
 
     /// Reset sync daemon shutdown.
     #[inline]
     pub fn reset_sync_daemon_shutdown(&self) {
-        debug!("reset sync followers daemon shutdown");
+        info!("reset sync followers daemon shutdown");
         self.inner
             .sync_follower_daemon_shutdown
             .store(false, Ordering::Relaxed);
