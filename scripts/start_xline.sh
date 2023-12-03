@@ -13,24 +13,23 @@ fi
 RUST_LOG="${RUST_LOG:-debug}"
 ENGINE="${STORAGE_ENGINE:-rocksdb}"
 DATA_DIR="${DATA_DIR:-/usr/local/xline/data-dir}"
-PUBLIC_KEY="${PUBLIC_KEY:-/mnt/public.pem}"
-PRIVATE_KEY="${PRIVATE_KEY:-/mnt/private.pem}"
 
-if [ -z "$IS_LEADER" ]; then
-    RUST_LOG=$RUST_LOG /usr/local/bin/xline \
+cmd="/usr/local/bin/xline \
         --name $HOSTNAME \
         --members $MEMBERS \
-        --storage-engine rocksdb \
-        --data-dir /usr/local/xline/data-dir \
-        --auth-public-key /mnt/public.pem \
-        --auth-private-key /mnt/private.pem
-else
-    RUST_LOG=$RUST_LOG /usr/local/bin/xline \
-        --name $HOSTNAME \
-        --members $MEMBERS \
-        --storage-engine rocksdb \
-        --data-dir /usr/local/xline/data-dir \
-        --auth-public-key /mnt/public.pem \
-        --auth-private-key /mnt/private.pem \
-        --is-leader
+        --storage-engine $ENGINE \
+        --data-dir $DATA_DIR "
+
+
+if [ -n "$AUTH_PUBLIC_KEY" ] && [ -n "$AUTH_PRIVATE_KEY" ]; then
+    cmd="${cmd} \
+        --auth-public-key $AUTH_PUBLIC_KEY \
+        --auth-private-key $AUTH_PRIVATE_KEY
+    "
 fi
+
+if [ -n "$IS_LEADER" ]; then
+    cmd="${cmd} --is-leader"
+fi
+
+RUST_LOG=$RUST_LOG ${cmd}

@@ -30,12 +30,14 @@ run_container() {
         if [ "$i" -eq 1 ]; then
             docker run \
             -e RUST_LOG=debug -e HOSTNAME=node${i} -e MEMBERS=${MEMBERS} -e IS_LEADER=true \
+            -e AUTH_PUBLIC_KEY=/mnt/public.pem -e AUTH_PRIVATE_KEY=/mnt/private.pem \
             -d -it --rm --name=node${i} \
             --net=xline_net --ip=${SERVERS[$i]} --cap-add=NET_ADMIN \
             --cpu-shares=1024 -m=512M -v ${DIR}:/mnt ${image} &
         else
             docker run \
             -e RUST_LOG=debug -e HOSTNAME=node${i} -e MEMBERS=${MEMBERS} \
+            -e AUTH_PUBLIC_KEY=/mnt/public.pem -e AUTH_PRIVATE_KEY=/mnt/private.pem \
             -d -it --rm --name=node${i} \
             --net=xline_net --ip=${SERVERS[$i]} --cap-add=NET_ADMIN \
             --cpu-shares=1024 -m=512M -v ${DIR}:/mnt ${image} &
