@@ -1140,8 +1140,8 @@ mod test {
     use std::collections::HashMap;
 
     use merged_range::MergedRange;
-    use utils::config::StorageConfig;
     use openssl::rsa::Rsa;
+    use utils::config::StorageConfig;
 
     use super::*;
     use crate::{
@@ -1410,8 +1410,12 @@ mod test {
 
     fn test_key_pair() -> Option<(EncodingKey, DecodingKey)> {
         let rsa = Rsa::generate(2048).expect("Failed to generate RSA key pair");
-        let public_key = rsa.public_key_to_pem().expect("Failed to convert public key to PEM format");
-        let private_key = rsa.private_key_to_pem().expect("Failed to convert private key to PEM format");
+        let public_key = rsa
+            .public_key_to_pem()
+            .expect("Failed to convert public key to PEM format");
+        let private_key = rsa
+            .private_key_to_pem()
+            .expect("Failed to convert private key to PEM format");
         let encoding_key = EncodingKey::from_rsa_pem(private_key.as_slice()).ok()?;
         let decoding_key = DecodingKey::from_rsa_pem(public_key.as_slice()).ok()?;
         Some((encoding_key, decoding_key))

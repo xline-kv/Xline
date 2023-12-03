@@ -587,12 +587,11 @@ pub fn command_from_request_wrapper(propose_id: ProposeId, wrapper: RequestWithT
 
 #[cfg(test)]
 mod test {
-    use crate::{Compare, PutResponse};
-
     use super::*;
     use crate::{
-        AuthEnableRequest, AuthStatusRequest, CompactionRequest, LeaseGrantRequest,
-        LeaseLeasesRequest, LeaseRevokeRequest, PutRequest, RangeRequest, RequestOp, TxnRequest,
+        AuthEnableRequest, AuthStatusRequest, CompactionRequest, Compare, LeaseGrantRequest,
+        LeaseLeasesRequest, LeaseRevokeRequest, PutRequest, PutResponse, RangeRequest, RequestOp,
+        TxnRequest,
     };
 
     #[test]
