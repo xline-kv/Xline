@@ -86,7 +86,7 @@ where
         }
     }
 
-    /// Get `KeyValue` from the `KvStore`
+    /// Get `KeyValue` from the `KvStoreInner`
     fn get_values(&self, revisions: &[Revision]) -> Result<Vec<KeyValue>, ExecuteError> {
         let revisions = revisions
             .iter()

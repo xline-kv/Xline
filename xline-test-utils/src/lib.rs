@@ -30,7 +30,7 @@ pub struct Cluster {
     /// storage paths
     paths: HashMap<usize, PathBuf>,
     /// Xline servers
-    servers: HashMap<usize, Arc<XlineServer>>,
+    servers: Vec<Arc<XlineServer>>,
 }
 
 impl Cluster {
@@ -50,7 +50,7 @@ impl Cluster {
             client: None,
             size,
             paths: HashMap::new(),
-            servers: HashMap::new(),
+            servers: Vec::new(),
         }
     }
 
@@ -92,7 +92,7 @@ impl Cluster {
                 StorageConfig::Memory,
                 CompactConfig::default(),
             ));
-            self.servers.insert(i, server.clone());
+            self.servers.push(server.clone());
             tokio::spawn(async move {
                 let result = server
                     .start_from_listener(listener, db, Self::test_key_pair())
@@ -197,7 +197,7 @@ impl Drop for Cluster {
     fn drop(&mut self) {
         block_in_place(move || {
             Handle::current().block_on(async move {
-                for xline in self.servers.values() {
+                for xline in self.servers.iter() {
                     xline.stop().await;
                 }
                 for path in self.paths.values() {
