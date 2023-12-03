@@ -88,7 +88,9 @@ docker build . -t ghcr.io/xline-kv/xline -f doc/quick-start/Dockerfile
 ### Start Xline servers
 
 ```bash
-cp ./xline-test-utils/{private,public}.pem ./scripts
+# Generate RSA key pair for JSON Web Token signature
+openssl genrsa -out ./private.pem
+openssl rsa -in ./private.pem -pubout -outform PEM -out ./public.pem
 
 ./scripts/quick_start.sh
 ```
