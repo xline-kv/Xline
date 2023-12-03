@@ -1141,6 +1141,7 @@ mod test {
 
     use merged_range::MergedRange;
     use utils::config::StorageConfig;
+    use openssl::rsa::Rsa;
 
     use super::*;
     use crate::{
@@ -1408,10 +1409,11 @@ mod test {
     }
 
     fn test_key_pair() -> Option<(EncodingKey, DecodingKey)> {
-        let private_key = include_bytes!("../../../../xline-test-utils/private.pem");
-        let public_key = include_bytes!("../../../../xline-test-utils/public.pem");
-        let encoding_key = EncodingKey::from_rsa_pem(private_key).ok()?;
-        let decoding_key = DecodingKey::from_rsa_pem(public_key).ok()?;
+        let rsa = Rsa::generate(2048).expect("Failed to generate RSA key pair");
+        let public_key = rsa.public_key_to_pem().expect("Failed to convert public key to PEM format");
+        let private_key = rsa.private_key_to_pem().expect("Failed to convert private key to PEM format");
+        let encoding_key = EncodingKey::from_rsa_pem(private_key.as_slice()).ok()?;
+        let decoding_key = DecodingKey::from_rsa_pem(public_key.as_slice()).ok()?;
         Some((encoding_key, decoding_key))
     }
 }

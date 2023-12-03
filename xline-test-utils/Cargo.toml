@@ -15,6 +15,7 @@ anyhow = "1.0.75"
 clap = { version = "4.4.4", features = ["derive"] }
 curp = { path = "../curp" }
 jsonwebtoken = "8.1.1"
+openssl = "0.10"
 rand = "0.8.5"
 tokio = { version = "0.2.23", package = "madsim-tokio", features = [
     "rt-multi-thread",

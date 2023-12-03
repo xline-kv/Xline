@@ -14,6 +14,7 @@ use tokio::{
 use utils::config::{ClientConfig, CompactConfig, CurpConfig, ServerTimeout, StorageConfig};
 use xline::{server::XlineServer, storage::db::DB};
 pub use xline_client::{types, Client, ClientOptions};
+use openssl::rsa::Rsa;
 
 /// Cluster
 pub struct Cluster {
@@ -179,10 +180,11 @@ impl Cluster {
     }
 
     fn test_key_pair() -> Option<(EncodingKey, DecodingKey)> {
-        let private_key = include_bytes!("../private.pem");
-        let public_key = include_bytes!("../public.pem");
-        let encoding_key = EncodingKey::from_rsa_pem(private_key).unwrap();
-        let decoding_key = DecodingKey::from_rsa_pem(public_key).unwrap();
+        let rsa = Rsa::generate(2048).expect("Failed to generate RSA key pair");
+        let public_key = rsa.public_key_to_pem().expect("Failed to convert public key to PEM format");
+        let private_key = rsa.private_key_to_pem().expect("Failed to convert private key to PEM format");
+        let encoding_key = EncodingKey::from_rsa_pem(private_key.as_slice()).unwrap();
+        let decoding_key = DecodingKey::from_rsa_pem(public_key.as_slice()).unwrap();
         Some((encoding_key, decoding_key))
     }
 }

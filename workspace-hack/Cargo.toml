@@ -13,6 +13,7 @@ publish = false
 
 ### BEGIN HAKARI SECTION
 [dependencies]
+bitflags = { version = "2", default-features = false, features = ["std"] }
 bytes = { version = "1" }
 clap = { version = "4", features = ["derive", "string"] }
 clap_builder = { version = "4", default-features = false, features = ["color", "help", "std", "string", "suggestions", "usage"] }
@@ -48,6 +49,7 @@ tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
 
 [build-dependencies]
+bitflags = { version = "2", default-features = false, features = ["std"] }
 bytes = { version = "1" }
 either = { version = "1" }
 hashbrown = { version = "0.14", default-features = false, features = ["raw"] }

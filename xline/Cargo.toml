@@ -67,6 +67,7 @@ tonic-build = { version = "0.3.0", package = "madsim-tonic-build" }
 [dev-dependencies]
 etcd-client = "0.12.1"
 mockall = "0.11.3"
+openssl = "0.10"
 rand = "0.8.5"
 strum = "0.25"
 strum_macros = "0.25"
