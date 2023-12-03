@@ -31,7 +31,8 @@ jobs:
       - run: |
           cd scripts
           cp ../target/release/{xline,benchmark,validation_lock_client} .
-          cp ../xline-test-utils/{private,public}.pem .
+          openssl genrsa -out ./private.pem
+          openssl rsa -in ./private.pem -pubout -outform PEM -out ./public.pem
           docker build . -t ghcr.io/xline-kv/xline:latest
           docker pull gcr.io/etcd-development/etcd:v3.5.5
           bash ./validation_test.sh
