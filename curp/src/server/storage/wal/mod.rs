@@ -3,6 +3,9 @@
 /// The WAL codec
 mod codec;
 
+/// The config for `WALStorage`
+mod config;
+
 /// WAL errors
 mod error;
 
