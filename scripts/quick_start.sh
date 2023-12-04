@@ -27,21 +27,12 @@ run_container() {
     size=${1}
     image="ghcr.io/xline-kv/xline:latest"
     for ((i = 1; i <= ${size}; i++)); do
-        if [ "$i" -eq 1 ]; then
-            docker run \
-            -e RUST_LOG=debug -e HOSTNAME=node${i} -e MEMBERS=${MEMBERS} -e IS_LEADER=true \
+        docker run \
+            -e RUST_LOG=debug -e HOSTNAME=node${i} -e MEMBERS=${MEMBERS} -e INIT_LEADER=node1\
             -e AUTH_PUBLIC_KEY=/mnt/public.pem -e AUTH_PRIVATE_KEY=/mnt/private.pem \
             -d -it --rm --name=node${i} \
             --net=xline_net --ip=${SERVERS[$i]} --cap-add=NET_ADMIN \
             --cpu-shares=1024 -m=512M -v ${DIR}:/mnt ${image} &
-        else
-            docker run \
-            -e RUST_LOG=debug -e HOSTNAME=node${i} -e MEMBERS=${MEMBERS} \
-            -e AUTH_PUBLIC_KEY=/mnt/public.pem -e AUTH_PRIVATE_KEY=/mnt/private.pem \
-            -d -it --rm --name=node${i} \
-            --net=xline_net --ip=${SERVERS[$i]} --cap-add=NET_ADMIN \
-            --cpu-shares=1024 -m=512M -v ${DIR}:/mnt ${image} &
-        fi
     done
     docker run -d -it --rm  --name=client \
         --net=xline_net --ip=${SERVERS[0]} --cap-add=NET_ADMIN \
