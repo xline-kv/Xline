@@ -570,6 +570,7 @@ impl ProposeConfChangeRequest {
 
 /// Conf change data in log entry
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(test, derive(PartialEq))]
 pub(crate) struct ConfChangeEntry {
     /// Propose id
     id: ProposeId,
