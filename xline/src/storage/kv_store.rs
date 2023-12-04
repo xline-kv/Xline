@@ -161,6 +161,27 @@ where
     pub(crate) fn compacted_revision(&self) -> i64 {
         self.compacted_rev.load(Relaxed)
     }
+
+    /// Get `KeyValue` of a range with limit and count only, return kvs and total count
+    fn get_range_with_opts(
+        &self,
+        key: &[u8],
+        range_end: &[u8],
+        revision: i64,
+        limit: usize,
+        count_only: bool,
+    ) -> Result<(Vec<KeyValue>, usize), ExecuteError> {
+        let mut revisions = self.index.get(key, range_end, revision);
+        let total = revisions.len();
+        if count_only || total == 0 {
+            return Ok((vec![], total));
+        }
+        if limit != 0 {
+            revisions.truncate(limit);
+        }
+        let kvs = self.get_values(&revisions)?;
+        Ok((kvs, total))
+    }
 }
 
 impl<DB> KvStore<DB>
@@ -460,33 +481,6 @@ where
     }
 }
 
-/// db operations
-impl<DB> KvStore<DB>
-where
-    DB: StorageApi,
-{
-    /// Get `KeyValue` of a range with limit and count only, return kvs and total count
-    fn get_range_with_opts(
-        &self,
-        key: &[u8],
-        range_end: &[u8],
-        revision: i64,
-        limit: usize,
-        count_only: bool,
-    ) -> Result<(Vec<KeyValue>, usize), ExecuteError> {
-        let mut revisions = self.inner.index.get(key, range_end, revision);
-        let total = revisions.len();
-        if count_only || total == 0 {
-            return Ok((vec![], total));
-        }
-        if limit != 0 {
-            revisions.truncate(limit);
-        }
-        let kvs = self.inner.get_values(&revisions)?;
-        Ok((kvs, total))
-    }
-}
-
 /// handle and sync kv requests
 impl<DB> KvStore<DB>
 where
@@ -533,7 +527,7 @@ where
         } else {
             req.limit.overflow_add(1) // get one extra for "more" flag
         };
-        let (mut kvs, total) = self.get_range_with_opts(
+        let (mut kvs, total) = self.inner.get_range_with_opts(
             &req.key,
             &req.range_end,
             req.revision,
