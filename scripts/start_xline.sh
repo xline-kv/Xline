@@ -28,7 +28,8 @@ if [ -n "$AUTH_PUBLIC_KEY" ] && [ -n "$AUTH_PRIVATE_KEY" ]; then
     "
 fi
 
-if [ -n "$IS_LEADER" ]; then
+
+if [ "$HOSTNAME" = "$INIT_LEADER" ]; then
     cmd="${cmd} --is-leader"
 fi
 
