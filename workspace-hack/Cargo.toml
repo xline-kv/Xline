@@ -27,7 +27,7 @@ getrandom = { version = "0.2", default-features = false, features = ["js", "rdra
 hashbrown = { version = "0.14", default-features = false, features = ["raw"] }
 hyper = { version = "0.14", features = ["full"] }
 indexmap = { version = "1", default-features = false, features = ["std"] }
-itertools = { version = "0.10" }
+itertools = { version = "0.12" }
 libc = { version = "0.2" }
 log = { version = "0.4", default-features = false, features = ["std"] }
 madsim-tokio = { git = "https://github.com/madsim-rs/madsim.git", rev = "5eb4198", default-features = false, features = ["fs", "io-util", "macros", "net", "rt", "rt-multi-thread", "signal", "sync", "time"] }
@@ -51,7 +51,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
 bytes = { version = "1" }
 either = { version = "1" }
 hashbrown = { version = "0.14", default-features = false, features = ["raw"] }
-itertools = { version = "0.10" }
+itertools = { version = "0.12" }
 libc = { version = "0.2" }
 log = { version = "0.4", default-features = false, features = ["std"] }
 memchr = { version = "2" }

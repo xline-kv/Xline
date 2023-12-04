@@ -15,7 +15,7 @@ async-trait = "0.1.53"
 bincode = "1.3.3"
 curp-external-api = { path = "../curp-external-api" }
 engine = { path = "../engine" }
-itertools = "0.10.3"
+itertools = "0.12.0"
 once_cell = "1.17.0"
 prost = "0.11"
 serde = { version = "1.0.130", features = ["derive", "rc"] }
