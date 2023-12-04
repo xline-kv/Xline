@@ -36,3 +36,6 @@ pub(super) trait StorageApi: Send + Sync {
 
 /// CURP `DB` storage implementation
 pub(super) mod db;
+
+/// CURP WAL storage implementation
+pub(super) mod wal;
