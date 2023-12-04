@@ -9,6 +9,9 @@ mod error;
 /// File pipeline
 mod pipeline;
 
+/// Remover of the segment file
+mod remover;
+
 /// WAL segment
 mod segment;
 
