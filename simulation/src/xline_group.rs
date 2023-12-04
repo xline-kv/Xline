@@ -41,7 +41,7 @@ impl XlineGroup {
                     .init(move || {
                         let server = XlineServer::new(
                             cluster_info.clone(),
-                            i == 0,
+                            false,
                             CurpConfig::default(),
                             ClientConfig::default(),
                             ServerTimeout::default(),
