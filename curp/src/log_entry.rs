@@ -10,6 +10,7 @@ use crate::{members::ServerId, rpc::ConfChangeEntry, server::PoolEntry, PublishR
 
 /// Log entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(PartialEq))]
 pub(crate) struct LogEntry<C> {
     /// Term
     pub(crate) term: u64,
@@ -21,6 +22,7 @@ pub(crate) struct LogEntry<C> {
 
 /// Entry data of a `LogEntry`
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(PartialEq))]
 pub(crate) enum EntryData<C> {
     /// Empty entry
     Empty(ProposeId),
