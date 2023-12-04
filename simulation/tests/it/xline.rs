@@ -2,6 +2,8 @@ use curp_test_utils::init_logger;
 use simulation::xline_group::XlineGroup;
 use xline_client::types::kv::PutRequest;
 
+// TODO: Add more tests if needed
+
 #[madsim::test]
 async fn basic_put() {
     init_logger();
