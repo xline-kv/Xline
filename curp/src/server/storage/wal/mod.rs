@@ -18,6 +18,10 @@ mod remover;
 /// WAL segment
 mod segment;
 
+/// WAL storage simulation tests
+#[cfg(test)]
+mod sim_tests;
+
 /// WAL storage tests
 #[cfg(test)]
 mod tests;
