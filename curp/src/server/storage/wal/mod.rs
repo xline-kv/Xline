@@ -33,7 +33,7 @@ use futures::{future::join_all, Future, SinkExt, StreamExt};
 use itertools::Itertools;
 use serde::{de::DeserializeOwned, Serialize};
 use tokio_util::codec::Framed;
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::log_entry::LogEntry;
 
@@ -95,6 +95,7 @@ where
 
         let mut segments = Self::take_until_io_error(segment_futs).await?;
         segments.sort_unstable();
+        debug!("Recovered segments: {:?}", segments);
 
         let logs_fut: Vec<_> = segments
             .iter_mut()
@@ -120,6 +121,9 @@ where
         }
         let next_segment_id = segments.last().map_or(0, |s| s.id().overflow_add(1));
         let next_log_index = logs.last().map_or(1, |l| l.index.overflow_add(1));
+        debug!(
+            "WAL successfully recovered, next_segment_id: {next_segment_id}, next_log_index: {next_log_index}"
+        );
 
         Ok((
             Self {
