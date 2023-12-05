@@ -19,7 +19,7 @@ use tonic::transport::{Channel, Endpoint};
 use tracing::{error, instrument};
 use utils::tracing::Inject;
 
-use super::{ShutdownRequest, ShutdownResponse};
+use super::{ShutdownRequest, ShutdownResponse, TimeoutNowRequest};
 use crate::{
     members::ServerId,
     rpc::{
@@ -29,10 +29,10 @@ use crate::{
         },
         AppendEntriesRequest, AppendEntriesResponse, CurpError, FetchClusterRequest,
         FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
-        InstallSnapshotRequest, InstallSnapshotResponse, ProposeConfChangeRequest,
-        ProposeConfChangeResponse, ProposeRequest, ProposeResponse, Protocol, PublishRequest,
-        PublishResponse, TriggerShutdownRequest, VoteRequest, VoteResponse, WaitSyncedRequest,
-        WaitSyncedResponse,
+        InstallSnapshotRequest, InstallSnapshotResponse, MoveLeaderRequest, MoveLeaderResponse,
+        ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest, ProposeResponse,
+        Protocol, PublishRequest, PublishResponse, TriggerShutdownRequest, VoteRequest,
+        VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
     snapshot::Snapshot,
 };
@@ -197,7 +197,15 @@ pub trait ConnectApi: Send + Sync + 'static {
         request: FetchReadStateRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<FetchReadStateResponse>, CurpError>;
+
+    /// Send `MoveLeaderRequest`
+    async fn move_leader(
+        &self,
+        request: MoveLeaderRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<MoveLeaderResponse>, CurpError>;
 }
+
 /// Inner Connect interface among different servers
 #[cfg_attr(test, automock)]
 #[async_trait]
@@ -232,6 +240,9 @@ pub(crate) trait InnerConnectApi: Send + Sync + 'static {
 
     /// Trigger follower shutdown
     async fn trigger_shutdown(&self) -> Result<(), tonic::Status>;
+
+    /// Send `TimeoutNowRequest`
+    async fn timeout_now(&self) -> Result<(), tonic::Status>;
 }
 
 /// Inner Connect Api Wrapper
@@ -419,6 +430,18 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         req.set_timeout(timeout);
         client.fetch_read_state(req).await.map_err(Into::into)
     }
+
+    /// Send `MoveLeaderRequest`
+    async fn move_leader(
+        &self,
+        request: MoveLeaderRequest,
+        timeout: Duration,
+    ) -> Result<tonic::Response<MoveLeaderResponse>, CurpError> {
+        let mut client = self.rpc_connect.clone();
+        let mut req = tonic::Request::new(request);
+        req.set_timeout(timeout);
+        client.move_leader(req).await.map_err(Into::into)
+    }
 }
 
 #[async_trait]
@@ -472,6 +495,13 @@ impl InnerConnectApi for Connect<InnerProtocolClient<Channel>> {
         let mut client = self.rpc_connect.clone();
         let req = tonic::Request::new(TriggerShutdownRequest::default());
         _ = client.trigger_shutdown(req).await?;
+        Ok(())
+    }
+
+    async fn timeout_now(&self) -> Result<(), tonic::Status> {
+        let mut client = self.rpc_connect.clone();
+        let req = tonic::Request::new(TimeoutNowRequest::default());
+        _ = client.timeout_now(req).await?;
         Ok(())
     }
 }
@@ -585,6 +615,17 @@ where
         let mut req = tonic::Request::new(request);
         req.metadata_mut().inject_current();
         self.server.fetch_read_state(req).await.map_err(Into::into)
+    }
+
+    /// Send `MoveLeaderRequest`
+    async fn move_leader(
+        &self,
+        request: MoveLeaderRequest,
+        _timeout: Duration,
+    ) -> Result<tonic::Response<MoveLeaderResponse>, CurpError> {
+        let mut req = tonic::Request::new(request);
+        req.metadata_mut().inject_current();
+        self.server.move_leader(req).await.map_err(Into::into)
     }
 }
 

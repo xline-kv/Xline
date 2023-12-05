@@ -221,9 +221,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     pub(super) fn tick_election(&self) -> Option<Vote> {
         let st_r = self.st.upgradable_read();
         let timeout = match st_r.role {
-            Role::Follower => st_r.follower_timeout_ticks,
+            Role::Follower | Role::Leader => st_r.follower_timeout_ticks,
             Role::PreCandidate | Role::Candidate => st_r.candidate_timeout_ticks,
-            Role::Leader => return None,
         };
         let tick = self.ctx.election_tick.fetch_add(1, Ordering::AcqRel);
         if tick < timeout {
@@ -237,7 +236,10 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 self.become_pre_candidate(&mut st_w, &mut cst_l, log_r)
             }
             Role::Candidate => self.become_candidate(&mut st_w, &mut cst_l, log_r),
-            Role::Leader => unreachable!("leader should not tick election"),
+            Role::Leader => {
+                self.lst.reset_transferee();
+                None
+            }
         }
     }
 }
@@ -260,6 +262,9 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 return Err(CurpError::key_conflict());
             }
             return Ok(false);
+        }
+        if self.lst.get_transferee().is_some() {
+            return Err(CurpError::LeaderTransfer("leader transferring".to_owned()));
         }
         if !self
             .ctx
@@ -290,7 +295,9 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         if st_r.role != Role::Leader {
             return Err(CurpError::redirect(st_r.leader_id, st_r.term));
         }
-
+        if self.lst.get_transferee().is_some() {
+            return Err(CurpError::LeaderTransfer("leader transferring".to_owned()));
+        }
         let mut log_w = self.log.write();
         let entry = log_w.push(st_r.term, propose_id, EntryData::Shutdown)?;
         debug!("{} gets new log[{}]", self.id(), entry.index);
@@ -778,6 +785,57 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             ))
         }
     }
+
+    /// Handle `move_leader`
+    pub(super) fn handle_move_leader(&self, node_id: ServerId) -> Result<bool, CurpError> {
+        debug!("{} received move leader", self.id());
+        let st_r = self.st.read();
+        if st_r.role != Role::Leader {
+            return Err(CurpError::redirect(st_r.leader_id, st_r.term));
+        }
+        if !self.cluster().get(&node_id).is_some_and(|m| !m.is_learner) {
+            return Err(CurpError::LeaderTransfer(
+                "target node is not exist or it is a learner".to_owned(),
+            ));
+        }
+
+        if node_id == self.id() {
+            // transfer to self
+            self.lst.reset_transferee();
+            return Ok(false);
+        }
+        let last_leader_transferee = self.lst.swap_transferee(node_id);
+        if last_leader_transferee.is_some_and(|id| id == node_id) {
+            // Already transferring.
+            return Ok(false);
+        }
+        self.reset_election_tick();
+        let match_index = self
+            .lst
+            .get_match_index(node_id)
+            .unwrap_or_else(|| unreachable!("node should exist,checked before"));
+        if match_index == self.log.read().last_log_index() {
+            Ok(true)
+        } else {
+            self.sync_event(node_id).notify(1);
+            Ok(false)
+        }
+    }
+
+    /// Handle `timeout_now`
+    pub(super) fn handle_timeout_now(&self) -> Option<Vote> {
+        debug!("{} received timeout now", self.id());
+        let mut st_w = self.st.write();
+        if st_w.role == Role::Leader {
+            return None;
+        }
+        if self.cluster().self_member().is_learner() {
+            return None;
+        }
+        let mut cst_l = self.cst.lock();
+        let log_r = self.log.upgradable_read();
+        self.become_candidate(&mut st_w, &mut cst_l, log_r)
+    }
 }
 
 /// Other small public interface
@@ -1218,6 +1276,21 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             .map(|c| Arc::clone(c.value()))
             .collect()
     }
+
+    /// Get transferee
+    pub(super) fn get_transferee(&self) -> Option<ServerId> {
+        self.lst.get_transferee()
+    }
+
+    /// Get match index of a node
+    pub(super) fn get_match_index(&self, id: ServerId) -> Option<u64> {
+        self.lst.get_match_index(id)
+    }
+
+    /// Get last log index
+    pub(super) fn last_log_index(&self) -> u64 {
+        self.log.read().last_log_index()
+    }
 }
 
 // Utils
@@ -1276,11 +1349,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     ) -> Option<Vote> {
         let prev_role = st.role;
         assert_ne!(prev_role, Role::Leader, "leader can't start election");
-        assert_ne!(
-            prev_role,
-            Role::Follower,
-            "follower can't directly become a candidate"
-        );
 
         st.term += 1;
         st.role = Role::Candidate;
@@ -1349,6 +1417,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             self.ctx.role_change.on_calibrate();
         }
         st.term = term;
+        self.lst.reset_transferee();
         st.role = Role::Follower;
         st.voted_for = None;
         st.leader_id = None;
@@ -1512,20 +1581,19 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Switch to a new config and return old member infos for fallback
     fn switch_config(&self, conf_change: ConfChange) -> (Vec<String>, String, bool) {
         let node_id = conf_change.node_id;
+        let mut cst_l = self.cst.lock();
         let (modified, fallback_info) = match conf_change.change_type() {
             ConfChangeType::Add | ConfChangeType::AddLearner => {
                 let is_learner = matches!(conf_change.change_type(), ConfChangeType::AddLearner);
                 let member = Member::new(node_id, "", conf_change.address.clone(), is_learner);
-                self.cst
-                    .map_lock(|mut cst_l| _ = cst_l.config.insert(node_id, is_learner));
+                _ = cst_l.config.insert(node_id, is_learner);
                 self.lst.insert(node_id, is_learner);
                 _ = self.ctx.sync_events.insert(node_id, Arc::new(Event::new()));
                 let m = self.ctx.cluster_info.insert(member);
                 (m.is_none(), (vec![], String::new(), is_learner))
             }
             ConfChangeType::Remove => {
-                self.cst
-                    .map_lock(|mut cst_l| _ = cst_l.config.remove(node_id));
+                _ = cst_l.config.remove(node_id);
                 self.lst.remove(node_id);
                 let m = self.ctx.cluster_info.remove(&node_id);
                 _ = self.ctx.sync_events.remove(&node_id);
@@ -1554,10 +1622,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 )
             }
             ConfChangeType::Promote => {
-                self.cst.map_lock(|mut cst_l| {
-                    _ = cst_l.config.learners.remove(&node_id);
-                    _ = cst_l.config.insert(node_id, false);
-                });
+                _ = cst_l.config.learners.remove(&node_id);
+                _ = cst_l.config.insert(node_id, false);
                 let modified = self.ctx.cluster_info.promote(node_id);
                 self.lst.promote(node_id);
                 (modified, (vec![], String::new(), false))
@@ -1571,6 +1637,13 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 .change_tx
                 .send(conf_change)
                 .unwrap_or_else(|_e| unreachable!("change_rx should not be dropped"));
+            if self
+                .lst
+                .get_transferee()
+                .is_some_and(|transferee| cst_l.config.voters().contains(&transferee))
+            {
+                self.lst.reset_transferee();
+            }
         }
         fallback_info
     }

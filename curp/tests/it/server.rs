@@ -607,3 +607,20 @@ async fn fetch_read_state_rpc_should_work_when_client_has_wrong_cluster() {
     let res = client.fetch_read_state(&cmd).await;
     assert!(res.is_ok());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+#[abort_on_panic]
+async fn move_leader_should_move_leadership_to_target_node() {
+    init_logger();
+    let group = CurpGroup::new(3).await;
+    let client = group.new_client().await;
+
+    let old_leader = group.get_leader().await.0;
+    let target = *group.nodes.keys().find(|&id| &old_leader != id).unwrap();
+
+    client.move_leader(target).await.unwrap();
+    let new_leader = group.get_leader().await.0;
+
+    assert_eq!(target, new_leader);
+    assert_ne!(old_leader, new_leader);
+}

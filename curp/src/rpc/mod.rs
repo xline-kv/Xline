@@ -20,10 +20,13 @@ pub use self::proto::{
         FetchClusterRequest,
         FetchClusterResponse,
         Member,
+        MoveLeaderRequest,
+        MoveLeaderResponse,
         ProposeConfChangeRequest,
         ProposeConfChangeResponse,
         ProposeId as PbProposeId,
         ProposeRequest,
+
         ProposeResponse,
         PublishRequest,
         PublishResponse,
@@ -38,8 +41,8 @@ pub(crate) use self::proto::{
     },
     inner_messagepb::{
         inner_protocol_server::InnerProtocol, AppendEntriesRequest, AppendEntriesResponse,
-        InstallSnapshotRequest, InstallSnapshotResponse, TriggerShutdownRequest,
-        TriggerShutdownResponse, VoteRequest, VoteResponse,
+        InstallSnapshotRequest, InstallSnapshotResponse, TimeoutNowRequest, TimeoutNowResponse,
+        TriggerShutdownRequest, TriggerShutdownResponse, VoteRequest, VoteResponse,
     },
 };
 use crate::{cmd::Command, log_entry::LogEntry, members::ServerId, LogIndex};
@@ -557,6 +560,16 @@ impl ShutdownRequest {
     }
 }
 
+impl MoveLeaderRequest {
+    /// Create a new shutdown request
+    pub(crate) fn new(node_id: ServerId, cluster_version: u64) -> Self {
+        Self {
+            node_id,
+            cluster_version,
+        }
+    }
+}
+
 impl PublishRequest {
     /// Create a new `PublishRequest`
     pub(crate) fn new(id: ProposeId, node_id: ServerId, name: String) -> Self {
@@ -686,6 +699,11 @@ impl CurpError {
             }
         }
     }
+
+    /// `LeaderTransfer` error
+    pub(crate) fn leader_transfer(err: impl Into<String>) -> Self {
+        Self::LeaderTransfer(err.into())
+    }
 }
 
 /// The priority of curp error
@@ -773,6 +791,10 @@ impl From<CurpError> for tonic::Status {
                 "Internal error: An internal error occurred.",
             ),
             CurpError::RpcTransport(_) => (tonic::Code::Cancelled, "Rpc error: Request cancelled"),
+            CurpError::LeaderTransfer(_) => (
+                tonic::Code::FailedPrecondition,
+                "Leader transfer error: A leader transfer error occurred.",
+            ),
         };
 
         let details = CurpErrorWrapper { err: Some(err) }.encode_to_vec();
