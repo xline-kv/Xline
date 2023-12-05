@@ -1640,7 +1640,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             if self
                 .lst
                 .get_transferee()
-                .is_some_and(|transferee| cst_l.config.voters().contains(&transferee))
+                .is_some_and(|transferee| !cst_l.config.voters().contains(&transferee))
             {
                 self.lst.reset_transferee();
             }
