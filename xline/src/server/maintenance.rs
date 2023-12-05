@@ -209,11 +209,16 @@ where
 
     async fn move_leader(
         &self,
-        _request: tonic::Request<MoveLeaderRequest>,
+        request: tonic::Request<MoveLeaderRequest>,
     ) -> Result<tonic::Response<MoveLeaderResponse>, tonic::Status> {
-        Err(tonic::Status::unimplemented(
-            "move_leader is unimplemented".to_owned(),
-        ))
+        let node_id = request.into_inner().target_id;
+        self.client
+            .move_leader(node_id)
+            .await
+            .map_err(client_err_to_status)?;
+        Ok(tonic::Response::new(MoveLeaderResponse {
+            header: Some(self.header_gen.gen_header()),
+        }))
     }
 
     async fn downgrade(

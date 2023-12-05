@@ -177,6 +177,13 @@ impl ClusterInfo {
         self.members.remove(id).map(|(_id, m)| m)
     }
 
+    /// Get a member
+    #[inline]
+    #[must_use]
+    pub fn get(&self, id: &ServerId) -> Option<Ref<'_, u64, Member>> {
+        self.members.get(id)
+    }
+
     /// Update a member and return old addrs
     #[inline]
     pub fn update(&self, id: &ServerId, addrs: impl Into<Vec<String>>) -> Vec<String> {

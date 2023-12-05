@@ -21,10 +21,11 @@ use crate::{
     rpc::{
         AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse,
         FetchReadStateRequest, FetchReadStateResponse, InnerProtocolServer, InstallSnapshotRequest,
-        InstallSnapshotResponse, ProposeConfChangeRequest, ProposeConfChangeResponse,
-        ProposeRequest, ProposeResponse, ProtocolServer, PublishRequest, PublishResponse,
-        ShutdownRequest, ShutdownResponse, TriggerShutdownRequest, TriggerShutdownResponse,
-        VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        InstallSnapshotResponse, MoveLeaderRequest, MoveLeaderResponse, ProposeConfChangeRequest,
+        ProposeConfChangeResponse, ProposeRequest, ProposeResponse, ProtocolServer, PublishRequest,
+        PublishResponse, ShutdownRequest, ShutdownResponse, TimeoutNowRequest, TimeoutNowResponse,
+        TriggerShutdownRequest, TriggerShutdownResponse, VoteRequest, VoteResponse,
+        WaitSyncedRequest, WaitSyncedResponse,
     },
 };
 
@@ -146,6 +147,16 @@ impl<C: Command, RC: RoleChange> crate::rpc::Protocol for Rpc<C, RC> {
             self.inner.fetch_read_state(request.into_inner())?,
         ))
     }
+
+    #[instrument(skip_all, name = "curp_move_leader")]
+    async fn move_leader(
+        &self,
+        request: tonic::Request<MoveLeaderRequest>,
+    ) -> Result<tonic::Response<MoveLeaderResponse>, tonic::Status> {
+        Ok(tonic::Response::new(
+            self.inner.move_leader(request.into_inner()).await?,
+        ))
+    }
 }
 
 #[tonic::async_trait]
@@ -188,6 +199,16 @@ impl<C: Command, RC: RoleChange> crate::rpc::InnerProtocol for Rpc<C, RC> {
         let req_stream = request.into_inner();
         Ok(tonic::Response::new(
             self.inner.install_snapshot(req_stream).await?,
+        ))
+    }
+
+    #[instrument(skip_all, name = "curp_timeout_now")]
+    async fn timeout_now(
+        &self,
+        request: tonic::Request<TimeoutNowRequest>,
+    ) -> Result<tonic::Response<TimeoutNowResponse>, tonic::Status> {
+        Ok(tonic::Response::new(
+            self.inner.timeout_now(request.get_ref()).await?,
         ))
     }
 }

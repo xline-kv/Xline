@@ -34,10 +34,11 @@ use crate::{
         connect::{InnerConnectApi, InnerConnectApiWrapper},
         AppendEntriesRequest, AppendEntriesResponse, ConfChange, ConfChangeType, CurpError,
         FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
-        InstallSnapshotRequest, InstallSnapshotResponse, ProposeConfChangeRequest,
-        ProposeConfChangeResponse, ProposeRequest, ProposeResponse, PublishRequest,
-        PublishResponse, ShutdownRequest, ShutdownResponse, TriggerShutdownRequest,
-        TriggerShutdownResponse, VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        InstallSnapshotRequest, InstallSnapshotResponse, MoveLeaderRequest, MoveLeaderResponse,
+        ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest, ProposeResponse,
+        PublishRequest, PublishResponse, ShutdownRequest, ShutdownResponse, TimeoutNowRequest,
+        TimeoutNowResponse, TriggerShutdownRequest, TriggerShutdownResponse, VoteRequest,
+        VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
     server::{cmd_worker::CEEventTxApi, raw_curp::SyncAction, storage::db::DB},
     snapshot::{Snapshot, SnapshotMeta},
@@ -103,61 +104,6 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         CommandBoard::wait_for_conf(&self.cmd_board, id).await;
         let members = self.curp.cluster().all_members_vec();
         Ok(ProposeConfChangeResponse { members })
-    }
-
-    /// handle `WaitSynced` requests
-    pub(super) async fn wait_synced(
-        &self,
-        req: WaitSyncedRequest,
-    ) -> Result<WaitSyncedResponse, CurpError> {
-        if self.curp.is_shutdown() {
-            return Err(CurpError::shutting_down());
-        }
-        self.check_cluster_version(req.cluster_version)?;
-        let id = req.propose_id();
-        debug!("{} get wait synced request for cmd({id})", self.curp.id());
-
-        let (er, asr) = CommandBoard::wait_for_er_asr(&self.cmd_board, id).await;
-        debug!("{} wait synced for cmd({id}) finishes", self.curp.id());
-        Ok(WaitSyncedResponse::new_from_result::<C>(er, asr))
-    }
-
-    /// Handle `FetchCluster` requests
-    #[allow(clippy::unnecessary_wraps, clippy::needless_pass_by_value)] // To keep type consistent with other request handlers
-    pub(super) fn fetch_cluster(
-        &self,
-        req: FetchClusterRequest,
-    ) -> Result<FetchClusterResponse, CurpError> {
-        let (leader_id, term, is_leader) = self.curp.leader();
-        let cluster_id = self.curp.cluster().cluster_id();
-        let members = if is_leader || !req.linearizable {
-            self.curp.cluster().all_members_vec()
-        } else {
-            // if it is a follower and enabled linearizable read, return empty members
-            // the client will ignore empty members and retry util it gets response from
-            // the leader
-            Vec::new()
-        };
-        let cluster_version = self.curp.cluster().cluster_version();
-        Ok(FetchClusterResponse::new(
-            leader_id,
-            term,
-            cluster_id,
-            members,
-            cluster_version,
-        ))
-    }
-
-    /// Handle `FetchReadState` requests
-    #[allow(clippy::needless_pass_by_value)] // To keep type consistent with other request handlers
-    pub(super) fn fetch_read_state(
-        &self,
-        req: FetchReadStateRequest,
-    ) -> Result<FetchReadStateResponse, CurpError> {
-        self.check_cluster_version(req.cluster_version)?;
-        let cmd = req.cmd()?;
-        let state = self.curp.handle_fetch_read_state(&cmd);
-        Ok(FetchReadStateResponse::new(state))
     }
 
     /// Handle `Publish` requests
@@ -235,6 +181,51 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         TriggerShutdownResponse::default()
     }
 
+    /// handle `WaitSynced` requests
+    pub(super) async fn wait_synced(
+        &self,
+        req: WaitSyncedRequest,
+    ) -> Result<WaitSyncedResponse, CurpError> {
+        if self.curp.is_shutdown() {
+            return Err(CurpError::shutting_down());
+        }
+        self.check_cluster_version(req.cluster_version)?;
+        let id = req.propose_id();
+        debug!("{} get wait synced request for cmd({id})", self.curp.id());
+        if self.curp.get_transferee().is_some() {
+            return Err(CurpError::leader_transfer("leader transferring"));
+        }
+        let (er, asr) = CommandBoard::wait_for_er_asr(&self.cmd_board, id).await;
+        debug!("{} wait synced for cmd({id}) finishes", self.curp.id());
+        Ok(WaitSyncedResponse::new_from_result::<C>(er, asr))
+    }
+
+    /// Handle `FetchCluster` requests
+    #[allow(clippy::unnecessary_wraps, clippy::needless_pass_by_value)] // To keep type consistent with other request handlers
+    pub(super) fn fetch_cluster(
+        &self,
+        req: FetchClusterRequest,
+    ) -> Result<FetchClusterResponse, CurpError> {
+        let (leader_id, term, is_leader) = self.curp.leader();
+        let cluster_id = self.curp.cluster().cluster_id();
+        let members = if is_leader || !req.linearizable {
+            self.curp.cluster().all_members_vec()
+        } else {
+            // if it is a follower and enabled linearizable read, return empty members
+            // the client will ignore empty members and retry util it gets response from
+            // the leader
+            Vec::new()
+        };
+        let cluster_version = self.curp.cluster().cluster_version();
+        Ok(FetchClusterResponse::new(
+            leader_id,
+            term,
+            cluster_id,
+            members,
+            cluster_version,
+        ))
+    }
+
     /// Handle `InstallSnapshot` stream
     #[allow(clippy::integer_arithmetic)] // can't overflow
     pub(super) async fn install_snapshot<E: std::error::Error + 'static>(
@@ -295,6 +286,70 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         Err(CurpError::internal(
             "failed to receive a complete snapshot".to_owned(),
         ))
+    }
+
+    /// Handle `FetchReadState` requests
+    #[allow(clippy::needless_pass_by_value)] // To keep type consistent with other request handlers
+    pub(super) fn fetch_read_state(
+        &self,
+        req: FetchReadStateRequest,
+    ) -> Result<FetchReadStateResponse, CurpError> {
+        self.check_cluster_version(req.cluster_version)?;
+        let cmd = req.cmd()?;
+        let state = self.curp.handle_fetch_read_state(&cmd);
+        Ok(FetchReadStateResponse::new(state))
+    }
+
+    /// Handle `MoveLeader` requests
+    pub(super) async fn move_leader(
+        &self,
+        req: MoveLeaderRequest,
+    ) -> Result<MoveLeaderResponse, CurpError> {
+        self.check_cluster_version(req.cluster_version)?;
+        let should_send_timeout_now = self.curp.handle_move_leader(req.node_id)?;
+        if should_send_timeout_now {
+            if let Err(e) = self
+                .curp
+                .connects()
+                .get(&req.node_id)
+                .unwrap_or_else(|| unreachable!("connect to {} should exist", req.node_id))
+                .timeout_now()
+                .await
+            {
+                warn!(
+                    "{} send timeout now to {} failed: {:?}",
+                    self.curp.id(),
+                    req.node_id,
+                    e
+                );
+            };
+        }
+
+        let mut ticker = tokio::time::interval(self.curp.cfg().heartbeat_interval);
+        let mut current_leader = self.curp.leader().0;
+        while !current_leader.is_some_and(|id| id == req.node_id) {
+            if self.curp.get_transferee().is_none()
+                && current_leader.is_some_and(|id| id != req.node_id)
+            {
+                return Err(CurpError::LeaderTransfer(
+                    "leader transferee aborted".to_owned(),
+                ));
+            };
+            _ = ticker.tick().await;
+            current_leader = self.curp.leader().0;
+        }
+        Ok(MoveLeaderResponse::default())
+    }
+
+    /// Handle `TimeoutNow` request
+    pub(super) async fn timeout_now(
+        &self,
+        _req: &TimeoutNowRequest,
+    ) -> Result<TimeoutNowResponse, CurpError> {
+        if let Some(vote) = self.curp.handle_timeout_now() {
+            _ = Self::bcast_vote(self.curp.as_ref(), vote).await;
+        }
+        Ok(TimeoutNowResponse::default())
     }
 }
 
@@ -477,80 +532,6 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
             }
         }
         debug!("{} to {} sync follower task exits", curp.id(), connect.id());
-    }
-
-    /// handler `SyncAction`
-    /// If no longer need to sync to this node, return true
-    async fn handle_sync_action(
-        sync_action: SyncAction<C>,
-        hb_opt: &mut bool,
-        is_shutdown_state: &mut bool,
-        ae_fail_count: &mut u32,
-        connect: &(impl InnerConnectApi + ?Sized),
-        curp: &RawCurp<C, RC>,
-    ) -> bool {
-        let connect_id = connect.id();
-        match sync_action {
-            SyncAction::AppendEntries(ae) => {
-                let is_empty = ae.entries.is_empty();
-                let is_commit_shutdown = ae.entries.last().is_some_and(|e| {
-                    matches!(e.entry_data, EntryData::Shutdown) && e.index == ae.leader_commit
-                });
-                // (hb_opt, entries) status combination
-                // (false, empty) => send heartbeat to followers
-                // (true, empty) => indicates that `batch_timeout` expired, and during this period there is not any log generated. Do nothing
-                // (true | false, not empty) => send append entries
-                if !*hb_opt || !is_empty {
-                    match Self::send_ae(connect, curp, ae).await {
-                        Ok((true, _)) => return true,
-                        Ok((false, ae_succeed)) => {
-                            if ae_succeed {
-                                *hb_opt = true;
-                            } else {
-                                debug!("ae rejected by {}", connect.id());
-                            }
-                            // Check Follower shutdown
-                            // When the leader is in the shutdown state, its last log must be shutdown, and if the follower is
-                            // already synced with leader and current AE is a heartbeat, then the follower will commit the shutdown
-                            // log after AE, or when the follower is not synced with the leader, the current AE will send and directly commit
-                            // shutdown log.
-                            if *is_shutdown_state
-                                && ((curp.is_synced(connect_id) && is_empty)
-                                    || (!curp.is_synced(connect_id) && is_commit_shutdown))
-                            {
-                                if let Err(e) = connect.trigger_shutdown().await {
-                                    warn!("trigger shutdown to {} failed, {e}", connect_id);
-                                } else {
-                                    debug!("trigger shutdown to {} success", connect_id);
-                                }
-                                return true;
-                            }
-                        }
-                        Err(err) => {
-                            warn!("ae to {} failed, {err:?}", connect.id());
-                            if *is_shutdown_state {
-                                *ae_fail_count = ae_fail_count.overflow_add(1);
-                                if *ae_fail_count >= 5 {
-                                    warn!("the follower {} may have been shutdown", connect_id);
-                                    return true;
-                                }
-                            }
-                        }
-                    };
-                }
-            }
-            SyncAction::Snapshot(rx) => match rx.await {
-                Ok(snapshot) => match Self::send_snapshot(connect, curp, snapshot).await {
-                    Ok(true) => return true,
-                    Err(err) => warn!("snapshot to {} failed, {err:?}", connect.id()),
-                    Ok(false) => {}
-                },
-                Err(err) => {
-                    warn!("failed to receive snapshot result, {err}");
-                }
-            },
-        }
-        false
     }
 
     /// Log persist task
@@ -858,6 +839,80 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     /// Get `RawCurp`
     pub(super) fn raw_curp(&self) -> Arc<RawCurp<C, RC>> {
         Arc::clone(&self.curp)
+    }
+
+    /// Handle `SyncAction`
+    /// If no longer need to sync to this node, return true
+    async fn handle_sync_action(
+        sync_action: SyncAction<C>,
+        hb_opt: &mut bool,
+        is_shutdown_state: &mut bool,
+        ae_fail_count: &mut u32,
+        connect: &(impl InnerConnectApi + ?Sized),
+        curp: &RawCurp<C, RC>,
+    ) -> bool {
+        let connect_id = connect.id();
+        match sync_action {
+            SyncAction::AppendEntries(ae) => {
+                let is_empty = ae.entries.is_empty();
+                let is_commit_shutdown = ae.entries.last().is_some_and(|e| {
+                    matches!(e.entry_data, EntryData::Shutdown) && e.index == ae.leader_commit
+                });
+                // (hb_opt, entries) status combination
+                // (false, empty) => send heartbeat to followers
+                // (true, empty) => indicates that `batch_timeout` expired, and during this period there is not any log generated. Do nothing
+                // (true | false, not empty) => send append entries
+                if !*hb_opt || !is_empty {
+                    match Self::send_ae(connect, curp, ae).await {
+                        Ok((true, _)) => return true,
+                        Ok((false, ae_succeed)) => {
+                            if ae_succeed {
+                                *hb_opt = true;
+                            } else {
+                                debug!("ae rejected by {}", connect.id());
+                            }
+                            // Check Follower shutdown
+                            // When the leader is in the shutdown state, its last log must be shutdown, and if the follower is
+                            // already synced with leader and current AE is a heartbeat, then the follower will commit the shutdown
+                            // log after AE, or when the follower is not synced with the leader, the current AE will send and directly commit
+                            // shutdown log.
+                            if *is_shutdown_state
+                                && ((curp.is_synced(connect_id) && is_empty)
+                                    || (!curp.is_synced(connect_id) && is_commit_shutdown))
+                            {
+                                if let Err(e) = connect.trigger_shutdown().await {
+                                    warn!("trigger shutdown to {} failed, {e}", connect_id);
+                                } else {
+                                    debug!("trigger shutdown to {} success", connect_id);
+                                }
+                                return true;
+                            }
+                        }
+                        Err(err) => {
+                            warn!("ae to {} failed, {err:?}", connect.id());
+                            if *is_shutdown_state {
+                                *ae_fail_count = ae_fail_count.overflow_add(1);
+                                if *ae_fail_count >= 5 {
+                                    warn!("the follower {} may have been shutdown", connect_id);
+                                    return true;
+                                }
+                            }
+                        }
+                    };
+                }
+            }
+            SyncAction::Snapshot(rx) => match rx.await {
+                Ok(snapshot) => match Self::send_snapshot(connect, curp, snapshot).await {
+                    Ok(true) => return true,
+                    Err(err) => warn!("snapshot to {} failed, {err:?}", connect.id()),
+                    Ok(false) => {}
+                },
+                Err(err) => {
+                    warn!("failed to receive snapshot result, {err}");
+                }
+            },
+        }
+        false
     }
 }
 

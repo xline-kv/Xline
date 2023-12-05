@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use dashmap::{
     mapref::{
@@ -87,6 +90,8 @@ impl FollowerStatus {
 pub(super) struct LeaderState {
     /// For each server, the leader maintains its status
     statuses: DashMap<ServerId, FollowerStatus>,
+    /// Leader Transferee
+    leader_transferee: AtomicU64,
 }
 
 impl State {
@@ -131,6 +136,7 @@ impl LeaderState {
                 .iter()
                 .map(|o| (*o, FollowerStatus::default()))
                 .collect(),
+            leader_transferee: AtomicU64::new(0),
         }
     }
 
@@ -214,6 +220,23 @@ impl LeaderState {
         if let Some(mut s) = self.statuses.get_mut(&node_id) {
             s.is_learner = true;
         }
+    }
+
+    /// Get transferee
+    pub(super) fn get_transferee(&self) -> Option<ServerId> {
+        let val = self.leader_transferee.load(Ordering::Acquire);
+        (val != 0).then_some(val)
+    }
+
+    /// Reset transferee
+    pub(super) fn reset_transferee(&self) {
+        self.leader_transferee.store(0, Ordering::Release);
+    }
+
+    /// Swap transferee
+    pub(super) fn swap_transferee(&self, node_id: ServerId) -> Option<ServerId> {
+        let val = self.leader_transferee.swap(node_id, Ordering::SeqCst);
+        (val != 0).then_some(val)
     }
 }
 
