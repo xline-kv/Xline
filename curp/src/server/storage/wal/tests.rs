@@ -51,14 +51,14 @@ async fn test_head_truncate_at(wal_test_path: &Path, num_entries: usize, truncat
             .len()
     };
 
-    let num_entries_per_segment = FrameGenerator::num_entries_per_segment();
-
     let config = WALConfig::new(&wal_test_path).with_max_segment_size(TEST_SEGMENT_SIZE);
     let (mut storage, _logs) = WALStorage::<TestCommand>::new_or_recover(config.clone())
         .await
         .unwrap();
 
-    let mut frame_gen = FrameGenerator::new();
+    let mut frame_gen = FrameGenerator::new(TEST_SEGMENT_SIZE);
+    let num_entries_per_segment = frame_gen.num_entries_per_segment();
+
     for frame in frame_gen.take(num_entries) {
         storage.send_sync(vec![frame]).await.unwrap();
     }
@@ -79,7 +79,7 @@ async fn test_tail_truncate_at(wal_test_path: &Path, num_entries: usize, truncat
     let config = WALConfig::new(&wal_test_path).with_max_segment_size(TEST_SEGMENT_SIZE);
     let (mut storage, _logs) = WALStorage::new_or_recover(config.clone()).await.unwrap();
 
-    let mut frame_gen = FrameGenerator::new();
+    let mut frame_gen = FrameGenerator::new(TEST_SEGMENT_SIZE);
     for frame in frame_gen.take(num_entries) {
         storage.send_sync(vec![frame]).await.unwrap();
     }
@@ -116,7 +116,7 @@ async fn test_follow_up_append_recovery(wal_test_path: &Path, to_append: usize) 
 
     let next_log_index = logs_initial.last().map_or(0, |e| e.index) + 1;
 
-    let mut frame_gen = FrameGenerator::new();
+    let mut frame_gen = FrameGenerator::new(TEST_SEGMENT_SIZE);
     frame_gen.skip(logs_initial.len());
     let frames = frame_gen.take(to_append);
 
@@ -146,20 +146,24 @@ async fn test_follow_up_append_recovery(wal_test_path: &Path, to_append: usize) 
 }
 
 #[derive(Clone)]
-struct FrameGenerator {
+pub(super) struct FrameGenerator {
     next_index: u64,
+    segment_size: u64,
 }
 
 impl FrameGenerator {
-    fn new() -> Self {
-        Self { next_index: 1 }
+    pub(super) fn new(segment_size: u64) -> Self {
+        Self {
+            next_index: 1,
+            segment_size,
+        }
     }
 
-    fn skip(&mut self, num_index: usize) {
+    pub(super) fn skip(&mut self, num_index: usize) {
         self.next_index += num_index as u64;
     }
 
-    fn next(&mut self) -> DataFrame<TestCommand> {
+    pub(super) fn next(&mut self) -> DataFrame<TestCommand> {
         let entry =
             LogEntry::<TestCommand>::new(self.next_index, 1, EntryData::Empty(ProposeId(1, 2)));
         self.next_index += 1;
@@ -167,17 +171,17 @@ impl FrameGenerator {
         DataFrame::Entry(entry)
     }
 
-    fn take(&mut self, num: usize) -> Vec<DataFrame<TestCommand>> {
+    pub(super) fn take(&mut self, num: usize) -> Vec<DataFrame<TestCommand>> {
         (0..num).map(|_| self.next()).collect()
     }
 
-    fn num_entries_per_segment() -> usize {
+    pub(super) fn num_entries_per_segment(&self) -> usize {
         let header_size = 32;
         let sample_entry = LogEntry::<TestCommand>::new(1, 1, EntryData::Empty(ProposeId(1, 2)));
         let mut wal_codec = WAL::<TestCommand>::new();
         let mut buf = BytesMut::new();
         wal_codec.encode(vec![DataFrame::Entry(sample_entry)], &mut buf);
         let entry_size = buf.len();
-        (TEST_SEGMENT_SIZE as usize - header_size + entry_size - 1) / entry_size
+        (self.segment_size as usize - header_size + entry_size - 1) / entry_size
     }
 }
