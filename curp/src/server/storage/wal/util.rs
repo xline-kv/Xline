@@ -39,7 +39,9 @@ impl LockedFile {
             return Ok(());
         }
 
-        self.file().allocate(size)
+        self.file().allocate(size)?;
+        self.file().sync_all()?;
+        sync_parent_dir(&self.path)
     }
 
     /// Gets the path of this file
