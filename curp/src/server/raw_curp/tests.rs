@@ -961,3 +961,93 @@ fn follower_handle_propose_conf_change() {
         }))
     ));
 }
+
+#[traced_test]
+#[test]
+fn leader_handle_move_leader() {
+    let curp = {
+        let exe_tx = MockCEEventTxApi::<TestCommand>::default();
+        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+    };
+    curp.switch_config(ConfChange::add_learner(1234, vec!["address".to_owned()]));
+
+    let res = curp.handle_move_leader(1234);
+    assert!(res.is_err());
+
+    let res = curp.handle_move_leader(12345);
+    assert!(res.is_err());
+
+    let target_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let res = curp.handle_move_leader(target_id);
+    // need to send timeout now after handle_move_leader
+    assert!(res.is_ok_and(|b| b));
+
+    let res = curp.handle_move_leader(target_id);
+    // no need to send timeout now after handle_move_leader, because it's duplicated
+    assert!(res.is_ok_and(|b| !b));
+}
+
+#[traced_test]
+#[test]
+fn follower_handle_move_leader() {
+    let curp = {
+        let exe_tx = MockCEEventTxApi::<TestCommand>::default();
+        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+    };
+    curp.update_to_term_and_become_follower(&mut *curp.st.write(), 2);
+
+    let target_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let res = curp.handle_move_leader(target_id);
+    assert!(matches!(res, Err(CurpError::Redirect(_, _))));
+}
+
+#[traced_test]
+#[test]
+fn leader_will_reset_transferee_after_remove_node() {
+    let curp = {
+        let exe_tx = MockCEEventTxApi::<TestCommand>::default();
+        Arc::new(RawCurp::new_test(5, exe_tx, mock_role_change()))
+    };
+
+    let target_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let res = curp.handle_move_leader(target_id);
+    assert!(res.is_ok_and(|b| b));
+    assert_eq!(curp.get_transferee(), Some(target_id));
+
+    curp.switch_config(ConfChange::remove(target_id));
+    assert!(curp.get_transferee().is_none());
+}
+
+#[traced_test]
+#[test]
+fn leader_will_reject_propose_when_transferring() {
+    let curp = {
+        let exe_tx = MockCEEventTxApi::<TestCommand>::default();
+        Arc::new(RawCurp::new_test(5, exe_tx, mock_role_change()))
+    };
+
+    let target_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let res = curp.handle_move_leader(target_id);
+    assert!(res.is_ok_and(|b| b));
+
+    let cmd = Arc::new(TestCommand::new_put(vec![1], 1));
+    let res = curp.handle_propose(cmd);
+    assert!(res.is_err());
+}
+
+#[traced_test]
+#[test]
+fn leader_will_reset_transferee_after_it_become_follower() {
+    let curp = {
+        let exe_tx = MockCEEventTxApi::<TestCommand>::default();
+        Arc::new(RawCurp::new_test(5, exe_tx, mock_role_change()))
+    };
+
+    let target_id = curp.cluster().get_id_by_name("S1").unwrap();
+    let res = curp.handle_move_leader(target_id);
+    assert!(res.is_ok_and(|b| b));
+    assert_eq!(curp.get_transferee(), Some(target_id));
+
+    curp.update_to_term_and_become_follower(&mut *curp.st.write(), 2);
+    assert!(curp.get_transferee().is_none());
+}
