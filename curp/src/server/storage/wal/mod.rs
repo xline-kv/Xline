@@ -29,7 +29,7 @@ use std::{io, marker::PhantomData};
 
 use clippy_utilities::OverflowArithmetic;
 use curp_external_api::LogIndex;
-use futures::{future::join_all, SinkExt, StreamExt};
+use futures::{future::join_all, Future, SinkExt, StreamExt};
 use itertools::Itertools;
 use serde::{de::DeserializeOwned, Serialize};
 use tokio_util::codec::Framed;
@@ -40,7 +40,7 @@ use crate::log_entry::LogEntry;
 use self::{
     codec::{DataFrame, WAL},
     config::WALConfig,
-    error::{CorruptType, WALError},
+    error::{CorruptError, WALError},
     pipeline::FilePipeline,
     remover::SegmentRemover,
     segment::{IOState, WALSegment},
@@ -78,9 +78,7 @@ where
 {
     /// Recover from the given directory if there's any segments
     /// Otherwise, creates a new `LogStorage`
-    pub(super) async fn new_or_recover(
-        config: WALConfig,
-    ) -> Result<(Self, Vec<LogEntry<C>>), WALError> {
+    pub(super) async fn new_or_recover(config: WALConfig) -> io::Result<(Self, Vec<LogEntry<C>>)> {
         // We try to recover the removal first
         SegmentRemover::recover(&config.dir).await?;
 
@@ -94,24 +92,22 @@ where
         let segment_futs = lfiles
             .into_iter()
             .map(|f| WALSegment::open(f, config.max_segment_size));
-        let mut segments: Vec<_> = join_all(segment_futs)
-            .await
-            .into_iter()
-            .collect::<Result<_, _>>()?;
+
+        let mut segments = Self::take_until_io_error(segment_futs).await?;
         segments.sort_unstable();
 
         let logs_fut: Vec<_> = segments
             .iter_mut()
             .map(WALSegment::recover_segment_logs)
             .collect();
-        let logs: Vec<_> = join_all(logs_fut)
-            .await
-            .into_iter()
-            .collect::<Result<_, _>>()?;
-        let logs_flattened: Vec<_> = logs.into_iter().flatten().collect();
 
-        if !Self::check_log_continuity(logs_flattened.iter()) {
-            return Err(WALError::Corrupted(CorruptType::LogNotContinue));
+        let logs_batches = Self::take_until_io_error(logs_fut).await?;
+        let mut logs: Vec<_> = logs_batches.into_iter().flatten().collect();
+
+        let pos = Self::highest_valid_pos(&logs[..]);
+        if pos != logs.len() {
+            warn!("WAL corrupted: {}", CorruptError::LogNotContinue);
+            logs = logs.into_iter().take(pos).collect();
         }
 
         // If there's no segments to recover, create a new segment
@@ -123,7 +119,7 @@ where
             segments.push(WALSegment::create(lfile, 1, 0, config.max_segment_size).await?);
         }
         let next_segment_id = segments.last().map_or(0, |s| s.id().overflow_add(1));
-        let next_log_index = logs_flattened.last().map_or(1, |l| l.index.overflow_add(1));
+        let next_log_index = logs.last().map_or(1, |l| l.index.overflow_add(1));
 
         Ok((
             Self {
@@ -134,7 +130,7 @@ where
                 next_log_index,
                 _phantom: PhantomData,
             },
-            logs_flattened,
+            logs,
         ))
     }
 
@@ -261,12 +257,35 @@ where
         Ok(())
     }
 
-    /// Checks if the log index are continuous
-    #[allow(single_use_lifetimes)] // the lifetime is required here
-    fn check_log_continuity<'a>(entries: impl Iterator<Item = &'a LogEntry<C>> + Clone) -> bool {
-        entries
-            .clone()
-            .zip(entries.skip(1))
-            .all(|(x, y)| x.index.overflow_add(1) == y.index)
+    /// Returns the highest valid position of the log entries,
+    /// the logs are continous before this position
+    fn highest_valid_pos(entries: &[LogEntry<C>]) -> usize {
+        let iter = entries.iter();
+        iter.clone()
+            .zip(iter.skip(1))
+            .enumerate()
+            .find(|(_, (x, y))| x.index.overflow_add(1) != y.index)
+            .map_or(entries.len(), |(i, _)| i)
+    }
+
+    async fn take_until_io_error<T, I>(futs: I) -> io::Result<Vec<T>>
+    where
+        I: IntoIterator,
+        I::Item: Future<Output = Result<T, WALError>>,
+    {
+        let mut ts = vec![];
+
+        let results: Vec<_> = join_all(futs).await;
+        for result in results {
+            match result {
+                Ok(t) => ts.push(t),
+                Err(e) => {
+                    let e = e.io_or_corrupt()?;
+                    warn!("WAL corrupted: {e}");
+                }
+            }
+        }
+
+        Ok(ts)
     }
 }

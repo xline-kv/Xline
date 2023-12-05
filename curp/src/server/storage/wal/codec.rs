@@ -10,7 +10,7 @@ use tokio_util::codec::{Decoder, Encoder};
 use crate::log_entry::LogEntry;
 
 use super::{
-    error::{CorruptType, WALError},
+    error::{CorruptError, WALError},
     util::{get_checksum, validate_data},
 };
 
@@ -29,7 +29,7 @@ trait FrameEncoder {
 /// The WAL codec
 #[allow(clippy::upper_case_acronyms)] // The WAL needs to be all upper cases
 #[derive(Debug)]
-pub(crate) struct WAL<C> {
+pub(super) struct WAL<C> {
     /// The phantom data
     _phantom: PhantomData<C>,
 }
@@ -48,7 +48,7 @@ enum WALFrame<C> {
 /// Contains either a log entry or a seal index
 #[derive(Debug, Clone)]
 #[cfg_attr(test, derive(PartialEq))]
-pub(crate) enum DataFrame<C> {
+pub(super) enum DataFrame<C> {
     /// A Frame containing a log entry
     Entry(LogEntry<C>),
     /// A Frame containing the sealed index
@@ -131,7 +131,7 @@ where
                         if commit.validate(&frames_bytes) {
                             return Ok(Some(frames));
                         }
-                        return Err(WALError::Corrupted(CorruptType::Checksum));
+                        return Err(WALError::Corrupted(CorruptError::Checksum));
                     }
                 }
             } else {
@@ -182,7 +182,7 @@ where
             0x01 => Self::decode_entry(header, &src[8..]),
             0x02 => Self::decode_seal_index(header),
             0x03 => Self::decode_commit(&src[8..]),
-            _ => Err(WALError::Corrupted(CorruptType::Codec(
+            _ => Err(WALError::Corrupted(CorruptError::Codec(
                 "Unexpected frame type".to_owned(),
             ))),
         }
@@ -196,7 +196,7 @@ where
         }
         let payload = &src[..len];
         let entry: LogEntry<C> = bincode::deserialize(payload)
-            .map_err(|e| WALError::Corrupted(CorruptType::Codec(e.to_string())))?;
+            .map_err(|e| WALError::Corrupted(CorruptError::Codec(e.to_string())))?;
 
         Ok(Some((Self::Data(DataFrame::Entry(entry)), 8 + len)))
     }

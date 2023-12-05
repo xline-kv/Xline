@@ -16,7 +16,7 @@ use crate::log_entry::LogEntry;
 
 use super::{
     codec::{DataFrame, WAL},
-    error::{CorruptType, WALError},
+    error::{CorruptError, WALError},
     util::{get_checksum, parse_u64, validate_data, LockedFile},
     WAL_FILE_EXT, WAL_MAGIC, WAL_VERSION,
 };
@@ -260,7 +260,7 @@ impl WALSegment {
             offset += len;
             &src[(offset - len)..offset]
         };
-        let parse_error = Err(WALError::Corrupted(CorruptType::Codec(
+        let parse_error = Err(WALError::Corrupted(CorruptError::Codec(
             "Segment file header parsing has failed".to_owned(),
         )));
         if src.len() < 56 {
