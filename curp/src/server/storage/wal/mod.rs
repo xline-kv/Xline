@@ -107,7 +107,10 @@ where
 
         let pos = Self::highest_valid_pos(&logs[..]);
         if pos != logs.len() {
-            warn!("WAL corrupted: {}", CorruptError::LogNotContinue);
+            warn!(
+                "WAL corrupted: {}, truncated at pos: {pos}",
+                CorruptError::LogNotContinue
+            );
             logs = logs.into_iter().take(pos).collect();
         }
 
