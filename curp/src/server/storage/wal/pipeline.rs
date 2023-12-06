@@ -35,7 +35,9 @@ pub(super) struct FilePipeline {
 impl FilePipeline {
     /// Creates a new `FilePipeline`
     #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select! macro
-    pub(super) fn new(dir: PathBuf, file_size: u64) -> Self {
+    pub(super) fn new(dir: PathBuf, file_size: u64) -> io::Result<Self> {
+        Self::clean_up(&dir)?;
+
         let (file_tx, file_rx) = flume::bounded(1);
         let stop_event = Event::new();
         let mut stop_listener = stop_event.listen();
@@ -62,13 +64,14 @@ impl FilePipeline {
             Self::clean_up(&dir_c)?;
             Ok(())
         });
-        Self {
+
+        Ok(Self {
             dir,
             file_size,
             file_stream: file_rx.into_stream(),
             stop_event,
             handle,
-        }
+        })
     }
 
     /// Stops the pipeline
@@ -150,7 +153,7 @@ mod tests {
     async fn file_pipeline_is_ok() {
         let file_size = 1024;
         let dir = tempfile::tempdir().unwrap();
-        let mut pipeline = FilePipeline::new(dir.as_ref().into(), file_size);
+        let mut pipeline = FilePipeline::new(dir.as_ref().into(), file_size).unwrap();
 
         let check_size = |mut file: LockedFile| {
             let file = file.into_std();

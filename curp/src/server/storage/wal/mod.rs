@@ -86,7 +86,7 @@ where
         // We try to recover the removal first
         SegmentRemover::recover(&config.dir).await?;
 
-        let mut pipeline = FilePipeline::new(config.dir.clone(), config.max_segment_size);
+        let mut pipeline = FilePipeline::new(config.dir.clone(), config.max_segment_size)?;
         let file_paths = util::get_file_paths_with_ext(&config.dir, WAL_FILE_EXT)?;
         let lfiles: Vec<_> = file_paths
             .into_iter()
@@ -298,5 +298,11 @@ where
         }
 
         Ok(ts)
+    }
+}
+
+impl<C> Drop for WALStorage<C> {
+    fn drop(&mut self) {
+        self.pipeline.stop();
     }
 }
