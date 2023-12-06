@@ -1,8 +1,9 @@
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use bytes::BytesMut;
 use curp_external_api::cmd::ProposeId;
 use curp_test_utils::test_cmd::TestCommand;
+use parking_lot::Mutex;
 use tempfile::TempDir;
 use tokio_util::codec::Encoder;
 
@@ -56,10 +57,14 @@ async fn test_head_truncate_at(wal_test_path: &Path, num_entries: usize, truncat
         .await
         .unwrap();
 
-    let mut frame_gen = FrameGenerator::new(TEST_SEGMENT_SIZE);
-    let num_entries_per_segment = frame_gen.num_entries_per_segment();
+    let mut entry_gen = EntryGenerator::new(TEST_SEGMENT_SIZE);
+    let num_entries_per_segment = entry_gen.num_entries_per_segment();
 
-    for frame in frame_gen.take(num_entries) {
+    for frame in entry_gen
+        .take(num_entries)
+        .into_iter()
+        .map(DataFrame::Entry)
+    {
         storage.send_sync(vec![frame]).await.unwrap();
     }
 
@@ -79,8 +84,12 @@ async fn test_tail_truncate_at(wal_test_path: &Path, num_entries: usize, truncat
     let config = WALConfig::new(&wal_test_path).with_max_segment_size(TEST_SEGMENT_SIZE);
     let (mut storage, _logs) = WALStorage::new_or_recover(config.clone()).await.unwrap();
 
-    let mut frame_gen = FrameGenerator::new(TEST_SEGMENT_SIZE);
-    for frame in frame_gen.take(num_entries) {
+    let mut entry_gen = EntryGenerator::new(TEST_SEGMENT_SIZE);
+    for frame in entry_gen
+        .take(num_entries)
+        .into_iter()
+        .map(DataFrame::Entry)
+    {
         storage.send_sync(vec![frame]).await.unwrap();
     }
 
@@ -116,9 +125,9 @@ async fn test_follow_up_append_recovery(wal_test_path: &Path, to_append: usize) 
 
     let next_log_index = logs_initial.last().map_or(0, |e| e.index) + 1;
 
-    let mut frame_gen = FrameGenerator::new(TEST_SEGMENT_SIZE);
-    frame_gen.skip(logs_initial.len());
-    let frames = frame_gen.take(to_append);
+    let mut entry_gen = EntryGenerator::new(TEST_SEGMENT_SIZE);
+    entry_gen.skip(logs_initial.len());
+    let frames = entry_gen.take(to_append).into_iter().map(DataFrame::Entry);
 
     for frame in frames.clone() {
         storage.send_sync(vec![frame]).await.unwrap();
@@ -145,43 +154,60 @@ async fn test_follow_up_append_recovery(wal_test_path: &Path, to_append: usize) 
     );
 }
 
-#[derive(Clone)]
-pub(super) struct FrameGenerator {
+pub(super) struct EntryGenerator {
+    inner: Mutex<Inner>,
+}
+
+struct Inner {
     next_index: u64,
     segment_size: u64,
 }
 
-impl FrameGenerator {
+impl EntryGenerator {
     pub(super) fn new(segment_size: u64) -> Self {
         Self {
-            next_index: 1,
-            segment_size,
+            inner: Mutex::new(Inner {
+                next_index: 1,
+                segment_size,
+            }),
         }
     }
 
-    pub(super) fn skip(&mut self, num_index: usize) {
-        self.next_index += num_index as u64;
+    pub(super) fn skip(&self, num_index: usize) {
+        let mut this = self.inner.lock();
+        this.next_index += num_index as u64;
     }
 
-    pub(super) fn next(&mut self) -> DataFrame<TestCommand> {
+    pub(super) fn next(&self) -> LogEntry<TestCommand> {
+        let mut this = self.inner.lock();
         let entry =
-            LogEntry::<TestCommand>::new(self.next_index, 1, EntryData::Empty(ProposeId(1, 2)));
-        self.next_index += 1;
-
-        DataFrame::Entry(entry)
+            LogEntry::<TestCommand>::new(this.next_index, 1, EntryData::Empty(ProposeId(1, 2)));
+        this.next_index += 1;
+        entry
     }
 
-    pub(super) fn take(&mut self, num: usize) -> Vec<DataFrame<TestCommand>> {
+    pub(super) fn take(&self, num: usize) -> Vec<LogEntry<TestCommand>> {
         (0..num).map(|_| self.next()).collect()
     }
 
+    pub(super) fn reset_next_index_to(&self, index: LogIndex) {
+        let mut this = self.inner.lock();
+        this.next_index = index
+    }
+
+    pub(super) fn current_index(&self) -> LogIndex {
+        let this = self.inner.lock();
+        this.next_index - 1
+    }
+
     pub(super) fn num_entries_per_segment(&self) -> usize {
+        let this = self.inner.lock();
         let header_size = 32;
         let sample_entry = LogEntry::<TestCommand>::new(1, 1, EntryData::Empty(ProposeId(1, 2)));
         let mut wal_codec = WAL::<TestCommand>::new();
         let mut buf = BytesMut::new();
         wal_codec.encode(vec![DataFrame::Entry(sample_entry)], &mut buf);
         let entry_size = buf.len();
-        (self.segment_size as usize - header_size + entry_size - 1) / entry_size
+        (this.segment_size as usize - header_size + entry_size - 1) / entry_size
     }
 }

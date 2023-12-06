@@ -145,7 +145,7 @@ impl WALSegment {
             }
         }
 
-        self_framed.get_mut().reset_offset().await?;
+        // self_framed.get_mut().reset_offset().await?;
 
         // Update seal index
         self_framed.get_mut().update_seal_index(highest_index);

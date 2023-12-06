@@ -1,6 +1,12 @@
+mod power_failure;
+
+mod silent_corruption;
+
 use std::{
-    fs,
-    path::PathBuf,
+    fs, iter,
+    path::{Path, PathBuf},
+    pin::Pin,
+    process::Command,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -9,10 +15,12 @@ use std::{
 };
 
 use curp_test_utils::test_cmd::TestCommand;
+use futures::FutureExt;
 use rand::{random, thread_rng, Rng};
+use tokio::time::interval;
 use tracing::info;
 
-use crate::server::storage::wal::tests::FrameGenerator;
+use crate::server::storage::wal::tests::EntryGenerator;
 
 use super::*;
 
@@ -48,93 +56,153 @@ impl LazyFSController {
     }
 }
 
-async fn start_sending(
-    mut wal_storage: WALStorage<TestCommand>,
-    mut frame_gen: FrameGenerator,
-    shutdown_flag: Arc<AtomicBool>,
-) -> Vec<LogEntry<TestCommand>> {
-    let mut frames_all = vec![];
-    let mut interval = tokio::time::interval(Duration::from_millis(1));
-    loop {
-        if shutdown_flag.load(Ordering::Relaxed) {
-            break;
-        }
-        interval.tick().await;
-        let batch_size = {
-            let mut rng = thread_rng();
-            rng.gen_range(1..10)
-        };
-        let frames = frame_gen.take(batch_size);
-        frames_all.extend(frames.clone());
-        wal_storage.send_sync(frames).await.unwrap();
-    }
-
-    frames_all
-        .into_iter()
-        .map(|f| {
-            let DataFrame::Entry(entry) = f else { unreachable!() };
-            entry
-        })
-        .collect()
+struct BitFlip {
+    path: PathBuf,
 }
 
-async fn start_failure_injection(failure_duration: Duration, shutdown_flag: Arc<AtomicBool>) {
+impl BitFlip {
+    fn offset(&self, offset: usize) {
+        self.spawn_bitflip(vec!["offset".to_owned(), format!("{offset}")]);
+    }
+
+    fn random(&self) {
+        self.spawn_bitflip(vec![]);
+    }
+
+    fn spawn_bitflip(&self, args: Vec<String>) {
+        let mut c = Command::new("bitflip")
+            .args(
+                args.into_iter()
+                    .chain(iter::once(self.path.as_path().to_string_lossy().into())),
+            )
+            .spawn()
+            .unwrap();
+        c.wait().unwrap();
+    }
+}
+
+async fn start_sending(
+    mut wal_storage: WALStorage<TestCommand>,
+    mut all_entries: Vec<LogEntry<TestCommand>>,
+    mut entry_gen: Arc<EntryGenerator>,
+    shutdown_flag: Arc<AtomicBool>,
+    log_persistent_interval: Duration,
+    head_truncation_interval: Option<Duration>,
+    tail_truncation_interval: Option<Duration>,
+) -> (Vec<LogEntry<TestCommand>>, LogIndex) {
+    // The minimum index that guaranteed to be persistent
+    let mut min_persistent_index = 0;
+    let mut log_persistent_interval = interval(log_persistent_interval);
+    let mut head_truncation_interval = head_truncation_interval.map(interval);
+    let mut tail_truncation_interval = tail_truncation_interval.map(interval);
+
+    loop {
+        if shutdown_flag.load(Ordering::SeqCst) {
+            break;
+        }
+        let head_truncation_fut: Pin<Box<dyn Future<Output = ()> + Send>> =
+            match head_truncation_interval {
+                Some(ref mut i) => Box::pin(i.tick().map(|_| ())),
+                None => Box::pin(futures::future::pending::<()>()),
+            };
+        let tail_truncation_fut: Pin<Box<dyn Future<Output = ()> + Send>> =
+            match tail_truncation_interval {
+                Some(ref mut i) => Box::pin(i.tick().map(|_| ())),
+                None => Box::pin(futures::future::pending::<()>()),
+            };
+
+        tokio::select! {
+            _ = log_persistent_interval.tick() => {
+                let batch_size = {
+                    let mut rng = thread_rng();
+                    rng.gen_range(1..10)
+                };
+                let entries = entry_gen.take(batch_size);
+                all_entries.extend(entries.clone());
+                wal_storage.send_sync(entries.clone().into_iter().map(DataFrame::Entry).collect()).await.unwrap();
+
+                // Here's a checkpoint:
+                // The send_sync successfully completed means that the logs are guaranteed
+                // to be persistented if there's no silent corruption
+
+                if !shutdown_flag.load(Ordering::SeqCst) {
+                    let Some(entry) = entries.last() else {
+                        unreachable!()
+                    };
+                    min_persistent_index = entry.index;
+                }
+            }
+            _ = head_truncation_fut => {
+                let current_index = entry_gen.current_index();
+                if current_index > 1000 {
+                    info!("event: head truncation");
+                    let truncate_index = current_index - 1000;
+                    wal_storage.truncate_head(truncate_index).await.unwrap();
+                }
+            }
+            _ = tail_truncation_fut => {
+                let current_index = entry_gen.current_index();
+                if current_index > 10 {
+                    info!("event: tail truncation");
+                    let truncate_index = current_index - 10;
+                    wal_storage.truncate_tail(truncate_index).await.unwrap();
+                    entry_gen.reset_next_index_to(truncate_index + 1);
+                    min_persistent_index = truncate_index;
+                    all_entries.truncate(all_entries.len() - 10);
+                }
+            }
+
+        }
+    }
+
+    (all_entries, min_persistent_index)
+}
+
+async fn start_faults_injection(failure_duration: Duration, shutdown_flag: Arc<AtomicBool>) {
+    let mut interval = interval(failure_duration);
     loop {
         if shutdown_flag.load(Ordering::Acquire) {
             break;
         }
-        tokio::time::sleep(failure_duration).await;
-        info!("Clearing LazyFS cache");
+        interval.tick().await;
+        info!("fault: clearing LazyFS cache");
         LazyFSController::clear_cache().await;
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn lazyfs_test() {
+async fn start_wal(
+    wal_dir: impl AsRef<Path>,
+) -> (WALStorage<TestCommand>, Vec<LogEntry<TestCommand>>) {
+    let config = WALConfig::new(wal_dir).with_max_segment_size(TEST_SEGMENT_SIZE);
+    WALStorage::<TestCommand>::new_or_recover(config.clone())
+        .await
+        .unwrap()
+}
+
+fn init_wal_dir() -> PathBuf {
+    let mut wal_dir = PathBuf::from(LAZYFS_MOUTN_POINT);
+    wal_dir.push("wal_data");
+    // fs::remove_dir_all(&wal_dir);
+    // fs::create_dir(&wal_dir);
+    let dir = fs::File::open(&wal_dir).unwrap();
+    dir.sync_all().unwrap();
+    wal_dir
+}
+
+fn init_logger() {
     _ = tracing_subscriber::fmt()
         .compact()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
-    let mut wal_dir = PathBuf::from(LAZYFS_MOUTN_POINT);
-    wal_dir.push("wal_data");
-    fs::remove_dir_all(&wal_dir);
-    fs::create_dir(&wal_dir);
-    let dir = fs::File::open(&wal_dir).unwrap();
-    dir.sync_all().unwrap();
+}
 
-    let config = WALConfig::new(wal_dir).with_max_segment_size(TEST_SEGMENT_SIZE);
-    let (wal_storage, _logs) = WALStorage::<TestCommand>::new_or_recover(config.clone())
-        .await
-        .unwrap();
-    let frame_gen = FrameGenerator::new(TEST_SEGMENT_SIZE);
-
-    let shutdown_flag = Arc::new(AtomicBool::new(false));
-    let send_handle = tokio::spawn(start_sending(
-        wal_storage,
-        frame_gen,
-        Arc::clone(&shutdown_flag),
-    ));
-    let failure_handle = tokio::spawn(start_failure_injection(
-        Duration::from_secs(1),
-        Arc::clone(&shutdown_flag),
-    ));
-
-    tokio::time::sleep(Duration::from_secs(10)).await;
-    shutdown_flag.store(true, Ordering::Relaxed);
-    let logs_all = send_handle.await.unwrap();
-    info!("entries sent: {}", logs_all.len());
-
-    let (wal_storage, logs_recovered) = WALStorage::<TestCommand>::new_or_recover(config)
-        .await
-        .unwrap();
-
-    info!("{} logs recovered", logs_recovered.len());
-
-    assert!(
-        logs_all
-            .into_iter()
-            .zip(logs_recovered.into_iter())
-            .all(|(x, y)| x == y),
-        "logs not match"
-    );
+fn logs_expect(expected: &Vec<LogEntry<TestCommand>>, recovered: &Vec<LogEntry<TestCommand>>) {
+    if recovered.len() == 0 {
+        return;
+    }
+    let start_index = recovered.first().unwrap().index;
+    let expected = expected.into_iter().skip_while(|e| e.index < start_index);
+    for (e, r) in expected.zip(recovered.into_iter()) {
+        assert_eq!(e, r, "recovered logs not match with expected logs");
+    }
 }
