@@ -115,7 +115,7 @@ where
                 "WAL corrupted: {}, truncated at pos: {pos}",
                 CorruptError::LogNotContinue
             );
-            logs = logs.into_iter().take(pos).collect();
+            logs.truncate(pos);
         }
 
         // If there's no segments to recover, create a new segment
