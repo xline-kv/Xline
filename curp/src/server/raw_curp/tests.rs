@@ -981,11 +981,11 @@ fn leader_handle_move_leader() {
 
     let target_id = curp.cluster().get_id_by_name("S1").unwrap();
     let res = curp.handle_move_leader(target_id);
-    // need to send timeout now after handle_move_leader
+    // need to send try become leader now after handle_move_leader
     assert!(res.is_ok_and(|b| b));
 
     let res = curp.handle_move_leader(target_id);
-    // no need to send timeout now after handle_move_leader, because it's duplicated
+    // no need to send try become leader now after handle_move_leader, because it's duplicated
     assert!(res.is_ok_and(|b| !b));
 }
 
