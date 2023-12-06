@@ -834,7 +834,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
     /// Handle `try_become_leader_now`
     pub(super) fn handle_try_become_leader_now(&self) -> Option<Vote> {
-        debug!("{} received timeout now", self.id());
+        debug!("{} received try become leader now", self.id());
         let mut st_w = self.st.write();
         if st_w.role == Role::Leader {
             return None;
@@ -1300,6 +1300,17 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Get last log index
     pub(super) fn last_log_index(&self) -> u64 {
         self.log.read().last_log_index()
+    }
+
+    /// Pick a node that has the same log as the current node
+    pub(super) fn pick_new_leader(&self) -> Option<ServerId> {
+        let last_idx = self.log.read().last_log_index();
+        for (id, status) in self.lst.get_all_statuses() {
+            if status.match_index == last_idx && !status.is_learner {
+                return Some(id);
+            }
+        }
+        None
     }
 }
 

@@ -8,7 +8,7 @@ use clippy_utilities::NumericCast;
 #[cfg(test)]
 use mockall::automock;
 use tokio::sync::oneshot;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use utils::shutdown;
 
 use self::conflict_checked_mpmc::Task;
@@ -174,6 +174,38 @@ async fn worker_as<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
             sp.lock().remove(&entry.propose_id);
             let _ig = ucp.lock().remove(&entry.propose_id);
             if shutdown_self {
+                if let Some(maybe_new_leader) = curp.pick_new_leader() {
+                    info!(
+                        "the old leader {} will shutdown, try to move leadership to {}",
+                        id, maybe_new_leader
+                    );
+                    if curp
+                        .handle_move_leader(maybe_new_leader)
+                        .unwrap_or_default()
+                    {
+                        if let Err(e) = curp
+                            .connects()
+                            .get(&maybe_new_leader)
+                            .unwrap_or_else(|| {
+                                unreachable!("connect to {} should exist", maybe_new_leader)
+                            })
+                            .try_become_leader_now(curp.cfg().wait_synced_timeout)
+                            .await
+                        {
+                            warn!(
+                                "{} send try become leader now to {} failed: {:?}",
+                                curp.id(),
+                                maybe_new_leader,
+                                e
+                            );
+                        };
+                    }
+                } else {
+                    info!(
+                        "the old leader {} will shutdown, but no other node can be the leader now",
+                        id
+                    );
+                }
                 curp.shutdown_trigger().self_shutdown();
             }
             true
