@@ -30,8 +30,10 @@ trait FrameEncoder {
 #[allow(clippy::upper_case_acronyms)] // The WAL needs to be all upper cases
 #[derive(Debug)]
 pub(super) struct WAL<C> {
-    /// The phantom data
-    _phantom: PhantomData<C>,
+    /// Frames stored in decoding
+    frames: Vec<DataFrame<C>>,
+    /// The hasher state for decoding
+    hasher: Sha256,
 }
 
 /// Union type of WAL frames
@@ -68,7 +70,8 @@ impl<C> WAL<C> {
     /// Creates a new WAL codec
     pub(super) fn new() -> Self {
         Self {
-            _phantom: PhantomData,
+            frames: Vec::new(),
+            hasher: Sha256::new(),
         }
     }
 
@@ -117,19 +120,21 @@ where
     type Error = WALError;
 
     fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        let mut frames = vec![];
         loop {
             if let Some((frame, len)) = WALFrame::<C>::decode(src)? {
-                let _ignore = src.split_to(len);
+                let decoded_bytes = src.split_to(len);
                 match frame {
                     WALFrame::Data(data) => {
-                        frames.push(data);
+                        self.frames.push(data);
+                        self.hasher.update(decoded_bytes);
                     }
                     WALFrame::Commit(commit) => {
                         let frames_bytes: Vec<_> =
-                            frames.iter().flat_map(DataFrame::encode).collect();
-                        if commit.validate(&frames_bytes) {
-                            return Ok(Some(frames));
+                            self.frames.iter().flat_map(DataFrame::encode).collect();
+                        let checksum = self.hasher.clone().finalize();
+                        self.hasher.reset();
+                        if commit.validate(&checksum) {
+                            return Ok(Some(self.frames.drain(..).collect()));
                         }
                         return Err(WALError::Corrupted(CorruptError::Checksum));
                     }
@@ -272,8 +277,8 @@ impl CommitFrame {
     }
 
     /// Validates the checksum
-    fn validate(&self, data: &[u8]) -> bool {
-        validate_data(data, &self.checksum)
+    fn validate(&self, checksum: &[u8]) -> bool {
+        *checksum == self.checksum
     }
 }
 
