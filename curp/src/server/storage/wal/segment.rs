@@ -11,6 +11,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
+use tracing::debug;
 
 use crate::log_entry::LogEntry;
 
@@ -76,7 +77,7 @@ impl WALSegment {
         tokio_file.flush().await?;
         tokio_file.sync_all().await?;
 
-        Ok(Self {
+        let segment = Self {
             base_index,
             segment_id,
             size_limit,
@@ -85,7 +86,10 @@ impl WALSegment {
             // For convenience we set it to largest u64 value that represent not sealed
             seal_index: u64::MAX,
             io_state: IOState::default(),
-        })
+        };
+        debug!("New segment: {segment:?}");
+
+        Ok(segment)
     }
 
     /// Open an existing WAL segment file
@@ -165,6 +169,10 @@ impl WALSegment {
         framed.flush().await;
         framed.get_mut().sync_all().await;
         framed.get_mut().update_seal_index(next_index);
+        debug!(
+            "Segment {} sealed by index: {next_index}",
+            framed.get_mut().id(),
+        );
     }
 
     /// Syncs the file of this segment

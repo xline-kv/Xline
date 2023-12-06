@@ -11,7 +11,7 @@ use futures::{FutureExt, StreamExt};
 use thiserror::Error;
 use tokio::task::JoinHandle;
 use tokio_stream::Stream;
-use tracing::error;
+use tracing::{debug, error};
 
 use super::util::LockedFile;
 
@@ -45,11 +45,13 @@ impl FilePipeline {
             let mut file_count = 0;
             loop {
                 let file = Self::alloc(&dir_c, file_size, &mut file_count)?;
+                let fpath = file.path();
                 tokio::select! {
                     _ = &mut stop_listener => {
                         break;
                     }
                     result = file_tx.send_async(file) => {
+                        debug!("file {fpath:?} sent to channel");
                         // The receiver is already dropped, stop this task
                         if let Err(e) = result {
                             break;
@@ -81,9 +83,11 @@ impl FilePipeline {
         file_count: &mut usize,
     ) -> io::Result<LockedFile> {
         let fpath = PathBuf::from(dir.as_ref()).join(format!("{}{TEMP_FILE_EXT}", *file_count));
-        let mut locked_file = LockedFile::open_rw(fpath)?;
+        let mut locked_file = LockedFile::open_rw(&fpath)?;
         locked_file.preallocate(file_size)?;
         *file_count = file_count.overflow_add(1);
+        debug!("allocated new file: {fpath:?}");
+
         Ok(locked_file)
     }
 
