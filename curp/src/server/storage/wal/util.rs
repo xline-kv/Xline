@@ -178,21 +178,10 @@ mod tests {
         let mut path = PathBuf::from(tempdir.path());
         path.push("file.test");
         let mut lfile = LockedFile::open_rw(&path).unwrap();
-        let path_str = path.to_str().unwrap();
-
-        let mut try_flock_output = Command::new("sh")
-            .args(&[
-                "-c",
-                &format!("flock --nonblock {path_str} echo some_data >> {path_str}"),
-            ])
-            .output()
-            .unwrap();
-        assert_ne!(try_flock_output.status.code().unwrap(), 0);
-
-        let mut std_file = lfile.into_std();
-        let mut buf = String::new();
-        std_file.read_to_string(&mut buf);
-        assert_eq!(buf.len(), 0);
+        assert!(
+            LockedFile::open_rw(&path).is_err(),
+            "acquire lock should failed"
+        );
     }
 
     #[test]
