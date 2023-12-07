@@ -34,10 +34,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             && self.cst.lock().config.contains(id)
     }
 
-    pub(crate) fn commit_index(&self) -> LogIndex {
-        self.log.read().commit_index
-    }
-
     pub(crate) fn new_test<Tx: CEEventTxApi<C>>(n: u64, exe_tx: Tx, role_change: RC) -> Self {
         let all_members: HashMap<_, _> = (0..n)
             .map(|i| (format!("S{i}"), vec![format!("S{i}")]))

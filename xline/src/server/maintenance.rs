@@ -3,16 +3,17 @@ use std::{fmt::Debug, pin::Pin, sync::Arc};
 use async_stream::try_stream;
 use bytes::BytesMut;
 use clippy_utilities::{Cast, OverflowArithmetic};
-use curp::members::ClusterInfo;
+use curp::{cmd::CommandExecutor as _, members::ClusterInfo, server::RawCurp};
 use engine::SnapshotApi;
 use futures::stream::Stream;
 use sha2::{Digest, Sha256};
 use tracing::{debug, error};
 use xlineapi::{
-    command::{command_from_request_wrapper, CommandResponse, CurpClient, SyncResponse},
+    command::{command_from_request_wrapper, Command, CommandResponse, CurpClient, SyncResponse},
     RequestWithToken, RequestWrapper,
 };
 
+use super::{auth_server::get_token, command::CommandExecutor};
 use crate::{
     header_gen::HeaderGenerator,
     rpc::{
@@ -21,10 +22,12 @@ use crate::{
         MoveLeaderRequest, MoveLeaderResponse, SnapshotRequest, SnapshotResponse, StatusRequest,
         StatusResponse,
     },
-    storage::{storage_api::StorageApi, KvStore},
+    state::State,
+    storage::{
+        AlarmStore,
+        {storage_api::StorageApi, KvStore},
+    },
 };
-
-use super::auth_server::get_token;
 
 /// Minimum page size
 const MIN_PAGE_SIZE: u64 = 512;
@@ -46,6 +49,12 @@ where
     client: Arc<CurpClient>,
     /// cluster information
     cluster_info: Arc<ClusterInfo>,
+    /// Raw curp
+    raw_curp: Arc<RawCurp<Command, State<S, Arc<CurpClient>>>>,
+    /// Command executor
+    ce: Arc<CommandExecutor<S>>,
+    /// Alarm store
+    alarm_store: Arc<AlarmStore<S>>,
 }
 
 impl<S> MaintenanceServer<S>
@@ -53,12 +62,16 @@ where
     S: StorageApi,
 {
     /// New `MaintenanceServer`
+    #[allow(clippy::too_many_arguments)] // Consistent with other servers
     pub(crate) fn new(
         kv_store: Arc<KvStore<S>>,
         client: Arc<CurpClient>,
         persistent: Arc<S>,
         header_gen: Arc<HeaderGenerator>,
         cluster_info: Arc<ClusterInfo>,
+        raw_curp: Arc<RawCurp<Command, State<S, Arc<CurpClient>>>>,
+        ce: Arc<CommandExecutor<S>>,
+        alarm_store: Arc<AlarmStore<S>>,
     ) -> Self {
         Self {
             kv_store,
@@ -66,6 +79,9 @@ where
             header_gen,
             client,
             cluster_info,
+            raw_curp,
+            ce,
+            alarm_store,
         }
     }
 
@@ -113,25 +129,34 @@ where
         &self,
         _request: tonic::Request<StatusRequest>,
     ) -> Result<tonic::Response<StatusResponse>, tonic::Status> {
-        let cluster = self.client.fetch_cluster(false).await?;
-        let header = self.header_gen.gen_header();
-        let self_id = self.cluster_info.self_id();
-        let is_learner = cluster
-            .members
-            .iter()
-            .find(|member| member.id == self_id)
-            .map_or(false, |member| member.is_learner);
-        // TODO bypass CurpNode in client to get more detailed information
+        let is_learner = self.cluster_info.self_member().is_learner;
+        let (leader, term, _) = self.raw_curp.leader();
+        let commit_index = self.raw_curp.commit_index();
+        let size = self.persistent.file_size().map_err(|e| {
+            error!("get file size failed, {e}");
+            tonic::Status::internal("get file size failed")
+        })?;
+        let last_applied = self.ce.last_applied().map_err(|e| {
+            error!("get last applied failed, {e}");
+            tonic::Status::internal("get last applied failed")
+        })?;
+        let mut errors = vec![];
+        if leader.is_none() {
+            errors.push("no leader".to_owned());
+        }
+        for a in self.alarm_store.get_all_alarms() {
+            errors.push(format!("{a:?}"));
+        }
         let response = StatusResponse {
-            header: Some(header),
+            header: Some(self.header_gen.gen_header()),
             version: env!("CARGO_PKG_VERSION").to_owned(),
-            db_size: -1,
-            leader: cluster.leader_id.unwrap_or(0), // None means this member believes there is no leader
-            raft_index: 0,
-            raft_term: cluster.term,
-            raft_applied_index: 0,
-            errors: vec![],
-            db_size_in_use: -1,
+            db_size: size.cast(),
+            leader: leader.unwrap_or(0), // None means this member believes there is no leader
+            raft_index: commit_index,
+            raft_term: term,
+            raft_applied_index: last_applied,
+            errors,
+            db_size_in_use: size.cast(),
             is_learner,
         };
         Ok(tonic::Response::new(response))

@@ -83,7 +83,7 @@ const CHANGE_CHANNEL_SIZE: usize = 128;
 const MAX_PROMOTE_GAP: u64 = 500;
 
 /// The curp state machine
-pub(super) struct RawCurp<C: Command, RC: RoleChange> {
+pub struct RawCurp<C: Command, RC: RoleChange> {
     /// Curp state
     st: RwLock<State>,
     /// Additional leader state
@@ -889,9 +889,16 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Get the leader id, attached with the term
-    pub(super) fn leader(&self) -> (Option<ServerId>, u64, bool) {
+    #[inline]
+    pub fn leader(&self) -> (Option<ServerId>, u64, bool) {
         self.st
             .map_read(|st_r| (st_r.leader_id, st_r.term, st_r.role == Role::Leader))
+    }
+
+    /// Get commit index
+    #[inline]
+    pub fn commit_index(&self) -> LogIndex {
+        self.log.read().commit_index
     }
 
     /// Get cluster info
@@ -989,12 +996,12 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Get a reference to spec pool
-    pub(crate) fn spec_pool(&self) -> SpecPoolRef<C> {
+    pub(super) fn spec_pool(&self) -> SpecPoolRef<C> {
         Arc::clone(&self.ctx.sp)
     }
 
     /// Get a reference to uncommitted pool
-    pub(crate) fn uncommitted_pool(&self) -> UncommittedPoolRef<C> {
+    pub(super) fn uncommitted_pool(&self) -> UncommittedPoolRef<C> {
         Arc::clone(&self.ctx.ucp)
     }
 
