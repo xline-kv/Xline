@@ -12,6 +12,7 @@ use tracing::instrument;
 use utils::{config::CurpConfig, shutdown, tracing::Extract};
 
 use self::curp_node::CurpNode;
+pub use self::raw_curp::RawCurp;
 use crate::{
     cmd::{Command, CommandExecutor},
     error::ServerError,
@@ -376,5 +377,12 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
     #[inline]
     pub fn shutdown_listener(&self) -> shutdown::Listener {
         self.inner.shutdown_listener()
+    }
+
+    /// Get raw curp
+    #[inline]
+    #[must_use]
+    pub fn raw_curp(&self) -> Arc<RawCurp<C, RC>> {
+        self.inner.curp()
     }
 }

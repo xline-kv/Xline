@@ -434,6 +434,7 @@ impl XlineServer {
             self.cluster_info.self_id(),
             Arc::clone(&client),
         ));
+        let raw_curp = curp_server.raw_curp();
 
         Ok((
             KvServer::new(
@@ -472,6 +473,9 @@ impl XlineServer {
                 persistent,
                 Arc::clone(&header_gen),
                 Arc::clone(&self.cluster_info),
+                raw_curp,
+                ce,
+                alarm_storage,
             ),
             ClusterServer::new(Arc::clone(&client), header_gen),
             curp_server,

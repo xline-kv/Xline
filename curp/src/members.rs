@@ -197,8 +197,12 @@ impl ClusterInfo {
     }
 
     /// Get the current member
+    /// # Panics
+    /// panic if self member id is not in members
     #[allow(clippy::unwrap_used)] // self member id must be in members
-    fn self_member(&self) -> Ref<'_, u64, Member> {
+    #[must_use]
+    #[inline]
+    pub fn self_member(&self) -> Ref<'_, u64, Member> {
         self.members.get(&self.member_id).unwrap()
     }
 

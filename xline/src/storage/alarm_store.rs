@@ -89,7 +89,7 @@ where
 
     /// Recover data form persistent storage
     pub(crate) fn recover(&self) -> Result<(), ExecuteError> {
-        let alarms = self.get_all_alarms()?;
+        let alarms = self.get_all_alarms_from_db()?;
         let mut types_w = self.types.write();
         for alarm in alarms {
             _ = types_w
@@ -146,8 +146,13 @@ where
             .store(i32::from(AlarmType::None), Ordering::Relaxed);
     }
 
+    /// Get all alarms
+    pub(crate) fn get_all_alarms(&self) -> Vec<AlarmMember> {
+        self.handle_alarm_get(AlarmType::None)
+    }
+
     /// Get all alarms from persistent storage
-    fn get_all_alarms(&self) -> Result<Vec<AlarmMember>, ExecuteError> {
+    fn get_all_alarms_from_db(&self) -> Result<Vec<AlarmMember>, ExecuteError> {
         let alarms = self
             .db
             .get_all(ALARM_TABLE)?

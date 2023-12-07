@@ -266,7 +266,7 @@ struct TaskRx<C: Command>(flume::Receiver<Task<C>>);
 
 /// Send cmd to background execution worker
 #[cfg_attr(test, automock)]
-pub(super) trait CEEventTxApi<C: Command>: Send + Sync + 'static {
+pub(crate) trait CEEventTxApi<C: Command>: Send + Sync + 'static {
     /// Send cmd to background cmd worker for speculative execution
     fn send_sp_exe(&self, entry: Arc<LogEntry<C>>);
 
