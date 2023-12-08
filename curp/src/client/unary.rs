@@ -20,8 +20,8 @@ use crate::{
         self,
         connect::{BypassedConnect, ConnectApi},
         ConfChange, CurpError, FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest,
-        Member, ProposeConfChangeRequest, ProposeId, ProposeRequest, Protocol, PublishRequest,
-        ReadState, ShutdownRequest, WaitSyncedRequest,
+        Member, MoveLeaderRequest, ProposeConfChangeRequest, ProposeId, ProposeRequest, Protocol,
+        PublishRequest, ReadState, ShutdownRequest, WaitSyncedRequest,
     },
 };
 
@@ -496,6 +496,11 @@ impl<C: Command> ClientApi for Unary<C> {
         RepeatableClientApi::propose_publish(self, propose_id, node_id, node_name).await
     }
 
+    /// Send move leader request
+    async fn move_leader(&self, node_id: ServerId) -> Result<(), Self::Error> {
+        RepeatableClientApi::move_leader(self, node_id).await
+    }
+
     /// Send fetch read state from leader
     async fn fetch_read_state(&self, cmd: &C) -> Result<ReadState, CurpError> {
         // Same as fast_round, we blame the serializing error to the server even
@@ -734,6 +739,16 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
         let timeout = self.config.wait_synced_timeout;
         let _ig = self
             .map_leader(|conn| async move { conn.publish(req, timeout).await })
+            .await??;
+        Ok(())
+    }
+
+    /// Send move leader request
+    async fn move_leader(&self, node_id: ServerId) -> Result<(), Self::Error> {
+        let req = MoveLeaderRequest::new(node_id, self.cluster_version().await);
+        let timeout = self.config.wait_synced_timeout;
+        let _ig = self
+            .map_leader(|conn| async move { conn.move_leader(req, timeout).await })
             .await??;
         Ok(())
     }

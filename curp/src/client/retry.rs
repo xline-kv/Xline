@@ -144,7 +144,8 @@ where
                 // some errors that could have a retry
                 CurpError::ExpiredClientId(_)
                 | CurpError::KeyConflict(_)
-                | CurpError::Internal(_) => {}
+                | CurpError::Internal(_)
+                | CurpError::LeaderTransfer(_) => {}
 
                 // update leader state if we got a rpc transport error
                 CurpError::RpcTransport(_) => {
@@ -252,6 +253,12 @@ where
             RepeatableClientApi::propose_publish(client, propose_id, node_id, name_c)
         })
         .await
+    }
+
+    /// Send move leader request
+    async fn move_leader(&self, node_id: u64) -> Result<(), Self::Error> {
+        self.retry::<_, _>(|client| RepeatableClientApi::move_leader(client, node_id))
+            .await
     }
 
     /// Send fetch read state from leader

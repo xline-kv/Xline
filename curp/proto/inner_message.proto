@@ -50,9 +50,9 @@ message TriggerShutdownRequest {}
 
 message TriggerShutdownResponse {}
 
-message TimeoutNowRequest {}
+message TryBeLeaderNowRequest {}
 
-message TimeoutNowResponse {}
+message TryBeLeaderNowResponse {}
 
 service InnerProtocol {
     rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
@@ -61,5 +61,5 @@ service InnerProtocol {
         returns (InstallSnapshotResponse);
     rpc TriggerShutdown(TriggerShutdownRequest)
         returns (TriggerShutdownResponse);
-    rpc TimeoutNow(TimeoutNowRequest) returns (TimeoutNowResponse);
+    rpc TryBeLeaderNow(TryBeLeaderNowRequest) returns (TryBeLeaderNowResponse);
 }

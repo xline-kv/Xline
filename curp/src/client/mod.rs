@@ -75,6 +75,9 @@ pub trait ClientApi {
         node_name: String,
     ) -> Result<(), Self::Error>;
 
+    /// Send move leader request
+    async fn move_leader(&self, node_id: ServerId) -> Result<(), Self::Error>;
+
     /// Send fetch read state from leader
     async fn fetch_read_state(&self, cmd: &Self::Cmd) -> Result<ReadState, Self::Error>;
 
@@ -134,6 +137,9 @@ trait RepeatableClientApi: ClientApi {
         node_id: ServerId,
         node_name: String,
     ) -> Result<(), Self::Error>;
+
+    /// Send move leader request
+    async fn move_leader(&self, node_id: ServerId) -> Result<(), Self::Error>;
 }
 
 /// Update leader state

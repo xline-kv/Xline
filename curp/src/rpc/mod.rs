@@ -41,8 +41,9 @@ pub(crate) use self::proto::{
     },
     inner_messagepb::{
         inner_protocol_server::InnerProtocol, AppendEntriesRequest, AppendEntriesResponse,
-        InstallSnapshotRequest, InstallSnapshotResponse, TimeoutNowRequest, TimeoutNowResponse,
-        TriggerShutdownRequest, TriggerShutdownResponse, VoteRequest, VoteResponse,
+        InstallSnapshotRequest, InstallSnapshotResponse, TriggerShutdownRequest,
+        TriggerShutdownResponse, TryBeLeaderNowRequest, TryBeLeaderNowResponse, VoteRequest,
+        VoteResponse,
     },
 };
 use crate::{cmd::Command, log_entry::LogEntry, members::ServerId, LogIndex};
@@ -561,7 +562,7 @@ impl ShutdownRequest {
 }
 
 impl MoveLeaderRequest {
-    /// Create a new shutdown request
+    /// Create a new `MoveLeaderRequest`
     pub(crate) fn new(node_id: ServerId, cluster_version: u64) -> Self {
         Self {
             node_id,
@@ -694,9 +695,10 @@ impl CurpError {
             | CurpError::ExpiredClientId(_)
             | CurpError::Redirect(_)
             | CurpError::WrongClusterVersion(_) => CurpErrorPriority::High,
-            CurpError::RpcTransport(_) | CurpError::Internal(_) | CurpError::KeyConflict(_) => {
-                CurpErrorPriority::Low
-            }
+            CurpError::RpcTransport(_)
+            | CurpError::Internal(_)
+            | CurpError::KeyConflict(_)
+            | CurpError::LeaderTransfer(_) => CurpErrorPriority::Low,
         }
     }
 

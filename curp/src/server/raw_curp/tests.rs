@@ -998,7 +998,7 @@ fn follower_handle_move_leader() {
 
     let target_id = curp.cluster().get_id_by_name("S1").unwrap();
     let res = curp.handle_move_leader(target_id);
-    assert!(matches!(res, Err(CurpError::Redirect(_, _))));
+    assert!(matches!(res, Err(CurpError::Redirect(_))));
 }
 
 #[traced_test]
@@ -1030,8 +1030,9 @@ fn leader_will_reject_propose_when_transferring() {
     let res = curp.handle_move_leader(target_id);
     assert!(res.is_ok_and(|b| b));
 
+    let propose_id = ProposeId(0, 0);
     let cmd = Arc::new(TestCommand::new_put(vec![1], 1));
-    let res = curp.handle_propose(cmd);
+    let res = curp.handle_propose(propose_id, cmd);
     assert!(res.is_err());
 }
 
