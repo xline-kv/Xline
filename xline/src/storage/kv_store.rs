@@ -493,7 +493,7 @@ where
                 "etcdserver: mvcc: required revision is a future revision",
             ));
         }
-        if rev == 0 {
+        if rev <= 0 {
             rev = current_rev;
         }
         let keep = self.inner.index.keep(rev);
@@ -506,8 +506,8 @@ where
             if upper <= kr {
                 continue;
             }
-            let lower = Revision::new(compact_rev.overflow_add(1), 0);
-            if lower > kr && !keep.is_empty() && !keep.contains(&kr) {
+            let lower = Revision::new(compact_rev, 0);
+            if lower > kr && !keep.contains(&kr) {
                 continue;
             }
             hasher.update(&k);
