@@ -319,6 +319,9 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             return Err(CurpError::redirect(st_r.leader_id, st_r.term));
         }
 
+        if self.lst.get_transferee().is_some() {
+            return Err(CurpError::LeaderTransfer("leader transferring".to_owned()));
+        }
         self.check_new_config(&conf_changes)?;
 
         let mut conflict = self.insert_sp(propose_id, conf_changes.clone());
@@ -349,6 +352,9 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let st_r = self.st.read();
         if st_r.role != Role::Leader {
             return Err(CurpError::redirect(st_r.leader_id, st_r.term));
+        }
+        if self.lst.get_transferee().is_some() {
+            return Err(CurpError::leader_transfer("leader transferring"));
         }
         let mut log_w = self.log.write();
         let entry = log_w.push(st_r.term, req.propose_id(), req)?;
@@ -787,43 +793,47 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Handle `move_leader`
-    pub(super) fn handle_move_leader(&self, node_id: ServerId) -> Result<bool, CurpError> {
-        debug!("{} received move leader", self.id());
+    pub(super) fn handle_move_leader(&self, target_id: ServerId) -> Result<bool, CurpError> {
+        debug!("{} received move leader to {}", self.id(), target_id);
         let st_r = self.st.read();
         if st_r.role != Role::Leader {
             return Err(CurpError::redirect(st_r.leader_id, st_r.term));
         }
-        if !self.cluster().get(&node_id).is_some_and(|m| !m.is_learner) {
+        if !self
+            .cluster()
+            .get(&target_id)
+            .is_some_and(|m| !m.is_learner)
+        {
             return Err(CurpError::LeaderTransfer(
                 "target node is not exist or it is a learner".to_owned(),
             ));
         }
 
-        if node_id == self.id() {
+        if target_id == self.id() {
             // transfer to self
             self.lst.reset_transferee();
             return Ok(false);
         }
-        let last_leader_transferee = self.lst.swap_transferee(node_id);
-        if last_leader_transferee.is_some_and(|id| id == node_id) {
+        let last_leader_transferee = self.lst.swap_transferee(target_id);
+        if last_leader_transferee.is_some_and(|id| id == target_id) {
             // Already transferring.
             return Ok(false);
         }
         self.reset_election_tick();
         let match_index = self
             .lst
-            .get_match_index(node_id)
+            .get_match_index(target_id)
             .unwrap_or_else(|| unreachable!("node should exist,checked before"));
         if match_index == self.log.read().last_log_index() {
             Ok(true)
         } else {
-            self.sync_event(node_id).notify(1);
+            self.sync_event(target_id).notify(1);
             Ok(false)
         }
     }
 
-    /// Handle `timeout_now`
-    pub(super) fn handle_timeout_now(&self) -> Option<Vote> {
+    /// Handle `try_be_leader_now`
+    pub(super) fn handle_try_be_leader_now(&self) -> Option<Vote> {
         debug!("{} received timeout now", self.id());
         let mut st_w = self.st.write();
         if st_w.role == Role::Leader {

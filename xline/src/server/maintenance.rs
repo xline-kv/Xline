@@ -212,10 +212,7 @@ where
         request: tonic::Request<MoveLeaderRequest>,
     ) -> Result<tonic::Response<MoveLeaderResponse>, tonic::Status> {
         let node_id = request.into_inner().target_id;
-        self.client
-            .move_leader(node_id)
-            .await
-            .map_err(client_err_to_status)?;
+        self.client.move_leader(node_id).await?;
         Ok(tonic::Response::new(MoveLeaderResponse {
             header: Some(self.header_gen.gen_header()),
         }))

@@ -23,9 +23,9 @@ use crate::{
         FetchReadStateRequest, FetchReadStateResponse, InnerProtocolServer, InstallSnapshotRequest,
         InstallSnapshotResponse, MoveLeaderRequest, MoveLeaderResponse, ProposeConfChangeRequest,
         ProposeConfChangeResponse, ProposeRequest, ProposeResponse, ProtocolServer, PublishRequest,
-        PublishResponse, ShutdownRequest, ShutdownResponse, TimeoutNowRequest, TimeoutNowResponse,
-        TriggerShutdownRequest, TriggerShutdownResponse, VoteRequest, VoteResponse,
-        WaitSyncedRequest, WaitSyncedResponse,
+        PublishResponse, ShutdownRequest, ShutdownResponse, TriggerShutdownRequest,
+        TriggerShutdownResponse, TryBeLeaderNowRequest, TryBeLeaderNowResponse, VoteRequest,
+        VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
 };
 
@@ -202,13 +202,13 @@ impl<C: Command, RC: RoleChange> crate::rpc::InnerProtocol for Rpc<C, RC> {
         ))
     }
 
-    #[instrument(skip_all, name = "curp_timeout_now")]
-    async fn timeout_now(
+    #[instrument(skip_all, name = "curp_try_be_leader_now")]
+    async fn try_be_leader_now(
         &self,
-        request: tonic::Request<TimeoutNowRequest>,
-    ) -> Result<tonic::Response<TimeoutNowResponse>, tonic::Status> {
+        request: tonic::Request<TryBeLeaderNowRequest>,
+    ) -> Result<tonic::Response<TryBeLeaderNowResponse>, tonic::Status> {
         Ok(tonic::Response::new(
-            self.inner.timeout_now(request.get_ref()).await?,
+            self.inner.try_be_leader_now(request.get_ref()).await?,
         ))
     }
 }

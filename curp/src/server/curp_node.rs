@@ -36,8 +36,8 @@ use crate::{
         FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
         InstallSnapshotRequest, InstallSnapshotResponse, MoveLeaderRequest, MoveLeaderResponse,
         ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest, ProposeResponse,
-        PublishRequest, PublishResponse, ShutdownRequest, ShutdownResponse, TimeoutNowRequest,
-        TimeoutNowResponse, TriggerShutdownRequest, TriggerShutdownResponse, VoteRequest,
+        PublishRequest, PublishResponse, ShutdownRequest, ShutdownResponse, TriggerShutdownRequest,
+        TriggerShutdownResponse, TryBeLeaderNowRequest, TryBeLeaderNowResponse, VoteRequest,
         VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
     server::{cmd_worker::CEEventTxApi, raw_curp::SyncAction, storage::db::DB},
@@ -306,14 +306,14 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         req: MoveLeaderRequest,
     ) -> Result<MoveLeaderResponse, CurpError> {
         self.check_cluster_version(req.cluster_version)?;
-        let should_send_timeout_now = self.curp.handle_move_leader(req.node_id)?;
-        if should_send_timeout_now {
+        let should_send_try_be_leader_now = self.curp.handle_move_leader(req.node_id)?;
+        if should_send_try_be_leader_now {
             if let Err(e) = self
                 .curp
                 .connects()
                 .get(&req.node_id)
                 .unwrap_or_else(|| unreachable!("connect to {} should exist", req.node_id))
-                .timeout_now()
+                .try_be_leader_now(self.curp.cfg().rpc_timeout)
                 .await
             {
                 warn!(
@@ -341,15 +341,15 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         Ok(MoveLeaderResponse::default())
     }
 
-    /// Handle `TimeoutNow` request
-    pub(super) async fn timeout_now(
+    /// Handle `TryBeLeaderNow` request
+    pub(super) async fn try_be_leader_now(
         &self,
-        _req: &TimeoutNowRequest,
-    ) -> Result<TimeoutNowResponse, CurpError> {
-        if let Some(vote) = self.curp.handle_timeout_now() {
+        _req: &TryBeLeaderNowRequest,
+    ) -> Result<TryBeLeaderNowResponse, CurpError> {
+        if let Some(vote) = self.curp.handle_try_be_leader_now() {
             _ = Self::bcast_vote(self.curp.as_ref(), vote).await;
         }
-        Ok(TimeoutNowResponse::default())
+        Ok(TryBeLeaderNowResponse::default())
     }
 }
 
@@ -868,6 +868,25 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                         Ok((false, ae_succeed)) => {
                             if ae_succeed {
                                 *hb_opt = true;
+                                if curp
+                                    .get_transferee()
+                                    .is_some_and(|transferee| transferee == connect_id)
+                                    && curp
+                                        .get_match_index(connect_id)
+                                        .is_some_and(|idx| idx == curp.last_log_index())
+                                {
+                                    if let Err(e) = connect
+                                        .try_be_leader_now(curp.cfg().wait_synced_timeout)
+                                        .await
+                                    {
+                                        warn!(
+                                            "{} send timeout now to {} failed: {:?}",
+                                            curp.id(),
+                                            connect_id,
+                                            e
+                                        );
+                                    };
+                                }
                             } else {
                                 debug!("ae rejected by {}", connect.id());
                             }
