@@ -2564,6 +2564,7 @@ dependencies = [
  "curp",
  "curp-test-utils",
  "engine",
+ "futures",
  "itertools 0.10.5",
  "madsim",
  "madsim-tokio",

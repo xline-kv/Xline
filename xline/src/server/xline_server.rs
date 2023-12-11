@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use clippy_utilities::{Cast, OverflowArithmetic};
@@ -11,6 +11,7 @@ use curp::{
 };
 use engine::{MemorySnapshotAllocator, RocksSnapshotAllocator, SnapshotAllocator};
 use jsonwebtoken::{DecodingKey, EncodingKey};
+use parking_lot::RwLock;
 use tokio::{sync::mpsc::channel, task::JoinHandle};
 use tonic::transport::{server::Router, Server};
 use tracing::{error, warn};
@@ -358,7 +359,7 @@ impl XlineServer {
 
         let index_barrier = Arc::new(IndexBarrier::new());
         let id_barrier = Arc::new(IdBarrier::new());
-
+        let compact_events = Arc::new(RwLock::new(HashMap::new()));
         let ce = CommandExecutor::new(
             Arc::clone(&kv_storage),
             Arc::clone(&auth_storage),
@@ -368,6 +369,7 @@ impl XlineServer {
             Arc::clone(&id_barrier),
             header_gen.general_revision_arc(),
             header_gen.auth_revision_arc(),
+            Arc::clone(&compact_events),
         );
         let snapshot_allocator: Box<dyn SnapshotAllocator> = match self.storage_cfg {
             StorageConfig::Memory => Box::<MemorySnapshotAllocator>::default(),
@@ -420,6 +422,7 @@ impl XlineServer {
                 id_barrier,
                 *self.server_timeout.range_retry_timeout(),
                 Arc::clone(&client),
+                compact_events,
             ),
             LockServer::new(
                 Arc::clone(&client),

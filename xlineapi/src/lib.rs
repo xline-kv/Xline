@@ -210,6 +210,7 @@ pub use self::{
         cluster_client::ClusterClient,
         cluster_server::{Cluster, ClusterServer},
         compare::{CompareResult, CompareTarget, TargetUnion},
+        kv_client::KvClient,
         kv_server::{Kv, KvServer},
         lease_client::LeaseClient,
         lease_server::{Lease, LeaseServer},
