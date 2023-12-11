@@ -499,12 +499,8 @@ where
             RequestWrapper::DeleteRangeRequest(ref req) => {
                 self.handle_delete_range_request(req).map(Into::into)
             }
-            RequestWrapper::TxnRequest(ref req) => {
-                debug!("Receive TxnRequest {:?}", req);
-                self.handle_txn_request(req).map(Into::into)
-            }
+            RequestWrapper::TxnRequest(ref req) => self.handle_txn_request(req).map(Into::into),
             RequestWrapper::CompactionRequest(ref req) => {
-                debug!("Receive CompactionRequest {:?}", req);
                 self.handle_compaction_request(req).map(Into::into)
             }
             _ => unreachable!("Other request should not be sent to this store"),

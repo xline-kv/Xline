@@ -1,7 +1,12 @@
-use std::{fmt::Debug, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
 
-use curp::client::{Client, ReadState};
-use futures::future::join_all;
+use curp::{
+    client::{Client, ReadState},
+    cmd::ProposeId,
+};
+use event_listener::Event;
+use futures::future::{join_all, Either};
+use parking_lot::RwLock;
 use tokio::time::timeout;
 use tracing::{debug, instrument};
 use xlineapi::{
@@ -44,6 +49,8 @@ where
     range_retry_timeout: Duration,
     /// Consensus client
     client: Arc<Client<Command>>,
+    /// Compact events
+    compact_events: Arc<RwLock<HashMap<ProposeId, Arc<Event>>>>,
 }
 
 impl<S> KvServer<S>
@@ -58,6 +65,7 @@ where
         id_barrier: Arc<IdBarrier>,
         range_retry_timeout: Duration,
         client: Arc<Client<Command>>,
+        compact_notifiers: Arc<RwLock<HashMap<ProposeId, Arc<Event>>>>,
     ) -> Self {
         Self {
             kv_storage,
@@ -66,6 +74,7 @@ where
             id_barrier,
             range_retry_timeout,
             client,
+            compact_events: compact_notifiers,
         }
     }
 
@@ -335,9 +344,33 @@ where
         let req = request.get_ref();
         req.check_revision(compacted_revision, current_revision)?;
 
-        let is_fast_path = !req.physical;
-        let (cmd_res, _sync_res) = self.propose(request, is_fast_path).await?;
+        let physical = req.physical;
+        let token = get_token(request.metadata());
+        let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
+        let propose_id = self
+            .client
+            .gen_propose_id()
+            .await
+            .map_err(client_err_to_status)?;
+        let compact_physical_fut = if physical {
+            let event = Arc::new(Event::new());
+            _ = self
+                .compact_events
+                .write()
+                .insert(propose_id, Arc::clone(&event));
+            let listener = event.listen();
+            Either::Left(listener)
+        } else {
+            Either::Right(async {})
+        };
+        let cmd = command_from_request_wrapper(propose_id, wrapper);
+        let (cmd_res, _sync_res) = self
+            .client
+            .propose(cmd, !physical)
+            .await
+            .map_err(client_err_to_status)?;
         let resp = cmd_res.into_inner();
+        compact_physical_fut.await;
 
         if let ResponseWrapper::CompactionResponse(response) = resp {
             Ok(tonic::Response::new(response))
