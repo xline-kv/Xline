@@ -182,7 +182,8 @@ impl Listener {
 
     /// Check if the shutdown signal has been sent.
     #[inline]
-    pub fn is_shutdown(&mut self) -> bool {
+    #[must_use]
+    pub fn is_shutdown(&self) -> bool {
         !matches!(*self.listener.borrow(), Signal::Running)
     }
 }
