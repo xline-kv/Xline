@@ -43,3 +43,9 @@ jobs:
           docker build . -t ghcr.io/xline-kv/xline:latest
           docker pull gcr.io/etcd-development/etcd:v3.5.5
           bash ./validation_test.sh
+      - name: upload logs
+        if: failure()
+        uses: actions/upload-artifact@v1
+        with:
+          name: Xline logs
+          path: scripts/logs
