@@ -136,11 +136,12 @@
 )]
 // When we use rust version 1.65 or later, refactor this with GAT
 
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, net::IpAddr, time::Duration};
 
 use clippy_utilities::OverflowArithmetic;
 use config::InitialClusterState;
 use thiserror::Error;
+use trust_dns_resolver::Resolver;
 
 use crate::config::{ClusterRange, LevelConfig, RotationConfig};
 
@@ -180,6 +181,9 @@ pub enum ConfigParseError {
     /// Invalid values
     #[error("Invalid Value: {0}")]
     InvalidValue(String),
+    /// Init parser failed
+    #[error("Init parser failed: {0}")]
+    InitFailed(String),
 }
 
 /// Config File Error
@@ -196,6 +200,8 @@ pub enum ConfigFileError {
 /// Return error when pass wrong args
 #[inline]
 pub fn parse_members(s: &str) -> Result<HashMap<String, Vec<String>>, ConfigParseError> {
+    let resolver = Resolver::from_system_conf()
+        .map_err(|err| ConfigParseError::InitFailed(err.to_string()))?;
     let mut map = HashMap::new();
     let mut last_node = "";
     for item in s.split(',') {
@@ -205,19 +211,54 @@ pub fn parse_members(s: &str) -> Result<HashMap<String, Vec<String>>, ConfigPars
                 "parse members error".to_owned(),
             ));
         }
+
         #[allow(clippy::indexing_slicing)] // that is safe to index slice after checking the length
         if terms.len() == 2 {
             last_node = terms[0];
-            let _ignore = map.insert(last_node.to_owned(), vec![terms[1].to_owned()]);
+            let _ignore = map.insert(
+                last_node.to_owned(),
+                vec![member_addr_resolve(terms[1], &resolver)?],
+            );
         } else if terms.len() == 1 {
             map.get_mut(last_node)
                 .ok_or_else(|| ConfigParseError::InvalidValue("parse members error".to_owned()))?
-                .push(terms[0].to_owned());
+                .push(member_addr_resolve(terms[0], &resolver)?);
         } else {
             unreachable!("terms length should be 1 or 2, terms: {terms:?}");
         }
     }
     Ok(map)
+}
+
+/// `member_addr_resolve` will resolve the dns name into ip
+#[inline]
+#[allow(clippy::indexing_slicing)] // that is safe to index slice after checking the length
+fn member_addr_resolve(record: &str, resolver: &Resolver) -> Result<String, ConfigParseError> {
+    // TODO: update this after we support https
+    let record = if let Some(rec) = record.strip_prefix("http://") {
+        rec
+    } else {
+        record
+    };
+    let terms = record.split(':').collect::<Vec<_>>();
+    if terms.len() != 2 {
+        return Err(ConfigParseError::InvalidValue(record.to_owned()));
+    }
+
+    if terms[0].parse::<IpAddr>().is_ok() {
+        return Ok(record.to_owned());
+    }
+
+    let response = resolver
+        .lookup_ip(terms[0])
+        .map_err(|e| ConfigParseError::InvalidValue(e.to_string()))?;
+    let ip_addr = response
+        .iter()
+        .next()
+        .ok_or(ConfigParseError::InvalidValue(
+            "empty dns record".to_owned(),
+        ))?;
+    Ok(format!("{}:{}", ip_addr, terms[1]))
 }
 
 /// Parse `ClusterRange` from the given string
@@ -439,29 +480,37 @@ mod test {
         let s1 = "";
         assert!(parse_members(s1).is_err());
 
-        let s2 = "a=1";
-        let m2 = HashMap::from([("a".to_owned(), vec!["1".to_owned()])]);
+        let s2 = "a=1.1.1.2:123";
+        let m2 = HashMap::from([("a".to_owned(), vec!["1.1.1.2:123".to_owned()])]);
         assert_eq!(parse_members(s2).unwrap(), m2);
 
-        let s3 = "a=1,b=2,c=3";
+        let s3 = "a=1.1.1.2:123,b=http://2.2.2.2:222,c=3.1.1.2:123";
         let m3 = HashMap::from([
-            ("a".to_owned(), vec!["1".to_owned()]),
-            ("b".to_owned(), vec!["2".to_owned()]),
-            ("c".to_owned(), vec!["3".to_owned()]),
+            ("a".to_owned(), vec!["1.1.1.2:123".to_owned()]),
+            ("b".to_owned(), vec!["2.2.2.2:222".to_owned()]),
+            ("c".to_owned(), vec!["3.1.1.2:123".to_owned()]),
         ]);
         assert_eq!(parse_members(s3).unwrap(), m3);
 
         let s4 = "abcde";
         assert!(parse_members(s4).is_err());
 
-        let s5 = "a=1,2,3,b=1,2,c=1";
+        let s5 =
+            "a=localhost:123,2.2.2.2:123,http://3.3.3.3:123,b=1.1.1.1:123,2.3.3.3:33,c=1.2.3.4:222";
         let m5 = HashMap::from([
             (
                 "a".to_owned(),
-                vec!["1".to_owned(), "2".to_owned(), "3".to_owned()],
+                vec![
+                    "127.0.0.1:123".to_owned(),
+                    "2.2.2.2:123".to_owned(),
+                    "3.3.3.3:123".to_owned(),
+                ],
             ),
-            ("b".to_owned(), vec!["1".to_owned(), "2".to_owned()]),
-            ("c".to_owned(), vec!["1".to_owned()]),
+            (
+                "b".to_owned(),
+                vec!["1.1.1.1:123".to_owned(), "2.3.3.3:33".to_owned()],
+            ),
+            ("c".to_owned(), vec!["1.2.3.4:222".to_owned()]),
         ]);
         assert_eq!(parse_members(s5).unwrap(), m5);
 

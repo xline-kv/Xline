@@ -527,15 +527,7 @@ async fn main() -> Result<()> {
         })?;
     let server_addr = server_addr_str
         .iter()
-        .map(|addr| {
-            // TODO: update this after we support https
-            let address = if let Some(address) = addr.strip_prefix("http://") {
-                address
-            } else {
-                addr
-            };
-            address.to_socket_addrs()
-        })
+        .map(ToSocketAddrs::to_socket_addrs)
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
         .flatten()
