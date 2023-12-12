@@ -8,7 +8,7 @@ use clippy_utilities::NumericCast;
 #[cfg(test)]
 use mockall::automock;
 use tokio::sync::oneshot;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 use utils::shutdown;
 
 use self::conflict_checked_mpmc::Task;
@@ -278,7 +278,7 @@ async fn worker_snapshot<
 
 /// Send event to background command executor workers
 #[derive(Debug, Clone)]
-pub(super) struct CEEventTx<C: Command>(flume::Sender<CEEvent<C>>);
+pub(super) struct CEEventTx<C: Command>(flume::Sender<CEEvent<C>>, shutdown::Listener);
 
 /// Recv cmds that need to be executed
 #[derive(Clone)]
@@ -300,36 +300,41 @@ pub(super) trait CEEventTxApi<C: Command + 'static>: Send + Sync + 'static {
     fn send_snapshot(&self, meta: SnapshotMeta) -> oneshot::Receiver<Snapshot>;
 }
 
+impl<C: Command + 'static> CEEventTx<C> {
+    /// Send ce event
+    fn send_event(&self, event: CEEvent<C>) {
+        if let Err(e) = self.0.send(event) {
+            if self.1.is_shutdown() {
+                info!("send event after current node shutdown");
+                return;
+            }
+            error!("failed to send cmd exe event to background cmd worker, {e}");
+        }
+    }
+}
+
 impl<C: Command + 'static> CEEventTxApi<C> for CEEventTx<C> {
     fn send_sp_exe(&self, entry: Arc<LogEntry<C>>) {
         let event = CEEvent::SpecExeReady(Arc::clone(&entry));
-        if let Err(e) = self.0.send(event) {
-            error!("failed to send cmd exe event to background cmd worker, {e}");
-        }
+        self.send_event(event);
     }
 
     fn send_after_sync(&self, entry: Arc<LogEntry<C>>) {
         let event = CEEvent::ASReady(Arc::clone(&entry));
-        if let Err(e) = self.0.send(event) {
-            error!("failed to send cmd as event to background cmd worker, {e}");
-        }
+        self.send_event(event);
     }
 
     fn send_reset(&self, snapshot: Option<Snapshot>) -> oneshot::Receiver<()> {
         let (tx, rx) = oneshot::channel();
-        let msg = CEEvent::Reset(snapshot, tx);
-        if let Err(e) = self.0.send(msg) {
-            error!("failed to send reset event to background cmd worker, {e}");
-        }
+        let event = CEEvent::Reset(snapshot, tx);
+        self.send_event(event);
         rx
     }
 
     fn send_snapshot(&self, meta: SnapshotMeta) -> oneshot::Receiver<Snapshot> {
         let (tx, rx) = oneshot::channel();
-        let msg = CEEvent::Snapshot(meta, tx);
-        if let Err(e) = self.0.send(msg) {
-            error!("failed to send snapshot event to background cmd worker, {e}");
-        }
+        let event = CEEvent::Snapshot(meta, tx);
+        self.send_event(event);
         rx
     }
 }

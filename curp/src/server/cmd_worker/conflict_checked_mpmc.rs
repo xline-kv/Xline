@@ -544,6 +544,7 @@ pub(in crate::server) fn channel<C: 'static + Command, CE: 'static + CommandExec
     let (filter_tx, recv_rx) = flume::unbounded();
     // recv from user to mark a msg done
     let (done_tx, done_rx) = flume::unbounded::<(Task<C>, bool)>();
+    let ce_event_tx = CEEventTx(send_tx, shutdown_trigger.subscribe());
     let _ig = tokio::spawn(conflict_checked_mpmc_task(
         filter_tx,
         filter_rx,
@@ -551,7 +552,7 @@ pub(in crate::server) fn channel<C: 'static + Command, CE: 'static + CommandExec
         shutdown_trigger,
         done_rx,
     ));
-    (CEEventTx(send_tx), recv_rx, done_tx)
+    (ce_event_tx, recv_rx, done_tx)
 }
 
 /// Conflict checked mpmc task
