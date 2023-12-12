@@ -33,4 +33,11 @@ if [ "$HOSTNAME" = "$INIT_LEADER" ]; then
     cmd="${cmd} --is-leader"
 fi
 
+if [ -n "$LOG_FILE"]; then
+    cmd="${cmd} \
+        --log-file $LOG_FILE \
+        --log-level $RUST_LOG \
+    "
+fi
+
 RUST_LOG=$RUST_LOG ${cmd}

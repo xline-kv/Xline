@@ -1,7 +1,7 @@
 #!/bin/bash
 DIR="$(dirname $0)"
 QUICK_START="${DIR}/quick_start.sh"
-bash ${QUICK_START}
+LOG_PATH=/mnt/logs bash ${QUICK_START}
 ETCDCTL="docker exec -i client etcdctl --endpoints=http://172.20.0.3:2379,http://172.20.0.4:2380"
 LOCK_CLIENT="docker exec -i client /mnt/validation_lock_client --endpoints=http://172.20.0.3:2379"
 
@@ -21,6 +21,7 @@ run_with_expect() {
         echo "command: ${cmd}"
         echo "expect: ${expect}"
         echo "result: ${res}"
+        bash ${QUICK_START} stop
         exit 1
     fi
 }
@@ -40,6 +41,7 @@ run_with_match() {
         echo "command: ${cmd}"
         echo "expect: ${expect}"
         echo "result: ${res}"
+        bash ${QUICK_START} stop
         exit 1
     fi
 }
