@@ -18,12 +18,12 @@ use crate::{
     members::{ClusterInfo, ServerId},
     role_change::RoleChange,
     rpc::{
-        AppendEntriesRequest, AppendEntriesResponse, ConfChangeEntry, FetchClusterRequest,
-        FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse, InnerProtocolServer,
-        InstallSnapshotRequest, InstallSnapshotResponse, ProposeConfChangeRequest,
-        ProposeConfChangeResponse, ProposeRequest, ProposeResponse, ProtocolServer, PublishRequest,
-        PublishResponse, ShutdownRequest, ShutdownResponse, TriggerShutdownRequest,
-        TriggerShutdownResponse, VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse,
+        FetchReadStateRequest, FetchReadStateResponse, InnerProtocolServer, InstallSnapshotRequest,
+        InstallSnapshotResponse, ProposeConfChangeRequest, ProposeConfChangeResponse,
+        ProposeRequest, ProposeResponse, ProtocolServer, PublishRequest, PublishResponse,
+        ShutdownRequest, ShutdownResponse, TriggerShutdownRequest, TriggerShutdownResponse,
+        VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
 };
 

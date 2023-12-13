@@ -181,7 +181,7 @@ impl AuthClient {
     ///         .auth_client();
     ///
     ///     let resp = client
-    ///         .authenticate(AuthenticateRequest::new("root", "rootpw"))
+    ///         .authenticate(AuthenticateRequest::new("root", "root pass word"))
     ///         .await?;
     ///
     ///     println!("auth token: {}", resp.token);
@@ -536,7 +536,7 @@ impl AuthClient {
     ///
     ///     let resp = client.role_get(AuthRoleGetRequest::new("role")).await?;
     ///
-    ///     println!("permmisions:");
+    ///     println!("permissions:");
     ///     for perm in resp.perm {
     ///         println!("{} {}", perm.perm_type, String::from_utf8_lossy(&perm.key));
     ///     }
@@ -716,7 +716,7 @@ impl AuthClient {
         use_fast_path: bool,
     ) -> Result<Res> {
         let request = RequestWithToken::new_with_token(request.into(), self.token.clone());
-        let cmd = Command::new(vec![], request);
+        let cmd = command_from_request_wrapper(request);
 
         let res_wrapper = if use_fast_path {
             let (cmd_res, _sync_error) = self.curp_client.propose(cmd, true).await?;

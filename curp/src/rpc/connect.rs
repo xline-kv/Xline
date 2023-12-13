@@ -30,9 +30,9 @@ use crate::{
         AppendEntriesRequest, AppendEntriesResponse, CurpError, FetchClusterRequest,
         FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
         InstallSnapshotRequest, InstallSnapshotResponse, ProposeConfChangeRequest,
-        ProposeConfChangeResponse, ProposeRequest, ProposeResponse, PublishRequest, PublishRequest,
-        PublishResponse, PublishResponse, TriggerShutdownRequest, VoteRequest, VoteResponse,
-        WaitSyncedRequest, WaitSyncedResponse,
+        ProposeConfChangeResponse, ProposeRequest, ProposeResponse, PublishRequest,
+        PublishResponse, TriggerShutdownRequest, VoteRequest, VoteResponse, WaitSyncedRequest,
+        WaitSyncedResponse,
     },
     snapshot::Snapshot,
 };
