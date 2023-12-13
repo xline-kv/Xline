@@ -520,8 +520,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                 SyncAction::AppendEntries(ae) => {
                     let is_empty = ae.entries.is_empty();
                     let is_commit_shutdown = ae.entries.last().is_some_and(|e| {
-                        matches!(e.entry_data, EntryData::Shutdown(_))
-                            && e.index == ae.leader_commit
+                        matches!(e.entry_data, EntryData::Shutdown) && e.index == ae.leader_commit
                     });
                     // (hb_opt, entries) status combination
                     // (false, empty) => send heartbeat to followers
