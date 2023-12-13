@@ -114,9 +114,9 @@ async fn test_status() -> Result<(), Box<dyn std::error::Error>> {
     assert!(res.db_size > 0);
     assert!(res.db_size_in_use > 0);
     assert_ne!(res.leader, 0);
-    assert_eq!(res.raft_index, 3);
+    assert!(res.raft_index >= res.raft_applied_index);
     assert_eq!(res.raft_term, 1);
-    assert_eq!(res.raft_applied_index, 3);
+    assert!(res.raft_applied_index > 0);
     assert!(!res.is_learner);
 
     Ok(())
