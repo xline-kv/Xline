@@ -239,7 +239,7 @@ impl Client {
             None => None,
         };
 
-        let kv = KvClient::new(Arc::clone(&curp_client), token.clone());
+        let kv = KvClient::new(Arc::clone(&curp_client), channel.clone(), token.clone());
         let lease = LeaseClient::new(
             Arc::clone(&curp_client),
             channel.clone(),
