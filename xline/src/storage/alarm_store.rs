@@ -62,7 +62,7 @@ where
             }
         };
         CommandResponse::new(ResponseWrapper::AlarmResponse(AlarmResponse {
-            header: Some(self.header_gen.gen_header()),
+            header: Some(self.header_gen.gen_header(false)),
             alarms,
         }))
     }

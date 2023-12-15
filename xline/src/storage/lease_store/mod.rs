@@ -14,6 +14,7 @@ use std::{
     time::Duration,
 };
 
+use engine::TransactionApi;
 use log::debug;
 use parking_lot::RwLock;
 use prost::Message;
@@ -32,7 +33,7 @@ use crate::{
         LeaseRevokeRequest, LeaseRevokeResponse, LeaseStatus, PbLease, RequestWithToken,
         RequestWrapper, ResponseHeader, ResponseWrapper,
     },
-    storage::KvStore,
+    storage::{index::IndexTransactionOperate, KvStore},
 };
 
 /// Lease table name
@@ -139,7 +140,7 @@ where
 
     /// Generate `ResponseHeader`
     pub(crate) fn gen_header(&self) -> ResponseHeader {
-        self.header_gen.gen_header()
+        self.header_gen.gen_header(false)
     }
 
     /// Demote current node
@@ -243,7 +244,7 @@ where
         _ = self.unsynced_cache.write().insert(req.id);
 
         Ok(LeaseGrantResponse {
-            header: Some(self.header_gen.gen_header()),
+            header: Some(self.header_gen.gen_header(false)),
             id: req.id,
             ttl: req.ttl,
             error: String::new(),
@@ -259,7 +260,7 @@ where
             _ = self.unsynced_cache.write().insert(req.id);
 
             Ok(LeaseRevokeResponse {
-                header: Some(self.header_gen.gen_header()),
+                header: Some(self.header_gen.gen_header(false)),
             })
         } else {
             Err(ExecuteError::LeaseNotFound(req.id))
@@ -275,7 +276,7 @@ where
             .collect();
 
         LeaseLeasesResponse {
-            header: Some(self.header_gen.gen_header()),
+            header: Some(self.header_gen.gen_header(false)),
             leases,
         }
     }
@@ -347,18 +348,27 @@ where
             return Ok(Vec::new());
         }
 
-        for (key, sub_revision) in del_keys.iter().zip(0..) {
-            let (mut del_ops, mut del_event) = KvStore::<DB>::delete_keys(
-                &self.index,
-                &self.lease_collection,
+        let txn_db = self.db.transaction();
+        let txn_index = self.index.transaction();
+
+        for (key, mut sub_revision) in del_keys.iter().zip(0..) {
+            let deleted = KvStore::<DB>::delete_keys(
+                &txn_db,
+                &txn_index,
                 key,
                 &[],
                 revision,
-                sub_revision,
-            );
-            ops.append(&mut del_ops);
+                &mut sub_revision,
+            )?;
+            KvStore::<DB>::detach_leases(&deleted, &self.lease_collection);
+            let mut del_event = KvStore::<DB>::new_deletion_events(revision, deleted);
             updates.append(&mut del_event);
         }
+
+        txn_db
+            .commit()
+            .map_err(|e| ExecuteError::DbError(e.to_string()))?;
+        txn_index.commit();
 
         let _ignore = self.lease_collection.revoke(req.id);
         assert!(

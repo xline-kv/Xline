@@ -417,14 +417,8 @@ impl RequestWrapper {
     }
 
     /// Check whether the kv request or lease request should skip the revision or not
-    pub fn skip_general_revision(&self) -> bool {
-        match self {
-            RequestWrapper::RangeRequest(_)
-            | RequestWrapper::LeaseGrantRequest(_)
-            | RequestWrapper::CompactionRequest(_) => true,
-            RequestWrapper::TxnRequest(req) => req.is_read_only(),
-            _ => false,
-        }
+    pub fn skip_lease_revision(&self) -> bool {
+        matches!(self, RequestWrapper::LeaseGrantRequest(_))
     }
 
     /// Check if this request is a auth request

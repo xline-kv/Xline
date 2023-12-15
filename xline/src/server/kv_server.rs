@@ -81,9 +81,11 @@ where
     /// serializable execute request in current node
     fn do_serializable(&self, wrapper: &RequestWithToken) -> Result<Response, tonic::Status> {
         self.auth_storage.check_permission(wrapper)?;
-        let cmd_res = self.kv_storage.execute(wrapper)?;
+        let sp_resp = self.kv_storage.execute(wrapper)?;
 
-        Ok(Self::parse_response_op(cmd_res.into_inner().into()))
+        Ok(Self::parse_response_op(
+            sp_resp.into_inner().into_inner().into(),
+        ))
     }
 
     /// Propose request and get result with fast/slow path

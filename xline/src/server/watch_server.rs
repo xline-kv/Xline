@@ -245,7 +245,7 @@ where
         );
 
         let response = WatchResponse {
-            header: Some(self.header_gen.gen_header()),
+            header: Some(self.header_gen.gen_header(true)),
             watch_id,
             created: true,
             ..WatchResponse::default()
@@ -262,7 +262,7 @@ where
             self.kv_watcher.cancel(watch_id);
             let _prev = self.active_watch_ids.remove(&watch_id);
             let response = WatchResponse {
-                header: Some(self.header_gen.gen_header()),
+                header: Some(self.header_gen.gen_header(true)),
                 watch_id,
                 canceled: true,
                 ..WatchResponse::default()
@@ -343,7 +343,7 @@ where
         if self
             .response_tx
             .send(Ok(WatchResponse {
-                header: Some(self.header_gen.gen_header()),
+                header: Some(self.header_gen.gen_header(true)),
                 watch_id: -1,
                 ..Default::default()
             }))
@@ -361,7 +361,7 @@ where
                 if self
                     .response_tx
                     .send(Ok(WatchResponse {
-                        header: Some(self.header_gen.gen_header()),
+                        header: Some(self.header_gen.gen_header(true)),
                         watch_id: *watch_id,
                         ..Default::default()
                     }))
@@ -456,7 +456,6 @@ mod test {
 
     async fn put(
         store: &KvStore<DB>,
-        db: &DB,
         key: impl Into<Vec<u8>>,
         value: impl Into<Vec<u8>>,
         revision: i64,
@@ -469,9 +468,7 @@ mod test {
             }
             .into(),
         );
-        let (_sync_res, ops) = store.after_sync(&req, revision).await.unwrap();
-        let key_revisions = db.flush_ops(ops).unwrap();
-        store.insert_index(key_revisions);
+        store.after_sync(&req, revision).await.unwrap();
     }
 
     #[tokio::test]
@@ -613,8 +610,8 @@ mod test {
             Duration::from_millis(10),
             rx.clone(),
         );
-        put(&kv_store, &db, "foo", "old_bar", 2).await;
-        put(&kv_store, &db, "foo", "bar", 3).await;
+        put(&kv_store, "foo", "old_bar", 2).await;
+        put(&kv_store, "foo", "bar", 3).await;
 
         let (req_tx, req_rx) = mpsc::channel(CHANNEL_SIZE);
         let req_stream = ReceiverStream::new(req_rx);
@@ -795,9 +792,9 @@ mod test {
             Duration::from_millis(10),
             rx.clone(),
         );
-        put(&kv_store, &db, "foo", "old_bar", 2).await;
-        put(&kv_store, &db, "foo", "bar", 3).await;
-        put(&kv_store, &db, "foo", "new_bar", 4).await;
+        put(&kv_store, "foo", "old_bar", 2).await;
+        put(&kv_store, "foo", "bar", 3).await;
+        put(&kv_store, "foo", "new_bar", 4).await;
 
         kv_store.update_compacted_revision(3);
 

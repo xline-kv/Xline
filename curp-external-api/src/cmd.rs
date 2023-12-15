@@ -127,6 +127,11 @@ where
     /// Execute the command
     async fn execute(&self, cmd: &C) -> Result<C::ER, C::Error>;
 
+    /// Pre after_sync phase.
+    ///
+    /// This is used by the CE to determine the order of the cmds before after_sync
+    fn pre_after_sync(&self, cmd: &C);
+
     /// Execute the after_sync callback
     async fn after_sync(
         &self,

@@ -8,10 +8,11 @@ use curp::{
     members::ServerId,
     LogIndex,
 };
+use dashmap::DashMap;
 use engine::Snapshot;
 use tracing::warn;
 use xlineapi::{
-    command::{Command, KeyRange},
+    command::{Command, KeyRange, SyncResponse},
     execute_error::ExecuteError,
     AlarmAction, AlarmRequest, AlarmType, PutRequest, Request, TxnRequest,
 };
@@ -85,6 +86,8 @@ where
     quota_checker: Arc<dyn QuotaChecker>,
     /// Alarmer
     alarmer: Alarmer,
+    /// Command revisions
+    cmd_revision: DashMap<ProposeId, i64>,
 }
 
 /// Quota checker
@@ -267,6 +270,7 @@ where
     ) -> Self {
         let alarmer = Alarmer::new(node_id, client);
         let quota_checker = Arc::new(CommandQuotaChecker::new(quota, Arc::clone(&persistent)));
+        let cmd_revision = DashMap::new();
         Self {
             kv_storage,
             auth_storage,
@@ -279,6 +283,7 @@ where
             auth_rev,
             quota_checker,
             alarmer,
+            cmd_revision,
         }
     }
 
@@ -328,7 +333,7 @@ where
                 }
             }
             RequestBackend::Kv | RequestBackend::Lease => {
-                if wrapper.request.skip_general_revision() {
+                if wrapper.request.skip_lease_revision() {
                     -1
                 } else {
                     self.general_rev.next()
@@ -345,10 +350,42 @@ where
     ) -> Result<<Command as CurpCommand>::ER, <Command as CurpCommand>::Error> {
         let wrapper = cmd.request();
         match wrapper.request.backend() {
-            RequestBackend::Kv => self.kv_storage.execute(wrapper),
+            RequestBackend::Kv => {
+                let resp = self.kv_storage.execute(wrapper)?;
+                if resp.is_mutative() {
+                    let _ignore = self.cmd_revision.insert(cmd.id(), 0);
+                }
+                Ok(resp.into_inner())
+            }
             RequestBackend::Auth => self.auth_storage.execute(wrapper),
             RequestBackend::Lease => self.lease_storage.execute(wrapper),
             RequestBackend::Alarm => Ok(self.alarm_storage.execute(wrapper)),
+        }
+    }
+
+    fn pre_after_sync(&self, cmd: &Command) {
+        let wrapper = cmd.request();
+        match wrapper.request.backend() {
+            RequestBackend::Kv => {
+                let Some(mut entry) = self.cmd_revision.get_mut(&cmd.id()) else {
+                    return;
+                };
+                let rev = self.general_rev.next();
+                *entry.value_mut() = rev;
+            }
+            RequestBackend::Auth => {
+                if !wrapper.request.skip_auth_revision() {
+                    let rev = self.auth_rev.next();
+                    let _ignore = self.cmd_revision.insert(cmd.id(), rev);
+                }
+            }
+            RequestBackend::Lease => {
+                if !wrapper.request.skip_lease_revision() {
+                    let rev = self.general_rev.next();
+                    let _ignore = self.cmd_revision.insert(cmd.id(), rev);
+                }
+            }
+            RequestBackend::Alarm => {}
         }
     }
 
@@ -359,16 +396,33 @@ where
         revision: i64,
     ) -> Result<<Command as CurpCommand>::ASR, <Command as CurpCommand>::Error> {
         let quota_enough = self.quota_checker.check(cmd);
-        let mut ops = vec![WriteOp::PutAppliedIndex(index)];
+        let _ignore = self
+            .persistent
+            .flush_ops(vec![WriteOp::PutAppliedIndex(index)])?;
         let wrapper = cmd.request();
-        let (res, mut wr_ops) = match wrapper.request.backend() {
-            RequestBackend::Kv => self.kv_storage.after_sync(wrapper, revision).await?,
-            RequestBackend::Auth => self.auth_storage.after_sync(wrapper, revision)?,
-            RequestBackend::Lease => self.lease_storage.after_sync(wrapper, revision).await?,
+
+        let revision = self.cmd_revision.get(&cmd.id()).map(|e| *e.value());
+        let (res, wr_ops) = match wrapper.request.backend() {
+            RequestBackend::Kv => {
+                if let Some(rev) = revision {
+                    self.kv_storage.after_sync(wrapper, rev).await?;
+                    (SyncResponse::new(rev), vec![])
+                } else {
+                    let rev = self.general_rev.get();
+                    (SyncResponse::new(rev), vec![])
+                }
+            }
+            RequestBackend::Auth => {
+                let rev = revision.unwrap_or(self.auth_rev.get());
+                self.auth_storage.after_sync(wrapper, rev)?
+            }
+            RequestBackend::Lease => {
+                let rev = revision.unwrap_or(self.general_rev.get());
+                self.lease_storage.after_sync(wrapper, rev).await?
+            }
             RequestBackend::Alarm => self.alarm_storage.after_sync(wrapper, revision),
         };
-        ops.append(&mut wr_ops);
-        let key_revisions = self.persistent.flush_ops(ops)?;
+        let key_revisions = self.persistent.flush_ops(wr_ops)?;
         if !key_revisions.is_empty() {
             self.kv_storage.insert_index(key_revisions);
         }

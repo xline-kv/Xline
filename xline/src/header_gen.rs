@@ -33,12 +33,14 @@ impl HeaderGenerator {
     }
 
     /// Generate `ResponseHeader`
-    pub(crate) fn gen_header(&self) -> ResponseHeader {
+    ///
+    /// `with_rev` indicates whether to generate header that includes the current revision
+    pub(crate) fn gen_header(&self, with_rev: bool) -> ResponseHeader {
         ResponseHeader {
             cluster_id: self.cluster_id,
             member_id: self.member_id,
             raft_term: *self.term.lock(),
-            revision: self.general_revision(),
+            revision: if with_rev { self.general_revision() } else { 0 },
         }
     }
 

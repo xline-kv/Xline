@@ -123,7 +123,7 @@ where
             .get_cluster_from_curp(false)
             .await
             .map_err(client_err_to_status)?;
-        let header = self.header_gen.gen_header();
+        let header = self.header_gen.gen_header(false);
         let self_id = self.cluster_info.self_id();
         let is_learner = cluster
             .members
@@ -215,7 +215,7 @@ fn snapshot_stream<S: StorageApi>(
         tonic::Status::internal("get snapshot failed")
     })?;
 
-    let header = header_gen.gen_header();
+    let header = header_gen.gen_header(false);
 
     let stream = try_stream! {
         if let Err(e) = snapshot.rewind() {
