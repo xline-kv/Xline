@@ -421,6 +421,7 @@ impl XlineServer {
                 index_barrier,
                 id_barrier,
                 *self.server_timeout.range_retry_timeout(),
+                *self.server_timeout.compact_timeout(),
                 Arc::clone(&client),
                 compact_events,
             ),

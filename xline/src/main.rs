@@ -153,15 +153,15 @@ use utils::{
     config::{
         default_batch_max_size, default_batch_timeout, default_candidate_timeout_ticks,
         default_client_wait_synced_timeout, default_cmd_workers, default_compact_batch_size,
-        default_compact_sleep_interval, default_follower_timeout_ticks, default_gc_interval,
-        default_heartbeat_interval, default_initial_retry_timeout, default_log_entries_cap,
-        default_log_level, default_max_retry_timeout, default_propose_timeout,
-        default_range_retry_timeout, default_retry_count, default_rotation, default_rpc_timeout,
-        default_server_wait_synced_timeout, default_sync_victims_interval, default_use_backoff,
-        default_watch_progress_notify_interval, file_appender, AuthConfig, AutoCompactConfig,
-        ClientConfig, ClusterConfig, CompactConfig, CurpConfigBuilder, InitialClusterState,
-        LevelConfig, LogConfig, RotationConfig, ServerTimeout, StorageConfig, TraceConfig,
-        XlineServerConfig,
+        default_compact_sleep_interval, default_compact_timeout, default_follower_timeout_ticks,
+        default_gc_interval, default_heartbeat_interval, default_initial_retry_timeout,
+        default_log_entries_cap, default_log_level, default_max_retry_timeout,
+        default_propose_timeout, default_range_retry_timeout, default_retry_count,
+        default_rotation, default_rpc_timeout, default_server_wait_synced_timeout,
+        default_sync_victims_interval, default_use_backoff, default_watch_progress_notify_interval,
+        file_appender, AuthConfig, AutoCompactConfig, ClientConfig, ClusterConfig, CompactConfig,
+        CurpConfigBuilder, InitialClusterState, LevelConfig, LogConfig, RotationConfig,
+        ServerTimeout, StorageConfig, TraceConfig, XlineServerConfig,
     },
     parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_rotation, parse_state,
     ConfigFileError,
@@ -259,6 +259,9 @@ struct ServerArgs {
     /// Range request retry timeout [default: 2s]
     #[clap(long, value_parser = parse_duration)]
     range_retry_timeout: Option<Duration>,
+    /// Compact timeout [default: 5s]
+    #[clap(long, value_parser = parse_duration)]
+    compact_timeout: Option<Duration>,
     /// How often should the background task sync victim watchers [default: 10ms]
     #[clap(long,value_parser = parse_duration)]
     sync_victims_interval: Option<Duration>,
@@ -342,6 +345,7 @@ impl From<ServerArgs> for XlineServerConfig {
         let server_timeout = ServerTimeout::new(
             args.range_retry_timeout
                 .unwrap_or_else(default_range_retry_timeout),
+            args.compact_timeout.unwrap_or_else(default_compact_timeout),
             args.sync_victims_interval
                 .unwrap_or_else(default_sync_victims_interval),
             args.watch_progress_notify_interval
