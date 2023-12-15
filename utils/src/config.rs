@@ -403,6 +403,13 @@ pub const fn default_range_retry_timeout() -> Duration {
     Duration::from_secs(2)
 }
 
+/// default compact timeout
+#[must_use]
+#[inline]
+pub const fn default_compact_timeout() -> Duration {
+    Duration::from_secs(5)
+}
+
 /// default sync victims interval
 #[must_use]
 #[inline]
@@ -541,6 +548,10 @@ pub struct ServerTimeout {
     #[getset(get = "pub")]
     #[serde(with = "duration_format", default = "default_range_retry_timeout")]
     range_retry_timeout: Duration,
+    /// Range request retry timeout settings
+    #[getset(get = "pub")]
+    #[serde(with = "duration_format", default = "default_compact_timeout")]
+    compact_timeout: Duration,
     /// Sync victims interval
     #[getset(get = "pub")]
     #[serde(with = "duration_format", default = "default_sync_victims_interval")]
@@ -560,11 +571,13 @@ impl ServerTimeout {
     #[inline]
     pub fn new(
         range_retry_timeout: Duration,
+        compact_timeout: Duration,
         sync_victims_interval: Duration,
         watch_progress_notify_interval: Duration,
     ) -> Self {
         Self {
             range_retry_timeout,
+            compact_timeout,
             sync_victims_interval,
             watch_progress_notify_interval,
         }
@@ -576,6 +589,7 @@ impl Default for ServerTimeout {
     fn default() -> Self {
         Self {
             range_retry_timeout: default_range_retry_timeout(),
+            compact_timeout: default_compact_timeout(),
             sync_victims_interval: default_sync_victims_interval(),
             watch_progress_notify_interval: default_watch_progress_notify_interval(),
         }
@@ -853,6 +867,7 @@ mod tests {
 
             [cluster.server_timeout]
             range_retry_timeout = '3s'
+            compact_timeout = '5s'
             sync_victims_interval = '20ms'
             watch_progress_notify_interval = '1s'
 
@@ -916,6 +931,7 @@ mod tests {
 
         let server_timeout = ServerTimeout::new(
             Duration::from_secs(3),
+            Duration::from_secs(5),
             Duration::from_millis(20),
             Duration::from_secs(1),
         );

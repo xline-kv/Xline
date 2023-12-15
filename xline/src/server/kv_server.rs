@@ -47,6 +47,8 @@ where
     id_barrier: Arc<IdBarrier>,
     /// Range request retry timeout
     range_retry_timeout: Duration,
+    /// Compact timeout
+    compact_timeout: Duration,
     /// Consensus client
     client: Arc<Client<Command>>,
     /// Compact events
@@ -58,12 +60,14 @@ where
     S: StorageApi,
 {
     /// New `KvServer`
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         kv_storage: Arc<KvStore<S>>,
         auth_storage: Arc<AuthStore<S>>,
         index_barrier: Arc<IndexBarrier>,
         id_barrier: Arc<IdBarrier>,
         range_retry_timeout: Duration,
+        compact_timeout: Duration,
         client: Arc<Client<Command>>,
         compact_notifiers: Arc<RwLock<HashMap<ProposeId, Arc<Event>>>>,
     ) -> Self {
@@ -73,6 +77,7 @@ where
             index_barrier,
             id_barrier,
             range_retry_timeout,
+            compact_timeout,
             client,
             compact_events: compact_notifiers,
         }
@@ -370,7 +375,12 @@ where
             .await
             .map_err(client_err_to_status)?;
         let resp = cmd_res.into_inner();
-        compact_physical_fut.await;
+        if timeout(self.compact_timeout, compact_physical_fut)
+            .await
+            .is_err()
+        {
+            return Err(tonic::Status::deadline_exceeded("Compact timeout"));
+        }
 
         if let ResponseWrapper::CompactionResponse(response) = resp {
             Ok(tonic::Response::new(response))
