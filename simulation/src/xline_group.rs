@@ -5,7 +5,9 @@ use itertools::Itertools;
 use madsim::runtime::NodeHandle;
 use tonic::transport::Channel;
 use tracing::debug;
-use utils::config::{ClientConfig, CompactConfig, CurpConfig, ServerTimeout, StorageConfig};
+use utils::config::{
+    ClientConfig, CompactConfig, CurpConfig, EngineConfig, ServerTimeout, StorageConfig,
+};
 use xline::{server::XlineServer, storage::db::DB};
 use xline_client::{
     error::XlineClientError,
@@ -58,10 +60,10 @@ impl XlineGroup {
                             CurpConfig::default(),
                             ClientConfig::default(),
                             ServerTimeout::default(),
-                            StorageConfig::Memory,
+                            StorageConfig::default(),
                             CompactConfig::default(),
                         );
-                        let db = DB::open(&StorageConfig::Memory).unwrap();
+                        let db = DB::open(&EngineConfig::Memory).unwrap();
                         async move {
                             server
                                 .start_from_single_addr("0.0.0.0:12345".parse().unwrap(), db, None)
