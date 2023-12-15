@@ -2,7 +2,7 @@ use std::{io, marker::PhantomData};
 
 use clippy_utilities::NumericCast;
 use curp_external_api::LogIndex;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio_util::codec::{Decoder, Encoder};
@@ -38,11 +38,11 @@ trait FrameEncoder {
 /// The WAL codec
 #[allow(clippy::upper_case_acronyms)] // The WAL needs to be all upper cases
 #[derive(Debug)]
-pub(super) struct WAL<C> {
+pub(super) struct WAL<C, H = Sha256> {
     /// Frames stored in decoding
     frames: Vec<DataFrame<C>>,
     /// The hasher state for decoding
-    hasher: Sha256,
+    hasher: H,
 }
 
 /// Union type of WAL frames
@@ -122,7 +122,7 @@ where
 
 impl<C> Decoder for WAL<C>
 where
-    C: Serialize + for<'a> Deserialize<'a>,
+    C: Serialize + DeserializeOwned,
 {
     type Item = Vec<DataFrame<C>>;
 
@@ -162,7 +162,7 @@ where
 )]
 impl<C> WALFrame<C>
 where
-    C: for<'a> Deserialize<'a>,
+    C: DeserializeOwned,
 {
     /// Decodes a frame from the buffer
     ///
