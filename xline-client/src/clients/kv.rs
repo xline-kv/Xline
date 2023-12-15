@@ -1,12 +1,14 @@
 use std::sync::Arc;
 
 use curp::client::Client as CurpClient;
+use tonic::transport::Channel;
 use xlineapi::command::{command_from_request_wrapper, Command};
 use xlineapi::{
     CompactionResponse, DeleteRangeResponse, PutResponse, RangeResponse, RequestWithToken,
     TxnResponse,
 };
 
+use crate::AuthService;
 use crate::{
     error::Result,
     types::kv::{CompactionRequest, DeleteRangeRequest, PutRequest, RangeRequest, TxnRequest},
@@ -17,6 +19,12 @@ use crate::{
 pub struct KvClient {
     /// The client running the CURP protocol, communicate with all servers.
     curp_client: Arc<CurpClient<Command>>,
+    /// The lease RPC client, only communicate with one server at a time
+    #[cfg(not(madsim))]
+    kv_client: xlineapi::KvClient<AuthService<Channel>>,
+    /// The lease RPC client, only communicate with one server at a time
+    #[cfg(madsim)]
+    kv_client: xlineapi::KvClient<Channel>,
     /// The auth token
     token: Option<String>,
 }
@@ -24,8 +32,19 @@ pub struct KvClient {
 impl KvClient {
     /// New `KvClient`
     #[inline]
-    pub(crate) fn new(curp_client: Arc<CurpClient<Command>>, token: Option<String>) -> Self {
-        Self { curp_client, token }
+    pub(crate) fn new(
+        curp_client: Arc<CurpClient<Command>>,
+        channel: Channel,
+        token: Option<String>,
+    ) -> Self {
+        Self {
+            curp_client,
+            kv_client: xlineapi::KvClient::new(AuthService::new(
+                channel,
+                token.as_ref().and_then(|t| t.parse().ok().map(Arc::new)),
+            )),
+            token,
+        }
     }
 
     /// Put a key-value into the store
@@ -235,25 +254,20 @@ impl KvClient {
     /// ```
     #[inline]
     pub async fn compact(&self, request: CompactionRequest) -> Result<CompactionResponse> {
-        let use_fast_path = request.physical();
+        if request.physical() {
+            let mut kv_client = self.kv_client.clone();
+            return kv_client
+                .compact(xlineapi::CompactionRequest::from(request))
+                .await
+                .map(tonic::Response::into_inner)
+                .map_err(Into::into);
+        }
         let request = RequestWithToken::new_with_token(
             xlineapi::CompactionRequest::from(request).into(),
             self.token.clone(),
         );
         let cmd = Command::new(vec![], request);
-
-        let res_wrapper = if use_fast_path {
-            let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
-            cmd_res.into_inner()
-        } else {
-            let (cmd_res, Some(sync_res)) = self.curp_client.propose(cmd, false).await? else {
-                unreachable!("sync_res is always Some when use_fast_path is false");
-            };
-            let mut res_wrapper = cmd_res.into_inner();
-            res_wrapper.update_revision(sync_res.revision());
-            res_wrapper
-        };
-
-        Ok(res_wrapper.into())
+        let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
+        Ok(cmd_res.into_inner().into())
     }
 }
