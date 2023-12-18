@@ -20,6 +20,7 @@ clap = { version = "3.2.16", features = ["derive"] }
 clippy-utilities = "0.1.0"
 crossbeam-skiplist = "0.1.1"
 curp = { path = "../curp", version = "0.1.0" }
+dashmap = "5.5.3"
 engine = { path = "../engine" }
 event-listener = "2.5.2"
 futures = "0.3.25"
