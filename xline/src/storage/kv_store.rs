@@ -497,16 +497,16 @@ where
             rev = current_rev;
         }
         let keep = self.inner.index.keep(rev);
+        let upper = Revision::new(rev.overflow_add(1), 0);
+        let lower = Revision::new(compact_rev, 0);
         let mut hasher = crc32fast::Hasher::new();
         hasher.update(KV_TABLE.as_bytes());
         let kv_pairs = self.inner.db.get_all(KV_TABLE)?;
         for (k, v) in kv_pairs {
             let kr = Revision::decode(&k);
-            let upper = Revision::new(rev.overflow_add(1), 0);
             if upper <= kr {
                 continue;
             }
-            let lower = Revision::new(compact_rev, 0);
             if lower > kr && !keep.contains(&kr) {
                 continue;
             }
