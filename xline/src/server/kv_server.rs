@@ -1,12 +1,12 @@
-use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
+use std::{fmt::Debug, sync::Arc, time::Duration};
 
 use curp::{
     client::{Client, ReadState},
     cmd::ProposeId,
 };
+use dashmap::DashMap;
 use event_listener::Event;
 use futures::future::{join_all, Either};
-use parking_lot::RwLock;
 use tokio::time::timeout;
 use tracing::{debug, instrument};
 use xlineapi::{
@@ -52,7 +52,7 @@ where
     /// Consensus client
     client: Arc<Client<Command>>,
     /// Compact events
-    compact_events: Arc<RwLock<HashMap<ProposeId, Arc<Event>>>>,
+    compact_events: Arc<DashMap<ProposeId, Arc<Event>>>,
 }
 
 impl<S> KvServer<S>
@@ -69,7 +69,7 @@ where
         range_retry_timeout: Duration,
         compact_timeout: Duration,
         client: Arc<Client<Command>>,
-        compact_notifiers: Arc<RwLock<HashMap<ProposeId, Arc<Event>>>>,
+        compact_events: Arc<DashMap<ProposeId, Arc<Event>>>,
     ) -> Self {
         Self {
             kv_storage,
@@ -79,7 +79,7 @@ where
             range_retry_timeout,
             compact_timeout,
             client,
-            compact_events: compact_notifiers,
+            compact_events,
         }
     }
 
@@ -359,10 +359,7 @@ where
             .map_err(client_err_to_status)?;
         let compact_physical_fut = if physical {
             let event = Arc::new(Event::new());
-            _ = self
-                .compact_events
-                .write()
-                .insert(propose_id, Arc::clone(&event));
+            _ = self.compact_events.insert(propose_id, Arc::clone(&event));
             let listener = event.listen();
             Either::Left(listener)
         } else {

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use clippy_utilities::{Cast, OverflowArithmetic};
@@ -9,9 +9,9 @@ use curp::{
     rpc::{InnerProtocolServer, ProtocolServer},
     server::Rpc,
 };
+use dashmap::DashMap;
 use engine::{MemorySnapshotAllocator, RocksSnapshotAllocator, SnapshotAllocator};
 use jsonwebtoken::{DecodingKey, EncodingKey};
-use parking_lot::RwLock;
 use tokio::{sync::mpsc::channel, task::JoinHandle};
 use tonic::transport::{server::Router, Server};
 use tracing::{error, warn};
@@ -359,7 +359,7 @@ impl XlineServer {
 
         let index_barrier = Arc::new(IndexBarrier::new());
         let id_barrier = Arc::new(IdBarrier::new());
-        let compact_events = Arc::new(RwLock::new(HashMap::new()));
+        let compact_events = Arc::new(DashMap::new());
         let ce = CommandExecutor::new(
             Arc::clone(&kv_storage),
             Arc::clone(&auth_storage),

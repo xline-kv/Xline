@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use super::barriers::{IdBarrier, IndexBarrier};
 use crate::{
@@ -11,9 +11,9 @@ use curp::{
     error::ClientError,
     InflightId, LogIndex,
 };
+use dashmap::DashMap;
 use engine::Snapshot;
 use event_listener::Event;
-use parking_lot::RwLock;
 use xlineapi::{command::Command, RequestWrapper};
 
 /// Meta table name
@@ -73,7 +73,7 @@ where
     /// Revision Number generator for Auth request
     auth_rev: Arc<RevisionNumberGenerator>,
     /// Compact events
-    compact_events: Arc<RwLock<HashMap<ProposeId, Arc<Event>>>>,
+    compact_events: Arc<DashMap<ProposeId, Arc<Event>>>,
 }
 
 impl<S> CommandExecutor<S>
@@ -91,7 +91,7 @@ where
         id_barrier: Arc<IdBarrier>,
         general_rev: Arc<RevisionNumberGenerator>,
         auth_rev: Arc<RevisionNumberGenerator>,
-        compact_notifiers: Arc<RwLock<HashMap<ProposeId, Arc<Event>>>>,
+        compact_events: Arc<DashMap<ProposeId, Arc<Event>>>,
     ) -> Self {
         Self {
             kv_storage,
@@ -102,7 +102,7 @@ where
             id_barrier,
             general_rev,
             auth_rev,
-            compact_events: compact_notifiers,
+            compact_events,
         }
     }
 }
@@ -162,16 +162,13 @@ where
             RequestBackend::Auth => self.auth_storage.after_sync(wrapper, revision)?,
             RequestBackend::Lease => self.lease_storage.after_sync(wrapper, revision).await?,
         };
-        #[allow(clippy::wildcard_enum_match_arm)]
-        let is_physical_compact = match wrapper.request {
-            RequestWrapper::CompactionRequest(ref compact_req) => compact_req.physical,
-            _ => false,
-        };
-        if is_physical_compact {
-            if let Some(n) = self.compact_events.read().get(&cmd.id()) {
-                n.notify(usize::MAX);
+        if let RequestWrapper::CompactionRequest(ref compact_req) = wrapper.request {
+            if compact_req.physical {
+                if let Some(n) = self.compact_events.get(&cmd.id()) {
+                    n.notify(usize::MAX);
+                }
             }
-        }
+        };
         ops.append(&mut wr_ops);
         let key_revisions = self.persistent.flush_ops(ops)?;
         if !key_revisions.is_empty() {

@@ -3600,6 +3600,7 @@ dependencies = [
  "clippy-utilities 0.1.0",
  "crossbeam-skiplist",
  "curp",
+ "dashmap",
  "engine",
  "etcd-client 0.12.3",
  "event-listener",
