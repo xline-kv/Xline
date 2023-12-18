@@ -309,7 +309,6 @@ impl FrameEncoder for CommitFrame {
 
 #[cfg(test)]
 mod tests {
-    use curp_external_api::cmd::ProposeId;
     use curp_test_utils::test_cmd::TestCommand;
     use futures::SinkExt;
     use tempfile::tempfile;
@@ -320,7 +319,7 @@ mod tests {
     use tokio_stream::StreamExt;
     use tokio_util::codec::Framed;
 
-    use crate::log_entry::EntryData;
+    use crate::{log_entry::EntryData, rpc::ProposeId};
 
     use super::*;
 
@@ -328,7 +327,7 @@ mod tests {
     async fn frame_encode_decode_is_ok() {
         let file = TokioFile::from(tempfile().unwrap());
         let mut framed = Framed::new(file, WAL::<TestCommand>::new());
-        let entry = LogEntry::<TestCommand>::new(1, 1, EntryData::Empty(ProposeId(1, 2)));
+        let entry = LogEntry::<TestCommand>::new(1, 1, ProposeId(1, 2), EntryData::Empty);
         let data_frame = DataFrame::Entry(entry.clone());
         let seal_frame = DataFrame::<TestCommand>::SealIndex(1);
         framed.send(vec![data_frame]).await.unwrap();
@@ -356,7 +355,7 @@ mod tests {
     async fn frame_zero_write_will_be_detected() {
         let file = TokioFile::from(tempfile().unwrap());
         let mut framed = Framed::new(file, WAL::<TestCommand>::new());
-        let entry = LogEntry::<TestCommand>::new(1, 1, EntryData::Empty(ProposeId(1, 2)));
+        let entry = LogEntry::<TestCommand>::new(1, 1, ProposeId(1, 2), EntryData::Empty);
         let data_frame = DataFrame::Entry(entry.clone());
         framed.send(vec![data_frame]).await.unwrap();
         framed.get_mut().flush().await;
@@ -379,7 +378,7 @@ mod tests {
     async fn frame_corrupt_will_be_detected() {
         let file = TokioFile::from(tempfile().unwrap());
         let mut framed = Framed::new(file, WAL::<TestCommand>::new());
-        let entry = LogEntry::<TestCommand>::new(1, 1, EntryData::Empty(ProposeId(1, 2)));
+        let entry = LogEntry::<TestCommand>::new(1, 1, ProposeId(1, 2), EntryData::Empty);
         let data_frame = DataFrame::Entry(entry.clone());
         framed.send(vec![data_frame]).await.unwrap();
         framed.get_mut().flush().await;

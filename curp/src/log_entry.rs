@@ -31,7 +31,7 @@ pub(crate) enum EntryData<C> {
     /// `Command` entry
     Command(Arc<C>),
     /// `ConfChange` entry
-    ConfChange(Vec<ConfChange>), // Box to fix variant_size_differences
+    ConfChange(Vec<ConfChange>),
     /// `Shutdown` entry
     Shutdown,
     /// `SetName` entry
