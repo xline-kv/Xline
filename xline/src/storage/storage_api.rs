@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use engine::Snapshot;
+use engine::{Snapshot, Transaction};
 use xlineapi::execute_error::ExecuteError;
 
 use super::{db::WriteOp, revision::KeyRevision};
@@ -8,6 +8,9 @@ use super::{db::WriteOp, revision::KeyRevision};
 /// The Stable Storage Api
 #[async_trait::async_trait]
 pub trait StorageApi: Send + Sync + 'static + std::fmt::Debug {
+    /// Creates a transaction
+    fn transaction(&self) -> Transaction<'_>;
+
     /// Get values by keys from storage
     ///
     /// # Errors

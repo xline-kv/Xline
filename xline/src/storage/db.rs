@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::Path, sync::Arc};
 
-use engine::{Engine, EngineType, Snapshot, StorageEngine, WriteOperation};
+use engine::{Engine, EngineType, Snapshot, StorageEngine, Transaction, WriteOperation};
 use prost::Message;
 use utils::config::EngineConfig;
 use xlineapi::execute_error::ExecuteError;
@@ -62,6 +62,10 @@ impl DB {
 }
 #[async_trait::async_trait]
 impl StorageApi for DB {
+    fn transaction(&self) -> Transaction {
+        self.engine.transaction()
+    }
+
     fn get_values<K>(
         &self,
         table: &'static str,

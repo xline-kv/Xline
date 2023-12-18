@@ -7,8 +7,10 @@ use crate::mock_rocksdb_engine::{RocksEngine, RocksSnapshot};
 #[cfg(not(madsim))]
 use crate::rocksdb_engine::{RocksEngine, RocksSnapshot};
 use crate::{
+    api::transaction_api::TransactionApi,
     error::EngineError,
-    memory_engine::{MemoryEngine, MemorySnapshot},
+    memory_engine::{MemoryEngine, MemorySnapshot, MemoryTransaction},
+    rocksdb_engine::RocksTransaction,
     SnapshotApi, StorageEngine, WriteOperation,
 };
 
@@ -49,6 +51,15 @@ impl Engine {
 #[async_trait::async_trait]
 impl StorageEngine for Engine {
     type Snapshot = Snapshot;
+    type Transaction<'db> = Transaction<'db>;
+
+    #[inline]
+    fn transaction(&self) -> Transaction<'_> {
+        match *self {
+            Engine::Memory(ref e) => Transaction::Memory(e.transaction()),
+            Engine::Rocks(ref e) => Transaction::Rocks(e.transaction()),
+        }
+    }
 
     #[inline]
     fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
@@ -129,6 +140,64 @@ impl StorageEngine for Engine {
         match *self {
             Engine::Memory(ref e) => e.file_size(),
             Engine::Rocks(ref e) => e.file_size(),
+        }
+    }
+}
+
+/// `Transaction` is designed to mask the different type of `MemoryTransaction` and `RocksTransaction`
+/// and provides an uniform type to the upper layer.
+/// NOTE: Currently multiple concurrent transactions is not supported
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum Transaction<'db> {
+    /// Memory snapshot
+    Memory(MemoryTransaction),
+    /// Rocks snapshot
+    Rocks(RocksTransaction<'db>),
+}
+
+impl TransactionApi for Transaction<'_> {
+    #[inline]
+    fn write(&self, op: WriteOperation<'_>) -> Result<(), EngineError> {
+        match *self {
+            Transaction::Memory(ref t) => t.write(op),
+            Transaction::Rocks(ref t) => t.write(op),
+        }
+    }
+
+    #[inline]
+    fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
+        match *self {
+            Transaction::Memory(ref t) => t.get(table, key),
+            Transaction::Rocks(ref t) => t.get(table, key),
+        }
+    }
+
+    #[inline]
+    fn get_multi(
+        &self,
+        table: &str,
+        keys: &[impl AsRef<[u8]>],
+    ) -> Result<Vec<Option<Vec<u8>>>, EngineError> {
+        match *self {
+            Transaction::Memory(ref t) => t.get_multi(table, keys),
+            Transaction::Rocks(ref t) => t.get_multi(table, keys),
+        }
+    }
+
+    #[inline]
+    fn commit(self) -> Result<(), EngineError> {
+        match self {
+            Transaction::Memory(t) => t.commit(),
+            Transaction::Rocks(t) => t.commit(),
+        }
+    }
+
+    #[inline]
+    fn rollback(&self) -> Result<(), EngineError> {
+        match *self {
+            Transaction::Memory(ref t) => t.rollback(),
+            Transaction::Rocks(ref t) => t.rollback(),
         }
     }
 }

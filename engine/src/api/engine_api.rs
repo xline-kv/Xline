@@ -2,6 +2,8 @@ use std::path::Path;
 
 use crate::{api::snapshot_api::SnapshotApi, error::EngineError};
 
+use super::transaction_api::TransactionApi;
+
 /// Write operation
 #[non_exhaustive]
 #[derive(Debug)]
@@ -61,6 +63,11 @@ impl<'a> WriteOperation<'a> {
 pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
     /// The snapshot type
     type Snapshot: SnapshotApi;
+    /// The transaction type
+    type Transaction<'db>: TransactionApi;
+
+    /// Creates a transaction
+    fn transaction(&self) -> Self::Transaction<'_>;
 
     /// Get the value associated with a key value and the given table
     ///
