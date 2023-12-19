@@ -116,8 +116,10 @@ async fn worker_exe<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
             );
             er_ok
         }
-        EntryData::ConfChange(ref _cc) => true,
-        EntryData::Shutdown | EntryData::Empty | EntryData::SetName(_, _) => true,
+        EntryData::ConfChange(_)
+        | EntryData::Shutdown
+        | EntryData::Empty
+        | EntryData::SetName(_, _) => true,
     };
     if !success {
         ce.trigger(entry.inflight_id(), entry.index);
