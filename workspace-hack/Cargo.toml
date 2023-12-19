@@ -16,7 +16,6 @@ publish = false
 bytes = { version = "1" }
 clap = { version = "4", features = ["derive", "string"] }
 clap_builder = { version = "4", default-features = false, features = ["color", "help", "std", "string", "suggestions", "usage"] }
-crypto-common = { version = "0.1", default-features = false, features = ["std"] }
 digest = { version = "0.10", features = ["mac", "std"] }
 either = { version = "1" }
 futures-channel = { version = "0.3", features = ["sink"] }
@@ -38,7 +37,6 @@ opentelemetry-jaeger = { version = "0.17", features = ["rt-tokio"] }
 opentelemetry_sdk = { version = "0.18", features = ["metrics", "rt-tokio"] }
 rand = { version = "0.8", features = ["small_rng"] }
 serde = { version = "1", features = ["derive", "rc"] }
-sha2 = { version = "0.10" }
 time = { version = "0.3", features = ["formatting", "macros", "parsing"] }
 tokio = { version = "1", features = ["fs", "io-std", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["codec", "io"] }

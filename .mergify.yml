@@ -2,7 +2,9 @@ pull_request_rules:
   - name: Automatic merge on approval
     conditions:
       - "#approved-reviews-by>=2"
-      - check-success=Checks
+      - check-success=Validation
+      - check-success=Tests Normal
+      - check-success=Tests Madsim
       - check-success=Commit Message Validation
       - check-success=Spell Check
       - check-success=DCO
