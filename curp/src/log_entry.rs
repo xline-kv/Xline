@@ -1,3 +1,4 @@
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use curp_external_api::{cmd::Command, InflightId, LogIndex};
@@ -92,6 +93,8 @@ where
 
 /// Propose id to inflight id
 pub(super) fn propose_id_to_inflight_id(id: ProposeId) -> InflightId {
-    // TODO: Will this significantly increase the probability of collision?
-    id.0 ^ id.1
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    id.0.hash(&mut hasher);
+    id.1.hash(&mut hasher);
+    hasher.finish()
 }
