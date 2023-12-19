@@ -89,7 +89,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         req: ShutdownRequest,
     ) -> Result<ShutdownResponse, CurpError> {
         self.check_cluster_version(req.cluster_version)?;
-        self.curp.handle_shutdown(req.id())?;
+        self.curp.handle_shutdown(req.propose_id())?;
         CommandBoard::wait_for_shutdown_synced(&self.cmd_board).await;
         Ok(ShutdownResponse::default())
     }

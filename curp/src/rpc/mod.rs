@@ -547,7 +547,7 @@ impl ShutdownRequest {
     }
 
     /// Get id of the request
-    pub(crate) fn id(&self) -> ProposeId {
+    pub(crate) fn propose_id(&self) -> ProposeId {
         self.propose_id
             .clone()
             .unwrap_or_else(|| {
