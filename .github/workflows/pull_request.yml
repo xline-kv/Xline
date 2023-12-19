@@ -7,7 +7,6 @@ on:
 
 jobs:
   test:
-    name: Tests
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -31,6 +30,7 @@ jobs:
               rustflags: "--cfg madsim",
               test: "nextest run --package=simulation",
             }
+    name: Tests ${{ matrix.config.name }}
     steps:
       - uses: actions/checkout@v4
         with:
