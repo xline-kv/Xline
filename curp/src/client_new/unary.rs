@@ -104,18 +104,18 @@ impl ClusterState {
         cluster_version: u64,
         member_addrs: HashMap<ServerId, Vec<String>>,
     ) -> Result<(), tonic::transport::Error> {
-        // Optimistic lock to keep there is only one thread `check_and_update`
+        // Check and update the cluster version in client side
         // FIXME: is these ordering options correct?
         let update = self.version.fetch_update(
-            std::sync::atomic::Ordering::Relaxed,
-            std::sync::atomic::Ordering::Relaxed,
+            std::sync::atomic::Ordering::Acquire,
+            std::sync::atomic::Ordering::Acquire,
             |cur| (cluster_version > cur).then_some(cluster_version),
         );
         if update.is_err() {
             return Ok(());
         }
-        // TODO: if the above code can ensure that only one thread enters,
-        // can `DashMap` be replaced with some unsafe codes to improve performance?
+        // TODO: if the above code can ensure that only one thread enters (aka. optimistic lock),
+        // can `DashMap` be replaced with some unsafe codes with &HashMap to improve performance?
         let old_ids = self
             .connects
             .iter()
@@ -125,13 +125,14 @@ impl ClusterState {
         let diffs = &old_ids ^ &new_ids;
         for diff in diffs {
             if self.connects.contains_key(&diff) {
-                debug!("client remove old server {diff}");
+                debug!("client removes old server({diff})");
                 let _ig = self.connects.remove(&diff);
             } else {
                 let addrs = member_addrs
                     .get(&diff)
                     .unwrap_or_else(|| unreachable!("{diff} must in new member addrs"))
                     .clone();
+                debug!("client connects to a new server({diff}), address({addrs:?})");
                 let new_conn = rpc::connect(diff, addrs).await?;
                 let _ig = self.connects.insert(diff, new_conn);
             }
@@ -181,7 +182,7 @@ impl UnaryConfig {
     }
 }
 
-/// The unary client send rpc only once
+/// The unary client
 #[derive(Debug)]
 pub(super) struct Unary<C: Command> {
     /// Cluster state
@@ -223,8 +224,10 @@ impl<C: Command> Unary<C> {
             .iter()
             .map(|connect| Arc::clone(&connect))
             .collect_vec();
+        // quorum calculated here to keep quorum = stream.len(), otherwise Non-atomic read operation on the `connects` may result in inconsistency.
+        let quorum = connects.len();
         (
-            connects.len(), // quorum calculated here to keep quorum = stream.len()
+            quorum,
             connects.into_iter().map(f).collect::<FuturesUnordered<F>>(),
         )
     }
@@ -242,7 +245,7 @@ impl<C: Command> Unary<C> {
         let cached_leader = self.leader_state.read().leader;
         let leader_id = match cached_leader {
             Some(id) => id,
-            None => <Unary<C> as ClientApi<C>>::fetch_leader_id(self, false).await?,
+            None => <Unary<C> as ClientApi>::fetch_leader_id(self, false).await?,
         };
         // If the leader id cannot be found in connects, it indicates that there is
         // an inconsistency between the client's local leader state and the cluster
@@ -373,9 +376,12 @@ impl<C: Command> Unary<C> {
 }
 
 #[async_trait]
-impl<C: Command> ClientApi<C> for Unary<C> {
+impl<C: Command> ClientApi for Unary<C> {
     /// The error is generated from server
     type Error = CurpError;
+
+    /// The command type
+    type Cmd = C;
 
     /// Get the local connection when the client is on the server node.
     fn local_connect(&self) -> Option<Arc<dyn ConnectApi>> {
@@ -485,7 +491,7 @@ impl<C: Command> ClientApi<C> for Unary<C> {
         let timeout = self.config.wait_synced_timeout;
         if !linearizable {
             // firstly, try to fetch the local server
-            if let Some(connect) = <Unary<C> as ClientApi<C>>::local_connect(self) {
+            if let Some(connect) = <Unary<C> as ClientApi>::local_connect(self) {
                 /// local timeout, in fact, local connect should only be bypassed, so the timeout maybe unused.
                 const FETCH_LOCAL_TIMEOUT: Duration = Duration::from_secs(1);
 
