@@ -48,6 +48,9 @@ mod curp_node;
 /// Storage
 mod storage;
 
+/// Conflict Check
+mod conflict_checker;
+
 /// Default server serving port
 #[cfg(not(madsim))]
 static DEFAULT_SERVER_PORT: u16 = 12345;
