@@ -112,7 +112,7 @@ impl CurpGroup {
                     name.clone(),
                     exe_tx,
                     as_tx,
-                    StorageConfig::new(xline_storage_config, default_quota()),
+                    xline_storage_config,
                 ));
 
                 let cluster_info = Arc::new(ClusterInfo::new(
@@ -203,7 +203,7 @@ impl CurpGroup {
             name.clone(),
             exe_tx,
             as_tx,
-            StorageConfig::new(xline_storage_config, default_quota()),
+            xline_storage_config,
         ));
 
         let id = cluster_info.self_id();
