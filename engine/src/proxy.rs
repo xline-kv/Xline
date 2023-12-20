@@ -24,7 +24,7 @@ pub enum EngineType {
 
 /// `Engine` is designed to mask the different type of `MemoryEngine` and `RocksEngine`
 /// and provides an uniform type to the upper layer.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum Engine {
     /// Memory engine

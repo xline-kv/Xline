@@ -24,7 +24,7 @@ use crate::{
 type MemoryTable = HashMap<Vec<u8>, Vec<u8>>;
 
 /// Memory Storage Engine Implementation
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 pub struct MemoryEngine {
     /// The inner storage engine of `MemoryStorage`
     inner: Arc<RwLock<HashMap<String, MemoryTable>>>,
