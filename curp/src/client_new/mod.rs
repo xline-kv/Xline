@@ -54,6 +54,13 @@ pub trait ClientApi {
     /// Send propose to shutdown cluster
     async fn propose_shutdown(&self) -> Result<(), Self::Error>;
 
+    /// Send propose to publish a node id and name
+    async fn propose_publish(
+        &self,
+        node_id: ServerId,
+        node_name: String,
+    ) -> Result<(), Self::Error>;
+
     /// Send fetch read state from leader
     async fn fetch_read_state(&self, cmd: &Self::Cmd) -> Result<ReadState, Self::Error>;
 
@@ -78,6 +85,12 @@ pub trait ClientApi {
         // fallback to linearizable fetch
         self.fetch_leader_id(true).await
     }
+}
+
+/// Update leader state
+trait LeaderStateUpdate {
+    /// update
+    fn update_leader(&self, leader_id: Option<ServerId>, term: u64);
 }
 
 /// Client builder to build a client
