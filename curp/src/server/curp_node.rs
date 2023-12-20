@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
 
-use clippy_utilities::NumericCast;
+use clippy_utilities::{NumericCast, OverflowArithmetic};
 use engine::{SnapshotAllocator, SnapshotApi};
 use event_listener::Event;
 use futures::{pin_mut, stream::FuturesUnordered, Stream, StreamExt};
@@ -8,7 +8,6 @@ use madsim::rand::{thread_rng, Rng};
 use parking_lot::{Mutex, RwLock};
 use tokio::{
     sync::{broadcast, mpsc},
-    task::JoinHandle,
     time::MissedTickBehavior,
 };
 use tracing::{debug, error, info, trace, warn};
@@ -33,7 +32,7 @@ use crate::{
     rpc::{
         self,
         connect::{InnerConnectApi, InnerConnectApiWrapper},
-        AppendEntriesRequest, AppendEntriesResponse, ConfChangeType, CurpError,
+        AppendEntriesRequest, AppendEntriesResponse, ConfChange, ConfChangeType, CurpError,
         FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
         InstallSnapshotRequest, InstallSnapshotResponse, ProposeConfChangeRequest,
         ProposeConfChangeResponse, ProposeRequest, ProposeResponse, PublishRequest,
@@ -338,248 +337,218 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         }
     }
 
-    /// Responsible for bringing up `sync_follower_task` when self becomes leader
-    #[allow(clippy::integer_arithmetic)]
-    async fn sync_followers_daemon(curp: Arc<RawCurp<C, RC>>) {
-        let mut shutdown_listener = curp.shutdown_listener();
-        let leader_event = curp.leader_event();
-        loop {
-            if !curp.is_leader() {
-                curp.shutdown_trigger().mark_sync_daemon_shutdown();
-                curp.shutdown_trigger().check_and_shutdown();
-                tokio::select! {
-                    _ = shutdown_listener.wait_self_shutdown() => {
-                        debug!("sync follower daemon exits");
-                        return;
-                    }
-                    _ = leader_event.listen() => {
-                        curp.shutdown_trigger().reset_sync_daemon_shutdown();
-                    }
-                }
-            }
-            let (sync_task_tx, mut sync_task_rx) = mpsc::channel(128);
-            let mut remove_events = HashMap::new();
-
-            for c in curp.connects().iter() {
-                let sync_event = curp.sync_event(c.id());
-                let remove_event = Arc::new(Event::new());
-                let fut = Self::sync_follower_task(
-                    Arc::clone(&curp),
-                    c.value().clone(),
-                    sync_event,
-                    Arc::clone(&remove_event),
-                );
-                sync_task_tx
-                    .send(tokio::spawn(fut))
-                    .await
-                    .unwrap_or_else(|_e| unreachable!("receiver should not be closed"));
-                _ = remove_events.insert(c.id(), remove_event);
-            }
-
-            let _handle = tokio::spawn(Self::conf_change_handler(
-                Arc::clone(&curp),
-                remove_events,
-                sync_task_tx,
-            ));
-
-            while let Some(h) = sync_task_rx.recv().await {
-                let leader_retired = h
-                    .await
-                    .unwrap_or_else(|e| unreachable!("sync follower task panicked: {e}"));
-                if leader_retired {
-                    break;
-                }
-            }
-
-            if shutdown_listener.is_shutdown() {
-                curp.shutdown_trigger().mark_sync_daemon_shutdown();
-                curp.shutdown_trigger().check_and_shutdown();
-                debug!("{} sync follower daemon exits", curp.id());
-                return;
-            }
-        }
-    }
-
-    /// Handler of conf
+    /// Handler of conf change
     async fn conf_change_handler(
         curp: Arc<RawCurp<C, RC>>,
         mut remove_events: HashMap<ServerId, Arc<Event>>,
-        sender: mpsc::Sender<JoinHandle<bool>>,
     ) {
         let change_rx = curp.change_rx();
         let mut shutdown_listener = curp.shutdown_listener();
         #[allow(clippy::integer_arithmetic)] // introduced by tokio select
         loop {
-            tokio::select! {
-                _ = shutdown_listener.wait() => {
-                    break;
-                }
+            let change: ConfChange = tokio::select! {
+                _ = shutdown_listener.wait() => break,
                 change_res = change_rx.recv_async() => {
                     let Ok(change) = change_res else {
                         break;
                     };
-                    match change.change_type() {
-                        ConfChangeType::Add | ConfChangeType::AddLearner => {
-                            let connect = match InnerConnectApiWrapper::connect(change.node_id, change.address).await {
-                                Ok(connect) => connect,
-                                Err(e) => {
-                                    error!("connect to {} failed, {}", change.node_id, e);
-                                    continue;
-                                }
-                            };
-                            curp.insert_connect(connect.clone());
-                            let sync_event = curp.sync_event(change.node_id);
-                            let remove_event = Arc::new(Event::new());
-                            sender
-                                .send(tokio::spawn(Self::sync_follower_task(
-                                    Arc::clone(&curp),
-                                    connect,
-                                    sync_event,
-                                    Arc::clone(&remove_event),
-                                )))
-                                .await
-                                .unwrap_or_else(|_e| unreachable!("change receiver should not be closed"));
-                            _ = remove_events.insert(change.node_id, remove_event);
-                        }
-                        ConfChangeType::Remove => {
-                            if change.node_id == curp.id() {
-                                break;
-                            }
-                            let Some(event) = remove_events.remove(&change.node_id) else {
-                                unreachable!("({:?}) shutdown_event of removed follower ({:x}) should exist", curp.id(), change.node_id);
-                            };
-                            event.notify(1);
-                        }
-                        ConfChangeType::Update =>{
-                            if let Err(e) = curp.update_connect(change.node_id,change.address).await {
-                                error!("update connect {} failed, err {:?}", change.node_id, e);
+                    change
+                },
+            };
+            match change.change_type() {
+                ConfChangeType::Add | ConfChangeType::AddLearner => {
+                    let connect =
+                        match InnerConnectApiWrapper::connect(change.node_id, change.address).await
+                        {
+                            Ok(connect) => connect,
+                            Err(e) => {
+                                error!("connect to {} failed, {}", change.node_id, e);
                                 continue;
                             }
-                        }
-                        ConfChangeType::Promote => {}
+                        };
+                    curp.insert_connect(connect.clone());
+                    let sync_event = curp.sync_event(change.node_id);
+                    let remove_event = Arc::new(Event::new());
+                    let _sync_follower_task = tokio::spawn(Self::sync_follower_task(
+                        Arc::clone(&curp),
+                        connect,
+                        sync_event,
+                        Arc::clone(&remove_event),
+                    ));
+                    _ = remove_events.insert(change.node_id, remove_event);
+                }
+                ConfChangeType::Remove => {
+                    if change.node_id == curp.id() {
+                        break;
+                    }
+                    let Some(event) = remove_events.remove(&change.node_id) else {
+                        unreachable!("({:?}) shutdown_event of removed follower ({:x}) should exist", curp.id(), change.node_id);
+                    };
+                    event.notify(1);
+                }
+                ConfChangeType::Update => {
+                    if let Err(e) = curp.update_connect(change.node_id, change.address).await {
+                        error!("update connect {} failed, err {:?}", change.node_id, e);
+                        continue;
                     }
                 }
+                ConfChangeType::Promote => {}
             }
         }
     }
 
-    /// Leader use this task to keep a follower up-to-date, will return if self is no longer leader,
-    /// and return true if the leader is retired
+    /// This task will keep a follower up-to-data when current node is leader,
+    /// and it will wait for `leader_event` if current node is not leader
     async fn sync_follower_task(
         curp: Arc<RawCurp<C, RC>>,
         connect: InnerConnectApiWrapper,
         sync_event: Arc<Event>,
         remove_event: Arc<Event>,
-    ) -> bool {
+    ) {
         debug!("{} to {} sync follower task start", curp.id(), connect.id());
+        let _token = curp.shutdown_trigger().token();
         let mut shutdown_listener = curp.shutdown_listener();
-        let mut hb_opt = false;
         let mut ticker = tokio::time::interval(curp.cfg().heartbeat_interval);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let connect_id = connect.id();
         let batch_timeout = curp.cfg().batch_timeout;
-        let mut is_shutdown_state = false;
-        let mut ae_fail_count = 0;
+        let leader_event = curp.leader_event();
 
         #[allow(clippy::integer_arithmetic)] // tokio select internal triggered
-        let leader_retired = loop {
-            // a sync is either triggered by an heartbeat timeout event or when new log entries arrive
-            tokio::select! {
-                sig = shutdown_listener.wait(), if !is_shutdown_state => {
-                    match sig {
-                        Some(Signal::Running) => {
-                            unreachable!("shutdown trigger should send ClusterShutdown or SelfShutdown")
-                        }
-                        Some(Signal::ClusterShutdown) => {
-                            is_shutdown_state = true;
-                        }
-                        _ => {
-                            break false;
-                        },
+        loop {
+            if !curp.is_leader() {
+                tokio::select! {
+                    _ = shutdown_listener.wait() => {
+                        break;
                     }
-                }
-                _ = remove_event.listen() => {
-                    break false;
-                }
-                _now = ticker.tick() => {
-                    hb_opt = false;
-                }
-                res = tokio::time::timeout(batch_timeout, sync_event.listen()) => {
-                    if let Err(_e) = res {
-                        hb_opt = true;
+                    _ = remove_event.listen() => {
+                        break;
                     }
+                    _ = leader_event.listen() => {}
                 }
             }
+            let mut hb_opt = false;
+            let mut is_shutdown_state = false;
+            let mut ae_fail_count = 0;
+            loop {
+                // a sync is either triggered by an heartbeat timeout event or when new log entries arrive
+                tokio::select! {
+                    sig = shutdown_listener.wait(), if !is_shutdown_state => {
+                        match sig {
+                            Some(Signal::Running) => {
+                                unreachable!("shutdown trigger should send ClusterShutdown or SelfShutdown")
+                            }
+                            Some(Signal::ClusterShutdown) => {
+                                is_shutdown_state = true;
+                            }
+                            _ => {
+                                return;
+                            },
+                        }
+                    }
+                    _ = remove_event.listen() => {
+                        return;
+                    }
+                    _now = ticker.tick() => {
+                        hb_opt = false;
+                    }
+                    res = tokio::time::timeout(batch_timeout, sync_event.listen()) => {
+                        if let Err(_e) = res {
+                            hb_opt = true;
+                        }
+                    }
+                }
 
-            let Some(sync_action) = curp.sync(connect_id) else {
-                break true;
-            };
+                let Some(sync_action) = curp.sync(connect_id) else {
+                    return;
+                };
+                if Self::handle_sync_action(
+                    sync_action,
+                    &mut hb_opt,
+                    &mut is_shutdown_state,
+                    &mut ae_fail_count,
+                    connect.as_ref(),
+                    curp.as_ref(),
+                )
+                .await
+                {
+                    return;
+                };
+            }
+        }
+    }
 
-            match sync_action {
-                SyncAction::AppendEntries(ae) => {
-                    let is_empty = ae.entries.is_empty();
-                    let is_commit_shutdown = ae.entries.last().is_some_and(|e| {
-                        matches!(e.entry_data, EntryData::Shutdown) && e.index == ae.leader_commit
-                    });
-                    // (hb_opt, entries) status combination
-                    // (false, empty) => send heartbeat to followers
-                    // (true, empty) => indicates that `batch_timeout` expired, and during this period there is not any log generated. Do nothing
-                    // (true | false, not empty) => send append entries
-                    if !hb_opt || !is_empty {
-                        match Self::send_ae(connect.as_ref(), curp.as_ref(), ae).await {
-                            Ok((true, _)) => break true,
-                            Ok((false, ae_succeed)) => {
-                                if ae_succeed {
-                                    hb_opt = true;
+    /// handler `SyncAction`
+    async fn handle_sync_action(
+        sync_action: SyncAction<C>,
+        hb_opt: &mut bool,
+        is_shutdown_state: &mut bool,
+        ae_fail_count: &mut u32,
+        connect: &(impl InnerConnectApi + ?Sized),
+        curp: &RawCurp<C, RC>,
+    ) -> bool {
+        let connect_id = connect.id();
+        match sync_action {
+            SyncAction::AppendEntries(ae) => {
+                let is_empty = ae.entries.is_empty();
+                let is_commit_shutdown = ae.entries.last().is_some_and(|e| {
+                    matches!(e.entry_data, EntryData::Shutdown) && e.index == ae.leader_commit
+                });
+                // (hb_opt, entries) status combination
+                // (false, empty) => send heartbeat to followers
+                // (true, empty) => indicates that `batch_timeout` expired, and during this period there is not any log generated. Do nothing
+                // (true | false, not empty) => send append entries
+                if !*hb_opt || !is_empty {
+                    match Self::send_ae(connect, curp, ae).await {
+                        Ok((true, _)) => return true,
+                        Ok((false, ae_succeed)) => {
+                            if ae_succeed {
+                                *hb_opt = true;
+                            } else {
+                                debug!("ae rejected by {}", connect.id());
+                            }
+                            // Check Follower shutdown
+                            // When the leader is in the shutdown state, its last log must be shutdown, and if the follower is
+                            // already synced with leader and current AE is a heartbeat, then the follower will commit the shutdown
+                            // log after AE, or when the follower is not synced with the leader, the current AE will send and directly commit
+                            // shutdown log.
+                            if *is_shutdown_state
+                                && ((curp.is_synced(connect_id) && is_empty)
+                                    || (!curp.is_synced(connect_id) && is_commit_shutdown))
+                            {
+                                if let Err(e) = connect.trigger_shutdown().await {
+                                    warn!("trigger shutdown to {} failed, {e}", connect_id);
                                 } else {
-                                    debug!("ae rejected by {}", connect.id());
+                                    debug!("trigger shutdown to {} success", connect_id);
                                 }
-                                // Check Follower shutdown
-                                // When the leader is in the shutdown state, its last log must be shutdown, and if the follower is
-                                // already synced with leader and current AE is a heartbeat, then the follower will commit the shutdown
-                                // log after AE, or when the follower is not synced with the leader, the current AE will send and directly commit
-                                // shutdown log.
-                                if is_shutdown_state
-                                    && ((curp.is_synced(connect_id) && is_empty)
-                                        || (!curp.is_synced(connect_id) && is_commit_shutdown))
-                                {
-                                    if let Err(e) = connect.trigger_shutdown().await {
-                                        warn!("trigger shutdown to {} failed, {e}", connect_id);
-                                    } else {
-                                        debug!("trigger shutdown to {} success", connect_id);
-                                    }
-                                    break false;
-                                }
+                                return true;
                             }
-                            Err(err) => {
-                                warn!("ae to {} failed, {err:?}", connect.id());
-                                if is_shutdown_state {
-                                    ae_fail_count += 1;
-                                    if ae_fail_count >= 5 {
-                                        warn!("the follower {} may have been shutdown", connect_id);
-                                        break false;
-                                    }
-                                }
-                            }
-                        };
-                    }
-                }
-                SyncAction::Snapshot(rx) => match rx.await {
-                    Ok(snapshot) => {
-                        match Self::send_snapshot(connect.as_ref(), curp.as_ref(), snapshot).await {
-                            Ok(true) => break true,
-                            Err(err) => warn!("snapshot to {} failed, {err:?}", connect.id()),
-                            Ok(false) => {}
                         }
-                    }
-                    Err(err) => {
-                        warn!("failed to receive snapshot result, {err}");
-                    }
-                },
+                        Err(err) => {
+                            warn!("ae to {} failed, {err:?}", connect.id());
+                            if *is_shutdown_state {
+                                *ae_fail_count = ae_fail_count.overflow_add(1);
+                                if *ae_fail_count >= 5 {
+                                    warn!("the follower {} may have been shutdown", connect_id);
+                                    return true;
+                                }
+                            }
+                        }
+                    };
+                }
             }
-        };
-        debug!("{} to {} sync follower task exits", curp.id(), connect_id);
-        leader_retired
+            SyncAction::Snapshot(rx) => match rx.await {
+                Ok(snapshot) => match Self::send_snapshot(connect, curp, snapshot).await {
+                    Ok(true) => return true,
+                    Err(err) => warn!("snapshot to {} failed, {err:?}", connect.id()),
+                    Ok(false) => {}
+                },
+                Err(err) => {
+                    warn!("failed to receive snapshot result, {err}");
+                }
+            },
+        }
+        false
     }
 
     /// Log persist task
@@ -711,7 +680,21 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     ) {
         let shutdown_listener = curp.shutdown_listener();
         let _election_task = tokio::spawn(Self::election_task(Arc::clone(&curp)));
-        let _sync_followers_daemon = tokio::spawn(Self::sync_followers_daemon(curp));
+        // let _sync_followers_daemon = tokio::spawn(Self::sync_followers_daemon(curp));
+        let mut remove_events = HashMap::new();
+        for c in curp.connects().iter() {
+            let sync_event = curp.sync_event(c.id());
+            let remove_event = Arc::new(Event::new());
+            let fut = Self::sync_follower_task(
+                Arc::clone(&curp),
+                c.value().clone(),
+                sync_event,
+                Arc::clone(&remove_event),
+            );
+            let _sync_follower_task = tokio::spawn(fut);
+            _ = remove_events.insert(c.id(), remove_event);
+        }
+        let _conf_change_handle = tokio::spawn(Self::conf_change_handler(curp, remove_events));
         let _log_persist_task =
             tokio::spawn(Self::log_persist_task(log_rx, storage, shutdown_listener));
     }
