@@ -73,7 +73,7 @@ where
     /// Revision Number generator for Auth request
     auth_rev: Arc<RevisionNumberGenerator>,
     /// Compact events
-    compact_events: Arc<DashMap<ProposeId, Arc<Event>>>,
+    compact_events: Arc<DashMap<u64, Arc<Event>>>,
 }
 
 impl<S> CommandExecutor<S>
@@ -91,7 +91,7 @@ where
         id_barrier: Arc<IdBarrier>,
         general_rev: Arc<RevisionNumberGenerator>,
         auth_rev: Arc<RevisionNumberGenerator>,
-        compact_events: Arc<DashMap<ProposeId, Arc<Event>>>,
+        compact_events: Arc<DashMap<u64, Arc<Event>>>,
     ) -> Self {
         Self {
             kv_storage,
@@ -164,7 +164,7 @@ where
         };
         if let RequestWrapper::CompactionRequest(ref compact_req) = wrapper.request {
             if compact_req.physical {
-                if let Some(n) = self.compact_events.get(&cmd.id()) {
+                if let Some(n) = self.compact_events.get(&cmd.compact_id()) {
                     n.notify(usize::MAX);
                 }
             }
