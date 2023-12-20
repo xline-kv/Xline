@@ -117,9 +117,9 @@ pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
         tables: &[&'static str],
     ) -> Result<(), EngineError>;
 
-    /// Get the cached size of the engine
+    /// Get the cached size of the engine (Measured in bytes)
     fn estimated_file_size(&self) -> u64;
 
-    /// Get the file size of the engine
+    /// Get the file size of the engine (Measured in bytes)
     fn file_size(&self) -> Result<u64, EngineError>;
 }
