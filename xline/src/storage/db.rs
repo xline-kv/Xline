@@ -239,8 +239,8 @@ impl StorageApi for DB {
         Ok(hasher.finalize())
     }
 
-    fn size(&self) -> u64 {
-        self.engine.size()
+    fn estimated_file_size(&self) -> u64 {
+        self.engine.estimated_file_size()
     }
 
     fn file_size(&self) -> Result<u64, ExecuteError> {

@@ -165,7 +165,7 @@ impl StorageEngine for MemoryEngine {
         Ok(())
     }
 
-    fn size(&self) -> u64 {
+    fn estimated_file_size(&self) -> u64 {
         0
     }
 
