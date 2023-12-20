@@ -1,5 +1,5 @@
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU32, Ordering},
     Arc,
 };
 
@@ -32,10 +32,31 @@ struct TriggerInner {
     trigger: watch::Sender<Signal>,
     /// State of mpsc channel.
     mpmc_channel_shutdown: AtomicBool,
-    /// State of sync follower daemon.
-    sync_follower_daemon_shutdown: AtomicBool,
+    /// Count of sync follower tasks.
+    sync_follower_task_count: AtomicU32,
     /// Shutdown Applied
     leader_notified: AtomicBool,
+}
+
+impl TriggerInner {
+    /// Check if the mpsc channel and sync follower daemon has been shutdown.
+    /// and send the shutdown signal when both are shutdown.
+    fn check_and_shutdown(&self) {
+        if self.mpmc_channel_shutdown.load(Ordering::Relaxed)
+            && self.sync_follower_task_count.load(Ordering::Relaxed) == 0
+            && self.leader_notified.load(Ordering::Relaxed)
+        {
+            self.self_shutdown();
+        }
+    }
+
+    /// Send the shutdown signal
+    fn self_shutdown(&self) {
+        info!("send self shutdown signal");
+        if self.trigger.send(Signal::SelfShutdown).is_err() {
+            warn!("no listener waiting for shutdown");
+        };
+    }
 }
 
 impl Trigger {
@@ -64,15 +85,6 @@ impl Trigger {
             .store(true, Ordering::Relaxed);
     }
 
-    /// Mark sync daemon shutdown.
-    #[inline]
-    pub fn mark_sync_daemon_shutdown(&self) {
-        info!("mark sync followers daemon shutdown");
-        self.inner
-            .sync_follower_daemon_shutdown
-            .store(true, Ordering::Relaxed);
-    }
-
     /// Mark leader notified
     #[inline]
     pub fn mark_leader_notified(&self) {
@@ -80,28 +92,11 @@ impl Trigger {
         self.inner.leader_notified.store(true, Ordering::Relaxed);
     }
 
-    /// Reset sync daemon shutdown.
-    #[inline]
-    pub fn reset_sync_daemon_shutdown(&self) {
-        info!("reset sync followers daemon shutdown");
-        self.inner
-            .sync_follower_daemon_shutdown
-            .store(false, Ordering::Relaxed);
-    }
-
     /// Check if the mpsc channel and sync follower daemon has been shutdown.
     /// and send the shutdown signal when both are shutdown.
     #[inline]
     pub fn check_and_shutdown(&self) {
-        if self.inner.mpmc_channel_shutdown.load(Ordering::Relaxed)
-            && self
-                .inner
-                .sync_follower_daemon_shutdown
-                .load(Ordering::Relaxed)
-            && self.inner.leader_notified.load(Ordering::Relaxed)
-        {
-            self.self_shutdown();
-        }
+        self.inner.check_and_shutdown();
     }
 
     /// Send the shutdown signal
@@ -128,6 +123,19 @@ impl Trigger {
     pub fn subscribe(&self) -> Listener {
         Listener {
             listener: self.inner.trigger.subscribe(),
+        }
+    }
+
+    /// Get `SyncFollowerToken`
+    #[inline]
+    #[must_use]
+    pub fn token(&self) -> SyncFollowerToken {
+        _ = self
+            .inner
+            .sync_follower_task_count
+            .fetch_add(1, Ordering::Relaxed);
+        SyncFollowerToken {
+            inner: Arc::clone(&self.inner),
         }
     }
 
@@ -188,6 +196,24 @@ impl Listener {
     }
 }
 
+/// sync follower token, used to track the sync follower tasks.
+#[derive(Debug)]
+pub struct SyncFollowerToken {
+    /// Shutdown trigger Inner.
+    inner: Arc<TriggerInner>,
+}
+
+impl Drop for SyncFollowerToken {
+    #[inline]
+    fn drop(&mut self) {
+        _ = self
+            .inner
+            .sync_follower_task_count
+            .fetch_sub(1, Ordering::Relaxed);
+        self.inner.check_and_shutdown();
+    }
+}
+
 /// Create a channel for shutdown.
 #[must_use]
 #[inline]
@@ -197,7 +223,7 @@ pub fn channel() -> (Trigger, Listener) {
         inner: Arc::new(TriggerInner {
             trigger: tx,
             mpmc_channel_shutdown: AtomicBool::new(false),
-            sync_follower_daemon_shutdown: AtomicBool::new(false),
+            sync_follower_task_count: AtomicU32::new(0),
             leader_notified: AtomicBool::new(false),
         }),
     };
