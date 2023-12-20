@@ -107,6 +107,7 @@ where
     persistent: Arc<S>,
 }
 
+/// functions used to estimate request write size
 mod size_estimate {
     use clippy_utilities::{Cast, OverflowArithmetic};
     use xlineapi::{PutRequest, Request, RequestWrapper, TxnRequest};
@@ -146,6 +147,7 @@ mod size_estimate {
 
     /// Estimate the size that may increase after the request is written
     pub(super) fn cmd_size(req: &RequestWrapper) -> u64 {
+        #[allow(clippy::wildcard_enum_match_arm)]
         match *req {
             RequestWrapper::PutRequest(ref req) => put_size(req),
             RequestWrapper::TxnRequest(ref req) => txn_size(req),
@@ -153,29 +155,7 @@ mod size_estimate {
                 // padding(1008) + cf_handle(5) + lease_id_size(8) * 2 + lease_size(24)
                 1053
             }
-            RequestWrapper::RangeRequest(_)
-            | RequestWrapper::DeleteRangeRequest(_)
-            | RequestWrapper::CompactionRequest(_)
-            | RequestWrapper::AuthEnableRequest(_)
-            | RequestWrapper::AuthDisableRequest(_)
-            | RequestWrapper::AuthStatusRequest(_)
-            | RequestWrapper::AuthRoleAddRequest(_)
-            | RequestWrapper::AuthRoleDeleteRequest(_)
-            | RequestWrapper::AuthRoleGetRequest(_)
-            | RequestWrapper::AuthRoleGrantPermissionRequest(_)
-            | RequestWrapper::AuthRoleListRequest(_)
-            | RequestWrapper::AuthRoleRevokePermissionRequest(_)
-            | RequestWrapper::AuthUserAddRequest(_)
-            | RequestWrapper::AuthUserChangePasswordRequest(_)
-            | RequestWrapper::AuthUserDeleteRequest(_)
-            | RequestWrapper::AuthUserGetRequest(_)
-            | RequestWrapper::AuthUserGrantRoleRequest(_)
-            | RequestWrapper::AuthUserListRequest(_)
-            | RequestWrapper::AuthUserRevokeRoleRequest(_)
-            | RequestWrapper::AuthenticateRequest(_)
-            | RequestWrapper::LeaseRevokeRequest(_)
-            | RequestWrapper::LeaseLeasesRequest(_)
-            | RequestWrapper::AlarmRequest(_) => 0,
+            _ => 0,
         }
     }
 }
@@ -200,14 +180,15 @@ where
         }
         let cmd_size = size_estimate::cmd_size(&cmd.request().request);
         if self.persistent.estimated_file_size().overflow_add(cmd_size) > self.quota {
-            if let Ok(file_size) = self.persistent.file_size() {
-                if file_size.overflow_add(cmd_size) > self.quota {
-                    warn!(
-                        "Quota exceeded, file size: {}, cmd size: {}, quota: {}",
-                        file_size, cmd_size, self.quota
-                    );
-                    return false;
-                }
+            let Ok(file_size) = self.persistent.file_size() else {
+                return false
+            };
+            if file_size.overflow_add(cmd_size) > self.quota {
+                warn!(
+                    "Quota exceeded, file size: {}, cmd size: {}, quota: {}",
+                    file_size, cmd_size, self.quota
+                );
+                return false;
             }
         }
         true
@@ -510,9 +491,8 @@ mod test {
             (lease_req.into(), 1053),
             (txn_req.into(), 2168),
         ];
-        for (req, _size) in testcase {
-            let s = size_estimate::cmd_size(req);
-            println!("s: {s:?}");
+        for &(ref req, size) in testcase {
+            assert_eq!(size_estimate::cmd_size(req), size);
         }
     }
 }

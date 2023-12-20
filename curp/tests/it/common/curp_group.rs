@@ -32,7 +32,7 @@ use tokio::{
 };
 use tracing::debug;
 use utils::{
-    config::{default_quota, ClientConfig, CurpConfigBuilder, EngineConfig, StorageConfig},
+    config::{ClientConfig, CurpConfigBuilder, EngineConfig, StorageConfig},
     shutdown::{self, Trigger},
 };
 pub mod commandpb {

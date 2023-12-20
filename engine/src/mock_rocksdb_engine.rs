@@ -15,7 +15,7 @@ use crate::{
 };
 
 /// Mock `RocksDB` Storage Engine
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct RocksEngine {
     /// The inner storage engine of Mock `RocksDB`
     inner: MemoryEngine,
@@ -116,7 +116,7 @@ impl StorageEngine for RocksEngine {
     }
 
     #[inline]
-    fn size(&self) -> u64 {
+    fn estimated_file_size(&self) -> u64 {
         0
     }
 

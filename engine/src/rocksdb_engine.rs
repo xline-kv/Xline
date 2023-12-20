@@ -92,7 +92,9 @@ impl RocksEngine {
             db.flush_cf(&cf)?;
             size = db
                 .property_int_value_cf(&cf, rocksdb::properties::TOTAL_SST_FILES_SIZE)?
-                .unwrap_or(0)
+                .ok_or(EngineError::UnderlyingError(
+                    "Got None when read TOTAL_SST_FILES_SIZE".to_owned(),
+                ))?
                 .overflow_add(size);
         }
         Ok(size)
@@ -154,7 +156,7 @@ impl StorageEngine for RocksEngine {
                         .inner
                         .cf_handle(table)
                         .ok_or(EngineError::TableNotFound(table.to_owned()))?;
-                    // max write data size = 2 * key + value + 1008
+                    // max write data size = 2 * key + value + cf_handle_size + 1008
                     size = size
                         .overflow_add(key.len().overflow_mul(2))
                         .overflow_add(value.len())
