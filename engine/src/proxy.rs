@@ -117,10 +117,10 @@ impl StorageEngine for Engine {
     }
 
     #[inline]
-    fn size(&self) -> u64 {
+    fn estimated_file_size(&self) -> u64 {
         match *self {
-            Engine::Memory(ref e) => e.size(),
-            Engine::Rocks(ref e) => e.size(),
+            Engine::Memory(ref e) => e.estimated_file_size(),
+            Engine::Rocks(ref e) => e.estimated_file_size(),
         }
     }
 

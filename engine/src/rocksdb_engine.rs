@@ -248,7 +248,7 @@ impl StorageEngine for RocksEngine {
         Ok(())
     }
 
-    fn size(&self) -> u64 {
+    fn estimated_file_size(&self) -> u64 {
         self.size.load(std::sync::atomic::Ordering::Relaxed)
     }
 
