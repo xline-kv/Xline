@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use clippy_utilities::{Cast, OverflowArithmetic};
+use clippy_utilities::OverflowArithmetic;
 use curp::{
     client::Client,
     cmd::{Command as CurpCommand, CommandExecutor as CurpCommandExecutor},
@@ -14,7 +14,6 @@ use event_listener::Event;
 use tracing::warn;
 use xlineapi::{
     command::Command, execute_error::ExecuteError, AlarmAction, AlarmRequest, AlarmType,
-    PutRequest, Request, TxnRequest,
 };
 
 use super::barriers::{IdBarrier, IndexBarrier};
@@ -108,14 +107,9 @@ where
     persistent: Arc<S>,
 }
 
-impl<S> CommandQuotaChecker<S>
-where
-    S: StorageApi,
-{
-    /// Create a new `CommandQuotaChecker`
-    fn new(quota: u64, persistent: Arc<S>) -> Self {
-        Self { quota, persistent }
-    }
+mod size_estimate {
+    use clippy_utilities::{Cast, OverflowArithmetic};
+    use xlineapi::{PutRequest, Request, RequestWrapper, TxnRequest};
 
     /// Estimate the put size
     fn put_size(req: &PutRequest) -> u64 {
@@ -132,8 +126,8 @@ where
             .success
             .iter()
             .map(|req_op| match req_op.request {
-                Some(Request::RequestPut(ref r)) => Self::put_size(r),
-                Some(Request::RequestTxn(ref r)) => Self::txn_size(r),
+                Some(Request::RequestPut(ref r)) => put_size(r),
+                Some(Request::RequestTxn(ref r)) => txn_size(r),
                 _ => 0,
             })
             .sum::<u64>();
@@ -141,8 +135,8 @@ where
             .failure
             .iter()
             .map(|req_op| match req_op.request {
-                Some(Request::RequestPut(ref r)) => Self::put_size(r),
-                Some(Request::RequestTxn(ref r)) => Self::txn_size(r),
+                Some(Request::RequestPut(ref r)) => put_size(r),
+                Some(Request::RequestTxn(ref r)) => txn_size(r),
                 _ => 0,
             })
             .sum::<u64>();
@@ -151,10 +145,10 @@ where
     }
 
     /// Estimate the size that may increase after the request is written
-    fn cmd_size(req: &RequestWrapper) -> u64 {
+    pub(super) fn cmd_size(req: &RequestWrapper) -> u64 {
         match *req {
-            RequestWrapper::PutRequest(ref req) => Self::put_size(req),
-            RequestWrapper::TxnRequest(ref req) => Self::txn_size(req),
+            RequestWrapper::PutRequest(ref req) => put_size(req),
+            RequestWrapper::TxnRequest(ref req) => txn_size(req),
             RequestWrapper::LeaseGrantRequest(_) => {
                 // padding(1008) + cf_handle(5) + lease_id_size(8) * 2 + lease_size(24)
                 1053
@@ -186,6 +180,16 @@ where
     }
 }
 
+impl<S> CommandQuotaChecker<S>
+where
+    S: StorageApi,
+{
+    /// Create a new `CommandQuotaChecker`
+    fn new(quota: u64, persistent: Arc<S>) -> Self {
+        Self { quota, persistent }
+    }
+}
+
 impl<S> QuotaChecker for CommandQuotaChecker<S>
 where
     S: StorageApi,
@@ -194,7 +198,7 @@ where
         if !cmd.need_check_quota() {
             return true;
         }
-        let cmd_size = Self::cmd_size(&cmd.request().request);
+        let cmd_size = size_estimate::cmd_size(&cmd.request().request);
         if self.persistent.size().overflow_add(cmd_size) > self.quota {
             if let Ok(file_size) = self.persistent.file_size() {
                 if file_size.overflow_add(cmd_size) > self.quota {
@@ -465,5 +469,50 @@ pub(super) fn client_err_to_status(err: ClientError<Command>) -> tonic::Status {
         ClientError::Timeout => tonic::Status::unavailable("request timed out"),
 
         _ => unreachable!("curp client error {err:?}"),
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use xlineapi::{LeaseGrantRequest, PutRequest, Request, RequestOp, TxnRequest};
+
+    use super::*;
+    #[test]
+    fn cmd_size_should_return_size_of_command() {
+        let put_req1 = PutRequest {
+            key: b"key".to_vec(),
+            value: b"value".to_vec(),
+            ..Default::default()
+        };
+        let put_req2 = PutRequest {
+            key: b"abcde".to_vec(),
+            value: b"abcdefg".to_vec(),
+            ..Default::default()
+        };
+        let lease_req = LeaseGrantRequest { id: 123, ttl: 10 };
+        let txn_req = TxnRequest {
+            compare: vec![],
+            success: vec![
+                RequestOp {
+                    request: Some(Request::RequestPut(put_req1.clone())),
+                },
+                RequestOp {
+                    request: Some(Request::RequestPut(put_req2.clone())),
+                },
+            ],
+            failure: vec![RequestOp {
+                request: Some(Request::RequestPut(put_req2.clone())),
+            }],
+        };
+        let testcase: &[(RequestWrapper, u64)] = &[
+            (put_req1.into(), 1082),
+            (put_req2.into(), 1086),
+            (lease_req.into(), 1053),
+            (txn_req.into(), 2168),
+        ];
+        for (req, _size) in testcase {
+            let s = size_estimate::cmd_size(req);
+            println!("s: {s:?}");
+        }
     }
 }
