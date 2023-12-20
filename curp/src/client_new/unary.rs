@@ -25,12 +25,12 @@ use crate::{
         self,
         connect::{BypassedConnect, ConnectApi},
         ConfChange, CurpError, FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest,
-        Member, ProposeConfChangeRequest, ProposeId, ProposeRequest, Protocol, ReadState,
-        ShutdownRequest, WaitSyncedRequest,
+        Member, ProposeConfChangeRequest, ProposeId, ProposeRequest, Protocol, PublishRequest,
+        ReadState, ShutdownRequest, WaitSyncedRequest,
     },
 };
 
-use super::{retry::LeaderStateUpdate, ClientApi, ProposeResponse};
+use super::{ClientApi, LeaderStateUpdate, ProposeResponse};
 
 /// Leader state of a client
 #[derive(Debug, Default)]
@@ -463,6 +463,21 @@ impl<C: Command> ClientApi for Unary<C> {
         let timeout = self.config.wait_synced_timeout;
         let _ig = self
             .for_leader(|conn| async move { conn.shutdown(req, timeout).await })
+            .await??;
+        Ok(())
+    }
+
+    /// Send propose to publish a node id and name
+    async fn propose_publish(
+        &self,
+        node_id: ServerId,
+        node_name: String,
+    ) -> Result<(), Self::Error> {
+        let propose_id = self.gen_propose_id().await?;
+        let req = PublishRequest::new(propose_id, node_id, node_name);
+        let timeout = self.config.wait_synced_timeout;
+        let _ig = self
+            .for_leader(|conn| async move { conn.publish(req, timeout).await })
             .await??;
         Ok(())
     }
