@@ -1,3 +1,6 @@
+//! CURP client
+//! The Curp client should be used to access the Curp service cluster, instead of using direct RPC.
+
 /// Unary rpc client
 mod unary;
 
@@ -24,9 +27,12 @@ type ProposeResponse<C: Command> = Result<(C::ER, Option<C::ASR>), C::Error>;
 /// `ClientApi`, a higher wrapper for `ConnectApi`, providing some methods for communicating to
 /// the whole curp cluster. Automatically discovery curp server to update it's quorum.
 #[async_trait]
-pub trait ClientApi<C: Command> {
+pub trait ClientApi {
     /// The client error
     type Error;
+
+    /// The command type
+    type Cmd: Command;
 
     /// Get the local connection when the client is on the server node.
     fn local_connect(&self) -> Option<Arc<dyn ConnectApi>>;
@@ -35,9 +41,9 @@ pub trait ClientApi<C: Command> {
     /// requests (event the requests are commutative).
     async fn propose(
         &self,
-        cmd: &C,
+        cmd: &Self::Cmd,
         use_fast_path: bool,
-    ) -> Result<ProposeResponse<C>, Self::Error>;
+    ) -> Result<ProposeResponse<Self::Cmd>, Self::Error>;
 
     /// Send propose configuration changes to the cluster
     async fn propose_conf_change(
@@ -49,7 +55,7 @@ pub trait ClientApi<C: Command> {
     async fn propose_shutdown(&self) -> Result<(), Self::Error>;
 
     /// Send fetch read state from leader
-    async fn fetch_read_state(&self, cmd: &C) -> Result<ReadState, Self::Error>;
+    async fn fetch_read_state(&self, cmd: &Self::Cmd) -> Result<ReadState, Self::Error>;
 
     /// Send fetch cluster requests to all servers (That's because initially, we didn't
     /// know who the leader is.)
