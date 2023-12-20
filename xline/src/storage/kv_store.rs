@@ -481,17 +481,13 @@ where
     }
 
     /// Calculate hash of kv storage
-    pub(crate) fn hash_kv(&self, mut rev: i64) -> Result<(u32, i64, i64), tonic::Status> {
+    pub(crate) fn hash_kv(&self, mut rev: i64) -> Result<(u32, i64, i64), ExecuteError> {
         let (compact_rev, current_rev) = (self.compacted_revision(), self.revision());
         if rev > 0 && rev < compact_rev {
-            return Err(tonic::Status::out_of_range(
-                "etcdserver: mvcc: required revision has been compacted",
-            ));
+            return Err(ExecuteError::RevisionCompacted(rev, compact_rev));
         }
         if rev > 0 && rev > current_rev {
-            return Err(tonic::Status::out_of_range(
-                "etcdserver: mvcc: required revision is a future revision",
-            ));
+            return Err(ExecuteError::RevisionTooLarge(rev, current_rev));
         }
         if rev <= 0 {
             rev = current_rev;
