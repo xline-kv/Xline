@@ -213,6 +213,8 @@ pub struct Command {
     keys: Vec<KeyRange>,
     /// Request data
     request: RequestWithToken,
+    /// Compact Id
+    compact_id: u64,
 }
 
 /// get all lease ids in the request wrapper
@@ -347,7 +349,26 @@ impl Command {
     #[must_use]
     #[inline]
     pub fn new(keys: Vec<KeyRange>, request: RequestWithToken) -> Self {
-        Self { keys, request }
+        Self {
+            keys,
+            request,
+            compact_id: 0,
+        }
+    }
+
+    /// With `compact_id``
+    #[must_use]
+    #[inline]
+    pub fn with_compact_id(mut self, compact_id: u64) -> Self {
+        self.compact_id = compact_id;
+        self
+    }
+
+    /// Get compact id
+    #[must_use]
+    #[inline]
+    pub fn compact_id(&self) -> u64 {
+        self.compact_id
     }
 
     /// get request
@@ -477,6 +498,7 @@ impl PbCodec for Command {
         let rpc_cmd = PbCommand {
             keys: cmd.keys.into_iter().map(Into::into).collect(),
             request: Some(cmd.request.into()),
+            compact_id: cmd.compact_id,
         };
         rpc_cmd.encode_to_vec()
     }
@@ -490,6 +512,7 @@ impl PbCodec for Command {
                 .request
                 .ok_or(PbSerializeError::EmptyField)?
                 .try_into()?,
+            compact_id: rpc_cmd.compact_id,
         })
     }
 }

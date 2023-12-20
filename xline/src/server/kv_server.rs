@@ -1,9 +1,13 @@
-use std::{fmt::Debug, sync::Arc, time::Duration};
-
-use curp::{
-    client::{Client, ReadState},
-    cmd::ProposeId,
+use std::{
+    fmt::Debug,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::Duration,
 };
+
+use curp::client::{Client, ReadState};
 use dashmap::DashMap;
 use event_listener::Event;
 use futures::future::{join_all, Either};
@@ -52,7 +56,9 @@ where
     /// Consensus client
     client: Arc<Client<Command>>,
     /// Compact events
-    compact_events: Arc<DashMap<ProposeId, Arc<Event>>>,
+    compact_events: Arc<DashMap<u64, Arc<Event>>>,
+    /// Next compact_id
+    next_compact_id: AtomicU64,
 }
 
 impl<S> KvServer<S>
@@ -69,7 +75,7 @@ where
         range_retry_timeout: Duration,
         compact_timeout: Duration,
         client: Arc<Client<Command>>,
-        compact_events: Arc<DashMap<ProposeId, Arc<Event>>>,
+        compact_events: Arc<DashMap<u64, Arc<Event>>>,
     ) -> Self {
         Self {
             kv_storage,
@@ -80,6 +86,7 @@ where
             compact_timeout,
             client,
             compact_events,
+            next_compact_id: AtomicU64::new(0),
         }
     }
 
@@ -352,20 +359,16 @@ where
         let physical = req.physical;
         let token = get_token(request.metadata());
         let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
-        let propose_id = self
-            .client
-            .gen_propose_id()
-            .await
-            .map_err(client_err_to_status)?;
+        let compact_id = self.next_compact_id.fetch_add(1, Ordering::Relaxed);
         let compact_physical_fut = if physical {
             let event = Arc::new(Event::new());
-            _ = self.compact_events.insert(propose_id, Arc::clone(&event));
+            _ = self.compact_events.insert(compact_id, Arc::clone(&event));
             let listener = event.listen();
             Either::Left(listener)
         } else {
             Either::Right(async {})
         };
-        let cmd = command_from_request_wrapper(propose_id, wrapper);
+        let cmd = command_from_request_wrapper(wrapper);
         let (cmd_res, _sync_res) = self
             .client
             .propose(cmd, !physical)
