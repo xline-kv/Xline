@@ -4,7 +4,7 @@ use std::{
     io::{Cursor, Error as IoError, ErrorKind},
     iter::repeat,
     path::{Path, PathBuf},
-    sync::{atomic::AtomicU64, Arc},
+    sync::atomic::AtomicU64,
 };
 
 use bytes::{Buf, Bytes, BytesMut};
@@ -50,14 +50,14 @@ impl From<RocksError> for EngineError {
 }
 
 /// `RocksDB` Storage Engine
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct RocksEngine {
     /// The inner storage engine of `RocksDB`
-    inner: Arc<DB>,
+    inner: DB,
     /// The tables of current engine
     tables: Vec<String>,
     /// The size cache of the engine
-    size: Arc<AtomicU64>,
+    size: AtomicU64,
 }
 
 impl RocksEngine {
@@ -71,12 +71,12 @@ impl RocksEngine {
         let mut db_opts = Options::default();
         db_opts.create_missing_column_families(true);
         db_opts.create_if_missing(true);
-        let db = Arc::new(DB::open_cf(&db_opts, data_dir, tables)?);
+        let db = DB::open_cf(&db_opts, data_dir, tables)?;
         let size = Self::get_db_size(&db, tables)?;
         Ok(Self {
             inner: db,
             tables: tables.iter().map(|s| (*s).to_owned()).collect(),
-            size: Arc::new(AtomicU64::new(size)),
+            size: AtomicU64::new(size),
         })
     }
 
