@@ -19,7 +19,7 @@ use super::{ClientApi, LeaderStateUpdate, ProposeResponse};
 
 /// Backoff config
 #[derive(Debug, Clone)]
-pub(super) enum BackoffConfig {
+enum BackoffConfig {
     /// A fixed delay backoff
     Fixed,
     /// A exponential delay backoff
@@ -53,7 +53,7 @@ struct Backoff {
 
 impl RetryConfig {
     /// Create a fixed retry config
-    fn new_fixed(delay: Duration, count: usize) -> Self {
+    pub(super) fn new_fixed(delay: Duration, count: usize) -> Self {
         assert!(count > 0, "retry count should be larger than 0");
         Self {
             backoff: BackoffConfig::Fixed,
@@ -63,7 +63,7 @@ impl RetryConfig {
     }
 
     /// Create a exponential retry config
-    fn new_exponential(delay: Duration, max_delay: Duration, count: usize) -> Self {
+    pub(super) fn new_exponential(delay: Duration, max_delay: Duration, count: usize) -> Self {
         assert!(count > 0, "retry count should be larger than 0");
         Self {
             backoff: BackoffConfig::Exponential { max_delay },
@@ -116,7 +116,7 @@ where
     Api: ClientApi<Error = CurpError> + LeaderStateUpdate + Send + Sync + 'static,
 {
     /// Create a retry client
-    fn new(inner: Api, config: RetryConfig) -> Self {
+    pub(super) fn new(inner: Api, config: RetryConfig) -> Self {
         Self { inner, config }
     }
 
@@ -243,5 +243,35 @@ where
     ) -> Result<FetchClusterResponse, tonic::Status> {
         self.retry::<_, _>(|client| client.fetch_cluster(linearizable))
             .await
+    }
+}
+
+/// Tests for backoff
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::RetryConfig;
+
+    #[test]
+    fn test_fixed_backoff_works() {
+        let config = RetryConfig::new_fixed(Duration::from_secs(1), 3);
+        let mut backoff = config.init_backoff();
+        assert_eq!(backoff.next_delay(), Some(Duration::from_secs(1)));
+        assert_eq!(backoff.next_delay(), Some(Duration::from_secs(1)));
+        assert_eq!(backoff.next_delay(), Some(Duration::from_secs(1)));
+        assert_eq!(backoff.next_delay(), None);
+    }
+
+    #[test]
+    fn test_exponential_backoff_works() {
+        let config =
+            RetryConfig::new_exponential(Duration::from_secs(1), Duration::from_secs(5), 4);
+        let mut backoff = config.init_backoff();
+        assert_eq!(backoff.next_delay(), Some(Duration::from_secs(1)));
+        assert_eq!(backoff.next_delay(), Some(Duration::from_secs(2)));
+        assert_eq!(backoff.next_delay(), Some(Duration::from_secs(4)));
+        assert_eq!(backoff.next_delay(), Some(Duration::from_secs(5))); // 8 > 5
+        assert_eq!(backoff.next_delay(), None);
     }
 }

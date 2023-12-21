@@ -54,6 +54,79 @@ impl std::fmt::Debug for State {
     }
 }
 
+/// Unary builder
+pub(super) struct UnaryBuilder<P: Protocol> {
+    /// All members (required)
+    all_members: HashMap<ServerId, Vec<String>>,
+    /// Unary config (required)
+    config: UnaryConfig,
+    /// Local server (optional)
+    local_server: Option<(ServerId, P)>,
+    /// Leader id (optional)
+    leader: Option<ServerId>,
+    /// Term (optional)
+    term: Option<u64>,
+    /// Cluster version (optional)
+    cluster_version: Option<u64>,
+}
+
+impl<P: Protocol> UnaryBuilder<P> {
+    /// Create unary builder
+    pub(super) fn new(all_members: HashMap<ServerId, Vec<String>>, config: UnaryConfig) -> Self {
+        Self {
+            all_members,
+            config,
+            local_server: None,
+            leader: None,
+            term: None,
+            cluster_version: None,
+        }
+    }
+
+    /// Set the local server (optional)
+    pub(super) fn set_local_server(&mut self, id: ServerId, server: P) {
+        self.local_server = Some((id, server));
+    }
+
+    /// Set the leader state (optional)
+    pub(super) fn set_leader_state(&mut self, id: ServerId, term: u64) {
+        self.leader = Some(id);
+        self.term = Some(term);
+    }
+
+    /// Set the cluster version (optional)
+    pub(super) fn set_cluster_version(&mut self, cluster_version: u64) {
+        self.cluster_version = Some(cluster_version);
+    }
+
+    /// Build the unary client
+    pub(super) async fn build<C: Command>(mut self) -> Result<Unary<C>, tonic::transport::Error> {
+        let mut local_server_id = None;
+        if let Some((id, _)) = self.local_server {
+            let _ig = self.all_members.remove(&id);
+        }
+        let mut connects: HashMap<_, _> = rpc::connects(self.all_members).await?.collect();
+        if let Some((id, server)) = self.local_server {
+            debug!("client bypassed server({id})");
+            local_server_id = Some(id);
+            let _ig = connects.insert(id, Arc::new(BypassedConnect::new(id, server)));
+        }
+        let state = State {
+            leader: self.leader,
+            term: self.term.unwrap_or_default(),
+            cluster_version: self.cluster_version.unwrap_or_default(),
+            connects,
+        };
+        let unary = Unary {
+            state: RwLock::new(state),
+            local_server_id,
+            config: self.config,
+            phantom: PhantomData,
+        };
+        Ok(unary)
+    }
+}
+
 /// The unary client config
 #[derive(Debug)]
 pub(super) struct UnaryConfig {
@@ -67,7 +140,7 @@ pub(super) struct UnaryConfig {
 
 impl UnaryConfig {
     /// Create a unary config
-    fn new(propose_timeout: Duration) -> Self {
+    pub(super) fn new(propose_timeout: Duration) -> Self {
         Self {
             propose_timeout,
             wait_synced_timeout: propose_timeout * 2,
@@ -75,7 +148,7 @@ impl UnaryConfig {
     }
 
     /// Create a unary config
-    fn new_full(propose_timeout: Duration, wait_synced_timeout: Duration) -> Self {
+    pub(super) fn new_full(propose_timeout: Duration, wait_synced_timeout: Duration) -> Self {
         Self {
             propose_timeout,
             wait_synced_timeout,
@@ -238,7 +311,7 @@ impl<C: Command> Unary<C> {
     }
 
     /// Send proposal to all servers
-    async fn fast_round(
+    pub(super) async fn fast_round(
         &self,
         propose_id: ProposeId,
         cmd: &C,
@@ -323,7 +396,7 @@ impl<C: Command> Unary<C> {
     }
 
     /// Wait synced result from server
-    async fn slow_round(
+    pub(super) async fn slow_round(
         &self,
         propose_id: ProposeId,
     ) -> Result<Result<(C::ASR, C::ER), C::Error>, CurpError> {
@@ -524,6 +597,7 @@ impl<C: Command> ClientApi for Unary<C> {
         let mut err: Option<CurpError> = None;
 
         while let Some((id, resp)) = responses.next().await {
+            debug!("{id} {max_term}");
             let inner = match resp {
                 Ok(r) => r,
                 Err(e) => {
@@ -541,41 +615,47 @@ impl<C: Command> ClientApi for Unary<C> {
                     continue;
                 }
             };
-
-            #[allow(clippy::integer_arithmetic)]
-            match max_term.cmp(&inner.term) {
-                Ordering::Less => {
-                    if !inner.members.is_empty() {
+            // Ignore the response of a node that doesn't know who the leader is.
+            // some disconnected candidates may continue to increase term, disrupting the process below.
+            if inner.leader_id.is_some() {
+                #[allow(clippy::integer_arithmetic)]
+                match max_term.cmp(&inner.term) {
+                    Ordering::Less => {
                         max_term = inner.term;
-                        res = Some(inner);
+                        if !inner.members.is_empty() {
+                            res = Some(inner);
+                        }
+                        // reset ok count to 1
+                        ok_cnt = 1;
                     }
-                    ok_cnt = 1;
-                }
-                Ordering::Equal => {
-                    if !inner.members.is_empty() {
-                        res = Some(inner);
+                    Ordering::Equal => {
+                        if !inner.members.is_empty() {
+                            res = Some(inner);
+                        }
+                        ok_cnt += 1;
                     }
-                    ok_cnt += 1;
+                    Ordering::Greater => {}
                 }
-                Ordering::Greater => {}
             }
-
+            // first check quorum
             if ok_cnt >= quorum {
-                break;
+                // then check if we got the response
+                if let Some(res) = res {
+                    debug!("fetch cluster succeeded, result: {res:?}");
+                    if let Err(e) = self.check_and_update(&res).await {
+                        warn!("update to a new cluster state failed, error {e}");
+                    }
+                    return Ok(res);
+                }
             }
         }
-        if let Some(res) = res {
-            debug!("fetch cluster succeeded, result: {res:?}");
-            if let Err(e) = self.check_and_update(&res).await {
-                warn!("update to a new cluster state failed, error {e}");
-            }
-            return Ok(res);
-        }
+
         if let Some(err) = err {
             return Err(err);
         }
 
-        unreachable!("At least one server will return `members` or a connection error has occurred. Leaders should not return empty members.")
+        // It seems that the max term has not reached the majority here. Mock a transport error and return it to the external to retry.
+        return Err(CurpError::RpcTransport(()));
     }
 }
 
