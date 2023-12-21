@@ -26,8 +26,6 @@ pub(super) struct FilePipeline {
     file_size: u64,
     /// The file receive stream
     file_stream: RecvStream<'static, LockedFile>,
-    /// The stop event listener
-    stop_event: Event,
     /// The handle of the background file creation task
     handle: JoinHandle<io::Result<()>>,
 }
@@ -40,7 +38,6 @@ impl FilePipeline {
 
         let (file_tx, file_rx) = flume::bounded(1);
         let stop_event = Event::new();
-        let mut stop_listener = stop_event.listen();
         let dir_c = dir.clone();
 
         let handle = tokio::spawn(async move {
@@ -48,16 +45,9 @@ impl FilePipeline {
             loop {
                 let file = Self::alloc(&dir_c, file_size, file_count)?;
                 file_count += 1;
-                tokio::select! {
-                    _ = &mut stop_listener => {
-                        break;
-                    }
-                    result = file_tx.send_async(file) => {
-                        // The receiver is already dropped, stop this task
-                        if let Err(e) = result {
-                            break;
-                        }
-                    }
+                if let Err(e) = file_tx.send_async(file).await {
+                    // The receiver is already dropped, stop this task
+                    break;
                 }
             }
             Self::clean_up(&dir_c)?;
@@ -68,14 +58,13 @@ impl FilePipeline {
             dir,
             file_size,
             file_stream: file_rx.into_stream(),
-            stop_event,
             handle,
         })
     }
 
     /// Stops the pipeline
     pub(super) fn stop(&self) {
-        self.stop_event.notify(1);
+        self.handle.abort();
     }
 
     /// Allocates a a new tempfile
