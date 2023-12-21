@@ -10,8 +10,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use curp_external_api::cmd::Command;
-use dashmap::DashMap;
+use curp_external_api::{cmd::Command, role_change::RoleChange};
 use futures::{stream::FuturesUnordered, Future, Stream, StreamExt};
 use itertools::Itertools;
 use tokio::sync::RwLock;
@@ -55,43 +54,31 @@ impl std::fmt::Debug for State {
 }
 
 /// Unary builder
-pub(super) struct UnaryBuilder<P: Protocol> {
+pub(super) struct UnaryBuilder {
     /// All members (required)
     all_members: HashMap<ServerId, Vec<String>>,
     /// Unary config (required)
     config: UnaryConfig,
-    /// Local server (optional)
-    local_server: Option<(ServerId, P)>,
-    /// Leader id (optional)
-    leader: Option<ServerId>,
-    /// Term (optional)
-    term: Option<u64>,
+    /// Leader state (optional)
+    leader_state: Option<(ServerId, u64)>,
     /// Cluster version (optional)
     cluster_version: Option<u64>,
 }
 
-impl<P: Protocol> UnaryBuilder<P> {
+impl UnaryBuilder {
     /// Create unary builder
     pub(super) fn new(all_members: HashMap<ServerId, Vec<String>>, config: UnaryConfig) -> Self {
         Self {
             all_members,
             config,
-            local_server: None,
-            leader: None,
-            term: None,
+            leader_state: None,
             cluster_version: None,
         }
     }
 
-    /// Set the local server (optional)
-    pub(super) fn set_local_server(&mut self, id: ServerId, server: P) {
-        self.local_server = Some((id, server));
-    }
-
     /// Set the leader state (optional)
     pub(super) fn set_leader_state(&mut self, id: ServerId, term: u64) {
-        self.leader = Some(id);
-        self.term = Some(term);
+        self.leader_state = Some((id, term));
     }
 
     /// Set the cluster version (optional)
@@ -99,31 +86,48 @@ impl<P: Protocol> UnaryBuilder<P> {
         self.cluster_version = Some(cluster_version);
     }
 
-    /// Build the unary client
-    pub(super) async fn build<C: Command>(mut self) -> Result<Unary<C>, tonic::transport::Error> {
-        let mut local_server_id = None;
-        if let Some((id, _)) = self.local_server {
-            let _ig = self.all_members.remove(&id);
-        }
-        let mut connects: HashMap<_, _> = rpc::connects(self.all_members).await?.collect();
-        if let Some((id, server)) = self.local_server {
-            debug!("client bypassed server({id})");
-            local_server_id = Some(id);
-            let _ig = connects.insert(id, Arc::new(BypassedConnect::new(id, server)));
-        }
+    /// Inner build
+    fn build_with_connects<C: Command>(
+        self,
+        connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
+        local_server_id: Option<ServerId>,
+    ) -> Unary<C> {
         let state = State {
-            leader: self.leader,
-            term: self.term.unwrap_or_default(),
+            leader: self.leader_state.map(|state| state.0),
+            term: self.leader_state.map_or(0, |state| state.1),
             cluster_version: self.cluster_version.unwrap_or_default(),
             connects,
         };
-        let unary = Unary {
+        Unary {
             state: RwLock::new(state),
             local_server_id,
             config: self.config,
             phantom: PhantomData,
-        };
-        Ok(unary)
+        }
+    }
+
+    /// Build the unary client with local server
+    pub(super) async fn build_bypassed<C: Command, P: Protocol>(
+        mut self,
+        local_server_id: ServerId,
+        local_server: P,
+    ) -> Result<Unary<C>, tonic::transport::Error> {
+        debug!("client bypassed server({local_server_id})");
+
+        let _ig = self.all_members.remove(&local_server_id);
+        let mut connects: HashMap<_, _> = rpc::connects(self.all_members.clone()).await?.collect();
+        let __ig = connects.insert(
+            local_server_id,
+            Arc::new(BypassedConnect::new(local_server_id, local_server)),
+        );
+
+        Ok(self.build_with_connects(connects, Some(local_server_id)))
+    }
+
+    /// Build the unary client
+    pub(super) async fn build<C: Command>(self) -> Result<Unary<C>, tonic::transport::Error> {
+        let connects: HashMap<_, _> = rpc::connects(self.all_members.clone()).await?.collect();
+        Ok(self.build_with_connects(connects, None))
     }
 }
 

@@ -14,7 +14,7 @@ mod tests;
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
-use curp_external_api::cmd::Command;
+use curp_external_api::{cmd::Command, role_change::RoleChange};
 use futures::{stream::FuturesUnordered, StreamExt};
 use utils::config::ClientConfig;
 
@@ -29,6 +29,7 @@ use crate::{
         connect::ConnectApi, protocol_client::ProtocolClient, ConfChange, FetchClusterRequest,
         FetchClusterResponse, Member, Protocol, ReadState,
     },
+    server::Rpc,
 };
 
 /// The response of propose command, deserialized from [`crate::rpc::ProposeResponse`] or
@@ -108,9 +109,7 @@ trait LeaderStateUpdate {
 
 /// Client builder to build a client
 #[derive(Debug, Clone)]
-pub struct ClientBuilder<P: Protocol> {
-    /// local server
-    local_server: Option<(ServerId, P)>,
+pub struct ClientBuilder {
     /// initial cluster version
     cluster_version: Option<u64>,
     /// initial cluster members
@@ -121,13 +120,23 @@ pub struct ClientBuilder<P: Protocol> {
     config: ClientConfig,
 }
 
-impl<P: Protocol> ClientBuilder<P> {
+/// A client builder with bypass with local server
+#[derive(Debug, Clone)]
+pub struct ClientBuilderWithBypass<P: Protocol> {
+    /// inner builder
+    inner: ClientBuilder,
+    /// local server id
+    local_server_id: ServerId,
+    /// local server
+    local_server: P,
+}
+
+impl ClientBuilder {
     /// Create a client builder
     #[inline]
     #[must_use]
     pub fn new(config: ClientConfig) -> Self {
         Self {
-            local_server: None,
             cluster_version: None,
             all_members: None,
             leader_state: None,
@@ -138,9 +147,16 @@ impl<P: Protocol> ClientBuilder<P> {
     /// Set the local server to bypass `gRPC` request
     #[inline]
     #[must_use]
-    pub fn bypass(&mut self, id: ServerId, server: P) -> &mut Self {
-        self.local_server = Some((id, server));
-        self
+    pub fn bypass<C: Command, RC: RoleChange>(
+        self,
+        local_server_id: ServerId,
+        local_server: Rpc<C, RC>,
+    ) -> ClientBuilderWithBypass<Rpc<C, RC>> {
+        ClientBuilderWithBypass {
+            inner: self,
+            local_server_id,
+            local_server,
+        }
     }
 
     /// Set the initial cluster version
@@ -210,17 +226,10 @@ impl<P: Protocol> ClientBuilder<P> {
         Err(err)
     }
 
-    /// Build the client
-    ///
-    /// # Errors
-    ///
-    /// Return `tonic::transport::Error` for connection failure.
-    #[inline]
-    pub async fn build<C: Command>(
-        self,
-    ) -> Result<impl ClientApi<Error = tonic::Status, Cmd = C>, tonic::transport::Error> {
-        let mut builder = UnaryBuilder::<P>::new(
-            self.all_members.unwrap_or_else(|| {
+    /// Init an unary builder
+    fn init_unary_builder(&self) -> UnaryBuilder {
+        let mut builder = UnaryBuilder::new(
+            self.all_members.clone().unwrap_or_else(|| {
                 unreachable!("must set the initial members or discover from some endpoints")
             }),
             UnaryConfig::new_full(
@@ -231,15 +240,15 @@ impl<P: Protocol> ClientBuilder<P> {
         if let Some(version) = self.cluster_version {
             builder.set_cluster_version(version);
         }
-        if let Some((id, server)) = self.local_server {
-            builder.set_local_server(id, server);
-        }
         if let Some((id, term)) = self.leader_state {
             builder.set_leader_state(id, term);
         }
-        let unary = builder.build::<C>().await?;
+        builder
+    }
 
-        let retry_config = if *self.config.use_backoff() {
+    /// Init retry config
+    fn init_retry_config(&self) -> RetryConfig {
+        if *self.config.use_backoff() {
             RetryConfig::new_exponential(
                 *self.config.initial_retry_timeout(),
                 *self.config.max_retry_timeout(),
@@ -250,8 +259,40 @@ impl<P: Protocol> ClientBuilder<P> {
                 *self.config.initial_retry_timeout(),
                 *self.config.retry_count(),
             )
-        };
-        let client = Retry::new(unary, retry_config);
+        }
+    }
+
+    /// Build the client
+    ///
+    /// # Errors
+    ///
+    /// Return `tonic::transport::Error` for connection failure.
+    #[inline]
+    pub async fn build<C: Command>(
+        &self,
+    ) -> Result<impl ClientApi<Error = tonic::Status, Cmd = C>, tonic::transport::Error> {
+        let unary = self.init_unary_builder().build::<C>().await?;
+        let client = Retry::new(unary, self.init_retry_config());
+        Ok(client)
+    }
+}
+
+impl<P: Protocol> ClientBuilderWithBypass<P> {
+    /// Build the client with local server
+    ///
+    /// # Errors
+    ///
+    /// Return `tonic::transport::Error` for connection failure.
+    #[inline]
+    pub async fn build<C: Command>(
+        self,
+    ) -> Result<impl ClientApi<Error = tonic::Status, Cmd = C>, tonic::transport::Error> {
+        let unary = self
+            .inner
+            .init_unary_builder()
+            .build_bypassed::<C, P>(self.local_server_id, self.local_server)
+            .await?;
+        let client = Retry::new(unary, self.inner.init_retry_config());
         Ok(client)
     }
 }
