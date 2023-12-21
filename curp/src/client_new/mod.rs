@@ -7,6 +7,10 @@ mod unary;
 /// Retry layer
 mod retry;
 
+/// Tests for client
+#[cfg(test)]
+mod tests;
+
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
@@ -14,11 +18,16 @@ use curp_external_api::cmd::Command;
 use futures::{stream::FuturesUnordered, StreamExt};
 use utils::config::ClientConfig;
 
+use self::{
+    retry::Retry,
+    unary::{UnaryBuilder, UnaryConfig},
+};
 use crate::{
+    client_new::retry::RetryConfig,
     members::ServerId,
     rpc::{
         connect::ConnectApi, protocol_client::ProtocolClient, ConfChange, FetchClusterRequest,
-        FetchClusterResponse, Member, ReadState,
+        FetchClusterResponse, Member, Protocol, ReadState,
     },
 };
 
@@ -99,35 +108,38 @@ trait LeaderStateUpdate {
 
 /// Client builder to build a client
 #[derive(Debug, Clone)]
-pub struct ClientBuilder {
-    /// local server id
-    local_server_id: Option<ServerId>,
+pub struct ClientBuilder<P: Protocol> {
+    /// local server
+    local_server: Option<(ServerId, P)>,
     /// initial cluster version
     cluster_version: Option<u64>,
+    /// initial cluster members
+    all_members: Option<HashMap<ServerId, Vec<String>>>,
+    /// initial leader state
+    leader_state: Option<(ServerId, u64)>,
     /// client configuration
     config: ClientConfig,
-    /// initial all members
-    all_members: Option<HashMap<ServerId, Vec<String>>>,
 }
 
-impl ClientBuilder {
+impl<P: Protocol> ClientBuilder<P> {
     /// Create a client builder
     #[inline]
     #[must_use]
     pub fn new(config: ClientConfig) -> Self {
         Self {
-            local_server_id: None,
-            config,
-            all_members: None,
+            local_server: None,
             cluster_version: None,
+            all_members: None,
+            leader_state: None,
+            config,
         }
     }
 
-    /// Set the local server id
+    /// Set the local server to bypass `gRPC` request
     #[inline]
     #[must_use]
-    pub fn local_server_id(&mut self, id: ServerId) -> &mut Self {
-        self.local_server_id = Some(id);
+    pub fn bypass(&mut self, id: ServerId, server: P) -> &mut Self {
+        self.local_server = Some((id, server));
         self
     }
 
@@ -139,16 +151,29 @@ impl ClientBuilder {
         self
     }
 
-    /// Fetch initial all members from some endpoints if you do not know the whole members
+    /// Set the initial all members
+    #[inline]
+    #[must_use]
+    pub fn all_members(&mut self, all_members: HashMap<ServerId, Vec<String>>) -> &mut Self {
+        self.all_members = Some(all_members);
+        self
+    }
+
+    /// Set the initial leader state
+    #[inline]
+    #[must_use]
+    pub fn leader_state(&mut self, leader_id: ServerId, term: u64) -> &mut Self {
+        self.leader_state = Some((leader_id, term));
+        self
+    }
+
+    /// Discover the initial states from some endpoints
     ///
     /// # Errors
     ///
     /// Return `tonic::Status` for connection failure or some server errors.
     #[inline]
-    pub async fn fetch_all_members(
-        &mut self,
-        addrs: Vec<String>,
-    ) -> Result<&mut Self, tonic::Status> {
+    pub async fn discover_from(&mut self, addrs: Vec<String>) -> Result<&mut Self, tonic::Status> {
         let propose_timeout = *self.config.propose_timeout();
         let mut futs: FuturesUnordered<_> = addrs
             .into_iter()
@@ -168,10 +193,14 @@ impl ClientBuilder {
             })
             .collect();
         let mut err = tonic::Status::invalid_argument("addrs is empty");
+        // find the first one return `FetchClusterResponse`
         while let Some(r) = futs.next().await {
             match r {
                 Ok(r) => {
                     self.cluster_version = Some(r.cluster_version);
+                    if let Some(id) = r.leader_id {
+                        self.leader_state = Some((id, r.term));
+                    }
                     self.all_members = Some(r.into_members_addrs());
                     return Ok(self);
                 }
@@ -181,11 +210,48 @@ impl ClientBuilder {
         Err(err)
     }
 
-    /// Set the initial all members
+    /// Build the client
+    ///
+    /// # Errors
+    ///
+    /// Return `tonic::transport::Error` for connection failure.
     #[inline]
-    #[must_use]
-    pub fn set_all_members(&mut self, all_members: HashMap<ServerId, Vec<String>>) -> &mut Self {
-        self.all_members = Some(all_members);
-        self
+    pub async fn build<C: Command>(
+        self,
+    ) -> Result<impl ClientApi<Error = tonic::Status, Cmd = C>, tonic::transport::Error> {
+        let mut builder = UnaryBuilder::<P>::new(
+            self.all_members.unwrap_or_else(|| {
+                unreachable!("must set the initial members or discover from some endpoints")
+            }),
+            UnaryConfig::new_full(
+                *self.config.propose_timeout(),
+                *self.config.wait_synced_timeout(),
+            ),
+        );
+        if let Some(version) = self.cluster_version {
+            builder.set_cluster_version(version);
+        }
+        if let Some((id, server)) = self.local_server {
+            builder.set_local_server(id, server);
+        }
+        if let Some((id, term)) = self.leader_state {
+            builder.set_leader_state(id, term);
+        }
+        let unary = builder.build::<C>().await?;
+
+        let retry_config = if *self.config.use_backoff() {
+            RetryConfig::new_exponential(
+                *self.config.initial_retry_timeout(),
+                *self.config.max_retry_timeout(),
+                *self.config.retry_count(),
+            )
+        } else {
+            RetryConfig::new_fixed(
+                *self.config.initial_retry_timeout(),
+                *self.config.retry_count(),
+            )
+        };
+        let client = Retry::new(unary, retry_config);
+        Ok(client)
     }
 }
