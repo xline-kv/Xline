@@ -46,7 +46,8 @@ impl FilePipeline {
         let handle = tokio::spawn(async move {
             let mut file_count = 0;
             loop {
-                let file = Self::alloc(&dir_c, file_size, &mut file_count)?;
+                let file = Self::alloc(&dir_c, file_size, file_count)?;
+                file_count += 1;
                 tokio::select! {
                     _ = &mut stop_listener => {
                         break;
@@ -78,15 +79,10 @@ impl FilePipeline {
     }
 
     /// Allocates a a new tempfile
-    fn alloc(
-        dir: impl AsRef<Path>,
-        file_size: u64,
-        file_count: &mut usize,
-    ) -> io::Result<LockedFile> {
-        let fpath = PathBuf::from(dir.as_ref()).join(format!("{}{TEMP_FILE_EXT}", *file_count));
+    fn alloc(dir: impl AsRef<Path>, file_size: u64, file_count: usize) -> io::Result<LockedFile> {
+        let fpath = PathBuf::from(dir.as_ref()).join(format!("{file_count}{TEMP_FILE_EXT}"));
         let mut locked_file = LockedFile::open_rw(fpath)?;
         locked_file.preallocate(file_size)?;
-        *file_count = file_count.overflow_add(1);
         Ok(locked_file)
     }
 
