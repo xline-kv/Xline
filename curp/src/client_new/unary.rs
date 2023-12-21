@@ -411,6 +411,7 @@ impl<C: Command> Unary<C> {
             // Same as fast round, we blame the server for the serializing error.
             CurpError::from(ser_err)
         })?;
+        debug!("slow round for cmd({}) succeed", propose_id);
         Ok(synced_res)
     }
 
@@ -597,7 +598,6 @@ impl<C: Command> ClientApi for Unary<C> {
         let mut err: Option<CurpError> = None;
 
         while let Some((id, resp)) = responses.next().await {
-            debug!("{id} {max_term}");
             let inner = match resp {
                 Ok(r) => r,
                 Err(e) => {
@@ -647,6 +647,7 @@ impl<C: Command> ClientApi for Unary<C> {
                     }
                     return Ok(res);
                 }
+                debug!("fetch_cluster quorum ok, but members are empty");
             }
         }
 
