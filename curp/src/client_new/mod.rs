@@ -4,6 +4,9 @@
 /// Unary rpc client
 mod unary;
 
+/// Retry layer
+mod retry;
+
 use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
