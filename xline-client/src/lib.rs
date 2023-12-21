@@ -152,11 +152,13 @@ use std::{
     task::{Context, Poll},
 };
 
-use curp::client::Client as CurpClient;
+use curp::client_new::{ClientApi, ClientBuilder as CurpClientBuilder};
+
 use http::{header::AUTHORIZATION, HeaderValue, Request, Uri};
 use tonic::transport::{Channel, Endpoint};
 use tower::Service;
 use utils::config::ClientConfig;
+use xlineapi::command::Command;
 
 use crate::{
     clients::{
@@ -175,6 +177,9 @@ pub mod types;
 
 /// Error definitions for `xline-client`.
 pub mod error;
+
+/// The curp client trait object
+type CurpClient = dyn ClientApi<Error = tonic::Status, Cmd = Command> + Sync + Send + 'static;
 
 /// Xline client
 #[derive(Clone, Debug)]
@@ -205,6 +210,8 @@ impl Client {
     /// If `Self::build_channel` fails.
     #[inline]
     #[allow(clippy::pattern_type_mismatch)] // allow mismatch in map
+    #[allow(clippy::as_conversions)] // cast to dyn
+    #[allow(trivial_casts)] // same as above
     pub async fn connect<E, S>(
         all_members: S,
         options: ClientOptions,
@@ -219,11 +226,12 @@ impl Client {
             .collect();
         let channel = Self::build_channel(addrs.clone()).await?;
         let curp_client = Arc::new(
-            CurpClient::builder()
-                .config(options.client_config)
-                .build_from_addrs(addrs)
+            CurpClientBuilder::new(options.client_config)
+                .discover_from(addrs)
+                .await?
+                .build::<Command>()
                 .await?,
-        );
+        ) as Arc<CurpClient>;
         let id_gen = Arc::new(lease_gen::LeaseIdGenerator::new());
 
         let token = match options.user {
