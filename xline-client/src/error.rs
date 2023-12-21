@@ -3,7 +3,7 @@ use curp::{
     error::{ClientBuildError, ClientError},
 };
 use thiserror::Error;
-use xlineapi::command::Command;
+use xlineapi::{command::Command, execute_error::ExecuteError};
 
 /// The result type for `xline-client`
 pub type Result<T> = std::result::Result<T, XlineClientError<Command>>;
@@ -71,6 +71,9 @@ pub enum XlineClientError<C: CurpCommand> {
     /// RPC error
     #[error("rpc error: {0}")]
     RpcError(String),
+    /// Command execution error
+    #[error("command execution error: {0}")]
+    ExecuteError(ExecuteError),
     /// Arguments invalid error
     #[error("Invalid arguments: {0}")]
     InvalidArgs(String),
@@ -108,6 +111,13 @@ impl From<tonic::Status> for XlineClientError<Command> {
     #[inline]
     fn from(e: tonic::Status) -> Self {
         Self::RpcError(e.to_string())
+    }
+}
+
+impl From<ExecuteError> for XlineClientError<Command> {
+    #[inline]
+    fn from(e: ExecuteError) -> Self {
+        Self::ExecuteError(e)
     }
 }
 

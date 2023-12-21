@@ -1,12 +1,10 @@
-use std::sync::Arc;
+use std::{fmt::Debug, sync::Arc};
 
-use curp::client::Client as CurpClient;
 use futures::channel::mpsc::channel;
 use tonic::{transport::Channel, Streaming};
 use xlineapi::{
-    command::{command_from_request_wrapper, Command},
-    LeaseGrantResponse, LeaseKeepAliveResponse, LeaseLeasesResponse, LeaseRevokeResponse,
-    LeaseTimeToLiveResponse, RequestWithToken,
+    command::command_from_request_wrapper, LeaseGrantResponse, LeaseKeepAliveResponse,
+    LeaseLeasesResponse, LeaseRevokeResponse, LeaseTimeToLiveResponse, RequestWithToken,
 };
 
 use crate::{
@@ -16,14 +14,14 @@ use crate::{
         LeaseGrantRequest, LeaseKeepAliveRequest, LeaseKeeper, LeaseRevokeRequest,
         LeaseTimeToLiveRequest,
     },
-    AuthService,
+    AuthService, CurpClient,
 };
 
 /// Client for Lease operations.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct LeaseClient {
     /// The client running the CURP protocol, communicate with all servers.
-    curp_client: Arc<CurpClient<Command>>,
+    curp_client: Arc<CurpClient>,
     /// The lease RPC client, only communicate with one server at a time
     #[cfg(not(madsim))]
     lease_client: xlineapi::LeaseClient<AuthService<Channel>>,
@@ -36,11 +34,23 @@ pub struct LeaseClient {
     id_gen: Arc<LeaseIdGenerator>,
 }
 
+impl Debug for LeaseClient {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LeaseClient")
+            .field("lease_client", &self.lease_client)
+            .field("lease_client", &self.lease_client)
+            .field("token", &self.token)
+            .field("id_gen", &self.id_gen)
+            .finish()
+    }
+}
+
 impl LeaseClient {
     /// Creates a new `LeaseClient`
     #[inline]
     pub fn new(
-        curp_client: Arc<CurpClient<Command>>,
+        curp_client: Arc<CurpClient>,
         channel: Channel,
         token: Option<String>,
         id_gen: Arc<LeaseIdGenerator>,
@@ -94,7 +104,7 @@ impl LeaseClient {
             self.token.clone(),
         );
         let cmd = command_from_request_wrapper(request);
-        let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
+        let (cmd_res, _sync_res) = self.curp_client.propose(&cmd, true).await??;
         Ok(cmd_res.into_inner().into())
     }
 
@@ -269,7 +279,7 @@ impl LeaseClient {
             self.token.clone(),
         );
         let cmd = command_from_request_wrapper(request);
-        let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
+        let (cmd_res, _sync_res) = self.curp_client.propose(&cmd, true).await??;
         Ok(cmd_res.into_inner().into())
     }
 }

@@ -1,19 +1,18 @@
-use std::sync::Arc;
+use std::{fmt::Debug, sync::Arc};
 
-use curp::client::Client as CurpClient;
 use pbkdf2::{
     password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
     Pbkdf2,
 };
 use tonic::transport::Channel;
 use xlineapi::{
-    command::{command_from_request_wrapper, Command},
-    AuthDisableResponse, AuthEnableResponse, AuthRoleAddResponse, AuthRoleDeleteResponse,
-    AuthRoleGetResponse, AuthRoleGrantPermissionResponse, AuthRoleListResponse,
-    AuthRoleRevokePermissionResponse, AuthStatusResponse, AuthUserAddResponse,
-    AuthUserChangePasswordResponse, AuthUserDeleteResponse, AuthUserGetResponse,
-    AuthUserGrantRoleResponse, AuthUserListResponse, AuthUserRevokeRoleResponse,
-    AuthenticateResponse, RequestWithToken, RequestWrapper, ResponseWrapper,
+    command::command_from_request_wrapper, AuthDisableResponse, AuthEnableResponse,
+    AuthRoleAddResponse, AuthRoleDeleteResponse, AuthRoleGetResponse,
+    AuthRoleGrantPermissionResponse, AuthRoleListResponse, AuthRoleRevokePermissionResponse,
+    AuthStatusResponse, AuthUserAddResponse, AuthUserChangePasswordResponse,
+    AuthUserDeleteResponse, AuthUserGetResponse, AuthUserGrantRoleResponse, AuthUserListResponse,
+    AuthUserRevokeRoleResponse, AuthenticateResponse, RequestWithToken, RequestWrapper,
+    ResponseWrapper,
 };
 
 use crate::{
@@ -24,14 +23,14 @@ use crate::{
         AuthUserChangePasswordRequest, AuthUserDeleteRequest, AuthUserGetRequest,
         AuthUserGrantRoleRequest, AuthUserRevokeRoleRequest, AuthenticateRequest,
     },
-    AuthService,
+    AuthService, CurpClient,
 };
 
 /// Client for Auth operations.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct AuthClient {
     /// The client running the CURP protocol, communicate with all servers.
-    curp_client: Arc<CurpClient<Command>>,
+    curp_client: Arc<CurpClient>,
     /// The auth RPC client, only communicate with one server at a time
     #[cfg(not(madsim))]
     auth_client: xlineapi::AuthClient<AuthService<Channel>>,
@@ -42,14 +41,21 @@ pub struct AuthClient {
     token: Option<String>,
 }
 
+impl Debug for AuthClient {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthClient")
+            .field("auth_client", &self.auth_client)
+            .field("auth_client", &self.auth_client)
+            .field("token", &self.token)
+            .finish()
+    }
+}
+
 impl AuthClient {
     /// Creates a new `AuthClient`
     #[inline]
-    pub fn new(
-        curp_client: Arc<CurpClient<Command>>,
-        channel: Channel,
-        token: Option<String>,
-    ) -> Self {
+    pub fn new(curp_client: Arc<CurpClient>, channel: Channel, token: Option<String>) -> Self {
         Self {
             curp_client,
             auth_client: xlineapi::AuthClient::new(AuthService::new(
@@ -719,10 +725,10 @@ impl AuthClient {
         let cmd = command_from_request_wrapper(request);
 
         let res_wrapper = if use_fast_path {
-            let (cmd_res, _sync_error) = self.curp_client.propose(cmd, true).await?;
+            let (cmd_res, _sync_error) = self.curp_client.propose(&cmd, true).await??;
             cmd_res.into_inner()
         } else {
-            let (cmd_res, Some(sync_res)) = self.curp_client.propose(cmd, false).await? else {
+            let (cmd_res, Some(sync_res)) = self.curp_client.propose(&cmd, false).await?? else {
                 unreachable!("sync_res is always Some when use_fast_path is false");
             };
             let mut res_wrapper = cmd_res.into_inner();

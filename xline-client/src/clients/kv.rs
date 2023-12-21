@@ -1,6 +1,6 @@
+use std::fmt::Debug;
 use std::sync::Arc;
 
-use curp::client::Client as CurpClient;
 use tonic::transport::Channel;
 use xlineapi::command::{command_from_request_wrapper, Command};
 use xlineapi::{
@@ -12,13 +12,14 @@ use crate::AuthService;
 use crate::{
     error::Result,
     types::kv::{CompactionRequest, DeleteRangeRequest, PutRequest, RangeRequest, TxnRequest},
+    CurpClient,
 };
 
 /// Client for KV operations.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct KvClient {
     /// The client running the CURP protocol, communicate with all servers.
-    curp_client: Arc<CurpClient<Command>>,
+    curp_client: Arc<CurpClient>,
     /// The lease RPC client, only communicate with one server at a time
     #[cfg(not(madsim))]
     kv_client: xlineapi::KvClient<AuthService<Channel>>,
@@ -29,11 +30,22 @@ pub struct KvClient {
     token: Option<String>,
 }
 
+impl Debug for KvClient {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KvClient")
+            .field("kv_client", &self.kv_client)
+            .field("kv_client", &self.kv_client)
+            .field("token", &self.token)
+            .finish()
+    }
+}
+
 impl KvClient {
     /// New `KvClient`
     #[inline]
     pub(crate) fn new(
-        curp_client: Arc<CurpClient<Command>>,
+        curp_client: Arc<CurpClient>,
         channel: Channel,
         token: Option<String>,
     ) -> Self {
@@ -79,7 +91,7 @@ impl KvClient {
             self.token.clone(),
         );
         let cmd = command_from_request_wrapper(request);
-        let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
+        let (cmd_res, _sync_res) = self.curp_client.propose(&cmd, true).await??;
         Ok(cmd_res.into_inner().into())
     }
 
@@ -123,7 +135,7 @@ impl KvClient {
             self.token.clone(),
         );
         let cmd = command_from_request_wrapper(request);
-        let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
+        let (cmd_res, _sync_res) = self.curp_client.propose(&cmd, true).await??;
         Ok(cmd_res.into_inner().into())
     }
 
@@ -160,7 +172,7 @@ impl KvClient {
             self.token.clone(),
         );
         let cmd = command_from_request_wrapper(request);
-        let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
+        let (cmd_res, _sync_res) = self.curp_client.propose(&cmd, true).await??;
         Ok(cmd_res.into_inner().into())
     }
 
@@ -208,7 +220,7 @@ impl KvClient {
             self.token.clone(),
         );
         let cmd = command_from_request_wrapper(request);
-        let (cmd_res, Some(sync_res)) = self.curp_client.propose(cmd, false).await? else {
+        let (cmd_res, Some(sync_res)) = self.curp_client.propose(&cmd, false).await?? else {
             unreachable!("sync_res is always Some when use_fast_path is false");
         };
         let mut res_wrapper = cmd_res.into_inner();
@@ -267,7 +279,7 @@ impl KvClient {
             self.token.clone(),
         );
         let cmd = Command::new(vec![], request);
-        let (cmd_res, _sync_res) = self.curp_client.propose(cmd, true).await?;
+        let (cmd_res, _sync_res) = self.curp_client.propose(&cmd, true).await??;
         Ok(cmd_res.into_inner().into())
     }
 }

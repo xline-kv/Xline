@@ -11,7 +11,7 @@ mod retry;
 #[cfg(test)]
 mod tests;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
 use async_trait::async_trait;
 use curp_external_api::{cmd::Command, role_change::RoleChange};
@@ -270,7 +270,10 @@ impl ClientBuilder {
     #[inline]
     pub async fn build<C: Command>(
         &self,
-    ) -> Result<impl ClientApi<Error = tonic::Status, Cmd = C>, tonic::transport::Error> {
+    ) -> Result<
+        impl ClientApi<Error = tonic::Status, Cmd = C> + Send + Sync + 'static,
+        tonic::transport::Error,
+    > {
         let unary = self.init_unary_builder().build::<C>().await?;
         let client = Retry::new(unary, self.init_retry_config());
         Ok(client)
