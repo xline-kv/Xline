@@ -103,6 +103,7 @@ impl ClusterState {
         &self,
         cluster_version: u64,
         member_addrs: HashMap<ServerId, Vec<String>>,
+        leader_update: impl Fn(),
     ) -> Result<(), tonic::transport::Error> {
         // Check and update the cluster version in client side
         // FIXME: is these ordering options correct?
@@ -149,6 +150,9 @@ impl ClusterState {
                 .clone();
             conn.update_addrs(addrs).await?;
         }
+        // Update the leader state here to ensure that each update of the cluster
+        // state and the leader state are atomic.
+        leader_update();
         Ok(())
     }
 }
@@ -224,10 +228,10 @@ impl<C: Command> Unary<C> {
             .iter()
             .map(|connect| Arc::clone(&connect))
             .collect_vec();
-        // quorum calculated here to keep quorum = stream.len(), otherwise Non-atomic read operation on the `connects` may result in inconsistency.
-        let quorum = connects.len();
+        // size calculated here to keep size = stream.len(), otherwise Non-atomic read operation on the `connects` may result in inconsistency.
+        let size = connects.len();
         (
-            quorum,
+            size,
             connects.into_iter().map(f).collect::<FuturesUnordered<F>>(),
         )
     }
@@ -236,8 +240,8 @@ impl<C: Command> Unary<C> {
     /// NOTICE:
     /// The leader might be outdate if the local `leader_state` is stale.
     /// `for_leader` should never be invoked in [`ClientApi::fetch_cluster`]
-    /// `for_leader` might call `fetch_leader_id`, `fetch_leader_id` might call
-    /// `fetch_cluster`, finally result in stack over flow.
+    /// `for_leader` might call `fetch_leader_id`, `fetch_cluster`, finally
+    /// result in stack overflow.
     async fn for_leader<R, F: Future<Output = R>>(
         &self,
         f: impl FnOnce(Arc<dyn ConnectApi>) -> F,
@@ -268,11 +272,11 @@ impl<C: Command> Unary<C> {
         let req = ProposeRequest::new(propose_id, cmd, self.cluster_version());
         let timeout = self.config.propose_timeout;
 
-        let (quorum, mut responses) = self.for_each_server(|conn| {
+        let (size, mut responses) = self.for_each_server(|conn| {
             let req_c = req.clone();
             async move { (conn.id(), conn.propose(req_c, timeout).await) }
         });
-        let super_quorum = super_quorum(quorum);
+        let super_quorum = super_quorum(size);
 
         let mut err = None;
         let mut execute_result: Option<C::ER> = None;
@@ -523,7 +527,7 @@ impl<C: Command> ClientApi for Unary<C> {
             }
         }
         // then fetch the whole cluster
-        let (quorum, mut responses) = self.for_each_server(|conn| async move {
+        let (size, mut responses) = self.for_each_server(|conn| async move {
             (
                 conn.id(),
                 conn.fetch_cluster(FetchClusterRequest { linearizable }, timeout)
@@ -531,7 +535,7 @@ impl<C: Command> ClientApi for Unary<C> {
                     .map(Response::into_inner),
             )
         });
-        let majority_quorum = majority_quorum(quorum);
+        let quorum = quorum(size);
 
         let mut max_term = 0;
         let mut res = None;
@@ -569,7 +573,7 @@ impl<C: Command> ClientApi for Unary<C> {
                 Ordering::Greater => {}
             }
 
-            if ok_cnt >= majority_quorum {
+            if ok_cnt >= quorum {
                 break;
             }
         }
@@ -577,17 +581,18 @@ impl<C: Command> ClientApi for Unary<C> {
             debug!("fetch cluster succeeded, result: {res:?}");
             if let Err(e) = self
                 .cluster_state
-                .check_and_update(res.cluster_version, res.clone().into_members_addrs())
+                .check_and_update(
+                    res.cluster_version,
+                    res.clone().into_members_addrs(),
+                    || {
+                        self.leader_state
+                            .write()
+                            .check_and_update(res.leader_id, res.term);
+                    },
+                )
                 .await
             {
                 warn!("update to a new cluster state failed, error {e}");
-            } else {
-                // FIXME: The updates of leader and cluster states are not atomic,
-                // which may result in the leader id not existing in the members
-                // for a while.
-                self.leader_state
-                    .write()
-                    .check_and_update(res.leader_id, res.term);
             }
             return Ok(res);
         }
@@ -607,14 +612,14 @@ impl<C: Command> LeaderStateUpdate for Unary<C> {
 }
 
 /// Calculate the super quorum
-fn super_quorum(quorum: usize) -> usize {
-    let fault_tolerance = quorum.wrapping_div(2);
+fn super_quorum(size: usize) -> usize {
+    let fault_tolerance = size.wrapping_div(2);
     fault_tolerance
         .wrapping_add(fault_tolerance.wrapping_add(1).wrapping_div(2))
         .wrapping_add(1)
 }
 
-/// Calculate the majority quorum
-fn majority_quorum(quorum: usize) -> usize {
-    quorum.wrapping_div(2).wrapping_add(1)
+/// Calculate the quorum
+fn quorum(size: usize) -> usize {
+    size.wrapping_div(2).wrapping_add(1)
 }
