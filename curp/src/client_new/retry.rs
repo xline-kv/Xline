@@ -202,7 +202,7 @@ where
         cmd: &Self::Cmd,
         use_fast_path: bool,
     ) -> Result<ProposeResponse<Self::Cmd>, tonic::Status> {
-        self.retry::<_, _>(|client| async move { client.propose(cmd, use_fast_path).await })
+        self.retry::<_, _>(|client| client.propose(cmd, use_fast_path))
             .await
     }
 
@@ -220,8 +220,7 @@ where
 
     /// Send propose to shutdown cluster
     async fn propose_shutdown(&self) -> Result<(), tonic::Status> {
-        self.retry::<_, _>(|client| async move { client.propose_shutdown().await })
-            .await
+        self.retry::<_, _>(ClientApi::propose_shutdown).await
     }
 
     /// Send propose to publish a node id and name
@@ -239,7 +238,7 @@ where
 
     /// Send fetch read state from leader
     async fn fetch_read_state(&self, cmd: &Self::Cmd) -> Result<ReadState, tonic::Status> {
-        self.retry::<_, _>(|client| async move { client.fetch_read_state(cmd).await })
+        self.retry::<_, _>(|client| client.fetch_read_state(cmd))
             .await
     }
 
@@ -250,7 +249,7 @@ where
         &self,
         linearizable: bool,
     ) -> Result<FetchClusterResponse, tonic::Status> {
-        self.retry::<_, _>(|client| async move { client.fetch_cluster(linearizable).await })
+        self.retry::<_, _>(|client| client.fetch_cluster(linearizable))
             .await
     }
 }
