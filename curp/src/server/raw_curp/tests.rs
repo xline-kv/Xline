@@ -38,6 +38,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         self.log.read().commit_index
     }
 
+    #[allow(clippy::mem_forget)] // only used in tests
     pub(crate) fn new_test<Tx: CEEventTxApi<C>>(n: u64, exe_tx: Tx, role_change: RC) -> Self {
         let all_members: HashMap<_, _> = (0..n)
             .map(|i| (format!("S{i}"), vec![format!("S{i}")]))
@@ -69,6 +70,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             .build()
             .unwrap();
         let (shutdown_trigger, _) = shutdown::channel();
+        let (as_tx, as_rx) = flume::unbounded();
+        std::mem::forget(as_rx);
 
         Self::new(
             cluster_info,
@@ -83,6 +86,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             role_change,
             shutdown_trigger,
             connects,
+            as_tx,
         )
     }
 
@@ -125,7 +129,7 @@ fn leader_handle_propose_will_succeed() {
         RawCurp::new_test(3, exe_tx, mock_role_change())
     };
     let cmd = Arc::new(TestCommand::default());
-    assert!(curp.handle_propose(ProposeId(0, 0), cmd).unwrap());
+    assert!(curp.handle_propose(ProposeId(0, 0), cmd).unwrap().is_some());
 }
 
 #[traced_test]
@@ -138,7 +142,10 @@ fn leader_handle_propose_will_reject_conflicted() {
     };
 
     let cmd1 = Arc::new(TestCommand::new_put(vec![1], 0));
-    assert!(curp.handle_propose(ProposeId(0, 0), cmd1).unwrap());
+    assert!(curp
+        .handle_propose(ProposeId(0, 0), cmd1)
+        .unwrap()
+        .is_some());
 
     let cmd2 = Arc::new(TestCommand::new_put(vec![1, 2], 1));
     let res = curp.handle_propose(ProposeId(0, 1), cmd2);
@@ -161,7 +168,8 @@ fn leader_handle_propose_will_reject_duplicated() {
     let cmd = Arc::new(TestCommand::default());
     assert!(curp
         .handle_propose(ProposeId(0, 0), Arc::clone(&cmd))
-        .unwrap());
+        .unwrap()
+        .is_some());
 
     let res = curp.handle_propose(ProposeId(0, 0), cmd);
     assert!(matches!(res, Err(CurpError::Duplicated(_))));
@@ -179,7 +187,7 @@ fn follower_handle_propose_will_succeed() {
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
     let cmd = Arc::new(TestCommand::new_get(vec![1]));
-    assert!(!curp.handle_propose(ProposeId(0, 0), cmd).unwrap());
+    assert!(curp.handle_propose(ProposeId(0, 0), cmd).unwrap().is_none());
 }
 
 #[traced_test]
@@ -195,7 +203,10 @@ fn follower_handle_propose_will_reject_conflicted() {
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
     let cmd1 = Arc::new(TestCommand::new_get(vec![1]));
-    assert!(!curp.handle_propose(ProposeId(0, 0), cmd1).unwrap());
+    assert!(curp
+        .handle_propose(ProposeId(0, 0), cmd1)
+        .unwrap()
+        .is_none());
 
     let cmd2 = Arc::new(TestCommand::new_get(vec![1]));
     let res = curp.handle_propose(ProposeId(0, 1), cmd2);

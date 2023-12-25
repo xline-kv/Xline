@@ -296,6 +296,11 @@ impl CommandExecutor<TestCommand> for TestCE {
         Ok(result)
     }
 
+    // TODO: implement this
+    fn pre_after_sync(&self, _cmd: &TestCommand) {
+        unimplemented!()
+    }
+
     async fn after_sync(
         &self,
         cmd: &TestCommand,
@@ -343,6 +348,15 @@ impl CommandExecutor<TestCommand> for TestCE {
             self.server_name, cmd.cmd_type, cmd
         );
         Ok(index.into())
+    }
+
+    // TODO: implement this
+    async fn after_sync_new(
+        &self,
+        _cmd: &TestCommand,
+        _index: LogIndex,
+    ) -> Result<<TestCommand as Command>::ASR, <TestCommand as Command>::Error> {
+        unimplemented!()
     }
 
     fn set_last_applied(&self, index: LogIndex) -> Result<(), <TestCommand as Command>::Error> {

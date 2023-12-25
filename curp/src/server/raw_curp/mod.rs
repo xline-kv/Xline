@@ -41,7 +41,7 @@ use self::{
     log::Log,
     state::{CandidateState, LeaderState, State},
 };
-use super::cmd_worker::CEEventTxApi;
+use super::{cmd_worker::CEEventTxApi, conflict_checker::ConflictChecker, curp_node::TaskType};
 use crate::{
     cmd::Command,
     log_entry::{EntryData, LogEntry},
@@ -53,6 +53,7 @@ use crate::{
     },
     server::{
         cmd_board::CmdBoardRef,
+        conflict_checker::VertexType,
         raw_curp::{log::FallbackContext, state::VoteResult},
         spec_pool::SpecPoolRef,
     },
@@ -183,6 +184,10 @@ struct Context<C: Command, RC: RoleChange> {
     connects: DashMap<ServerId, InnerConnectApiWrapper>,
     /// last conf change idx
     last_conf_change_idx: AtomicU64,
+    /// The conflict checker
+    conflict_checker: ConflictChecker<C>,
+    /// Tx to send entries to after_sync
+    as_tx: flume::Sender<TaskType<C>>,
 }
 
 impl<C: Command, RC: RoleChange> Debug for Context<C, RC> {
@@ -233,12 +238,12 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 // Curp handlers
 impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Handle `propose` request
-    /// Return `true` if the leader speculatively executed the command
+    /// Return `Some(entry)` if the leader speculatively executed the command
     pub(super) fn handle_propose(
         &self,
         propose_id: ProposeId,
         cmd: Arc<C>,
-    ) -> Result<bool, CurpError> {
+    ) -> Result<Option<Arc<LogEntry<C>>>, CurpError> {
         debug!("{} gets proposal for cmd({})", self.id(), propose_id);
         let mut conflict = self.insert_sp(propose_id, Arc::clone(&cmd));
         let st_r = self.st.read();
@@ -247,7 +252,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             if conflict {
                 return Err(CurpError::key_conflict());
             }
-            return Ok(false);
+            return Ok(None);
         }
 
         if !self
@@ -261,16 +266,17 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         // leader also needs to check if the cmd conflicts un-synced commands
         conflict |= self.insert_ucp(propose_id, Arc::clone(&cmd));
         let mut log_w = self.log.write();
+
         let entry = log_w.push(st_r.term, propose_id, cmd)?;
         debug!("{} gets new log[{}]", self.id(), entry.index);
 
-        self.entry_process(&mut log_w, entry, conflict);
+        self.entry_process(&mut log_w, Arc::clone(&entry), conflict);
 
         if conflict {
             return Err(CurpError::key_conflict());
         }
 
-        Ok(true)
+        Ok(Some(entry))
     }
 
     /// Handle `shutdown` request
@@ -416,7 +422,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let prev_commit_index = log_w.commit_index;
         log_w.commit_index = min(leader_commit, log_w.last_log_index());
         if prev_commit_index < log_w.commit_index {
-            self.apply(&mut *log_w);
+            self.apply(&mut *log_w, |_entry| {});
         }
         Ok(term)
     }
@@ -467,7 +473,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             if last_sent_index > log_w.commit_index {
                 log_w.commit_to(last_sent_index);
                 debug!("{} updates commit index to {last_sent_index}", self.id());
-                self.apply(&mut *log_w);
+                self.apply(&mut *log_w, |_entry| {});
             }
         }
 
@@ -786,6 +792,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         role_change: RC,
         shutdown_trigger: shutdown::Trigger,
         connects: DashMap<ServerId, InnerConnectApiWrapper>,
+        as_tx: flume::Sender<TaskType<C>>,
     ) -> Self {
         let (change_tx, change_rx) = flume::bounded(CHANGE_CHANNEL_SIZE);
         let raw_curp = Self {
@@ -816,6 +823,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 change_rx,
                 connects,
                 last_conf_change_idx: AtomicU64::new(0),
+                conflict_checker: ConflictChecker::new(),
+                as_tx,
             },
             shutdown_trigger,
         };
@@ -846,6 +855,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         role_change: RC,
         shutdown_trigger: shutdown::Trigger,
         connects: DashMap<ServerId, InnerConnectApiWrapper>,
+        as_tx: flume::Sender<TaskType<C>>,
     ) -> Self {
         let raw_curp = Self::new(
             cluster_info,
@@ -860,6 +870,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             role_change,
             shutdown_trigger,
             connects,
+            as_tx,
         );
 
         if let Some((term, server_id)) = voted_for {
@@ -932,6 +943,52 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                     last_included_term: entry.term,
                 },
             )))
+        } else {
+            let (prev_log_index, prev_log_term) = log_r.get_prev_entry_info(next_index);
+            let entries = log_r.get_from(next_index);
+            let ae = AppendEntries {
+                term,
+                leader_id: self.id(),
+                prev_log_index,
+                prev_log_term,
+                leader_commit: log_r.commit_index,
+                entries,
+            };
+            Some(SyncAction::AppendEntries(ae))
+        }
+    }
+
+    #[allow(unused)]
+    /// Get `append_entries` request for `follower_id` that contains the latest log entries
+    pub(super) fn sync_new(&self, follower_id: ServerId) -> Option<SyncAction<C>> {
+        let term = {
+            let lst_r = self.st.read();
+            if lst_r.role != Role::Leader {
+                return None;
+            }
+            lst_r.term
+        };
+
+        let Some(next_index) = self.lst.get_next_index(follower_id) else {
+            warn!("follower {} is not found, it maybe has been removed", follower_id);
+            return None;
+        };
+        let log_r = self.log.read();
+        if next_index <= log_r.base_index {
+            // the log has already been compacted
+            let entry = log_r.get(log_r.last_exe).unwrap_or_else(|| {
+                unreachable!(
+                    "log entry {} should not have been compacted yet, needed for snapshot",
+                    log_r.last_as
+                )
+            });
+            let meta = SnapshotMeta {
+                last_included_index: entry.index,
+                last_included_term: entry.term,
+            };
+            let (tx, rx) = oneshot::channel();
+            self.ctx.as_tx.send(TaskType::Snapshot(meta, tx));
+            Some(SyncAction::Snapshot(rx))
         } else {
             let (prev_log_index, prev_log_term) = log_r.get_prev_entry_info(next_index);
             let entries = log_r.get_from(next_index);
@@ -1450,8 +1507,19 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         }
     }
 
-    /// Apply new logs
-    fn apply(&self, log: &mut Log<C>) {
+    /// Applies new logs on follower
+    #[allow(unused)] // TODO: merge this with apply
+    fn apply_new(&self, log: &mut Log<C>) {
+        self.apply(log, |entry| {
+            let task = TaskType::Entry(Arc::clone(entry));
+            if let Err(e) = self.ctx.as_tx.send(task) {
+                error!("send after sync error: {e}");
+            }
+        });
+    }
+
+    /// Applies new logs
+    fn apply(&self, log: &mut Log<C>, entry_process_fn: impl Fn(&Arc<LogEntry<C>>)) {
         for i in (log.last_as + 1)..=log.commit_index {
             let entry = log.get(i).unwrap_or_else(|| {
                 unreachable!(
@@ -1459,6 +1527,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                     log.last_log_index()
                 )
             });
+            entry_process_fn(entry);
+            // TODO: remove this in the following refactor
             self.ctx.cmd_tx.send_after_sync(Arc::clone(entry));
             log.last_as = i;
             if log.last_exe < log.last_as {
@@ -1567,6 +1637,10 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let index = entry.index;
         if !conflict {
             log_w.last_exe = index;
+            let _ignore = self
+                .ctx
+                .conflict_checker
+                .register(VertexType::Entry(Arc::clone(&entry)));
             self.ctx.cmd_tx.send_sp_exe(entry);
         }
         self.ctx.sync_events.iter().for_each(|e| {
@@ -1576,14 +1650,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 }
             }
         });
-
-        // check if commit_index needs to be updated
-        if self.can_update_commit_index_to(log_w, index, self.term()) && index > log_w.commit_index
-        {
-            log_w.commit_to(index);
-            debug!("{} updates commit index to {index}", self.id());
-            self.apply(&mut *log_w);
-        }
     }
 
     /// Insert entry to spec pool
