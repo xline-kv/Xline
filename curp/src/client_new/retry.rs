@@ -49,6 +49,8 @@ struct Backoff {
     config: RetryConfig,
     /// Current delay
     cur_delay: Duration,
+    /// Total RPC count
+    count: usize,
 }
 
 impl RetryConfig {
@@ -79,6 +81,7 @@ impl RetryConfig {
         Backoff {
             config: self.clone(),
             cur_delay: self.delay,
+            count: self.count,
         }
     }
 }
@@ -86,10 +89,10 @@ impl RetryConfig {
 impl Backoff {
     /// Get the next delay duration, None means the end.
     fn next_delay(&mut self) -> Option<Duration> {
-        if self.config.count == 0 {
+        if self.count == 0 {
             return None;
         }
-        self.config.count.sub_assign(1);
+        self.count.sub_assign(1);
         let mut cur = self.cur_delay;
         if let BackoffConfig::Exponential { max_delay } = self.config.backoff {
             self.cur_delay = self
