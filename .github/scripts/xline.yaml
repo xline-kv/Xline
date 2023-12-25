@@ -7,7 +7,7 @@ metadata:
 spec:
   containers:
     - name: xline
-      image: datenlord/xline:latest
+      image: ghcr.io/xline-kv/xline:v0.6.0
       imagePullPolicy: IfNotPresent
       env:
       - name: RUST_LOG
