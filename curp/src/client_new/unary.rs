@@ -30,6 +30,7 @@ use crate::{
 };
 
 use super::{ClientApi, LeaderStateUpdate, ProposeResponse};
+
 /// Client state
 struct State {
     /// Leader id. At the beginning, we may not know who the leader is.
@@ -212,8 +213,8 @@ impl<C: Command> Unary<C> {
     /// Get a handle `f` and return the future to apply `f` on the leader.
     /// NOTICE:
     /// The leader might be outdate if the local `leader_state` is stale.
-    /// `for_leader` should never be invoked in [`ClientApi::fetch_cluster`]
-    /// `for_leader` might call `fetch_leader_id`, `fetch_cluster`, finally
+    /// `map_leader` should never be invoked in [`ClientApi::fetch_cluster`]
+    /// `map_leader` might call `fetch_leader_id`, `fetch_cluster`, finally
     /// result in stack overflow.
     async fn map_leader<R, F: Future<Output = R>>(
         &self,
