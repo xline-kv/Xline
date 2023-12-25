@@ -170,6 +170,30 @@ pub(super) struct Unary<C: Command> {
 }
 
 impl<C: Command> Unary<C> {
+    /// Used in tests, all connects are mocked
+    #[cfg(test)]
+    pub(super) fn new(
+        connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
+        local_server_id: Option<ServerId>,
+        leader_id: Option<ServerId>,
+        term: Option<u64>,
+    ) -> Self {
+        Self {
+            state: RwLock::new(State {
+                leader: leader_id,
+                term: term.unwrap_or_default(),
+                cluster_version: 0,
+                connects,
+            }),
+            local_server_id,
+            config: UnaryConfig {
+                propose_timeout: Duration::from_secs(0),
+                wait_synced_timeout: Duration::from_secs(0),
+            },
+            phantom: PhantomData,
+        }
+    }
+
     /// Update leader
     fn check_and_update_leader(state: &mut State, leader_id: Option<ServerId>, term: u64) -> bool {
         match state.term.cmp(&term) {
@@ -276,7 +300,8 @@ impl<C: Command> Unary<C> {
             .await
             .connects
             .values()
-            .map(|connect| f(Arc::clone(connect)))
+            .map(Arc::clone)
+            .map(|connect| f(connect))
             .collect::<FuturesUnordered<F>>();
         // size calculated here to keep size = stream.len(), otherwise Non-atomic read operation on the `connects` may result in inconsistency.
         let size = connects.len();
@@ -293,8 +318,7 @@ impl<C: Command> Unary<C> {
         &self,
         f: impl FnOnce(Arc<dyn ConnectApi>) -> F,
     ) -> Result<R, CurpError> {
-        let state_r = self.state.read().await;
-        let cached_leader = state_r.leader;
+        let cached_leader = self.state.read().await.leader;
         let leader_id = match cached_leader {
             Some(id) => id,
             None => <Unary<C> as ClientApi>::fetch_leader_id(self, false).await?,
@@ -302,11 +326,15 @@ impl<C: Command> Unary<C> {
         // If the leader id cannot be found in connects, it indicates that there is
         // an inconsistency between the client's local leader state and the cluster
         // state, then mock a `WrongClusterVersion` return to the outside.
-        let connect = state_r
+        let connect = self
+            .state
+            .read()
+            .await
             .connects
             .get(&leader_id)
+            .map(Arc::clone)
             .ok_or_else(CurpError::wrong_cluster_version)?;
-        let res = f(Arc::clone(connect)).await;
+        let res = f(connect).await;
         Ok(res)
     }
 

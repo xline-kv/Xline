@@ -7,7 +7,6 @@ use std::{
 
 use curp_external_api::LogIndex;
 use curp_test_utils::test_cmd::{LogIndexResult, TestCommand, TestCommandResult};
-use dashmap::DashMap;
 use tokio::time::Instant;
 use tracing_test::traced_test;
 
@@ -29,7 +28,7 @@ use crate::{
 fn init_mocked_connects(
     size: usize,
     f: impl Fn(usize, &mut MockConnectApi),
-) -> DashMap<ServerId, Arc<dyn ConnectApi>> {
+) -> HashMap<ServerId, Arc<dyn ConnectApi>> {
     std::iter::repeat_with(|| MockConnectApi::new())
         .take(size)
         .enumerate()
@@ -62,8 +61,8 @@ async fn test_unary_fetch_clusters_serializable() {
             }))
         });
     });
-    let unary = Unary::<TestCommand>::new(connects, None, None);
-    assert!(unary.local_connect().is_none());
+    let unary = Unary::<TestCommand>::new(connects, None, None, None);
+    assert!(unary.local_connect().await.is_none());
     let res = unary.fetch_cluster(false).await.unwrap();
     assert_eq!(
         res.into_members_addrs(),
@@ -96,8 +95,8 @@ async fn test_unary_fetch_clusters_serializable_local_first() {
                 }))
             });
     });
-    let unary = Unary::<TestCommand>::new(connects, Some(1), None);
-    assert!(unary.local_connect().is_some());
+    let unary = Unary::<TestCommand>::new(connects, Some(1), None, None);
+    assert!(unary.local_connect().await.is_some());
     let res = unary.fetch_cluster(false).await.unwrap();
     assert!(res.members.is_empty());
 }
@@ -154,8 +153,8 @@ async fn test_unary_fetch_clusters_linearizable() {
                 Ok(tonic::Response::new(resp))
             });
     });
-    let unary = Unary::<TestCommand>::new(connects, None, None);
-    assert!(unary.local_connect().is_none());
+    let unary = Unary::<TestCommand>::new(connects, None, None, None);
+    assert!(unary.local_connect().await.is_none());
     let res = unary.fetch_cluster(true).await.unwrap();
     assert_eq!(
         res.into_members_addrs(),
@@ -228,8 +227,8 @@ async fn test_unary_fetch_clusters_linearizable_failed() {
                 Ok(tonic::Response::new(resp))
             });
     });
-    let unary = Unary::<TestCommand>::new(connects, None, None);
-    assert!(unary.local_connect().is_none());
+    let unary = Unary::<TestCommand>::new(connects, None, None, None);
+    assert!(unary.local_connect().await.is_none());
     let res = unary.fetch_cluster(true).await.unwrap_err();
     // only server(0, 1)'s responses are valid, less than majority quorum(3), got a mocked RpcTransport to retry
     assert_eq!(res, CurpError::RpcTransport(()));
@@ -249,7 +248,7 @@ async fn test_unary_fast_round_works() {
             Ok(tonic::Response::new(resp))
         });
     });
-    let unary = Unary::<TestCommand>::new(connects, None, None);
+    let unary = Unary::<TestCommand>::new(connects, None, None, None);
     let res = unary
         .fast_round(ProposeId(0, 0), &TestCommand::default())
         .await
@@ -283,7 +282,7 @@ async fn test_unary_fast_round_return_early_err() {
                 Err(err)
             });
         });
-        let unary = Unary::<TestCommand>::new(connects, None, None);
+        let unary = Unary::<TestCommand>::new(connects, None, None, None);
         let err = unary
             .fast_round(ProposeId(0, 0), &TestCommand::default())
             .await
@@ -307,7 +306,7 @@ async fn test_unary_fast_round_less_quorum() {
             Ok(tonic::Response::new(resp))
         });
     });
-    let unary = Unary::<TestCommand>::new(connects, None, None);
+    let unary = Unary::<TestCommand>::new(connects, None, None, None);
     let err = unary
         .fast_round(ProposeId(0, 0), &TestCommand::default())
         .await
@@ -342,7 +341,7 @@ async fn test_unary_fast_round_with_two_leader() {
         });
     });
     // old local leader(0), term 1
-    let unary = Unary::<TestCommand>::new(connects, None, Some((0, 1)));
+    let unary = Unary::<TestCommand>::new(connects, None, Some(0), Some(1));
     let res = unary
         .fast_round(ProposeId(0, 0), &TestCommand::default())
         .await
@@ -389,7 +388,7 @@ async fn test_unary_slow_round_fetch_leader_first() {
                 )))
             });
     });
-    let unary = Unary::<TestCommand>::new(connects, None, None);
+    let unary = Unary::<TestCommand>::new(connects, None, None, None);
     let res = unary.slow_round(ProposeId(0, 0)).await.unwrap().unwrap();
     assert_eq!(LogIndex::from(res.0), 1);
     assert_eq!(res.1, TestCommandResult::default());
@@ -420,7 +419,7 @@ async fn test_unary_propose_fast_path_works() {
                 )))
             });
     });
-    let unary = Unary::<TestCommand>::new(connects, None, Some((0, 1)));
+    let unary = Unary::<TestCommand>::new(connects, None, Some(0), Some(1));
     let res = unary
         .propose(&TestCommand::default(), true)
         .await
@@ -454,7 +453,7 @@ async fn test_unary_propose_slow_path_works() {
                 )))
             });
     });
-    let unary = Unary::<TestCommand>::new(connects, None, Some((0, 1)));
+    let unary = Unary::<TestCommand>::new(connects, None, Some(0), Some(1));
     let start_at = Instant::now();
     let res = unary
         .propose(&TestCommand::default(), false)
@@ -501,7 +500,7 @@ async fn test_unary_propose_fast_path_fallback_slow_path() {
                 )))
             });
     });
-    let unary = Unary::<TestCommand>::new(connects, None, Some((0, 1)));
+    let unary = Unary::<TestCommand>::new(connects, None, Some(0), Some(1));
     let start_at = Instant::now();
     let res = unary
         .propose(&TestCommand::default(), true)
@@ -553,7 +552,7 @@ async fn test_unary_propose_return_early_err() {
                     Err(err)
                 });
         });
-        let unary = Unary::<TestCommand>::new(connects, None, Some((0, 1)));
+        let unary = Unary::<TestCommand>::new(connects, None, Some(0), Some(1));
         let err = unary
             .propose(&TestCommand::default(), true)
             .await
@@ -596,7 +595,7 @@ async fn test_retry_propose_return_no_retry_error() {
                     Err(err)
                 });
         });
-        let unary = Unary::<TestCommand>::new(connects, None, Some((0, 1)));
+        let unary = Unary::<TestCommand>::new(connects, None, Some(0), Some(1));
         let retry = Retry::new(
             unary,
             RetryConfig::new_fixed(Duration::from_millis(100), 5, false),
@@ -631,7 +630,7 @@ async fn test_retry_propose_return_retry_error() {
                     .returning(move |_req, _timeout| Err(err.clone()));
             }
         });
-        let unary = Unary::<TestCommand>::new(connects, None, Some((0, 1)));
+        let unary = Unary::<TestCommand>::new(connects, None, Some(0), Some(1));
         let retry = Retry::new(
             unary,
             RetryConfig::new_fixed(Duration::from_millis(10), 5, false),
