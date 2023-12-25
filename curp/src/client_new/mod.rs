@@ -35,7 +35,7 @@ pub trait ClientApi {
     type Cmd: Command;
 
     /// Get the local connection when the client is on the server node.
-    fn local_connect(&self) -> Option<Arc<dyn ConnectApi>>;
+    async fn local_connect(&self) -> Option<Arc<dyn ConnectApi>>;
 
     /// Send propose to the whole cluster, `use_fast_path` set to `false` to fallback into ordered
     /// requests (event the requests are commutative).
@@ -88,9 +88,10 @@ pub trait ClientApi {
 }
 
 /// Update leader state
+#[async_trait]
 trait LeaderStateUpdate {
     /// update
-    fn update_leader(&self, leader_id: Option<ServerId>, term: u64);
+    async fn update_leader(&self, leader_id: Option<ServerId>, term: u64) -> bool;
 }
 
 /// Client builder to build a client
