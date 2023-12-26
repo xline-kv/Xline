@@ -3,8 +3,9 @@ name: e2e
 on:
   # schedule:
   #   - cron: "00 * * * *" # run ci periodically at 3 am
+  pull_request:
   push: #enabled after the API is stable
-  workflow_dispatch:
+  # workflow_dispatch:
 concurrency:
   group: ${{ github.workflow }}-${{ github.actor }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
