@@ -249,27 +249,6 @@ pub struct TestCE {
 
 #[async_trait]
 impl CommandExecutor<TestCommand> for TestCE {
-    fn prepare(
-        &self,
-        cmd: &TestCommand,
-    ) -> Result<<TestCommand as Command>::PR, <TestCommand as Command>::Error> {
-        let rev = if let TestCommandType::Put(_) = cmd.cmd_type {
-            let rev = self.revision.fetch_add(1, Ordering::Relaxed);
-            let wr_ops = vec![WriteOperation::new_put(
-                META_TABLE,
-                LAST_REVISION_KEY.into(),
-                rev.to_le_bytes().to_vec(),
-            )];
-            self.store
-                .write_batch(wr_ops, true)
-                .map_err(|e| ExecuteError(e.to_string()))?;
-            rev
-        } else {
-            -1
-        };
-        Ok(rev)
-    }
-
     async fn execute(
         &self,
         cmd: &TestCommand,
@@ -324,8 +303,8 @@ impl CommandExecutor<TestCommand> for TestCE {
         &self,
         cmd: &TestCommand,
         index: LogIndex,
-        revision: <TestCommand as Command>::PR,
     ) -> Result<<TestCommand as Command>::ASR, <TestCommand as Command>::Error> {
+        let revision = self.next_revision(cmd)?;
         sleep(cmd.as_dur).await;
         if cmd.as_should_fail {
             return Err(ExecuteError("fail".to_owned()));
@@ -461,5 +440,23 @@ impl TestCE {
             exe_sender,
             after_sync_sender,
         }
+    }
+
+    fn next_revision(&self, cmd: &TestCommand) -> Result<i64, <TestCommand as Command>::Error> {
+        let rev = if let TestCommandType::Put(_) = cmd.cmd_type {
+            let rev = self.revision.fetch_add(1, Ordering::Relaxed);
+            let wr_ops = vec![WriteOperation::new_put(
+                META_TABLE,
+                LAST_REVISION_KEY.into(),
+                rev.to_le_bytes().to_vec(),
+            )];
+            self.store
+                .write_batch(wr_ops, true)
+                .map_err(|e| ExecuteError(e.to_string()))?;
+            rev
+        } else {
+            -1
+        };
+        Ok(rev)
     }
 }

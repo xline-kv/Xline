@@ -317,38 +317,13 @@ impl<S> CurpCommandExecutor<Command> for CommandExecutor<S>
 where
     S: StorageApi,
 {
-    fn prepare(
-        &self,
-        cmd: &Command,
-    ) -> Result<<Command as CurpCommand>::PR, <Command as CurpCommand>::Error> {
-        self.check_alarm(cmd)?;
-        let wrapper = cmd.request();
-        self.auth_storage.check_permission(wrapper)?;
-        let revision = match wrapper.request.backend() {
-            RequestBackend::Auth => {
-                if wrapper.request.skip_auth_revision() {
-                    -1
-                } else {
-                    self.auth_rev.next()
-                }
-            }
-            RequestBackend::Kv | RequestBackend::Lease => {
-                if wrapper.request.skip_lease_revision() {
-                    -1
-                } else {
-                    self.general_rev.next()
-                }
-            }
-            RequestBackend::Alarm => -1,
-        };
-        Ok(revision)
-    }
-
     async fn execute(
         &self,
         cmd: &Command,
     ) -> Result<<Command as CurpCommand>::ER, <Command as CurpCommand>::Error> {
+        self.check_alarm(cmd)?;
         let wrapper = cmd.request();
+        self.auth_storage.check_permission(wrapper)?;
         match wrapper.request.backend() {
             RequestBackend::Kv => {
                 let resp = self.kv_storage.execute(wrapper)?;
@@ -393,7 +368,6 @@ where
         &self,
         cmd: &Command,
         index: LogIndex,
-        revision: i64,
     ) -> Result<<Command as CurpCommand>::ASR, <Command as CurpCommand>::Error> {
         let quota_enough = self.quota_checker.check(cmd);
         let _ignore = self
@@ -420,7 +394,10 @@ where
                 let rev = revision.unwrap_or(self.general_rev.get());
                 self.lease_storage.after_sync(wrapper, rev).await?
             }
-            RequestBackend::Alarm => self.alarm_storage.after_sync(wrapper, revision),
+            RequestBackend::Alarm => {
+                let rev = self.general_rev.get();
+                self.alarm_storage.after_sync(wrapper, rev)
+            }
         };
         let key_revisions = self.persistent.flush_ops(wr_ops)?;
         if !key_revisions.is_empty() {

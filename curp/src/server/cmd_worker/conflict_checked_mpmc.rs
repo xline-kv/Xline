@@ -17,7 +17,7 @@ use utils::shutdown::{self, Signal};
 use self::cart::Cart;
 use super::{CEEvent, CEEventTx};
 use crate::{
-    cmd::{Command, CommandExecutor},
+    cmd::Command,
     log_entry::{EntryData, LogEntry},
     snapshot::{Snapshot, SnapshotMeta},
 };
@@ -61,7 +61,7 @@ pub(super) enum TaskType<C: Command> {
     /// Execute a cmd
     SpecExe(Arc<LogEntry<C>>, Option<C::Error>),
     /// After sync a cmd
-    AS(Arc<LogEntry<C>>, Option<C::PR>),
+    AS(Arc<LogEntry<C>>),
     /// Reset the CE
     Reset(Option<Snapshot>, oneshot::Sender<()>),
     /// Snapshot
@@ -119,7 +119,7 @@ enum VertexInner<C: Command> {
         /// Execution state
         exe_st: ExeState,
         /// After sync state
-        as_st: AsState<C>,
+        as_st: AsState,
     },
     /// A reset vertex
     Reset {
@@ -150,30 +150,15 @@ enum ExeState {
 
 /// After sync state of a cmd
 #[derive(Debug, Clone)]
-enum AsState<C: Command> {
+enum AsState {
     /// Not Synced yet
-    NotSynced(Option<C::PR>),
+    NotSynced,
     /// Is ready to do after sync
-    AfterSyncReady(Option<C::PR>),
+    AfterSyncReady,
     /// Is doing after syncing
     AfterSyncing,
     /// Has been after synced
     AfterSynced,
-}
-
-impl<C: Command> AsState<C> {
-    /// set the prepare result into the `AsState`
-    #[inline]
-    fn set_prepare_result(&mut self, res: C::PR) {
-        match *self {
-            Self::NotSynced(ref mut pre_res) | Self::AfterSyncReady(ref mut pre_res) => {
-                *pre_res = Some(res);
-            }
-            Self::AfterSyncing | Self::AfterSynced => {
-                unreachable!("Pre-execute result cannot be set in the {:?} stage", *self)
-            }
-        }
-    }
 }
 
 /// State of a vertex that only has one task
@@ -190,7 +175,7 @@ enum OnceState {
 /// The filter will block any msg if its predecessors(msgs that arrive earlier and conflict with it) haven't finished process
 /// Internally it maintains a dependency graph of conflicting cmds
 
-struct Filter<C: Command, CE> {
+struct Filter<C: Command> {
     /// Index from `ProposeId` to `vertex`
     cmd_vid: HashMap<ProposeId, u64>,
     /// Conflict graph
@@ -199,19 +184,16 @@ struct Filter<C: Command, CE> {
     next_id: u64,
     /// Send task to users
     filter_tx: flume::Sender<Task<C>>,
-    /// Command Executor
-    cmd_executor: Arc<CE>,
 }
 
-impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
+impl<C: Command> Filter<C> {
     /// Create a new filter that checks conflict in between msgs
-    fn new(filter_tx: flume::Sender<Task<C>>, ce: Arc<CE>) -> Self {
+    fn new(filter_tx: flume::Sender<Task<C>>) -> Self {
         Self {
             cmd_vid: HashMap::new(),
             vs: HashMap::new(),
             next_id: 0,
             filter_tx,
-            cmd_executor: ce,
         }
     }
 
@@ -332,25 +314,10 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                 ref mut exe_st,
                 ref mut as_st,
             } => match (*exe_st, as_st.clone()) {
-                (
-                    ExeState::ExecuteReady,
-                    AsState::NotSynced(prepare) | AsState::AfterSyncReady(prepare),
-                ) => {
-                    assert!(prepare.is_none(), "The prepare result of a given cmd can only be calculated when exe_state change from ExecuteReady to Executing");
+                (ExeState::ExecuteReady, AsState::NotSynced | AsState::AfterSyncReady) => {
                     let prepare_err = match entry.entry_data {
-                        EntryData::Command(ref cmd) => {
-                            match self.cmd_executor.prepare(cmd.as_ref()) {
-                                Ok(pre_res) => {
-                                    as_st.set_prepare_result(pre_res);
-                                    None
-                                }
-                                Err(err) => {
-                                    self.cmd_executor.trigger(cmd.id(), entry.index);
-                                    Some(err)
-                                }
-                            }
-                        }
-                        EntryData::ConfChange(_)
+                        EntryData::Command(_)
+                        | EntryData::ConfChange(_)
                         | EntryData::Shutdown(_)
                         | EntryData::Empty(_)
                         | EntryData::SetName(_, _, _) => None,
@@ -365,21 +332,21 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                     }
                     false
                 }
-                (ExeState::Executed(true), AsState::AfterSyncReady(prepare)) => {
+                (ExeState::Executed(true), AsState::AfterSyncReady) => {
                     *as_st = AsState::AfterSyncing;
                     let task = Task {
                         vid,
-                        inner: Cart::new(TaskType::AS(Arc::clone(entry), prepare)),
+                        inner: Cart::new(TaskType::AS(Arc::clone(entry))),
                     };
                     if let Err(e) = self.filter_tx.send(task) {
                         error!("failed to send task through filter, {e}");
                     }
                     false
                 }
-                (ExeState::Executed(false), AsState::AfterSyncReady(_))
+                (ExeState::Executed(false), AsState::AfterSyncReady)
                 | (ExeState::Executed(_), AsState::AfterSynced) => true,
-                (ExeState::Executing | ExeState::Executed(_), AsState::NotSynced(_))
-                | (ExeState::Executing, AsState::AfterSyncReady(_) | AsState::AfterSyncing)
+                (ExeState::Executing | ExeState::Executed(_), AsState::NotSynced)
+                | (ExeState::Executing, AsState::AfterSyncReady | AsState::AfterSyncing)
                 | (ExeState::Executed(true), AsState::AfterSyncing) => false,
                 (exe_st, as_st) => {
                     unreachable!("no such exe and as state can be reached: {exe_st:?}, {as_st:?}")
@@ -449,7 +416,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                     predecessor_cnt: 0,
                     inner: VertexInner::Entry {
                         exe_st: ExeState::ExecuteReady,
-                        as_st: AsState::NotSynced(None),
+                        as_st: AsState::NotSynced,
                         entry,
                     },
                 };
@@ -461,10 +428,11 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                     let v = self.get_vertex_mut(vid);
                     match v.inner {
                         VertexInner::Entry { ref mut as_st, .. } => {
-                            let AsState::NotSynced(ref mut prepare) = *as_st else {
-                                unreachable!("after sync state should be AsState::NotSynced but found {as_st:?}");
-                            };
-                            *as_st = AsState::AfterSyncReady(prepare.take());
+                            assert!(
+                                matches!(*as_st, AsState::NotSynced),
+                                "after sync state should be AsState::NotSynced but found {as_st:?}"
+                            );
+                            *as_st = AsState::AfterSyncReady;
                         }
                         _ => unreachable!("impossible vertex type"),
                     }
@@ -480,7 +448,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                         predecessor_cnt: 0,
                         inner: VertexInner::Entry {
                             exe_st: ExeState::ExecuteReady,
-                            as_st: AsState::AfterSyncReady(None),
+                            as_st: AsState::AfterSyncReady,
                             entry,
                         },
                     };
@@ -530,8 +498,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
 // Message flow:
 // send_tx -> filter_rx -> filter -> filter_tx -> recv_rx -> done_tx -> done_rx
 #[allow(clippy::type_complexity)] // it's clear
-pub(in crate::server) fn channel<C: 'static + Command, CE: 'static + CommandExecutor<C>>(
-    ce: Arc<CE>,
+pub(in crate::server) fn channel<C: 'static + Command>(
     shutdown_trigger: shutdown::Trigger,
 ) -> (
     CEEventTx<C>,
@@ -547,7 +514,6 @@ pub(in crate::server) fn channel<C: 'static + Command, CE: 'static + CommandExec
     let _ig = tokio::spawn(conflict_checked_mpmc_task(
         filter_tx,
         filter_rx,
-        ce,
         shutdown_trigger,
         done_rx,
     ));
@@ -555,15 +521,14 @@ pub(in crate::server) fn channel<C: 'static + Command, CE: 'static + CommandExec
 }
 
 /// Conflict checked mpmc task
-async fn conflict_checked_mpmc_task<C: 'static + Command, CE: 'static + CommandExecutor<C>>(
+async fn conflict_checked_mpmc_task<C: 'static + Command>(
     filter_tx: flume::Sender<Task<C>>,
     filter_rx: flume::Receiver<CEEvent<C>>,
-    ce: Arc<CE>,
     shutdown_trigger: shutdown::Trigger,
     done_rx: flume::Receiver<(Task<C>, bool)>,
 ) {
     let mut shutdown_listener = shutdown_trigger.subscribe();
-    let mut filter = Filter::new(filter_tx, ce);
+    let mut filter = Filter::new(filter_tx);
     let mut is_shutdown_state = false;
     #[allow(clippy::integer_arithmetic, clippy::pattern_type_mismatch)] // tokio internal triggers
     loop {
