@@ -13,7 +13,6 @@ use super::{
     auth_store::{AUTH_ENABLE_KEY, AUTH_REVISION_KEY, AUTH_TABLE, ROLE_TABLE, USER_TABLE},
     kv_store::KV_TABLE,
     lease_store::LEASE_TABLE,
-    revision::KeyRevision,
     storage_api::{StorageApi, StorageTxnApi},
 };
 use crate::{
@@ -130,9 +129,8 @@ impl StorageApi for DB {
         }
     }
 
-    fn flush_ops(&self, ops: Vec<WriteOp>) -> Result<Vec<(Vec<u8>, KeyRevision)>, ExecuteError> {
+    fn flush_ops(&self, ops: Vec<WriteOp>) -> Result<(), ExecuteError> {
         let mut wr_ops = Vec::new();
-        let mut revs = Vec::new();
         let del_lease_key_buffer = ops
             .iter()
             .filter_map(|op| {
@@ -156,15 +154,6 @@ impl StorageApi for DB {
         for op in ops {
             let wop = match op {
                 WriteOp::PutKeyValue(rev, value) => {
-                    revs.push((
-                        value.key.clone(),
-                        KeyRevision::new(
-                            value.create_revision,
-                            value.version,
-                            rev.revision(),
-                            rev.sub_revision(),
-                        ),
-                    ));
                     let key = rev.encode_to_vec();
                     WriteOperation::new_put(KV_TABLE, key, value.encode_to_vec())
                 }
@@ -226,8 +215,7 @@ impl StorageApi for DB {
         }
         self.engine
             .write_batch(wr_ops, false)
-            .map_err(|e| ExecuteError::DbError(format!("Failed to flush ops, error: {e}")))?;
-        Ok(revs)
+            .map_err(|e| ExecuteError::DbError(format!("Failed to flush ops, error: {e}")))
     }
 
     fn size(&self) -> u64 {
@@ -395,7 +383,7 @@ mod test {
             ..Default::default()
         };
         let ops = vec![WriteOp::PutKeyValue(revision, kv.clone())];
-        _ = db.flush_ops(ops)?;
+        db.flush_ops(ops)?;
         let res = db.get_value(KV_TABLE, &key)?;
         assert_eq!(res, Some(kv.encode_to_vec()));
 
@@ -426,7 +414,7 @@ mod test {
             ..Default::default()
         };
         let ops = vec![WriteOp::PutKeyValue(revision, kv.clone())];
-        _ = origin_db.flush_ops(ops)?;
+        origin_db.flush_ops(ops)?;
 
         let snapshot = origin_db.get_snapshot(snapshot_path)?;
 
@@ -507,7 +495,7 @@ mod test {
             WriteOp::PutUser(user),
             WriteOp::PutRole(role),
         ];
-        _ = db.flush_ops(write_ops).unwrap();
+        db.flush_ops(write_ops).unwrap();
         assert_eq!(
             db.get_value(KV_TABLE, Revision::new(1, 2).encode_to_vec())
                 .unwrap(),
@@ -537,7 +525,7 @@ mod test {
             WriteOp::DeleteUser("user"),
             WriteOp::DeleteRole("role"),
         ];
-        _ = db.flush_ops(del_ops).unwrap();
+        db.flush_ops(del_ops).unwrap();
         assert_eq!(
             db.get_value(LEASE_TABLE, 1i64.encode_to_vec()).unwrap(),
             None

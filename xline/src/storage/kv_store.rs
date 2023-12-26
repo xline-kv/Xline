@@ -355,7 +355,7 @@ where
         revisions
             .iter()
             .for_each(|rev| ops.push(WriteOp::DeleteKeyValue(rev.as_ref())));
-        _ = self.db.flush_ops(ops)?;
+        self.db.flush_ops(ops)?;
         Ok(())
     }
 }
@@ -963,7 +963,7 @@ where
             }
         }
         let ops = vec![WriteOp::PutCompactRevision(revision)];
-        let _ignore = self.db.flush_ops(ops)?;
+        self.db.flush_ops(ops)?;
 
         Ok(vec![])
     }

@@ -370,8 +370,7 @@ where
         index: LogIndex,
     ) -> Result<<Command as CurpCommand>::ASR, <Command as CurpCommand>::Error> {
         let quota_enough = self.quota_checker.check(cmd);
-        let _ignore = self
-            .persistent
+        self.persistent
             .flush_ops(vec![WriteOp::PutAppliedIndex(index)])?;
         let wrapper = cmd.request();
 
@@ -399,10 +398,7 @@ where
                 self.alarm_storage.after_sync(wrapper, rev)
             }
         };
-        let key_revisions = self.persistent.flush_ops(wr_ops)?;
-        if !key_revisions.is_empty() {
-            self.kv_storage.insert_index(key_revisions);
-        }
+        self.persistent.flush_ops(wr_ops)?;
         self.lease_storage.mark_lease_synced(&wrapper.request);
         if !quota_enough {
             let alarmer = self.alarmer.clone();
@@ -423,8 +419,7 @@ where
         snapshot: Option<(Snapshot, LogIndex)>,
     ) -> Result<(), <Command as CurpCommand>::Error> {
         let s = if let Some((snapshot, index)) = snapshot {
-            _ = self
-                .persistent
+            self.persistent
                 .flush_ops(vec![WriteOp::PutAppliedIndex(index)])?;
             Some(snapshot)
         } else {
@@ -439,8 +434,7 @@ where
     }
 
     fn set_last_applied(&self, index: LogIndex) -> Result<(), <Command as CurpCommand>::Error> {
-        _ = self
-            .persistent
+        self.persistent
             .flush_ops(vec![WriteOp::PutAppliedIndex(index)])?;
         Ok(())
     }

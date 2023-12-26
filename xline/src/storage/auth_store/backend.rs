@@ -131,7 +131,7 @@ where
         &self,
         ops: Vec<crate::storage::db::WriteOp>,
     ) -> Result<(), ExecuteError> {
-        _ = self.db.flush_ops(ops)?;
+        self.db.flush_ops(ops)?;
         Ok(())
     }
 }
