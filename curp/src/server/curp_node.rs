@@ -44,8 +44,9 @@ use crate::{
     snapshot::{Snapshot, SnapshotMeta},
 };
 
+#[allow(dead_code)]
 /// `CurpNode` represents a single node of curp cluster
-pub(super) struct CurpNode<C: Command, RC: RoleChange> {
+pub(super) struct CurpNode<C: Command, CE: CommandExecutor<C>, RC: RoleChange> {
     /// `RawCurp` state machine
     curp: Arc<RawCurp<C, RC>>,
     /// The speculative cmd pool, shared with executor
@@ -58,10 +59,12 @@ pub(super) struct CurpNode<C: Command, RC: RoleChange> {
     storage: Arc<dyn StorageApi<Command = C>>,
     /// Snapshot allocator
     snapshot_allocator: Box<dyn SnapshotAllocator>,
+    /// Command Executor
+    cmd_executor: Arc<CE>,
 }
 
 /// Handlers for clients
-impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
+impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     /// Handle `Propose` requests
     pub(super) async fn propose(&self, req: ProposeRequest) -> Result<ProposeResponse, CurpError> {
         if self.curp.is_shutdown() {
@@ -170,7 +173,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
 }
 
 /// Handlers for peers
-impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
+impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     /// Handle `AppendEntries` requests
     pub(super) fn append_entries(
         &self,
@@ -301,7 +304,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
 }
 
 /// Spawned tasks
-impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
+impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     /// Tick periodically
     #[allow(clippy::integer_arithmetic)]
     async fn election_task(curp: Arc<RawCurp<C, RC>>) {
@@ -601,10 +604,10 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
 }
 
 // utils
-impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
+impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     /// Create a new server instance
     #[inline]
-    pub(super) async fn new<CE: CommandExecutor<C>>(
+    pub(super) async fn new(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         cmd_executor: Arc<CE>,
@@ -679,7 +682,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         };
 
         start_cmd_workers(
-            cmd_executor,
+            Arc::clone(&cmd_executor),
             Arc::clone(&curp),
             task_rx,
             done_tx,
@@ -701,6 +704,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
             ce_event_tx,
             storage,
             snapshot_allocator,
+            cmd_executor,
         })
     }
 
@@ -872,7 +876,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     }
 }
 
-impl<C: Command, RC: RoleChange> Debug for CurpNode<C, RC> {
+impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Debug for CurpNode<C, CE, RC> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CurpNode")
             .field("raw_curp", &self.curp)
@@ -884,7 +888,10 @@ impl<C: Command, RC: RoleChange> Debug for CurpNode<C, RC> {
 
 #[cfg(test)]
 mod tests {
-    use curp_test_utils::{mock_role_change, sleep_secs, test_cmd::TestCommand};
+    use curp_test_utils::{
+        mock_role_change, sleep_secs,
+        test_cmd::{TestCE, TestCommand},
+    };
     use tracing_test::traced_test;
 
     use super::*;
@@ -909,7 +916,7 @@ mod tests {
         let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
         mock_connect1.expect_id().return_const(s1_id);
         let remove_event = Arc::new(Event::new());
-        tokio::spawn(CurpNode::sync_follower_task(
+        tokio::spawn(CurpNode::<_, TestCE, _>::sync_follower_task(
             Arc::clone(&curp),
             InnerConnectApiWrapper::new_from_arc(Arc::new(mock_connect1)),
             Arc::new(Event::new()),
@@ -955,7 +962,7 @@ mod tests {
             s2_id,
             InnerConnectApiWrapper::new_from_arc(Arc::new(mock_connect2)),
         );
-        tokio::spawn(CurpNode::election_task(Arc::clone(&curp)));
+        tokio::spawn(CurpNode::<_, TestCE, _>::election_task(Arc::clone(&curp)));
         sleep_secs(3).await;
         assert!(curp.is_leader());
         curp.shutdown_trigger().self_shutdown_and_wait().await;
@@ -1013,7 +1020,7 @@ mod tests {
             learner_id,
             InnerConnectApiWrapper::new_from_arc(Arc::new(mock_connect_learner)),
         );
-        tokio::spawn(CurpNode::election_task(Arc::clone(&curp)));
+        tokio::spawn(CurpNode::<_, TestCE, _>::election_task(Arc::clone(&curp)));
         sleep_secs(3).await;
         assert!(curp.is_leader());
         curp.shutdown_trigger().self_shutdown_and_wait().await;

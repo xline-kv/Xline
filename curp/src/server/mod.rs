@@ -58,13 +58,13 @@ static DEFAULT_SERVER_PORT: u16 = 12345;
 /// The Rpc Server to handle rpc requests
 /// This Wrapper is introduced due to the `MadSim` rpc lib
 #[derive(Clone, Debug)]
-pub struct Rpc<C: Command, RC: RoleChange> {
+pub struct Rpc<C: Command, CE: CommandExecutor<C>, RC: RoleChange> {
     /// The inner server is wrapped in an Arc so that its state can be shared while cloning the rpc wrapper
-    inner: Arc<CurpNode<C, RC>>,
+    inner: Arc<CurpNode<C, CE, RC>>,
 }
 
 #[tonic::async_trait]
-impl<C: Command, RC: RoleChange> crate::rpc::Protocol for Rpc<C, RC> {
+impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::Protocol for Rpc<C, CE, RC> {
     #[instrument(skip_all, name = "curp_propose")]
     async fn propose(
         &self,
@@ -142,7 +142,9 @@ impl<C: Command, RC: RoleChange> crate::rpc::Protocol for Rpc<C, RC> {
 }
 
 #[tonic::async_trait]
-impl<C: Command, RC: RoleChange> crate::rpc::InnerProtocol for Rpc<C, RC> {
+impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::InnerProtocol
+    for Rpc<C, CE, RC>
+{
     #[instrument(skip_all, name = "curp_append_entries")]
     async fn append_entries(
         &self,
@@ -185,13 +187,13 @@ impl<C: Command, RC: RoleChange> crate::rpc::InnerProtocol for Rpc<C, RC> {
     }
 }
 
-impl<C: Command, RC: RoleChange> Rpc<C, RC> {
+impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
     /// New `Rpc`
     ///
     /// # Panics
     /// Panic if storage creation failed
     #[inline]
-    pub async fn new<CE: CommandExecutor<C>>(
+    pub async fn new(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         executor: CE,
@@ -231,7 +233,7 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
     #[cfg(not(madsim))]
     #[allow(clippy::too_many_arguments)]
     #[inline]
-    pub async fn run<CE>(
+    pub async fn run(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         server_port: Option<u16>,
@@ -281,7 +283,7 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
     #[cfg(not(madsim))]
     #[allow(clippy::too_many_arguments)]
     #[inline]
-    pub async fn run_from_listener<CE>(
+    pub async fn run_from_listener(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         listener: TcpListener,
@@ -327,7 +329,7 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
     #[cfg(madsim)]
     #[allow(clippy::too_many_arguments)]
     #[inline]
-    pub async fn run_from_addr<CE>(
+    pub async fn run_from_addr(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         addr: std::net::SocketAddr,
