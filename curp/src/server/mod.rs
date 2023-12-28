@@ -5,7 +5,7 @@ use tokio::sync::broadcast;
 #[cfg(not(madsim))]
 use tracing::info;
 use tracing::instrument;
-use utils::{config::CurpConfig, shutdown, tracing::Extract};
+use utils::{config::CurpConfig, task_manager::TaskManager, tracing::Extract};
 
 use self::curp_node::CurpNode;
 pub use self::raw_curp::RawCurp;
@@ -238,7 +238,7 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
         snapshot_allocator: Box<dyn SnapshotAllocator>,
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
-        shutdown_trigger: shutdown::Trigger,
+        task_manager: Arc<TaskManager>,
     ) -> Self {
         #[allow(clippy::panic)]
         let curp_node = match CurpNode::new(
@@ -248,7 +248,7 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
             snapshot_allocator,
             role_change,
             curp_cfg,
-            shutdown_trigger,
+            task_manager,
         )
         .await
         {
@@ -279,7 +279,7 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
         snapshot_allocator: Box<dyn SnapshotAllocator>,
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
-        shutdown_trigger: shutdown::Trigger,
+        task_manager: Arc<TaskManager>,
     ) -> Result<(), ServerError>
     where
         CE: CommandExecutor<C>,
@@ -294,7 +294,7 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
             snapshot_allocator,
             role_change,
             curp_cfg,
-            shutdown_trigger,
+            task_manager,
         )
         .await;
 
@@ -327,12 +327,12 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
         snapshot_allocator: Box<dyn SnapshotAllocator>,
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
-        shutdown_trigger: shutdown::Trigger,
+        task_manager: Arc<TaskManager>,
     ) -> Result<(), ServerError>
     where
         CE: CommandExecutor<C>,
     {
-        let mut shutdown_listener = shutdown_trigger.subscribe();
+        let n = task_manager.get_shutdown_listener(TaskName::TonicServer);
         let server = Self::new(
             cluster_info,
             is_leader,
@@ -340,16 +340,14 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
             snapshot_allocator,
             role_change,
             curp_cfg,
-            shutdown_trigger,
+            task_manager,
         )
         .await;
 
         tonic::transport::Server::builder()
             .add_service(ProtocolServer::new(server.clone()))
             .add_service(InnerProtocolServer::new(server))
-            .serve_with_shutdown(addr, async move {
-                shutdown_listener.wait_self_shutdown().await;
-            })
+            .serve_with_shutdown(addr, n.wait())
             .await?;
         Ok(())
     }
@@ -359,13 +357,6 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
     #[must_use]
     pub fn leader_rx(&self) -> broadcast::Receiver<Option<ServerId>> {
         self.inner.leader_rx()
-    }
-
-    /// Get a shutdown listener
-    #[must_use]
-    #[inline]
-    pub fn shutdown_listener(&self) -> shutdown::Listener {
-        self.inner.shutdown_listener()
     }
 
     /// Get raw curp

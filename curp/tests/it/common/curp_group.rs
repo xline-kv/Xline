@@ -36,7 +36,7 @@ use utils::{
     config::{
         default_quota, ClientConfig, CurpConfig, CurpConfigBuilder, EngineConfig, StorageConfig,
     },
-    shutdown::{self, Trigger},
+    task_manager::TaskManager,
 };
 pub mod commandpb {
     tonic::include_proto!("commandpb");
@@ -54,7 +54,7 @@ pub struct CurpNode {
     pub as_rx: mpsc::UnboundedReceiver<(TestCommand, LogIndex)>,
     pub role_change_arc: Arc<TestRoleChangeInner>,
     pub handle: JoinHandle<Result<(), tonic::transport::Error>>,
-    pub trigger: Trigger,
+    pub task_manager: Arc<TaskManager>,
 }
 
 pub struct CurpGroup {
@@ -98,7 +98,7 @@ impl CurpGroup {
         let mut nodes = HashMap::new();
 
         for (name, (config, xline_storage_config)) in configs.into_iter() {
-            let (trigger, l) = shutdown::channel();
+            let task_manager = Arc::new(TaskManager::new());
             let snapshot_allocator = Self::get_snapshot_allocator_from_cfg(&config);
             let cluster_info = Arc::new(ClusterInfo::new(all_members_addrs.clone(), &name));
             let listener = listeners.remove(&name).unwrap();
@@ -124,7 +124,7 @@ impl CurpGroup {
                     snapshot_allocator,
                     role_change_cb,
                     config,
-                    trigger.clone(),
+                    Arc::clone(&task_manager),
                 )
                 .await,
             );
@@ -136,7 +136,7 @@ impl CurpGroup {
                 as_rx,
                 role_change_arc,
                 handle,
-                trigger,
+                task_manager,
             };
             nodes.insert(curp_node.id, curp_node);
         }
@@ -224,7 +224,7 @@ impl CurpGroup {
         config: Arc<CurpConfig>,
         xline_storage_config: EngineConfig,
     ) {
-        let (trigger, l) = shutdown::channel();
+        let task_manager = Arc::new(TaskManager::new());
         let addr = listener.local_addr().unwrap().to_string();
         let snapshot_allocator = Self::get_snapshot_allocator_from_cfg(&config);
 
@@ -248,7 +248,7 @@ impl CurpGroup {
                 snapshot_allocator,
                 role_change_cb,
                 config,
-                trigger.clone(),
+                Arc::clone(&task_manager),
             )
             .await,
         );
@@ -260,7 +260,7 @@ impl CurpGroup {
             as_rx,
             role_change_arc,
             handle,
-            trigger,
+            task_manager,
         };
         self.nodes.insert(id, curp_node);
         let client = self.new_client().await;
@@ -315,7 +315,7 @@ impl CurpGroup {
         let futs = self
             .nodes
             .values_mut()
-            .map(|n| n.trigger.self_shutdown_and_wait());
+            .map(|n| n.task_manager.shutdown(true));
         futures::future::join_all(futs).await;
 
         self.nodes.clear();

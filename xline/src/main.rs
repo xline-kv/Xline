@@ -170,17 +170,9 @@ async fn main() -> Result<()> {
     )
     .await?;
     debug!("{:?}", server);
-    let handle = server.start().await?;
+    server.start().await?;
 
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {
-            info!("received ctrl-c, shutting down, press ctrl-c again to force exit");
-        }
-        _ = handle => {
-            info!("server exited");
-            return Ok(());
-        }
-    }
+    let _ig = tokio::signal::ctrl_c().await;
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {

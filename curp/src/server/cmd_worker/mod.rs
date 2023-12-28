@@ -9,7 +9,7 @@ use clippy_utilities::NumericCast;
 use mockall::automock;
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
-use utils::shutdown;
+use utils::task_manager::{tasks::TaskName, Listener, TaskManager};
 
 use self::conflict_checked_mpmc::Task;
 use super::raw_curp::RawCurp;
@@ -60,32 +60,44 @@ async fn cmd_worker<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     done_tx: flume::Sender<(Task<C>, bool)>,
     curp: Arc<RawCurp<C, RC>>,
     ce: Arc<CE>,
-    // This task will safely exit when the dispatch_rx is dropped, but we still
-    // need to keep the shutdown_listener here to notify the shutdown trigger
-    _shutdown_listener: shutdown::Listener,
+    shutdown_listener: Listener,
 ) {
-    while let Ok(mut task) = dispatch_rx.recv().await {
-        let succeeded = match task.take() {
-            TaskType::SpecExe(entry, pre_err) => {
-                worker_exe(entry, pre_err, ce.as_ref(), curp.as_ref()).await
+    #[allow(clippy::integer_arithmetic)] // introduced by tokio select
+    loop {
+        tokio::select! {
+            task = dispatch_rx.recv() => {
+                let Ok(task) = task else {
+                    return;
+                };
+                handle_task(task, &done_tx, ce.as_ref(), curp.as_ref()).await;
             }
-            TaskType::AS(entry, prepare) => {
-                worker_as(entry, prepare, ce.as_ref(), curp.as_ref()).await
-            }
-            TaskType::Reset(snapshot, finish_tx) => {
-                worker_reset(snapshot, finish_tx, ce.as_ref(), curp.as_ref()).await
-            }
-            TaskType::Snapshot(meta, tx) => {
-                worker_snapshot(meta, tx, ce.as_ref(), curp.as_ref()).await
-            }
-        };
-        if let Err(e) = done_tx.send((task, succeeded)) {
-            if !curp.is_shutdown() {
-                error!("can't mark a task done, the channel could be closed, {e}");
-            }
+            _ = shutdown_listener.wait() => break,
         }
     }
+    while let Ok(task) = dispatch_rx.try_recv() {
+        handle_task(task, &done_tx, ce.as_ref(), curp.as_ref()).await;
+    }
     debug!("cmd worker exits");
+}
+
+/// Handle task
+async fn handle_task<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
+    mut task: Task<C>,
+    done_tx: &flume::Sender<(Task<C>, bool)>,
+    ce: &CE,
+    curp: &RawCurp<C, RC>,
+) {
+    let succeeded = match task.take() {
+        TaskType::SpecExe(entry, pre_err) => worker_exe(entry, pre_err, ce, curp).await,
+        TaskType::AS(entry, prepare) => worker_as(entry, prepare, ce, curp).await,
+        TaskType::Reset(snapshot, finish_tx) => worker_reset(snapshot, finish_tx, ce, curp).await,
+        TaskType::Snapshot(meta, tx) => worker_snapshot(meta, tx, ce, curp).await,
+    };
+    if let Err(e) = done_tx.send((task, succeeded)) {
+        if !curp.is_shutdown() {
+            error!("can't mark a task done, the channel could be closed, {e}");
+        }
+    }
 }
 
 /// Cmd worker execute handler
@@ -150,9 +162,9 @@ async fn worker_as<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
             asr_ok
         }
         EntryData::Shutdown => {
-            curp.enter_shutdown();
+            curp.task_manager().cluster_shutdown();
             if curp.is_leader() {
-                curp.shutdown_trigger().mark_leader_notified();
+                curp.task_manager().mark_leader_notified();
             }
             if let Err(e) = ce.set_last_applied(entry.index) {
                 error!("failed to set last_applied, {e}");
@@ -206,7 +218,7 @@ async fn worker_as<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
                         id
                     );
                 }
-                curp.shutdown_trigger().self_shutdown();
+                curp.task_manager().shutdown(false).await;
             }
             true
         }
@@ -290,7 +302,7 @@ async fn worker_snapshot<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
 
 /// Send event to background command executor workers
 #[derive(Debug, Clone)]
-pub(super) struct CEEventTx<C: Command>(flume::Sender<CEEvent<C>>, shutdown::Listener);
+pub(super) struct CEEventTx<C: Command>(flume::Sender<CEEvent<C>>, Arc<TaskManager>);
 
 /// Recv cmds that need to be executed
 #[derive(Clone)]
@@ -357,13 +369,18 @@ impl<C: Command> CEEventTxApi<C> for CEEventTx<C> {
 trait TaskRxApi<C: Command> {
     /// Recv execute msg and done notifier
     async fn recv(&self) -> Result<Task<C>, flume::RecvError>;
+    /// Try recv execute msg and done notifier
+    fn try_recv(&self) -> Result<Task<C>, flume::TryRecvError>;
 }
 
 #[async_trait]
 impl<C: Command> TaskRxApi<C> for TaskRx<C> {
-    /// Recv execute msg and done notifier
     async fn recv(&self) -> Result<Task<C>, flume::RecvError> {
         self.0.recv_async().await
+    }
+
+    fn try_recv(&self) -> Result<Task<C>, flume::TryRecvError> {
+        self.0.try_recv()
     }
 }
 
@@ -373,20 +390,16 @@ pub(super) fn start_cmd_workers<C: Command, CE: CommandExecutor<C>, RC: RoleChan
     curp: Arc<RawCurp<C, RC>>,
     task_rx: flume::Receiver<Task<C>>,
     done_tx: flume::Sender<(Task<C>, bool)>,
-    shutdown_listener: shutdown::Listener,
 ) {
     let n_workers: usize = curp.cfg().cmd_workers.numeric_cast();
+    let task_manager = curp.task_manager();
     #[allow(clippy::shadow_unrelated)] // false positive
-    iter::repeat((task_rx, done_tx, curp, cmd_executor, shutdown_listener))
+    iter::repeat((task_rx, done_tx, curp, cmd_executor))
         .take(n_workers)
-        .for_each(|(task_rx, done_tx, curp, ce, shutdown_listener)| {
-            let _cmd_worker = tokio::spawn(cmd_worker(
-                TaskRx(task_rx),
-                done_tx,
-                curp,
-                ce,
-                shutdown_listener,
-            ));
+        .for_each(|(task_rx, done_tx, curp, ce)| {
+            task_manager.spawn(TaskName::CmdWorker, |n| {
+                cmd_worker(TaskRx(task_rx), done_tx, curp, ce, n)
+            });
         });
 }
 
@@ -419,19 +432,19 @@ mod tests {
             as_tx,
             EngineConfig::Memory,
         ));
-        let (t, l) = shutdown::channel();
+        let task_manager = Arc::new(TaskManager::new());
         let (ce_event_tx, task_rx, done_tx) =
-            conflict_checked_mpmc::channel(Arc::clone(&ce), t.clone());
+            conflict_checked_mpmc::channel(Arc::clone(&ce), Arc::clone(&task_manager));
         start_cmd_workers(
             Arc::clone(&ce),
             Arc::new(RawCurp::new_test(
                 3,
                 ce_event_tx.clone(),
                 mock_role_change(),
+                Arc::clone(&task_manager),
             )),
             task_rx,
             done_tx,
-            l,
         );
 
         let entry = Arc::new(LogEntry::new(
@@ -446,7 +459,7 @@ mod tests {
 
         ce_event_tx.send_after_sync(entry);
         assert_eq!(as_rx.recv().await.unwrap().1, 1);
-        t.self_shutdown();
+        task_manager.shutdown(true).await;
     }
 
     // When the execution takes more time than sync, `as` should be called after exe has finished
@@ -462,19 +475,19 @@ mod tests {
             as_tx,
             EngineConfig::Memory,
         ));
-        let (t, l) = shutdown::channel();
+        let task_manager = Arc::new(TaskManager::new());
         let (ce_event_tx, task_rx, done_tx) =
-            conflict_checked_mpmc::channel(Arc::clone(&ce), t.clone());
+            conflict_checked_mpmc::channel(Arc::clone(&ce), Arc::clone(&task_manager));
         start_cmd_workers(
             Arc::clone(&ce),
             Arc::new(RawCurp::new_test(
                 3,
                 ce_event_tx.clone(),
                 mock_role_change(),
+                Arc::clone(&task_manager),
             )),
             task_rx,
             done_tx,
-            l,
         );
 
         let begin = Instant::now();
@@ -494,7 +507,7 @@ mod tests {
         assert_eq!(as_rx.recv().await.unwrap().1, 1);
 
         assert!((Instant::now() - begin) >= Duration::from_secs(1));
-        t.self_shutdown();
+        task_manager.shutdown(true).await;
     }
 
     // When the execution takes more time than sync and fails, after sync should not be called
@@ -510,19 +523,19 @@ mod tests {
             as_tx,
             EngineConfig::Memory,
         ));
-        let (t, l) = shutdown::channel();
+        let task_manager = Arc::new(TaskManager::new());
         let (ce_event_tx, task_rx, done_tx) =
-            conflict_checked_mpmc::channel(Arc::clone(&ce), t.clone());
+            conflict_checked_mpmc::channel(Arc::clone(&ce), Arc::clone(&task_manager));
         start_cmd_workers(
             Arc::clone(&ce),
             Arc::new(RawCurp::new_test(
                 3,
                 ce_event_tx.clone(),
                 mock_role_change(),
+                Arc::clone(&task_manager),
             )),
             task_rx,
             done_tx,
-            l,
         );
 
         let entry = Arc::new(LogEntry::new(
@@ -546,7 +559,7 @@ mod tests {
         sleep_secs(1).await;
         assert!(er_rx.try_recv().is_err());
         assert!(as_rx.try_recv().is_err());
-        t.self_shutdown();
+        task_manager.shutdown(true).await;
     }
 
     // This should happen in slow path in most cases
@@ -562,19 +575,19 @@ mod tests {
             as_tx,
             EngineConfig::Memory,
         ));
-        let (t, l) = shutdown::channel();
+        let task_manager = Arc::new(TaskManager::new());
         let (ce_event_tx, task_rx, done_tx) =
-            conflict_checked_mpmc::channel(Arc::clone(&ce), t.clone());
+            conflict_checked_mpmc::channel(Arc::clone(&ce), Arc::clone(&task_manager));
         start_cmd_workers(
             Arc::clone(&ce),
             Arc::new(RawCurp::new_test(
                 3,
                 ce_event_tx.clone(),
                 mock_role_change(),
+                Arc::clone(&task_manager),
             )),
             task_rx,
             done_tx,
-            l,
         );
 
         let entry = Arc::new(LogEntry::new(
@@ -588,7 +601,7 @@ mod tests {
 
         assert_eq!(er_rx.recv().await.unwrap().1.revisions, Vec::<i64>::new());
         assert_eq!(as_rx.recv().await.unwrap().1, 1);
-        t.self_shutdown();
+        task_manager.shutdown(true).await;
     }
 
     // When exe fails
@@ -604,19 +617,19 @@ mod tests {
             as_tx,
             EngineConfig::Memory,
         ));
-        let (t, l) = shutdown::channel();
+        let task_manager = Arc::new(TaskManager::new());
         let (ce_event_tx, task_rx, done_tx) =
-            conflict_checked_mpmc::channel(Arc::clone(&ce), t.clone());
+            conflict_checked_mpmc::channel(Arc::clone(&ce), Arc::clone(&task_manager));
         start_cmd_workers(
             Arc::clone(&ce),
             Arc::new(RawCurp::new_test(
                 3,
                 ce_event_tx.clone(),
                 mock_role_change(),
+                Arc::clone(&task_manager),
             )),
             task_rx,
             done_tx,
-            l,
         );
 
         let entry = Arc::new(LogEntry::new(
@@ -633,7 +646,7 @@ mod tests {
         assert!(er.is_err(), "The execute command result is {er:?}");
         let asr = as_rx.try_recv();
         assert!(asr.is_err(), "The after sync result is {asr:?}");
-        t.self_shutdown();
+        task_manager.shutdown(true).await;
     }
 
     // If cmd1 and cmd2 conflict, order will be (cmd1 exe) -> (cmd1 as) -> (cmd2 exe) -> (cmd2 as)
@@ -649,19 +662,19 @@ mod tests {
             as_tx,
             EngineConfig::Memory,
         ));
-        let (t, l) = shutdown::channel();
+        let task_manager = Arc::new(TaskManager::new());
         let (ce_event_tx, task_rx, done_tx) =
-            conflict_checked_mpmc::channel(Arc::clone(&ce), t.clone());
+            conflict_checked_mpmc::channel(Arc::clone(&ce), Arc::clone(&task_manager));
         start_cmd_workers(
             Arc::clone(&ce),
             Arc::new(RawCurp::new_test(
                 3,
                 ce_event_tx.clone(),
                 mock_role_change(),
+                Arc::clone(&task_manager),
             )),
             task_rx,
             done_tx,
-            l,
         );
 
         let entry1 = Arc::new(LogEntry::new(
@@ -696,7 +709,7 @@ mod tests {
         assert_eq!(er_rx.recv().await.unwrap().1.revisions, vec![1]);
         assert_eq!(as_rx.recv().await.unwrap().1, 1);
         assert_eq!(as_rx.recv().await.unwrap().1, 2);
-        t.self_shutdown();
+        task_manager.shutdown(true).await;
     }
 
     #[traced_test]
@@ -711,19 +724,19 @@ mod tests {
             as_tx,
             EngineConfig::Memory,
         ));
-        let (t, l) = shutdown::channel();
+        let task_manager = Arc::new(TaskManager::new());
         let (ce_event_tx, task_rx, done_tx) =
-            conflict_checked_mpmc::channel(Arc::clone(&ce), t.clone());
+            conflict_checked_mpmc::channel(Arc::clone(&ce), Arc::clone(&task_manager));
         start_cmd_workers(
             Arc::clone(&ce),
             Arc::new(RawCurp::new_test(
                 3,
                 ce_event_tx.clone(),
                 mock_role_change(),
+                Arc::clone(&task_manager),
             )),
             task_rx,
             done_tx,
-            l,
         );
 
         let entry1 = Arc::new(LogEntry::new(
@@ -759,14 +772,15 @@ mod tests {
         // there will be only one after sync results
         assert!(as_rx.recv().await.is_some());
         assert!(as_rx.try_recv().is_err());
-        t.self_shutdown();
+        task_manager.shutdown(true).await;
     }
 
     #[traced_test]
     #[tokio::test]
     #[abort_on_panic]
     async fn test_snapshot() {
-        let (t, l) = shutdown::channel();
+        let task_manager1 = Arc::new(TaskManager::new());
+        let task_manager2 = Arc::new(TaskManager::new());
 
         // ce1
         let (er_tx, mut _er_rx) = mpsc::unbounded_channel();
@@ -778,8 +792,13 @@ mod tests {
             EngineConfig::Memory,
         ));
         let (ce_event_tx, task_rx, done_tx) =
-            conflict_checked_mpmc::channel(Arc::clone(&ce1), t.clone());
-        let curp = RawCurp::new_test(3, ce_event_tx.clone(), mock_role_change());
+            conflict_checked_mpmc::channel(Arc::clone(&ce1), Arc::clone(&task_manager1));
+        let curp = RawCurp::new_test(
+            3,
+            ce_event_tx.clone(),
+            mock_role_change(),
+            Arc::clone(&task_manager1),
+        );
         let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
         curp.handle_append_entries(
             1,
@@ -795,13 +814,7 @@ mod tests {
             0,
         )
         .unwrap();
-        start_cmd_workers(
-            Arc::clone(&ce1),
-            Arc::new(curp),
-            task_rx,
-            done_tx,
-            l.clone(),
-        );
+        start_cmd_workers(Arc::clone(&ce1), Arc::new(curp), task_rx, done_tx);
 
         let entry = Arc::new(LogEntry::new(
             1,
@@ -830,17 +843,17 @@ mod tests {
             EngineConfig::Memory,
         ));
         let (ce_event_tx, task_rx, done_tx) =
-            conflict_checked_mpmc::channel(Arc::clone(&ce2), t.clone());
+            conflict_checked_mpmc::channel(Arc::clone(&ce2), Arc::clone(&task_manager2));
         start_cmd_workers(
             Arc::clone(&ce2),
             Arc::new(RawCurp::new_test(
                 3,
                 ce_event_tx.clone(),
                 mock_role_change(),
+                Arc::clone(&task_manager2),
             )),
             task_rx,
             done_tx,
-            l,
         );
 
         ce_event_tx.send_reset(Some(snapshot)).await.unwrap();
@@ -853,6 +866,7 @@ mod tests {
         ));
         ce_event_tx.send_after_sync(entry);
         assert_eq!(er_rx.recv().await.unwrap().1.revisions, vec![1]);
-        t.self_shutdown();
+        task_manager1.shutdown(true).await;
+        task_manager2.shutdown(true).await;
     }
 }

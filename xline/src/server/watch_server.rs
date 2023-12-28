@@ -8,7 +8,7 @@ use event_listener::Event;
 use tokio::sync::mpsc;
 use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
 use tracing::{debug, warn};
-use utils::shutdown;
+use utils::task_manager::{tasks::TaskName, Listener, TaskManager};
 use xlineapi::command::KeyRange;
 
 use crate::{
@@ -40,8 +40,8 @@ where
     header_gen: Arc<HeaderGenerator>,
     /// Watch progress notify interval
     watch_progress_notify_interval: Duration,
-    /// Shutdown Listener
-    shutdown_listener: shutdown::Listener,
+    /// Task manager
+    task_manager: Arc<TaskManager>,
 }
 
 impl<S> WatchServer<S>
@@ -53,14 +53,14 @@ where
         watcher: Arc<KvWatcher<S>>,
         header_gen: Arc<HeaderGenerator>,
         watch_progress_notify_interval: Duration,
-        shutdown_listener: shutdown::Listener,
+        task_manager: Arc<TaskManager>,
     ) -> Self {
         Self {
             watcher,
             next_id_gen: Arc::new(WatchIdGenerator::new(1)), // watch_id starts from 1, 0 means auto-generating
             header_gen,
             watch_progress_notify_interval,
-            shutdown_listener,
+            task_manager,
         }
     }
 
@@ -73,7 +73,7 @@ where
         mut req_rx: ST,
         header_gen: Arc<HeaderGenerator>,
         watch_progress_notify_interval: Duration,
-        mut shutdown_listener: shutdown::Listener,
+        shutdown_listener: Listener,
     ) where
         ST: Stream<Item = Result<WatchRequest, tonic::Status>> + Unpin,
         W: KvWatcherOps,
@@ -93,9 +93,7 @@ where
         tokio::pin!(stop_listener);
         loop {
             tokio::select! {
-                _ = shutdown_listener.wait_self_shutdown() => {
-                    break;
-                }
+                _ = shutdown_listener.wait() => break,
                 req = req_rx.next() => {
                     if let Some(req) = req {
                         match req {
@@ -408,15 +406,17 @@ where
         debug!("Receive Watch Connection {:?}", request);
         let req_stream = request.into_inner();
         let (tx, rx) = mpsc::channel(CHANNEL_SIZE);
-        let _hd = tokio::spawn(Self::task(
-            Arc::clone(&self.next_id_gen),
-            Arc::clone(&self.watcher),
-            tx,
-            req_stream,
-            Arc::clone(&self.header_gen),
-            self.watch_progress_notify_interval,
-            self.shutdown_listener.clone(),
-        ));
+        self.task_manager.spawn(TaskName::WatchTask, |n| {
+            Self::task(
+                Arc::clone(&self.next_id_gen),
+                Arc::clone(&self.watcher),
+                tx,
+                req_stream,
+                Arc::clone(&self.header_gen),
+                self.watch_progress_notify_interval,
+                n,
+            )
+        });
         Ok(tonic::Response::new(ReceiverStream::new(rx)))
     }
 }
@@ -477,7 +477,7 @@ mod test {
     #[tokio::test]
     #[abort_on_panic]
     async fn test_watch_client_closes_connection() -> Result<(), Box<dyn std::error::Error>> {
-        let (tx, rx) = shutdown::channel();
+        let task_manager = Arc::new(TaskManager::new());
         let (req_tx, req_rx) = mpsc::channel(CHANNEL_SIZE);
         let (res_tx, mut res_rx) = mpsc::channel(CHANNEL_SIZE);
         let req_stream: ReceiverStream<Result<WatchRequest, tonic::Status>> =
@@ -491,6 +491,7 @@ mod test {
             .return_const(-1_i64);
         let watcher = Arc::new(mock_watcher);
         let next_id = Arc::new(WatchIdGenerator::new(1));
+        let n = task_manager.get_shutdown_listener(TaskName::WatchTask);
         let handle = tokio::spawn(WatchServer::<DB>::task(
             next_id,
             Arc::clone(&watcher),
@@ -498,7 +499,7 @@ mod test {
             req_stream,
             header_gen,
             default_watch_progress_notify_interval(),
-            rx,
+            n,
         ));
         req_tx
             .send(Ok(WatchRequest {
@@ -514,7 +515,7 @@ mod test {
         }
         drop(req_tx);
         timeout(Duration::from_secs(3), handle).await??;
-        tx.self_shutdown_and_wait().await;
+        task_manager.shutdown(true).await;
         Ok(())
     }
 
@@ -522,7 +523,7 @@ mod test {
     #[abort_on_panic]
     #[allow(clippy::similar_names)] // use num as suffix
     async fn test_multi_watch_handle() -> Result<(), Box<dyn std::error::Error>> {
-        let (tx, rx) = shutdown::channel();
+        let task_manager = Arc::new(TaskManager::new());
         let mut mock_watcher = MockKvWatcherOps::new();
         let collection = Arc::new(Mutex::new(HashMap::new()));
         let collection_c = Arc::clone(&collection);
@@ -545,29 +546,33 @@ mod test {
         let (res_tx1, _res_rx1) = mpsc::channel(CHANNEL_SIZE);
         let req_stream1: ReceiverStream<Result<WatchRequest, tonic::Status>> =
             ReceiverStream::new(req_rx1);
-        let handle1 = tokio::spawn(WatchServer::<DB>::task(
-            Arc::clone(&next_id_gen),
-            Arc::clone(&kv_watcher),
-            res_tx1,
-            req_stream1,
-            Arc::clone(&header_gen),
-            default_watch_progress_notify_interval(),
-            rx.clone(),
-        ));
+        task_manager.spawn(TaskName::WatchTask, |n| {
+            WatchServer::<DB>::task(
+                Arc::clone(&next_id_gen),
+                Arc::clone(&kv_watcher),
+                res_tx1,
+                req_stream1,
+                Arc::clone(&header_gen),
+                default_watch_progress_notify_interval(),
+                n,
+            )
+        });
 
         let (req_tx2, req_rx2) = mpsc::channel(CHANNEL_SIZE);
         let (res_tx2, _res_rx2) = mpsc::channel(CHANNEL_SIZE);
         let req_stream2: ReceiverStream<Result<WatchRequest, tonic::Status>> =
             ReceiverStream::new(req_rx2);
-        let handle2 = tokio::spawn(WatchServer::<DB>::task(
-            next_id_gen,
-            kv_watcher,
-            res_tx2,
-            req_stream2,
-            header_gen,
-            default_watch_progress_notify_interval(),
-            rx,
-        ));
+        task_manager.spawn(TaskName::WatchTask, |n| {
+            WatchServer::<DB>::task(
+                next_id_gen,
+                kv_watcher,
+                res_tx2,
+                req_stream2,
+                header_gen,
+                default_watch_progress_notify_interval(),
+                n,
+            )
+        });
 
         let w_req = WatchRequest {
             request_union: Some(RequestUnion::CreateRequest(WatchCreateRequest {
@@ -582,16 +587,17 @@ mod test {
         for count in collection.lock().values() {
             assert_eq!(*count, 1);
         }
-        handle1.abort();
-        handle2.abort();
-        tx.self_shutdown_and_wait().await;
+        // handle1.abort();
+        // handle2.abort();
+        // TODO
+        task_manager.shutdown(true).await;
         Ok(())
     }
 
     #[tokio::test]
     #[abort_on_panic]
     async fn test_watch_prev_kv() {
-        let (tx, rx) = shutdown::channel();
+        let task_manager = Arc::new(TaskManager::new());
         let (compact_tx, _compact_rx) = mpsc::channel(COMPACT_CHANNEL_SIZE);
         let index = Arc::new(Index::new());
         let db = DB::open(&EngineConfig::Memory).unwrap();
@@ -611,7 +617,7 @@ mod test {
             kv_store_inner,
             kv_update_rx,
             Duration::from_millis(10),
-            rx.clone(),
+            &task_manager,
         );
         put(&kv_store, &db, "foo", "old_bar", 2).await;
         put(&kv_store, &db, "foo", "bar", 3).await;
@@ -630,15 +636,17 @@ mod test {
         req_tx.send(Ok(create_watch_req(1, false))).await.unwrap();
         req_tx.send(Ok(create_watch_req(2, true))).await.unwrap();
         let (res_tx, mut res_rx) = mpsc::channel(CHANNEL_SIZE);
-        let _hd = tokio::spawn(WatchServer::<DB>::task(
-            Arc::clone(&next_id_gen),
-            Arc::clone(&kv_watcher),
-            res_tx,
-            req_stream,
-            Arc::clone(&header_gen),
-            default_watch_progress_notify_interval(),
-            rx,
-        ));
+        task_manager.spawn(TaskName::WatchTask, |n| {
+            WatchServer::<DB>::task(
+                Arc::clone(&next_id_gen),
+                Arc::clone(&kv_watcher),
+                res_tx,
+                req_stream,
+                Arc::clone(&header_gen),
+                default_watch_progress_notify_interval(),
+                n,
+            )
+        });
 
         for _ in 0..4 {
             let watch_res = res_rx.recv().await.unwrap().unwrap();
@@ -655,13 +663,13 @@ mod test {
             }
         }
         drop(kv_store);
-        tx.self_shutdown_and_wait().await;
+        task_manager.shutdown(true).await;
     }
 
     #[tokio::test]
     #[abort_on_panic]
     async fn test_watch_progress() -> Result<(), Box<dyn std::error::Error>> {
-        let (tx, rx) = shutdown::channel();
+        let task_manager = Arc::new(TaskManager::new());
         let (req_tx, req_rx) = mpsc::channel(CHANNEL_SIZE);
         let (res_tx, mut res_rx) = mpsc::channel(CHANNEL_SIZE);
         let req_stream: ReceiverStream<Result<WatchRequest, tonic::Status>> =
@@ -675,15 +683,17 @@ mod test {
             .return_const(-1_i64);
         let watcher = Arc::new(mock_watcher);
         let next_id = Arc::new(WatchIdGenerator::new(1));
-        let handle = tokio::spawn(WatchServer::<DB>::task(
-            next_id,
-            Arc::clone(&watcher),
-            res_tx,
-            req_stream,
-            header_gen,
-            Duration::from_millis(100),
-            rx,
-        ));
+        task_manager.spawn(TaskName::WatchTask, |n| {
+            WatchServer::<DB>::task(
+                next_id,
+                Arc::clone(&watcher),
+                res_tx,
+                req_stream,
+                header_gen,
+                Duration::from_millis(100),
+                n,
+            )
+        });
         req_tx
             .send(Ok(WatchRequest {
                 request_union: Some(RequestUnion::CreateRequest(WatchCreateRequest {
@@ -715,15 +725,14 @@ mod test {
         let c = cnt.load(Ordering::Acquire);
         assert!(c >= 9);
         drop(req_tx);
-        handle.await.unwrap();
-        tx.self_shutdown_and_wait().await;
+        task_manager.shutdown(true).await;
         Ok(())
     }
 
     #[tokio::test]
     async fn watch_task_should_terminate_when_response_tx_closed(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let (tx, rx) = shutdown::channel();
+        let task_manager = Arc::new(TaskManager::new());
         let (req_tx, req_rx) = mpsc::channel(CHANNEL_SIZE);
         let (res_tx, res_rx) = mpsc::channel(CHANNEL_SIZE);
         let req_stream: ReceiverStream<Result<WatchRequest, tonic::Status>> =
@@ -737,6 +746,7 @@ mod test {
             .return_const(-1_i64);
         let watcher = Arc::new(mock_watcher);
         let next_id = Arc::new(WatchIdGenerator::new(1));
+        let n = task_manager.get_shutdown_listener(TaskName::WatchTask);
         let handle = tokio::spawn(WatchServer::<DB>::task(
             next_id,
             Arc::clone(&watcher),
@@ -744,7 +754,7 @@ mod test {
             req_stream,
             header_gen,
             Duration::from_millis(100),
-            rx,
+            n,
         ));
 
         req_tx
@@ -767,13 +777,13 @@ mod test {
             .await?;
 
         assert!(timeout(Duration::from_secs(10), handle).await.is_ok());
-        tx.self_shutdown_and_wait().await;
+        task_manager.shutdown(true).await;
         Ok(())
     }
 
     #[tokio::test]
     async fn watch_compacted_revision_should_fail() {
-        let (tx, rx) = shutdown::channel();
+        let task_manager = Arc::new(TaskManager::new());
         let (compact_tx, _compact_rx) = mpsc::channel(COMPACT_CHANNEL_SIZE);
         let index = Arc::new(Index::new());
         let db = DB::open(&EngineConfig::Memory).unwrap();
@@ -793,7 +803,7 @@ mod test {
             kv_store_inner,
             kv_update_rx,
             Duration::from_millis(10),
-            rx.clone(),
+            &task_manager,
         );
         put(&kv_store, &db, "foo", "old_bar", 2).await;
         put(&kv_store, &db, "foo", "bar", 3).await;
@@ -813,15 +823,17 @@ mod test {
         };
         req_tx.send(Ok(create_watch_req(1, 2))).await.unwrap();
         let (res_tx, mut res_rx) = mpsc::channel(CHANNEL_SIZE);
-        let _hd = tokio::spawn(WatchServer::<DB>::task(
-            Arc::clone(&next_id_gen),
-            Arc::clone(&kv_watcher),
-            res_tx,
-            req_stream,
-            Arc::clone(&header_gen),
-            default_watch_progress_notify_interval(),
-            rx,
-        ));
+        task_manager.spawn(TaskName::WatchTask, |n| {
+            WatchServer::<DB>::task(
+                Arc::clone(&next_id_gen),
+                Arc::clone(&kv_watcher),
+                res_tx,
+                req_stream,
+                Arc::clone(&header_gen),
+                default_watch_progress_notify_interval(),
+                n,
+            )
+        });
 
         // It's allowed to create a compacted watch request, but it will immediately cancel. Doing so is for the compatibility with etcdctl
         let watch_create_success_res = res_rx.recv().await.unwrap().unwrap();
@@ -843,6 +855,6 @@ mod test {
         assert_eq!(watch_event_res.compact_revision, 0);
         assert_eq!(watch_event_res.watch_id, 2);
         drop(kv_store);
-        tx.self_shutdown_and_wait().await;
+        task_manager.shutdown(true).await;
     }
 }

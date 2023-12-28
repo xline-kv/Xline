@@ -905,7 +905,10 @@ mod test {
 
     use test_macros::abort_on_panic;
     use tokio::{runtime::Handle, task::block_in_place};
-    use utils::{config::EngineConfig, shutdown};
+    use utils::{
+        config::EngineConfig,
+        task_manager::{tasks::TaskName, TaskManager},
+    };
 
     use super::*;
     use crate::{
@@ -920,14 +923,14 @@ mod test {
 
     const CHANNEL_SIZE: usize = 1024;
 
-    struct StoreWrapper(Option<Arc<KvStore<DB>>>, shutdown::Trigger);
+    struct StoreWrapper(Option<Arc<KvStore<DB>>>, Arc<TaskManager>);
 
     impl Drop for StoreWrapper {
         fn drop(&mut self) {
             drop(self.0.take());
             block_in_place(move || {
                 Handle::current().block_on(async move {
-                    self.1.self_shutdown_and_wait().await;
+                    self.1.shutdown(true).await;
                 });
             });
         }
@@ -979,7 +982,7 @@ mod test {
     }
 
     fn init_empty_store(db: Arc<DB>) -> StoreWrapper {
-        let (shutdown_trigger, shutdown_listener) = shutdown::channel();
+        let task_manager = Arc::new(TaskManager::new());
         let (compact_tx, compact_rx) = mpsc::channel(COMPACT_CHANNEL_SIZE);
         let (kv_update_tx, kv_update_rx) = mpsc::channel(CHANNEL_SIZE);
         let lease_collection = Arc::new(LeaseCollection::new(0));
@@ -997,17 +1000,19 @@ mod test {
             kv_store_inner,
             kv_update_rx,
             Duration::from_millis(10),
-            shutdown_listener.clone(),
+            &task_manager,
         );
-        let _compactor = tokio::spawn(compact_bg_task(
-            Arc::clone(&storage),
-            index,
-            1000,
-            Duration::from_millis(10),
-            compact_rx,
-            shutdown_listener,
-        ));
-        StoreWrapper(Some(storage), shutdown_trigger)
+        task_manager.spawn(TaskName::CompactBg, |n| {
+            compact_bg_task(
+                Arc::clone(&storage),
+                index,
+                1000,
+                Duration::from_millis(10),
+                compact_rx,
+                n,
+            )
+        });
+        StoreWrapper(Some(storage), task_manager)
     }
 
     async fn exe_as_and_flush(

@@ -21,16 +21,16 @@ use itertools::Itertools;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 #[cfg(not(madsim))]
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::{fs, sync::mpsc::channel, task::JoinHandle};
+use tokio::{fs, sync::mpsc::channel};
 #[cfg(not(madsim))]
 use tonic::transport::server::Connected;
 use tonic::transport::{server::Router, Server};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use utils::{
     config::{
         AuthConfig, ClusterConfig, CompactConfig, EngineConfig, InitialClusterState, StorageConfig,
     },
-    shutdown,
+    task_manager::{tasks::TaskName, TaskManager},
 };
 use xlineapi::command::{Command, CurpClient};
 
@@ -82,8 +82,8 @@ pub struct XlineServer {
     compact_config: CompactConfig,
     /// Auth config
     auth_config: AuthConfig,
-    /// Shutdown trigger
-    shutdown_trigger: shutdown::Trigger,
+    /// Task Manager
+    task_manager: Arc<TaskManager>,
 }
 
 impl XlineServer {
@@ -97,7 +97,6 @@ impl XlineServer {
         compact_config: CompactConfig,
         auth_config: AuthConfig,
     ) -> Result<Self> {
-        let (shutdown_trigger, _) = shutdown::channel();
         let cluster_info = Arc::new(Self::init_cluster_info(&cluster_config).await?);
         Ok(Self {
             cluster_info,
@@ -105,7 +104,7 @@ impl XlineServer {
             storage_config,
             compact_config,
             auth_config,
-            shutdown_trigger,
+            task_manager: Arc::new(TaskManager::new()),
         })
     }
 
@@ -201,14 +200,16 @@ impl XlineServer {
             compact_task_tx,
             Arc::clone(&lease_collection),
         ));
-        let _hd = tokio::spawn(compact_bg_task(
-            Arc::clone(&kv_storage),
-            Arc::clone(&index),
-            *self.compact_config.compact_batch_size(),
-            *self.compact_config.compact_sleep_interval(),
-            compact_task_rx,
-            self.shutdown_trigger.subscribe(),
-        ));
+        self.task_manager.spawn(TaskName::CompactBg, |n| {
+            compact_bg_task(
+                Arc::clone(&kv_storage),
+                Arc::clone(&index),
+                *self.compact_config.compact_batch_size(),
+                *self.compact_config.compact_sleep_interval(),
+                compact_task_rx,
+                n,
+            )
+        });
         let lease_storage = Arc::new(LeaseStore::new(
             Arc::clone(&lease_collection),
             Arc::clone(&header_gen),
@@ -229,7 +230,7 @@ impl XlineServer {
             kv_store_inner,
             kv_update_rx,
             *self.cluster_config.server_timeout().sync_victims_interval(),
-            self.shutdown_trigger.subscribe(),
+            &self.task_manager,
         );
         // lease storage must recover before kv storage
         lease_storage.recover()?;
@@ -309,11 +310,12 @@ impl XlineServer {
     pub async fn start_from_single_addr(
         &self,
         addr: SocketAddr,
-    ) -> Result<JoinHandle<Result<(), tonic::transport::Error>>> {
-        let mut shutdown_listener = self.shutdown_trigger.subscribe();
-        let signal = async move {
-            shutdown_listener.wait_self_shutdown().await;
-        };
+        persistent: Arc<S>,
+        key_pair: Option<(EncodingKey, DecodingKey)>,
+    ) -> Result<tokio::task::JoinHandle<Result<(), tonic::transport::Error>>> {
+        let n = self
+            .task_manager
+            .get_shutdown_listener(TaskName::TonicServer);
         let persistent = DB::open(&self.storage_config.engine)?;
         let key_pair = Self::read_key_pair(
             self.auth_config.auth_private_key().as_ref(),
@@ -321,7 +323,7 @@ impl XlineServer {
         )
         .await?;
         let (router, curp_client) = self.init_router(persistent, key_pair).await?;
-        let handle = tokio::spawn(async move { router.serve_with_shutdown(addr, signal).await });
+        let handle = tokio::spawn(async move { router.serve_with_shutdown(addr, n.wait()).await });
         if let Err(e) = self.publish(curp_client).await {
             warn!("publish name to cluster failed: {:?}", e);
         };
@@ -330,20 +332,13 @@ impl XlineServer {
 
     /// inner start method shared by `start` and `start_from_listener`
     #[cfg(not(madsim))]
-    async fn start_inner<I, IO, IE>(
-        &self,
-        incoming: I,
-    ) -> Result<JoinHandle<Result<(), tonic::transport::Error>>>
+    async fn start_inner<I, IO, IE>(&self, incoming: I) -> Result<()>
     where
         I: Stream<Item = Result<IO, IE>> + Send + 'static,
         IO: AsyncRead + AsyncWrite + Connected + Unpin + Send + 'static,
         IO::ConnectInfo: Clone + Send + Sync + 'static,
         IE: Into<Box<dyn std::error::Error + Send + Sync>> + Send,
     {
-        let mut shutdown_listener = self.shutdown_trigger.subscribe();
-        let signal = async move {
-            shutdown_listener.wait_self_shutdown().await;
-        };
         let persistent = DB::open(&self.storage_config.engine)?;
         let key_pair = Self::read_key_pair(
             self.auth_config.auth_private_key().as_ref(),
@@ -351,15 +346,16 @@ impl XlineServer {
         )
         .await?;
         let (router, curp_client) = self.init_router(persistent, key_pair).await?;
-
-        let handle =
-            tokio::spawn(
-                async move { router.serve_with_incoming_shutdown(incoming, signal).await },
-            );
+        self.task_manager
+            .spawn(TaskName::TonicServer, |n| async move {
+                let _ig = router
+                    .serve_with_incoming_shutdown(incoming, n.wait())
+                    .await;
+            });
         if let Err(e) = self.publish(curp_client).await {
-            warn!("publish name to cluster failed: {:?}", e);
+            warn!("publish name to cluster failed: {e:?}");
         };
-        Ok(handle)
+        Ok(())
     }
 
     /// Start `XlineServer`
@@ -369,7 +365,7 @@ impl XlineServer {
     /// Will return `Err` when `tonic::Server` serve return an error
     #[inline]
     #[cfg(not(madsim))]
-    pub async fn start(&self) -> Result<JoinHandle<Result<(), tonic::transport::Error>>> {
+    pub async fn start(&self) -> Result<()> {
         let server_addr_iter = self
             .cluster_config
             .members()
@@ -405,10 +401,7 @@ impl XlineServer {
     /// Will return `Err` when `tonic::Server` serve return an error
     #[inline]
     #[cfg(not(madsim))]
-    pub async fn start_from_listener(
-        &self,
-        xline_listener: tokio::net::TcpListener,
-    ) -> Result<JoinHandle<Result<(), tonic::transport::Error>>> {
+    pub async fn start_from_listener(&self, xline_listener: tokio::net::TcpListener) -> Result<()> {
         let incoming = tokio_stream::wrappers::TcpListenerStream::new(xline_listener);
         self.start_inner(incoming).await
     }
@@ -477,8 +470,8 @@ impl XlineServer {
                     auto_compactor(
                         *self.cluster_config.is_leader(),
                         header_gen.general_revision_arc(),
-                        self.shutdown_trigger.subscribe(),
                         auto_config_cfg,
+                        Arc::clone(&self.task_manager),
                     )
                     .await,
                 )
@@ -498,7 +491,7 @@ impl XlineServer {
             snapshot_allocator,
             state,
             Arc::clone(&curp_config),
-            self.shutdown_trigger.clone(),
+            Arc::clone(&self.task_manager),
         )
         .await;
 
@@ -543,14 +536,14 @@ impl XlineServer {
                 Arc::clone(&client),
                 id_gen,
                 Arc::clone(&self.cluster_info),
-                self.shutdown_trigger.subscribe(),
+                &self.task_manager,
             ),
             AuthServer::new(Arc::clone(&client)),
             WatchServer::new(
                 watcher,
                 Arc::clone(&header_gen),
                 *server_timeout.watch_progress_notify_interval(),
-                self.shutdown_trigger.subscribe(),
+                Arc::clone(&self.task_manager),
             ),
             MaintenanceServer::new(
                 kv_storage,
@@ -575,17 +568,10 @@ impl XlineServer {
             .await
     }
 
-    /// Check if `XlineServer` is stopped
-    #[inline]
-    #[must_use]
-    pub fn is_stopped(&self) -> bool {
-        self.shutdown_trigger.is_closed()
-    }
-
     /// Stop `XlineServer`
     #[inline]
     pub async fn stop(&self) {
-        self.shutdown_trigger.self_shutdown_and_wait().await;
+        self.task_manager.shutdown(true).await;
     }
 
     /// Read key pair from file
@@ -603,19 +589,6 @@ impl XlineServer {
             _ => Err(anyhow!(
                 "private key path and public key path must be both set or both unset"
             )),
-        }
-    }
-}
-
-impl Drop for XlineServer {
-    #[inline]
-    fn drop(&mut self) {
-        if !self.is_stopped() {
-            let task_number = self.shutdown_trigger.receiver_count();
-            error!(
-                "Xline server is not stopped, there are {} tasks not stopped",
-                task_number
-            );
         }
     }
 }

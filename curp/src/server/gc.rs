@@ -1,32 +1,24 @@
 use std::{collections::HashSet, time::Duration};
 
-use utils::{parking_lot_lock::MutexMap, shutdown};
+use utils::{parking_lot_lock::MutexMap, task_manager::Listener};
 
 use super::spec_pool::SpecPoolRef;
 use crate::{cmd::Command, rpc::ProposeId, server::cmd_board::CmdBoardRef};
 
-/// Run background GC tasks for Curp server
-pub(super) fn run_gc_tasks<C: Command>(
-    cmd_board: CmdBoardRef<C>,
-    spec: SpecPoolRef<C>,
-    gc_interval: Duration,
-    mut shutdown_listener: shutdown::Listener,
-) {
-    let spec_pool_gc = tokio::spawn(gc_spec_pool(spec, gc_interval));
-    let cmd_board_gc = tokio::spawn(gc_cmd_board(cmd_board, gc_interval));
-    let _ig = tokio::spawn(async move {
-        shutdown_listener.wait_self_shutdown().await;
-        spec_pool_gc.abort();
-        cmd_board_gc.abort();
-    });
-}
-
 /// Cleanup spec pool
-async fn gc_spec_pool<C: Command>(sp: SpecPoolRef<C>, interval: Duration) {
+pub(super) async fn gc_spec_pool<C: Command>(
+    sp: SpecPoolRef<C>,
+    interval: Duration,
+    shutdown_listener: Listener,
+) {
     let mut last_check: HashSet<ProposeId> =
         sp.map_lock(|sp_l| sp_l.pool.keys().copied().collect());
+    #[allow(clippy::integer_arithmetic)] // introduced by tokio select
     loop {
-        tokio::time::sleep(interval).await;
+        tokio::select! {
+            _ = tokio::time::sleep(interval) => {}
+            _ = shutdown_listener.wait() => break,
+        }
         let mut sp = sp.lock();
         sp.pool.retain(|k, _v| !last_check.contains(k));
 
@@ -35,13 +27,21 @@ async fn gc_spec_pool<C: Command>(sp: SpecPoolRef<C>, interval: Duration) {
 }
 
 /// Cleanup cmd board
-async fn gc_cmd_board<C: Command>(cmd_board: CmdBoardRef<C>, interval: Duration) {
+pub(super) async fn gc_cmd_board<C: Command>(
+    cmd_board: CmdBoardRef<C>,
+    interval: Duration,
+    shutdown_listener: Listener,
+) {
     let mut last_check_len_er = 0;
     let mut last_check_len_asr = 0;
     let mut last_check_len_sync = 0;
     let mut last_check_len_conf = 0;
+    #[allow(clippy::integer_arithmetic)] // introduced by tokio select
     loop {
-        tokio::time::sleep(interval).await;
+        tokio::select! {
+            _ = tokio::time::sleep(interval) => {}
+            _ = shutdown_listener.wait() => break,
+        }
         let mut board = cmd_board.write();
 
         // last_check_len_xxx should always be smaller than board.xxx_.len(), the check is just for precaution
@@ -82,6 +82,7 @@ mod tests {
     };
     use parking_lot::{Mutex, RwLock};
     use test_macros::abort_on_panic;
+    use utils::task_manager::{tasks::TaskName, TaskManager};
 
     use super::*;
     use crate::{
@@ -96,8 +97,11 @@ mod tests {
     #[tokio::test]
     #[abort_on_panic]
     async fn cmd_board_gc_test() {
+        let task_manager = TaskManager::new();
         let board: CmdBoardRef<TestCommand> = Arc::new(RwLock::new(CommandBoard::new()));
-        tokio::spawn(gc_cmd_board(Arc::clone(&board), Duration::from_millis(500)));
+        task_manager.spawn(TaskName::GcCmdBoard, |n| {
+            gc_cmd_board(Arc::clone(&board), Duration::from_millis(500), n)
+        });
 
         tokio::time::sleep(Duration::from_millis(100)).await;
         board
@@ -137,13 +141,17 @@ mod tests {
         assert_eq!(*board.er_buffer.get_index(0).unwrap().0, ProposeId(3, 3));
         assert_eq!(board.asr_buffer.len(), 1);
         assert_eq!(*board.asr_buffer.get_index(0).unwrap().0, ProposeId(3, 3));
+        task_manager.shutdown(true).await;
     }
 
     #[tokio::test]
     #[abort_on_panic]
     async fn spec_gc_test() {
+        let task_manager = TaskManager::new();
         let spec: SpecPoolRef<TestCommand> = Arc::new(Mutex::new(SpeculativePool::new()));
-        tokio::spawn(gc_spec_pool(Arc::clone(&spec), Duration::from_millis(500)));
+        task_manager.spawn(TaskName::GcSpecPool, |n| {
+            gc_spec_pool(Arc::clone(&spec), Duration::from_millis(500), n)
+        });
 
         tokio::time::sleep(Duration::from_millis(100)).await;
         let cmd1 = Arc::new(TestCommand::default());
@@ -169,12 +177,14 @@ mod tests {
         let spec = spec.lock();
         assert_eq!(spec.pool.len(), 1);
         assert!(spec.pool.contains_key(&ProposeId(0, 3)));
+        task_manager.shutdown(true).await;
     }
 
     // To verify #206 is fixed
     #[tokio::test]
     #[abort_on_panic]
     async fn spec_gc_will_not_panic() {
+        let task_manager = TaskManager::new();
         let spec: SpecPoolRef<TestCommand> = Arc::new(Mutex::new(SpeculativePool::new()));
 
         let cmd1 = Arc::new(TestCommand::default());
@@ -193,10 +203,13 @@ mod tests {
             .pool
             .insert(ProposeId(0, 2), PoolEntry::new(ProposeId(0, 3), cmd3));
 
-        tokio::spawn(gc_spec_pool(Arc::clone(&spec), Duration::from_millis(500)));
+        task_manager.spawn(TaskName::GcSpecPool, |n| {
+            gc_spec_pool(Arc::clone(&spec), Duration::from_millis(500), n)
+        });
 
         spec.lock().remove(&ProposeId(0, 2));
 
         sleep_secs(1).await;
+        task_manager.shutdown(true).await;
     }
 }

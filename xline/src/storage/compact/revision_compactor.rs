@@ -9,7 +9,7 @@ use std::{
 use clippy_utilities::OverflowArithmetic;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
-use utils::shutdown;
+use utils::task_manager::Listener;
 
 use super::{Compactable, Compactor};
 use crate::revision_number::RevisionNumberGenerator;
@@ -26,8 +26,6 @@ pub(crate) struct RevisionCompactor<C: Compactable> {
     compactable: RwLock<Option<C>>,
     /// revision getter
     revision_getter: Arc<RevisionNumberGenerator>,
-    /// shutdown listener
-    shutdown_listener: shutdown::Listener,
     /// revision retention
     retention: i64,
 }
@@ -37,14 +35,12 @@ impl<C: Compactable> RevisionCompactor<C> {
     pub(super) fn new_arc(
         is_leader: bool,
         revision_getter: Arc<RevisionNumberGenerator>,
-        shutdown_listener: shutdown::Listener,
         retention: i64,
     ) -> Arc<Self> {
         Arc::new(Self {
             is_leader: AtomicBool::new(is_leader),
             compactable: RwLock::new(None),
             revision_getter,
-            shutdown_listener,
             retention,
         })
     }
@@ -103,10 +99,9 @@ impl<C: Compactable> Compactor<C> for RevisionCompactor<C> {
     }
 
     #[allow(clippy::arithmetic_side_effects)]
-    async fn run(&self) {
+    async fn run(&self, shutdown_listener: Listener) {
         let mut last_revision = None;
         let mut ticker = tokio::time::interval(CHECK_INTERVAL);
-        let mut shutdown_listener = self.shutdown_listener.clone();
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
@@ -114,9 +109,7 @@ impl<C: Compactable> Compactor<C> for RevisionCompactor<C> {
                         last_revision = Some(last_compacted_rev);
                     }
                 }
-                _ = shutdown_listener.wait_self_shutdown() => {
-                    break;
-                }
+                _ = shutdown_listener.wait() => break,
             }
         }
     }
@@ -135,10 +128,8 @@ mod test {
     async fn revision_compactor_should_work_in_normal_path() {
         let mut compactable = MockCompactable::new();
         compactable.expect_compact().times(3).returning(Ok);
-        let (_shutdown_trigger, shutdown_listener) = shutdown::channel();
         let revision_gen = Arc::new(RevisionNumberGenerator::new(110));
-        let revision_compactor =
-            RevisionCompactor::new_arc(true, Arc::clone(&revision_gen), shutdown_listener, 100);
+        let revision_compactor = RevisionCompactor::new_arc(true, Arc::clone(&revision_gen), 100);
         revision_compactor.set_compactable(compactable).await;
         // auto_compactor works successfully
         assert_eq!(revision_compactor.do_compact(None).await, Some(10));

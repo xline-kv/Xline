@@ -235,8 +235,14 @@ impl Drop for Cluster {
     fn drop(&mut self) {
         block_in_place(move || {
             Handle::current().block_on(async move {
-                for xline in self.servers.iter() {
-                    xline.stop().await;
+                let mut handles = Vec::new();
+                for xline in self.servers.drain(..) {
+                    handles.push(tokio::spawn(async move {
+                        xline.stop().await;
+                    }));
+                }
+                for h in handles {
+                    h.await.unwrap();
                 }
                 for cfg in &self.configs {
                     if let EngineConfig::RocksDB(ref path) = cfg.cluster().curp_config().engine_cfg

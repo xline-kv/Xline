@@ -35,7 +35,7 @@ use tracing::{
 use utils::{
     config::CurpConfig,
     parking_lot_lock::{MutexMap, RwLockMap},
-    shutdown::{self, Signal},
+    task_manager::TaskManager,
 };
 
 use self::{
@@ -97,8 +97,8 @@ pub struct RawCurp<C: Command, RC: RoleChange> {
     log: RwLock<Log<C>>,
     /// Relevant context
     ctx: Context<C, RC>,
-    /// Shutdown trigger
-    shutdown_trigger: shutdown::Trigger,
+    /// Task manager
+    task_manager: Arc<TaskManager>,
 }
 
 /// Tmp struct for building `RawCurp`
@@ -125,8 +125,8 @@ pub(super) struct RawCurpArgs<C: Command, RC: RoleChange> {
     log_tx: mpsc::UnboundedSender<Arc<LogEntry<C>>>,
     /// Role change callback
     role_change: RC,
-    /// Shutdown trigger
-    shutdown_trigger: shutdown::Trigger,
+    /// Task manager
+    task_manager: Arc<TaskManager>,
     /// Sync events
     sync_events: DashMap<ServerId, Arc<Event>>,
     /// Connects of peers
@@ -185,7 +185,7 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
             cst,
             log,
             ctx,
-            shutdown_trigger: args.shutdown_trigger,
+            task_manager: args.task_manager,
         };
 
         if args.is_leader {
@@ -224,7 +224,7 @@ impl<C: Command, RC: RoleChange> Debug for RawCurp<C, RC> {
             .field("cst", &self.cst)
             .field("log", &self.log)
             .field("ctx", &self.ctx)
-            .field("shutdown_trigger", &self.shutdown_trigger)
+            .field("task_manager", &self.task_manager)
             .finish()
     }
 }
@@ -1187,25 +1187,14 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         )
     }
 
-    /// Enter shutdown state
-    pub(super) fn enter_shutdown(&self) {
-        self.shutdown_trigger.cluster_shutdown();
-        debug!("enter cluster shutdown state");
-    }
-
     /// Check if the cluster is shutting down
     pub(super) fn is_shutdown(&self) -> bool {
-        !matches!(self.shutdown_trigger.state(), Signal::Running)
+        self.task_manager.is_shutdown()
     }
 
     /// Get a shutdown listener
-    pub(super) fn shutdown_trigger(&self) -> &shutdown::Trigger {
-        &self.shutdown_trigger
-    }
-
-    /// Get a shutdown listener
-    pub(super) fn shutdown_listener(&self) -> shutdown::Listener {
-        self.shutdown_trigger.subscribe()
+    pub(super) fn task_manager(&self) -> Arc<TaskManager> {
+        Arc::clone(&self.task_manager)
     }
 
     /// Check if the specified follower has caught up with the leader
