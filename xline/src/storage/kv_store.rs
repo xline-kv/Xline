@@ -9,7 +9,7 @@ use std::{
 };
 
 use clippy_utilities::{Cast, OverflowArithmetic};
-use engine::{EngineError, Transaction, TransactionApi, WriteOperation};
+use engine::Transaction;
 use prost::Message;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
@@ -22,7 +22,7 @@ use super::{
     index::{Index, IndexOperate, IndexTransaction, IndexTransactionOperate},
     lease_store::LeaseCollection,
     revision::{KeyRevision, Revision},
-    storage_api::StorageApi,
+    storage_api::{StorageApi, StorageTxnApi},
 };
 use crate::{
     header_gen::HeaderGenerator,
@@ -81,8 +81,9 @@ where
     pub(crate) async fn after_sync<'a>(
         &self,
         request: &RequestWithToken,
+        txn_db: &Transaction,
     ) -> Result<(SyncResponse, Vec<WriteOp<'a>>), ExecuteError> {
-        self.sync_request(&request.request)
+        self.sync_request(&request.request, txn_db)
             .await
             .map(|resp| (resp, vec![]))
     }
@@ -375,9 +376,7 @@ where
             .iter()
             .map(Revision::encode_to_vec)
             .collect::<Vec<Vec<u8>>>();
-        let values = txn
-            .get_multi(KV_TABLE, &revisions)
-            .map_err(Self::into_execute_err)?;
+        let values = txn.get_values(KV_TABLE, &revisions)?;
         let kvs: Vec<KeyValue> = values
             .into_iter()
             .flatten()
@@ -471,6 +470,17 @@ where
             })
             .collect();
         Ok(events)
+    }
+}
+
+#[cfg(test)]
+/// Test uitls
+impl<DB> KvStore<DB>
+where
+    DB: StorageApi,
+{
+    pub(crate) fn db(&self) -> &DB {
+        self.db.as_ref()
     }
 }
 
@@ -640,11 +650,7 @@ where
             }
         };
 
-        let key = new_rev.as_revision().encode_to_vec();
-        let value = kv.encode_to_vec();
-        txn_db
-            .write(WriteOperation::new_put(KV_TABLE, key, value))
-            .map_err(Self::into_execute_err)?;
+        txn_db.write_op(WriteOp::PutKeyValue(new_rev.as_revision(), kv.clone()))?;
         *sub_revision = sub_revision.overflow_add(1);
         let revs = vec![(
             kv.key.clone(),
@@ -777,32 +783,34 @@ where
     DB: StorageApi,
 {
     /// Handle kv requests
-    async fn sync_request(&self, wrapper: &RequestWrapper) -> Result<SyncResponse, ExecuteError> {
+    async fn sync_request(
+        &self,
+        wrapper: &RequestWrapper,
+        txn_db: &Transaction,
+    ) -> Result<SyncResponse, ExecuteError> {
         debug!("Execute {:?}", wrapper);
 
-        let txn_db = self.db.transaction();
         let txn_index = self.index.transaction();
-
         let next_revision = self.revision.get().overflow_add(1);
+
         #[allow(clippy::wildcard_enum_match_arm)]
         let events = match *wrapper {
             RequestWrapper::RangeRequest(_) => {
                 vec![]
             }
             RequestWrapper::PutRequest(ref req) => {
-                self.sync_put(&txn_db, &txn_index, req, next_revision, &mut 0)?
+                self.sync_put(txn_db, &txn_index, req, next_revision, &mut 0)?
             }
             RequestWrapper::DeleteRangeRequest(ref req) => {
-                self.sync_delete_range(&txn_db, &txn_index, req, next_revision, &mut 0)?
+                self.sync_delete_range(txn_db, &txn_index, req, next_revision, &mut 0)?
             }
             RequestWrapper::TxnRequest(ref req) => {
-                self.sync_txn(&txn_db, &txn_index, req, next_revision, &mut 0)?
+                self.sync_txn(txn_db, &txn_index, req, next_revision, &mut 0)?
             }
             RequestWrapper::CompactionRequest(ref req) => self.sync_compaction(req).await?,
             _ => unreachable!("Other request should not be sent to this store"),
         };
 
-        txn_db.commit().map_err(Self::into_execute_err)?;
         txn_index.commit();
 
         let response = if events.is_empty() {
@@ -855,11 +863,7 @@ where
                 .unwrap_or_else(|e| panic!("unexpected error from lease Attach: {e}"));
         }
 
-        let key = new_rev.as_revision().encode_to_vec();
-        let value = kv.encode_to_vec();
-        txn_db
-            .write(WriteOperation::new_put(KV_TABLE, key, value))
-            .map_err(Self::into_execute_err)?;
+        txn_db.write_op(WriteOp::PutKeyValue(new_rev.as_revision(), kv.clone()))?;
         *sub_revision = sub_revision.overflow_add(1);
 
         let revs = vec![(
@@ -1000,7 +1004,7 @@ where
     fn mark_deletions<'a>(
         revisions: &[(Revision, Revision)],
         keys: &[Vec<u8>],
-    ) -> (Vec<WriteOperation<'a>>, Vec<(Vec<u8>, KeyRevision)>) {
+    ) -> (Vec<WriteOp<'a>>, Vec<(Vec<u8>, KeyRevision)>) {
         assert_eq!(keys.len(), revisions.len(), "Index doesn't match with DB");
         keys.iter()
             .zip(revisions.iter())
@@ -1010,11 +1014,6 @@ where
                     mod_revision: new_rev.revision(),
                     ..KeyValue::default()
                 };
-                let op = WriteOperation::new_put(
-                    KV_TABLE,
-                    new_rev.encode_to_vec(),
-                    del_kv.encode_to_vec(),
-                );
 
                 let key_revision = (
                     del_kv.key.clone(),
@@ -1025,7 +1024,7 @@ where
                         new_rev.sub_revision(),
                     ),
                 );
-                (op, key_revision)
+                (WriteOp::PutKeyValue(new_rev, del_kv), key_revision)
             })
             .unzip()
     }
@@ -1046,7 +1045,7 @@ where
 
         *sub_revision = sub_revision.overflow_add(del_ops.len().cast());
         for op in del_ops {
-            txn_db.write(op).map_err(Self::into_execute_err)?;
+            txn_db.write_op(op)?;
         }
 
         Ok(keys)
@@ -1069,18 +1068,13 @@ where
         txn.insert(key_revisions);
         txn.commit();
     }
-
-    /// Converts `EngineError` to `ExecuteError`
-    #[allow(clippy::needless_pass_by_value)] // need to consume it
-    fn into_execute_err(error: EngineError) -> ExecuteError {
-        ExecuteError::DbError(error.to_string())
-    }
 }
 
 #[cfg(test)]
 mod test {
     use std::time::Duration;
 
+    use engine::TransactionApi;
     use test_macros::abort_on_panic;
     use utils::{config::EngineConfig, shutdown};
 
@@ -1164,8 +1158,11 @@ mod test {
         store: &Arc<KvStore<DB>>,
         request: &RequestWithToken,
     ) -> Result<(), ExecuteError> {
-        store.after_sync(request).await?;
-        Ok(())
+        let txn = store.db().transaction();
+        store.after_sync(request, &txn).await?;
+        txn.commit()
+            .await
+            .map_err(|e| ExecuteError::DbError(e.to_string()))
     }
 
     fn index_compact(store: &Arc<KvStore<DB>>, at_rev: i64) -> Vec<Vec<u8>> {

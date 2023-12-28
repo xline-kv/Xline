@@ -9,7 +9,7 @@ use curp::{
     LogIndex,
 };
 use dashmap::DashMap;
-use engine::Snapshot;
+use engine::{Snapshot, TransactionApi};
 use tracing::warn;
 use xlineapi::{
     command::{Command, KeyRange},
@@ -20,7 +20,11 @@ use xlineapi::{
 use super::barriers::{IdBarrier, IndexBarrier};
 use crate::{
     rpc::{RequestBackend, RequestWithToken, RequestWrapper},
-    storage::{db::WriteOp, storage_api::StorageApi, AlarmStore, AuthStore, KvStore, LeaseStore},
+    storage::{
+        db::WriteOp,
+        storage_api::{StorageApi, StorageTxnApi},
+        AlarmStore, AuthStore, KvStore, LeaseStore,
+    },
 };
 
 /// Meta table name
@@ -335,18 +339,23 @@ where
         index: LogIndex,
     ) -> Result<<Command as CurpCommand>::ASR, <Command as CurpCommand>::Error> {
         let quota_enough = self.quota_checker.check(cmd);
-        self.persistent
-            .flush_ops(vec![WriteOp::PutAppliedIndex(index)])?;
         let wrapper = cmd.request();
+        let txn_db = self.persistent.transaction();
+        txn_db.write_op(WriteOp::PutAppliedIndex(index))?;
 
         let (res, wr_ops) = match wrapper.request.backend() {
-            RequestBackend::Kv => self.kv_storage.after_sync(wrapper).await?,
+            RequestBackend::Kv => self.kv_storage.after_sync(wrapper, &txn_db).await?,
             RequestBackend::Auth => self.auth_storage.after_sync(wrapper)?,
             RequestBackend::Lease => self.lease_storage.after_sync(wrapper).await?,
             RequestBackend::Alarm => self.alarm_storage.after_sync(wrapper),
         };
-        self.persistent.flush_ops(wr_ops)?;
+        txn_db.write_ops(wr_ops)?;
+        txn_db
+            .commit()
+            .await
+            .map_err(|e| ExecuteError::DbError(e.to_string()))?;
         self.lease_storage.mark_lease_synced(&wrapper.request);
+
         if !quota_enough {
             let alarmer = self.alarmer.clone();
             let _ig = tokio::spawn(async move {
