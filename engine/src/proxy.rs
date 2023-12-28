@@ -457,4 +457,155 @@ mod test {
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
+
+    #[tokio::test]
+    #[abort_on_panic]
+    async fn txn_write_batch_should_success() {
+        let dir = PathBuf::from("/tmp/txn_write_batch_should_success");
+        let rocks_engine_path = dir.join("rocks_engine");
+        let engines = vec![
+            Engine::new(EngineType::Memory, &TESTTABLES).unwrap(),
+            Engine::new(EngineType::Rocks(rocks_engine_path), &TESTTABLES).unwrap(),
+        ];
+        for engine in engines {
+            let txn = engine.transaction();
+            let origin_set: Vec<Vec<u8>> = (1u8..=10u8)
+                .map(|val| repeat(val).take(4).collect())
+                .collect();
+            let keys = origin_set.clone();
+            let values = origin_set.clone();
+            let puts = zip(keys, values)
+                .map(|(k, v)| WriteOperation::new_put("kv", k, v))
+                .collect::<Vec<WriteOperation<'_>>>();
+
+            for put in puts {
+                txn.write(put).unwrap();
+            }
+
+            let res_1 = txn.get_multi("kv", &origin_set).unwrap();
+            assert_eq!(res_1.iter().filter(|v| v.is_some()).count(), 10);
+
+            let delete_key: Vec<u8> = vec![1, 1, 1, 1];
+            let delete = WriteOperation::new_delete("kv", &delete_key);
+
+            txn.write(delete).unwrap();
+
+            let res_3 = txn.get("kv", &delete_key).unwrap();
+            assert!(res_3.is_none());
+
+            let delete_start: Vec<u8> = vec![2, 2, 2, 2];
+            let delete_end: Vec<u8> = vec![5, 5, 5, 5];
+            let delete_range = WriteOperation::new_delete_range("kv", &delete_start, &delete_end);
+            txn.write(delete_range).unwrap();
+
+            let get_key_1: Vec<u8> = vec![5, 5, 5, 5];
+            let get_key_2: Vec<u8> = vec![3, 3, 3, 3];
+            assert!(txn.get("kv", &get_key_1).unwrap().is_some());
+            assert!(txn.get("kv", &get_key_2).unwrap().is_none());
+
+            txn.commit().await.unwrap();
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    #[abort_on_panic]
+    async fn txn_get_operation_should_success() {
+        let dir = PathBuf::from("/tmp/txn_get_operation_should_success");
+        let rocks_engine_path = dir.join("rocks_engine");
+        let engines = vec![
+            Engine::new(EngineType::Memory, &TESTTABLES).unwrap(),
+            Engine::new(EngineType::Rocks(rocks_engine_path), &TESTTABLES).unwrap(),
+        ];
+        for engine in engines {
+            let test_set = vec![("hello", "hello"), ("world", "world"), ("foo", "foo")];
+            let batch = test_set.iter().map(|&(key, value)| {
+                WriteOperation::new_put("kv", key.as_bytes().to_vec(), value.as_bytes().to_vec())
+            });
+            let txn = engine.transaction();
+            for op in batch {
+                txn.write(op).unwrap();
+            }
+            let res_1 = txn.get("kv", "hello").unwrap();
+            assert_eq!(res_1, Some("hello".as_bytes().to_vec()));
+            let multi_keys = vec!["hello", "world", "bar"];
+            let expected_multi_values = vec![
+                Some("hello".as_bytes().to_vec()),
+                Some("world".as_bytes().to_vec()),
+                None,
+            ];
+            let res_2 = txn.get_multi("kv", &multi_keys).unwrap();
+            assert_eq!(multi_keys.len(), res_2.len());
+            assert_eq!(res_2, expected_multi_values);
+            txn.commit().await.unwrap();
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    #[abort_on_panic]
+    async fn txn_operation_is_atomic() {
+        let dir = PathBuf::from("/tmp/txn_operation_should_be_atomic");
+        let rocks_engine_path = dir.join("rocks_engine");
+        let engines = vec![
+            Engine::new(EngineType::Memory, &TESTTABLES).unwrap(),
+            Engine::new(EngineType::Rocks(rocks_engine_path), &TESTTABLES).unwrap(),
+        ];
+        for engine in engines {
+            let txn = engine.transaction();
+            let test_set: Vec<_> = vec![("hello", "hello"), ("world", "world"), ("foo", "foo")]
+                .into_iter()
+                .map(|(k, v)| (k.as_bytes().to_vec(), v.as_bytes().to_vec()))
+                .collect();
+            for (key, val) in test_set.clone() {
+                let op = WriteOperation::new_put("kv", key, val);
+                txn.write(op).unwrap();
+            }
+            for (key, val) in test_set.clone() {
+                assert_eq!(txn.get("kv", key).unwrap().unwrap(), val);
+            }
+            for (key, _) in test_set.clone() {
+                assert!(engine.get("kv", key).unwrap().is_none());
+            }
+            txn.commit().await.unwrap();
+            for (key, val) in test_set.clone() {
+                assert_eq!(engine.get("kv", key).unwrap().unwrap(), val);
+            }
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    #[abort_on_panic]
+    async fn txn_revert_should_success() {
+        let dir = PathBuf::from("/tmp/txn_revert_should_success");
+        let rocks_engine_path = dir.join("rocks_engine");
+        let engines = vec![
+            Engine::new(EngineType::Memory, &TESTTABLES).unwrap(),
+            Engine::new(EngineType::Rocks(rocks_engine_path), &TESTTABLES).unwrap(),
+        ];
+        for engine in engines {
+            let txn = engine.transaction();
+            let test_set: Vec<_> = vec![("hello", "hello"), ("world", "world"), ("foo", "foo")]
+                .into_iter()
+                .map(|(k, v)| (k.as_bytes().to_vec(), v.as_bytes().to_vec()))
+                .collect();
+            for (key, val) in test_set.clone() {
+                let op = WriteOperation::new_put("kv", key, val);
+                txn.write(op).unwrap();
+            }
+            for (key, val) in test_set.clone() {
+                assert_eq!(txn.get("kv", key).unwrap().unwrap(), val);
+            }
+            txn.rollback().unwrap();
+            for (key, _) in test_set.clone() {
+                assert!(txn.get("kv", key).unwrap().is_none());
+            }
+            txn.commit().await.unwrap();
+            for (key, _) in test_set {
+                assert!(engine.get("kv", key).unwrap().is_none());
+            }
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }
