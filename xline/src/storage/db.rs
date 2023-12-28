@@ -1,6 +1,8 @@
 use std::{collections::HashMap, path::Path, sync::Arc};
 
-use engine::{Engine, EngineType, Snapshot, StorageEngine, Transaction, WriteOperation};
+use engine::{
+    Engine, EngineType, Snapshot, StorageEngine, Transaction, TransactionApi, WriteOperation,
+};
 use prost::Message;
 use utils::config::EngineConfig;
 use xlineapi::execute_error::ExecuteError;
@@ -12,7 +14,7 @@ use super::{
     kv_store::KV_TABLE,
     lease_store::LEASE_TABLE,
     revision::KeyRevision,
-    storage_api::StorageApi,
+    storage_api::{StorageApi, StorageTxnApi},
 };
 use crate::{
     rpc::{KeyValue, PbLease, Role, User},
@@ -236,6 +238,104 @@ impl StorageApi for DB {
         self.engine
             .file_size()
             .map_err(|e| ExecuteError::DbError(format!("Failed to get file size, error: {e}")))
+    }
+}
+
+impl StorageTxnApi for Transaction<'_> {
+    fn get_values<K>(
+        &self,
+        table: &'static str,
+        keys: &[K],
+    ) -> Result<Vec<Option<Vec<u8>>>, ExecuteError>
+    where
+        K: AsRef<[u8]> + std::fmt::Debug,
+    {
+        let values = self
+            .get_multi(table, keys)
+            .map_err(|e| ExecuteError::DbError(format!("Failed to get keys {keys:?}: {e}")))?
+            .into_iter()
+            .collect::<Vec<_>>();
+
+        assert_eq!(values.len(), keys.len(), "Index doesn't match with DB");
+
+        Ok(values)
+    }
+
+    fn get_value<K>(&self, table: &'static str, key: K) -> Result<Option<Vec<u8>>, ExecuteError>
+    where
+        K: AsRef<[u8]> + std::fmt::Debug,
+    {
+        self.get(table, key.as_ref())
+            .map_err(|e| ExecuteError::DbError(format!("Failed to get key {key:?}: {e}")))
+    }
+
+    fn write_op(&self, op: WriteOp) -> Result<(), ExecuteError> {
+        #[allow(unused_assignments)] // it's an empty value
+        let mut buf = vec![];
+
+        let wop = match op {
+            WriteOp::PutKeyValue(rev, value) => {
+                let key = rev.encode_to_vec();
+                WriteOperation::new_put(KV_TABLE, key, value.encode_to_vec())
+            }
+            WriteOp::PutAppliedIndex(index) => WriteOperation::new_put(
+                META_TABLE,
+                APPLIED_INDEX_KEY.as_bytes().to_vec(),
+                index.to_le_bytes().to_vec(),
+            ),
+            WriteOp::PutLease(lease) => WriteOperation::new_put(
+                LEASE_TABLE,
+                lease.id.encode_to_vec(),
+                lease.encode_to_vec(),
+            ),
+            WriteOp::PutCompactRevision(rev) => WriteOperation::new_put(
+                META_TABLE,
+                COMPACT_REVISION.as_bytes().to_vec(),
+                rev.to_le_bytes().to_vec(),
+            ),
+            WriteOp::DeleteKeyValue(rev) => WriteOperation::new_delete(KV_TABLE, rev),
+            WriteOp::DeleteLease(lease_id) => {
+                buf = lease_id.encode_to_vec();
+                WriteOperation::new_delete(LEASE_TABLE, &buf)
+            }
+            WriteOp::PutAuthEnable(enable) => WriteOperation::new_put(
+                AUTH_TABLE,
+                AUTH_ENABLE_KEY.to_vec(),
+                vec![u8::from(enable)],
+            ),
+            WriteOp::PutAuthRevision(rev) => {
+                WriteOperation::new_put(AUTH_TABLE, AUTH_REVISION_KEY.to_vec(), rev.encode_to_vec())
+            }
+            WriteOp::PutUser(user) => {
+                let value = user.encode_to_vec();
+                WriteOperation::new_put(USER_TABLE, user.name, value)
+            }
+            WriteOp::DeleteUser(name) => WriteOperation::new_delete(USER_TABLE, name.as_bytes()),
+            WriteOp::PutRole(role) => {
+                let value = role.encode_to_vec();
+                WriteOperation::new_put(ROLE_TABLE, role.name, value)
+            }
+            WriteOp::DeleteRole(name) => WriteOperation::new_delete(ROLE_TABLE, name.as_bytes()),
+            WriteOp::PutAlarm(alarm) => {
+                let key = alarm.encode_to_vec();
+                WriteOperation::new_put(ALARM_TABLE, key, vec![])
+            }
+            WriteOp::DeleteAlarm(member) => {
+                buf = member.encode_to_vec();
+                WriteOperation::new_delete(ALARM_TABLE, &buf)
+            }
+        };
+
+        self.write(wop)
+            .map_err(|e| ExecuteError::DbError(format!("Failed to write op, error: {e}")))
+    }
+
+    fn write_ops(&self, ops: Vec<WriteOp>) -> Result<(), ExecuteError> {
+        for op in ops {
+            self.write_op(op)?;
+        }
+
+        Ok(())
     }
 }
 
