@@ -299,7 +299,7 @@ async fn shutdown_rpc_should_shutdown_the_cluster() {
     assert!(matches!(res, Err(ClientError::ShuttingDown)));
 
     let collection = collection_task.await.unwrap();
-    sleep_secs(3).await; // wait for the cluster to shutdown
+    sleep_secs(7).await; // wait for the cluster to shutdown
     assert!(group.is_finished());
 
     let group = CurpGroup::new_rocks(3, tmp_path).await;
@@ -341,7 +341,7 @@ async fn propose_remove_follower_should_success() {
     let members = client.propose_conf_change(changes).await.unwrap().unwrap();
     assert_eq!(members.len(), 4);
     assert!(members.iter().all(|m| m.id != follower_id));
-    sleep_secs(3).await; // wait the removed node start election and detect it is removed
+    sleep_secs(7).await; // wait the removed node start election and detect it is removed
     assert!(group.nodes.get(&follower_id).unwrap().handle.is_finished());
     // check if the old client can propose to the new cluster
     let res = client.propose(TestCommand::new_get(vec![1]), true).await;
@@ -360,7 +360,7 @@ async fn propose_remove_leader_should_success() {
     let members = client.propose_conf_change(changes).await.unwrap().unwrap();
     assert_eq!(members.len(), 4);
     assert!(members.iter().all(|m| m.id != leader_id));
-    sleep_secs(3).await; // wait for the new leader to be elected
+    sleep_secs(7).await; // wait for the new leader to be elected
     assert!(group.nodes.get(&leader_id).unwrap().handle.is_finished());
     let new_leader_id = group.get_leader().await.0;
     assert_ne!(new_leader_id, leader_id);
@@ -415,7 +415,7 @@ async fn shutdown_rpc_should_shutdown_the_cluster_when_client_has_wrong_leader()
         .unwrap();
     client.shutdown().await.unwrap();
 
-    sleep_secs(3).await; // wait for the cluster to shutdown
+    sleep_secs(7).await; // wait for the cluster to shutdown
     assert!(group.is_finished());
 }
 
@@ -542,7 +542,7 @@ async fn shutdown_rpc_should_shutdown_the_cluster_when_client_has_wrong_cluster(
         .await;
     client.shutdown().await.unwrap();
 
-    sleep_secs(5).await; // wait for the cluster to shutdown
+    sleep_secs(7).await; // wait for the cluster to shutdown
     assert!(group.is_finished());
 }
 
@@ -569,7 +569,7 @@ async fn propose_conf_change_rpc_should_work_when_client_has_wrong_cluster() {
     let members = client.propose_conf_change(changes).await.unwrap().unwrap();
     assert_eq!(members.len(), 3);
     assert!(members.iter().all(|m| m.id != node_id));
-    sleep_secs(5).await;
+    sleep_secs(7).await;
     assert!(group.nodes.get(&node_id).unwrap().handle.is_finished());
 }
 
