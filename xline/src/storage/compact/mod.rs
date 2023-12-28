@@ -6,7 +6,10 @@ use event_listener::Event;
 use periodic_compactor::PeriodicCompactor;
 use revision_compactor::RevisionCompactor;
 use tokio::{sync::mpsc::Receiver, time::sleep};
-use utils::{config::AutoCompactConfig, shutdown};
+use utils::{
+    config::AutoCompactConfig,
+    task_manager::{tasks::TaskName, Listener, TaskManager},
+};
 use xlineapi::{command::Command, execute_error::ExecuteError};
 
 use super::{
@@ -32,7 +35,7 @@ pub(crate) const COMPACT_CHANNEL_SIZE: usize = 32;
 #[async_trait]
 pub(crate) trait Compactor<C: Compactable>: Send + Sync {
     /// run an auto-compactor
-    async fn run(&self);
+    async fn run(&self, shutdown_listener: Listener);
     /// pause an auto-compactor when the current node denotes to a non-leader role
     fn pause(&self);
     /// resume an auto-compactor when the current becomes a leader
@@ -75,23 +78,23 @@ impl Compactable
 pub(crate) async fn auto_compactor<C: Compactable>(
     is_leader: bool,
     revision_getter: Arc<RevisionNumberGenerator>,
-    shutdown_listener: shutdown::Listener,
     auto_compact_cfg: AutoCompactConfig,
+    task_manager: Arc<TaskManager>,
 ) -> Arc<dyn Compactor<C>> {
     let auto_compactor: Arc<dyn Compactor<C>> = match auto_compact_cfg {
         AutoCompactConfig::Periodic(period) => {
-            PeriodicCompactor::new_arc(is_leader, revision_getter, shutdown_listener, period)
+            PeriodicCompactor::new_arc(is_leader, revision_getter, period)
         }
         AutoCompactConfig::Revision(retention) => {
-            RevisionCompactor::new_arc(is_leader, revision_getter, shutdown_listener, retention)
+            RevisionCompactor::new_arc(is_leader, revision_getter, retention)
         }
         _ => {
             unreachable!("xline only supports two auto-compaction modes: periodic, revision")
         }
     };
     let compactor_handle = Arc::clone(&auto_compactor);
-    let _hd = tokio::spawn(async move {
-        auto_compactor.run().await;
+    task_manager.spawn(TaskName::AutoCompactor, |n| async move {
+        auto_compactor.run(n).await;
     });
     compactor_handle
 }
@@ -104,22 +107,19 @@ pub(crate) async fn compact_bg_task<DB>(
     batch_limit: usize,
     interval: Duration,
     mut compact_task_rx: Receiver<(i64, Option<Arc<Event>>)>,
-    mut shutdown_listener: shutdown::Listener,
+    shutdown_listener: Listener,
 ) where
     DB: StorageApi,
 {
     loop {
         let (revision, listener) = tokio::select! {
             recv = compact_task_rx.recv() => {
-                if let Some((revision, listener)) = recv {
-                    (revision, listener)
-                } else {
-                    break;
-                }
-            }
-            _ = shutdown_listener.wait_self_shutdown() => {
-                break;
-            }
+                let Some((revision, listener)) = recv else {
+                    return;
+                };
+                (revision, listener)
+            },
+            _ = shutdown_listener.wait() => break,
         };
 
         let target_revisions = index

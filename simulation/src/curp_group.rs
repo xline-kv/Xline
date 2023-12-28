@@ -27,7 +27,7 @@ use tokio::sync::mpsc;
 use tracing::debug;
 use utils::{
     config::{ClientConfig, CurpConfigBuilder, EngineConfig},
-    shutdown,
+    task_manager::TaskManager,
 };
 
 /// TODO: use `type CurpClient<C>  = impl ClientApi<...>` when `type_alias_impl_trait` stabilized
@@ -96,7 +96,7 @@ impl CurpGroup {
                     .name(id.to_string())
                     .ip(format!("192.168.1.{}", i + 1).parse().unwrap())
                     .init(move || {
-                        let (trigger, _listener) = shutdown::channel();
+                        let task_manager = Arc::new(TaskManager::new());
                         let ce = Arc::new(TestCE::new(
                             name.clone(),
                             exe_tx.clone(),
@@ -124,7 +124,7 @@ impl CurpGroup {
                                     .build()
                                     .unwrap(),
                             ),
-                            trigger,
+                            task_manager,
                         )
                     })
                     .build();

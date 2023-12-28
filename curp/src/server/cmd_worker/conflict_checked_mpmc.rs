@@ -11,7 +11,7 @@ use std::{
 
 use tokio::sync::oneshot;
 use tracing::{debug, error};
-use utils::shutdown::{self, Signal};
+use utils::task_manager::{tasks::TaskName, Listener, TaskManager, State};
 
 use self::cart::Cart;
 use super::{CEEvent, CEEventTx};
@@ -535,7 +535,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
 #[allow(clippy::type_complexity)] // it's clear
 pub(in crate::server) fn channel<C: Command, CE: CommandExecutor<C>>(
     ce: Arc<CE>,
-    shutdown_trigger: shutdown::Trigger,
+    task_manager: Arc<TaskManager>,
 ) -> (
     CEEventTx<C>,
     flume::Receiver<Task<C>>,
@@ -547,14 +547,10 @@ pub(in crate::server) fn channel<C: Command, CE: CommandExecutor<C>>(
     let (filter_tx, recv_rx) = flume::unbounded();
     // recv from user to mark a msg done
     let (done_tx, done_rx) = flume::unbounded::<(Task<C>, bool)>();
-    let ce_event_tx = CEEventTx(send_tx, shutdown_trigger.subscribe());
-    let _ig = tokio::spawn(conflict_checked_mpmc_task(
-        filter_tx,
-        filter_rx,
-        ce,
-        shutdown_trigger,
-        done_rx,
-    ));
+    task_manager.spawn(TaskName::ConflictCheckedMpmc, |n| {
+        conflict_checked_mpmc_task(filter_tx, filter_rx, ce, done_rx, n)
+    });
+    let ce_event_tx = CEEventTx(send_tx, task_manager);
     (ce_event_tx, recv_rx, done_tx)
 }
 
@@ -563,10 +559,9 @@ async fn conflict_checked_mpmc_task<C: Command, CE: CommandExecutor<C>>(
     filter_tx: flume::Sender<Task<C>>,
     filter_rx: flume::Receiver<CEEvent<C>>,
     ce: Arc<CE>,
-    shutdown_trigger: shutdown::Trigger,
     done_rx: flume::Receiver<(Task<C>, bool)>,
+    shutdown_listener: Listener,
 ) {
-    let mut shutdown_listener = shutdown_trigger.subscribe();
     let mut filter = Filter::new(filter_tx, ce);
     let mut is_shutdown_state = false;
     // tokio internal triggers
@@ -574,19 +569,13 @@ async fn conflict_checked_mpmc_task<C: Command, CE: CommandExecutor<C>>(
     loop {
         tokio::select! {
             biased; // cleanup filter first so that the buffer in filter can be kept as small as possible
-            sig = shutdown_listener.wait(), if !is_shutdown_state => {
-                match sig {
-                    Some(Signal::Running) => {
-                        unreachable!("shutdown trigger should send ClusterShutdown or SelfShutdown")
-                    }
-                    Some(Signal::ClusterShutdown) => {
-                        is_shutdown_state = true;
-                    }
-                    _ => {
-                        return;
-                    },
+            state = shutdown_listener.wait_state(), if !is_shutdown_state => {
+                match state {
+                    State::Running => unreachable!("wait state should not return Run"),
+                    State::Shutdown => return,
+                    State::ClusterShutdown => is_shutdown_state = true,
                 }
-            }
+            },
             Ok((task, succeeded)) = done_rx.recv_async() => {
                 filter.progress(task.vid, succeeded);
             },
@@ -600,8 +589,7 @@ async fn conflict_checked_mpmc_task<C: Command, CE: CommandExecutor<C>>(
         }
 
         if is_shutdown_state && filter.vs.is_empty() {
-            shutdown_trigger.mark_channel_shutdown();
-            shutdown_trigger.check_and_shutdown();
+            shutdown_listener.mark_mpmc_channel_shutdown();
             return;
         }
     }

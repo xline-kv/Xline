@@ -38,7 +38,12 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             && self.cst.lock().config.contains(id)
     }
 
-    pub(crate) fn new_test<Tx: CEEventTxApi<C>>(n: u64, exe_tx: Tx, role_change: RC) -> Self {
+    pub(crate) fn new_test<Tx: CEEventTxApi<C>>(
+        n: u64,
+        exe_tx: Tx,
+        role_change: RC,
+        task_manager: Arc<TaskManager>,
+    ) -> Self {
         let all_members: HashMap<_, _> = (0..n)
             .map(|i| (format!("S{i}"), vec![format!("S{i}")]))
             .collect();
@@ -90,7 +95,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             .sync_events(sync_events)
             .log_tx(log_tx)
             .role_change(role_change)
-            .shutdown_trigger(shutdown_trigger)
+            .task_manager(task_manager)
             .connects(connects)
             .build_raw_curp()
             .unwrap()
@@ -129,10 +134,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 #[traced_test]
 #[test]
 fn leader_handle_propose_will_succeed() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx.expect_send_sp_exe().returning(|_| {});
-        RawCurp::new_test(3, exe_tx, mock_role_change())
+        RawCurp::new_test(3, exe_tx, mock_role_change(), task_manager)
     };
     let cmd = Arc::new(TestCommand::default());
     assert!(curp
@@ -143,10 +149,11 @@ fn leader_handle_propose_will_succeed() {
 #[traced_test]
 #[test]
 fn leader_handle_propose_will_reject_conflicted() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx.expect_send_sp_exe().returning(|_| {});
-        RawCurp::new_test(3, exe_tx, mock_role_change())
+        RawCurp::new_test(3, exe_tx, mock_role_change(), task_manager)
     };
 
     let cmd1 = Arc::new(TestCommand::new_put(vec![1], 0));
@@ -167,10 +174,11 @@ fn leader_handle_propose_will_reject_conflicted() {
 #[traced_test]
 #[test]
 fn leader_handle_propose_will_reject_duplicated() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx.expect_send_sp_exe().returning(|_| {});
-        RawCurp::new_test(3, exe_tx, mock_role_change())
+        RawCurp::new_test(3, exe_tx, mock_role_change(), task_manager)
     };
     let cmd = Arc::new(TestCommand::default());
     assert!(curp
@@ -184,12 +192,18 @@ fn leader_handle_propose_will_reject_duplicated() {
 #[traced_test]
 #[test]
 fn follower_handle_propose_will_succeed() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            3,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
     let cmd = Arc::new(TestCommand::new_get(vec![1]));
@@ -201,12 +215,18 @@ fn follower_handle_propose_will_succeed() {
 #[traced_test]
 #[test]
 fn follower_handle_propose_will_reject_conflicted() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            3,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
@@ -225,12 +245,13 @@ fn follower_handle_propose_will_reject_conflicted() {
 #[traced_test]
 #[test]
 fn heartbeat_will_calibrate_term() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        RawCurp::new_test(3, exe_tx, mock_role_change())
+        RawCurp::new_test(3, exe_tx, mock_role_change(), task_manager)
     };
 
     let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
@@ -245,10 +266,12 @@ fn heartbeat_will_calibrate_term() {
 #[traced_test]
 #[test]
 fn heartbeat_will_calibrate_next_index() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = RawCurp::new_test(
         3,
         MockCEEventTxApi::<TestCommand>::default(),
         mock_role_change(),
+        task_manager,
     );
 
     let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
@@ -263,12 +286,18 @@ fn heartbeat_will_calibrate_next_index() {
 #[traced_test]
 #[test]
 fn handle_ae_will_calibrate_term() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            3,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
     let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
@@ -285,12 +314,18 @@ fn handle_ae_will_calibrate_term() {
 #[traced_test]
 #[test]
 fn handle_ae_will_set_leader_id() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            3,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
@@ -307,12 +342,18 @@ fn handle_ae_will_set_leader_id() {
 #[traced_test]
 #[test]
 fn handle_ae_will_reject_wrong_term() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            3,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
@@ -325,12 +366,18 @@ fn handle_ae_will_reject_wrong_term() {
 #[traced_test]
 #[test]
 fn handle_ae_will_reject_wrong_log() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            3,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
@@ -357,12 +404,18 @@ fn handle_ae_will_reject_wrong_log() {
 #[tokio::test]
 #[abort_on_panic]
 async fn follower_will_not_start_election_when_heartbeats_are_received() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            3,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
@@ -388,12 +441,18 @@ async fn follower_will_not_start_election_when_heartbeats_are_received() {
 #[tokio::test]
 #[abort_on_panic]
 async fn follower_or_pre_candidate_will_start_election_if_timeout() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            3,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
@@ -431,12 +490,18 @@ async fn follower_or_pre_candidate_will_start_election_if_timeout() {
 #[traced_test]
 #[test]
 fn handle_vote_will_calibrate_term() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            3,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
     curp.st.write().leader_id = None;
 
@@ -451,12 +516,18 @@ fn handle_vote_will_calibrate_term() {
 #[traced_test]
 #[test]
 fn handle_vote_will_reject_smaller_term() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            3,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 2);
 
@@ -468,12 +539,18 @@ fn handle_vote_will_reject_smaller_term() {
 // #[traced_test]
 #[test]
 fn handle_vote_will_reject_outdated_candidate() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            3,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
     let s2_id = curp.cluster().get_id_by_name("S2").unwrap();
     let result = curp.handle_append_entries(
@@ -499,12 +576,18 @@ fn handle_vote_will_reject_outdated_candidate() {
 #[traced_test]
 #[test]
 fn pre_candidate_will_become_candidate_then_become_leader_after_election_succeeds() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            3,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
@@ -535,12 +618,18 @@ fn pre_candidate_will_become_candidate_then_become_leader_after_election_succeed
 #[traced_test]
 #[test]
 fn vote_will_calibrate_pre_candidate_term() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            3,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
@@ -563,12 +652,18 @@ fn vote_will_calibrate_pre_candidate_term() {
 #[traced_test]
 #[test]
 fn recover_from_spec_pools_will_pick_the_correct_cmds() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(5, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            5,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
@@ -631,12 +726,18 @@ fn recover_from_spec_pools_will_pick_the_correct_cmds() {
 #[traced_test]
 #[test]
 fn recover_ucp_from_logs_will_pick_the_correct_cmds() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx
             .expect_send_reset()
             .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(5, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            5,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
 
@@ -665,9 +766,10 @@ fn recover_ucp_from_logs_will_pick_the_correct_cmds() {
 #[traced_test]
 #[test]
 fn leader_retires_after_log_compact_will_succeed() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        RawCurp::new_test(3, exe_tx, mock_role_change())
+        RawCurp::new_test(3, exe_tx, mock_role_change(), task_manager)
     };
     let mut log_w = curp.log.write();
     for i in 1..=20 {
@@ -686,10 +788,11 @@ fn leader_retires_after_log_compact_will_succeed() {
 #[traced_test]
 #[test]
 fn leader_retires_should_cleanup() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx.expect_send_sp_exe().returning(|_| {});
-        RawCurp::new_test(3, exe_tx, mock_role_change())
+        RawCurp::new_test(3, exe_tx, mock_role_change(), task_manager)
     };
 
     let _ignore = curp.handle_propose(
@@ -715,9 +818,10 @@ fn leader_retires_should_cleanup() {
 #[traced_test]
 #[tokio::test]
 async fn leader_handle_shutdown_will_succeed() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        RawCurp::new_test(3, exe_tx, mock_role_change())
+        RawCurp::new_test(3, exe_tx, mock_role_change(), task_manager)
     };
     assert!(curp.handle_shutdown(ProposeId(TEST_CLIENT_ID, 0)).is_ok());
 }
@@ -725,10 +829,11 @@ async fn leader_handle_shutdown_will_succeed() {
 #[traced_test]
 #[test]
 fn follower_handle_shutdown_will_reject() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx.expect_send_sp_exe().returning(|_| {});
-        RawCurp::new_test(3, exe_tx, mock_role_change())
+        RawCurp::new_test(3, exe_tx, mock_role_change(), task_manager)
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
     let res = curp.handle_shutdown(ProposeId(TEST_CLIENT_ID, 0));
@@ -743,22 +848,11 @@ fn follower_handle_shutdown_will_reject() {
 
 #[traced_test]
 #[test]
-fn enter_shutdown_should_enter_the_shutdown_state() {
-    let curp = {
-        let exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        RawCurp::new_test(3, exe_tx, mock_role_change())
-    };
-    let _listener = curp.shutdown_listener();
-    curp.enter_shutdown();
-    assert!(curp.is_shutdown());
-}
-
-#[traced_test]
-#[test]
 fn is_synced_should_return_true_when_followers_caught_up_with_leader() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        RawCurp::new_test(3, exe_tx, mock_role_change())
+        RawCurp::new_test(3, exe_tx, mock_role_change(), task_manager)
     };
 
     let s1_id = curp.cluster().get_id_by_name("S1").unwrap();
@@ -776,9 +870,15 @@ fn is_synced_should_return_true_when_followers_caught_up_with_leader() {
 #[traced_test]
 #[test]
 fn add_node_should_add_new_node_to_curp() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            3,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
     let old_cluster = curp.cluster().clone();
     let changes = vec![ConfChange::add(1, vec!["http://127.0.0.1:4567".to_owned()])];
@@ -805,9 +905,15 @@ fn add_node_should_add_new_node_to_curp() {
 #[traced_test]
 #[test]
 fn add_learner_node_and_promote_should_success() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            3,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
     let changes = vec![ConfChange::add_learner(
         1,
@@ -828,9 +934,15 @@ fn add_learner_node_and_promote_should_success() {
 #[traced_test]
 #[test]
 fn add_exists_node_should_return_node_already_exists_error() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            3,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
     let exists_node_id = curp.cluster().get_id_by_name("S1").unwrap();
     let changes = vec![ConfChange::add(
@@ -845,9 +957,15 @@ fn add_exists_node_should_return_node_already_exists_error() {
 #[traced_test]
 #[test]
 fn remove_node_should_remove_node_from_curp() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        Arc::new(RawCurp::new_test(5, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            5,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
     let old_cluster = curp.cluster().clone();
     let follower_id = curp.cluster().get_id_by_name("S1").unwrap();
@@ -872,9 +990,15 @@ fn remove_node_should_remove_node_from_curp() {
 #[traced_test]
 #[test]
 fn remove_non_exists_node_should_return_node_not_exists_error() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        Arc::new(RawCurp::new_test(5, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            5,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
     let changes = vec![ConfChange::remove(1)];
     let resp = curp.check_new_config(&changes);
@@ -884,9 +1008,15 @@ fn remove_non_exists_node_should_return_node_not_exists_error() {
 #[traced_test]
 #[test]
 fn update_node_should_update_the_address_of_node() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            3,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
     let old_cluster = curp.cluster().clone();
     let follower_id = curp.cluster().get_id_by_name("S1").unwrap();
@@ -927,10 +1057,16 @@ fn update_node_should_update_the_address_of_node() {
 #[traced_test]
 #[test]
 fn leader_handle_propose_conf_change() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
         exe_tx.expect_send_sp_exe().returning(|_| {});
-        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            3,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
     let follower_id = curp.cluster().get_id_by_name("S1").unwrap();
     assert_eq!(
@@ -948,9 +1084,15 @@ fn leader_handle_propose_conf_change() {
 #[traced_test]
 #[test]
 fn follower_handle_propose_conf_change() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            3,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 2);
 
