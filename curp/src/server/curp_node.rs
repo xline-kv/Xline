@@ -677,13 +677,12 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         for c in curp.connects().iter() {
             let sync_event = curp.sync_event(c.id());
             let remove_event = Arc::new(Event::new());
-            let fut = Self::sync_follower_task(
+            let _sync_follower_task = tokio::spawn(Self::sync_follower_task(
                 Arc::clone(&curp),
                 c.value().clone(),
                 sync_event,
                 Arc::clone(&remove_event),
-            );
-            let _sync_follower_task = tokio::spawn(fut);
+            ));
             _ = remove_events.insert(c.id(), remove_event);
         }
         let _conf_change_handle = tokio::spawn(Self::conf_change_handler(curp, remove_events));

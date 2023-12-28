@@ -155,6 +155,8 @@ pub mod shutdown;
 /// utils of `std` lock
 #[cfg(feature = "std")]
 pub mod std_lock;
+/// task manager
+pub mod task_manager;
 /// utils of `tokio` lock
 #[cfg(feature = "tokio")]
 pub mod tokio_lock;
