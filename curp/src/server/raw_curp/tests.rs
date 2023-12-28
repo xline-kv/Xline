@@ -1118,9 +1118,15 @@ fn follower_handle_propose_conf_change() {
 #[traced_test]
 #[test]
 fn leader_handle_move_leader() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            3,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
     curp.switch_config(ConfChange::add_learner(1234, vec!["address".to_owned()]));
 
@@ -1143,9 +1149,15 @@ fn leader_handle_move_leader() {
 #[traced_test]
 #[test]
 fn follower_handle_move_leader() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            3,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 2);
 
@@ -1157,9 +1169,15 @@ fn follower_handle_move_leader() {
 #[traced_test]
 #[test]
 fn leader_will_reset_transferee_after_remove_node() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        Arc::new(RawCurp::new_test(5, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            5,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
 
     let target_id = curp.cluster().get_id_by_name("S1").unwrap();
@@ -1174,9 +1192,15 @@ fn leader_will_reset_transferee_after_remove_node() {
 #[traced_test]
 #[test]
 fn leader_will_reject_propose_when_transferring() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        Arc::new(RawCurp::new_test(5, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            5,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
 
     let target_id = curp.cluster().get_id_by_name("S1").unwrap();
@@ -1192,9 +1216,15 @@ fn leader_will_reject_propose_when_transferring() {
 #[traced_test]
 #[test]
 fn leader_will_reset_transferee_after_it_become_follower() {
+    let task_manager = Arc::new(TaskManager::new());
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        Arc::new(RawCurp::new_test(5, exe_tx, mock_role_change()))
+        Arc::new(RawCurp::new_test(
+            5,
+            exe_tx,
+            mock_role_change(),
+            task_manager,
+        ))
     };
 
     let target_id = curp.cluster().get_id_by_name("S1").unwrap();

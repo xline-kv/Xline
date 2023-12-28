@@ -11,7 +11,7 @@ use std::{
 
 use tokio::sync::oneshot;
 use tracing::{debug, error};
-use utils::task_manager::{tasks::TaskName, Listener, TaskManager, State};
+use utils::task_manager::{tasks::TaskName, Listener, State, TaskManager};
 
 use self::cart::Cart;
 use super::{CEEvent, CEEventTx};

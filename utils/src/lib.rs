@@ -150,8 +150,6 @@ pub mod config;
 pub mod parking_lot_lock;
 /// utils for parse config
 pub mod parser;
-/// utils of `shutdown`
-pub mod shutdown;
 /// utils of `std` lock
 #[cfg(feature = "std")]
 pub mod std_lock;
