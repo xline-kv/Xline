@@ -110,13 +110,19 @@ impl RocksEngine {
 #[async_trait::async_trait]
 impl StorageEngine for RocksEngine {
     type Snapshot = RocksSnapshot;
-    type Transaction<'db> = RocksTransaction<'db>;
+    type Transaction = RocksTransaction;
 
+    #[allow(unsafe_code)]
     #[inline]
-    fn transaction(&self) -> RocksTransaction<'_> {
+    fn transaction(&self) -> RocksTransaction {
+        let txn = self.inner.transaction();
+        let txn_static =
+            // SAFETY: In `RocksTransaction` we hold an Arc reference to the DB, 
+            // so a `Transaction<'db, DB>` won't outlive the lifetime of the DB.
+            unsafe { std::mem::transmute::<_, Transaction<'static, OptimisticTransactionDB>>(txn) };
         RocksTransaction {
             db: Arc::clone(&self.inner),
-            txn: Mutex::new(Some(self.inner.transaction())),
+            txn: Mutex::new(Some(txn_static)),
         }
     }
 
@@ -337,14 +343,16 @@ impl Meta {
 }
 
 /// Transaction type for `RocksDB`
-pub struct RocksTransaction<'db> {
+///
+/// WARN: `db` should never be dropped before `txn`
+pub struct RocksTransaction {
     /// The inner DB
     db: Arc<OptimisticTransactionDB>,
     /// A transaction of the DB
-    txn: Mutex<Option<Transaction<'db, OptimisticTransactionDB>>>,
+    txn: Mutex<Option<Transaction<'static, OptimisticTransactionDB>>>,
 }
 
-impl std::fmt::Debug for RocksTransaction<'_> {
+impl std::fmt::Debug for RocksTransaction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RocksTransaction")
             .field("db", &self.db)
@@ -353,7 +361,8 @@ impl std::fmt::Debug for RocksTransaction<'_> {
 }
 
 #[allow(clippy::unwrap_used, clippy::unwrap_in_result)] // The transaction always exist
-impl TransactionApi for RocksTransaction<'_> {
+#[async_trait::async_trait]
+impl TransactionApi for RocksTransaction {
     fn write(&self, op: WriteOperation<'_>) -> Result<(), EngineError> {
         let txn_l = self.txn.lock();
         let txn = txn_l.as_ref().unwrap();
@@ -419,13 +428,16 @@ impl TransactionApi for RocksTransaction<'_> {
             .map_err(EngineError::from)
     }
 
-    fn commit(self) -> Result<(), EngineError> {
-        self.txn
-            .lock()
-            .take()
-            .unwrap()
-            .commit()
-            .map_err(EngineError::from)
+    async fn commit(self) -> Result<(), EngineError> {
+        tokio::task::spawn_blocking(move || {
+            self.txn
+                .lock()
+                .take()
+                .unwrap()
+                .commit()
+                .map_err(EngineError::from)
+        })
+        .await?
     }
 
     fn rollback(&self) -> Result<(), EngineError> {

@@ -1,5 +1,6 @@
 use crate::{EngineError, WriteOperation};
 
+#[async_trait::async_trait]
 /// Api for database transactions
 pub trait TransactionApi {
     /// Write an op to the transaction
@@ -32,7 +33,7 @@ pub trait TransactionApi {
     /// # Errors
     ///
     /// if error occurs in storage, return `Err(error)`
-    fn commit(self) -> Result<(), EngineError>;
+    async fn commit(self) -> Result<(), EngineError>;
 
     /// Rollbacks the changes
     ///

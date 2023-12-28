@@ -57,7 +57,7 @@ impl MemoryEngine {
 #[async_trait::async_trait]
 impl StorageEngine for MemoryEngine {
     type Snapshot = MemorySnapshot;
-    type Transaction<'db> = MemoryTransaction;
+    type Transaction = MemoryTransaction;
 
     #[inline]
     fn transaction(&self) -> MemoryTransaction {
@@ -201,6 +201,7 @@ pub struct MemoryTransaction {
     state: RwLock<HashMap<String, StateMemoryTable>>,
 }
 
+#[async_trait::async_trait]
 impl TransactionApi for MemoryTransaction {
     fn write(&self, op: WriteOperation<'_>) -> Result<(), EngineError> {
         let mut state_w = self.state.write();
@@ -281,7 +282,7 @@ impl TransactionApi for MemoryTransaction {
         keys.iter().map(|key| self.get(table, key)).collect()
     }
 
-    fn commit(self) -> Result<(), EngineError> {
+    async fn commit(self) -> Result<(), EngineError> {
         let mut state_w = self.state.write();
         let mut db_inner_w = self.db.inner.write();
         for (name, mut table) in state_w.drain() {

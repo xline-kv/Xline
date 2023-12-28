@@ -9,7 +9,7 @@ use super::{db::WriteOp, revision::KeyRevision};
 #[async_trait::async_trait]
 pub trait StorageApi: Send + Sync + 'static + std::fmt::Debug {
     /// Creates a transaction
-    fn transaction(&self) -> Transaction<'_>;
+    fn transaction(&self) -> Transaction;
 
     /// Get values by keys from storage
     ///

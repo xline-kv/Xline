@@ -50,10 +50,10 @@ impl Engine {
 #[async_trait::async_trait]
 impl StorageEngine for Engine {
     type Snapshot = Snapshot;
-    type Transaction<'db> = Transaction<'db>;
+    type Transaction = Transaction;
 
     #[inline]
-    fn transaction(&self) -> Transaction<'_> {
+    fn transaction(&self) -> Transaction {
         match *self {
             Engine::Memory(ref e) => Transaction::Memory(e.transaction()),
             Engine::Rocks(ref e) => Transaction::Rocks(e.transaction()),
@@ -148,14 +148,15 @@ impl StorageEngine for Engine {
 /// NOTE: Currently multiple concurrent transactions is not supported
 #[derive(Debug)]
 #[non_exhaustive]
-pub enum Transaction<'db> {
+pub enum Transaction {
     /// Memory snapshot
     Memory(MemoryTransaction),
     /// Rocks snapshot
-    Rocks(RocksTransaction<'db>),
+    Rocks(RocksTransaction),
 }
 
-impl TransactionApi for Transaction<'_> {
+#[async_trait::async_trait]
+impl TransactionApi for Transaction {
     #[inline]
     fn write(&self, op: WriteOperation<'_>) -> Result<(), EngineError> {
         match *self {
@@ -185,10 +186,10 @@ impl TransactionApi for Transaction<'_> {
     }
 
     #[inline]
-    fn commit(self) -> Result<(), EngineError> {
+    async fn commit(self) -> Result<(), EngineError> {
         match self {
-            Transaction::Memory(t) => t.commit(),
-            Transaction::Rocks(t) => t.commit(),
+            Transaction::Memory(t) => t.commit().await,
+            Transaction::Rocks(t) => t.commit().await,
         }
     }
 

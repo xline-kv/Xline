@@ -1,4 +1,5 @@
 use thiserror::Error;
+use tokio::task::JoinError;
 
 /// The `EngineError`
 #[allow(clippy::module_name_repetitions)]
@@ -23,4 +24,7 @@ pub enum EngineError {
     /// The Snapshot is invalid
     #[error("The Snapshot is invalid")]
     InvalidSnapshot,
+    /// Tokio task join error
+    #[error("Tokio Task Join Error: {0}")]
+    TaskJoinError(#[from] JoinError),
 }

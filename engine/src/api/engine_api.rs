@@ -64,10 +64,10 @@ pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
     /// The snapshot type
     type Snapshot: SnapshotApi;
     /// The transaction type
-    type Transaction<'db>: TransactionApi;
+    type Transaction: TransactionApi;
 
     /// Creates a transaction
-    fn transaction(&self) -> Self::Transaction<'_>;
+    fn transaction(&self) -> Self::Transaction;
 
     /// Get the value associated with a key value and the given table
     ///

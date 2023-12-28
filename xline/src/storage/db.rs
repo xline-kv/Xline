@@ -241,7 +241,7 @@ impl StorageApi for DB {
     }
 }
 
-impl StorageTxnApi for Transaction<'_> {
+impl StorageTxnApi for Transaction {
     fn get_values<K>(
         &self,
         table: &'static str,
