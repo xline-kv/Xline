@@ -578,7 +578,6 @@ mod test {
 
     use std::{collections::BTreeMap, time::Duration};
 
-    use clippy_utilities::Cast;
     use test_macros::abort_on_panic;
     use tokio::time::{sleep, timeout};
     use utils::config::EngineConfig;
@@ -635,7 +634,7 @@ mod test {
             let store = Arc::clone(&store);
             async move {
                 for i in 0..100_u8 {
-                    put(store.as_ref(), "foo", vec![i], i.overflow_add(2).cast()).await;
+                    put(store.as_ref(), "foo", vec![i]).await;
                 }
             }
         });
@@ -696,7 +695,7 @@ mod test {
         });
 
         for i in 0..100_u8 {
-            put(store.as_ref(), "foo", vec![i], i.cast()).await;
+            put(store.as_ref(), "foo", vec![i]).await;
         }
         handle.await.unwrap();
         tx.self_shutdown_and_wait().await;
@@ -725,12 +724,7 @@ mod test {
         tx.self_shutdown_and_wait().await;
     }
 
-    async fn put(
-        store: &KvStore<DB>,
-        key: impl Into<Vec<u8>>,
-        value: impl Into<Vec<u8>>,
-        revision: i64,
-    ) {
+    async fn put(store: &KvStore<DB>, key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) {
         let req = RequestWithToken::new(
             PutRequest {
                 key: key.into(),
@@ -739,6 +733,6 @@ mod test {
             }
             .into(),
         );
-        store.after_sync(&req, revision).await.unwrap();
+        store.after_sync(&req).await.unwrap();
     }
 }

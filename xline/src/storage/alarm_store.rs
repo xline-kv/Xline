@@ -17,7 +17,7 @@ use xlineapi::{
 };
 
 use super::{db::WriteOp, storage_api::StorageApi};
-use crate::header_gen::HeaderGenerator;
+use crate::{header_gen::HeaderGenerator, revision_number::RevisionNumberGenerator};
 
 /// Alarm table name
 pub(crate) const ALARM_TABLE: &str = "alarm";
@@ -28,6 +28,8 @@ pub(crate) struct AlarmStore<DB>
 where
     DB: StorageApi,
 {
+    /// Revision
+    revision: Arc<RevisionNumberGenerator>,
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
     /// Persistent storage
@@ -68,11 +70,7 @@ where
     }
 
     /// sync a alarm request
-    pub(crate) fn after_sync(
-        &self,
-        request: &RequestWithToken,
-        revision: i64,
-    ) -> (SyncResponse, Vec<WriteOp>) {
+    pub(crate) fn after_sync(&self, request: &RequestWithToken) -> (SyncResponse, Vec<WriteOp>) {
         #[allow(clippy::wildcard_enum_match_arm)]
         let ops = match request.request {
             RequestWrapper::AlarmRequest(ref req) => match req.action() {
@@ -84,7 +82,7 @@ where
                 unreachable!("Other request should not be sent to this store");
             }
         };
-        (SyncResponse::new(revision), ops)
+        (SyncResponse::new(self.revision.get()), ops)
     }
 
     /// Recover data form persistent storage
@@ -108,6 +106,7 @@ where
     /// Create a new alarm store
     pub(crate) fn new(header_gen: Arc<HeaderGenerator>, db: Arc<DB>) -> Self {
         Self {
+            revision: header_gen.general_revision_arc(),
             header_gen,
             db,
             types: RwLock::new(HashMap::new()),

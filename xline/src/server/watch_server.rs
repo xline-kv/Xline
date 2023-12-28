@@ -454,12 +454,7 @@ mod test {
             && wr.header.as_ref().map_or(false, |h| h.revision != 0)
     }
 
-    async fn put(
-        store: &KvStore<DB>,
-        key: impl Into<Vec<u8>>,
-        value: impl Into<Vec<u8>>,
-        revision: i64,
-    ) {
+    async fn put(store: &KvStore<DB>, key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) {
         let req = RequestWithToken::new(
             PutRequest {
                 key: key.into(),
@@ -468,7 +463,7 @@ mod test {
             }
             .into(),
         );
-        store.after_sync(&req, revision).await.unwrap();
+        store.after_sync(&req).await.unwrap();
     }
 
     #[tokio::test]
@@ -610,8 +605,8 @@ mod test {
             Duration::from_millis(10),
             rx.clone(),
         );
-        put(&kv_store, "foo", "old_bar", 2).await;
-        put(&kv_store, "foo", "bar", 3).await;
+        put(&kv_store, "foo", "old_bar").await;
+        put(&kv_store, "foo", "bar").await;
 
         let (req_tx, req_rx) = mpsc::channel(CHANNEL_SIZE);
         let req_stream = ReceiverStream::new(req_rx);
@@ -792,9 +787,9 @@ mod test {
             Duration::from_millis(10),
             rx.clone(),
         );
-        put(&kv_store, "foo", "old_bar", 2).await;
-        put(&kv_store, "foo", "bar", 3).await;
-        put(&kv_store, "foo", "new_bar", 4).await;
+        put(&kv_store, "foo", "old_bar").await;
+        put(&kv_store, "foo", "bar").await;
+        put(&kv_store, "foo", "new_bar").await;
 
         kv_store.update_compacted_revision(3);
 

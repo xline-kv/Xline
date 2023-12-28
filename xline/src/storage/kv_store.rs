@@ -14,7 +14,7 @@ use prost::Message;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 use xlineapi::{
-    command::{CommandResponse, KeyRange},
+    command::{CommandResponse, KeyRange, SyncResponse},
     execute_error::ExecuteError,
 };
 
@@ -78,12 +78,13 @@ where
     }
 
     /// After-Syncs a request
-    pub(crate) async fn after_sync(
+    pub(crate) async fn after_sync<'a>(
         &self,
         request: &RequestWithToken,
-        revision: i64,
-    ) -> Result<(), ExecuteError> {
-        self.sync_request(&request.request, revision).await
+    ) -> Result<(SyncResponse, Vec<WriteOp<'a>>), ExecuteError> {
+        self.sync_request(&request.request)
+            .await
+            .map(|resp| (resp, vec![]))
     }
 
     /// Recover data from persistent storage
@@ -776,29 +777,26 @@ where
     DB: StorageApi,
 {
     /// Handle kv requests
-    async fn sync_request(
-        &self,
-        wrapper: &RequestWrapper,
-        revision: i64,
-    ) -> Result<(), ExecuteError> {
+    async fn sync_request(&self, wrapper: &RequestWrapper) -> Result<SyncResponse, ExecuteError> {
         debug!("Execute {:?}", wrapper);
 
         let txn_db = self.db.transaction();
         let txn_index = self.index.transaction();
 
+        let next_revision = self.revision.get().overflow_add(1);
         #[allow(clippy::wildcard_enum_match_arm)]
         let events = match *wrapper {
             RequestWrapper::RangeRequest(_) => {
                 vec![]
             }
             RequestWrapper::PutRequest(ref req) => {
-                self.sync_put(&txn_db, &txn_index, req, revision, &mut 0)?
+                self.sync_put(&txn_db, &txn_index, req, next_revision, &mut 0)?
             }
             RequestWrapper::DeleteRangeRequest(ref req) => {
-                self.sync_delete_range(&txn_db, &txn_index, req, revision, &mut 0)?
+                self.sync_delete_range(&txn_db, &txn_index, req, next_revision, &mut 0)?
             }
             RequestWrapper::TxnRequest(ref req) => {
-                self.sync_txn(&txn_db, &txn_index, req, revision, &mut 0)?
+                self.sync_txn(&txn_db, &txn_index, req, next_revision, &mut 0)?
             }
             RequestWrapper::CompactionRequest(ref req) => self.sync_compaction(req).await?,
             _ => unreachable!("Other request should not be sent to this store"),
@@ -806,9 +804,15 @@ where
 
         txn_db.commit().map_err(Self::into_execute_err)?;
         txn_index.commit();
-        self.notify_updates(revision, events).await;
 
-        Ok(())
+        let response = if events.is_empty() {
+            SyncResponse::new(self.revision.get())
+        } else {
+            self.notify_updates(next_revision, events).await;
+            SyncResponse::new(self.revision.next())
+        };
+
+        Ok(response)
     }
 
     /// Handle `PutRequest`
@@ -1120,7 +1124,7 @@ mod test {
                 }
                 .into(),
             );
-            exe_as_and_flush(&store, &req, revision.next()).await?;
+            exe_as_and_flush(&store, &req).await?;
         }
         Ok((store, revision))
     }
@@ -1159,9 +1163,8 @@ mod test {
     async fn exe_as_and_flush(
         store: &Arc<KvStore<DB>>,
         request: &RequestWithToken,
-        revision: i64,
     ) -> Result<(), ExecuteError> {
-        store.after_sync(request, revision).await?;
+        store.after_sync(request).await?;
         Ok(())
     }
 
@@ -1394,8 +1397,8 @@ mod test {
             .into(),
         );
         let db = DB::open(&EngineConfig::Memory)?;
-        let (store, rev) = init_store(db, rx).await?;
-        exe_as_and_flush(&store, &txn_req, rev.next()).await?;
+        let (store, _rev) = init_store(db, rx).await?;
+        exe_as_and_flush(&store, &txn_req).await?;
         let request = RangeRequest {
             key: "success".into(),
             range_end: vec![],
@@ -1417,7 +1420,7 @@ mod test {
     async fn test_kv_store_index_available() {
         let (tx, rx) = shutdown::channel();
         let db = DB::open(&EngineConfig::Memory).unwrap();
-        let (store, revision) = init_store(Arc::clone(&db), rx).await.unwrap();
+        let (store, _revision) = init_store(Arc::clone(&db), rx).await.unwrap();
         let handle = tokio::spawn({
             let store = Arc::clone(&store);
             async move {
@@ -1430,9 +1433,7 @@ mod test {
                         }
                         .into(),
                     );
-                    exe_as_and_flush(&store, &req, revision.next())
-                        .await
-                        .unwrap();
+                    exe_as_and_flush(&store, &req).await.unwrap();
                 }
             }
         });
@@ -1454,7 +1455,6 @@ mod test {
         let (tx, rx) = shutdown::channel();
         let db = DB::open(&EngineConfig::Memory)?;
         let store = init_empty_store(db, rx);
-        let revision = RevisionNumberGenerator::default();
         // sample requests: (a, 1) (b, 2) (a, 3) (del a)
         // their revisions:     2      3      4       5
         let requests = vec![
@@ -1492,9 +1492,7 @@ mod test {
         ];
 
         for req in requests {
-            exe_as_and_flush(&store, &req, revision.next())
-                .await
-                .unwrap();
+            exe_as_and_flush(&store, &req).await.unwrap();
         }
 
         let target_revisions = index_compact(&store, 3);

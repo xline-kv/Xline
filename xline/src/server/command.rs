@@ -12,14 +12,13 @@ use dashmap::DashMap;
 use engine::Snapshot;
 use tracing::warn;
 use xlineapi::{
-    command::{Command, KeyRange, SyncResponse},
+    command::{Command, KeyRange},
     execute_error::ExecuteError,
     AlarmAction, AlarmRequest, AlarmType, PutRequest, Request, TxnRequest,
 };
 
 use super::barriers::{IdBarrier, IndexBarrier};
 use crate::{
-    revision_number::RevisionNumberGenerator,
     rpc::{RequestBackend, RequestWithToken, RequestWrapper},
     storage::{db::WriteOp, storage_api::StorageApi, AlarmStore, AuthStore, KvStore, LeaseStore},
 };
@@ -78,10 +77,6 @@ where
     index_barrier: Arc<IndexBarrier>,
     /// Barrier for propose id
     id_barrier: Arc<IdBarrier>,
-    /// Revision Number generator for KV request and Lease request
-    general_rev: Arc<RevisionNumberGenerator>,
-    /// Revision Number generator for Auth request
-    auth_rev: Arc<RevisionNumberGenerator>,
     /// Quota checker
     quota_checker: Arc<dyn QuotaChecker>,
     /// Alarmer
@@ -262,8 +257,6 @@ where
         persistent: Arc<S>,
         index_barrier: Arc<IndexBarrier>,
         id_barrier: Arc<IdBarrier>,
-        general_rev: Arc<RevisionNumberGenerator>,
-        auth_rev: Arc<RevisionNumberGenerator>,
         quota: u64,
         node_id: ServerId,
         client: Arc<Client<Command>>,
@@ -279,8 +272,6 @@ where
             persistent,
             index_barrier,
             id_barrier,
-            general_rev,
-            auth_rev,
             quota_checker,
             alarmer,
             cmd_revision,
@@ -338,32 +329,6 @@ where
         }
     }
 
-    fn pre_after_sync(&self, cmd: &Command) {
-        let wrapper = cmd.request();
-        match wrapper.request.backend() {
-            RequestBackend::Kv => {
-                let Some(mut entry) = self.cmd_revision.get_mut(&cmd.id()) else {
-                    return;
-                };
-                let rev = self.general_rev.next();
-                *entry.value_mut() = rev;
-            }
-            RequestBackend::Auth => {
-                if !wrapper.request.skip_auth_revision() {
-                    let rev = self.auth_rev.next();
-                    let _ignore = self.cmd_revision.insert(cmd.id(), rev);
-                }
-            }
-            RequestBackend::Lease => {
-                if !wrapper.request.skip_lease_revision() {
-                    let rev = self.general_rev.next();
-                    let _ignore = self.cmd_revision.insert(cmd.id(), rev);
-                }
-            }
-            RequestBackend::Alarm => {}
-        }
-    }
-
     async fn after_sync(
         &self,
         cmd: &Command,
@@ -374,29 +339,11 @@ where
             .flush_ops(vec![WriteOp::PutAppliedIndex(index)])?;
         let wrapper = cmd.request();
 
-        let revision = self.cmd_revision.get(&cmd.id()).map(|e| *e.value());
         let (res, wr_ops) = match wrapper.request.backend() {
-            RequestBackend::Kv => {
-                if let Some(rev) = revision {
-                    self.kv_storage.after_sync(wrapper, rev).await?;
-                    (SyncResponse::new(rev), vec![])
-                } else {
-                    let rev = self.general_rev.get();
-                    (SyncResponse::new(rev), vec![])
-                }
-            }
-            RequestBackend::Auth => {
-                let rev = revision.unwrap_or(self.auth_rev.get());
-                self.auth_storage.after_sync(wrapper, rev)?
-            }
-            RequestBackend::Lease => {
-                let rev = revision.unwrap_or(self.general_rev.get());
-                self.lease_storage.after_sync(wrapper, rev).await?
-            }
-            RequestBackend::Alarm => {
-                let rev = self.general_rev.get();
-                self.alarm_storage.after_sync(wrapper, rev)
-            }
+            RequestBackend::Kv => self.kv_storage.after_sync(wrapper).await?,
+            RequestBackend::Auth => self.auth_storage.after_sync(wrapper)?,
+            RequestBackend::Lease => self.lease_storage.after_sync(wrapper).await?,
+            RequestBackend::Alarm => self.alarm_storage.after_sync(wrapper),
         };
         self.persistent.flush_ops(wr_ops)?;
         self.lease_storage.mark_lease_synced(&wrapper.request);
