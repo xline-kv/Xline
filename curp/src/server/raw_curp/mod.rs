@@ -1154,7 +1154,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 None
             }
         };
-        let _ig = self.ctx.cluster_info.cluster_version_dec();
+        self.ctx.cluster_info.cluster_version_update();
         if let Some(c) = fallback_change {
             self.ctx
                 .change_tx
@@ -1546,7 +1546,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             }
         };
         if modified {
-            let _ig = self.ctx.cluster_info.cluster_version_inc();
+            self.ctx.cluster_info.cluster_version_update();
         }
         if self.is_leader() {
             self.ctx

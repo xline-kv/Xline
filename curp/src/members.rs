@@ -1,6 +1,6 @@
 use std::{
     collections::{hash_map::DefaultHasher, HashMap},
-    hash::Hasher,
+    hash::{Hash, Hasher},
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -285,14 +285,20 @@ impl ClusterInfo {
         self.cluster_version.load(Ordering::Relaxed)
     }
 
-    /// cluster version increase
-    pub(crate) fn cluster_version_inc(&self) -> u64 {
-        self.cluster_version.fetch_add(1, Ordering::Relaxed)
-    }
-
     /// cluster version decrease
-    pub(crate) fn cluster_version_dec(&self) -> u64 {
-        self.cluster_version.fetch_sub(1, Ordering::Relaxed)
+    pub(crate) fn cluster_version_update(&self) {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.all_members_addrs()
+            .into_iter()
+            .sorted()
+            .for_each(|(id, mut addrs)| {
+                id.hash(&mut hasher);
+                addrs.sort();
+                addrs.hash(&mut hasher);
+            });
+        let ver = hasher.finish();
+        debug!("cluster version updates to {ver}");
+        self.cluster_version.store(ver, Ordering::Relaxed);
     }
 
     /// Get peers
