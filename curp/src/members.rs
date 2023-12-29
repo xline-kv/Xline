@@ -11,7 +11,7 @@ use std::{
 use dashmap::{mapref::one::Ref, DashMap};
 use futures::{stream::FuturesUnordered, StreamExt};
 use itertools::Itertools;
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::rpc::{self, FetchClusterRequest, FetchClusterResponse, Member};
 
@@ -297,7 +297,7 @@ impl ClusterInfo {
                 addrs.hash(&mut hasher);
             });
         let ver = hasher.finish();
-        debug!("cluster version updates to {ver}");
+        info!("cluster version updates to {ver}");
         self.cluster_version.store(ver, Ordering::Relaxed);
     }
 

@@ -777,6 +777,10 @@ fn add_node_should_add_new_node_to_curp() {
         old_cluster.all_members(),
         cluster_after_fallback.all_members()
     );
+    assert_eq!(
+        cluster_after_fallback.cluster_version(),
+        old_cluster.cluster_version()
+    );
 }
 
 #[traced_test]
