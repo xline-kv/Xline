@@ -38,8 +38,6 @@ pub(super) struct RetryConfig {
     delay: Duration,
     /// Retry count
     count: usize,
-    /// Enable jitter to randomize the delay to avoid thundering herd
-    jitter: bool,
 }
 
 /// Backoff tool
@@ -55,24 +53,22 @@ struct Backoff {
 
 impl RetryConfig {
     /// Create a fixed retry config
-    fn new_fixed(delay: Duration, count: usize, jitter: bool) -> Self {
+    fn new_fixed(delay: Duration, count: usize) -> Self {
         assert!(count > 0, "retry count should be larger than 0");
         Self {
             backoff: BackoffConfig::Fixed,
             delay,
             count,
-            jitter,
         }
     }
 
     /// Create a exponential retry config
-    fn new_exponential(delay: Duration, max_delay: Duration, count: usize, jitter: bool) -> Self {
+    fn new_exponential(delay: Duration, max_delay: Duration, count: usize) -> Self {
         assert!(count > 0, "retry count should be larger than 0");
         Self {
             backoff: BackoffConfig::Exponential { max_delay },
             delay,
             count,
-            jitter,
         }
     }
 
@@ -100,13 +96,6 @@ impl Backoff {
                 .checked_mul(2)
                 .unwrap_or(self.cur_delay)
                 .min(max_delay);
-        }
-        #[allow(clippy::float_arithmetic)] // It is always correct.
-        if self.config.jitter {
-            // jitter algorithm will randomly pick a delay between [0.5 * delay, 1.5 * delay)
-            let per: f32 = rand::random();
-            let cur_sec = cur.as_secs_f32() * (0.5 + per);
-            cur = Duration::from_secs_f32(cur_sec);
         }
         Some(cur)
     }
