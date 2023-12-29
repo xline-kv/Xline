@@ -3,14 +3,13 @@ use std::path::{Path, PathBuf};
 use bytes::{Bytes, BytesMut};
 
 #[cfg(madsim)]
-use crate::mock_rocksdb_engine::{RocksEngine, RocksSnapshot};
+use crate::mock_rocksdb_engine::{RocksEngine, RocksSnapshot, RocksTransaction};
 #[cfg(not(madsim))]
-use crate::rocksdb_engine::{RocksEngine, RocksSnapshot};
+use crate::rocksdb_engine::{RocksEngine, RocksSnapshot, RocksTransaction};
 use crate::{
     api::transaction_api::TransactionApi,
     error::EngineError,
     memory_engine::{MemoryEngine, MemorySnapshot, MemoryTransaction},
-    rocksdb_engine::RocksTransaction,
     SnapshotApi, StorageEngine, WriteOperation,
 };
 

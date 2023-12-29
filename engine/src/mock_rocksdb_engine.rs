@@ -11,7 +11,8 @@ use crate::{
         snapshot_api::SnapshotApi,
     },
     error::EngineError,
-    memory_engine::{MemoryEngine, MemorySnapshot},
+    memory_engine::{MemoryEngine, MemorySnapshot, MemoryTransaction},
+    TransactionApi,
 };
 
 /// Mock `RocksDB` Storage Engine
@@ -69,6 +70,16 @@ impl RocksEngine {
 #[async_trait::async_trait]
 impl StorageEngine for RocksEngine {
     type Snapshot = RocksSnapshot;
+    type Transaction = RocksTransaction;
+
+    #[inline]
+    fn transaction(&self) -> RocksTransaction {
+        RocksTransaction {
+            db: self.clone(),
+            inner: self.inner.transaction(),
+        }
+    }
+
     #[inline]
     fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
         self.inner.get(table, key)
@@ -185,5 +196,42 @@ impl SnapshotApi for RocksSnapshot {
     #[inline]
     async fn clean(&mut self) -> std::io::Result<()> {
         self.inner.clean().await
+    }
+}
+
+/// Mock `RocksTransaction`
+#[derive(Debug)]
+pub struct RocksTransaction {
+    /// The mock engine
+    db: RocksEngine,
+    /// The memory transaction
+    inner: MemoryTransaction,
+}
+
+#[async_trait::async_trait]
+impl TransactionApi for RocksTransaction {
+    fn write(&self, op: WriteOperation<'_>) -> Result<(), EngineError> {
+        self.inner.write(op)
+    }
+
+    fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
+        self.inner.get(table, key)
+    }
+
+    fn get_multi(
+        &self,
+        table: &str,
+        keys: &[impl AsRef<[u8]>],
+    ) -> Result<Vec<Option<Vec<u8>>>, EngineError> {
+        self.inner.get_multi(table, keys)
+    }
+
+    async fn commit(self) -> Result<(), EngineError> {
+        self.inner.commit().await?;
+        self.db.fs_sync()
+    }
+
+    fn rollback(&self) -> Result<(), EngineError> {
+        self.inner.rollback()
     }
 }
