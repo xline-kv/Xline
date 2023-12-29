@@ -23,9 +23,9 @@ use crate::{
     rpc::{
         self,
         connect::{BypassedConnect, ConnectApi},
-        ConfChange, CurpError, FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest,
-        Member, ProposeConfChangeRequest, ProposeId, ProposeRequest, Protocol, PublishRequest,
-        ReadState, ShutdownRequest, WaitSyncedRequest,
+        ConfChange, CurpError, CurpErrorPriority, FetchClusterRequest, FetchClusterResponse,
+        FetchReadStateRequest, Member, ProposeConfChangeRequest, ProposeId, ProposeRequest,
+        Protocol, PublishRequest, ReadState, ShutdownRequest, WaitSyncedRequest,
     },
 };
 
@@ -254,7 +254,7 @@ impl<C: Command> Unary<C> {
             .await;
         let super_quorum = super_quorum(size);
 
-        let mut err = None;
+        let mut err: Option<CurpError> = None;
         let mut execute_result: Option<C::ER> = None;
         let mut ok_cnt = 0;
 
@@ -263,10 +263,16 @@ impl<C: Command> Unary<C> {
                 Ok(resp) => resp.into_inner(),
                 Err(e) => {
                     warn!("propose cmd({propose_id}) to server({id}) error: {e:?}");
-                    if e.return_early() {
+                    if e.priority() == CurpErrorPriority::ReturnImmediately {
                         return Err(e);
                     }
-                    err = Some(e);
+                    if let Some(old_err) = err.as_ref() {
+                        if old_err.priority() <= e.priority() {
+                            err = Some(e);
+                        }
+                    } else {
+                        err = Some(e);
+                    }
                     continue;
                 }
             };
@@ -384,7 +390,7 @@ impl<C: Command> ClientApi for Unary<C> {
                 futures::future::Either::Left((fast_result, slow_round)) => match fast_result {
                     Ok(er) => er.map(|e| (e, None)),
                     Err(err) => {
-                        if err.return_early() {
+                        if err.priority() > CurpErrorPriority::Low {
                             return Err(err);
                         }
                         // fallback to slow round if fast round failed
@@ -395,7 +401,7 @@ impl<C: Command> ClientApi for Unary<C> {
                 futures::future::Either::Right((slow_result, fast_round)) => match slow_result {
                     Ok(er) => er.map(|(asr, e)| (e, Some(asr))),
                     Err(err) => {
-                        if err.return_early() {
+                        if err.priority() > CurpErrorPriority::Low {
                             return Err(err);
                         }
                         let fr = fast_round.await?;
@@ -406,7 +412,7 @@ impl<C: Command> ClientApi for Unary<C> {
         } else {
             let (fr, sr) = futures::future::join(fast_round, slow_round).await;
             if let Err(err) = fr {
-                if err.return_early() {
+                if err.priority() > CurpErrorPriority::Low {
                     return Err(err);
                 }
             }
@@ -515,17 +521,23 @@ impl<C: Command> ClientApi for Unary<C> {
         let mut max_term = 0;
         let mut res = None;
         let mut ok_cnt = 0;
-        let mut err = None;
+        let mut err: Option<CurpError> = None;
 
         while let Some((id, resp)) = responses.next().await {
             let inner = match resp {
                 Ok(r) => r,
                 Err(e) => {
                     warn!("fetch cluster from {} failed, {:?}", id, e);
-                    if e.return_early() {
+                    if e.priority() == CurpErrorPriority::ReturnImmediately {
                         return Err(e);
                     }
-                    err = Some(e);
+                    if let Some(old_err) = err.as_ref() {
+                        if old_err.priority() <= e.priority() {
+                            err = Some(e);
+                        }
+                    } else {
+                        err = Some(e);
+                    }
                     continue;
                 }
             };

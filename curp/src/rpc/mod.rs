@@ -635,22 +635,34 @@ impl CurpError {
         Self::Internal(reason.into())
     }
 
-    /// Errors that should return early to the retry layer when we
-    /// got the error at propose stage
-    pub(crate) fn return_early(&self) -> bool {
-        matches!(
-            *self,
+    /// Get the priority of the error
+    pub(crate) fn priority(&self) -> CurpErrorPriority {
+        match *self {
             CurpError::Duplicated(_)
-                | CurpError::ShuttingDown(_)
-                | CurpError::InvalidConfig(_)
-                | CurpError::NodeAlreadyExists(_)
-                | CurpError::NodeNotExists(_)
-                | CurpError::LearnerNotCatchUp(_)
-                | CurpError::ExpiredClientId(_)
-                | CurpError::WrongClusterVersion(_)
-                | CurpError::Redirect(_)
-        )
+            | CurpError::ShuttingDown(_)
+            | CurpError::InvalidConfig(_)
+            | CurpError::NodeAlreadyExists(_)
+            | CurpError::NodeNotExists(_)
+            | CurpError::LearnerNotCatchUp(_)
+            | CurpError::ExpiredClientId(_)
+            | CurpError::Redirect(_) => CurpErrorPriority::ReturnImmediately,
+            CurpError::WrongClusterVersion(_) => CurpErrorPriority::High,
+            CurpError::RpcTransport(_) | CurpError::Internal(_) | CurpError::KeyConflict(_) => {
+                CurpErrorPriority::Low
+            }
+        }
     }
+}
+
+/// The priority of curp error, indicate which error should be handled in retry layer
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum CurpErrorPriority {
+    /// Low priority
+    Low = 1,
+    /// High priority
+    High = 2,
+    /// Should be returned immediately if any server response it
+    ReturnImmediately = 3,
 }
 
 impl<E: std::error::Error + 'static> From<E> for CurpError {
