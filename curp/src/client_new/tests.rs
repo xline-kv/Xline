@@ -19,7 +19,8 @@ use crate::{
     members::ServerId,
     rpc::{
         connect::{ConnectApi, MockConnectApi},
-        CurpError, FetchClusterResponse, Member, ProposeId, ProposeResponse, WaitSyncedResponse,
+        CurpError, CurpErrorPriority, FetchClusterResponse, Member, ProposeId, ProposeResponse,
+        WaitSyncedResponse,
     },
 };
 
@@ -268,10 +269,9 @@ async fn test_unary_fast_round_return_early_err() {
         CurpError::node_not_exist(),
         CurpError::learner_not_catch_up(),
         CurpError::expired_client_id(),
-        CurpError::wrong_cluster_version(),
         CurpError::redirect(Some(1), 0),
     ] {
-        assert!(early_err.return_early());
+        assert_eq!(early_err.priority(), CurpErrorPriority::ReturnImmediately);
         // record how many times `handle_propose` was invoked.
         let counter = Arc::new(Mutex::new(0));
         let connects = init_mocked_connects(3, |_id, conn| {
@@ -530,10 +530,9 @@ async fn test_unary_propose_return_early_err() {
         CurpError::node_not_exist(),
         CurpError::learner_not_catch_up(),
         CurpError::expired_client_id(),
-        CurpError::wrong_cluster_version(),
         CurpError::redirect(Some(1), 0),
     ] {
-        assert!(early_err.return_early());
+        assert_eq!(early_err.priority(), CurpErrorPriority::ReturnImmediately);
         // record how many times rpc was invoked.
         let counter = Arc::new(Mutex::new(0));
         let connects = init_mocked_connects(5, |id, conn| {
@@ -576,7 +575,7 @@ async fn test_retry_propose_return_no_retry_error() {
         CurpError::learner_not_catch_up(),
     ] {
         // all no retry errors are returned early
-        assert!(early_err.return_early());
+        assert_eq!(early_err.priority(), CurpErrorPriority::ReturnImmediately);
         // record how many times rpc was invoked.
         let counter = Arc::new(Mutex::new(0));
         let connects = init_mocked_connects(5, |id, conn| {
@@ -596,10 +595,7 @@ async fn test_retry_propose_return_no_retry_error() {
                 });
         });
         let unary = Unary::<TestCommand>::new(connects, None, Some(0), Some(1));
-        let retry = Retry::new(
-            unary,
-            RetryConfig::new_fixed(Duration::from_millis(100), 5, false),
-        );
+        let retry = Retry::new(unary, RetryConfig::new_fixed(Duration::from_millis(100), 5));
         let err = retry
             .propose(&TestCommand::default(), false)
             .await
@@ -631,10 +627,7 @@ async fn test_retry_propose_return_retry_error() {
             }
         });
         let unary = Unary::<TestCommand>::new(connects, None, Some(0), Some(1));
-        let retry = Retry::new(
-            unary,
-            RetryConfig::new_fixed(Duration::from_millis(10), 5, false),
-        );
+        let retry = Retry::new(unary, RetryConfig::new_fixed(Duration::from_millis(10), 5));
         let err = retry
             .propose(&TestCommand::default(), false)
             .await

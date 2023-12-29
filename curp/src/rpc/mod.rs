@@ -578,6 +578,10 @@ impl PublishRequest {
     }
 }
 
+/// NOTICE:
+/// Please check test case `test_unary_fast_round_return_early_err` `test_unary_propose_return_early_err`
+/// `test_retry_propose_return_no_retry_error` `test_retry_propose_return_retry_error` if you added some
+/// new [`CurpError`]
 impl CurpError {
     /// `KeyConflict` error
     pub(crate) fn key_conflict() -> Self {
