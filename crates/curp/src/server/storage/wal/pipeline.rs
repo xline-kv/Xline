@@ -28,6 +28,8 @@ pub(super) struct FilePipeline {
     file_stream: RecvStream<'static, LockedFile>,
     /// The handle of the background file creation task
     handle: JoinHandle<io::Result<()>>,
+    /// Stopped flag
+    stopped: bool,
 }
 
 impl FilePipeline {
@@ -50,7 +52,6 @@ impl FilePipeline {
                     break;
                 }
             }
-            Self::clean_up(&dir_c)?;
             Ok(())
         });
 
@@ -59,12 +60,17 @@ impl FilePipeline {
             file_size,
             file_stream: file_rx.into_stream(),
             handle,
+            stopped: false,
         })
     }
 
     /// Stops the pipeline
-    pub(super) fn stop(&self) {
+    pub(super) fn stop(&mut self) {
         self.handle.abort();
+        self.stopped = true;
+        if let Err(e) = Self::clean_up(&self.dir) {
+            error!("failed to clean up pipeline files: {e}");
+        }
     }
 
     /// Allocates a a new tempfile
@@ -89,6 +95,12 @@ impl FilePipeline {
     }
 }
 
+impl Drop for FilePipeline {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
 impl Stream for FilePipeline {
     type Item = io::Result<LockedFile>;
 
@@ -108,6 +120,10 @@ impl Stream for FilePipeline {
                     Ok(Ok(_)) => return Poll::Ready(None),
                 }
             }
+            return Poll::Ready(None);
+        }
+
+        if self.stopped {
             return Poll::Ready(None);
         }
 
