@@ -657,11 +657,18 @@ impl CurpError {
 /// The priority of curp error, indicate which error should be handled in retry layer
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum CurpErrorPriority {
-    /// Low priority
+    /// Low priority, in multiple sequenced RPCs, if preceding RPCs returns
+    /// a low-priority error, will not exit prematurely. In concurrent RPCs,
+    /// a low-priority error returned may be overridden by a higher-priority error.
     Low = 1,
-    /// High priority
+    /// High priority, in multiple sequenced RPCs, if preceding RPCs returns
+    /// a high-priority error, it will exit early, preventing next RPCs from
+    /// proceeding. In concurrent RPCs, high-priority errors will override
+    /// low-priority errors.
     High = 2,
-    /// Should be returned immediately if any server response it
+    /// Should be returned immediately if any server response it. If requests are
+    /// sent to multiple servers, the request that does not have received a
+    /// response will be terminated immediately.
     ReturnImmediately = 3,
 }
 
