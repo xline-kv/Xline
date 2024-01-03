@@ -1,9 +1,6 @@
-#![allow(unused)] // TODO: remove
-
-use std::{marker::PhantomData, ops::SubAssign, sync::Arc, time::Duration};
+use std::{ops::SubAssign, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use curp_external_api::cmd::Command;
 use futures::Future;
 use tracing::warn;
 
@@ -89,7 +86,7 @@ impl Backoff {
             return None;
         }
         self.count.sub_assign(1);
-        let mut cur = self.cur_delay;
+        let cur = self.cur_delay;
         if let BackoffConfig::Exponential { max_delay } = self.config.backoff {
             self.cur_delay = self
                 .cur_delay
@@ -159,7 +156,7 @@ where
 
                 // update the leader state if got Redirect
                 CurpError::Redirect(Redirect { leader_id, term }) => {
-                    self.inner.update_leader(leader_id, term);
+                    let _ig = self.inner.update_leader(leader_id, term).await;
                 }
             }
 

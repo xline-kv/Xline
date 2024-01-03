@@ -1,18 +1,15 @@
-#![allow(unused)] // TODO: remove
-
 use std::{
     cmp::Ordering,
     collections::{hash_map::Entry, HashMap, HashSet},
     marker::PhantomData,
-    ops::{AddAssign, Deref},
+    ops::AddAssign,
     sync::Arc,
     time::Duration,
 };
 
 use async_trait::async_trait;
-use curp_external_api::{cmd::Command, role_change::RoleChange};
+use curp_external_api::cmd::Command;
 use futures::{stream::FuturesUnordered, Future, Stream, StreamExt};
-use itertools::Itertools;
 use tokio::sync::RwLock;
 use tonic::Response;
 use tracing::{debug, warn};
@@ -137,22 +134,13 @@ pub(super) struct UnaryConfig {
     /// The rpc timeout of a propose request
     propose_timeout: Duration,
     /// The rpc timeout of a 2-RTT request, usually takes longer than propose timeout
-    /// Default to 2 * propose_timeout, The recommended the values is within
-    /// (propose_timeout, 2 * propose_timeout].
+    /// The recommended the values is within (propose_timeout, 2 * propose_timeout].
     wait_synced_timeout: Duration,
 }
 
 impl UnaryConfig {
     /// Create a unary config
-    pub(super) fn new(propose_timeout: Duration) -> Self {
-        Self {
-            propose_timeout,
-            wait_synced_timeout: propose_timeout * 2,
-        }
-    }
-
-    /// Create a unary config
-    pub(super) fn new_full(propose_timeout: Duration, wait_synced_timeout: Duration) -> Self {
+    pub(super) fn new(propose_timeout: Duration, wait_synced_timeout: Duration) -> Self {
         Self {
             propose_timeout,
             wait_synced_timeout,
