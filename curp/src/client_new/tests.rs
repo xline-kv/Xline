@@ -130,8 +130,8 @@ async fn test_unary_fetch_clusters_linearizable() {
                         cluster_version: 1,
                     },
                     2 => FetchClusterResponse {
-                        leader_id: None, // imagine this node is a disconnected candidate
-                        term: 23,        // with a high term
+                        leader_id: None,
+                        term: 23, // abnormal term
                         cluster_id: 123,
                         members: vec![],
                         cluster_version: 1,

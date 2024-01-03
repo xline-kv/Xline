@@ -238,9 +238,9 @@ impl<C: Command> Unary<C> {
         if !Self::check_and_update_leader(&mut state, res.leader_id, res.term) {
             return Ok(());
         }
-        if state.cluster_version >= res.cluster_version {
+        if state.cluster_version == res.cluster_version {
             debug!(
-                "ignore old cluster version({}) from server",
+                "ignore cluster version({}) from server",
                 res.cluster_version
             );
             return Ok(());
@@ -644,7 +644,6 @@ impl<C: Command> ClientApi for Unary<C> {
                 }
             };
             // Ignore the response of a node that doesn't know who the leader is.
-            // some disconnected candidates may continue to increase term, disrupting the process below.
             if inner.leader_id.is_some() {
                 #[allow(clippy::integer_arithmetic)]
                 match max_term.cmp(&inner.term) {
