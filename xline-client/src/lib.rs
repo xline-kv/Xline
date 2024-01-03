@@ -179,6 +179,7 @@ pub mod types;
 pub mod error;
 
 /// The curp client trait object
+/// TODO: use `type CurpClient = impl ClientApi<...>` when `type_alias_impl_trait` stabilized
 type CurpClient = dyn ClientApi<Error = tonic::Status, Cmd = Command> + Sync + Send + 'static;
 
 /// Xline client

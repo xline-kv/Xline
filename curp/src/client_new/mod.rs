@@ -232,7 +232,7 @@ impl ClientBuilder {
             self.all_members.clone().unwrap_or_else(|| {
                 unreachable!("must set the initial members or discover from some endpoints")
             }),
-            UnaryConfig::new_full(
+            UnaryConfig::new(
                 *self.config.propose_timeout(),
                 *self.config.wait_synced_timeout(),
             ),
