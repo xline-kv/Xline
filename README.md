@@ -1,5 +1,7 @@
 # Xline
 
+![Xline-logo](doc/img/xline-horizontal-black.png)
+
 [![Discord Shield][discord-badge]][discord-url]
 [![Apache 2.0 licensed][apache-badge]][apache-url]
 [![Build Status][actions-badge]][actions-url]
