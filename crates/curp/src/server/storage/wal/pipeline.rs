@@ -1,6 +1,10 @@
 use std::{
     io,
     path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     task::Poll,
 };
 
@@ -26,10 +30,8 @@ pub(super) struct FilePipeline {
     file_size: u64,
     /// The file receive stream
     file_stream: RecvStream<'static, LockedFile>,
-    /// The handle of the background file creation task
-    handle: JoinHandle<io::Result<()>>,
     /// Stopped flag
-    stopped: bool,
+    stopped: Arc<AtomicBool>,
 }
 
 impl FilePipeline {
@@ -41,36 +43,46 @@ impl FilePipeline {
         let (file_tx, file_rx) = flume::bounded(1);
         let stop_event = Event::new();
         let dir_c = dir.clone();
+        let stopped = Arc::new(AtomicBool::new(false));
+        let stopped_c = Arc::clone(&stopped);
 
-        let handle = tokio::spawn(async move {
+        let _ignore = tokio::spawn(async move {
             let mut file_count = 0;
             loop {
-                let file = Self::alloc(&dir_c, file_size, file_count)?;
+                let file = match Self::alloc(&dir_c, file_size, file_count) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        error!("failed to allocate new file: {e}");
+                        break;
+                    }
+                };
                 file_count += 1;
+
+                if stopped_c.load(Ordering::SeqCst) {
+                    if let Err(e) = Self::clean_up(&dir_c) {
+                        error!("failed to clean up pipeline files: {e}");
+                    }
+                    break;
+                }
+
                 if let Err(e) = file_tx.send_async(file).await {
                     // The receiver is already dropped, stop this task
                     break;
                 }
             }
-            Ok(())
         });
 
         Ok(Self {
             dir,
             file_size,
             file_stream: file_rx.into_stream(),
-            handle,
-            stopped: false,
+            stopped,
         })
     }
 
     /// Stops the pipeline
     pub(super) fn stop(&mut self) {
-        self.handle.abort();
-        self.stopped = true;
-        if let Err(e) = Self::clean_up(&self.dir) {
-            error!("failed to clean up pipeline files: {e}");
-        }
+        self.stopped.store(true, Ordering::SeqCst);
     }
 
     /// Allocates a a new tempfile
@@ -108,22 +120,7 @@ impl Stream for FilePipeline {
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Self::Item>> {
-        if self.handle.is_finished() {
-            if let Poll::Ready(result) = self.handle.poll_unpin(cx) {
-                match result {
-                    Ok(Err(e)) => {
-                        return Poll::Ready(Some(Err(e)));
-                    }
-                    Err(e) => {
-                        return Poll::Ready(Some(Err(e.into())));
-                    }
-                    Ok(Ok(_)) => return Poll::Ready(None),
-                }
-            }
-            return Poll::Ready(None);
-        }
-
-        if self.stopped {
+        if self.stopped.load(Ordering::SeqCst) {
             return Poll::Ready(None);
         }
 
