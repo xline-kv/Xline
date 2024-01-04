@@ -25,6 +25,7 @@ async fn leader_crash_and_recovery() {
             .propose(TestCommand::new_put(vec![0], 0), true)
             .await
             .unwrap()
+            .unwrap()
             .0
             .values,
         Vec::<u32>::new()
@@ -34,13 +35,14 @@ async fn leader_crash_and_recovery() {
             .propose(TestCommand::new_get(vec![0]), true)
             .await
             .unwrap()
+            .unwrap()
             .0
             .values,
         vec![0]
     );
 
     // restart the original leader
-    group.restart(leader, false).await;
+    group.restart(leader).await;
     let old_leader = group.nodes.get_mut(&leader).unwrap();
 
     // new leader will push an empty log to commit previous logs, the empty log does
@@ -73,6 +75,7 @@ async fn follower_crash_and_recovery() {
             .propose(TestCommand::new_put(vec![0], 0), true)
             .await
             .unwrap()
+            .unwrap()
             .0
             .values,
         Vec::<u32>::new(),
@@ -82,13 +85,14 @@ async fn follower_crash_and_recovery() {
             .propose(TestCommand::new_get(vec![0]), true)
             .await
             .unwrap()
+            .unwrap()
             .0
             .values,
         vec![0]
     );
 
     // restart follower
-    group.restart(follower, false).await;
+    group.restart(follower).await;
     let follower = group.nodes.get_mut(&follower).unwrap();
 
     let (_cmd, er) = follower.exe_rx.recv().await.unwrap();
@@ -118,6 +122,7 @@ async fn leader_and_follower_both_crash_and_recovery() {
             .propose(TestCommand::new_put(vec![0], 0), true)
             .await
             .unwrap()
+            .unwrap()
             .0
             .values,
         Vec::<u32>::new(),
@@ -127,6 +132,7 @@ async fn leader_and_follower_both_crash_and_recovery() {
             .propose(TestCommand::new_get(vec![0]), true)
             .await
             .unwrap()
+            .unwrap()
             .0
             .values,
         vec![0]
@@ -135,7 +141,7 @@ async fn leader_and_follower_both_crash_and_recovery() {
     group.crash(leader).await;
 
     // restart the original leader
-    group.restart(leader, false).await;
+    group.restart(leader).await;
 
     let old_leader = group.nodes.get_mut(&leader).unwrap();
 
@@ -150,7 +156,7 @@ async fn leader_and_follower_both_crash_and_recovery() {
     assert_eq!(asr.1, 3);
 
     // restart follower
-    group.restart(follower, false).await;
+    group.restart(follower).await;
     let follower = group.nodes.get_mut(&follower).unwrap();
 
     let (_cmd, er) = follower.exe_rx.recv().await.unwrap();
@@ -203,6 +209,7 @@ async fn new_leader_will_recover_spec_cmds_cond1() {
             .propose(TestCommand::new_get(vec![0]), true)
             .await
             .unwrap()
+            .unwrap()
             .0
             .values,
         vec![0]
@@ -247,6 +254,7 @@ async fn new_leader_will_recover_spec_cmds_cond2() {
             .propose(TestCommand::new_put(vec![0], 0), true)
             .await
             .unwrap()
+            .unwrap()
             .0
             .values,
         Vec::<u32>::new(),
@@ -255,6 +263,7 @@ async fn new_leader_will_recover_spec_cmds_cond2() {
         client
             .propose(TestCommand::new_get(vec![0]), true)
             .await
+            .unwrap()
             .unwrap()
             .0
             .values,
@@ -271,7 +280,7 @@ async fn old_leader_will_keep_original_states() {
 
     // 0: let's first propose an initial cmd0
     let cmd0 = TestCommand::new_put(vec![0], 0);
-    let (er, index) = client.propose(cmd0, false).await.unwrap();
+    let (er, index) = client.propose(cmd0, false).await.unwrap().unwrap();
     assert_eq!(er.values, Vec::<u32>::new());
     assert_eq!(index.unwrap(), 2.into()); // log index 1 is the empty log
 
@@ -325,6 +334,7 @@ async fn old_leader_will_keep_original_states() {
             .propose(TestCommand::new_get(vec![0]), true)
             .await
             .unwrap()
+            .unwrap()
             .0
             .values,
         vec![0]
@@ -347,6 +357,7 @@ async fn minority_crash_and_recovery() {
             .propose(TestCommand::new_put(vec![0], 0), true)
             .await
             .unwrap()
+            .unwrap()
             .0
             .values,
         Vec::<u32>::new()
@@ -355,6 +366,7 @@ async fn minority_crash_and_recovery() {
         client
             .propose(TestCommand::new_get(vec![0]), true)
             .await
+            .unwrap()
             .unwrap()
             .0
             .values,
@@ -371,14 +383,14 @@ async fn minority_crash_and_recovery() {
         group.crash(node).await;
     }
     for node in minority {
-        let is_leader = *group.leader.as_ref().lock() == node;
-        group.restart(node, is_leader).await;
+        group.restart(node).await;
     }
 
     assert_eq!(
         client
             .propose(TestCommand::new_get(vec![0]), true)
             .await
+            .unwrap()
             .unwrap()
             .0
             .values,
@@ -389,6 +401,7 @@ async fn minority_crash_and_recovery() {
             .propose(TestCommand::new_put(vec![0], 1), true)
             .await
             .unwrap()
+            .unwrap()
             .0
             .values,
         Vec::<u32>::new()
@@ -397,6 +410,7 @@ async fn minority_crash_and_recovery() {
         client
             .propose(TestCommand::new_get(vec![0]), true)
             .await
+            .unwrap()
             .unwrap()
             .0
             .values,
@@ -433,7 +447,7 @@ async fn recovery_after_compaction() {
     debug!("start recovery");
 
     // the restarted node should use snapshot to recover
-    group.restart(node_id, false).await;
+    group.restart(node_id).await;
 
     // wait for node to restart
     sleep_secs(15).await;

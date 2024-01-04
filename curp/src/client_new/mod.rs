@@ -16,6 +16,7 @@ use std::{collections::HashMap, fmt::Debug, sync::Arc};
 use async_trait::async_trait;
 use curp_external_api::cmd::Command;
 use futures::{stream::FuturesUnordered, StreamExt};
+use tracing::debug;
 use utils::config::ClientConfig;
 
 use self::{
@@ -94,6 +95,7 @@ pub trait ClientApi {
         if let Some(id) = resp.leader_id {
             return Ok(id);
         }
+        debug!("no leader id in FetchClusterResponse, try to send linearizable request");
         // fallback to linearizable fetch
         self.fetch_leader_id(true).await
     }
