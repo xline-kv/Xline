@@ -144,13 +144,19 @@ where
                 // some errors that could have a retry
                 CurpError::ExpiredClientId(_)
                 | CurpError::KeyConflict(_)
-                | CurpError::RpcTransport(_)
                 | CurpError::Internal(_) => {}
+
+                // update leader state if we got a rpc transport error
+                CurpError::RpcTransport(_) => {
+                    if let Err(e) = self.inner.fetch_leader_id(true).await {
+                        warn!("fetch leader failed, error {e:?}");
+                    }
+                }
 
                 // update the cluster state if got WrongClusterVersion
                 CurpError::WrongClusterVersion(_) => {
                     // the inner client should automatically update cluster state when fetch_cluster
-                    if let Err(e) = self.inner.fetch_cluster(false).await {
+                    if let Err(e) = self.inner.fetch_cluster(true).await {
                         warn!("fetch cluster failed, error {e:?}");
                     }
                 }

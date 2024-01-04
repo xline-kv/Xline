@@ -127,6 +127,7 @@ async fn propose_after_reelect() {
             .propose(TestCommand::new_put(vec![0], 0), true)
             .await
             .unwrap()
+            .unwrap()
             .0
             .values,
         Vec::<u32>::new()
@@ -141,6 +142,7 @@ async fn propose_after_reelect() {
         client
             .propose(TestCommand::new_get(vec![0]), true)
             .await
+            .unwrap()
             .unwrap()
             .0
             .values,
@@ -158,12 +160,16 @@ async fn conflict_should_detected_in_new_leader() {
     let client = group.new_client().await;
     let leader1 = group.get_leader().await.0;
 
+    // update leader state in client first
+    let _ig = client.get_leader_id().await.unwrap();
+
     // client only propose to leader
     group.clog_link_client_nodes(group.nodes.keys().filter(|id| **id != leader1));
     assert_eq!(
         client
             .propose(TestCommand::new_put(vec![0], 0), true)
             .await
+            .unwrap()
             .unwrap()
             .0
             .values,
@@ -179,6 +185,7 @@ async fn conflict_should_detected_in_new_leader() {
         client
             .propose(TestCommand::new_get(vec![0]), true)
             .await
+            .unwrap()
             .unwrap()
             .0
             .values,

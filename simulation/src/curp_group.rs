@@ -5,13 +5,12 @@ pub use curp::rpc::{
     protocol_client::ProtocolClient, PbProposeId, ProposeRequest, ProposeResponse,
 };
 use curp::{
-    client::{Client, ReadState},
+    client_new::{ClientApi, ClientBuilder},
     cmd::Command,
-    error::ClientError,
     members::{ClusterInfo, ServerId},
     rpc::{
-        ConfChange, CurpError, FetchClusterRequest, FetchClusterResponse, Member,
-        ProposeConfChangeRequest, ProposeConfChangeResponse,
+        ConfChange, FetchClusterRequest, FetchClusterResponse, Member, ProposeConfChangeRequest,
+        ProposeConfChangeResponse, ReadState,
     },
     server::Rpc,
     LogIndex,
@@ -30,6 +29,9 @@ use utils::{
     config::{ClientConfig, CurpConfigBuilder, StorageConfig},
     shutdown,
 };
+
+/// TODO: use `type CurpClient<C>  = impl ClientApi<...>` when `type_alias_impl_trait` stabilized
+type CurpClient<C> = dyn ClientApi<Cmd = C, Error = tonic::Status> + Send + Sync + 'static;
 
 struct MemorySnapshotAllocator;
 
@@ -53,7 +55,6 @@ pub struct CurpNode {
 
 pub struct CurpGroup {
     pub nodes: HashMap<ServerId, CurpNode>,
-    pub leader: Arc<Mutex<ServerId>>,
     pub all_members: HashMap<ServerId, String>,
     pub client_node: NodeHandle,
 }
@@ -67,8 +68,6 @@ impl CurpGroup {
             .map(|x| (format!("S{x}"), vec![format!("192.168.1.{}:12345", x + 1)]))
             .collect();
         let mut all_members = HashMap::new();
-
-        let leader = Arc::new(Mutex::new(0));
 
         let nodes = (0..n_nodes)
             .map(|i| {
@@ -155,7 +154,6 @@ impl CurpGroup {
         debug!("successfully start group");
         Self {
             nodes,
-            leader,
             all_members,
             client_node,
         }
@@ -174,9 +172,9 @@ impl CurpGroup {
             .collect();
         SimClient {
             inner: Arc::new(
-                Client::<TestCommand>::builder()
-                    .config(config)
-                    .build_from_all_members(all_members, None)
+                ClientBuilder::new(config)
+                    .all_members(all_members)
+                    .build()
                     .await
                     .unwrap(),
             ),
@@ -205,13 +203,8 @@ impl CurpGroup {
         }
     }
 
-    pub async fn restart(&mut self, id: ServerId, is_leader: bool) {
+    pub async fn restart(&mut self, id: ServerId) {
         let handle = madsim::runtime::Handle::current();
-        if is_leader {
-            *self.leader.lock() = id;
-        } else {
-            *self.leader.lock() = 0;
-        }
         handle.restart(id.to_string());
     }
 
@@ -444,7 +437,7 @@ impl SimProtocolClient {
 }
 
 pub struct SimClient<C: Command> {
-    inner: Arc<Client<C>>,
+    inner: Arc<CurpClient<C>>,
     handle: NodeHandle,
 }
 
@@ -454,10 +447,10 @@ impl<C: Command> SimClient<C> {
         &self,
         cmd: C,
         use_fast_path: bool,
-    ) -> Result<(C::ER, Option<C::ASR>), ClientError<C>> {
+    ) -> Result<Result<(C::ER, Option<C::ASR>), C::Error>, tonic::Status> {
         let inner = self.inner.clone();
         self.handle
-            .spawn(async move { inner.propose(cmd, use_fast_path).await })
+            .spawn(async move { inner.propose(&cmd, use_fast_path).await })
             .await
             .unwrap()
     }
@@ -466,7 +459,7 @@ impl<C: Command> SimClient<C> {
     pub async fn propose_conf_change(
         &self,
         changes: Vec<ConfChange>,
-    ) -> Result<Result<Vec<Member>, CurpError>, ClientError<C>> {
+    ) -> Result<Vec<Member>, tonic::Status> {
         let inner = self.inner.clone();
         self.handle
             .spawn(async move { inner.propose_conf_change(changes).await })
@@ -475,7 +468,7 @@ impl<C: Command> SimClient<C> {
     }
 
     #[inline]
-    pub async fn fetch_read_state(&self, cmd: &C) -> Result<ReadState, ClientError<C>> {
+    pub async fn fetch_read_state(&self, cmd: &C) -> Result<ReadState, tonic::Status> {
         let inner = self.inner.clone();
         let cmd = cmd.clone();
         self.handle
@@ -485,19 +478,10 @@ impl<C: Command> SimClient<C> {
     }
 
     #[inline]
-    pub async fn get_leader_id(&self) -> ServerId {
+    pub async fn get_leader_id(&self) -> Result<ServerId, tonic::Status> {
         let inner = self.inner.clone();
         self.handle
-            .spawn(async move { inner.get_leader_id().await.unwrap() })
-            .await
-            .unwrap()
-    }
-
-    #[inline]
-    pub async fn get_leader_id_from_curp(&self) -> ServerId {
-        let inner = self.inner.clone();
-        self.handle
-            .spawn(async move { inner.get_leader_id_from_curp().await.unwrap() })
+            .spawn(async move { inner.fetch_leader_id(true).await })
             .await
             .unwrap()
     }

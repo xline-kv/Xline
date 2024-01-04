@@ -412,7 +412,9 @@ impl<C: Command> Unary<C> {
         // We will at least send the request to the leader if no `WrongClusterVersion` returned.
         // If no errors occur, the leader should return the ER
         // If it is because the super quorum has not been reached, an error will definitely occur.
-        unreachable!("leader should return ER if no error happens");
+        // Otherwise, there is no leader in the cluster state currently, return wrong cluster version
+        // and attempt to retrieve the cluster state again.
+        Err(CurpError::wrong_cluster_version())
     }
 
     /// Wait synced result from server
@@ -596,6 +598,8 @@ impl<C: Command> ClientApi for Unary<C> {
                         )
                     })
                     .into_inner();
+                debug!("fetch local cluster {resp:?}");
+
                 return Ok(resp);
             }
         }
@@ -666,8 +670,9 @@ impl<C: Command> ClientApi for Unary<C> {
                     }
                     return Ok(res);
                 }
-                debug!("fetch_cluster quorum ok, but members are empty");
+                debug!("fetch cluster quorum ok, but members are empty");
             }
+            debug!("fetch cluster from {id} success");
         }
 
         if let Some(err) = err {
