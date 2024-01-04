@@ -58,7 +58,7 @@ impl FilePipeline {
                 };
                 file_count += 1;
 
-                if stopped_c.load(Ordering::SeqCst) {
+                if stopped_c.load(Ordering::Relaxed) {
                     if let Err(e) = Self::clean_up(&dir_c) {
                         error!("failed to clean up pipeline files: {e}");
                     }
@@ -82,7 +82,7 @@ impl FilePipeline {
 
     /// Stops the pipeline
     pub(super) fn stop(&mut self) {
-        self.stopped.store(true, Ordering::SeqCst);
+        self.stopped.store(true, Ordering::Relaxed);
     }
 
     /// Allocates a a new tempfile
@@ -120,7 +120,7 @@ impl Stream for FilePipeline {
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Self::Item>> {
-        if self.stopped.load(Ordering::SeqCst) {
+        if self.stopped.load(Ordering::Relaxed) {
             return Poll::Ready(None);
         }
 
