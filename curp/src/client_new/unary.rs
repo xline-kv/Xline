@@ -25,7 +25,7 @@ use crate::{
     },
 };
 
-use super::{ClientApi, LeaderStateUpdate, ProposeResponse};
+use super::{ClientApi, LeaderStateUpdate, ProposeResponse, RepeatableClientApi};
 
 /// Client state
 struct State {
@@ -448,13 +448,6 @@ impl<C: Command> Unary<C> {
     fn new_seq_num(&self) -> u64 {
         rand::random()
     }
-
-    /// Generate a new propose id
-    async fn gen_propose_id(&self) -> Result<ProposeId, CurpError> {
-        let client_id = self.get_client_id().await?;
-        let seq_num = self.new_seq_num();
-        Ok(ProposeId(client_id, seq_num))
-    }
 }
 
 #[async_trait]
@@ -475,47 +468,7 @@ impl<C: Command> ClientApi for Unary<C> {
     /// requests (event the requests are commutative).
     async fn propose(&self, cmd: &C, use_fast_path: bool) -> Result<ProposeResponse<C>, CurpError> {
         let propose_id = self.gen_propose_id().await?;
-
-        tokio::pin! {
-            let fast_round = self.fast_round(propose_id, cmd);
-            let slow_round = self.slow_round(propose_id);
-        }
-
-        let res: ProposeResponse<C> = if use_fast_path {
-            match futures::future::select(fast_round, slow_round).await {
-                futures::future::Either::Left((fast_result, slow_round)) => match fast_result {
-                    Ok(er) => er.map(|e| (e, None)),
-                    Err(err) => {
-                        if err.priority() > CurpErrorPriority::Low {
-                            return Err(err);
-                        }
-                        // fallback to slow round if fast round failed
-                        let sr = slow_round.await?;
-                        sr.map(|(asr, er)| (er, Some(asr)))
-                    }
-                },
-                futures::future::Either::Right((slow_result, fast_round)) => match slow_result {
-                    Ok(er) => er.map(|(asr, e)| (e, Some(asr))),
-                    Err(err) => {
-                        if err.priority() > CurpErrorPriority::Low {
-                            return Err(err);
-                        }
-                        let fr = fast_round.await?;
-                        fr.map(|er| (er, None))
-                    }
-                },
-            }
-        } else {
-            let (fr, sr) = futures::future::join(fast_round, slow_round).await;
-            if let Err(err) = fr {
-                if err.priority() > CurpErrorPriority::Low {
-                    return Err(err);
-                }
-            }
-            sr?.map(|(asr, er)| (er, Some(asr)))
-        };
-
-        Ok(res)
+        RepeatableClientApi::propose(self, propose_id, cmd, use_fast_path).await
     }
 
     /// Send propose configuration changes to the cluster
@@ -524,25 +477,13 @@ impl<C: Command> ClientApi for Unary<C> {
         changes: Vec<ConfChange>,
     ) -> Result<Vec<Member>, CurpError> {
         let propose_id = self.gen_propose_id().await?;
-        let req = ProposeConfChangeRequest::new(propose_id, changes, self.cluster_version().await);
-        let timeout = self.config.wait_synced_timeout;
-        let members = self
-            .map_leader(|conn| async move { conn.propose_conf_change(req, timeout).await })
-            .await??
-            .into_inner()
-            .members;
-        Ok(members)
+        RepeatableClientApi::propose_conf_change(self, propose_id, changes).await
     }
 
     /// Send propose to shutdown cluster
     async fn propose_shutdown(&self) -> Result<(), CurpError> {
         let propose_id = self.gen_propose_id().await?;
-        let req = ShutdownRequest::new(propose_id, self.cluster_version().await);
-        let timeout = self.config.wait_synced_timeout;
-        let _ig = self
-            .map_leader(|conn| async move { conn.shutdown(req, timeout).await })
-            .await??;
-        Ok(())
+        RepeatableClientApi::propose_shutdown(self, propose_id).await
     }
 
     /// Send propose to publish a node id and name
@@ -552,12 +493,7 @@ impl<C: Command> ClientApi for Unary<C> {
         node_name: String,
     ) -> Result<(), Self::Error> {
         let propose_id = self.gen_propose_id().await?;
-        let req = PublishRequest::new(propose_id, node_id, node_name);
-        let timeout = self.config.wait_synced_timeout;
-        let _ig = self
-            .map_leader(|conn| async move { conn.publish(req, timeout).await })
-            .await??;
-        Ok(())
+        RepeatableClientApi::propose_publish(self, propose_id, node_id, node_name).await
     }
 
     /// Send fetch read state from leader
@@ -681,6 +617,107 @@ impl<C: Command> ClientApi for Unary<C> {
 
         // It seems that the max term has not reached the majority here. Mock a transport error and return it to the external to retry.
         return Err(CurpError::RpcTransport(()));
+    }
+}
+
+#[async_trait]
+impl<C: Command> RepeatableClientApi for Unary<C> {
+    /// Generate a unique propose id during the retry process.
+    async fn gen_propose_id(&self) -> Result<ProposeId, Self::Error> {
+        let client_id = self.get_client_id().await?;
+        let seq_num = self.new_seq_num();
+        Ok(ProposeId(client_id, seq_num))
+    }
+
+    /// Send propose to the whole cluster, `use_fast_path` set to `false` to fallback into ordered
+    /// requests (event the requests are commutative).
+    async fn propose(
+        &self,
+        propose_id: ProposeId,
+        cmd: &Self::Cmd,
+        use_fast_path: bool,
+    ) -> Result<ProposeResponse<Self::Cmd>, Self::Error> {
+        tokio::pin! {
+            let fast_round = self.fast_round(propose_id, cmd);
+            let slow_round = self.slow_round(propose_id);
+        }
+
+        let res: ProposeResponse<C> = if use_fast_path {
+            match futures::future::select(fast_round, slow_round).await {
+                futures::future::Either::Left((fast_result, slow_round)) => match fast_result {
+                    Ok(er) => er.map(|e| (e, None)),
+                    Err(err) => {
+                        if err.priority() > CurpErrorPriority::Low {
+                            return Err(err);
+                        }
+                        // fallback to slow round if fast round failed
+                        let sr = slow_round.await?;
+                        sr.map(|(asr, er)| (er, Some(asr)))
+                    }
+                },
+                futures::future::Either::Right((slow_result, fast_round)) => match slow_result {
+                    Ok(er) => er.map(|(asr, e)| (e, Some(asr))),
+                    Err(err) => {
+                        if err.priority() > CurpErrorPriority::Low {
+                            return Err(err);
+                        }
+                        let fr = fast_round.await?;
+                        fr.map(|er| (er, None))
+                    }
+                },
+            }
+        } else {
+            let (fr, sr) = futures::future::join(fast_round, slow_round).await;
+            if let Err(err) = fr {
+                if err.priority() > CurpErrorPriority::Low {
+                    return Err(err);
+                }
+            }
+            sr?.map(|(asr, er)| (er, Some(asr)))
+        };
+
+        Ok(res)
+    }
+
+    /// Send propose configuration changes to the cluster
+    async fn propose_conf_change(
+        &self,
+        propose_id: ProposeId,
+        changes: Vec<ConfChange>,
+    ) -> Result<Vec<Member>, Self::Error> {
+        let req = ProposeConfChangeRequest::new(propose_id, changes, self.cluster_version().await);
+        let timeout = self.config.wait_synced_timeout;
+        let members = self
+            .map_leader(|conn| async move { conn.propose_conf_change(req, timeout).await })
+            .await??
+            .into_inner()
+            .members;
+        Ok(members)
+    }
+
+    /// Send propose to shutdown cluster
+    async fn propose_shutdown(&self, propose_id: ProposeId) -> Result<(), Self::Error> {
+        let req = ShutdownRequest::new(propose_id, self.cluster_version().await);
+        let timeout = self.config.wait_synced_timeout;
+        let _ig = self
+            .map_leader(|conn| async move { conn.shutdown(req, timeout).await })
+            .await??;
+        Ok(())
+    }
+
+    /// Send propose to publish a node id and name
+    async fn propose_publish(
+        &self,
+        propose_id: ProposeId,
+        node_id: ServerId,
+        node_name: String,
+    ) -> Result<(), Self::Error> {
+        let req = PublishRequest::new(propose_id, node_id, node_name);
+        let timeout = self.config.wait_synced_timeout;
+        let _ig = self
+            .map_leader(|conn| async move { conn.publish(req, timeout).await })
+            .await??;
+        Ok(())
     }
 }
 

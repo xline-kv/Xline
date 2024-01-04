@@ -28,7 +28,7 @@ use crate::{
     members::ServerId,
     rpc::{
         connect::ConnectApi, protocol_client::ProtocolClient, ConfChange, FetchClusterRequest,
-        FetchClusterResponse, Member, Protocol, ReadState,
+        FetchClusterResponse, Member, ProposeId, Protocol, ReadState,
     },
 };
 
@@ -99,6 +99,40 @@ pub trait ClientApi {
         // fallback to linearizable fetch
         self.fetch_leader_id(true).await
     }
+}
+
+/// This trait is used for internal implementation, and a client API with this trait will be able to retry.
+#[async_trait]
+trait RepeatableClientApi: ClientApi {
+    /// Generate a unique propose id during the retry process.
+    async fn gen_propose_id(&self) -> Result<ProposeId, Self::Error>;
+
+    /// Send propose to the whole cluster, `use_fast_path` set to `false` to fallback into ordered
+    /// requests (event the requests are commutative).
+    async fn propose(
+        &self,
+        propose_id: ProposeId,
+        cmd: &Self::Cmd,
+        use_fast_path: bool,
+    ) -> Result<ProposeResponse<Self::Cmd>, Self::Error>;
+
+    /// Send propose configuration changes to the cluster
+    async fn propose_conf_change(
+        &self,
+        propose_id: ProposeId,
+        changes: Vec<ConfChange>,
+    ) -> Result<Vec<Member>, Self::Error>;
+
+    /// Send propose to shutdown cluster
+    async fn propose_shutdown(&self, id: ProposeId) -> Result<(), Self::Error>;
+
+    /// Send propose to publish a node id and name
+    async fn propose_publish(
+        &self,
+        propose_id: ProposeId,
+        node_id: ServerId,
+        node_name: String,
+    ) -> Result<(), Self::Error>;
 }
 
 /// Update leader state

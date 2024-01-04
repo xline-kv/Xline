@@ -20,6 +20,11 @@ async fn leader_crash_and_recovery() {
     let leader = group.try_get_leader().await.unwrap().0;
     group.crash(leader).await;
 
+    // wait for election, or we might get Duplicated Error
+    sleep_secs(15).await;
+    let leader2 = group.get_leader().await.0;
+    assert_ne!(leader, leader2);
+
     assert_eq!(
         client
             .propose(TestCommand::new_put(vec![0], 0), true)

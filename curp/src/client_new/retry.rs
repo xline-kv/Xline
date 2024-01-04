@@ -12,7 +12,7 @@ use crate::{
     },
 };
 
-use super::{ClientApi, LeaderStateUpdate, ProposeResponse};
+use super::{ClientApi, LeaderStateUpdate, ProposeResponse, RepeatableClientApi};
 
 /// Backoff config
 #[derive(Debug, Clone)]
@@ -110,7 +110,7 @@ pub(super) struct Retry<Api> {
 
 impl<Api> Retry<Api>
 where
-    Api: ClientApi<Error = CurpError> + LeaderStateUpdate + Send + Sync + 'static,
+    Api: RepeatableClientApi<Error = CurpError> + LeaderStateUpdate + Send + Sync + 'static,
 {
     /// Create a retry client
     pub(super) fn new(inner: Api, config: RetryConfig) -> Self {
@@ -185,7 +185,7 @@ where
 #[async_trait]
 impl<Api> ClientApi for Retry<Api>
 where
-    Api: ClientApi<Error = CurpError> + LeaderStateUpdate + Send + Sync + 'static,
+    Api: RepeatableClientApi<Error = CurpError> + LeaderStateUpdate + Send + Sync + 'static,
 {
     /// The client error
     type Error = tonic::Status;
@@ -205,8 +205,13 @@ where
         cmd: &Self::Cmd,
         use_fast_path: bool,
     ) -> Result<ProposeResponse<Self::Cmd>, tonic::Status> {
-        self.retry::<_, _>(|client| client.propose(cmd, use_fast_path))
-            .await
+        let propose_id = self
+            .retry::<_, _>(RepeatableClientApi::gen_propose_id)
+            .await?;
+        self.retry::<_, _>(|client| {
+            RepeatableClientApi::propose(client, propose_id, cmd, use_fast_path)
+        })
+        .await
     }
 
     /// Send propose configuration changes to the cluster
@@ -214,16 +219,23 @@ where
         &self,
         changes: Vec<ConfChange>,
     ) -> Result<Vec<Member>, tonic::Status> {
+        let propose_id = self
+            .retry::<_, _>(RepeatableClientApi::gen_propose_id)
+            .await?;
         self.retry::<_, _>(|client| {
             let changes_c = changes.clone();
-            async move { client.propose_conf_change(changes_c).await }
+            RepeatableClientApi::propose_conf_change(client, propose_id, changes_c)
         })
         .await
     }
 
     /// Send propose to shutdown cluster
     async fn propose_shutdown(&self) -> Result<(), tonic::Status> {
-        self.retry::<_, _>(ClientApi::propose_shutdown).await
+        let propose_id = self
+            .retry::<_, _>(RepeatableClientApi::gen_propose_id)
+            .await?;
+        self.retry::<_, _>(|client| RepeatableClientApi::propose_shutdown(client, propose_id))
+            .await
     }
 
     /// Send propose to publish a node id and name
@@ -232,9 +244,12 @@ where
         node_id: ServerId,
         node_name: String,
     ) -> Result<(), Self::Error> {
+        let propose_id = self
+            .retry::<_, _>(RepeatableClientApi::gen_propose_id)
+            .await?;
         self.retry::<_, _>(|client| {
             let name_c = node_name.clone();
-            async move { client.propose_publish(node_id, name_c).await }
+            RepeatableClientApi::propose_publish(client, propose_id, node_id, name_c)
         })
         .await
     }
