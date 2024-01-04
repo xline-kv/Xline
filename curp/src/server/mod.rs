@@ -1,11 +1,7 @@
 use std::{fmt::Debug, sync::Arc};
 
 use engine::SnapshotAllocator;
-#[cfg(not(madsim))]
-use tokio::net::TcpListener;
 use tokio::sync::broadcast;
-#[cfg(not(madsim))]
-use tokio_stream::wrappers::TcpListenerStream;
 #[cfg(not(madsim))]
 use tracing::info;
 use tracing::instrument;
@@ -272,50 +268,6 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
                     .parse()
                     .map_err(|e| ServerError::ParsingError(format!("{e}")))?,
             )
-            .await?;
-
-        Ok(())
-    }
-
-    /// Run a new rpc server from a listener, designed to be used in the tests
-    ///
-    /// # Errors
-    ///   `ServerError::ParsingError` if parsing failed for the local server address
-    ///   `ServerError::RpcError` if any rpc related error met
-    #[cfg(not(madsim))]
-    #[allow(clippy::too_many_arguments)]
-    #[inline]
-    pub async fn run_from_listener<CE>(
-        cluster_info: Arc<ClusterInfo>,
-        is_leader: bool,
-        listener: TcpListener,
-        executor: Arc<CE>,
-        snapshot_allocator: Box<dyn SnapshotAllocator>,
-        role_change: RC,
-        curp_cfg: Arc<CurpConfig>,
-        shutdown_trigger: shutdown::Trigger,
-    ) -> Result<(), ServerError>
-    where
-        CE: CommandExecutor<C>,
-    {
-        let mut shutdown_listener = shutdown_trigger.subscribe();
-        let server = Self::new(
-            cluster_info,
-            is_leader,
-            executor,
-            snapshot_allocator,
-            role_change,
-            curp_cfg,
-            shutdown_trigger,
-        )
-        .await;
-
-        tonic::transport::Server::builder()
-            .add_service(ProtocolServer::new(server.clone()))
-            .add_service(InnerProtocolServer::new(server))
-            .serve_with_incoming_shutdown(TcpListenerStream::new(listener), async move {
-                shutdown_listener.wait_self_shutdown().await;
-            })
             .await?;
 
         Ok(())
