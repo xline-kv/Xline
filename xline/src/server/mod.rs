@@ -22,7 +22,7 @@ mod xline_server;
 pub(crate) use self::maintenance::MAINTENANCE_SNAPSHOT_CHUNK_SIZE;
 pub use self::xline_server::XlineServer;
 
-use curp::client_new::ClientApi;
+use curp::client::ClientApi;
 use xlineapi::command::Command;
 
 /// The curp client trait object

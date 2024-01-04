@@ -15,7 +15,7 @@ use super::{
     unary::Unary,
 };
 use crate::{
-    client_new::ClientApi,
+    client::ClientApi,
     members::ServerId,
     rpc::{
         connect::{ConnectApi, MockConnectApi},

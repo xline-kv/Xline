@@ -6,7 +6,7 @@ use std::{
 use async_trait::async_trait;
 use clippy_utilities::NumericCast;
 use curp::{
-    client_new::{ClientApi, ClientBuilder},
+    client::{ClientApi, ClientBuilder},
     error::ServerError,
     members::{ClusterInfo, ServerId},
     rpc::Member,

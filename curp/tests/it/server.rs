@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
 use curp::{
-    client_new::{ClientApi, ClientBuilder},
+    client::{ClientApi, ClientBuilder},
     members::ClusterInfo,
     rpc::{ConfChange, CurpError},
 };

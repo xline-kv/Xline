@@ -152,7 +152,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use curp::client_new::{ClientApi, ClientBuilder as CurpClientBuilder};
+use curp::client::{ClientApi, ClientBuilder as CurpClientBuilder};
 
 use http::{header::AUTHORIZATION, HeaderValue, Request, Uri};
 use tonic::transport::{Channel, Endpoint};
