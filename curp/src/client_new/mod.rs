@@ -14,7 +14,7 @@ mod tests;
 use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
 use async_trait::async_trait;
-use curp_external_api::{cmd::Command, role_change::RoleChange};
+use curp_external_api::cmd::Command;
 use futures::{stream::FuturesUnordered, StreamExt};
 use utils::config::ClientConfig;
 
@@ -29,7 +29,6 @@ use crate::{
         connect::ConnectApi, protocol_client::ProtocolClient, ConfChange, FetchClusterRequest,
         FetchClusterResponse, Member, Protocol, ReadState,
     },
-    server::Rpc,
 };
 
 /// The response of propose command, deserialized from [`crate::rpc::ProposeResponse`] or
@@ -147,11 +146,11 @@ impl ClientBuilder {
     /// Set the local server to bypass `gRPC` request
     #[inline]
     #[must_use]
-    pub fn bypass<C: Command, RC: RoleChange>(
+    pub fn bypass<P: Protocol>(
         self,
         local_server_id: ServerId,
-        local_server: Rpc<C, RC>,
-    ) -> ClientBuilderWithBypass<Rpc<C, RC>> {
+        local_server: P,
+    ) -> ClientBuilderWithBypass<P> {
         ClientBuilderWithBypass {
             inner: self,
             local_server_id,
@@ -162,7 +161,7 @@ impl ClientBuilder {
     /// Set the initial cluster version
     #[inline]
     #[must_use]
-    pub fn cluster_version(&mut self, cluster_version: u64) -> &mut Self {
+    pub fn cluster_version(mut self, cluster_version: u64) -> Self {
         self.cluster_version = Some(cluster_version);
         self
     }
@@ -170,7 +169,7 @@ impl ClientBuilder {
     /// Set the initial all members
     #[inline]
     #[must_use]
-    pub fn all_members(&mut self, all_members: HashMap<ServerId, Vec<String>>) -> &mut Self {
+    pub fn all_members(mut self, all_members: HashMap<ServerId, Vec<String>>) -> Self {
         self.all_members = Some(all_members);
         self
     }
@@ -178,7 +177,7 @@ impl ClientBuilder {
     /// Set the initial leader state
     #[inline]
     #[must_use]
-    pub fn leader_state(&mut self, leader_id: ServerId, term: u64) -> &mut Self {
+    pub fn leader_state(mut self, leader_id: ServerId, term: u64) -> Self {
         self.leader_state = Some((leader_id, term));
         self
     }
@@ -189,7 +188,7 @@ impl ClientBuilder {
     ///
     /// Return `tonic::Status` for connection failure or some server errors.
     #[inline]
-    pub async fn discover_from(&mut self, addrs: Vec<String>) -> Result<&mut Self, tonic::Status> {
+    pub async fn discover_from(mut self, addrs: Vec<String>) -> Result<Self, tonic::Status> {
         let propose_timeout = *self.config.propose_timeout();
         let mut futs: FuturesUnordered<_> = addrs
             .into_iter()

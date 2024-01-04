@@ -123,6 +123,7 @@ where
         F: Future<Output = Result<R, CurpError>>,
     {
         let mut backoff = self.config.init_backoff();
+        let mut last_err = None;
         while let Some(delay) = backoff.next_delay() {
             let err = match f(&self.inner).await {
                 Ok(res) => return Ok(res),
@@ -160,11 +161,18 @@ where
                 }
             }
 
-            warn!("retry on {} seconds later", delay.as_secs_f32());
+            warn!(
+                "got error: {err:?}, retry on {} seconds later",
+                delay.as_secs_f32()
+            );
+            last_err = Some(err);
             tokio::time::sleep(delay).await;
         }
 
-        Err(tonic::Status::deadline_exceeded("request timeout"))
+        Err(tonic::Status::deadline_exceeded(format!(
+            "request timeout, last error: {:?}",
+            last_err.unwrap_or_else(|| unreachable!("last error must be set"))
+        )))
     }
 }
 

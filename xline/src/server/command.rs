@@ -8,7 +8,6 @@ use crate::{
 };
 use curp::{
     cmd::{Command as CurpCommand, CommandExecutor as CurpCommandExecutor},
-    error::ClientError,
     InflightId, LogIndex,
 };
 use dashmap::DashMap;
@@ -218,26 +217,5 @@ where
     fn trigger(&self, id: InflightId, index: LogIndex) {
         self.id_barrier.trigger(id);
         self.index_barrier.trigger(index);
-    }
-}
-
-/// Convert `ClientError` to `tonic::Status`
-pub(super) fn client_err_to_status(err: ClientError<Command>) -> tonic::Status {
-    #[allow(clippy::wildcard_enum_match_arm)]
-    match err {
-        ClientError::CommandError(e) => {
-            // If an error occurs during the `prepare` or `execute` stages, `after_sync` will
-            // not be invoked. In this case, `wait_synced` will return the errors generated
-            // in the first two stages. Therefore, if the response from `slow_round` arrives
-            // earlier than `fast_round`, the `propose` function will return a `SyncedError`,
-            // even though `after_sync` is not called.
-            tonic::Status::from(e)
-        }
-        ClientError::ShuttingDown => tonic::Status::unavailable("Curp Server is shutting down"),
-        ClientError::OutOfBound(status) => status,
-        ClientError::EncodeDecode(msg) => tonic::Status::internal(msg),
-        ClientError::Timeout => tonic::Status::unavailable("request timed out"),
-
-        _ => unreachable!("curp client error {err:?}"),
     }
 }
