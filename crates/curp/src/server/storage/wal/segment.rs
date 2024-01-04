@@ -54,7 +54,7 @@ pub(super) enum IOState {
     /// Already flushed, but haven't called fsync yet
     Flushed,
     /// Shutdowned
-    Shutdowned,
+    Shutdown,
     /// The IO has failed on this file
     Errored,
 }
@@ -244,7 +244,7 @@ impl WALSegment {
     /// Parse the header from the given buffer
     #[allow(
         clippy::unwrap_used, // Unwraps are used to convert slice to const length and is safe
-        clippy::integer_arithmetic,// Arithmetics cannot overflow
+        clippy::integer_arithmetic, // Arithmetics cannot overflow
         clippy::indexing_slicing // Index slicings are checked
     )]
     fn parse_header(src: &[u8]) -> Result<(LogIndex, u64), WALError> {
@@ -256,10 +256,8 @@ impl WALSegment {
         let parse_error = Err(WALError::Corrupted(CorruptType::Codec(
             "Segment file header parsing has failed".to_owned(),
         )));
-        if src.len() < 56 {
-            return parse_error;
-        }
-        if next_field(4) != WAL_MAGIC.to_le_bytes()
+        if src.len() != WAL_HEADER_SIZE
+            || next_field(4) != WAL_MAGIC.to_le_bytes()
             || next_field(3) != [0; 3]
             || next_field(1) != [WAL_VERSION]
         {
@@ -406,7 +404,7 @@ impl IOState {
 
     /// Mutate the state to `IOState::Shutdowned`
     fn shutdowned(&mut self) {
-        *self = IOState::Shutdowned;
+        *self = IOState::Shutdown;
     }
 }
 
