@@ -19,9 +19,9 @@ use crate::{
     rpc::{
         self,
         connect::{BypassedConnect, ConnectApi},
-        ConfChange, CurpError, CurpErrorPriority, FetchClusterRequest, FetchClusterResponse,
-        FetchReadStateRequest, Member, ProposeConfChangeRequest, ProposeId, ProposeRequest,
-        Protocol, PublishRequest, ReadState, ShutdownRequest, WaitSyncedRequest,
+        ConfChange, CurpError, FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest,
+        Member, ProposeConfChangeRequest, ProposeId, ProposeRequest, Protocol, PublishRequest,
+        ReadState, ShutdownRequest, WaitSyncedRequest,
     },
 };
 
@@ -356,7 +356,7 @@ impl<C: Command> Unary<C> {
                 Ok(resp) => resp.into_inner(),
                 Err(e) => {
                     warn!("propose cmd({propose_id}) to server({id}) error: {e:?}");
-                    if e.priority() == CurpErrorPriority::ReturnImmediately {
+                    if e.should_abort_fast_round() {
                         return Err(e);
                     }
                     if let Some(old_err) = err.as_ref() {
@@ -562,7 +562,8 @@ impl<C: Command> ClientApi for Unary<C> {
                 Ok(r) => r,
                 Err(e) => {
                     warn!("fetch cluster from {} failed, {:?}", id, e);
-                    if e.priority() == CurpErrorPriority::ReturnImmediately {
+                    // similar to fast round
+                    if e.should_abort_fast_round() {
                         return Err(e);
                     }
                     if let Some(old_err) = err.as_ref() {
@@ -647,7 +648,7 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
                 futures::future::Either::Left((fast_result, slow_round)) => match fast_result {
                     Ok(er) => er.map(|e| (e, None)),
                     Err(err) => {
-                        if err.priority() > CurpErrorPriority::Low {
+                        if err.should_abort_slow_round() {
                             return Err(err);
                         }
                         // fallback to slow round if fast round failed
@@ -658,7 +659,7 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
                 futures::future::Either::Right((slow_result, fast_round)) => match slow_result {
                     Ok(er) => er.map(|(asr, e)| (e, Some(asr))),
                     Err(err) => {
-                        if err.priority() > CurpErrorPriority::Low {
+                        if err.should_abort_fast_round() {
                             return Err(err);
                         }
                         let fr = fast_round.await?;
@@ -669,7 +670,7 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
         } else {
             let (fr, sr) = futures::future::join(fast_round, slow_round).await;
             if let Err(err) = fr {
-                if err.priority() > CurpErrorPriority::Low {
+                if err.should_abort_slow_round() {
                     return Err(err);
                 }
             }
