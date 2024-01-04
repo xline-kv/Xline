@@ -617,6 +617,22 @@ async fn test_retry_propose_return_retry_error() {
     ] {
         let connects = init_mocked_connects(5, |id, conn| {
             let err = early_err.clone();
+            conn.expect_fetch_cluster()
+                .returning(move |_req, _timeout| {
+                    Ok(tonic::Response::new(FetchClusterResponse {
+                        leader_id: Some(0),
+                        term: 2,
+                        cluster_id: 123,
+                        members: vec![
+                            Member::new(0, "S0", vec!["A0".to_owned()], false),
+                            Member::new(1, "S1", vec!["A1".to_owned()], false),
+                            Member::new(2, "S2", vec!["A2".to_owned()], false),
+                            Member::new(3, "S3", vec!["A3".to_owned()], false),
+                            Member::new(4, "S4", vec!["A4".to_owned()], false),
+                        ],
+                        cluster_version: 1,
+                    }))
+                });
             conn.expect_propose()
                 .returning(move |_req, _timeout| Err(err.clone()));
             if id == 0 {
