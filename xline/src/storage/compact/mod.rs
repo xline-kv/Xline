@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use curp::{client::Client, error::ClientError};
+use curp::{client_new::ClientApi, error::ClientError};
 use event_listener::Event;
 use periodic_compactor::PeriodicCompactor;
 use revision_compactor::RevisionCompactor;
@@ -30,25 +30,29 @@ pub(crate) const COMPACT_CHANNEL_SIZE: usize = 32;
 
 /// Compactor trait definition
 #[async_trait]
-pub(crate) trait Compactor: std::fmt::Debug + Send + Sync {
+pub(crate) trait Compactor<C: Compactable>: Send + Sync {
     /// run an auto-compactor
     async fn run(&self);
     /// pause an auto-compactor when the current node denotes to a non-leader role
     fn pause(&self);
     /// resume an auto-compactor when the current becomes a leader
     fn resume(&self);
+    /// Set compactable
+    async fn set_compactable(&self, c: C);
 }
 
 /// `Compactable` trait indicates a method that receives a given revision and proposes a compact proposal
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
-pub(crate) trait Compactable: std::fmt::Debug + Send + Sync {
+pub(crate) trait Compactable: Send + Sync + 'static {
     /// do compact
     async fn compact(&self, revision: i64) -> Result<(), ClientError<Command>>;
 }
 
 #[async_trait]
-impl Compactable for Client<Command> {
+impl Compactable
+    for Arc<dyn ClientApi<Error = tonic::Status, Cmd = Command> + Sync + Send + 'static>
+{
     async fn compact(&self, revision: i64) -> Result<(), ClientError<Command>> {
         let request = CompactionRequest {
             revision,
@@ -56,34 +60,25 @@ impl Compactable for Client<Command> {
         };
         let request_wrapper = RequestWithToken::new_with_token(request.into(), None);
         let cmd = Command::new(vec![], request_wrapper);
-        let _ig = self.propose(cmd, true).await?;
+        let _ig = self.propose(&cmd, true).await?;
         Ok(())
     }
 }
 
 /// Boot up an auto-compactor background task.
-pub(crate) async fn auto_compactor(
+pub(crate) async fn auto_compactor<C: Compactable>(
     is_leader: bool,
-    client: Arc<Client<Command>>,
     revision_getter: Arc<RevisionNumberGenerator>,
     shutdown_listener: shutdown::Listener,
     auto_compact_cfg: AutoCompactConfig,
-) -> Arc<dyn Compactor> {
-    let auto_compactor: Arc<dyn Compactor> = match auto_compact_cfg {
-        AutoCompactConfig::Periodic(period) => PeriodicCompactor::new_arc(
-            is_leader,
-            client,
-            revision_getter,
-            shutdown_listener,
-            period,
-        ),
-        AutoCompactConfig::Revision(retention) => RevisionCompactor::new_arc(
-            is_leader,
-            client,
-            revision_getter,
-            shutdown_listener,
-            retention,
-        ),
+) -> Arc<dyn Compactor<C>> {
+    let auto_compactor: Arc<dyn Compactor<C>> = match auto_compact_cfg {
+        AutoCompactConfig::Periodic(period) => {
+            PeriodicCompactor::new_arc(is_leader, revision_getter, shutdown_listener, period)
+        }
+        AutoCompactConfig::Revision(retention) => {
+            RevisionCompactor::new_arc(is_leader, revision_getter, shutdown_listener, retention)
+        }
         _ => {
             unreachable!("xline only supports two auto-compaction modes: periodic, revision")
         }

@@ -632,6 +632,6 @@ async fn test_retry_propose_return_retry_error() {
             .propose(&TestCommand::default(), false)
             .await
             .unwrap_err();
-        assert_eq!(err.message(), "request timeout");
+        assert!(err.message().contains("request timeout"));
     }
 }

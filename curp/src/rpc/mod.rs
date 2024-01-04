@@ -12,6 +12,7 @@ pub use self::proto::{
         cmd_result::Result as CmdResultInner,
         curp_error::Err as CurpError, // easy for match
         curp_error::Redirect,
+        fetch_read_state_response::{IdSet, ReadState},
         propose_conf_change_request::{ConfChange, ConfChangeType},
         protocol_client,
         protocol_server::ProtocolServer,
@@ -31,10 +32,9 @@ pub use self::proto::{
 };
 pub(crate) use self::proto::{
     commandpb::{
-        fetch_read_state_response::{IdSet, ReadState},
-        protocol_server::Protocol,
-        CurpError as CurpErrorWrapper, FetchReadStateRequest, FetchReadStateResponse,
-        ShutdownRequest, ShutdownResponse, WaitSyncedRequest, WaitSyncedResponse,
+        protocol_server::Protocol, CurpError as CurpErrorWrapper, FetchReadStateRequest,
+        FetchReadStateResponse, ShutdownRequest, ShutdownResponse, WaitSyncedRequest,
+        WaitSyncedResponse,
     },
     inner_messagepb::{
         inner_protocol_server::InnerProtocol, AppendEntriesRequest, AppendEntriesResponse,

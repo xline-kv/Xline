@@ -21,3 +21,10 @@ mod xline_server;
 
 pub(crate) use self::maintenance::MAINTENANCE_SNAPSHOT_CHUNK_SIZE;
 pub use self::xline_server::XlineServer;
+
+use curp::client_new::ClientApi;
+use xlineapi::command::Command;
+
+/// The curp client trait object
+/// TODO: use `type CurpClient = impl ClientApi<...>` when `type_alias_impl_trait` stabilized
+type CurpClient = dyn ClientApi<Error = tonic::Status, Cmd = Command> + Sync + Send + 'static;

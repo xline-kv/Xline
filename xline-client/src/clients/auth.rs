@@ -46,7 +46,6 @@ impl Debug for AuthClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AuthClient")
             .field("auth_client", &self.auth_client)
-            .field("auth_client", &self.auth_client)
             .field("token", &self.token)
             .finish()
     }

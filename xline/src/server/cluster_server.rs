@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use curp::{
-    client::Client,
     members::ClusterInfo,
     rpc::{
         ConfChange,
@@ -12,25 +11,25 @@ use itertools::Itertools;
 use tonic::{Request, Response, Status};
 use utils::timestamp;
 use xlineapi::{
-    command::Command, Cluster, Member, MemberAddRequest, MemberAddResponse, MemberListRequest,
-    MemberListResponse, MemberPromoteRequest, MemberPromoteResponse, MemberRemoveRequest,
-    MemberRemoveResponse, MemberUpdateRequest, MemberUpdateResponse,
+    Cluster, Member, MemberAddRequest, MemberAddResponse, MemberListRequest, MemberListResponse,
+    MemberPromoteRequest, MemberPromoteResponse, MemberRemoveRequest, MemberRemoveResponse,
+    MemberUpdateRequest, MemberUpdateResponse,
 };
 
-use super::command::client_err_to_status;
+use super::CurpClient;
 use crate::header_gen::HeaderGenerator;
 
 /// Cluster Server
 pub(crate) struct ClusterServer {
     /// Consensus client
-    client: Arc<Client<Command>>,
+    client: Arc<CurpClient>,
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
 }
 
 impl ClusterServer {
     /// New `ClusterServer`
-    pub(crate) fn new(client: Arc<Client<Command>>, header_gen: Arc<HeaderGenerator>) -> Self {
+    pub(crate) fn new(client: Arc<CurpClient>, header_gen: Arc<HeaderGenerator>) -> Self {
         Self { client, header_gen }
     }
 
@@ -39,8 +38,7 @@ impl ClusterServer {
         Ok(self
             .client
             .propose_conf_change(changes)
-            .await
-            .map_err(client_err_to_status)??
+            .await?
             .into_iter()
             .map(|member| Member {
                 id: member.id(),
@@ -127,12 +125,7 @@ impl Cluster for ClusterServer {
     ) -> Result<Response<MemberListResponse>, Status> {
         let req = request.into_inner();
         let header = self.header_gen.gen_header();
-        let members = self
-            .client
-            .get_cluster_from_curp(req.linearizable)
-            .await
-            .map_err(client_err_to_status)?
-            .members;
+        let members = self.client.fetch_cluster(req.linearizable).await?.members;
         let resp = MemberListResponse {
             header: Some(header),
             members: members

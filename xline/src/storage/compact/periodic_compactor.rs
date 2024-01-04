@@ -9,6 +9,7 @@ use std::{
 
 use clippy_utilities::OverflowArithmetic;
 use curp::error::ClientError;
+use tokio::sync::RwLock;
 use tracing::{info, warn};
 use utils::shutdown;
 use xlineapi::execute_error::ExecuteError;
@@ -61,7 +62,7 @@ pub(crate) struct PeriodicCompactor<C: Compactable> {
     /// `is_leader` indicates whether the current node is a leader or not.
     is_leader: AtomicBool,
     /// curp client
-    client: Arc<C>,
+    compactable: RwLock<Option<C>>,
     /// revision getter
     revision_getter: Arc<RevisionNumberGenerator>,
     /// shutdown listener
@@ -74,14 +75,13 @@ impl<C: Compactable> PeriodicCompactor<C> {
     /// Creates a new revision compactor
     pub(super) fn new_arc(
         is_leader: bool,
-        client: Arc<C>,
         revision_getter: Arc<RevisionNumberGenerator>,
         shutdown_listener: shutdown::Listener,
         period: Duration,
     ) -> Arc<Self> {
         Arc::new(Self {
             is_leader: AtomicBool::new(is_leader),
-            client,
+            compactable: RwLock::new(None),
             revision_getter,
             shutdown_listener,
             period,
@@ -89,6 +89,7 @@ impl<C: Compactable> PeriodicCompactor<C> {
     }
 
     /// perform auto compaction logic
+    #[allow(clippy::pattern_type_mismatch)] // allow let Some matching
     async fn do_compact(
         &self,
         last_revision: Option<i64>,
@@ -109,7 +110,11 @@ impl<C: Compactable> PeriodicCompactor<C> {
             revision, self.period
         );
 
-        let res = self.client.compact(revision).await;
+        let Some(compactable) = &*self.compactable.read().await else {
+            return None;
+        };
+
+        let res = compactable.compact(revision).await;
         if res.is_ok() {
             info!(
                 "completed auto revision compaction, revision = {}, period = {:?}, took {:?}",
@@ -162,7 +167,7 @@ fn sample_config(period: Duration) -> (Duration, usize) {
 }
 
 #[async_trait::async_trait]
-impl<C: Compactable> Compactor for PeriodicCompactor<C> {
+impl<C: Compactable> Compactor<C> for PeriodicCompactor<C> {
     #[allow(clippy::integer_arithmetic)]
     async fn run(&self) {
         let mut last_revision: Option<i64> = None;
@@ -183,6 +188,10 @@ impl<C: Compactable> Compactor for PeriodicCompactor<C> {
                 }
             }
         }
+    }
+
+    async fn set_compactable(&self, compactable: C) {
+        *self.compactable.write().await = Some(compactable);
     }
 
     fn pause(&self) {
@@ -248,11 +257,11 @@ mod test {
         let revision_gen = Arc::new(RevisionNumberGenerator::new(1));
         let periodic_compactor = PeriodicCompactor::new_arc(
             true,
-            Arc::new(compactable),
             revision_gen,
             shutdown_listener,
             Duration::from_secs(10),
         );
+        periodic_compactor.set_compactable(compactable).await;
         // auto_compactor works successfully
         assert_eq!(
             periodic_compactor.do_compact(None, &revision_window).await,

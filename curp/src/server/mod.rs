@@ -54,10 +54,19 @@ static DEFAULT_SERVER_PORT: u16 = 12345;
 
 /// The Rpc Server to handle rpc requests
 /// This Wrapper is introduced due to the `MadSim` rpc lib
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Rpc<C: Command, RC: RoleChange> {
     /// The inner server is wrapped in an Arc so that its state can be shared while cloning the rpc wrapper
     inner: Arc<CurpNode<C, RC>>,
+}
+
+impl<C: Command, RC: RoleChange> Clone for Rpc<C, RC> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
 }
 
 #[tonic::async_trait]
@@ -244,22 +253,20 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
         let port = server_port.unwrap_or(DEFAULT_SERVER_PORT);
         let id = cluster_info.self_id();
         info!("RPC server {id} started, listening on port {port}");
-        let server = Arc::new(
-            Self::new(
-                cluster_info,
-                is_leader,
-                executor,
-                snapshot_allocator,
-                role_change,
-                curp_cfg,
-                shutdown_trigger,
-            )
-            .await,
-        );
+        let server = Self::new(
+            cluster_info,
+            is_leader,
+            executor,
+            snapshot_allocator,
+            role_change,
+            curp_cfg,
+            shutdown_trigger,
+        )
+        .await;
 
         tonic::transport::Server::builder()
-            .add_service(ProtocolServer::from_arc(Arc::clone(&server)))
-            .add_service(InnerProtocolServer::from_arc(server))
+            .add_service(ProtocolServer::new(server.clone()))
+            .add_service(InnerProtocolServer::new(server))
             .serve(
                 format!("0.0.0.0:{port}")
                     .parse()
@@ -292,22 +299,20 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
         CE: CommandExecutor<C>,
     {
         let mut shutdown_listener = shutdown_trigger.subscribe();
-        let server = Arc::new(
-            Self::new(
-                cluster_info,
-                is_leader,
-                executor,
-                snapshot_allocator,
-                role_change,
-                curp_cfg,
-                shutdown_trigger,
-            )
-            .await,
-        );
+        let server = Self::new(
+            cluster_info,
+            is_leader,
+            executor,
+            snapshot_allocator,
+            role_change,
+            curp_cfg,
+            shutdown_trigger,
+        )
+        .await;
 
         tonic::transport::Server::builder()
-            .add_service(ProtocolServer::from_arc(Arc::clone(&server)))
-            .add_service(InnerProtocolServer::from_arc(server))
+            .add_service(ProtocolServer::new(server.clone()))
+            .add_service(InnerProtocolServer::new(server))
             .serve_with_incoming_shutdown(TcpListenerStream::new(listener), async move {
                 shutdown_listener.wait_self_shutdown().await;
             })
@@ -338,22 +343,20 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
         CE: CommandExecutor<C>,
     {
         let mut shutdown_listener = shutdown_trigger.subscribe();
-        let server = Arc::new(
-            Self::new(
-                cluster_info,
-                is_leader,
-                executor,
-                snapshot_allocator,
-                role_change,
-                curp_cfg,
-                shutdown_trigger,
-            )
-            .await,
-        );
+        let server = Self::new(
+            cluster_info,
+            is_leader,
+            executor,
+            snapshot_allocator,
+            role_change,
+            curp_cfg,
+            shutdown_trigger,
+        )
+        .await;
 
         tonic::transport::Server::builder()
-            .add_service(ProtocolServer::from_arc(Arc::clone(&server)))
-            .add_service(InnerProtocolServer::from_arc(server))
+            .add_service(ProtocolServer::new(server.clone()))
+            .add_service(InnerProtocolServer::new(server))
             .serve_with_shutdown(addr, async move {
                 shutdown_listener.wait_self_shutdown().await;
             })

@@ -83,7 +83,6 @@ const CHANGE_CHANNEL_SIZE: usize = 128;
 const MAX_PROMOTE_GAP: u64 = 500;
 
 /// The curp state machine
-#[derive(Debug)]
 pub(super) struct RawCurp<C: Command, RC: RoleChange> {
     /// Curp state
     st: RwLock<State>,
@@ -97,6 +96,19 @@ pub(super) struct RawCurp<C: Command, RC: RoleChange> {
     ctx: Context<C, RC>,
     /// Shutdown trigger
     shutdown_trigger: shutdown::Trigger,
+}
+
+impl<C: Command, RC: RoleChange> Debug for RawCurp<C, RC> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RawCurp")
+            .field("st", &self.st)
+            .field("lst", &self.lst)
+            .field("cst", &self.cst)
+            .field("log", &self.log)
+            .field("ctx", &self.ctx)
+            .field("shutdown_trigger", &self.shutdown_trigger)
+            .finish()
+    }
 }
 
 /// Actions of syncing
@@ -198,7 +210,6 @@ impl<C: Command, RC: RoleChange> Debug for Context<C, RC> {
             .field("cmd_tx", &"CEEventTxApi")
             .field("sync_events", &self.sync_events)
             .field("leader_event", &self.leader_event)
-            .field("role_change", &self.role_change)
             .finish()
     }
 }

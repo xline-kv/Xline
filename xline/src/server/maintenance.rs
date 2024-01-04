@@ -3,14 +3,13 @@ use std::{pin::Pin, sync::Arc};
 use async_stream::try_stream;
 use bytes::BytesMut;
 use clippy_utilities::{Cast, OverflowArithmetic};
-use curp::{client::Client, members::ClusterInfo};
+use curp::members::ClusterInfo;
 use engine::SnapshotApi;
 use futures::stream::Stream;
 use sha2::{Digest, Sha256};
 use tracing::error;
-use xlineapi::command::Command;
 
-use super::command::client_err_to_status;
+use super::CurpClient;
 use crate::{
     header_gen::HeaderGenerator,
     rpc::{
@@ -28,7 +27,6 @@ const MIN_PAGE_SIZE: u64 = 512;
 pub(crate) const MAINTENANCE_SNAPSHOT_CHUNK_SIZE: u64 = 64 * 1024;
 
 /// Maintenance Server
-#[derive(Debug)]
 pub(crate) struct MaintenanceServer<S>
 where
     S: StorageApi,
@@ -38,7 +36,7 @@ where
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
     /// Consensus client
-    client: Arc<Client<Command>>,
+    client: Arc<CurpClient>,
     /// cluster information
     cluster_info: Arc<ClusterInfo>,
 }
@@ -49,7 +47,7 @@ where
 {
     /// New `MaintenanceServer`
     pub(crate) fn new(
-        client: Arc<Client<Command>>,
+        client: Arc<CurpClient>,
         persistent: Arc<S>,
         header_gen: Arc<HeaderGenerator>,
         cluster_info: Arc<ClusterInfo>,
@@ -81,11 +79,7 @@ where
         &self,
         _request: tonic::Request<StatusRequest>,
     ) -> Result<tonic::Response<StatusResponse>, tonic::Status> {
-        let cluster = self
-            .client
-            .get_cluster_from_curp(false)
-            .await
-            .map_err(client_err_to_status)?;
+        let cluster = self.client.fetch_cluster(false).await?;
         let header = self.header_gen.gen_header();
         let self_id = self.cluster_info.self_id();
         let is_learner = cluster
