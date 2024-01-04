@@ -9,7 +9,7 @@ use curp::{
     client::{ClientApi, ClientBuilder},
     error::ServerError,
     members::{ClusterInfo, ServerId},
-    rpc::Member,
+    rpc::{InnerProtocolServer, Member, ProtocolServer},
     server::Rpc,
     LogIndex,
 };
@@ -30,6 +30,7 @@ use tokio::{
     sync::{mpsc, watch},
     task::{block_in_place, JoinHandle},
 };
+use tokio_stream::wrappers::TcpListenerStream;
 use tracing::debug;
 use utils::{
     config::{default_quota, ClientConfig, CurpConfigBuilder, EngineConfig, StorageConfig},
@@ -50,7 +51,7 @@ pub struct CurpNode {
     pub exe_rx: mpsc::UnboundedReceiver<(TestCommand, TestCommandResult)>,
     pub as_rx: mpsc::UnboundedReceiver<(TestCommand, LogIndex)>,
     pub role_change_arc: Arc<TestRoleChangeInner>,
-    pub handle: JoinHandle<Result<(), ServerError>>,
+    pub handle: JoinHandle<Result<(), tonic::transport::Error>>,
     pub trigger: Trigger,
 }
 
@@ -132,22 +133,36 @@ impl CurpGroup {
 
                 let role_change_cb = TestRoleChange::default();
                 let role_change_arc = role_change_cb.get_inner_arc();
-                let handle = tokio::spawn(Rpc::run_from_listener(
-                    cluster_info,
-                    i == 0,
-                    listener,
-                    ce,
-                    snapshot_allocator,
-                    role_change_cb,
-                    Arc::new(
-                        CurpConfigBuilder::default()
-                            .engine_cfg(curp_storage_config)
-                            .log_entries_cap(10)
-                            .build()
-                            .unwrap(),
-                    ),
-                    trigger.clone(),
-                ));
+                let trigger_c = trigger.clone();
+                let handle = tokio::spawn(async move {
+                    let mut shutdown_listener = trigger_c.subscribe();
+                    let server = Arc::new(
+                        Rpc::new(
+                            cluster_info,
+                            i == 0,
+                            ce,
+                            snapshot_allocator,
+                            role_change_cb,
+                            Arc::new(
+                                CurpConfigBuilder::default()
+                                    .engine_cfg(curp_storage_config)
+                                    .log_entries_cap(10)
+                                    .build()
+                                    .unwrap(),
+                            ),
+                            trigger_c,
+                        )
+                        .await,
+                    );
+                    tonic::transport::Server::builder()
+                        .add_service(ProtocolServer::from_arc(Arc::clone(&server)))
+                        .add_service(InnerProtocolServer::from_arc(server))
+                        .serve_with_incoming_shutdown(
+                            TcpListenerStream::new(listener),
+                            shutdown_listener.wait_self_shutdown(),
+                        )
+                        .await
+                });
 
                 (
                     id,
@@ -209,22 +224,35 @@ impl CurpGroup {
         let id = cluster_info.self_id();
         let role_change_cb = TestRoleChange::default();
         let role_change_arc = role_change_cb.get_inner_arc();
-        let handle = tokio::spawn(Rpc::run_from_listener(
-            cluster_info,
-            false,
-            listener,
-            ce,
-            snapshot_allocator,
-            role_change_cb,
-            Arc::new(
-                CurpConfigBuilder::default()
-                    .engine_cfg(curp_storage_config)
-                    .log_entries_cap(10)
-                    .build()
-                    .unwrap(),
-            ),
-            trigger.clone(),
-        ));
+        let server = Arc::new(
+            Rpc::new(
+                cluster_info,
+                false,
+                ce,
+                snapshot_allocator,
+                role_change_cb,
+                Arc::new(
+                    CurpConfigBuilder::default()
+                        .engine_cfg(curp_storage_config)
+                        .log_entries_cap(10)
+                        .build()
+                        .unwrap(),
+                ),
+                trigger.clone(),
+            )
+            .await,
+        );
+        let mut shutdown_listener = trigger.subscribe();
+        let handle = tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(ProtocolServer::from_arc(Arc::clone(&server)))
+                .add_service(InnerProtocolServer::from_arc(server))
+                .serve_with_incoming_shutdown(
+                    TcpListenerStream::new(listener),
+                    shutdown_listener.wait_self_shutdown(),
+                )
+                .await
+        });
         self.nodes.insert(
             id,
             CurpNode {
