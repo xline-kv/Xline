@@ -162,9 +162,6 @@ pub use curp_external_api::LogIndex;
 /// Client side, sending requests and determining requests' state
 pub mod client;
 
-/// Client side, sending requests and determining requests' state
-pub mod client_new;
-
 /// Server side, handling request and sync requests to the log
 pub mod server;
 

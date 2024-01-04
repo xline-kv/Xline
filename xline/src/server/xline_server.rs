@@ -3,7 +3,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use anyhow::Result;
 use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{
-    client_new::ClientBuilder as CurpClientBuilder,
+    client::ClientBuilder as CurpClientBuilder,
     members::ClusterInfo,
     rpc::{InnerProtocolServer, ProtocolServer},
     server::Rpc,

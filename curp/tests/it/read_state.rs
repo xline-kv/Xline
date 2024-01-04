@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use curp::{client_new::ClientApi, rpc::ReadState};
+use curp::{client::ClientApi, rpc::ReadState};
 use curp_test_utils::{
     init_logger, sleep_millis,
     test_cmd::{TestCommand, TestCommandResult},

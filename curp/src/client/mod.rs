@@ -24,7 +24,7 @@ use self::{
     unary::{UnaryBuilder, UnaryConfig},
 };
 use crate::{
-    client_new::retry::RetryConfig,
+    client::retry::RetryConfig,
     members::ServerId,
     rpc::{
         connect::ConnectApi, protocol_client::ProtocolClient, ConfChange, FetchClusterRequest,
@@ -40,6 +40,7 @@ type ProposeResponse<C: Command> = Result<(C::ER, Option<C::ASR>), C::Error>;
 /// `ClientApi`, a higher wrapper for `ConnectApi`, providing some methods for communicating to
 /// the whole curp cluster. Automatically discovery curp server to update it's quorum.
 #[async_trait]
+#[allow(clippy::module_name_repetitions)] // better than just Api
 pub trait ClientApi {
     /// The client error
     type Error;
@@ -144,6 +145,7 @@ trait LeaderStateUpdate {
 
 /// Client builder to build a client
 #[derive(Debug, Clone)]
+#[allow(clippy::module_name_repetitions)] // better than just Builder
 pub struct ClientBuilder {
     /// initial cluster version
     cluster_version: Option<u64>,
@@ -157,6 +159,7 @@ pub struct ClientBuilder {
 
 /// A client builder with bypass with local server
 #[derive(Debug, Clone)]
+#[allow(clippy::module_name_repetitions)] // same as above
 pub struct ClientBuilderWithBypass<P: Protocol> {
     /// inner builder
     inner: ClientBuilder,

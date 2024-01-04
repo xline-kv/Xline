@@ -5,7 +5,7 @@ pub use curp::rpc::{
     protocol_client::ProtocolClient, PbProposeId, ProposeRequest, ProposeResponse,
 };
 use curp::{
-    client_new::{ClientApi, ClientBuilder},
+    client::{ClientApi, ClientBuilder},
     cmd::Command,
     members::{ClusterInfo, ServerId},
     rpc::{

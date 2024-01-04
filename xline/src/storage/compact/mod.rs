@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use curp::{client_new::ClientApi, error::ClientError};
+use curp::{client::ClientApi, error::ClientError};
 use event_listener::Event;
 use periodic_compactor::PeriodicCompactor;
 use revision_compactor::RevisionCompactor;
