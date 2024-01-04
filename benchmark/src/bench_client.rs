@@ -6,7 +6,7 @@ use thiserror::Error;
 #[cfg(test)]
 use xline_client::types::kv::{RangeRequest, RangeResponse};
 use xline_client::{
-    error::XlineClientError as ClientError,
+    error::XlineClientError,
     types::kv::{PutRequest, PutResponse},
     Client, ClientOptions,
 };
@@ -21,7 +21,7 @@ pub(crate) enum BenchClientError {
     EtcdError(#[from] etcd_client::Error),
     /// Error from `xline_client`
     #[error("xline_client error: {0}")]
-    XlineError(#[from] ClientError<Command>),
+    XlineError(#[from] XlineClientError<Command>),
 }
 
 /// The KV client enum used in benchmark

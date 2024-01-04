@@ -7,7 +7,6 @@ use std::{
 };
 
 use clippy_utilities::OverflowArithmetic;
-use curp::error::ClientError;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 use utils::shutdown;
@@ -83,9 +82,7 @@ impl<C: Compactable> RevisionCompactor<C> {
             );
             return Some(target_revision);
         }
-        if let Err(ClientError::CommandError(ExecuteError::RevisionCompacted(_, compacted_rev))) =
-            res
-        {
+        if let Err(ExecuteError::RevisionCompacted(_, compacted_rev)) = res {
             info!(
                 "required revision {} has been compacted, the current compacted revision is {},  retention = {:?}",
                 target_revision,

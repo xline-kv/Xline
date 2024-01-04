@@ -1,13 +1,14 @@
 use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use curp::{client::ClientApi, error::ClientError};
+use curp::client::ClientApi;
 use event_listener::Event;
 use periodic_compactor::PeriodicCompactor;
 use revision_compactor::RevisionCompactor;
 use tokio::{sync::mpsc::Receiver, time::sleep};
+use tracing::warn;
 use utils::{config::AutoCompactConfig, shutdown};
-use xlineapi::command::Command;
+use xlineapi::{command::Command, execute_error::ExecuteError};
 
 use super::{
     index::{Index, IndexOperate},
@@ -46,22 +47,26 @@ pub(crate) trait Compactor<C: Compactable>: Send + Sync {
 #[async_trait]
 pub(crate) trait Compactable: Send + Sync + 'static {
     /// do compact
-    async fn compact(&self, revision: i64) -> Result<(), ClientError<Command>>;
+    async fn compact(&self, revision: i64) -> Result<(), ExecuteError>;
 }
 
 #[async_trait]
 impl Compactable
     for Arc<dyn ClientApi<Error = tonic::Status, Cmd = Command> + Sync + Send + 'static>
 {
-    async fn compact(&self, revision: i64) -> Result<(), ClientError<Command>> {
+    async fn compact(&self, revision: i64) -> Result<(), ExecuteError> {
         let request = CompactionRequest {
             revision,
             physical: false,
         };
         let request_wrapper = RequestWithToken::new_with_token(request.into(), None);
         let cmd = Command::new(vec![], request_wrapper);
-        let _ig = self.propose(&cmd, true).await?;
-        Ok(())
+        loop {
+            match self.propose(&cmd, true).await {
+                Ok(res) => return res.map(|_ig| ()),
+                Err(err) => warn!("send compaction request failed, error: {err}"),
+            };
+        }
     }
 }
 
