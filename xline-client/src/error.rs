@@ -1,7 +1,4 @@
-use curp::{
-    cmd::Command as CurpCommand,
-    error::{ClientBuildError, ClientError},
-};
+use curp::cmd::Command as CurpCommand;
 use thiserror::Error;
 use xlineapi::{command::Command, execute_error::ExecuteError};
 
@@ -44,17 +41,6 @@ impl From<tonic::Status> for XlineClientBuildError {
     #[inline]
     fn from(e: tonic::Status) -> Self {
         Self::RpcError(e.to_string())
-    }
-}
-
-impl From<ClientBuildError> for XlineClientBuildError {
-    #[inline]
-    fn from(e: ClientBuildError) -> Self {
-        match e {
-            ClientBuildError::InvalidArguments(e) => Self::InvalidArguments(e),
-            ClientBuildError::RpcError(e) => Self::RpcError(e),
-            _ => unreachable!("unknown ClientBuildError type"),
-        }
     }
 }
 
@@ -118,23 +104,5 @@ impl From<ExecuteError> for XlineClientError<Command> {
     #[inline]
     fn from(e: ExecuteError) -> Self {
         Self::ExecuteError(e)
-    }
-}
-
-impl From<ClientError<Command>> for XlineClientError<Command> {
-    #[inline]
-    fn from(e: ClientError<Command>) -> Self {
-        match e {
-            ClientError::CommandError(e) => Self::CommandError(e),
-            ClientError::IoError(e) => Self::IoError(e),
-            ClientError::OutOfBound(s) => Self::RpcError(s.to_string()),
-            ClientError::InvalidArgs(e) => Self::InvalidArgs(e),
-            ClientError::InternalError(e) => Self::InternalError(e),
-            ClientError::Timeout => Self::Timeout,
-            ClientError::ShuttingDown => Self::ShuttingDown,
-            ClientError::EncodeDecode(e) => Self::EncodeDecode(e),
-            ClientError::WrongClusterVersion => Self::RpcError("wrong cluster version".to_owned()),
-            _ => unreachable!("unknown ClientError type"),
-        }
     }
 }

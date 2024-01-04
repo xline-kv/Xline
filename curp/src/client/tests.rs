@@ -351,6 +351,29 @@ async fn test_unary_fast_round_with_two_leader() {
     assert_eq!(res, TestCommandResult::new(vec![2], vec![2]));
 }
 
+// We may encounter this scenario during leader election
+#[traced_test]
+#[tokio::test]
+async fn test_unary_fast_round_without_leader() {
+    let connects = init_mocked_connects(5, |id, conn| {
+        conn.expect_propose().return_once(move |_req, _timeout| {
+            let resp = match id {
+                0 | 1 | 2 | 3 | 4 => ProposeResponse::new_empty(),
+                _ => unreachable!("there are only 5 nodes"),
+            };
+            Ok(tonic::Response::new(resp))
+        });
+    });
+    // old local leader(0), term 1
+    let unary = Unary::<TestCommand>::new(connects, None, Some(0), Some(1));
+    let res = unary
+        .fast_round(ProposeId(0, 0), &TestCommand::default())
+        .await
+        .unwrap_err();
+    // quorum: server(0, 1, 2, 3)
+    assert_eq!(res, CurpError::WrongClusterVersion(()));
+}
+
 #[traced_test]
 #[tokio::test]
 async fn test_unary_slow_round_fetch_leader_first() {
