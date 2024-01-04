@@ -19,8 +19,7 @@ use crate::{
     members::ServerId,
     rpc::{
         connect::{ConnectApi, MockConnectApi},
-        CurpError, CurpErrorPriority, FetchClusterResponse, Member, ProposeId, ProposeResponse,
-        WaitSyncedResponse,
+        CurpError, FetchClusterResponse, Member, ProposeId, ProposeResponse, WaitSyncedResponse,
     },
 };
 
@@ -271,7 +270,7 @@ async fn test_unary_fast_round_return_early_err() {
         CurpError::expired_client_id(),
         CurpError::redirect(Some(1), 0),
     ] {
-        assert_eq!(early_err.priority(), CurpErrorPriority::ReturnImmediately);
+        assert!(early_err.should_abort_fast_round());
         // record how many times `handle_propose` was invoked.
         let counter = Arc::new(Mutex::new(0));
         let connects = init_mocked_connects(3, |_id, conn| {
@@ -546,7 +545,6 @@ async fn test_unary_propose_fast_path_fallback_slow_path() {
 #[tokio::test]
 async fn test_unary_propose_return_early_err() {
     for early_err in [
-        CurpError::duplicated(),
         CurpError::shutting_down(),
         CurpError::invalid_config(),
         CurpError::node_already_exists(),
@@ -555,7 +553,7 @@ async fn test_unary_propose_return_early_err() {
         CurpError::expired_client_id(),
         CurpError::redirect(Some(1), 0),
     ] {
-        assert_eq!(early_err.priority(), CurpErrorPriority::ReturnImmediately);
+        assert!(early_err.should_abort_fast_round());
         // record how many times rpc was invoked.
         let counter = Arc::new(Mutex::new(0));
         let connects = init_mocked_connects(5, |id, conn| {
@@ -590,15 +588,12 @@ async fn test_unary_propose_return_early_err() {
 #[tokio::test]
 async fn test_retry_propose_return_no_retry_error() {
     for early_err in [
-        CurpError::duplicated(),
         CurpError::shutting_down(),
         CurpError::invalid_config(),
         CurpError::node_already_exists(),
         CurpError::node_not_exist(),
         CurpError::learner_not_catch_up(),
     ] {
-        // all no retry errors are returned early
-        assert_eq!(early_err.priority(), CurpErrorPriority::ReturnImmediately);
         // record how many times rpc was invoked.
         let counter = Arc::new(Mutex::new(0));
         let connects = init_mocked_connects(5, |id, conn| {
