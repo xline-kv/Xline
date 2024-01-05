@@ -5,12 +5,12 @@ use clippy_utilities::OverflowArithmetic;
 use tonic::transport::{Channel, Endpoint};
 use tracing::debug;
 use xlineapi::{
-    command::{command_from_request_wrapper, CommandResponse, KeyRange, SyncResponse},
+    command::{command_from_request_wrapper, CommandResponse, CurpClient, KeyRange, SyncResponse},
     execute_error::ExecuteError,
     EventType, RequestWithToken,
 };
 
-use super::{auth_server::get_token, CurpClient};
+use super::auth_server::get_token;
 use crate::{
     id_gen::IdGenerator,
     rpc::{

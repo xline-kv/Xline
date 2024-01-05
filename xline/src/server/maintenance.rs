@@ -8,8 +8,8 @@ use engine::SnapshotApi;
 use futures::stream::Stream;
 use sha2::{Digest, Sha256};
 use tracing::error;
+use xlineapi::command::CurpClient;
 
-use super::CurpClient;
 use crate::{
     header_gen::HeaderGenerator,
     rpc::{

@@ -152,13 +152,12 @@ use std::{
     task::{Context, Poll},
 };
 
-use curp::client::{ClientApi, ClientBuilder as CurpClientBuilder};
-
+use curp::client::ClientBuilder as CurpClientBuilder;
 use http::{header::AUTHORIZATION, HeaderValue, Request, Uri};
 use tonic::transport::{Channel, Endpoint};
 use tower::Service;
 use utils::config::ClientConfig;
-use xlineapi::command::Command;
+use xlineapi::command::{Command, CurpClient};
 
 use crate::{
     clients::{
@@ -177,10 +176,6 @@ pub mod types;
 
 /// Error definitions for `xline-client`.
 pub mod error;
-
-/// The curp client trait object
-/// TODO: use `type CurpClient = impl ClientApi<...>` when `type_alias_impl_trait` stabilized
-type CurpClient = dyn ClientApi<Error = tonic::Status, Cmd = Command> + Sync + Send + 'static;
 
 /// Xline client
 #[derive(Clone, Debug)]

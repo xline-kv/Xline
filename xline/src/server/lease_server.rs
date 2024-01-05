@@ -9,12 +9,12 @@ use tonic::transport::Endpoint;
 use tracing::{debug, warn};
 use utils::shutdown;
 use xlineapi::{
-    command::{Command, CommandResponse, KeyRange, SyncResponse},
+    command::{Command, CommandResponse, CurpClient, KeyRange, SyncResponse},
     execute_error::ExecuteError,
     RequestWithToken,
 };
 
-use super::{auth_server::get_token, CurpClient};
+use super::auth_server::get_token;
 use crate::{
     id_gen::IdGenerator,
     rpc::{

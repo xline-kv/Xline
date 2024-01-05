@@ -11,7 +11,6 @@ use clippy_utilities::OverflowArithmetic;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 use utils::shutdown;
-use xlineapi::execute_error::ExecuteError;
 
 use super::{Compactable, Compactor};
 use crate::revision_number::RevisionNumberGenerator;
@@ -113,31 +112,25 @@ impl<C: Compactable> PeriodicCompactor<C> {
             return None;
         };
 
-        let res = compactable.compact(revision).await;
-        if res.is_ok() {
-            info!(
-                "completed auto revision compaction, revision = {}, period = {:?}, took {:?}",
-                revision,
-                self.period,
-                now.elapsed().as_secs()
-            );
-            return target_revision;
+        match compactable.compact(revision).await {
+            Ok(rev) => {
+                info!(
+                    "completed auto revision compaction, request revision = {}, target revision = {}, period = {:?}, took {:?}",
+                    revision,
+                    rev,
+                    self.period,
+                    now.elapsed().as_secs()
+                );
+                Some(rev)
+            }
+            Err(err) => {
+                warn!(
+                    "failed auto revision compaction, revision = {}, period = {:?}, err: {}",
+                    revision, self.period, err
+                );
+                None
+            }
         }
-        if let Err(ExecuteError::RevisionCompacted(_, compacted_rev)) = res {
-            info!(
-                "required revision {} has been compacted, the current compacted revision is {},  period = {:?}, took {:?}",
-                revision,
-                compacted_rev,
-                self.period,
-                now.elapsed().as_secs()
-            );
-            return Some(compacted_rev);
-        }
-        warn!(
-            "failed auto revision compaction, revision = {}, period = {:?}, result: {:?}",
-            revision, self.period, res
-        );
-        None
     }
 }
 
@@ -249,7 +242,7 @@ mod test {
             revision_window.sample(revision);
         }
         let mut compactable = MockCompactable::new();
-        compactable.expect_compact().times(3).returning(|_| Ok(()));
+        compactable.expect_compact().times(3).returning(Ok);
         let (_shutdown_trigger, shutdown_listener) = shutdown::channel();
         let revision_gen = Arc::new(RevisionNumberGenerator::new(1));
         let periodic_compactor = PeriodicCompactor::new_arc(

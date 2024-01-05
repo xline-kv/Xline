@@ -10,7 +10,6 @@ use clippy_utilities::OverflowArithmetic;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 use utils::shutdown;
-use xlineapi::execute_error::ExecuteError;
 
 use super::{Compactable, Compactor};
 use crate::revision_number::RevisionNumberGenerator;
@@ -68,34 +67,29 @@ impl<C: Compactable> RevisionCompactor<C> {
             target_revision, self.retention
         );
 
-        let Some(compactor) = &*self.compactable.read().await else {
+        let Some(compactable) = &*self.compactable.read().await else {
             return None;
         };
 
-        let res = compactor.compact(target_revision).await;
-        if res.is_ok() {
-            info!(
-                "completed auto revision compaction, revision = {}, retention = {}, took {:?}",
-                target_revision,
-                self.retention,
-                now.elapsed().as_secs()
-            );
-            return Some(target_revision);
+        match compactable.compact(target_revision).await {
+            Ok(rev) => {
+                info!(
+                    "completed auto revision compaction, request revision = {}, target revision = {}, retention = {}, took {:?}",
+                    target_revision,
+                    rev,
+                    self.retention,
+                    now.elapsed().as_secs()
+                );
+                Some(rev)
+            }
+            Err(err) => {
+                warn!(
+                    "failed auto revision compaction, revision = {}, retention = {}, result: {}",
+                    target_revision, self.retention, err
+                );
+                None
+            }
         }
-        if let Err(ExecuteError::RevisionCompacted(_, compacted_rev)) = res {
-            info!(
-                "required revision {} has been compacted, the current compacted revision is {},  retention = {:?}",
-                target_revision,
-                compacted_rev,
-                self.retention,
-            );
-            return Some(compacted_rev);
-        }
-        warn!(
-            "failed auto revision compaction, revision = {}, retention = {}, result: {:?}",
-            target_revision, self.retention, res
-        );
-        None
     }
 }
 
@@ -141,7 +135,7 @@ mod test {
     #[tokio::test]
     async fn revision_compactor_should_work_in_normal_path() {
         let mut compactable = MockCompactable::new();
-        compactable.expect_compact().times(3).returning(|_| Ok(()));
+        compactable.expect_compact().times(3).returning(Ok);
         let (_shutdown_trigger, shutdown_listener) = shutdown::channel();
         let revision_gen = Arc::new(RevisionNumberGenerator::new(110));
         let revision_compactor =
