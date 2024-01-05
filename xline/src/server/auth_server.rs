@@ -7,12 +7,11 @@ use pbkdf2::{
 use tonic::metadata::MetadataMap;
 use tracing::debug;
 use xlineapi::{
-    command::{command_from_request_wrapper, CommandResponse, SyncResponse},
+    command::{command_from_request_wrapper, CommandResponse, CurpClient, SyncResponse},
     request_validation::RequestValidator,
     RequestWithToken,
 };
 
-use super::CurpClient;
 use crate::rpc::{
     Auth, AuthDisableRequest, AuthDisableResponse, AuthEnableRequest, AuthEnableResponse,
     AuthRoleAddRequest, AuthRoleAddResponse, AuthRoleDeleteRequest, AuthRoleDeleteResponse,

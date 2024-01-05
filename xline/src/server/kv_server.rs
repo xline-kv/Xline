@@ -14,7 +14,7 @@ use futures::future::{join_all, Either};
 use tokio::time::timeout;
 use tracing::{debug, instrument};
 use xlineapi::{
-    command::{command_from_request_wrapper, Command, CommandResponse, SyncResponse},
+    command::{command_from_request_wrapper, Command, CommandResponse, CurpClient, SyncResponse},
     execute_error::ExecuteError,
     request_validation::RequestValidator,
     RequestWithToken, ResponseWrapper,
@@ -23,7 +23,6 @@ use xlineapi::{
 use super::{
     auth_server::get_token,
     barriers::{IdBarrier, IndexBarrier},
-    CurpClient,
 };
 use crate::{
     revision_check::RevisionCheck,

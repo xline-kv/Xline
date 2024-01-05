@@ -18,7 +18,7 @@ use utils::{
     config::{ClientConfig, CompactConfig, CurpConfig, ServerTimeout, StorageConfig},
     shutdown,
 };
-use xlineapi::command::Command;
+use xlineapi::command::{Command, CurpClient};
 
 use super::{
     auth_server::AuthServer,
@@ -30,7 +30,6 @@ use super::{
     lock_server::LockServer,
     maintenance::MaintenanceServer,
     watch_server::{WatchServer, CHANNEL_SIZE},
-    CurpClient,
 };
 use crate::{
     header_gen::HeaderGenerator,
@@ -53,7 +52,7 @@ use crate::{
 };
 
 /// Rpc Server of curp protocol
-type CurpServer<S, C> = Rpc<Command, State<S, C>>;
+type CurpServer<S> = Rpc<Command, State<S, Arc<CurpClient>>>;
 
 /// Xline server
 #[derive(Debug)]
@@ -338,7 +337,7 @@ impl XlineServer {
         WatchServer<S>,
         MaintenanceServer<S>,
         ClusterServer,
-        CurpServer<S, Arc<CurpClient>>,
+        CurpServer<S>,
         Arc<CurpClient>,
     )> {
         let (header_gen, id_gen) = Self::construct_generator(&self.cluster_info);

@@ -11,12 +11,11 @@ use itertools::Itertools;
 use tonic::{Request, Response, Status};
 use utils::timestamp;
 use xlineapi::{
-    Cluster, Member, MemberAddRequest, MemberAddResponse, MemberListRequest, MemberListResponse,
-    MemberPromoteRequest, MemberPromoteResponse, MemberRemoveRequest, MemberRemoveResponse,
-    MemberUpdateRequest, MemberUpdateResponse,
+    command::CurpClient, Cluster, Member, MemberAddRequest, MemberAddResponse, MemberListRequest,
+    MemberListResponse, MemberPromoteRequest, MemberPromoteResponse, MemberRemoveRequest,
+    MemberRemoveResponse, MemberUpdateRequest, MemberUpdateResponse,
 };
 
-use super::CurpClient;
 use crate::header_gen::HeaderGenerator;
 
 /// Cluster Server
