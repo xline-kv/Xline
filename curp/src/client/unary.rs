@@ -647,34 +647,51 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
             match futures::future::select(fast_round, slow_round).await {
                 futures::future::Either::Left((fast_result, slow_round)) => match fast_result {
                     Ok(er) => er.map(|e| (e, None)),
-                    Err(err) => {
-                        if err.should_abort_slow_round() {
-                            return Err(err);
+                    Err(fast_err) => {
+                        if fast_err.should_abort_slow_round() {
+                            return Err(fast_err);
                         }
                         // fallback to slow round if fast round failed
-                        let sr = slow_round.await?;
+                        let sr = match slow_round.await {
+                            Ok(sr) => sr,
+                            Err(slow_err) => {
+                                return Err(std::cmp::max_by_key(fast_err, slow_err, |err| {
+                                    err.priority()
+                                }))
+                            }
+                        };
                         sr.map(|(asr, er)| (er, Some(asr)))
                     }
                 },
                 futures::future::Either::Right((slow_result, fast_round)) => match slow_result {
                     Ok(er) => er.map(|(asr, e)| (e, Some(asr))),
-                    Err(err) => {
-                        if err.should_abort_fast_round() {
-                            return Err(err);
+                    Err(slow_err) => {
+                        if slow_err.should_abort_fast_round() {
+                            return Err(slow_err);
                         }
-                        let fr = fast_round.await?;
+                        // try to poll fast round
+                        let fr = match fast_round.await {
+                            Ok(fr) => fr,
+                            Err(fast_err) => {
+                                return Err(std::cmp::max_by_key(fast_err, slow_err, |err| {
+                                    err.priority()
+                                }))
+                            }
+                        };
                         fr.map(|er| (er, None))
                     }
                 },
             }
         } else {
-            let (fr, sr) = futures::future::join(fast_round, slow_round).await;
-            if let Err(err) = fr {
-                if err.should_abort_slow_round() {
-                    return Err(err);
+            match futures::future::join(fast_round, slow_round).await {
+                (_, Ok(sr)) => sr.map(|(asr, er)| (er, Some(asr))),
+                (Ok(_), Err(err)) => return Err(err),
+                (Err(fast_err), Err(slow_err)) => {
+                    return Err(std::cmp::max_by_key(fast_err, slow_err, |err| {
+                        err.priority()
+                    }))
                 }
             }
-            sr?.map(|(asr, er)| (er, Some(asr)))
         };
 
         Ok(res)

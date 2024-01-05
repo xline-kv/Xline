@@ -691,10 +691,10 @@ impl CurpError {
 /// The priority of curp error
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum CurpErrorPriority {
-    /// Low priority, In concurrent RPCs, a low-priority error returned may
+    /// Low priority, a low-priority error returned may
     /// be overridden by a higher-priority error.
     Low = 1,
-    /// High priority, In concurrent RPCs, high-priority errors will override
+    /// High priority, high-priority errors will override
     /// low-priority errors.
     High = 2,
 }
