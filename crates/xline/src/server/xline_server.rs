@@ -24,10 +24,13 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::{fs, sync::mpsc::channel};
 #[cfg(not(madsim))]
 use tonic::transport::server::Connected;
-use tonic::transport::{server::Router, Identity, Server, ServerTlsConfig};
+use tonic::transport::{server::Router, Server};
+#[cfg(not(madsim))]
+use tonic::transport::{Identity, ServerTlsConfig};
 use tracing::{info, warn};
+#[cfg(not(madsim))]
+use utils::certs;
 use utils::{
-    certs,
     config::{
         AuthConfig, ClusterConfig, CompactConfig, EngineConfig, InitialClusterState, StorageConfig,
     },
@@ -280,12 +283,16 @@ impl XlineServer {
             curp_server,
             curp_client,
         ) = self.init_servers(persistent, key_pair).await?;
+        #[cfg(not(madsim))]
         let tls_config = ServerTlsConfig::new().identity(Identity::from_pem(
             certs::server_cert(),
             certs::server_key(),
         ));
-        let router = Server::builder()
-            .tls_config(tls_config)?
+        #[cfg(not(madsim))]
+        let mut builder = Server::builder().tls_config(tls_config)?;
+        #[cfg(madsim)]
+        let mut builder = Server::builder();
+        let router = builder
             .add_service(RpcLockServer::new(lock_server))
             .add_service(RpcKvServer::new(kv_server))
             .add_service(RpcLeaseServer::from_arc(lease_server))

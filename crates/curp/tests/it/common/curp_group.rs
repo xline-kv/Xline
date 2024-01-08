@@ -31,7 +31,7 @@ use tokio::{
     task::{block_in_place, JoinHandle},
 };
 use tokio_stream::wrappers::TcpListenerStream;
-use tonic::transport::{Certificate, Channel, ClientTlsConfig};
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
 use tracing::debug;
 use utils::{
     certs,
@@ -416,13 +416,12 @@ impl CurpGroup {
         let addr = format!("https://{}", self.nodes[id].addr);
         let tls_config =
             ClientTlsConfig::new().ca_certificate(Certificate::from_pem(certs::ca_cert()));
-        let channel = Channel::from_shared(addr)
-            .unwrap()
-            .tls_config(tls_config)
-            .unwrap()
-            .connect()
-            .await
-            .unwrap();
+        let channel_fut = async move {
+            let ep = Channel::from_shared(addr)?.tls_config(tls_config)?;
+            let channel = ep.connect().await?;
+            Ok::<Channel, Box<dyn std::error::Error>>(channel)
+        };
+        let channel = channel_fut.await.unwrap();
         ProtocolClient::new(channel)
     }
 
