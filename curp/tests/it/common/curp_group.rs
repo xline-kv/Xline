@@ -22,7 +22,7 @@ use engine::{
     Engine, EngineType, MemorySnapshotAllocator, RocksSnapshotAllocator, Snapshot,
     SnapshotAllocator,
 };
-use futures::future::join_all;
+use futures::{future::join_all, Future};
 use itertools::Itertools;
 use tokio::{
     net::TcpListener,
@@ -33,7 +33,9 @@ use tokio::{
 use tokio_stream::wrappers::TcpListenerStream;
 use tracing::debug;
 use utils::{
-    config::{default_quota, ClientConfig, CurpConfigBuilder, EngineConfig, StorageConfig},
+    config::{
+        default_quota, ClientConfig, CurpConfig, CurpConfigBuilder, EngineConfig, StorageConfig,
+    },
     shutdown::{self, Trigger},
 };
 pub mod commandpb {
@@ -62,129 +64,140 @@ pub struct CurpGroup {
 
 impl CurpGroup {
     pub async fn new(n_nodes: usize) -> Self {
-        Self::inner_new(n_nodes, None).await
+        let configs = (0..n_nodes)
+            .map(|i| (format!("S{i}"), Default::default()))
+            .collect();
+        Self::new_with_configs(configs, "S0".to_owned()).await
     }
 
     pub async fn new_rocks(n_nodes: usize, path: PathBuf) -> Self {
-        Self::inner_new(n_nodes, Some(path)).await
-    }
-
-    async fn inner_new(n_nodes: usize, storage_path: Option<PathBuf>) -> Self {
-        assert!(n_nodes >= 3, "the number of nodes must >= 3");
-        let listeners = join_all(
-            iter::repeat_with(|| async { TcpListener::bind("0.0.0.0:0").await.unwrap() })
-                .take(n_nodes),
-        )
-        .await;
-        let all_members: HashMap<String, String> = listeners
-            .iter()
-            .enumerate()
-            .map(|(i, listener)| (format!("S{i}"), listener.local_addr().unwrap().to_string()))
-            .collect();
-        let mut all = HashMap::new();
-        let nodes = listeners
-            .into_iter()
-            .enumerate()
-            .map(|(i, listener)| {
-                let (trigger, l) = shutdown::channel();
+        let configs = (0..n_nodes)
+            .map(|i| {
                 let name = format!("S{i}");
-                let addr = listener.local_addr().unwrap().to_string();
-                let (curp_storage_config, xline_storage_config, snapshot_allocator) =
-                    match storage_path {
-                        Some(ref path) => {
-                            let storage_path = path.join(&name);
-                            (
-                                EngineConfig::RocksDB(storage_path.join("curp")),
-                                EngineConfig::RocksDB(storage_path.join("xline")),
-                                Box::<RocksSnapshotAllocator>::default()
-                                    as Box<dyn SnapshotAllocator>,
-                            )
-                        }
-                        None => (
-                            EngineConfig::Memory,
-                            EngineConfig::Memory,
-                            Box::<MemorySnapshotAllocator>::default() as Box<dyn SnapshotAllocator>,
-                        ),
-                    };
-
-                let (exe_tx, exe_rx) = mpsc::unbounded_channel();
-                let (as_tx, as_rx) = mpsc::unbounded_channel();
-                let ce = Arc::new(TestCE::new(
-                    name.clone(),
-                    exe_tx,
-                    as_tx,
-                    xline_storage_config,
-                ));
-
-                let cluster_info = Arc::new(ClusterInfo::new(
-                    all_members
-                        .clone()
-                        .into_iter()
-                        .map(|(k, v)| (k, vec![v]))
-                        .collect(),
-                    &name,
-                ));
-                all = cluster_info
-                    .all_members_addrs()
-                    .into_iter()
-                    .map(|(k, mut v)| (k, v.pop().unwrap()))
-                    .collect();
-                let id = cluster_info.self_id();
-
-                let role_change_cb = TestRoleChange::default();
-                let role_change_arc = role_change_cb.get_inner_arc();
-                let trigger_c = trigger.clone();
-                let handle = tokio::spawn(async move {
-                    let mut shutdown_listener = trigger_c.subscribe();
-                    let server = Arc::new(
-                        Rpc::new(
-                            cluster_info,
-                            i == 0,
-                            ce,
-                            snapshot_allocator,
-                            role_change_cb,
-                            Arc::new(
-                                CurpConfigBuilder::default()
-                                    .engine_cfg(curp_storage_config)
-                                    .log_entries_cap(10)
-                                    .build()
-                                    .unwrap(),
-                            ),
-                            trigger_c,
-                        )
-                        .await,
-                    );
-                    tonic::transport::Server::builder()
-                        .add_service(ProtocolServer::from_arc(Arc::clone(&server)))
-                        .add_service(InnerProtocolServer::from_arc(server))
-                        .serve_with_incoming_shutdown(
-                            TcpListenerStream::new(listener),
-                            shutdown_listener.wait_self_shutdown(),
-                        )
-                        .await
-                });
-
-                (
-                    id,
-                    CurpNode {
-                        id,
-                        addr,
-                        exe_rx,
-                        as_rx,
-                        role_change_arc,
-                        handle,
-                        trigger,
-                    },
-                )
+                let mut config = CurpConfig::default();
+                let dir = path.join(&name);
+                config.engine_cfg = EngineConfig::RocksDB(dir.join("curp"));
+                let xline_storage_config = EngineConfig::RocksDB(dir.join("xline"));
+                (name, (Arc::new(config), xline_storage_config))
             })
             .collect();
+        let mut inner = Self::new_with_configs(configs, "S0".to_owned()).await;
+        inner.storage_path = Some(path);
+        inner
+    }
+
+    async fn new_with_configs(
+        configs: HashMap<String, (Arc<CurpConfig>, EngineConfig)>,
+        leader_name: String,
+    ) -> Self {
+        let n_nodes = configs.len();
+        assert!(n_nodes >= 3, "the number of nodes must >= 3");
+        let mut listeners = Self::gen_listeners(configs.keys()).await;
+        let all_members_addrs = Self::listeners_to_all_members_addrs(&listeners);
+
+        let mut nodes = HashMap::new();
+
+        for (name, (config, xline_storage_config)) in configs.into_iter() {
+            let (trigger, l) = shutdown::channel();
+            let snapshot_allocator = Self::get_snapshot_allocator_from_cfg(&config);
+            let cluster_info = Arc::new(ClusterInfo::new(all_members_addrs.clone(), &name));
+            let listener = listeners.remove(&name).unwrap();
+            let id = cluster_info.self_id();
+            let addr = cluster_info.self_addrs().pop().unwrap();
+
+            let (exe_tx, exe_rx) = mpsc::unbounded_channel();
+            let (as_tx, as_rx) = mpsc::unbounded_channel();
+            let ce = Arc::new(TestCE::new(
+                name.clone(),
+                exe_tx,
+                as_tx,
+                xline_storage_config,
+            ));
+
+            let role_change_cb = TestRoleChange::default();
+            let role_change_arc = role_change_cb.get_inner_arc();
+            let server = Arc::new(
+                Rpc::new(
+                    cluster_info,
+                    name == leader_name,
+                    ce,
+                    snapshot_allocator,
+                    role_change_cb,
+                    config,
+                    trigger.clone(),
+                )
+                .await,
+            );
+            let handle = tokio::spawn(Self::run(server, listener, l));
+            let curp_node = CurpNode {
+                id,
+                addr,
+                exe_rx,
+                as_rx,
+                role_change_arc,
+                handle,
+                trigger,
+            };
+            nodes.insert(curp_node.id, curp_node);
+        }
 
         tokio::time::sleep(Duration::from_millis(300)).await;
         debug!("successfully start group");
         Self {
             nodes,
-            storage_path,
+            storage_path: None,
         }
+    }
+
+    async fn gen_listeners(keys: impl Iterator<Item = &String>) -> HashMap<String, TcpListener> {
+        join_all(
+            keys.cloned()
+                .map(|name| async { (name, TcpListener::bind("0.0.0.0:0").await.unwrap()) }),
+        )
+        .await
+        .into_iter()
+        .collect()
+    }
+
+    fn listeners_to_all_members_addrs(
+        listeners: &HashMap<String, TcpListener>,
+    ) -> HashMap<String, Vec<String>> {
+        listeners
+            .iter()
+            .map(|(name, listener)| {
+                (
+                    name.clone(),
+                    vec![listener.local_addr().unwrap().to_string()],
+                )
+            })
+            .collect()
+    }
+
+    fn get_snapshot_allocator_from_cfg(config: &CurpConfig) -> Box<dyn SnapshotAllocator> {
+        match config.engine_cfg {
+            EngineConfig::Memory => {
+                Box::<MemorySnapshotAllocator>::default() as Box<dyn SnapshotAllocator>
+            }
+            EngineConfig::RocksDB(_) => {
+                Box::<RocksSnapshotAllocator>::default() as Box<dyn SnapshotAllocator>
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    async fn run(
+        server: Arc<Rpc<TestCommand, TestRoleChange>>,
+        listener: TcpListener,
+        mut shutdown_listener: shutdown::Listener,
+    ) -> Result<(), tonic::transport::Error> {
+        tonic::transport::Server::builder()
+            .add_service(ProtocolServer::from_arc(Arc::clone(&server)))
+            .add_service(InnerProtocolServer::from_arc(server))
+            .serve_with_incoming_shutdown(
+                TcpListenerStream::new(listener),
+                shutdown_listener.wait_self_shutdown(),
+            )
+            .await
     }
 
     pub async fn run_node(
@@ -193,24 +206,27 @@ impl CurpGroup {
         name: String,
         cluster_info: Arc<ClusterInfo>,
     ) {
+        self.run_node_with_config(
+            listener,
+            name,
+            cluster_info,
+            Arc::new(CurpConfig::default()),
+            EngineConfig::default(),
+        )
+        .await
+    }
+
+    pub async fn run_node_with_config(
+        &mut self,
+        listener: TcpListener,
+        name: String,
+        cluster_info: Arc<ClusterInfo>,
+        config: Arc<CurpConfig>,
+        xline_storage_config: EngineConfig,
+    ) {
         let (trigger, l) = shutdown::channel();
         let addr = listener.local_addr().unwrap().to_string();
-        let (curp_storage_config, xline_storage_config, snapshot_allocator) =
-            match self.storage_path {
-                Some(ref path) => {
-                    let storage_path = path.join(&name);
-                    (
-                        EngineConfig::RocksDB(storage_path.join("curp")),
-                        EngineConfig::RocksDB(storage_path.join("xline")),
-                        Box::<RocksSnapshotAllocator>::default() as Box<dyn SnapshotAllocator>,
-                    )
-                }
-                None => (
-                    EngineConfig::Memory,
-                    EngineConfig::Memory,
-                    Box::<MemorySnapshotAllocator>::default() as Box<dyn SnapshotAllocator>,
-                ),
-            };
+        let snapshot_allocator = Self::get_snapshot_allocator_from_cfg(&config);
 
         let (exe_tx, exe_rx) = mpsc::unbounded_channel();
         let (as_tx, as_rx) = mpsc::unbounded_channel();
@@ -231,40 +247,22 @@ impl CurpGroup {
                 ce,
                 snapshot_allocator,
                 role_change_cb,
-                Arc::new(
-                    CurpConfigBuilder::default()
-                        .engine_cfg(curp_storage_config)
-                        .log_entries_cap(10)
-                        .build()
-                        .unwrap(),
-                ),
+                config,
                 trigger.clone(),
             )
             .await,
         );
-        let mut shutdown_listener = trigger.subscribe();
-        let handle = tokio::spawn(async move {
-            tonic::transport::Server::builder()
-                .add_service(ProtocolServer::from_arc(Arc::clone(&server)))
-                .add_service(InnerProtocolServer::from_arc(server))
-                .serve_with_incoming_shutdown(
-                    TcpListenerStream::new(listener),
-                    shutdown_listener.wait_self_shutdown(),
-                )
-                .await
-        });
-        self.nodes.insert(
+        let handle = tokio::spawn(Self::run(server, listener, l));
+        let curp_node = CurpNode {
             id,
-            CurpNode {
-                id,
-                addr,
-                exe_rx,
-                as_rx,
-                role_change_arc,
-                handle,
-                trigger,
-            },
-        );
+            addr,
+            exe_rx,
+            as_rx,
+            role_change_arc,
+            handle,
+            trigger,
+        };
+        self.nodes.insert(id, curp_node);
         let client = self.new_client().await;
         client.propose_publish(id, name).await.unwrap();
     }
