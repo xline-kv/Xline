@@ -68,7 +68,7 @@ xlineapi = { path = "../xlineapi" }
 tonic-build = { version = "0.4.2", package = "madsim-tonic-build" }
 
 [dev-dependencies]
-etcd-client = "0.12.1"
+etcd-client = { version = "0.12.1", features = ["tls"] }
 mockall = "0.12.1"
 rand = "0.8.5"
 strum = "0.25"

@@ -31,8 +31,10 @@ use tokio::{
     task::{block_in_place, JoinHandle},
 };
 use tokio_stream::wrappers::TcpListenerStream;
+use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 use tracing::debug;
 use utils::{
+    certs,
     config::{
         default_quota, ClientConfig, CurpConfig, CurpConfigBuilder, EngineConfig, StorageConfig,
     },
@@ -336,11 +338,17 @@ impl CurpGroup {
         let mut leader = None;
         let mut max_term = 0;
         for addr in self.all_addrs() {
-            let addr = format!("http://{}", addr);
-            let mut client = if let Ok(client) = ProtocolClient::connect(addr.clone()).await {
-                client
-            } else {
-                continue;
+            let addr = format!("https://{}", addr);
+            let tls_config =
+                ClientTlsConfig::new().ca_certificate(Certificate::from_pem(certs::ca_cert()));
+            let channel_fut = async move {
+                let ep = Channel::from_shared(addr)?.tls_config(tls_config)?;
+                let channel = ep.connect().await?;
+                Ok::<Channel, Box<dyn std::error::Error>>(channel)
+            };
+            let mut client = match channel_fut.await {
+                Ok(channel) => ProtocolClient::new(channel),
+                Err(e) => continue,
             };
 
             let FetchClusterResponse {
@@ -374,11 +382,17 @@ impl CurpGroup {
     pub async fn get_term_checked(&self) -> u64 {
         let mut max_term = None;
         for addr in self.all_addrs() {
-            let addr = format!("http://{}", addr);
-            let mut client = if let Ok(client) = ProtocolClient::connect(addr.clone()).await {
-                client
-            } else {
-                continue;
+            let addr = format!("https://{}", addr);
+            let tls_config =
+                ClientTlsConfig::new().ca_certificate(Certificate::from_pem(certs::ca_cert()));
+            let channel_fut = async move {
+                let ep = Channel::from_shared(addr)?.tls_config(tls_config)?;
+                let channel = ep.connect().await?;
+                Ok::<Channel, Box<dyn std::error::Error>>(channel)
+            };
+            let mut client = match channel_fut.await {
+                Ok(channel) => ProtocolClient::new(channel),
+                Err(e) => continue,
             };
 
             let FetchClusterResponse {
@@ -399,8 +413,17 @@ impl CurpGroup {
     }
 
     pub async fn get_connect(&self, id: &ServerId) -> ProtocolClient<tonic::transport::Channel> {
-        let addr = format!("http://{}", self.nodes[id].addr);
-        ProtocolClient::connect(addr.clone()).await.unwrap()
+        let addr = format!("https://{}", self.nodes[id].addr);
+        let tls_config =
+            ClientTlsConfig::new().ca_certificate(Certificate::from_pem(certs::ca_cert()));
+        let channel = Channel::from_shared(addr)
+            .unwrap()
+            .tls_config(tls_config)
+            .unwrap()
+            .connect()
+            .await
+            .unwrap();
+        ProtocolClient::new(channel)
     }
 
     pub async fn fetch_cluster_info(&self, addrs: &[String], name: &str) -> ClusterInfo {
