@@ -5,9 +5,9 @@ use clippy_utilities::Cast;
 use curp::{client::Client, members::ClusterInfo};
 use futures::stream::Stream;
 use tokio::time;
-use tonic::transport::Endpoint;
+use tonic::transport::{Certificate, ClientTlsConfig, Endpoint};
 use tracing::{debug, warn};
-use utils::shutdown;
+use utils::{certs, shutdown};
 use xlineapi::{
     command::{Command, CommandResponse, KeyRange, SyncResponse},
     execute_error::ExecuteError,
@@ -232,18 +232,24 @@ where
 }
 
 /// Build endpoints from addresses
-fn build_endpoints(mut addrs: Vec<String>) -> Result<Vec<Endpoint>, tonic::Status> {
+fn build_endpoints(addrs: Vec<String>) -> Result<Vec<Endpoint>, tonic::Status> {
     addrs
-        .iter_mut()
-        .map(|addr| {
-            let addr = if addr.starts_with("http://") {
-                addr
-            } else {
-                addr.insert_str(0, "http://");
-                addr
-            };
-            addr.parse()
-                .map_err(|e| tonic::Status::internal(format!("Connect to leader error: {e}")))
+        .into_iter()
+        .map(|mut addr| {
+            if !addr.starts_with("https://") {
+                addr.insert_str(0, "https://");
+            }
+            let tls_config =
+                ClientTlsConfig::new().ca_certificate(Certificate::from_pem(certs::ca_cert()));
+
+            let ep = Endpoint::from_shared(addr)
+                .and_then(|e| e.tls_config(tls_config))
+                .map_err(|e| {
+                    tonic::Status::internal(format!(
+                        "create endpoint and set tls config error: {e}"
+                    ))
+                })?;
+            Ok(ep)
         })
         .collect()
 }

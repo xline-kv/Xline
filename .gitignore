@@ -18,6 +18,7 @@ scripts/*
 !scripts/quick_start.sh
 !scripts/coverage.sh
 !scripts/validation_test.sh
+!scripts/certgen.sh
 
 coverage
 *.profraw

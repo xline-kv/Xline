@@ -291,6 +291,9 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
     where
         CE: CommandExecutor<C>,
     {
+        use tonic::transport::{Identity, ServerTlsConfig};
+        use utils::certs;
+
         let mut shutdown_listener = shutdown_trigger.subscribe();
         let server = Arc::new(
             Self::new(
@@ -304,8 +307,13 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
             )
             .await,
         );
+        let tls_config = ServerTlsConfig::new().identity(Identity::from_pem(
+            certs::server_cert(),
+            certs::server_key(),
+        ));
 
         tonic::transport::Server::builder()
+            .tls_config(tls_config)?
             .add_service(ProtocolServer::from_arc(Arc::clone(&server)))
             .add_service(InnerProtocolServer::from_arc(server))
             .serve_with_incoming_shutdown(TcpListenerStream::new(listener), async move {

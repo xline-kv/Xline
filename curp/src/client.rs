@@ -14,8 +14,9 @@ use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use tokio::time::timeout;
+use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 use tracing::{debug, instrument, warn};
-use utils::config::ClientConfig;
+use utils::{certs, config::ClientConfig};
 
 use crate::{
     cmd::Command,
@@ -94,11 +95,18 @@ impl<C: Command> Builder<C> {
         let mut futs: FuturesUnordered<_> = addrs
             .into_iter()
             .map(|mut addr| {
-                if !addr.starts_with("http://") {
-                    addr.insert_str(0, "http://");
+                if !addr.starts_with("https://") {
+                    addr.insert_str(0, "https://");
                 }
+                let tls_config =
+                    ClientTlsConfig::new().ca_certificate(Certificate::from_pem(certs::ca_cert()));
                 async move {
-                    let mut protocol_client = ProtocolClient::connect(addr).await?;
+                    let channel = Channel::from_shared(addr)
+                        .map_err(|e| ClientBuildError::invalid_arguments(e.to_string()))?
+                        .tls_config(tls_config)?
+                        .connect()
+                        .await?;
+                    let mut protocol_client = ProtocolClient::new(channel);
                     let mut req = tonic::Request::new(FetchClusterRequest::default());
                     req.set_timeout(propose_timeout);
                     let fetch_cluster_res = protocol_client.fetch_cluster(req).await?.into_inner();
@@ -1063,13 +1071,16 @@ mod tests {
     async fn client_builder_should_return_err_when_arguments_invalid() {
         let res = Client::<TestCommand>::builder()
             .config(ClientConfig::default())
-            .build_from_all_members(HashMap::from([(123, vec!["addr".to_owned()])]), None)
+            .build_from_all_members(
+                HashMap::from([(123, vec!["127.0.0.1:2379".to_owned()])]),
+                None,
+            )
             .await;
         assert!(res.is_ok());
 
         let res = Client::<TestCommand>::builder()
             .local_server_id(123)
-            .build_from_addrs(vec!["addr".to_owned()])
+            .build_from_addrs(vec!["127.0.0.1:2379".to_owned()])
             .await;
         assert!(matches!(res, Err(ClientBuildError::InvalidArguments(_))));
     }

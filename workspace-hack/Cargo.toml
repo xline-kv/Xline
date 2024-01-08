@@ -30,6 +30,7 @@ itertools = { version = "0.10" }
 libc = { version = "0.2" }
 log = { version = "0.4", default-features = false, features = ["std"] }
 madsim-tokio = { git = "https://github.com/madsim-rs/madsim.git", rev = "5eb4198", default-features = false, features = ["fs", "io-util", "macros", "net", "rt", "rt-multi-thread", "signal", "sync", "time"] }
+madsim-tonic = { git = "https://github.com/madsim-rs/madsim.git", rev = "5eb4198", default-features = false, features = ["tls"] }
 memchr = { version = "2" }
 num-traits = { version = "0.2", default-features = false, features = ["i128", "std"] }
 opentelemetry = { version = "0.18", features = ["metrics", "rt-tokio"] }

@@ -20,8 +20,8 @@ impl ClientBuildError {
     /// Create a new `ClientBuildError::InvalidArguments`
     #[inline]
     #[must_use]
-    pub fn invalid_arguments(msg: &str) -> Self {
-        Self::InvalidArguments(msg.to_owned())
+    pub fn invalid_arguments(msg: impl Into<String>) -> Self {
+        Self::InvalidArguments(msg.into())
     }
 }
 
