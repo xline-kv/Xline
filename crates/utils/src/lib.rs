@@ -172,3 +172,27 @@ pub fn timestamp() -> u64 {
         .unwrap_or_else(|_| unreachable!("Time went backwards"))
         .as_secs()
 }
+
+/// Certs for tests
+pub mod certs {
+    /// Server certificate
+    #[inline]
+    #[must_use]
+    pub fn server_cert() -> &'static [u8] {
+        include_bytes!("../certs/server.crt")
+    }
+
+    /// Server private key
+    #[inline]
+    #[must_use]
+    pub fn server_key() -> &'static [u8] {
+        include_bytes!("../certs/server.key")
+    }
+
+    /// CA certificate
+    #[inline]
+    #[must_use]
+    pub fn ca_cert() -> &'static [u8] {
+        include_bytes!("../certs/ca.crt")
+    }
+}

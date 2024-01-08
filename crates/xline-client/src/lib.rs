@@ -161,9 +161,9 @@ use std::{
 
 use curp::client::ClientBuilder as CurpClientBuilder;
 use http::{header::AUTHORIZATION, HeaderValue, Request, Uri};
-use tonic::transport::{Channel, Endpoint};
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
 use tower::Service;
-use utils::config::ClientConfig;
+use utils::{certs, config::ClientConfig};
 use xlineapi::command::{Command, CurpClient};
 
 use crate::{
@@ -286,19 +286,19 @@ impl Client {
         let (channel, tx) = Channel::balance_channel(64);
 
         for mut addr in addrs {
-            if !addr.starts_with("http://") {
-                addr.insert_str(0, "http://");
+            if !addr.starts_with("https://") {
+                addr.insert_str(0, "https://");
             }
             let uri: Uri = addr.parse().map_err(|_e| {
                 XlineClientBuildError::InvalidArguments(String::from("Invalid uri"))
             })?;
+            let tls_config =
+                ClientTlsConfig::new().ca_certificate(Certificate::from_pem(certs::ca_cert()));
+            let ep = Endpoint::from(uri.clone()).tls_config(tls_config)?;
 
-            tx.send(tower::discover::Change::Insert(
-                uri.clone(),
-                Endpoint::from(uri),
-            ))
-            .await
-            .unwrap_or_else(|_| unreachable!("The channel will not closed"));
+            tx.send(tower::discover::Change::Insert(uri, ep))
+                .await
+                .unwrap_or_else(|_| unreachable!("The channel will not closed"));
         }
 
         Ok(channel)

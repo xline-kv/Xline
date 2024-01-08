@@ -15,9 +15,9 @@ use futures::{stream::FuturesUnordered, Stream};
 #[cfg(test)]
 use mockall::automock;
 use tokio::sync::Mutex;
-use tonic::transport::{Channel, Endpoint};
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
 use tracing::{debug, error, instrument};
-use utils::tracing::Inject;
+use utils::{certs, tracing::Inject};
 
 use crate::{
     members::ServerId,
@@ -68,11 +68,12 @@ async fn connect_to<Client: FromTonicChannel>(
 ) -> Result<Arc<Connect<Client>>, tonic::transport::Error> {
     let (channel, change_tx) = Channel::balance_channel(DEFAULT_BUFFER_SIZE);
     for addr in &mut addrs {
-        // TODO: support TLS
-        if !addr.starts_with("http://") {
-            addr.insert_str(0, "http://");
+        if !addr.starts_with("https://") {
+            addr.insert_str(0, "https://");
         }
-        let endpoint = Endpoint::from_shared(addr.clone())?;
+        let tls_config =
+            ClientTlsConfig::new().ca_certificate(Certificate::from_pem(certs::ca_cert()));
+        let endpoint = Endpoint::from_shared(addr.clone())?.tls_config(tls_config)?;
         let _ig = change_tx
             .send(tower::discover::Change::Insert(addr.clone(), endpoint))
             .await;
