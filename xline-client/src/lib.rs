@@ -154,9 +154,13 @@ use std::{
 
 use curp::client::Client as CurpClient;
 use http::{header::AUTHORIZATION, HeaderValue, Request, Uri};
-use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
+#[cfg(not(madsim))]
+use tonic::transport::{Certificate, ClientTlsConfig};
+use tonic::transport::{Channel, Endpoint};
 use tower::Service;
-use utils::{certs, config::ClientConfig};
+#[cfg(not(madsim))]
+use utils::certs;
+use utils::config::ClientConfig;
 
 use crate::{
     clients::{
@@ -281,9 +285,12 @@ impl Client {
             let uri: Uri = addr.parse().map_err(|_e| {
                 XlineClientBuildError::InvalidArguments(String::from("Invalid uri"))
             })?;
+            #[cfg(not(madsim))]
             let tls_config =
                 ClientTlsConfig::new().ca_certificate(Certificate::from_pem(certs::ca_cert()));
-            let ep = Endpoint::from(uri.clone()).tls_config(tls_config)?;
+            let ep = Endpoint::from(uri.clone());
+            #[cfg(not(madsim))]
+            let ep = ep.tls_config(tls_config)?;
 
             tx.send(tower::discover::Change::Insert(uri, ep))
                 .await

@@ -5,9 +5,13 @@ use clippy_utilities::Cast;
 use curp::{client::Client, members::ClusterInfo};
 use futures::stream::Stream;
 use tokio::time;
-use tonic::transport::{Certificate, ClientTlsConfig, Endpoint};
+use tonic::transport::Endpoint;
+#[cfg(not(madsim))]
+use tonic::transport::{Certificate, ClientTlsConfig};
 use tracing::{debug, warn};
-use utils::{certs, shutdown};
+#[cfg(not(madsim))]
+use utils::certs;
+use utils::shutdown;
 use xlineapi::{
     command::{Command, CommandResponse, KeyRange, SyncResponse},
     execute_error::ExecuteError,
@@ -239,11 +243,18 @@ fn build_endpoints(addrs: Vec<String>) -> Result<Vec<Endpoint>, tonic::Status> {
             if !addr.starts_with("https://") {
                 addr.insert_str(0, "https://");
             }
+            #[cfg(not(madsim))]
             let tls_config =
                 ClientTlsConfig::new().ca_certificate(Certificate::from_pem(certs::ca_cert()));
 
             let ep = Endpoint::from_shared(addr)
-                .and_then(|e| e.tls_config(tls_config))
+                .and_then(|e| {
+                    #[cfg(not(madsim))]
+                    let res = e.tls_config(tls_config);
+                    #[cfg(madsim)]
+                    let res = Ok(e);
+                    res
+                })
                 .map_err(|e| {
                     tonic::Status::internal(format!(
                         "create endpoint and set tls config error: {e}"

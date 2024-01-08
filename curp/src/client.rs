@@ -14,9 +14,13 @@ use futures::{pin_mut, stream::FuturesUnordered, StreamExt};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use tokio::time::timeout;
-use tonic::transport::{Certificate, Channel, ClientTlsConfig};
+use tonic::transport::Endpoint;
+#[cfg(not(madsim))]
+use tonic::transport::{Certificate, ClientTlsConfig};
 use tracing::{debug, instrument, warn};
-use utils::{certs, config::ClientConfig};
+#[cfg(not(madsim))]
+use utils::certs;
+use utils::config::ClientConfig;
 
 use crate::{
     cmd::Command,
@@ -98,14 +102,16 @@ impl<C: Command> Builder<C> {
                 if !addr.starts_with("https://") {
                     addr.insert_str(0, "https://");
                 }
+                #[cfg(not(madsim))]
                 let tls_config =
                     ClientTlsConfig::new().ca_certificate(Certificate::from_pem(certs::ca_cert()));
                 async move {
-                    let channel = Channel::from_shared(addr)
-                        .map_err(|e| ClientBuildError::invalid_arguments(e.to_string()))?
-                        .tls_config(tls_config)?
-                        .connect()
-                        .await?;
+                    let ep = Endpoint::from_shared(addr)
+                        .map_err(|e| ClientBuildError::invalid_arguments(e.to_string()))?;
+                    #[cfg(not(madsim))]
+                    let ep = ep.tls_config(tls_config)?;
+
+                    let channel = ep.connect().await?;
                     let mut protocol_client = ProtocolClient::new(channel);
                     let mut req = tonic::Request::new(FetchClusterRequest::default());
                     req.set_timeout(propose_timeout);
