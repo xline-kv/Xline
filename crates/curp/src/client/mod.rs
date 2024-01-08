@@ -19,7 +19,12 @@ use std::{collections::HashMap, fmt::Debug, sync::Arc};
 use async_trait::async_trait;
 use curp_external_api::cmd::Command;
 use futures::{stream::FuturesUnordered, StreamExt};
+use tonic::transport::Endpoint;
+#[cfg(not(madsim))]
+use tonic::transport::{Certificate, ClientTlsConfig};
 use tracing::debug;
+#[cfg(not(madsim))]
+use utils::certs;
 use utils::config::ClientConfig;
 
 use self::{
@@ -233,13 +238,23 @@ impl ClientBuilder {
         let mut futs: FuturesUnordered<_> = addrs
             .into_iter()
             .map(|mut addr| {
-                if !addr.starts_with("http://") {
-                    addr.insert_str(0, "http://");
+                if !addr.starts_with("https://") {
+                    addr.insert_str(0, "https://");
                 }
                 async move {
-                    let mut protocol_client = ProtocolClient::connect(addr).await.map_err(|e| {
+                    let endpoint = Endpoint::from_shared(addr)
+                        .map_err(|e| tonic::Status::internal(e.to_string()))?;
+                    #[cfg(not(madsim))]
+                    let endpoint = endpoint
+                        .tls_config(
+                            ClientTlsConfig::new()
+                                .ca_certificate(Certificate::from_pem(certs::ca_cert())),
+                        )
+                        .map_err(|e| tonic::Status::internal(e.to_string()))?;
+                    let channel = endpoint.connect().await.map_err(|e| {
                         tonic::Status::cancelled(format!("cannot connect to addr, error: {e}"))
                     })?;
+                    let mut protocol_client = ProtocolClient::new(channel);
                     let mut req = tonic::Request::new(FetchClusterRequest::default());
                     req.set_timeout(propose_timeout);
                     let fetch_cluster_res = protocol_client.fetch_cluster(req).await?.into_inner();

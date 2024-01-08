@@ -15,9 +15,13 @@ use futures::{stream::FuturesUnordered, Stream};
 #[cfg(test)]
 use mockall::automock;
 use tokio::sync::Mutex;
-use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
+#[cfg(not(madsim))]
+use tonic::transport::{Certificate, ClientTlsConfig};
+use tonic::transport::{Channel, Endpoint};
 use tracing::{debug, error, instrument};
-use utils::{certs, tracing::Inject};
+#[cfg(not(madsim))]
+use utils::certs;
+use utils::tracing::Inject;
 
 use crate::{
     members::ServerId,
@@ -71,9 +75,11 @@ async fn connect_to<Client: FromTonicChannel>(
         if !addr.starts_with("https://") {
             addr.insert_str(0, "https://");
         }
-        let tls_config =
-            ClientTlsConfig::new().ca_certificate(Certificate::from_pem(certs::ca_cert()));
-        let endpoint = Endpoint::from_shared(addr.clone())?.tls_config(tls_config)?;
+        let endpoint = Endpoint::from_shared(addr.clone())?;
+        #[cfg(not(madsim))]
+        let endpoint = endpoint.tls_config(
+            ClientTlsConfig::new().ca_certificate(Certificate::from_pem(certs::ca_cert())),
+        )?;
         let _ig = change_tx
             .send(tower::discover::Change::Insert(addr.clone(), endpoint))
             .await;
@@ -307,8 +313,8 @@ impl<C> Connect<C> {
     ) -> Result<(), tonic::transport::Error> {
         for addr in &mut addrs {
             // TODO: support TLS
-            if !addr.starts_with("http://") {
-                addr.insert_str(0, "http://");
+            if !addr.starts_with("https://") {
+                addr.insert_str(0, "https://");
             }
         }
         let mut old = self.addrs.lock().await;
@@ -318,6 +324,10 @@ impl<C> Connect<C> {
         for diff in &diffs {
             let change = if new_addrs.contains(diff) {
                 let endpoint = Endpoint::from_shared(diff.clone())?;
+                #[cfg(not(madsim))]
+                let endpoint = endpoint.tls_config(
+                    ClientTlsConfig::new().ca_certificate(Certificate::from_pem(certs::ca_cert())),
+                )?;
                 tower::discover::Change::Insert(diff.clone(), endpoint)
             } else {
                 tower::discover::Change::Remove(diff.clone())
