@@ -22,8 +22,13 @@ async fn test_snapshot_and_restore() -> Result<(), Box<dyn std::error::Error>> {
     let restore_dirs: HashMap<usize, PathBuf> = (0..3)
         .map(|i| (i, dir.join(format!("restore_{}", i))))
         .collect();
+    let restore_cluster_configs = restore_dirs
+        .clone()
+        .into_iter()
+        .map(|(i, path)| (i, Cluster::default_rocks_config_with_path(path)))
+        .collect();
     {
-        let mut cluster = Cluster::new(3).await;
+        let mut cluster = Cluster::new_rocks(3).await;
         cluster.start().await;
         let client = cluster.client().await.kv_client();
         let _ignore = client.put(PutRequest::new("key", "value")).await?;
@@ -41,8 +46,7 @@ async fn test_snapshot_and_restore() -> Result<(), Box<dyn std::error::Error>> {
     for restore_dir in restore_dirs.values() {
         restore(&snapshot_path, &restore_dir).await?;
     }
-    let mut new_cluster = Cluster::new(3).await;
-    new_cluster.set_paths(restore_dirs);
+    let mut new_cluster = Cluster::new_with_configs(restore_cluster_configs).await;
     new_cluster.start().await;
     let client = new_cluster.client().await.kv_client();
     let res = client.range(RangeRequest::new("key")).await?;
@@ -67,8 +71,19 @@ async fn follower_should_detect_no_space_alarm() {
 
 async fn test_alarm(idx: usize) {
     let q = 8 * 1024;
-    let mut cluster = Cluster::new(3).await;
-    _ = cluster.quotas.insert(idx, q);
+    let configs = (0..3)
+        .map(|i| {
+            (
+                i,
+                if i == idx {
+                    Cluster::default_quota_config(q)
+                } else {
+                    Cluster::default_rocks_config()
+                },
+            )
+        })
+        .collect();
+    let mut cluster = Cluster::new_with_configs(configs).await;
     cluster.start().await;
     let client = cluster.client().await;
     let mut m_client = client.maintenance_client();

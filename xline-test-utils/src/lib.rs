@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap},
+    env::temp_dir,
     path::PathBuf,
     sync::Arc,
 };
@@ -14,7 +15,9 @@ use tokio::{
     time::{self, Duration},
 };
 use utils::config::{
-    ClientConfig, CompactConfig, CurpConfig, EngineConfig, ServerTimeout, StorageConfig,
+    AuthConfig, ClientConfig, ClusterConfig, CompactConfig, CurpConfig, EngineConfig,
+    InitialClusterState, LevelConfig, LogConfig, RotationConfig, ServerTimeout, StorageConfig,
+    TraceConfig, XlineServerConfig,
 };
 use xline::{server::XlineServer, storage::db::DB};
 pub use xline_client::{types, Client, ClientOptions};
@@ -27,19 +30,34 @@ pub struct Cluster {
     all_members: HashMap<usize, String>,
     /// Client of cluster
     client: Option<Client>,
-    /// Cluster size
-    size: usize,
-    /// storage paths
-    paths: HashMap<usize, PathBuf>,
     /// Xline servers
     servers: Vec<Arc<XlineServer>>,
-    /// Cluster quotas
-    pub quotas: HashMap<usize, u64>,
+    /// Server configs
+    configs: HashMap<usize, XlineServerConfig>,
 }
 
 impl Cluster {
     /// New `Cluster`
     pub async fn new(size: usize) -> Self {
+        let configs = (0..size)
+            .map(|i| (i, Self::default_config()))
+            .collect::<HashMap<_, _>>();
+        Self::new_with_configs(configs).await
+    }
+
+    /// New `Cluster` with rocksdb
+    pub async fn new_rocks(size: usize) -> Self {
+        let configs = (0..size)
+            .map(|i| {
+                let path = temp_dir().join(random_id());
+                (i, Self::default_rocks_config_with_path(path))
+            })
+            .collect::<HashMap<_, _>>();
+        Self::new_with_configs(configs).await
+    }
+
+    pub async fn new_with_configs(configs: HashMap<usize, XlineServerConfig>) -> Self {
+        let size = configs.len();
         let mut listeners = BTreeMap::new();
         for i in 0..size {
             listeners.insert(i, TcpListener::bind("0.0.0.0:0").await.unwrap());
@@ -52,54 +70,49 @@ impl Cluster {
             listeners,
             all_members,
             client: None,
-            size,
-            paths: HashMap::new(),
             servers: Vec::new(),
-            quotas: HashMap::new(),
+            configs,
         }
     }
 
-    pub fn set_paths(&mut self, paths: HashMap<usize, PathBuf>) {
-        self.paths = paths;
+    pub fn set_paths(&mut self, _paths: HashMap<usize, PathBuf>) {
+        todo!()
+        // self.paths = paths;
     }
 
     /// Start `Cluster`
     pub async fn start(&mut self) {
-        for i in 0..self.size {
+        for i in 0..self.configs.len() {
             let name = format!("server{}", i);
             let is_leader = i == 0;
             let listener = self.listeners.remove(&i).unwrap();
-            let path = if let Some(path) = self.paths.get(&i) {
-                path.clone()
-            } else {
-                let path = PathBuf::from(format!("/tmp/xline-{}", random_id()));
-                self.paths.insert(i, path.clone());
-                path
-            };
-            let db: Arc<DB> = DB::open(&EngineConfig::RocksDB(path.clone())).unwrap();
+            let config = self.configs.get(&i).unwrap();
+            let cluster_config = config.cluster();
             let cluster_info = ClusterInfo::new(
                 self.all_members
                     .clone()
                     .into_iter()
-                    .map(|(id, addr)| (format!("server{}", id), vec![addr]))
+                    .map(|(i, addr)| (format!("server{}", i), vec![addr]))
                     .collect(),
                 &name,
             );
-            let storage_config = if let Some(quota) = self.quotas.get(&i) {
-                StorageConfig::new(EngineConfig::default(), *quota)
-            } else {
-                StorageConfig::default()
-            };
+            assert!(matches!(
+                cluster_config.initial_cluster_state(),
+                InitialClusterState::New
+            ));
+
+            let db = DB::open(&config.storage().engine).unwrap();
+            let server = XlineServer::new(
+                cluster_info.into(),
+                is_leader,
+                cluster_config.curp_config().clone(),
+                *cluster_config.client_config(),
+                *cluster_config.server_timeout(),
+                config.storage().clone(),
+                *config.compact(),
+            );
+
             tokio::spawn(async move {
-                let server = XlineServer::new(
-                    cluster_info.into(),
-                    is_leader,
-                    CurpConfig::default(),
-                    ClientConfig::default(),
-                    ServerTimeout::default(),
-                    storage_config,
-                    CompactConfig::default(),
-                );
                 let result = server
                     .start_from_listener(listener, db, Self::test_key_pair())
                     .await;
@@ -113,17 +126,23 @@ impl Cluster {
     }
 
     pub async fn run_node(&mut self, listener: TcpListener, idx: usize) {
+        let config = Self::default_config();
+        self.run_node_with_config(listener, idx, config).await;
+    }
+
+    pub async fn run_node_with_config(
+        &mut self,
+        listener: TcpListener,
+        idx: usize,
+        config: XlineServerConfig,
+    ) {
         let self_addr = listener.local_addr().unwrap().to_string();
         _ = self.all_members.insert(idx, self_addr.clone());
+        _ = self.configs.insert(idx, config);
+        let config = self.configs.get(&idx).unwrap();
+        let cluster_config = config.cluster();
         let name = format!("server{}", idx);
-        let path = if let Some(path) = self.paths.get(&idx) {
-            path.clone()
-        } else {
-            let path = PathBuf::from(format!("/tmp/xline-{}", random_id()));
-            self.paths.insert(idx, path.clone());
-            path
-        };
-        let db: Arc<DB> = DB::open(&EngineConfig::RocksDB(path.clone())).unwrap();
+        let db: Arc<DB> = DB::open(&config.storage().engine).unwrap();
         let init_cluster_info = ClusterInfo::new(
             self.all_members
                 .clone()
@@ -140,19 +159,16 @@ impl Cluster {
         )
         .await
         .unwrap();
+        let server = XlineServer::new(
+            cluster_info.into(),
+            false,
+            cluster_config.curp_config().clone(),
+            *cluster_config.client_config(),
+            *cluster_config.server_timeout(),
+            config.storage().clone(),
+            *config.compact(),
+        );
         tokio::spawn(async move {
-            let server = XlineServer::new(
-                cluster_info.into(),
-                false,
-                CurpConfig {
-                    engine_cfg: EngineConfig::RocksDB(path.join("curp")),
-                    ..Default::default()
-                },
-                ClientConfig::default(),
-                ServerTimeout::default(),
-                StorageConfig::default(),
-                CompactConfig::default(),
-            );
             let result = server
                 .start_from_listener(listener, db, Self::test_key_pair())
                 .await;
@@ -197,6 +213,63 @@ impl Cluster {
         let decoding_key = DecodingKey::from_rsa_pem(public_key).unwrap();
         Some((encoding_key, decoding_key))
     }
+
+    pub fn default_cluster_config() -> ClusterConfig {
+        ClusterConfig::new(
+            "".to_owned(),
+            HashMap::new(),
+            false,
+            CurpConfig::default(),
+            ClientConfig::default(),
+            ServerTimeout::default(),
+            InitialClusterState::default(),
+        )
+    }
+
+    pub fn default_log_config() -> LogConfig {
+        LogConfig::new(
+            temp_dir().join(random_id()),
+            RotationConfig::Daily,
+            LevelConfig::INFO,
+        )
+    }
+
+    pub fn default_config() -> XlineServerConfig {
+        let cluster = Self::default_cluster_config();
+        let storage = StorageConfig::default();
+        let log = Self::default_log_config();
+        let trace = TraceConfig::default();
+        let auth = AuthConfig::default();
+        let compact = CompactConfig::default();
+        XlineServerConfig::new(cluster, storage, log, trace, auth, compact)
+    }
+
+    pub fn default_config_with_quota_and_rocks_path(
+        path: PathBuf,
+        quota: u64,
+    ) -> XlineServerConfig {
+        let cluster = Self::default_cluster_config();
+        let storage = StorageConfig::new(EngineConfig::RocksDB(path), quota);
+        let log = Self::default_log_config();
+        let trace = TraceConfig::default();
+        let auth = AuthConfig::default();
+        let compact = CompactConfig::default();
+        XlineServerConfig::new(cluster, storage, log, trace, auth, compact)
+    }
+
+    pub fn default_rocks_config_with_path(path: PathBuf) -> XlineServerConfig {
+        Self::default_config_with_quota_and_rocks_path(path, 0)
+    }
+
+    pub fn default_rocks_config() -> XlineServerConfig {
+        let path = temp_dir().join(random_id());
+        Self::default_config_with_quota_and_rocks_path(path, 0)
+    }
+
+    pub fn default_quota_config(quota: u64) -> XlineServerConfig {
+        let path = temp_dir().join(random_id());
+        Self::default_config_with_quota_and_rocks_path(path, quota)
+    }
 }
 
 impl Drop for Cluster {
@@ -206,8 +279,14 @@ impl Drop for Cluster {
                 for xline in self.servers.iter() {
                     xline.stop().await;
                 }
-                for path in self.paths.values() {
-                    let _ignore = tokio::fs::remove_dir_all(path).await;
+                for cfg in self.configs.values() {
+                    if let EngineConfig::RocksDB(ref path) = cfg.cluster().curp_config().engine_cfg
+                    {
+                        let _ignore = tokio::fs::remove_dir_all(path).await;
+                    }
+                    if let EngineConfig::RocksDB(ref path) = cfg.storage().engine {
+                        let _ignore = tokio::fs::remove_dir_all(path).await;
+                    }
                 }
             });
         });
