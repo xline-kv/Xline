@@ -11,6 +11,7 @@ use std::{
 use dashmap::{mapref::one::Ref, DashMap};
 use futures::{stream::FuturesUnordered, StreamExt};
 use itertools::Itertools;
+use tonic::transport::ClientTlsConfig;
 use tracing::{debug, info};
 
 use crate::rpc::{self, FetchClusterRequest, FetchClusterResponse, Member};
@@ -107,6 +108,8 @@ impl ClusterInfo {
     }
 
     /// Construct a new `ClusterInfo` from `FetchClusterResponse`
+    /// # Panics
+    /// panic if `cluster.members` doesn't contain `self_addr`
     #[inline]
     #[must_use]
     pub fn from_cluster(
@@ -119,25 +122,14 @@ impl ClusterInfo {
             .members
             .into_iter()
             .map(|mut member| {
-                // TODO: update this after we support https
-                let addrs = member
-                    .addrs
-                    .iter()
-                    .map(|addr| {
-                        if let Some(a) = addr.strip_prefix("http://") {
-                            a.to_owned()
-                        } else {
-                            addr.clone()
-                        }
-                    })
-                    .collect_vec();
-                if addrs == self_addr {
+                if member.addrs() == self_addr {
                     member_id = member.id;
                     member.name = self_name.to_owned();
                 }
                 (member.id, member)
             })
             .collect();
+        assert!(member_id != 0, "self_id should not be 0");
         Self {
             cluster_id: cluster.cluster_id,
             member_id,
@@ -387,9 +379,10 @@ pub async fn get_cluster_info_from_remote(
     self_addr: &[String],
     self_name: &str,
     timeout: Duration,
+    tls_config: Option<&ClientTlsConfig>,
 ) -> Option<ClusterInfo> {
     let peers = init_cluster_info.peers_addrs();
-    let connects = rpc::connects(peers)
+    let connects = rpc::connects(peers, tls_config)
         .await
         .ok()?
         .map(|pair| pair.1)

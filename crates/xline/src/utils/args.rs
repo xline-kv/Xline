@@ -15,7 +15,7 @@ use utils::{
         default_sync_victims_interval, default_use_backoff, default_watch_progress_notify_interval,
         AuthConfig, AutoCompactConfig, ClientConfig, ClusterConfig, CompactConfig,
         CurpConfigBuilder, EngineConfig, InitialClusterState, LevelConfig, LogConfig,
-        RotationConfig, ServerTimeout, StorageConfig, TraceConfig, XlineServerConfig,
+        RotationConfig, ServerTimeout, StorageConfig, TlsConfig, TraceConfig, XlineServerConfig,
     },
     parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_rotation, parse_state,
     ConfigFileError,
@@ -158,6 +158,15 @@ pub struct ServerArgs {
     /// Quota
     #[clap(long)]
     quota: Option<u64>,
+    /// Server certificate path
+    #[clap(long)]
+    server_cert_path: Option<PathBuf>,
+    /// Server private key path
+    #[clap(long)]
+    server_key_path: Option<PathBuf>,
+    /// Client ca certificate path
+    #[clap(long)]
+    client_ca_cert_path: Option<PathBuf>,
 }
 
 impl From<ServerArgs> for XlineServerConfig {
@@ -259,7 +268,12 @@ impl From<ServerArgs> for XlineServerConfig {
                 .unwrap_or_else(default_compact_sleep_interval),
             auto_compactor_cfg,
         );
-        XlineServerConfig::new(cluster, storage, log, trace, auth, compact)
+        let tls = TlsConfig::new(
+            args.server_cert_path,
+            args.server_key_path,
+            args.client_ca_cert_path,
+        );
+        XlineServerConfig::new(cluster, storage, log, trace, auth, compact, tls)
     }
 }
 

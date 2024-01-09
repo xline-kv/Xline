@@ -9,7 +9,7 @@ use tokio::{
 };
 use utils::config::{
     default_quota, AuthConfig, ClusterConfig, CompactConfig, EngineConfig, InitialClusterState,
-    LogConfig, StorageConfig, TraceConfig, XlineServerConfig,
+    LogConfig, StorageConfig, TlsConfig, TraceConfig, XlineServerConfig,
 };
 use xline::server::XlineServer;
 pub use xline_client::{types, Client, ClientOptions};
@@ -91,6 +91,7 @@ impl Cluster {
                 config.storage().clone(),
                 *config.compact(),
                 config.auth().clone(),
+                config.tls().clone(),
             )
             .await
             .unwrap();
@@ -142,6 +143,7 @@ impl Cluster {
             config.storage().clone(),
             *config.compact(),
             config.auth().clone(),
+            config.tls().clone(),
         )
         .await
         .unwrap();
@@ -186,7 +188,8 @@ impl Cluster {
         let trace = TraceConfig::default();
         let auth = AuthConfig::default();
         let compact = CompactConfig::default();
-        XlineServerConfig::new(cluster, storage, log, trace, auth, compact)
+        let tls = TlsConfig::default();
+        XlineServerConfig::new(cluster, storage, log, trace, auth, compact, tls)
     }
 
     pub fn default_rocks_config_with_path(path: PathBuf) -> XlineServerConfig {
@@ -227,6 +230,7 @@ impl Cluster {
             base_config.trace().clone(),
             base_config.auth().clone(),
             *base_config.compact(),
+            base_config.tls().clone(),
         )
     }
 }

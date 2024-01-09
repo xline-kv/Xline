@@ -2,6 +2,7 @@ use std::{fmt::Debug, sync::Arc};
 
 use engine::SnapshotAllocator;
 use tokio::sync::broadcast;
+use tonic::transport::ClientTlsConfig;
 #[cfg(not(madsim))]
 use tracing::info;
 use tracing::instrument;
@@ -235,6 +236,7 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
     /// # Panics
     /// Panic if storage creation failed
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub async fn new<CE: CommandExecutor<C>>(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
@@ -243,6 +245,7 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
         task_manager: Arc<TaskManager>,
+        client_tls_config: Option<ClientTlsConfig>,
     ) -> Self {
         #[allow(clippy::panic)]
         let curp_node = match CurpNode::new(
@@ -253,6 +256,7 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
             role_change,
             curp_cfg,
             task_manager,
+            client_tls_config,
         )
         .await
         {
@@ -284,6 +288,7 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
         task_manager: Arc<TaskManager>,
+        client_tls_config: Option<ClientTlsConfig>,
     ) -> Result<(), ServerError>
     where
         CE: CommandExecutor<C>,
@@ -300,6 +305,7 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
             role_change,
             curp_cfg,
             task_manager,
+            client_tls_config,
         )
         .await;
 

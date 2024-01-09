@@ -2,7 +2,7 @@ use std::{error::Error, iter, path::PathBuf};
 
 use test_macros::abort_on_panic;
 use utils::config::{
-    AuthConfig, ClusterConfig, CompactConfig, LogConfig, StorageConfig, TraceConfig,
+    AuthConfig, ClusterConfig, CompactConfig, LogConfig, StorageConfig, TlsConfig, TraceConfig,
     XlineServerConfig,
 };
 use xline_test_utils::{
@@ -276,6 +276,7 @@ fn configs_with_auth(size: usize) -> Vec<XlineServerConfig> {
             TraceConfig::default(),
             AuthConfig::new(auth_public_key, auth_private_key),
             CompactConfig::default(),
+            TlsConfig::default(),
         )
     })
     .take(size)
