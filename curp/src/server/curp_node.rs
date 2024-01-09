@@ -11,6 +11,7 @@ use tokio::{
     task::JoinHandle,
     time::MissedTickBehavior,
 };
+use tonic::transport::ClientTlsConfig;
 use tracing::{debug, error, info, trace, warn};
 use utils::{
     config::CurpConfig,
@@ -421,7 +422,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                     };
                     match change.change_type() {
                         ConfChangeType::Add | ConfChangeType::AddLearner => {
-                            let connect = match InnerConnectApiWrapper::connect(change.node_id, change.address).await {
+                            let connect = match InnerConnectApiWrapper::connect(change.node_id, change.address, curp.client_tls_config().cloned()).await {
                                 Ok(connect) => connect,
                                 Err(e) => {
                                     error!("connect to {} failed, {}", change.node_id, e);
@@ -612,6 +613,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
         shutdown_trigger: shutdown::Trigger,
+        client_tls_config: Option<ClientTlsConfig>,
     ) -> Result<Self, CurpError> {
         let shutdown_listener = shutdown_trigger.subscribe();
         let sync_events = cluster_info
@@ -619,7 +621,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
             .into_iter()
             .map(|server_id| (server_id, Arc::new(Event::new())))
             .collect();
-        let connects = rpc::inner_connects(cluster_info.peers_addrs())
+        let connects = rpc::inner_connects(cluster_info.peers_addrs(), client_tls_config.as_ref())
             .await
             .map_err(|e| CurpError::internal(format!("parse peers addresses failed, err {e:?}")))?
             .collect();
@@ -651,6 +653,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                 role_change,
                 shutdown_trigger,
                 connects,
+                client_tls_config,
             ))
         } else {
             info!(
@@ -675,6 +678,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                 role_change,
                 shutdown_trigger,
                 connects,
+                client_tls_config,
             ))
         };
 

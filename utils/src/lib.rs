@@ -136,11 +136,12 @@
 )]
 // When we use rust version 1.65 or later, refactor this with GAT
 
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, str::FromStr, time::Duration};
 
 use clippy_utilities::OverflowArithmetic;
 use config::InitialClusterState;
 use thiserror::Error;
+use tonic::transport::{ClientTlsConfig, Endpoint};
 
 use crate::config::{ClusterRange, LevelConfig, RotationConfig};
 
@@ -418,6 +419,30 @@ pub mod certs {
     }
 }
 
+/// Create a new endpoint from addr
+pub fn build_endpoint(
+    addr: &str,
+    tls_config: Option<&ClientTlsConfig>,
+) -> Result<Endpoint, tonic::transport::Error> {
+    let mut endpoint = Endpoint::from_str(addr)?;
+    if endpoint.uri().scheme().is_none() {
+        endpoint = Endpoint::from_shared(format!("http://{}", addr))?;
+    }
+    match endpoint.uri().scheme_str() {
+        Some("http") => {}
+        Some("https") => {
+            let tls_config = tls_config.cloned().unwrap_or_default();
+            endpoint = endpoint.tls_config(tls_config)?
+        }
+        _ => {
+            if let Some(tls_config) = tls_config {
+                endpoint = endpoint.tls_config(tls_config.clone())?;
+            }
+        }
+    };
+    Ok(endpoint)
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -530,5 +555,17 @@ mod test {
         assert!(parse_batch_bytes("10Gb").is_err());
         assert!(parse_batch_bytes("kb").is_err());
         assert!(parse_batch_bytes("MB").is_err());
+    }
+
+    #[test]
+    fn test_build_endpoint() {
+        let endpoint = build_endpoint("127.0.0.1", Some(&ClientTlsConfig::new())).unwrap();
+        assert_eq!(endpoint.uri().scheme_str(), Some("http"));
+
+        let endpoint = build_endpoint("https://localhost", Some(&ClientTlsConfig::new())).unwrap();
+        assert_eq!(endpoint.uri().scheme_str(), Some("https"));
+
+        let endpoint = build_endpoint("http://example.com", Some(&ClientTlsConfig::new())).unwrap();
+        assert_eq!(endpoint.uri().scheme_str(), Some("http"));
     }
 }

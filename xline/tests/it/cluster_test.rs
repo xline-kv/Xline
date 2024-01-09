@@ -1,9 +1,7 @@
 use std::{error::Error, time::Duration};
 
-use etcd_client::ConnectOptions;
 use test_macros::abort_on_panic;
 use tokio::{net::TcpListener, time::sleep};
-use utils::certs;
 use xline_client::{
     types::{
         cluster::{MemberAddRequest, MemberListRequest, MemberRemoveRequest, MemberUpdateRequest},
@@ -48,13 +46,7 @@ async fn xline_add_node() -> Result<(), Box<dyn Error>> {
     let add_res = cluster_client.member_add(add_req).await?;
     assert_eq!(add_res.members.len(), 4);
     cluster.run_node(new_node_listener, 3).await;
-    let tls_config = etcd_client::TlsOptions::new()
-        .ca_certificate(etcd_client::Certificate::from_pem(certs::ca_cert()));
-    let mut etcd_client = etcd_client::Client::connect(
-        &new_node_addrs,
-        Some(ConnectOptions::default().with_tls(tls_config)),
-    )
-    .await?;
+    let mut etcd_client = etcd_client::Client::connect(&new_node_addrs, None).await?;
     let res = etcd_client.get("key", None).await?;
     assert_eq!(res.kvs().get(0).unwrap().value(), b"value");
     Ok(())

@@ -16,13 +16,10 @@ use std::{collections::HashMap, fmt::Debug, sync::Arc};
 use async_trait::async_trait;
 use curp_external_api::cmd::Command;
 use futures::{stream::FuturesUnordered, StreamExt};
-use tonic::transport::Endpoint;
 #[cfg(not(madsim))]
-use tonic::transport::{Certificate, ClientTlsConfig};
+use tonic::transport::ClientTlsConfig;
 use tracing::debug;
-#[cfg(not(madsim))]
-use utils::certs;
-use utils::config::ClientConfig;
+use utils::{build_endpoint, config::ClientConfig};
 
 use self::{
     retry::Retry,
@@ -160,6 +157,8 @@ pub struct ClientBuilder {
     leader_state: Option<(ServerId, u64)>,
     /// client configuration
     config: ClientConfig,
+    /// Client tls config
+    tls_config: Option<ClientTlsConfig>,
 }
 
 /// A client builder with bypass with local server
@@ -224,6 +223,14 @@ impl ClientBuilder {
         self
     }
 
+    /// Set the tls config
+    #[inline]
+    #[must_use]
+    pub fn tls_config(mut self, tls_config: Option<ClientTlsConfig>) -> Self {
+        self.tls_config = tls_config;
+        self
+    }
+
     /// Discover the initial states from some endpoints
     ///
     /// # Errors
@@ -233,21 +240,13 @@ impl ClientBuilder {
     pub async fn discover_from(mut self, addrs: Vec<String>) -> Result<Self, tonic::Status> {
         let propose_timeout = *self.config.propose_timeout();
         let mut futs: FuturesUnordered<_> = addrs
-            .into_iter()
-            .map(|mut addr| {
-                if !addr.starts_with("https://") {
-                    addr.insert_str(0, "https://");
-                }
+            .iter()
+            .map(|addr| {
+                let tls_config = self.tls_config.clone();
                 async move {
-                    let endpoint = Endpoint::from_shared(addr)
-                        .map_err(|e| tonic::Status::internal(e.to_string()))?;
-                    #[cfg(not(madsim))]
-                    let endpoint = endpoint
-                        .tls_config(
-                            ClientTlsConfig::new()
-                                .ca_certificate(Certificate::from_pem(certs::ca_cert())),
-                        )
-                        .map_err(|e| tonic::Status::internal(e.to_string()))?;
+                    let endpoint = build_endpoint(addr, tls_config.as_ref()).map_err(|e| {
+                        tonic::Status::internal(format!("create endpoint failed, error: {e}"))
+                    })?;
                     let channel = endpoint.connect().await.map_err(|e| {
                         tonic::Status::cancelled(format!("cannot connect to addr, error: {e}"))
                     })?;
@@ -286,6 +285,7 @@ impl ClientBuilder {
             UnaryConfig::new(
                 *self.config.propose_timeout(),
                 *self.config.wait_synced_timeout(),
+                None,
             ),
         );
         if let Some(version) = self.cluster_version {

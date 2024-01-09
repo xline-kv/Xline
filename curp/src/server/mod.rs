@@ -6,6 +6,7 @@ use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 #[cfg(not(madsim))]
 use tokio_stream::wrappers::TcpListenerStream;
+use tonic::transport::{ClientTlsConfig, ServerTlsConfig};
 #[cfg(not(madsim))]
 use tracing::info;
 use tracing::instrument;
@@ -205,6 +206,7 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
         shutdown_trigger: shutdown::Trigger,
+        client_tls_config: Option<ClientTlsConfig>,
     ) -> Self {
         #[allow(clippy::panic)]
         let curp_node = match CurpNode::new(
@@ -215,6 +217,7 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
             role_change,
             curp_cfg,
             shutdown_trigger,
+            client_tls_config,
         )
         .await
         {
@@ -246,6 +249,7 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
         shutdown_trigger: shutdown::Trigger,
+        client_tls_config: Option<ClientTlsConfig>,
     ) -> Result<(), ServerError>
     where
         CE: CommandExecutor<C>,
@@ -261,6 +265,7 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
             role_change,
             curp_cfg,
             shutdown_trigger,
+            client_tls_config,
         )
         .await;
 
@@ -294,13 +299,12 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
         shutdown_trigger: shutdown::Trigger,
+        client_tls_config: Option<ClientTlsConfig>,
+        server_tls_config: Option<ServerTlsConfig>,
     ) -> Result<(), ServerError>
     where
         CE: CommandExecutor<C>,
     {
-        use tonic::transport::{Identity, ServerTlsConfig};
-        use utils::certs;
-
         let mut shutdown_listener = shutdown_trigger.subscribe();
         let server = Self::new(
             cluster_info,
@@ -310,14 +314,14 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
             role_change,
             curp_cfg,
             shutdown_trigger,
+            client_tls_config,
         )
         .await;
-        let tls_config = ServerTlsConfig::new().identity(Identity::from_pem(
-            certs::server_cert(),
-            certs::server_key(),
-        ));
-        tonic::transport::Server::builder()
-            .tls_config(tls_config)?
+        let mut builder = tonic::transport::Server::builder();
+        if let Some(cfg) = server_tls_config {
+            builder = builder.tls_config(cfg)?;
+        }
+        builder
             .add_service(ProtocolServer::new(server.clone()))
             .add_service(InnerProtocolServer::new(server))
             .serve_with_incoming_shutdown(TcpListenerStream::new(listener), async move {

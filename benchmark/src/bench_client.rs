@@ -1,9 +1,8 @@
 use std::fmt::Debug;
 
 use anyhow::Result;
-use etcd_client::{Certificate, Client as EtcdClient, ConnectOptions, TlsOptions};
+use etcd_client::{Client as EtcdClient, ConnectOptions};
 use thiserror::Error;
-use utils::certs;
 #[cfg(test)]
 use xline_client::types::kv::{RangeRequest, RangeResponse};
 use xline_client::{
@@ -77,15 +76,11 @@ impl BenchClient {
         let kv_client = if use_curp_client {
             KVClient::Xline(Client::connect(addrs, config).await?)
         } else {
-            let tls_config =
-                TlsOptions::new().ca_certificate(Certificate::from_pem(certs::ca_cert()));
-            KVClient::Etcd(
-                EtcdClient::connect(
-                    addrs.clone(),
-                    Some(ConnectOptions::default().with_tls(tls_config)),
-                )
-                .await?,
-            )
+            let options = config
+                .tls_config()
+                .cloned()
+                .map(|c| ConnectOptions::default().with_tls(c));
+            KVClient::Etcd(EtcdClient::connect(addrs.clone(), options).await?)
         };
         Ok(Self { name, kv_client })
     }

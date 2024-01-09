@@ -13,24 +13,27 @@ use tokio::{
     task::block_in_place,
     time::{self, Duration},
 };
+use tonic::transport::ClientTlsConfig;
 use utils::config::{ClientConfig, CompactConfig, CurpConfig, ServerTimeout, StorageConfig};
 use xline::{server::XlineServer, storage::db::DB};
 pub use xline_client::{types, Client, ClientOptions};
 
 /// Cluster
 pub struct Cluster {
-    /// listeners of members
+    /// Listeners of members
     listeners: BTreeMap<usize, TcpListener>,
-    /// address of members
+    /// Address of members
     all_members: HashMap<usize, String>,
     /// Client of cluster
     client: Option<Client>,
     /// Cluster size
     size: usize,
-    /// storage paths
+    /// Storage paths
     paths: HashMap<usize, PathBuf>,
     /// Xline servers
     servers: Vec<Arc<XlineServer>>,
+    /// Client tls config
+    client_tls_config: Option<ClientTlsConfig>,
 }
 
 impl Cluster {
@@ -51,6 +54,7 @@ impl Cluster {
             size,
             paths: HashMap::new(),
             servers: Vec::new(),
+            client_tls_config: None,
         }
     }
 
@@ -91,6 +95,8 @@ impl Cluster {
                 ServerTimeout::default(),
                 StorageConfig::Memory,
                 CompactConfig::default(),
+                None,
+                None,
             ));
             self.servers.push(server.clone());
             tokio::spawn(async move {
@@ -131,6 +137,7 @@ impl Cluster {
             &[self_addr],
             &name,
             Duration::from_secs(3),
+            self.client_tls_config.as_ref(),
         )
         .await
         .unwrap();
@@ -146,6 +153,8 @@ impl Cluster {
                 ServerTimeout::default(),
                 StorageConfig::Memory,
                 CompactConfig::default(),
+                None,
+                None,
             );
             let result = server
                 .start_from_listener(listener, db, Self::test_key_pair())

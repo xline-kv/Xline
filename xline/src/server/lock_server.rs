@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use async_stream::stream;
 use clippy_utilities::OverflowArithmetic;
-use tonic::transport::{Channel, Endpoint};
+use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
 use tracing::debug;
+use utils::build_endpoint;
 use xlineapi::{
     command::{command_from_request_wrapper, CommandResponse, CurpClient, KeyRange, SyncResponse},
     execute_error::ExecuteError,
@@ -41,14 +42,12 @@ impl LockServer {
         client: Arc<CurpClient>,
         id_gen: Arc<IdGenerator>,
         addrs: Vec<String>,
+        client_tls_config: Option<&ClientTlsConfig>,
     ) -> Self {
         let addrs = addrs
-            .into_iter()
-            .map(|mut addr| {
-                if !addr.starts_with("http://") {
-                    addr.insert_str(0, "http://");
-                }
-                addr.parse()
+            .iter()
+            .map(|addr| {
+                build_endpoint(addr, client_tls_config)
                     .unwrap_or_else(|_e| panic!("invalid address: {addr}"))
             })
             .collect();

@@ -12,12 +12,10 @@ use dashmap::DashMap;
 use engine::{MemorySnapshotAllocator, RocksSnapshotAllocator, SnapshotAllocator};
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use tokio::{sync::mpsc::channel, task::JoinHandle};
-use tonic::transport::{server::Router, Server};
 #[cfg(not(madsim))]
-use tonic::transport::{Identity, ServerTlsConfig};
+use tonic::transport::ServerTlsConfig;
+use tonic::transport::{server::Router, ClientTlsConfig, Server};
 use tracing::{error, warn};
-#[cfg(not(madsim))]
-use utils::certs;
 use utils::{
     config::{ClientConfig, CompactConfig, CurpConfig, ServerTimeout, StorageConfig},
     shutdown,
@@ -75,6 +73,10 @@ pub struct XlineServer {
     compact_cfg: CompactConfig,
     /// Server timeout
     server_timeout: ServerTimeout,
+    /// Client tls config
+    client_tls_config: Option<ClientTlsConfig>,
+    /// Server tls config
+    server_tls_config: Option<ServerTlsConfig>,
     /// Shutdown trigger
     shutdown_trigger: shutdown::Trigger,
 }
@@ -95,6 +97,8 @@ impl XlineServer {
         server_timeout: ServerTimeout,
         storage_config: StorageConfig,
         compact_config: CompactConfig,
+        client_tls_config: Option<ClientTlsConfig>,
+        server_tls_config: Option<ServerTlsConfig>,
     ) -> Self {
         let (shutdown_trigger, _) = shutdown::channel();
         Self {
@@ -106,6 +110,8 @@ impl XlineServer {
             compact_cfg: compact_config,
             server_timeout,
             shutdown_trigger,
+            client_tls_config,
+            server_tls_config,
         }
     }
 
@@ -220,15 +226,11 @@ impl XlineServer {
             curp_server,
             curp_client,
         ) = self.init_servers(persistent, key_pair).await?;
-        #[cfg(not(madsim))]
-        let tls_config = ServerTlsConfig::new().identity(Identity::from_pem(
-            certs::server_cert(),
-            certs::server_key(),
-        ));
-        #[cfg(not(madsim))]
-        let mut builder = Server::builder().tls_config(tls_config)?;
-        #[cfg(madsim)]
         let mut builder = Server::builder();
+        #[cfg(not(madsim))]
+        if let Some(ref cfg) = self.server_tls_config {
+            builder = builder.tls_config(cfg.clone())?;
+        }
         let router = builder
             .add_service(RpcLockServer::new(lock_server))
             .add_service(RpcKvServer::new(kv_server))
@@ -416,11 +418,12 @@ impl XlineServer {
             state,
             Arc::clone(&self.curp_cfg),
             self.shutdown_trigger.clone(),
+            self.client_tls_config.clone(),
         )
         .await;
 
         let client = Arc::new(
-            CurpClientBuilder::new(self.client_config)
+            CurpClientBuilder::new(self.client_config.clone())
                 .cluster_version(self.cluster_info.cluster_version())
                 .all_members(self.cluster_info.all_members_addrs())
                 .bypass(self.cluster_info.self_id(), curp_server.clone())
@@ -447,6 +450,7 @@ impl XlineServer {
                 Arc::clone(&client),
                 Arc::clone(&id_gen),
                 self.cluster_info.self_addrs(),
+                self.client_tls_config.as_ref(),
             ),
             LeaseServer::new(
                 lease_storage,
@@ -454,6 +458,7 @@ impl XlineServer {
                 Arc::clone(&client),
                 id_gen,
                 Arc::clone(&self.cluster_info),
+                self.client_tls_config.clone(),
                 self.shutdown_trigger.subscribe(),
             ),
             AuthServer::new(Arc::clone(&client)),

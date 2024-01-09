@@ -26,6 +26,7 @@ use event_listener::Event;
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
 use tokio::sync::{broadcast, mpsc, oneshot};
+use tonic::transport::ClientTlsConfig;
 use tracing::{
     debug, error,
     log::{log_enabled, Level},
@@ -169,6 +170,8 @@ struct Context<C: Command, RC: RoleChange> {
     cluster_info: Arc<ClusterInfo>,
     /// Config
     cfg: Arc<CurpConfig>,
+    /// Client tls config
+    client_tls_config: Option<ClientTlsConfig>,
     /// Cmd board for tracking the cmd sync results
     cb: CmdBoardRef<C>,
     /// Speculative pool
@@ -797,6 +800,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         role_change: RC,
         shutdown_trigger: shutdown::Trigger,
         connects: DashMap<ServerId, InnerConnectApiWrapper>,
+        client_tls_config: Option<ClientTlsConfig>,
     ) -> Self {
         let (change_tx, change_rx) = flume::bounded(CHANGE_CHANNEL_SIZE);
         let raw_curp = Self {
@@ -818,6 +822,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 ucp: uncommitted_pool,
                 leader_tx: broadcast::channel(1).0,
                 cfg,
+                client_tls_config,
                 election_tick: AtomicU8::new(0),
                 cmd_tx,
                 sync_events,
@@ -857,6 +862,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         role_change: RC,
         shutdown_trigger: shutdown::Trigger,
         connects: DashMap<ServerId, InnerConnectApiWrapper>,
+        client_tls_config: Option<ClientTlsConfig>,
     ) -> Self {
         let raw_curp = Self::new(
             cluster_info,
@@ -871,6 +877,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             role_change,
             shutdown_trigger,
             connects,
+            client_tls_config,
         );
 
         if let Some((term, server_id)) = voted_for {
@@ -1210,6 +1217,10 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             .filter(|c| voters.contains(c.key()))
             .map(|c| Arc::clone(c.value()))
             .collect()
+    }
+
+    pub(super) fn client_tls_config(&self) -> Option<&ClientTlsConfig> {
+        self.ctx.client_tls_config.as_ref()
     }
 }
 

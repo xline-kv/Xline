@@ -30,10 +30,10 @@ use tokio::{
     sync::{mpsc, watch},
     task::{block_in_place, JoinHandle},
 };
-use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, ServerTlsConfig};
 use tracing::debug;
 use utils::{
-    certs,
+    build_endpoint, certs,
     config::{ClientConfig, CurpConfigBuilder, StorageConfig},
     shutdown::{self, Trigger},
 };
@@ -59,6 +59,8 @@ pub struct CurpNode {
 pub struct CurpGroup {
     pub nodes: HashMap<ServerId, CurpNode>,
     pub storage_path: Option<PathBuf>,
+    pub client_tls_config: Option<ClientTlsConfig>,
+    pub server_tls_config: Option<ServerTlsConfig>,
 }
 
 impl CurpGroup {
@@ -82,6 +84,8 @@ impl CurpGroup {
             .enumerate()
             .map(|(i, listener)| (format!("S{i}"), listener.local_addr().unwrap().to_string()))
             .collect();
+        let client_tls_config = None;
+        let server_tls_config = None;
         let mut all = HashMap::new();
         let nodes = listeners
             .into_iter()
@@ -144,6 +148,8 @@ impl CurpGroup {
                             .unwrap(),
                     ),
                     trigger.clone(),
+                    client_tls_config.clone(),
+                    server_tls_config.clone(),
                 ));
 
                 (
@@ -166,6 +172,8 @@ impl CurpGroup {
         Self {
             nodes,
             storage_path,
+            client_tls_config,
+            server_tls_config,
         }
     }
 
@@ -216,6 +224,8 @@ impl CurpGroup {
                     .unwrap(),
             ),
             trigger.clone(),
+            self.client_tls_config.clone(),
+            self.server_tls_config.clone(),
         ));
         self.nodes.insert(
             id,
@@ -296,11 +306,8 @@ impl CurpGroup {
         let mut leader = None;
         let mut max_term = 0;
         for addr in self.all_addrs() {
-            let addr = format!("https://{}", addr);
-            let tls_config =
-                ClientTlsConfig::new().ca_certificate(Certificate::from_pem(certs::ca_cert()));
             let channel_fut = async move {
-                let ep = Channel::from_shared(addr)?.tls_config(tls_config)?;
+                let ep = build_endpoint(addr, self.client_tls_config.as_ref())?;
                 let channel = ep.connect().await?;
                 Ok::<Channel, Box<dyn std::error::Error>>(channel)
             };
@@ -340,11 +347,8 @@ impl CurpGroup {
     pub async fn get_term_checked(&self) -> u64 {
         let mut max_term = None;
         for addr in self.all_addrs() {
-            let addr = format!("https://{}", addr);
-            let tls_config =
-                ClientTlsConfig::new().ca_certificate(Certificate::from_pem(certs::ca_cert()));
             let channel_fut = async move {
-                let ep = Channel::from_shared(addr)?.tls_config(tls_config)?;
+                let ep = build_endpoint(addr, self.client_tls_config.as_ref())?;
                 let channel = ep.connect().await?;
                 Ok::<Channel, Box<dyn std::error::Error>>(channel)
             };
@@ -371,11 +375,9 @@ impl CurpGroup {
     }
 
     pub async fn get_connect(&self, id: &ServerId) -> ProtocolClient<tonic::transport::Channel> {
-        let addr = format!("https://{}", self.nodes[id].addr);
-        let tls_config =
-            ClientTlsConfig::new().ca_certificate(Certificate::from_pem(certs::ca_cert()));
+        let addr = &self.nodes[id].addr;
         let channel_fut = async move {
-            let ep = Channel::from_shared(addr)?.tls_config(tls_config)?;
+            let ep = build_endpoint(addr, self.client_tls_config.as_ref())?;
             let channel = ep.connect().await?;
             Ok::<Channel, Box<dyn std::error::Error>>(channel)
         };

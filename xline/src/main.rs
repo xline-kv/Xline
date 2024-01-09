@@ -146,6 +146,7 @@ use jsonwebtoken::{DecodingKey, EncodingKey};
 use opentelemetry::{global, runtime::Tokio, sdk::propagation::TraceContextPropagator};
 use opentelemetry_contrib::trace::exporter::jaeger_json::JaegerJsonExporter;
 use tokio::fs;
+use tonic::transport::{Certificate, ClientTlsConfig, Identity, ServerTlsConfig};
 use tracing::{debug, error, info};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{fmt::format, prelude::*};
@@ -161,7 +162,7 @@ use utils::{
         default_sync_victims_interval, default_use_backoff, default_watch_progress_notify_interval,
         file_appender, AuthConfig, AutoCompactConfig, ClientConfig, ClusterConfig, CompactConfig,
         CurpConfigBuilder, InitialClusterState, LevelConfig, LogConfig, RotationConfig,
-        ServerTimeout, StorageConfig, TraceConfig, XlineServerConfig,
+        ServerTimeout, StorageConfig, TlsConfig, TraceConfig, XlineServerConfig,
     },
     parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_rotation, parse_state,
     ConfigFileError,
@@ -297,6 +298,15 @@ struct ServerArgs {
     /// Initial cluster state
     #[clap(long,value_parser = parse_state)]
     initial_cluster_state: Option<InitialClusterState>,
+    /// Server certificate path
+    #[clap(long)]
+    server_cert_path: Option<PathBuf>,
+    /// Server private key path
+    #[clap(long)]
+    server_key_path: Option<PathBuf>,
+    /// Client ca certificate path
+    #[clap(long)]
+    client_ca_cert_path: Option<PathBuf>,
 }
 
 impl From<ServerArgs> for XlineServerConfig {
@@ -396,7 +406,12 @@ impl From<ServerArgs> for XlineServerConfig {
                 .unwrap_or_else(default_compact_sleep_interval),
             auto_compactor_cfg,
         );
-        XlineServerConfig::new(cluster, storage, log, trace, auth, compact)
+        let tls = TlsConfig::new(
+            args.server_cert_path,
+            args.server_key_path,
+            args.client_ca_cert_path,
+        );
+        XlineServerConfig::new(cluster, storage, log, trace, auth, compact, tls)
     }
 }
 
@@ -511,6 +526,7 @@ async fn main() -> Result<()> {
     let trace_config = config.trace();
     let cluster_config = config.cluster();
     let auth_config = config.auth();
+    let tls_config = config.tls();
 
     let _guard = init_subscriber(cluster_config.name(), log_config, trace_config)?;
 
@@ -532,11 +548,9 @@ async fn main() -> Result<()> {
     let server_addr = server_addr_str
         .iter()
         .map(|addr| {
-            // TODO: update this after we support https
-            let address = if let Some(address) = addr.strip_prefix("http://") {
-                address
-            } else {
-                addr
+            let address = match addr.split_once("://") {
+                Some((_, address)) => address,
+                None => addr,
             };
             address.to_socket_addrs()
         })
@@ -544,6 +558,27 @@ async fn main() -> Result<()> {
         .into_iter()
         .flatten()
         .collect_vec();
+
+    let client_tls_config = if let Some(ca_cert_path) = tls_config.client_ca_cert_path() {
+        let ca = Certificate::from_pem(fs::read(ca_cert_path).await?);
+        Some(ClientTlsConfig::new().ca_certificate(ca))
+    } else {
+        None
+    };
+    let server_tls_config = match (tls_config.server_cert_path(), tls_config.server_key_path()) {
+        (Some(cert_path), Some(key_path)) => {
+            let cert = fs::read_to_string(cert_path).await?;
+            let key = fs::read_to_string(key_path).await?;
+            Some(ServerTlsConfig::new().identity(Identity::from_pem(cert, key)))
+        }
+        (None, None) => None,
+        _ => {
+            return Err(anyhow!(
+                "server_cert_path and server_key_path must be both set"
+            ))
+        }
+    };
+
     debug!("name = {:?}", cluster_config.name());
     debug!("server_addr = {server_addr:?}");
     debug!("cluster_peers = {:?}", cluster_config.members());
@@ -558,6 +593,7 @@ async fn main() -> Result<()> {
             server_addr_str,
             &name,
             Duration::from_secs(3),
+            client_tls_config.as_ref(),
         )
         .await
         .ok_or_else(|| anyhow!("Failed to get cluster info from remote"))?,
@@ -569,10 +605,12 @@ async fn main() -> Result<()> {
         cluster_info.into(),
         *cluster_config.is_leader(),
         cluster_config.curp_config().clone(),
-        *cluster_config.client_config(),
+        cluster_config.client_config().clone(),
         *cluster_config.server_timeout(),
         config.storage().clone(),
         *config.compact(),
+        client_tls_config,
+        server_tls_config,
     );
     debug!("{:?}", server);
     let handle = server.start(server_addr, db_proxy, key_pair).await?;

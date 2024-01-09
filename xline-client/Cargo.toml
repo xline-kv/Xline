@@ -20,7 +20,7 @@ http = "0.2.9"
 pbkdf2 = { version = "0.11.0", features = ["std"] }
 thiserror = "1.0.37"
 tokio = { version = "0.2.23", package = "madsim-tokio", features = ["sync"] }
-tonic = { version = "0.3.0", package = "madsim-tonic" }
+tonic = { version = "0.4.1", package = "madsim-tonic" }
 tower = { version = "0.4", features = ["discover"] }
 utils = { path = "../utils", features = ["parking_lot"] }
 workspace-hack = { version = "0.1", path = "../workspace-hack" }

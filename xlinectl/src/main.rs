@@ -151,12 +151,14 @@
 
 extern crate utils as ext_utils;
 
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 use anyhow::Result;
 use clap::{arg, value_parser, Command};
 use command::compaction;
 use ext_utils::config::ClientConfig;
+use tokio::fs;
+use tonic::transport::{Certificate, ClientTlsConfig};
 use xline_client::{Client, ClientOptions};
 
 use crate::{
@@ -230,6 +232,10 @@ fn cli() -> Command {
             .help_heading(GLOBAL_HEADING)
             .value_parser(["SIMPLE", "FIELD", "JSON"])
             .default_value("SIMPLE"))
+        .arg(arg!(--ca_cert_pem_path <PATH> "The path of the CA certificate PEM file")
+            .global(true)
+            .value_parser(value_parser!(PathBuf))
+            .help_heading(GLOBAL_HEADING))
 
         .subcommand(get::command())
         .subcommand(put::command())
@@ -259,7 +265,16 @@ async fn main() -> Result<()> {
         *matches.get_one("retry_count").expect("Required"),
         true,
     );
-    let options = ClientOptions::new(user_opt, client_config);
+    let ca_path: Option<PathBuf> = matches.get_one("ca_cert_pem_path").cloned();
+    let tls_config = match ca_path {
+        Some(path) => {
+            let ca = Certificate::from_pem(fs::read_to_string(path).await?);
+            let tls_config = ClientTlsConfig::new().ca_certificate(ca);
+            Some(tls_config)
+        }
+        None => None,
+    };
+    let options = ClientOptions::new(user_opt, tls_config, client_config);
     let printer_type = match matches
         .get_one::<String>("printer_type")
         .expect("Required")

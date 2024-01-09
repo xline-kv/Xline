@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use curp_external_api::cmd::Command;
 use futures::{stream::FuturesUnordered, Future, Stream, StreamExt};
 use tokio::sync::RwLock;
-use tonic::Response;
+use tonic::{transport::ClientTlsConfig, Response};
 use tracing::{debug, warn};
 
 use crate::{
@@ -112,7 +112,10 @@ impl UnaryBuilder {
         debug!("client bypassed server({local_server_id})");
 
         let _ig = self.all_members.remove(&local_server_id);
-        let mut connects: HashMap<_, _> = rpc::connects(self.all_members.clone()).await?.collect();
+        let mut connects: HashMap<_, _> =
+            rpc::connects(self.all_members.clone(), self.config.tls_config.as_ref())
+                .await?
+                .collect();
         let __ig = connects.insert(
             local_server_id,
             Arc::new(BypassedConnect::new(local_server_id, local_server)),
@@ -123,7 +126,10 @@ impl UnaryBuilder {
 
     /// Build the unary client
     pub(super) async fn build<C: Command>(self) -> Result<Unary<C>, tonic::transport::Error> {
-        let connects: HashMap<_, _> = rpc::connects(self.all_members.clone()).await?.collect();
+        let connects: HashMap<_, _> =
+            rpc::connects(self.all_members.clone(), self.config.tls_config.as_ref())
+                .await?
+                .collect();
         Ok(self.build_with_connects(connects, None))
     }
 }
@@ -136,14 +142,21 @@ pub(super) struct UnaryConfig {
     /// The rpc timeout of a 2-RTT request, usually takes longer than propose timeout
     /// The recommended the values is within (propose_timeout, 2 * propose_timeout].
     wait_synced_timeout: Duration,
+    /// Client tls config
+    tls_config: Option<ClientTlsConfig>,
 }
 
 impl UnaryConfig {
     /// Create a unary config
-    pub(super) fn new(propose_timeout: Duration, wait_synced_timeout: Duration) -> Self {
+    pub(super) fn new(
+        propose_timeout: Duration,
+        wait_synced_timeout: Duration,
+        tls_config: Option<ClientTlsConfig>,
+    ) -> Self {
         Self {
             propose_timeout,
             wait_synced_timeout,
+            tls_config,
         }
     }
 }
@@ -181,6 +194,7 @@ impl<C: Command> Unary<C> {
             config: UnaryConfig {
                 propose_timeout: Duration::from_secs(0),
                 wait_synced_timeout: Duration::from_secs(0),
+                tls_config: None,
             },
             phantom: PhantomData,
         }
@@ -255,7 +269,7 @@ impl<C: Command> Unary<C> {
                     .remove(&diff)
                     .unwrap_or_else(|| unreachable!("{diff} must in new member addrs"));
                 debug!("client connects to a new server({diff}), address({addrs:?})");
-                let new_conn = rpc::connect(diff, addrs).await?;
+                let new_conn = rpc::connect(diff, addrs, self.config.tls_config.clone()).await?;
                 let _ig = e.insert(new_conn);
             } else {
                 debug!("client removes old server({diff})");

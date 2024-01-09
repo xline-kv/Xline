@@ -83,6 +83,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             role_change,
             shutdown_trigger,
             connects,
+            None,
         )
     }
 
