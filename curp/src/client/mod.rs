@@ -144,7 +144,7 @@ trait LeaderStateUpdate {
 }
 
 /// Client builder to build a client
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 #[allow(clippy::module_name_repetitions)] // better than just Builder
 pub struct ClientBuilder {
     /// initial cluster version
@@ -175,10 +175,8 @@ impl ClientBuilder {
     #[must_use]
     pub fn new(config: ClientConfig) -> Self {
         Self {
-            cluster_version: None,
-            all_members: None,
-            leader_state: None,
             config,
+            ..ClientBuilder::default()
         }
     }
 

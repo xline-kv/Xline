@@ -50,7 +50,6 @@ impl<C: Compactable> RevisionCompactor<C> {
     }
 
     /// perform auto compaction logic
-    #[allow(clippy::pattern_type_mismatch)] // allow let Some matching
     async fn do_compact(&self, last_revision: Option<i64>) -> Option<i64> {
         if !self.is_leader.load(Relaxed) {
             return None;
@@ -67,7 +66,7 @@ impl<C: Compactable> RevisionCompactor<C> {
             target_revision, self.retention
         );
 
-        let Some(compactable) = &*self.compactable.read().await else {
+        let Some(ref compactable) = *self.compactable.read().await else {
             return None;
         };
 

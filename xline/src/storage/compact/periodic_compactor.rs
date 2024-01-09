@@ -87,7 +87,6 @@ impl<C: Compactable> PeriodicCompactor<C> {
     }
 
     /// perform auto compaction logic
-    #[allow(clippy::pattern_type_mismatch)] // allow let Some matching
     async fn do_compact(
         &self,
         last_revision: Option<i64>,
@@ -108,7 +107,7 @@ impl<C: Compactable> PeriodicCompactor<C> {
             revision, self.period
         );
 
-        let Some(compactable) = &*self.compactable.read().await else {
+        let Some(ref compactable) = *self.compactable.read().await else {
             return None;
         };
 
