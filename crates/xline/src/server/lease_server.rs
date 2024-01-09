@@ -5,13 +5,14 @@ use clippy_utilities::Cast;
 use curp::members::ClusterInfo;
 use futures::stream::Stream;
 use tokio::time;
+#[cfg(not(madsim))]
+use tonic::transport::ClientTlsConfig;
 use tonic::transport::Endpoint;
-#[cfg(not(madsim))]
-use tonic::transport::{Certificate, ClientTlsConfig};
 use tracing::{debug, warn};
-#[cfg(not(madsim))]
-use utils::certs;
-use utils::task_manager::{tasks::TaskName, Listener, TaskManager};
+use utils::{
+    build_endpoint,
+    task_manager::{tasks::TaskName, Listener, TaskManager},
+};
 use xlineapi::{
     command::{Command, CommandResponse, CurpClient, KeyRange, SyncResponse},
     execute_error::ExecuteError,
@@ -47,6 +48,8 @@ where
     id_gen: Arc<IdGenerator>,
     /// cluster information
     cluster_info: Arc<ClusterInfo>,
+    /// Client tls config
+    client_tls_config: Option<ClientTlsConfig>,
     /// Task manager
     task_manager: Arc<TaskManager>,
 }
@@ -62,6 +65,7 @@ where
         client: Arc<CurpClient>,
         id_gen: Arc<IdGenerator>,
         cluster_info: Arc<ClusterInfo>,
+        client_tls_config: Option<ClientTlsConfig>,
         task_manager: &Arc<TaskManager>,
     ) -> Arc<Self> {
         let lease_server = Arc::new(Self {
@@ -70,6 +74,7 @@ where
             client,
             id_gen,
             cluster_info,
+            client_tls_config,
             task_manager: Arc::clone(task_manager),
         });
         task_manager.spawn(TaskName::RevokeExpiredLeases, |n| {
@@ -205,7 +210,7 @@ where
         let shutdown_listener = self
             .task_manager
             .get_shutdown_listener(TaskName::LeaseKeepAlive);
-        let endpoints = build_endpoints(leader_addrs)?;
+        let endpoints = build_endpoints(&leader_addrs, self.client_tls_config.as_ref())?;
         let channel = tonic::transport::Channel::balance_list(endpoints.into_iter());
         let mut lease_client = LeaseClient::new(channel);
 
@@ -238,20 +243,14 @@ where
 }
 
 /// Build endpoints from addresses
-fn build_endpoints(addrs: Vec<String>) -> Result<Vec<Endpoint>, tonic::Status> {
+fn build_endpoints(
+    addrs: &[String],
+    tls_config: Option<&ClientTlsConfig>,
+) -> Result<Vec<Endpoint>, tonic::Status> {
     addrs
-        .into_iter()
-        .map(|mut addr| {
-            if !addr.starts_with("https://") {
-                addr.insert_str(0, "https://");
-            }
-            let endpoint = Endpoint::from_shared(addr.clone())
-                .map_err(|e| tonic::Status::internal(e.to_string()))?;
-            #[cfg(not(madsim))]
-            let endpoint = endpoint
-                .tls_config(
-                    ClientTlsConfig::new().ca_certificate(Certificate::from_pem(certs::ca_cert())),
-                )
+        .iter()
+        .map(|addr| {
+            let endpoint = build_endpoint(addr, tls_config)
                 .map_err(|e| tonic::Status::internal(e.to_string()))?;
             Ok(endpoint)
         })
@@ -383,7 +382,7 @@ where
                 )
             });
             if !self.lease_storage.is_primary() {
-                let endpoints = build_endpoints(leader_addrs)?;
+                let endpoints = build_endpoints(&leader_addrs, self.client_tls_config.as_ref())?;
                 let channel = tonic::transport::Channel::balance_list(endpoints.into_iter());
                 let mut lease_client = LeaseClient::new(channel);
                 return lease_client.lease_time_to_live(request).await;

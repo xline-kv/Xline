@@ -3456,6 +3456,7 @@ dependencies = [
  "anyhow",
  "clap",
  "madsim-tokio",
+ "madsim-tonic",
  "rand",
  "utils",
  "workspace-hack",

@@ -167,6 +167,7 @@ async fn main() -> Result<()> {
         config.storage().clone(),
         *config.compact(),
         config.auth().clone(),
+        config.tls().clone(),
     )
     .await?;
     debug!("{:?}", server);

@@ -1,6 +1,5 @@
 use std::{
     net::{SocketAddr, ToSocketAddrs},
-    path::PathBuf,
     sync::Arc,
     time::Duration,
 };
@@ -24,15 +23,14 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::{fs, sync::mpsc::channel};
 #[cfg(not(madsim))]
 use tonic::transport::server::Connected;
-use tonic::transport::{server::Router, Server};
 #[cfg(not(madsim))]
-use tonic::transport::{Identity, ServerTlsConfig};
+use tonic::transport::ServerTlsConfig;
+use tonic::transport::{server::Router, Certificate, ClientTlsConfig, Identity, Server};
 use tracing::{info, warn};
-#[cfg(not(madsim))]
-use utils::certs;
 use utils::{
     config::{
         AuthConfig, ClusterConfig, CompactConfig, EngineConfig, InitialClusterState, StorageConfig,
+        TlsConfig,
     },
     task_manager::{tasks::TaskName, TaskManager},
 };
@@ -86,6 +84,10 @@ pub struct XlineServer {
     compact_config: CompactConfig,
     /// Auth config
     auth_config: AuthConfig,
+    /// Client tls config
+    client_tls_config: Option<ClientTlsConfig>,
+    /// Server tls config
+    server_tls_config: Option<ServerTlsConfig>,
     /// Task Manager
     task_manager: Arc<TaskManager>,
 }
@@ -100,20 +102,28 @@ impl XlineServer {
         storage_config: StorageConfig,
         compact_config: CompactConfig,
         auth_config: AuthConfig,
+        tls_config: TlsConfig,
     ) -> Result<Self> {
-        let cluster_info = Arc::new(Self::init_cluster_info(&cluster_config).await?);
+        let (client_tls_config, server_tls_config) = Self::read_tls_config(&tls_config).await?;
+        let cluster_info =
+            Arc::new(Self::init_cluster_info(&cluster_config, client_tls_config.as_ref()).await?);
         Ok(Self {
             cluster_info,
             cluster_config,
             storage_config,
             compact_config,
             auth_config,
+            client_tls_config,
+            server_tls_config,
             task_manager: Arc::new(TaskManager::new()),
         })
     }
 
     /// Init cluster info from cluster config
-    async fn init_cluster_info(cluster_config: &ClusterConfig) -> Result<ClusterInfo> {
+    async fn init_cluster_info(
+        cluster_config: &ClusterConfig,
+        tls_config: Option<&ClientTlsConfig>,
+    ) -> Result<ClusterInfo> {
         let server_addr_str = cluster_config
             .members()
             .get(cluster_config.name())
@@ -126,11 +136,9 @@ impl XlineServer {
         let server_addr = server_addr_str
             .iter()
             .map(|addr| {
-                // TODO: update this after we support https
-                let address = if let Some(address) = addr.strip_prefix("http://") {
-                    address
-                } else {
-                    addr
+                let address = match addr.split_once("://") {
+                    Some((_, address)) => address,
+                    None => addr,
                 };
                 address.to_socket_addrs()
             })
@@ -152,6 +160,7 @@ impl XlineServer {
                 server_addr_str,
                 &name,
                 *cluster_config.client_config().wait_synced_timeout(),
+                tls_config,
             )
             .await
             .ok_or_else(|| anyhow!("Failed to get cluster info from remote"))?,
@@ -283,15 +292,11 @@ impl XlineServer {
             curp_server,
             curp_client,
         ) = self.init_servers(persistent, key_pair).await?;
-        #[cfg(not(madsim))]
-        let tls_config = ServerTlsConfig::new().identity(Identity::from_pem(
-            certs::server_cert(),
-            certs::server_key(),
-        ));
-        #[cfg(not(madsim))]
-        let mut builder = Server::builder().tls_config(tls_config)?;
-        #[cfg(madsim)]
         let mut builder = Server::builder();
+        #[cfg(not(madsim))]
+        if let Some(ref cfg) = self.server_tls_config {
+            builder = builder.tls_config(cfg.clone())?;
+        }
         let router = builder
             .add_service(RpcLockServer::new(lock_server))
             .add_service(RpcKvServer::new(kv_server))
@@ -351,11 +356,7 @@ impl XlineServer {
         IE: Into<Box<dyn std::error::Error + Send + Sync>> + Send,
     {
         let persistent = DB::open(&self.storage_config.engine)?;
-        let key_pair = Self::read_key_pair(
-            self.auth_config.auth_private_key().as_ref(),
-            self.auth_config.auth_public_key().as_ref(),
-        )
-        .await?;
+        let key_pair = Self::read_key_pair(&self.auth_config).await?;
         let (router, curp_client) = self.init_router(persistent, key_pair).await?;
         self.task_manager
             .spawn(TaskName::TonicServer, |n| async move {
@@ -503,6 +504,7 @@ impl XlineServer {
             state,
             Arc::clone(&curp_config),
             Arc::clone(&self.task_manager),
+            self.client_tls_config.clone(),
         )
         .await;
 
@@ -539,7 +541,8 @@ impl XlineServer {
             LockServer::new(
                 Arc::clone(&client),
                 Arc::clone(&id_gen),
-                self.cluster_info.self_addrs(),
+                &self.cluster_info.self_addrs(),
+                self.client_tls_config.as_ref(),
             ),
             LeaseServer::new(
                 lease_storage,
@@ -547,6 +550,7 @@ impl XlineServer {
                 Arc::clone(&client),
                 id_gen,
                 Arc::clone(&self.cluster_info),
+                self.client_tls_config.clone(),
                 &self.task_manager,
             ),
             AuthServer::new(Arc::clone(&client)),
@@ -586,11 +590,11 @@ impl XlineServer {
     }
 
     /// Read key pair from file
-    async fn read_key_pair(
-        private_key_path: Option<&PathBuf>,
-        public_key_path: Option<&PathBuf>,
-    ) -> Result<Option<(EncodingKey, DecodingKey)>> {
-        match (private_key_path, public_key_path) {
+    async fn read_key_pair(auth_config: &AuthConfig) -> Result<Option<(EncodingKey, DecodingKey)>> {
+        match (
+            auth_config.auth_private_key().as_ref(),
+            auth_config.auth_public_key().as_ref(),
+        ) {
             (Some(private), Some(public)) => {
                 let encoding_key = EncodingKey::from_rsa_pem(&fs::read(private).await?)?;
                 let decoding_key = DecodingKey::from_rsa_pem(&fs::read(public).await?)?;
@@ -601,6 +605,36 @@ impl XlineServer {
                 "private key path and public key path must be both set or both unset"
             )),
         }
+    }
+
+    /// Read tls cert and key from file
+    async fn read_tls_config(
+        tls_config: &TlsConfig,
+    ) -> Result<(Option<ClientTlsConfig>, Option<ServerTlsConfig>)> {
+        let client_tls_config =
+            if let Some(ca_cert_path) = tls_config.client_ca_cert_path().as_ref() {
+                let ca = Certificate::from_pem(fs::read(ca_cert_path).await?);
+                Some(ClientTlsConfig::new().ca_certificate(ca))
+            } else {
+                None
+            };
+        let server_tls_config = match (
+            tls_config.server_cert_path().as_ref(),
+            tls_config.server_key_path().as_ref(),
+        ) {
+            (Some(cert_path), Some(key_path)) => {
+                let cert = fs::read_to_string(cert_path).await?;
+                let key = fs::read_to_string(key_path).await?;
+                Some(ServerTlsConfig::new().identity(Identity::from_pem(cert, key)))
+            }
+            (None, None) => None,
+            _ => {
+                return Err(anyhow!(
+                    "server_cert_path and server_key_path must be both set"
+                ))
+            }
+        };
+        Ok((client_tls_config, server_tls_config))
     }
 }
 

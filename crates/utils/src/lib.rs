@@ -143,6 +143,10 @@
 )]
 // When we use rust version 1.65 or later, refactor this with GAT
 
+use std::str::FromStr;
+
+use tonic::transport::{ClientTlsConfig, Endpoint};
+
 /// configuration
 pub mod config;
 /// utils of `parking_lot` lock
@@ -195,4 +199,31 @@ pub mod certs {
     pub fn ca_cert() -> &'static [u8] {
         include_bytes!("../certs/ca.crt")
     }
+}
+
+/// Create a new endpoint from addr
+/// # Errors
+/// Return error if addr or tls config is invalid
+#[inline]
+pub fn build_endpoint(
+    addr: &str,
+    tls_config: Option<&ClientTlsConfig>,
+) -> Result<Endpoint, tonic::transport::Error> {
+    let mut endpoint = Endpoint::from_str(addr)?;
+    if endpoint.uri().scheme().is_none() {
+        endpoint = Endpoint::from_shared(format!("http://{addr}"))?;
+    }
+    match endpoint.uri().scheme_str() {
+        Some("http") => {}
+        Some("https") => {
+            let tls_config = tls_config.cloned().unwrap_or_default();
+            endpoint = endpoint.tls_config(tls_config)?;
+        }
+        _ => {
+            if let Some(tls_config) = tls_config {
+                endpoint = endpoint.tls_config(tls_config.clone())?;
+            }
+        }
+    };
+    Ok(endpoint)
 }

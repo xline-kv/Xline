@@ -27,6 +27,7 @@ use event_listener::Event;
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
 use tokio::sync::{broadcast, mpsc, oneshot};
+use tonic::transport::ClientTlsConfig;
 use tracing::{
     debug, error,
     log::{log_enabled, Level},
@@ -132,6 +133,9 @@ pub(super) struct RawCurpArgs<C: Command, RC: RoleChange> {
     /// Connects of peers
     connects: DashMap<ServerId, InnerConnectApiWrapper>,
 
+    /// client tls config
+    #[builder(default)]
+    client_tls_config: Option<ClientTlsConfig>,
     /// Last applied index
     #[builder(setter(strip_option), default)]
     last_applied: Option<LogIndex>,
@@ -171,6 +175,7 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
             .sync_events(args.sync_events)
             .role_change(args.role_change)
             .connects(args.connects)
+            .client_tls_config(args.client_tls_config)
             .build()
             .map_err(|e| match e {
                 ContextBuilderError::UninitializedField(s) => {
@@ -289,6 +294,8 @@ struct Context<C: Command, RC: RoleChange> {
     cluster_info: Arc<ClusterInfo>,
     /// Config
     cfg: Arc<CurpConfig>,
+    /// Client tls config
+    client_tls_config: Option<ClientTlsConfig>,
     /// Cmd board for tracking the cmd sync results
     cb: CmdBoardRef<C>,
     /// Speculative pool
@@ -383,6 +390,10 @@ impl<C: Command, RC: RoleChange> ContextBuilder<C, RC> {
                 None => return Err(ContextBuilderError::UninitializedField("connects")),
             },
             last_conf_change_idx: AtomicU64::new(0),
+            client_tls_config: match self.client_tls_config.take() {
+                Some(value) => value,
+                None => return Err(ContextBuilderError::UninitializedField("client_tls_config")),
+            },
         })
     }
 }
@@ -1399,6 +1410,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             }
         }
         None
+    }
+
+    /// Get client tls config
+    pub(super) fn client_tls_config(&self) -> Option<&ClientTlsConfig> {
+        self.ctx.client_tls_config.as_ref()
     }
 }
 

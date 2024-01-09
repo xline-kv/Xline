@@ -27,6 +27,9 @@ pub struct XlineServerConfig {
     /// compactor configuration object
     #[getset(get = "pub")]
     compact: CompactConfig,
+    /// tls configuration object
+    #[getset(get = "pub")]
+    tls: TlsConfig,
 }
 
 /// Cluster Range type alias
@@ -894,7 +897,6 @@ pub struct AuthConfig {
     /// The private key file
     #[getset(get = "pub")]
     auth_private_key: Option<PathBuf>,
-    // TODO: support SSL/TLS configuration in the future
 }
 
 impl AuthConfig {
@@ -905,6 +907,39 @@ impl AuthConfig {
         Self {
             auth_public_key,
             auth_private_key,
+        }
+    }
+}
+
+/// Xline tls configuration object
+#[allow(clippy::module_name_repetitions)]
+#[non_exhaustive]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters, Default)]
+pub struct TlsConfig {
+    /// The public key file used by server
+    #[getset(get = "pub")]
+    pub server_cert_path: Option<PathBuf>,
+    /// The private key file used by server
+    #[getset(get = "pub")]
+    pub server_key_path: Option<PathBuf>,
+    /// The CA certificate file used by client
+    #[getset(get = "pub")]
+    pub client_ca_cert_path: Option<PathBuf>,
+}
+
+impl TlsConfig {
+    /// Create a new `TlsConfig` object
+    #[must_use]
+    #[inline]
+    pub fn new(
+        server_cert_path: Option<PathBuf>,
+        server_key_path: Option<PathBuf>,
+        client_ca_cert_path: Option<PathBuf>,
+    ) -> Self {
+        Self {
+            server_cert_path,
+            server_key_path,
+            client_ca_cert_path,
         }
     }
 }
@@ -920,6 +955,7 @@ impl XlineServerConfig {
         trace: TraceConfig,
         auth: AuthConfig,
         compact: CompactConfig,
+        tls: TlsConfig,
     ) -> Self {
         Self {
             cluster,
@@ -928,6 +964,7 @@ impl XlineServerConfig {
             trace,
             auth,
             compact,
+            tls,
         }
     }
 }
@@ -990,7 +1027,14 @@ mod tests {
             jaeger_output_dir = './jaeger_jsons'
             jaeger_level = 'info'
 
-            [auth]"#,
+            [auth]
+            auth_public_key = './public_key.pem'
+            auth_private_key = './private_key.pem'
+
+            [tls]
+            server_cert_path = './cert.pem'
+            server_key_path = './key.pem'
+            client_ca_cert_path = './ca.pem'"#,
         )
         .unwrap();
 
@@ -1070,6 +1114,23 @@ mod tests {
                 )))
             }
         );
+
+        assert_eq!(
+            config.auth,
+            AuthConfig {
+                auth_private_key: Some(PathBuf::from("./private_key.pem")),
+                auth_public_key: Some(PathBuf::from("./public_key.pem")),
+            }
+        );
+
+        assert_eq!(
+            config.tls,
+            TlsConfig {
+                server_cert_path: Some(PathBuf::from("./cert.pem")),
+                server_key_path: Some(PathBuf::from("./key.pem")),
+                client_ca_cert_path: Some(PathBuf::from("./ca.pem")),
+            }
+        );
     }
 
     #[allow(clippy::unwrap_used)]
@@ -1102,8 +1163,9 @@ mod tests {
                 jaeger_level = 'info'
 
                 [auth]
-                # auth_public_key = './public_key'.pem'
-                # auth_private_key = './private_key.pem'"#,
+
+                [tls]
+                "#,
         )
         .unwrap();
 
@@ -1148,6 +1210,8 @@ mod tests {
             )
         );
         assert_eq!(config.compact, CompactConfig::default());
+        assert_eq!(config.auth, AuthConfig::default());
+        assert_eq!(config.tls, TlsConfig::default());
     }
 
     #[allow(clippy::unwrap_used)]
@@ -1184,8 +1248,9 @@ mod tests {
                 jaeger_level = 'info'
 
                 [auth]
-                # auth_public_key = './public_key'.pem'
-                # auth_private_key = './private_key.pem'"#,
+
+                [tls]
+                "#,
         )
         .unwrap();
 

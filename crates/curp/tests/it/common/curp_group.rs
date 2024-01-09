@@ -31,10 +31,10 @@ use tokio::{
     task::{block_in_place, JoinHandle},
 };
 use tokio_stream::wrappers::TcpListenerStream;
-use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, ServerTlsConfig};
 use tracing::debug;
 use utils::{
-    certs,
+    build_endpoint, certs,
     config::{
         default_quota, ClientConfig, CurpConfig, CurpConfigBuilder, EngineConfig, StorageConfig,
     },
@@ -61,6 +61,8 @@ pub struct CurpNode {
 pub struct CurpGroup {
     pub nodes: HashMap<ServerId, CurpNode>,
     pub storage_path: Option<PathBuf>,
+    pub client_tls_config: Option<ClientTlsConfig>,
+    pub server_tls_config: Option<ServerTlsConfig>,
 }
 
 impl CurpGroup {
@@ -97,7 +99,8 @@ impl CurpGroup {
         let all_members_addrs = Self::listeners_to_all_members_addrs(&listeners);
 
         let mut nodes = HashMap::new();
-
+        let client_tls_config = None;
+        let server_tls_config = None;
         for (name, (config, xline_storage_config)) in configs.into_iter() {
             let task_manager = Arc::new(TaskManager::new());
             let snapshot_allocator = Self::get_snapshot_allocator_from_cfg(&config);
@@ -126,6 +129,7 @@ impl CurpGroup {
                     role_change_cb,
                     config,
                     Arc::clone(&task_manager),
+                    client_tls_config.clone(),
                 )
                 .await,
             );
@@ -148,6 +152,8 @@ impl CurpGroup {
         Self {
             nodes,
             storage_path: None,
+            client_tls_config,
+            server_tls_config,
         }
     }
 
@@ -251,6 +257,7 @@ impl CurpGroup {
                 role_change_cb,
                 config,
                 Arc::clone(&task_manager),
+                self.client_tls_config.clone(),
             )
             .await,
         );
@@ -338,11 +345,8 @@ impl CurpGroup {
         let mut leader = None;
         let mut max_term = 0;
         for addr in self.all_addrs() {
-            let addr = format!("https://{}", addr);
-            let tls_config =
-                ClientTlsConfig::new().ca_certificate(Certificate::from_pem(certs::ca_cert()));
             let channel_fut = async move {
-                let ep = Channel::from_shared(addr)?.tls_config(tls_config)?;
+                let ep = build_endpoint(addr, self.client_tls_config.as_ref())?;
                 let channel = ep.connect().await?;
                 Ok::<Channel, Box<dyn std::error::Error>>(channel)
             };
@@ -382,11 +386,8 @@ impl CurpGroup {
     pub async fn get_term_checked(&self) -> u64 {
         let mut max_term = None;
         for addr in self.all_addrs() {
-            let addr = format!("https://{}", addr);
-            let tls_config =
-                ClientTlsConfig::new().ca_certificate(Certificate::from_pem(certs::ca_cert()));
             let channel_fut = async move {
-                let ep = Channel::from_shared(addr)?.tls_config(tls_config)?;
+                let ep = build_endpoint(addr, self.client_tls_config.as_ref())?;
                 let channel = ep.connect().await?;
                 Ok::<Channel, Box<dyn std::error::Error>>(channel)
             };
@@ -413,11 +414,9 @@ impl CurpGroup {
     }
 
     pub async fn get_connect(&self, id: &ServerId) -> ProtocolClient<tonic::transport::Channel> {
-        let addr = format!("https://{}", self.nodes[id].addr);
-        let tls_config =
-            ClientTlsConfig::new().ca_certificate(Certificate::from_pem(certs::ca_cert()));
+        let addr = &self.nodes[id].addr;
         let channel_fut = async move {
-            let ep = Channel::from_shared(addr)?.tls_config(tls_config)?;
+            let ep = build_endpoint(addr, self.client_tls_config.as_ref())?;
             let channel = ep.connect().await?;
             Ok::<Channel, Box<dyn std::error::Error>>(channel)
         };

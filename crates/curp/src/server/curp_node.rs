@@ -10,6 +10,7 @@ use tokio::{
     sync::{broadcast, mpsc},
     time::MissedTickBehavior,
 };
+use tonic::transport::ClientTlsConfig;
 use tracing::{debug, error, info, trace, warn};
 use utils::{
     config::CurpConfig,
@@ -437,15 +438,19 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
             };
             match change.change_type() {
                 ConfChangeType::Add | ConfChangeType::AddLearner => {
-                    let connect =
-                        match InnerConnectApiWrapper::connect(change.node_id, change.address).await
-                        {
-                            Ok(connect) => connect,
-                            Err(e) => {
-                                error!("connect to {} failed, {}", change.node_id, e);
-                                continue;
-                            }
-                        };
+                    let connect = match InnerConnectApiWrapper::connect(
+                        change.node_id,
+                        change.address,
+                        curp.client_tls_config().cloned(),
+                    )
+                    .await
+                    {
+                        Ok(connect) => connect,
+                        Err(e) => {
+                            error!("connect to {} failed, {}", change.node_id, e);
+                            continue;
+                        }
+                    };
                     curp.insert_connect(connect.clone());
                     let sync_event = curp.sync_event(change.node_id);
                     let remove_event = Arc::new(Event::new());
@@ -582,6 +587,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
 impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     /// Create a new server instance
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn new<CE: CommandExecutor<C>>(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
@@ -590,13 +596,14 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
         task_manager: Arc<TaskManager>,
+        client_tls_config: Option<ClientTlsConfig>,
     ) -> Result<Self, CurpError> {
         let sync_events = cluster_info
             .peers_ids()
             .into_iter()
             .map(|server_id| (server_id, Arc::new(Event::new())))
             .collect();
-        let connects = rpc::inner_connects(cluster_info.peers_addrs())
+        let connects = rpc::inner_connects(cluster_info.peers_addrs(), client_tls_config.as_ref())
             .await
             .map_err(|e| CurpError::internal(format!("parse peers addresses failed, err {e:?}")))?
             .collect();
@@ -633,6 +640,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                 .last_applied(last_applied)
                 .voted_for(voted_for)
                 .entries(entries)
+                .client_tls_config(client_tls_config)
                 .build_raw_curp()
                 .map_err(|e| CurpError::internal(format!("build raw curp failed, {e}")))?,
         );

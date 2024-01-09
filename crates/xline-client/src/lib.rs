@@ -161,13 +161,11 @@ use std::{
 
 use curp::client::ClientBuilder as CurpClientBuilder;
 use http::{header::AUTHORIZATION, HeaderValue, Request};
+use tonic::transport::Channel;
 #[cfg(not(madsim))]
-use tonic::transport::{Certificate, ClientTlsConfig};
-use tonic::transport::{Channel, Endpoint};
+use tonic::transport::ClientTlsConfig;
 use tower::Service;
-#[cfg(not(madsim))]
-use utils::certs;
-use utils::config::ClientConfig;
+use utils::{build_endpoint, config::ClientConfig};
 use xlineapi::command::{Command, CurpClient};
 
 use crate::{
@@ -231,7 +229,7 @@ impl Client {
             .into_iter()
             .map(|addr| addr.as_ref().to_owned())
             .collect();
-        let channel = Self::build_channel(addrs.clone()).await?;
+        let channel = Self::build_channel(addrs.clone(), options.tls_config.as_ref()).await?;
         let curp_client = Arc::new(
             CurpClientBuilder::new(options.client_config)
                 .discover_from(addrs)
@@ -286,18 +284,14 @@ impl Client {
     }
 
     /// Build a tonic load balancing channel.
-    async fn build_channel(addrs: Vec<String>) -> Result<Channel, XlineClientBuildError> {
+    async fn build_channel(
+        addrs: Vec<String>,
+        tls_config: Option<&ClientTlsConfig>,
+    ) -> Result<Channel, XlineClientBuildError> {
         let (channel, tx) = Channel::balance_channel(64);
 
-        for mut addr in addrs {
-            if !addr.starts_with("https://") {
-                addr.insert_str(0, "https://");
-            }
-            let endpoint = Endpoint::from_shared(addr.clone())?;
-            #[cfg(not(madsim))]
-            let endpoint = endpoint.tls_config(
-                ClientTlsConfig::new().ca_certificate(Certificate::from_pem(certs::ca_cert())),
-            )?;
+        for addr in addrs {
+            let endpoint = build_endpoint(&addr, tls_config)?;
             tx.send(tower::discover::Change::Insert(addr, endpoint))
                 .await
                 .unwrap_or_else(|_| unreachable!("The channel will not closed"));
@@ -368,6 +362,8 @@ impl Client {
 pub struct ClientOptions {
     /// User is a pair values of name and password
     user: Option<(String, String)>,
+    /// Client tls config
+    tls_config: Option<ClientTlsConfig>,
     /// config for the curp client
     client_config: ClientConfig,
 }
@@ -376,9 +372,14 @@ impl ClientOptions {
     /// Create a new `ClientOptions`
     #[inline]
     #[must_use]
-    pub fn new(user: Option<(String, String)>, client_config: ClientConfig) -> Self {
+    pub fn new(
+        user: Option<(String, String)>,
+        tls_config: Option<ClientTlsConfig>,
+        client_config: ClientConfig,
+    ) -> Self {
         Self {
             user,
+            tls_config,
             client_config,
         }
     }
@@ -390,11 +391,18 @@ impl ClientOptions {
         self.user.clone()
     }
 
+    /// Get `tls_config`
+    #[inline]
+    #[must_use]
+    pub fn tls_config(&self) -> Option<&ClientTlsConfig> {
+        self.tls_config.as_ref()
+    }
+
     /// Get `client_config`
     #[inline]
     #[must_use]
-    pub fn client_config(&self) -> ClientConfig {
-        self.client_config
+    pub fn client_config(&self) -> &ClientConfig {
+        &self.client_config
     }
 
     /// Set `user`
@@ -403,7 +411,7 @@ impl ClientOptions {
     pub fn with_user(self, name: impl Into<String>, password: impl Into<String>) -> Self {
         Self {
             user: Some((name.into(), password.into())),
-            client_config: self.client_config,
+            ..self
         }
     }
 
@@ -412,8 +420,18 @@ impl ClientOptions {
     #[must_use]
     pub fn with_client_config(self, client_config: ClientConfig) -> Self {
         Self {
-            user: self.user,
             client_config,
+            ..self
+        }
+    }
+
+    /// Set `tls_config`
+    #[inline]
+    #[must_use]
+    pub fn with_tls_config(self, tls_config: ClientTlsConfig) -> Self {
+        Self {
+            tls_config: Some(tls_config),
+            ..self
         }
     }
 }
