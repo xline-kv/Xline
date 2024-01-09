@@ -240,24 +240,15 @@ fn build_endpoints(addrs: Vec<String>) -> Result<Vec<Endpoint>, tonic::Status> {
             if !addr.starts_with("https://") {
                 addr.insert_str(0, "https://");
             }
+            let endpoint = Endpoint::from_shared(addr.clone())
+                .map_err(|e| tonic::Status::internal(e.to_string()))?;
             #[cfg(not(madsim))]
-            let tls_config =
-                ClientTlsConfig::new().ca_certificate(Certificate::from_pem(certs::ca_cert()));
-
-            let ep = Endpoint::from_shared(addr)
-                .and_then(|e| {
-                    #[cfg(not(madsim))]
-                    let res = e.tls_config(tls_config);
-                    #[cfg(madsim)]
-                    let res = Ok(e);
-                    res
-                })
-                .map_err(|e| {
-                    tonic::Status::internal(format!(
-                        "create endpoint and set tls config error: {e}"
-                    ))
-                })?;
-            Ok(ep)
+            let endpoint = endpoint
+                .tls_config(
+                    ClientTlsConfig::new().ca_certificate(Certificate::from_pem(certs::ca_cert())),
+                )
+                .map_err(|e| tonic::Status::internal(e.to_string()))?;
+            Ok(endpoint)
         })
         .collect()
 }

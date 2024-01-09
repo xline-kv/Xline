@@ -153,7 +153,7 @@ use std::{
 };
 
 use curp::client::ClientBuilder as CurpClientBuilder;
-use http::{header::AUTHORIZATION, HeaderValue, Request, Uri};
+use http::{header::AUTHORIZATION, HeaderValue, Request};
 #[cfg(not(madsim))]
 use tonic::transport::{Certificate, ClientTlsConfig};
 use tonic::transport::{Channel, Endpoint};
@@ -286,17 +286,12 @@ impl Client {
             if !addr.starts_with("https://") {
                 addr.insert_str(0, "https://");
             }
-            let uri: Uri = addr.parse().map_err(|_e| {
-                XlineClientBuildError::InvalidArguments(String::from("Invalid uri"))
-            })?;
+            let endpoint = Endpoint::from_shared(addr.clone())?;
             #[cfg(not(madsim))]
-            let tls_config =
-                ClientTlsConfig::new().ca_certificate(Certificate::from_pem(certs::ca_cert()));
-            let ep = Endpoint::from(uri.clone());
-            #[cfg(not(madsim))]
-            let ep = ep.tls_config(tls_config)?;
-
-            tx.send(tower::discover::Change::Insert(uri, ep))
+            let endpoint = endpoint.tls_config(
+                ClientTlsConfig::new().ca_certificate(Certificate::from_pem(certs::ca_cert())),
+            )?;
+            tx.send(tower::discover::Change::Insert(addr, endpoint))
                 .await
                 .unwrap_or_else(|_| unreachable!("The channel will not closed"));
         }
