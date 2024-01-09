@@ -15,12 +15,11 @@ use super::{
     unary::Unary,
 };
 use crate::{
-    client_new::ClientApi,
+    client::ClientApi,
     members::ServerId,
     rpc::{
         connect::{ConnectApi, MockConnectApi},
-        CurpError, CurpErrorPriority, FetchClusterResponse, Member, ProposeId, ProposeResponse,
-        WaitSyncedResponse,
+        CurpError, FetchClusterResponse, Member, ProposeId, ProposeResponse, WaitSyncedResponse,
     },
 };
 
@@ -271,7 +270,7 @@ async fn test_unary_fast_round_return_early_err() {
         CurpError::expired_client_id(),
         CurpError::redirect(Some(1), 0),
     ] {
-        assert_eq!(early_err.priority(), CurpErrorPriority::ReturnImmediately);
+        assert!(early_err.should_abort_fast_round());
         // record how many times `handle_propose` was invoked.
         let counter = Arc::new(Mutex::new(0));
         let connects = init_mocked_connects(3, |_id, conn| {
@@ -349,6 +348,29 @@ async fn test_unary_fast_round_with_two_leader() {
         .unwrap();
     // quorum: server(0, 1, 2, 3)
     assert_eq!(res, TestCommandResult::new(vec![2], vec![2]));
+}
+
+// We may encounter this scenario during leader election
+#[traced_test]
+#[tokio::test]
+async fn test_unary_fast_round_without_leader() {
+    let connects = init_mocked_connects(5, |id, conn| {
+        conn.expect_propose().return_once(move |_req, _timeout| {
+            let resp = match id {
+                0 | 1 | 2 | 3 | 4 => ProposeResponse::new_empty(),
+                _ => unreachable!("there are only 5 nodes"),
+            };
+            Ok(tonic::Response::new(resp))
+        });
+    });
+    // old local leader(0), term 1
+    let unary = Unary::<TestCommand>::new(connects, None, Some(0), Some(1));
+    let res = unary
+        .fast_round(ProposeId(0, 0), &TestCommand::default())
+        .await
+        .unwrap_err();
+    // quorum: server(0, 1, 2, 3)
+    assert_eq!(res, CurpError::WrongClusterVersion(()));
 }
 
 #[traced_test]
@@ -523,7 +545,6 @@ async fn test_unary_propose_fast_path_fallback_slow_path() {
 #[tokio::test]
 async fn test_unary_propose_return_early_err() {
     for early_err in [
-        CurpError::duplicated(),
         CurpError::shutting_down(),
         CurpError::invalid_config(),
         CurpError::node_already_exists(),
@@ -532,7 +553,7 @@ async fn test_unary_propose_return_early_err() {
         CurpError::expired_client_id(),
         CurpError::redirect(Some(1), 0),
     ] {
-        assert_eq!(early_err.priority(), CurpErrorPriority::ReturnImmediately);
+        assert!(early_err.should_abort_fast_round());
         // record how many times rpc was invoked.
         let counter = Arc::new(Mutex::new(0));
         let connects = init_mocked_connects(5, |id, conn| {
@@ -567,15 +588,12 @@ async fn test_unary_propose_return_early_err() {
 #[tokio::test]
 async fn test_retry_propose_return_no_retry_error() {
     for early_err in [
-        CurpError::duplicated(),
         CurpError::shutting_down(),
         CurpError::invalid_config(),
         CurpError::node_already_exists(),
         CurpError::node_not_exist(),
         CurpError::learner_not_catch_up(),
     ] {
-        // all no retry errors are returned early
-        assert_eq!(early_err.priority(), CurpErrorPriority::ReturnImmediately);
         // record how many times rpc was invoked.
         let counter = Arc::new(Mutex::new(0));
         let connects = init_mocked_connects(5, |id, conn| {
@@ -617,6 +635,22 @@ async fn test_retry_propose_return_retry_error() {
     ] {
         let connects = init_mocked_connects(5, |id, conn| {
             let err = early_err.clone();
+            conn.expect_fetch_cluster()
+                .returning(move |_req, _timeout| {
+                    Ok(tonic::Response::new(FetchClusterResponse {
+                        leader_id: Some(0),
+                        term: 2,
+                        cluster_id: 123,
+                        members: vec![
+                            Member::new(0, "S0", vec!["A0".to_owned()], false),
+                            Member::new(1, "S1", vec!["A1".to_owned()], false),
+                            Member::new(2, "S2", vec!["A2".to_owned()], false),
+                            Member::new(3, "S3", vec!["A3".to_owned()], false),
+                            Member::new(4, "S4", vec!["A4".to_owned()], false),
+                        ],
+                        cluster_version: 1,
+                    }))
+                });
             conn.expect_propose()
                 .returning(move |_req, _timeout| Err(err.clone()));
             if id == 0 {
@@ -632,6 +666,6 @@ async fn test_retry_propose_return_retry_error() {
             .propose(&TestCommand::default(), false)
             .await
             .unwrap_err();
-        assert_eq!(err.message(), "request timeout");
+        assert!(err.message().contains("request timeout"));
     }
 }

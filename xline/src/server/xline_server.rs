@@ -3,8 +3,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use anyhow::Result;
 use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{
-    client::Client,
-    error::ClientError,
+    client::ClientBuilder as CurpClientBuilder,
     members::ClusterInfo,
     rpc::{InnerProtocolServer, ProtocolServer},
     server::Rpc,
@@ -23,7 +22,7 @@ use utils::{
     config::{ClientConfig, CompactConfig, CurpConfig, ServerTimeout, StorageConfig},
     shutdown,
 };
-use xlineapi::command::Command;
+use xlineapi::command::{Command, CurpClient};
 
 use super::{
     auth_server::AuthServer,
@@ -57,10 +56,7 @@ use crate::{
 };
 
 /// Rpc Server of curp protocol
-type CurpServer<S> = Rpc<Command, State<S>>;
-
-/// Rpc Client of curp protocol
-type CurpClient = Client<Command>;
+type CurpServer<S> = Rpc<Command, State<S, Arc<CurpClient>>>;
 
 /// Xline server
 #[derive(Debug)]
@@ -241,8 +237,8 @@ impl XlineServer {
             .add_service(RpcWatchServer::new(watch_server))
             .add_service(RpcMaintenanceServer::new(maintenance_server))
             .add_service(RpcClusterServer::new(cluster_server))
-            .add_service(ProtocolServer::from_arc(Arc::clone(&curp_server)))
-            .add_service(InnerProtocolServer::from_arc(curp_server));
+            .add_service(ProtocolServer::new(curp_server.clone()))
+            .add_service(InnerProtocolServer::new(curp_server));
         #[cfg(not(madsim))]
         let router = {
             let (mut reporter, health_server) = tonic_health::server::health_reporter();
@@ -340,6 +336,8 @@ impl XlineServer {
     /// Init `KvServer`, `LockServer`, `LeaseServer`, `WatchServer` and `CurpServer`
     /// for the Xline Server.
     #[allow(clippy::type_complexity, clippy::too_many_lines)] // it is easy to read
+    #[allow(clippy::as_conversions)] // cast to dyn
+    #[allow(trivial_casts)] // same as above
     async fn init_servers<S: StorageApi>(
         &self,
         persistent: Arc<S>,
@@ -352,7 +350,7 @@ impl XlineServer {
         WatchServer<S>,
         MaintenanceServer<S>,
         ClusterServer,
-        Arc<CurpServer<S>>,
+        CurpServer<S>,
         Arc<CurpClient>,
     )> {
         let (header_gen, id_gen) = Self::construct_generator(&self.cluster_info);
@@ -391,20 +389,11 @@ impl XlineServer {
             _ => unimplemented!(),
         };
 
-        let client = Arc::new(
-            CurpClient::builder()
-                .local_server_id(self.cluster_info.self_id())
-                .config(self.client_config)
-                .build_from_all_members(self.cluster_info.all_members_addrs(), None)
-                .await?,
-        );
-
         let auto_compactor = if let Some(auto_config_cfg) = *self.compact_cfg.auto_compact_config()
         {
             Some(
                 auto_compactor(
                     self.is_leader,
-                    Arc::clone(&client),
                     header_gen.general_revision_arc(),
                     self.shutdown_trigger.subscribe(),
                     auto_config_cfg,
@@ -415,7 +404,10 @@ impl XlineServer {
             None
         };
 
+        let auto_compactor_c = auto_compactor.clone();
+
         let state = State::new(Arc::clone(&lease_storage), auto_compactor);
+
         let curp_server = CurpServer::new(
             Arc::clone(&self.cluster_info),
             self.is_leader,
@@ -426,6 +418,19 @@ impl XlineServer {
             self.shutdown_trigger.clone(),
         )
         .await;
+
+        let client = Arc::new(
+            CurpClientBuilder::new(self.client_config)
+                .cluster_version(self.cluster_info.cluster_version())
+                .all_members(self.cluster_info.all_members_addrs())
+                .bypass(self.cluster_info.self_id(), curp_server.clone())
+                .build::<Command>()
+                .await?,
+        ) as Arc<CurpClient>;
+
+        if let Some(compactor) = auto_compactor_c {
+            compactor.set_compactable(Arc::clone(&client)).await;
+        }
 
         Ok((
             KvServer::new(
@@ -465,15 +470,15 @@ impl XlineServer {
                 Arc::clone(&self.cluster_info),
             ),
             ClusterServer::new(Arc::clone(&client), header_gen),
-            Arc::new(curp_server),
+            curp_server,
             client,
         ))
     }
 
     /// Publish the name of current node to cluster
-    async fn publish(&self, curp_client: Arc<CurpClient>) -> Result<(), ClientError<Command>> {
+    async fn publish(&self, curp_client: Arc<CurpClient>) -> Result<(), tonic::Status> {
         curp_client
-            .publish(self.cluster_info.self_id(), self.cluster_info.self_name())
+            .propose_publish(self.cluster_info.self_id(), self.cluster_info.self_name())
             .await
     }
 

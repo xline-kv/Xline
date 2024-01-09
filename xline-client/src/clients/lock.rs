@@ -1,4 +1,5 @@
 use std::{
+    fmt::Debug,
     pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -7,11 +8,10 @@ use std::{
 };
 
 use clippy_utilities::OverflowArithmetic;
-use curp::client::Client as CurpClient;
 use futures::{Future, FutureExt};
 use tonic::transport::Channel;
 use xlineapi::{
-    command::{command_from_request_wrapper, Command, CommandResponse, KeyRange, SyncResponse},
+    command::{command_from_request_wrapper, CommandResponse, KeyRange, SyncResponse},
     Compare, CompareResult, CompareTarget, DeleteRangeRequest, DeleteRangeResponse, EventType,
     LockResponse, PutRequest, RangeRequest, RangeResponse, Request, RequestOp, RequestWithToken,
     RequestWrapper, Response, ResponseHeader, SortOrder, SortTarget, TargetUnion, TxnRequest,
@@ -27,13 +27,14 @@ use crate::{
         lock::{LockRequest, UnlockRequest},
         watch::WatchRequest,
     },
+    CurpClient,
 };
 
 /// Client for Lock operations.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct LockClient {
     /// The client running the CURP protocol, communicate with all servers.
-    curp_client: Arc<CurpClient<Command>>,
+    curp_client: Arc<CurpClient>,
     /// The lease client
     lease_client: LeaseClient,
     /// The watch client
@@ -42,13 +43,24 @@ pub struct LockClient {
     token: Option<String>,
 }
 
+impl Debug for LockClient {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LockClient")
+            .field("lease_client", &self.lease_client)
+            .field("watch_client", &self.watch_client)
+            .field("token", &self.token)
+            .finish()
+    }
+}
+
 // These methods primarily originate from xline lock server,
 // see also: `xline/src/server/lock_server.rs`
 impl LockClient {
     /// Creates a new `LockClient`
     #[inline]
     pub fn new(
-        curp_client: Arc<CurpClient<Command>>,
+        curp_client: Arc<CurpClient>,
         channel: Channel,
         token: Option<String>,
         id_gen: Arc<LeaseIdGenerator>,
@@ -247,8 +259,8 @@ impl LockClient {
 
         let cmd = command_from_request_wrapper(request_with_token);
         self.curp_client
-            .propose(cmd, use_fast_path)
-            .await
+            .propose(&cmd, use_fast_path)
+            .await?
             .map_err(Into::into)
     }
 
@@ -357,7 +369,8 @@ struct LockFuture<'a> {
     /// The inner lock future
     lock_inner: Pin<&'a mut (dyn Future<Output = Result<LockResponse>> + Send)>,
 }
-impl std::fmt::Debug for LockFuture<'_> {
+
+impl Debug for LockFuture<'_> {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(

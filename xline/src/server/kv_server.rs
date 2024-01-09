@@ -7,14 +7,14 @@ use std::{
     time::Duration,
 };
 
-use curp::client::{Client, ReadState};
+use curp::rpc::ReadState;
 use dashmap::DashMap;
 use event_listener::Event;
 use futures::future::{join_all, Either};
 use tokio::time::timeout;
 use tracing::{debug, instrument};
 use xlineapi::{
-    command::{command_from_request_wrapper, Command, CommandResponse, SyncResponse},
+    command::{command_from_request_wrapper, Command, CommandResponse, CurpClient, SyncResponse},
     execute_error::ExecuteError,
     request_validation::RequestValidator,
     RequestWithToken, ResponseWrapper,
@@ -23,7 +23,6 @@ use xlineapi::{
 use super::{
     auth_server::get_token,
     barriers::{IdBarrier, IndexBarrier},
-    command::client_err_to_status,
 };
 use crate::{
     revision_check::RevisionCheck,
@@ -36,7 +35,6 @@ use crate::{
 };
 
 /// KV Server
-#[derive(Debug)]
 pub(crate) struct KvServer<S>
 where
     S: StorageApi,
@@ -54,7 +52,7 @@ where
     /// Compact timeout
     compact_timeout: Duration,
     /// Consensus client
-    client: Arc<Client<Command>>,
+    client: Arc<CurpClient>,
     /// Compact events
     compact_events: Arc<DashMap<u64, Arc<Event>>>,
     /// Next compact_id
@@ -74,7 +72,7 @@ where
         id_barrier: Arc<IdBarrier>,
         range_retry_timeout: Duration,
         compact_timeout: Duration,
-        client: Arc<Client<Command>>,
+        client: Arc<CurpClient>,
         compact_events: Arc<DashMap<u64, Arc<Event>>>,
     ) -> Self {
         Self {
@@ -120,10 +118,8 @@ where
         let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
         let cmd = command_from_request_wrapper(wrapper);
 
-        self.client
-            .propose(cmd, use_fast_path)
-            .await
-            .map_err(client_err_to_status)
+        let res = self.client.propose(&cmd, use_fast_path).await??;
+        Ok(res)
     }
 
     /// Update revision of `ResponseHeader`
@@ -170,16 +166,13 @@ where
     /// Wait current node's state machine apply the conflict commands
     async fn wait_read_state(&self, cmd: &Command) -> Result<(), tonic::Status> {
         loop {
-            let rd_state = self
-                .client
-                .fetch_read_state(cmd)
-                .await
-                .map_err(|e| tonic::Status::internal(e.to_string()))?;
+            let rd_state = self.client.fetch_read_state(cmd).await?;
             let wait_future = async move {
                 match rd_state {
-                    ReadState::Ids(inflight_ids) => {
-                        debug!(?inflight_ids, "Range wait for command ids");
-                        let fus = inflight_ids
+                    ReadState::Ids(id_set) => {
+                        debug!(?id_set, "Range wait for command ids");
+                        let fus = id_set
+                            .inflight_ids
                             .into_iter()
                             .map(|id| self.id_barrier.wait(id))
                             .collect::<Vec<_>>();
@@ -189,7 +182,6 @@ where
                         debug!(?index, "Range wait for commit index");
                         self.index_barrier.wait(index).await;
                     }
-                    _ => unreachable!(),
                 }
             };
             if timeout(self.range_retry_timeout, wait_future).await.is_ok() {
@@ -369,11 +361,7 @@ where
             Either::Right(async {})
         };
         let cmd = command_from_request_wrapper(wrapper);
-        let (cmd_res, _sync_res) = self
-            .client
-            .propose(cmd, !physical)
-            .await
-            .map_err(client_err_to_status)?;
+        let (cmd_res, _sync_res) = self.client.propose(&cmd, !physical).await??;
         let resp = cmd_res.into_inner();
         if timeout(self.compact_timeout, compact_physical_fut)
             .await

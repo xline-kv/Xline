@@ -152,7 +152,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use curp::client::Client as CurpClient;
+use curp::client::ClientBuilder as CurpClientBuilder;
 use http::{header::AUTHORIZATION, HeaderValue, Request, Uri};
 #[cfg(not(madsim))]
 use tonic::transport::{Certificate, ClientTlsConfig};
@@ -161,6 +161,7 @@ use tower::Service;
 #[cfg(not(madsim))]
 use utils::certs;
 use utils::config::ClientConfig;
+use xlineapi::command::{Command, CurpClient};
 
 use crate::{
     clients::{
@@ -209,6 +210,8 @@ impl Client {
     /// If `Self::build_channel` fails.
     #[inline]
     #[allow(clippy::pattern_type_mismatch)] // allow mismatch in map
+    #[allow(clippy::as_conversions)] // cast to dyn
+    #[allow(trivial_casts)] // same as above
     pub async fn connect<E, S>(
         all_members: S,
         options: ClientOptions,
@@ -223,11 +226,12 @@ impl Client {
             .collect();
         let channel = Self::build_channel(addrs.clone()).await?;
         let curp_client = Arc::new(
-            CurpClient::builder()
-                .config(options.client_config)
-                .build_from_addrs(addrs)
+            CurpClientBuilder::new(options.client_config)
+                .discover_from(addrs)
+                .await?
+                .build::<Command>()
                 .await?,
-        );
+        ) as Arc<CurpClient>;
         let id_gen = Arc::new(lease_gen::LeaseIdGenerator::new());
 
         let token = match options.user {

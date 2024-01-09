@@ -2,16 +2,15 @@ use std::sync::Arc;
 
 use async_stream::stream;
 use clippy_utilities::OverflowArithmetic;
-use curp::client::Client;
 use tonic::transport::{Channel, Endpoint};
 use tracing::debug;
 use xlineapi::{
-    command::{command_from_request_wrapper, Command, CommandResponse, KeyRange, SyncResponse},
+    command::{command_from_request_wrapper, CommandResponse, CurpClient, KeyRange, SyncResponse},
     execute_error::ExecuteError,
     EventType, RequestWithToken,
 };
 
-use super::{auth_server::get_token, command::client_err_to_status};
+use super::auth_server::get_token;
 use crate::{
     id_gen::IdGenerator,
     rpc::{
@@ -27,10 +26,9 @@ use crate::{
 const DEFAULT_SESSION_TTL: i64 = 60;
 
 /// Lock Server
-#[derive(Debug)]
 pub(super) struct LockServer {
     /// Consensus client
-    client: Arc<Client<Command>>,
+    client: Arc<CurpClient>,
     /// Id Generator
     id_gen: Arc<IdGenerator>,
     /// Server addresses
@@ -40,7 +38,7 @@ pub(super) struct LockServer {
 impl LockServer {
     /// New `LockServer`
     pub(super) fn new(
-        client: Arc<Client<Command>>,
+        client: Arc<CurpClient>,
         id_gen: Arc<IdGenerator>,
         addrs: Vec<String>,
     ) -> Self {
@@ -74,10 +72,8 @@ impl LockServer {
         let wrapper = RequestWithToken::new_with_token(request.into(), token);
         let cmd = command_from_request_wrapper(wrapper);
 
-        self.client
-            .propose(cmd, use_fast_path)
-            .await
-            .map_err(client_err_to_status)
+        let res = self.client.propose(&cmd, use_fast_path).await??;
+        Ok(res)
     }
 
     /// Crate txn for try acquire lock

@@ -294,7 +294,16 @@ pub(crate) struct Connect<C> {
 
 impl<C> Connect<C> {
     /// Update server addresses, the new addresses will override the old ones
-    async fn inner_update_addrs(&self, addrs: Vec<String>) -> Result<(), tonic::transport::Error> {
+    async fn inner_update_addrs(
+        &self,
+        mut addrs: Vec<String>,
+    ) -> Result<(), tonic::transport::Error> {
+        for addr in &mut addrs {
+            // TODO: support TLS
+            if !addr.starts_with("http://") {
+                addr.insert_str(0, "http://");
+            }
+        }
         let mut old = self.addrs.lock().await;
         let old_addrs: HashSet<String> = old.iter().cloned().collect();
         let new_addrs: HashSet<String> = addrs.iter().cloned().collect();
@@ -485,7 +494,6 @@ pub(crate) struct BypassedConnect<T: Protocol> {
 
 impl<T: Protocol> BypassedConnect<T> {
     /// Create a bypassed connect
-    #[allow(unused)] // TODO: remove
     pub(crate) fn new(id: ServerId, server: T) -> Self {
         Self { server, id }
     }

@@ -6,7 +6,7 @@ use std::{
 use async_trait::async_trait;
 use clippy_utilities::NumericCast;
 use curp::{
-    client::Client,
+    client::{ClientApi, ClientBuilder},
     error::ServerError,
     members::{ClusterInfo, ServerId},
     rpc::Member,
@@ -230,7 +230,7 @@ impl CurpGroup {
             },
         );
         let client = self.new_client().await;
-        client.publish(id, name).await;
+        client.propose_publish(id, name).await.unwrap();
     }
 
     pub fn all_addrs(&self) -> impl Iterator<Item = &String> {
@@ -248,11 +248,13 @@ impl CurpGroup {
         &self.nodes[id]
     }
 
-    pub async fn new_client(&self) -> Client<TestCommand> {
+    pub async fn new_client(&self) -> impl ClientApi<Error = tonic::Status, Cmd = TestCommand> {
         let addrs = self.all_addrs().cloned().collect();
-        Client::builder()
-            .config(ClientConfig::default())
-            .build_from_addrs(addrs)
+        ClientBuilder::new(ClientConfig::default())
+            .discover_from(addrs)
+            .await
+            .unwrap()
+            .build()
             .await
             .unwrap()
     }

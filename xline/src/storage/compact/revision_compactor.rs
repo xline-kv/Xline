@@ -7,10 +7,9 @@ use std::{
 };
 
 use clippy_utilities::OverflowArithmetic;
-use curp::error::ClientError;
+use tokio::sync::RwLock;
 use tracing::{info, warn};
 use utils::shutdown;
-use xlineapi::execute_error::ExecuteError;
 
 use super::{Compactable, Compactor};
 use crate::revision_number::RevisionNumberGenerator;
@@ -24,7 +23,7 @@ pub(crate) struct RevisionCompactor<C: Compactable> {
     /// `is_leader` indicates whether the current node is a leader or not.
     is_leader: AtomicBool,
     /// curp client
-    client: Arc<C>,
+    compactable: RwLock<Option<C>>,
     /// revision getter
     revision_getter: Arc<RevisionNumberGenerator>,
     /// shutdown listener
@@ -37,14 +36,13 @@ impl<C: Compactable> RevisionCompactor<C> {
     /// Creates a new revision compactor
     pub(super) fn new_arc(
         is_leader: bool,
-        client: Arc<C>,
         revision_getter: Arc<RevisionNumberGenerator>,
         shutdown_listener: shutdown::Listener,
         retention: i64,
     ) -> Arc<Self> {
         Arc::new(Self {
             is_leader: AtomicBool::new(is_leader),
-            client,
+            compactable: RwLock::new(None),
             revision_getter,
             shutdown_listener,
             retention,
@@ -68,37 +66,34 @@ impl<C: Compactable> RevisionCompactor<C> {
             target_revision, self.retention
         );
 
-        let res = self.client.compact(target_revision).await;
-        if res.is_ok() {
-            info!(
-                "completed auto revision compaction, revision = {}, retention = {}, took {:?}",
-                target_revision,
-                self.retention,
-                now.elapsed().as_secs()
-            );
-            return Some(target_revision);
+        let Some(ref compactable) = *self.compactable.read().await else {
+            return None;
+        };
+
+        match compactable.compact(target_revision).await {
+            Ok(rev) => {
+                info!(
+                    "completed auto revision compaction, request revision = {}, target revision = {}, retention = {}, took {:?}",
+                    target_revision,
+                    rev,
+                    self.retention,
+                    now.elapsed().as_secs()
+                );
+                Some(rev)
+            }
+            Err(err) => {
+                warn!(
+                    "failed auto revision compaction, revision = {}, retention = {}, result: {}",
+                    target_revision, self.retention, err
+                );
+                None
+            }
         }
-        if let Err(ClientError::CommandError(ExecuteError::RevisionCompacted(_, compacted_rev))) =
-            res
-        {
-            info!(
-                "required revision {} has been compacted, the current compacted revision is {},  retention = {:?}",
-                target_revision,
-                compacted_rev,
-                self.retention,
-            );
-            return Some(compacted_rev);
-        }
-        warn!(
-            "failed auto revision compaction, revision = {}, retention = {}, result: {:?}",
-            target_revision, self.retention, res
-        );
-        None
     }
 }
 
 #[async_trait::async_trait]
-impl<C: Compactable> Compactor for RevisionCompactor<C> {
+impl<C: Compactable> Compactor<C> for RevisionCompactor<C> {
     fn pause(&self) {
         self.is_leader.store(false, Relaxed);
     }
@@ -125,6 +120,10 @@ impl<C: Compactable> Compactor for RevisionCompactor<C> {
             }
         }
     }
+
+    async fn set_compactable(&self, compactable: C) {
+        *self.compactable.write().await = Some(compactable);
+    }
 }
 
 #[cfg(test)]
@@ -135,16 +134,12 @@ mod test {
     #[tokio::test]
     async fn revision_compactor_should_work_in_normal_path() {
         let mut compactable = MockCompactable::new();
-        compactable.expect_compact().times(3).returning(|_| Ok(()));
+        compactable.expect_compact().times(3).returning(Ok);
         let (_shutdown_trigger, shutdown_listener) = shutdown::channel();
         let revision_gen = Arc::new(RevisionNumberGenerator::new(110));
-        let revision_compactor = RevisionCompactor::new_arc(
-            true,
-            Arc::new(compactable),
-            Arc::clone(&revision_gen),
-            shutdown_listener,
-            100,
-        );
+        let revision_compactor =
+            RevisionCompactor::new_arc(true, Arc::clone(&revision_gen), shutdown_listener, 100);
+        revision_compactor.set_compactable(compactable).await;
         // auto_compactor works successfully
         assert_eq!(revision_compactor.do_compact(None).await, Some(10));
         revision_gen.next(); // current revision: 111

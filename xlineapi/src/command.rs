@@ -3,6 +3,7 @@ use std::{
     ops::{Bound, RangeBounds},
 };
 
+use curp::client::ClientApi;
 use curp::cmd::Command as CurpCommand;
 use curp_external_api::cmd::{ConflictCheck, PbCodec, PbSerializeError};
 use itertools::Itertools;
@@ -14,6 +15,10 @@ use crate::{
     PbSyncResponse, PutRequest, RangeRequest, Request, RequestWithToken, RequestWrapper,
     ResponseWrapper, TxnRequest,
 };
+
+/// The curp client trait object on the command of xline
+/// TODO: use `type CurpClient = impl ClientApi<...>` when `type_alias_impl_trait` stabilized
+pub type CurpClient = dyn ClientApi<Error = tonic::Status, Cmd = Command> + Sync + Send + 'static;
 
 /// Range start and end to get all keys
 const UNBOUNDED: &[u8] = &[0_u8];

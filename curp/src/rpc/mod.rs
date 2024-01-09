@@ -12,6 +12,7 @@ pub use self::proto::{
         cmd_result::Result as CmdResultInner,
         curp_error::Err as CurpError, // easy for match
         curp_error::Redirect,
+        fetch_read_state_response::{IdSet, ReadState},
         propose_conf_change_request::{ConfChange, ConfChangeType},
         protocol_client,
         protocol_server::ProtocolServer,
@@ -31,10 +32,9 @@ pub use self::proto::{
 };
 pub(crate) use self::proto::{
     commandpb::{
-        fetch_read_state_response::{IdSet, ReadState},
-        protocol_server::Protocol,
-        CurpError as CurpErrorWrapper, FetchReadStateRequest, FetchReadStateResponse,
-        ShutdownRequest, ShutdownResponse, WaitSyncedRequest, WaitSyncedResponse,
+        protocol_server::Protocol, CurpError as CurpErrorWrapper, FetchReadStateRequest,
+        FetchReadStateResponse, ShutdownRequest, ShutdownResponse, WaitSyncedRequest,
+        WaitSyncedResponse,
     },
     inner_messagepb::{
         inner_protocol_server::InnerProtocol, AppendEntriesRequest, AppendEntriesResponse,
@@ -639,6 +639,36 @@ impl CurpError {
         Self::Internal(reason.into())
     }
 
+    /// Whether to abort fast round early
+    pub(crate) fn should_abort_fast_round(&self) -> bool {
+        matches!(
+            *self,
+            CurpError::Duplicated(_)
+                | CurpError::ShuttingDown(_)
+                | CurpError::InvalidConfig(_)
+                | CurpError::NodeAlreadyExists(_)
+                | CurpError::NodeNotExists(_)
+                | CurpError::LearnerNotCatchUp(_)
+                | CurpError::ExpiredClientId(_)
+                | CurpError::Redirect(_)
+        )
+    }
+
+    /// Whether to abort slow round early
+    pub(crate) fn should_abort_slow_round(&self) -> bool {
+        matches!(
+            *self,
+            CurpError::ShuttingDown(_)
+                | CurpError::InvalidConfig(_)
+                | CurpError::NodeAlreadyExists(_)
+                | CurpError::NodeNotExists(_)
+                | CurpError::LearnerNotCatchUp(_)
+                | CurpError::ExpiredClientId(_)
+                | CurpError::Redirect(_)
+                | CurpError::WrongClusterVersion(_)
+        )
+    }
+
     /// Get the priority of the error
     pub(crate) fn priority(&self) -> CurpErrorPriority {
         match *self {
@@ -649,8 +679,8 @@ impl CurpError {
             | CurpError::NodeNotExists(_)
             | CurpError::LearnerNotCatchUp(_)
             | CurpError::ExpiredClientId(_)
-            | CurpError::Redirect(_) => CurpErrorPriority::ReturnImmediately,
-            CurpError::WrongClusterVersion(_) => CurpErrorPriority::High,
+            | CurpError::Redirect(_)
+            | CurpError::WrongClusterVersion(_) => CurpErrorPriority::High,
             CurpError::RpcTransport(_) | CurpError::Internal(_) | CurpError::KeyConflict(_) => {
                 CurpErrorPriority::Low
             }
@@ -658,22 +688,15 @@ impl CurpError {
     }
 }
 
-/// The priority of curp error, indicate which error should be handled in retry layer
+/// The priority of curp error
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum CurpErrorPriority {
-    /// Low priority, in multiple sequenced RPCs, if preceding RPCs returns
-    /// a low-priority error, will not exit prematurely. In concurrent RPCs,
-    /// a low-priority error returned may be overridden by a higher-priority error.
+    /// Low priority, a low-priority error returned may
+    /// be overridden by a higher-priority error.
     Low = 1,
-    /// High priority, in multiple sequenced RPCs, if preceding RPCs returns
-    /// a high-priority error, it will exit early, preventing next RPCs from
-    /// proceeding. In concurrent RPCs, high-priority errors will override
+    /// High priority, high-priority errors will override
     /// low-priority errors.
     High = 2,
-    /// Should be returned immediately if any server response it. If requests are
-    /// sent to multiple servers, the request that does not have received a
-    /// response will be terminated immediately.
-    ReturnImmediately = 3,
 }
 
 impl<E: std::error::Error + 'static> From<E> for CurpError {

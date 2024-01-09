@@ -1,9 +1,6 @@
-use curp::{
-    cmd::Command as CurpCommand,
-    error::{ClientBuildError, ClientError},
-};
+use curp::cmd::Command as CurpCommand;
 use thiserror::Error;
-use xlineapi::command::Command;
+use xlineapi::{command::Command, execute_error::ExecuteError};
 
 /// The result type for `xline-client`
 pub type Result<T> = std::result::Result<T, XlineClientError<Command>>;
@@ -47,17 +44,6 @@ impl From<tonic::Status> for XlineClientBuildError {
     }
 }
 
-impl From<ClientBuildError> for XlineClientBuildError {
-    #[inline]
-    fn from(e: ClientBuildError) -> Self {
-        match e {
-            ClientBuildError::InvalidArguments(e) => Self::InvalidArguments(e),
-            ClientBuildError::RpcError(e) => Self::RpcError(e),
-            _ => unreachable!("unknown ClientBuildError type"),
-        }
-    }
-}
-
 /// The error type for `xline-client`
 #[derive(Error, Debug)]
 #[non_exhaustive]
@@ -71,6 +57,9 @@ pub enum XlineClientError<C: CurpCommand> {
     /// RPC error
     #[error("rpc error: {0}")]
     RpcError(String),
+    /// Command execution error
+    #[error("command execution error: {0}")]
+    ExecuteError(ExecuteError),
     /// Arguments invalid error
     #[error("Invalid arguments: {0}")]
     InvalidArgs(String),
@@ -111,20 +100,9 @@ impl From<tonic::Status> for XlineClientError<Command> {
     }
 }
 
-impl From<ClientError<Command>> for XlineClientError<Command> {
+impl From<ExecuteError> for XlineClientError<Command> {
     #[inline]
-    fn from(e: ClientError<Command>) -> Self {
-        match e {
-            ClientError::CommandError(e) => Self::CommandError(e),
-            ClientError::IoError(e) => Self::IoError(e),
-            ClientError::OutOfBound(s) => Self::RpcError(s.to_string()),
-            ClientError::InvalidArgs(e) => Self::InvalidArgs(e),
-            ClientError::InternalError(e) => Self::InternalError(e),
-            ClientError::Timeout => Self::Timeout,
-            ClientError::ShuttingDown => Self::ShuttingDown,
-            ClientError::EncodeDecode(e) => Self::EncodeDecode(e),
-            ClientError::WrongClusterVersion => Self::RpcError("wrong cluster version".to_owned()),
-            _ => unreachable!("unknown ClientError type"),
-        }
+    fn from(e: ExecuteError) -> Self {
+        Self::ExecuteError(e)
     }
 }

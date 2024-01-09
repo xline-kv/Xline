@@ -4,8 +4,7 @@ use std::{sync::Arc, time::Duration};
 
 use clippy_utilities::NumericCast;
 use curp::{
-    client::{Builder, Client},
-    error::ClientError,
+    client::{ClientApi, ClientBuilder},
     members::ClusterInfo,
     rpc::{ConfChange, CurpError},
 };
@@ -32,34 +31,22 @@ async fn basic_propose() {
 
     assert_eq!(
         client
-            .propose(TestCommand::new_put(vec![0], 0), true)
+            .propose(&TestCommand::new_put(vec![0], 0), true)
             .await
+            .unwrap()
             .unwrap()
             .0,
         TestCommandResult::new(vec![], vec![])
     );
     assert_eq!(
         client
-            .propose(TestCommand::new_get(vec![0]), true)
+            .propose(&TestCommand::new_get(vec![0]), true)
             .await
+            .unwrap()
             .unwrap()
             .0,
         TestCommandResult::new(vec![0], vec![1])
     );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-#[abort_on_panic]
-async fn client_build_from_addrs_should_fetch_cluster_from_server() {
-    init_logger();
-    let group = CurpGroup::new(3).await;
-
-    let all_addrs = group.all_addrs().cloned().collect();
-    let _client = Builder::<TestCommand>::default()
-        .config(ClientConfig::default())
-        .build_from_addrs(all_addrs)
-        .await
-        .unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -71,7 +58,7 @@ async fn synced_propose() {
     let client = group.new_client().await;
     let cmd = TestCommand::new_get(vec![0]);
 
-    let (er, index) = client.propose(cmd.clone(), false).await.unwrap();
+    let (er, index) = client.propose(&cmd, false).await.unwrap().unwrap();
     assert_eq!(er, TestCommandResult::new(vec![], vec![]));
     assert_eq!(index.unwrap(), 1.into()); // log[0] is a fake one
 
@@ -97,7 +84,7 @@ async fn exe_exact_n_times() {
     let client = group.new_client().await;
     let cmd = TestCommand::new_get(vec![0]);
 
-    let er = client.propose(cmd.clone(), true).await.unwrap().0;
+    let er = client.propose(&cmd, true).await.unwrap().unwrap().0;
     assert_eq!(er, TestCommandResult::new(vec![], vec![]));
 
     for exe_rx in group.exe_rxs() {
@@ -229,8 +216,9 @@ async fn concurrent_cmd_order() {
 
     assert_eq!(
         client
-            .propose(TestCommand::new_get(vec![1]), true)
+            .propose(&TestCommand::new_get(vec![1]), true)
             .await
+            .unwrap()
             .unwrap()
             .0
             .values,
@@ -252,16 +240,18 @@ async fn concurrent_cmd_order_should_have_correct_revision() {
     for i in sample_range.clone() {
         let rand_dur = Duration::from_millis(thread_rng().gen_range(0..500).numeric_cast());
         let _er = client
-            .propose(TestCommand::new_put(vec![i], i).set_as_dur(rand_dur), true)
+            .propose(&TestCommand::new_put(vec![i], i).set_as_dur(rand_dur), true)
             .await
+            .unwrap()
             .unwrap();
     }
 
     for i in sample_range {
         assert_eq!(
             client
-                .propose(TestCommand::new_get(vec![i]), true)
+                .propose(&TestCommand::new_get(vec![i]), true)
                 .await
+                .unwrap()
                 .unwrap()
                 .0
                 .revisions,
@@ -282,8 +272,8 @@ async fn shutdown_rpc_should_shutdown_the_cluster() {
         let mut collection = vec![];
         for i in 0..10 {
             let cmd = TestCommand::new_put(vec![i], i);
-            let res = req_client.propose(cmd, true).await;
-            if res.is_ok() {
+            let res = req_client.propose(&cmd, true).await;
+            if res.is_ok() && res.unwrap().is_ok() {
                 collection.push(i);
             }
         }
@@ -291,12 +281,15 @@ async fn shutdown_rpc_should_shutdown_the_cluster() {
     });
 
     let client = group.new_client().await;
-    client.shutdown().await.unwrap();
+    client.propose_shutdown().await.unwrap();
 
     let res = client
-        .propose(TestCommand::new_put(vec![888], 1), false)
+        .propose(&TestCommand::new_put(vec![888], 1), false)
         .await;
-    assert!(matches!(res, Err(ClientError::ShuttingDown)));
+    assert!(matches!(
+        CurpError::from(res.unwrap_err()),
+        CurpError::ShuttingDown(_)
+    ));
 
     let collection = collection_task.await.unwrap();
     sleep_secs(7).await; // wait for the cluster to shutdown
@@ -305,7 +298,10 @@ async fn shutdown_rpc_should_shutdown_the_cluster() {
     let group = CurpGroup::new_rocks(3, tmp_path).await;
     let client = group.new_client().await;
     for i in collection {
-        let res = client.propose(TestCommand::new_get(vec![i]), true).await;
+        let res = client
+            .propose(&TestCommand::new_get(vec![i]), true)
+            .await
+            .unwrap();
         assert_eq!(res.unwrap().0.values, vec![i]);
     }
 }
@@ -322,7 +318,7 @@ async fn propose_add_node_should_success() {
         ClusterInfo::calculate_member_id(vec!["address".to_owned()], "", Some(timestamp()));
     let changes = vec![ConfChange::add(node_id, vec!["address".to_string()])];
     let res = client.propose_conf_change(changes).await;
-    let members = res.unwrap().unwrap();
+    let members = res.unwrap();
     assert_eq!(members.len(), 4);
     assert!(members.iter().any(|m| m.id == node_id));
 }
@@ -338,14 +334,17 @@ async fn propose_remove_follower_should_success() {
     let leader_id = group.get_leader().await.0;
     let follower_id = *group.nodes.keys().find(|&id| &leader_id != id).unwrap();
     let changes = vec![ConfChange::remove(follower_id)];
-    let members = client.propose_conf_change(changes).await.unwrap().unwrap();
+    let members = client.propose_conf_change(changes).await.unwrap();
     assert_eq!(members.len(), 4);
     assert!(members.iter().all(|m| m.id != follower_id));
     sleep_secs(7).await; // wait the removed node start election and detect it is removed
     assert!(group.nodes.get(&follower_id).unwrap().handle.is_finished());
     // check if the old client can propose to the new cluster
-    let res = client.propose(TestCommand::new_get(vec![1]), true).await;
-    assert!(res.is_ok());
+    client
+        .propose(&TestCommand::new_get(vec![1]), true)
+        .await
+        .unwrap()
+        .unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -357,7 +356,7 @@ async fn propose_remove_leader_should_success() {
     let client = group.new_client().await;
     let leader_id = group.get_leader().await.0;
     let changes = vec![ConfChange::remove(leader_id)];
-    let members = client.propose_conf_change(changes).await.unwrap().unwrap();
+    let members = client.propose_conf_change(changes).await.unwrap();
     assert_eq!(members.len(), 4);
     assert!(members.iter().all(|m| m.id != leader_id));
     sleep_secs(7).await; // wait for the new leader to be elected
@@ -365,8 +364,11 @@ async fn propose_remove_leader_should_success() {
     let new_leader_id = group.get_leader().await.0;
     assert_ne!(new_leader_id, leader_id);
     // check if the old client can propose to the new cluster
-    let res = client.propose(TestCommand::new_get(vec![1]), true).await;
-    assert!(res.is_ok());
+    client
+        .propose(&TestCommand::new_get(vec![1]), true)
+        .await
+        .unwrap()
+        .unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -378,7 +380,7 @@ async fn propose_update_node_should_success() {
     let client = group.new_client().await;
     let node_id = group.nodes.keys().next().copied().unwrap();
     let changes = vec![ConfChange::update(node_id, vec!["new_addr".to_owned()])];
-    let members = client.propose_conf_change(changes).await.unwrap().unwrap();
+    let members = client.propose_conf_change(changes).await.unwrap();
     assert_eq!(members.len(), 5);
     let member = members.iter().find(|m| m.id == node_id);
     assert!(member.is_some_and(|m| m.addrs == ["new_addr"]));
@@ -394,8 +396,11 @@ async fn propose_remove_node_should_failed_when_cluster_nodes_equals_to_three() 
 
     let node_id = group.nodes.keys().next().copied().unwrap();
     let changes = vec![ConfChange::remove(node_id)];
-    let res = client.propose_conf_change(changes).await.unwrap();
-    assert!(matches!(res, Err(CurpError::InvalidConfig(()))));
+    let res = client.propose_conf_change(changes).await;
+    assert!(matches!(
+        CurpError::from(res.unwrap_err()),
+        CurpError::InvalidConfig(())
+    ));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -408,12 +413,13 @@ async fn shutdown_rpc_should_shutdown_the_cluster_when_client_has_wrong_leader()
     let leader_id = group.get_leader().await.0;
     let follower_id = *group.nodes.keys().find(|&id| &leader_id != id).unwrap();
     // build a client and set a wrong leader id
-    let client = Client::<TestCommand>::builder()
-        .config(ClientConfig::default())
-        .build_from_all_members(group.all_addrs_map(), Some(follower_id))
+    let client = ClientBuilder::new(ClientConfig::default())
+        .leader_state(follower_id, 0)
+        .all_members(group.all_addrs_map())
+        .build::<TestCommand>()
         .await
         .unwrap();
-    client.shutdown().await.unwrap();
+    client.propose_shutdown().await.unwrap();
 
     sleep_secs(7).await; // wait for the cluster to shutdown
     assert!(group.is_finished());
@@ -428,15 +434,16 @@ async fn propose_conf_change_to_follower() {
     let leader_id = group.get_leader().await.0;
     let follower_id = *group.nodes.keys().find(|&id| &leader_id != id).unwrap();
     // build a client and set a wrong leader id
-    let client = Client::<TestCommand>::builder()
-        .config(ClientConfig::default())
-        .build_from_all_members(group.all_addrs_map(), Some(follower_id))
+    let client = ClientBuilder::new(ClientConfig::default())
+        .leader_state(follower_id, 0)
+        .all_members(group.all_addrs_map())
+        .build::<TestCommand>()
         .await
         .unwrap();
 
     let node_id = group.nodes.keys().next().copied().unwrap();
     let changes = vec![ConfChange::update(node_id, vec!["new_addr".to_owned()])];
-    let members = client.propose_conf_change(changes).await.unwrap().unwrap();
+    let members = client.propose_conf_change(changes).await.unwrap();
     assert_eq!(members.len(), 5);
     let member = members.iter().find(|m| m.id == node_id);
     assert!(member.is_some_and(|m| m.addrs == ["new_addr"]));
@@ -448,7 +455,7 @@ async fn check_new_node(is_learner: bool) {
     let mut group = CurpGroup::new(3).await;
     let client = group.new_client().await;
     let req = TestCommand::new_put(vec![123], 123);
-    let _res = client.propose(req, true).await;
+    let _res = client.propose(&req, true).await.unwrap().unwrap();
 
     let listener = TcpListener::bind("0.0.0.0:0").await.unwrap();
     let addr = listener.local_addr().unwrap().to_string();
@@ -460,7 +467,7 @@ async fn check_new_node(is_learner: bool) {
         vec![ConfChange::add(node_id, addrs.clone())]
     };
 
-    let members = client.propose_conf_change(changes).await.unwrap().unwrap();
+    let members = client.propose_conf_change(changes).await.unwrap();
     assert_eq!(members.len(), 4);
     assert!(members.iter().any(|m| m.id == node_id));
 
@@ -504,8 +511,11 @@ async fn check_new_node(is_learner: bool) {
     assert!(res.values.is_empty());
 
     // 5. check if the old client can propose to the new cluster
-    let res = client.propose(TestCommand::new_get(vec![1]), true).await;
-    assert!(res.is_ok());
+    client
+        .propose(&TestCommand::new_get(vec![1]), true)
+        .await
+        .unwrap()
+        .unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -532,7 +542,7 @@ async fn shutdown_rpc_should_shutdown_the_cluster_when_client_has_wrong_cluster(
     let addrs = vec![listener.local_addr().unwrap().to_string()];
     let node_id = ClusterInfo::calculate_member_id(addrs.clone(), "", Some(123));
     let changes = vec![ConfChange::add(node_id, addrs.clone())];
-    let members = client.propose_conf_change(changes).await.unwrap().unwrap();
+    let members = client.propose_conf_change(changes).await.unwrap();
     assert_eq!(members.len(), 4);
     assert!(members.iter().any(|m| m.id == node_id));
 
@@ -540,7 +550,7 @@ async fn shutdown_rpc_should_shutdown_the_cluster_when_client_has_wrong_cluster(
     group
         .run_node(listener, "new_node".to_owned(), cluster_info)
         .await;
-    client.shutdown().await.unwrap();
+    client.propose_shutdown().await.unwrap();
 
     sleep_secs(7).await; // wait for the cluster to shutdown
     assert!(group.is_finished());
@@ -558,7 +568,7 @@ async fn propose_conf_change_rpc_should_work_when_client_has_wrong_cluster() {
     let addrs = vec![listener.local_addr().unwrap().to_string()];
     let node_id = ClusterInfo::calculate_member_id(addrs.clone(), "", Some(123));
     let changes = vec![ConfChange::add(node_id, addrs.clone())];
-    let members = client.propose_conf_change(changes).await.unwrap().unwrap();
+    let members = client.propose_conf_change(changes).await.unwrap();
     assert_eq!(members.len(), 4);
     assert!(members.iter().any(|m| m.id == node_id));
     let cluster_info = Arc::new(group.fetch_cluster_info(&addrs, "new_node").await);
@@ -566,7 +576,7 @@ async fn propose_conf_change_rpc_should_work_when_client_has_wrong_cluster() {
         .run_node(listener, "new_node".to_owned(), cluster_info)
         .await;
     let changes = vec![ConfChange::remove(node_id)];
-    let members = client.propose_conf_change(changes).await.unwrap().unwrap();
+    let members = client.propose_conf_change(changes).await.unwrap();
     assert_eq!(members.len(), 3);
     assert!(members.iter().all(|m| m.id != node_id));
     sleep_secs(7).await;
@@ -585,7 +595,7 @@ async fn fetch_read_state_rpc_should_work_when_client_has_wrong_cluster() {
     let addrs = vec![listener.local_addr().unwrap().to_string()];
     let node_id = ClusterInfo::calculate_member_id(addrs.clone(), "", Some(123));
     let changes = vec![ConfChange::add(node_id, addrs.clone())];
-    let members = client.propose_conf_change(changes).await.unwrap().unwrap();
+    let members = client.propose_conf_change(changes).await.unwrap();
     assert_eq!(members.len(), 4);
     assert!(members.iter().any(|m| m.id == node_id));
     let cluster_info = Arc::new(group.fetch_cluster_info(&addrs, "new_node").await);

@@ -2,7 +2,7 @@ use std::{pin::Pin, sync::Arc, time::Duration};
 
 use async_stream::{stream, try_stream};
 use clippy_utilities::Cast;
-use curp::{client::Client, members::ClusterInfo};
+use curp::members::ClusterInfo;
 use futures::stream::Stream;
 use tokio::time;
 use tonic::transport::Endpoint;
@@ -13,12 +13,12 @@ use tracing::{debug, warn};
 use utils::certs;
 use utils::shutdown;
 use xlineapi::{
-    command::{Command, CommandResponse, KeyRange, SyncResponse},
+    command::{Command, CommandResponse, CurpClient, KeyRange, SyncResponse},
     execute_error::ExecuteError,
     RequestWithToken,
 };
 
-use super::{auth_server::get_token, command::client_err_to_status};
+use super::auth_server::get_token;
 use crate::{
     id_gen::IdGenerator,
     rpc::{
@@ -33,7 +33,6 @@ use crate::{
 const DEFAULT_LEASE_REQUEST_TIME: Duration = Duration::from_millis(500);
 
 /// Lease Server
-#[derive(Debug)]
 pub(crate) struct LeaseServer<S>
 where
     S: StorageApi,
@@ -43,7 +42,7 @@ where
     /// Auth storage
     auth_storage: Arc<AuthStore<S>>,
     /// Consensus client
-    client: Arc<Client<Command>>,
+    client: Arc<CurpClient>,
     /// Id generator
     id_gen: Arc<IdGenerator>,
     /// cluster information
@@ -60,7 +59,7 @@ where
     pub(crate) fn new(
         lease_storage: Arc<LeaseStore<S>>,
         auth_storage: Arc<AuthStore<S>>,
-        client: Arc<Client<Command>>,
+        client: Arc<CurpClient>,
         id_gen: Arc<IdGenerator>,
         cluster_info: Arc<ClusterInfo>,
         shutdown_listener: shutdown::Listener,
@@ -139,10 +138,8 @@ where
         };
         let wrapper = RequestWithToken::new_with_token(request_inner, token);
         let cmd = Command::new(keys, wrapper);
-        self.client
-            .propose(cmd, use_fast_path)
-            .await
-            .map_err(client_err_to_status)
+        let res = self.client.propose(&cmd, use_fast_path).await??;
+        Ok(res)
     }
 
     /// Handle keep alive at leader
@@ -336,11 +333,7 @@ where
                     .leader_keep_alive(request_stream, self.shutdown_listener.clone())
                     .await;
             }
-            let leader_id = self
-                .client
-                .get_leader_id_from_curp()
-                .await
-                .map_err(client_err_to_status)?;
+            let leader_id = self.client.fetch_leader_id(false).await?;
             // Given that a candidate server may become a leader when it won the election or
             // a follower when it lost the election. Therefore we need to double check here.
             // We can directly invoke leader_keep_alive when a candidate becomes a leader.
@@ -392,11 +385,7 @@ where
                 };
                 return Ok(tonic::Response::new(res));
             }
-            let leader_id = self
-                .client
-                .get_leader_id_from_curp()
-                .await
-                .map_err(client_err_to_status)?;
+            let leader_id = self.client.fetch_leader_id(false).await?;
             let leader_addrs = self.cluster_info.addrs(leader_id).unwrap_or_else(|| {
                 unreachable!(
                     "The address of leader {} not found in all_members {:?}",

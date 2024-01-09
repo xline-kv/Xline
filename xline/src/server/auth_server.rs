@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use curp::client::Client;
 use pbkdf2::{
     password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
     Pbkdf2,
@@ -8,12 +7,11 @@ use pbkdf2::{
 use tonic::metadata::MetadataMap;
 use tracing::debug;
 use xlineapi::{
-    command::{command_from_request_wrapper, Command, CommandResponse, SyncResponse},
+    command::{command_from_request_wrapper, CommandResponse, CurpClient, SyncResponse},
     request_validation::RequestValidator,
     RequestWithToken,
 };
 
-use super::command::client_err_to_status;
 use crate::rpc::{
     Auth, AuthDisableRequest, AuthDisableResponse, AuthEnableRequest, AuthEnableResponse,
     AuthRoleAddRequest, AuthRoleAddResponse, AuthRoleDeleteRequest, AuthRoleDeleteResponse,
@@ -29,10 +27,9 @@ use crate::rpc::{
 };
 
 /// Auth Server
-#[derive(Debug)]
 pub(crate) struct AuthServer {
     /// Consensus client
-    client: Arc<Client<Command>>,
+    client: Arc<CurpClient>,
 }
 
 /// Get token from metadata
@@ -45,7 +42,7 @@ pub(crate) fn get_token(metadata: &MetadataMap) -> Option<String> {
 
 impl AuthServer {
     /// New `AuthServer`
-    pub(crate) fn new(client: Arc<Client<Command>>) -> Self {
+    pub(crate) fn new(client: Arc<CurpClient>) -> Self {
         Self { client }
     }
 
@@ -62,10 +59,8 @@ impl AuthServer {
         let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
         let cmd = command_from_request_wrapper(wrapper);
 
-        self.client
-            .propose(cmd, use_fast_path)
-            .await
-            .map_err(client_err_to_status)
+        let res = self.client.propose(&cmd, use_fast_path).await??;
+        Ok(res)
     }
 
     /// Hash password

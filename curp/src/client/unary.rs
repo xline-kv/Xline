@@ -1,19 +1,15 @@
-#![allow(unused)] // TODO: remove
-
 use std::{
     cmp::Ordering,
     collections::{hash_map::Entry, HashMap, HashSet},
     marker::PhantomData,
-    ops::{AddAssign, Deref},
+    ops::AddAssign,
     sync::Arc,
     time::Duration,
 };
 
 use async_trait::async_trait;
 use curp_external_api::cmd::Command;
-use dashmap::DashMap;
 use futures::{stream::FuturesUnordered, Future, Stream, StreamExt};
-use itertools::Itertools;
 use tokio::sync::RwLock;
 use tonic::Response;
 use tracing::{debug, warn};
@@ -23,13 +19,13 @@ use crate::{
     rpc::{
         self,
         connect::{BypassedConnect, ConnectApi},
-        ConfChange, CurpError, CurpErrorPriority, FetchClusterRequest, FetchClusterResponse,
-        FetchReadStateRequest, Member, ProposeConfChangeRequest, ProposeId, ProposeRequest,
-        Protocol, PublishRequest, ReadState, ShutdownRequest, WaitSyncedRequest,
+        ConfChange, CurpError, FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest,
+        Member, ProposeConfChangeRequest, ProposeId, ProposeRequest, Protocol, PublishRequest,
+        ReadState, ShutdownRequest, WaitSyncedRequest,
     },
 };
 
-use super::{ClientApi, LeaderStateUpdate, ProposeResponse};
+use super::{ClientApi, LeaderStateUpdate, ProposeResponse, RepeatableClientApi};
 
 /// Client state
 struct State {
@@ -55,43 +51,31 @@ impl std::fmt::Debug for State {
 }
 
 /// Unary builder
-pub(super) struct UnaryBuilder<P: Protocol> {
+pub(super) struct UnaryBuilder {
     /// All members (required)
     all_members: HashMap<ServerId, Vec<String>>,
     /// Unary config (required)
     config: UnaryConfig,
-    /// Local server (optional)
-    local_server: Option<(ServerId, P)>,
-    /// Leader id (optional)
-    leader: Option<ServerId>,
-    /// Term (optional)
-    term: Option<u64>,
+    /// Leader state (optional)
+    leader_state: Option<(ServerId, u64)>,
     /// Cluster version (optional)
     cluster_version: Option<u64>,
 }
 
-impl<P: Protocol> UnaryBuilder<P> {
+impl UnaryBuilder {
     /// Create unary builder
     pub(super) fn new(all_members: HashMap<ServerId, Vec<String>>, config: UnaryConfig) -> Self {
         Self {
             all_members,
             config,
-            local_server: None,
-            leader: None,
-            term: None,
+            leader_state: None,
             cluster_version: None,
         }
     }
 
-    /// Set the local server (optional)
-    pub(super) fn set_local_server(&mut self, id: ServerId, server: P) {
-        self.local_server = Some((id, server));
-    }
-
     /// Set the leader state (optional)
     pub(super) fn set_leader_state(&mut self, id: ServerId, term: u64) {
-        self.leader = Some(id);
-        self.term = Some(term);
+        self.leader_state = Some((id, term));
     }
 
     /// Set the cluster version (optional)
@@ -99,31 +83,48 @@ impl<P: Protocol> UnaryBuilder<P> {
         self.cluster_version = Some(cluster_version);
     }
 
-    /// Build the unary client
-    pub(super) async fn build<C: Command>(mut self) -> Result<Unary<C>, tonic::transport::Error> {
-        let mut local_server_id = None;
-        if let Some((id, _)) = self.local_server {
-            let _ig = self.all_members.remove(&id);
-        }
-        let mut connects: HashMap<_, _> = rpc::connects(self.all_members).await?.collect();
-        if let Some((id, server)) = self.local_server {
-            debug!("client bypassed server({id})");
-            local_server_id = Some(id);
-            let _ig = connects.insert(id, Arc::new(BypassedConnect::new(id, server)));
-        }
+    /// Inner build
+    fn build_with_connects<C: Command>(
+        self,
+        connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
+        local_server_id: Option<ServerId>,
+    ) -> Unary<C> {
         let state = State {
-            leader: self.leader,
-            term: self.term.unwrap_or_default(),
+            leader: self.leader_state.map(|state| state.0),
+            term: self.leader_state.map_or(0, |state| state.1),
             cluster_version: self.cluster_version.unwrap_or_default(),
             connects,
         };
-        let unary = Unary {
+        Unary {
             state: RwLock::new(state),
             local_server_id,
             config: self.config,
             phantom: PhantomData,
-        };
-        Ok(unary)
+        }
+    }
+
+    /// Build the unary client with local server
+    pub(super) async fn build_bypassed<C: Command, P: Protocol>(
+        mut self,
+        local_server_id: ServerId,
+        local_server: P,
+    ) -> Result<Unary<C>, tonic::transport::Error> {
+        debug!("client bypassed server({local_server_id})");
+
+        let _ig = self.all_members.remove(&local_server_id);
+        let mut connects: HashMap<_, _> = rpc::connects(self.all_members.clone()).await?.collect();
+        let __ig = connects.insert(
+            local_server_id,
+            Arc::new(BypassedConnect::new(local_server_id, local_server)),
+        );
+
+        Ok(self.build_with_connects(connects, Some(local_server_id)))
+    }
+
+    /// Build the unary client
+    pub(super) async fn build<C: Command>(self) -> Result<Unary<C>, tonic::transport::Error> {
+        let connects: HashMap<_, _> = rpc::connects(self.all_members.clone()).await?.collect();
+        Ok(self.build_with_connects(connects, None))
     }
 }
 
@@ -133,22 +134,13 @@ pub(super) struct UnaryConfig {
     /// The rpc timeout of a propose request
     propose_timeout: Duration,
     /// The rpc timeout of a 2-RTT request, usually takes longer than propose timeout
-    /// Default to 2 * propose_timeout, The recommended the values is within
-    /// (propose_timeout, 2 * propose_timeout].
+    /// The recommended the values is within (propose_timeout, 2 * propose_timeout].
     wait_synced_timeout: Duration,
 }
 
 impl UnaryConfig {
     /// Create a unary config
-    pub(super) fn new(propose_timeout: Duration) -> Self {
-        Self {
-            propose_timeout,
-            wait_synced_timeout: propose_timeout * 2,
-        }
-    }
-
-    /// Create a unary config
-    pub(super) fn new_full(propose_timeout: Duration, wait_synced_timeout: Duration) -> Self {
+    pub(super) fn new(propose_timeout: Duration, wait_synced_timeout: Duration) -> Self {
         Self {
             propose_timeout,
             wait_synced_timeout,
@@ -364,7 +356,7 @@ impl<C: Command> Unary<C> {
                 Ok(resp) => resp.into_inner(),
                 Err(e) => {
                     warn!("propose cmd({propose_id}) to server({id}) error: {e:?}");
-                    if e.priority() == CurpErrorPriority::ReturnImmediately {
+                    if e.should_abort_fast_round() {
                         return Err(e);
                     }
                     if let Some(old_err) = err.as_ref() {
@@ -420,7 +412,9 @@ impl<C: Command> Unary<C> {
         // We will at least send the request to the leader if no `WrongClusterVersion` returned.
         // If no errors occur, the leader should return the ER
         // If it is because the super quorum has not been reached, an error will definitely occur.
-        unreachable!("leader should return ER if no error happens");
+        // Otherwise, there is no leader in the cluster state currently, return wrong cluster version
+        // and attempt to retrieve the cluster state again.
+        Err(CurpError::wrong_cluster_version())
     }
 
     /// Wait synced result from server
@@ -454,13 +448,6 @@ impl<C: Command> Unary<C> {
     fn new_seq_num(&self) -> u64 {
         rand::random()
     }
-
-    /// Generate a new propose id
-    async fn gen_propose_id(&self) -> Result<ProposeId, CurpError> {
-        let client_id = self.get_client_id().await?;
-        let seq_num = self.new_seq_num();
-        Ok(ProposeId(client_id, seq_num))
-    }
 }
 
 #[async_trait]
@@ -481,47 +468,7 @@ impl<C: Command> ClientApi for Unary<C> {
     /// requests (event the requests are commutative).
     async fn propose(&self, cmd: &C, use_fast_path: bool) -> Result<ProposeResponse<C>, CurpError> {
         let propose_id = self.gen_propose_id().await?;
-
-        tokio::pin! {
-            let fast_round = self.fast_round(propose_id, cmd);
-            let slow_round = self.slow_round(propose_id);
-        }
-
-        let res: ProposeResponse<C> = if use_fast_path {
-            match futures::future::select(fast_round, slow_round).await {
-                futures::future::Either::Left((fast_result, slow_round)) => match fast_result {
-                    Ok(er) => er.map(|e| (e, None)),
-                    Err(err) => {
-                        if err.priority() > CurpErrorPriority::Low {
-                            return Err(err);
-                        }
-                        // fallback to slow round if fast round failed
-                        let sr = slow_round.await?;
-                        sr.map(|(asr, er)| (er, Some(asr)))
-                    }
-                },
-                futures::future::Either::Right((slow_result, fast_round)) => match slow_result {
-                    Ok(er) => er.map(|(asr, e)| (e, Some(asr))),
-                    Err(err) => {
-                        if err.priority() > CurpErrorPriority::Low {
-                            return Err(err);
-                        }
-                        let fr = fast_round.await?;
-                        fr.map(|er| (er, None))
-                    }
-                },
-            }
-        } else {
-            let (fr, sr) = futures::future::join(fast_round, slow_round).await;
-            if let Err(err) = fr {
-                if err.priority() > CurpErrorPriority::Low {
-                    return Err(err);
-                }
-            }
-            sr?.map(|(asr, er)| (er, Some(asr)))
-        };
-
-        Ok(res)
+        RepeatableClientApi::propose(self, propose_id, cmd, use_fast_path).await
     }
 
     /// Send propose configuration changes to the cluster
@@ -530,25 +477,13 @@ impl<C: Command> ClientApi for Unary<C> {
         changes: Vec<ConfChange>,
     ) -> Result<Vec<Member>, CurpError> {
         let propose_id = self.gen_propose_id().await?;
-        let req = ProposeConfChangeRequest::new(propose_id, changes, self.cluster_version().await);
-        let timeout = self.config.wait_synced_timeout;
-        let members = self
-            .map_leader(|conn| async move { conn.propose_conf_change(req, timeout).await })
-            .await??
-            .into_inner()
-            .members;
-        Ok(members)
+        RepeatableClientApi::propose_conf_change(self, propose_id, changes).await
     }
 
     /// Send propose to shutdown cluster
     async fn propose_shutdown(&self) -> Result<(), CurpError> {
         let propose_id = self.gen_propose_id().await?;
-        let req = ShutdownRequest::new(propose_id, self.cluster_version().await);
-        let timeout = self.config.wait_synced_timeout;
-        let _ig = self
-            .map_leader(|conn| async move { conn.shutdown(req, timeout).await })
-            .await??;
-        Ok(())
+        RepeatableClientApi::propose_shutdown(self, propose_id).await
     }
 
     /// Send propose to publish a node id and name
@@ -558,12 +493,7 @@ impl<C: Command> ClientApi for Unary<C> {
         node_name: String,
     ) -> Result<(), Self::Error> {
         let propose_id = self.gen_propose_id().await?;
-        let req = PublishRequest::new(propose_id, node_id, node_name);
-        let timeout = self.config.wait_synced_timeout;
-        let _ig = self
-            .map_leader(|conn| async move { conn.publish(req, timeout).await })
-            .await??;
-        Ok(())
+        RepeatableClientApi::propose_publish(self, propose_id, node_id, node_name).await
     }
 
     /// Send fetch read state from leader
@@ -604,6 +534,8 @@ impl<C: Command> ClientApi for Unary<C> {
                         )
                     })
                     .into_inner();
+                debug!("fetch local cluster {resp:?}");
+
                 return Ok(resp);
             }
         }
@@ -630,7 +562,8 @@ impl<C: Command> ClientApi for Unary<C> {
                 Ok(r) => r,
                 Err(e) => {
                     warn!("fetch cluster from {} failed, {:?}", id, e);
-                    if e.priority() == CurpErrorPriority::ReturnImmediately {
+                    // similar to fast round
+                    if e.should_abort_fast_round() {
                         return Err(e);
                     }
                     if let Some(old_err) = err.as_ref() {
@@ -674,8 +607,9 @@ impl<C: Command> ClientApi for Unary<C> {
                     }
                     return Ok(res);
                 }
-                debug!("fetch_cluster quorum ok, but members are empty");
+                debug!("fetch cluster quorum ok, but members are empty");
             }
+            debug!("fetch cluster from {id} success");
         }
 
         if let Some(err) = err {
@@ -684,6 +618,124 @@ impl<C: Command> ClientApi for Unary<C> {
 
         // It seems that the max term has not reached the majority here. Mock a transport error and return it to the external to retry.
         return Err(CurpError::RpcTransport(()));
+    }
+}
+
+#[async_trait]
+impl<C: Command> RepeatableClientApi for Unary<C> {
+    /// Generate a unique propose id during the retry process.
+    async fn gen_propose_id(&self) -> Result<ProposeId, Self::Error> {
+        let client_id = self.get_client_id().await?;
+        let seq_num = self.new_seq_num();
+        Ok(ProposeId(client_id, seq_num))
+    }
+
+    /// Send propose to the whole cluster, `use_fast_path` set to `false` to fallback into ordered
+    /// requests (event the requests are commutative).
+    async fn propose(
+        &self,
+        propose_id: ProposeId,
+        cmd: &Self::Cmd,
+        use_fast_path: bool,
+    ) -> Result<ProposeResponse<Self::Cmd>, Self::Error> {
+        tokio::pin! {
+            let fast_round = self.fast_round(propose_id, cmd);
+            let slow_round = self.slow_round(propose_id);
+        }
+
+        let res: ProposeResponse<C> = if use_fast_path {
+            match futures::future::select(fast_round, slow_round).await {
+                futures::future::Either::Left((fast_result, slow_round)) => match fast_result {
+                    Ok(er) => er.map(|e| (e, None)),
+                    Err(fast_err) => {
+                        if fast_err.should_abort_slow_round() {
+                            return Err(fast_err);
+                        }
+                        // fallback to slow round if fast round failed
+                        let sr = match slow_round.await {
+                            Ok(sr) => sr,
+                            Err(slow_err) => {
+                                return Err(std::cmp::max_by_key(fast_err, slow_err, |err| {
+                                    err.priority()
+                                }))
+                            }
+                        };
+                        sr.map(|(asr, er)| (er, Some(asr)))
+                    }
+                },
+                futures::future::Either::Right((slow_result, fast_round)) => match slow_result {
+                    Ok(er) => er.map(|(asr, e)| (e, Some(asr))),
+                    Err(slow_err) => {
+                        if slow_err.should_abort_fast_round() {
+                            return Err(slow_err);
+                        }
+                        // try to poll fast round
+                        let fr = match fast_round.await {
+                            Ok(fr) => fr,
+                            Err(fast_err) => {
+                                return Err(std::cmp::max_by_key(fast_err, slow_err, |err| {
+                                    err.priority()
+                                }))
+                            }
+                        };
+                        fr.map(|er| (er, None))
+                    }
+                },
+            }
+        } else {
+            match futures::future::join(fast_round, slow_round).await {
+                (_, Ok(sr)) => sr.map(|(asr, er)| (er, Some(asr))),
+                (Ok(_), Err(err)) => return Err(err),
+                (Err(fast_err), Err(slow_err)) => {
+                    return Err(std::cmp::max_by_key(fast_err, slow_err, |err| {
+                        err.priority()
+                    }))
+                }
+            }
+        };
+
+        Ok(res)
+    }
+
+    /// Send propose configuration changes to the cluster
+    async fn propose_conf_change(
+        &self,
+        propose_id: ProposeId,
+        changes: Vec<ConfChange>,
+    ) -> Result<Vec<Member>, Self::Error> {
+        let req = ProposeConfChangeRequest::new(propose_id, changes, self.cluster_version().await);
+        let timeout = self.config.wait_synced_timeout;
+        let members = self
+            .map_leader(|conn| async move { conn.propose_conf_change(req, timeout).await })
+            .await??
+            .into_inner()
+            .members;
+        Ok(members)
+    }
+
+    /// Send propose to shutdown cluster
+    async fn propose_shutdown(&self, propose_id: ProposeId) -> Result<(), Self::Error> {
+        let req = ShutdownRequest::new(propose_id, self.cluster_version().await);
+        let timeout = self.config.wait_synced_timeout;
+        let _ig = self
+            .map_leader(|conn| async move { conn.shutdown(req, timeout).await })
+            .await??;
+        Ok(())
+    }
+
+    /// Send propose to publish a node id and name
+    async fn propose_publish(
+        &self,
+        propose_id: ProposeId,
+        node_id: ServerId,
+        node_name: String,
+    ) -> Result<(), Self::Error> {
+        let req = PublishRequest::new(propose_id, node_id, node_name);
+        let timeout = self.config.wait_synced_timeout;
+        let _ig = self
+            .map_leader(|conn| async move { conn.publish(req, timeout).await })
+            .await??;
+        Ok(())
     }
 }
 
