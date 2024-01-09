@@ -824,6 +824,18 @@ pub struct TraceConfig {
     jaeger_level: LevelConfig,
 }
 
+impl Default for TraceConfig {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            jaeger_online: false,
+            jaeger_offline: false,
+            jaeger_output_dir: "".into(),
+            jaeger_level: default_log_level(),
+        }
+    }
+}
+
 impl TraceConfig {
     /// Generate a new `TraceConfig` object
     #[must_use]
@@ -845,7 +857,7 @@ impl TraceConfig {
 
 /// Xline tracing configuration object
 #[allow(clippy::module_name_repetitions)]
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters, Default)]
 pub struct AuthConfig {
     /// The public key file
     #[getset(get = "pub")]
