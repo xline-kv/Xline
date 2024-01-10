@@ -1,5 +1,31 @@
 # ChangeLog
 
+## v0.6.1
+
+### Features
+
+* implement retry layer eda7302
+* implement publish for new client c2404e8
+* client will send physical compact request to business server dbb6a84
+* implement WAL codec afa7c3d
+* add wal errors df4039d
+* add WAL file utils 31cf545
+
+### Fixes
+
+* allow slow round when get Duplicated error db13bb3
+* fix retry policy da4fa03
+* fix cluster version update 69fcb2f
+* atomic update in cluster state and leader state b889fc7
+* fix compact physical logic f14b88f
+* fix madsim test d1b0b89
+* fix ce event tx logs 8055282
+* shutdown cluster before drop runtime 7fdb8da
+* add a limit when leader tries to shtuduwn a node that has been shutdown 844fc53
+* fix cluster shutdown after member add 5dc185b
+* update abort_on_panic macro and fix read_state test 53e6c45
+* fix xline_update_node test and update comments a4dee03
+
 ## v0.6.0
 
 ### Features
