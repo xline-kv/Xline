@@ -229,7 +229,12 @@ impl Client {
             .into_iter()
             .map(|addr| addr.as_ref().to_owned())
             .collect();
-        let channel = Self::build_channel(addrs.clone(), options.tls_config.as_ref()).await?;
+        let channel = Self::build_channel(
+            addrs.clone(),
+            #[cfg(not(madsim))]
+            options.tls_config.as_ref(),
+        )
+        .await?;
         let curp_client = Arc::new(
             CurpClientBuilder::new(options.client_config)
                 .discover_from(addrs)
@@ -286,12 +291,16 @@ impl Client {
     /// Build a tonic load balancing channel.
     async fn build_channel(
         addrs: Vec<String>,
-        tls_config: Option<&ClientTlsConfig>,
+        #[cfg(not(madsim))] tls_config: Option<&ClientTlsConfig>,
     ) -> Result<Channel, XlineClientBuildError> {
         let (channel, tx) = Channel::balance_channel(64);
 
         for addr in addrs {
-            let endpoint = build_endpoint(&addr, tls_config)?;
+            let endpoint = build_endpoint(
+                &addr,
+                #[cfg(not(madsim))]
+                tls_config,
+            )?;
             tx.send(tower::discover::Change::Insert(addr, endpoint))
                 .await
                 .unwrap_or_else(|_| unreachable!("The channel will not closed"));
@@ -363,6 +372,7 @@ pub struct ClientOptions {
     /// User is a pair values of name and password
     user: Option<(String, String)>,
     /// Client tls config
+    #[cfg(not(madsim))]
     tls_config: Option<ClientTlsConfig>,
     /// config for the curp client
     client_config: ClientConfig,
@@ -374,11 +384,12 @@ impl ClientOptions {
     #[must_use]
     pub fn new(
         user: Option<(String, String)>,
-        tls_config: Option<ClientTlsConfig>,
+        #[cfg(not(madsim))] tls_config: Option<ClientTlsConfig>,
         client_config: ClientConfig,
     ) -> Self {
         Self {
             user,
+            #[cfg(not(madsim))]
             tls_config,
             client_config,
         }
@@ -394,6 +405,7 @@ impl ClientOptions {
     /// Get `tls_config`
     #[inline]
     #[must_use]
+    #[cfg(not(madsim))]
     pub fn tls_config(&self) -> Option<&ClientTlsConfig> {
         self.tls_config.as_ref()
     }
@@ -428,6 +440,7 @@ impl ClientOptions {
     /// Set `tls_config`
     #[inline]
     #[must_use]
+    #[cfg(not(madsim))]
     pub fn with_tls_config(self, tls_config: ClientTlsConfig) -> Self {
         Self {
             tls_config: Some(tls_config),
