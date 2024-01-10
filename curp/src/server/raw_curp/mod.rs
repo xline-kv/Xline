@@ -22,6 +22,7 @@ use std::{
 use clippy_utilities::{NumericCast, OverflowArithmetic};
 use curp_external_api::cmd::ConflictCheck;
 use dashmap::DashMap;
+use derive_builder::Builder;
 use event_listener::Event;
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
@@ -98,6 +99,117 @@ pub struct RawCurp<C: Command, RC: RoleChange> {
     shutdown_trigger: shutdown::Trigger,
 }
 
+/// Tmp struct for building `RawCurp`
+#[derive(Builder)]
+#[builder(name = "RawCurpBuilder")]
+pub(super) struct RawCurpArgs<C: Command, RC: RoleChange> {
+    /// Cluster information
+    cluster_info: Arc<ClusterInfo>,
+    /// Current node is leader or not
+    is_leader: bool,
+    /// Cmd board for tracking the cmd sync results
+    cmd_board: CmdBoardRef<C>,
+    /// Speculative pool
+    spec_pool: SpecPoolRef<C>,
+    /// Uncommitted pool
+    uncommitted_pool: UncommittedPoolRef<C>,
+    /// Config
+    cfg: Arc<CurpConfig>,
+    /// Tx to send cmds to execute and do after sync
+    cmd_tx: Arc<dyn CEEventTxApi<C>>,
+    /// Tx to send log entries
+    log_tx: mpsc::UnboundedSender<Arc<LogEntry<C>>>,
+    /// Role change callback
+    role_change: RC,
+    /// Shutdown trigger
+    shutdown_trigger: shutdown::Trigger,
+    /// Sync events
+    sync_events: DashMap<ServerId, Arc<Event>>,
+    /// Connects of peers
+    connects: DashMap<ServerId, InnerConnectApiWrapper>,
+
+    /// Last applied index
+    #[builder(setter(strip_option), default)]
+    last_applied: Option<LogIndex>,
+    /// Voted for
+    #[builder(default)]
+    voted_for: Option<(u64, ServerId)>,
+    /// Log entries
+    #[builder(default)]
+    entries: Vec<LogEntry<C>>,
+}
+
+impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
+    /// build `RawCurp` from `RawCurpBuilder`
+    pub(super) fn build_raw_curp(&mut self) -> Result<RawCurp<C, RC>, RawCurpBuilderError> {
+        let args = self.build()?;
+
+        let st = RwLock::new(State::new(
+            args.cfg.follower_timeout_ticks,
+            args.cfg.candidate_timeout_ticks,
+        ));
+        let lst = LeaderState::new(&args.cluster_info.peers_ids());
+        let cst = Mutex::new(CandidateState::new(args.cluster_info.all_ids().into_iter()));
+        let log = RwLock::new(Log::new(
+            args.log_tx,
+            args.cfg.batch_max_size,
+            args.cfg.log_entries_cap,
+        ));
+
+        let ctx = Context::builder()
+            .cluster_info(args.cluster_info)
+            .cb(args.cmd_board)
+            .sp(args.spec_pool)
+            .ucp(args.uncommitted_pool)
+            .cfg(args.cfg)
+            .cmd_tx(args.cmd_tx)
+            .sync_events(args.sync_events)
+            .role_change(args.role_change)
+            .connects(args.connects)
+            .build()
+            .map_err(|e| match e {
+                ContextBuilderError::UninitializedField(s) => {
+                    RawCurpBuilderError::UninitializedField(s)
+                }
+                ContextBuilderError::ValidationError(s) => RawCurpBuilderError::ValidationError(s),
+            })?;
+
+        let raw_curp = RawCurp {
+            st,
+            lst,
+            cst,
+            log,
+            ctx,
+            shutdown_trigger: args.shutdown_trigger,
+        };
+
+        if args.is_leader {
+            let mut st_w = raw_curp.st.write();
+            st_w.term = 1;
+            raw_curp.become_leader(&mut st_w);
+        }
+
+        if let Some((term, server_id)) = args.voted_for {
+            let mut st_w = raw_curp.st.write();
+            raw_curp.update_to_term_and_become_follower(&mut st_w, term);
+            st_w.voted_for = Some(server_id);
+        }
+
+        if !args.entries.is_empty() {
+            let last_applied = args.last_applied.ok_or_else(|| {
+                RawCurpBuilderError::ValidationError("last_applied is not set".to_owned())
+            })?;
+            let mut log_w = raw_curp.log.write();
+            log_w.last_as = last_applied;
+            log_w.last_exe = last_applied;
+            log_w.commit_index = last_applied;
+            log_w.restore_entries(args.entries);
+        }
+
+        Ok(raw_curp)
+    }
+}
+
 impl<C: Command, RC: RoleChange> Debug for RawCurp<C, RC> {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -165,6 +277,8 @@ enum Role {
 }
 
 /// Relevant context for Curp
+#[derive(Builder)]
+#[builder(build_fn(skip))]
 struct Context<C: Command, RC: RoleChange> {
     /// Cluster information
     cluster_info: Arc<ClusterInfo>,
@@ -177,25 +291,89 @@ struct Context<C: Command, RC: RoleChange> {
     /// Uncommitted pool
     ucp: UncommittedPoolRef<C>,
     /// Tx to send leader changes
+    #[builder(setter(skip))]
     leader_tx: broadcast::Sender<Option<ServerId>>,
     /// Election tick
+    #[builder(setter(skip))]
     election_tick: AtomicU8,
     /// Tx to send cmds to execute and do after sync
     cmd_tx: Arc<dyn CEEventTxApi<C>>,
     /// Followers sync event trigger
     sync_events: DashMap<ServerId, Arc<Event>>,
     /// Become leader event
+    #[builder(setter(skip))]
     leader_event: Arc<Event>,
     /// Leader change callback
     role_change: RC,
     /// Conf change tx, used to update sync tasks
+    #[builder(setter(skip))]
     change_tx: flume::Sender<ConfChange>,
     /// Conf change rx, used to update sync tasks
+    #[builder(setter(skip))]
     change_rx: flume::Receiver<ConfChange>,
     /// Connects of peers
     connects: DashMap<ServerId, InnerConnectApiWrapper>,
     /// last conf change idx
+    #[builder(setter(skip))]
     last_conf_change_idx: AtomicU64,
+}
+
+impl<C: Command, RC: RoleChange> Context<C, RC> {
+    /// Create a new `ContextBuilder`
+    pub(super) fn builder() -> ContextBuilder<C, RC> {
+        ContextBuilder::default()
+    }
+}
+
+impl<C: Command, RC: RoleChange> ContextBuilder<C, RC> {
+    /// Build the context from the builder
+    pub(super) fn build(&mut self) -> Result<Context<C, RC>, ContextBuilderError> {
+        let (change_tx, change_rx) = flume::bounded(CHANGE_CHANNEL_SIZE);
+        Ok(Context {
+            cluster_info: match self.cluster_info.take() {
+                Some(value) => value,
+                None => return Err(ContextBuilderError::UninitializedField("cluster_info")),
+            },
+            cfg: match self.cfg.take() {
+                Some(value) => value,
+                None => return Err(ContextBuilderError::UninitializedField("cfg")),
+            },
+            cb: match self.cb.take() {
+                Some(value) => value,
+                None => return Err(ContextBuilderError::UninitializedField("cb")),
+            },
+            sp: match self.sp.take() {
+                Some(value) => value,
+                None => return Err(ContextBuilderError::UninitializedField("sp")),
+            },
+            ucp: match self.ucp.take() {
+                Some(value) => value,
+                None => return Err(ContextBuilderError::UninitializedField("ucp")),
+            },
+            leader_tx: broadcast::channel(1).0,
+            election_tick: AtomicU8::new(0),
+            cmd_tx: match self.cmd_tx.take() {
+                Some(value) => value,
+                None => return Err(ContextBuilderError::UninitializedField("cmd_tx")),
+            },
+            sync_events: match self.sync_events.take() {
+                Some(value) => value,
+                None => return Err(ContextBuilderError::UninitializedField("sync_events")),
+            },
+            leader_event: Arc::new(Event::new()),
+            role_change: match self.role_change.take() {
+                Some(value) => value,
+                None => return Err(ContextBuilderError::UninitializedField("role_change")),
+            },
+            change_tx,
+            change_rx,
+            connects: match self.connects.take() {
+                Some(value) => value,
+                None => return Err(ContextBuilderError::UninitializedField("connects")),
+            },
+            last_conf_change_idx: AtomicU64::new(0),
+        })
+    }
 }
 
 impl<C: Command, RC: RoleChange> Debug for Context<C, RC> {
@@ -850,111 +1028,9 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
 /// Other small public interface
 impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
-    /// Create a new `RawCurp`
-    #[allow(clippy::too_many_arguments)] // only called once
-    pub(super) fn new(
-        cluster_info: Arc<ClusterInfo>,
-        is_leader: bool,
-        cmd_board: CmdBoardRef<C>,
-        spec_pool: SpecPoolRef<C>,
-        uncommitted_pool: UncommittedPoolRef<C>,
-        cfg: Arc<CurpConfig>,
-        cmd_tx: Arc<dyn CEEventTxApi<C>>,
-        sync_events: DashMap<ServerId, Arc<Event>>,
-        log_tx: mpsc::UnboundedSender<Arc<LogEntry<C>>>,
-        role_change: RC,
-        shutdown_trigger: shutdown::Trigger,
-        connects: DashMap<ServerId, InnerConnectApiWrapper>,
-    ) -> Self {
-        let (change_tx, change_rx) = flume::bounded(CHANGE_CHANNEL_SIZE);
-        let raw_curp = Self {
-            st: RwLock::new(State::new(
-                0,
-                None,
-                Role::Follower,
-                None,
-                cfg.follower_timeout_ticks,
-                cfg.candidate_timeout_ticks,
-            )),
-            lst: LeaderState::new(&cluster_info.peers_ids()),
-            cst: Mutex::new(CandidateState::new(cluster_info.all_ids().into_iter())),
-            log: RwLock::new(Log::new(log_tx, cfg.batch_max_size, cfg.log_entries_cap)),
-            ctx: Context {
-                cluster_info,
-                cb: cmd_board,
-                sp: spec_pool,
-                ucp: uncommitted_pool,
-                leader_tx: broadcast::channel(1).0,
-                cfg,
-                election_tick: AtomicU8::new(0),
-                cmd_tx,
-                sync_events,
-                leader_event: Arc::new(Event::new()),
-                role_change,
-                change_tx,
-                change_rx,
-                connects,
-                last_conf_change_idx: AtomicU64::new(0),
-            },
-            shutdown_trigger,
-        };
-        if is_leader {
-            let mut st_w = raw_curp.st.write();
-            st_w.term = 1;
-            raw_curp.become_leader(&mut st_w);
-        }
-        raw_curp
-    }
-
-    /// Create a new `RawCurp`
-    /// `is_leader` will only take effect when all servers start from a fresh state
-    #[allow(clippy::too_many_arguments)] // only called once
-    pub(super) fn recover_from(
-        cluster_info: Arc<ClusterInfo>,
-        is_leader: bool,
-        cmd_board: CmdBoardRef<C>,
-        spec_pool: SpecPoolRef<C>,
-        uncommitted_pool: UncommittedPoolRef<C>,
-        cfg: &Arc<CurpConfig>,
-        cmd_tx: Arc<dyn CEEventTxApi<C>>,
-        sync_event: DashMap<ServerId, Arc<Event>>,
-        log_tx: mpsc::UnboundedSender<Arc<LogEntry<C>>>,
-        voted_for: Option<(u64, ServerId)>,
-        entries: Vec<LogEntry<C>>,
-        last_applied: LogIndex,
-        role_change: RC,
-        shutdown_trigger: shutdown::Trigger,
-        connects: DashMap<ServerId, InnerConnectApiWrapper>,
-    ) -> Self {
-        let raw_curp = Self::new(
-            cluster_info,
-            is_leader,
-            cmd_board,
-            spec_pool,
-            uncommitted_pool,
-            Arc::clone(cfg),
-            cmd_tx,
-            sync_event,
-            log_tx,
-            role_change,
-            shutdown_trigger,
-            connects,
-        );
-
-        if let Some((term, server_id)) = voted_for {
-            let mut st_w = raw_curp.st.write();
-            raw_curp.update_to_term_and_become_follower(&mut st_w, term);
-            st_w.voted_for = Some(server_id);
-        }
-
-        raw_curp.log.map_write(|mut log_w| {
-            log_w.last_as = last_applied;
-            log_w.last_exe = last_applied;
-            log_w.commit_index = last_applied;
-            log_w.restore_entries(entries);
-        });
-
-        raw_curp
+    /// Create a `RawCurpBuilder`
+    pub(super) fn builder() -> RawCurpBuilder<C, RC> {
+        RawCurpBuilder::default()
     }
 
     /// Get the leader id, attached with the term

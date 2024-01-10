@@ -96,19 +96,12 @@ pub(super) struct LeaderState {
 
 impl State {
     /// Create a new `State`
-    pub(super) fn new(
-        term: u64,
-        voted_for: Option<ServerId>,
-        role: Role,
-        leader_id: Option<ServerId>,
-        follower_timeout_ticks: u8,
-        candidate_timeout_ticks: u8,
-    ) -> Self {
+    pub(super) fn new(follower_timeout_ticks: u8, candidate_timeout_ticks: u8) -> Self {
         let mut st = Self {
-            term,
-            voted_for,
-            role,
-            leader_id,
+            term: 0,
+            voted_for: None,
+            role: Role::Follower,
+            leader_id: None,
             follower_timeout_ticks,
             candidate_timeout_ticks,
             follower_timeout_ticks_base: follower_timeout_ticks,

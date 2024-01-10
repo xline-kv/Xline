@@ -65,20 +65,22 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             .build()
             .unwrap();
         let (shutdown_trigger, _) = shutdown::channel();
-        Self::new(
-            cluster_info,
-            true,
-            cmd_board,
-            spec_pool,
-            uncommitted_pool,
-            Arc::new(curp_config),
-            Arc::new(exe_tx),
-            sync_events,
-            log_tx,
-            role_change,
-            shutdown_trigger,
-            connects,
-        )
+
+        Self::builder()
+            .cluster_info(cluster_info)
+            .is_leader(true)
+            .cmd_board(cmd_board)
+            .spec_pool(spec_pool)
+            .uncommitted_pool(uncommitted_pool)
+            .cfg(Arc::new(curp_config))
+            .cmd_tx(Arc::new(exe_tx))
+            .sync_events(sync_events)
+            .log_tx(log_tx)
+            .role_change(role_change)
+            .shutdown_trigger(shutdown_trigger)
+            .connects(connects)
+            .build_raw_curp()
+            .unwrap()
     }
 
     /// Set connect for a server

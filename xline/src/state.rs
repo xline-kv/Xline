@@ -16,6 +16,15 @@ pub(crate) struct State<DB: StorageApi, C: Compactable> {
     auto_compactor: Option<Arc<dyn Compactor<C>>>,
 }
 
+impl<DB: StorageApi, C: Compactable> Clone for State<DB, C> {
+    fn clone(&self) -> Self {
+        Self {
+            lease_storage: Arc::clone(&self.lease_storage),
+            auto_compactor: self.auto_compactor.clone(),
+        }
+    }
+}
+
 impl<DB: StorageApi, C: Compactable> RoleChange for State<DB, C> {
     fn on_election_win(&self) {
         self.lease_storage.promote(Duration::from_secs(1)); // TODO: extend should be election timeout

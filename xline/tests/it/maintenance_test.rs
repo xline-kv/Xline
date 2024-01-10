@@ -105,7 +105,7 @@ async fn test_alarm(idx: usize) {
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn test_status() -> Result<(), Box<dyn std::error::Error>> {
-    let mut cluster = Cluster::new(3).await;
+    let mut cluster = Cluster::new_rocks(3).await;
     cluster.start().await;
     let client = cluster.client().await;
     let mut maintenance_client = client.maintenance_client();
