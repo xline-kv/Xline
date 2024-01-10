@@ -19,6 +19,40 @@ stop_all() {
     echo stopped
 }
 
+# run xline node by index
+# args:
+#   $1: index of the node
+run_xline() {
+    cmd="/usr/local/bin/xline \
+    --name node${1} \
+    --members ${MEMBERS} \
+    --storage-engine rocksdb \
+    --data-dir /usr/local/xline/data-dir \
+    --auth-public-key /mnt/public.pem \
+    --auth-private-key /mnt/private.pem"
+
+    if [ -n "$LOG_PATH" ]; then
+        cmd="${cmd} --log-file ${LOG_PATH}/node${1} --log-level debug"
+    fi
+
+    if [ ${1} -eq 1 ]; then
+        cmd="${cmd} --is-leader"
+    fi
+
+    docker exec -e RUST_LOG=debug -d node${1} ${cmd}
+    echo "command is: docker exec -e RUST_LOG=debug -d node${1} ${cmd}"
+}
+
+# run cluster of xline/etcd in container
+run_cluster() {
+    echo cluster starting
+    run_xline 1 &
+    run_xline 2 &
+    run_xline 3 &
+    wait
+    echo cluster started
+}
+
 # run container of xline/etcd use specified image
 # args:
 #   $1: size of cluster
@@ -27,15 +61,9 @@ run_container() {
     size=${1}
     image="ghcr.io/xline-kv/xline:latest"
     for ((i = 1; i <= ${size}; i++)); do
-        command_str="docker run -e RUST_LOG=debug -e HOSTNAME=node${i} -e MEMBERS=${MEMBERS} -e INIT_LEADER=node1"
-        command_str="${command_str} -e AUTH_PUBLIC_KEY=/mnt/public.pem -e AUTH_PRIVATE_KEY=/mnt/private.pem"
-        if [ -n "$LOG_PATH" ]; then
-            command_str="${command_str} -e LOG_FILE=${LOG_PATH}/node${i}"
-        fi
-        command_str="${command_str} -d -it --rm --name=node${i}"
-        command_str="${command_str} --net=xline_net --ip=${SERVERS[$i]} --cap-add=NET_ADMIN"
-        command_str="${command_str} --cpu-shares=1024 -m=512M -v ${DIR}:/mnt ${image}"
-        eval ${command_str}
+        docker run -d -it --rm --name=node${i} --net=xline_net \
+            --ip=${SERVERS[$i]} --cap-add=NET_ADMIN --cpu-shares=1024 \
+            -m=512M -v ${DIR}:/mnt ${image} bash &
     done
     docker run -d -it --rm  --name=client \
         --net=xline_net --ip=${SERVERS[0]} --cap-add=NET_ADMIN \
@@ -49,6 +77,7 @@ if [ -z "$1" ]; then
     docker network create --subnet=172.20.0.0/24 xline_net >/dev/null 2>&1
     echo "A Docker network named 'xline_net' is created for communication among various xline nodes. You can use the command 'docker network rm xline_net' to remove it after use."
     run_container 3
+    run_cluster
     exit 0
 elif [ "$1" == "stop" ]; then
     stop_all

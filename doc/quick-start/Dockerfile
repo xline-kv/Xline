@@ -21,6 +21,5 @@ RUN set -eux && \
 COPY --from=builder /build/target/release/xline /usr/local/bin
 COPY --from=builder /build/target/release/benchmark /usr/local/bin
 COPY --from=builder /build/target/release/validation_lock_client /usr/local/bin
-COPY --from=builder /build/scripts/start_xline.sh /usr/local/bin
 
-CMD ["/bin/bash", "/usr/local/bin/start_xline.sh"]
+CMD ["/usr/local/bin/xline"]
