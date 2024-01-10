@@ -10,6 +10,7 @@ use tokio::{
     sync::{broadcast, mpsc},
     time::MissedTickBehavior,
 };
+#[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
 use tracing::{debug, error, info, trace, warn};
 use utils::{
@@ -441,6 +442,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                     let connect = match InnerConnectApiWrapper::connect(
                         change.node_id,
                         change.address,
+                        #[cfg(not(madsim))]
                         curp.client_tls_config().cloned(),
                     )
                     .await
@@ -587,7 +589,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
 impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     /// Create a new server instance
     #[inline]
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // TODO: refactor this use builder pattern
     pub(super) async fn new<CE: CommandExecutor<C>>(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
@@ -596,17 +598,21 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
         task_manager: Arc<TaskManager>,
-        client_tls_config: Option<ClientTlsConfig>,
+        #[cfg(not(madsim))] client_tls_config: Option<ClientTlsConfig>,
     ) -> Result<Self, CurpError> {
         let sync_events = cluster_info
             .peers_ids()
             .into_iter()
             .map(|server_id| (server_id, Arc::new(Event::new())))
             .collect();
-        let connects = rpc::inner_connects(cluster_info.peers_addrs(), client_tls_config.as_ref())
-            .await
-            .map_err(|e| CurpError::internal(format!("parse peers addresses failed, err {e:?}")))?
-            .collect();
+        let connects = rpc::inner_connects(
+            cluster_info.peers_addrs(),
+            #[cfg(not(madsim))]
+            client_tls_config.as_ref(),
+        )
+        .await
+        .map_err(|e| CurpError::internal(format!("parse peers addresses failed, err {e:?}")))?
+        .collect();
         let (log_tx, log_rx) = mpsc::unbounded_channel();
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));

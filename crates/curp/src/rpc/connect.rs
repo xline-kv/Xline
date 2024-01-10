@@ -67,11 +67,15 @@ impl FromTonicChannel for InnerProtocolClient<Channel> {
 async fn connect_to<Client: FromTonicChannel>(
     id: ServerId,
     addrs: Vec<String>,
-    tls_config: Option<ClientTlsConfig>,
+    #[cfg(not(madsim))] tls_config: Option<ClientTlsConfig>,
 ) -> Result<Arc<Connect<Client>>, tonic::transport::Error> {
     let (channel, change_tx) = Channel::balance_channel(DEFAULT_BUFFER_SIZE);
     for addr in &addrs {
-        let endpoint = build_endpoint(addr, tls_config.as_ref())?;
+        let endpoint = build_endpoint(
+            addr,
+            #[cfg(not(madsim))]
+            tls_config.as_ref(),
+        )?;
         let _ig = change_tx
             .send(tower::discover::Change::Insert(addr.clone(), endpoint))
             .await;
@@ -82,6 +86,7 @@ async fn connect_to<Client: FromTonicChannel>(
         rpc_connect: client,
         change_tx,
         addrs: Mutex::new(addrs),
+        #[cfg(not(madsim))]
         tls_config,
     });
     Ok(connect)
@@ -90,14 +95,19 @@ async fn connect_to<Client: FromTonicChannel>(
 /// Connect to a map of members
 async fn connect_all<Client: FromTonicChannel>(
     members: HashMap<ServerId, Vec<String>>,
-    tls_config: Option<&ClientTlsConfig>,
+    #[cfg(not(madsim))] tls_config: Option<&ClientTlsConfig>,
 ) -> Result<Vec<(u64, Arc<Connect<Client>>)>, tonic::transport::Error> {
     let conns_to: FuturesUnordered<_> = members
         .into_iter()
         .map(|(id, addrs)| async move {
-            connect_to::<Client>(id, addrs, tls_config.cloned())
-                .await
-                .map(|conn| (id, conn))
+            connect_to::<Client>(
+                id,
+                addrs,
+                #[cfg(not(madsim))]
+                tls_config.cloned(),
+            )
+            .await
+            .map(|conn| (id, conn))
         })
         .collect();
     futures::StreamExt::collect::<Vec<_>>(conns_to)
@@ -110,36 +120,50 @@ async fn connect_all<Client: FromTonicChannel>(
 pub(crate) async fn connect(
     id: ServerId,
     addrs: Vec<String>,
-    tls_config: Option<ClientTlsConfig>,
+    #[cfg(not(madsim))] tls_config: Option<ClientTlsConfig>,
 ) -> Result<Arc<dyn ConnectApi>, tonic::transport::Error> {
-    let conn = connect_to::<ProtocolClient<Channel>>(id, addrs, tls_config).await?;
+    let conn = connect_to::<ProtocolClient<Channel>>(
+        id,
+        addrs,
+        #[cfg(not(madsim))]
+        tls_config,
+    )
+    .await?;
     Ok(conn)
 }
 
 /// Wrapper of [`connect_all`], hide the details of [`Connect<ProtocolClient>`]
 pub(crate) async fn connects(
     members: HashMap<ServerId, Vec<String>>,
-    tls_config: Option<&ClientTlsConfig>,
+    #[cfg(not(madsim))] tls_config: Option<&ClientTlsConfig>,
 ) -> Result<impl Iterator<Item = (ServerId, Arc<dyn ConnectApi>)>, tonic::transport::Error> {
     // It seems that casting high-rank types cannot be inferred, so we allow trivial_casts to cast manually
     #[allow(trivial_casts)]
     #[allow(clippy::as_conversions)]
-    let conns = connect_all(members, tls_config)
-        .await?
-        .into_iter()
-        .map(|(id, conn)| (id, conn as Arc<dyn ConnectApi>));
+    let conns = connect_all(
+        members,
+        #[cfg(not(madsim))]
+        tls_config,
+    )
+    .await?
+    .into_iter()
+    .map(|(id, conn)| (id, conn as Arc<dyn ConnectApi>));
     Ok(conns)
 }
 
 /// Wrapper of [`connect_all`], hide the details of [`Connect<InnerProtocolClient>`]
 pub(crate) async fn inner_connects(
     members: HashMap<ServerId, Vec<String>>,
-    tls_config: Option<&ClientTlsConfig>,
+    #[cfg(not(madsim))] tls_config: Option<&ClientTlsConfig>,
 ) -> Result<impl Iterator<Item = (ServerId, InnerConnectApiWrapper)>, tonic::transport::Error> {
-    let conns = connect_all(members, tls_config)
-        .await?
-        .into_iter()
-        .map(|(id, conn)| (id, InnerConnectApiWrapper::new_from_arc(conn)));
+    let conns = connect_all(
+        members,
+        #[cfg(not(madsim))]
+        tls_config,
+    )
+    .await?
+    .into_iter()
+    .map(|(id, conn)| (id, InnerConnectApiWrapper::new_from_arc(conn)));
     Ok(conns)
 }
 
@@ -268,9 +292,15 @@ impl InnerConnectApiWrapper {
     pub(crate) async fn connect(
         id: ServerId,
         addrs: Vec<String>,
-        tls_config: Option<ClientTlsConfig>,
+        #[cfg(not(madsim))] tls_config: Option<ClientTlsConfig>,
     ) -> Result<Self, tonic::transport::Error> {
-        let conn = connect_to::<InnerProtocolClient<Channel>>(id, addrs, tls_config).await?;
+        let conn = connect_to::<InnerProtocolClient<Channel>>(
+            id,
+            addrs,
+            #[cfg(not(madsim))]
+            tls_config,
+        )
+        .await?;
         Ok(InnerConnectApiWrapper::new_from_arc(conn))
     }
 }
@@ -303,6 +333,7 @@ pub(crate) struct Connect<C> {
     /// `addrs` will be used to remove previous connection
     addrs: Mutex<Vec<String>>,
     /// Client tls config
+    #[cfg(not(madsim))]
     tls_config: Option<ClientTlsConfig>,
 }
 
@@ -315,7 +346,11 @@ impl<C> Connect<C> {
         let diffs = &old_addrs ^ &new_addrs;
         for diff in &diffs {
             let change = if new_addrs.contains(diff) {
-                let endpoint = build_endpoint(diff, self.tls_config.as_ref())?;
+                let endpoint = build_endpoint(
+                    diff,
+                    #[cfg(not(madsim))]
+                    self.tls_config.as_ref(),
+                )?;
                 tower::discover::Change::Insert(diff.clone(), endpoint)
             } else {
                 tower::discover::Change::Remove(diff.clone())

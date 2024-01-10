@@ -22,15 +22,16 @@ use jsonwebtoken::{DecodingKey, EncodingKey};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::{fs, sync::mpsc::channel};
 #[cfg(not(madsim))]
-use tonic::transport::server::Connected;
-#[cfg(not(madsim))]
-use tonic::transport::ServerTlsConfig;
-use tonic::transport::{server::Router, Certificate, ClientTlsConfig, Identity, Server};
+use tonic::transport::{
+    server::Connected, Certificate, ClientTlsConfig, Identity, ServerTlsConfig,
+};
+use tonic::transport::{server::Router, Server};
 use tracing::{info, warn};
+#[cfg(not(madsim))]
+use utils::config::TlsConfig;
 use utils::{
     config::{
         AuthConfig, ClusterConfig, CompactConfig, EngineConfig, InitialClusterState, StorageConfig,
-        TlsConfig,
     },
     task_manager::{tasks::TaskName, TaskManager},
 };
@@ -85,8 +86,10 @@ pub struct XlineServer {
     /// Auth config
     auth_config: AuthConfig,
     /// Client tls config
+    #[cfg(not(madsim))]
     client_tls_config: Option<ClientTlsConfig>,
     /// Server tls config
+    #[cfg(not(madsim))]
     server_tls_config: Option<ServerTlsConfig>,
     /// Task Manager
     task_manager: Arc<TaskManager>,
@@ -102,18 +105,27 @@ impl XlineServer {
         storage_config: StorageConfig,
         compact_config: CompactConfig,
         auth_config: AuthConfig,
-        tls_config: TlsConfig,
+        #[cfg(not(madsim))] tls_config: TlsConfig,
     ) -> Result<Self> {
+        #[cfg(not(madsim))]
         let (client_tls_config, server_tls_config) = Self::read_tls_config(&tls_config).await?;
-        let cluster_info =
-            Arc::new(Self::init_cluster_info(&cluster_config, client_tls_config.as_ref()).await?);
+        let cluster_info = Arc::new(
+            Self::init_cluster_info(
+                &cluster_config,
+                #[cfg(not(madsim))]
+                client_tls_config.as_ref(),
+            )
+            .await?,
+        );
         Ok(Self {
             cluster_info,
             cluster_config,
             storage_config,
             compact_config,
             auth_config,
+            #[cfg(not(madsim))]
             client_tls_config,
+            #[cfg(not(madsim))]
             server_tls_config,
             task_manager: Arc::new(TaskManager::new()),
         })
@@ -122,7 +134,7 @@ impl XlineServer {
     /// Init cluster info from cluster config
     async fn init_cluster_info(
         cluster_config: &ClusterConfig,
-        tls_config: Option<&ClientTlsConfig>,
+        #[cfg(not(madsim))] tls_config: Option<&ClientTlsConfig>,
     ) -> Result<ClusterInfo> {
         let server_addr_str = cluster_config
             .members()
@@ -160,6 +172,7 @@ impl XlineServer {
                 server_addr_str,
                 &name,
                 *cluster_config.client_config().wait_synced_timeout(),
+                #[cfg(not(madsim))]
                 tls_config,
             )
             .await
@@ -333,11 +346,7 @@ impl XlineServer {
             .task_manager
             .get_shutdown_listener(TaskName::TonicServer);
         let persistent = DB::open(&self.storage_config.engine)?;
-        let key_pair = Self::read_key_pair(
-            self.auth_config.auth_private_key().as_ref(),
-            self.auth_config.auth_public_key().as_ref(),
-        )
-        .await?;
+        let key_pair = Self::read_key_pair(&self.auth_config).await?;
         let (router, curp_client) = self.init_router(persistent, key_pair).await?;
         let handle = tokio::spawn(async move { router.serve_with_shutdown(addr, n.wait()).await });
         if let Err(e) = self.publish(curp_client).await {
@@ -504,6 +513,7 @@ impl XlineServer {
             state,
             Arc::clone(&curp_config),
             Arc::clone(&self.task_manager),
+            #[cfg(not(madsim))]
             self.client_tls_config.clone(),
         )
         .await;
@@ -542,6 +552,7 @@ impl XlineServer {
                 Arc::clone(&client),
                 Arc::clone(&id_gen),
                 &self.cluster_info.self_addrs(),
+                #[cfg(not(madsim))]
                 self.client_tls_config.as_ref(),
             ),
             LeaseServer::new(
@@ -550,6 +561,7 @@ impl XlineServer {
                 Arc::clone(&client),
                 id_gen,
                 Arc::clone(&self.cluster_info),
+                #[cfg(not(madsim))]
                 self.client_tls_config.clone(),
                 &self.task_manager,
             ),
@@ -608,6 +620,7 @@ impl XlineServer {
     }
 
     /// Read tls cert and key from file
+    #[cfg(not(madsim))]
     async fn read_tls_config(
         tls_config: &TlsConfig,
     ) -> Result<(Option<ClientTlsConfig>, Option<ServerTlsConfig>)> {
