@@ -588,46 +588,26 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
 
         // create curp state machine
         let (voted_for, entries) = storage.recover().await?;
-        let curp = if voted_for.is_none() && entries.is_empty() {
-            Arc::new(RawCurp::new(
-                Arc::clone(&cluster_info),
-                is_leader,
-                Arc::clone(&cmd_board),
-                Arc::clone(&spec_pool),
-                uncommitted_pool,
-                Arc::clone(&curp_cfg),
-                Arc::clone(&ce_event_tx),
-                sync_events,
-                log_tx,
-                role_change,
-                shutdown_trigger,
-                connects,
-            ))
-        } else {
-            info!(
-                "{} recovered voted_for({voted_for:?}), entries from {:?} to {:?}",
-                cluster_info.self_id(),
-                entries.first(),
-                entries.last()
-            );
-            Arc::new(RawCurp::recover_from(
-                Arc::clone(&cluster_info),
-                is_leader,
-                Arc::clone(&cmd_board),
-                Arc::clone(&spec_pool),
-                uncommitted_pool,
-                &curp_cfg,
-                Arc::clone(&ce_event_tx),
-                sync_events,
-                log_tx,
-                voted_for,
-                entries,
-                last_applied,
-                role_change,
-                shutdown_trigger,
-                connects,
-            ))
-        };
+        let curp = Arc::new(
+            RawCurp::builder()
+                .cluster_info(Arc::clone(&cluster_info))
+                .is_leader(is_leader)
+                .cmd_board(Arc::clone(&cmd_board))
+                .spec_pool(Arc::clone(&spec_pool))
+                .uncommitted_pool(uncommitted_pool)
+                .cfg(Arc::clone(&curp_cfg))
+                .cmd_tx(Arc::clone(&ce_event_tx))
+                .sync_events(sync_events)
+                .log_tx(log_tx)
+                .role_change(role_change)
+                .shutdown_trigger(shutdown_trigger)
+                .connects(connects)
+                .last_applied(last_applied)
+                .voted_for(voted_for)
+                .entries(entries)
+                .build_raw_curp()
+                .map_err(|e| CurpError::internal(format!("build raw curp failed, {e}")))?,
+        );
 
         start_cmd_workers(
             Arc::clone(&cmd_executor),
