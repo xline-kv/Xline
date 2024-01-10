@@ -46,6 +46,7 @@ where
     /// cluster information
     cluster_info: Arc<ClusterInfo>,
     /// Client tls config
+    #[cfg(not(madsim))]
     client_tls_config: Option<ClientTlsConfig>,
     /// Shutdown listener
     shutdown_listener: shutdown::Listener,
@@ -62,7 +63,7 @@ where
         client: Arc<CurpClient>,
         id_gen: Arc<IdGenerator>,
         cluster_info: Arc<ClusterInfo>,
-        client_tls_config: Option<ClientTlsConfig>,
+        #[cfg(not(madsim))] client_tls_config: Option<ClientTlsConfig>,
         shutdown_listener: shutdown::Listener,
     ) -> Arc<Self> {
         let lease_server = Arc::new(Self {
@@ -71,6 +72,7 @@ where
             client,
             id_gen,
             cluster_info,
+            #[cfg(not(madsim))]
             client_tls_config,
             shutdown_listener,
         });
@@ -196,13 +198,17 @@ where
     async fn follower_keep_alive(
         &self,
         mut request_stream: tonic::Streaming<LeaseKeepAliveRequest>,
-        leader_addrs: Vec<String>,
+        leader_addrs: &[String],
         mut shutdown_listener: shutdown::Listener,
     ) -> Result<
         Pin<Box<dyn Stream<Item = Result<LeaseKeepAliveResponse, tonic::Status>> + Send>>,
         tonic::Status,
     > {
-        let endpoints = build_endpoints(leader_addrs, self.client_tls_config.as_ref())?;
+        let endpoints = build_endpoints(
+            leader_addrs,
+            #[cfg(not(madsim))]
+            self.client_tls_config.as_ref(),
+        )?;
         let channel = tonic::transport::Channel::balance_list(endpoints.into_iter());
         let mut lease_client = LeaseClient::new(channel);
 
@@ -236,14 +242,18 @@ where
 
 /// Build endpoints from addresses
 fn build_endpoints(
-    addrs: Vec<String>,
-    tls_config: Option<&ClientTlsConfig>,
+    addrs: &[String],
+    #[cfg(not(madsim))] tls_config: Option<&ClientTlsConfig>,
 ) -> Result<Vec<Endpoint>, tonic::Status> {
     addrs
         .iter()
         .map(|addr| {
-            let endpoint = build_endpoint(addr, tls_config)
-                .map_err(|e| tonic::Status::internal(e.to_string()))?;
+            let endpoint = build_endpoint(
+                addr,
+                #[cfg(not(madsim))]
+                tls_config,
+            )
+            .map_err(|e| tonic::Status::internal(e.to_string()))?;
             Ok(endpoint)
         })
         .collect()
@@ -334,7 +344,7 @@ where
                 break self
                     .follower_keep_alive(
                         request_stream,
-                        leader_addrs,
+                        &leader_addrs,
                         self.shutdown_listener.clone(),
                     )
                     .await?;
@@ -380,7 +390,11 @@ where
                 )
             });
             if !self.lease_storage.is_primary() {
-                let endpoints = build_endpoints(leader_addrs, self.client_tls_config.as_ref())?;
+                let endpoints = build_endpoints(
+                    &leader_addrs,
+                    #[cfg(not(madsim))]
+                    self.client_tls_config.as_ref(),
+                )?;
                 let channel = tonic::transport::Channel::balance_list(endpoints.into_iter());
                 let mut lease_client = LeaseClient::new(channel);
                 return lease_client.lease_time_to_live(request).await;

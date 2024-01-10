@@ -12,9 +12,9 @@ use dashmap::DashMap;
 use engine::{MemorySnapshotAllocator, RocksSnapshotAllocator, SnapshotAllocator};
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use tokio::{sync::mpsc::channel, task::JoinHandle};
+use tonic::transport::{server::Router, Server};
 #[cfg(not(madsim))]
-use tonic::transport::ServerTlsConfig;
-use tonic::transport::{server::Router, ClientTlsConfig, Server};
+use tonic::transport::{ClientTlsConfig, ServerTlsConfig};
 use tracing::{error, warn};
 use utils::{
     config::{ClientConfig, CompactConfig, CurpConfig, ServerTimeout, StorageConfig},
@@ -74,8 +74,10 @@ pub struct XlineServer {
     /// Server timeout
     server_timeout: ServerTimeout,
     /// Client tls config
+    #[cfg(not(madsim))]
     client_tls_config: Option<ClientTlsConfig>,
     /// Server tls config
+    #[cfg(not(madsim))]
     server_tls_config: Option<ServerTlsConfig>,
     /// Shutdown trigger
     shutdown_trigger: shutdown::Trigger,
@@ -89,6 +91,7 @@ impl XlineServer {
     /// panic when peers do not contain leader address
     #[inline]
     #[must_use]
+    #[allow(clippy::too_many_arguments)] // TODO: refactor this use builder pattern
     pub fn new(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
@@ -97,8 +100,8 @@ impl XlineServer {
         server_timeout: ServerTimeout,
         storage_config: StorageConfig,
         compact_config: CompactConfig,
-        client_tls_config: Option<ClientTlsConfig>,
-        server_tls_config: Option<ServerTlsConfig>,
+        #[cfg(not(madsim))] client_tls_config: Option<ClientTlsConfig>,
+        #[cfg(not(madsim))] server_tls_config: Option<ServerTlsConfig>,
     ) -> Self {
         let (shutdown_trigger, _) = shutdown::channel();
         Self {
@@ -110,7 +113,9 @@ impl XlineServer {
             compact_cfg: compact_config,
             server_timeout,
             shutdown_trigger,
+            #[cfg(not(madsim))]
             client_tls_config,
+            #[cfg(not(madsim))]
             server_tls_config,
         }
     }
@@ -418,12 +423,13 @@ impl XlineServer {
             state,
             Arc::clone(&self.curp_cfg),
             self.shutdown_trigger.clone(),
+            #[cfg(not(madsim))]
             self.client_tls_config.clone(),
         )
         .await;
 
         let client = Arc::new(
-            CurpClientBuilder::new(self.client_config.clone())
+            CurpClientBuilder::new(self.client_config)
                 .cluster_version(self.cluster_info.cluster_version())
                 .all_members(self.cluster_info.all_members_addrs())
                 .bypass(self.cluster_info.self_id(), curp_server.clone())
@@ -449,7 +455,8 @@ impl XlineServer {
             LockServer::new(
                 Arc::clone(&client),
                 Arc::clone(&id_gen),
-                self.cluster_info.self_addrs(),
+                &self.cluster_info.self_addrs(),
+                #[cfg(not(madsim))]
                 self.client_tls_config.as_ref(),
             ),
             LeaseServer::new(
@@ -458,6 +465,7 @@ impl XlineServer {
                 Arc::clone(&client),
                 id_gen,
                 Arc::clone(&self.cluster_info),
+                #[cfg(not(madsim))]
                 self.client_tls_config.clone(),
                 self.shutdown_trigger.subscribe(),
             ),

@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use async_stream::stream;
 use clippy_utilities::OverflowArithmetic;
-use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
+#[cfg(not(madsim))]
+use tonic::transport::ClientTlsConfig;
+use tonic::transport::{Channel, Endpoint};
 use tracing::debug;
 use utils::build_endpoint;
 use xlineapi::{
@@ -41,14 +43,18 @@ impl LockServer {
     pub(super) fn new(
         client: Arc<CurpClient>,
         id_gen: Arc<IdGenerator>,
-        addrs: Vec<String>,
-        client_tls_config: Option<&ClientTlsConfig>,
+        addrs: &[String],
+        #[cfg(not(madsim))] client_tls_config: Option<&ClientTlsConfig>,
     ) -> Self {
         let addrs = addrs
             .iter()
             .map(|addr| {
-                build_endpoint(addr, client_tls_config)
-                    .unwrap_or_else(|_e| panic!("invalid address: {addr}"))
+                build_endpoint(
+                    addr,
+                    #[cfg(not(madsim))]
+                    client_tls_config,
+                )
+                .unwrap_or_else(|_e| panic!("invalid address: {addr}"))
             })
             .collect();
         Self {

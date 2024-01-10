@@ -158,6 +158,7 @@ pub struct ClientBuilder {
     /// client configuration
     config: ClientConfig,
     /// Client tls config
+    #[cfg(not(madsim))]
     tls_config: Option<ClientTlsConfig>,
 }
 
@@ -226,6 +227,7 @@ impl ClientBuilder {
     /// Set the tls config
     #[inline]
     #[must_use]
+    #[cfg(not(madsim))]
     pub fn tls_config(mut self, tls_config: Option<ClientTlsConfig>) -> Self {
         self.tls_config = tls_config;
         self
@@ -242,9 +244,15 @@ impl ClientBuilder {
         let mut futs: FuturesUnordered<_> = addrs
             .iter()
             .map(|addr| {
+                #[cfg(not(madsim))]
                 let tls_config = self.tls_config.clone();
                 async move {
-                    let endpoint = build_endpoint(addr, tls_config.as_ref()).map_err(|e| {
+                    let endpoint = build_endpoint(
+                        addr,
+                        #[cfg(not(madsim))]
+                        tls_config.as_ref(),
+                    )
+                    .map_err(|e| {
                         tonic::Status::internal(format!("create endpoint failed, error: {e}"))
                     })?;
                     let channel = endpoint.connect().await.map_err(|e| {
@@ -285,6 +293,7 @@ impl ClientBuilder {
             UnaryConfig::new(
                 *self.config.propose_timeout(),
                 *self.config.wait_synced_timeout(),
+                #[cfg(not(madsim))]
                 None,
             ),
         );

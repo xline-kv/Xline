@@ -26,6 +26,7 @@ use event_listener::Event;
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
 use tokio::sync::{broadcast, mpsc, oneshot};
+#[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
 use tracing::{
     debug, error,
@@ -171,6 +172,7 @@ struct Context<C: Command, RC: RoleChange> {
     /// Config
     cfg: Arc<CurpConfig>,
     /// Client tls config
+    #[cfg(not(madsim))]
     client_tls_config: Option<ClientTlsConfig>,
     /// Cmd board for tracking the cmd sync results
     cb: CmdBoardRef<C>,
@@ -800,7 +802,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         role_change: RC,
         shutdown_trigger: shutdown::Trigger,
         connects: DashMap<ServerId, InnerConnectApiWrapper>,
-        client_tls_config: Option<ClientTlsConfig>,
+        #[cfg(not(madsim))] client_tls_config: Option<ClientTlsConfig>,
     ) -> Self {
         let (change_tx, change_rx) = flume::bounded(CHANGE_CHANNEL_SIZE);
         let raw_curp = Self {
@@ -822,6 +824,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 ucp: uncommitted_pool,
                 leader_tx: broadcast::channel(1).0,
                 cfg,
+                #[cfg(not(madsim))]
                 client_tls_config,
                 election_tick: AtomicU8::new(0),
                 cmd_tx,
@@ -862,7 +865,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         role_change: RC,
         shutdown_trigger: shutdown::Trigger,
         connects: DashMap<ServerId, InnerConnectApiWrapper>,
-        client_tls_config: Option<ClientTlsConfig>,
+        #[cfg(not(madsim))] client_tls_config: Option<ClientTlsConfig>,
     ) -> Self {
         let raw_curp = Self::new(
             cluster_info,
@@ -877,6 +880,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             role_change,
             shutdown_trigger,
             connects,
+            #[cfg(not(madsim))]
             client_tls_config,
         );
 
@@ -1219,6 +1223,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             .collect()
     }
 
+    /// Get client tls config
+    #[cfg(not(madsim))]
     pub(super) fn client_tls_config(&self) -> Option<&ClientTlsConfig> {
         self.ctx.client_tls_config.as_ref()
     }

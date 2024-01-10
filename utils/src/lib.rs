@@ -141,7 +141,9 @@ use std::{collections::HashMap, str::FromStr, time::Duration};
 use clippy_utilities::OverflowArithmetic;
 use config::InitialClusterState;
 use thiserror::Error;
-use tonic::transport::{ClientTlsConfig, Endpoint};
+#[cfg(not(madsim))]
+use tonic::transport::ClientTlsConfig;
+use tonic::transport::Endpoint;
 
 use crate::config::{ClusterRange, LevelConfig, RotationConfig};
 
@@ -420,23 +422,29 @@ pub mod certs {
 }
 
 /// Create a new endpoint from addr
+/// # Errors
+/// Return error when parsing the given string to `Endpoint` failed
+/// or TLS config is invalid
+#[inline]
 pub fn build_endpoint(
     addr: &str,
-    tls_config: Option<&ClientTlsConfig>,
+    #[cfg(not(madsim))] tls_config: Option<&ClientTlsConfig>,
 ) -> Result<Endpoint, tonic::transport::Error> {
-    let mut endpoint = Endpoint::from_str(addr)?;
-    if endpoint.uri().scheme().is_none() {
-        endpoint = Endpoint::from_shared(format!("http://{}", addr))?;
-    }
-    match endpoint.uri().scheme_str() {
-        Some("http") => {}
+    let scheme_str = addr.split_once("://").map(|(scheme, _)| scheme);
+    let endpoint = match scheme_str {
+        Some(_scheme) => Endpoint::from_str(addr)?,
+        None => Endpoint::from_shared(format!("http://{addr}"))?,
+    };
+    #[cfg(not(madsim))]
+    match scheme_str {
+        Some("http") | None => {}
         Some("https") => {
             let tls_config = tls_config.cloned().unwrap_or_default();
-            endpoint = endpoint.tls_config(tls_config)?
+            return endpoint.tls_config(tls_config);
         }
         _ => {
             if let Some(tls_config) = tls_config {
-                endpoint = endpoint.tls_config(tls_config.clone())?;
+                return endpoint.tls_config(tls_config.clone());
             }
         }
     };
@@ -557,15 +565,16 @@ mod test {
         assert!(parse_batch_bytes("MB").is_err());
     }
 
+    #[allow(clippy::unwrap_used)]
     #[test]
     fn test_build_endpoint() {
-        let endpoint = build_endpoint("127.0.0.1", Some(&ClientTlsConfig::new())).unwrap();
-        assert_eq!(endpoint.uri().scheme_str(), Some("http"));
+        let ep1 = build_endpoint("127.0.0.1", Some(&ClientTlsConfig::new())).unwrap();
+        assert_eq!(ep1.uri().scheme_str(), Some("http"));
 
-        let endpoint = build_endpoint("https://localhost", Some(&ClientTlsConfig::new())).unwrap();
-        assert_eq!(endpoint.uri().scheme_str(), Some("https"));
+        let ep2 = build_endpoint("https://localhost", Some(&ClientTlsConfig::new())).unwrap();
+        assert_eq!(ep2.uri().scheme_str(), Some("https"));
 
-        let endpoint = build_endpoint("http://example.com", Some(&ClientTlsConfig::new())).unwrap();
-        assert_eq!(endpoint.uri().scheme_str(), Some("http"));
+        let ep3 = build_endpoint("http://example.com", Some(&ClientTlsConfig::new())).unwrap();
+        assert_eq!(ep3.uri().scheme_str(), Some("http"));
     }
 }

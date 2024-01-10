@@ -145,7 +145,7 @@ use itertools::Itertools;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use opentelemetry::{global, runtime::Tokio, sdk::propagation::TraceContextPropagator};
 use opentelemetry_contrib::trace::exporter::jaeger_json::JaegerJsonExporter;
-use tokio::fs;
+use tokio::{fs, task::JoinHandle};
 use tonic::transport::{Certificate, ClientTlsConfig, Identity, ServerTlsConfig};
 use tracing::{debug, error, info};
 use tracing_appender::non_blocking::WorkerGuard;
@@ -505,8 +505,40 @@ async fn read_key_pair(
     Some((encoding_key, decoding_key))
 }
 
+/// Read client tls config from file
+async fn read_client_tls_config(
+    client_ca_cert_path: Option<&PathBuf>,
+) -> Result<Option<ClientTlsConfig>> {
+    Ok(match client_ca_cert_path {
+        Some(ca_cert_path) => {
+            let ca = Certificate::from_pem(fs::read(ca_cert_path).await?);
+            Some(ClientTlsConfig::new().ca_certificate(ca))
+        }
+        None => None,
+    })
+}
+
+/// Read server tls config from file
+async fn read_server_tls_config(
+    server_cert_path: Option<&PathBuf>,
+    server_key_path: Option<&PathBuf>,
+) -> Result<Option<ServerTlsConfig>> {
+    Ok(match (server_cert_path, server_key_path) {
+        (Some(cert_path), Some(key_path)) => {
+            let cert = fs::read_to_string(cert_path).await?;
+            let key = fs::read_to_string(key_path).await?;
+            Some(ServerTlsConfig::new().identity(Identity::from_pem(cert, key)))
+        }
+        (None, None) => None,
+        _ => {
+            return Err(anyhow!(
+                "server_cert_path and server_key_path must be both set"
+            ))
+        }
+    })
+}
+
 #[tokio::main]
-#[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
 async fn main() -> Result<()> {
     global::set_text_map_propagator(TraceContextPropagator::new());
     let config: XlineServerConfig = if env::args_os().len() == 1 {
@@ -559,25 +591,13 @@ async fn main() -> Result<()> {
         .flatten()
         .collect_vec();
 
-    let client_tls_config = if let Some(ca_cert_path) = tls_config.client_ca_cert_path() {
-        let ca = Certificate::from_pem(fs::read(ca_cert_path).await?);
-        Some(ClientTlsConfig::new().ca_certificate(ca))
-    } else {
-        None
-    };
-    let server_tls_config = match (tls_config.server_cert_path(), tls_config.server_key_path()) {
-        (Some(cert_path), Some(key_path)) => {
-            let cert = fs::read_to_string(cert_path).await?;
-            let key = fs::read_to_string(key_path).await?;
-            Some(ServerTlsConfig::new().identity(Identity::from_pem(cert, key)))
-        }
-        (None, None) => None,
-        _ => {
-            return Err(anyhow!(
-                "server_cert_path and server_key_path must be both set"
-            ))
-        }
-    };
+    let client_tls_config =
+        read_client_tls_config(tls_config.client_ca_cert_path().as_ref()).await?;
+    let server_tls_config = read_server_tls_config(
+        tls_config.server_cert_path().as_ref(),
+        tls_config.server_key_path().as_ref(),
+    )
+    .await?;
 
     debug!("name = {:?}", cluster_config.name());
     debug!("server_addr = {server_addr:?}");
@@ -605,7 +625,7 @@ async fn main() -> Result<()> {
         cluster_info.into(),
         *cluster_config.is_leader(),
         cluster_config.curp_config().clone(),
-        cluster_config.client_config().clone(),
+        *cluster_config.client_config(),
         *cluster_config.server_timeout(),
         config.storage().clone(),
         *config.compact(),
@@ -614,7 +634,17 @@ async fn main() -> Result<()> {
     );
     debug!("{:?}", server);
     let handle = server.start(server_addr, db_proxy, key_pair).await?;
+    shutdown_handler(handle, server).await?;
+    global::shutdown_tracer_provider();
+    Ok(())
+}
 
+/// Ctrl c signal handler
+#[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
+async fn shutdown_handler(
+    handle: JoinHandle<Result<(), tonic::transport::Error>>,
+    server: XlineServer,
+) -> Result<()> {
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
             info!("received ctrl-c, shutting down, press ctrl-c again to force exit");
@@ -633,7 +663,5 @@ async fn main() -> Result<()> {
             info!("server exited");
         }
     }
-
-    global::shutdown_tracer_provider();
     Ok(())
 }

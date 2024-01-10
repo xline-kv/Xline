@@ -11,6 +11,7 @@ use std::{
 use dashmap::{mapref::one::Ref, DashMap};
 use futures::{stream::FuturesUnordered, StreamExt};
 use itertools::Itertools;
+#[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
 use tracing::{debug, info};
 
@@ -108,6 +109,8 @@ impl ClusterInfo {
     }
 
     /// Construct a new `ClusterInfo` from `FetchClusterResponse`
+    /// # Panics
+    /// panic if `cluster.members` does contain `self_addr`
     #[inline]
     #[must_use]
     pub fn from_cluster(
@@ -366,14 +369,18 @@ pub async fn get_cluster_info_from_remote(
     self_addr: &[String],
     self_name: &str,
     timeout: Duration,
-    tls_config: Option<&ClientTlsConfig>,
+    #[cfg(not(madsim))] tls_config: Option<&ClientTlsConfig>,
 ) -> Option<ClusterInfo> {
     let peers = init_cluster_info.peers_addrs();
-    let connects = rpc::connects(peers, tls_config)
-        .await
-        .ok()?
-        .map(|pair| pair.1)
-        .collect_vec();
+    let connects = rpc::connects(
+        peers,
+        #[cfg(not(madsim))]
+        tls_config,
+    )
+    .await
+    .ok()?
+    .map(|pair| pair.1)
+    .collect_vec();
     let mut futs = connects
         .iter()
         .map(|c| {
