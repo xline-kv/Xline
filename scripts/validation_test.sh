@@ -11,8 +11,9 @@ LOCK_CLIENT="docker exec -i client /mnt/validation_lock_client --endpoints=http:
 #   $2: expect output
 run_with_expect() {
     cmd="${1}"
+    echo -e "\nrunning command: ${cmd}"
     res=$(eval ${cmd})
-    # echo -e "res:\n${res}\n"
+    echo "command result: ${res}"
     expect=$(echo -e ${2})
     if [ "${res}" == "${expect}" ]; then
         echo "command run success"
@@ -32,7 +33,9 @@ run_with_expect() {
 #   $2: expect output
 run_with_match() {
     cmd="${1}"
+    echo -e "\nrunning command: ${cmd}"
     res=$(eval ${cmd} 2>&1)
+    echo "command result: ${res}"
     expect=$(echo -e ${2})
     if echo "${res}" | grep -q "${expect}"; then
         echo "command run success"
@@ -57,11 +60,11 @@ kv_validation() {
     run_with_match "${ETCDCTL} put '' value" "etcdserver: key is not provided"
     run_with_match "${ETCDCTL} put non_exist_key --ignore-value" "etcdserver: key not found"
 
-    # TODO compact
-    echo "kv validation test passed"
+    echo -e "\nkv validation test passed"
 }
 
 watch_progress_validation() {
+    echo -e "\nwatch progress validation test running..."
     expect <<EOF
     spawn ${ETCDCTL} watch -i
     send "watch foo\r"
@@ -89,8 +92,10 @@ EOF
 watch_validation() {
     echo "watch validation test running..."
     command="${ETCDCTL} watch watch_key"
+    echo -e "\nrunning command: ${command}"
     want=("PUT" "watch_key" "value" "DELETE" "watch_key" "value" "watch_key")
     ${command} | while read line; do
+        echo "command result: ${line}"
         if [ "${line}" == "${want[0]}" ]; then
             unset want[0]
             want=("${want[@]}")
@@ -106,15 +111,17 @@ watch_validation() {
     run_with_expect "${ETCDCTL} put watch_key value" "OK"
     run_with_expect "${ETCDCTL} del watch_key" "1"
     watch_progress_validation
-    echo "watch validation test passed"
+    echo -e "\nwatch validation test passed"
 }
 
 # validate lease requests
 lease_validation() {
     echo "lease validation test running..."
     command="${ETCDCTL} lease grant 5"
+    echo -e "\nrunning command: ${command}"
     out=$(${command})
-    pattern='lease [0-9a-z]+ granted with TTL\([0-9]+s\)'
+    echo "command result: ${out}"
+    pattern='lease\s+[0-9a-z]+ granted with TTL\([0-9]+s\)'
     if [[ ${out} =~ ${pattern} ]]; then
         echo "command run success"
     else
@@ -127,8 +134,9 @@ lease_validation() {
     lease_id=$(echo ${out} | awk '{print $2}')
     run_with_expect "${ETCDCTL} lease list" "found 1 leases\n${lease_id}"
     command="${ETCDCTL} lease keep-alive ${lease_id}"
+    echo -e "\nrunning command: ${command}"
     ${command} | while read line; do
-
+        echo "command result: ${line}"
         if [ "${line}" != "lease ${lease_id} keepalived with TTL(5)" ]; then
             if [ "${line}" != "lease ${lease_id} expired or revoked." ]; then
                 echo "command run failed"
@@ -142,7 +150,10 @@ lease_validation() {
     run_with_expect "${ETCDCTL} put key1 value1 --lease=${lease_id}" "OK"
     run_with_expect "${ETCDCTL} get key1" "key1\nvalue1"
     command="${ETCDCTL} lease timetolive ${lease_id}"
-    remaining=$(${command} | sed -r "s/lease ${lease_id} granted with TTL\(5s\), remaining\(([0-9]+)s\)/\1/g")
+    echo -e "\nrunning command: ${command}"
+    res=$(${command})
+    echo "command result: ${res}"
+    remaining=$(echo ${res} | sed -r "s/lease ${lease_id} granted with TTL\(5s\), remaining\(([0-9]+)s\)/\1/g")
     if [ ${remaining} -le 5 ]; then
         echo "command run success"
     else
@@ -156,7 +167,7 @@ lease_validation() {
     run_with_expect "${ETCDCTL} get key1" ""
     run_with_match "${ETCDCTL} lease revoke 255" "etcdserver: requested lease not found"
     run_with_match "${ETCDCTL} lease grant 10000000000" "etcdserver: too large lease TTL"
-    echo "lease validation test passed"
+    echo -e "\nlease validation test passed"
 }
 
 # validate auth requests
@@ -193,19 +204,21 @@ auth_validation() {
     run_with_match "${ETCDCTL} --user root:root role revoke root non_exist_key" "etcdserver: permission is not granted to the role"
     run_with_match "${ETCDCTL} --user root:root user delete root" "etcdserver: invalid auth management"
     run_with_expect "${ETCDCTL} --user root:root auth disable" "Authentication Disabled"
-    echo "auth validation test passed"
+    echo -e "\nauth validation test passed"
 }
 
 lock_validation() {
     echo "lock validation test running..."
     run_with_expect "${ETCDCTL} lock mutex echo success" "success"
-    echo "lock validation test passed"
+    echo -e "\nlock validation test passed"
 }
 
 lock_rpc_validation() {
     echo "lock rpc validation test running..."
     command="${LOCK_CLIENT} lock mutex"
+    echo -e "\nrunning command: ${command}"
     key=$(${command})
+    echo "command result: ${key}"
     if [[ ${key} == mutex* ]]; then
         echo "command run success"
     else
@@ -215,7 +228,7 @@ lock_rpc_validation() {
         echo "result: ${key}"
     fi
     run_with_expect "${LOCK_CLIENT} unlock ${key}" "unlock success"
-    echo "lock rpc validation test passed"
+    echo -e "\nlock rpc validation test passed"
 }
 
 # validate maintenance requests
@@ -224,7 +237,7 @@ maintenance_validation() {
     local _ETCDCTL="docker exec -i client etcdctl --endpoints=http://172.20.0.3:2379"
     echo "maintenance validation test running..."
     run_with_expect "${_ETCDCTL} snapshot save snap.db" "Snapshot saved at snap.db"
-    echo "maintenance validation test passed"
+    echo -e "\nmaintenance validation test passed"
 }
 
 # validate compact requests
@@ -234,16 +247,18 @@ compact_validation() {
         run_with_expect "${ETCDCTL} put key ${value}" "OK"
     done
     run_with_expect "${ETCDCTL} get --rev=4 key" "key\nvalue3"
-    run_with_expect "${ETCDCTL} compact 5" "compacted revision 5"
+    run_with_expect "${ETCDCTL} compact --physical 5" "compacted revision 5"
     run_with_match "${ETCDCTL} get --rev=4 key" "etcdserver: mvcc: required revision has been compacted"
     run_with_match "${ETCDCTL} watch --rev=4 key " "watch was canceled (etcdserver: mvcc: required revision has been compacted)"
-    echo "compact validation test pass..."
+    echo -e "\ncompact validation test pass..."
 }
 
 cluster_validation() {
     echo "cluster validation test running..."
     command="${ETCDCTL} member list"
+    echo -e "\nrunning command: ${command}"
     out=$(eval ${command})
+    echo "command result: ${out}"
     pattern="[0-9a-z]+, started, node[0-9], 172.20.0.[0-9]:2379,172.20.0.[0-9]:2380, 172.20.0.[0-9]:2379,172.20.0.[0-9]:2380, false"
     if [[ ${out} =~ ${pattern} ]]; then
         echo "command run success"
@@ -255,8 +270,10 @@ cluster_validation() {
         exit 1
     fi
     command="${ETCDCTL} member add client --peer-urls=http://172.20.0.6:2379 --learner=true"
+    echo -e "\nrunning command: ${command}"
     out=$(eval ${command})
-    pattern="Member [a-zA-Z0-9]+ added to cluster [a-zA-Z0-9]+"
+    echo "command result: ${out}"
+    pattern="Member\s+[a-zA-Z0-9]+ added to cluster\s+[a-zA-Z0-9]+"
     if [[ ${out} =~ ${pattern} ]]; then
         echo "command run success"
     else
@@ -271,7 +288,7 @@ cluster_validation() {
     run_with_expect "${ETCDCTL} member promote ${node_id}" "Member ${node_id} promoted in cluster ${cluster_id}"
     run_with_expect "${ETCDCTL} member update ${node_id} --peer-urls=http://172.20.0.6:2379" "Member ${node_id} updated in cluster ${cluster_id}"
     run_with_expect "${ETCDCTL} member remove ${node_id}" "Member ${node_id} removed from cluster ${cluster_id}"
-    echo "cluster validation test passed"
+    echo -e "\ncluster validation test passed"
 }
 
 compact_validation
