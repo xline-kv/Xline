@@ -383,6 +383,6 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
     #[inline]
     #[must_use]
     pub fn raw_curp(&self) -> Arc<RawCurp<C, RC>> {
-        self.inner.curp()
+        self.inner.raw_curp()
     }
 }

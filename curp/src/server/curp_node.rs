@@ -871,7 +871,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     }
 
     /// Get `RawCurp`
-    pub(super) fn curp(&self) -> Arc<RawCurp<C, RC>> {
+    pub(super) fn raw_curp(&self) -> Arc<RawCurp<C, RC>> {
         Arc::clone(&self.curp)
     }
 }
