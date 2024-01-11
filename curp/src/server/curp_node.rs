@@ -415,7 +415,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         let leader_event = curp.leader_event();
 
         #[allow(clippy::integer_arithmetic)] // tokio select internal triggered
-        loop {
+        'outer: loop {
             if !curp.is_leader() {
                 tokio::select! {
                     _ = shutdown_listener.wait() => {
@@ -442,12 +442,12 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                                 is_shutdown_state = true;
                             }
                             _ => {
-                                return;
+                                break 'outer;
                             },
                         }
                     }
                     _ = remove_event.listen() => {
-                        return;
+                        break 'outer;
                     }
                     _now = ticker.tick() => {
                         hb_opt = false;
@@ -460,7 +460,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                 }
 
                 let Some(sync_action) = curp.sync(connect_id) else {
-                    return;
+                    break 'outer;
                 };
                 if Self::handle_sync_action(
                     sync_action,
@@ -472,13 +472,15 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                 )
                 .await
                 {
-                    return;
+                    break 'outer;
                 };
             }
         }
+        debug!("{} to {} sync follower task exits", curp.id(), connect.id());
     }
 
     /// handler `SyncAction`
+    /// If no longer need to sync to this node, return true
     async fn handle_sync_action(
         sync_action: SyncAction<C>,
         hb_opt: &mut bool,
