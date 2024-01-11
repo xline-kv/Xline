@@ -190,6 +190,8 @@ mod errorpb {
     tonic::include_proto!("errorpb");
 }
 
+use std::fmt::Display;
+
 use curp_external_api::cmd::PbSerializeError;
 use serde::{Deserialize, Serialize};
 
@@ -674,6 +676,17 @@ impl AlarmMember {
     }
 }
 
+impl Display for AlarmMember {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let alarm = AlarmType::from_i32(self.alarm).unwrap_or_else(|| panic!("invalid alarm"));
+        let alarm_str = match alarm {
+            AlarmType::Nospace => "NOSPACE",
+            AlarmType::Corrupt => "CORRUPT",
+            AlarmType::None => "NONE",
+        };
+        write!(f, "memberID:{} alarm:{} ", self.member_id, alarm_str)
+    }
+}
 #[cfg(test)]
 mod test {
     use super::*;
@@ -827,5 +840,12 @@ mod test {
         };
 
         assert!(!mixed_nested_txn_req.is_serializable());
+    }
+
+    #[test]
+    fn test_alarm_member_display() {
+        let am = AlarmMember::new(10276657743932975437, AlarmType::Nospace);
+        let expect = "memberID:10276657743932975437 alarm:NOSPACE ";
+        assert_eq!(expect, am.to_string());
     }
 }

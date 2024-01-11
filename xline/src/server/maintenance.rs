@@ -142,10 +142,10 @@ where
         })?;
         let mut errors = vec![];
         if leader.is_none() {
-            errors.push("no leader".to_owned());
+            errors.push("etcdserver: no leader".to_owned());
         }
         for a in self.alarm_store.get_all_alarms() {
-            errors.push(format!("{a:?}"));
+            errors.push(a.to_string());
         }
         let response = StatusResponse {
             header: Some(self.header_gen.gen_header()),

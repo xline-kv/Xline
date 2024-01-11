@@ -99,6 +99,7 @@ pub struct RawCurp<C: Command, RC: RoleChange> {
 }
 
 impl<C: Command, RC: RoleChange> Debug for RawCurp<C, RC> {
+    #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RawCurp")
             .field("st", &self.st)
