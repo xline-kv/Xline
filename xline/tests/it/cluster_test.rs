@@ -45,7 +45,7 @@ async fn xline_add_node() -> Result<(), Box<dyn Error>> {
     let add_req = MemberAddRequest::new(new_node_addrs.clone(), false);
     let add_res = cluster_client.member_add(add_req).await?;
     assert_eq!(add_res.members.len(), 4);
-    cluster.run_node(new_node_listener, 3).await;
+    cluster.run_node(new_node_listener).await;
     let mut etcd_client = etcd_client::Client::connect(&new_node_addrs, None).await?;
     let res = etcd_client.get("key", None).await?;
     assert_eq!(res.kvs().get(0).unwrap().value(), b"value");
