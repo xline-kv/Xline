@@ -14,18 +14,14 @@ use xlineapi::{execute_error::ExecuteError, AlarmAction, AlarmRequest, AlarmType
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn test_snapshot_and_restore() -> Result<(), Box<dyn std::error::Error>> {
-    use std::collections::HashMap;
-
     let dir = PathBuf::from("/tmp/test_snapshot_and_restore");
     tokio::fs::create_dir_all(&dir).await?;
     let snapshot_path = dir.join("snapshot");
-    let restore_dirs: HashMap<usize, PathBuf> = (0..3)
-        .map(|i| (i, dir.join(format!("restore_{}", i))))
-        .collect();
+    let restore_dirs: Vec<PathBuf> = (0..3).map(|i| dir.join(format!("restore_{}", i))).collect();
     let restore_cluster_configs = restore_dirs
-        .clone()
-        .into_iter()
-        .map(|(i, path)| (i, Cluster::default_rocks_config_with_path(path)))
+        .iter()
+        .cloned()
+        .map(|path| Cluster::default_rocks_config_with_path(path))
         .collect();
     {
         let mut cluster = Cluster::new_rocks(3).await;
@@ -43,7 +39,7 @@ async fn test_snapshot_and_restore() -> Result<(), Box<dyn std::error::Error>> {
             snapshot.write_all(chunk.blob.as_slice()).await?;
         }
     }
-    for restore_dir in restore_dirs.values() {
+    for restore_dir in restore_dirs {
         restore(&snapshot_path, &restore_dir).await?;
     }
     let mut new_cluster = Cluster::new_with_configs(restore_cluster_configs).await;
@@ -73,14 +69,11 @@ async fn test_alarm(idx: usize) {
     let q = 8 * 1024;
     let configs = (0..3)
         .map(|i| {
-            (
-                i,
-                if i == idx {
-                    Cluster::default_quota_config(q)
-                } else {
-                    Cluster::default_rocks_config()
-                },
-            )
+            if i == idx {
+                Cluster::default_quota_config(q)
+            } else {
+                Cluster::default_rocks_config()
+            }
         })
         .collect();
     let mut cluster = Cluster::new_with_configs(configs).await;

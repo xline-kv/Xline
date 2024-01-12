@@ -1,9 +1,4 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    env::temp_dir,
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{collections::HashMap, env::temp_dir, iter, path::PathBuf, sync::Arc};
 
 use curp::members::{get_cluster_info_from_remote, ClusterInfo};
 use jsonwebtoken::{DecodingKey, EncodingKey};
@@ -25,73 +20,66 @@ pub use xline_client::{types, Client, ClientOptions};
 /// Cluster
 pub struct Cluster {
     /// listeners of members
-    listeners: BTreeMap<usize, TcpListener>,
+    listeners: Vec<TcpListener>,
     /// address of members
-    all_members: HashMap<usize, String>,
-    /// Client of cluster
-    client: Option<Client>,
+    all_members: Vec<String>,
+    /// Server configs
+    configs: Vec<XlineServerConfig>,
     /// Xline servers
     servers: Vec<Arc<XlineServer>>,
-    /// Server configs
-    configs: HashMap<usize, XlineServerConfig>,
+    /// Client of cluster
+    client: Option<Client>,
 }
 
 impl Cluster {
     /// New `Cluster`
     pub async fn new(size: usize) -> Self {
-        let configs = (0..size)
-            .map(|i| (i, Self::default_config()))
-            .collect::<HashMap<_, _>>();
+        let configs = iter::repeat_with(Self::default_config).take(size).collect();
         Self::new_with_configs(configs).await
     }
 
     /// New `Cluster` with rocksdb
     pub async fn new_rocks(size: usize) -> Self {
-        let configs = (0..size)
-            .map(|i| {
-                let path = temp_dir().join(random_id());
-                (i, Self::default_rocks_config_with_path(path))
-            })
-            .collect::<HashMap<_, _>>();
+        let configs = iter::repeat_with(|| {
+            let path = temp_dir().join(random_id());
+            Self::default_rocks_config_with_path(path)
+        })
+        .take(size)
+        .collect();
         Self::new_with_configs(configs).await
     }
 
-    pub async fn new_with_configs(configs: HashMap<usize, XlineServerConfig>) -> Self {
+    pub async fn new_with_configs(configs: Vec<XlineServerConfig>) -> Self {
         let size = configs.len();
-        let mut listeners = BTreeMap::new();
-        for i in 0..size {
-            listeners.insert(i, TcpListener::bind("0.0.0.0:0").await.unwrap());
+        let mut listeners = Vec::new();
+        for _i in 0..size {
+            listeners.push(TcpListener::bind("0.0.0.0:0").await.unwrap());
         }
         let all_members = listeners
             .iter()
-            .map(|(i, l)| (*i, l.local_addr().unwrap().to_string()))
+            .map(|l| l.local_addr().unwrap().to_string())
             .collect();
         Self {
             listeners,
             all_members,
-            client: None,
-            servers: Vec::new(),
             configs,
+            servers: Vec::new(),
+            client: None,
         }
-    }
-
-    pub fn set_paths(&mut self, _paths: HashMap<usize, PathBuf>) {
-        todo!()
-        // self.paths = paths;
     }
 
     /// Start `Cluster`
     pub async fn start(&mut self) {
-        for i in 0..self.configs.len() {
+        for (i, config) in self.configs.iter().enumerate() {
             let name = format!("server{}", i);
             let is_leader = i == 0;
-            let listener = self.listeners.remove(&i).unwrap();
-            let config = self.configs.get(&i).unwrap();
+            let listener = self.listeners.remove(0);
             let cluster_config = config.cluster();
             let cluster_info = ClusterInfo::new(
                 self.all_members
                     .clone()
                     .into_iter()
+                    .enumerate()
                     .map(|(i, addr)| (format!("server{}", i), vec![addr]))
                     .collect(),
                 &name,
@@ -125,28 +113,25 @@ impl Cluster {
         time::sleep(Duration::from_millis(300)).await;
     }
 
-    pub async fn run_node(&mut self, listener: TcpListener, idx: usize) {
+    pub async fn run_node(&mut self, listener: TcpListener) {
         let config = Self::default_config();
-        self.run_node_with_config(listener, idx, config).await;
+        self.run_node_with_config(listener, config).await;
     }
 
-    pub async fn run_node_with_config(
-        &mut self,
-        listener: TcpListener,
-        idx: usize,
-        config: XlineServerConfig,
-    ) {
-        let self_addr = listener.local_addr().unwrap().to_string();
-        _ = self.all_members.insert(idx, self_addr.clone());
-        _ = self.configs.insert(idx, config);
-        let config = self.configs.get(&idx).unwrap();
-        let cluster_config = config.cluster();
+    pub async fn run_node_with_config(&mut self, listener: TcpListener, config: XlineServerConfig) {
+        let idx = self.all_members.len();
         let name = format!("server{}", idx);
+        let self_addr = listener.local_addr().unwrap().to_string();
+        _ = self.all_members.push(self_addr.clone());
+        _ = self.configs.push(config);
+        let config = self.configs.last().unwrap();
+        let cluster_config = config.cluster();
         let db: Arc<DB> = DB::open(&config.storage().engine).unwrap();
         let init_cluster_info = ClusterInfo::new(
             self.all_members
                 .clone()
                 .into_iter()
+                .enumerate()
                 .map(|(id, addr)| (format!("server{id}"), vec![addr]))
                 .collect(),
             &name,
@@ -181,29 +166,26 @@ impl Cluster {
     /// Create or get the client with the specified index
     pub async fn client(&mut self) -> &mut Client {
         if self.client.is_none() {
-            let client = Client::connect(
-                self.all_members.values().cloned().collect::<Vec<_>>(),
-                ClientOptions::default(),
-            )
-            .await
-            .unwrap_or_else(|e| {
-                panic!("Client connect error: {:?}", e);
-            });
+            let client = Client::connect(self.all_members.clone(), ClientOptions::default())
+                .await
+                .unwrap_or_else(|e| {
+                    panic!("Client connect error: {:?}", e);
+                });
             self.client = Some(client);
         }
         self.client.as_mut().unwrap()
     }
 
-    pub fn all_members(&self) -> &HashMap<usize, String> {
-        &self.all_members
+    pub fn all_members_map(&self) -> HashMap<usize, String> {
+        self.all_members.iter().cloned().enumerate().collect()
     }
 
     pub fn get_addr(&self, idx: usize) -> String {
-        self.all_members[&idx].clone()
+        self.all_members[idx].clone()
     }
 
     pub fn addrs(&self) -> Vec<String> {
-        self.all_members.values().cloned().collect()
+        self.all_members.clone()
     }
 
     fn test_key_pair() -> Option<(EncodingKey, DecodingKey)> {
@@ -279,7 +261,7 @@ impl Drop for Cluster {
                 for xline in self.servers.iter() {
                     xline.stop().await;
                 }
-                for cfg in self.configs.values() {
+                for cfg in &self.configs {
                     if let EngineConfig::RocksDB(ref path) = cfg.cluster().curp_config().engine_cfg
                     {
                         let _ignore = tokio::fs::remove_dir_all(path).await;
