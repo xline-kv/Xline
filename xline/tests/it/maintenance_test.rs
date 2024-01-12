@@ -21,7 +21,7 @@ async fn test_snapshot_and_restore() -> Result<(), Box<dyn std::error::Error>> {
     let restore_cluster_configs = restore_dirs
         .iter()
         .cloned()
-        .map(|path| Cluster::default_rocks_config_with_path(path))
+        .map(Cluster::default_rocks_config_with_path)
         .collect();
     {
         let mut cluster = Cluster::new_rocks(3).await;

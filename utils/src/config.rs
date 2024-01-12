@@ -7,7 +7,7 @@ use tracing_appender::rolling::RollingFileAppender;
 
 /// Xline server configuration object
 #[allow(clippy::module_name_repetitions)]
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters, Default)]
 pub struct XlineServerConfig {
     /// cluster configuration object
     #[getset(get = "pub")]
@@ -100,6 +100,24 @@ pub struct ClusterConfig {
     #[getset(get = "pub")]
     #[serde(with = "state_format", default = "InitialClusterState::default")]
     initial_cluster_state: InitialClusterState,
+}
+
+impl Default for ClusterConfig {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            name: "default".to_owned(),
+            members: HashMap::from([(
+                "default".to_owned(),
+                vec!["http://127.0.0.1:2379".to_owned()],
+            )]),
+            is_leader: false,
+            curp_config: CurpConfig::default(),
+            client_config: ClientConfig::default(),
+            server_timeout: ServerTimeout::default(),
+            initial_cluster_state: InitialClusterState::default(),
+        }
+    }
 }
 
 /// Initial cluster state of xline server
@@ -682,7 +700,8 @@ pub fn default_quota() -> u64 {
 pub struct LogConfig {
     /// Log file path
     #[getset(get = "pub")]
-    path: PathBuf,
+    #[serde(default)]
+    path: Option<PathBuf>,
     /// Log rotation strategy
     #[getset(get = "pub")]
     #[serde(with = "rotation_format", default = "default_rotation")]
@@ -691,6 +710,17 @@ pub struct LogConfig {
     #[getset(get = "pub")]
     #[serde(with = "level_format", default = "default_log_level")]
     level: LevelConfig,
+}
+
+impl Default for LogConfig {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            path: None,
+            rotation: default_rotation(),
+            level: default_log_level(),
+        }
+    }
 }
 
 /// `LevelConfig` deserialization formatter
@@ -724,7 +754,7 @@ impl LogConfig {
     #[inline]
     pub fn new(path: PathBuf, rotation: RotationConfig, level: LevelConfig) -> Self {
         Self {
-            path,
+            path: Some(path),
             rotation,
             level,
         }
