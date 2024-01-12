@@ -409,17 +409,19 @@ fn init_subscriber(
     name: &str,
     log_config: &LogConfig,
     trace_config: &TraceConfig,
-) -> Result<WorkerGuard> {
-    let file_appender = file_appender(*log_config.rotation(), log_config.path(), name);
-
-    // `WorkerGuard` should be assigned in the `main` function or whatever the entrypoint of the program is.
-    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
-
-    let log_file_layer = tracing_subscriber::fmt::layer()
-        .event_format(format().compact())
-        .with_writer(non_blocking)
-        .with_ansi(false)
-        .with_filter(*log_config.level());
+) -> Result<Option<WorkerGuard>> {
+    let mut guard = None;
+    let log_file_layer = log_config.path().as_ref().map(|log_path| {
+        let file_appender = file_appender(*log_config.rotation(), log_path, name);
+        // `WorkerGuard` should be assigned in the `main` function or whatever the entrypoint of the program is.
+        let (non_blocking, guard_inner) = tracing_appender::non_blocking(file_appender);
+        guard = Some(guard_inner);
+        tracing_subscriber::fmt::layer()
+            .event_format(format().compact())
+            .with_writer(non_blocking)
+            .with_ansi(false)
+            .with_filter(*log_config.level())
+    });
 
     let jaeger_level = *trace_config.jaeger_level();
     let jaeger_online_layer = trace_config

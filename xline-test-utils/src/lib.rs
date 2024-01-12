@@ -10,9 +10,8 @@ use tokio::{
     time::{self, Duration},
 };
 use utils::config::{
-    AuthConfig, ClientConfig, ClusterConfig, CompactConfig, CurpConfig, EngineConfig,
-    InitialClusterState, LevelConfig, LogConfig, RotationConfig, ServerTimeout, StorageConfig,
-    TraceConfig, XlineServerConfig,
+    default_quota, AuthConfig, ClusterConfig, CompactConfig, EngineConfig, InitialClusterState,
+    LogConfig, StorageConfig, TraceConfig, XlineServerConfig,
 };
 use xline::{server::XlineServer, storage::db::DB};
 pub use xline_client::{types, Client, ClientOptions};
@@ -34,7 +33,9 @@ pub struct Cluster {
 impl Cluster {
     /// New `Cluster`
     pub async fn new(size: usize) -> Self {
-        let configs = iter::repeat_with(Self::default_config).take(size).collect();
+        let configs = iter::repeat_with(XlineServerConfig::default)
+            .take(size)
+            .collect();
         Self::new_with_configs(configs).await
     }
 
@@ -114,7 +115,7 @@ impl Cluster {
     }
 
     pub async fn run_node(&mut self, listener: TcpListener) {
-        let config = Self::default_config();
+        let config = XlineServerConfig::default();
         self.run_node_with_config(listener, config).await;
     }
 
@@ -122,8 +123,8 @@ impl Cluster {
         let idx = self.all_members.len();
         let name = format!("server{}", idx);
         let self_addr = listener.local_addr().unwrap().to_string();
-        _ = self.all_members.push(self_addr.clone());
-        _ = self.configs.push(config);
+        self.all_members.push(self_addr.clone());
+        self.configs.push(config);
         let config = self.configs.last().unwrap();
         let cluster_config = config.cluster();
         let db: Arc<DB> = DB::open(&config.storage().engine).unwrap();
@@ -196,43 +197,13 @@ impl Cluster {
         Some((encoding_key, decoding_key))
     }
 
-    pub fn default_cluster_config() -> ClusterConfig {
-        ClusterConfig::new(
-            "".to_owned(),
-            HashMap::new(),
-            false,
-            CurpConfig::default(),
-            ClientConfig::default(),
-            ServerTimeout::default(),
-            InitialClusterState::default(),
-        )
-    }
-
-    pub fn default_log_config() -> LogConfig {
-        LogConfig::new(
-            temp_dir().join(random_id()),
-            RotationConfig::Daily,
-            LevelConfig::INFO,
-        )
-    }
-
-    pub fn default_config() -> XlineServerConfig {
-        let cluster = Self::default_cluster_config();
-        let storage = StorageConfig::default();
-        let log = Self::default_log_config();
-        let trace = TraceConfig::default();
-        let auth = AuthConfig::default();
-        let compact = CompactConfig::default();
-        XlineServerConfig::new(cluster, storage, log, trace, auth, compact)
-    }
-
     pub fn default_config_with_quota_and_rocks_path(
         path: PathBuf,
         quota: u64,
     ) -> XlineServerConfig {
-        let cluster = Self::default_cluster_config();
+        let cluster = ClusterConfig::default();
         let storage = StorageConfig::new(EngineConfig::RocksDB(path), quota);
-        let log = Self::default_log_config();
+        let log = LogConfig::default();
         let trace = TraceConfig::default();
         let auth = AuthConfig::default();
         let compact = CompactConfig::default();
@@ -240,12 +211,12 @@ impl Cluster {
     }
 
     pub fn default_rocks_config_with_path(path: PathBuf) -> XlineServerConfig {
-        Self::default_config_with_quota_and_rocks_path(path, 0)
+        Self::default_config_with_quota_and_rocks_path(path, default_quota())
     }
 
     pub fn default_rocks_config() -> XlineServerConfig {
         let path = temp_dir().join(random_id());
-        Self::default_config_with_quota_and_rocks_path(path, 0)
+        Self::default_config_with_quota_and_rocks_path(path, default_quota())
     }
 
     pub fn default_quota_config(quota: u64) -> XlineServerConfig {
