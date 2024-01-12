@@ -805,7 +805,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             .is_some_and(|m| !m.is_learner)
         {
             return Err(CurpError::LeaderTransfer(
-                "target node is not exist or it is a learner".to_owned(),
+                "target node does not exist or it is a learner".to_owned(),
             ));
         }
 

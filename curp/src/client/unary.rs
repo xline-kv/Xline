@@ -498,7 +498,12 @@ impl<C: Command> ClientApi for Unary<C> {
 
     /// Send move leader request
     async fn move_leader(&self, node_id: ServerId) -> Result<(), Self::Error> {
-        RepeatableClientApi::move_leader(self, node_id).await
+        let req = MoveLeaderRequest::new(node_id, self.cluster_version().await);
+        let timeout = self.config.wait_synced_timeout;
+        let _ig = self
+            .map_leader(|conn| async move { conn.move_leader(req, timeout).await })
+            .await??;
+        Ok(())
     }
 
     /// Send fetch read state from leader
@@ -739,16 +744,6 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
         let timeout = self.config.wait_synced_timeout;
         let _ig = self
             .map_leader(|conn| async move { conn.publish(req, timeout).await })
-            .await??;
-        Ok(())
-    }
-
-    /// Send move leader request
-    async fn move_leader(&self, node_id: ServerId) -> Result<(), Self::Error> {
-        let req = MoveLeaderRequest::new(node_id, self.cluster_version().await);
-        let timeout = self.config.wait_synced_timeout;
-        let _ig = self
-            .map_leader(|conn| async move { conn.move_leader(req, timeout).await })
             .await??;
         Ok(())
     }

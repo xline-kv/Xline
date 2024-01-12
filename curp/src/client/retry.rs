@@ -257,7 +257,7 @@ where
 
     /// Send move leader request
     async fn move_leader(&self, node_id: u64) -> Result<(), Self::Error> {
-        self.retry::<_, _>(|client| RepeatableClientApi::move_leader(client, node_id))
+        self.retry::<_, _>(|client| client.move_leader(node_id))
             .await
     }
 
