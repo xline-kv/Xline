@@ -17,11 +17,12 @@ use crate::{
     rpc::{
         AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse,
         FetchReadStateRequest, FetchReadStateResponse, InnerProtocolServer, InstallSnapshotRequest,
-        InstallSnapshotResponse, MoveLeaderRequest, MoveLeaderResponse, ProposeConfChangeRequest,
-        ProposeConfChangeResponse, ProposeRequest, ProposeResponse, ProtocolServer, PublishRequest,
-        PublishResponse, ShutdownRequest, ShutdownResponse, TriggerShutdownRequest,
-        TriggerShutdownResponse, TryBecomeLeaderNowRequest, TryBecomeLeaderNowResponse,
-        VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        InstallSnapshotResponse, LeaseKeepAliveMsg, MoveLeaderRequest, MoveLeaderResponse,
+        ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest, ProposeResponse,
+        ProtocolServer, PublishRequest, PublishResponse, ShutdownRequest, ShutdownResponse,
+        TriggerShutdownRequest, TriggerShutdownResponse, TryBecomeLeaderNowRequest,
+        TryBecomeLeaderNowResponse, VoteRequest, VoteResponse, WaitSyncedRequest,
+        WaitSyncedResponse,
     },
 };
 
@@ -45,6 +46,9 @@ mod curp_node;
 
 /// Storage
 mod storage;
+
+/// Lease Manager
+mod lease_manager;
 
 /// Default server serving port
 #[cfg(not(madsim))]
@@ -152,6 +156,15 @@ impl<C: Command, RC: RoleChange> crate::rpc::Protocol for Rpc<C, RC> {
         Ok(tonic::Response::new(
             self.inner.move_leader(request.into_inner()).await?,
         ))
+    }
+
+    #[instrument(skip_all, name = "lease_keep_alive")]
+    #[allow(clippy::unimplemented)]
+    async fn lease_keep_alive(
+        &self,
+        _request: tonic::Request<tonic::Streaming<LeaseKeepAliveMsg>>,
+    ) -> Result<tonic::Response<LeaseKeepAliveMsg>, tonic::Status> {
+        unimplemented!("")
     }
 }
 

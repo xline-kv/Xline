@@ -36,8 +36,8 @@ pub use self::proto::{
 pub(crate) use self::proto::{
     commandpb::{
         protocol_server::Protocol, CurpError as CurpErrorWrapper, FetchReadStateRequest,
-        FetchReadStateResponse, ShutdownRequest, ShutdownResponse, WaitSyncedRequest,
-        WaitSyncedResponse,
+        FetchReadStateResponse, LeaseKeepAliveMsg, ShutdownRequest, ShutdownResponse,
+        WaitSyncedRequest, WaitSyncedResponse,
     },
     inner_messagepb::{
         inner_protocol_server::InnerProtocol, AppendEntriesRequest, AppendEntriesResponse,
