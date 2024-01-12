@@ -539,6 +539,36 @@ impl<T: Protocol> BypassedConnect<T> {
     }
 }
 
+/// Metadata key of a bypassed request
+const BYPASS_KEY: &str = "bypass";
+
+/// Inject bypassed message into a request's metadata and check if it is a bypassed request.
+/// A bypass request can skip the check for lease expiration (there will never be a disconnection from oneself).
+pub(crate) trait Bypass {
+    /// Inject into metadata
+    fn inject_bypassed(&mut self);
+
+    /// Check
+    fn is_bypassed(&self) -> bool;
+}
+
+impl Bypass for tonic::metadata::MetadataMap {
+    /// Inject into metadata
+    fn inject_bypassed(&mut self) {
+        let _ig = self.insert(
+            BYPASS_KEY,
+            "true"
+                .parse()
+                .unwrap_or_else(|_e| unreachable!("it must be parsed")),
+        );
+    }
+
+    /// Check
+    fn is_bypassed(&self) -> bool {
+        self.contains_key(BYPASS_KEY)
+    }
+}
+
 #[async_trait]
 impl<T> ConnectApi for BypassedConnect<T>
 where
@@ -562,6 +592,7 @@ where
         _timeout: Duration,
     ) -> Result<tonic::Response<ProposeResponse>, CurpError> {
         let mut req = tonic::Request::new(request);
+        req.metadata_mut().inject_bypassed();
         req.metadata_mut().inject_current();
         self.server.propose(req).await.map_err(Into::into)
     }
@@ -573,6 +604,7 @@ where
         _timeout: Duration,
     ) -> Result<tonic::Response<PublishResponse>, CurpError> {
         let mut req = tonic::Request::new(request);
+        req.metadata_mut().inject_bypassed();
         req.metadata_mut().inject_current();
         self.server.publish(req).await.map_err(Into::into)
     }
@@ -584,6 +616,7 @@ where
         _timeout: Duration,
     ) -> Result<tonic::Response<ProposeConfChangeResponse>, CurpError> {
         let mut req = tonic::Request::new(request);
+        req.metadata_mut().inject_bypassed();
         req.metadata_mut().inject_current();
         self.server
             .propose_conf_change(req)
@@ -598,6 +631,7 @@ where
         _timeout: Duration,
     ) -> Result<tonic::Response<WaitSyncedResponse>, CurpError> {
         let mut req = tonic::Request::new(request);
+        req.metadata_mut().inject_bypassed();
         req.metadata_mut().inject_current();
         self.server.wait_synced(req).await.map_err(Into::into)
     }
@@ -609,6 +643,7 @@ where
         _timeout: Duration,
     ) -> Result<tonic::Response<ShutdownResponse>, CurpError> {
         let mut req = tonic::Request::new(request);
+        req.metadata_mut().inject_bypassed();
         req.metadata_mut().inject_current();
         self.server.shutdown(req).await.map_err(Into::into)
     }
@@ -620,6 +655,7 @@ where
         _timeout: Duration,
     ) -> Result<tonic::Response<FetchClusterResponse>, CurpError> {
         let mut req = tonic::Request::new(request);
+        req.metadata_mut().inject_bypassed();
         req.metadata_mut().inject_current();
         self.server.fetch_cluster(req).await.map_err(Into::into)
     }
@@ -631,6 +667,7 @@ where
         _timeout: Duration,
     ) -> Result<tonic::Response<FetchReadStateResponse>, CurpError> {
         let mut req = tonic::Request::new(request);
+        req.metadata_mut().inject_bypassed();
         req.metadata_mut().inject_current();
         self.server.fetch_read_state(req).await.map_err(Into::into)
     }
