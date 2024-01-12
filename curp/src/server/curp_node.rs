@@ -20,6 +20,7 @@ use super::{
     cmd_board::{CmdBoardRef, CommandBoard},
     cmd_worker::{conflict_checked_mpmc, start_cmd_workers},
     gc::run_gc_tasks,
+    lease_manager::LeaseManager,
     raw_curp::{AppendEntries, RawCurp, UncommittedPool, Vote},
     spec_pool::{SpecPoolRef, SpeculativePool},
     storage::StorageApi,
@@ -34,11 +35,12 @@ use crate::{
         connect::{InnerConnectApi, InnerConnectApiWrapper},
         AppendEntriesRequest, AppendEntriesResponse, ConfChange, ConfChangeType, CurpError,
         FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
-        InstallSnapshotRequest, InstallSnapshotResponse, MoveLeaderRequest, MoveLeaderResponse,
-        ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest, ProposeResponse,
-        PublishRequest, PublishResponse, ShutdownRequest, ShutdownResponse, TriggerShutdownRequest,
-        TriggerShutdownResponse, TryBecomeLeaderNowRequest, TryBecomeLeaderNowResponse,
-        VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        InstallSnapshotRequest, InstallSnapshotResponse, LeaseKeepAliveMsg, MoveLeaderRequest,
+        MoveLeaderResponse, ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest,
+        ProposeResponse, PublishRequest, PublishResponse, ShutdownRequest, ShutdownResponse,
+        TriggerShutdownRequest, TriggerShutdownResponse, TryBecomeLeaderNowRequest,
+        TryBecomeLeaderNowResponse, VoteRequest, VoteResponse, WaitSyncedRequest,
+        WaitSyncedResponse,
     },
     server::{cmd_worker::CEEventTxApi, raw_curp::SyncAction, storage::db::DB},
     snapshot::{Snapshot, SnapshotMeta},
@@ -110,6 +112,31 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     pub(super) fn publish(&self, req: PublishRequest) -> Result<PublishResponse, CurpError> {
         self.curp.handle_publish(req)?;
         Ok(PublishResponse::default())
+    }
+
+    /// Handle lease keep alive requests
+    pub(super) async fn lease_keep_alive<E: std::error::Error + 'static>(
+        &self,
+        req_stream: impl Stream<Item = Result<LeaseKeepAliveMsg, E>>,
+    ) -> Result<LeaseKeepAliveMsg, CurpError> {
+        pin_mut!(req_stream);
+        while let Some(req) = req_stream.next().await {
+            if self.curp.is_shutdown() {
+                return Err(CurpError::shutting_down());
+            }
+            if !self.curp.is_leader() {
+                let (leader_id, term, _) = self.curp.leader();
+                return Err(CurpError::redirect(leader_id, term));
+            }
+            let req = req.map_err(|err| {
+                error!("{err}");
+                CurpError::RpcTransport(())
+            })?;
+            if let Some(client_id) = self.curp.handle_lease_keep_alive(req.client_id) {
+                return Ok(LeaseKeepAliveMsg { client_id });
+            }
+        }
+        Err(CurpError::RpcTransport(()))
     }
 }
 
@@ -577,6 +604,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         let (log_tx, log_rx) = mpsc::unbounded_channel();
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
+        let lease_manager = Arc::new(RwLock::new(LeaseManager::new()));
         let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
         let last_applied = cmd_executor
             .last_applied()
@@ -594,6 +622,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                 .is_leader(is_leader)
                 .cmd_board(Arc::clone(&cmd_board))
                 .spec_pool(Arc::clone(&spec_pool))
+                .lease_manager(lease_manager)
                 .uncommitted_pool(uncommitted_pool)
                 .cfg(Arc::clone(&curp_cfg))
                 .cmd_tx(Arc::clone(&ce_event_tx))

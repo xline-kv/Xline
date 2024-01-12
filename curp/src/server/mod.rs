@@ -162,9 +162,12 @@ impl<C: Command, RC: RoleChange> crate::rpc::Protocol for Rpc<C, RC> {
     #[allow(clippy::unimplemented)]
     async fn lease_keep_alive(
         &self,
-        _request: tonic::Request<tonic::Streaming<LeaseKeepAliveMsg>>,
+        request: tonic::Request<tonic::Streaming<LeaseKeepAliveMsg>>,
     ) -> Result<tonic::Response<LeaseKeepAliveMsg>, tonic::Status> {
-        unimplemented!("")
+        let req_stream = request.into_inner();
+        Ok(tonic::Response::new(
+            self.inner.lease_keep_alive(req_stream).await?,
+        ))
     }
 }
 
