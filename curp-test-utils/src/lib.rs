@@ -13,6 +13,7 @@ use tracing_subscriber::fmt::time::uptime;
 pub mod test_cmd;
 
 pub const TEST_TABLE: &str = "test";
+pub const TEST_CLIENT_ID: u64 = 12345;
 pub const REVISION_TABLE: &str = "revision";
 pub const META_TABLE: &str = "meta";
 

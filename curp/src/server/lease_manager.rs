@@ -1,5 +1,3 @@
-#![allow(unused)]
-
 use std::cmp::Reverse;
 use std::ops::Add;
 use std::sync::Arc;
@@ -13,13 +11,13 @@ use tokio::time::Instant;
 pub(crate) type LeaseManagerRef = Arc<RwLock<LeaseManager>>;
 
 /// Default lease ttl
-const DEFAULT_LEASE_TTL: Duration = Duration::from_secs(10);
+const DEFAULT_LEASE_TTL: Duration = Duration::from_secs(8);
 
 /// Lease manager
 pub(crate) struct LeaseManager {
     /// client_id => expired_at
     /// expiry queue to check the smallest expired_at
-    expiry_queue: PriorityQueue<u64, Reverse<Instant>>,
+    pub(super) expiry_queue: PriorityQueue<u64, Reverse<Instant>>,
 }
 
 impl LeaseManager {
@@ -44,6 +42,7 @@ impl LeaseManager {
         let client_id: u64 = rand::random();
         let expiry = Instant::now().add(DEFAULT_LEASE_TTL);
         let _ig = self.expiry_queue.push(client_id, Reverse(expiry));
+        // gc all expired client id while granting a new client id
         self.gc_expired();
         client_id
     }

@@ -42,7 +42,7 @@ use self::{
     log::Log,
     state::{CandidateState, LeaderState, State},
 };
-use super::cmd_worker::CEEventTxApi;
+use super::{cmd_worker::CEEventTxApi, lease_manager::LeaseManagerRef};
 use crate::{
     cmd::Command,
     log_entry::{EntryData, LogEntry},
@@ -113,6 +113,8 @@ pub(super) struct RawCurpArgs<C: Command, RC: RoleChange> {
     cmd_board: CmdBoardRef<C>,
     /// Speculative pool
     spec_pool: SpecPoolRef<C>,
+    /// Lease Manager
+    lease_manager: LeaseManagerRef,
     /// Uncommitted pool
     uncommitted_pool: UncommittedPoolRef<C>,
     /// Config
@@ -162,6 +164,7 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
             .cluster_info(args.cluster_info)
             .cb(args.cmd_board)
             .sp(args.spec_pool)
+            .lm(args.lease_manager)
             .ucp(args.uncommitted_pool)
             .cfg(args.cfg)
             .cmd_tx(args.cmd_tx)
@@ -290,6 +293,8 @@ struct Context<C: Command, RC: RoleChange> {
     cb: CmdBoardRef<C>,
     /// Speculative pool
     sp: SpecPoolRef<C>,
+    /// The lease manager
+    lm: LeaseManagerRef,
     /// Uncommitted pool
     ucp: UncommittedPoolRef<C>,
     /// Tx to send leader changes
@@ -347,6 +352,10 @@ impl<C: Command, RC: RoleChange> ContextBuilder<C, RC> {
             sp: match self.sp.take() {
                 Some(value) => value,
                 None => return Err(ContextBuilderError::UninitializedField("sp")),
+            },
+            lm: match self.lm.take() {
+                Some(value) => value,
+                None => return Err(ContextBuilderError::UninitializedField("lm")),
             },
             ucp: match self.ucp.take() {
                 Some(value) => value,
@@ -541,6 +550,22 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         debug!("{} gets new log[{}]", self.id(), entry.index);
         self.entry_process(&mut log_w, entry, false);
         Ok(())
+    }
+
+    /// Handle `lease_keep_alive` message
+    pub(super) fn handle_lease_keep_alive(&self, client_id: u64) -> Option<u64> {
+        if client_id == 0 {
+            return Some(self.ctx.lm.write().grant());
+        }
+        self.ctx.lm.map_write(|mut lm_w| {
+            if lm_w.check_alive(client_id) {
+                lm_w.renew(client_id);
+                None
+            } else {
+                lm_w.revoke(client_id);
+                Some(lm_w.grant())
+            }
+        })
     }
 
     /// Handle `append_entries`
@@ -1662,6 +1687,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     fn leader_retires(&self) {
         debug!("leader {} retires", self.id());
         self.ctx.cb.write().clear();
+        self.ctx.lm.write().clear();
         self.ctx.ucp.lock().clear();
     }
 

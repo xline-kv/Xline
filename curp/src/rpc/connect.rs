@@ -14,12 +14,11 @@ use engine::SnapshotApi;
 use futures::{stream::FuturesUnordered, Stream};
 #[cfg(test)]
 use mockall::automock;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tonic::transport::{Channel, Endpoint};
-use tracing::{error, instrument};
+use tracing::{debug, error, instrument};
 use utils::tracing::Inject;
 
-use super::{ShutdownRequest, ShutdownResponse, TryBecomeLeaderNowRequest};
 use crate::{
     members::ServerId,
     rpc::{
@@ -29,9 +28,10 @@ use crate::{
         },
         AppendEntriesRequest, AppendEntriesResponse, CurpError, FetchClusterRequest,
         FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
-        InstallSnapshotRequest, InstallSnapshotResponse, MoveLeaderRequest, MoveLeaderResponse,
-        ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest, ProposeResponse,
-        Protocol, PublishRequest, PublishResponse, TriggerShutdownRequest, VoteRequest,
+        InstallSnapshotRequest, InstallSnapshotResponse, LeaseKeepAliveMsg, MoveLeaderRequest,
+        MoveLeaderResponse, ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest,
+        ProposeResponse, Protocol, PublishRequest, PublishResponse, ShutdownRequest,
+        ShutdownResponse, TriggerShutdownRequest, TryBecomeLeaderNowRequest, VoteRequest,
         VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
     snapshot::Snapshot,
@@ -204,6 +204,9 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
         request: MoveLeaderRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<MoveLeaderResponse>, CurpError>;
+
+    /// Keep send lease keep alive to server and mutate the client id
+    async fn lease_keep_alive(&self, client_id: Arc<RwLock<u64>>) -> CurpError;
 }
 
 /// Inner Connect interface among different servers
@@ -442,6 +445,20 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         req.set_timeout(timeout);
         client.move_leader(req).await.map_err(Into::into)
     }
+
+    /// Keep send lease keep alive to server and mutate the client id
+    async fn lease_keep_alive(&self, client_id: Arc<RwLock<u64>>) -> CurpError {
+        let mut client = self.rpc_connect.clone();
+        loop {
+            let stream = heartbeat_stream(Arc::clone(&client_id));
+            let new_id = match client.lease_keep_alive(stream).await {
+                Err(err) => return err.into(),
+                Ok(res) => res.into_inner().client_id,
+            };
+            let mut client_id = client_id.write().await;
+            *client_id = new_id;
+        }
+    }
 }
 
 #[async_trait]
@@ -627,6 +644,33 @@ where
         let mut req = tonic::Request::new(request);
         req.metadata_mut().inject_current();
         self.server.move_leader(req).await.map_err(Into::into)
+    }
+
+    /// Keep send lease keep alive to server and mutate the client id
+    async fn lease_keep_alive(&self, _client_id: Arc<RwLock<u64>>) -> CurpError {
+        unreachable!("cannot invoke lease_keep_alive in bypassed connect")
+    }
+}
+
+/// Generate heartbeat stream
+fn heartbeat_stream(client_id: Arc<RwLock<u64>>) -> impl Stream<Item = LeaseKeepAliveMsg> {
+    /// Keep alive interval
+    const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(1);
+
+    let mut ticker = tokio::time::interval(HEARTBEAT_INTERVAL);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+    stream! {
+        loop {
+            _ = ticker.tick().await;
+            let id = *client_id.read().await;
+            if id == 0 {
+                debug!("grant a client id");
+            } else {
+                debug!("keep alive the client id({id})");
+            }
+            yield LeaseKeepAliveMsg { client_id: id };
+        }
     }
 }
 
