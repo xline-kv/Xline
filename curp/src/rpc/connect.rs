@@ -142,7 +142,7 @@ pub(crate) async fn inner_connects(
 #[allow(clippy::module_name_repetitions)] // better for recognizing than just "Api"
 #[cfg_attr(test, automock)]
 #[async_trait]
-pub trait ConnectApi: Send + Sync + 'static {
+pub(crate) trait ConnectApi: Send + Sync + 'static {
     /// Get server id
     fn id(&self) -> ServerId;
 

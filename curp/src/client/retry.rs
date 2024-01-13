@@ -1,4 +1,4 @@
-use std::{ops::SubAssign, sync::Arc, time::Duration};
+use std::{ops::SubAssign, time::Duration};
 
 use async_trait::async_trait;
 use futures::Future;
@@ -6,10 +6,7 @@ use tracing::warn;
 
 use crate::{
     members::ServerId,
-    rpc::{
-        connect::ConnectApi, ConfChange, CurpError, FetchClusterResponse, Member, ReadState,
-        Redirect,
-    },
+    rpc::{ConfChange, CurpError, FetchClusterResponse, Member, ReadState, Redirect},
 };
 
 use super::{ClientApi, LeaderStateUpdate, ProposeResponse, RepeatableClientApi};
@@ -193,11 +190,6 @@ where
 
     /// Inherit the command type
     type Cmd = Api::Cmd;
-
-    /// Get the local connection when the client is on the server node.
-    async fn local_connect(&self) -> Option<Arc<dyn ConnectApi>> {
-        self.inner.local_connect().await
-    }
 
     /// Send propose to the whole cluster, `use_fast_path` set to `false` to fallback into ordered
     /// requests (event the requests are commutative).

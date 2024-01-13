@@ -1,132 +1,21 @@
-use std::{
-    cmp::Ordering,
-    collections::{hash_map::Entry, HashMap, HashSet},
-    marker::PhantomData,
-    ops::AddAssign,
-    sync::Arc,
-    time::Duration,
-};
+use std::{cmp::Ordering, marker::PhantomData, ops::AddAssign, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use curp_external_api::cmd::Command;
 use futures::{stream::FuturesUnordered, Future, Stream, StreamExt};
-use tokio::sync::RwLock;
 use tonic::Response;
 use tracing::{debug, warn};
 
 use crate::{
     members::ServerId,
     rpc::{
-        self,
-        connect::{BypassedConnect, ConnectApi},
-        ConfChange, CurpError, FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest,
-        Member, MoveLeaderRequest, ProposeConfChangeRequest, ProposeId, ProposeRequest, Protocol,
-        PublishRequest, ReadState, ShutdownRequest, WaitSyncedRequest,
+        connect::ConnectApi, ConfChange, CurpError, FetchClusterRequest, FetchClusterResponse,
+        FetchReadStateRequest, Member, MoveLeaderRequest, ProposeConfChangeRequest, ProposeId,
+        ProposeRequest, PublishRequest, ReadState, ShutdownRequest, WaitSyncedRequest,
     },
 };
 
-use super::{ClientApi, LeaderStateUpdate, ProposeResponse, RepeatableClientApi};
-
-/// Client state
-struct State {
-    /// Leader id. At the beginning, we may not know who the leader is.
-    leader: Option<ServerId>,
-    /// Term, initialize to 0, calibrated by the server.
-    term: u64,
-    /// Cluster version, initialize to 0, calibrated by the server.
-    cluster_version: u64,
-    /// Members' connect
-    connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
-}
-
-impl std::fmt::Debug for State {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("StateInner")
-            .field("leader", &self.leader)
-            .field("term", &self.term)
-            .field("cluster_version", &self.cluster_version)
-            .field("connects", &self.connects.keys())
-            .finish()
-    }
-}
-
-/// Unary builder
-pub(super) struct UnaryBuilder {
-    /// All members (required)
-    all_members: HashMap<ServerId, Vec<String>>,
-    /// Unary config (required)
-    config: UnaryConfig,
-    /// Leader state (optional)
-    leader_state: Option<(ServerId, u64)>,
-    /// Cluster version (optional)
-    cluster_version: Option<u64>,
-}
-
-impl UnaryBuilder {
-    /// Create unary builder
-    pub(super) fn new(all_members: HashMap<ServerId, Vec<String>>, config: UnaryConfig) -> Self {
-        Self {
-            all_members,
-            config,
-            leader_state: None,
-            cluster_version: None,
-        }
-    }
-
-    /// Set the leader state (optional)
-    pub(super) fn set_leader_state(&mut self, id: ServerId, term: u64) {
-        self.leader_state = Some((id, term));
-    }
-
-    /// Set the cluster version (optional)
-    pub(super) fn set_cluster_version(&mut self, cluster_version: u64) {
-        self.cluster_version = Some(cluster_version);
-    }
-
-    /// Inner build
-    fn build_with_connects<C: Command>(
-        self,
-        connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
-        local_server_id: Option<ServerId>,
-    ) -> Unary<C> {
-        let state = State {
-            leader: self.leader_state.map(|state| state.0),
-            term: self.leader_state.map_or(0, |state| state.1),
-            cluster_version: self.cluster_version.unwrap_or_default(),
-            connects,
-        };
-        Unary {
-            state: RwLock::new(state),
-            local_server_id,
-            config: self.config,
-            phantom: PhantomData,
-        }
-    }
-
-    /// Build the unary client with local server
-    pub(super) async fn build_bypassed<C: Command, P: Protocol>(
-        mut self,
-        local_server_id: ServerId,
-        local_server: P,
-    ) -> Result<Unary<C>, tonic::transport::Error> {
-        debug!("client bypassed server({local_server_id})");
-
-        let _ig = self.all_members.remove(&local_server_id);
-        let mut connects: HashMap<_, _> = rpc::connects(self.all_members.clone()).await?.collect();
-        let __ig = connects.insert(
-            local_server_id,
-            Arc::new(BypassedConnect::new(local_server_id, local_server)),
-        );
-
-        Ok(self.build_with_connects(connects, Some(local_server_id)))
-    }
-
-    /// Build the unary client
-    pub(super) async fn build<C: Command>(self) -> Result<Unary<C>, tonic::transport::Error> {
-        let connects: HashMap<_, _> = rpc::connects(self.all_members.clone()).await?.collect();
-        Ok(self.build_with_connects(connects, None))
-    }
-}
+use super::{state::StateRef, ClientApi, LeaderStateUpdate, ProposeResponse, RepeatableClientApi};
 
 /// The unary client config
 #[derive(Debug)]
@@ -152,9 +41,7 @@ impl UnaryConfig {
 #[derive(Debug)]
 pub(super) struct Unary<C: Command> {
     /// Client state
-    state: RwLock<State>,
-    /// Local server id
-    local_server_id: Option<ServerId>,
+    state: StateRef,
     /// Unary config
     config: UnaryConfig,
     /// marker
@@ -162,118 +49,13 @@ pub(super) struct Unary<C: Command> {
 }
 
 impl<C: Command> Unary<C> {
-    /// Used in tests, all connects are mocked
-    #[cfg(test)]
-    pub(super) fn new(
-        connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
-        local_server_id: Option<ServerId>,
-        leader_id: Option<ServerId>,
-        term: Option<u64>,
-    ) -> Self {
+    /// Create an unary client
+    pub(super) fn new(state: StateRef, config: UnaryConfig) -> Self {
         Self {
-            state: RwLock::new(State {
-                leader: leader_id,
-                term: term.unwrap_or_default(),
-                cluster_version: 0,
-                connects,
-            }),
-            local_server_id,
-            config: UnaryConfig {
-                propose_timeout: Duration::from_secs(0),
-                wait_synced_timeout: Duration::from_secs(0),
-            },
+            state,
+            config,
             phantom: PhantomData,
         }
-    }
-
-    /// Update leader
-    fn check_and_update_leader(state: &mut State, leader_id: Option<ServerId>, term: u64) -> bool {
-        match state.term.cmp(&term) {
-            Ordering::Less => {
-                // reset term only when the resp has leader id to prevent:
-                // If a server loses contact with its leader, it will update its term for election. Since other servers are all right, the election will not succeed.
-                // But if the client learns about the new term and updates its term to it, it will never get the true leader.
-                if let Some(new_leader_id) = leader_id {
-                    debug!("client term updates to {}", term);
-                    debug!("client leader id updates to {new_leader_id}");
-                    state.term = term;
-                    state.leader = Some(new_leader_id);
-                }
-            }
-            Ordering::Equal => {
-                if let Some(new_leader_id) = leader_id {
-                    if state.leader.is_none() {
-                        debug!("client leader id updates to {new_leader_id}");
-                        state.leader = Some(new_leader_id);
-                    }
-                    assert_eq!(
-                        state.leader,
-                        Some(new_leader_id),
-                        "there should never be two leader in one term"
-                    );
-                }
-            }
-            Ordering::Greater => {
-                debug!("ignore old term({}) from server", term);
-                return false;
-            }
-        }
-        true
-    }
-
-    /// Update client state based on [`FetchClusterResponse`]
-    async fn check_and_update(
-        &self,
-        res: &FetchClusterResponse,
-    ) -> Result<(), tonic::transport::Error> {
-        let mut state = self.state.write().await;
-        if !Self::check_and_update_leader(&mut state, res.leader_id, res.term) {
-            return Ok(());
-        }
-        if state.cluster_version == res.cluster_version {
-            debug!(
-                "ignore cluster version({}) from server",
-                res.cluster_version
-            );
-            return Ok(());
-        }
-
-        debug!("client cluster version updated to {}", res.cluster_version);
-        state.cluster_version = res.cluster_version;
-
-        let mut new_members = res.clone().into_members_addrs();
-
-        let old_ids = state.connects.keys().copied().collect::<HashSet<_>>();
-        let new_ids = new_members.keys().copied().collect::<HashSet<_>>();
-
-        let diffs = &old_ids ^ &new_ids;
-        let sames = &old_ids & &new_ids;
-
-        for diff in diffs {
-            if let Entry::Vacant(e) = state.connects.entry(diff) {
-                let addrs = new_members
-                    .remove(&diff)
-                    .unwrap_or_else(|| unreachable!("{diff} must in new member addrs"));
-                debug!("client connects to a new server({diff}), address({addrs:?})");
-                let new_conn = rpc::connect(diff, addrs).await?;
-                let _ig = e.insert(new_conn);
-            } else {
-                debug!("client removes old server({diff})");
-                let _ig = state.connects.remove(&diff);
-            }
-        }
-        for same in sames {
-            let conn = state
-                .connects
-                .get(&same)
-                .unwrap_or_else(|| unreachable!("{same} must in old connects"));
-            let addrs = new_members
-                .remove(&same)
-                .unwrap_or_else(|| unreachable!("{same} must in new member addrs"));
-            conn.update_addrs(addrs).await?;
-        }
-
-        Ok(())
     }
 
     /// Get cluster version.
@@ -458,12 +240,6 @@ impl<C: Command> ClientApi for Unary<C> {
     /// The command type
     type Cmd = C;
 
-    /// Get the local connection when the client is on the server node.
-    async fn local_connect(&self) -> Option<Arc<dyn ConnectApi>> {
-        let id = self.local_server_id?;
-        self.state.read().await.connects.get(&id).map(Arc::clone)
-    }
-
     /// Send propose to the whole cluster, `use_fast_path` set to `false` to fallback into ordered
     /// requests (event the requests are commutative).
     async fn propose(&self, cmd: &C, use_fast_path: bool) -> Result<ProposeResponse<C>, CurpError> {
@@ -531,7 +307,7 @@ impl<C: Command> ClientApi for Unary<C> {
         let timeout = self.config.wait_synced_timeout;
         if !linearizable {
             // firstly, try to fetch the local server
-            if let Some(connect) = <Unary<C> as ClientApi>::local_connect(self).await {
+            if let Some(connect) = self.state.read().await.local_connect() {
                 /// local timeout, in fact, local connect should only be bypassed, so the timeout maybe unused.
                 const FETCH_LOCAL_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -612,7 +388,7 @@ impl<C: Command> ClientApi for Unary<C> {
                 // then check if we got the response
                 if let Some(res) = res {
                     debug!("fetch cluster succeeded, result: {res:?}");
-                    if let Err(e) = self.check_and_update(&res).await {
+                    if let Err(e) = self.state.write().await.check_and_update(&res).await {
                         warn!("update to a new cluster state failed, error {e}");
                     }
                     return Ok(res);
@@ -754,7 +530,7 @@ impl<C: Command> LeaderStateUpdate for Unary<C> {
     /// Update leader
     async fn update_leader(&self, leader_id: Option<ServerId>, term: u64) -> bool {
         let mut state_w = self.state.write().await;
-        Self::check_and_update_leader(&mut state_w, leader_id, term)
+        state_w.check_and_update_leader(leader_id, term)
     }
 }
 
