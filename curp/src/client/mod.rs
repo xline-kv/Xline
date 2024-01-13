@@ -7,6 +7,9 @@ mod unary;
 /// Retry layer
 mod retry;
 
+/// State for clients
+mod state;
+
 /// Tests for client
 #[cfg(test)]
 mod tests;
@@ -16,19 +19,20 @@ use std::{collections::HashMap, fmt::Debug, sync::Arc};
 use async_trait::async_trait;
 use curp_external_api::cmd::Command;
 use futures::{stream::FuturesUnordered, StreamExt};
+use tokio::sync::RwLock;
 use tracing::debug;
 use utils::config::ClientConfig;
 
 use self::{
-    retry::Retry,
-    unary::{UnaryBuilder, UnaryConfig},
+    retry::{Retry, RetryConfig},
+    state::StateBuilder,
+    unary::{Unary, UnaryConfig},
 };
 use crate::{
-    client::retry::RetryConfig,
     members::ServerId,
     rpc::{
-        connect::ConnectApi, protocol_client::ProtocolClient, ConfChange, FetchClusterRequest,
-        FetchClusterResponse, Member, ProposeId, Protocol, ReadState,
+        protocol_client::ProtocolClient, ConfChange, FetchClusterRequest, FetchClusterResponse,
+        Member, ProposeId, Protocol, ReadState,
     },
 };
 
@@ -47,9 +51,6 @@ pub trait ClientApi {
 
     /// The command type
     type Cmd: Command;
-
-    /// Get the local connection when the client is on the server node.
-    async fn local_connect(&self) -> Option<Arc<dyn ConnectApi>>;
 
     /// Send propose to the whole cluster, `use_fast_path` set to `false` to fallback into ordered
     /// requests (event the requests are commutative).
@@ -105,7 +106,7 @@ pub trait ClientApi {
     }
 }
 
-/// This trait is used for internal implementation, and a client API with this trait will be able to retry.
+/// This trait override some unrepeatable methods in ClientApi, and a client with this trait will be able to retry.
 #[async_trait]
 trait RepeatableClientApi: ClientApi {
     /// Generate a unique propose id during the retry process.
@@ -265,17 +266,11 @@ impl ClientBuilder {
         Err(err)
     }
 
-    /// Init an unary builder
-    fn init_unary_builder(&self) -> UnaryBuilder {
-        let mut builder = UnaryBuilder::new(
-            self.all_members.clone().unwrap_or_else(|| {
-                unreachable!("must set the initial members or discover from some endpoints")
-            }),
-            UnaryConfig::new(
-                *self.config.propose_timeout(),
-                *self.config.wait_synced_timeout(),
-            ),
-        );
+    /// Init state builder
+    fn init_state_builder(&self) -> StateBuilder {
+        let mut builder = StateBuilder::new(self.all_members.clone().unwrap_or_else(|| {
+            unreachable!("must set the initial members or discover from some endpoints")
+        }));
         if let Some(version) = self.cluster_version {
             builder.set_cluster_version(version);
         }
@@ -301,6 +296,14 @@ impl ClientBuilder {
         }
     }
 
+    /// Init unary config
+    fn init_unary_config(&self) -> UnaryConfig {
+        UnaryConfig::new(
+            *self.config.propose_timeout(),
+            *self.config.wait_synced_timeout(),
+        )
+    }
+
     /// Build the client
     ///
     /// # Errors
@@ -313,8 +316,11 @@ impl ClientBuilder {
         impl ClientApi<Error = tonic::Status, Cmd = C> + Send + Sync + 'static,
         tonic::transport::Error,
     > {
-        let unary = self.init_unary_builder().build::<C>().await?;
-        let client = Retry::new(unary, self.init_retry_config());
+        let state = self.init_state_builder().build().await?;
+        let client = Retry::new(
+            Unary::new(Arc::new(RwLock::new(state)), self.init_unary_config()),
+            self.init_retry_config(),
+        );
         Ok(client)
     }
 }
@@ -329,12 +335,15 @@ impl<P: Protocol> ClientBuilderWithBypass<P> {
     pub async fn build<C: Command>(
         self,
     ) -> Result<impl ClientApi<Error = tonic::Status, Cmd = C>, tonic::transport::Error> {
-        let unary = self
+        let state = self
             .inner
-            .init_unary_builder()
-            .build_bypassed::<C, P>(self.local_server_id, self.local_server)
+            .init_state_builder()
+            .build_bypassed::<P>(self.local_server_id, self.local_server)
             .await?;
-        let client = Retry::new(unary, self.inner.init_retry_config());
+        let client = Retry::new(
+            Unary::new(Arc::new(RwLock::new(state)), self.inner.init_unary_config()),
+            self.inner.init_retry_config(),
+        );
         Ok(client)
     }
 }
