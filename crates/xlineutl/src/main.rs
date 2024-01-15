@@ -1,4 +1,4 @@
-//! `utils`
+//! xlineutl
 #![deny(
     // The following are allowed by default lints according to
     // https://doc.rust-lang.org/rustc/lints/listing/allowed-by-default.html
@@ -38,7 +38,7 @@
     unused_results,
     variant_size_differences,
 
-    warnings, // treat all warns as errors
+    warnings, // treat all warnings as errors
 
     clippy::all,
     clippy::pedantic,
@@ -121,7 +121,7 @@
     clippy::unused_peekable,
     clippy::unused_rounding,
 
-    // The followings are selected restriction lints from rust 1.68.0 to 1.71.0
+    // The followings are selected restriction lints from rust 1.68.0 to 1.70.0
     // clippy::allow_attributes, still unstable
     clippy::impl_trait_in_params,
     clippy::let_underscore_untyped,
@@ -129,17 +129,13 @@
     clippy::multiple_unsafe_ops_per_block,
     clippy::semicolon_inside_block,
     // clippy::semicolon_outside_block, already used `semicolon_inside_block`
-    clippy::tests_outside_test_module,
-    // 1.71.0
-    clippy::default_constructed_unit_structs,
-    clippy::items_after_test_module,
-    clippy::manual_next_back,
-    clippy::manual_while_let_some,
-    clippy::needless_bool_assign,
-    clippy::non_minimal_cfg,
+    clippy::tests_outside_test_module
 )]
 #![allow(
     clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
+    clippy::expect_used, // allow panic on invalid inputs
+    clippy::print_stderr, // allow in command line tool
+    clippy::print_stdout, // allow in command line tool
 )]
 #![cfg_attr(
     test,
@@ -147,119 +143,35 @@
         clippy::indexing_slicing,
         unused_results,
         clippy::unwrap_used,
-        clippy::expect_used,
         clippy::as_conversions,
         clippy::shadow_unrelated,
-        clippy::arithmetic_side_effects,
-        clippy::let_underscore_untyped,
-        clippy::too_many_lines,
+        clippy::arithmetic_side_effects
     )
 )]
 
-use std::str::FromStr;
+use anyhow::Result;
+use clap::Command;
+use command::snapshot;
 
-#[cfg(not(madsim))]
-use tonic::transport::ClientTlsConfig;
-use tonic::transport::Endpoint;
+/// Command definitions and parsers
+mod command;
 
-/// Fake `ClientTlsConfig` for `madsim`
-#[cfg(madsim)]
-#[derive(Debug, Clone)]
-#[allow(missing_copy_implementations)] // Same as real config
-#[non_exhaustive]
-pub struct ClientTlsConfig;
-
-/// Fake `ServerTlsConfig` for `madsim`
-#[cfg(madsim)]
-#[derive(Debug, Clone)]
-#[allow(missing_copy_implementations)] // Same as real config
-#[non_exhaustive]
-pub struct ServerTlsConfig;
-
-/// configuration
-pub mod config;
-/// utils for metrics
-pub mod metrics;
-/// utils of `parking_lot` lock
-#[cfg(feature = "parking_lot")]
-pub mod parking_lot_lock;
-/// utils for parse config
-pub mod parser;
-/// utils of `std` lock
-#[cfg(feature = "std")]
-pub mod std_lock;
-/// table names
-pub mod table_names;
-/// task manager
-pub mod task_manager;
-/// utils of `tokio` lock
-#[cfg(feature = "tokio")]
-pub mod tokio_lock;
-/// utils for pass span context
-pub mod tracing;
-
-pub use parser::*;
-
-/// Get current timestamp in seconds
-#[must_use]
-#[inline]
-pub fn timestamp() -> u64 {
-    let now = std::time::SystemTime::now();
-    now.duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_else(|_| unreachable!("Time went backwards"))
-        .as_secs()
+/// The top level cli command
+fn cli() -> Command {
+    Command::new("xlineutl")
+        .about("A command line client for Xline")
+        .version(env!("CARGO_PKG_VERSION"))
+        .subcommand_required(true)
+        .arg_required_else_help(true)
+        .allow_external_subcommands(true)
+        .subcommand(snapshot::command())
 }
 
-/// Certs for tests
-pub mod certs {
-    /// Server certificate
-    #[inline]
-    #[must_use]
-    pub fn server_cert() -> &'static [u8] {
-        include_bytes!("../../../fixtures/server.crt")
+#[tokio::main]
+async fn main() -> Result<()> {
+    let matches = cli().get_matches();
+    if let Some(("snapshot", sub_matches)) = matches.subcommand() {
+        snapshot::execute(sub_matches).await?;
     }
-
-    /// Server private key
-    #[inline]
-    #[must_use]
-    pub fn server_key() -> &'static [u8] {
-        include_bytes!("../../../fixtures/server.key")
-    }
-
-    /// CA certificate
-    #[inline]
-    #[must_use]
-    pub fn ca_cert() -> &'static [u8] {
-        include_bytes!("../../../fixtures/ca.crt")
-    }
-}
-
-/// Create a new endpoint from addr
-/// # Errors
-/// Return error if addr or tls config is invalid
-#[inline]
-#[allow(unused_variables)]
-pub fn build_endpoint(
-    addr: &str,
-    tls_config: Option<&ClientTlsConfig>,
-) -> Result<Endpoint, tonic::transport::Error> {
-    let scheme_str = addr.split_once("://").map(|(scheme, _)| scheme);
-    let endpoint = match scheme_str {
-        Some(_scheme) => Endpoint::from_str(addr)?,
-        None => Endpoint::from_shared(format!("http://{addr}"))?,
-    };
-    #[cfg(not(madsim))]
-    match scheme_str {
-        Some("http") | None => {}
-        Some("https") => {
-            let tls_config = tls_config.cloned().unwrap_or_default();
-            return endpoint.tls_config(tls_config);
-        }
-        _ => {
-            if let Some(tls_config) = tls_config {
-                return endpoint.tls_config(tls_config.clone());
-            }
-        }
-    };
-    Ok(endpoint)
+    Ok(())
 }

@@ -850,6 +850,7 @@ dependencies = [
  "madsim-tokio",
  "opentelemetry",
  "parking_lot",
+ "rand",
  "rocksdb",
  "serde",
  "test-macros",
@@ -3847,6 +3848,18 @@ dependencies = [
  "workspace-hack",
  "xline-client",
  "xlineapi",
+]
+
+[[package]]
+name = "xlineutl"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "engine",
+ "tokio",
+ "utils",
+ "workspace-hack",
 ]
 
 [[package]]

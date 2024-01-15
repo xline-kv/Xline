@@ -18,6 +18,7 @@ bytes = "1.4.0"
 clippy-utilities = "0.2.0"
 opentelemetry = { version = "0.21.0", features = ["metrics"] }
 parking_lot = "0.12.1"
+rand = "0.8.5"
 rocksdb = { version = "0.21.0", features = ["multi-threaded-cf"] }
 serde = { version = "1.0.152", features = ["derive"] }
 thiserror = "1.0.38"

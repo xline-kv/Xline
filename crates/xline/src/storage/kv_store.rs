@@ -11,6 +11,7 @@ use clippy_utilities::{Cast, OverflowArithmetic};
 use prost::Message;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
+use utils::table_names::{KV_TABLE, META_TABLE};
 use xlineapi::{
     command::{CommandResponse, KeyRange, SyncResponse},
     execute_error::ExecuteError,
@@ -32,12 +33,8 @@ use crate::{
         PutResponse, RangeRequest, RangeResponse, Request, RequestWithToken, RequestWrapper,
         ResponseWrapper, SortOrder, SortTarget, TargetUnion, TxnRequest, TxnResponse,
     },
-    server::command::META_TABLE,
     storage::db::{WriteOp, COMPACT_REVISION},
 };
-
-/// KV table name
-pub(crate) const KV_TABLE: &str = "kv";
 
 /// KV store
 #[derive(Debug)]

@@ -1,6 +1,7 @@
 use std::{fmt, sync::Arc};
 
 use prost::Message;
+use utils::table_names::{AUTH_TABLE, ROLE_TABLE, USER_TABLE};
 use xlineapi::execute_error::ExecuteError;
 
 use crate::{
@@ -8,12 +9,6 @@ use crate::{
     storage::storage_api::StorageApi,
 };
 
-/// User table
-pub(crate) const USER_TABLE: &str = "user";
-/// Role table
-pub(crate) const ROLE_TABLE: &str = "role";
-/// Auth table
-pub(crate) const AUTH_TABLE: &str = "auth";
 /// Key of `AuthEnable`
 pub(crate) const AUTH_ENABLE_KEY: &[u8] = b"enable";
 /// Key of `AuthRevision`

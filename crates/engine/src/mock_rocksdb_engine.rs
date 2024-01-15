@@ -64,6 +64,16 @@ impl RocksEngine {
         fs::write(path, db)?;
         Ok(())
     }
+
+    /// Apply snapshot from file
+    #[allow(clippy::unused_async)]
+    pub async fn apply_snapshot_from_file(
+        &self,
+        _path: impl AsRef<Path>,
+        _tables: &[&'static str],
+    ) -> Result<(), EngineError> {
+        unreachable!("mock engine does not support apply snapshot from file")
+    }
 }
 
 #[async_trait::async_trait]
