@@ -19,7 +19,7 @@ use tonic::transport::{Channel, Endpoint};
 use tracing::{error, instrument};
 use utils::tracing::Inject;
 
-use super::{ShutdownRequest, ShutdownResponse, TryBeLeaderNowRequest};
+use super::{ShutdownRequest, ShutdownResponse, TryBecomeLeaderNowRequest};
 use crate::{
     members::ServerId,
     rpc::{
@@ -241,8 +241,8 @@ pub(crate) trait InnerConnectApi: Send + Sync + 'static {
     /// Trigger follower shutdown
     async fn trigger_shutdown(&self) -> Result<(), tonic::Status>;
 
-    /// Send `TryBeLeaderNowRequest`
-    async fn try_be_leader_now(&self, timeout: Duration) -> Result<(), tonic::Status>;
+    /// Send `TryBecomeLeaderNowRequest`
+    async fn try_become_leader_now(&self, timeout: Duration) -> Result<(), tonic::Status>;
 }
 
 /// Inner Connect Api Wrapper
@@ -498,11 +498,11 @@ impl InnerConnectApi for Connect<InnerProtocolClient<Channel>> {
         Ok(())
     }
 
-    async fn try_be_leader_now(&self, timeout: Duration) -> Result<(), tonic::Status> {
+    async fn try_become_leader_now(&self, timeout: Duration) -> Result<(), tonic::Status> {
         let mut client = self.rpc_connect.clone();
-        let mut req = tonic::Request::new(TryBeLeaderNowRequest::default());
+        let mut req = tonic::Request::new(TryBecomeLeaderNowRequest::default());
         req.set_timeout(timeout);
-        _ = client.try_be_leader_now(req).await?;
+        _ = client.try_become_leader_now(req).await?;
         Ok(())
     }
 }

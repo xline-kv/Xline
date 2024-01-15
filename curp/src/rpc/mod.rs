@@ -42,8 +42,8 @@ pub(crate) use self::proto::{
     inner_messagepb::{
         inner_protocol_server::InnerProtocol, AppendEntriesRequest, AppendEntriesResponse,
         InstallSnapshotRequest, InstallSnapshotResponse, TriggerShutdownRequest,
-        TriggerShutdownResponse, TryBeLeaderNowRequest, TryBeLeaderNowResponse, VoteRequest,
-        VoteResponse,
+        TriggerShutdownResponse, TryBecomeLeaderNowRequest, TryBecomeLeaderNowResponse,
+        VoteRequest, VoteResponse,
     },
 };
 use crate::{cmd::Command, log_entry::LogEntry, members::ServerId, LogIndex};
