@@ -832,8 +832,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         }
     }
 
-    /// Handle `try_be_leader_now`
-    pub(super) fn handle_try_be_leader_now(&self) -> Option<Vote> {
+    /// Handle `try_become_leader_now`
+    pub(super) fn handle_try_become_leader_now(&self) -> Option<Vote> {
         debug!("{} received timeout now", self.id());
         let mut st_w = self.st.write();
         if st_w.role == Role::Leader {

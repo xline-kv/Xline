@@ -24,8 +24,8 @@ use crate::{
         InstallSnapshotResponse, MoveLeaderRequest, MoveLeaderResponse, ProposeConfChangeRequest,
         ProposeConfChangeResponse, ProposeRequest, ProposeResponse, ProtocolServer, PublishRequest,
         PublishResponse, ShutdownRequest, ShutdownResponse, TriggerShutdownRequest,
-        TriggerShutdownResponse, TryBeLeaderNowRequest, TryBeLeaderNowResponse, VoteRequest,
-        VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        TriggerShutdownResponse, TryBecomeLeaderNowRequest, TryBecomeLeaderNowResponse,
+        VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
 };
 
@@ -202,13 +202,13 @@ impl<C: Command, RC: RoleChange> crate::rpc::InnerProtocol for Rpc<C, RC> {
         ))
     }
 
-    #[instrument(skip_all, name = "curp_try_be_leader_now")]
-    async fn try_be_leader_now(
+    #[instrument(skip_all, name = "curp_try_become_leader_now")]
+    async fn try_become_leader_now(
         &self,
-        request: tonic::Request<TryBeLeaderNowRequest>,
-    ) -> Result<tonic::Response<TryBeLeaderNowResponse>, tonic::Status> {
+        request: tonic::Request<TryBecomeLeaderNowRequest>,
+    ) -> Result<tonic::Response<TryBecomeLeaderNowResponse>, tonic::Status> {
         Ok(tonic::Response::new(
-            self.inner.try_be_leader_now(request.get_ref()).await?,
+            self.inner.try_become_leader_now(request.get_ref()).await?,
         ))
     }
 }
