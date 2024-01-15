@@ -5,7 +5,7 @@ use std::{
 };
 
 use tokio::sync::RwLock;
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::{
     members::ServerId,
@@ -82,8 +82,7 @@ impl State {
                 // If a server loses contact with its leader, it will update its term for election. Since other servers are all right, the election will not succeed.
                 // But if the client learns about the new term and updates its term to it, it will never get the true leader.
                 if let Some(new_leader_id) = leader_id {
-                    debug!("client term updates to {}", term);
-                    debug!("client leader id updates to {new_leader_id}");
+                    info!("client term updates to {term}\nclient leader id updates to {new_leader_id}");
                     self.term = term;
                     self.leader = Some(new_leader_id);
                 }
@@ -91,7 +90,7 @@ impl State {
             Ordering::Equal => {
                 if let Some(new_leader_id) = leader_id {
                     if self.leader.is_none() {
-                        debug!("client leader id updates to {new_leader_id}");
+                        info!("client leader id updates to {new_leader_id}");
                         self.leader = Some(new_leader_id);
                     }
                     assert_eq!(
@@ -125,7 +124,7 @@ impl State {
             return Ok(());
         }
 
-        debug!("client cluster version updated to {}", res.cluster_version);
+        info!("client cluster version updated to {}", res.cluster_version);
         self.cluster_version = res.cluster_version;
 
         let mut new_members = res.clone().into_members_addrs();
