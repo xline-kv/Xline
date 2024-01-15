@@ -1,5 +1,6 @@
 use std::{
     cmp::Ordering,
+    env::temp_dir,
     fs, io,
     io::{Cursor, Error as IoError, ErrorKind},
     iter::repeat,
@@ -9,6 +10,7 @@ use std::{
 
 use bytes::{Buf, Bytes, BytesMut};
 use clippy_utilities::{NumericCast, OverflowArithmetic};
+use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use rocksdb::{
     Error as RocksError, IteratorMode, Options, SstFileWriter, WriteBatchWithTransaction,
     WriteOptions, DB,
@@ -24,6 +26,9 @@ use crate::{
     },
     error::EngineError,
 };
+
+/// Install snapshot chunk size: 64KB
+const SNAPSHOT_CHUNK_SIZE: usize = 64 * 1024;
 
 /// Translate a `RocksError` into a `EngineError`
 impl From<RocksError> for EngineError {
@@ -98,6 +103,34 @@ impl RocksEngine {
                 .overflow_add(size);
         }
         Ok(size)
+    }
+
+    /// Apply snapshot from file
+    pub async fn apply_snapshot_from_file<P>(
+        &self,
+        snap_path: P,
+        tables: &[&'static str],
+    ) -> Result<(), EngineError>
+    where
+        P: AsRef<Path>,
+    {
+        let mut snapshot_f = tokio::fs::File::open(snap_path).await?;
+        let random: String = thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(8)
+            .map(char::from)
+            .collect();
+        let tmp_path = temp_dir().join(format!("snapshot-{random}"));
+        let mut rocks_snapshot = RocksSnapshot::new_for_receiving(tmp_path)?;
+        let mut buf = BytesMut::with_capacity(SNAPSHOT_CHUNK_SIZE);
+        while let Ok(n) = read_buf(&mut snapshot_f, &mut buf).await {
+            if n == 0 {
+                break;
+            }
+            rocks_snapshot.write_all(buf.split().freeze()).await?;
+        }
+        self.apply_snapshot(rocks_snapshot, tables).await?;
+        Ok(())
     }
 }
 

@@ -1,0 +1,20 @@
+[package]
+name = "xlineutl"
+version = "0.1.0"
+edition = "2021"
+authors = ["DatenLord <dev@datenlord.io>"]
+repository = "https://github.com/xline-kv/Xline/tree/master/xlinectl"
+description = "Command line client for Xline"
+license = "Apache-2.0"
+readme = "README.md"
+categories = ["Client"]
+keywords = ["Client", "CommandLine"]
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.3.2", features = ["derive", "string"] }
+engine = { path = "../engine" }
+tokio = { version = "1", features = ["rt"] }
+utils = { path = "../utils" }
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }

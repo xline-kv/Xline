@@ -11,6 +11,7 @@ use engine::Snapshot;
 use event_listener::Event;
 use parking_lot::RwLock;
 use tracing::warn;
+use utils::table_names::META_TABLE;
 use xlineapi::{
     command::{Command, CurpClient},
     execute_error::ExecuteError,
@@ -24,8 +25,6 @@ use crate::{
     storage::{db::WriteOp, storage_api::StorageApi, AlarmStore, AuthStore, KvStore, LeaseStore},
 };
 
-/// Meta table name
-pub(crate) const META_TABLE: &str = "meta";
 /// Key of applied index
 pub(crate) const APPLIED_INDEX_KEY: &str = "applied_index";
 

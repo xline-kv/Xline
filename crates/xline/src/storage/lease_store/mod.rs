@@ -18,6 +18,7 @@ use log::debug;
 use parking_lot::RwLock;
 use prost::Message;
 use tokio::sync::mpsc;
+use utils::table_names::LEASE_TABLE;
 use xlineapi::{
     command::{CommandResponse, SyncResponse},
     execute_error::ExecuteError,
@@ -35,8 +36,6 @@ use crate::{
     storage::KvStore,
 };
 
-/// Lease table name
-pub(crate) const LEASE_TABLE: &str = "lease";
 /// Max lease ttl
 const MAX_LEASE_TTL: i64 = 9_000_000_000;
 

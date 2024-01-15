@@ -2,33 +2,25 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 
 use engine::{Engine, EngineType, Snapshot, StorageEngine, WriteOperation};
 use prost::Message;
-use utils::config::EngineConfig;
+use utils::{
+    config::EngineConfig,
+    table_names::{
+        ALARM_TABLE, AUTH_TABLE, KV_TABLE, LEASE_TABLE, META_TABLE, ROLE_TABLE, USER_TABLE,
+        XLINE_TABLES,
+    },
+};
 use xlineapi::{execute_error::ExecuteError, AlarmMember};
 
 use super::{
-    alarm_store::ALARM_TABLE,
-    auth_store::{AUTH_ENABLE_KEY, AUTH_REVISION_KEY, AUTH_TABLE, ROLE_TABLE, USER_TABLE},
-    kv_store::KV_TABLE,
-    lease_store::LEASE_TABLE,
+    auth_store::{AUTH_ENABLE_KEY, AUTH_REVISION_KEY},
     revision::KeyRevision,
     storage_api::StorageApi,
 };
 use crate::{
     rpc::{KeyValue, PbLease, Role, User},
-    server::command::{APPLIED_INDEX_KEY, META_TABLE},
+    server::command::APPLIED_INDEX_KEY,
     storage::Revision,
 };
-
-/// Xline Server Storage Table
-pub(crate) const XLINE_TABLES: [&str; 7] = [
-    META_TABLE,
-    KV_TABLE,
-    LEASE_TABLE,
-    AUTH_TABLE,
-    USER_TABLE,
-    ROLE_TABLE,
-    ALARM_TABLE,
-];
 
 /// Key of compacted revision
 pub(crate) const COMPACT_REVISION: &str = "compact_revision";

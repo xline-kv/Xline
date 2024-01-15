@@ -46,6 +46,21 @@ impl Engine {
             )?))),
         }
     }
+
+    /// Apply snapshot from file, only works for `RocksEngine`
+    /// # Errors
+    /// Return `EngineError` when `RocksDB` returns an error.
+    #[inline]
+    pub async fn apply_snapshot_from_file(
+        &self,
+        snapshot_path: impl AsRef<Path>,
+        tables: &[&'static str],
+    ) -> Result<(), EngineError> {
+        match *self {
+            Engine::Rocks(ref e) => e.apply_snapshot_from_file(snapshot_path, tables).await,
+            Engine::Memory(ref _e) => unreachable!(),
+        }
+    }
 }
 
 #[async_trait::async_trait]

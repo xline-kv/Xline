@@ -13,6 +13,7 @@ members = [
     "crates/xline-test-utils",
     "crates/xlineapi",
     "crates/xlinectl",
+    "crates/xlineutl",
     "workspace-hack",
 ]
 resolver = "2"

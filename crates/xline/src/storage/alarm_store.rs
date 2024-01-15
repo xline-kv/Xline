@@ -9,6 +9,7 @@ use std::{
 use curp::members::ServerId;
 use parking_lot::RwLock;
 use prost::Message;
+use utils::table_names::ALARM_TABLE;
 use xlineapi::{
     command::{CommandResponse, SyncResponse},
     execute_error::ExecuteError,
@@ -18,9 +19,6 @@ use xlineapi::{
 
 use super::{db::WriteOp, storage_api::StorageApi};
 use crate::header_gen::HeaderGenerator;
-
-/// Alarm table name
-pub(crate) const ALARM_TABLE: &str = "alarm";
 
 /// Alarm store
 #[derive(Debug)]

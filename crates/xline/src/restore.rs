@@ -5,8 +5,9 @@ use bytes::BytesMut;
 use clippy_utilities::Cast;
 use engine::{Engine, EngineType, Snapshot, SnapshotApi, StorageEngine};
 use tokio_util::io::read_buf;
+use utils::table_names::XLINE_TABLES;
 
-use crate::{server::MAINTENANCE_SNAPSHOT_CHUNK_SIZE, storage::db::XLINE_TABLES};
+use crate::server::MAINTENANCE_SNAPSHOT_CHUNK_SIZE;
 
 /// Restore snapshot to data dir
 /// # Errors
