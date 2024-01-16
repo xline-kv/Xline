@@ -21,5 +21,6 @@ pub(crate) mod storage_api;
 
 pub(crate) use self::{
     alarm_store::AlarmStore, auth_store::AuthStore, kv_store::KvStore, lease_store::LeaseStore,
-    revision::Revision,
 };
+
+pub use self::revision::Revision;

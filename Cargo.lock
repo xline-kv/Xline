@@ -3855,10 +3855,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "crc32fast",
  "engine",
+ "tempfile",
  "tokio",
  "utils",
  "workspace-hack",
+ "xline",
 ]
 
 [[package]]

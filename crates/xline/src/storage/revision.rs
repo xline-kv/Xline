@@ -23,6 +23,7 @@ pub struct Revision {
 }
 
 impl Ord for Revision {
+    #[inline]
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.revision
             .cmp(&other.revision)
@@ -31,6 +32,7 @@ impl Ord for Revision {
 }
 
 impl PartialOrd for Revision {
+    #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
@@ -46,7 +48,9 @@ impl Revision {
     }
 
     /// Get revision
-    pub(crate) fn revision(&self) -> i64 {
+    #[must_use]
+    #[inline]
+    pub fn revision(&self) -> i64 {
         self.revision
     }
 
@@ -64,7 +68,9 @@ impl Revision {
     }
 
     /// Decode `Revision` from `&[u8]`
-    pub(crate) fn decode(mut buf: &[u8]) -> Self {
+    #[must_use]
+    #[inline]
+    pub fn decode(mut buf: &[u8]) -> Self {
         Self::new(buf.get_i64(), buf.get_i64())
     }
 }

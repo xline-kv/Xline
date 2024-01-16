@@ -1,9 +1,14 @@
-use std::path::{Path, PathBuf};
+use std::{
+    hash::Hasher,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Result;
 use clap::{arg, ArgMatches, Command};
-use engine::{Engine, EngineType};
-use utils::table_names::XLINE_TABLES;
+use engine::{Engine, EngineType, StorageEngine};
+use tempfile::tempdir;
+use utils::table_names::{KV_TABLE, XLINE_TABLES};
+use xline::storage::Revision;
 
 /// Definition of `snapshot` command
 pub(crate) fn command() -> Command {
@@ -15,15 +20,28 @@ pub(crate) fn command() -> Command {
                 .arg(arg!(<filename> "Path to the snapshot file"))
                 .arg(arg!(--"data-dir" <DATA_DIR> "Path to the output data directory")),
         )
+        .subcommand(
+            Command::new("status")
+                .about("Gets backend snapshot status of a given file")
+                .arg(arg!(<filename> "Path to the snapshot file")),
+        )
 }
 
 /// Execute the command
 pub(crate) async fn execute(matches: &ArgMatches) -> Result<()> {
-    if let Some(("restore", sub_matches)) = matches.subcommand() {
-        let snapshot_path = sub_matches.get_one::<String>("filename").expect("required");
-        let data_dir = sub_matches.get_one::<String>("data-dir").expect("required");
-        handle_restore(snapshot_path, data_dir).await?;
+    match matches.subcommand() {
+        Some(("restore", sub_matches)) => {
+            let snapshot_path = sub_matches.get_one::<String>("filename").expect("required");
+            let data_dir = sub_matches.get_one::<String>("data-dir").expect("required");
+            handle_restore(snapshot_path, data_dir).await?;
+        }
+        Some(("status", sub_matches)) => {
+            let snapshot_path = sub_matches.get_one::<String>("filename").expect("required");
+            handle_status(snapshot_path).await?;
+        }
+        _ => {}
     }
+
     Ok(())
 }
 
@@ -37,5 +55,53 @@ async fn handle_restore<P: AsRef<Path>, D: Into<PathBuf>>(
     restore_rocks_engine
         .apply_snapshot_from_file(snapshot_path, &XLINE_TABLES)
         .await?;
+    Ok(())
+}
+
+/// Snapshot status
+#[derive(Debug, Default)]
+struct Status {
+    /// Hash of the snapshot
+    hash: u32,
+    /// Last revision of the snapshot
+    revision: i64,
+    /// Total key-value pair count of the snapshot
+    total_count: u64,
+    /// Total size of the snapshot
+    total_size: u64,
+}
+
+/// handle restore snapshot to data dir
+#[inline]
+#[allow(clippy::arithmetic_side_effects)] // u64 is big enough
+async fn handle_status<P: AsRef<Path>>(snapshot_path: P) -> Result<()> {
+    let tempdir = tempdir()?;
+    let restore_rocks_engine = Engine::new(
+        EngineType::Rocks(tempdir.path().to_path_buf()),
+        &XLINE_TABLES,
+    )?;
+    restore_rocks_engine
+        .apply_snapshot_from_file(snapshot_path, &XLINE_TABLES)
+        .await?;
+    let mut status = Status::default();
+    status.total_size = restore_rocks_engine.file_size()?;
+    let mut hasher = crc32fast::Hasher::new();
+    for table in XLINE_TABLES {
+        hasher.write(table.as_bytes());
+        let kv_pairs = restore_rocks_engine.get_all(table)?;
+        let is_kv_table = table == KV_TABLE;
+        for (k, v) in kv_pairs {
+            hasher.write(k.as_slice());
+            hasher.write(v.as_slice());
+            if is_kv_table {
+                let rev = Revision::decode(k.as_slice());
+                status.revision = rev.revision();
+            }
+            status.total_count += 1;
+        }
+    }
+    status.hash = hasher.finalize();
+    println!("{status:?}"); // TODO use a printer
+
     Ok(())
 }
