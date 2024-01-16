@@ -50,7 +50,7 @@ fn init_unary_client(
     term: u64,
     cluster_version: u64,
 ) -> Unary<TestCommand> {
-    let state = State::new_ref(connects, local_server, leader, term, cluster_version);
+    let state = State::new_arc(connects, local_server, leader, term, cluster_version);
     Unary::new(
         state,
         UnaryConfig::new(Duration::from_secs(0), Duration::from_secs(0)),

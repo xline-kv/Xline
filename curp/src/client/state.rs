@@ -4,6 +4,8 @@ use std::{
     sync::Arc,
 };
 
+use event_listener::Event;
+use futures::{stream::FuturesUnordered, Future};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
@@ -12,32 +14,44 @@ use crate::{
     rpc::{
         self,
         connect::{BypassedConnect, ConnectApi},
-        FetchClusterResponse, Protocol,
+        CurpError, FetchClusterResponse, Protocol,
     },
 };
 
-/// Reference to state
-pub(super) type StateRef = Arc<RwLock<State>>;
-
-/// Client state
+/// The client state
+#[derive(Debug)]
 pub(super) struct State {
-    /// Leader id. At the beginning, we may not know who the leader is.
-    pub(super) leader: Option<ServerId>,
-    /// Local server id
-    pub(super) local_server: Option<ServerId>,
-    /// Term, initialize to 0, calibrated by the server.
-    pub(super) term: u64,
-    /// Cluster version, initialize to 0, calibrated by the server.
-    pub(super) cluster_version: u64,
-    /// Members' connect
-    pub(super) connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
+    /// Mutable state
+    mutable: RwLock<StateMut>,
+    /// Immutable state
+    immutable: StateStatic,
 }
 
-impl std::fmt::Debug for State {
+/// Immutable client state, could be cloned
+#[derive(Debug, Clone)]
+struct StateStatic {
+    /// Local server id, should be initialized on startup
+    local_server: Option<ServerId>,
+    /// Notifier of leader update
+    leader_notifier: Arc<Event>,
+}
+
+/// Mutable client state
+struct StateMut {
+    /// Leader id. At the beginning, we may not know who the leader is.
+    leader: Option<ServerId>,
+    /// Term, initialize to 0, calibrated by the server.
+    term: u64,
+    /// Cluster version, initialize to 0, calibrated by the server.
+    cluster_version: u64,
+    /// Members' connect, calibrated by the server.
+    connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
+}
+
+impl std::fmt::Debug for StateMut {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("State")
             .field("leader", &self.leader)
-            .field("local_server", &self.local_server)
             .field("term", &self.term)
             .field("cluster_version", &self.cluster_version)
             .field("connects", &self.connects.keys())
@@ -48,53 +62,108 @@ impl std::fmt::Debug for State {
 impl State {
     /// For test
     #[cfg(test)]
-    pub(super) fn new_ref(
+    pub(super) fn new_arc(
         connects: HashMap<ServerId, Arc<dyn ConnectApi>>,
         local_server: Option<ServerId>,
         leader: Option<ServerId>,
         term: u64,
         cluster_version: u64,
-    ) -> StateRef {
-        Arc::new(RwLock::new(Self {
-            leader,
-            local_server,
-            term,
-            cluster_version,
-            connects,
-        }))
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            mutable: RwLock::new(StateMut {
+                leader,
+                term,
+                cluster_version,
+                connects,
+            }),
+            immutable: StateStatic {
+                local_server,
+                leader_notifier: Arc::new(Event::new()),
+            },
+        })
     }
 
     /// Get the local connect
-    pub(super) fn local_connect(&self) -> Option<Arc<dyn ConnectApi>> {
-        let id = self.local_server?;
-        self.connects.get(&id).map(Arc::clone)
+    pub(super) async fn local_connect(&self) -> Option<Arc<dyn ConnectApi>> {
+        let id = self.immutable.local_server?;
+        self.mutable.read().await.connects.get(&id).map(Arc::clone)
     }
 
-    /// Update leader
-    pub(super) fn check_and_update_leader(
-        &mut self,
+    /// Get the cluster version
+    pub(super) async fn cluster_version(&self) -> u64 {
+        self.mutable.read().await.cluster_version
+    }
+
+    /// Get the cached leader id
+    pub(super) async fn leader_id(&self) -> Option<ServerId> {
+        self.mutable.read().await.leader
+    }
+
+    /// Take an async function and map to the dedicated server, return `Err(CurpError:WrongClusterVersion(()))`
+    /// if the server can not found in local state
+    pub(super) async fn map_server<R, F: Future<Output = Result<R, CurpError>>>(
+        &self,
+        id: ServerId,
+        f: impl FnOnce(Arc<dyn ConnectApi>) -> F,
+    ) -> Result<R, CurpError> {
+        let conn = {
+            // If the leader id cannot be found in connects, it indicates that there is
+            // an inconsistency between the client's local leader state and the cluster
+            // state, then mock a `WrongClusterVersion` return to the outside.
+            self.mutable
+                .read()
+                .await
+                .connects
+                .get(&id)
+                .map(Arc::clone)
+                .ok_or_else(CurpError::wrong_cluster_version)?
+        };
+        f(conn).await
+    }
+
+    /// Take an async function and map to all server, returning `FuturesUnordered<F>`
+    pub(super) async fn for_each_server<R, F: Future<Output = R>>(
+        &self,
+        f: impl FnMut(Arc<dyn ConnectApi>) -> F,
+    ) -> FuturesUnordered<F> {
+        self.mutable
+            .read()
+            .await
+            .connects
+            .values()
+            .map(Arc::clone)
+            .map(f)
+            .collect()
+    }
+
+    /// Inner check and update leader
+    fn check_and_update_leader_inner(
+        &self,
+        state: &mut StateMut,
         leader_id: Option<ServerId>,
         term: u64,
     ) -> bool {
-        match self.term.cmp(&term) {
+        match state.term.cmp(&term) {
             Ordering::Less => {
                 // reset term only when the resp has leader id to prevent:
                 // If a server loses contact with its leader, it will update its term for election. Since other servers are all right, the election will not succeed.
                 // But if the client learns about the new term and updates its term to it, it will never get the true leader.
                 if let Some(new_leader_id) = leader_id {
                     info!("client term updates to {term}\nclient leader id updates to {new_leader_id}");
-                    self.term = term;
-                    self.leader = Some(new_leader_id);
+                    state.term = term;
+                    state.leader = Some(new_leader_id);
+                    self.immutable.leader_notifier.notify(usize::MAX);
                 }
             }
             Ordering::Equal => {
                 if let Some(new_leader_id) = leader_id {
-                    if self.leader.is_none() {
+                    if state.leader.is_none() {
                         info!("client leader id updates to {new_leader_id}");
-                        self.leader = Some(new_leader_id);
+                        state.leader = Some(new_leader_id);
+                        self.immutable.leader_notifier.notify(usize::MAX);
                     }
                     assert_eq!(
-                        self.leader,
+                        state.leader,
                         Some(new_leader_id),
                         "there should never be two leader in one term"
                     );
@@ -108,15 +177,26 @@ impl State {
         true
     }
 
+    /// Update leader
+    pub(super) async fn check_and_update_leader(
+        &self,
+        leader_id: Option<ServerId>,
+        term: u64,
+    ) -> bool {
+        let mut state = self.mutable.write().await;
+        self.check_and_update_leader_inner(&mut state, leader_id, term)
+    }
+
     /// Update client state based on [`FetchClusterResponse`]
     pub(super) async fn check_and_update(
-        &mut self,
+        &self,
         res: &FetchClusterResponse,
     ) -> Result<(), tonic::transport::Error> {
-        if !Self::check_and_update_leader(self, res.leader_id, res.term) {
+        let mut state = self.mutable.write().await;
+        if !self.check_and_update_leader_inner(&mut state, res.leader_id, res.term) {
             return Ok(());
         }
-        if self.cluster_version == res.cluster_version {
+        if state.cluster_version == res.cluster_version {
             debug!(
                 "ignore cluster version({}) from server",
                 res.cluster_version
@@ -125,18 +205,18 @@ impl State {
         }
 
         info!("client cluster version updated to {}", res.cluster_version);
-        self.cluster_version = res.cluster_version;
+        state.cluster_version = res.cluster_version;
 
         let mut new_members = res.clone().into_members_addrs();
 
-        let old_ids = self.connects.keys().copied().collect::<HashSet<_>>();
+        let old_ids = state.connects.keys().copied().collect::<HashSet<_>>();
         let new_ids = new_members.keys().copied().collect::<HashSet<_>>();
 
         let diffs = &old_ids ^ &new_ids;
         let sames = &old_ids & &new_ids;
 
         for diff in diffs {
-            if let Entry::Vacant(e) = self.connects.entry(diff) {
+            if let Entry::Vacant(e) = state.connects.entry(diff) {
                 let addrs = new_members
                     .remove(&diff)
                     .unwrap_or_else(|| unreachable!("{diff} must in new member addrs"));
@@ -145,11 +225,11 @@ impl State {
                 let _ig = e.insert(new_conn);
             } else {
                 debug!("client removes old server({diff})");
-                let _ig = self.connects.remove(&diff);
+                let _ig = state.connects.remove(&diff);
             }
         }
         for same in sames {
-            let conn = self
+            let conn = state
                 .connects
                 .get(&same)
                 .unwrap_or_else(|| unreachable!("{same} must in old connects"));
@@ -210,11 +290,16 @@ impl StateBuilder {
         );
 
         Ok(State {
-            leader: self.leader_state.map(|state| state.0),
-            local_server: Some(local_server_id),
-            term: self.leader_state.map_or(0, |state| state.1),
-            cluster_version: self.cluster_version.unwrap_or_default(),
-            connects,
+            mutable: RwLock::new(StateMut {
+                leader: self.leader_state.map(|state| state.0),
+                term: self.leader_state.map_or(0, |state| state.1),
+                cluster_version: self.cluster_version.unwrap_or_default(),
+                connects,
+            }),
+            immutable: StateStatic {
+                local_server: Some(local_server_id),
+                leader_notifier: Arc::new(Event::new()),
+            },
         })
     }
 
@@ -222,11 +307,16 @@ impl StateBuilder {
     pub(super) async fn build(self) -> Result<State, tonic::transport::Error> {
         let connects: HashMap<_, _> = rpc::connects(self.all_members.clone()).await?.collect();
         Ok(State {
-            leader: self.leader_state.map(|state| state.0),
-            local_server: None,
-            term: self.leader_state.map_or(0, |state| state.1),
-            cluster_version: self.cluster_version.unwrap_or_default(),
-            connects,
+            mutable: RwLock::new(StateMut {
+                leader: self.leader_state.map(|state| state.0),
+                term: self.leader_state.map_or(0, |state| state.1),
+                cluster_version: self.cluster_version.unwrap_or_default(),
+                connects,
+            }),
+            immutable: StateStatic {
+                local_server: None,
+                leader_notifier: Arc::new(Event::new()),
+            },
         })
     }
 }
