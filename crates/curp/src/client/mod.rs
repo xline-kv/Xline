@@ -8,6 +8,9 @@ mod metrics;
 /// Unary rpc client
 mod unary;
 
+/// Stream rpc client
+mod stream;
+
 /// Retry layer
 mod retry;
 
@@ -338,6 +341,18 @@ impl ClientBuilder {
         )
     }
 
+    /// Spawn background tasks for the client
+    fn spawn_bg_tasks(&self, state: Arc<state::State>) {
+        let interval = *self.config.keep_alive_interval();
+        let _ig = tokio::spawn(async move {
+            let stream = stream::Streaming::new(state, stream::StreamingConfig::new(interval));
+            stream.keep_heartbeat().await;
+            debug!("keep heartbeat task shutdown");
+        });
+        // FIXME: it should be caught by ClientApi
+        // handle.abort();
+    }
+
     /// Build the client
     ///
     /// # Errors
@@ -350,9 +365,10 @@ impl ClientBuilder {
         impl ClientApi<Error = tonic::Status, Cmd = C> + Send + Sync + 'static,
         tonic::transport::Error,
     > {
-        let state = self.init_state_builder().build().await?;
+        let state = Arc::new(self.init_state_builder().build().await?);
+        self.spawn_bg_tasks(Arc::clone(&state));
         let client = Retry::new(
-            Unary::new(Arc::new(state), self.init_unary_config()),
+            Unary::new(state, self.init_unary_config()),
             self.init_retry_config(),
         );
         Ok(client)
@@ -374,8 +390,10 @@ impl<P: Protocol> ClientBuilderWithBypass<P> {
             .init_state_builder()
             .build_bypassed::<P>(self.local_server_id, self.local_server)
             .await?;
+        let state = Arc::new(state);
+        self.inner.spawn_bg_tasks(Arc::clone(&state));
         let client = Retry::new(
-            Unary::new(Arc::new(state), self.inner.init_unary_config()),
+            Unary::new(state, self.inner.init_unary_config()),
             self.inner.init_retry_config(),
         );
         Ok(client)

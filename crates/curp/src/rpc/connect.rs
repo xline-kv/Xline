@@ -215,7 +215,7 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
     ) -> Result<tonic::Response<MoveLeaderResponse>, CurpError>;
 
     /// Keep send lease keep alive to server and mutate the client id
-    async fn lease_keep_alive(&self, client_id: Arc<AtomicU64>) -> CurpError;
+    async fn lease_keep_alive(&self, client_id: Arc<AtomicU64>, interval: Duration) -> CurpError;
 }
 
 /// Inner Connect interface among different servers
@@ -492,10 +492,10 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
     }
 
     /// Keep send lease keep alive to server and mutate the client id
-    async fn lease_keep_alive(&self, client_id: Arc<AtomicU64>) -> CurpError {
+    async fn lease_keep_alive(&self, client_id: Arc<AtomicU64>, interval: Duration) -> CurpError {
         let mut client = self.rpc_connect.clone();
         loop {
-            let stream = heartbeat_stream(Arc::clone(&client_id));
+            let stream = heartbeat_stream(Arc::clone(&client_id), interval);
             let new_id = match client.lease_keep_alive(stream).await {
                 Err(err) => return err.into(),
                 Ok(res) => res.into_inner().client_id,
@@ -771,17 +771,17 @@ where
     }
 
     /// Keep send lease keep alive to server and mutate the client id
-    async fn lease_keep_alive(&self, _client_id: Arc<AtomicU64>) -> CurpError {
+    async fn lease_keep_alive(&self, _client_id: Arc<AtomicU64>, _interval: Duration) -> CurpError {
         unreachable!("cannot invoke lease_keep_alive in bypassed connect")
     }
 }
 
 /// Generate heartbeat stream
-fn heartbeat_stream(client_id: Arc<AtomicU64>) -> impl Stream<Item = LeaseKeepAliveMsg> {
-    /// Keep alive interval
-    const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(1);
-
-    let mut ticker = tokio::time::interval(HEARTBEAT_INTERVAL);
+fn heartbeat_stream(
+    client_id: Arc<AtomicU64>,
+    interval: Duration,
+) -> impl Stream<Item = LeaseKeepAliveMsg> {
+    let mut ticker = tokio::time::interval(interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     stream! {
@@ -789,9 +789,9 @@ fn heartbeat_stream(client_id: Arc<AtomicU64>) -> impl Stream<Item = LeaseKeepAl
             _ = ticker.tick().await;
             let id = client_id.load(std::sync::atomic::Ordering::Relaxed);
             if id == 0 {
-                debug!("grant a client id");
+                debug!("client request a client id");
             } else {
-                debug!("keep alive the client id({id})");
+                debug!("client keep alive the client id({id})");
             }
             yield LeaseKeepAliveMsg { client_id: id };
         }

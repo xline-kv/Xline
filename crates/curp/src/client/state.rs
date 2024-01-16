@@ -1,7 +1,7 @@
 use std::{
     cmp::Ordering,
     collections::{hash_map::Entry, HashMap, HashSet},
-    sync::Arc,
+    sync::{atomic::AtomicU64, Arc},
 };
 
 use event_listener::Event;
@@ -29,6 +29,8 @@ pub(super) struct State {
     mutable: RwLock<StateMut>,
     /// Immutable state
     immutable: StateStatic,
+    /// The client id. Remove from `mutable`` because the client ID will be updated in the background.
+    client_id: Arc<AtomicU64>,
 }
 
 /// Immutable client state, could be cloned
@@ -91,13 +93,44 @@ impl State {
                 tls_config,
                 is_raw_curp: true,
             },
+            client_id: Arc::new(AtomicU64::new(0)),
         })
     }
 
-    /// Get the local connect
+    /// Get the leader notifier
+    pub(super) fn leader_notifier(&self) -> &Event {
+        &self.immutable.leader_notifier
+    }
+
+    /// Clone a reference to client id
+    pub(super) fn clone_client_id(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.client_id)
+    }
+
+    /// Generate client id if it does not exist when it is the leader
+    pub(crate) async fn check_gen_local_client_id(&self) {
+        let local_server_id = self.immutable.local_server;
+        let leader_id = self.leader_id().await;
+        if local_server_id != leader_id {
+            return;
+        }
+        if self.client_id.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+            let id = rand::random();
+            self.client_id
+                .store(id, std::sync::atomic::Ordering::Relaxed);
+            info!("generate client id({id}) locally for bypassed client");
+        }
+    }
+
+    /// Get the local server connection
     pub(super) async fn local_connect(&self) -> Option<Arc<dyn ConnectApi>> {
         let id = self.immutable.local_server?;
         self.mutable.read().await.connects.get(&id).map(Arc::clone)
+    }
+
+    /// Get the local server id
+    pub(super) fn local_server_id(&self) -> Option<ServerId> {
+        self.immutable.local_server
     }
 
     /// Get the cluster version
@@ -333,6 +366,7 @@ impl StateBuilder {
                 tls_config: self.tls_config.take(),
                 is_raw_curp: self.is_raw_curp,
             },
+            client_id: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -355,6 +389,7 @@ impl StateBuilder {
                 tls_config: self.tls_config,
                 is_raw_curp: self.is_raw_curp,
             },
+            client_id: Arc::new(AtomicU64::new(0)),
         })
     }
 }

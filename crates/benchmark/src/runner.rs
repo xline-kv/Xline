@@ -166,6 +166,7 @@ impl CommandRunner {
             Duration::from_millis(10_000),
             3,
             true,
+            Duration::from_secs(1),
         ));
         let addrs = self
             .args
