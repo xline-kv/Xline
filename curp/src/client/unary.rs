@@ -2,7 +2,7 @@ use std::{cmp::Ordering, marker::PhantomData, ops::AddAssign, sync::Arc, time::D
 
 use async_trait::async_trait;
 use curp_external_api::cmd::Command;
-use futures::{stream::FuturesUnordered, Future, Stream, StreamExt};
+use futures::{Future, StreamExt};
 use tonic::Response;
 use tracing::{debug, warn};
 
@@ -15,7 +15,7 @@ use crate::{
     },
 };
 
-use super::{state::StateRef, ClientApi, LeaderStateUpdate, ProposeResponse, RepeatableClientApi};
+use super::{state::State, ClientApi, LeaderStateUpdate, ProposeResponse, RepeatableClientApi};
 
 /// The unary client config
 #[derive(Debug)]
@@ -41,7 +41,7 @@ impl UnaryConfig {
 #[derive(Debug)]
 pub(super) struct Unary<C: Command> {
     /// Client state
-    state: StateRef,
+    state: Arc<State>,
     /// Unary config
     config: UnaryConfig,
     /// marker
@@ -50,7 +50,7 @@ pub(super) struct Unary<C: Command> {
 
 impl<C: Command> Unary<C> {
     /// Create an unary client
-    pub(super) fn new(state: StateRef, config: UnaryConfig) -> Self {
+    pub(super) fn new(state: Arc<State>, config: UnaryConfig) -> Self {
         Self {
             state,
             config,
@@ -58,58 +58,23 @@ impl<C: Command> Unary<C> {
         }
     }
 
-    /// Get cluster version.
-    async fn cluster_version(&self) -> u64 {
-        self.state.read().await.cluster_version
-    }
-
-    /// Give a handle `f` to apply to all servers *concurrently* and return a stream to poll result one by one.
-    async fn for_each_server<R, F: Future<Output = R>>(
-        &self,
-        mut f: impl FnMut(Arc<dyn ConnectApi>) -> F,
-    ) -> (usize, impl Stream<Item = R>) {
-        let connects = self
-            .state
-            .read()
-            .await
-            .connects
-            .values()
-            .map(Arc::clone)
-            .map(|connect| f(connect))
-            .collect::<FuturesUnordered<F>>();
-        // size calculated here to keep size = stream.len(), otherwise Non-atomic read operation on the `connects` may result in inconsistency.
-        let size = connects.len();
-        (size, connects)
-    }
-
-    /// Get a handle `f` and return the future to apply `f` on the leader.
+    /// Get a handle `f` and apply to the leader
     /// NOTICE:
-    /// The leader might be outdate if the local `leader_state` is stale.
+    /// The leader might be outdate if the local state is stale.
     /// `map_leader` should never be invoked in [`ClientApi::fetch_cluster`]
     /// `map_leader` might call `fetch_leader_id`, `fetch_cluster`, finally
     /// result in stack overflow.
-    async fn map_leader<R, F: Future<Output = R>>(
+    async fn map_leader<R, F: Future<Output = Result<R, CurpError>>>(
         &self,
         f: impl FnOnce(Arc<dyn ConnectApi>) -> F,
     ) -> Result<R, CurpError> {
-        let cached_leader = self.state.read().await.leader;
+        let cached_leader = self.state.leader_id().await;
         let leader_id = match cached_leader {
             Some(id) => id,
             None => <Unary<C> as ClientApi>::fetch_leader_id(self, false).await?,
         };
-        // If the leader id cannot be found in connects, it indicates that there is
-        // an inconsistency between the client's local leader state and the cluster
-        // state, then mock a `WrongClusterVersion` return to the outside.
-        let connect = self
-            .state
-            .read()
-            .await
-            .connects
-            .get(&leader_id)
-            .map(Arc::clone)
-            .ok_or_else(CurpError::wrong_cluster_version)?;
-        let res = f(connect).await;
-        Ok(res)
+
+        self.state.map_server(leader_id, f).await
     }
 
     /// Send proposal to all servers
@@ -118,16 +83,17 @@ impl<C: Command> Unary<C> {
         propose_id: ProposeId,
         cmd: &C,
     ) -> Result<Result<C::ER, C::Error>, CurpError> {
-        let req = ProposeRequest::new(propose_id, cmd, self.cluster_version().await);
+        let req = ProposeRequest::new(propose_id, cmd, self.state.cluster_version().await);
         let timeout = self.config.propose_timeout;
 
-        let (size, mut responses) = self
+        let mut responses = self
+            .state
             .for_each_server(|conn| {
                 let req_c = req.clone();
                 async move { (conn.id(), conn.propose(req_c, timeout).await) }
             })
             .await;
-        let super_quorum = super_quorum(size);
+        let super_quorum = super_quorum(responses.len());
 
         let mut err: Option<CurpError> = None;
         let mut execute_result: Option<C::ER> = None;
@@ -205,10 +171,10 @@ impl<C: Command> Unary<C> {
         propose_id: ProposeId,
     ) -> Result<Result<(C::ASR, C::ER), C::Error>, CurpError> {
         let timeout = self.config.wait_synced_timeout;
-        let req = WaitSyncedRequest::new(propose_id, self.cluster_version().await);
+        let req = WaitSyncedRequest::new(propose_id, self.state.cluster_version().await);
         let resp = self
             .map_leader(|conn| async move { conn.wait_synced(req, timeout).await })
-            .await??
+            .await?
             .into_inner();
         let synced_res = resp.map_result::<C, _, _>(|res| res).map_err(|ser_err| {
             warn!("serialize error: {ser_err}");
@@ -274,11 +240,11 @@ impl<C: Command> ClientApi for Unary<C> {
 
     /// Send move leader request
     async fn move_leader(&self, node_id: ServerId) -> Result<(), Self::Error> {
-        let req = MoveLeaderRequest::new(node_id, self.cluster_version().await);
+        let req = MoveLeaderRequest::new(node_id, self.state.cluster_version().await);
         let timeout = self.config.wait_synced_timeout;
         let _ig = self
             .map_leader(|conn| async move { conn.move_leader(req, timeout).await })
-            .await??;
+            .await?;
         Ok(())
     }
 
@@ -286,15 +252,16 @@ impl<C: Command> ClientApi for Unary<C> {
     async fn fetch_read_state(&self, cmd: &C) -> Result<ReadState, CurpError> {
         // Same as fast_round, we blame the serializing error to the server even
         // thought it is the local error
-        let req =
-            FetchReadStateRequest::new(cmd, self.cluster_version().await).map_err(|ser_err| {
+        let req = FetchReadStateRequest::new(cmd, self.state.cluster_version().await).map_err(
+            |ser_err| {
                 warn!("serializing error: {ser_err}");
                 CurpError::from(ser_err)
-            })?;
+            },
+        )?;
         let timeout = self.config.wait_synced_timeout;
         let state = self
             .map_leader(|conn| async move { conn.fetch_read_state(req, timeout).await })
-            .await??
+            .await?
             .into_inner()
             .read_state
             .unwrap_or_else(|| unreachable!("read_state must be set in fetch read state response"));
@@ -307,7 +274,7 @@ impl<C: Command> ClientApi for Unary<C> {
         let timeout = self.config.wait_synced_timeout;
         if !linearizable {
             // firstly, try to fetch the local server
-            if let Some(connect) = self.state.read().await.local_connect() {
+            if let Some(connect) = self.state.local_connect().await {
                 /// local timeout, in fact, local connect should only be bypassed, so the timeout maybe unused.
                 const FETCH_LOCAL_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -326,7 +293,8 @@ impl<C: Command> ClientApi for Unary<C> {
             }
         }
         // then fetch the whole cluster
-        let (size, mut responses) = self
+        let mut responses = self
+            .state
             .for_each_server(|conn| async move {
                 (
                     conn.id(),
@@ -336,7 +304,7 @@ impl<C: Command> ClientApi for Unary<C> {
                 )
             })
             .await;
-        let quorum = quorum(size);
+        let quorum = quorum(responses.len());
 
         let mut max_term = 0;
         let mut res = None;
@@ -388,7 +356,7 @@ impl<C: Command> ClientApi for Unary<C> {
                 // then check if we got the response
                 if let Some(res) = res {
                     debug!("fetch cluster succeeded, result: {res:?}");
-                    if let Err(e) = self.state.write().await.check_and_update(&res).await {
+                    if let Err(e) = self.state.check_and_update(&res).await {
                         warn!("update to a new cluster state failed, error {e}");
                     }
                     return Ok(res);
@@ -489,11 +457,12 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
         propose_id: ProposeId,
         changes: Vec<ConfChange>,
     ) -> Result<Vec<Member>, Self::Error> {
-        let req = ProposeConfChangeRequest::new(propose_id, changes, self.cluster_version().await);
+        let req =
+            ProposeConfChangeRequest::new(propose_id, changes, self.state.cluster_version().await);
         let timeout = self.config.wait_synced_timeout;
         let members = self
             .map_leader(|conn| async move { conn.propose_conf_change(req, timeout).await })
-            .await??
+            .await?
             .into_inner()
             .members;
         Ok(members)
@@ -501,11 +470,11 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
 
     /// Send propose to shutdown cluster
     async fn propose_shutdown(&self, propose_id: ProposeId) -> Result<(), Self::Error> {
-        let req = ShutdownRequest::new(propose_id, self.cluster_version().await);
+        let req = ShutdownRequest::new(propose_id, self.state.cluster_version().await);
         let timeout = self.config.wait_synced_timeout;
         let _ig = self
             .map_leader(|conn| async move { conn.shutdown(req, timeout).await })
-            .await??;
+            .await?;
         Ok(())
     }
 
@@ -520,7 +489,7 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
         let timeout = self.config.wait_synced_timeout;
         let _ig = self
             .map_leader(|conn| async move { conn.publish(req, timeout).await })
-            .await??;
+            .await?;
         Ok(())
     }
 }
@@ -529,8 +498,7 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
 impl<C: Command> LeaderStateUpdate for Unary<C> {
     /// Update leader
     async fn update_leader(&self, leader_id: Option<ServerId>, term: u64) -> bool {
-        let mut state_w = self.state.write().await;
-        state_w.check_and_update_leader(leader_id, term)
+        self.state.check_and_update_leader(leader_id, term).await
     }
 }
 

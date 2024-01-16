@@ -19,7 +19,6 @@ use std::{collections::HashMap, fmt::Debug, sync::Arc};
 use async_trait::async_trait;
 use curp_external_api::cmd::Command;
 use futures::{stream::FuturesUnordered, StreamExt};
-use tokio::sync::RwLock;
 use tracing::debug;
 use utils::config::ClientConfig;
 
@@ -318,7 +317,7 @@ impl ClientBuilder {
     > {
         let state = self.init_state_builder().build().await?;
         let client = Retry::new(
-            Unary::new(Arc::new(RwLock::new(state)), self.init_unary_config()),
+            Unary::new(Arc::new(state), self.init_unary_config()),
             self.init_retry_config(),
         );
         Ok(client)
@@ -341,7 +340,7 @@ impl<P: Protocol> ClientBuilderWithBypass<P> {
             .build_bypassed::<P>(self.local_server_id, self.local_server)
             .await?;
         let client = Retry::new(
-            Unary::new(Arc::new(RwLock::new(state)), self.inner.init_unary_config()),
+            Unary::new(Arc::new(state), self.inner.init_unary_config()),
             self.inner.init_retry_config(),
         );
         Ok(client)
