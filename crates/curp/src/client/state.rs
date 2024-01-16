@@ -107,6 +107,11 @@ impl State {
         Arc::clone(&self.client_id)
     }
 
+    /// Get the client id
+    pub(super) async fn client_id(&self) -> u64 {
+        *self.client_id.read().await
+    }
+
     /// Generate client id if it does not exist when it is the leader
     pub(crate) async fn check_gen_local_client_id(&self) {
         let local_server_id = self.immutable.local_server;

@@ -188,12 +188,6 @@ impl<C: Command> Unary<C> {
         Ok(synced_res)
     }
 
-    /// Get the client id
-    #[allow(clippy::unused_async)] // TODO: grant a client id from server
-    async fn get_client_id(&self) -> Result<u64, CurpError> {
-        Ok(rand::random())
-    }
-
     /// New a seq num and record it
     #[allow(clippy::unused_self)] // TODO: implement request tracker
     fn new_seq_num(&self) -> u64 {
@@ -389,7 +383,7 @@ impl<C: Command> ClientApi for Unary<C> {
 impl<C: Command> RepeatableClientApi for Unary<C> {
     /// Generate a unique propose id during the retry process.
     async fn gen_propose_id(&self) -> Result<ProposeId, Self::Error> {
-        let client_id = self.get_client_id().await?;
+        let client_id = self.state.client_id().await;
         let seq_num = self.new_seq_num();
         Ok(ProposeId(client_id, seq_num))
     }
