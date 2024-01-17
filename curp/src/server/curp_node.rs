@@ -555,7 +555,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         storage: Arc<dyn StorageApi<Command = C>>,
         shutdown_listener: Listener,
     ) {
-        #[allow(clippy::integer_arithmetic)] // introduced by tokio select
+        #[allow(clippy::arithmetic_side_effects)] // introduced by tokio select
         loop {
             tokio::select! {
                 e = log_rx.recv() => {

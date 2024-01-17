@@ -5,7 +5,11 @@ use tokio::sync::broadcast;
 #[cfg(not(madsim))]
 use tracing::info;
 use tracing::instrument;
-use utils::{config::CurpConfig, task_manager::TaskManager, tracing::Extract};
+use utils::{
+    config::CurpConfig,
+    task_manager::{tasks::TaskName, TaskManager},
+    tracing::Extract,
+};
 
 use self::curp_node::CurpNode;
 pub use self::raw_curp::RawCurp;
@@ -284,6 +288,7 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
     where
         CE: CommandExecutor<C>,
     {
+        let n = task_manager.get_shutdown_listener(TaskName::TonicServer);
         let port = server_port.unwrap_or(DEFAULT_SERVER_PORT);
         let id = cluster_info.self_id();
         info!("RPC server {id} started, listening on port {port}");
@@ -301,10 +306,11 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
         tonic::transport::Server::builder()
             .add_service(ProtocolServer::new(server.clone()))
             .add_service(InnerProtocolServer::new(server))
-            .serve(
+            .serve_with_shutdown(
                 format!("0.0.0.0:{port}")
                     .parse()
                     .map_err(|e| ServerError::ParsingError(format!("{e}")))?,
+                n.wait(),
             )
             .await?;
 

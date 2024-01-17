@@ -62,7 +62,7 @@ async fn cmd_worker<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     ce: Arc<CE>,
     shutdown_listener: Listener,
 ) {
-    #[allow(clippy::integer_arithmetic)] // introduced by tokio select
+    #[allow(clippy::arithmetic_side_effects)] // introduced by tokio select
     loop {
         tokio::select! {
             task = dispatch_rx.recv() => {
