@@ -82,6 +82,7 @@ impl Stats {
     /// Calculate the histogram from the latencies.
     #[allow(clippy::indexing_slicing)]
     #[allow(clippy::let_underscore_must_use)] // the writeln! will not fail thus always return an Ok
+    #[allow(clippy::arithmetic_side_effects)] // test only
     pub fn histogram(&self) -> String {
         let size = 10;
         let mut buckets = Vec::with_capacity(size);
@@ -254,7 +255,8 @@ impl CommandRunner {
     #[allow(
         clippy::as_conversions,
         clippy::cast_precision_loss,
-        clippy::float_arithmetic
+        clippy::float_arithmetic,
+        clippy::arithmetic_side_effects
     )]
     async fn collecter(&mut self, mut rx: Receiver<CmdResult>, barrier: Arc<Barrier>) -> Stats {
         let bar_len = match self.args.command {

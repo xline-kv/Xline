@@ -102,7 +102,7 @@ impl<C: Compactable> Compactor<C> for RevisionCompactor<C> {
         self.is_leader.store(true, Relaxed);
     }
 
-    #[allow(clippy::integer_arithmetic)]
+    #[allow(clippy::arithmetic_side_effects)]
     async fn run(&self) {
         let mut last_revision = None;
         let mut ticker = tokio::time::interval(CHECK_INTERVAL);

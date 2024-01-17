@@ -6,7 +6,7 @@ on:
     - cron: "00 00 * * 1"
 
 env:
-  CI_RUST_TOOLCHAIN: 1.70.0
+  CI_RUST_TOOLCHAIN: 1.71.0
 
 jobs:
   benchmark:

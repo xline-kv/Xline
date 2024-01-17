@@ -2,7 +2,7 @@
     clippy::wildcard_enum_match_arm,
     clippy::match_wildcard_for_single_variants
 )] // wildcard actually is more clear in this module
-#![allow(clippy::integer_arithmetic)] // u64 is large enough
+#![allow(clippy::arithmetic_side_effects)] // u64 is large enough
 
 use std::{
     collections::{HashMap, HashSet},
@@ -569,7 +569,8 @@ async fn conflict_checked_mpmc_task<C: Command, CE: CommandExecutor<C>>(
     let mut shutdown_listener = shutdown_trigger.subscribe();
     let mut filter = Filter::new(filter_tx, ce);
     let mut is_shutdown_state = false;
-    #[allow(clippy::integer_arithmetic, clippy::pattern_type_mismatch)] // tokio internal triggers
+    // tokio internal triggers
+    #[allow(clippy::arithmetic_side_effects, clippy::pattern_type_mismatch)]
     loop {
         tokio::select! {
             biased; // cleanup filter first so that the buffer in filter can be kept as small as possible

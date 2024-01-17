@@ -66,7 +66,7 @@
     clippy::indexing_slicing,
     // clippy::inline_asm_x86_att_syntax, stick to intel syntax
     clippy::inline_asm_x86_intel_syntax,
-    clippy::integer_arithmetic,
+    clippy::arithmetic_side_effects,
     // clippy::integer_division, required in the project
     clippy::let_underscore_must_use,
     clippy::lossy_float_literal,
@@ -121,7 +121,7 @@
     clippy::unused_peekable,
     clippy::unused_rounding,
 
-    // The followings are selected restriction lints from rust 1.68.0 to 1.70.0
+    // The followings are selected restriction lints from rust 1.68.0 to 1.71.0
     // clippy::allow_attributes, still unstable
     clippy::impl_trait_in_params,
     clippy::let_underscore_untyped,
@@ -129,7 +129,14 @@
     clippy::multiple_unsafe_ops_per_block,
     clippy::semicolon_inside_block,
     // clippy::semicolon_outside_block, already used `semicolon_inside_block`
-    clippy::tests_outside_test_module
+    clippy::tests_outside_test_module,
+    // 1.71.0
+    clippy::default_constructed_unit_structs,
+    clippy::items_after_test_module,
+    clippy::manual_next_back,
+    clippy::manual_while_let_some,
+    clippy::needless_bool_assign,
+    clippy::non_minimal_cfg,
 )]
 
 /// Log Index

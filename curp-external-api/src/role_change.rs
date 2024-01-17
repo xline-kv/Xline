@@ -2,7 +2,6 @@ use mockall::automock;
 
 /// Callback when the leadership changes
 #[allow(clippy::indexing_slicing)]
-#[allow(clippy::integer_arithmetic)]
 #[automock]
 pub trait RoleChange: Send + Sync + 'static {
     /// The `on_election_win` will be invoked when the current server win the election.

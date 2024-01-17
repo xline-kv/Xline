@@ -97,7 +97,7 @@ pub(crate) async fn auto_compactor<C: Compactable>(
 }
 
 /// background compact executor
-#[allow(clippy::integer_arithmetic)] // introduced bt tokio::select! macro
+#[allow(clippy::arithmetic_side_effects)] // introduced bt tokio::select! macro
 pub(crate) async fn compact_bg_task<DB>(
     kv_store: Arc<KvStore<DB>>,
     index: Arc<Index>,

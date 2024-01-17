@@ -7,7 +7,7 @@
 //!     3. self.log
 
 #![allow(clippy::similar_names)] // st, lst, cst is similar but not confusing
-#![allow(clippy::integer_arithmetic)] // u64 is large enough and won't overflow
+#![allow(clippy::arithmetic_side_effects)] // u64 is large enough and won't overflow
 
 use std::{
     cmp::min,

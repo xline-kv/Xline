@@ -118,7 +118,7 @@ where
         if let Some(sync_res) = sync_res {
             let revision = sync_res.revision();
             debug!("Get revision {:?} for AlarmResponse", revision);
-            if let Some(mut header) = res.header.as_mut() {
+            if let Some(header) = res.header.as_mut() {
                 header.revision = revision;
             }
         }

@@ -1,5 +1,6 @@
 use std::{
     collections::HashSet,
+    ops::Add,
     time::{Duration, Instant},
 };
 
@@ -70,7 +71,7 @@ impl Lease {
 
     /// Refresh expiry and return new expiry
     pub(crate) fn refresh(&mut self, extend: Duration) -> Instant {
-        let new_expiry = Instant::now() + extend + self.remaining_ttl();
+        let new_expiry = Instant::now().add(extend).add(self.remaining_ttl());
         self.expiry = Some(new_expiry);
         new_expiry
     }

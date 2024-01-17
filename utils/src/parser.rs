@@ -196,7 +196,7 @@ pub fn parse_rotation(s: &str) -> Result<RotationConfig, ConfigParseError> {
 /// # Errors
 /// Return error when parsing the given string to usize failed
 #[inline]
-#[allow(clippy::integer_arithmetic)]
+#[allow(clippy::arithmetic_side_effects)]
 pub fn parse_batch_bytes(s: &str) -> Result<u64, ConfigParseError> {
     let s = s.to_lowercase();
     if s.ends_with("kb") {

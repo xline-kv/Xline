@@ -1,4 +1,4 @@
-#![allow(clippy::integer_arithmetic)] // u64 is large enough and won't overflow
+#![allow(clippy::arithmetic_side_effects)] // u64 is large enough and won't overflow
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},

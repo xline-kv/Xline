@@ -87,7 +87,7 @@ impl<C> WAL<C> {
     /// Gets encoded length and padding length
     ///
     /// This is used to prevent torn write by forcing 8-bit alignment
-    #[allow(unused, clippy::integer_arithmetic)] // TODO: 8bit alignment
+    #[allow(unused, clippy::arithmetic_side_effects)] // TODO: 8bit alignment
     fn encode_frame_size(data_len: usize) -> (usize, usize) {
         let mut encoded_len = data_len;
         let pad_len = (8 - data_len % 8) % 8;
@@ -157,7 +157,7 @@ where
 
 #[allow(
     clippy::indexing_slicing, // Index slicings are checked
-    clippy::integer_arithmetic, //  Arithmetics are checked
+    clippy::arithmetic_side_effects, //  Arithmetics are checked
     clippy::unnecessary_wraps // Use the wraps to make code more consistenct
 )]
 impl<C> WALFrame<C>
@@ -256,7 +256,7 @@ impl<C> FrameEncoder for DataFrame<C>
 where
     C: Serialize,
 {
-    #[allow(clippy::integer_arithmetic)] // The integer shift is safe
+    #[allow(clippy::arithmetic_side_effects)] // The integer shift is safe
     fn encode(&self) -> Vec<u8> {
         match *self {
             DataFrame::Entry(ref entry) => {

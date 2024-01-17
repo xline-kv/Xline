@@ -59,7 +59,7 @@ impl<C: Command> StorageApi for DB<C> {
                 continue;
             }
             let entry: LogEntry<C> = bincode::deserialize(&v)?;
-            #[allow(clippy::integer_arithmetic)] // won't overflow
+            #[allow(clippy::arithmetic_side_effects)] // won't overflow
             if entry.index != prev_index + 1 {
                 // break when logs are no longer consistent
                 break;

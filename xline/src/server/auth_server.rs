@@ -170,7 +170,7 @@ impl Auth for AuthServer {
         mut request: tonic::Request<AuthUserChangePasswordRequest>,
     ) -> Result<tonic::Response<AuthUserChangePasswordResponse>, tonic::Status> {
         debug!("Receive AuthUserChangePasswordRequest {:?}", request);
-        let mut user_change_password_req = request.get_mut();
+        let user_change_password_req = request.get_mut();
         let hashed_password = Self::hash_password(user_change_password_req.password.as_bytes());
         user_change_password_req.hashed_password = hashed_password;
         user_change_password_req.password = String::new();
