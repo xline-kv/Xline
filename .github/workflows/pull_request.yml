@@ -77,18 +77,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         if: matrix.config.name == 'Normal'
-        run: |
-          set -euo pipefail
-          curl -Os https://uploader.codecov.io/latest/linux/codecov && chmod +x codecov
-          max_retry=5
-          counter=0
-          until ./codecov -t ${{ secrets.CODECOV_TOKEN }} -f lcov.info 2>&1 | grep -q 'Uploading'
-          do
-            sleep 1
-            [[ counter -eq $max_retry ]] && echo "Upload failed!" && exit 1
-            echo "Uploading again. Try #$counter"
-            ((counter++))
-          done
+        run: ci/scripts/upload-codecov.sh ${{ github.event.pull_request.head.sha }}
 
   commit:
     name: Commit Message Validation
