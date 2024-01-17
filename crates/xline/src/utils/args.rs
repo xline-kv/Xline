@@ -158,17 +158,27 @@ pub struct ServerArgs {
     /// Quota
     #[clap(long)]
     quota: Option<u64>,
+    /// Server ca certificate path, used to verify client certificate
+    #[clap(long)]
+    server_ca_cert_path: Option<PathBuf>,
     /// Server certificate path
     #[clap(long)]
     server_cert_path: Option<PathBuf>,
     /// Server private key path
     #[clap(long)]
     server_key_path: Option<PathBuf>,
-    /// Client ca certificate path
+    /// Client ca certificate path, used to verify server certificate
     #[clap(long)]
     client_ca_cert_path: Option<PathBuf>,
+    /// Client certificate path
+    #[clap(long)]
+    client_cert_path: Option<PathBuf>,
+    /// Client private key path
+    #[clap(long)]
+    client_key_path: Option<PathBuf>,
 }
 
+#[allow(clippy::too_many_lines)] // will be refactored in #604
 impl From<ServerArgs> for XlineServerConfig {
     #[inline]
     fn from(args: ServerArgs) -> Self {
@@ -200,7 +210,6 @@ impl From<ServerArgs> for XlineServerConfig {
         .gc_interval(args.gc_interval.unwrap_or_else(default_gc_interval))
         .cmd_workers(args.cmd_workers)
         .build() else { panic!("failed to create curp config") };
-
         let client_config = ClientConfig::new(
             args.client_wait_synced_timeout
                 .unwrap_or_else(default_client_wait_synced_timeout),
@@ -213,7 +222,6 @@ impl From<ServerArgs> for XlineServerConfig {
             args.retry_count.unwrap_or_else(default_retry_count),
             args.client_use_backoff.unwrap_or_else(default_use_backoff),
         );
-
         let server_timeout = ServerTimeout::new(
             args.range_retry_timeout
                 .unwrap_or_else(default_range_retry_timeout),
@@ -269,9 +277,12 @@ impl From<ServerArgs> for XlineServerConfig {
             auto_compactor_cfg,
         );
         let tls = TlsConfig::new(
+            args.server_ca_cert_path,
             args.server_cert_path,
             args.server_key_path,
             args.client_ca_cert_path,
+            args.client_cert_path,
+            args.client_key_path,
         );
         XlineServerConfig::new(cluster, storage, log, trace, auth, compact, tls)
     }
