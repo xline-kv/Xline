@@ -1,4 +1,4 @@
-#![allow(clippy::integer_arithmetic)] // introduced by `strum_macros::EnumIter`
+#![allow(clippy::arithmetic_side_effects)] // introduced by `strum_macros::EnumIter`
 
 use crate::{PbExecuteError, PbExecuteErrorOuter, PbRevisions, PbUserRole};
 use curp::cmd::{PbCodec, PbSerializeError};

@@ -36,14 +36,14 @@ impl RevisionWindow {
     }
 
     /// Store the revision into the inner ring buffer
-    #[allow(clippy::integer_arithmetic, clippy::indexing_slicing)]
+    #[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
     fn sample(&mut self, revision: i64) {
         self.cursor = (self.cursor + 1) % self.retention; // it's ok to do so since cursor will never overflow
         self.ring_buf[self.cursor] = revision;
     }
 
     /// Retrieve the expired revision that is sampled period ago
-    #[allow(clippy::indexing_slicing, clippy::integer_arithmetic)]
+    #[allow(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
     fn expired_revision(&self) -> Option<i64> {
         let target = self.ring_buf[(self.cursor + 1) % self.retention];
         if target == 0 {
@@ -157,7 +157,7 @@ fn sample_config(period: Duration) -> (Duration, usize) {
 
 #[async_trait::async_trait]
 impl<C: Compactable> Compactor<C> for PeriodicCompactor<C> {
-    #[allow(clippy::integer_arithmetic)]
+    #[allow(clippy::arithmetic_side_effects)]
     async fn run(&self) {
         let mut last_revision: Option<i64> = None;
         let (sample_frequency, sample_total) = sample_config(self.period);

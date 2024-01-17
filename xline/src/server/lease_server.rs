@@ -73,7 +73,7 @@ where
     }
 
     /// Task of revoke expired leases
-    #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
+    #[allow(clippy::arithmetic_side_effects)] // Introduced by tokio::select!
     async fn revoke_expired_leases_task(lease_server: Arc<LeaseServer<S>>) {
         let mut listener = lease_server.shutdown_listener.clone();
         loop {
@@ -139,7 +139,7 @@ where
     }
 
     /// Handle keep alive at leader
-    #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
+    #[allow(clippy::arithmetic_side_effects)] // Introduced by tokio::select!
     async fn leader_keep_alive(
         &self,
         mut request_stream: tonic::Streaming<LeaseKeepAliveRequest>,
@@ -186,7 +186,7 @@ where
     }
 
     /// Handle keep alive at follower
-    #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
+    #[allow(clippy::arithmetic_side_effects)] // Introduced by tokio::select!
     async fn follower_keep_alive(
         &self,
         mut request_stream: tonic::Streaming<LeaseKeepAliveRequest>,
@@ -270,7 +270,7 @@ where
         if let Some(sync_res) = sync_res {
             let revision = sync_res.revision();
             debug!("Get revision {:?} for LeaseGrantResponse", revision);
-            if let Some(mut header) = res.header.as_mut() {
+            if let Some(header) = res.header.as_mut() {
                 header.revision = revision;
             }
         }
@@ -291,7 +291,7 @@ where
         if let Some(sync_res) = sync_res {
             let revision = sync_res.revision();
             debug!("Get revision {:?} for LeaseRevokeResponse", revision);
-            if let Some(mut header) = res.header.as_mut() {
+            if let Some(header) = res.header.as_mut() {
                 header.revision = revision;
             }
         }
@@ -398,7 +398,7 @@ where
         if let Some(sync_res) = sync_res {
             let revision = sync_res.revision();
             debug!("Get revision {:?} for LeaseLeasesResponse", revision);
-            if let Some(mut header) = res.header.as_mut() {
+            if let Some(header) = res.header.as_mut() {
                 header.revision = revision;
             }
         }

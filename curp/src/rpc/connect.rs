@@ -139,8 +139,8 @@ pub(crate) async fn inner_connects(
 }
 
 /// Connect interface between server and clients
-#[cfg_attr(test, automock)]
 #[allow(clippy::module_name_repetitions)] // better for recognizing than just "Api"
+#[cfg_attr(test, automock)]
 #[async_trait]
 pub trait ConnectApi: Send + Sync + 'static {
     /// Get server id
@@ -644,7 +644,7 @@ fn install_snapshot_stream(
             error!("snapshot seek failed, {e}");
             return;
         }
-        #[allow(clippy::integer_arithmetic)] // can't overflow
+        #[allow(clippy::arithmetic_side_effects)] // can't overflow
         while offset < snapshot.size() {
             let len: u64 =
                 std::cmp::min(snapshot.size() - offset, SNAPSHOT_CHUNK_SIZE).numeric_cast();

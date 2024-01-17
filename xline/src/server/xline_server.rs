@@ -107,6 +107,7 @@ impl XlineServer {
 
     /// Construct a `LeaseCollection`
     #[inline]
+    #[allow(clippy::arithmetic_side_effects)] // never overflow
     fn construct_lease_collection(
         heartbeat_interval: Duration,
         candidate_timeout_ticks: u8,

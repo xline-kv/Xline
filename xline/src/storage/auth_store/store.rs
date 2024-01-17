@@ -79,7 +79,7 @@ where
     S: StorageApi,
 {
     /// New `AuthStore`
-    #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
+    #[allow(clippy::arithmetic_side_effects)] // Introduced by tokio::select!
     pub(crate) fn new(
         lease_collection: Arc<LeaseCollection>,
         key_pair: Option<(EncodingKey, DecodingKey)>,

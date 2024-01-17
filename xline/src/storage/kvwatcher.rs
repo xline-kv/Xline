@@ -276,7 +276,7 @@ impl WatcherMap {
 }
 
 /// Operations of KV watcher
-#[allow(clippy::integer_arithmetic, clippy::indexing_slicing)] // Introduced by mockall::automock
+#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)] // Introduced by mockall::automock
 #[cfg_attr(test, mockall::automock)]
 #[async_trait::async_trait]
 pub(crate) trait KvWatcherOps {
@@ -412,7 +412,7 @@ where
     }
 
     /// Background task to handle KV updates
-    #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
+    #[allow(clippy::arithmetic_side_effects)] // Introduced by tokio::select!
     async fn kv_updates_task(
         kv_watcher: Arc<KvWatcher<S>>,
         mut kv_update_rx: mpsc::Receiver<(i64, Vec<Event>)>,
@@ -427,7 +427,7 @@ where
     }
 
     /// Background task to sync victims
-    #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
+    #[allow(clippy::arithmetic_side_effects)] // Introduced by tokio::select!
     async fn sync_victims_task(
         kv_watcher: Arc<KvWatcher<S>>,
         sync_victims_interval: Duration,

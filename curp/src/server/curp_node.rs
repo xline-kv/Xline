@@ -227,7 +227,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     }
 
     /// Handle `InstallSnapshot` stream
-    #[allow(clippy::integer_arithmetic)] // can't overflow
+    #[allow(clippy::arithmetic_side_effects)] // can't overflow
     pub(super) async fn install_snapshot<E: std::error::Error + 'static>(
         &self,
         req_stream: impl Stream<Item = Result<InstallSnapshotRequest, E>>,
@@ -356,7 +356,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
 /// Spawned tasks
 impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     /// Tick periodically
-    #[allow(clippy::integer_arithmetic)]
+    #[allow(clippy::arithmetic_side_effects)]
     async fn election_task(curp: Arc<RawCurp<C, RC>>) {
         let mut shutdown_listener = curp.shutdown_listener();
         let heartbeat_interval = curp.cfg().heartbeat_interval;
@@ -399,7 +399,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     ) {
         let change_rx = curp.change_rx();
         let mut shutdown_listener = curp.shutdown_listener();
-        #[allow(clippy::integer_arithmetic)] // introduced by tokio select
+        #[allow(clippy::arithmetic_side_effects)] // introduced by tokio select
         loop {
             let change: ConfChange = tokio::select! {
                 _ = shutdown_listener.wait() => break,
@@ -469,7 +469,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         let batch_timeout = curp.cfg().batch_timeout;
         let leader_event = curp.leader_event();
 
-        #[allow(clippy::integer_arithmetic)] // tokio select internal triggered
+        #[allow(clippy::arithmetic_side_effects)] // tokio select internal triggered
         'outer: loop {
             if !curp.is_leader() {
                 tokio::select! {
@@ -758,7 +758,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     /// Send `append_entries` request
     /// Return `tonic::Error` if meet network issue
     /// Return (`leader_retires`, `ae_succeed`)
-    #[allow(clippy::integer_arithmetic)] // won't overflow
+    #[allow(clippy::arithmetic_side_effects)] // won't overflow
     async fn send_ae(
         connect: &(impl InnerConnectApi + ?Sized),
         curp: &RawCurp<C, RC>,

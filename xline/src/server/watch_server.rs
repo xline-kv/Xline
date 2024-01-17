@@ -65,7 +65,7 @@ where
     }
 
     /// bg task for handle watch connection
-    #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select!
+    #[allow(clippy::arithmetic_side_effects)] // Introduced by tokio::select!
     async fn task<ST, W>(
         next_id_gen: Arc<WatchIdGenerator>,
         kv_watcher: Arc<W>,

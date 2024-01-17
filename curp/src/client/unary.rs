@@ -588,7 +588,7 @@ impl<C: Command> ClientApi for Unary<C> {
             };
             // Ignore the response of a node that doesn't know who the leader is.
             if inner.leader_id.is_some() {
-                #[allow(clippy::integer_arithmetic)]
+                #[allow(clippy::arithmetic_side_effects)]
                 match max_term.cmp(&inner.term) {
                     Ordering::Less => {
                         max_term = inner.term;

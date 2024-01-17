@@ -306,7 +306,7 @@ pub const fn default_batch_timeout() -> Duration {
 /// default batch timeout
 #[must_use]
 #[inline]
-#[allow(clippy::integer_arithmetic)]
+#[allow(clippy::arithmetic_side_effects)]
 pub const fn default_batch_max_size() -> u64 {
     2 * 1024 * 1024
 }
