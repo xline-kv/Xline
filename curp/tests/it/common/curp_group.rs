@@ -36,7 +36,7 @@ use utils::{
     config::{
         default_quota, ClientConfig, CurpConfig, CurpConfigBuilder, EngineConfig, StorageConfig,
     },
-    task_manager::TaskManager,
+    task_manager::{tasks::TaskName, Listener, TaskManager},
 };
 pub mod commandpb {
     tonic::include_proto!("commandpb");
@@ -53,7 +53,6 @@ pub struct CurpNode {
     pub exe_rx: mpsc::UnboundedReceiver<(TestCommand, TestCommandResult)>,
     pub as_rx: mpsc::UnboundedReceiver<(TestCommand, LogIndex)>,
     pub role_change_arc: Arc<TestRoleChangeInner>,
-    pub handle: JoinHandle<Result<(), tonic::transport::Error>>,
     pub task_manager: Arc<TaskManager>,
 }
 
@@ -128,14 +127,15 @@ impl CurpGroup {
                 )
                 .await,
             );
-            let handle = tokio::spawn(Self::run(server, listener, l));
+            task_manager.spawn(TaskName::TonicServer, |n| async move {
+                let ig = Self::run(server, listener, n).await;
+            });
             let curp_node = CurpNode {
                 id,
                 addr,
                 exe_rx,
                 as_rx,
                 role_change_arc,
-                handle,
                 task_manager,
             };
             nodes.insert(curp_node.id, curp_node);
@@ -188,14 +188,14 @@ impl CurpGroup {
     async fn run(
         server: Arc<Rpc<TestCommand, TestRoleChange>>,
         listener: TcpListener,
-        mut shutdown_listener: shutdown::Listener,
+        shutdown_listener: Listener,
     ) -> Result<(), tonic::transport::Error> {
         tonic::transport::Server::builder()
             .add_service(ProtocolServer::from_arc(Arc::clone(&server)))
             .add_service(InnerProtocolServer::from_arc(server))
             .serve_with_incoming_shutdown(
                 TcpListenerStream::new(listener),
-                shutdown_listener.wait_self_shutdown(),
+                shutdown_listener.wait(),
             )
             .await
     }
@@ -252,17 +252,21 @@ impl CurpGroup {
             )
             .await,
         );
-        let handle = tokio::spawn(Self::run(server, listener, l));
-        let curp_node = CurpNode {
+        task_manager.spawn(TaskName::TonicServer, |n| async move {
+            let _ig = Self::run(server, listener, n).await;
+        });
+
+        self.nodes.insert(
             id,
-            addr,
-            exe_rx,
-            as_rx,
-            role_change_arc,
-            handle,
-            task_manager,
-        };
-        self.nodes.insert(id, curp_node);
+            CurpNode {
+                id,
+                addr,
+                exe_rx,
+                as_rx,
+                role_change_arc,
+                task_manager,
+            },
+        );
         let client = self.new_client().await;
         client.propose_publish(id, name).await.unwrap();
     }
@@ -306,7 +310,9 @@ impl CurpGroup {
     }
 
     pub fn is_finished(&self) -> bool {
-        self.nodes.values().all(|node| node.handle.is_finished())
+        self.nodes
+            .values()
+            .all(|node| node.task_manager.is_finished())
     }
 
     async fn stop(&mut self) {

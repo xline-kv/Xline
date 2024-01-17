@@ -81,8 +81,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             Reverse(Instant::now().add(Duration::from_nanos(u64::MAX))),
         );
 
-        let (shutdown_trigger, _) = shutdown::channel();
-
         Self::builder()
             .cluster_info(cluster_info)
             .is_leader(true)

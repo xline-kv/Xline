@@ -129,7 +129,7 @@ impl TaskManager {
     #[must_use]
     #[inline]
     pub fn is_shutdown(&self) -> bool {
-        self.state.load(Ordering::Relaxed) != 0
+        self.state.load(Ordering::Acquire) != 0
     }
 
     /// Get shutdown listener
@@ -182,7 +182,7 @@ impl TaskManager {
     /// Inner shutdown task
     async fn inner_shutdown(tasks: Arc<DashMap<TaskName, Task>>, state: Arc<AtomicU8>) {
         let mut queue = Self::root_tasks_queue(&tasks);
-        state.store(1, Ordering::Relaxed);
+        state.store(1, Ordering::Release);
         while let Some(v) = queue.pop_front() {
             let Some((_name,mut task)) = tasks.remove(&v) else {
                 continue;
@@ -226,7 +226,7 @@ impl TaskManager {
         let tracker = Arc::clone(&self.cluster_shutdown_tracker);
         let _ig = tokio::spawn(async move {
             info!("cluster shutdown start");
-            state.store(2, Ordering::Relaxed);
+            state.store(2, Ordering::Release);
             for name in [TaskName::SyncFollower, TaskName::ConflictCheckedMpmc] {
                 _ = tasks.get(&name).map(|n| n.notifier.notify_waiters());
             }
@@ -245,6 +245,20 @@ impl TaskManager {
     #[inline]
     pub fn mark_leader_notified(&self) {
         self.cluster_shutdown_tracker.mark_leader_notified();
+    }
+
+    /// Check if all tasks are finished
+    #[inline]
+    #[must_use]
+    pub fn is_finished(&self) -> bool {
+        for t in self.tasks.iter() {
+            for h in &t.handle {
+                if !h.is_finished() {
+                    return false;
+                }
+            }
+        }
+        true
     }
 }
 
@@ -330,7 +344,7 @@ impl Listener {
 
     /// Get current state
     fn state(&self) -> State {
-        let state = self.state.load(Ordering::Relaxed);
+        let state = self.state.load(Ordering::Acquire);
         match state {
             0 => State::Running,
             1 => State::Shutdown,

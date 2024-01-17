@@ -338,7 +338,12 @@ async fn propose_remove_follower_should_success() {
     assert_eq!(members.len(), 4);
     assert!(members.iter().all(|m| m.id != follower_id));
     sleep_secs(7).await; // wait the removed node start election and detect it is removed
-    assert!(group.nodes.get(&follower_id).unwrap().handle.is_finished());
+    assert!(group
+        .nodes
+        .get(&follower_id)
+        .unwrap()
+        .task_manager
+        .is_finished());
     // check if the old client can propose to the new cluster
     client
         .propose(&TestCommand::new_get(vec![1]), true)
@@ -360,7 +365,12 @@ async fn propose_remove_leader_should_success() {
     assert_eq!(members.len(), 4);
     assert!(members.iter().all(|m| m.id != leader_id));
     sleep_secs(7).await; // wait for the new leader to be elected
-    assert!(group.nodes.get(&leader_id).unwrap().handle.is_finished());
+    assert!(group
+        .nodes
+        .get(&leader_id)
+        .unwrap()
+        .task_manager
+        .is_finished());
     let new_leader_id = group.get_leader().await.0;
     assert_ne!(new_leader_id, leader_id);
     // check if the old client can propose to the new cluster
@@ -563,7 +573,12 @@ async fn propose_conf_change_rpc_should_work_when_client_has_wrong_cluster() {
     assert_eq!(members.len(), 3);
     assert!(members.iter().all(|m| m.id != node_id));
     sleep_secs(7).await;
-    assert!(group.nodes.get(&node_id).unwrap().handle.is_finished());
+    assert!(group
+        .nodes
+        .get(&node_id)
+        .unwrap()
+        .task_manager
+        .is_finished());
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -587,9 +587,6 @@ mod test {
         for count in collection.lock().values() {
             assert_eq!(*count, 1);
         }
-        // handle1.abort();
-        // handle2.abort();
-        // TODO
         task_manager.shutdown(true).await;
         Ok(())
     }
