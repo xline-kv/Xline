@@ -58,7 +58,9 @@ impl Engine {
     ) -> Result<(), EngineError> {
         match *self {
             Engine::Rocks(ref e) => e.apply_snapshot_from_file(snapshot_path, tables).await,
-            Engine::Memory(ref _e) => unreachable!(),
+            Engine::Memory(ref _e) => {
+                unreachable!("Memory engine does not support apply snapshot from file")
+            }
         }
     }
 }
