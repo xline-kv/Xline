@@ -201,9 +201,7 @@ where
         token: Option<&String>,
         use_fast_path: bool,
     ) -> Result<ProposeResponse<Self::Cmd>, tonic::Status> {
-        let propose_id = self
-            .retry::<_, _>(RepeatableClientApi::gen_propose_id)
-            .await?;
+        let propose_id = self.inner.gen_propose_id()?;
         self.retry::<_, _>(|client| {
             RepeatableClientApi::propose(client, propose_id, cmd, token, use_fast_path)
         })
@@ -215,9 +213,7 @@ where
         &self,
         changes: Vec<ConfChange>,
     ) -> Result<Vec<Member>, tonic::Status> {
-        let propose_id = self
-            .retry::<_, _>(RepeatableClientApi::gen_propose_id)
-            .await?;
+        let propose_id = self.inner.gen_propose_id()?;
         self.retry::<_, _>(|client| {
             let changes_c = changes.clone();
             RepeatableClientApi::propose_conf_change(client, propose_id, changes_c)
@@ -227,9 +223,7 @@ where
 
     /// Send propose to shutdown cluster
     async fn propose_shutdown(&self) -> Result<(), tonic::Status> {
-        let propose_id = self
-            .retry::<_, _>(RepeatableClientApi::gen_propose_id)
-            .await?;
+        let propose_id = self.inner.gen_propose_id()?;
         self.retry::<_, _>(|client| RepeatableClientApi::propose_shutdown(client, propose_id))
             .await
     }
@@ -241,9 +235,7 @@ where
         node_name: String,
         node_client_urls: Vec<String>,
     ) -> Result<(), Self::Error> {
-        let propose_id = self
-            .retry::<_, _>(RepeatableClientApi::gen_propose_id)
-            .await?;
+        let propose_id = self.inner.gen_propose_id()?;
         self.retry::<_, _>(|client| {
             let name_c = node_name.clone();
             let node_client_urls_c = node_client_urls.clone();

@@ -108,8 +108,8 @@ impl State {
     }
 
     /// Get the client id
-    pub(super) async fn client_id(&self) -> u64 {
-        *self.client_id.read().await
+    pub(super) fn client_id(&self) -> u64 {
+        self.client_id.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Generate client id if it does not exist when it is the leader
