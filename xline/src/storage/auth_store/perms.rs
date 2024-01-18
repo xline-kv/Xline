@@ -115,7 +115,7 @@ impl UserPermissions {
     pub(super) fn insert(&mut self, perm: Permission) {
         let range = KeyRange::new(perm.key, perm.range_end).unpack();
         #[allow(clippy::unwrap_used)] // safe unwrap
-        match Type::from_i32(perm.perm_type).unwrap() {
+        match Type::try_from(perm.perm_type).unwrap() {
             Type::Readwrite => {
                 self.read.insert(range.clone());
                 self.write.insert(range);

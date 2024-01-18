@@ -12,6 +12,7 @@ jobs:
         shell: bash
     env:
       SCCACHE_GHA_ENABLED: "on"
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     container: ghcr.io/xline-kv/build-env:latest
     strategy:
       fail-fast: true

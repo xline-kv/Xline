@@ -15,14 +15,14 @@ async-trait = "0.1.53"
 curp = { path = "../curp" }
 curp-external-api = { path = "../curp-external-api" }
 itertools = "0.10.3"
-prost = "0.11"
+prost = "0.12.3"
 serde = { version = "1.0.137", features = ["derive"] }
 thiserror = "1.0.37"
-tonic = { version = "0.3.0", package = "madsim-tonic" }
+tonic = { version = "0.4.1", package = "madsim-tonic" }
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
 [build-dependencies]
-tonic-build = { version = "0.3.0", package = "madsim-tonic-build" }
+tonic-build = { version = "0.4.2", package = "madsim-tonic-build" }
 
 [dev-dependencies]
 strum = "0.25"
