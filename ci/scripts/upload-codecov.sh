@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 
+if [ -n "$CODECOV_TOKEN" ]; then
+  token="-t ${CODECOV_TOKEN}"
+else
+  token=""
+fi
+
 set -euo pipefail
 curl -Os https://uploader.codecov.io/latest/linux/codecov && chmod +x codecov
 
@@ -12,7 +18,7 @@ RED='\033[0;31m'
 set +e
 
 while true; do
-    ./codecov -f lcov.info -Z -C $sha
+    ./codecov -f lcov.info -Z -C $sha $token
     if [ $? -eq 0 ]; then
         break
     fi

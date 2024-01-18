@@ -21,10 +21,3 @@ resolver = "2"
 # ISSUE: https://github.com/bnjbvr/cargo-machete/issues/94
 [workspace.metadata.cargo-machete]
 ignored = ["prost", "workspace-hack"]
-
-# TODO: We should remove it when the madsim updates its release in the crate.io
-[patch.crates-io]
-madsim = { git = "https://github.com/madsim-rs/madsim.git", rev = "5eb4198", package = "madsim" }
-tokio = { git = "https://github.com/madsim-rs/madsim.git", rev = "5eb4198", package = "madsim-tokio" }
-tonic = { git = "https://github.com/madsim-rs/madsim.git", rev = "5eb4198", package = "madsim-tonic" }
-tonic-build = { git = "https://github.com/madsim-rs/madsim.git", rev = "5eb4198", package = "madsim-tonic-build" }

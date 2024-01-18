@@ -118,8 +118,8 @@ where
     /// Get current alarm
     pub(crate) fn current_alarm(&self) -> AlarmType {
         let current_alarm = self.current_alarm.load(Ordering::Relaxed);
-        AlarmType::from_i32(current_alarm)
-            .unwrap_or_else(|| unreachable!("current alarm should be valid"))
+        AlarmType::try_from(current_alarm)
+            .unwrap_or_else(|e| unreachable!("current alarm should be valid, err: {e}"))
     }
 
     /// Refresh current alarm

@@ -678,7 +678,8 @@ impl AlarmMember {
 
 impl Display for AlarmMember {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let alarm = AlarmType::from_i32(self.alarm).unwrap_or_else(|| panic!("invalid alarm"));
+        let alarm =
+            AlarmType::try_from(self.alarm).unwrap_or_else(|e| panic!("invalid alarm, err: {e}"));
         let alarm_str = match alarm {
             AlarmType::Nospace => "NOSPACE",
             AlarmType::Corrupt => "CORRUPT",
