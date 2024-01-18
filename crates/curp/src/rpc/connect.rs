@@ -495,11 +495,15 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
     async fn lease_keep_alive(&self, client_id: Arc<AtomicU64>, interval: Duration) -> CurpError {
         let mut client = self.rpc_connect.clone();
         loop {
-            let stream = heartbeat_stream(Arc::clone(&client_id), interval);
+            let stream = heartbeat_stream(
+                client_id.load(std::sync::atomic::Ordering::Relaxed),
+                interval,
+            );
             let new_id = match client.lease_keep_alive(stream).await {
                 Err(err) => return err.into(),
                 Ok(res) => res.into_inner().client_id,
             };
+            // The only place to update the client id for follower
             client_id.store(new_id, std::sync::atomic::Ordering::Relaxed);
         }
     }
@@ -777,23 +781,19 @@ where
 }
 
 /// Generate heartbeat stream
-fn heartbeat_stream(
-    client_id: Arc<AtomicU64>,
-    interval: Duration,
-) -> impl Stream<Item = LeaseKeepAliveMsg> {
+fn heartbeat_stream(client_id: u64, interval: Duration) -> impl Stream<Item = LeaseKeepAliveMsg> {
     let mut ticker = tokio::time::interval(interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     stream! {
         loop {
             _ = ticker.tick().await;
-            let id = client_id.load(std::sync::atomic::Ordering::Relaxed);
-            if id == 0 {
+            if client_id == 0 {
                 debug!("client request a client id");
             } else {
-                debug!("client keep alive the client id({id})");
+                debug!("client keep alive the client id({client_id})");
             }
-            yield LeaseKeepAliveMsg { client_id: id };
+            yield LeaseKeepAliveMsg { client_id };
         }
     }
 }

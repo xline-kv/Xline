@@ -122,7 +122,7 @@ pub trait ClientApi {
 #[async_trait]
 trait RepeatableClientApi: ClientApi {
     /// Generate a unique propose id during the retry process.
-    async fn gen_propose_id(&self) -> Result<ProposeId, Self::Error>;
+    fn gen_propose_id(&self) -> Result<ProposeId, Self::Error>;
 
     /// Send propose to the whole cluster, `use_fast_path` set to `false` to fallback into ordered
     /// requests (event the requests are commutative).

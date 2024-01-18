@@ -62,6 +62,9 @@ impl Streaming {
 
     /// Keep heartbeat
     pub(super) async fn keep_heartbeat(&self) {
+        /// Prevent lock contention when leader crashed or some unknown errors
+        const RETRY_DELAY: Duration = Duration::from_millis(100);
+
         loop {
             // is heartbeat task cancellation safety?
             let heartbeat = self.map_remote_leader::<(), _>(|conn| async move {
@@ -90,7 +93,10 @@ impl Streaming {
                             debug!("shutting down stream client background task");
                             break Err(err);
                         }
-                        _ => unreachable!("rpc lease_keep_alive should not return {err:?}"),
+                        _ => {
+                            debug!("got unexpected error {err:?} when keep heartbeat, retrying...");
+                            tokio::time::sleep(RETRY_DELAY).await;
+                        }
                     }
                 }
             });

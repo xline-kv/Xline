@@ -211,7 +211,7 @@ impl<C: Command> ClientApi for Unary<C> {
         token: Option<&String>,
         use_fast_path: bool,
     ) -> Result<ProposeResponse<C>, CurpError> {
-        let propose_id = self.gen_propose_id().await?;
+        let propose_id = self.gen_propose_id()?;
         RepeatableClientApi::propose(self, propose_id, cmd, token, use_fast_path).await
     }
 
@@ -220,13 +220,13 @@ impl<C: Command> ClientApi for Unary<C> {
         &self,
         changes: Vec<ConfChange>,
     ) -> Result<Vec<Member>, CurpError> {
-        let propose_id = self.gen_propose_id().await?;
+        let propose_id = self.gen_propose_id()?;
         RepeatableClientApi::propose_conf_change(self, propose_id, changes).await
     }
 
     /// Send propose to shutdown cluster
     async fn propose_shutdown(&self) -> Result<(), CurpError> {
-        let propose_id = self.gen_propose_id().await?;
+        let propose_id = self.gen_propose_id()?;
         RepeatableClientApi::propose_shutdown(self, propose_id).await
     }
 
@@ -237,7 +237,7 @@ impl<C: Command> ClientApi for Unary<C> {
         node_name: String,
         node_client_urls: Vec<String>,
     ) -> Result<(), Self::Error> {
-        let propose_id = self.gen_propose_id().await?;
+        let propose_id = self.gen_propose_id()?;
         RepeatableClientApi::propose_publish(self, propose_id, node_id, node_name, node_client_urls)
             .await
     }
@@ -382,8 +382,8 @@ impl<C: Command> ClientApi for Unary<C> {
 #[async_trait]
 impl<C: Command> RepeatableClientApi for Unary<C> {
     /// Generate a unique propose id during the retry process.
-    async fn gen_propose_id(&self) -> Result<ProposeId, Self::Error> {
-        let client_id = self.state.client_id().await;
+    fn gen_propose_id(&self) -> Result<ProposeId, Self::Error> {
+        let client_id = self.state.client_id();
         let seq_num = self.new_seq_num();
         Ok(ProposeId(client_id, seq_num))
     }
