@@ -82,7 +82,7 @@ impl Stats {
     /// Calculate the histogram from the latencies.
     #[allow(clippy::indexing_slicing)]
     #[allow(clippy::let_underscore_must_use)] // the writeln! will not fail thus always return an Ok
-    #[allow(clippy::arithmetic_side_effects)] // test only
+    #[allow(clippy::arithmetic_side_effects)] // benchmark only
     pub fn histogram(&self) -> String {
         let size = 10;
         let mut buckets = Vec::with_capacity(size);
