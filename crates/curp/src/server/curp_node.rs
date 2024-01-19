@@ -609,6 +609,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         snapshot_allocator: Box<dyn SnapshotAllocator>,
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
+        storage: Arc<DB<C>>,
         task_manager: Arc<TaskManager>,
         client_tls_config: Option<ClientTlsConfig>,
     ) -> Result<Self, CurpError> {
@@ -632,7 +633,6 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         let (ce_event_tx, task_rx, done_tx) =
             conflict_checked_mpmc::channel(Arc::clone(&cmd_executor), Arc::clone(&task_manager));
         let ce_event_tx: Arc<dyn CEEventTxApi<C>> = Arc::new(ce_event_tx);
-        let storage = Arc::new(DB::open(&curp_cfg.engine_cfg)?);
 
         // create curp state machine
         let (voted_for, entries) = storage.recover().await?;
@@ -654,6 +654,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                 .last_applied(last_applied)
                 .voted_for(voted_for)
                 .entries(entries)
+                .curp_storage(Arc::clone(&storage))
                 .client_tls_config(client_tls_config)
                 .build_raw_curp()
                 .map_err(|e| CurpError::internal(format!("build raw curp failed, {e}")))?,

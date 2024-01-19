@@ -2,27 +2,61 @@ use async_trait::async_trait;
 use engine::EngineError;
 use thiserror::Error;
 
-use crate::{cmd::Command, log_entry::LogEntry, members::ServerId};
+use crate::{
+    cmd::Command,
+    log_entry::LogEntry,
+    members::{ClusterInfo, ServerId},
+    rpc::Member,
+};
 
 /// Storage layer error
 #[derive(Error, Debug)]
-pub(super) enum StorageError {
+#[allow(clippy::module_name_repetitions)]
+#[non_exhaustive]
+pub enum StorageError {
     /// Serialize or deserialize error
-    #[error("bincode error, {0}")]
-    Bincode(#[from] bincode::Error),
+    #[error("codec error, {0}")]
+    Codec(String),
     /// Rocksdb error
     #[error("internal error, {0}")]
     Internal(#[from] EngineError),
 }
 
+impl From<bincode::Error> for StorageError {
+    #[inline]
+    fn from(e: bincode::Error) -> Self {
+        Self::Codec(e.to_string())
+    }
+}
+
+impl From<prost::DecodeError> for StorageError {
+    #[inline]
+    fn from(e: prost::DecodeError) -> Self {
+        Self::Codec(e.to_string())
+    }
+}
+
 /// Curp storage api
 #[async_trait]
-pub(super) trait StorageApi: Send + Sync {
+#[allow(clippy::module_name_repetitions)]
+pub trait StorageApi: Send + Sync {
     /// Command
     type Command: Command;
 
     /// Put `voted_for` in storage, must be flushed on disk before returning
     async fn flush_voted_for(&self, term: u64, voted_for: ServerId) -> Result<(), StorageError>;
+
+    /// TODO
+    fn put_member(&self, member: &Member) -> Result<(), StorageError>;
+
+    /// TODO
+    fn remove_member(&self, id: ServerId) -> Result<(), StorageError>;
+
+    /// TODO
+    fn put_cluster_info(&self, cluster_info: &ClusterInfo) -> Result<(), StorageError>;
+
+    /// TODO
+    fn recover_cluster_info(&self) -> Result<Option<ClusterInfo>, StorageError>;
 
     /// Put log entries in storage
     async fn put_log_entry(&self, entry: &LogEntry<Self::Command>) -> Result<(), StorageError>;

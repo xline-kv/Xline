@@ -47,7 +47,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let all_members: HashMap<_, _> = (0..n)
             .map(|i| (format!("S{i}"), vec![format!("S{i}")]))
             .collect();
-        let cluster_info = Arc::new(ClusterInfo::new(all_members, "S0"));
+        let cluster_info = Arc::new(ClusterInfo::from_members_map(all_members, "S0"));
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
         let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
@@ -74,6 +74,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             .log_entries_cap(10)
             .build()
             .unwrap();
+        let curp_storage = Arc::new(DB::open(&curp_config.engine_cfg).unwrap());
 
         // grant a infinity expiry lease for test client id
         lease_manager.write().expiry_queue.push(
@@ -95,6 +96,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             .role_change(role_change)
             .task_manager(task_manager)
             .connects(connects)
+            .curp_storage(curp_storage)
             .build_raw_curp()
             .unwrap()
     }

@@ -47,7 +47,7 @@ use self::{
     log::Log,
     state::{CandidateState, LeaderState, State},
 };
-use super::{cmd_worker::CEEventTxApi, lease_manager::LeaseManagerRef};
+use super::{cmd_worker::CEEventTxApi, lease_manager::LeaseManagerRef, storage::StorageApi, DB};
 use crate::{
     cmd::Command,
     log_entry::{EntryData, LogEntry},
@@ -137,7 +137,8 @@ pub(super) struct RawCurpArgs<C: Command, RC: RoleChange> {
     sync_events: DashMap<ServerId, Arc<Event>>,
     /// Connects of peers
     connects: DashMap<ServerId, InnerConnectApiWrapper>,
-
+    /// curp storage
+    curp_storage: Arc<DB<C>>,
     /// client tls config
     #[builder(default)]
     client_tls_config: Option<ClientTlsConfig>,
@@ -180,6 +181,7 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
             .sync_events(args.sync_events)
             .role_change(args.role_change)
             .connects(args.connects)
+            .curp_storage(args.curp_storage)
             .client_tls_config(args.client_tls_config)
             .build()
             .map_err(|e| match e {
@@ -335,6 +337,8 @@ struct Context<C: Command, RC: RoleChange> {
     /// last conf change idx
     #[builder(setter(skip))]
     last_conf_change_idx: AtomicU64,
+    /// Curp storage
+    curp_storage: Arc<DB<C>>,
 }
 
 impl<C: Command, RC: RoleChange> Context<C, RC> {
@@ -395,6 +399,10 @@ impl<C: Command, RC: RoleChange> ContextBuilder<C, RC> {
                 None => return Err(ContextBuilderError::UninitializedField("connects")),
             },
             last_conf_change_idx: AtomicU64::new(0),
+            curp_storage: match self.curp_storage.take() {
+                Some(value) => value,
+                None => return Err(ContextBuilderError::UninitializedField("curp_storage")),
+            },
             client_tls_config: match self.client_tls_config.take() {
                 Some(value) => value,
                 None => return Err(ContextBuilderError::UninitializedField("client_tls_config")),
@@ -1376,7 +1384,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                     .map_lock(|mut cst_l| _ = cst_l.config.remove(node_id));
                 self.lst.remove(node_id);
                 _ = self.ctx.sync_events.remove(&node_id);
-                let _ig = self.ctx.cluster_info.remove(&node_id);
+                let _ig1 = self.ctx.cluster_info.remove(&node_id);
+                let _ig2 = self.ctx.curp_storage.remove_member(node_id);
                 _ = self.ctx.connects.remove(&node_id);
                 Some(ConfChange::remove(node_id))
             }
@@ -1386,7 +1395,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                     .map_lock(|mut cst_l| _ = cst_l.config.insert(node_id, is_learner));
                 self.lst.insert(node_id, is_learner);
                 _ = self.ctx.sync_events.insert(node_id, Arc::new(Event::new()));
-                let _ig = self.ctx.cluster_info.insert(member);
+                let _ig1 = self.ctx.curp_storage.put_member(&member);
+                let _ig2 = self.ctx.cluster_info.insert(member);
                 if is_learner {
                     Some(ConfChange::add_learner(node_id, old_addrs))
                 } else {
@@ -1395,6 +1405,10 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             }
             ConfChangeType::Update => {
                 _ = self.ctx.cluster_info.update(&node_id, old_addrs.clone());
+                let m = self.ctx.cluster_info.get(&node_id).unwrap_or_else(|| {
+                    unreachable!("node {} should exist in cluster info", node_id)
+                });
+                let _ig = self.ctx.curp_storage.put_member(&m);
                 Some(ConfChange::update(node_id, old_addrs))
             }
             ConfChangeType::Promote => {
@@ -1404,6 +1418,10 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 });
                 self.ctx.cluster_info.demote(node_id);
                 self.lst.demote(node_id);
+                let m = self.ctx.cluster_info.get(&node_id).unwrap_or_else(|| {
+                    unreachable!("node {} should exist in cluster info", node_id)
+                });
+                let _ig = self.ctx.curp_storage.put_member(&m);
                 None
             }
         };
@@ -1778,20 +1796,21 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 _ = cst_l.config.insert(node_id, is_learner);
                 self.lst.insert(node_id, is_learner);
                 _ = self.ctx.sync_events.insert(node_id, Arc::new(Event::new()));
+                let _ig = self.ctx.curp_storage.put_member(&member);
                 let m = self.ctx.cluster_info.insert(member);
                 (m.is_none(), (vec![], String::new(), is_learner))
             }
             ConfChangeType::Remove => {
                 _ = cst_l.config.remove(node_id);
                 self.lst.remove(node_id);
-                let m = self.ctx.cluster_info.remove(&node_id);
                 _ = self.ctx.sync_events.remove(&node_id);
                 _ = self.ctx.connects.remove(&node_id);
-                let modified = m.is_some();
+                let _ig = self.ctx.curp_storage.remove_member(node_id);
+                let m = self.ctx.cluster_info.remove(&node_id);
                 let removed_member =
                     m.unwrap_or_else(|| unreachable!("the member should exist before remove"));
                 (
-                    modified,
+                    true,
                     (
                         removed_member.addrs,
                         removed_member.name,
@@ -1804,7 +1823,10 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                     .ctx
                     .cluster_info
                     .update(&node_id, conf_change.address.clone());
-
+                let m = self.ctx.cluster_info.get(&node_id).unwrap_or_else(|| {
+                    unreachable!("the member should exist after update");
+                });
+                let _ig = self.ctx.curp_storage.put_member(&m);
                 (
                     old_addrs != conf_change.address,
                     (old_addrs, String::new(), false),
@@ -1813,8 +1835,12 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             ConfChangeType::Promote => {
                 _ = cst_l.config.learners.remove(&node_id);
                 _ = cst_l.config.insert(node_id, false);
-                let modified = self.ctx.cluster_info.promote(node_id);
                 self.lst.promote(node_id);
+                let modified = self.ctx.cluster_info.promote(node_id);
+                let m = self.ctx.cluster_info.get(&node_id).unwrap_or_else(|| {
+                    unreachable!("the member should exist after promote");
+                });
+                let _ig = self.ctx.curp_storage.put_member(&m);
                 (modified, (vec![], String::new(), false))
             }
         };
