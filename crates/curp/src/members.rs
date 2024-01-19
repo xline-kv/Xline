@@ -84,11 +84,26 @@ pub struct ClusterInfo {
 
 impl ClusterInfo {
     /// Construct a new `ClusterInfo`
+    #[inline]
+    #[must_use]
+    pub fn new(cluster_id: u64, member_id: u64, members: Vec<Member>) -> Self {
+        Self {
+            cluster_id,
+            member_id,
+            members: members.into_iter().map(|m| (m.id, m)).collect(),
+            cluster_version: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    /// Construct a new `ClusterInfo` from members map
     /// # Panics
     /// panic if `all_members` is empty
     #[inline]
     #[must_use]
-    pub fn new(all_members_addrs: HashMap<String, Vec<String>>, self_name: &str) -> Self {
+    pub fn from_members_map(
+        all_members_addrs: HashMap<String, Vec<String>>,
+        self_name: &str,
+    ) -> Self {
         let mut member_id = 0;
         let members = DashMap::new();
         for (name, addrs) in all_members_addrs {
@@ -426,9 +441,9 @@ mod tests {
             ("S3".to_owned(), vec!["S3".to_owned()]),
         ]);
 
-        let node1 = ClusterInfo::new(all_members.clone(), "S1");
-        let node2 = ClusterInfo::new(all_members.clone(), "S2");
-        let node3 = ClusterInfo::new(all_members, "S3");
+        let node1 = ClusterInfo::from_members_map(all_members.clone(), "S1");
+        let node2 = ClusterInfo::from_members_map(all_members.clone(), "S2");
+        let node3 = ClusterInfo::from_members_map(all_members, "S3");
 
         assert_ne!(node1.self_id(), node2.self_id());
         assert_ne!(node1.self_id(), node3.self_id());
@@ -446,7 +461,7 @@ mod tests {
             ("S3".to_owned(), vec!["S3".to_owned()]),
         ]);
 
-        let node1 = ClusterInfo::new(all_members, "S1");
+        let node1 = ClusterInfo::from_members_map(all_members, "S1");
         let peers = node1.peers_addrs();
         let node1_id = node1.self_id();
         let node1_url = node1.self_addrs();

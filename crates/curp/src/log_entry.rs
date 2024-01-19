@@ -14,7 +14,7 @@ use crate::{
 /// Log entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(test, derive(PartialEq))]
-pub(crate) struct LogEntry<C> {
+pub struct LogEntry<C> {
     /// Term
     pub(crate) term: u64,
     /// Index

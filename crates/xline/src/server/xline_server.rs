@@ -10,7 +10,7 @@ use curp::{
     client::ClientBuilder as CurpClientBuilder,
     members::{get_cluster_info_from_remote, ClusterInfo},
     rpc::{InnerProtocolServer, ProtocolServer},
-    server::Rpc,
+    server::{Rpc, StorageApi as _, DB as CurpDB},
 };
 use dashmap::DashMap;
 use engine::{MemorySnapshotAllocator, RocksSnapshotAllocator, SnapshotAllocator};
@@ -94,6 +94,8 @@ pub struct XlineServer {
     server_tls_config: Option<ServerTlsConfig>,
     /// Task Manager
     task_manager: Arc<TaskManager>,
+    /// Curp storage
+    curp_storage: Arc<CurpDB<Command>>,
 }
 
 impl XlineServer {
@@ -112,8 +114,15 @@ impl XlineServer {
         let (client_tls_config, server_tls_config) = Self::read_tls_config(&tls_config).await?;
         #[cfg(madsim)]
         let (client_tls_config, server_tls_config) = (None, None);
-        let cluster_info =
-            Arc::new(Self::init_cluster_info(&cluster_config, client_tls_config.as_ref()).await?);
+        let curp_storage = Arc::new(CurpDB::open(&cluster_config.curp_config().engine_cfg)?);
+        let cluster_info = Arc::new(
+            Self::init_cluster_info(
+                &cluster_config,
+                curp_storage.as_ref(),
+                client_tls_config.as_ref(),
+            )
+            .await?,
+        );
         Ok(Self {
             cluster_info,
             cluster_config,
@@ -123,12 +132,14 @@ impl XlineServer {
             client_tls_config,
             server_tls_config,
             task_manager: Arc::new(TaskManager::new()),
+            curp_storage,
         })
     }
 
     /// Init cluster info from cluster config
     async fn init_cluster_info(
         cluster_config: &ClusterConfig,
+        curp_storage: &CurpDB<Command>,
         tls_config: Option<&ClientTlsConfig>,
     ) -> Result<ClusterInfo> {
         let server_addr_str = cluster_config
@@ -157,22 +168,44 @@ impl XlineServer {
         info!("server_addr = {server_addr:?}");
         info!("cluster_peers = {:?}", cluster_config.members());
 
-        let name = cluster_config.name().clone();
-        let all_members = cluster_config.members().clone();
-        let init_cluster_info = ClusterInfo::new(all_members, &name);
-        Ok(match *cluster_config.initial_cluster_state() {
-            InitialClusterState::New => init_cluster_info,
-            InitialClusterState::Existing => get_cluster_info_from_remote(
-                &init_cluster_info,
-                server_addr_str,
-                &name,
-                *cluster_config.client_config().wait_synced_timeout(),
-                tls_config,
-            )
-            .await
-            .ok_or_else(|| anyhow!("Failed to get cluster info from remote"))?,
-            _ => unreachable!("xline only supports two initial cluster states: new, existing"),
-        })
+        match (
+            curp_storage.recover_cluster_info()?,
+            *cluster_config.initial_cluster_state(),
+        ) {
+            (Some(cluster_info), _) => {
+                info!("get cluster_info from local");
+                Ok(cluster_info)
+            }
+            (None, InitialClusterState::New) => {
+                info!("get cluster_info by args");
+                let cluster_info = ClusterInfo::from_members_map(
+                    cluster_config.members().clone(),
+                    cluster_config.name(),
+                );
+                curp_storage.put_cluster_info(&cluster_info)?;
+                Ok(cluster_info)
+            }
+            (None, InitialClusterState::Existing) => {
+                info!("get cluster_info from remote");
+                let cluster_info = get_cluster_info_from_remote(
+                    &ClusterInfo::from_members_map(
+                        cluster_config.members().clone(),
+                        cluster_config.name(),
+                    ),
+                    server_addr_str,
+                    cluster_config.name(),
+                    *cluster_config.client_config().wait_synced_timeout(),
+                    tls_config,
+                )
+                .await
+                .ok_or_else(|| anyhow!("Failed to get cluster info from remote"))?;
+                curp_storage.put_cluster_info(&cluster_info)?;
+                Ok(cluster_info)
+            }
+            (None, _) => {
+                unreachable!("xline only supports two initial cluster states: new, existing")
+            }
+        }
     }
 
     /// Construct a `LeaseCollection`
@@ -504,6 +537,7 @@ impl XlineServer {
             snapshot_allocator,
             state,
             Arc::clone(&curp_config),
+            Arc::clone(&self.curp_storage),
             Arc::clone(&self.task_manager),
             self.client_tls_config.clone(),
         )

@@ -10,7 +10,7 @@ use curp::{
     error::ServerError,
     members::{ClusterInfo, ServerId},
     rpc::{InnerProtocolServer, Member, ProtocolServer},
-    server::Rpc,
+    server::{Rpc, DB},
     LogIndex,
 };
 use curp_test_utils::{
@@ -104,7 +104,10 @@ impl CurpGroup {
         for (name, (config, xline_storage_config)) in configs.into_iter() {
             let task_manager = Arc::new(TaskManager::new());
             let snapshot_allocator = Self::get_snapshot_allocator_from_cfg(&config);
-            let cluster_info = Arc::new(ClusterInfo::new(all_members_addrs.clone(), &name));
+            let cluster_info = Arc::new(ClusterInfo::from_members_map(
+                all_members_addrs.clone(),
+                &name,
+            ));
             let listener = listeners.remove(&name).unwrap();
             let id = cluster_info.self_id();
             let addr = cluster_info.self_addrs().pop().unwrap();
@@ -120,6 +123,7 @@ impl CurpGroup {
 
             let role_change_cb = TestRoleChange::default();
             let role_change_arc = role_change_cb.get_inner_arc();
+            let curp_storage = Arc::new(DB::open(&config.engine_cfg).unwrap());
             let server = Arc::new(
                 Rpc::new(
                     cluster_info,
@@ -128,6 +132,7 @@ impl CurpGroup {
                     snapshot_allocator,
                     role_change_cb,
                     config,
+                    curp_storage,
                     Arc::clone(&task_manager),
                     client_tls_config.clone(),
                 )
@@ -248,6 +253,7 @@ impl CurpGroup {
         let id = cluster_info.self_id();
         let role_change_cb = TestRoleChange::default();
         let role_change_arc = role_change_cb.get_inner_arc();
+        let curp_storage = Arc::new(DB::open(&config.engine_cfg).unwrap());
         let server = Arc::new(
             Rpc::new(
                 cluster_info,
@@ -256,6 +262,7 @@ impl CurpGroup {
                 snapshot_allocator,
                 role_change_cb,
                 config,
+                curp_storage,
                 Arc::clone(&task_manager),
                 self.client_tls_config.clone(),
             )
