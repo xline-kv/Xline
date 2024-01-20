@@ -2,6 +2,9 @@
 
 Official Xline API client for Rust that supports the [CURP](https://github.com/xline-kv/Xline/tree/master/curp) protocol
 
+# Pre-requisites
+- Install `protobuf-compiler` as mentioned in [QuickStart](https://github.com/xline-kv/Xline/blob/master/doc/quick-start/README.md#install-dependencies)
+
 ## Features
 
 `xline-client` runs the CURP protocol on the client side for maximal performance.
