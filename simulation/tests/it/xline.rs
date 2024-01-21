@@ -20,7 +20,7 @@ async fn basic_put() {
 async fn watch_compacted_revision_should_receive_canceled_response() {
     init_logger();
     let group = XlineGroup::new(3).await;
-    let watch_addr = group.get_node_by_name("S2").addr.clone();
+    let watch_addr = group.get_node("S2").addr.clone();
 
     let client = SimEtcdClient::new(watch_addr, group.client_handle.clone()).await;
 
