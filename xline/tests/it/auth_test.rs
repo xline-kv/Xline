@@ -1,6 +1,10 @@
-use std::error::Error;
+use std::{error::Error, iter, path::PathBuf};
 
 use test_macros::abort_on_panic;
+use utils::config::{
+    AuthConfig, ClusterConfig, CompactConfig, LogConfig, StorageConfig, TraceConfig,
+    XlineServerConfig,
+};
 use xline_test_utils::{
     types::{
         auth::{
@@ -16,7 +20,7 @@ use xline_test_utils::{
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn test_auth_empty_user_get() -> Result<(), Box<dyn Error>> {
-    let mut cluster = Cluster::new(3).await;
+    let mut cluster = Cluster::new_with_configs(configs_with_auth(3)).await;
     cluster.start().await;
     let client = cluster.client().await;
 
@@ -30,7 +34,7 @@ async fn test_auth_empty_user_get() -> Result<(), Box<dyn Error>> {
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn test_auth_empty_user_put() -> Result<(), Box<dyn Error>> {
-    let mut cluster = Cluster::new(3).await;
+    let mut cluster = Cluster::new_with_configs(configs_with_auth(3)).await;
     cluster.start().await;
     let client = cluster.client().await;
 
@@ -44,7 +48,7 @@ async fn test_auth_empty_user_put() -> Result<(), Box<dyn Error>> {
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn test_auth_token_with_disable() -> Result<(), Box<dyn Error>> {
-    let mut cluster = Cluster::new(3).await;
+    let mut cluster = Cluster::new_with_configs(configs_with_auth(3)).await;
     cluster.start().await;
     let client = cluster.client().await;
 
@@ -65,7 +69,7 @@ async fn test_auth_token_with_disable() -> Result<(), Box<dyn Error>> {
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn test_auth_revision() -> Result<(), Box<dyn Error>> {
-    let mut cluster = Cluster::new(3).await;
+    let mut cluster = Cluster::new_with_configs(configs_with_auth(3)).await;
     cluster.start().await;
     let client = cluster.client().await;
     let auth_client = client.auth_client();
@@ -87,7 +91,7 @@ async fn test_auth_revision() -> Result<(), Box<dyn Error>> {
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn test_auth_non_authorized_rpcs() -> Result<(), Box<dyn Error>> {
-    let mut cluster = Cluster::new(3).await;
+    let mut cluster = Cluster::new_with_configs(configs_with_auth(3)).await;
     cluster.start().await;
     let client = cluster.client().await;
     let kv_client = client.kv_client();
@@ -104,7 +108,8 @@ async fn test_auth_non_authorized_rpcs() -> Result<(), Box<dyn Error>> {
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn test_kv_authorization() -> Result<(), Box<dyn Error>> {
-    let mut cluster = Cluster::new(3).await;
+    configs_with_auth(3);
+    let mut cluster = Cluster::new_with_configs(configs_with_auth(3)).await;
     cluster.start().await;
     let client = cluster.client().await;
 
@@ -145,7 +150,7 @@ async fn test_kv_authorization() -> Result<(), Box<dyn Error>> {
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn test_role_delete() -> Result<(), Box<dyn Error>> {
-    let mut cluster = Cluster::new(3).await;
+    let mut cluster = Cluster::new_with_configs(configs_with_auth(3)).await;
     cluster.start().await;
     let client = cluster.client().await;
     let auth_client = client.auth_client();
@@ -164,7 +169,7 @@ async fn test_role_delete() -> Result<(), Box<dyn Error>> {
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn test_no_root_user_do_admin_ops() -> Result<(), Box<dyn Error>> {
-    let mut cluster = Cluster::new(3).await;
+    let mut cluster = Cluster::new_with_configs(configs_with_auth(3)).await;
     cluster.start().await;
     let client = cluster.client().await;
 
@@ -201,7 +206,7 @@ async fn test_no_root_user_do_admin_ops() -> Result<(), Box<dyn Error>> {
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn test_auth_wrong_password() -> Result<(), Box<dyn Error>> {
-    let mut cluster = Cluster::new(3).await;
+    let mut cluster = Cluster::new_with_configs(configs_with_auth(3)).await;
     cluster.start().await;
     let client = cluster.client().await;
 
@@ -255,4 +260,25 @@ async fn enable_auth(client: &Client) -> Result<(), Box<dyn Error>> {
     set_user(client, "root", "123", "root", &[], &[]).await?;
     client.auth_client().auth_enable().await?;
     Ok(())
+}
+
+fn configs_with_auth(size: usize) -> Vec<XlineServerConfig> {
+    iter::repeat_with(|| {
+        (
+            Some(PathBuf::from("../xline-test-utils/public.pem")),
+            Some(PathBuf::from("../xline-test-utils/private.pem")),
+        )
+    })
+    .map(|(auth_public_key, auth_private_key)| {
+        XlineServerConfig::new(
+            ClusterConfig::default(),
+            StorageConfig::default(),
+            LogConfig::default(),
+            TraceConfig::default(),
+            AuthConfig::new(auth_public_key, auth_private_key),
+            CompactConfig::default(),
+        )
+    })
+    .take(size)
+    .collect()
 }
