@@ -284,6 +284,7 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
         snapshot_allocator: Box<dyn SnapshotAllocator>,
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
+        storage: Arc<DB<C>>,
         task_manager: Arc<TaskManager>,
         client_tls_config: Option<ClientTlsConfig>,
     ) -> Result<(), crate::error::ServerError>
@@ -302,6 +303,7 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
             snapshot_allocator,
             role_change,
             curp_cfg,
+            storage,
             task_manager,
             client_tls_config,
         )

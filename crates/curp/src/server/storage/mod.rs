@@ -43,19 +43,19 @@ pub trait StorageApi: Send + Sync {
     /// Command
     type Command: Command;
 
-    /// Put `voted_for` in storage, must be flushed on disk before returning
+    /// Put `voted_for` into storage, must be flushed on disk before returning
     async fn flush_voted_for(&self, term: u64, voted_for: ServerId) -> Result<(), StorageError>;
 
-    /// TODO
+    /// Put `Member` into storage
     fn put_member(&self, member: &Member) -> Result<(), StorageError>;
 
-    /// TODO
+    /// Remove `Member` from storage
     fn remove_member(&self, id: ServerId) -> Result<(), StorageError>;
 
-    /// TODO
+    /// Put `ClusterInfo` into storage
     fn put_cluster_info(&self, cluster_info: &ClusterInfo) -> Result<(), StorageError>;
 
-    /// TODO
+    /// Recover `ClusterInfo` from storage
     fn recover_cluster_info(&self) -> Result<Option<ClusterInfo>, StorageError>;
 
     /// Put log entries in storage

@@ -64,15 +64,14 @@ async fn xline_members_restore() {
         ))
         .await
         .unwrap();
-    println!("member add res {:#?}", res.members.len());
+    assert_eq!(res.members.len(), 4);
     let members = client
         .member_list(MemberListRequest::new(false))
         .await
         .unwrap();
-    println!("member list res {:#?}", members.members.len());
+    assert_eq!(members.members.len(), 4);
     group.crash(node_id).await;
     sleep(Duration::from_secs(10)).await;
-    println!("restart");
 
     group.restart(node_id).await;
     sleep(Duration::from_secs(10)).await;
@@ -80,5 +79,5 @@ async fn xline_members_restore() {
         .member_list(MemberListRequest::new(false))
         .await
         .unwrap();
-    println!("member list after restart {:#?}", members.members.len());
+    assert_eq!(members.members.len(), 4);
 }

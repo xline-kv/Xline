@@ -2,6 +2,8 @@ use std::io;
 
 use thiserror::Error;
 
+use crate::server::StorageError;
+
 /// Server bootstrap error
 #[allow(clippy::module_name_repetitions)] // this-error generate code false-positive
 #[non_exhaustive]
@@ -18,4 +20,8 @@ pub enum ServerError {
     /// Rpc Error
     #[error("rpc error: {0}")]
     RpcError(#[from] tonic::transport::Error),
+
+    /// Storage Error
+    #[error("storage error: {0}")]
+    StorageError(#[from] StorageError),
 }
