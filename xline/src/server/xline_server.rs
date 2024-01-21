@@ -1,21 +1,38 @@
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    net::{SocketAddr, ToSocketAddrs},
+    path::PathBuf,
+    sync::Arc,
+    time::Duration,
+};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clippy_utilities::{Cast, OverflowArithmetic};
 use curp::{
     client::ClientBuilder as CurpClientBuilder,
-    members::ClusterInfo,
+    members::{get_cluster_info_from_remote, ClusterInfo},
     rpc::{InnerProtocolServer, ProtocolServer},
     server::Rpc,
 };
 use dashmap::DashMap;
 use engine::{MemorySnapshotAllocator, RocksSnapshotAllocator, SnapshotAllocator};
+use futures::Stream;
+use itertools::Itertools;
 use jsonwebtoken::{DecodingKey, EncodingKey};
-use tokio::{sync::mpsc::channel, task::JoinHandle};
-use tonic::transport::{server::Router, Server};
-use tracing::{error, warn};
+use tokio::{
+    fs,
+    io::{AsyncRead, AsyncWrite},
+    sync::mpsc::channel,
+    task::JoinHandle,
+};
+use tonic::transport::{
+    server::{Connected, Router},
+    Server,
+};
+use tracing::{debug, error, warn};
 use utils::{
-    config::{ClientConfig, CompactConfig, CurpConfig, EngineConfig, ServerTimeout, StorageConfig},
+    config::{
+        AuthConfig, ClusterConfig, CompactConfig, EngineConfig, InitialClusterState, StorageConfig,
+    },
     shutdown,
 };
 use xlineapi::command::{Command, CurpClient};
@@ -42,6 +59,7 @@ use crate::{
     state::State,
     storage::{
         compact::{auto_compactor, compact_bg_task, COMPACT_CHANNEL_SIZE},
+        db::DB,
         index::Index,
         kv_store::KvStoreInner,
         kvwatcher::KvWatcher,
@@ -57,20 +75,16 @@ type CurpServer<S> = Rpc<Command, State<S, Arc<CurpClient>>>;
 /// Xline server
 #[derive(Debug)]
 pub struct XlineServer {
-    /// cluster information
+    /// Cluster information
     cluster_info: Arc<ClusterInfo>,
-    /// is leader
-    is_leader: bool,
-    /// Curp server timeout
-    curp_cfg: Arc<CurpConfig>,
-    /// Client config
-    client_config: ClientConfig,
+    /// Cluster Config
+    cluster_config: ClusterConfig,
     /// Storage config,
-    storage_cfg: StorageConfig,
+    storage_config: StorageConfig,
     /// Compact config
-    compact_cfg: CompactConfig,
-    /// Server timeout
-    server_timeout: ServerTimeout,
+    compact_config: CompactConfig,
+    /// Auth config
+    auth_config: AuthConfig,
     /// Shutdown trigger
     shutdown_trigger: shutdown::Trigger,
 }
@@ -83,26 +97,68 @@ impl XlineServer {
     /// panic when peers do not contain leader address
     #[inline]
     #[must_use]
-    pub fn new(
-        cluster_info: Arc<ClusterInfo>,
-        is_leader: bool,
-        curp_config: CurpConfig,
-        client_config: ClientConfig,
-        server_timeout: ServerTimeout,
+    pub async fn new(
+        cluster_config: ClusterConfig,
         storage_config: StorageConfig,
         compact_config: CompactConfig,
-    ) -> Self {
+        auth_config: AuthConfig,
+    ) -> Result<Self> {
         let (shutdown_trigger, _) = shutdown::channel();
-        Self {
+        let cluster_info = Arc::new(Self::init_cluster_info(&cluster_config).await?);
+        Ok(Self {
             cluster_info,
-            is_leader,
-            curp_cfg: Arc::new(curp_config),
-            client_config,
-            storage_cfg: storage_config,
-            compact_cfg: compact_config,
-            server_timeout,
+            cluster_config,
+            storage_config,
+            compact_config,
+            auth_config,
             shutdown_trigger,
-        }
+        })
+    }
+
+    async fn init_cluster_info(cluster_config: &ClusterConfig) -> Result<ClusterInfo> {
+        let server_addr_str = cluster_config
+            .members()
+            .get(cluster_config.name())
+            .ok_or_else(|| {
+                anyhow!(
+                    "node name {} not found in cluster peers",
+                    cluster_config.name()
+                )
+            })?;
+        let server_addr = server_addr_str
+            .iter()
+            .map(|addr| {
+                // TODO: update this after we support https
+                let address = if let Some(address) = addr.strip_prefix("http://") {
+                    address
+                } else {
+                    addr
+                };
+                address.to_socket_addrs()
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect_vec();
+        debug!("name = {:?}", cluster_config.name());
+        debug!("server_addr = {server_addr:?}");
+        debug!("cluster_peers = {:?}", cluster_config.members());
+
+        let name = cluster_config.name().clone();
+        let all_members = cluster_config.members().clone();
+        let init_cluster_info = ClusterInfo::new(all_members, &name);
+        Ok(match *cluster_config.initial_cluster_state() {
+            InitialClusterState::New => init_cluster_info,
+            InitialClusterState::Existing => get_cluster_info_from_remote(
+                &init_cluster_info,
+                server_addr_str,
+                &name,
+                Duration::from_secs(3),
+            )
+            .await
+            .ok_or_else(|| anyhow!("Failed to get cluster info from remote"))?,
+            _ => unreachable!("xline only supports two initial cluster states: new, existing"),
+        })
     }
 
     /// Construct a `LeaseCollection`
@@ -153,8 +209,8 @@ impl XlineServer {
         let _hd = tokio::spawn(compact_bg_task(
             Arc::clone(&kv_storage),
             Arc::clone(&index),
-            *self.compact_cfg.compact_batch_size(),
-            *self.compact_cfg.compact_sleep_interval(),
+            *self.compact_config.compact_batch_size(),
+            *self.compact_config.compact_sleep_interval(),
             compact_task_rx,
             self.shutdown_trigger.subscribe(),
         ));
@@ -164,7 +220,7 @@ impl XlineServer {
             Arc::clone(&persistent),
             index,
             kv_update_tx,
-            self.is_leader,
+            *self.cluster_config.is_leader(),
         ));
         let auth_storage = Arc::new(AuthStore::new(
             lease_collection,
@@ -177,7 +233,7 @@ impl XlineServer {
         let watcher = KvWatcher::new_arc(
             kv_store_inner,
             kv_update_rx,
-            *self.server_timeout.sync_victims_interval(),
+            *self.cluster_config.server_timeout().sync_victims_interval(),
             self.shutdown_trigger.subscribe(),
         );
         // lease storage must recover before kv storage
@@ -273,25 +329,28 @@ impl XlineServer {
         Ok(handle)
     }
 
-    /// Start `XlineServer`
-    ///
-    /// # Errors
-    ///
-    /// Will return `Err` when `tonic::Server` serve return an error
-    #[inline]
-    #[cfg(not(madsim))]
-    pub async fn start<S: StorageApi>(
+    async fn start_inner<I, IO, IE>(
         &self,
-        addrs: Vec<SocketAddr>,
-        persistent: Arc<S>,
-        key_pair: Option<(EncodingKey, DecodingKey)>,
-    ) -> Result<JoinHandle<Result<(), tonic::transport::Error>>> {
+        incoming: I,
+    ) -> Result<JoinHandle<Result<(), tonic::transport::Error>>>
+    where
+        I: Stream<Item = Result<IO, IE>> + Send + 'static,
+        IO: AsyncRead + AsyncWrite + Connected + Unpin + Send + 'static,
+        IO::ConnectInfo: Clone + Send + Sync + 'static,
+        IE: Into<Box<dyn std::error::Error + Send + Sync>> + Send,
+    {
         let mut shutdown_listener = self.shutdown_trigger.subscribe();
         let signal = async move {
-            let _r = shutdown_listener.wait_self_shutdown().await;
+            shutdown_listener.wait_self_shutdown().await;
         };
+        let persistent = DB::open(&self.storage_config.engine)?;
+        let key_pair = Self::read_key_pair(
+            self.auth_config.auth_private_key().as_ref(),
+            self.auth_config.auth_public_key().as_ref(),
+        )
+        .await;
         let (router, curp_client) = self.init_router(persistent, key_pair).await?;
-        let incoming = bind_addrs(addrs.into_iter())?;
+
         let handle =
             tokio::spawn(
                 async move { router.serve_with_incoming_shutdown(incoming, signal).await },
@@ -302,6 +361,42 @@ impl XlineServer {
         Ok(handle)
     }
 
+    /// Start `XlineServer`
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` when `tonic::Server` serve return an error
+    #[inline]
+    #[cfg(not(madsim))]
+    pub async fn start(&self) -> Result<JoinHandle<Result<(), tonic::transport::Error>>> {
+        let server_addr_iter = self
+            .cluster_config
+            .members()
+            .get(self.cluster_config.name())
+            .ok_or_else(|| {
+                anyhow!(
+                    "node name {} not found in cluster peers",
+                    self.cluster_config.name()
+                )
+            })?
+            .iter()
+            .map(|addr| {
+                // TODO: update this after we support https
+                let address = if let Some(address) = addr.strip_prefix("http://") {
+                    address
+                } else {
+                    addr
+                };
+                address.to_socket_addrs()
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten();
+        let incoming = bind_addrs(server_addr_iter)?;
+
+        self.start_inner(incoming).await
+    }
+
     /// Start `XlineServer` from listeners
     ///
     /// # Errors
@@ -309,26 +404,12 @@ impl XlineServer {
     /// Will return `Err` when `tonic::Server` serve return an error
     #[inline]
     #[cfg(not(madsim))]
-    pub async fn start_from_listener<S: StorageApi>(
+    pub async fn start_from_listener(
         &self,
         xline_listener: tokio::net::TcpListener,
-        persistent: Arc<S>,
-        key_pair: Option<(EncodingKey, DecodingKey)>,
-    ) -> Result<()> {
-        let mut shutdown_listener = self.shutdown_trigger.subscribe();
-        let signal = async move {
-            shutdown_listener.wait_self_shutdown().await;
-        };
-        let (router, curp_client) = self.init_router(persistent, key_pair).await?;
+    ) -> Result<JoinHandle<Result<(), tonic::transport::Error>>> {
         let incoming = tokio_stream::wrappers::TcpListenerStream::new(xline_listener);
-        let _h =
-            tokio::spawn(
-                async move { router.serve_with_incoming_shutdown(incoming, signal).await },
-            );
-        if let Err(e) = self.publish(curp_client).await {
-            warn!("publish name to cluster failed: {:?}", e);
-        };
-        Ok(())
+        self.start_inner(incoming).await
     }
 
     /// Init `KvServer`, `LockServer`, `LeaseServer`, `WatchServer` and `CurpServer`
@@ -353,8 +434,8 @@ impl XlineServer {
     )> {
         let (header_gen, id_gen) = Self::construct_generator(&self.cluster_info);
         let lease_collection = Self::construct_lease_collection(
-            self.curp_cfg.heartbeat_interval,
-            self.curp_cfg.candidate_timeout_ticks,
+            self.cluster_config.curp_config().heartbeat_interval,
+            self.cluster_config.curp_config().candidate_timeout_ticks,
         );
 
         let (kv_storage, lease_storage, auth_storage, alarm_storage, watcher) = self
@@ -380,47 +461,48 @@ impl XlineServer {
             header_gen.general_revision_arc(),
             header_gen.auth_revision_arc(),
             Arc::clone(&compact_events),
-            self.storage_cfg.quota,
+            self.storage_config.quota,
         ));
-        let snapshot_allocator: Box<dyn SnapshotAllocator> = match self.storage_cfg.engine {
+        let snapshot_allocator: Box<dyn SnapshotAllocator> = match self.storage_config.engine {
             EngineConfig::Memory => Box::<MemorySnapshotAllocator>::default(),
             EngineConfig::RocksDB(_) => Box::<RocksSnapshotAllocator>::default(),
             #[allow(clippy::unimplemented)]
             _ => unimplemented!(),
         };
 
-        let auto_compactor = if let Some(auto_config_cfg) = *self.compact_cfg.auto_compact_config()
-        {
-            Some(
-                auto_compactor(
-                    self.is_leader,
-                    header_gen.general_revision_arc(),
-                    self.shutdown_trigger.subscribe(),
-                    auto_config_cfg,
+        let auto_compactor =
+            if let Some(auto_config_cfg) = *self.compact_config.auto_compact_config() {
+                Some(
+                    auto_compactor(
+                        *self.cluster_config.is_leader(),
+                        header_gen.general_revision_arc(),
+                        self.shutdown_trigger.subscribe(),
+                        auto_config_cfg,
+                    )
+                    .await,
                 )
-                .await,
-            )
-        } else {
-            None
-        };
+            } else {
+                None
+            };
 
         let auto_compactor_c = auto_compactor.clone();
 
         let state = State::new(Arc::clone(&lease_storage), auto_compactor);
 
+        let curp_config = Arc::new(self.cluster_config.curp_config().clone());
         let curp_server = CurpServer::new(
             Arc::clone(&self.cluster_info),
-            self.is_leader,
+            *self.cluster_config.is_leader(),
             Arc::clone(&ce),
             snapshot_allocator,
             state,
-            Arc::clone(&self.curp_cfg),
+            Arc::clone(&curp_config),
             self.shutdown_trigger.clone(),
         )
         .await;
 
         let client = Arc::new(
-            CurpClientBuilder::new(self.client_config)
+            CurpClientBuilder::new(self.cluster_config.client_config().clone())
                 .cluster_version(self.cluster_info.cluster_version())
                 .all_members(self.cluster_info.all_members_addrs())
                 .bypass(self.cluster_info.self_id(), curp_server.clone())
@@ -437,14 +519,15 @@ impl XlineServer {
         ));
         let raw_curp = curp_server.raw_curp();
 
+        let server_timeout = self.cluster_config.server_timeout();
         Ok((
             KvServer::new(
                 Arc::clone(&kv_storage),
                 Arc::clone(&auth_storage),
                 index_barrier,
                 id_barrier,
-                *self.server_timeout.range_retry_timeout(),
-                *self.server_timeout.compact_timeout(),
+                *server_timeout.range_retry_timeout(),
+                *server_timeout.compact_timeout(),
                 Arc::clone(&client),
                 compact_events,
             ),
@@ -465,7 +548,7 @@ impl XlineServer {
             WatchServer::new(
                 watcher,
                 Arc::clone(&header_gen),
-                *self.server_timeout.watch_progress_notify_interval(),
+                *server_timeout.watch_progress_notify_interval(),
                 self.shutdown_trigger.subscribe(),
             ),
             MaintenanceServer::new(
@@ -503,6 +586,40 @@ impl XlineServer {
     pub async fn stop(&self) {
         self.shutdown_trigger.self_shutdown_and_wait().await;
     }
+
+    /// Read key pair from file
+    async fn read_key_pair(
+        private_key_path: Option<&PathBuf>,
+        public_key_path: Option<&PathBuf>,
+    ) -> Option<(EncodingKey, DecodingKey)> {
+        let encoding_key = match fs::read(private_key_path?).await {
+            Ok(key) => match EncodingKey::from_rsa_pem(&key) {
+                Ok(key) => key,
+                Err(e) => {
+                    error!("parse private key failed: {:?}", e);
+                    return None;
+                }
+            },
+            Err(e) => {
+                error!("read private key failed: {:?}", e);
+                return None;
+            }
+        };
+        let decoding_key = match fs::read(public_key_path?).await {
+            Ok(key) => match DecodingKey::from_rsa_pem(&key) {
+                Ok(key) => key,
+                Err(e) => {
+                    error!("parse public key failed: {:?}", e);
+                    return None;
+                }
+            },
+            Err(e) => {
+                error!("read public key failed: {:?}", e);
+                return None;
+            }
+        };
+        Some((encoding_key, decoding_key))
+    }
 }
 
 impl Drop for XlineServer {
@@ -522,7 +639,7 @@ impl Drop for XlineServer {
 #[cfg(not(madsim))]
 fn bind_addrs<T: Iterator<Item = SocketAddr>>(
     addrs: T,
-) -> Result<impl futures::Stream<Item = Result<hyper::server::conn::AddrStream, std::io::Error>>> {
+) -> Result<impl Stream<Item = Result<hyper::server::conn::AddrStream, std::io::Error>>> {
     let incoming = addrs
         .map(|addr| {
             tonic::transport::server::TcpIncoming::new(addr, true, None)

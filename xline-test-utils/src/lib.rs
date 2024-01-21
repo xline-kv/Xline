@@ -1,7 +1,5 @@
 use std::{collections::HashMap, env::temp_dir, iter, path::PathBuf, sync::Arc};
 
-use curp::members::{get_cluster_info_from_remote, ClusterInfo};
-use jsonwebtoken::{DecodingKey, EncodingKey};
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use tokio::{
     net::TcpListener,
@@ -13,7 +11,7 @@ use utils::config::{
     default_quota, AuthConfig, ClusterConfig, CompactConfig, EngineConfig, InitialClusterState,
     LogConfig, StorageConfig, TraceConfig, XlineServerConfig,
 };
-use xline::{server::XlineServer, storage::db::DB};
+use xline::server::XlineServer;
 pub use xline_client::{types, Client, ClientOptions};
 
 /// Cluster
@@ -73,42 +71,34 @@ impl Cluster {
     pub async fn start(&mut self) {
         for (i, config) in self.configs.iter().enumerate() {
             let name = format!("server{}", i);
-            let is_leader = i == 0;
             let listener = self.listeners.remove(0);
-            let cluster_config = config.cluster();
-            let cluster_info = ClusterInfo::new(
+
+            let config = Self::merge_config(
+                config,
+                name,
                 self.all_members
                     .clone()
                     .into_iter()
                     .enumerate()
                     .map(|(i, addr)| (format!("server{}", i), vec![addr]))
                     .collect(),
-                &name,
+                i == 0,
+                InitialClusterState::New,
             );
-            assert!(matches!(
-                cluster_config.initial_cluster_state(),
-                InitialClusterState::New
-            ));
 
-            let db = DB::open(&config.storage().engine).unwrap();
             let server = XlineServer::new(
-                cluster_info.into(),
-                is_leader,
-                cluster_config.curp_config().clone(),
-                *cluster_config.client_config(),
-                *cluster_config.server_timeout(),
+                config.cluster().clone(),
                 config.storage().clone(),
-                *config.compact(),
-            );
+                config.compact().clone(),
+                config.auth().clone(),
+            )
+            .await
+            .unwrap();
 
-            tokio::spawn(async move {
-                let result = server
-                    .start_from_listener(listener, db, Self::test_key_pair())
-                    .await;
-                if let Err(e) = result {
-                    panic!("Server start error: {e}");
-                }
-            });
+            let result = server.start_from_listener(listener).await;
+            if let Err(e) = result {
+                panic!("Server start error: {e}");
+            }
         }
         // Sleep 30ms, wait for the server to start
         time::sleep(Duration::from_millis(300)).await;
@@ -119,49 +109,46 @@ impl Cluster {
         self.run_node_with_config(listener, config).await;
     }
 
-    pub async fn run_node_with_config(&mut self, listener: TcpListener, config: XlineServerConfig) {
+    pub async fn run_node_with_config(
+        &mut self,
+        listener: TcpListener,
+        base_config: XlineServerConfig,
+    ) {
         let idx = self.all_members.len();
         let name = format!("server{}", idx);
         let self_addr = listener.local_addr().unwrap().to_string();
         self.all_members.push(self_addr.clone());
-        self.configs.push(config);
-        let config = self.configs.last().unwrap();
-        let cluster_config = config.cluster();
-        let db: Arc<DB> = DB::open(&config.storage().engine).unwrap();
-        let init_cluster_info = ClusterInfo::new(
-            self.all_members
-                .clone()
-                .into_iter()
-                .enumerate()
-                .map(|(id, addr)| (format!("server{id}"), vec![addr]))
-                .collect(),
-            &name,
+
+        let members = self
+            .all_members
+            .clone()
+            .into_iter()
+            .enumerate()
+            .map(|(id, addr)| (format!("server{id}"), vec![addr]))
+            .collect::<HashMap<_, _>>();
+        self.configs.push(base_config);
+
+        let base_config = self.configs.last().unwrap();
+        let config = Self::merge_config(
+            base_config,
+            name,
+            members,
+            false,
+            InitialClusterState::Existing,
         );
-        let cluster_info = get_cluster_info_from_remote(
-            &init_cluster_info,
-            &[self_addr],
-            &name,
-            Duration::from_secs(3),
+
+        let server = XlineServer::new(
+            config.cluster().clone(),
+            config.storage().clone(),
+            config.compact().clone(),
+            config.auth().clone(),
         )
         .await
         .unwrap();
-        let server = XlineServer::new(
-            cluster_info.into(),
-            false,
-            cluster_config.curp_config().clone(),
-            *cluster_config.client_config(),
-            *cluster_config.server_timeout(),
-            config.storage().clone(),
-            *config.compact(),
-        );
-        tokio::spawn(async move {
-            let result = server
-                .start_from_listener(listener, db, Self::test_key_pair())
-                .await;
-            if let Err(e) = result {
-                panic!("Server start error: {e}");
-            }
-        });
+        let result = server.start_from_listener(listener).await;
+        if let Err(e) = result {
+            panic!("Server start error: {e}");
+        }
     }
 
     /// Create or get the client with the specified index
@@ -189,13 +176,14 @@ impl Cluster {
         self.all_members.clone()
     }
 
-    fn test_key_pair() -> Option<(EncodingKey, DecodingKey)> {
-        let private_key = include_bytes!("../private.pem");
-        let public_key = include_bytes!("../public.pem");
-        let encoding_key = EncodingKey::from_rsa_pem(private_key).unwrap();
-        let decoding_key = DecodingKey::from_rsa_pem(public_key).unwrap();
-        Some((encoding_key, decoding_key))
-    }
+    // TODO
+    // fn test_key_pair() -> Option<(EncodingKey, DecodingKey)> {
+    //     let private_key = include_bytes!("../private.pem");
+    //     let public_key = include_bytes!("../public.pem");
+    //     let encoding_key = EncodingKey::from_rsa_pem(private_key).unwrap();
+    //     let decoding_key = DecodingKey::from_rsa_pem(public_key).unwrap();
+    //     Some((encoding_key, decoding_key))
+    // }
 
     pub fn default_config_with_quota_and_rocks_path(
         path: PathBuf,
@@ -222,6 +210,33 @@ impl Cluster {
     pub fn default_quota_config(quota: u64) -> XlineServerConfig {
         let path = temp_dir().join(random_id());
         Self::default_config_with_quota_and_rocks_path(path, quota)
+    }
+
+    fn merge_config(
+        base_config: &XlineServerConfig,
+        name: String,
+        members: HashMap<String, Vec<String>>,
+        is_leader: bool,
+        init_cluster_state: InitialClusterState,
+    ) -> XlineServerConfig {
+        let old_cluster = base_config.cluster();
+        let new_cluster = ClusterConfig::new(
+            name,
+            members,
+            is_leader,
+            old_cluster.curp_config().clone(),
+            old_cluster.client_config().clone(),
+            old_cluster.server_timeout().clone(),
+            init_cluster_state,
+        );
+        XlineServerConfig::new(
+            new_cluster,
+            base_config.storage().clone(),
+            base_config.log().clone(),
+            base_config.trace().clone(),
+            base_config.auth().clone(),
+            base_config.compact().clone(),
+        )
     }
 }
 
