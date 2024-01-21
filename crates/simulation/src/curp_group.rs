@@ -12,7 +12,7 @@ use curp::{
         ConfChange, FetchClusterRequest, FetchClusterResponse, Member, ProposeConfChangeRequest,
         ProposeConfChangeResponse, ReadState,
     },
-    server::Rpc,
+    server::{Rpc, StorageApi, DB},
     LogIndex,
 };
 use curp_test_utils::{
@@ -79,7 +79,7 @@ impl CurpGroup {
                 let (as_tx, as_rx) = mpsc::unbounded_channel();
                 let store = Arc::new(Mutex::new(None));
 
-                let cluster_info = Arc::new(ClusterInfo::new(all.clone(), &name));
+                let cluster_info = Arc::new(ClusterInfo::from_members_map(all.clone(), &name));
                 all_members = cluster_info
                     .all_members_addrs()
                     .into_iter()
@@ -107,9 +107,20 @@ impl CurpGroup {
                         // we will restart the old leader.
                         // after the reboot, it may no longer be the leader.
                         let is_leader = false;
-
+                        let curp_config = Arc::new(
+                            CurpConfigBuilder::default()
+                                .engine_cfg(engine_cfg.clone())
+                                .log_entries_cap(10)
+                                .build()
+                                .unwrap(),
+                        );
+                        let curp_storage = Arc::new(DB::open(&curp_config.engine_cfg).unwrap());
+                        let cluster_info = match curp_storage.recover_cluster_info().unwrap() {
+                            Some(cl) => Arc::new(cl),
+                            None => Arc::clone(&cluster_info),
+                        };
                         Rpc::run_from_addr(
-                            cluster_info.clone(),
+                            cluster_info,
                             is_leader,
                             "0.0.0.0:12345".parse().unwrap(),
                             ce,
@@ -117,13 +128,8 @@ impl CurpGroup {
                             TestRoleChange {
                                 inner: role_change_cb.get_inner_arc(),
                             },
-                            Arc::new(
-                                CurpConfigBuilder::default()
-                                    .engine_cfg(engine_cfg.clone())
-                                    .log_entries_cap(10)
-                                    .build()
-                                    .unwrap(),
-                            ),
+                            curp_config,
+                            curp_storage,
                             task_manager,
                             None,
                         )
