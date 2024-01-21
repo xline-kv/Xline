@@ -88,12 +88,9 @@ pub struct XlineServer {
 
 impl XlineServer {
     /// New `XlineServer`
-    ///
-    /// # Panics
-    ///
-    /// panic when peers do not contain leader address
+    /// # Errors
+    /// Return error if init cluster info failed
     #[inline]
-    #[must_use]
     pub async fn new(
         cluster_config: ClusterConfig,
         storage_config: StorageConfig,
@@ -112,6 +109,7 @@ impl XlineServer {
         })
     }
 
+    /// Init cluster info from cluster config
     async fn init_cluster_info(cluster_config: &ClusterConfig) -> Result<ClusterInfo> {
         let server_addr_str = cluster_config
             .members()
@@ -330,6 +328,7 @@ impl XlineServer {
         Ok(handle)
     }
 
+    /// inner start method shared by `start` and `start_from_listener`
     #[cfg(not(madsim))]
     async fn start_inner<I, IO, IE>(
         &self,
@@ -504,7 +503,7 @@ impl XlineServer {
         .await;
 
         let client = Arc::new(
-            CurpClientBuilder::new(self.cluster_config.client_config().clone())
+            CurpClientBuilder::new(*self.cluster_config.client_config())
                 .cluster_version(self.cluster_info.cluster_version())
                 .all_members(self.cluster_info.all_members_addrs())
                 .bypass(self.cluster_info.self_id(), curp_server.clone())

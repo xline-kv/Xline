@@ -8,6 +8,9 @@ use tracing_subscriber::{layer::SubscriberExt, Layer};
 use utils::config::{file_appender, LogConfig, TraceConfig};
 
 /// init tracing subscriber
+/// # Errors
+/// Return error if init failed
+#[inline]
 pub fn init_subscriber(
     name: &str,
     log_config: &LogConfig,

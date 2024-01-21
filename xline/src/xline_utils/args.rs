@@ -155,6 +155,7 @@ pub struct ServerArgs {
 }
 
 impl From<ServerArgs> for XlineServerConfig {
+    #[inline]
     fn from(args: ServerArgs) -> Self {
         let (engine, curp_engine) = match args.storage_engine.as_str() {
             "memory" => (EngineConfig::Memory, EngineConfig::Memory),
@@ -257,6 +258,9 @@ impl From<ServerArgs> for XlineServerConfig {
 }
 
 /// Parse config from command line arguments or config file
+/// # Errors
+/// Return error if parse failed
+#[inline]
 pub async fn parse_config() -> Result<XlineServerConfig> {
     if env::args_os().len() == 1 {
         let path =
