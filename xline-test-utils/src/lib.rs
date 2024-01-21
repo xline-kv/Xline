@@ -89,7 +89,7 @@ impl Cluster {
             let server = XlineServer::new(
                 config.cluster().clone(),
                 config.storage().clone(),
-                config.compact().clone(),
+                *config.compact(),
                 config.auth().clone(),
             )
             .await
@@ -140,7 +140,7 @@ impl Cluster {
         let server = XlineServer::new(
             config.cluster().clone(),
             config.storage().clone(),
-            config.compact().clone(),
+            *config.compact(),
             config.auth().clone(),
         )
         .await
@@ -217,7 +217,7 @@ impl Cluster {
         name: String,
         members: HashMap<String, Vec<String>>,
         is_leader: bool,
-        init_cluster_state: InitialClusterState,
+        initial_cluster_state: InitialClusterState,
     ) -> XlineServerConfig {
         let old_cluster = base_config.cluster();
         let new_cluster = ClusterConfig::new(
@@ -225,9 +225,9 @@ impl Cluster {
             members,
             is_leader,
             old_cluster.curp_config().clone(),
-            old_cluster.client_config().clone(),
-            old_cluster.server_timeout().clone(),
-            init_cluster_state,
+            *old_cluster.client_config(),
+            *old_cluster.server_timeout(),
+            initial_cluster_state,
         );
         XlineServerConfig::new(
             new_cluster,
@@ -235,7 +235,7 @@ impl Cluster {
             base_config.log().clone(),
             base_config.trace().clone(),
             base_config.auth().clone(),
-            base_config.compact().clone(),
+            *base_config.compact(),
         )
     }
 }
