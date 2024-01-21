@@ -1,14 +1,14 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use curp::members::{ClusterInfo, ServerId};
 use itertools::Itertools;
 use madsim::runtime::NodeHandle;
 use tonic::transport::Channel;
 use tracing::debug;
 use utils::config::{
-    ClientConfig, CompactConfig, CurpConfig, EngineConfig, ServerTimeout, StorageConfig,
+    AuthConfig, ClientConfig, ClusterConfig, CompactConfig, CurpConfig, InitialClusterState,
+    ServerTimeout, StorageConfig,
 };
-use xline::{server::XlineServer, storage::db::DB};
+use xline::server::XlineServer;
 use xline_client::{
     error::XlineClientError,
     types::{
@@ -23,14 +23,13 @@ use xline_client::{
 use xlineapi::{command::Command, KvClient, RequestUnion, WatchClient};
 
 pub struct XlineNode {
-    pub id: ServerId,
     pub addr: String,
     pub name: String,
     pub handle: NodeHandle,
 }
 
 pub struct XlineGroup {
-    pub nodes: HashMap<ServerId, XlineNode>,
+    pub nodes: HashMap<String, XlineNode>,
     pub client_handle: NodeHandle,
 }
 
@@ -46,27 +45,33 @@ impl XlineGroup {
             .map(|i| {
                 let name = format!("S{i}");
                 let addr = format!("192.168.1.{}:12345", i + 1);
-                let cluster_info = Arc::new(ClusterInfo::new(all.clone(), &name));
-                let id = cluster_info.self_id();
+                let cluster_config = ClusterConfig::new(
+                    name.clone(),
+                    all.clone(),
+                    false,
+                    CurpConfig::default(),
+                    ClientConfig::default(),
+                    ServerTimeout::default(),
+                    InitialClusterState::New,
+                );
 
                 let handle = handle
                     .create_node()
-                    .name(id.to_string())
+                    .name(name.clone())
                     .ip(format!("192.168.1.{}", i + 1).parse().unwrap())
                     .init(move || {
-                        let server = XlineServer::new(
-                            cluster_info.clone(),
-                            false,
-                            CurpConfig::default(),
-                            ClientConfig::default(),
-                            ServerTimeout::default(),
-                            StorageConfig::default(),
-                            CompactConfig::default(),
-                        );
-                        let db = DB::open(&EngineConfig::Memory).unwrap();
+                        let cluster_config = cluster_config.clone();
                         async move {
+                            let server = XlineServer::new(
+                                cluster_config,
+                                StorageConfig::default(),
+                                CompactConfig::default(),
+                                AuthConfig::default(),
+                            )
+                            .await
+                            .unwrap();
                             server
-                                .start_from_single_addr("0.0.0.0:12345".parse().unwrap(), db, None)
+                                .start_from_single_addr("0.0.0.0:12345".parse().unwrap())
                                 .await
                                 .unwrap()
                                 .await
@@ -75,15 +80,7 @@ impl XlineGroup {
                         }
                     })
                     .build();
-                (
-                    id,
-                    XlineNode {
-                        id,
-                        addr,
-                        name,
-                        handle,
-                    },
-                )
+                (name.clone(), XlineNode { addr, name, handle })
             })
             .collect();
         let client_handle = handle
@@ -119,12 +116,8 @@ impl XlineGroup {
         }
     }
 
-    pub fn get_node_by_name(&self, name: &str) -> &XlineNode {
-        self.nodes
-            .iter()
-            .find(|(_, node)| node.name == name)
-            .unwrap()
-            .1
+    pub fn get_node(&self, name: &str) -> &XlineNode {
+        self.nodes.get(name).unwrap()
     }
 }
 

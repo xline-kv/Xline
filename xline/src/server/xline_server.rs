@@ -15,19 +15,16 @@ use curp::{
 };
 use dashmap::DashMap;
 use engine::{MemorySnapshotAllocator, RocksSnapshotAllocator, SnapshotAllocator};
+#[cfg(not(madsim))]
 use futures::Stream;
 use itertools::Itertools;
 use jsonwebtoken::{DecodingKey, EncodingKey};
-use tokio::{
-    fs,
-    io::{AsyncRead, AsyncWrite},
-    sync::mpsc::channel,
-    task::JoinHandle,
-};
-use tonic::transport::{
-    server::{Connected, Router},
-    Server,
-};
+#[cfg(not(madsim))]
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::{fs, sync::mpsc::channel, task::JoinHandle};
+#[cfg(not(madsim))]
+use tonic::transport::server::Connected;
+use tonic::transport::{server::Router, Server};
 use tracing::{debug, error, warn};
 use utils::{
     config::{
@@ -311,16 +308,20 @@ impl XlineServer {
     /// Will return `Err` when `tonic::Server` serve return an error
     #[inline]
     #[cfg(madsim)]
-    pub async fn start_from_single_addr<S: StorageApi>(
+    pub async fn start_from_single_addr(
         &self,
         addr: SocketAddr,
-        persistent: Arc<S>,
-        key_pair: Option<(EncodingKey, DecodingKey)>,
     ) -> Result<JoinHandle<Result<(), tonic::transport::Error>>> {
         let mut shutdown_listener = self.shutdown_trigger.subscribe();
         let signal = async move {
             shutdown_listener.wait_self_shutdown().await;
         };
+        let persistent = DB::open(&self.storage_config.engine)?;
+        let key_pair = Self::read_key_pair(
+            self.auth_config.auth_private_key().as_ref(),
+            self.auth_config.auth_public_key().as_ref(),
+        )
+        .await;
         let (router, curp_client) = self.init_router(persistent, key_pair).await?;
         let handle = tokio::spawn(async move { router.serve_with_shutdown(addr, signal).await });
         if let Err(e) = self.publish(curp_client).await {
@@ -329,6 +330,7 @@ impl XlineServer {
         Ok(handle)
     }
 
+    #[cfg(not(madsim))]
     async fn start_inner<I, IO, IE>(
         &self,
         incoming: I,
