@@ -9,6 +9,8 @@ use tokio::time;
 use tonic::transport::ClientTlsConfig;
 use tonic::transport::Endpoint;
 use tracing::{debug, warn};
+#[cfg(madsim)]
+use utils::ClientTlsConfig;
 use utils::{
     build_endpoint,
     task_manager::{tasks::TaskName, Listener, TaskManager},
@@ -49,7 +51,6 @@ where
     /// cluster information
     cluster_info: Arc<ClusterInfo>,
     /// Client tls config
-    #[cfg(not(madsim))]
     client_tls_config: Option<ClientTlsConfig>,
     /// Task manager
     task_manager: Arc<TaskManager>,
@@ -66,7 +67,7 @@ where
         client: Arc<CurpClient>,
         id_gen: Arc<IdGenerator>,
         cluster_info: Arc<ClusterInfo>,
-        #[cfg(not(madsim))] client_tls_config: Option<ClientTlsConfig>,
+        client_tls_config: Option<ClientTlsConfig>,
         task_manager: &Arc<TaskManager>,
     ) -> Arc<Self> {
         let lease_server = Arc::new(Self {
@@ -75,7 +76,6 @@ where
             client,
             id_gen,
             cluster_info,
-            #[cfg(not(madsim))]
             client_tls_config,
             task_manager: Arc::clone(task_manager),
         });
@@ -212,11 +212,7 @@ where
         let shutdown_listener = self
             .task_manager
             .get_shutdown_listener(TaskName::LeaseKeepAlive);
-        let endpoints = build_endpoints(
-            leader_addrs,
-            #[cfg(not(madsim))]
-            self.client_tls_config.as_ref(),
-        )?;
+        let endpoints = build_endpoints(leader_addrs, self.client_tls_config.as_ref())?;
         let channel = tonic::transport::Channel::balance_list(endpoints.into_iter());
         let mut lease_client = LeaseClient::new(channel);
 
@@ -251,17 +247,13 @@ where
 /// Build endpoints from addresses
 fn build_endpoints(
     addrs: &[String],
-    #[cfg(not(madsim))] tls_config: Option<&ClientTlsConfig>,
+    tls_config: Option<&ClientTlsConfig>,
 ) -> Result<Vec<Endpoint>, tonic::Status> {
     addrs
         .iter()
         .map(|addr| {
-            let endpoint = build_endpoint(
-                addr,
-                #[cfg(not(madsim))]
-                tls_config,
-            )
-            .map_err(|e| tonic::Status::internal(e.to_string()))?;
+            let endpoint = build_endpoint(addr, tls_config)
+                .map_err(|e| tonic::Status::internal(e.to_string()))?;
             Ok(endpoint)
         })
         .collect()
@@ -392,11 +384,7 @@ where
                 )
             });
             if !self.lease_storage.is_primary() {
-                let endpoints = build_endpoints(
-                    &leader_addrs,
-                    #[cfg(not(madsim))]
-                    self.client_tls_config.as_ref(),
-                )?;
+                let endpoints = build_endpoints(&leader_addrs, self.client_tls_config.as_ref())?;
                 let channel = tonic::transport::Channel::balance_list(endpoints.into_iter());
                 let mut lease_client = LeaseClient::new(channel);
                 return lease_client.lease_time_to_live(request).await;

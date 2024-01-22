@@ -34,6 +34,8 @@ use tracing::{
     log::{log_enabled, Level},
     trace, warn,
 };
+#[cfg(madsim)]
+use utils::ClientTlsConfig;
 use utils::{
     config::CurpConfig,
     parking_lot_lock::{MutexMap, RwLockMap},
@@ -300,7 +302,6 @@ struct Context<C: Command, RC: RoleChange> {
     /// Config
     cfg: Arc<CurpConfig>,
     /// Client tls config
-    #[cfg(not(madsim))]
     client_tls_config: Option<ClientTlsConfig>,
     /// Cmd board for tracking the cmd sync results
     cb: CmdBoardRef<C>,
@@ -396,7 +397,6 @@ impl<C: Command, RC: RoleChange> ContextBuilder<C, RC> {
                 None => return Err(ContextBuilderError::UninitializedField("connects")),
             },
             last_conf_change_idx: AtomicU64::new(0),
-            #[cfg(not(madsim))]
             client_tls_config: match self.client_tls_config.take() {
                 Some(value) => value,
                 None => return Err(ContextBuilderError::UninitializedField("client_tls_config")),
@@ -1420,7 +1420,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Get client tls config
-    #[cfg(not(madsim))]
     pub(super) fn client_tls_config(&self) -> Option<&ClientTlsConfig> {
         self.ctx.client_tls_config.as_ref()
     }

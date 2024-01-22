@@ -27,14 +27,15 @@ use tonic::transport::{
 };
 use tonic::transport::{server::Router, Server};
 use tracing::{info, warn};
-#[cfg(not(madsim))]
-use utils::config::TlsConfig;
 use utils::{
     config::{
         AuthConfig, ClusterConfig, CompactConfig, EngineConfig, InitialClusterState, StorageConfig,
+        TlsConfig,
     },
     task_manager::{tasks::TaskName, TaskManager},
 };
+#[cfg(madsim)]
+use utils::{ClientTlsConfig, ServerTlsConfig};
 use xlineapi::command::{Command, CurpClient};
 
 use super::{
@@ -86,10 +87,9 @@ pub struct XlineServer {
     /// Auth config
     auth_config: AuthConfig,
     /// Client tls config
-    #[cfg(not(madsim))]
     client_tls_config: Option<ClientTlsConfig>,
     /// Server tls config
-    #[cfg(not(madsim))]
+    #[cfg_attr(madsim, allow(unused))]
     server_tls_config: Option<ServerTlsConfig>,
     /// Task Manager
     task_manager: Arc<TaskManager>,
@@ -105,27 +105,21 @@ impl XlineServer {
         storage_config: StorageConfig,
         compact_config: CompactConfig,
         auth_config: AuthConfig,
-        #[cfg(not(madsim))] tls_config: TlsConfig,
+        #[cfg_attr(madsim, allow(unused_variables))] tls_config: TlsConfig,
     ) -> Result<Self> {
         #[cfg(not(madsim))]
         let (client_tls_config, server_tls_config) = Self::read_tls_config(&tls_config).await?;
-        let cluster_info = Arc::new(
-            Self::init_cluster_info(
-                &cluster_config,
-                #[cfg(not(madsim))]
-                client_tls_config.as_ref(),
-            )
-            .await?,
-        );
+        #[cfg(madsim)]
+        let (client_tls_config, server_tls_config) = (None, None);
+        let cluster_info =
+            Arc::new(Self::init_cluster_info(&cluster_config, client_tls_config.as_ref()).await?);
         Ok(Self {
             cluster_info,
             cluster_config,
             storage_config,
             compact_config,
             auth_config,
-            #[cfg(not(madsim))]
             client_tls_config,
-            #[cfg(not(madsim))]
             server_tls_config,
             task_manager: Arc::new(TaskManager::new()),
         })
@@ -134,7 +128,7 @@ impl XlineServer {
     /// Init cluster info from cluster config
     async fn init_cluster_info(
         cluster_config: &ClusterConfig,
-        #[cfg(not(madsim))] tls_config: Option<&ClientTlsConfig>,
+        tls_config: Option<&ClientTlsConfig>,
     ) -> Result<ClusterInfo> {
         let server_addr_str = cluster_config
             .members()
@@ -172,7 +166,6 @@ impl XlineServer {
                 server_addr_str,
                 &name,
                 *cluster_config.client_config().wait_synced_timeout(),
-                #[cfg(not(madsim))]
                 tls_config,
             )
             .await
@@ -513,7 +506,6 @@ impl XlineServer {
             state,
             Arc::clone(&curp_config),
             Arc::clone(&self.task_manager),
-            #[cfg(not(madsim))]
             self.client_tls_config.clone(),
         )
         .await;
@@ -552,7 +544,6 @@ impl XlineServer {
                 Arc::clone(&client),
                 Arc::clone(&id_gen),
                 &self.cluster_info.self_addrs(),
-                #[cfg(not(madsim))]
                 self.client_tls_config.as_ref(),
             ),
             LeaseServer::new(
@@ -561,7 +552,6 @@ impl XlineServer {
                 Arc::clone(&client),
                 id_gen,
                 Arc::clone(&self.cluster_info),
-                #[cfg(not(madsim))]
                 self.client_tls_config.clone(),
                 &self.task_manager,
             ),

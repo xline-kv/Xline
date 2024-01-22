@@ -125,6 +125,7 @@ impl CurpGroup {
                                     .unwrap(),
                             ),
                             task_manager,
+                            None,
                         )
                     })
                     .build();

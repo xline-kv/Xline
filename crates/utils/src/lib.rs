@@ -149,6 +149,20 @@ use std::str::FromStr;
 use tonic::transport::ClientTlsConfig;
 use tonic::transport::Endpoint;
 
+/// Fake `ClientTlsConfig` for `madsim`
+#[cfg(madsim)]
+#[derive(Debug, Clone)]
+#[allow(missing_copy_implementations)] // Same as real config
+#[non_exhaustive]
+pub struct ClientTlsConfig;
+
+/// Fake `ServerTlsConfig` for `madsim`
+#[cfg(madsim)]
+#[derive(Debug, Clone)]
+#[allow(missing_copy_implementations)] // Same as real config
+#[non_exhaustive]
+pub struct ServerTlsConfig;
+
 /// configuration
 pub mod config;
 /// utils of `parking_lot` lock
@@ -207,9 +221,10 @@ pub mod certs {
 /// # Errors
 /// Return error if addr or tls config is invalid
 #[inline]
+#[allow(unused_variables)]
 pub fn build_endpoint(
     addr: &str,
-    #[cfg(not(madsim))] tls_config: Option<&ClientTlsConfig>,
+    tls_config: Option<&ClientTlsConfig>,
 ) -> Result<Endpoint, tonic::transport::Error> {
     let scheme_str = addr.split_once("://").map(|(scheme, _)| scheme);
     let endpoint = match scheme_str {

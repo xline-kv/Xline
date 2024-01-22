@@ -7,6 +7,8 @@ use tonic::transport::ClientTlsConfig;
 #[cfg(not(madsim))]
 use tracing::info;
 use tracing::instrument;
+#[cfg(madsim)]
+use utils::ClientTlsConfig;
 use utils::{
     config::CurpConfig,
     task_manager::{tasks::TaskName, TaskManager},
@@ -246,7 +248,7 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
         task_manager: Arc<TaskManager>,
-        #[cfg(not(madsim))] client_tls_config: Option<ClientTlsConfig>,
+        client_tls_config: Option<ClientTlsConfig>,
     ) -> Self {
         #[allow(clippy::panic)]
         let curp_node = match CurpNode::new(
@@ -257,7 +259,6 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
             role_change,
             curp_cfg,
             task_manager,
-            #[cfg(not(madsim))]
             client_tls_config,
         )
         .await
@@ -342,6 +343,7 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
         role_change: RC,
         curp_cfg: Arc<CurpConfig>,
         task_manager: Arc<TaskManager>,
+        client_tls_config: Option<ClientTlsConfig>,
     ) -> Result<(), ServerError>
     where
         CE: CommandExecutor<C>,
@@ -355,6 +357,7 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
             role_change,
             curp_cfg,
             task_manager,
+            client_tls_config,
         )
         .await;
 

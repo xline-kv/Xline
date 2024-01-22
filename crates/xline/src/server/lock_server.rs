@@ -7,6 +7,8 @@ use tonic::transport::ClientTlsConfig;
 use tonic::transport::{Channel, Endpoint};
 use tracing::debug;
 use utils::build_endpoint;
+#[cfg(madsim)]
+use utils::ClientTlsConfig;
 use xlineapi::{
     command::{command_from_request_wrapper, CommandResponse, CurpClient, KeyRange, SyncResponse},
     execute_error::ExecuteError,
@@ -44,17 +46,13 @@ impl LockServer {
         client: Arc<CurpClient>,
         id_gen: Arc<IdGenerator>,
         addrs: &[String],
-        #[cfg(not(madsim))] client_tls_config: Option<&ClientTlsConfig>,
+        client_tls_config: Option<&ClientTlsConfig>,
     ) -> Self {
         let addrs = addrs
             .iter()
             .map(|addr| {
-                build_endpoint(
-                    addr,
-                    #[cfg(not(madsim))]
-                    client_tls_config,
-                )
-                .unwrap_or_else(|_e| panic!("invalid address: {addr}"))
+                build_endpoint(addr, client_tls_config)
+                    .unwrap_or_else(|_e| panic!("invalid address: {addr}"))
             })
             .collect();
         Self {
