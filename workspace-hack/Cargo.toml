@@ -25,7 +25,6 @@ futures-util = { version = "0.3", features = ["channel", "io", "sink"] }
 getrandom = { version = "0.2", default-features = false, features = ["js", "rdrand", "std"] }
 hashbrown = { version = "0.14", default-features = false, features = ["raw"] }
 hyper = { version = "0.14", features = ["full"] }
-indexmap = { version = "1", default-features = false, features = ["std"] }
 itertools = { version = "0.11" }
 libc = { version = "0.2" }
 log = { version = "0.4", default-features = false, features = ["std"] }

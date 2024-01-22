@@ -14,7 +14,7 @@ repository = "https://github.com/xline-kv/Xline/tree/master/benchmark"
 
 [dependencies]
 anyhow = "1.0.66"
-clap = { version = "3.2.16", features = ["derive"] }
+clap = { version = "4", features = ["derive"] }
 clippy-utilities = "0.2.0"
 etcd-client = { version = "0.4.0", package = "madsim-etcd-client" }
 indicatif = "0.17.1"
