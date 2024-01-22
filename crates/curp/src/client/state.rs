@@ -10,6 +10,8 @@ use tokio::sync::RwLock;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
 use tracing::{debug, info};
+#[cfg(madsim)]
+use utils::ClientTlsConfig;
 
 use crate::{
     members::ServerId,
@@ -37,7 +39,6 @@ struct StateStatic {
     /// Notifier of leader update
     leader_notifier: Arc<Event>,
     /// Client tls config
-    #[cfg(not(madsim))]
     tls_config: Option<ClientTlsConfig>,
 }
 
@@ -228,13 +229,7 @@ impl State {
                     .remove(&diff)
                     .unwrap_or_else(|| unreachable!("{diff} must in new member addrs"));
                 debug!("client connects to a new server({diff}), address({addrs:?})");
-                let new_conn = rpc::connect(
-                    diff,
-                    addrs,
-                    #[cfg(not(madsim))]
-                    self.immutable.tls_config.clone(),
-                )
-                .await?;
+                let new_conn = rpc::connect(diff, addrs, self.immutable.tls_config.clone()).await?;
                 let _ig = e.insert(new_conn);
             } else {
                 debug!("client removes old server({diff})");
@@ -266,7 +261,6 @@ pub(super) struct StateBuilder {
     /// Initial cluster version (optional)
     cluster_version: Option<u64>,
     /// Client Tls config
-    #[cfg(not(madsim))]
     tls_config: Option<ClientTlsConfig>,
 }
 
@@ -274,13 +268,12 @@ impl StateBuilder {
     /// Create a state builder
     pub(super) fn new(
         all_members: HashMap<ServerId, Vec<String>>,
-        #[cfg(not(madsim))] tls_config: Option<ClientTlsConfig>,
+        tls_config: Option<ClientTlsConfig>,
     ) -> Self {
         Self {
             all_members,
             leader_state: None,
             cluster_version: None,
-            #[cfg(not(madsim))]
             tls_config,
         }
     }
@@ -304,13 +297,10 @@ impl StateBuilder {
         debug!("client bypassed server({local_server_id})");
 
         let _ig = self.all_members.remove(&local_server_id);
-        let mut connects: HashMap<_, _> = rpc::connects(
-            self.all_members.clone(),
-            #[cfg(not(madsim))]
-            self.tls_config.as_ref(),
-        )
-        .await?
-        .collect();
+        let mut connects: HashMap<_, _> =
+            rpc::connects(self.all_members.clone(), self.tls_config.as_ref())
+                .await?
+                .collect();
         let __ig = connects.insert(
             local_server_id,
             Arc::new(BypassedConnect::new(local_server_id, local_server)),
@@ -326,7 +316,6 @@ impl StateBuilder {
             immutable: StateStatic {
                 local_server: Some(local_server_id),
                 leader_notifier: Arc::new(Event::new()),
-                #[cfg(not(madsim))]
                 tls_config: self.tls_config.take(),
             },
         })
@@ -334,13 +323,10 @@ impl StateBuilder {
 
     /// Build the state
     pub(super) async fn build(self) -> Result<State, tonic::transport::Error> {
-        let connects: HashMap<_, _> = rpc::connects(
-            self.all_members.clone(),
-            #[cfg(not(madsim))]
-            self.tls_config.as_ref(),
-        )
-        .await?
-        .collect();
+        let connects: HashMap<_, _> =
+            rpc::connects(self.all_members.clone(), self.tls_config.as_ref())
+                .await?
+                .collect();
         Ok(State {
             mutable: RwLock::new(StateMut {
                 leader: self.leader_state.map(|state| state.0),
@@ -351,7 +337,6 @@ impl StateBuilder {
             immutable: StateStatic {
                 local_server: None,
                 leader_notifier: Arc::new(Event::new()),
-                #[cfg(not(madsim))]
                 tls_config: self.tls_config,
             },
         })

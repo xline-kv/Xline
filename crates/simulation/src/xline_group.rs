@@ -6,7 +6,7 @@ use tonic::transport::Channel;
 use tracing::debug;
 use utils::config::{
     AuthConfig, ClientConfig, ClusterConfig, CompactConfig, CurpConfig, InitialClusterState,
-    ServerTimeout, StorageConfig,
+    ServerTimeout, StorageConfig, TlsConfig,
 };
 use xline::server::XlineServer;
 use xline_client::{
@@ -67,6 +67,7 @@ impl XlineGroup {
                                 StorageConfig::default(),
                                 CompactConfig::default(),
                                 AuthConfig::default(),
+                                TlsConfig::default(),
                             )
                             .await
                             .unwrap();

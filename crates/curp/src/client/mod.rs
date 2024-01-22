@@ -22,6 +22,8 @@ use futures::{stream::FuturesUnordered, StreamExt};
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
 use tracing::debug;
+#[cfg(madsim)]
+use utils::ClientTlsConfig;
 use utils::{build_endpoint, config::ClientConfig};
 
 use self::{
@@ -161,7 +163,6 @@ pub struct ClientBuilder {
     /// client configuration
     config: ClientConfig,
     /// Client tls config
-    #[cfg(not(madsim))]
     tls_config: Option<ClientTlsConfig>,
 }
 
@@ -247,15 +248,9 @@ impl ClientBuilder {
         let mut futs: FuturesUnordered<_> = addrs
             .iter()
             .map(|addr| {
-                #[cfg(not(madsim))]
                 let tls_config = self.tls_config.clone();
                 async move {
-                    let endpoint = build_endpoint(
-                        addr,
-                        #[cfg(not(madsim))]
-                        tls_config.as_ref(),
-                    )
-                    .map_err(|e| {
+                    let endpoint = build_endpoint(addr, tls_config.as_ref()).map_err(|e| {
                         tonic::Status::internal(format!("create endpoint failed, error: {e}"))
                     })?;
                     let channel = endpoint.connect().await.map_err(|e| {
@@ -293,7 +288,6 @@ impl ClientBuilder {
             self.all_members.clone().unwrap_or_else(|| {
                 unreachable!("must set the initial members or discover from some endpoints")
             }),
-            #[cfg(not(madsim))]
             self.tls_config.clone(),
         );
         if let Some(version) = self.cluster_version {

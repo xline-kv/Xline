@@ -14,6 +14,8 @@ use itertools::Itertools;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
 use tracing::{debug, info};
+#[cfg(madsim)]
+use utils::ClientTlsConfig;
 
 use crate::rpc::{self, FetchClusterRequest, FetchClusterResponse, Member};
 
@@ -380,18 +382,14 @@ pub async fn get_cluster_info_from_remote(
     self_addr: &[String],
     self_name: &str,
     timeout: Duration,
-    #[cfg(not(madsim))] tls_config: Option<&ClientTlsConfig>,
+    tls_config: Option<&ClientTlsConfig>,
 ) -> Option<ClusterInfo> {
     let peers = init_cluster_info.peers_addrs();
-    let connects = rpc::connects(
-        peers,
-        #[cfg(not(madsim))]
-        tls_config,
-    )
-    .await
-    .ok()?
-    .map(|pair| pair.1)
-    .collect_vec();
+    let connects = rpc::connects(peers, tls_config)
+        .await
+        .ok()?
+        .map(|pair| pair.1)
+        .collect_vec();
     let mut futs = connects
         .iter()
         .map(|c| {
