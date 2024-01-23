@@ -12,7 +12,6 @@ jobs:
         shell: bash
     env:
       SCCACHE_GHA_ENABLED: "on"
-      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     container: ghcr.io/xline-kv/build-env:latest
     strategy:
       fail-fast: true
@@ -22,7 +21,7 @@ jobs:
               name: "Normal",
               args: "",
               rustflags: "",
-              test: "llvm-cov nextest --all-features --workspace --lcov --output-path lcov.info",
+              test: "llvm-cov nextest --all-features --workspace --codecov --output-path codecov.info",
             }
           - {
               name: "Madsim",
@@ -78,7 +77,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         if: matrix.config.name == 'Normal'
-        run: ci/scripts/upload-codecov.sh ${{ github.event.pull_request.head.sha }}
+        run: ci/scripts/upload-codecov.sh codecov.info
 
   commit:
     name: Commit Message Validation

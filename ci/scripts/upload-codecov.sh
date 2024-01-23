@@ -10,15 +10,16 @@ set -euo pipefail
 curl -Os https://uploader.codecov.io/latest/linux/codecov && chmod +x codecov
 
 max_retry=5
+delay=30
 counter=0
-sha=$1
+file=$1
 NONE='\033[0m'
 RED='\033[0;31m'
 
 set +e
 
 while true; do
-    ./codecov -f lcov.info -Z -C $sha $token
+    ./codecov -f $file -Z $token
     if [ $? -eq 0 ]; then
         break
     fi
@@ -26,9 +27,9 @@ while true; do
     ((counter++))
 
     if [ $counter -eq $max_retry ]; then
-        echo "Max retries reached. Exiting."
+        echo "${RED}Max retries reached. Exiting.${NONE}"
         exit 1
     fi
-    echo -e "${RED}Fail to upload, retring #${counter}${NONE}"
-    sleep 5
+    echo -e "${RED}Fail to upload, retring ${counter}/${max_retry}${NONE}"
+    sleep $delay
 done
