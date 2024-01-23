@@ -187,6 +187,9 @@ pub mod role_change {
     pub use curp_external_api::role_change::*;
 }
 
+/// Tracker for request and result
+mod tracker;
+
 /// Log Entry
 mod log_entry;
 
