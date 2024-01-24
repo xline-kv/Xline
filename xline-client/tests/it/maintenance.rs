@@ -1,5 +1,6 @@
-use super::common::get_cluster_client;
 use xline_client::error::Result;
+
+use super::common::get_cluster_client;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn snapshot_should_get_valid_data() -> Result<()> {

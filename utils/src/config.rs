@@ -135,9 +135,8 @@ pub enum InitialClusterState {
 pub mod state_format {
     use serde::{self, Deserialize, Deserializer};
 
-    use crate::parse_state;
-
     use super::InitialClusterState;
+    use crate::parse_state;
 
     /// deserializes a cluster log rotation strategy
     #[allow(single_use_lifetimes)]

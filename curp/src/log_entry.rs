@@ -1,5 +1,7 @@
-use std::hash::{Hash, Hasher};
-use std::sync::Arc;
+use std::{
+    hash::{Hash, Hasher},
+    sync::Arc,
+};
 
 use curp_external_api::{cmd::Command, InflightId, LogIndex};
 use serde::{Deserialize, Serialize};

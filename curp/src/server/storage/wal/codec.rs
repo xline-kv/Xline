@@ -7,12 +7,11 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio_util::codec::{Decoder, Encoder};
 
-use crate::log_entry::LogEntry;
-
 use super::{
     error::{CorruptType, WALError},
     util::{get_checksum, validate_data},
 };
+use crate::log_entry::LogEntry;
 
 /// Invalid frame type
 const INVALID: u8 = 0x00;
@@ -319,9 +318,8 @@ mod tests {
     use tokio_stream::StreamExt;
     use tokio_util::codec::Framed;
 
-    use crate::{log_entry::EntryData, rpc::ProposeId};
-
     use super::*;
+    use crate::{log_entry::EntryData, rpc::ProposeId};
 
     #[tokio::test]
     async fn frame_encode_decode_is_ok() {

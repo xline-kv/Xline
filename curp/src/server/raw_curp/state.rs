@@ -14,7 +14,7 @@ use madsim::rand::{thread_rng, Rng};
 use tracing::{debug, warn};
 
 use super::Role;
-use crate::{members::ServerId, rpc::PoolEntry, LogIndex, quorum};
+use crate::{members::ServerId, quorum, rpc::PoolEntry, LogIndex};
 
 /// Curp state
 #[derive(Debug)]

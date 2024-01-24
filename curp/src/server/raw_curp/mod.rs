@@ -47,10 +47,12 @@ use crate::{
     cmd::Command,
     log_entry::{EntryData, LogEntry},
     members::{ClusterInfo, ServerId},
+    quorum, recover_quorum,
     role_change::RoleChange,
     rpc::{
-        connect::InnerConnectApi, connect::InnerConnectApiWrapper, ConfChange, ConfChangeType,
-        CurpError, IdSet, Member, PoolEntry, PoolEntryInner, ProposeId, PublishRequest, ReadState,
+        connect::{InnerConnectApi, InnerConnectApiWrapper},
+        ConfChange, ConfChangeType, CurpError, IdSet, Member, PoolEntry, PoolEntryInner, ProposeId,
+        PublishRequest, ReadState,
     },
     server::{
         cmd_board::CmdBoardRef,
@@ -60,8 +62,6 @@ use crate::{
     snapshot::{Snapshot, SnapshotMeta},
     LogIndex,
 };
-
-use crate::{quorum, recover_quorum};
 
 /// Curp state
 mod state;
@@ -1584,7 +1584,9 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let recovered_cmds = entry_cnt
             .into_values()
             // only cmds whose cnt >= ( f + 1 ) / 2 + 1 can be recovered
-            .filter_map(|(cmd, cnt)| (cnt >= recover_quorum(self.ctx.cluster_info.voters_len())).then_some(cmd))
+            .filter_map(|(cmd, cnt)| {
+                (cnt >= recover_quorum(self.ctx.cluster_info.voters_len())).then_some(cmd)
+            })
             // dedup in current logs
             .filter(|entry| {
                 // TODO: better dedup mechanism

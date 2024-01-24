@@ -4,12 +4,11 @@ use async_trait::async_trait;
 use futures::Future;
 use tracing::warn;
 
+use super::{ClientApi, LeaderStateUpdate, ProposeResponse, RepeatableClientApi};
 use crate::{
     members::ServerId,
     rpc::{ConfChange, CurpError, FetchClusterResponse, Member, ReadState, Redirect},
 };
-
-use super::{ClientApi, LeaderStateUpdate, ProposeResponse, RepeatableClientApi};
 
 /// Backoff config
 #[derive(Debug, Clone)]

@@ -1,18 +1,16 @@
-use std::fmt::Debug;
-use std::sync::Arc;
+use std::{fmt::Debug, sync::Arc};
 
 use tonic::transport::Channel;
-use xlineapi::command::{command_from_request_wrapper, Command};
 use xlineapi::{
+    command::{command_from_request_wrapper, Command},
     CompactionResponse, DeleteRangeResponse, PutResponse, RangeResponse, RequestWithToken,
     TxnResponse,
 };
 
-use crate::AuthService;
 use crate::{
     error::Result,
     types::kv::{CompactionRequest, DeleteRangeRequest, PutRequest, RangeRequest, TxnRequest},
-    CurpClient,
+    AuthService, CurpClient,
 };
 
 /// Client for KV operations.

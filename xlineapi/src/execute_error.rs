@@ -1,10 +1,11 @@
 #![allow(clippy::arithmetic_side_effects)] // introduced by `strum_macros::EnumIter`
 
-use crate::{PbExecuteError, PbExecuteErrorOuter, PbRevisions, PbUserRole};
 use curp::cmd::{PbCodec, PbSerializeError};
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::{PbExecuteError, PbExecuteErrorOuter, PbRevisions, PbUserRole};
 
 /// Error met when executing commands
 #[cfg_attr(test, derive(strum_macros::EnumIter))]

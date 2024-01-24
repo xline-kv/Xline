@@ -96,9 +96,8 @@ mod tests {
     use test_macros::abort_on_panic;
     use tokio::fs::remove_dir_all;
 
-    use crate::rpc::ProposeId;
-
     use super::*;
+    use crate::rpc::ProposeId;
 
     #[tokio::test]
     #[abort_on_panic]
