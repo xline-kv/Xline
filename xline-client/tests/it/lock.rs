@@ -1,11 +1,12 @@
 use std::time::Duration;
 
-use super::common::get_cluster_client;
 use test_macros::abort_on_panic;
 use xline_client::{
     error::Result,
     types::lock::{LockRequest, UnlockRequest},
 };
+
+use super::common::get_cluster_client;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn lock_unlock_should_success_in_normal_path() -> Result<()> {

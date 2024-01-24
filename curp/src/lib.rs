@@ -163,8 +163,7 @@
     )
 )]
 
-pub use curp_external_api::InflightId;
-pub use curp_external_api::LogIndex;
+pub use curp_external_api::{InflightId, LogIndex};
 
 /// Client side, sending requests and determining requests' state
 pub mod client;
@@ -197,11 +196,10 @@ pub mod rpc;
 /// Snapshot
 mod snapshot;
 
-
 /// Calculate the super quorum
 #[inline]
 #[must_use]
-#[allow(clippy::arithmetic_side_effects)]  // it's safe
+#[allow(clippy::arithmetic_side_effects)] // it's safe
 fn super_quorum(size: usize) -> usize {
     let fault_tolerance = size - quorum(size);
     fault_tolerance + recover_quorum(size)
@@ -214,7 +212,6 @@ fn super_quorum(size: usize) -> usize {
 fn quorum(size: usize) -> usize {
     size / 2 + 1
 }
-
 
 /// Calculate the `recover_quorum`: the smallest number of servers who must contain a command in speculative pool for it to be recovered
 #[inline]
@@ -232,7 +229,7 @@ mod test {
     fn quorum_should_work() {
         let nodes = vec![1, 2, 3, 4, 5, 6, 7, 10];
         // (quorum, recover_quorum, super_quorum)
-        let expected_res = vec! [
+        let expected_res = vec![
             (1, 1, 1),
             (2, 2, 2),
             (2, 2, 3),
@@ -247,6 +244,5 @@ mod test {
             assert_eq!(recover_quorum(node_cnt), expected.1);
             assert_eq!(super_quorum(node_cnt), expected.2);
         }
-
     }
 }

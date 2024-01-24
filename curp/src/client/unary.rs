@@ -6,17 +6,17 @@ use futures::{Future, StreamExt};
 use tonic::Response;
 use tracing::{debug, warn};
 
+use super::{state::State, ClientApi, LeaderStateUpdate, ProposeResponse, RepeatableClientApi};
 use crate::{
     members::ServerId,
+    quorum,
     rpc::{
         connect::ConnectApi, ConfChange, CurpError, FetchClusterRequest, FetchClusterResponse,
         FetchReadStateRequest, Member, MoveLeaderRequest, ProposeConfChangeRequest, ProposeId,
         ProposeRequest, PublishRequest, ReadState, ShutdownRequest, WaitSyncedRequest,
     },
+    super_quorum,
 };
-
-use super::{state::State, ClientApi, LeaderStateUpdate, ProposeResponse, RepeatableClientApi};
-use crate::{super_quorum, quorum};
 
 /// The unary client config
 #[derive(Debug)]

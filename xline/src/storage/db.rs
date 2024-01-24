@@ -3,8 +3,7 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 use engine::{Engine, EngineType, Snapshot, StorageEngine, WriteOperation};
 use prost::Message;
 use utils::config::EngineConfig;
-use xlineapi::execute_error::ExecuteError;
-use xlineapi::AlarmMember;
+use xlineapi::{execute_error::ExecuteError, AlarmMember};
 
 use super::{
     alarm_store::ALARM_TABLE,

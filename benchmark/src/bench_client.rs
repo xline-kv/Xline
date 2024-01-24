@@ -205,9 +205,10 @@ mod convert {
 #[allow(clippy::unwrap_used)]
 #[allow(clippy::indexing_slicing)]
 mod test {
-    use crate::bench_client::{BenchClient, ClientOptions, PutRequest};
     use xline_client::types::kv::RangeRequest;
     use xline_test_utils::Cluster;
+
+    use crate::bench_client::{BenchClient, ClientOptions, PutRequest};
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_new_xline_client() {

@@ -1,10 +1,11 @@
-use super::common::get_cluster_client;
 use xline_client::{
     error::Result,
     types::lease::{
         LeaseGrantRequest, LeaseKeepAliveRequest, LeaseRevokeRequest, LeaseTimeToLiveRequest,
     },
 };
+
+use super::common::get_cluster_client;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn grant_revoke_should_success_in_normal_path() -> Result<()> {

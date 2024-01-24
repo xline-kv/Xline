@@ -3,8 +3,7 @@ use std::{
     ops::{Bound, RangeBounds},
 };
 
-use curp::client::ClientApi;
-use curp::cmd::Command as CurpCommand;
+use curp::{client::ClientApi, cmd::Command as CurpCommand};
 use curp_external_api::cmd::{ConflictCheck, PbCodec, PbSerializeError};
 use itertools::Itertools;
 use prost::Message;
@@ -617,12 +616,11 @@ pub fn command_from_request_wrapper(wrapper: RequestWithToken) -> Command {
 
 #[cfg(test)]
 mod test {
-    use crate::{Compare, PutResponse};
-
     use super::*;
     use crate::{
-        AuthEnableRequest, AuthStatusRequest, CompactionRequest, LeaseGrantRequest,
-        LeaseLeasesRequest, LeaseRevokeRequest, PutRequest, RangeRequest, RequestOp, TxnRequest,
+        AuthEnableRequest, AuthStatusRequest, CompactionRequest, Compare, LeaseGrantRequest,
+        LeaseLeasesRequest, LeaseRevokeRequest, PutRequest, PutResponse, RangeRequest, RequestOp,
+        TxnRequest,
     };
 
     #[test]
