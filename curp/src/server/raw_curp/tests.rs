@@ -677,20 +677,6 @@ fn leader_retires_should_cleanup() {
 /*************** tests for other small functions **************/
 
 #[traced_test]
-#[test]
-fn quorum() {
-    let curp = {
-        let mut exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        exe_tx
-            .expect_send_reset()
-            .returning(|_| oneshot::channel().1);
-        Arc::new(RawCurp::new_test(5, exe_tx, mock_role_change()))
-    };
-    assert_eq!(curp.quorum(), 3);
-    assert_eq!(curp.recover_quorum(), 2);
-}
-
-#[traced_test]
 #[tokio::test]
 async fn leader_handle_shutdown_will_succeed() {
     let curp = {

@@ -61,6 +61,8 @@ use crate::{
     LogIndex,
 };
 
+use crate::{quorum, recover_quorum};
+
 /// Curp state
 mod state;
 
@@ -1542,13 +1544,12 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             return false;
         }
 
-        let replicated_cnt: u64 = self
+        let replicated_cnt = self
             .lst
             .iter()
             .filter(|f| !f.is_learner && f.match_index >= i)
-            .count()
-            .numeric_cast();
-        replicated_cnt + 1 >= self.quorum()
+            .count();
+        replicated_cnt + 1 >= quorum(self.ctx.cluster_info.voters_len())
     }
 
     /// Recover from all voter's spec pools
@@ -1572,7 +1573,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             debug!("{} collected spec pools: {debug_sps:?}", self.id());
         }
 
-        let mut entry_cnt: HashMap<ProposeId, (PoolEntry<C>, u64)> = HashMap::new();
+        let mut entry_cnt: HashMap<ProposeId, (PoolEntry<C>, usize)> = HashMap::new();
         for entry in spec_pools.into_values().flatten() {
             let entry = entry_cnt.entry(entry.id).or_insert((entry, 0));
             entry.1 += 1;
@@ -1583,7 +1584,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let recovered_cmds = entry_cnt
             .into_values()
             // only cmds whose cnt >= ( f + 1 ) / 2 + 1 can be recovered
-            .filter_map(|(cmd, cnt)| (cnt >= self.recover_quorum()).then_some(cmd))
+            .filter_map(|(cmd, cnt)| (cnt >= recover_quorum(self.ctx.cluster_info.voters_len())).then_some(cmd))
             // dedup in current logs
             .filter(|entry| {
                 // TODO: better dedup mechanism
@@ -1656,16 +1657,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             );
         }
         log.compact();
-    }
-
-    /// Get quorum: the smallest number of servers who must be online for the cluster to work
-    fn quorum(&self) -> u64 {
-        (self.ctx.cluster_info.voters_len() / 2 + 1).numeric_cast()
-    }
-
-    /// Get `recover_quorum`: the smallest number of servers who must contain a command in speculative pool for it to be recovered
-    fn recover_quorum(&self) -> u64 {
-        self.quorum() / 2 + 1
     }
 
     /// When leader retires, it should reset state

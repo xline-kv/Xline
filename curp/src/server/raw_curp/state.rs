@@ -14,7 +14,7 @@ use madsim::rand::{thread_rng, Rng};
 use tracing::{debug, warn};
 
 use super::Role;
-use crate::{members::ServerId, rpc::PoolEntry, LogIndex};
+use crate::{members::ServerId, rpc::PoolEntry, LogIndex, quorum};
 
 /// Curp state
 #[derive(Debug)]
@@ -318,11 +318,6 @@ impl MajorityConfig {
             voters: voters.collect(),
         }
     }
-
-    /// Get quorum: the smallest number of servers who must be online for the cluster to work
-    fn quorum(&self) -> usize {
-        self.voters.len() / 2 + 1
-    }
 }
 
 impl ClusterConfig for MajorityConfig {
@@ -341,7 +336,7 @@ impl ClusterConfig for MajorityConfig {
             }
         }
 
-        let quorum = self.quorum();
+        let quorum = quorum(self.voters.len());
         if voted_cnt >= quorum {
             return VoteResult::Won;
         }
@@ -369,24 +364,6 @@ mod test {
     use curp_test_utils::test_cmd::TestCommand;
 
     use super::*;
-
-    #[test]
-    fn quorum_should_work() {
-        let cst = MajorityConfig::new(0..3);
-        assert_eq!(cst.quorum(), 2);
-
-        let cst = MajorityConfig::new(0..4);
-        assert_eq!(cst.quorum(), 3);
-
-        let cst = MajorityConfig::new(0..5);
-        assert_eq!(cst.quorum(), 3);
-
-        let cst = MajorityConfig::new(0..9);
-        assert_eq!(cst.quorum(), 5);
-
-        let cst = MajorityConfig::new(0..10);
-        assert_eq!(cst.quorum(), 6);
-    }
 
     #[test]
     fn check_vote_should_return_right_vote_result() {
