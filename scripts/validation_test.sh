@@ -5,6 +5,14 @@ LOG_PATH=/mnt/logs bash ${QUICK_START}
 ETCDCTL="docker exec -i client etcdctl --endpoints=http://172.20.0.3:2379,http://172.20.0.4:2380"
 LOCK_CLIENT="docker exec -i client /mnt/validation_lock_client --endpoints=http://172.20.0.3:2379"
 
+stop() {
+    bash ${QUICK_START} stop
+}
+
+trap stop EXIT
+trap stop INT
+trap stop TERM
+
 # run a command with expect output
 # args:
 #   $1: command to run
@@ -22,7 +30,6 @@ run_with_expect() {
         echo "command: ${cmd}"
         echo "expect: ${expect}"
         echo "result: ${res}"
-        bash ${QUICK_START} stop
         exit 1
     fi
 }
@@ -44,7 +51,6 @@ run_with_match() {
         echo "command: ${cmd}"
         echo "expect: ${expect}"
         echo "result: ${res}"
-        bash ${QUICK_START} stop
         exit 1
     fi
 }
@@ -242,14 +248,15 @@ maintenance_validation() {
 
 # validate compact requests
 compact_validation() {
+    local _ETCDCTL="docker exec -i client etcdctl --endpoints=http://172.20.0.3:2379"
     echo "compact validation test running..."
     for value in "value1" "value2" "value3" "value4" "value5" "value6"; do
         run_with_expect "${ETCDCTL} put key ${value}" "OK"
     done
     run_with_expect "${ETCDCTL} get --rev=4 key" "key\nvalue3"
-    run_with_expect "${ETCDCTL} compact --physical 5" "compacted revision 5"
-    run_with_match "${ETCDCTL} get --rev=4 key" "etcdserver: mvcc: required revision has been compacted"
-    run_with_match "${ETCDCTL} watch --rev=4 key " "watch was canceled (etcdserver: mvcc: required revision has been compacted)"
+    run_with_expect "${_ETCDCTL} compact --physical 5" "compacted revision 5"
+    run_with_match "${_ETCDCTL} get --rev=4 key" "etcdserver: mvcc: required revision has been compacted"
+    run_with_match "${_ETCDCTL} watch --rev=4 key " "watch was canceled (etcdserver: mvcc: required revision has been compacted)"
     echo -e "\ncompact validation test pass..."
 }
 
