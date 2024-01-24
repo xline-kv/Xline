@@ -11,9 +11,9 @@
 [discord-badge]: https://discordapp.com/api/guilds/1110584535248281760/widget.png?style=shield
 [discord-url]: https://discord.gg/hqDRtYkWzm
 [apache-badge]: https://img.shields.io/badge/license-Apache--2.0-brightgreen
-[apache-url]: https://github.com/datenlord/Xline/blob/master/LICENSE
-[actions-badge]: https://github.com/datenlord/xline/actions/workflows/ci.yml/badge.svg?branch=master
-[actions-url]: https://github.com/datenlord/xline/actions
+[apache-url]: https://github.com/xline-kv/Xline/blob/master/LICENSE
+[actions-badge]: https://github.com/xline-kv/xline/actions/workflows/pull_request.yml/badge.svg?branch=master
+[actions-url]: https://github.com/xline-kv/xline/actions
 [cov-badge]: https://codecov.io/gh/xline-kv/xline/branch/master/graph/badge.svg
 [cov-url]: https://codecov.io/gh/xline-kv/xline
 [openssf-badge]: https://bestpractices.coreinfrastructure.org/projects/7571/badge
