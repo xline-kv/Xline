@@ -16,6 +16,7 @@ use crate::{
 };
 
 use super::{state::State, ClientApi, LeaderStateUpdate, ProposeResponse, RepeatableClientApi};
+use crate::{super_quorum, quorum};
 
 /// The unary client config
 #[derive(Debug)]
@@ -500,17 +501,4 @@ impl<C: Command> LeaderStateUpdate for Unary<C> {
     async fn update_leader(&self, leader_id: Option<ServerId>, term: u64) -> bool {
         self.state.check_and_update_leader(leader_id, term).await
     }
-}
-
-/// Calculate the super quorum
-fn super_quorum(size: usize) -> usize {
-    let fault_tolerance = size.wrapping_div(2);
-    fault_tolerance
-        .wrapping_add(fault_tolerance.wrapping_add(1).wrapping_div(2))
-        .wrapping_add(1)
-}
-
-/// Calculate the quorum
-fn quorum(size: usize) -> usize {
-    size.wrapping_div(2).wrapping_add(1)
 }
