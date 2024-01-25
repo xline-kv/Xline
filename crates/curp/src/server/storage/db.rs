@@ -82,12 +82,12 @@ impl<C: Command> StorageApi for DB<C> {
         ops.push(WriteOperation::new_put(
             CF,
             CLUSTER_ID.to_vec(),
-            bincode::serialize(&cluster_info.cluster_id())?,
+            cluster_info.cluster_id().to_be_bytes().to_vec(),
         ));
         ops.push(WriteOperation::new_put(
             CF,
             MEMBER_ID.to_vec(),
-            bincode::serialize(&cluster_info.self_id())?,
+            cluster_info.self_id().to_be_bytes().to_vec(),
         ));
         for m in cluster_info.all_members_vec() {
             ops.push(WriteOperation::new_put(
@@ -102,16 +102,22 @@ impl<C: Command> StorageApi for DB<C> {
 
     #[inline]
     fn recover_cluster_info(&self) -> Result<Option<ClusterInfo>, StorageError> {
-        let cluster_id = self
-            .db
-            .get(CF, CLUSTER_ID)?
-            .map(|bytes| bincode::deserialize::<u64>(&bytes))
-            .transpose()?;
-        let member_id = self
-            .db
-            .get(CF, MEMBER_ID)?
-            .map(|bytes| bincode::deserialize::<u64>(&bytes))
-            .transpose()?;
+        let cluster_id = self.db.get(CF, CLUSTER_ID)?.map(|bytes| {
+            u64::from_be_bytes(
+                bytes
+                    .as_slice()
+                    .try_into()
+                    .unwrap_or_else(|e| unreachable!("cannot decode index from backend, {e:?}")),
+            )
+        });
+        let member_id = self.db.get(CF, MEMBER_ID)?.map(|bytes| {
+            u64::from_be_bytes(
+                bytes
+                    .as_slice()
+                    .try_into()
+                    .unwrap_or_else(|e| unreachable!("cannot decode index from backend, {e:?}")),
+            )
+        });
         let mut members = vec![];
         for (_k, v) in self.db.get_all(MEMBERS_CF)? {
             let member = Member::decode(v.as_ref())?;

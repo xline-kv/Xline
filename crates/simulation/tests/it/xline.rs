@@ -52,8 +52,7 @@ async fn watch_compacted_revision_should_receive_canceled_response() {
 async fn xline_members_restore() {
     init_logger();
     let mut group = XlineGroup::new(3).await;
-    let node = group.get_node_by_name("S1");
-    let node_id = node.id;
+    let node = group.get_node("S1");
     let addr = node.addr.clone();
     let client = SimEtcdClient::new(addr, group.client_handle.clone()).await;
 
@@ -70,10 +69,10 @@ async fn xline_members_restore() {
         .await
         .unwrap();
     assert_eq!(members.members.len(), 4);
-    group.crash(node_id).await;
+    group.crash("S1").await;
     sleep(Duration::from_secs(10)).await;
 
-    group.restart(node_id).await;
+    group.restart("S1").await;
     sleep(Duration::from_secs(10)).await;
     let members = client
         .member_list(MemberListRequest::new(false))
