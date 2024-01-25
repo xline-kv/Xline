@@ -264,8 +264,8 @@ async fn enable_auth(client: &Client) -> Result<(), Box<dyn Error>> {
 fn configs_with_auth(size: usize) -> Vec<XlineServerConfig> {
     iter::repeat_with(|| {
         (
-            Some(PathBuf::from("../xline-test-utils/public.pem")),
-            Some(PathBuf::from("../xline-test-utils/private.pem")),
+            Some(PathBuf::from("../../fixtures/public.pem")),
+            Some(PathBuf::from("../../fixtures/private.pem")),
         )
     })
     .map(|(auth_public_key, auth_private_key)| {

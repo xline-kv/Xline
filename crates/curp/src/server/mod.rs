@@ -4,33 +4,25 @@ use engine::SnapshotAllocator;
 use tokio::sync::broadcast;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
-#[cfg(not(madsim))]
-use tracing::info;
 use tracing::instrument;
 #[cfg(madsim)]
 use utils::ClientTlsConfig;
-use utils::{
-    config::CurpConfig,
-    task_manager::{tasks::TaskName, TaskManager},
-    tracing::Extract,
-};
+use utils::{config::CurpConfig, task_manager::TaskManager, tracing::Extract};
 
 use self::curp_node::CurpNode;
 pub use self::raw_curp::RawCurp;
 use crate::{
     cmd::{Command, CommandExecutor},
-    error::ServerError,
     members::{ClusterInfo, ServerId},
     role_change::RoleChange,
     rpc::{
         AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse,
-        FetchReadStateRequest, FetchReadStateResponse, InnerProtocolServer, InstallSnapshotRequest,
+        FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,
         InstallSnapshotResponse, LeaseKeepAliveMsg, MoveLeaderRequest, MoveLeaderResponse,
         ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest, ProposeResponse,
-        ProtocolServer, PublishRequest, PublishResponse, ShutdownRequest, ShutdownResponse,
-        TriggerShutdownRequest, TriggerShutdownResponse, TryBecomeLeaderNowRequest,
-        TryBecomeLeaderNowResponse, VoteRequest, VoteResponse, WaitSyncedRequest,
-        WaitSyncedResponse,
+        PublishRequest, PublishResponse, ShutdownRequest, ShutdownResponse, TriggerShutdownRequest,
+        TriggerShutdownResponse, TryBecomeLeaderNowRequest, TryBecomeLeaderNowResponse,
+        VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
     },
 };
 
@@ -57,10 +49,6 @@ mod storage;
 
 /// Lease Manager
 mod lease_manager;
-
-/// Default server serving port
-#[cfg(not(madsim))]
-static DEFAULT_SERVER_PORT: u16 = 12345;
 
 /// The Rpc Server to handle rpc requests
 /// This Wrapper is introduced due to the `MadSim` rpc lib
@@ -235,7 +223,6 @@ impl<C: Command, RC: RoleChange> crate::rpc::InnerProtocol for Rpc<C, RC> {
 
 impl<C: Command, RC: RoleChange> Rpc<C, RC> {
     /// New `Rpc`
-    ///
     /// # Panics
     /// Panic if storage creation failed
     #[inline]
@@ -274,58 +261,6 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
         }
     }
 
-    /// Run a new rpc server
-    ///
-    /// # Errors
-    ///   `ServerError::ParsingError` if parsing failed for the local server address
-    ///   `ServerError::RpcError` if any rpc related error met
-    #[cfg(not(madsim))]
-    #[allow(clippy::too_many_arguments)]
-    #[inline]
-    pub async fn run<CE>(
-        cluster_info: Arc<ClusterInfo>,
-        is_leader: bool,
-        server_port: Option<u16>,
-        executor: Arc<CE>,
-        snapshot_allocator: Box<dyn SnapshotAllocator>,
-        role_change: RC,
-        curp_cfg: Arc<CurpConfig>,
-        task_manager: Arc<TaskManager>,
-        client_tls_config: Option<ClientTlsConfig>,
-    ) -> Result<(), ServerError>
-    where
-        CE: CommandExecutor<C>,
-    {
-        let n = task_manager.get_shutdown_listener(TaskName::TonicServer);
-        let port = server_port.unwrap_or(DEFAULT_SERVER_PORT);
-        let id = cluster_info.self_id();
-        info!("RPC server {id} started, listening on port {port}");
-        let server = Self::new(
-            cluster_info,
-            is_leader,
-            executor,
-            snapshot_allocator,
-            role_change,
-            curp_cfg,
-            task_manager,
-            client_tls_config,
-        )
-        .await;
-
-        tonic::transport::Server::builder()
-            .add_service(ProtocolServer::new(server.clone()))
-            .add_service(InnerProtocolServer::new(server))
-            .serve_with_shutdown(
-                format!("0.0.0.0:{port}")
-                    .parse()
-                    .map_err(|e| ServerError::ParsingError(format!("{e}")))?,
-                n.wait(),
-            )
-            .await?;
-
-        Ok(())
-    }
-
     /// Run a new rpc server on a specific addr, designed to be used in the tests
     ///
     /// # Errors
@@ -344,10 +279,14 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
         curp_cfg: Arc<CurpConfig>,
         task_manager: Arc<TaskManager>,
         client_tls_config: Option<ClientTlsConfig>,
-    ) -> Result<(), ServerError>
+    ) -> Result<(), crate::error::ServerError>
     where
         CE: CommandExecutor<C>,
     {
+        use utils::task_manager::tasks::TaskName;
+
+        use crate::rpc::{InnerProtocolServer, ProtocolServer};
+
         let n = task_manager.get_shutdown_listener(TaskName::TonicServer);
         let server = Self::new(
             cluster_info,

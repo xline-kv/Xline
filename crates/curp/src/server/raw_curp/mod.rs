@@ -138,7 +138,6 @@ pub(super) struct RawCurpArgs<C: Command, RC: RoleChange> {
 
     /// client tls config
     #[builder(default)]
-    #[cfg(not(madsim))]
     client_tls_config: Option<ClientTlsConfig>,
     /// Last applied index
     #[builder(setter(strip_option), default)]
@@ -168,8 +167,7 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
             args.cfg.log_entries_cap,
         ));
 
-        let mut ctx_builder = Context::builder();
-        _ = ctx_builder
+        let ctx = Context::builder()
             .cluster_info(args.cluster_info)
             .cb(args.cmd_board)
             .sp(args.spec_pool)
@@ -179,17 +177,15 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
             .cmd_tx(args.cmd_tx)
             .sync_events(args.sync_events)
             .role_change(args.role_change)
-            .connects(args.connects);
-        #[cfg(not(madsim))]
-        {
-            _ = ctx_builder.client_tls_config(args.client_tls_config);
-        }
-        let ctx = ctx_builder.build().map_err(|e| match e {
-            ContextBuilderError::UninitializedField(s) => {
-                RawCurpBuilderError::UninitializedField(s)
-            }
-            ContextBuilderError::ValidationError(s) => RawCurpBuilderError::ValidationError(s),
-        })?;
+            .connects(args.connects)
+            .client_tls_config(args.client_tls_config)
+            .build()
+            .map_err(|e| match e {
+                ContextBuilderError::UninitializedField(s) => {
+                    RawCurpBuilderError::UninitializedField(s)
+                }
+                ContextBuilderError::ValidationError(s) => RawCurpBuilderError::ValidationError(s),
+            })?;
 
         let raw_curp = RawCurp {
             st,
