@@ -1,9 +1,12 @@
 #!/bin/bash
 DIR="$(dirname $0)"
 QUICK_START="${DIR}/quick_start.sh"
-LOG_PATH=/mnt/logs bash ${QUICK_START}
 ETCDCTL="docker exec -i client etcdctl --endpoints=http://172.20.0.3:2379,http://172.20.0.4:2380"
 LOCK_CLIENT="docker exec -i client /mnt/validation_lock_client --endpoints=http://172.20.0.3:2379"
+
+
+LOG_PATH=/mnt/logs bash ${QUICK_START}
+source $DIR/log.sh
 
 stop() {
     bash ${QUICK_START} stop
@@ -13,64 +16,77 @@ trap stop EXIT
 trap stop INT
 trap stop TERM
 
-# run a command with expect output
-# args:
-#   $1: command to run
-#   $2: expect output
-run_with_expect() {
-    cmd="${1}"
-    echo -e "\nrunning command: ${cmd}"
-    res=$(eval ${cmd})
-    echo "command result: ${res}"
-    expect=$(echo -e ${2})
-    if [ "${res}" == "${expect}" ]; then
-        echo "command run success"
+res=""
+
+function parse_result() {
+    local tmp_res=""
+    while read -r line; do
+        log::debug $line
+        tmp_res="${tmp_res}${line}\n"
+    done
+    res="${tmp_res}"
+}
+
+
+function check() {
+    local pattern=$1
+    if [[ $(echo -e $res) =~ $pattern ]]; then
+        log::info "pass"
     else
-        echo "command run failed"
-        echo "command: ${cmd}"
-        echo "expect: ${expect}"
-        echo "result: ${res}"
-        exit 1
+        log::fatal "result not match pattern\n\tpattern: $pattern\n\tresult: $res"
     fi
 }
 
-# run a command with expect output, based on key word match
-# args:
-#   $1: command to run
-#   $2: expect output
-run_with_match() {
-    cmd="${1}"
-    echo -e "\nrunning command: ${cmd}"
-    res=$(eval ${cmd} 2>&1)
-    echo "command result: ${res}"
-    expect=$(echo -e ${2})
-    if echo "${res}" | grep -q "${expect}"; then
-        echo "command run success"
-    else
-        echo "command run failed"
-        echo "command: ${cmd}"
-        echo "expect: ${expect}"
-        echo "result: ${res}"
-        exit 1
-    fi
+function run() {
+    command=$@
+    log::info "running: $command"
+    parse_result <<< "$(eval $command 2>&1)"
+}
+
+# validate compact requests
+compact_validation() {
+    local _ETCDCTL="docker exec -i client etcdctl --endpoints=http://172.20.0.3:2379"
+    log::info "compact validation test running..."
+
+    for value in "value1" "value2" "value3" "value4" "value5" "value6"; do
+        run "${ETCDCTL} put key ${value}"
+        check "OK"
+    done
+    run "${ETCDCTL} get --rev=4 key"
+    check $'key\nvalue3'
+    run "${_ETCDCTL} compact --physical 5"
+    check "compacted revision 5"
+    run "${_ETCDCTL} get --rev=4 key"
+    check "etcdserver: mvcc: required revision has been compacted"
+    run "${_ETCDCTL} watch --rev=4 key"
+    check "watch was canceled \(etcdserver: mvcc: required revision has been compacted\)"
+
+    log::info "compact validation test pass..."
 }
 
 # validate kv requests
 kv_validation() {
-    echo "kv validation test running..."
-    run_with_expect "${ETCDCTL} put key1 value1" "OK"
-    stdin='value(\"key1\") = \"value1\"\n\nput key2 success\n\nput key2 failure\n'
-    run_with_expect "echo -e \"${stdin}\" | ${ETCDCTL} txn" "SUCCESS\n\nOK"
-    run_with_expect "${ETCDCTL} get key2" "key2\nsuccess"
-    run_with_expect "${ETCDCTL} del key1" "1"
-    run_with_match "${ETCDCTL} put '' value" "etcdserver: key is not provided"
-    run_with_match "${ETCDCTL} put non_exist_key --ignore-value" "etcdserver: key not found"
+    log::info "kv validation test running..."
 
-    echo -e "\nkv validation test passed"
+    run "${ETCDCTL} put key1 value1"
+    check "OK"
+    stdin='value(\"key1\") = \"value1\"\n\nput key2 success\n\nput key2 failure\n'
+    run "echo -e \"${stdin}\" | ${ETCDCTL} txn"
+    check $'SUCCESS\n\nOK'
+    run "${ETCDCTL} get key2"
+    check $'key2\nsuccess'
+    run "${ETCDCTL} del key1"
+    check "1"
+    run "${ETCDCTL} put '' value"
+    check "etcdserver: key is not provided"
+    run "${ETCDCTL} put non_exist_key --ignore-value"
+    check "etcdserver: key not found"
+
+    log::info "kv validation test passed"
 }
 
 watch_progress_validation() {
-    echo -e "\nwatch progress validation test running..."
+    log::info "watch progress validation test running..."
     expect <<EOF
     spawn ${ETCDCTL} watch -i
     send "watch foo\r"
@@ -87,216 +103,198 @@ watch_progress_validation() {
     expect eof
 EOF
     if [ $? -eq 0 ]; then
-        echo "command run success"
+        log::info "pass"
     else
-        echo "watch_progress_validation run failed"
-        exit 1
+        log::fatal "watch_progress_validation run failed"
     fi
 }
 
+
 # validate watch requests
 watch_validation() {
-    echo "watch validation test running..."
+    log::info "watch validation test running..."
+
     command="${ETCDCTL} watch watch_key"
-    echo -e "\nrunning command: ${command}"
-    want=("PUT" "watch_key" "value" "DELETE" "watch_key" "value" "watch_key")
+    log::info "running: ${command}"
+    want=("PUT" "watch_key" "value" "DELETE" "watch_key")
     ${command} | while read line; do
-        echo "command result: ${line}"
+        log::debug ${line}
         if [ "${line}" == "${want[0]}" ]; then
             unset want[0]
             want=("${want[@]}")
         else
-            echo "command run failed"
-            echo "command: ${command}"
-            echo "expect: ${want[0]}"
-            echo "result: ${line}"
-            exit 1
+            log::fatal "result not match pattern\n\tpattern: ${want[0]}\n\tresult: ${line}"
         fi
     done &
     sleep 0.1 # wait watch
-    run_with_expect "${ETCDCTL} put watch_key value" "OK"
-    run_with_expect "${ETCDCTL} del watch_key" "1"
+    run "${ETCDCTL} put watch_key value"
+    check "OK"
+    run "${ETCDCTL} del watch_key"
+    check "1"
     watch_progress_validation
-    echo -e "\nwatch validation test passed"
+
+    log::info "watch validation test passed"
 }
 
 # validate lease requests
 lease_validation() {
-    echo "lease validation test running..."
-    command="${ETCDCTL} lease grant 5"
-    echo -e "\nrunning command: ${command}"
-    out=$(${command})
-    echo "command result: ${out}"
-    pattern='lease\s+[0-9a-z]+ granted with TTL\([0-9]+s\)'
-    if [[ ${out} =~ ${pattern} ]]; then
-        echo "command run success"
-    else
-        echo "command run failed"
-        echo "command: ${command}"
-        echo "expect: ${pattern}"
-        echo "result: ${out}"
-        exit 1
-    fi
-    lease_id=$(echo ${out} | awk '{print $2}')
-    run_with_expect "${ETCDCTL} lease list" "found 1 leases\n${lease_id}"
+    log::info "lease validation test running..."
+
+    run "${ETCDCTL} lease grant 5"
+    check 'lease\s+[0-9a-z]+ granted with TTL\([0-9]+s\)'
+    lease_id=$(echo -e ${res} | awk '{print $2}')
+    run "${ETCDCTL} lease list"
+    check $'found 1 leases\n'${lease_id}
     command="${ETCDCTL} lease keep-alive ${lease_id}"
-    echo -e "\nrunning command: ${command}"
+    log::info "running: ${command}"
     ${command} | while read line; do
-        echo "command result: ${line}"
+        log::debug ${line}
         if [ "${line}" != "lease ${lease_id} keepalived with TTL(5)" ]; then
             if [ "${line}" != "lease ${lease_id} expired or revoked." ]; then
-                echo "command run failed"
-                echo "command: ${command}"
-                echo "expect: lease ${lease_id} keepalived with TTL(5) or lease ${lease_id} expired or revoked."
-                echo "result: ${line}"
-                exit 1
+                log::fatal "result not match pattern\n\tpattern: lease ${lease_id} keepalived with TTL(5) or lease ${lease_id} expired or revoked.\n\tresult: ${line}"
             fi
         fi
     done &
-    run_with_expect "${ETCDCTL} put key1 value1 --lease=${lease_id}" "OK"
-    run_with_expect "${ETCDCTL} get key1" "key1\nvalue1"
-    command="${ETCDCTL} lease timetolive ${lease_id}"
-    echo -e "\nrunning command: ${command}"
-    res=$(${command})
-    echo "command result: ${res}"
-    remaining=$(echo ${res} | sed -r "s/lease ${lease_id} granted with TTL\(5s\), remaining\(([0-9]+)s\)/\1/g")
-    if [ ${remaining} -le 5 ]; then
-        echo "command run success"
-    else
-        echo "command run failed"
-        echo "command: ${command}"
-        echo "remaining should be less than 5, but got ${remaining}"
-        exit 1
-    fi
+    run "${ETCDCTL} put key1 value1 --lease=${lease_id}"
+    check "OK"
+    run "${ETCDCTL} get key1"
+    check $'key1\nvalue1'
+    run "${ETCDCTL} lease timetolive ${lease_id}"
+    check "lease\s+${lease_id} granted with TTL\(5s\), remaining\([0-5]s\)"
+    run "${ETCDCTL} lease revoke ${lease_id}"
+    check "lease\s+${lease_id} revoked"
+    run "${ETCDCTL} get key1"
+    check ""
+    run "${ETCDCTL} lease revoke 255"
+    check "etcdserver: requested lease not found"
+    run "${ETCDCTL} lease grant 10000000000"
+    check "etcdserver: too large lease TTL"
 
-    run_with_expect "${ETCDCTL} lease revoke ${lease_id}" "lease ${lease_id} revoked"
-    run_with_expect "${ETCDCTL} get key1" ""
-    run_with_match "${ETCDCTL} lease revoke 255" "etcdserver: requested lease not found"
-    run_with_match "${ETCDCTL} lease grant 10000000000" "etcdserver: too large lease TTL"
-    echo -e "\nlease validation test passed"
+    log::info "lease validation test passed"
 }
 
 # validate auth requests
 auth_validation() {
-    echo "auth validation test running..."
-    run_with_expect "${ETCDCTL} user add root:root" "User root created"
-    run_with_expect "${ETCDCTL} role add root" "Role root created"
-    run_with_expect "${ETCDCTL} user grant-role root root" "Role root is granted to user root"
-    run_with_match "${ETCDCTL} --user root:root user list" "etcdserver: authentication is not enabled"
-    run_with_expect "${ETCDCTL} auth enable" "Authentication Enabled"
-    run_with_match "${ETCDCTL} --user root:rot user list" "etcdserver: authentication failed, invalid user ID or password"
-    run_with_expect "${ETCDCTL} --user root:root auth status" "Authentication Status: true\nAuthRevision: 4"
-    run_with_expect "${ETCDCTL} --user root:root user add u:u" "User u created"
-    run_with_match "${ETCDCTL} --user u:u user add f:f" "etcdserver: permission denied"
-    run_with_expect "${ETCDCTL} --user root:root role add r" "Role r created"
-    run_with_expect "${ETCDCTL} --user root:root user grant-role u r" "Role r is granted to user u"
-    run_with_expect "${ETCDCTL} --user root:root role grant-permission r readwrite key1" "Role r updated"
-    run_with_expect "${ETCDCTL} --user u:u put key1 value1" "OK"
-    run_with_expect "${ETCDCTL} --user u:u get key1" "key1\nvalue1"
-    run_with_expect "${ETCDCTL} --user u:u role get r" "Role r\nKV Read:\n\tkey1\nKV Write:\n\tkey1"
-    run_with_expect "${ETCDCTL} --user u:u user get u" "User: u\nRoles: r"
-    run_with_expect "echo 'new_password' | ${ETCDCTL} --user root:root user passwd --interactive=false u" "Password updated"
-    run_with_expect "${ETCDCTL} --user root:root role revoke-permission r key1" "Permission of key key1 is revoked from role r"
-    run_with_expect "${ETCDCTL} --user root:root user revoke-role u r" "Role r is revoked from user u"
-    run_with_expect "${ETCDCTL} --user root:root user list" "root\nu"
-    run_with_expect "${ETCDCTL} --user root:root role list" "r\nroot"
-    run_with_expect "${ETCDCTL} --user root:root user delete u" "User u deleted"
-    run_with_expect "${ETCDCTL} --user root:root role delete r" "Role r deleted"
-    run_with_match "${ETCDCTL} --user root:root user get non_exist_user" "etcdserver: user name not found"
-    run_with_match "${ETCDCTL} --user root:root user add root:root" "etcdserver: user name already exists"
-    run_with_match "${ETCDCTL} --user root:root role get non_exist_role" "etcdserver: role name not found"
-    run_with_match "${ETCDCTL} --user root:root role add root" "etcdserver: role name already exists"
-    run_with_match "${ETCDCTL} --user root:root user revoke root r" "etcdserver: role is not granted to the user"
-    run_with_match "${ETCDCTL} --user root:root role revoke root non_exist_key" "etcdserver: permission is not granted to the role"
-    run_with_match "${ETCDCTL} --user root:root user delete root" "etcdserver: invalid auth management"
-    run_with_expect "${ETCDCTL} --user root:root auth disable" "Authentication Disabled"
-    echo -e "\nauth validation test passed"
+    log::info "auth validation test running..."
+
+    run "${ETCDCTL} user add root:root"
+    check "User root created"
+    run "${ETCDCTL} role add root"
+    check "Role root created"
+    run "${ETCDCTL} user grant-role root root"
+    check "Role root is granted to user root"
+    run "${ETCDCTL} --user root:root user list"
+    check "etcdserver: authentication is not enabled"
+    run "${ETCDCTL} auth enable"
+    check "Authentication Enabled"
+    run "${ETCDCTL} --user root:rot user list"
+    check "etcdserver: authentication failed, invalid user ID or password"
+    run "${ETCDCTL} --user root:root auth status"
+    check $'Authentication Status: true\nAuthRevision: 4'
+    run "${ETCDCTL} --user root:root user add u:u"
+    check "User u created"
+    run "${ETCDCTL} --user u:u user add f:f"
+    check "etcdserver: permission denied"
+    run "${ETCDCTL} --user root:root role add r"
+    check "Role r created"
+    run "${ETCDCTL} --user root:root user grant-role u r"
+    check "Role r is granted to user u"
+    run "${ETCDCTL} --user root:root role grant-permission r readwrite key1"
+    check "Role r updated"
+    run "${ETCDCTL} --user u:u put key1 value1"
+    check "OK"
+    run "${ETCDCTL} --user u:u get key1"
+    check $'key1\nvalue1'
+    run "${ETCDCTL} --user u:u role get r"
+    check $'Role r\nKV Read:\nkey1\nKV Write:\nkey1'
+    run "${ETCDCTL} --user u:u user get u"
+    check $'User: u\nRoles: r'
+    run "echo 'new_password' | ${ETCDCTL} --user root:root user passwd --interactive=false u"
+    check "Password updated"
+    run "${ETCDCTL} --user root:root role revoke-permission r key1"
+    check "Permission of key key1 is revoked from role r"
+    run "${ETCDCTL} --user root:root user revoke-role u r"
+    check "Role r is revoked from user u"
+    run "${ETCDCTL} --user root:root user list"
+    check $'root\nu'
+    run "${ETCDCTL} --user root:root role list"
+    check $'r\nroot'
+    run "${ETCDCTL} --user root:root user delete u"
+    check "User u deleted"
+    run "${ETCDCTL} --user root:root role delete r"
+    check "Role r deleted"
+    run "${ETCDCTL} --user root:root user get non_exist_user"
+    check "etcdserver: user name not found"
+    run "${ETCDCTL} --user root:root user add root:root"
+    check "etcdserver: user name already exists"
+    run "${ETCDCTL} --user root:root role get non_exist_role"
+    check "etcdserver: role name not found"
+    run "${ETCDCTL} --user root:root role add root"
+    check "etcdserver: role name already exists"
+    run "${ETCDCTL} --user root:root user revoke root r"
+    check "etcdserver: role is not granted to the user"
+    run "${ETCDCTL} --user root:root role revoke root non_exist_key"
+    check "etcdserver: permission is not granted to the role"
+    run "${ETCDCTL} --user root:root user delete root"
+    check "etcdserver: invalid auth management"
+    run "${ETCDCTL} --user root:root auth disable"
+    check "Authentication Disabled"
+
+    log::info "auth validation test passed"
 }
 
 lock_validation() {
-    echo "lock validation test running..."
-    run_with_expect "${ETCDCTL} lock mutex echo success" "success"
-    echo -e "\nlock validation test passed"
+    log::info "lock validation test running..."
+
+    run "${ETCDCTL} lock mutex echo success"
+    check "success"
+
+    log::info "lock validation test passed"
 }
 
 lock_rpc_validation() {
-    echo "lock rpc validation test running..."
-    command="${LOCK_CLIENT} lock mutex"
-    echo -e "\nrunning command: ${command}"
-    key=$(${command})
-    echo "command result: ${key}"
-    if [[ ${key} == mutex* ]]; then
-        echo "command run success"
-    else
-        echo "command run failed"
-        echo "command: ${command}"
-        echo "expect: mutex*"
-        echo "result: ${key}"
-    fi
-    run_with_expect "${LOCK_CLIENT} unlock ${key}" "unlock success"
-    echo -e "\nlock rpc validation test passed"
+    log::info "lock rpc validation test running..."
+
+    run "${LOCK_CLIENT} lock mutex"
+    check "mutex.*"
+    run "${LOCK_CLIENT} unlock ${res}"
+    check "unlock success"
+
+    log::info "lock rpc validation test passed"
 }
 
 # validate maintenance requests
 maintenance_validation() {
     # snapshot save request only works on one endpoint
     local _ETCDCTL="docker exec -i client etcdctl --endpoints=http://172.20.0.3:2379"
-    echo "maintenance validation test running..."
-    run_with_expect "${_ETCDCTL} snapshot save snap.db" "Snapshot saved at snap.db"
-    echo -e "\nmaintenance validation test passed"
+    log::info "maintenance validation test running..."
+
+    run "${_ETCDCTL} snapshot save snap.db"
+    check "Snapshot saved at snap.db"
+
+    log::info "maintenance validation test passed"
 }
 
-# validate compact requests
-compact_validation() {
-    local _ETCDCTL="docker exec -i client etcdctl --endpoints=http://172.20.0.3:2379"
-    echo "compact validation test running..."
-    for value in "value1" "value2" "value3" "value4" "value5" "value6"; do
-        run_with_expect "${ETCDCTL} put key ${value}" "OK"
-    done
-    run_with_expect "${ETCDCTL} get --rev=4 key" "key\nvalue3"
-    run_with_expect "${_ETCDCTL} compact --physical 5" "compacted revision 5"
-    run_with_match "${_ETCDCTL} get --rev=4 key" "etcdserver: mvcc: required revision has been compacted"
-    run_with_match "${_ETCDCTL} watch --rev=4 key " "watch was canceled (etcdserver: mvcc: required revision has been compacted)"
-    echo -e "\ncompact validation test pass..."
-}
 
 cluster_validation() {
-    echo "cluster validation test running..."
-    command="${ETCDCTL} member list"
-    echo -e "\nrunning command: ${command}"
-    out=$(eval ${command})
-    echo "command result: ${out}"
-    pattern="[0-9a-z]+, started, node[0-9], 172.20.0.[0-9]:2379,172.20.0.[0-9]:2380, 172.20.0.[0-9]:2379,172.20.0.[0-9]:2380, false"
-    if [[ ${out} =~ ${pattern} ]]; then
-        echo "command run success"
-    else
-        echo "command run failed"
-        echo "command: ${command}"
-        echo "expect: ${pattern}"
-        echo "result: ${out}"
-        exit 1
-    fi
-    command="${ETCDCTL} member add client --peer-urls=http://172.20.0.6:2379 --learner=true"
-    echo -e "\nrunning command: ${command}"
-    out=$(eval ${command})
-    echo "command result: ${out}"
-    pattern="Member\s+[a-zA-Z0-9]+ added to cluster\s+[a-zA-Z0-9]+"
-    if [[ ${out} =~ ${pattern} ]]; then
-        echo "command run success"
-    else
-        echo "command run failed"
-        echo "command: ${command}"
-        echo "expect: ${pattern}"
-        echo "result: ${out}"
-        exit 1
-    fi
-    node_id=$(echo ${out} | awk '{print $2}')
-    cluster_id=$(echo ${out} | awk '{print $6}')
-    run_with_expect "${ETCDCTL} member promote ${node_id}" "Member ${node_id} promoted in cluster ${cluster_id}"
-    run_with_expect "${ETCDCTL} member update ${node_id} --peer-urls=http://172.20.0.6:2379" "Member ${node_id} updated in cluster ${cluster_id}"
-    run_with_expect "${ETCDCTL} member remove ${node_id}" "Member ${node_id} removed from cluster ${cluster_id}"
-    echo -e "\ncluster validation test passed"
+    log::info "cluster validation test running..."
+
+    run "${ETCDCTL} member list"
+    check "\s*[0-9a-z]+, started, node[0-9], 172.20.0.[0-9]:2379,172.20.0.[0-9]:2380, 172.20.0.[0-9]:2379,172.20.0.[0-9]:2380, false"
+    run "${ETCDCTL} member add client --peer-urls=http://172.20.0.6:2379 --learner=true"
+    check "Member\s+[a-zA-Z0-9]+ added to cluster\s+[a-zA-Z0-9]+"
+    node_id=$(echo -e ${res} | awk '{print $2}')
+    cluster_id=$(echo -e ${res} | awk '{print $6}')
+    run "${ETCDCTL} member promote ${node_id}"
+    check "Member\s+${node_id} promoted in cluster\s+${cluster_id}"
+    run "${ETCDCTL} member update ${node_id} --peer-urls=http://172.20.0.6:2379"
+    check "Member\s+${node_id} updated in cluster\s+${cluster_id}"
+    run "${ETCDCTL} member remove ${node_id}"
+    check "Member\s+${node_id} removed from cluster\s+${cluster_id}"
+
+    log::info "cluster validation test passed"
 }
+
 
 compact_validation
 kv_validation
