@@ -231,7 +231,6 @@ impl ClientBuilder {
     /// Set the tls config
     #[inline]
     #[must_use]
-    #[cfg(not(madsim))]
     pub fn tls_config(mut self, tls_config: Option<ClientTlsConfig>) -> Self {
         self.tls_config = tls_config;
         self

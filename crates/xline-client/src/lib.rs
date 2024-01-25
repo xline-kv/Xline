@@ -396,7 +396,6 @@ impl ClientOptions {
     /// Get `tls_config`
     #[inline]
     #[must_use]
-    #[cfg(not(madsim))]
     pub fn tls_config(&self) -> Option<&ClientTlsConfig> {
         self.tls_config.as_ref()
     }
@@ -431,7 +430,6 @@ impl ClientOptions {
     /// Set `tls_config`
     #[inline]
     #[must_use]
-    #[cfg(not(madsim))]
     pub fn with_tls_config(self, tls_config: ClientTlsConfig) -> Self {
         Self {
             tls_config: Some(tls_config),

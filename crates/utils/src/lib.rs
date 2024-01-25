@@ -199,21 +199,21 @@ pub mod certs {
     #[inline]
     #[must_use]
     pub fn server_cert() -> &'static [u8] {
-        include_bytes!("../certs/server.crt")
+        include_bytes!("../../../fixtures/server.crt")
     }
 
     /// Server private key
     #[inline]
     #[must_use]
     pub fn server_key() -> &'static [u8] {
-        include_bytes!("../certs/server.key")
+        include_bytes!("../../../fixtures/server.key")
     }
 
     /// CA certificate
     #[inline]
     #[must_use]
     pub fn ca_cert() -> &'static [u8] {
-        include_bytes!("../certs/ca.crt")
+        include_bytes!("../../../fixtures/ca.crt")
     }
 }
 

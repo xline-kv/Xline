@@ -392,11 +392,9 @@ impl XlineServer {
             })?
             .iter()
             .map(|addr| {
-                // TODO: update this after we support https
-                let address = if let Some(address) = addr.strip_prefix("http://") {
-                    address
-                } else {
-                    addr
+                let address = match addr.split_once("://") {
+                    Some((_, address)) => address,
+                    None => addr,
                 };
                 address.to_socket_addrs()
             })
