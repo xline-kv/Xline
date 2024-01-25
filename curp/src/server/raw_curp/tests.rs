@@ -847,19 +847,6 @@ fn remove_non_exists_node_should_return_node_not_exists_error() {
 
 #[traced_test]
 #[test]
-fn remove_node_should_return_invalid_config_error_when_nodes_count_less_than_3() {
-    let curp = {
-        let exe_tx = MockCEEventTxApi::<TestCommand>::default();
-        Arc::new(RawCurp::new_test(3, exe_tx, mock_role_change()))
-    };
-    let follower_id = curp.cluster().get_id_by_name("S1").unwrap();
-    let changes = vec![ConfChange::remove(follower_id)];
-    let resp = curp.check_new_config(&changes);
-    assert!(matches!(resp, Err(CurpError::InvalidConfig(()))));
-}
-
-#[traced_test]
-#[test]
 fn update_node_should_update_the_address_of_node() {
     let curp = {
         let exe_tx = MockCEEventTxApi::<TestCommand>::default();

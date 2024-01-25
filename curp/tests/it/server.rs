@@ -388,23 +388,6 @@ async fn propose_update_node_should_success() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
-async fn propose_remove_node_should_failed_when_cluster_nodes_equals_to_three() {
-    init_logger();
-
-    let group = CurpGroup::new(3).await;
-    let client = group.new_client().await;
-
-    let node_id = group.nodes.keys().next().copied().unwrap();
-    let changes = vec![ConfChange::remove(node_id)];
-    let res = client.propose_conf_change(changes).await;
-    assert!(matches!(
-        CurpError::from(res.unwrap_err()),
-        CurpError::InvalidConfig(())
-    ));
-}
-
-#[tokio::test(flavor = "multi_thread")]
-#[abort_on_panic]
 async fn shutdown_rpc_should_shutdown_the_cluster_when_client_has_wrong_leader() {
     init_logger();
     let tmp_path = tempfile::TempDir::new().unwrap().into_path();

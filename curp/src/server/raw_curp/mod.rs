@@ -1246,10 +1246,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let mut all_nodes = HashSet::new();
         all_nodes.extend(config.voters());
         all_nodes.extend(&config.learners);
-        if statuses_ids.len() < 3
-            || all_nodes != statuses_ids
-            || !config.voters().is_disjoint(&config.learners)
-        {
+        if all_nodes != statuses_ids || !config.voters().is_disjoint(&config.learners) {
             return Err(CurpError::invalid_config());
         }
         Ok(())
