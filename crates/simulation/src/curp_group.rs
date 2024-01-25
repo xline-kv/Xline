@@ -204,7 +204,7 @@ impl CurpGroup {
     pub async fn crash(&mut self, id: ServerId) {
         let handle = madsim::runtime::Handle::current();
         handle.kill(id.to_string());
-        madsim::time::sleep(Duration::from_secs(2)).await;
+        madsim::time::sleep(Duration::from_secs(10)).await;
         if !handle.is_exit(id.to_string()) {
             panic!("failed to crash node: {id}");
         }

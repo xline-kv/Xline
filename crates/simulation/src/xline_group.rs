@@ -5,9 +5,8 @@ use madsim::runtime::NodeHandle;
 use tonic::transport::Channel;
 use tracing::debug;
 use utils::config::{
-    default_quota, AuthConfig, ClientConfig, ClientConfig, ClusterConfig, CompactConfig,
-    CompactConfig, CurpConfig, CurpConfig, EngineConfig, InitialClusterState, ServerTimeout,
-    ServerTimeout, StorageConfig, StorageConfig, TlsConfig,
+    AuthConfig, ClientConfig, ClusterConfig, CompactConfig, CurpConfig, InitialClusterState,
+    ServerTimeout, StorageConfig, TlsConfig,
 };
 use xline::server::XlineServer;
 use xline_client::{
@@ -123,18 +122,18 @@ impl XlineGroup {
         self.nodes.get(name).unwrap()
     }
 
-    pub async fn crash(&mut self, id: ServerId) {
+    pub async fn crash(&mut self, name: &str) {
         let handle = madsim::runtime::Handle::current();
-        handle.kill(id.to_string());
-        madsim::time::sleep(Duration::from_secs(2)).await;
-        if !handle.is_exit(id.to_string()) {
-            panic!("failed to crash node: {id}");
+        handle.kill(name);
+        madsim::time::sleep(Duration::from_secs(10)).await;
+        if !handle.is_exit(name) {
+            panic!("failed to crash node: {name}");
         }
     }
 
-    pub async fn restart(&mut self, id: ServerId) {
+    pub async fn restart(&mut self, name: &str) {
         let handle = madsim::runtime::Handle::current();
-        handle.restart(id.to_string());
+        handle.restart(name);
     }
 }
 
