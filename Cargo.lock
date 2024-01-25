@@ -850,13 +850,13 @@ dependencies = [
  "madsim-tokio",
  "opentelemetry",
  "parking_lot",
- "rand",
  "rocksdb",
  "serde",
  "test-macros",
  "thiserror",
  "tokio-util",
  "utils",
+ "uuid",
  "workspace-hack",
 ]
 

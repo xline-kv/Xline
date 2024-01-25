@@ -121,7 +121,7 @@
     clippy::unused_peekable,
     clippy::unused_rounding,
 
-    // The followings are selected restriction lints from rust 1.68.0 to 1.70.0
+    // The followings are selected restriction lints from rust 1.68.0 to 1.71.0
     // clippy::allow_attributes, still unstable
     clippy::impl_trait_in_params,
     clippy::let_underscore_untyped,
@@ -129,7 +129,14 @@
     clippy::multiple_unsafe_ops_per_block,
     clippy::semicolon_inside_block,
     // clippy::semicolon_outside_block, already used `semicolon_inside_block`
-    clippy::tests_outside_test_module
+    clippy::tests_outside_test_module,
+    // 1.71.0
+    clippy::default_constructed_unit_structs,
+    clippy::items_after_test_module,
+    clippy::manual_next_back,
+    clippy::manual_while_let_some,
+    clippy::needless_bool_assign,
+    clippy::non_minimal_cfg,
 )]
 #![allow(
     clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
