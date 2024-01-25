@@ -84,6 +84,7 @@ jobs:
 
   commit:
     name: Commit Message Validation
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -99,6 +100,7 @@ jobs:
 
   spell-check:
     name: Spell Check
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
