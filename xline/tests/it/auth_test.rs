@@ -108,7 +108,6 @@ async fn test_auth_non_authorized_rpcs() -> Result<(), Box<dyn Error>> {
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn test_kv_authorization() -> Result<(), Box<dyn Error>> {
-    configs_with_auth(3);
     let mut cluster = Cluster::new_with_configs(configs_with_auth(3)).await;
     cluster.start().await;
     let client = cluster.client().await;

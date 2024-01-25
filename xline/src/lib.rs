@@ -178,4 +178,4 @@ mod state;
 /// Storage module
 pub mod storage;
 /// Xline utils
-pub mod xline_utils;
+pub mod utils;

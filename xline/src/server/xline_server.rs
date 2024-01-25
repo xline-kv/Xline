@@ -148,7 +148,7 @@ impl XlineServer {
                 &init_cluster_info,
                 server_addr_str,
                 &name,
-                Duration::from_secs(3),
+                *cluster_config.client_config().wait_synced_timeout(),
             )
             .await
             .ok_or_else(|| anyhow!("Failed to get cluster info from remote"))?,
@@ -319,7 +319,7 @@ impl XlineServer {
             self.auth_config.auth_private_key().as_ref(),
             self.auth_config.auth_public_key().as_ref(),
         )
-        .await;
+        .await?;
         let (router, curp_client) = self.init_router(persistent, key_pair).await?;
         let handle = tokio::spawn(async move { router.serve_with_shutdown(addr, signal).await });
         if let Err(e) = self.publish(curp_client).await {
@@ -349,7 +349,7 @@ impl XlineServer {
             self.auth_config.auth_private_key().as_ref(),
             self.auth_config.auth_public_key().as_ref(),
         )
-        .await;
+        .await?;
         let (router, curp_client) = self.init_router(persistent, key_pair).await?;
 
         let handle =
@@ -592,34 +592,18 @@ impl XlineServer {
     async fn read_key_pair(
         private_key_path: Option<&PathBuf>,
         public_key_path: Option<&PathBuf>,
-    ) -> Option<(EncodingKey, DecodingKey)> {
-        let encoding_key = match fs::read(private_key_path?).await {
-            Ok(key) => match EncodingKey::from_rsa_pem(&key) {
-                Ok(key) => key,
-                Err(e) => {
-                    error!("parse private key failed: {:?}", e);
-                    return None;
-                }
-            },
-            Err(e) => {
-                error!("read private key failed: {:?}", e);
-                return None;
+    ) -> Result<Option<(EncodingKey, DecodingKey)>> {
+        match (private_key_path, public_key_path) {
+            (Some(private), Some(public)) => {
+                let encoding_key = EncodingKey::from_rsa_pem(&fs::read(private).await?)?;
+                let decoding_key = DecodingKey::from_rsa_pem(&fs::read(public).await?)?;
+                Ok(Some((encoding_key, decoding_key)))
             }
-        };
-        let decoding_key = match fs::read(public_key_path?).await {
-            Ok(key) => match DecodingKey::from_rsa_pem(&key) {
-                Ok(key) => key,
-                Err(e) => {
-                    error!("parse public key failed: {:?}", e);
-                    return None;
-                }
-            },
-            Err(e) => {
-                error!("read public key failed: {:?}", e);
-                return None;
-            }
-        };
-        Some((encoding_key, decoding_key))
+            (None, None) => Ok(None),
+            _ => Err(anyhow!(
+                "private key path and public key path must be both set or both unset"
+            )),
+        }
     }
 }
 
