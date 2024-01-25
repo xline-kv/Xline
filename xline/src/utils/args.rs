@@ -20,6 +20,12 @@ use utils::{
     parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_rotation, parse_state,
     ConfigFileError,
 };
+
+/// Xline server config path env name
+const XLINE_SERVER_CONFIG_ENV: &str = "XLINE_SERVER_CONFIG";
+/// default xline server config path
+const DEFAULT_XLINE_SERVER_CONFIG_PATH: &str = "/etc/xline_server.conf";
+
 /// Command line arguments
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -263,8 +269,8 @@ impl From<ServerArgs> for XlineServerConfig {
 #[inline]
 pub async fn parse_config() -> Result<XlineServerConfig> {
     if env::args_os().len() == 1 {
-        let path =
-            env::var("XLINE_SERVER_CONFIG").unwrap_or_else(|_| "/etc/xline_server.conf".to_owned());
+        let path = env::var(XLINE_SERVER_CONFIG_ENV)
+            .unwrap_or_else(|_| DEFAULT_XLINE_SERVER_CONFIG_PATH.to_owned());
         let config_file = fs::read_to_string(&path)
             .await
             .map_err(|err| ConfigFileError::FileError(path, err))?;

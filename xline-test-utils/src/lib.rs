@@ -176,15 +176,6 @@ impl Cluster {
         self.all_members.clone()
     }
 
-    // TODO
-    // fn test_key_pair() -> Option<(EncodingKey, DecodingKey)> {
-    //     let private_key = include_bytes!("../private.pem");
-    //     let public_key = include_bytes!("../public.pem");
-    //     let encoding_key = EncodingKey::from_rsa_pem(private_key).unwrap();
-    //     let decoding_key = DecodingKey::from_rsa_pem(public_key).unwrap();
-    //     Some((encoding_key, decoding_key))
-    // }
-
     pub fn default_config_with_quota_and_rocks_path(
         path: PathBuf,
         quota: u64,
