@@ -10,7 +10,6 @@ use std::{
 
 use bytes::{Buf, Bytes, BytesMut};
 use clippy_utilities::{NumericCast, OverflowArithmetic};
-use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use rocksdb::{
     Error as RocksError, IteratorMode, Options, SstFileWriter, WriteBatchWithTransaction,
     WriteOptions, DB,
@@ -115,12 +114,7 @@ impl RocksEngine {
         P: AsRef<Path>,
     {
         let mut snapshot_f = tokio::fs::File::open(snap_path).await?;
-        let random: String = thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(8)
-            .map(char::from)
-            .collect();
-        let tmp_path = temp_dir().join(format!("snapshot-{random}"));
+        let tmp_path = temp_dir().join(format!("snapshot-{}", uuid::Uuid::new_v4()));
         let mut rocks_snapshot = RocksSnapshot::new_for_receiving(tmp_path)?;
         let mut buf = BytesMut::with_capacity(SNAPSHOT_CHUNK_SIZE);
         while let Ok(n) = read_buf(&mut snapshot_f, &mut buf).await {

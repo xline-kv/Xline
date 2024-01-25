@@ -5,7 +5,7 @@ use bytes::{Bytes, BytesMut};
 use opentelemetry::{metrics::Histogram, KeyValue};
 use utils::define_metrics;
 
-use crate::{EngineError, SnapshotApi, StorageEngine, WriteOperation};
+use crate::{rocksdb_engine::RocksEngine, EngineError, SnapshotApi, StorageEngine, WriteOperation};
 
 define_metrics! {
     "engine",
@@ -30,6 +30,22 @@ impl<E> Layer<E> {
     /// Create metrics layer
     pub(crate) fn new(engine: E) -> Self {
         Self { engine }
+    }
+}
+
+impl Layer<RocksEngine> {
+    /// Apply snapshot from file, only works for `RocksEngine`
+    /// # Errors
+    /// Return `EngineError` when `RocksDB` returns an error.
+    #[inline]
+    pub async fn apply_snapshot_from_file(
+        &self,
+        snap_path: impl AsRef<Path>,
+        tables: &[&'static str],
+    ) -> Result<(), EngineError> {
+        self.engine
+            .apply_snapshot_from_file(snap_path, tables)
+            .await
     }
 }
 

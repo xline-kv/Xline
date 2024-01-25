@@ -1,7 +1,5 @@
 use std::{env::temp_dir, error::Error};
 
-use rand::{distributions::Alphanumeric, thread_rng, Rng};
-
 use crate::{api::snapshot_api::SnapshotAllocator, EngineType, Snapshot};
 
 /// Rocks snapshot allocator
@@ -14,12 +12,7 @@ pub struct RocksSnapshotAllocator;
 impl SnapshotAllocator for RocksSnapshotAllocator {
     #[inline]
     async fn allocate_new_snapshot(&self) -> Result<Snapshot, Box<dyn Error>> {
-        let random: String = thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(8)
-            .map(char::from)
-            .collect();
-        let tmp_path = temp_dir().join(format!("snapshot-{random}"));
+        let tmp_path = temp_dir().join(format!("snapshot-{}", uuid::Uuid::new_v4()));
         Ok(Snapshot::new_for_receiving(EngineType::Rocks(tmp_path))?)
     }
 }
