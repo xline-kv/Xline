@@ -310,8 +310,6 @@ impl XlineServer {
     pub async fn start_from_single_addr(
         &self,
         addr: SocketAddr,
-        persistent: Arc<S>,
-        key_pair: Option<(EncodingKey, DecodingKey)>,
     ) -> Result<tokio::task::JoinHandle<Result<(), tonic::transport::Error>>> {
         let n = self
             .task_manager

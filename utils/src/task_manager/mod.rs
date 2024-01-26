@@ -282,7 +282,7 @@ struct Task {
     /// All tasks that depend on this task
     depend_by: Vec<TaskName>,
     /// Count of tasks that this task depends on
-    depend_cnt: u64,
+    depend_cnt: usize,
 }
 
 impl Drop for Task {
@@ -349,7 +349,7 @@ impl Listener {
             0 => State::Running,
             1 => State::Shutdown,
             2 => State::ClusterShutdown,
-            _ => unreachable!(),
+            _ => unreachable!("invalid state: {}", state),
         }
     }
 
@@ -402,5 +402,49 @@ impl Drop for SyncFollowerGuard {
     #[inline]
     fn drop(&mut self) {
         self.tracker.sync_follower_task_count_dec();
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    use std::time::Duration;
+
+    use tokio::sync::mpsc;
+
+    use super::*;
+    #[tokio::test]
+    #[allow(clippy::unwrap_used)]
+    async fn test_inner_shutdown() {
+        let tm = TaskManager::new();
+        let (record_tx, mut record_rx) = mpsc::unbounded_channel();
+        for name in TaskName::iter() {
+            let record_tx = record_tx.clone();
+            tm.spawn(name, move |listener| async move {
+                listener.wait().await;
+                record_tx.send(name).unwrap();
+            });
+        }
+        drop(record_tx);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        TaskManager::inner_shutdown(Arc::clone(&tm.tasks), Arc::clone(&tm.state)).await;
+        let mut shutdown_order = vec![];
+        while let Some(name) = record_rx.recv().await {
+            shutdown_order.push(name);
+        }
+        for (from, to) in ALL_EDGES {
+            let from_index = shutdown_order
+                .iter()
+                .position(|n| *n == from)
+                .unwrap_or_else(|| unreachable!("task {:?} should exist", from));
+            let to_index = shutdown_order
+                .iter()
+                .position(|n| *n == to)
+                .unwrap_or_else(|| unreachable!("task {:?} should exist", to));
+            assert!(
+                from_index < to_index,
+                "{from:?} should shutdown before {to:?}"
+            );
+        }
     }
 }

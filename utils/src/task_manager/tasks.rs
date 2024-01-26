@@ -48,7 +48,7 @@ enum_with_iter! {
     AutoCompactor,
 }
 
-/// All edges of task graph
+/// All edges of task graph, the first item in each pair must be shut down before the second item
 pub const ALL_EDGES: [(TaskName, TaskName); 9] = [
     (TaskName::ConflictCheckedMpmc, TaskName::CmdWorker),
     (TaskName::CmdWorker, TaskName::CompactBg),

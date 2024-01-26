@@ -1192,7 +1192,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         self.task_manager.is_shutdown()
     }
 
-    /// Get a shutdown listener
+    /// Get a cloned task manager
     pub(super) fn task_manager(&self) -> Arc<TaskManager> {
         Arc::clone(&self.task_manager)
     }
