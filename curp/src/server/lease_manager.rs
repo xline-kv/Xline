@@ -1,7 +1,4 @@
-use std::cmp::Reverse;
-use std::ops::Add;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{cmp::Reverse, ops::Add, sync::Arc, time::Duration};
 
 use parking_lot::RwLock;
 use priority_queue::PriorityQueue;
@@ -39,7 +36,10 @@ impl LeaseManager {
 
     /// Generate a new client id and grant a lease
     pub(crate) fn grant(&mut self) -> u64 {
-        let client_id: u64 = rand::random();
+        let mut client_id: u64 = rand::random();
+        while self.expiry_queue.get(&client_id).is_some() {
+            client_id = rand::random();
+        }
         let expiry = Instant::now().add(DEFAULT_LEASE_TTL);
         let _ig = self.expiry_queue.push(client_id, Reverse(expiry));
         // gc all expired client id while granting a new client id

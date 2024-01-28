@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::{Debug, Formatter},
     ops::Deref,
-    sync::Arc,
+    sync::{atomic::AtomicU64, Arc},
     time::Duration,
 };
 
@@ -14,7 +14,7 @@ use engine::SnapshotApi;
 use futures::{stream::FuturesUnordered, Stream};
 #[cfg(test)]
 use mockall::automock;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 use tonic::transport::{Channel, Endpoint};
 use tracing::{debug, error, instrument};
 use utils::tracing::Inject;
@@ -206,7 +206,7 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
     ) -> Result<tonic::Response<MoveLeaderResponse>, CurpError>;
 
     /// Keep send lease keep alive to server and mutate the client id
-    async fn lease_keep_alive(&self, client_id: Arc<RwLock<u64>>) -> CurpError;
+    async fn lease_keep_alive(&self, client_id: Arc<AtomicU64>) -> CurpError;
 }
 
 /// Inner Connect interface among different servers
@@ -447,7 +447,7 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
     }
 
     /// Keep send lease keep alive to server and mutate the client id
-    async fn lease_keep_alive(&self, client_id: Arc<RwLock<u64>>) -> CurpError {
+    async fn lease_keep_alive(&self, client_id: Arc<AtomicU64>) -> CurpError {
         let mut client = self.rpc_connect.clone();
         loop {
             let stream = heartbeat_stream(Arc::clone(&client_id));
@@ -455,8 +455,7 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
                 Err(err) => return err.into(),
                 Ok(res) => res.into_inner().client_id,
             };
-            let mut client_id = client_id.write().await;
-            *client_id = new_id;
+            client_id.store(new_id, std::sync::atomic::Ordering::Relaxed);
         }
     }
 }
@@ -684,13 +683,13 @@ where
     }
 
     /// Keep send lease keep alive to server and mutate the client id
-    async fn lease_keep_alive(&self, _client_id: Arc<RwLock<u64>>) -> CurpError {
+    async fn lease_keep_alive(&self, _client_id: Arc<AtomicU64>) -> CurpError {
         unreachable!("cannot invoke lease_keep_alive in bypassed connect")
     }
 }
 
 /// Generate heartbeat stream
-fn heartbeat_stream(client_id: Arc<RwLock<u64>>) -> impl Stream<Item = LeaseKeepAliveMsg> {
+fn heartbeat_stream(client_id: Arc<AtomicU64>) -> impl Stream<Item = LeaseKeepAliveMsg> {
     /// Keep alive interval
     const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -700,7 +699,7 @@ fn heartbeat_stream(client_id: Arc<RwLock<u64>>) -> impl Stream<Item = LeaseKeep
     stream! {
         loop {
             _ = ticker.tick().await;
-            let id = *client_id.read().await;
+            let id = client_id.load(std::sync::atomic::Ordering::Relaxed);
             if id == 0 {
                 debug!("grant a client id");
             } else {

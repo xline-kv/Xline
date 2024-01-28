@@ -554,18 +554,17 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
     /// Handle `lease_keep_alive` message
     pub(super) fn handle_lease_keep_alive(&self, client_id: u64) -> Option<u64> {
+        let mut lm_w = self.ctx.lm.write();
         if client_id == 0 {
-            return Some(self.ctx.lm.write().grant());
+            return Some(lm_w.grant());
         }
-        self.ctx.lm.map_write(|mut lm_w| {
-            if lm_w.check_alive(client_id) {
-                lm_w.renew(client_id);
-                None
-            } else {
-                lm_w.revoke(client_id);
-                Some(lm_w.grant())
-            }
-        })
+        if lm_w.check_alive(client_id) {
+            lm_w.renew(client_id);
+            None
+        } else {
+            lm_w.revoke(client_id);
+            Some(lm_w.grant())
+        }
     }
 
     /// Handle `append_entries`
