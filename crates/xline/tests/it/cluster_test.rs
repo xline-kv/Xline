@@ -34,21 +34,11 @@ async fn xline_remove_node() -> Result<(), Box<dyn Error>> {
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn xline_add_node() -> Result<(), Box<dyn Error>> {
-    if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", "curp=debug,xline=debug");
-    }
-    _ = tracing_subscriber::fmt()
-        .with_timer(tracing_subscriber::fmt::time::uptime())
-        .compact()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .try_init();
-
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;
     let client = Client::connect(cluster.all_client_addrs(), ClientOptions::default()).await?;
     let mut cluster_client = client.cluster_client();
     let kv_client = client.kv_client();
-
     _ = kv_client.put(PutRequest::new("key", "value")).await?;
     let new_node_peer_listener = TcpListener::bind("0.0.0.0:0").await?;
     let new_node_peer_urls = vec![format!("http://{}", new_node_peer_listener.local_addr()?)];
@@ -56,9 +46,6 @@ async fn xline_add_node() -> Result<(), Box<dyn Error>> {
     let new_node_client_urls = vec![format!("http://{}", new_node_client_listener.local_addr()?)];
     let add_req = MemberAddRequest::new(new_node_peer_urls.clone(), false);
     let add_res = cluster_client.member_add(add_req).await?;
-
-    println!("here finish");
-
     assert_eq!(add_res.members.len(), 4);
     cluster
         .run_node(new_node_client_listener, new_node_peer_listener)

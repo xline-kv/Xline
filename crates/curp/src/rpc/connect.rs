@@ -18,7 +18,7 @@ use tokio::sync::Mutex;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
 use tonic::transport::{Channel, Endpoint};
-use tracing::{debug, error, instrument};
+use tracing::{debug, error, info, instrument};
 #[cfg(madsim)]
 use utils::ClientTlsConfig;
 use utils::{build_endpoint, tracing::Inject};
@@ -504,6 +504,7 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
                 Ok(res) => res.into_inner().client_id,
             };
             // The only place to update the client id for follower
+            info!("client_id update to {new_id}");
             client_id.store(new_id, std::sync::atomic::Ordering::Relaxed);
         }
     }

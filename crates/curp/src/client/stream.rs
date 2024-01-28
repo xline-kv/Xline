@@ -25,7 +25,7 @@ impl StreamingConfig {
 #[derive(Debug)]
 pub(super) struct Streaming {
     /// Shared client state
-    state: Arc<State>,
+    pub(super) state: Arc<State>,
     /// Stream client config
     config: StreamingConfig,
 }
@@ -77,9 +77,6 @@ impl Streaming {
                         .await;
                     #[allow(clippy::wildcard_enum_match_arm)]
                     match err {
-                        CurpError::RpcTransport(_) => {
-                            debug!("got rpc transport error when keep heartbeat, retrying...");
-                        }
                         CurpError::Redirect(Redirect { leader_id, term }) => {
                             let _ig = self.state.check_and_update_leader(leader_id, term).await;
                         }
