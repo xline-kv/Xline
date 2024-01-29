@@ -25,7 +25,7 @@ use tokio::{fs, sync::mpsc::channel, task::JoinHandle};
 #[cfg(not(madsim))]
 use tonic::transport::server::Connected;
 use tonic::transport::{server::Router, Server};
-use tracing::{debug, error, warn};
+use tracing::{error, info, warn};
 use utils::{
     config::{
         AuthConfig, ClusterConfig, CompactConfig, EngineConfig, InitialClusterState, StorageConfig,
@@ -135,9 +135,9 @@ impl XlineServer {
             .into_iter()
             .flatten()
             .collect_vec();
-        debug!("name = {:?}", cluster_config.name());
-        debug!("server_addr = {server_addr:?}");
-        debug!("cluster_peers = {:?}", cluster_config.members());
+        info!("name = {:?}", cluster_config.name());
+        info!("server_addr = {server_addr:?}");
+        info!("cluster_peers = {:?}", cluster_config.members());
 
         let name = cluster_config.name().clone();
         let all_members = cluster_config.members().clone();
