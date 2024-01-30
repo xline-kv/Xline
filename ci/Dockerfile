@@ -28,7 +28,7 @@ RUN echo "=== Install rusty stuff 🦀️ ===" && \
     rustup component add rustfmt llvm-tools clippy && \
     rustup show -v && \
     curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash && \
-    cargo binstall -y --no-symlinks cargo-llvm-cov cargo-nextest cargo-hakari cargo-sort cargo-cache cargo-audit && \
+    cargo binstall -y --no-symlinks cargo-llvm-cov cargo-nextest cargo-hakari cargo-sort cargo-cache cargo-audit cargo-machete && \
     cargo install --locked sccache && \
     cargo cache --autoclean && \
     rm -rf "/root/.cargo/registry/index" && \

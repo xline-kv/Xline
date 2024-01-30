@@ -57,6 +57,10 @@ jobs:
       - name: Sort crates
         run: cargo sort --check --workspace
 
+      # TODO: trigger `Build Env` to release `ghcr.io/xline-kv/build-env:latest` when this PR is merged, then uncomment the step
+      # - name: Check dependencies
+      #   run: cargo machete --fix crates/
+
       - name: Workspace hack check
         run: cargo hakari generate --diff && cargo hakari manage-deps --dry-run && cargo hakari verify
 
