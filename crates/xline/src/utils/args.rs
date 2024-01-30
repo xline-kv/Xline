@@ -10,15 +10,17 @@ use utils::{
         default_compact_sleep_interval, default_compact_timeout, default_follower_timeout_ticks,
         default_gc_interval, default_heartbeat_interval, default_initial_retry_timeout,
         default_log_entries_cap, default_log_level, default_max_retry_timeout,
-        default_propose_timeout, default_quota, default_range_retry_timeout, default_retry_count,
-        default_rotation, default_rpc_timeout, default_server_wait_synced_timeout,
-        default_sync_victims_interval, default_use_backoff, default_watch_progress_notify_interval,
-        AuthConfig, AutoCompactConfig, ClientConfig, ClusterConfig, CompactConfig,
-        CurpConfigBuilder, EngineConfig, InitialClusterState, LevelConfig, LogConfig,
+        default_metrics_enable, default_metrics_path, default_metrics_port,
+        default_metrics_push_endpoint, default_metrics_push_protocol, default_propose_timeout,
+        default_quota, default_range_retry_timeout, default_retry_count, default_rotation,
+        default_rpc_timeout, default_server_wait_synced_timeout, default_sync_victims_interval,
+        default_use_backoff, default_watch_progress_notify_interval, AuthConfig, AutoCompactConfig,
+        ClientConfig, ClusterConfig, CompactConfig, CurpConfigBuilder, EngineConfig,
+        InitialClusterState, LevelConfig, LogConfig, MetricsConfig, MetricsPushProtocol,
         RotationConfig, ServerTimeout, StorageConfig, TlsConfig, TraceConfig, XlineServerConfig,
     },
-    parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_rotation, parse_state,
-    ConfigFileError,
+    parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_metrics_push_protocol,
+    parse_rotation, parse_state, ConfigFileError,
 };
 
 /// Xline server config path env name
@@ -29,6 +31,7 @@ const DEFAULT_XLINE_SERVER_CONFIG_PATH: &str = "/etc/xline_server.conf";
 /// Command line arguments
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
+#[allow(clippy::struct_excessive_bools)] // arguments
 pub struct ServerArgs {
     /// Node name
     #[clap(long)]
@@ -57,6 +60,24 @@ pub struct ServerArgs {
     /// Trace level of jaeger
     #[clap(long, value_parser = parse_log_level, default_value_t = default_log_level())]
     jaeger_level: LevelConfig,
+    /// Whether to enable metrics
+    #[clap(long, default_value_t = default_metrics_enable())]
+    metrics_enable: bool,
+    /// Metrics port, default to "9100"
+    #[clap(long, default_value_t = default_metrics_port())]
+    metrics_port: u16,
+    /// Metrics path, default to "/metrics"
+    #[clap(long, default_value_t = default_metrics_path())]
+    metrics_path: String,
+    /// Whether to enable metrics push mode
+    #[clap(long)]
+    metrics_push: bool,
+    /// Collector endpoint to collect metrics
+    #[clap(long, default_value_t = default_metrics_push_endpoint())]
+    metrics_push_endpoint: String,
+    /// Collector protocol to collect metrics
+    #[clap(long, value_parser = parse_metrics_push_protocol, default_value_t = default_metrics_push_protocol())]
+    metrics_push_protocol: MetricsPushProtocol,
     /// Log file path
     #[clap(long, default_value = "/var/log/xline")]
     log_file: PathBuf,
@@ -181,6 +202,7 @@ pub struct ServerArgs {
 #[allow(clippy::too_many_lines)] // will be refactored in #604
 impl From<ServerArgs> for XlineServerConfig {
     #[inline]
+    #[allow(clippy::too_many_lines)] // not bad
     fn from(args: ServerArgs) -> Self {
         let (engine, curp_engine) = match args.storage_engine.as_str() {
             "memory" => (EngineConfig::Memory, EngineConfig::Memory),
@@ -284,7 +306,15 @@ impl From<ServerArgs> for XlineServerConfig {
             args.client_cert_path,
             args.client_key_path,
         );
-        XlineServerConfig::new(cluster, storage, log, trace, auth, compact, tls)
+        let metrics = MetricsConfig::new(
+            args.metrics_enable,
+            args.metrics_port,
+            args.metrics_path,
+            args.metrics_push,
+            args.metrics_push_endpoint,
+            args.metrics_push_protocol,
+        );
+        XlineServerConfig::new(cluster, storage, log, trace, auth, compact, tls, metrics)
     }
 }
 

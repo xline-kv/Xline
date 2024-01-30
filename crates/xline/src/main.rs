@@ -148,7 +148,7 @@ use opentelemetry::global;
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use tracing::{debug, info};
 use xline::server::XlineServer;
-use xline::utils::{init_subscriber, parse_config};
+use xline::utils::{init_metrics, init_subscriber, parse_config};
 
 #[tokio::main]
 #[allow(clippy::arithmetic_side_effects)] // Introduced by tokio::select!
@@ -156,11 +156,10 @@ async fn main() -> Result<()> {
     global::set_text_map_propagator(TraceContextPropagator::new());
     let config = parse_config().await?;
 
-    let log_config = config.log();
-    let trace_config = config.trace();
     let cluster_config = config.cluster();
 
-    let _guard = init_subscriber(cluster_config.name(), log_config, trace_config)?;
+    let _guard = init_subscriber(cluster_config.name(), config.log(), config.trace())?;
+    init_metrics(config.metrics())?;
 
     let server = XlineServer::new(
         cluster_config.clone(),
@@ -185,5 +184,6 @@ async fn main() -> Result<()> {
     }
 
     global::shutdown_tracer_provider();
+    global::shutdown_meter_provider();
     Ok(())
 }

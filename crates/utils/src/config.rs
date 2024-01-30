@@ -30,6 +30,10 @@ pub struct XlineServerConfig {
     /// tls configuration object
     #[getset(get = "pub")]
     tls: TlsConfig,
+    /// Metrics config
+    #[getset(get = "pub")]
+    #[serde(default = "MetricsConfig::default")]
+    metrics: MetricsConfig,
 }
 
 /// Cluster Range type alias
@@ -959,10 +963,160 @@ impl TlsConfig {
     }
 }
 
+/// Xline metrics push protocol
+#[non_exhaustive]
+#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all(deserialize = "lowercase"))]
+pub enum MetricsPushProtocol {
+    /// HTTP protocol
+    HTTP,
+    /// GRPC protocol
+    #[default]
+    GRPC,
+}
+
+impl std::fmt::Display for MetricsPushProtocol {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            MetricsPushProtocol::HTTP => write!(f, "http"),
+            MetricsPushProtocol::GRPC => write!(f, "grpc"),
+        }
+    }
+}
+
+/// Metrics push protocol format
+pub mod protocol_format {
+    use serde::{self, Deserialize, Deserializer};
+
+    use super::MetricsPushProtocol;
+    use crate::parse_metrics_push_protocol;
+
+    /// deserializes a cluster duration
+    #[allow(single_use_lifetimes)]
+    pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<MetricsPushProtocol, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        parse_metrics_push_protocol(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Xline metrics configuration object
+#[allow(clippy::module_name_repetitions)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters)]
+pub struct MetricsConfig {
+    /// Enable or not
+    #[getset(get = "pub")]
+    #[serde(default = "default_metrics_enable")]
+    enable: bool,
+    /// The http port to expose
+    #[getset(get = "pub")]
+    #[serde(default = "default_metrics_port")]
+    port: u16,
+    /// The http path to expose
+    #[getset(get = "pub")]
+    #[serde(default = "default_metrics_path")]
+    path: String,
+    /// Enable push or not
+    #[getset(get = "pub")]
+    #[serde(default = "default_metrics_push")]
+    push: bool,
+    /// Push endpoint
+    #[getset(get = "pub")]
+    #[serde(default = "default_metrics_push_endpoint")]
+    push_endpoint: String,
+    /// Push protocol
+    #[getset(get = "pub")]
+    #[serde(with = "protocol_format", default = "default_metrics_push_protocol")]
+    push_protocol: MetricsPushProtocol,
+}
+
+impl MetricsConfig {
+    /// Create a new `MetricsConfig`
+    #[must_use]
+    #[inline]
+    pub fn new(
+        enable: bool,
+        port: u16,
+        path: String,
+        push: bool,
+        push_endpoint: String,
+        push_protocol: MetricsPushProtocol,
+    ) -> Self {
+        Self {
+            enable,
+            port,
+            path,
+            push,
+            push_endpoint,
+            push_protocol,
+        }
+    }
+}
+
+impl Default for MetricsConfig {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            enable: default_metrics_enable(),
+            port: default_metrics_port(),
+            path: default_metrics_path(),
+            push: default_metrics_push(),
+            push_endpoint: default_metrics_push_endpoint(),
+            push_protocol: default_metrics_push_protocol(),
+        }
+    }
+}
+
+/// Default metrics enable
+#[must_use]
+#[inline]
+pub const fn default_metrics_enable() -> bool {
+    true
+}
+
+/// Default metrics port
+#[must_use]
+#[inline]
+pub const fn default_metrics_port() -> u16 {
+    9100
+}
+
+/// Default metrics path
+#[must_use]
+#[inline]
+pub fn default_metrics_path() -> String {
+    "/metrics".to_owned()
+}
+
+/// Default metrics push option
+#[must_use]
+#[inline]
+pub fn default_metrics_push() -> bool {
+    false
+}
+
+/// Default metrics push protocol
+#[must_use]
+#[inline]
+pub fn default_metrics_push_protocol() -> MetricsPushProtocol {
+    MetricsPushProtocol::GRPC
+}
+
+/// Default metrics push endpoint
+#[must_use]
+#[inline]
+pub fn default_metrics_push_endpoint() -> String {
+    "http://127.0.0.1:4318".to_owned()
+}
+
 impl XlineServerConfig {
     /// Generates a new `XlineServerConfig` object
     #[must_use]
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         cluster: ClusterConfig,
         storage: StorageConfig,
@@ -971,6 +1125,7 @@ impl XlineServerConfig {
         auth: AuthConfig,
         compact: CompactConfig,
         tls: TlsConfig,
+        metrics: MetricsConfig,
     ) -> Self {
         Self {
             cluster,
@@ -980,6 +1135,7 @@ impl XlineServerConfig {
             auth,
             compact,
             tls,
+            metrics,
         }
     }
 }
@@ -988,7 +1144,6 @@ impl XlineServerConfig {
 mod tests {
     use super::*;
 
-    #[allow(clippy::unwrap_used)]
     #[allow(clippy::too_many_lines)] // just a testcase, not too bad
     #[test]
     fn test_xline_server_config_should_be_loaded() {
@@ -1049,7 +1204,16 @@ mod tests {
             [tls]
             server_cert_path = './cert.pem'
             server_key_path = './key.pem'
-            client_ca_cert_path = './ca.pem'"#,
+            client_ca_cert_path = './ca.pem'
+            
+            [metrics]
+            enable = true
+            port = 9100
+            path = "/metrics"
+            push = true
+            push_endpoint = 'http://some-endpoint.com:4396'
+            push_protocol = 'http'
+            "#,
         )
         .unwrap();
 
@@ -1147,9 +1311,20 @@ mod tests {
                 ..Default::default()
             }
         );
+
+        assert_eq!(
+            config.metrics,
+            MetricsConfig {
+                enable: true,
+                port: 9100,
+                path: "/metrics".to_owned(),
+                push: true,
+                push_endpoint: "http://some-endpoint.com:4396".to_owned(),
+                push_protocol: MetricsPushProtocol::HTTP,
+            },
+        );
     }
 
-    #[allow(clippy::unwrap_used)]
     #[test]
     fn test_xline_server_default_config_should_be_loaded() {
         let config: XlineServerConfig = toml::from_str(
@@ -1228,9 +1403,9 @@ mod tests {
         assert_eq!(config.compact, CompactConfig::default());
         assert_eq!(config.auth, AuthConfig::default());
         assert_eq!(config.tls, TlsConfig::default());
+        assert_eq!(config.metrics, MetricsConfig::default());
     }
 
-    #[allow(clippy::unwrap_used)]
     #[test]
     fn test_auto_revision_compactor_config_should_be_loaded() {
         let config: XlineServerConfig = toml::from_str(

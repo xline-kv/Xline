@@ -141,7 +141,20 @@
 #![allow(
     clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
 )]
-// When we use rust version 1.65 or later, refactor this with GAT
+#![cfg_attr(
+    test,
+    allow(
+        clippy::indexing_slicing,
+        unused_results,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::as_conversions,
+        clippy::shadow_unrelated,
+        clippy::arithmetic_side_effects,
+        clippy::let_underscore_untyped,
+        clippy::too_many_lines,
+    )
+)]
 
 use std::str::FromStr;
 
@@ -165,6 +178,8 @@ pub struct ServerTlsConfig;
 
 /// configuration
 pub mod config;
+/// utils for metrics
+pub mod metrics;
 /// utils of `parking_lot` lock
 #[cfg(feature = "parking_lot")]
 pub mod parking_lot_lock;
