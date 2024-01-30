@@ -134,6 +134,9 @@ pub(crate) async fn compact_bg_task<DB>(
             }
             sleep(interval).await;
         }
+        if let Err(e) = kv_store.compact_finished(revision) {
+            panic!("failed to set finished compact revision {revision:?} due to {e}");
+        }
         if let Some(notifier) = listener {
             notifier.notify(usize::MAX);
         }
