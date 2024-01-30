@@ -23,13 +23,11 @@ use xlineapi::{
 
 use super::auth_server::get_token;
 use crate::{
-    id_gen::IdGenerator,
-    rpc::{
+    id_gen::IdGenerator, metrics, rpc::{
         Lease, LeaseClient, LeaseGrantRequest, LeaseGrantResponse, LeaseKeepAliveRequest,
         LeaseKeepAliveResponse, LeaseLeasesRequest, LeaseLeasesResponse, LeaseRevokeRequest,
         LeaseRevokeResponse, LeaseTimeToLiveRequest, LeaseTimeToLiveResponse, RequestWrapper,
-    },
-    storage::{storage_api::StorageApi, AuthStore, LeaseStore},
+    }, storage::{storage_api::StorageApi, AuthStore, LeaseStore}
 };
 
 /// Default Lease Request Time
@@ -308,6 +306,7 @@ where
             if let Some(header) = res.header.as_mut() {
                 header.revision = revision;
             }
+            metrics::get().lease_expired_total.add(1, &[]);
         }
         Ok(tonic::Response::new(res))
     }

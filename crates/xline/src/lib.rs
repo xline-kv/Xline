@@ -167,6 +167,8 @@ mod revision_number;
 mod rpc {
     pub(crate) use xlineapi::*;
 }
+/// Xline metrics
+pub mod metrics;
 /// restore module, only for test
 pub mod restore;
 /// Revision check
