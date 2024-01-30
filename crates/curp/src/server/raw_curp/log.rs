@@ -18,6 +18,7 @@ use crate::{
     cmd::Command,
     log_entry::{EntryData, LogEntry},
     rpc::ProposeId,
+    server::metrics,
     snapshot::SnapshotMeta,
     LogIndex,
 };
@@ -65,13 +66,13 @@ impl<C: Command> FallbackContext<C> {
         origin_entry: Arc<LogEntry<C>>,
         addrs: Vec<String>,
         name: String,
-        is_leader: bool,
+        is_learner: bool,
     ) -> Self {
         Self {
             origin_entry,
             addrs,
             name,
-            is_learner: is_leader,
+            is_learner,
         }
     }
 }
@@ -429,8 +430,15 @@ impl<C: Command> Log<C> {
             self.commit_index
         );
         self.commit_index = commit_index;
-        self.fallback_contexts
-            .retain(|&idx, _| idx > self.commit_index);
+        self.fallback_contexts.retain(|&idx, c| {
+            if idx > self.commit_index {
+                return true;
+            }
+            if c.is_learner {
+                metrics::get().learner_promote_succeed.add(1, &[]);
+            }
+            false
+        });
     }
 }
 

@@ -401,7 +401,12 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
         let res: ProposeResponse<C> = if use_fast_path {
             match futures::future::select(fast_round, slow_round).await {
                 futures::future::Either::Left((fast_result, slow_round)) => match fast_result {
-                    Ok(er) => er.map(|e| (e, None)),
+                    Ok(er) => er.map(|e| {
+                        #[cfg(feature = "client-metrics")]
+                        super::metrics::get().client_fast_path_count.add(1, &[]);
+
+                        (e, None)
+                    }),
                     Err(fast_err) => {
                         if fast_err.should_abort_slow_round() {
                             return Err(fast_err);
@@ -415,11 +420,26 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
                                 }))
                             }
                         };
-                        sr.map(|(asr, er)| (er, Some(asr)))
+                        sr.map(|(asr, er)| {
+                            #[cfg(feature = "client-metrics")]
+                            {
+                                super::metrics::get().client_slow_path_count.add(1, &[]);
+                                super::metrics::get()
+                                    .client_fast_path_fallback_slow_path_count
+                                    .add(1, &[]);
+                            }
+
+                            (er, Some(asr))
+                        })
                     }
                 },
                 futures::future::Either::Right((slow_result, fast_round)) => match slow_result {
-                    Ok(er) => er.map(|(asr, e)| (e, Some(asr))),
+                    Ok(er) => er.map(|(asr, e)| {
+                        #[cfg(feature = "client-metrics")]
+                        super::metrics::get().client_slow_path_count.add(1, &[]);
+
+                        (e, Some(asr))
+                    }),
                     Err(slow_err) => {
                         if slow_err.should_abort_fast_round() {
                             return Err(slow_err);
@@ -433,13 +453,23 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
                                 }))
                             }
                         };
-                        fr.map(|er| (er, None))
+                        fr.map(|er| {
+                            #[cfg(feature = "client-metrics")]
+                            super::metrics::get().client_fast_path_count.add(1, &[]);
+
+                            (er, None)
+                        })
                     }
                 },
             }
         } else {
             match futures::future::join(fast_round, slow_round).await {
-                (_, Ok(sr)) => sr.map(|(asr, er)| (er, Some(asr))),
+                (_, Ok(sr)) => sr.map(|(asr, er)| {
+                    #[cfg(feature = "client-metrics")]
+                    super::metrics::get().client_slow_path_count.add(1, &[]);
+
+                    (er, Some(asr))
+                }),
                 (Ok(_), Err(err)) => return Err(err),
                 (Err(fast_err), Err(slow_err)) => {
                     return Err(std::cmp::max_by_key(fast_err, slow_err, |err| {

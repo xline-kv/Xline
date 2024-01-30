@@ -1,4 +1,9 @@
-use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    fmt::Debug,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use clippy_utilities::{NumericCast, OverflowArithmetic};
 use engine::{SnapshotAllocator, SnapshotApi};
@@ -46,7 +51,7 @@ use crate::{
         TryBecomeLeaderNowResponse, VoteRequest, VoteResponse, WaitSyncedRequest,
         WaitSyncedResponse,
     },
-    server::{cmd_worker::CEEventTxApi, raw_curp::SyncAction, storage::db::DB},
+    server::{cmd_worker::CEEventTxApi, metrics, raw_curp::SyncAction, storage::db::DB},
     snapshot::{Snapshot, SnapshotMeta},
 };
 
@@ -261,6 +266,8 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         &self,
         req_stream: impl Stream<Item = Result<InstallSnapshotRequest, E>>,
     ) -> Result<InstallSnapshotResponse, CurpError> {
+        metrics::get().apply_snapshot_in_progress.observe(1, &[]);
+        let start = Instant::now();
         pin_mut!(req_stream);
         let mut snapshot = self
             .snapshot_allocator
@@ -309,6 +316,10 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                             "failed to reset the command executor by snapshot, {err}"
                         ))
                     })?;
+                metrics::get().apply_snapshot_in_progress.observe(0, &[]);
+                metrics::get()
+                    .snapshot_install_total_duration_seconds
+                    .record(start.elapsed().as_secs(), &[]);
                 return Ok(InstallSnapshotResponse::new(self.curp.term()));
             }
         }
@@ -648,6 +659,8 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                 .map_err(|e| CurpError::internal(format!("build raw curp failed, {e}")))?,
         );
 
+        metrics::Metrics::register_callback(Arc::clone(&curp))?;
+
         start_cmd_workers(cmd_executor, Arc::clone(&curp), task_rx, done_tx);
 
         task_manager.spawn(TaskName::GcCmdBoard, |n| {
@@ -927,6 +940,9 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                             }
                         }
                         Err(err) => {
+                            if is_empty {
+                                metrics::get().heartbeat_send_failures.add(1, &[]);
+                            }
                             warn!("ae to {} failed, {err:?}", connect.id());
                             if is_shutdown_state {
                                 *ae_fail_count = ae_fail_count.overflow_add(1);

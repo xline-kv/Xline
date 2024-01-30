@@ -611,6 +611,7 @@ dependencies = [
  "madsim-tonic-build",
  "mockall",
  "once_cell",
+ "opentelemetry",
  "parking_lot",
  "priority-queue",
  "prost 0.12.3",
