@@ -9,7 +9,7 @@ use crate::rocksdb_engine::{RocksEngine, RocksSnapshot};
 use crate::{
     error::EngineError,
     memory_engine::{MemoryEngine, MemorySnapshot},
-    SnapshotApi, StorageEngine, WriteOperation,
+    metrics, SnapshotApi, StorageEngine, WriteOperation,
 };
 
 #[derive(Debug)]
@@ -30,7 +30,7 @@ pub enum Engine {
     /// Memory engine
     Memory(MemoryEngine),
     /// Rocks engine
-    Rocks(RocksEngine),
+    Rocks(metrics::Layer<RocksEngine>),
 }
 
 impl Engine {
@@ -41,7 +41,9 @@ impl Engine {
     pub fn new(engine_type: EngineType, tables: &[&'static str]) -> Result<Self, EngineError> {
         match engine_type {
             EngineType::Memory => Ok(Engine::Memory(MemoryEngine::new(tables))),
-            EngineType::Rocks(path) => Ok(Engine::Rocks(RocksEngine::new(path, tables)?)),
+            EngineType::Rocks(path) => Ok(Engine::Rocks(metrics::Layer::new(RocksEngine::new(
+                path, tables,
+            )?))),
         }
     }
 }
@@ -141,7 +143,7 @@ pub enum Snapshot {
     /// Memory snapshot
     Memory(MemorySnapshot),
     /// Rocks snapshot
-    Rocks(RocksSnapshot),
+    Rocks(metrics::Layer<RocksSnapshot>),
 }
 
 impl Snapshot {
@@ -152,7 +154,9 @@ impl Snapshot {
     pub fn new_for_receiving(engine_type: EngineType) -> Result<Self, EngineError> {
         match engine_type {
             EngineType::Memory => Ok(Self::Memory(MemorySnapshot::new(Vec::new()))),
-            EngineType::Rocks(path) => Ok(Self::Rocks(RocksSnapshot::new_for_receiving(path)?)),
+            EngineType::Rocks(path) => Ok(Self::Rocks(metrics::Layer::new(
+                RocksSnapshot::new_for_receiving(path)?,
+            ))),
         }
     }
 }
@@ -348,7 +352,9 @@ mod test {
         ];
         let received_snapshots = vec![
             Snapshot::Memory(MemorySnapshot::new(Vec::new())),
-            Snapshot::Rocks(RocksSnapshot::new_for_receiving(snapshot_bak_dir).unwrap()),
+            Snapshot::Rocks(metrics::Layer::new(
+                RocksSnapshot::new_for_receiving(snapshot_bak_dir).unwrap(),
+            )),
         ];
 
         for ((engine, mut received_snapshot), recover_engine) in engines
