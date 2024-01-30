@@ -580,7 +580,7 @@ impl SnapshotApi for RocksSnapshot {
             self.write(&mut buf).await?;
             if prev_rem == buf.remaining() {
                 let written_size = buf_size.overflow_sub(buf.remaining());
-                let size = self.size().numeric_cast();
+                let size: usize = self.size().numeric_cast();
                 if written_size == size {
                     break;
                 }

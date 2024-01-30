@@ -847,12 +847,14 @@ dependencies = [
  "bytes",
  "clippy-utilities 0.2.0",
  "madsim-tokio",
+ "opentelemetry",
  "parking_lot",
  "rocksdb",
  "serde",
  "test-macros",
  "thiserror",
  "tokio-util",
+ "utils",
  "workspace-hack",
 ]
 
