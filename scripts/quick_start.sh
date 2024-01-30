@@ -18,6 +18,7 @@ stop_all() {
         fi
     done
     docker network rm xline_net >/dev/null 2>&1
+    docker stop "prometheus"
     sleep 1
     log::info stopped
 }
@@ -75,12 +76,21 @@ run_container() {
     log::info container started
 }
 
+# run prometheus
+run_prometheus() {
+    docker run -d -it --rm --name=prometheus --net=xline_net -p 9090:9090 \
+        --ip=${1} --cap-add=NET_ADMIN -v ${DIR}/prometheus.yml:/etc/prometheus/prometheus.yml \
+        prom/prometheus
+}
+
 if [ -z "$1" ]; then
     stop_all
     docker network create --subnet=172.20.0.0/24 xline_net >/dev/null 2>&1
     log::warn "A Docker network named 'xline_net' is created for communication among various xline nodes. You can use the command 'docker network rm xline_net' to remove it after use."
     run_container 3
     run_cluster
+    run_prometheus "172.20.0.6"
+    echo "Prometheus starts on http://172.20.0.6:9090/graph and http://127.0.0.1:9090/graph"
     exit 0
 elif [ "$1" == "stop" ]; then
     stop_all
