@@ -56,3 +56,10 @@ repos:
         language: rust
         files: Cargo\.(toml|lock)
         pass_filenames: false
+      - id: cargo machete
+        name: Check if all dependencies are used
+        description: Ensure no unused dependencies in /crates increase compiling time
+        entry: bash -c 'cargo machete --fix crates/'
+        language: rust
+        files: Cargo\.toml
+        pass_filenames: false
