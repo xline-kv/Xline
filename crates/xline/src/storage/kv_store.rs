@@ -18,6 +18,7 @@ use xlineapi::{
 };
 
 use super::{
+    db::SCHEDULED_COMPACT_REVISION,
     index::{Index, IndexOperate},
     lease_store::LeaseCollection,
     revision::{KeyRevision, Revision},
@@ -33,7 +34,7 @@ use crate::{
         PutResponse, RangeRequest, RangeResponse, Request, RequestWithToken, RequestWrapper,
         ResponseWrapper, SortOrder, SortTarget, TargetUnion, TxnRequest, TxnResponse,
     },
-    storage::db::{WriteOp, COMPACT_REVISION},
+    storage::db::{WriteOp, FINISHED_COMPACT_REVISION},
 };
 
 /// KV store
@@ -238,24 +239,44 @@ where
         for (key, lease_id) in key_to_lease {
             self.attach(lease_id, key)?;
         }
-
-        if let Some(revision_bytes) = self.inner.db.get_value(META_TABLE, COMPACT_REVISION)? {
-            let compacted_revision =
-                i64::from_le_bytes(revision_bytes.try_into().map_err(|e| {
-                    ExecuteError::DbError(format!(
-                        "cannot decode compacted revision from META_TABLE: {e:?}"
-                    ))
-                })?);
+        if let Some(finished_rev) = self.get_compact_revision(FINISHED_COMPACT_REVISION)? {
             assert!(
-                compacted_revision >= -1 && compacted_revision <= current_rev,
-                "compacted revision corruption, which ({compacted_revision}) must belong to the range [-1, {current_rev}]"
+                finished_rev >= -1 && finished_rev <= current_rev,
+                "compacted revision corruption, which ({finished_rev}) must belong to the range [-1, {current_rev}]"
             );
-            self.update_compacted_revision(compacted_revision);
-            if let Err(e) = self.compact_task_tx.send((compacted_revision, None)).await {
-                panic!("the compactor exited unexpectedly: {e:?}");
+            self.update_compacted_revision(finished_rev);
+        }
+        if let Some(scheduled_rev) = self.get_compact_revision(SCHEDULED_COMPACT_REVISION)? {
+            if scheduled_rev > self.compacted_revision() {
+                let event = Arc::new(event_listener::Event::new());
+                let listener = event.listen();
+                if let Err(e) = self
+                    .compact_task_tx
+                    .send((scheduled_rev, Some(event)))
+                    .await
+                {
+                    panic!("the compactor exited unexpectedly: {e:?}");
+                }
+                listener.await;
             }
         }
         Ok(())
+    }
+
+    /// Get compact revision from db
+    fn get_compact_revision(&self, revision_key: &str) -> Result<Option<i64>, ExecuteError> {
+        let Some(revision_bytes)=  self.inner
+            .db
+            .get_value(META_TABLE, revision_key)?
+        else {
+            return  Ok(None);
+        };
+        let bytes = revision_bytes.try_into().map_err(|e| {
+            ExecuteError::DbError(format!(
+                "cannot decode compacted revision from META_TABLE: {e:?}"
+            ))
+        })?;
+        Ok(Some(i64::from_le_bytes(bytes)))
     }
 }
 
@@ -474,6 +495,14 @@ where
             .iter()
             .for_each(|rev| ops.push(WriteOp::DeleteKeyValue(rev.as_ref())));
         _ = self.inner.db.flush_ops(ops)?;
+        Ok(())
+    }
+
+    /// Compact kv storage
+    pub(crate) fn compact_finished(&self, revision: i64) -> Result<(), ExecuteError> {
+        let ops = vec![WriteOp::PutFinishedCompactRevision(revision)];
+        _ = self.inner.db.flush_ops(ops)?;
+        self.update_compacted_revision(revision);
         Ok(())
     }
 
@@ -700,23 +729,20 @@ where
         _revision: i64,
     ) -> Result<(Vec<WriteOp>, Vec<Event>), ExecuteError> {
         let revision = req.revision;
-        let ops = vec![WriteOp::PutCompactRevision(revision)];
+        let ops = vec![WriteOp::PutScheduledCompactRevision(revision)];
         // TODO: Remove the physical process logic here. It's better to move into the KvServer
-        #[allow(clippy::collapsible_else_if)]
-        if req.physical {
+        let (event, listener) = if req.physical {
             let event = Arc::new(event_listener::Event::new());
-            if let Err(e) = self
-                .compact_task_tx
-                .send((revision, Some(Arc::clone(&event))))
-                .await
-            {
-                panic!("the compactor exited unexpectedly: {e:?}");
-            }
-            event.listen().await;
+            let listener = event.listen();
+            (Some(event), Some(listener))
         } else {
-            if let Err(e) = self.compact_task_tx.send((revision, None)).await {
-                panic!("the compactor exited unexpectedly: {e:?}");
-            }
+            (None, None)
+        };
+        if let Err(e) = self.compact_task_tx.send((revision, event)).await {
+            panic!("the compactor exited unexpectedly: {e:?}");
+        }
+        if let Some(listener) = listener {
+            listener.await;
         }
         Ok((ops, Vec::new()))
     }
@@ -1155,7 +1181,7 @@ mod test {
     #[abort_on_panic]
     async fn test_recover() -> Result<(), ExecuteError> {
         let db = DB::open(&EngineConfig::Memory)?;
-        let ops = vec![WriteOp::PutCompactRevision(8)];
+        let ops = vec![WriteOp::PutScheduledCompactRevision(8)];
         db.flush_ops(ops)?;
         let (store, _rev_gen) = init_store(Arc::clone(&db)).await?;
         assert_eq!(store.inner.index.get_from_rev(b"z", b"", 5).len(), 3);

@@ -22,8 +22,10 @@ use crate::{
     storage::Revision,
 };
 
-/// Key of compacted revision
-pub(crate) const COMPACT_REVISION: &str = "compact_revision";
+/// Key of finished compact revision
+pub(crate) const FINISHED_COMPACT_REVISION: &str = "finished_compact_revision";
+/// Key of scheduled compact revision
+pub(crate) const SCHEDULED_COMPACT_REVISION: &str = "scheduled_compact_revision";
 
 /// Database to store revision to kv mapping
 #[derive(Debug)]
@@ -49,6 +51,34 @@ impl DB {
         Ok(Arc::new(Self {
             engine: Arc::new(engine),
         }))
+    }
+
+    /// Get del lease key buffer
+    #[inline]
+    fn get_del_lease_key_buffer(ops: &[WriteOp]) -> HashMap<i64, Vec<u8>> {
+        ops.iter()
+            .filter_map(|op| {
+                if let WriteOp::DeleteLease(lease_id) = *op {
+                    Some((lease_id, lease_id.encode_to_vec()))
+                } else {
+                    None
+                }
+            })
+            .collect::<HashMap<_, _>>()
+    }
+
+    /// get del alarm buffer
+    #[inline]
+    fn get_del_alarm_buffer(ops: &[WriteOp]) -> Vec<u8> {
+        ops.iter()
+            .find_map(|op| {
+                if let WriteOp::DeleteAlarm(ref key) = *op {
+                    Some(key.encode_to_vec())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default()
     }
 }
 #[async_trait::async_trait]
@@ -118,26 +148,8 @@ impl StorageApi for DB {
     fn flush_ops(&self, ops: Vec<WriteOp>) -> Result<Vec<(Vec<u8>, KeyRevision)>, ExecuteError> {
         let mut wr_ops = Vec::new();
         let mut revs = Vec::new();
-        let del_lease_key_buffer = ops
-            .iter()
-            .filter_map(|op| {
-                if let WriteOp::DeleteLease(lease_id) = *op {
-                    Some((lease_id, lease_id.encode_to_vec()))
-                } else {
-                    None
-                }
-            })
-            .collect::<HashMap<_, _>>();
-        let del_alarm_buffer = ops
-            .iter()
-            .find_map(|op| {
-                if let WriteOp::DeleteAlarm(ref key) = *op {
-                    Some(key.encode_to_vec())
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_default();
+        let del_lease_key_buffer = Self::get_del_lease_key_buffer(&ops);
+        let del_alarm_buffer = Self::get_del_alarm_buffer(&ops);
         for op in ops {
             let wop = match op {
                 WriteOp::PutKeyValue(rev, value) => {
@@ -163,9 +175,14 @@ impl StorageApi for DB {
                     lease.id.encode_to_vec(),
                     lease.encode_to_vec(),
                 ),
-                WriteOp::PutCompactRevision(rev) => WriteOperation::new_put(
+                WriteOp::PutFinishedCompactRevision(rev) => WriteOperation::new_put(
                     META_TABLE,
-                    COMPACT_REVISION.as_bytes().to_vec(),
+                    FINISHED_COMPACT_REVISION.as_bytes().to_vec(),
+                    rev.to_le_bytes().to_vec(),
+                ),
+                WriteOp::PutScheduledCompactRevision(rev) => WriteOperation::new_put(
+                    META_TABLE,
+                    SCHEDULED_COMPACT_REVISION.as_bytes().to_vec(),
                     rev.to_le_bytes().to_vec(),
                 ),
                 WriteOp::DeleteKeyValue(rev) => WriteOperation::new_delete(KV_TABLE, rev),
@@ -251,8 +268,10 @@ pub enum WriteOp<'a> {
     PutAppliedIndex(u64),
     /// Put a lease to lease table
     PutLease(PbLease),
-    /// Put a compacted revision into meta table
-    PutCompactRevision(i64),
+    /// Put a finished compact revision into meta table
+    PutFinishedCompactRevision(i64),
+    /// Put a scheduled compact revision into meta table
+    PutScheduledCompactRevision(i64),
     /// Delete a key-value pair from kv table
     DeleteKeyValue(&'a [u8]),
     /// Delete a lease from lease table
