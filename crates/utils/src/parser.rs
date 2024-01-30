@@ -3,7 +3,9 @@ use std::{collections::HashMap, time::Duration};
 use clippy_utilities::OverflowArithmetic;
 use thiserror::Error;
 
-use crate::config::{ClusterRange, InitialClusterState, LevelConfig, RotationConfig};
+use crate::config::{
+    ClusterRange, InitialClusterState, LevelConfig, MetricsPushProtocol, RotationConfig,
+};
 
 /// seconds per minute
 const SECS_PER_MINUTE: u64 = 60;
@@ -229,11 +231,24 @@ pub fn parse_batch_bytes(s: &str) -> Result<u64, ConfigParseError> {
     }
 }
 
+/// Get the metrics push protocol
+/// # Errors
+/// Return error when parsing the given string to `MetricsPushProtocol` failed
+#[inline]
+pub fn parse_metrics_push_protocol(s: &str) -> Result<MetricsPushProtocol, ConfigParseError> {
+    match s {
+        "http" => Ok(MetricsPushProtocol::HTTP),
+        "grpc" => Ok(MetricsPushProtocol::GRPC),
+        _ => Err(ConfigParseError::InvalidValue(format!(
+            "the metrics push protocol should be one of 'http' or 'grpc' ({s})"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
 
-    #[allow(clippy::unwrap_used)]
     #[test]
     fn test_parse_duration() {
         assert_eq!(parse_duration("5s").unwrap(), Duration::from_secs(5));
@@ -259,7 +274,6 @@ mod test {
         }
     }
 
-    #[allow(clippy::unwrap_used)]
     #[test]
     fn test_parse_range() {
         assert_eq!(parse_range("1000..2000").unwrap(), 1000..2000);
@@ -310,7 +324,6 @@ mod test {
         assert!(parse_members(s8).is_err());
     }
 
-    #[allow(clippy::unwrap_used)]
     #[test]
     fn test_parse_log_level() {
         assert_eq!(parse_log_level("trace").unwrap(), LevelConfig::TRACE);
@@ -322,7 +335,6 @@ mod test {
         assert!(res.is_err());
     }
 
-    #[allow(clippy::unwrap_used)]
     #[test]
     fn test_parse_rotation() {
         assert_eq!(parse_rotation("daily").unwrap(), RotationConfig::Daily);
@@ -332,7 +344,6 @@ mod test {
         assert!(res.is_err());
     }
 
-    #[allow(clippy::unwrap_used)]
     #[test]
     fn test_parse_batch_size() {
         assert_eq!(parse_batch_bytes("10kb").unwrap(), 10 * 1024);
@@ -341,5 +352,18 @@ mod test {
         assert!(parse_batch_bytes("10Gb").is_err());
         assert!(parse_batch_bytes("kb").is_err());
         assert!(parse_batch_bytes("MB").is_err());
+    }
+
+    #[test]
+    fn test_parse_metrics_push_protocol() {
+        assert_eq!(
+            parse_metrics_push_protocol("http").unwrap(),
+            MetricsPushProtocol::HTTP
+        );
+        assert_eq!(
+            parse_metrics_push_protocol("grpc").unwrap(),
+            MetricsPushProtocol::GRPC
+        );
+        assert!(parse_metrics_push_protocol("thrift").is_err());
     }
 }
