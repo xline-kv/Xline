@@ -164,6 +164,9 @@ where
                 }
             }
 
+            #[cfg(feature = "client-metrics")]
+            super::metrics::get().client_retry_count.add(1, &[]);
+
             warn!(
                 "got error: {err:?}, retry on {} seconds later",
                 delay.as_secs_f32()

@@ -23,11 +23,14 @@ use xlineapi::{
 
 use super::auth_server::get_token;
 use crate::{
-    id_gen::IdGenerator, metrics, rpc::{
+    id_gen::IdGenerator,
+    metrics,
+    rpc::{
         Lease, LeaseClient, LeaseGrantRequest, LeaseGrantResponse, LeaseKeepAliveRequest,
         LeaseKeepAliveResponse, LeaseLeasesRequest, LeaseLeasesResponse, LeaseRevokeRequest,
         LeaseRevokeResponse, LeaseTimeToLiveRequest, LeaseTimeToLiveResponse, RequestWrapper,
-    }, storage::{storage_api::StorageApi, AuthStore, LeaseStore}
+    },
+    storage::{storage_api::StorageApi, AuthStore, LeaseStore},
 };
 
 /// Default Lease Request Time

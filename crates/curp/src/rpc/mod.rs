@@ -48,6 +48,10 @@ pub(crate) use self::proto::{
 };
 use crate::{cmd::Command, log_entry::LogEntry, members::ServerId, LogIndex};
 
+/// Metrics
+#[cfg(feature = "client-metrics")]
+mod metrics;
+
 /// Rpc connect
 pub(crate) mod connect;
 pub(crate) use connect::{connect, connects, inner_connects};

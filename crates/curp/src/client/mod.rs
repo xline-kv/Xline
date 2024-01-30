@@ -1,6 +1,10 @@
 //! CURP client
 //! The Curp client should be used to access the Curp service cluster, instead of using direct RPC.
 
+/// Metrics layer
+#[cfg(feature = "client-metrics")]
+mod metrics;
+
 /// Unary rpc client
 mod unary;
 

@@ -21,6 +21,11 @@ impl Snapshot {
     pub(crate) fn into_inner(self) -> EngineSnapshot {
         self.inner
     }
+
+    /// Get the inner snapshot ref
+    pub(crate) fn inner(&self) -> &EngineSnapshot {
+        &self.inner
+    }
 }
 
 /// Metadata for snapshot

@@ -50,6 +50,9 @@ mod storage;
 /// Lease Manager
 mod lease_manager;
 
+/// Curp metrics
+mod metrics;
+
 /// The Rpc Server to handle rpc requests
 /// This Wrapper is introduced due to the `MadSim` rpc lib
 #[derive(Debug)]

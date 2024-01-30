@@ -328,6 +328,44 @@ impl<C> Connect<C> {
         *old = addrs;
         Ok(())
     }
+
+    /// Before RPC
+    #[cfg(feature = "client-metrics")]
+    fn before_rpc<Req>(&self) -> std::time::Instant {
+        super::metrics::get().peer_sent_bytes_total.add(
+            std::mem::size_of::<Req>().max(1).numeric_cast(),
+            &[opentelemetry::KeyValue::new("to", self.id.to_string())],
+        );
+        std::time::Instant::now()
+    }
+
+    /// Before RPC with size
+    #[cfg(feature = "client-metrics")]
+    fn before_rpc_with_size(&self, size: u64) -> std::time::Instant {
+        super::metrics::get().peer_sent_bytes_total.add(
+            size,
+            &[opentelemetry::KeyValue::new("to", self.id.to_string())],
+        );
+        std::time::Instant::now()
+    }
+
+    /// After RPC
+    #[cfg(feature = "client-metrics")]
+    fn after_rpc<R>(&self, start_at: std::time::Instant, res: &Result<R, tonic::Status>) {
+        super::metrics::get().peer_round_trip_time_seconds.record(
+            start_at.elapsed().as_secs(),
+            &[opentelemetry::KeyValue::new("to", self.id.to_string())],
+        );
+        if let Err(err) = res.as_ref() {
+            super::metrics::get().peer_sent_failures_total.add(
+                1,
+                &[
+                    opentelemetry::KeyValue::new("to", self.id.to_string()),
+                    opentelemetry::KeyValue::new("reason", err.message().to_owned()),
+                ],
+            );
+        }
+    }
 }
 
 #[async_trait]
@@ -462,6 +500,7 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
     }
 }
 
+#[allow(clippy::let_and_return)] // for metrics
 #[async_trait]
 impl InnerConnectApi for Connect<InnerProtocolClient<Channel>> {
     /// Get server id
@@ -480,10 +519,18 @@ impl InnerConnectApi for Connect<InnerProtocolClient<Channel>> {
         request: AppendEntriesRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<AppendEntriesResponse>, tonic::Status> {
+        #[cfg(feature = "client-metrics")]
+        let start_at = self.before_rpc::<AppendEntriesRequest>();
+
         let mut client = self.rpc_connect.clone();
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
-        client.append_entries(req).await
+        let result = client.append_entries(req).await;
+
+        #[cfg(feature = "client-metrics")]
+        self.after_rpc(start_at, &result);
+
+        result
     }
 
     /// Send `VoteRequest`
@@ -492,10 +539,18 @@ impl InnerConnectApi for Connect<InnerProtocolClient<Channel>> {
         request: VoteRequest,
         timeout: Duration,
     ) -> Result<tonic::Response<VoteResponse>, tonic::Status> {
+        #[cfg(feature = "client-metrics")]
+        let start_at = self.before_rpc::<VoteRequest>();
+
         let mut client = self.rpc_connect.clone();
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
-        client.vote(req).await
+        let result = client.vote(req).await;
+
+        #[cfg(feature = "client-metrics")]
+        self.after_rpc(start_at, &result);
+
+        result
     }
 
     async fn install_snapshot(
@@ -504,24 +559,46 @@ impl InnerConnectApi for Connect<InnerProtocolClient<Channel>> {
         leader_id: ServerId,
         snapshot: Snapshot,
     ) -> Result<tonic::Response<InstallSnapshotResponse>, tonic::Status> {
+        #[cfg(feature = "client-metrics")]
+        let start_at = self.before_rpc_with_size(snapshot.inner().size());
+
         let stream = install_snapshot_stream(term, leader_id, snapshot);
         let mut client = self.rpc_connect.clone();
-        client.install_snapshot(stream).await
+        let result = client.install_snapshot(stream).await;
+
+        #[cfg(feature = "client-metrics")]
+        self.after_rpc(start_at, &result);
+
+        result
     }
 
     async fn trigger_shutdown(&self) -> Result<(), tonic::Status> {
+        #[cfg(feature = "client-metrics")]
+        let start_at = self.before_rpc::<TriggerShutdownRequest>();
+
         let mut client = self.rpc_connect.clone();
         let req = tonic::Request::new(TriggerShutdownRequest::default());
-        _ = client.trigger_shutdown(req).await?;
-        Ok(())
+        let result = client.trigger_shutdown(req).await;
+
+        #[cfg(feature = "client-metrics")]
+        self.after_rpc(start_at, &result);
+
+        result.map(|_| ())
     }
 
     async fn try_become_leader_now(&self, timeout: Duration) -> Result<(), tonic::Status> {
+        #[cfg(feature = "client-metrics")]
+        let start_at = self.before_rpc::<TryBecomeLeaderNowRequest>();
+
         let mut client = self.rpc_connect.clone();
         let mut req = tonic::Request::new(TryBecomeLeaderNowRequest::default());
         req.set_timeout(timeout);
-        _ = client.try_become_leader_now(req).await?;
-        Ok(())
+        let result = client.try_become_leader_now(req).await;
+
+        #[cfg(feature = "client-metrics")]
+        self.after_rpc(start_at, &result);
+
+        result.map(|_| ())
     }
 }
 
