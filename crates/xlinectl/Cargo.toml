@@ -20,6 +20,6 @@ shlex = "1.3.0"
 tokio = { version = "1", features = ["rt"] }
 tonic = "0.10.0"
 utils = { path = "../utils" }
-workspace-hack = { version = "0.1", path = "../workspace-hack" }
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 xline-client = { path = "../xline-client" }
 xlineapi = { path = "../xlineapi" }
