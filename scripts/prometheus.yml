@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: "xline"
+    static_configs:
+      - targets:
+          [
+            "172.20.0.2:2379",
+            "172.20.0.3:2379",
+            "172.20.0.4:2379",
+            "172.20.0.5:2379",
+          ]
+    metrics_path: /metrics
+    scheme: http
