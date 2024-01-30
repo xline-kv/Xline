@@ -1,6 +1,6 @@
 use anyhow::Result;
-use opentelemetry::runtime::Tokio;
 use opentelemetry_contrib::trace::exporter::jaeger_json::JaegerJsonExporter;
+use opentelemetry_sdk::runtime::Tokio;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::fmt::format;
 use tracing_subscriber::util::SubscriberInitExt;

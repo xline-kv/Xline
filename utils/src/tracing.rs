@@ -81,10 +81,8 @@ impl Inject for tonic::metadata::MetadataMap {
 #[cfg(test)]
 mod test {
 
-    use opentelemetry::{
-        sdk::propagation::TraceContextPropagator,
-        trace::{TraceContextExt, TraceId},
-    };
+    use opentelemetry::trace::{TraceContextExt, TraceId};
+    use opentelemetry_sdk::propagation::TraceContextPropagator;
     use tracing::info_span;
     use tracing_subscriber::{
         prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt,

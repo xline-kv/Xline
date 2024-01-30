@@ -145,7 +145,7 @@
 
 use anyhow::Result;
 use opentelemetry::global;
-use opentelemetry::sdk::propagation::TraceContextPropagator;
+use opentelemetry_sdk::propagation::TraceContextPropagator;
 use tracing::{debug, info};
 use xline::server::XlineServer;
 use xline::utils::{init_subscriber, parse_config};
