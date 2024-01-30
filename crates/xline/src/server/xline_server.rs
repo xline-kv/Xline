@@ -52,6 +52,7 @@ use super::{
 use crate::{
     header_gen::HeaderGenerator,
     id_gen::IdGenerator,
+    metrics::Metrics,
     rpc::{
         AuthServer as RpcAuthServer, ClusterServer as RpcClusterServer, KvServer as RpcKvServer,
         LeaseServer as RpcLeaseServer, LockServer as RpcLockServer,
@@ -525,6 +526,8 @@ impl XlineServer {
             Arc::clone(&client),
         ));
         let raw_curp = curp_server.raw_curp();
+
+        Metrics::register_callback()?;
 
         let server_timeout = self.cluster_config.server_timeout();
         Ok((

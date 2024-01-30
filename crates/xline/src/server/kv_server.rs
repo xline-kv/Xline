@@ -25,6 +25,7 @@ use super::{
     barriers::{IdBarrier, IndexBarrier},
 };
 use crate::{
+    metrics,
     revision_check::RevisionCheck,
     rpc::{
         CompactionRequest, CompactionResponse, DeleteRangeRequest, DeleteRangeResponse, Kv,
@@ -166,7 +167,10 @@ where
     /// Wait current node's state machine apply the conflict commands
     async fn wait_read_state(&self, cmd: &Command) -> Result<(), tonic::Status> {
         loop {
-            let rd_state = self.client.fetch_read_state(cmd).await?;
+            let rd_state = self.client.fetch_read_state(cmd).await.map_err(|e| {
+                metrics::get().read_indexes_failed_total.add(1, &[]);
+                e
+            })?;
             let wait_future = async move {
                 match rd_state {
                     ReadState::Ids(id_set) => {
@@ -186,7 +190,8 @@ where
             };
             if timeout(self.range_retry_timeout, wait_future).await.is_ok() {
                 break;
-            };
+            }
+            metrics::get().slow_read_indexes_total.add(1, &[]);
         }
         Ok(())
     }
