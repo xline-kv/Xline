@@ -1,19 +1,19 @@
 [workspace]
 members = [
-    "benchmark",
-    "curp",
-    "curp-external-api",
-    "curp-test-utils",
-    "engine",
-    "simulation",
-    "test-macros",
-    "utils",
+    "crates/benchmark",
+    "crates/curp",
+    "crates/curp-external-api",
+    "crates/curp-test-utils",
+    "crates/engine",
+    "crates/simulation",
+    "crates/test-macros",
+    "crates/utils",
+    "crates/xline",
+    "crates/xline-client",
+    "crates/xline-test-utils",
+    "crates/xlineapi",
+    "crates/xlinectl",
     "workspace-hack",
-    "xline",
-    "xline-client",
-    "xline-test-utils",
-    "xlineapi",
-    "xlinectl",
 ]
 resolver = "2"
 

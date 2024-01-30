@@ -17,7 +17,7 @@ proc-macro = true
 quote = "1.0"
 syn = { version = "2.0", features = ["full"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-workspace-hack = { version = "0.1", path = "../workspace-hack" }
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [dev-dependencies]
 assert_cmd = "2.0.11"

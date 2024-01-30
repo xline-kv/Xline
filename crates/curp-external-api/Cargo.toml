@@ -17,4 +17,4 @@ mockall = "0.12.1"
 prost = "0.12.3"
 serde = { version = "1.0.130", features = ["derive", "rc"] }
 thiserror = "1.0.31"
-workspace-hack = { version = "0.1", path = "../workspace-hack" }
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }

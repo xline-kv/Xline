@@ -16,7 +16,6 @@ bincode = "1.3.3"
 curp-external-api = { path = "../curp-external-api" }
 engine = { path = "../engine" }
 itertools = "0.11"
-once_cell = "1.17.0"
 prost = "0.12.3"
 serde = { version = "1.0.130", features = ["derive", "rc"] }
 thiserror = "1.0.31"
@@ -26,4 +25,4 @@ tokio = { version = "0.2.23", package = "madsim-tokio", features = [
 tracing = { version = "0.1.34", features = ["std", "log", "attributes"] }
 tracing-subscriber = { version = "0.3.16", features = ["env-filter", "time"] }
 utils = { path = "../utils", version = "0.1.0", features = ["parking_lot"] }
-workspace-hack = { version = "0.1", path = "../workspace-hack" }
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }

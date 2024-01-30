@@ -34,7 +34,7 @@ tokio = { version = "0.2.23", package = "madsim-tokio", features = [
 tonic = { version = "0.4.1", package = "madsim-tonic" }
 tracing = { version = "0.1.34", features = ["std", "log", "attributes"] }
 utils = { path = "../utils", version = "0.1.0", features = ["parking_lot"] }
-workspace-hack = { version = "0.1", path = "../workspace-hack" }
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 xline = { path = "../xline" }
 xline-client = { path = "../xline-client" }
 xlineapi = { path = "../xlineapi" }
