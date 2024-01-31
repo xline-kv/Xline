@@ -17,7 +17,5 @@ members = [
 ]
 resolver = "2"
 
-# TODO: when cargo-machete support ignore workspace member crate, then add it into pre commit hook & CI
-# ISSUE: https://github.com/bnjbvr/cargo-machete/issues/94
 [workspace.metadata.cargo-machete]
 ignored = ["prost", "workspace-hack"]
