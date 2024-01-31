@@ -1205,7 +1205,7 @@ mod tests {
             server_cert_path = './cert.pem'
             server_key_path = './key.pem'
             client_ca_cert_path = './ca.pem'
-            
+
             [metrics]
             enable = true
             port = 9100
