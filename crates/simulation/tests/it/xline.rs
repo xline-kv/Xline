@@ -1,6 +1,10 @@
+use std::time::Duration;
+
 use curp_test_utils::init_logger;
+use madsim::time::sleep;
 use simulation::xline_group::{SimEtcdClient, XlineGroup};
 use xline_client::types::{
+    cluster::{MemberAddRequest, MemberListRequest},
     kv::{CompactionRequest, PutRequest},
     watch::WatchRequest,
 };
@@ -42,4 +46,39 @@ async fn watch_compacted_revision_should_receive_canceled_response() {
         .unwrap();
     let r = watch_stream.message().await.unwrap().unwrap();
     assert!(r.canceled);
+}
+
+#[madsim::test]
+async fn xline_members_restore() {
+    init_logger();
+    let mut group = XlineGroup::new(3).await;
+    let node = group.get_node_by_name("S1");
+    let node_id = node.id;
+    let addr = node.addr.clone();
+    let client = SimEtcdClient::new(addr, group.client_handle.clone()).await;
+
+    let res = client
+        .member_add(MemberAddRequest::new(
+            vec!["http://192.168.1.4:12345".to_owned()],
+            true,
+        ))
+        .await
+        .unwrap();
+    println!("member add res {:#?}", res.members.len());
+    let members = client
+        .member_list(MemberListRequest::new(false))
+        .await
+        .unwrap();
+    println!("member list res {:#?}", members.members.len());
+    group.crash(node_id).await;
+    sleep(Duration::from_secs(10)).await;
+    println!("restart");
+
+    group.restart(node_id).await;
+    sleep(Duration::from_secs(10)).await;
+    let members = client
+        .member_list(MemberListRequest::new(false))
+        .await
+        .unwrap();
+    println!("member list after restart {:#?}", members.members.len());
 }
