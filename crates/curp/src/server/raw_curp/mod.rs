@@ -483,7 +483,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let entry = log_w.push(st_r.term, propose_id, cmd)?;
         debug!("{} gets new log[{}]", self.id(), entry.index);
 
-        self.entry_process(&mut log_w, entry, conflict);
+        self.entry_process(&mut log_w, entry, conflict, st_r.term);
 
         if conflict {
             return Err(CurpError::key_conflict());
@@ -504,7 +504,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let mut log_w = self.log.write();
         let entry = log_w.push(st_r.term, propose_id, EntryData::Shutdown)?;
         debug!("{} gets new log[{}]", self.id(), entry.index);
-        self.entry_process(&mut log_w, entry, true);
+        self.entry_process(&mut log_w, entry, true, st_r.term);
         Ok(())
     }
 
@@ -541,7 +541,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             entry.index,
             FallbackContext::new(Arc::clone(&entry), addrs, name, is_learner),
         );
-        self.entry_process(&mut log_w, entry, conflict);
+        self.entry_process(&mut log_w, entry, conflict, st_r.term);
         Ok(())
     }
 
@@ -562,7 +562,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let mut log_w = self.log.write();
         let entry = log_w.push(st_r.term, req.propose_id(), req)?;
         debug!("{} gets new log[{}]", self.id(), entry.index);
-        self.entry_process(&mut log_w, entry, false);
+        self.entry_process(&mut log_w, entry, false, st_r.term);
         Ok(())
     }
 
@@ -1104,11 +1104,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Get `append_entries` request for `follower_id` that contains the latest log entries
     pub(super) fn sync(&self, follower_id: ServerId) -> Option<SyncAction<C>> {
         let term = {
-            let lst_r = self.st.read();
-            if lst_r.role != Role::Leader {
+            let st_r = self.st.read();
+            if st_r.role != Role::Leader {
                 return None;
             }
-            lst_r.term
+            st_r.term
         };
 
         let Some(next_index) = self.lst.get_next_index(follower_id) else {
@@ -1774,6 +1774,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         log_w: &mut RwLockWriteGuard<'_, Log<C>>,
         entry: Arc<LogEntry<C>>,
         conflict: bool,
+        term: u64,
     ) {
         let index = entry.index;
         if !conflict {
@@ -1789,8 +1790,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         });
 
         // check if commit_index needs to be updated
-        if self.can_update_commit_index_to(log_w, index, self.term()) && index > log_w.commit_index
-        {
+        if self.can_update_commit_index_to(log_w, index, term) && index > log_w.commit_index {
             log_w.commit_to(index);
             debug!("{} updates commit index to {index}", self.id());
             self.apply(&mut *log_w);
