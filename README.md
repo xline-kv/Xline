@@ -86,8 +86,8 @@ multi-cluster environment.
 
 For more information about the Xline client SDK, or the Xline client command line tool, please refer to the following documents:
 
-* [Xline client sdk](xline-client/README.md)
-* [xlinectl](xlinectl/README.md)
+* [Xline client sdk](crates/xline-client/README.md)
+* [xlinectl](crates/xlinectl/README.md)
 
 ## Quick Start
 
