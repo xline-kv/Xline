@@ -5,13 +5,15 @@ use madsim::runtime::NodeHandle;
 use tonic::transport::Channel;
 use tracing::debug;
 use utils::config::{
-    AuthConfig, ClientConfig, ClusterConfig, CompactConfig, CurpConfig, InitialClusterState,
-    ServerTimeout, StorageConfig, TlsConfig,
+    default_quota, AuthConfig, ClientConfig, ClientConfig, ClusterConfig, CompactConfig,
+    CompactConfig, CurpConfig, CurpConfig, EngineConfig, InitialClusterState, ServerTimeout,
+    ServerTimeout, StorageConfig, StorageConfig, TlsConfig,
 };
 use xline::server::XlineServer;
 use xline_client::{
     error::XlineClientError,
     types::{
+        cluster::{MemberAddRequest, MemberAddResponse, MemberListRequest, MemberListResponse},
         kv::{
             CompactionRequest, CompactionResponse, PutRequest, PutResponse, RangeRequest,
             RangeResponse,
@@ -20,7 +22,7 @@ use xline_client::{
     },
     Client, ClientOptions,
 };
-use xlineapi::{command::Command, KvClient, RequestUnion, WatchClient};
+use xlineapi::{command::Command, ClusterClient, KvClient, RequestUnion, WatchClient};
 
 pub struct XlineNode {
     pub addr: String,
@@ -120,6 +122,20 @@ impl XlineGroup {
     pub fn get_node(&self, name: &str) -> &XlineNode {
         self.nodes.get(name).unwrap()
     }
+
+    pub async fn crash(&mut self, id: ServerId) {
+        let handle = madsim::runtime::Handle::current();
+        handle.kill(id.to_string());
+        madsim::time::sleep(Duration::from_secs(2)).await;
+        if !handle.is_exit(id.to_string()) {
+            panic!("failed to crash node: {id}");
+        }
+    }
+
+    pub async fn restart(&mut self, id: ServerId) {
+        let handle = madsim::runtime::Handle::current();
+        handle.restart(id.to_string());
+    }
 }
 
 pub struct SimClient {
@@ -169,21 +185,28 @@ impl Drop for XlineGroup {
 pub struct SimEtcdClient {
     watch: WatchClient<Channel>,
     kv: KvClient<Channel>,
+    cluster: ClusterClient<Channel>,
     handle: NodeHandle,
 }
 
 impl SimEtcdClient {
     pub async fn new(addr: String, handle: NodeHandle) -> Self {
-        let (watch, kv) = handle
+        let (watch, kv, cluster) = handle
             .spawn(async move {
                 (
                     WatchClient::connect(addr.clone()).await.unwrap(),
-                    KvClient::connect(addr).await.unwrap(),
+                    KvClient::connect(addr.clone()).await.unwrap(),
+                    ClusterClient::connect(addr).await.unwrap(),
                 )
             })
             .await
             .unwrap();
-        Self { watch, kv, handle }
+        Self {
+            watch,
+            kv,
+            cluster,
+            handle,
+        }
     }
 
     pub async fn put(&self, request: PutRequest) -> Result<PutResponse, XlineClientError<Command>> {
@@ -254,6 +277,40 @@ impl SimEtcdClient {
                     Watcher::new(watch_id, request_sender.clone()),
                     WatchStreaming::new(response_stream, request_sender),
                 ))
+            })
+            .await
+            .unwrap()
+    }
+
+    pub async fn member_add(
+        &self,
+        request: MemberAddRequest,
+    ) -> Result<MemberAddResponse, XlineClientError<Command>> {
+        let mut client = self.cluster.clone();
+        self.handle
+            .spawn(async move {
+                client
+                    .member_add(xlineapi::MemberAddRequest::from(request))
+                    .await
+                    .map(|r| r.into_inner())
+                    .map_err(Into::into)
+            })
+            .await
+            .unwrap()
+    }
+
+    pub async fn member_list(
+        &self,
+        request: MemberListRequest,
+    ) -> Result<MemberListResponse, XlineClientError<Command>> {
+        let mut client = self.cluster.clone();
+        self.handle
+            .spawn(async move {
+                client
+                    .member_list(xlineapi::MemberListRequest::from(request))
+                    .await
+                    .map(|r| r.into_inner())
+                    .map_err(Into::into)
             })
             .await
             .unwrap()
