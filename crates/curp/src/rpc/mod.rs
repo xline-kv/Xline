@@ -7,6 +7,15 @@ use curp_external_api::{
 use prost::Message;
 use serde::{Deserialize, Serialize};
 
+pub(crate) use self::proto::{
+    commandpb::CurpError as CurpErrorWrapper,
+    inner_messagepb::{
+        inner_protocol_server::InnerProtocol, AppendEntriesRequest, AppendEntriesResponse,
+        InstallSnapshotRequest, InstallSnapshotResponse, TriggerShutdownRequest,
+        TriggerShutdownResponse, TryBecomeLeaderNowRequest, TryBecomeLeaderNowResponse,
+        VoteRequest, VoteResponse,
+    },
+};
 pub use self::proto::{
     commandpb::{
         cmd_result::Result as CmdResultInner,
@@ -15,10 +24,13 @@ pub use self::proto::{
         fetch_read_state_response::{IdSet, ReadState},
         propose_conf_change_request::{ConfChange, ConfChangeType},
         protocol_client,
-        protocol_server::ProtocolServer,
+        protocol_server::{Protocol, ProtocolServer},
         CmdResult,
         FetchClusterRequest,
         FetchClusterResponse,
+        FetchReadStateRequest,
+        FetchReadStateResponse,
+        LeaseKeepAliveMsg,
         Member,
         MoveLeaderRequest,
         MoveLeaderResponse,
@@ -26,25 +38,15 @@ pub use self::proto::{
         ProposeConfChangeResponse,
         ProposeId as PbProposeId,
         ProposeRequest,
-
         ProposeResponse,
         PublishRequest,
         PublishResponse,
+        ShutdownRequest,
+        ShutdownResponse,
+        WaitSyncedRequest,
+        WaitSyncedResponse,
     },
     inner_messagepb::inner_protocol_server::InnerProtocolServer,
-};
-pub(crate) use self::proto::{
-    commandpb::{
-        protocol_server::Protocol, CurpError as CurpErrorWrapper, FetchReadStateRequest,
-        FetchReadStateResponse, LeaseKeepAliveMsg, ShutdownRequest, ShutdownResponse,
-        WaitSyncedRequest, WaitSyncedResponse,
-    },
-    inner_messagepb::{
-        inner_protocol_server::InnerProtocol, AppendEntriesRequest, AppendEntriesResponse,
-        InstallSnapshotRequest, InstallSnapshotResponse, TriggerShutdownRequest,
-        TriggerShutdownResponse, TryBecomeLeaderNowRequest, TryBecomeLeaderNowResponse,
-        VoteRequest, VoteResponse,
-    },
 };
 use crate::{cmd::Command, log_entry::LogEntry, members::ServerId, LogIndex};
 
@@ -127,7 +129,8 @@ impl FetchClusterResponse {
 
 impl ProposeRequest {
     /// Create a new `Propose` request
-    pub(crate) fn new<C: Command>(propose_id: ProposeId, cmd: &C, cluster_version: u64) -> Self {
+    #[inline]
+    pub fn new<C: Command>(propose_id: ProposeId, cmd: &C, cluster_version: u64) -> Self {
         Self {
             propose_id: Some(propose_id.into()),
             command: cmd.encode(),
@@ -136,7 +139,9 @@ impl ProposeRequest {
     }
 
     /// Get the propose id
-    pub(crate) fn propose_id(&self) -> ProposeId {
+    #[inline]
+    #[must_use]
+    pub fn propose_id(&self) -> ProposeId {
         self.propose_id
             .clone()
             .unwrap_or_else(|| unreachable!("propose id must be set in ProposeRequest"))
@@ -144,7 +149,10 @@ impl ProposeRequest {
     }
 
     /// Get command
-    pub(crate) fn cmd<C: Command>(&self) -> Result<C, PbSerializeError> {
+    /// # Errors
+    /// Return error if the command can't be decoded
+    #[inline]
+    pub fn cmd<C: Command>(&self) -> Result<C, PbSerializeError> {
         C::decode(&self.command)
     }
 }
@@ -883,7 +891,7 @@ impl<C> From<Vec<ConfChange>> for PoolEntryInner<C> {
     Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Ord, PartialOrd, Default,
 )]
 #[allow(clippy::exhaustive_structs)] // It is exhaustive
-pub(crate) struct ProposeId(pub(crate) u64, pub(crate) u64);
+pub struct ProposeId(pub(crate) u64, pub(crate) u64);
 
 impl std::fmt::Display for ProposeId {
     #[inline]

@@ -40,6 +40,7 @@ use xlineapi::command::{Command, CurpClient};
 
 use super::{
     auth_server::AuthServer,
+    auth_wrapper::AuthWrapper,
     barriers::{IdBarrier, IndexBarrier},
     cluster_server::ClusterServer,
     command::{Alarmer, CommandExecutor},
@@ -72,7 +73,7 @@ use crate::{
 };
 
 /// Rpc Server of curp protocol
-type CurpServer<S> = Rpc<Command, State<S, Arc<CurpClient>>>;
+pub(crate) type CurpServer<S> = Rpc<Command, State<S, Arc<CurpClient>>>;
 
 /// Xline server
 #[derive(Debug)]
@@ -330,6 +331,7 @@ impl XlineServer {
             maintenance_server,
             cluster_server,
             curp_server,
+            auth_wrapper,
             curp_client,
         ) = self.init_servers(persistent, key_pair).await?;
         let mut builder = Server::builder();
@@ -345,7 +347,9 @@ impl XlineServer {
             .add_service(RpcWatchServer::new(watch_server))
             .add_service(RpcMaintenanceServer::new(maintenance_server))
             .add_service(RpcClusterServer::new(cluster_server))
-            .add_service(ProtocolServer::new(curp_server.clone()))
+            .add_service(ProtocolServer::new(auth_wrapper))
+            // TODO: run origin curp server in a separate port
+            // .add_service(ProtocolServer::new(curp_server.clone()))
             .add_service(InnerProtocolServer::new(curp_server));
         #[cfg(not(madsim))]
         let router = {
@@ -470,6 +474,7 @@ impl XlineServer {
         MaintenanceServer<S>,
         ClusterServer,
         CurpServer<S>,
+        AuthWrapper<S>,
         Arc<CurpClient>,
     )> {
         let (header_gen, id_gen) = Self::construct_generator(&self.cluster_info);
@@ -583,7 +588,7 @@ impl XlineServer {
             ),
             LeaseServer::new(
                 lease_storage,
-                auth_storage,
+                Arc::clone(&auth_storage),
                 Arc::clone(&client),
                 id_gen,
                 Arc::clone(&self.cluster_info),
@@ -608,7 +613,8 @@ impl XlineServer {
                 alarm_storage,
             ),
             ClusterServer::new(Arc::clone(&client), header_gen),
-            curp_server,
+            curp_server.clone(),
+            AuthWrapper::new(curp_server, auth_storage),
             client,
         ))
     }
