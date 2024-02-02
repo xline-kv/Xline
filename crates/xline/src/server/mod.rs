@@ -1,5 +1,7 @@
 /// Xline auth server
 mod auth_server;
+/// Auth Wrapper
+mod auth_wrapper;
 /// Barriers for range requests
 mod barriers;
 /// Cluster server
