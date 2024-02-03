@@ -29,13 +29,14 @@ impl Member {
     pub fn new(
         id: ServerId,
         name: impl Into<String>,
-        addrs: impl Into<Vec<String>>,
+        peer_urls: impl Into<Vec<String>>,
         is_learner: bool,
     ) -> Self {
         Self {
             id,
             name: name.into(),
-            addrs: addrs.into(),
+            peer_urls: peer_urls.into(),
+            client_urls: vec![], // TODO
             is_learner,
         }
     }
@@ -57,8 +58,8 @@ impl Member {
     /// Get member addresses
     #[must_use]
     #[inline]
-    pub fn addrs(&self) -> &[String] {
-        self.addrs.as_slice()
+    pub fn peer_urls(&self) -> &[String] {
+        self.peer_urls.as_slice()
     }
 
     /// Is learner or not
@@ -140,7 +141,7 @@ impl ClusterInfo {
             .members
             .into_iter()
             .map(|mut member| {
-                if member.addrs() == self_addr {
+                if member.peer_urls() == self_addr {
                     member_id = member.id;
                     member.name = self_name.to_owned();
                 }
@@ -202,7 +203,7 @@ impl ClusterInfo {
             .members
             .get_mut(id)
             .unwrap_or_else(|| unreachable!("member {} not found", id));
-        std::mem::swap(&mut addrs, &mut member.addrs);
+        std::mem::swap(&mut addrs, &mut member.peer_urls);
         addrs
     }
 
@@ -210,7 +211,7 @@ impl ClusterInfo {
     #[must_use]
     #[inline]
     pub fn addrs(&self, id: ServerId) -> Option<Vec<String>> {
-        self.members.get(&id).map(|t| t.addrs.clone())
+        self.members.get(&id).map(|t| t.peer_urls.clone())
     }
 
     /// Get the current member
@@ -227,7 +228,7 @@ impl ClusterInfo {
     #[must_use]
     #[inline]
     pub fn self_addrs(&self) -> Vec<String> {
-        self.self_member().addrs.clone()
+        self.self_member().peer_urls.clone()
     }
 
     /// Get the current server id
@@ -329,7 +330,7 @@ impl ClusterInfo {
         self.members
             .iter()
             .filter(|t| t.id != self.member_id)
-            .map(|t| (t.id, t.addrs.clone()))
+            .map(|t| (t.id, t.peer_urls.clone()))
             .collect()
     }
 
@@ -339,7 +340,7 @@ impl ClusterInfo {
     pub fn all_members_addrs(&self) -> HashMap<ServerId, Vec<String>> {
         self.members
             .iter()
-            .map(|t| (t.id, t.addrs.clone()))
+            .map(|t| (t.id, t.peer_urls.clone()))
             .collect()
     }
 

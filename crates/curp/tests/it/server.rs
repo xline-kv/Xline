@@ -393,7 +393,7 @@ async fn propose_update_node_should_success() {
     let members = client.propose_conf_change(changes).await.unwrap();
     assert_eq!(members.len(), 5);
     let member = members.iter().find(|m| m.id == node_id);
-    assert!(member.is_some_and(|m| m.addrs == ["new_addr"]));
+    assert!(member.is_some_and(|m| m.peer_urls == ["new_addr"]));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -439,7 +439,7 @@ async fn propose_conf_change_to_follower() {
     let members = client.propose_conf_change(changes).await.unwrap();
     assert_eq!(members.len(), 5);
     let member = members.iter().find(|m| m.id == node_id);
-    assert!(member.is_some_and(|m| m.addrs == ["new_addr"]));
+    assert!(member.is_some_and(|m| m.peer_urls == ["new_addr"]));
 }
 
 async fn check_new_node(is_learner: bool) {

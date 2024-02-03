@@ -40,11 +40,11 @@ impl ClusterServer {
             .await?
             .into_iter()
             .map(|member| Member {
-                id: member.id(),
-                name: member.name().to_owned(),
-                peer_ur_ls: member.addrs().to_vec(),
-                client_ur_ls: member.addrs().to_vec(),
-                is_learner: member.is_learner(),
+                id: member.id,
+                name: member.name.clone(),
+                peer_ur_ls: member.peer_urls.clone(),
+                client_ur_ls: member.client_urls.clone(),
+                is_learner: member.is_learner,
             })
             .collect())
     }
@@ -132,8 +132,8 @@ impl Cluster for ClusterServer {
                 .map(|member| Member {
                     id: member.id,
                     name: member.name,
-                    peer_ur_ls: member.addrs.clone(),
-                    client_ur_ls: member.addrs,
+                    peer_ur_ls: member.peer_urls,
+                    client_ur_ls: member.client_urls,
                     is_learner: member.is_learner,
                 })
                 .collect(),
