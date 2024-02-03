@@ -444,7 +444,7 @@ impl CurpGroup {
         let members = cluster_res_base
             .members
             .into_iter()
-            .map(|m| Member::new(m.id, m.name, m.addrs, m.is_learner))
+            .map(|m| Member::new(m.id, m.name, m.peer_urls, m.is_learner))
             .collect();
         let cluster_res = curp::rpc::FetchClusterResponse {
             leader_id: cluster_res_base.leader_id,

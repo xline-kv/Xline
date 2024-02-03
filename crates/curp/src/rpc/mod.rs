@@ -122,7 +122,7 @@ impl FetchClusterResponse {
     pub(crate) fn into_members_addrs(self) -> HashMap<ServerId, Vec<String>> {
         self.members
             .into_iter()
-            .map(|member| (member.id, member.addrs))
+            .map(|member| (member.id, member.peer_urls)) // TODO
             .collect()
     }
 }

@@ -1812,7 +1812,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 (
                     true,
                     (
-                        removed_member.addrs,
+                        removed_member.peer_urls,
                         removed_member.name,
                         removed_member.is_learner,
                     ),
