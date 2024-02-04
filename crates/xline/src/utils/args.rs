@@ -6,18 +6,19 @@ use tokio::fs;
 use utils::{
     config::{
         default_batch_max_size, default_batch_timeout, default_candidate_timeout_ticks,
-        default_client_wait_synced_timeout, default_cmd_workers, default_compact_batch_size,
-        default_compact_sleep_interval, default_compact_timeout, default_follower_timeout_ticks,
-        default_gc_interval, default_heartbeat_interval, default_initial_retry_timeout,
-        default_log_entries_cap, default_log_level, default_max_retry_timeout,
-        default_metrics_enable, default_metrics_path, default_metrics_port,
-        default_metrics_push_endpoint, default_metrics_push_protocol, default_propose_timeout,
-        default_quota, default_range_retry_timeout, default_retry_count, default_rotation,
-        default_rpc_timeout, default_server_wait_synced_timeout, default_sync_victims_interval,
-        default_watch_progress_notify_interval, AuthConfig, AutoCompactConfig, ClientConfig,
-        ClusterConfig, CompactConfig, CurpConfigBuilder, EngineConfig, InitialClusterState,
-        LevelConfig, LogConfig, MetricsConfig, MetricsPushProtocol, RotationConfig, ServerTimeout,
-        StorageConfig, TlsConfig, TraceConfig, XlineServerConfig,
+        default_client_id_keep_alive_interval, default_client_wait_synced_timeout,
+        default_cmd_workers, default_compact_batch_size, default_compact_sleep_interval,
+        default_compact_timeout, default_follower_timeout_ticks, default_gc_interval,
+        default_heartbeat_interval, default_initial_retry_timeout, default_log_entries_cap,
+        default_log_level, default_max_retry_timeout, default_metrics_enable, default_metrics_path,
+        default_metrics_port, default_metrics_push_endpoint, default_metrics_push_protocol,
+        default_propose_timeout, default_quota, default_range_retry_timeout, default_retry_count,
+        default_rotation, default_rpc_timeout, default_server_wait_synced_timeout,
+        default_sync_victims_interval, default_watch_progress_notify_interval, AuthConfig,
+        AutoCompactConfig, ClientConfig, ClusterConfig, CompactConfig, CurpConfigBuilder,
+        EngineConfig, InitialClusterState, LevelConfig, LogConfig, MetricsConfig,
+        MetricsPushProtocol, RotationConfig, ServerTimeout, StorageConfig, TlsConfig, TraceConfig,
+        XlineServerConfig,
     },
     parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_metrics_push_protocol,
     parse_rotation, parse_state, ConfigFileError,
@@ -144,6 +145,9 @@ pub struct ServerArgs {
     /// Curp client use fixed backoff
     #[clap(long)]
     client_fixed_backoff: bool,
+    /// Curp client id keep alive interval [default: 1s]
+    #[clap(long, value_parser = parse_duration)]
+    client_keep_alive_interval: Option<Duration>,
     /// How often should the gc task run [default: 20s]
     #[clap(long, value_parser = parse_duration)]
     gc_interval: Option<Duration>,
@@ -255,6 +259,8 @@ impl From<ServerArgs> for XlineServerConfig {
                 .unwrap_or_else(default_max_retry_timeout),
             args.retry_count.unwrap_or_else(default_retry_count),
             args.client_fixed_backoff,
+            args.client_keep_alive_interval
+                .unwrap_or_else(default_client_id_keep_alive_interval),
         );
         let server_timeout = ServerTimeout::new(
             args.range_retry_timeout
