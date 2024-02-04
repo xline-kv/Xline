@@ -335,7 +335,7 @@ where
             // a follower when it lost the election. Therefore we need to double check here.
             // We can directly invoke leader_keep_alive when a candidate becomes a leader.
             if !self.lease_storage.is_primary() {
-                let leader_addrs = self.cluster_info.addrs(leader_id).unwrap_or_else(|| {
+                let leader_addrs = self.cluster_info.client_urls(leader_id).unwrap_or_else(|| {
                     unreachable!(
                         "The address of leader {} not found in all_members {:?}",
                         leader_id, self.cluster_info
@@ -379,7 +379,7 @@ where
                 return Ok(tonic::Response::new(res));
             }
             let leader_id = self.client.fetch_leader_id(false).await?;
-            let leader_addrs = self.cluster_info.addrs(leader_id).unwrap_or_else(|| {
+            let leader_addrs = self.cluster_info.client_urls(leader_id).unwrap_or_else(|| {
                 unreachable!(
                     "The address of leader {} not found in all_members {:?}",
                     leader_id, self.cluster_info

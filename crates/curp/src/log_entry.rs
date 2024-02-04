@@ -37,8 +37,8 @@ pub(crate) enum EntryData<C> {
     ConfChange(Vec<ConfChange>),
     /// `Shutdown` entry
     Shutdown,
-    /// `SetName` entry
-    SetName(ServerId, String),
+    /// `SetNodeState` entry
+    SetNodeState(ServerId, String, Vec<String>),
 }
 
 impl<C> From<Arc<C>> for EntryData<C> {
@@ -64,7 +64,7 @@ impl<C> From<PoolEntryInner<C>> for EntryData<C> {
 
 impl<C> From<PublishRequest> for EntryData<C> {
     fn from(value: PublishRequest) -> Self {
-        EntryData::SetName(value.node_id, value.name)
+        EntryData::SetNodeState(value.node_id, value.name, value.client_urls)
     }
 }
 

@@ -30,13 +30,14 @@ impl Member {
         id: ServerId,
         name: impl Into<String>,
         peer_urls: impl Into<Vec<String>>,
+        client_urls: impl Into<Vec<String>>,
         is_learner: bool,
     ) -> Self {
         Self {
             id,
             name: name.into(),
             peer_urls: peer_urls.into(),
-            client_urls: vec![], // TODO
+            client_urls: client_urls.into(),
             is_learner,
         }
     }
@@ -102,17 +103,20 @@ impl ClusterInfo {
     #[inline]
     #[must_use]
     pub fn from_members_map(
-        all_members_addrs: HashMap<String, Vec<String>>,
+        all_members_peer_urls: HashMap<String, Vec<String>>,
+        self_client_urls: impl Into<Vec<String>>,
         self_name: &str,
     ) -> Self {
         let mut member_id = 0;
+        let self_client_urls = self_client_urls.into();
         let members = DashMap::new();
-        for (name, addrs) in all_members_addrs {
-            let id = Self::calculate_member_id(addrs.clone(), "", None);
+        for (name, peer_urls) in all_members_peer_urls {
+            let id = Self::calculate_member_id(peer_urls.clone(), "", None);
+            let mut member = Member::new(id, name.clone(), peer_urls, [], false);
             if name == self_name {
                 member_id = id;
+                member.client_urls = self_client_urls.clone();
             }
-            let member = Member::new(id, name, addrs, false);
             let _ig = members.insert(id, member);
         }
         debug_assert!(member_id != 0, "self_id should not be 0");
@@ -207,11 +211,18 @@ impl ClusterInfo {
         addrs
     }
 
-    /// Get server addresses via server id
+    /// Get server peer urls via server id
     #[must_use]
     #[inline]
-    pub fn addrs(&self, id: ServerId) -> Option<Vec<String>> {
+    pub fn peer_urls(&self, id: ServerId) -> Option<Vec<String>> {
         self.members.get(&id).map(|t| t.peer_urls.clone())
+    }
+
+    /// Get server client urls via server id
+    #[must_use]
+    #[inline]
+    pub fn client_urls(&self, id: ServerId) -> Option<Vec<String>> {
+        self.members.get(&id).map(|t| t.client_urls.clone())
     }
 
     /// Get the current member
@@ -224,11 +235,18 @@ impl ClusterInfo {
         self.members.get(&self.member_id).unwrap()
     }
 
-    /// Get the current server address
+    /// Get the current server peer urls
     #[must_use]
     #[inline]
-    pub fn self_addrs(&self) -> Vec<String> {
+    pub fn self_peer_urls(&self) -> Vec<String> {
         self.self_member().peer_urls.clone()
+    }
+
+    /// Get the current server client addrs
+    #[must_use]
+    #[inline]
+    pub fn self_client_urls(&self) -> Vec<String> {
+        self.self_member().client_urls.clone()
     }
 
     /// Get the current server id
@@ -382,11 +400,15 @@ impl ClusterInfo {
         self.members.contains_key(&node_id)
     }
 
-    /// Set name for a node
-    pub(crate) fn set_name(&self, node_id: ServerId, name: String) {
+    /// Set state for a node
+    pub(crate) fn set_node_state(&self, node_id: ServerId, name: String, client_urls: Vec<String>) {
         if let Some(mut s) = self.members.get_mut(&node_id) {
-            debug!("set name for node {} to {}", node_id, name);
+            debug!(
+                "set name and client_urls for node {} to {},{:?}",
+                node_id, name, client_urls
+            );
             s.name = name;
+            s.client_urls = client_urls;
         }
     }
 }
@@ -442,9 +464,9 @@ mod tests {
             ("S3".to_owned(), vec!["S3".to_owned()]),
         ]);
 
-        let node1 = ClusterInfo::from_members_map(all_members.clone(), "S1");
-        let node2 = ClusterInfo::from_members_map(all_members.clone(), "S2");
-        let node3 = ClusterInfo::from_members_map(all_members, "S3");
+        let node1 = ClusterInfo::from_members_map(all_members.clone(), [], "S1");
+        let node2 = ClusterInfo::from_members_map(all_members.clone(), [], "S2");
+        let node3 = ClusterInfo::from_members_map(all_members, [], "S3");
 
         assert_ne!(node1.self_id(), node2.self_id());
         assert_ne!(node1.self_id(), node3.self_id());
@@ -462,10 +484,10 @@ mod tests {
             ("S3".to_owned(), vec!["S3".to_owned()]),
         ]);
 
-        let node1 = ClusterInfo::from_members_map(all_members, "S1");
+        let node1 = ClusterInfo::from_members_map(all_members, [], "S1");
         let peers = node1.peers_addrs();
         let node1_id = node1.self_id();
-        let node1_url = node1.self_addrs();
+        let node1_url = node1.self_peer_urls();
         assert!(!peers.contains_key(&node1_id));
         assert_eq!(peers.len(), 2);
         assert_eq!(node1.voters_len(), peers.len() + 1);

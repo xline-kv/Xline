@@ -24,7 +24,8 @@ use xline_client::{
 use xlineapi::{command::Command, ClusterClient, KvClient, RequestUnion, WatchClient};
 
 pub struct XlineNode {
-    pub addr: String,
+    pub client_url: String,
+    pub peer_url: String,
     pub name: String,
     pub handle: NodeHandle,
 }
@@ -40,14 +41,19 @@ impl XlineGroup {
         let handle = madsim::runtime::Handle::current();
 
         let all: HashMap<_, _> = (0..size)
-            .map(|x| (format!("S{x}"), vec![format!("192.168.1.{}:12345", x + 1)]))
+            .map(|x| (format!("S{x}"), vec![format!("192.168.1.{}:2380", x + 1)]))
             .collect();
         let nodes = (0..size)
             .map(|i| {
                 let name = format!("S{i}");
-                let addr = format!("192.168.1.{}:12345", i + 1);
+                let client_url = format!("192.168.1.{}:2379", i + 1);
+                let peer_url = format!("192.168.1.{}:2380", i + 1);
                 let cluster_config = ClusterConfig::new(
                     name.clone(),
+                    vec!["0.0.0.0:2380".to_owned()],
+                    vec![format!("192.168.1.{}:2380", i + 1)],
+                    vec!["0.0.0.0:2379".to_owned()],
+                    vec![format!("192.168.1.{}:2379", i + 1)],
                     all.clone(),
                     false,
                     CurpConfig::default(),
@@ -73,7 +79,10 @@ impl XlineGroup {
                             .await
                             .unwrap();
                             server
-                                .start_from_single_addr("0.0.0.0:12345".parse().unwrap())
+                                .start_from_single_addr(
+                                    "0.0.0.0:2379".parse().unwrap(),
+                                    "0.0.0.0:2380".parse().unwrap(),
+                                )
                                 .await
                                 .unwrap()
                                 .await
@@ -82,7 +91,15 @@ impl XlineGroup {
                         }
                     })
                     .build();
-                (name.clone(), XlineNode { addr, name, handle })
+                (
+                    name.clone(),
+                    XlineNode {
+                        client_url,
+                        peer_url,
+                        name,
+                        handle,
+                    },
+                )
             })
             .collect();
         let client_handle = handle
@@ -101,7 +118,7 @@ impl XlineGroup {
         let all_members = self
             .nodes
             .values()
-            .map(|node| node.addr.clone())
+            .map(|node| node.client_url.clone())
             .collect_vec();
         let client = self
             .client_handle

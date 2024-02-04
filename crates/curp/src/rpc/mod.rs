@@ -585,11 +585,17 @@ impl MoveLeaderRequest {
 
 impl PublishRequest {
     /// Create a new `PublishRequest`
-    pub(crate) fn new(id: ProposeId, node_id: ServerId, name: String) -> Self {
+    pub(crate) fn new(
+        id: ProposeId,
+        node_id: ServerId,
+        name: String,
+        client_urls: Vec<String>,
+    ) -> Self {
         Self {
             propose_id: Some(id.into()),
             node_id,
             name,
+            client_urls,
         }
     }
 

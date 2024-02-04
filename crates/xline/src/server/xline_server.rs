@@ -1,8 +1,4 @@
-use std::{
-    net::{SocketAddr, ToSocketAddrs},
-    sync::Arc,
-    time::Duration,
-};
+use std::{net::ToSocketAddrs, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
 use clippy_utilities::{Cast, OverflowArithmetic};
@@ -169,6 +165,7 @@ impl XlineServer {
         info!("server_addr = {server_addr:?}");
         info!("cluster_peers = {:?}", cluster_config.members());
 
+        let self_client_addr = cluster_config.client_advertise_urls().clone();
         match (
             curp_storage.recover_cluster_info()?,
             *cluster_config.initial_cluster_state(),
@@ -181,6 +178,7 @@ impl XlineServer {
                 info!("get cluster_info by args");
                 let cluster_info = ClusterInfo::from_members_map(
                     cluster_config.members().clone(),
+                    self_client_addr,
                     cluster_config.name(),
                 );
                 curp_storage.put_cluster_info(&cluster_info)?;
@@ -191,6 +189,7 @@ impl XlineServer {
                 let cluster_info = get_cluster_info_from_remote(
                     &ClusterInfo::from_members_map(
                         cluster_config.members().clone(),
+                        self_client_addr,
                         cluster_config.name(),
                     ),
                     server_addr_str,
@@ -311,7 +310,7 @@ impl XlineServer {
         )
     }
 
-    /// Init router
+    /// Init xline and curp router
     ///
     /// # Errors
     ///
@@ -321,7 +320,7 @@ impl XlineServer {
         &self,
         persistent: Arc<S>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
-    ) -> Result<(Router, Arc<CurpClient>)> {
+    ) -> Result<(Router, Router, Arc<CurpClient>)> {
         let (
             kv_server,
             lock_server,
@@ -339,7 +338,8 @@ impl XlineServer {
         if let Some(ref cfg) = self.server_tls_config {
             builder = builder.tls_config(cfg.clone())?;
         }
-        let router = builder
+        let xline_router = builder
+            .clone()
             .add_service(RpcLockServer::new(lock_server))
             .add_service(RpcKvServer::new(kv_server))
             .add_service(RpcLeaseServer::from_arc(lease_server))
@@ -347,19 +347,19 @@ impl XlineServer {
             .add_service(RpcWatchServer::new(watch_server))
             .add_service(RpcMaintenanceServer::new(maintenance_server))
             .add_service(RpcClusterServer::new(cluster_server))
-            .add_service(ProtocolServer::new(auth_wrapper))
-            // TODO: run origin curp server in a separate port
-            // .add_service(ProtocolServer::new(curp_server.clone()))
+            .add_service(ProtocolServer::new(auth_wrapper));
+        let curp_router = builder
+            .add_service(ProtocolServer::new(curp_server.clone()))
             .add_service(InnerProtocolServer::new(curp_server));
         #[cfg(not(madsim))]
-        let router = {
+        let xline_router = {
             let (mut reporter, health_server) = tonic_health::server::health_reporter();
             reporter
                 .set_service_status("", tonic_health::ServingStatus::Serving)
                 .await;
-            router.add_service(health_server)
+            xline_router.add_service(health_server)
         };
-        Ok((router, curp_client))
+        Ok((xline_router, curp_router, curp_client))
     }
 
     /// Start `XlineServer`
@@ -371,15 +371,24 @@ impl XlineServer {
     #[cfg(madsim)]
     pub async fn start_from_single_addr(
         &self,
-        addr: SocketAddr,
+        xline_addr: std::net::SocketAddr,
+        curp_addr: std::net::SocketAddr,
     ) -> Result<tokio::task::JoinHandle<Result<(), tonic::transport::Error>>> {
-        let n = self
+        let n1 = self
             .task_manager
             .get_shutdown_listener(TaskName::TonicServer);
+        let n2 = n1.clone();
         let persistent = DB::open(&self.storage_config.engine)?;
         let key_pair = Self::read_key_pair(&self.auth_config).await?;
-        let (router, curp_client) = self.init_router(persistent, key_pair).await?;
-        let handle = tokio::spawn(async move { router.serve_with_shutdown(addr, n.wait()).await });
+        let (xline_router, curp_router, curp_client) =
+            self.init_router(persistent, key_pair).await?;
+        let handle = tokio::spawn(async move {
+            tokio::select! {
+                _ = xline_router.serve_with_shutdown(xline_addr, n1.wait()) => {},
+                _ = curp_router.serve_with_shutdown(curp_addr, n2.wait()) => {},
+            }
+            Ok(())
+        });
         if let Err(e) = self.publish(curp_client).await {
             warn!("publish name to cluster failed: {:?}", e);
         };
@@ -388,21 +397,25 @@ impl XlineServer {
 
     /// inner start method shared by `start` and `start_from_listener`
     #[cfg(not(madsim))]
-    async fn start_inner<I, IO, IE>(&self, incoming: I) -> Result<()>
+    async fn start_inner<I1, I2, IO, IE>(&self, xline_incoming: I1, curp_incoming: I2) -> Result<()>
     where
-        I: Stream<Item = Result<IO, IE>> + Send + 'static,
+        I1: Stream<Item = Result<IO, IE>> + Send + 'static,
+        I2: Stream<Item = Result<IO, IE>> + Send + 'static,
         IO: AsyncRead + AsyncWrite + Connected + Unpin + Send + 'static,
         IO::ConnectInfo: Clone + Send + Sync + 'static,
         IE: Into<Box<dyn std::error::Error + Send + Sync>> + Send,
     {
         let persistent = DB::open(&self.storage_config.engine)?;
         let key_pair = Self::read_key_pair(&self.auth_config).await?;
-        let (router, curp_client) = self.init_router(persistent, key_pair).await?;
+        let (xline_router, curp_router, curp_client) =
+            self.init_router(persistent, key_pair).await?;
         self.task_manager
-            .spawn(TaskName::TonicServer, |n| async move {
-                let _ig = router
-                    .serve_with_incoming_shutdown(incoming, n.wait())
-                    .await;
+            .spawn(TaskName::TonicServer, |n1| async move {
+                let n2 = n1.clone();
+                tokio::select! {
+                    _ = xline_router.serve_with_incoming_shutdown(xline_incoming, n1.wait()) => {},
+                    _ = curp_router.serve_with_incoming_shutdown(curp_incoming, n2.wait()) => {},
+                }
             });
         if let Err(e) = self.publish(curp_client).await {
             warn!("publish name to cluster failed: {e:?}");
@@ -418,30 +431,12 @@ impl XlineServer {
     #[inline]
     #[cfg(not(madsim))]
     pub async fn start(&self) -> Result<()> {
-        let server_addr_iter = self
-            .cluster_config
-            .members()
-            .get(self.cluster_config.name())
-            .ok_or_else(|| {
-                anyhow!(
-                    "node name {} not found in cluster peers",
-                    self.cluster_config.name()
-                )
-            })?
-            .iter()
-            .map(|addr| {
-                let address = match addr.split_once("://") {
-                    Some((_, address)) => address,
-                    None => addr,
-                };
-                address.to_socket_addrs()
-            })
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .flatten();
-        let incoming = bind_addrs(server_addr_iter)?;
+        let client_listen_urls = self.cluster_config.client_listen_urls();
+        let peer_listen_urls = self.cluster_config.peer_listen_urls();
+        let xline_incoming = bind_addrs(client_listen_urls)?;
+        let curp_incoming = bind_addrs(peer_listen_urls)?;
 
-        self.start_inner(incoming).await
+        self.start_inner(xline_incoming, curp_incoming).await
     }
 
     /// Start `XlineServer` from listeners
@@ -451,9 +446,14 @@ impl XlineServer {
     /// Will return `Err` when `tonic::Server` serve return an error
     #[inline]
     #[cfg(not(madsim))]
-    pub async fn start_from_listener(&self, xline_listener: tokio::net::TcpListener) -> Result<()> {
-        let incoming = tokio_stream::wrappers::TcpListenerStream::new(xline_listener);
-        self.start_inner(incoming).await
+    pub async fn start_from_listener(
+        &self,
+        xline_listener: tokio::net::TcpListener,
+        curp_listener: tokio::net::TcpListener,
+    ) -> Result<()> {
+        let xline_incoming = tokio_stream::wrappers::TcpListenerStream::new(xline_listener);
+        let curp_incoming = tokio_stream::wrappers::TcpListenerStream::new(curp_listener);
+        self.start_inner(xline_incoming, curp_incoming).await
     }
 
     /// Init `KvServer`, `LockServer`, `LeaseServer`, `WatchServer` and `CurpServer`
@@ -583,7 +583,7 @@ impl XlineServer {
             LockServer::new(
                 Arc::clone(&client),
                 Arc::clone(&id_gen),
-                &self.cluster_info.self_addrs(),
+                &self.cluster_info.self_peer_urls(),
                 self.client_tls_config.as_ref(),
             ),
             LeaseServer::new(
@@ -622,7 +622,11 @@ impl XlineServer {
     /// Publish the name of current node to cluster
     async fn publish(&self, curp_client: Arc<CurpClient>) -> Result<(), tonic::Status> {
         curp_client
-            .propose_publish(self.cluster_info.self_id(), self.cluster_info.self_name())
+            .propose_publish(
+                self.cluster_info.self_id(),
+                self.cluster_info.self_name(),
+                self.cluster_info.self_client_urls(),
+            )
             .await
     }
 
@@ -684,10 +688,21 @@ impl XlineServer {
 
 /// Bind multiple addresses
 #[cfg(not(madsim))]
-fn bind_addrs<T: Iterator<Item = SocketAddr>>(
-    addrs: T,
+fn bind_addrs(
+    addrs: &[String],
 ) -> Result<impl Stream<Item = Result<hyper::server::conn::AddrStream, std::io::Error>>> {
     let incoming = addrs
+        .iter()
+        .map(|addr| {
+            let address = match addr.split_once("://") {
+                Some((_, address)) => address,
+                None => addr,
+            };
+            address.to_socket_addrs()
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
         .map(|addr| {
             tonic::transport::server::TcpIncoming::new(addr, true, None)
                 .map_err(|e| anyhow::anyhow!("Failed to bind to {}, err: {e}", addr))

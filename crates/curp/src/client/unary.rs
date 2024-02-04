@@ -234,9 +234,11 @@ impl<C: Command> ClientApi for Unary<C> {
         &self,
         node_id: ServerId,
         node_name: String,
+        node_client_urls: Vec<String>,
     ) -> Result<(), Self::Error> {
         let propose_id = self.gen_propose_id().await?;
-        RepeatableClientApi::propose_publish(self, propose_id, node_id, node_name).await
+        RepeatableClientApi::propose_publish(self, propose_id, node_id, node_name, node_client_urls)
+            .await
     }
 
     /// Send move leader request
@@ -515,8 +517,9 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
         propose_id: ProposeId,
         node_id: ServerId,
         node_name: String,
+        node_client_urls: Vec<String>,
     ) -> Result<(), Self::Error> {
-        let req = PublishRequest::new(propose_id, node_id, node_name);
+        let req = PublishRequest::new(propose_id, node_id, node_name, node_client_urls);
         let timeout = self.config.wait_synced_timeout;
         let _ig = self
             .map_leader(|conn| async move { conn.publish(req, timeout).await })

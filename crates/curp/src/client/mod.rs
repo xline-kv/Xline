@@ -81,6 +81,7 @@ pub trait ClientApi {
         &self,
         node_id: ServerId,
         node_name: String,
+        node_client_urls: Vec<String>,
     ) -> Result<(), Self::Error>;
 
     /// Send move leader request
@@ -144,6 +145,7 @@ trait RepeatableClientApi: ClientApi {
         propose_id: ProposeId,
         node_id: ServerId,
         node_name: String,
+        node_client_urls: Vec<String>,
     ) -> Result<(), Self::Error>;
 }
 

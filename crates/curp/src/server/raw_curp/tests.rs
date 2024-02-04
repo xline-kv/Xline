@@ -47,7 +47,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let all_members: HashMap<_, _> = (0..n)
             .map(|i| (format!("S{i}"), vec![format!("S{i}")]))
             .collect();
-        let cluster_info = Arc::new(ClusterInfo::from_members_map(all_members, "S0"));
+        let cluster_info = Arc::new(ClusterInfo::from_members_map(all_members, [], "S0"));
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
         let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
         let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
@@ -1027,7 +1027,7 @@ fn update_node_should_update_the_address_of_node() {
         InnerConnectApiWrapper::new_from_arc(Arc::new(mock_connect)),
     );
     assert_eq!(
-        curp.cluster().addrs(follower_id),
+        curp.cluster().peer_urls(follower_id),
         Some(vec!["S1".to_owned()])
     );
     let changes = vec![ConfChange::update(
@@ -1038,7 +1038,7 @@ fn update_node_should_update_the_address_of_node() {
     let infos = curp.apply_conf_change(changes.clone());
     assert_eq!(infos, (vec!["S1".to_owned()], String::new(), false));
     assert_eq!(
-        curp.cluster().addrs(follower_id),
+        curp.cluster().peer_urls(follower_id),
         Some(vec!["http://127.0.0.1:4567".to_owned()])
     );
     curp.fallback_conf_change(changes, infos.0, infos.1, infos.2);
@@ -1070,7 +1070,7 @@ fn leader_handle_propose_conf_change() {
     };
     let follower_id = curp.cluster().get_id_by_name("S1").unwrap();
     assert_eq!(
-        curp.cluster().addrs(follower_id),
+        curp.cluster().peer_urls(follower_id),
         Some(vec!["S1".to_owned()])
     );
     let changes = vec![ConfChange::update(
@@ -1098,7 +1098,7 @@ fn follower_handle_propose_conf_change() {
 
     let follower_id = curp.cluster().get_id_by_name("S1").unwrap();
     assert_eq!(
-        curp.cluster().addrs(follower_id),
+        curp.cluster().peer_urls(follower_id),
         Some(vec!["S1".to_owned()])
     );
     let changes = vec![ConfChange::update(

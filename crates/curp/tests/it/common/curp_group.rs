@@ -106,11 +106,12 @@ impl CurpGroup {
             let snapshot_allocator = Self::get_snapshot_allocator_from_cfg(&config);
             let cluster_info = Arc::new(ClusterInfo::from_members_map(
                 all_members_addrs.clone(),
+                [],
                 &name,
             ));
             let listener = listeners.remove(&name).unwrap();
             let id = cluster_info.self_id();
-            let addr = cluster_info.self_addrs().pop().unwrap();
+            let addr = cluster_info.self_peer_urls().pop().unwrap();
 
             let (exe_tx, exe_rx) = mpsc::unbounded_channel();
             let (as_tx, as_rx) = mpsc::unbounded_channel();
@@ -284,7 +285,7 @@ impl CurpGroup {
             },
         );
         let client = self.new_client().await;
-        client.propose_publish(id, name).await.unwrap();
+        client.propose_publish(id, name, vec![]).await.unwrap();
     }
 
     pub fn all_addrs(&self) -> impl Iterator<Item = &String> {
@@ -444,7 +445,7 @@ impl CurpGroup {
         let members = cluster_res_base
             .members
             .into_iter()
-            .map(|m| Member::new(m.id, m.name, m.peer_urls, m.is_learner))
+            .map(|m| Member::new(m.id, m.name, m.peer_urls, m.client_urls, m.is_learner))
             .collect();
         let cluster_res = curp::rpc::FetchClusterResponse {
             leader_id: cluster_res_base.leader_id,

@@ -862,7 +862,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                     EntryData::Empty
                     | EntryData::Command(_)
                     | EntryData::Shutdown
-                    | EntryData::SetName(_, _) => false,
+                    | EntryData::SetNodeState(_, _, _) => false,
                 });
         // extra check to shutdown removed node
         if !contains_candidate && !remove_candidate_is_not_committed {
@@ -1390,7 +1390,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 Some(ConfChange::remove(node_id))
             }
             ConfChangeType::Remove => {
-                let member = Member::new(node_id, name, old_addrs.clone(), is_learner);
+                let member = Member::new(node_id, name, old_addrs.clone(), [], is_learner);
                 self.cst
                     .map_lock(|mut cst_l| _ = cst_l.config.insert(node_id, is_learner));
                 self.lst.insert(node_id, is_learner);
@@ -1747,7 +1747,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                     let _ignore =
                         ucp_l.insert(propose_id, PoolEntry::new(propose_id, conf_change.clone()));
                 }
-                EntryData::Shutdown | EntryData::Empty | EntryData::SetName(_, _) => {}
+                EntryData::Shutdown | EntryData::Empty | EntryData::SetNodeState(_, _, _) => {}
             }
         }
     }
@@ -1792,7 +1792,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let (modified, fallback_info) = match conf_change.change_type() {
             ConfChangeType::Add | ConfChangeType::AddLearner => {
                 let is_learner = matches!(conf_change.change_type(), ConfChangeType::AddLearner);
-                let member = Member::new(node_id, "", conf_change.address.clone(), is_learner);
+                let member = Member::new(node_id, "", conf_change.address.clone(), [], is_learner);
                 _ = cst_l.config.insert(node_id, is_learner);
                 self.lst.insert(node_id, is_learner);
                 _ = self.ctx.sync_events.insert(node_id, Arc::new(Event::new()));

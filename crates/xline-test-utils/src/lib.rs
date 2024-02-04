@@ -16,10 +16,12 @@ pub use xline_client::{types, Client, ClientOptions};
 
 /// Cluster
 pub struct Cluster {
-    /// listeners of members
-    listeners: Vec<TcpListener>,
+    /// client and peer listeners of members
+    listeners: Vec<(TcpListener, TcpListener)>,
     /// address of members
-    all_members: Vec<String>,
+    all_members_peer_urls: Vec<String>,
+    /// address of members
+    all_members_client_urls: Vec<String>,
     /// Server configs
     configs: Vec<XlineServerConfig>,
     /// Xline servers
@@ -52,15 +54,23 @@ impl Cluster {
         let size = configs.len();
         let mut listeners = Vec::new();
         for _i in 0..size {
-            listeners.push(TcpListener::bind("0.0.0.0:0").await.unwrap());
+            listeners.push((
+                TcpListener::bind("0.0.0.0:0").await.unwrap(),
+                TcpListener::bind("0.0.0.0:0").await.unwrap(),
+            ));
         }
-        let all_members = listeners
+        let all_members_client_urls = listeners
             .iter()
-            .map(|l| l.local_addr().unwrap().to_string())
+            .map(|l| l.0.local_addr().unwrap().to_string())
+            .collect();
+        let all_members_peer_urls = listeners
+            .iter()
+            .map(|l| l.1.local_addr().unwrap().to_string())
             .collect();
         Self {
             listeners,
-            all_members,
+            all_members_peer_urls,
+            all_members_client_urls,
             configs,
             servers: Vec::new(),
             client: None,
@@ -71,12 +81,15 @@ impl Cluster {
     pub async fn start(&mut self) {
         for (i, config) in self.configs.iter().enumerate() {
             let name = format!("server{}", i);
-            let listener = self.listeners.remove(0);
-
+            let (xline_listener, curp_listener) = self.listeners.remove(0);
+            let self_client_url = xline_listener.local_addr().unwrap().to_string();
+            let self_peer_url = curp_listener.local_addr().unwrap().to_string();
             let config = Self::merge_config(
                 config,
                 name,
-                self.all_members
+                self_client_url,
+                self_peer_url,
+                self.all_members_peer_urls
                     .clone()
                     .into_iter()
                     .enumerate()
@@ -96,7 +109,9 @@ impl Cluster {
             .await
             .unwrap();
 
-            let result = server.start_from_listener(listener).await;
+            let result = server
+                .start_from_listener(xline_listener, curp_listener)
+                .await;
             if let Err(e) = result {
                 panic!("Server start error: {e}");
             }
@@ -105,23 +120,27 @@ impl Cluster {
         time::sleep(Duration::from_millis(300)).await;
     }
 
-    pub async fn run_node(&mut self, listener: TcpListener) {
+    pub async fn run_node(&mut self, xline_listener: TcpListener, curp_listener: TcpListener) {
         let config = XlineServerConfig::default();
-        self.run_node_with_config(listener, config).await;
+        self.run_node_with_config(xline_listener, curp_listener, config)
+            .await;
     }
 
     pub async fn run_node_with_config(
         &mut self,
-        listener: TcpListener,
+        xline_listener: TcpListener,
+        curp_listener: TcpListener,
         base_config: XlineServerConfig,
     ) {
-        let idx = self.all_members.len();
+        let idx = self.all_members_peer_urls.len();
         let name = format!("server{}", idx);
-        let self_addr = listener.local_addr().unwrap().to_string();
-        self.all_members.push(self_addr.clone());
+        let self_client_url = xline_listener.local_addr().unwrap().to_string();
+        let self_peer_url = curp_listener.local_addr().unwrap().to_string();
+        self.all_members_client_urls.push(self_client_url.clone());
+        self.all_members_peer_urls.push(self_peer_url.clone());
 
         let members = self
-            .all_members
+            .all_members_peer_urls
             .clone()
             .into_iter()
             .enumerate()
@@ -133,6 +152,8 @@ impl Cluster {
         let config = Self::merge_config(
             base_config,
             name,
+            self_client_url,
+            self_peer_url,
             members,
             false,
             InitialClusterState::Existing,
@@ -147,7 +168,9 @@ impl Cluster {
         )
         .await
         .unwrap();
-        let result = server.start_from_listener(listener).await;
+        let result = server
+            .start_from_listener(xline_listener, curp_listener)
+            .await;
         if let Err(e) = result {
             panic!("Server start error: {e}");
         }
@@ -156,26 +179,33 @@ impl Cluster {
     /// Create or get the client with the specified index
     pub async fn client(&mut self) -> &mut Client {
         if self.client.is_none() {
-            let client = Client::connect(self.all_members.clone(), ClientOptions::default())
-                .await
-                .unwrap_or_else(|e| {
-                    panic!("Client connect error: {:?}", e);
-                });
+            let client = Client::connect(
+                self.all_members_client_urls.clone(),
+                ClientOptions::default(),
+            )
+            .await
+            .unwrap_or_else(|e| {
+                panic!("Client connect error: {:?}", e);
+            });
             self.client = Some(client);
         }
         self.client.as_mut().unwrap()
     }
 
-    pub fn all_members_map(&self) -> HashMap<usize, String> {
-        self.all_members.iter().cloned().enumerate().collect()
+    pub fn all_members_client_urls_map(&self) -> HashMap<usize, String> {
+        self.all_members_client_urls
+            .iter()
+            .cloned()
+            .enumerate()
+            .collect()
     }
 
-    pub fn get_addr(&self, idx: usize) -> String {
-        self.all_members[idx].clone()
+    pub fn get_client_urls(&self, idx: usize) -> String {
+        self.all_members_client_urls[idx].clone()
     }
 
-    pub fn addrs(&self) -> Vec<String> {
-        self.all_members.clone()
+    pub fn all_client_addrs(&self) -> Vec<String> {
+        self.all_members_client_urls.clone()
     }
 
     pub fn default_config_with_quota_and_rocks_path(
@@ -210,6 +240,8 @@ impl Cluster {
     fn merge_config(
         base_config: &XlineServerConfig,
         name: String,
+        client_url: String,
+        peer_url: String,
         members: HashMap<String, Vec<String>>,
         is_leader: bool,
         initial_cluster_state: InitialClusterState,
@@ -217,10 +249,10 @@ impl Cluster {
         let old_cluster = base_config.cluster();
         let new_cluster = ClusterConfig::new(
             name,
-            vec![],
-            vec![],
-            vec![],
-            vec![], // TODO
+            vec![peer_url.clone()],
+            vec![peer_url],
+            vec![client_url.clone()],
+            vec![client_url],
             members,
             is_leader,
             old_cluster.curp_config().clone(),
