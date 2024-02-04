@@ -85,6 +85,18 @@ pub struct ClusterConfig {
     /// Get xline server name
     #[getset(get = "pub")]
     name: String,
+    /// Xline server peer listen urls
+    #[getset(get = "pub")]
+    peer_listen_urls: Vec<String>,
+    /// Xline server peer advertise urls
+    #[getset(get = "pub")]
+    peer_advertise_urls: Vec<String>,
+    /// Xline server client listen urls
+    #[getset(get = "pub")]
+    client_listen_urls: Vec<String>,
+    /// Xline server client advertise urls
+    #[getset(get = "pub")]
+    client_advertise_urls: Vec<String>,
     /// All the nodes in the xline cluster
     #[getset(get = "pub")]
     members: HashMap<String, Vec<String>>,
@@ -114,6 +126,10 @@ impl Default for ClusterConfig {
     fn default() -> Self {
         Self {
             name: "default".to_owned(),
+            peer_listen_urls: vec!["http://127.0.0.1:2379".to_owned()],
+            peer_advertise_urls: vec!["http://127.0.0.1:2379".to_owned()],
+            client_listen_urls: vec!["http://127.0.0.1:2379".to_owned()],
+            client_advertise_urls: vec!["http://127.0.0.1:2379".to_owned()],
             members: HashMap::from([(
                 "default".to_owned(),
                 vec!["http://127.0.0.1:2379".to_owned()],
@@ -160,8 +176,13 @@ impl ClusterConfig {
     /// Generate a new `ClusterConfig` object
     #[must_use]
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: String,
+        peer_listen_urls: Vec<String>,
+        peer_advertise_urls: Vec<String>,
+        client_listen_urls: Vec<String>,
+        client_advertise_urls: Vec<String>,
         members: HashMap<String, Vec<String>>,
         is_leader: bool,
         curp: CurpConfig,
@@ -171,6 +192,10 @@ impl ClusterConfig {
     ) -> Self {
         Self {
             name,
+            peer_listen_urls,
+            peer_advertise_urls,
+            client_listen_urls,
+            client_advertise_urls,
             members,
             is_leader,
             curp_config: curp,
@@ -1152,6 +1177,10 @@ mod tests {
             name = 'node1'
             is_leader = true
             initial_cluster_state = 'new'
+            peer_listen_urls = ['127.0.0.1:2380']
+            peer_advertise_urls = ['127.0.0.1:2380']
+            client_listen_urls = ['127.0.0.1:2379']
+            client_advertise_urls = ['127.0.0.1:2379']
 
             [cluster.server_timeout]
             range_retry_timeout = '3s'
@@ -1243,6 +1272,10 @@ mod tests {
             config.cluster,
             ClusterConfig::new(
                 "node1".to_owned(),
+                vec!["127.0.0.1:2380".to_owned()],
+                vec!["127.0.0.1:2380".to_owned()],
+                vec!["127.0.0.1:2379".to_owned()],
+                vec!["127.0.0.1:2379".to_owned()],
                 HashMap::from_iter([
                     (
                         "node1".to_owned(),
@@ -1330,6 +1363,10 @@ mod tests {
             r#"[cluster]
                 name = 'node1'
                 is_leader = true
+                peer_listen_urls = ['127.0.0.1:2380']
+                peer_advertise_urls = ['127.0.0.1:2380']
+                client_listen_urls = ['127.0.0.1:2379']
+                client_advertise_urls = ['127.0.0.1:2379']
 
                 [cluster.members]
                 node1 = ['127.0.0.1:2379']
@@ -1363,6 +1400,10 @@ mod tests {
             config.cluster,
             ClusterConfig::new(
                 "node1".to_owned(),
+                vec!["127.0.0.1:2380".to_owned()],
+                vec!["127.0.0.1:2380".to_owned()],
+                vec!["127.0.0.1:2379".to_owned()],
+                vec!["127.0.0.1:2379".to_owned()],
                 HashMap::from([
                     ("node1".to_owned(), vec!["127.0.0.1:2379".to_owned()]),
                     ("node2".to_owned(), vec!["127.0.0.1:2380".to_owned()]),
@@ -1411,6 +1452,10 @@ mod tests {
             r#"[cluster]
                 name = 'node1'
                 is_leader = true
+                peer_listen_urls = ['127.0.0.1:2380']
+                peer_advertise_urls = ['127.0.0.1:2380']
+                client_listen_urls = ['127.0.0.1:2379']
+                client_advertise_urls = ['127.0.0.1:2379']
 
                 [cluster.members]
                 node1 = ['127.0.0.1:2379']

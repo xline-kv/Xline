@@ -36,6 +36,18 @@ pub struct ServerArgs {
     /// Node name
     #[clap(long)]
     name: String,
+    /// Node peer listen urls
+    #[clap(long)]
+    peer_listen_urls: Vec<String>,
+    /// Node peer advertise urls
+    #[clap(long)]
+    peer_advertise_urls: Vec<String>,
+    /// Node client listen urls
+    #[clap(long)]
+    client_listen_urls: Vec<String>,
+    /// Node client advertise urls
+    #[clap(long)]
+    client_advertise_urls: Vec<String>,
     /// Cluster peers. eg: node1=192.168.x.x:8080,192.168.x.x:8081,node2=192.168.x.x:8083
     #[clap(long, value_parser = parse_members)]
     members: HashMap<String, Vec<String>>,
@@ -256,6 +268,10 @@ impl From<ServerArgs> for XlineServerConfig {
         let initial_cluster_state = args.initial_cluster_state.unwrap_or_default();
         let cluster = ClusterConfig::new(
             args.name,
+            args.peer_listen_urls,
+            args.peer_advertise_urls,
+            args.client_listen_urls,
+            args.client_advertise_urls,
             args.members,
             args.is_leader,
             curp_config,
