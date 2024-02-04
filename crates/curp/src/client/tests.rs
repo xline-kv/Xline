@@ -852,7 +852,7 @@ fn init_stream_client(
     term: u64,
     cluster_version: u64,
 ) -> Streaming {
-    let state = State::new_arc(connects, local_server, leader, term, cluster_version);
+    let state = State::new_arc(connects, local_server, leader, term, cluster_version, None);
     Streaming::new(state, StreamingConfig::new(Duration::from_secs(1)))
 }
 
