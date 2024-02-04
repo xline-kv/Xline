@@ -217,6 +217,10 @@ impl Cluster {
         let old_cluster = base_config.cluster();
         let new_cluster = ClusterConfig::new(
             name,
+            vec![],
+            vec![],
+            vec![],
+            vec![], // TODO
             members,
             is_leader,
             old_cluster.curp_config().clone(),
