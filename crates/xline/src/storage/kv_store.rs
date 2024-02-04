@@ -595,6 +595,9 @@ where
             header: Some(self.header_gen.gen_header()),
             ..Default::default()
         };
+        if req.lease != 0 && self.lease_collection.look_up(req.lease).is_none() {
+            return Err(ExecuteError::LeaseNotFound(req.lease));
+        };
         if req.prev_kv || req.ignore_lease || req.ignore_value {
             let prev_kv = self.inner.get_range(&req.key, &[], 0)?.pop();
             if prev_kv.is_none() && (req.ignore_lease || req.ignore_value) {

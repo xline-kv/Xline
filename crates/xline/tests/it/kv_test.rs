@@ -30,6 +30,10 @@ async fn test_kv_put() -> Result<(), Box<dyn Error>> {
             req: PutRequest::new("foo", "").with_ignore_value(true),
             want_err: false,
         },
+        TestCase {
+            req: PutRequest::new("foo", "").with_lease(12345),
+            want_err: true,
+        },
     ];
 
     let mut cluster = Cluster::new(3).await;
