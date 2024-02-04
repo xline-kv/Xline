@@ -131,7 +131,7 @@ async fn worker_exe<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
         EntryData::ConfChange(_)
         | EntryData::Shutdown
         | EntryData::Empty
-        | EntryData::SetName(_, _) => true,
+        | EntryData::SetNodeState(_, _, _) => true,
     };
     if !success {
         ce.trigger(entry.inflight_id(), entry.index);
@@ -222,12 +222,13 @@ async fn worker_as<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
             }
             true
         }
-        EntryData::SetName(node_id, ref name) => {
+        EntryData::SetNodeState(node_id, ref name, ref client_urls) => {
             if let Err(e) = ce.set_last_applied(entry.index) {
                 error!("failed to set last_applied, {e}");
                 return false;
             }
-            curp.cluster().set_name(node_id, name.clone());
+            curp.cluster()
+                .set_node_state(node_id, name.clone(), client_urls.clone());
             true
         }
         EntryData::Empty => true,

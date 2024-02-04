@@ -238,13 +238,21 @@ where
         &self,
         node_id: ServerId,
         node_name: String,
+        node_client_urls: Vec<String>,
     ) -> Result<(), Self::Error> {
         let propose_id = self
             .retry::<_, _>(RepeatableClientApi::gen_propose_id)
             .await?;
         self.retry::<_, _>(|client| {
             let name_c = node_name.clone();
-            RepeatableClientApi::propose_publish(client, propose_id, node_id, name_c)
+            let node_client_urls_c = node_client_urls.clone();
+            RepeatableClientApi::propose_publish(
+                client,
+                propose_id,
+                node_id,
+                name_c,
+                node_client_urls_c,
+            )
         })
         .await
     }

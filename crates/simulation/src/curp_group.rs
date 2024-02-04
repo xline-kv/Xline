@@ -65,21 +65,21 @@ impl CurpGroup {
         let handle = madsim::runtime::Handle::current();
 
         let all: HashMap<_, _> = (0..n_nodes)
-            .map(|x| (format!("S{x}"), vec![format!("192.168.1.{}:12345", x + 1)]))
+            .map(|x| (format!("S{x}"), vec![format!("192.168.1.{}:2380", x + 1)]))
             .collect();
         let mut all_members = HashMap::new();
 
         let nodes = (0..n_nodes)
             .map(|i| {
                 let name = format!("S{i}");
-                let addr = format!("192.168.1.{}:12345", i + 1);
+                let peer_url = format!("192.168.1.{}:2380", i + 1);
                 let storage_path = tempfile::tempdir().unwrap().into_path();
 
                 let (exe_tx, exe_rx) = mpsc::unbounded_channel();
                 let (as_tx, as_rx) = mpsc::unbounded_channel();
                 let store = Arc::new(Mutex::new(None));
 
-                let cluster_info = Arc::new(ClusterInfo::from_members_map(all.clone(), &name));
+                let cluster_info = Arc::new(ClusterInfo::from_members_map(all.clone(), [], &name));
                 all_members = cluster_info
                     .all_members_addrs()
                     .into_iter()
@@ -122,7 +122,7 @@ impl CurpGroup {
                         Rpc::run_from_addr(
                             cluster_info,
                             is_leader,
-                            "0.0.0.0:12345".parse().unwrap(),
+                            "0.0.0.0:2380".parse().unwrap(),
                             ce,
                             Box::new(MemorySnapshotAllocator),
                             TestRoleChange {
@@ -140,7 +140,7 @@ impl CurpGroup {
                     id,
                     CurpNode {
                         id,
-                        addr,
+                        addr: peer_url,
                         handle: node_handle,
                         exe_rx,
                         as_rx,

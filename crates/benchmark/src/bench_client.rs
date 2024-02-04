@@ -221,7 +221,7 @@ mod test {
         cluster.start().await;
         let use_curp_client = true;
         let config = ClientOptions::default();
-        let mut client = BenchClient::new(cluster.addrs(), use_curp_client, config)
+        let mut client = BenchClient::new(cluster.all_client_addrs(), use_curp_client, config)
             .await
             .unwrap();
         //check xline client put value exist
@@ -238,7 +238,7 @@ mod test {
         cluster.start().await;
         let use_curp_client = false;
         let config = ClientOptions::default();
-        let mut client = BenchClient::new(cluster.addrs(), use_curp_client, config)
+        let mut client = BenchClient::new(cluster.all_client_addrs(), use_curp_client, config)
             .await
             .unwrap();
 

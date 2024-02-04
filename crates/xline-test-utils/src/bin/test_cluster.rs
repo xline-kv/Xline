@@ -9,7 +9,7 @@ async fn main() {
 
     println!("cluster running");
 
-    for (id, addr) in cluster.all_members_map() {
+    for (id, addr) in cluster.all_members_client_urls_map() {
         println!("server id: {} addr: {}", id, addr);
     }
 

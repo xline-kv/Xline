@@ -8,8 +8,11 @@ use std::{
 use curp_external_api::LogIndex;
 use curp_test_utils::test_cmd::{LogIndexResult, TestCommand, TestCommandResult};
 use tokio::time::Instant;
+#[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
 use tracing_test::traced_test;
+#[cfg(madsim)]
+use utils::ClientTlsConfig;
 
 use super::{
     retry::{Retry, RetryConfig},
@@ -78,9 +81,9 @@ async fn test_unary_fetch_clusters_serializable() {
                 term: 1,
                 cluster_id: 123,
                 members: vec![
-                    Member::new(0, "S0", vec!["A0".to_owned()], false),
-                    Member::new(1, "S1", vec!["A1".to_owned()], false),
-                    Member::new(2, "S2", vec!["A2".to_owned()], false),
+                    Member::new(0, "S0", vec!["A0".to_owned()], [], false),
+                    Member::new(1, "S1", vec!["A1".to_owned()], [], false),
+                    Member::new(2, "S2", vec!["A2".to_owned()], [], false),
                 ],
                 cluster_version: 1,
             }))
@@ -136,11 +139,11 @@ async fn test_unary_fetch_clusters_linearizable() {
                         term: 2,
                         cluster_id: 123,
                         members: vec![
-                            Member::new(0, "S0", vec!["A0".to_owned()], false),
-                            Member::new(1, "S1", vec!["A1".to_owned()], false),
-                            Member::new(2, "S2", vec!["A2".to_owned()], false),
-                            Member::new(3, "S3", vec!["A3".to_owned()], false),
-                            Member::new(4, "S4", vec!["A4".to_owned()], false),
+                            Member::new(0, "S0", vec!["A0".to_owned()], [], false),
+                            Member::new(1, "S1", vec!["A1".to_owned()], [], false),
+                            Member::new(2, "S2", vec!["A2".to_owned()], [], false),
+                            Member::new(3, "S3", vec!["A3".to_owned()], [], false),
+                            Member::new(4, "S4", vec!["A4".to_owned()], [], false),
                         ],
                         cluster_version: 1,
                     },
@@ -163,11 +166,11 @@ async fn test_unary_fetch_clusters_linearizable() {
                         term: 1,            // with the old term
                         cluster_id: 123,
                         members: vec![
-                            Member::new(0, "S0", vec!["B0".to_owned()], false),
-                            Member::new(1, "S1", vec!["B1".to_owned()], false),
-                            Member::new(2, "S2", vec!["B2".to_owned()], false),
-                            Member::new(3, "S3", vec!["B3".to_owned()], false),
-                            Member::new(4, "S4", vec!["B4".to_owned()], false),
+                            Member::new(0, "S0", vec!["B0".to_owned()], [], false),
+                            Member::new(1, "S1", vec!["B1".to_owned()], [], false),
+                            Member::new(2, "S2", vec!["B2".to_owned()], [], false),
+                            Member::new(3, "S3", vec!["B3".to_owned()], [], false),
+                            Member::new(4, "S4", vec!["B4".to_owned()], [], false),
                         ],
                         cluster_version: 1,
                     },
@@ -202,11 +205,11 @@ async fn test_unary_fetch_clusters_linearizable_failed() {
                         term: 2,
                         cluster_id: 123,
                         members: vec![
-                            Member::new(0, "S0", vec!["A0".to_owned()], false),
-                            Member::new(1, "S1", vec!["A1".to_owned()], false),
-                            Member::new(2, "S2", vec!["A2".to_owned()], false),
-                            Member::new(3, "S3", vec!["A3".to_owned()], false),
-                            Member::new(4, "S4", vec!["A4".to_owned()], false),
+                            Member::new(0, "S0", vec!["A0".to_owned()], [], false),
+                            Member::new(1, "S1", vec!["A1".to_owned()], [], false),
+                            Member::new(2, "S2", vec!["A2".to_owned()], [], false),
+                            Member::new(3, "S3", vec!["A3".to_owned()], [], false),
+                            Member::new(4, "S4", vec!["A4".to_owned()], [], false),
                         ],
                         cluster_version: 1,
                     },
@@ -229,11 +232,11 @@ async fn test_unary_fetch_clusters_linearizable_failed() {
                         term: 1,            // with the old term
                         cluster_id: 123,
                         members: vec![
-                            Member::new(0, "S0", vec!["B0".to_owned()], false),
-                            Member::new(1, "S1", vec!["B1".to_owned()], false),
-                            Member::new(2, "S2", vec!["B2".to_owned()], false),
-                            Member::new(3, "S3", vec!["B3".to_owned()], false),
-                            Member::new(4, "S4", vec!["B4".to_owned()], false),
+                            Member::new(0, "S0", vec!["B0".to_owned()], [], false),
+                            Member::new(1, "S1", vec!["B1".to_owned()], [], false),
+                            Member::new(2, "S2", vec!["B2".to_owned()], [], false),
+                            Member::new(3, "S3", vec!["B3".to_owned()], [], false),
+                            Member::new(4, "S4", vec!["B4".to_owned()], [], false),
                         ],
                         cluster_version: 1,
                     },
@@ -408,9 +411,9 @@ async fn test_unary_slow_round_fetch_leader_first() {
                     term: 1,
                     cluster_id: 123,
                     members: vec![
-                        Member::new(0, "S0", vec!["A0".to_owned()], false),
-                        Member::new(1, "S1", vec!["A1".to_owned()], false),
-                        Member::new(2, "S2", vec!["A2".to_owned()], false),
+                        Member::new(0, "S0", vec!["A0".to_owned()], [], false),
+                        Member::new(1, "S1", vec!["A1".to_owned()], [], false),
+                        Member::new(2, "S2", vec!["A2".to_owned()], [], false),
                     ],
                     cluster_version: 1,
                 }))
@@ -663,11 +666,11 @@ async fn test_retry_propose_return_retry_error() {
                         term: 2,
                         cluster_id: 123,
                         members: vec![
-                            Member::new(0, "S0", vec!["A0".to_owned()], false),
-                            Member::new(1, "S1", vec!["A1".to_owned()], false),
-                            Member::new(2, "S2", vec!["A2".to_owned()], false),
-                            Member::new(3, "S3", vec!["A3".to_owned()], false),
-                            Member::new(4, "S4", vec!["A4".to_owned()], false),
+                            Member::new(0, "S0", vec!["A0".to_owned()], [], false),
+                            Member::new(1, "S1", vec!["A1".to_owned()], [], false),
+                            Member::new(2, "S2", vec!["A2".to_owned()], [], false),
+                            Member::new(3, "S3", vec!["A3".to_owned()], [], false),
+                            Member::new(4, "S4", vec!["A4".to_owned()], [], false),
                         ],
                         cluster_version: 1,
                     }))

@@ -356,7 +356,7 @@ impl<C: Command, CE: CommandExecutor<C>> Filter<C, CE> {
                         EntryData::ConfChange(_)
                         | EntryData::Shutdown
                         | EntryData::Empty
-                        | EntryData::SetName(_, _) => None,
+                        | EntryData::SetNodeState(_, _, _) => None,
                     };
                     *exe_st = ExeState::Executing;
                     let task = Task {
