@@ -3857,6 +3857,8 @@ dependencies = [
  "clap",
  "crc32fast",
  "engine",
+ "serde",
+ "serde_json",
  "tempfile",
  "tokio",
  "utils",

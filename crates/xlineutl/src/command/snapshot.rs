@@ -6,9 +6,12 @@ use std::{
 use anyhow::Result;
 use clap::{arg, ArgMatches, Command};
 use engine::{Engine, EngineType, StorageEngine};
+use serde::Serialize;
 use tempfile::tempdir;
 use utils::table_names::{KV_TABLE, XLINE_TABLES};
 use xline::storage::Revision;
+
+use crate::printer::Printer;
 
 /// Definition of `snapshot` command
 pub(crate) fn command() -> Command {
@@ -59,7 +62,7 @@ async fn handle_restore<P: AsRef<Path>, D: Into<PathBuf>>(
 }
 
 /// Snapshot status
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize)]
 struct Status {
     /// Hash of the snapshot
     hash: u32,
@@ -83,8 +86,10 @@ async fn handle_status<P: AsRef<Path>>(snapshot_path: P) -> Result<()> {
     restore_rocks_engine
         .apply_snapshot_from_file(snapshot_path, &XLINE_TABLES)
         .await?;
-    let mut status = Status::default();
-    status.total_size = restore_rocks_engine.file_size()?;
+    let mut status = Status {
+        total_size: restore_rocks_engine.file_size()?,
+        ..Default::default()
+    };
     let mut hasher = crc32fast::Hasher::new();
     for table in XLINE_TABLES {
         hasher.write(table.as_bytes());
@@ -95,13 +100,29 @@ async fn handle_status<P: AsRef<Path>>(snapshot_path: P) -> Result<()> {
             hasher.write(v.as_slice());
             if is_kv_table {
                 let rev = Revision::decode(k.as_slice());
-                status.revision = rev.revision();
+                status.revision = status.revision.max(rev.revision());
             }
             status.total_count += 1;
         }
     }
     status.hash = hasher.finalize();
-    println!("{status:?}"); // TODO use a printer
+    status.print();
 
     Ok(())
+}
+
+impl Printer for Status {
+    fn simple(&self) {
+        println!(
+            "{:x}, {}, {}, {}",
+            self.hash, self.revision, self.total_count, self.total_size
+        );
+    }
+
+    fn field(&self) {
+        println!("Hash : {}", self.hash);
+        println!("Revision : {}", self.revision);
+        println!("Keys : {}", self.total_count);
+        println!("Size : {}", self.total_size);
+    }
 }
