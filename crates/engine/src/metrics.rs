@@ -5,7 +5,11 @@ use bytes::{Bytes, BytesMut};
 use opentelemetry::{metrics::Histogram, KeyValue};
 use utils::define_metrics;
 
-use crate::{rocksdb_engine::RocksEngine, EngineError, SnapshotApi, StorageEngine, WriteOperation};
+#[cfg(madsim)]
+use crate::mock_rocksdb_engine::RocksEngine;
+#[cfg(not(madsim))]
+use crate::rocksdb_engine::RocksEngine;
+use crate::{EngineError, SnapshotApi, StorageEngine, WriteOperation};
 
 define_metrics! {
     "engine",
