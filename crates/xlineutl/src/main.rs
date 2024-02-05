@@ -157,11 +157,14 @@
 )]
 
 use anyhow::Result;
-use clap::Command;
+use clap::{arg, Command};
 use command::snapshot;
+use printer::{set_printer_type, PrinterType};
 
 /// Command definitions and parsers
 mod command;
+/// Printer of common response types
+mod printer;
 
 /// The top level cli command
 fn cli() -> Command {
@@ -171,12 +174,29 @@ fn cli() -> Command {
         .subcommand_required(true)
         .arg_required_else_help(true)
         .allow_external_subcommands(true)
+        .arg(
+            arg!(--printer_type <TYPE> "The format of the result that will be printed")
+                .global(true)
+                .value_parser(["SIMPLE", "FIELD", "JSON"])
+                .default_value("SIMPLE"),
+        )
         .subcommand(snapshot::command())
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let matches = cli().get_matches();
+    let printer_type = match matches
+        .get_one::<String>("printer_type")
+        .expect("Required")
+        .as_str()
+    {
+        "SIMPLE" => PrinterType::Simple,
+        "FIELD" => PrinterType::Field,
+        "JSON" => PrinterType::Json,
+        _ => unreachable!("already checked by clap"),
+    };
+    set_printer_type(printer_type);
     if let Some(("snapshot", sub_matches)) = matches.subcommand() {
         snapshot::execute(sub_matches).await?;
     }
