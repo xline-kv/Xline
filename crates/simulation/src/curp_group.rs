@@ -81,7 +81,7 @@ impl CurpGroup {
 
                 let cluster_info = Arc::new(ClusterInfo::from_members_map(all.clone(), [], &name));
                 all_members = cluster_info
-                    .all_members_addrs()
+                    .all_members_peer_urls()
                     .into_iter()
                     .map(|(k, mut v)| (k, v.pop().unwrap()))
                     .collect();
@@ -179,7 +179,7 @@ impl CurpGroup {
             .collect();
         SimClient {
             inner: Arc::new(
-                ClientBuilder::new(config)
+                ClientBuilder::new(config, true)
                     .all_members(all_members)
                     .build()
                     .await

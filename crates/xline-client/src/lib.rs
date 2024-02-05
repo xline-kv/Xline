@@ -233,7 +233,7 @@ impl Client {
             .collect();
         let channel = Self::build_channel(addrs.clone(), options.tls_config.as_ref()).await?;
         let curp_client = Arc::new(
-            CurpClientBuilder::new(options.client_config)
+            CurpClientBuilder::new(options.client_config, false)
                 .discover_from(addrs)
                 .await?
                 .build::<Command>()

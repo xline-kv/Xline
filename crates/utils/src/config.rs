@@ -99,7 +99,7 @@ pub struct ClusterConfig {
     client_advertise_urls: Vec<String>,
     /// All the nodes in the xline cluster
     #[getset(get = "pub")]
-    members: HashMap<String, Vec<String>>,
+    peers: HashMap<String, Vec<String>>,
     /// Leader node.
     #[getset(get = "pub")]
     is_leader: bool,
@@ -126,11 +126,11 @@ impl Default for ClusterConfig {
     fn default() -> Self {
         Self {
             name: "default".to_owned(),
-            peer_listen_urls: vec!["http://127.0.0.1:2379".to_owned()],
-            peer_advertise_urls: vec!["http://127.0.0.1:2379".to_owned()],
+            peer_listen_urls: vec!["http://127.0.0.1:2380".to_owned()],
+            peer_advertise_urls: vec!["http://127.0.0.1:2380".to_owned()],
             client_listen_urls: vec!["http://127.0.0.1:2379".to_owned()],
             client_advertise_urls: vec!["http://127.0.0.1:2379".to_owned()],
-            members: HashMap::from([(
+            peers: HashMap::from([(
                 "default".to_owned(),
                 vec!["http://127.0.0.1:2379".to_owned()],
             )]),
@@ -196,7 +196,7 @@ impl ClusterConfig {
             peer_advertise_urls,
             client_listen_urls,
             client_advertise_urls,
-            members,
+            peers: members,
             is_leader,
             curp_config: curp,
             client_config,
@@ -1188,7 +1188,7 @@ mod tests {
             sync_victims_interval = '20ms'
             watch_progress_notify_interval = '1s'
 
-            [cluster.members]
+            [cluster.peers]
             node1 = ['127.0.0.1:2378', '127.0.0.1:2379']
             node2 = ['127.0.0.1:2380']
             node3 = ['127.0.0.1:2381']
@@ -1368,7 +1368,7 @@ mod tests {
                 client_listen_urls = ['127.0.0.1:2379']
                 client_advertise_urls = ['127.0.0.1:2379']
 
-                [cluster.members]
+                [cluster.peers]
                 node1 = ['127.0.0.1:2379']
                 node2 = ['127.0.0.1:2380']
                 node3 = ['127.0.0.1:2381']
@@ -1457,7 +1457,7 @@ mod tests {
                 client_listen_urls = ['127.0.0.1:2379']
                 client_advertise_urls = ['127.0.0.1:2379']
 
-                [cluster.members]
+                [cluster.peers]
                 node1 = ['127.0.0.1:2379']
                 node2 = ['127.0.0.1:2380']
                 node3 = ['127.0.0.1:2381']

@@ -92,7 +92,7 @@ async fn test_unary_fetch_clusters_serializable() {
     let unary = init_unary_client(connects, None, None, 0, 0, None);
     let res = unary.fetch_cluster(false).await.unwrap();
     assert_eq!(
-        res.into_members_addrs(),
+        res.into_peer_urls(),
         HashMap::from([
             (0, vec!["A0".to_owned()]),
             (1, vec!["A1".to_owned()]),
@@ -182,7 +182,7 @@ async fn test_unary_fetch_clusters_linearizable() {
     let unary = init_unary_client(connects, None, None, 0, 0, None);
     let res = unary.fetch_cluster(true).await.unwrap();
     assert_eq!(
-        res.into_members_addrs(),
+        res.into_peer_urls(),
         HashMap::from([
             (0, vec!["A0".to_owned()]),
             (1, vec!["A1".to_owned()]),

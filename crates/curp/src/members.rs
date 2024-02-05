@@ -137,7 +137,7 @@ impl ClusterInfo {
     #[must_use]
     pub fn from_cluster(
         cluster: FetchClusterResponse,
-        self_addr: &[String],
+        self_peer_urls: &[String],
         self_name: &str,
     ) -> Self {
         let mut member_id = 0;
@@ -145,7 +145,7 @@ impl ClusterInfo {
             .members
             .into_iter()
             .map(|mut member| {
-                if member.peer_urls() == self_addr {
+                if member.peer_urls() == self_peer_urls {
                     member_id = member.id;
                     member.name = self_name.to_owned();
                 }
@@ -328,7 +328,7 @@ impl ClusterInfo {
     /// cluster version decrease
     pub(crate) fn cluster_version_update(&self) {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        self.all_members_addrs()
+        self.all_members_peer_urls()
             .into_iter()
             .sorted()
             .for_each(|(id, mut addrs)| {
@@ -355,7 +355,7 @@ impl ClusterInfo {
     /// Get all members
     #[must_use]
     #[inline]
-    pub fn all_members_addrs(&self) -> HashMap<ServerId, Vec<String>> {
+    pub fn all_members_peer_urls(&self) -> HashMap<ServerId, Vec<String>> {
         self.members
             .iter()
             .map(|t| (t.id, t.peer_urls.clone()))
@@ -417,7 +417,7 @@ impl ClusterInfo {
 #[inline]
 pub async fn get_cluster_info_from_remote(
     init_cluster_info: &ClusterInfo,
-    self_addr: &[String],
+    self_peer_urls: &[String],
     self_name: &str,
     timeout: Duration,
     tls_config: Option<&ClientTlsConfig>,
@@ -444,7 +444,7 @@ pub async fn get_cluster_info_from_remote(
             debug!("get cluster info from remote success: {:?}", cluster_res);
             return Some(ClusterInfo::from_cluster(
                 cluster_res.into_inner(),
-                self_addr,
+                self_peer_urls,
                 self_name,
             ));
         }

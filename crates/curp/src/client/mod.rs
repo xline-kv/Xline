@@ -164,6 +164,8 @@ pub struct ClientBuilder {
     cluster_version: Option<u64>,
     /// initial cluster members
     all_members: Option<HashMap<ServerId, Vec<String>>>,
+    /// is current client send request to raw curp server
+    is_raw_curp: bool,
     /// initial leader state
     leader_state: Option<(ServerId, u64)>,
     /// client configuration
@@ -188,8 +190,9 @@ impl ClientBuilder {
     /// Create a client builder
     #[inline]
     #[must_use]
-    pub fn new(config: ClientConfig) -> Self {
+    pub fn new(config: ClientConfig, is_raw_curp: bool) -> Self {
         Self {
+            is_raw_curp,
             config,
             ..ClientBuilder::default()
         }
@@ -278,7 +281,11 @@ impl ClientBuilder {
                     if let Some(id) = r.leader_id {
                         self.leader_state = Some((id, r.term));
                     }
-                    self.all_members = Some(r.into_members_addrs());
+                    self.all_members = if self.is_raw_curp {
+                        Some(r.into_peer_urls())
+                    } else {
+                        Some(r.into_client_urls())
+                    };
                     return Ok(self);
                 }
                 Err(e) => err = e,
@@ -301,6 +308,7 @@ impl ClientBuilder {
         if let Some((id, term)) = self.leader_state {
             builder.set_leader_state(id, term);
         }
+        builder.set_is_raw_curp(self.is_raw_curp);
         builder
     }
 

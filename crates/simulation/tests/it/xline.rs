@@ -53,7 +53,7 @@ async fn xline_members_restore() {
     init_logger();
     let mut group = XlineGroup::new(3).await;
     let node = group.get_node("S1");
-    let addr = node.addr.clone();
+    let addr = node.client_url.clone();
     let client = SimEtcdClient::new(addr, group.client_handle.clone()).await;
 
     let res = client

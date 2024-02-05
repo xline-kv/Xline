@@ -4,7 +4,7 @@ DIR=$(
     pwd
 )
 SERVERS=("172.20.0.2" "172.20.0.3" "172.20.0.4" "172.20.0.5")
-MEMBERS="node1=${SERVERS[1]}:2379,${SERVERS[1]}:2380,node2=${SERVERS[2]}:2379,${SERVERS[2]}:2380,node3=${SERVERS[3]}:2379,${SERVERS[3]}:2380"
+MEMBERS="node1=${SERVERS[1]}:2380,${SERVERS[1]}:2381,node2=${SERVERS[2]}:2380,${SERVERS[2]}:2381,node3=${SERVERS[3]}:2380,${SERVERS[3]}:2381"
 
 source $DIR/log.sh
 
@@ -33,7 +33,11 @@ run_xline() {
     --storage-engine rocksdb \
     --data-dir /usr/local/xline/data-dir \
     --auth-public-key /mnt/public.pem \
-    --auth-private-key /mnt/private.pem"
+    --auth-private-key /mnt/private.pem \
+    --client-listen-urls=http://${SERVERS[$1]}:2379 \
+    --peer-listen-urls=http://${SERVERS[$1]}:2380,http://${SERVERS[$1]}:2381 \
+    --client-advertise-urls=http://${SERVERS[$1]}:2379 \
+    --peer-advertise-urls=http://${SERVERS[$1]}:2380,http://${SERVERS[$1]}:2381"
 
     if [ -n "$LOG_PATH" ]; then
         cmd="${cmd} --log-file ${LOG_PATH}/node${1} --log-level debug"

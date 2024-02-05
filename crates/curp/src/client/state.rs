@@ -34,6 +34,8 @@ pub(super) struct State {
 /// Immutable client state, could be cloned
 #[derive(Debug, Clone)]
 struct StateStatic {
+    /// is current client send request to raw curp server
+    is_raw_curp: bool,
     /// Local server id, should be initialized on startup
     local_server: Option<ServerId>,
     /// Notifier of leader update
@@ -87,6 +89,7 @@ impl State {
                 local_server,
                 leader_notifier: Arc::new(Event::new()),
                 tls_config,
+                is_raw_curp: true,
             },
         })
     }
@@ -215,8 +218,11 @@ impl State {
         info!("client cluster version updated to {}", res.cluster_version);
         state.cluster_version = res.cluster_version;
 
-        let mut new_members = res.clone().into_members_addrs();
-
+        let mut new_members = if self.immutable.is_raw_curp {
+            res.clone().into_peer_urls()
+        } else {
+            res.clone().into_client_urls()
+        };
         let old_ids = state.connects.keys().copied().collect::<HashSet<_>>();
         let new_ids = new_members.keys().copied().collect::<HashSet<_>>();
 
@@ -262,6 +268,8 @@ pub(super) struct StateBuilder {
     cluster_version: Option<u64>,
     /// Client Tls config
     tls_config: Option<ClientTlsConfig>,
+    /// is current client send request to raw curp server
+    is_raw_curp: bool,
 }
 
 impl StateBuilder {
@@ -275,7 +283,13 @@ impl StateBuilder {
             leader_state: None,
             cluster_version: None,
             tls_config,
+            is_raw_curp: false,
         }
+    }
+
+    /// Set is raw curp
+    pub(super) fn set_is_raw_curp(&mut self, is_raw_curp: bool) {
+        self.is_raw_curp = is_raw_curp;
     }
 
     /// Set the leader state (optional)
@@ -317,6 +331,7 @@ impl StateBuilder {
                 local_server: Some(local_server_id),
                 leader_notifier: Arc::new(Event::new()),
                 tls_config: self.tls_config.take(),
+                is_raw_curp: self.is_raw_curp,
             },
         })
     }
@@ -338,6 +353,7 @@ impl StateBuilder {
                 local_server: None,
                 leader_notifier: Arc::new(Event::new()),
                 tls_config: self.tls_config,
+                is_raw_curp: self.is_raw_curp,
             },
         })
     }
