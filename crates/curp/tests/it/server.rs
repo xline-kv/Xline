@@ -406,7 +406,7 @@ async fn shutdown_rpc_should_shutdown_the_cluster_when_client_has_wrong_leader()
     let leader_id = group.get_leader().await.0;
     let follower_id = *group.nodes.keys().find(|&id| &leader_id != id).unwrap();
     // build a client and set a wrong leader id
-    let client = ClientBuilder::new(ClientConfig::default())
+    let client = ClientBuilder::new(ClientConfig::default(), true)
         .leader_state(follower_id, 0)
         .all_members(group.all_addrs_map())
         .build::<TestCommand>()
@@ -427,7 +427,7 @@ async fn propose_conf_change_to_follower() {
     let leader_id = group.get_leader().await.0;
     let follower_id = *group.nodes.keys().find(|&id| &leader_id != id).unwrap();
     // build a client and set a wrong leader id
-    let client = ClientBuilder::new(ClientConfig::default())
+    let client = ClientBuilder::new(ClientConfig::default(), true)
         .leader_state(follower_id, 0)
         .all_members(group.all_addrs_map())
         .build::<TestCommand>()

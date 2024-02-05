@@ -118,11 +118,19 @@ impl FetchClusterResponse {
         }
     }
 
-    /// Get all members addresses
-    pub(crate) fn into_members_addrs(self) -> HashMap<ServerId, Vec<String>> {
+    /// Get all members peer urls
+    pub(crate) fn into_peer_urls(self) -> HashMap<ServerId, Vec<String>> {
         self.members
             .into_iter()
-            .map(|member| (member.id, member.peer_urls)) // TODO
+            .map(|member| (member.id, member.peer_urls))
+            .collect()
+    }
+
+    /// Get all members peer urls
+    pub(crate) fn into_client_urls(self) -> HashMap<ServerId, Vec<String>> {
+        self.members
+            .into_iter()
+            .map(|member| (member.id, member.client_urls))
             .collect()
     }
 }

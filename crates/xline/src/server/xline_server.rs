@@ -1,4 +1,4 @@
-use std::{net::ToSocketAddrs, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
 use clippy_utilities::{Cast, OverflowArithmetic};
@@ -12,7 +12,6 @@ use dashmap::DashMap;
 use engine::{MemorySnapshotAllocator, RocksSnapshotAllocator, SnapshotAllocator};
 #[cfg(not(madsim))]
 use futures::Stream;
-use itertools::Itertools;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 #[cfg(not(madsim))]
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -139,33 +138,13 @@ impl XlineServer {
         curp_storage: &CurpDB<Command>,
         tls_config: Option<&ClientTlsConfig>,
     ) -> Result<ClusterInfo> {
-        let server_addr_str = cluster_config
-            .members()
-            .get(cluster_config.name())
-            .ok_or_else(|| {
-                anyhow!(
-                    "node name {} not found in cluster peers",
-                    cluster_config.name()
-                )
-            })?;
-        let server_addr = server_addr_str
-            .iter()
-            .map(|addr| {
-                let address = match addr.split_once("://") {
-                    Some((_, address)) => address,
-                    None => addr,
-                };
-                address.to_socket_addrs()
-            })
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .flatten()
-            .collect_vec();
         info!("name = {:?}", cluster_config.name());
-        info!("server_addr = {server_addr:?}");
-        info!("cluster_peers = {:?}", cluster_config.members());
+        info!("cluster_peers = {:?}", cluster_config.peers());
 
-        let self_client_addr = cluster_config.client_advertise_urls().clone();
+        let name = cluster_config.name().clone();
+        let all_members = cluster_config.peers().clone();
+        let self_client_urls = cluster_config.client_advertise_urls().clone();
+        let self_peer_urls = cluster_config.peer_advertise_urls().clone();
         match (
             curp_storage.recover_cluster_info()?,
             *cluster_config.initial_cluster_state(),
@@ -176,23 +155,16 @@ impl XlineServer {
             }
             (None, InitialClusterState::New) => {
                 info!("get cluster_info by args");
-                let cluster_info = ClusterInfo::from_members_map(
-                    cluster_config.members().clone(),
-                    self_client_addr,
-                    cluster_config.name(),
-                );
+                let cluster_info =
+                    ClusterInfo::from_members_map(all_members, self_client_urls, &name);
                 curp_storage.put_cluster_info(&cluster_info)?;
                 Ok(cluster_info)
             }
             (None, InitialClusterState::Existing) => {
                 info!("get cluster_info from remote");
                 let cluster_info = get_cluster_info_from_remote(
-                    &ClusterInfo::from_members_map(
-                        cluster_config.members().clone(),
-                        self_client_addr,
-                        cluster_config.name(),
-                    ),
-                    server_addr_str,
+                    &ClusterInfo::from_members_map(all_members, self_client_urls, &name),
+                    &self_peer_urls,
                     cluster_config.name(),
                     *cluster_config.client_config().wait_synced_timeout(),
                     tls_config,
@@ -435,7 +407,8 @@ impl XlineServer {
         let peer_listen_urls = self.cluster_config.peer_listen_urls();
         let xline_incoming = bind_addrs(client_listen_urls)?;
         let curp_incoming = bind_addrs(peer_listen_urls)?;
-
+        info!("start xline server on {:?}", client_listen_urls);
+        info!("start curp server on {:?}", peer_listen_urls);
         self.start_inner(xline_incoming, curp_incoming).await
     }
 
@@ -549,9 +522,9 @@ impl XlineServer {
         .await;
 
         let client = Arc::new(
-            CurpClientBuilder::new(*self.cluster_config.client_config())
+            CurpClientBuilder::new(*self.cluster_config.client_config(), false)
                 .cluster_version(self.cluster_info.cluster_version())
-                .all_members(self.cluster_info.all_members_addrs())
+                .all_members(self.cluster_info.all_members_peer_urls())
                 .bypass(self.cluster_info.self_id(), curp_server.clone())
                 .build::<Command>()
                 .await?,
@@ -691,6 +664,10 @@ impl XlineServer {
 fn bind_addrs(
     addrs: &[String],
 ) -> Result<impl Stream<Item = Result<hyper::server::conn::AddrStream, std::io::Error>>> {
+    use std::net::ToSocketAddrs;
+    if addrs.is_empty() {
+        return Err(anyhow!("No address to bind"));
+    }
     let incoming = addrs
         .iter()
         .map(|addr| {

@@ -34,7 +34,7 @@ use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, ServerTlsConfig};
 use tracing::debug;
 use utils::{
-    build_endpoint, certs,
+    build_endpoint,
     config::{
         default_quota, ClientConfig, CurpConfig, CurpConfigBuilder, EngineConfig, StorageConfig,
     },
@@ -305,7 +305,7 @@ impl CurpGroup {
 
     pub async fn new_client(&self) -> impl ClientApi<Error = tonic::Status, Cmd = TestCommand> {
         let addrs = self.all_addrs().cloned().collect();
-        ClientBuilder::new(ClientConfig::default())
+        ClientBuilder::new(ClientConfig::default(), true)
             .discover_from(addrs)
             .await
             .unwrap()

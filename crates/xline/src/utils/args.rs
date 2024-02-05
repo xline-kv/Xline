@@ -37,16 +37,16 @@ pub struct ServerArgs {
     #[clap(long)]
     name: String,
     /// Node peer listen urls
-    #[clap(long)]
+    #[clap(long, num_args = 1.., value_delimiter = ',')]
     peer_listen_urls: Vec<String>,
     /// Node peer advertise urls
-    #[clap(long)]
+    #[clap(long, num_args = 1.., value_delimiter = ',')]
     peer_advertise_urls: Vec<String>,
     /// Node client listen urls
-    #[clap(long)]
+    #[clap(long, num_args = 1.., value_delimiter = ',')]
     client_listen_urls: Vec<String>,
     /// Node client advertise urls
-    #[clap(long)]
+    #[clap(long, num_args = 1.., value_delimiter = ',')]
     client_advertise_urls: Vec<String>,
     /// Cluster peers. eg: node1=192.168.x.x:8080,192.168.x.x:8081,node2=192.168.x.x:8083
     #[clap(long, value_parser = parse_members)]

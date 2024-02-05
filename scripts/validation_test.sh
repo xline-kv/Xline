@@ -1,7 +1,7 @@
 #!/bin/bash
 DIR="$(dirname $0)"
 QUICK_START="${DIR}/quick_start.sh"
-ETCDCTL="docker exec -i client etcdctl --endpoints=http://172.20.0.3:2379,http://172.20.0.4:2380"
+ETCDCTL="docker exec -i client etcdctl --endpoints=http://172.20.0.3:2379,http://172.20.0.4:2379"
 LOCK_CLIENT="docker exec -i client /mnt/validation_lock_client --endpoints=http://172.20.0.3:2379"
 
 
@@ -280,7 +280,7 @@ cluster_validation() {
     log::info "cluster validation test running..."
 
     run "${ETCDCTL} member list"
-    check "\s*[0-9a-z]+, started, node[0-9], 172.20.0.[0-9]:2379,172.20.0.[0-9]:2380, 172.20.0.[0-9]:2379,172.20.0.[0-9]:2380, false"
+    check "\s*[0-9a-z]+, started, node[0-9], 172.20.0.[0-9]:2380,172.20.0.[0-9]:2381, http://172.20.0.[0-9]:2379, false"
     run "${ETCDCTL} member add client --peer-urls=http://172.20.0.6:2379 --learner=true"
     check "Member\s+[a-zA-Z0-9]+ added to cluster\s+[a-zA-Z0-9]+"
     node_id=$(echo -e ${res} | awk '{print $2}')
