@@ -13,8 +13,8 @@ keywords = ["Client", "CommandLine"]
 
 [dependencies]
 anyhow = "1.0"
-clap = { version = "4.3.2", features = ["derive", "string"] }
+clap = "4"
 engine = { path = "../engine" }
-tokio = { version = "1", features = ["rt"] }
+tokio = "1"
 utils = { path = "../utils" }
 workspace-hack = { version = "0.1", path = "../../workspace-hack" }

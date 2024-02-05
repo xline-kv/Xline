@@ -3686,7 +3686,6 @@ dependencies = [
  "bytes",
  "cc",
  "clap",
- "clap_builder",
  "digest",
  "either",
  "futures-channel",

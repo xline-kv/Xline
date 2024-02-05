@@ -16,8 +16,7 @@ publish = false
 axum = { version = "0.6" }
 bitflags = { version = "2", default-features = false, features = ["std"] }
 bytes = { version = "1" }
-clap = { version = "4", features = ["derive", "string"] }
-clap_builder = { version = "4", default-features = false, features = ["color", "help", "std", "string", "suggestions", "usage"] }
+clap = { version = "4", features = ["derive"] }
 digest = { version = "0.10", features = ["mac", "std"] }
 either = { version = "1" }
 futures-channel = { version = "0.3", features = ["sink"] }
