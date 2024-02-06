@@ -436,10 +436,11 @@ mod test {
         time::{sleep, timeout},
     };
     use utils::config::{default_watch_progress_notify_interval, EngineConfig};
+    use xlineapi::RequestWrapper;
 
     use super::*;
     use crate::{
-        rpc::{PutRequest, RequestWithToken, WatchProgressRequest},
+        rpc::{PutRequest, WatchProgressRequest},
         storage::{
             compact::COMPACT_CHANNEL_SIZE, db::DB, index::Index, kv_store::KvStoreInner,
             kvwatcher::MockKvWatcherOps, lease_store::LeaseCollection, KvStore,
@@ -461,14 +462,11 @@ mod test {
         value: impl Into<Vec<u8>>,
         revision: i64,
     ) {
-        let req = RequestWithToken::new(
-            PutRequest {
-                key: key.into(),
-                value: value.into(),
-                ..Default::default()
-            }
-            .into(),
-        );
+        let req = RequestWrapper::from(PutRequest {
+            key: key.into(),
+            value: value.into(),
+            ..Default::default()
+        });
         let (_sync_res, ops) = store.after_sync(&req, revision).await.unwrap();
         let key_revisions = db.flush_ops(ops).unwrap();
         store.insert_index(key_revisions);

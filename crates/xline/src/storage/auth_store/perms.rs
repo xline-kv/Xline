@@ -6,7 +6,7 @@ use jsonwebtoken::{
 use merged_range::MergedRange;
 use serde::{Deserialize, Serialize};
 use utils::timestamp;
-use xlineapi::command::KeyRange;
+use xlineapi::{command::KeyRange, AuthInfo};
 
 use crate::rpc::{Permission, Type};
 
@@ -22,6 +22,16 @@ pub(super) struct TokenClaims {
     pub(super) revision: i64,
     /// Expiration
     exp: u64,
+}
+
+impl From<TokenClaims> for AuthInfo {
+    #[inline]
+    fn from(value: TokenClaims) -> Self {
+        Self {
+            username: value.username,
+            auth_revision: value.revision,
+        }
+    }
 }
 
 /// Operations of token manager

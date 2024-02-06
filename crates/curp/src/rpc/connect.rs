@@ -161,6 +161,7 @@ pub(crate) trait ConnectApi: Send + Sync + 'static {
     async fn propose(
         &self,
         request: ProposeRequest,
+        token: Option<String>,
         timeout: Duration,
     ) -> Result<tonic::Response<ProposeResponse>, CurpError>;
 
@@ -385,12 +386,16 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
     async fn propose(
         &self,
         request: ProposeRequest,
+        token: Option<String>,
         timeout: Duration,
     ) -> Result<tonic::Response<ProposeResponse>, CurpError> {
         let mut client = self.rpc_connect.clone();
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
         req.metadata_mut().inject_current();
+        if let Some(token) = token {
+            _ = req.metadata_mut().insert("token", token.parse()?);
+        }
         client.propose(req).await.map_err(Into::into)
     }
 
@@ -667,11 +672,15 @@ where
     async fn propose(
         &self,
         request: ProposeRequest,
+        token: Option<String>,
         _timeout: Duration,
     ) -> Result<tonic::Response<ProposeResponse>, CurpError> {
         let mut req = tonic::Request::new(request);
         req.metadata_mut().inject_bypassed();
         req.metadata_mut().inject_current();
+        if let Some(token) = token {
+            _ = req.metadata_mut().insert("token", token.parse()?);
+        }
         self.server.propose(req).await.map_err(Into::into)
     }
 

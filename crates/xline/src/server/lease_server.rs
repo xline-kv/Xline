@@ -18,7 +18,6 @@ use utils::{
 use xlineapi::{
     command::{Command, CommandResponse, CurpClient, KeyRange, SyncResponse},
     execute_error::ExecuteError,
-    RequestWithToken,
 };
 
 use super::auth_server::get_token;
@@ -132,10 +131,13 @@ where
     where
         T: Into<RequestWrapper>,
     {
-        let token = get_token(request.metadata());
-        let request_inner = request.into_inner().into();
+        let auth_info = match get_token(request.metadata()) {
+            Some(token) => Some(self.auth_storage.verify(&token)?),
+            None => None,
+        };
+        let request = request.into_inner().into();
         let keys = {
-            if let RequestWrapper::LeaseRevokeRequest(ref req) = request_inner {
+            if let RequestWrapper::LeaseRevokeRequest(ref req) = request {
                 self.lease_storage
                     .get_keys(req.id)
                     .into_iter()
@@ -145,9 +147,8 @@ where
                 vec![]
             }
         };
-        let wrapper = RequestWithToken::new_with_token(request_inner, token);
-        let cmd = Command::new(keys, wrapper);
-        let res = self.client.propose(&cmd, use_fast_path).await??;
+        let cmd = Command::new_with_auth_info(keys, request, auth_info);
+        let res = self.client.propose(&cmd, None, use_fast_path).await??;
         Ok(res)
     }
 

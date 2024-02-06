@@ -14,10 +14,10 @@ use futures::future::{join_all, Either};
 use tokio::time::timeout;
 use tracing::{debug, instrument};
 use xlineapi::{
-    command::{command_from_request_wrapper, Command, CommandResponse, CurpClient, SyncResponse},
+    command::{Command, CommandResponse, CurpClient, SyncResponse},
     execute_error::ExecuteError,
     request_validation::RequestValidator,
-    RequestWithToken, ResponseWrapper,
+    AuthInfo, ResponseWrapper,
 };
 
 use super::{
@@ -99,27 +99,26 @@ where
     }
 
     /// serializable execute request in current node
-    fn do_serializable(&self, wrapper: &RequestWithToken) -> Result<Response, tonic::Status> {
-        self.auth_storage.check_permission(wrapper)?;
-        let cmd_res = self.kv_storage.execute(wrapper)?;
-
+    fn do_serializable(&self, command: &Command) -> Result<Response, tonic::Status> {
+        self.auth_storage
+            .check_permission(command.request(), command.auth_info())?;
+        let cmd_res = self.kv_storage.execute(command.request())?;
         Ok(Self::parse_response_op(cmd_res.into_inner().into()))
     }
 
     /// Propose request and get result with fast/slow path
     async fn propose<T>(
         &self,
-        request: tonic::Request<T>,
+        request: T,
+        auth_info: Option<AuthInfo>,
         use_fast_path: bool,
     ) -> Result<(CommandResponse, Option<SyncResponse>), tonic::Status>
     where
         T: Into<RequestWrapper> + Debug,
     {
-        let token = get_token(request.metadata());
-        let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
-        let cmd = command_from_request_wrapper(wrapper);
-
-        let res = self.client.propose(&cmd, use_fast_path).await??;
+        let request = request.into();
+        let cmd = Command::new_with_auth_info(request.keys(), request, auth_info);
+        let res = self.client.propose(&cmd, None, use_fast_path).await??;
         Ok(res)
     }
 
@@ -215,11 +214,14 @@ where
             self.kv_storage.compacted_revision(),
             self.kv_storage.revision(),
         )?;
+        let auth_info = match get_token(request.metadata()) {
+            Some(token) => Some(self.auth_storage.verify(&token)?),
+            None => None,
+        };
         let range_required_revision = range_req.revision;
         let is_serializable = range_req.serializable;
-        let token = get_token(request.metadata());
-        let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
-        let cmd = command_from_request_wrapper(wrapper);
+        let request = RequestWrapper::from(request.into_inner());
+        let cmd = Command::new_with_auth_info(request.keys(), request, auth_info);
         if !is_serializable {
             self.wait_read_state(&cmd).await?;
             // Double check whether the range request is compacted or not since the compaction request
@@ -231,7 +233,7 @@ where
             )?;
         }
 
-        let res = self.do_serializable(cmd.request())?;
+        let res = self.do_serializable(&cmd)?;
         if let Response::ResponseRange(response) = res {
             Ok(tonic::Response::new(response))
         } else {
@@ -250,9 +252,14 @@ where
         let put_req: &PutRequest = request.get_ref();
         put_req.validation()?;
         debug!("Receive grpc request: {:?}", put_req);
+        let auth_info = match get_token(request.metadata()) {
+            Some(token) => Some(self.auth_storage.verify(&token)?),
+            None => None,
+        };
         let is_fast_path = true;
-        let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
-
+        let (cmd_res, sync_res) = self
+            .propose(request.into_inner(), auth_info, is_fast_path)
+            .await?;
         let mut res = Self::parse_response_op(cmd_res.into_inner().into());
         if let Some(sync_res) = sync_res {
             let revision = sync_res.revision();
@@ -277,9 +284,14 @@ where
         let delete_range_req = request.get_ref();
         delete_range_req.validation()?;
         debug!("Receive grpc request: {:?}", delete_range_req);
+        let auth_info = match get_token(request.metadata()) {
+            Some(token) => Some(self.auth_storage.verify(&token)?),
+            None => None,
+        };
         let is_fast_path = true;
-        let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
-
+        let (cmd_res, sync_res) = self
+            .propose(request.into_inner(), auth_info, is_fast_path)
+            .await?;
         let mut res = Self::parse_response_op(cmd_res.into_inner().into());
         if let Some(sync_res) = sync_res {
             let revision = sync_res.revision();
@@ -309,21 +321,24 @@ where
             self.kv_storage.compacted_revision(),
             self.kv_storage.revision(),
         )?;
-
+        let auth_info = match get_token(request.metadata()) {
+            Some(token) => Some(self.auth_storage.verify(&token)?),
+            None => None,
+        };
         let res = if txn_req.is_read_only() {
             debug!("TxnRequest is read only");
             let is_serializable = txn_req.is_serializable();
-            let token = get_token(request.metadata());
-            let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
-            let cmd = command_from_request_wrapper(wrapper);
+            let request = RequestWrapper::from(request.into_inner());
+            let cmd = Command::new_with_auth_info(request.keys(), request, auth_info);
             if !is_serializable {
                 self.wait_read_state(&cmd).await?;
             }
-            self.do_serializable(cmd.request())?
+            self.do_serializable(&cmd)?
         } else {
             let is_fast_path = true;
-            let (cmd_res, sync_res) = self.propose(request, is_fast_path).await?;
-
+            let (cmd_res, sync_res) = self
+                .propose(request.into_inner(), auth_info, is_fast_path)
+                .await?;
             let mut res = Self::parse_response_op(cmd_res.into_inner().into());
             if let Some(sync_res) = sync_res {
                 let revision = sync_res.revision();
@@ -352,10 +367,13 @@ where
         let current_revision = self.kv_storage.revision();
         let req = request.get_ref();
         req.check_revision(compacted_revision, current_revision)?;
-
+        let auth_info = match get_token(request.metadata()) {
+            Some(token) => Some(self.auth_storage.verify(&token)?),
+            None => None,
+        };
         let physical = req.physical;
-        let token = get_token(request.metadata());
-        let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
+        let request = RequestWrapper::from(request.into_inner());
+        let cmd = Command::new_with_auth_info(request.keys(), request, auth_info);
         let compact_id = self.next_compact_id.fetch_add(1, Ordering::Relaxed);
         let compact_physical_fut = if physical {
             let event = Arc::new(Event::new());
@@ -365,8 +383,7 @@ where
         } else {
             Either::Right(async {})
         };
-        let cmd = command_from_request_wrapper(wrapper);
-        let (cmd_res, _sync_res) = self.client.propose(&cmd, !physical).await??;
+        let (cmd_res, _sync_res) = self.client.propose(&cmd, None, !physical).await??;
         let resp = cmd_res.into_inner();
         if timeout(self.compact_timeout, compact_physical_fut)
             .await

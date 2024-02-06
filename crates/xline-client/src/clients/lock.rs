@@ -11,11 +11,11 @@ use clippy_utilities::OverflowArithmetic;
 use futures::{Future, FutureExt};
 use tonic::transport::Channel;
 use xlineapi::{
-    command::{command_from_request_wrapper, CommandResponse, KeyRange, SyncResponse},
+    command::{Command, CommandResponse, KeyRange, SyncResponse},
     Compare, CompareResult, CompareTarget, DeleteRangeRequest, DeleteRangeResponse, EventType,
-    LockResponse, PutRequest, RangeRequest, RangeResponse, Request, RequestOp, RequestWithToken,
-    RequestWrapper, Response, ResponseHeader, SortOrder, SortTarget, TargetUnion, TxnRequest,
-    TxnResponse, UnlockResponse,
+    LockResponse, PutRequest, RangeRequest, RangeResponse, Request, RequestOp, RequestWrapper,
+    Response, ResponseHeader, SortOrder, SortTarget, TargetUnion, TxnRequest, TxnResponse,
+    UnlockResponse,
 };
 
 use crate::{
@@ -254,12 +254,10 @@ impl LockClient {
     where
         T: Into<RequestWrapper>,
     {
-        let request_with_token =
-            RequestWithToken::new_with_token(request.into(), self.token.clone());
-
-        let cmd = command_from_request_wrapper(request_with_token);
+        let request = request.into();
+        let cmd = Command::new(request.keys(), request);
         self.curp_client
-            .propose(&cmd, use_fast_path)
+            .propose(&cmd, self.token.as_ref(), use_fast_path)
             .await?
             .map_err(Into::into)
     }

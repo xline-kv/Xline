@@ -23,6 +23,7 @@ impl Snapshot {
     }
 
     /// Get the inner snapshot ref
+    #[cfg(feature = "client-metrics")]
     pub(crate) fn inner(&self) -> &EngineSnapshot {
         &self.inner
     }

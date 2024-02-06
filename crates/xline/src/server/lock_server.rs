@@ -10,9 +10,9 @@ use utils::build_endpoint;
 #[cfg(madsim)]
 use utils::ClientTlsConfig;
 use xlineapi::{
-    command::{command_from_request_wrapper, CommandResponse, CurpClient, KeyRange, SyncResponse},
+    command::{Command, CommandResponse, CurpClient, KeyRange, SyncResponse},
     execute_error::ExecuteError,
-    EventType, RequestWithToken,
+    AuthInfo, EventType,
 };
 
 use super::auth_server::get_token;
@@ -25,25 +25,35 @@ use crate::{
         ResponseHeader, SortOrder, SortTarget, TargetUnion, TxnRequest, TxnResponse, UnlockRequest,
         UnlockResponse, WatchClient, WatchCreateRequest, WatchRequest,
     },
+    storage::{storage_api::StorageApi, AuthStore},
 };
 
 /// Default session ttl
 const DEFAULT_SESSION_TTL: i64 = 60;
 
 /// Lock Server
-pub(super) struct LockServer {
+pub(super) struct LockServer<S>
+where
+    S: StorageApi,
+{
     /// Consensus client
     client: Arc<CurpClient>,
+    /// Auth store
+    auth_store: Arc<AuthStore<S>>,
     /// Id Generator
     id_gen: Arc<IdGenerator>,
     /// Server addresses
     addrs: Vec<Endpoint>,
 }
 
-impl LockServer {
+impl<S> LockServer<S>
+where
+    S: StorageApi,
+{
     /// New `LockServer`
     pub(super) fn new(
         client: Arc<CurpClient>,
+        auth_store: Arc<AuthStore<S>>,
         id_gen: Arc<IdGenerator>,
         addrs: &[String],
         client_tls_config: Option<&ClientTlsConfig>,
@@ -57,6 +67,7 @@ impl LockServer {
             .collect();
         Self {
             client,
+            auth_store,
             id_gen,
             addrs,
         }
@@ -66,16 +77,15 @@ impl LockServer {
     async fn propose<T>(
         &self,
         request: T,
-        token: Option<String>,
+        auth_info: Option<AuthInfo>,
         use_fast_path: bool,
     ) -> Result<(CommandResponse, Option<SyncResponse>), tonic::Status>
     where
         T: Into<RequestWrapper>,
     {
-        let wrapper = RequestWithToken::new_with_token(request.into(), token);
-        let cmd = command_from_request_wrapper(wrapper);
-
-        let res = self.client.propose(&cmd, use_fast_path).await??;
+        let request = request.into();
+        let cmd = Command::new_with_auth_info(request.keys(), request, auth_info);
+        let res = self.client.propose(&cmd, None, use_fast_path).await??;
         Ok(res)
     }
 
@@ -128,7 +138,7 @@ impl LockServer {
         &self,
         pfx: String,
         my_rev: i64,
-        token: Option<&String>,
+        auth_info: Option<&AuthInfo>,
     ) -> Result<(), tonic::Status> {
         let rev = my_rev.overflow_sub(1);
         let mut watch_client =
@@ -145,7 +155,7 @@ impl LockServer {
                 max_create_revision: rev,
                 ..Default::default()
             };
-            let (cmd_res, _sync_res) = self.propose(get_req, token.cloned(), false).await?;
+            let (cmd_res, _sync_res) = self.propose(get_req, auth_info.cloned(), false).await?;
             let response = Into::<RangeResponse>::into(cmd_res.into_inner());
             let last_key = match response.kvs.first() {
                 Some(kv) => kv.key.clone(),
@@ -177,32 +187,35 @@ impl LockServer {
     async fn delete_key(
         &self,
         key: &[u8],
-        token: Option<String>,
+        auth_info: Option<AuthInfo>,
     ) -> Result<Option<ResponseHeader>, tonic::Status> {
         let del_req = DeleteRangeRequest {
             key: key.into(),
             ..Default::default()
         };
-        let (cmd_res, _) = self.propose(del_req, token, true).await?;
+        let (cmd_res, _) = self.propose(del_req, auth_info, true).await?;
         let res = Into::<DeleteRangeResponse>::into(cmd_res.into_inner());
         Ok(res.header)
     }
 
     /// Lease grant
-    async fn lease_grant(&self, token: Option<String>) -> Result<i64, tonic::Status> {
+    async fn lease_grant(&self, auth_info: Option<AuthInfo>) -> Result<i64, tonic::Status> {
         let lease_id = self.id_gen.next();
         let lease_grant_req = LeaseGrantRequest {
             ttl: DEFAULT_SESSION_TTL,
             id: lease_id,
         };
-        let (cmd_res, _) = self.propose(lease_grant_req, token, true).await?;
+        let (cmd_res, _) = self.propose(lease_grant_req, auth_info, true).await?;
         let res = Into::<LeaseGrantResponse>::into(cmd_res.into_inner());
         Ok(res.id)
     }
 }
 
 #[tonic::async_trait]
-impl Lock for LockServer {
+impl<S> Lock for LockServer<S>
+where
+    S: StorageApi,
+{
     /// Lock acquires a distributed shared lock on a given named lock.
     /// On success, it will return a unique key that exists so long as the
     /// lock is held by the caller. This key can be used in conjunction with
@@ -214,10 +227,13 @@ impl Lock for LockServer {
         request: tonic::Request<LockRequest>,
     ) -> Result<tonic::Response<LockResponse>, tonic::Status> {
         debug!("Receive LockRequest {:?}", request);
-        let token = get_token(request.metadata());
+        let auth_info = match get_token(request.metadata()) {
+            Some(token) => Some(self.auth_store.verify(&token)?),
+            None => None,
+        };
         let lock_req = request.into_inner();
         let lease_id = if lock_req.lease == 0 {
-            self.lease_grant(token.clone()).await?
+            self.lease_grant(auth_info.clone()).await?
         } else {
             lock_req.lease
         };
@@ -226,7 +242,7 @@ impl Lock for LockServer {
         let key = format!("{prefix}{lease_id:x}");
 
         let txn = Self::create_acquire_txn(&prefix, lease_id);
-        let (cmd_res, sync_res) = self.propose(txn, token.clone(), false).await?;
+        let (cmd_res, sync_res) = self.propose(txn, auth_info.clone(), false).await?;
         let mut txn_res = Into::<TxnResponse>::into(cmd_res.into_inner());
         #[allow(clippy::unwrap_used)] // sync_res always has value when use slow path
         let my_rev = sync_res.unwrap().revision();
@@ -250,15 +266,15 @@ impl Lock for LockServer {
         {
             owner_res.header
         } else {
-            if let Err(e) = self.wait_delete(prefix, my_rev, token.as_ref()).await {
-                let _ignore = self.delete_key(key.as_bytes(), token).await;
+            if let Err(e) = self.wait_delete(prefix, my_rev, auth_info.as_ref()).await {
+                let _ignore = self.delete_key(key.as_bytes(), auth_info).await;
                 return Err(e);
             }
             let range_req = RangeRequest {
                 key: key.as_bytes().to_vec(),
                 ..Default::default()
             };
-            let result = self.propose(range_req, token.clone(), true).await;
+            let result = self.propose(range_req, auth_info.clone(), true).await;
             match result {
                 Ok(res) => {
                     let res = Into::<RangeResponse>::into(res.0.into_inner());
@@ -268,7 +284,7 @@ impl Lock for LockServer {
                     res.header
                 }
                 Err(e) => {
-                    let _ignore = self.delete_key(key.as_bytes(), token).await;
+                    let _ignore = self.delete_key(key.as_bytes(), auth_info).await;
                     return Err(e);
                 }
             }
@@ -288,8 +304,11 @@ impl Lock for LockServer {
         request: tonic::Request<UnlockRequest>,
     ) -> Result<tonic::Response<UnlockResponse>, tonic::Status> {
         debug!("Receive UnlockRequest {:?}", request);
-        let token = get_token(request.metadata());
-        let header = self.delete_key(&request.get_ref().key, token).await?;
+        let auth_info = match get_token(request.metadata()) {
+            Some(token) => Some(self.auth_store.verify(&token)?),
+            None => None,
+        };
+        let header = self.delete_key(&request.get_ref().key, auth_info).await?;
         Ok(tonic::Response::new(UnlockResponse { header }))
     }
 }

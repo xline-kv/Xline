@@ -21,7 +21,7 @@ use xlineapi::{
 use super::barriers::{IdBarrier, IndexBarrier};
 use crate::{
     revision_number::RevisionNumberGenerator,
-    rpc::{RequestBackend, RequestWithToken, RequestWrapper},
+    rpc::{RequestBackend, RequestWrapper},
     storage::{db::WriteOp, storage_api::StorageApi, AlarmStore, AuthStore, KvStore, LeaseStore},
 };
 
@@ -178,7 +178,7 @@ where
         if !cmd.need_check_quota() {
             return true;
         }
-        let cmd_size = size_estimate::cmd_size(&cmd.request().request);
+        let cmd_size = size_estimate::cmd_size(cmd.request());
         if self.persistent.estimated_file_size().overflow_add(cmd_size) > self.quota {
             let Ok(file_size) = self.persistent.file_size() else {
                 return false
@@ -218,12 +218,9 @@ impl Alarmer {
 
     /// Propose alarm request to other nodes
     async fn alarm(&self, action: AlarmAction, alarm: AlarmType) -> Result<(), tonic::Status> {
-        let alarm_req = AlarmRequest::new(action, self.id, alarm);
-        let cmd = Command::new(
-            vec![],
-            RequestWithToken::new(RequestWrapper::AlarmRequest(alarm_req)),
-        );
-        let _ig = self.client.propose(&cmd, true).await?;
+        let request = RequestWrapper::from(AlarmRequest::new(action, self.id, alarm));
+        let cmd = Command::new(request.keys(), request);
+        let _ig = self.client.propose(&cmd, None, true).await?;
         Ok(())
     }
 }
@@ -273,7 +270,7 @@ where
     /// Check if the alarm is activated
     fn check_alarm(&self, cmd: &Command) -> Result<(), ExecuteError> {
         #[allow(clippy::wildcard_enum_match_arm)]
-        match cmd.request().request {
+        match *cmd.request() {
             RequestWrapper::PutRequest(_)
             | RequestWrapper::TxnRequest(_)
             | RequestWrapper::LeaseGrantRequest(_) => match self.alarm_storage.current_alarm() {
@@ -306,17 +303,18 @@ where
     ) -> Result<<Command as CurpCommand>::PR, <Command as CurpCommand>::Error> {
         self.check_alarm(cmd)?;
         let wrapper = cmd.request();
-        self.auth_storage.check_permission(wrapper)?;
-        let revision = match wrapper.request.backend() {
+        let auth_info = cmd.auth_info();
+        self.auth_storage.check_permission(wrapper, auth_info)?;
+        let revision = match wrapper.backend() {
             RequestBackend::Auth => {
-                if wrapper.request.skip_auth_revision() {
+                if wrapper.skip_auth_revision() {
                     -1
                 } else {
                     self.auth_rev.next()
                 }
             }
             RequestBackend::Kv | RequestBackend::Lease => {
-                if wrapper.request.skip_general_revision() {
+                if wrapper.skip_general_revision() {
                     -1
                 } else {
                     self.general_rev.next()
@@ -332,7 +330,7 @@ where
         cmd: &Command,
     ) -> Result<<Command as CurpCommand>::ER, <Command as CurpCommand>::Error> {
         let wrapper = cmd.request();
-        match wrapper.request.backend() {
+        match wrapper.backend() {
             RequestBackend::Kv => self.kv_storage.execute(wrapper),
             RequestBackend::Auth => self.auth_storage.execute(wrapper),
             RequestBackend::Lease => self.lease_storage.execute(wrapper),
@@ -349,20 +347,20 @@ where
         let quota_enough = self.quota_checker.check(cmd);
         let mut ops = vec![WriteOp::PutAppliedIndex(index)];
         let wrapper = cmd.request();
-        let (res, mut wr_ops) = match wrapper.request.backend() {
+        let (res, mut wr_ops) = match wrapper.backend() {
             RequestBackend::Kv => self.kv_storage.after_sync(wrapper, revision).await?,
             RequestBackend::Auth => self.auth_storage.after_sync(wrapper, revision)?,
             RequestBackend::Lease => self.lease_storage.after_sync(wrapper, revision).await?,
             RequestBackend::Alarm => self.alarm_storage.after_sync(wrapper, revision),
         };
-        if let RequestWrapper::CompactionRequest(ref compact_req) = wrapper.request {
+        if let RequestWrapper::CompactionRequest(ref compact_req) = *wrapper {
             if compact_req.physical {
                 if let Some(n) = self.compact_events.get(&cmd.compact_id()) {
                     n.notify(usize::MAX);
                 }
             }
         };
-        if let RequestWrapper::CompactionRequest(ref compact_req) = wrapper.request {
+        if let RequestWrapper::CompactionRequest(ref compact_req) = *wrapper {
             if compact_req.physical {
                 if let Some(n) = self.compact_events.get(&cmd.compact_id()) {
                     n.notify(usize::MAX);
@@ -374,7 +372,7 @@ where
         if !key_revisions.is_empty() {
             self.kv_storage.insert_index(key_revisions);
         }
-        self.lease_storage.mark_lease_synced(&wrapper.request);
+        self.lease_storage.mark_lease_synced(wrapper);
         if !quota_enough {
             if let Some(alarmer) = self.alarmer.read().clone() {
                 let _ig = tokio::spawn(async move {

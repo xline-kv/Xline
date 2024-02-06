@@ -1,15 +1,22 @@
 use std::sync::Arc;
 
-use curp::rpc::{
-    FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
-    LeaseKeepAliveMsg, MoveLeaderRequest, MoveLeaderResponse, ProposeConfChangeRequest,
-    ProposeConfChangeResponse, ProposeRequest, ProposeResponse, Protocol, PublishRequest,
-    PublishResponse, ShutdownRequest, ShutdownResponse, WaitSyncedRequest, WaitSyncedResponse,
+use curp::{
+    cmd::PbCodec,
+    rpc::{
+        FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
+        LeaseKeepAliveMsg, MoveLeaderRequest, MoveLeaderResponse, ProposeConfChangeRequest,
+        ProposeConfChangeResponse, ProposeRequest, ProposeResponse, Protocol, PublishRequest,
+        PublishResponse, ShutdownRequest, ShutdownResponse, WaitSyncedRequest, WaitSyncedResponse,
+    },
 };
 use tracing::debug;
+use xlineapi::command::Command;
 
 use super::xline_server::CurpServer;
-use crate::storage::{storage_api::StorageApi, AuthStore};
+use crate::{
+    server::auth_server::get_token,
+    storage::{storage_api::StorageApi, AuthStore},
+};
 
 /// Auth wrapper
 pub(crate) struct AuthWrapper<S>
@@ -19,7 +26,6 @@ where
     /// Curp server
     curp_server: CurpServer<S>,
     /// Auth store
-    #[allow(unused)] // TODO: this will be used in the future
     auth_store: Arc<AuthStore<S>>,
 }
 
@@ -43,12 +49,21 @@ where
 {
     async fn propose(
         &self,
-        request: tonic::Request<ProposeRequest>,
+        mut request: tonic::Request<ProposeRequest>,
     ) -> Result<tonic::Response<ProposeResponse>, tonic::Status> {
         debug!(
             "AuthWrapper received propose request: {}",
             request.get_ref().propose_id()
         );
+        if let Some(token) = get_token(request.metadata()) {
+            let auth_info = self.auth_store.verify(&token)?;
+            let mut command: Command = request
+                .get_ref()
+                .cmd()
+                .map_err(|e| tonic::Status::internal(e.to_string()))?;
+            command.set_auth_info(auth_info);
+            request.get_mut().command = command.encode();
+        };
         self.curp_server.propose(request).await
     }
 

@@ -262,19 +262,22 @@ async fn test_unary_fetch_clusters_linearizable_failed() {
 #[tokio::test]
 async fn test_unary_fast_round_works() {
     let connects = init_mocked_connects(5, |id, conn| {
-        conn.expect_propose().return_once(move |_req, _timeout| {
-            let resp = match id {
-                0 => ProposeResponse::new_result::<TestCommand>(&Ok(TestCommandResult::default())),
-                1 | 2 | 3 => ProposeResponse::new_empty(),
-                4 => return Err(CurpError::key_conflict()),
-                _ => unreachable!("there are only 5 nodes"),
-            };
-            Ok(tonic::Response::new(resp))
-        });
+        conn.expect_propose()
+            .return_once(move |_req, _token, _timeout| {
+                let resp = match id {
+                    0 => ProposeResponse::new_result::<TestCommand>(&Ok(
+                        TestCommandResult::default(),
+                    )),
+                    1 | 2 | 3 => ProposeResponse::new_empty(),
+                    4 => return Err(CurpError::key_conflict()),
+                    _ => unreachable!("there are only 5 nodes"),
+                };
+                Ok(tonic::Response::new(resp))
+            });
     });
     let unary = init_unary_client(connects, None, None, 0, 0, None);
     let res = unary
-        .fast_round(ProposeId(0, 0), &TestCommand::default())
+        .fast_round(ProposeId(0, 0), &TestCommand::default(), None)
         .await
         .unwrap()
         .unwrap();
@@ -300,14 +303,15 @@ async fn test_unary_fast_round_return_early_err() {
         let connects = init_mocked_connects(3, |_id, conn| {
             let counter_c = Arc::clone(&counter);
             let err = early_err.clone();
-            conn.expect_propose().return_once(move |_req, _timeout| {
-                counter_c.lock().unwrap().add_assign(1);
-                Err(err)
-            });
+            conn.expect_propose()
+                .return_once(move |_req, _token, _timeout| {
+                    counter_c.lock().unwrap().add_assign(1);
+                    Err(err)
+                });
         });
         let unary = init_unary_client(connects, None, None, 0, 0, None);
         let err = unary
-            .fast_round(ProposeId(0, 0), &TestCommand::default())
+            .fast_round(ProposeId(0, 0), &TestCommand::default(), None)
             .await
             .unwrap_err();
         assert_eq!(err, early_err);
@@ -319,19 +323,22 @@ async fn test_unary_fast_round_return_early_err() {
 #[tokio::test]
 async fn test_unary_fast_round_less_quorum() {
     let connects = init_mocked_connects(5, |id, conn| {
-        conn.expect_propose().return_once(move |_req, _timeout| {
-            let resp = match id {
-                0 => ProposeResponse::new_result::<TestCommand>(&Ok(TestCommandResult::default())),
-                1 | 2 => ProposeResponse::new_empty(),
-                3 | 4 => return Err(CurpError::key_conflict()),
-                _ => unreachable!("there are only 5 nodes"),
-            };
-            Ok(tonic::Response::new(resp))
-        });
+        conn.expect_propose()
+            .return_once(move |_req, _token, _timeout| {
+                let resp = match id {
+                    0 => ProposeResponse::new_result::<TestCommand>(&Ok(
+                        TestCommandResult::default(),
+                    )),
+                    1 | 2 => ProposeResponse::new_empty(),
+                    3 | 4 => return Err(CurpError::key_conflict()),
+                    _ => unreachable!("there are only 5 nodes"),
+                };
+                Ok(tonic::Response::new(resp))
+            });
     });
     let unary = init_unary_client(connects, None, None, 0, 0, None);
     let err = unary
-        .fast_round(ProposeId(0, 0), &TestCommand::default())
+        .fast_round(ProposeId(0, 0), &TestCommand::default(), None)
         .await
         .unwrap_err();
     assert_eq!(err, CurpError::KeyConflict(()));
@@ -344,29 +351,29 @@ async fn test_unary_fast_round_less_quorum() {
 #[should_panic]
 async fn test_unary_fast_round_with_two_leader() {
     let connects = init_mocked_connects(5, |id, conn| {
-        conn.expect_propose().return_once(move |_req, _timeout| {
-            let resp = match id {
-                // The execution result has been returned, indicating that server(0) has also recorded the command.
-                0 => ProposeResponse::new_result::<TestCommand>(&Ok(TestCommandResult::new(
-                    vec![1],
-                    vec![1],
-                ))),
-                // imagine that server(1) is the new leader
-                1 => ProposeResponse::new_result::<TestCommand>(&Ok(TestCommandResult::new(
-                    vec![2],
-                    vec![2],
-                ))),
-                2 | 3 => ProposeResponse::new_empty(),
-                4 => return Err(CurpError::key_conflict()),
-                _ => unreachable!("there are only 5 nodes"),
-            };
-            Ok(tonic::Response::new(resp))
-        });
+        conn.expect_propose()
+            .return_once(move |_req, _token, _timeout| {
+                let resp =
+                    match id {
+                        // The execution result has been returned, indicating that server(0) has also recorded the command.
+                        0 => ProposeResponse::new_result::<TestCommand>(&Ok(
+                            TestCommandResult::new(vec![1], vec![1]),
+                        )),
+                        // imagine that server(1) is the new leader
+                        1 => ProposeResponse::new_result::<TestCommand>(&Ok(
+                            TestCommandResult::new(vec![2], vec![2]),
+                        )),
+                        2 | 3 => ProposeResponse::new_empty(),
+                        4 => return Err(CurpError::key_conflict()),
+                        _ => unreachable!("there are only 5 nodes"),
+                    };
+                Ok(tonic::Response::new(resp))
+            });
     });
     // old local leader(0), term 1
     let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
     let res = unary
-        .fast_round(ProposeId(0, 0), &TestCommand::default())
+        .fast_round(ProposeId(0, 0), &TestCommand::default(), None)
         .await
         .unwrap()
         .unwrap();
@@ -379,18 +386,19 @@ async fn test_unary_fast_round_with_two_leader() {
 #[tokio::test]
 async fn test_unary_fast_round_without_leader() {
     let connects = init_mocked_connects(5, |id, conn| {
-        conn.expect_propose().return_once(move |_req, _timeout| {
-            let resp = match id {
-                0 | 1 | 2 | 3 | 4 => ProposeResponse::new_empty(),
-                _ => unreachable!("there are only 5 nodes"),
-            };
-            Ok(tonic::Response::new(resp))
-        });
+        conn.expect_propose()
+            .return_once(move |_req, _token, _timeout| {
+                let resp = match id {
+                    0 | 1 | 2 | 3 | 4 => ProposeResponse::new_empty(),
+                    _ => unreachable!("there are only 5 nodes"),
+                };
+                Ok(tonic::Response::new(resp))
+            });
     });
     // old local leader(0), term 1
     let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
     let res = unary
-        .fast_round(ProposeId(0, 0), &TestCommand::default())
+        .fast_round(ProposeId(0, 0), &TestCommand::default(), None)
         .await
         .unwrap_err();
     // quorum: server(0, 1, 2, 3)
@@ -444,15 +452,18 @@ async fn test_unary_slow_round_fetch_leader_first() {
 #[tokio::test]
 async fn test_unary_propose_fast_path_works() {
     let connects = init_mocked_connects(5, |id, conn| {
-        conn.expect_propose().return_once(move |_req, _timeout| {
-            let resp = match id {
-                0 => ProposeResponse::new_result::<TestCommand>(&Ok(TestCommandResult::default())),
-                1 | 2 | 3 => ProposeResponse::new_empty(),
-                4 => return Err(CurpError::key_conflict()),
-                _ => unreachable!("there are only 5 nodes"),
-            };
-            Ok(tonic::Response::new(resp))
-        });
+        conn.expect_propose()
+            .return_once(move |_req, _token, _timeout| {
+                let resp = match id {
+                    0 => ProposeResponse::new_result::<TestCommand>(&Ok(
+                        TestCommandResult::default(),
+                    )),
+                    1 | 2 | 3 => ProposeResponse::new_empty(),
+                    4 => return Err(CurpError::key_conflict()),
+                    _ => unreachable!("there are only 5 nodes"),
+                };
+                Ok(tonic::Response::new(resp))
+            });
         conn.expect_wait_synced()
             .return_once(move |_req, _timeout| {
                 assert!(id == 0, "wait synced should send to leader");
@@ -467,7 +478,7 @@ async fn test_unary_propose_fast_path_works() {
     });
     let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
     let res = unary
-        .propose(&TestCommand::default(), true)
+        .propose(&TestCommand::default(), None, true)
         .await
         .unwrap()
         .unwrap();
@@ -478,15 +489,18 @@ async fn test_unary_propose_fast_path_works() {
 #[tokio::test]
 async fn test_unary_propose_slow_path_works() {
     let connects = init_mocked_connects(5, |id, conn| {
-        conn.expect_propose().return_once(move |_req, _timeout| {
-            let resp = match id {
-                0 => ProposeResponse::new_result::<TestCommand>(&Ok(TestCommandResult::default())),
-                1 | 2 | 3 => ProposeResponse::new_empty(),
-                4 => return Err(CurpError::key_conflict()),
-                _ => unreachable!("there are only 5 nodes"),
-            };
-            Ok(tonic::Response::new(resp))
-        });
+        conn.expect_propose()
+            .return_once(move |_req, _token, _timeout| {
+                let resp = match id {
+                    0 => ProposeResponse::new_result::<TestCommand>(&Ok(
+                        TestCommandResult::default(),
+                    )),
+                    1 | 2 | 3 => ProposeResponse::new_empty(),
+                    4 => return Err(CurpError::key_conflict()),
+                    _ => unreachable!("there are only 5 nodes"),
+                };
+                Ok(tonic::Response::new(resp))
+            });
         conn.expect_wait_synced()
             .return_once(move |_req, _timeout| {
                 assert!(id == 0, "wait synced should send to leader");
@@ -502,7 +516,7 @@ async fn test_unary_propose_slow_path_works() {
     let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
     let start_at = Instant::now();
     let res = unary
-        .propose(&TestCommand::default(), false)
+        .propose(&TestCommand::default(), None, false)
         .await
         .unwrap()
         .unwrap();
@@ -523,17 +537,20 @@ async fn test_unary_propose_fast_path_fallback_slow_path() {
     let counter = Arc::new(Mutex::new(0));
     let connects = init_mocked_connects(5, |id, conn| {
         let counter_c = Arc::clone(&counter);
-        conn.expect_propose().return_once(move |_req, _timeout| {
-            counter_c.lock().unwrap().add_assign(1);
-            // insufficient quorum
-            let resp = match id {
-                0 => ProposeResponse::new_result::<TestCommand>(&Ok(TestCommandResult::default())),
-                1 | 2 => ProposeResponse::new_empty(),
-                3 | 4 => return Err(CurpError::key_conflict()),
-                _ => unreachable!("there are only 5 nodes"),
-            };
-            Ok(tonic::Response::new(resp))
-        });
+        conn.expect_propose()
+            .return_once(move |_req, _token, _timeout| {
+                counter_c.lock().unwrap().add_assign(1);
+                // insufficient quorum
+                let resp = match id {
+                    0 => ProposeResponse::new_result::<TestCommand>(&Ok(
+                        TestCommandResult::default(),
+                    )),
+                    1 | 2 => ProposeResponse::new_empty(),
+                    3 | 4 => return Err(CurpError::key_conflict()),
+                    _ => unreachable!("there are only 5 nodes"),
+                };
+                Ok(tonic::Response::new(resp))
+            });
         conn.expect_wait_synced()
             .return_once(move |_req, _timeout| {
                 assert!(id == 0, "wait synced should send to leader");
@@ -549,7 +566,7 @@ async fn test_unary_propose_fast_path_fallback_slow_path() {
     let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
     let start_at = Instant::now();
     let res = unary
-        .propose(&TestCommand::default(), true)
+        .propose(&TestCommand::default(), None, true)
         .await
         .unwrap()
         .unwrap();
@@ -583,10 +600,11 @@ async fn test_unary_propose_return_early_err() {
         let connects = init_mocked_connects(5, |id, conn| {
             let err = early_err.clone();
             let counter_c = Arc::clone(&counter);
-            conn.expect_propose().return_once(move |_req, _timeout| {
-                counter_c.lock().unwrap().add_assign(1);
-                Err(err)
-            });
+            conn.expect_propose()
+                .return_once(move |_req, _token, _timeout| {
+                    counter_c.lock().unwrap().add_assign(1);
+                    Err(err)
+                });
             let err = early_err.clone();
             let counter_c = Arc::clone(&counter);
             conn.expect_wait_synced()
@@ -598,7 +616,7 @@ async fn test_unary_propose_return_early_err() {
         });
         let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
         let err = unary
-            .propose(&TestCommand::default(), true)
+            .propose(&TestCommand::default(), None, true)
             .await
             .unwrap_err();
         assert_eq!(err, early_err);
@@ -623,10 +641,11 @@ async fn test_retry_propose_return_no_retry_error() {
         let connects = init_mocked_connects(5, |id, conn| {
             let err = early_err.clone();
             let counter_c = Arc::clone(&counter);
-            conn.expect_propose().return_once(move |_req, _timeout| {
-                counter_c.lock().unwrap().add_assign(1);
-                Err(err)
-            });
+            conn.expect_propose()
+                .return_once(move |_req, _token, _timeout| {
+                    counter_c.lock().unwrap().add_assign(1);
+                    Err(err)
+                });
             let err = early_err.clone();
             let counter_c = Arc::clone(&counter);
             conn.expect_wait_synced()
@@ -639,7 +658,7 @@ async fn test_retry_propose_return_no_retry_error() {
         let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
         let retry = Retry::new(unary, RetryConfig::new_fixed(Duration::from_millis(100), 5));
         let err = retry
-            .propose(&TestCommand::default(), false)
+            .propose(&TestCommand::default(), None, false)
             .await
             .unwrap_err();
         assert_eq!(err.message(), tonic::Status::from(early_err).message());
@@ -676,7 +695,7 @@ async fn test_retry_propose_return_retry_error() {
                     }))
                 });
             conn.expect_propose()
-                .returning(move |_req, _timeout| Err(err.clone()));
+                .returning(move |_req, _token, _timeout| Err(err.clone()));
             if id == 0 {
                 let err = early_err.clone();
                 conn.expect_wait_synced()
@@ -687,7 +706,7 @@ async fn test_retry_propose_return_retry_error() {
         let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
         let retry = Retry::new(unary, RetryConfig::new_fixed(Duration::from_millis(10), 5));
         let err = retry
-            .propose(&TestCommand::default(), false)
+            .propose(&TestCommand::default(), None, false)
             .await
             .unwrap_err();
         assert!(err.message().contains("request timeout"));

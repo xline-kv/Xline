@@ -457,7 +457,7 @@ impl<C: Command> SimClient<C> {
     ) -> Result<Result<(C::ER, Option<C::ASR>), C::Error>, tonic::Status> {
         let inner = self.inner.clone();
         self.handle
-            .spawn(async move { inner.propose(&cmd, use_fast_path).await })
+            .spawn(async move { inner.propose(&cmd, None, use_fast_path).await })
             .await
             .unwrap()
     }
