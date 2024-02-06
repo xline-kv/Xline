@@ -18,7 +18,12 @@ async fn read_state() {
     let put_cmd = TestCommand::new_put(vec![0], 0).set_exe_dur(Duration::from_millis(100));
     tokio::spawn(async move {
         assert_eq!(
-            put_client.propose(&put_cmd, true).await.unwrap().unwrap().0,
+            put_client
+                .propose(&put_cmd, None, true)
+                .await
+                .unwrap()
+                .unwrap()
+                .0,
             TestCommandResult::default(),
         );
     });

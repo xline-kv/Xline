@@ -7,29 +7,36 @@ use pbkdf2::{
 use tonic::metadata::MetadataMap;
 use tracing::debug;
 use xlineapi::{
-    command::{command_from_request_wrapper, CommandResponse, CurpClient, SyncResponse},
+    command::{Command, CommandResponse, CurpClient, SyncResponse},
     request_validation::RequestValidator,
-    RequestWithToken,
 };
 
-use crate::rpc::{
-    Auth, AuthDisableRequest, AuthDisableResponse, AuthEnableRequest, AuthEnableResponse,
-    AuthRoleAddRequest, AuthRoleAddResponse, AuthRoleDeleteRequest, AuthRoleDeleteResponse,
-    AuthRoleGetRequest, AuthRoleGetResponse, AuthRoleGrantPermissionRequest,
-    AuthRoleGrantPermissionResponse, AuthRoleListRequest, AuthRoleListResponse,
-    AuthRoleRevokePermissionRequest, AuthRoleRevokePermissionResponse, AuthStatusRequest,
-    AuthStatusResponse, AuthUserAddRequest, AuthUserAddResponse, AuthUserChangePasswordRequest,
-    AuthUserChangePasswordResponse, AuthUserDeleteRequest, AuthUserDeleteResponse,
-    AuthUserGetRequest, AuthUserGetResponse, AuthUserGrantRoleRequest, AuthUserGrantRoleResponse,
-    AuthUserListRequest, AuthUserListResponse, AuthUserRevokeRoleRequest,
-    AuthUserRevokeRoleResponse, AuthenticateRequest, AuthenticateResponse, RequestWrapper,
-    ResponseWrapper,
+use crate::{
+    rpc::{
+        Auth, AuthDisableRequest, AuthDisableResponse, AuthEnableRequest, AuthEnableResponse,
+        AuthRoleAddRequest, AuthRoleAddResponse, AuthRoleDeleteRequest, AuthRoleDeleteResponse,
+        AuthRoleGetRequest, AuthRoleGetResponse, AuthRoleGrantPermissionRequest,
+        AuthRoleGrantPermissionResponse, AuthRoleListRequest, AuthRoleListResponse,
+        AuthRoleRevokePermissionRequest, AuthRoleRevokePermissionResponse, AuthStatusRequest,
+        AuthStatusResponse, AuthUserAddRequest, AuthUserAddResponse, AuthUserChangePasswordRequest,
+        AuthUserChangePasswordResponse, AuthUserDeleteRequest, AuthUserDeleteResponse,
+        AuthUserGetRequest, AuthUserGetResponse, AuthUserGrantRoleRequest,
+        AuthUserGrantRoleResponse, AuthUserListRequest, AuthUserListResponse,
+        AuthUserRevokeRoleRequest, AuthUserRevokeRoleResponse, AuthenticateRequest,
+        AuthenticateResponse, RequestWrapper, ResponseWrapper,
+    },
+    storage::{storage_api::StorageApi, AuthStore},
 };
 
 /// Auth Server
-pub(crate) struct AuthServer {
+pub(crate) struct AuthServer<S>
+where
+    S: StorageApi,
+{
     /// Consensus client
     client: Arc<CurpClient>,
+    /// Auth Store
+    auth_store: Arc<AuthStore<S>>,
 }
 
 /// Get token from metadata
@@ -40,10 +47,13 @@ pub(crate) fn get_token(metadata: &MetadataMap) -> Option<String> {
         .and_then(|v| v.to_str().map(String::from).ok())
 }
 
-impl AuthServer {
+impl<S> AuthServer<S>
+where
+    S: StorageApi,
+{
     /// New `AuthServer`
-    pub(crate) fn new(client: Arc<CurpClient>) -> Self {
-        Self { client }
+    pub(crate) fn new(client: Arc<CurpClient>, auth_store: Arc<AuthStore<S>>) -> Self {
+        Self { client, auth_store }
     }
 
     /// Propose request and get result with fast/slow path
@@ -55,11 +65,13 @@ impl AuthServer {
     where
         T: Into<RequestWrapper>,
     {
-        let token = get_token(request.metadata());
-        let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
-        let cmd = command_from_request_wrapper(wrapper);
-
-        let res = self.client.propose(&cmd, use_fast_path).await??;
+        let auth_info = match get_token(request.metadata()) {
+            Some(token) => Some(self.auth_store.verify(&token)?),
+            None => None,
+        };
+        let request = request.into_inner().into();
+        let cmd = Command::new_with_auth_info(request.keys(), request, auth_info);
+        let res = self.client.propose(&cmd, None, use_fast_path).await??;
         Ok(res)
     }
 
@@ -92,7 +104,10 @@ impl AuthServer {
 }
 
 #[tonic::async_trait]
-impl Auth for AuthServer {
+impl<S> Auth for AuthServer<S>
+where
+    S: StorageApi,
+{
     async fn auth_enable(
         &self,
         request: tonic::Request<AuthEnableRequest>,

@@ -10,17 +10,14 @@ use utils::{
     config::AutoCompactConfig,
     task_manager::{tasks::TaskName, Listener, TaskManager},
 };
-use xlineapi::{command::Command, execute_error::ExecuteError};
+use xlineapi::{command::Command, execute_error::ExecuteError, RequestWrapper};
 
 use super::{
     index::{Index, IndexOperate},
     storage_api::StorageApi,
     KvStore,
 };
-use crate::{
-    revision_number::RevisionNumberGenerator,
-    rpc::{CompactionRequest, RequestWithToken},
-};
+use crate::{revision_number::RevisionNumberGenerator, rpc::CompactionRequest};
 
 /// mod revision compactor;
 mod revision_compactor;
@@ -57,13 +54,12 @@ impl Compactable
     for Arc<dyn ClientApi<Error = tonic::Status, Cmd = Command> + Sync + Send + 'static>
 {
     async fn compact(&self, revision: i64) -> Result<i64, tonic::Status> {
-        let request = CompactionRequest {
+        let request = RequestWrapper::from(CompactionRequest {
             revision,
             physical: false,
-        };
-        let request_wrapper = RequestWithToken::new_with_token(request.into(), None);
-        let cmd = Command::new(vec![], request_wrapper);
-        let err = match self.propose(&cmd, true).await? {
+        });
+        let cmd = Command::new(request.keys(), request);
+        let err = match self.propose(&cmd, None, true).await? {
             Ok(_) => return Ok(revision),
             Err(err) => err,
         };

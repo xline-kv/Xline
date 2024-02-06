@@ -31,8 +31,8 @@ use crate::{
     rpc::{
         CompactionRequest, CompactionResponse, Compare, CompareResult, CompareTarget,
         DeleteRangeRequest, DeleteRangeResponse, Event, EventType, KeyValue, PutRequest,
-        PutResponse, RangeRequest, RangeResponse, Request, RequestWithToken, RequestWrapper,
-        ResponseWrapper, SortOrder, SortTarget, TargetUnion, TxnRequest, TxnResponse,
+        PutResponse, RangeRequest, RangeResponse, Request, RequestWrapper, ResponseWrapper,
+        SortOrder, SortTarget, TargetUnion, TxnRequest, TxnResponse,
     },
     storage::db::{WriteOp, FINISHED_COMPACT_REVISION},
 };
@@ -189,19 +189,18 @@ where
     /// execute a kv request
     pub(crate) fn execute(
         &self,
-        request: &RequestWithToken,
+        request: &RequestWrapper,
     ) -> Result<CommandResponse, ExecuteError> {
-        self.handle_kv_requests(&request.request)
-            .map(CommandResponse::new)
+        self.handle_kv_requests(request).map(CommandResponse::new)
     }
 
     /// sync a kv request
     pub(crate) async fn after_sync(
         &self,
-        request: &RequestWithToken,
+        request: &RequestWrapper,
         revision: i64,
     ) -> Result<(SyncResponse, Vec<WriteOp>), ExecuteError> {
-        self.sync_request(&request.request, revision)
+        self.sync_request(request, revision)
             .await
             .map(|(rev, ops)| (SyncResponse::new(rev), ops))
     }
@@ -994,14 +993,11 @@ mod test {
         let vals = vec!["a", "b", "c", "d", "e", "z1", "z2", "z3"];
         let revision = RevisionNumberGenerator::default();
         for (key, val) in keys.into_iter().zip(vals.into_iter()) {
-            let req = RequestWithToken::new(
-                PutRequest {
-                    key: key.into(),
-                    value: val.into(),
-                    ..Default::default()
-                }
-                .into(),
-            );
+            let req = RequestWrapper::from(PutRequest {
+                key: key.into(),
+                value: val.into(),
+                ..Default::default()
+            });
             exe_as_and_flush(&store, &req, revision.next()).await?;
         }
         Ok((store, revision))
@@ -1043,7 +1039,7 @@ mod test {
 
     async fn exe_as_and_flush(
         store: &Arc<KvStore<DB>>,
-        request: &RequestWithToken,
+        request: &RequestWrapper,
         revision: i64,
     ) -> Result<(), ExecuteError> {
         let (_sync_res, ops) = store.after_sync(request, revision).await?;
@@ -1215,44 +1211,41 @@ mod test {
     #[tokio::test(flavor = "multi_thread")]
     #[abort_on_panic]
     async fn test_txn() -> Result<(), ExecuteError> {
-        let txn_req = RequestWithToken::new(
-            TxnRequest {
-                compare: vec![Compare {
-                    result: CompareResult::Equal as i32,
-                    target: CompareTarget::Value as i32,
-                    key: "a".into(),
-                    range_end: vec![],
-                    target_union: Some(TargetUnion::Value("a".into())),
-                }],
-                success: vec![RequestOp {
-                    request: Some(Request::RequestTxn(TxnRequest {
-                        compare: vec![Compare {
-                            result: CompareResult::Equal as i32,
-                            target: CompareTarget::Value as i32,
-                            key: "b".into(),
-                            range_end: vec![],
-                            target_union: Some(TargetUnion::Value("b".into())),
-                        }],
-                        success: vec![RequestOp {
-                            request: Some(Request::RequestPut(PutRequest {
-                                key: "success".into(),
-                                value: "1".into(),
-                                ..Default::default()
-                            })),
-                        }],
-                        failure: vec![],
-                    })),
-                }],
-                failure: vec![RequestOp {
-                    request: Some(Request::RequestPut(PutRequest {
-                        key: "success".into(),
-                        value: "0".into(),
-                        ..Default::default()
-                    })),
-                }],
-            }
-            .into(),
-        );
+        let txn_req = RequestWrapper::from(TxnRequest {
+            compare: vec![Compare {
+                result: CompareResult::Equal as i32,
+                target: CompareTarget::Value as i32,
+                key: "a".into(),
+                range_end: vec![],
+                target_union: Some(TargetUnion::Value("a".into())),
+            }],
+            success: vec![RequestOp {
+                request: Some(Request::RequestTxn(TxnRequest {
+                    compare: vec![Compare {
+                        result: CompareResult::Equal as i32,
+                        target: CompareTarget::Value as i32,
+                        key: "b".into(),
+                        range_end: vec![],
+                        target_union: Some(TargetUnion::Value("b".into())),
+                    }],
+                    success: vec![RequestOp {
+                        request: Some(Request::RequestPut(PutRequest {
+                            key: "success".into(),
+                            value: "1".into(),
+                            ..Default::default()
+                        })),
+                    }],
+                    failure: vec![],
+                })),
+            }],
+            failure: vec![RequestOp {
+                request: Some(Request::RequestPut(PutRequest {
+                    key: "success".into(),
+                    value: "0".into(),
+                    ..Default::default()
+                })),
+            }],
+        });
         let db = DB::open(&EngineConfig::Memory)?;
         let (store, rev) = init_store(db).await?;
         exe_as_and_flush(&store, &txn_req, rev.next()).await?;
@@ -1278,14 +1271,11 @@ mod test {
             let store = Arc::clone(&store);
             async move {
                 for i in 0..100_u8 {
-                    let req = RequestWithToken::new(
-                        PutRequest {
-                            key: "foo".into(),
-                            value: vec![i],
-                            ..Default::default()
-                        }
-                        .into(),
-                    );
+                    let req = RequestWrapper::from(PutRequest {
+                        key: "foo".into(),
+                        value: vec![i],
+                        ..Default::default()
+                    });
                     exe_as_and_flush(&store, &req, revision.next())
                         .await
                         .unwrap();
@@ -1311,37 +1301,25 @@ mod test {
         // sample requests: (a, 1) (b, 2) (a, 3) (del a)
         // their revisions:     2      3      4       5
         let requests = vec![
-            RequestWithToken::new(
-                PutRequest {
-                    key: "a".into(),
-                    value: "1".into(),
-                    ..Default::default()
-                }
-                .into(),
-            ),
-            RequestWithToken::new(
-                PutRequest {
-                    key: "b".into(),
-                    value: "2".into(),
-                    ..Default::default()
-                }
-                .into(),
-            ),
-            RequestWithToken::new(
-                PutRequest {
-                    key: "a".into(),
-                    value: "3".into(),
-                    ..Default::default()
-                }
-                .into(),
-            ),
-            RequestWithToken::new(
-                DeleteRangeRequest {
-                    key: "a".into(),
-                    ..Default::default()
-                }
-                .into(),
-            ),
+            RequestWrapper::from(PutRequest {
+                key: "a".into(),
+                value: "1".into(),
+                ..Default::default()
+            }),
+            RequestWrapper::from(PutRequest {
+                key: "b".into(),
+                value: "2".into(),
+                ..Default::default()
+            }),
+            RequestWrapper::from(PutRequest {
+                key: "a".into(),
+                value: "3".into(),
+                ..Default::default()
+            }),
+            RequestWrapper::from(DeleteRangeRequest {
+                key: "a".into(),
+                ..Default::default()
+            }),
         ];
 
         for req in requests {

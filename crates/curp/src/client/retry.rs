@@ -198,13 +198,14 @@ where
     async fn propose(
         &self,
         cmd: &Self::Cmd,
+        token: Option<&String>,
         use_fast_path: bool,
     ) -> Result<ProposeResponse<Self::Cmd>, tonic::Status> {
         let propose_id = self
             .retry::<_, _>(RepeatableClientApi::gen_propose_id)
             .await?;
         self.retry::<_, _>(|client| {
-            RepeatableClientApi::propose(client, propose_id, cmd, use_fast_path)
+            RepeatableClientApi::propose(client, propose_id, cmd, token, use_fast_path)
         })
         .await
     }

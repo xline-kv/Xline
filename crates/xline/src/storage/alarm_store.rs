@@ -13,8 +13,7 @@ use utils::table_names::ALARM_TABLE;
 use xlineapi::{
     command::{CommandResponse, SyncResponse},
     execute_error::ExecuteError,
-    AlarmAction, AlarmMember, AlarmResponse, AlarmType, RequestWithToken, RequestWrapper,
-    ResponseWrapper,
+    AlarmAction, AlarmMember, AlarmResponse, AlarmType, RequestWrapper, ResponseWrapper,
 };
 
 use super::{db::WriteOp, storage_api::StorageApi};
@@ -41,9 +40,9 @@ where
     DB: StorageApi,
 {
     /// execute a alarm request
-    pub(crate) fn execute(&self, request: &RequestWithToken) -> CommandResponse {
+    pub(crate) fn execute(&self, request: &RequestWrapper) -> CommandResponse {
         #[allow(clippy::wildcard_enum_match_arm)]
-        let alarms = match request.request {
+        let alarms = match *request {
             RequestWrapper::AlarmRequest(ref req) => match req.action() {
                 AlarmAction::Get => self.handle_alarm_get(req.alarm()),
                 AlarmAction::Activate => {
@@ -68,11 +67,11 @@ where
     /// sync a alarm request
     pub(crate) fn after_sync(
         &self,
-        request: &RequestWithToken,
+        request: &RequestWrapper,
         revision: i64,
     ) -> (SyncResponse, Vec<WriteOp>) {
         #[allow(clippy::wildcard_enum_match_arm)]
-        let ops = match request.request {
+        let ops = match *request {
             RequestWrapper::AlarmRequest(ref req) => match req.action() {
                 AlarmAction::Get => vec![],
                 AlarmAction::Activate => self.sync_alarm_activate(req.member_id, req.alarm()),

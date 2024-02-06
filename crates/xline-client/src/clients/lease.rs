@@ -3,8 +3,8 @@ use std::{fmt::Debug, sync::Arc};
 use futures::channel::mpsc::channel;
 use tonic::{transport::Channel, Streaming};
 use xlineapi::{
-    command::command_from_request_wrapper, LeaseGrantResponse, LeaseKeepAliveResponse,
-    LeaseLeasesResponse, LeaseRevokeResponse, LeaseTimeToLiveResponse, RequestWithToken,
+    command::Command, LeaseGrantResponse, LeaseKeepAliveResponse, LeaseLeasesResponse,
+    LeaseRevokeResponse, LeaseTimeToLiveResponse, RequestWrapper,
 };
 
 use crate::{
@@ -99,12 +99,12 @@ impl LeaseClient {
         if request.inner.id == 0 {
             request.inner.id = self.id_gen.next();
         }
-        let request = RequestWithToken::new_with_token(
-            xlineapi::LeaseGrantRequest::from(request).into(),
-            self.token.clone(),
-        );
-        let cmd = command_from_request_wrapper(request);
-        let (cmd_res, _sync_res) = self.curp_client.propose(&cmd, true).await??;
+        let request = RequestWrapper::from(xlineapi::LeaseGrantRequest::from(request));
+        let cmd = Command::new(request.keys(), request);
+        let (cmd_res, _sync_res) = self
+            .curp_client
+            .propose(&cmd, self.token.as_ref(), true)
+            .await??;
         Ok(cmd_res.into_inner().into())
     }
 
@@ -274,12 +274,12 @@ impl LeaseClient {
     /// ```
     #[inline]
     pub async fn leases(&self) -> Result<LeaseLeasesResponse> {
-        let request = RequestWithToken::new_with_token(
-            xlineapi::LeaseLeasesRequest {}.into(),
-            self.token.clone(),
-        );
-        let cmd = command_from_request_wrapper(request);
-        let (cmd_res, _sync_res) = self.curp_client.propose(&cmd, true).await??;
+        let request = RequestWrapper::from(xlineapi::LeaseLeasesRequest {});
+        let cmd = Command::new(request.keys(), request);
+        let (cmd_res, _sync_res) = self
+            .curp_client
+            .propose(&cmd, self.token.as_ref(), true)
+            .await??;
         Ok(cmd_res.into_inner().into())
     }
 }

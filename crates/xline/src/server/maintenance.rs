@@ -9,8 +9,8 @@ use futures::stream::Stream;
 use sha2::{Digest, Sha256};
 use tracing::{debug, error};
 use xlineapi::{
-    command::{command_from_request_wrapper, Command, CommandResponse, CurpClient, SyncResponse},
-    RequestWithToken, RequestWrapper,
+    command::{Command, CommandResponse, CurpClient, SyncResponse},
+    RequestWrapper,
 };
 
 use super::{auth_server::get_token, command::CommandExecutor};
@@ -23,7 +23,7 @@ use crate::{
         StatusResponse,
     },
     state::State,
-    storage::{storage_api::StorageApi, AlarmStore, KvStore},
+    storage::{storage_api::StorageApi, AlarmStore, AuthStore, KvStore},
 };
 
 /// Minimum page size
@@ -38,6 +38,8 @@ where
 {
     /// Kv Storage
     kv_store: Arc<KvStore<S>>,
+    /// Auth Storage
+    auth_store: Arc<AuthStore<S>>,
     /// persistent storage
     persistent: Arc<S>, // TODO: `persistent` is not a good name, rename it in a better way
     /// Header generator
@@ -62,6 +64,7 @@ where
     #[allow(clippy::too_many_arguments)] // Consistent with other servers
     pub(crate) fn new(
         kv_store: Arc<KvStore<S>>,
+        auth_store: Arc<AuthStore<S>>,
         client: Arc<CurpClient>,
         persistent: Arc<S>,
         header_gen: Arc<HeaderGenerator>,
@@ -72,6 +75,7 @@ where
     ) -> Self {
         Self {
             kv_store,
+            auth_store,
             persistent,
             header_gen,
             client,
@@ -91,11 +95,13 @@ where
     where
         T: Into<RequestWrapper> + Debug,
     {
-        let token = get_token(request.metadata());
-        let wrapper = RequestWithToken::new_with_token(request.into_inner().into(), token);
-        let cmd = command_from_request_wrapper(wrapper);
-
-        let res = self.client.propose(&cmd, use_fast_path).await??;
+        let auth_info = match get_token(request.metadata()) {
+            Some(token) => Some(self.auth_store.verify(&token)?),
+            None => None,
+        };
+        let request = request.into_inner().into();
+        let cmd = Command::new_with_auth_info(request.keys(), request, auth_info);
+        let res = self.client.propose(&cmd, None, use_fast_path).await??;
         Ok(res)
     }
 }

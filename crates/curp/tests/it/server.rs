@@ -27,11 +27,12 @@ async fn basic_propose() {
     init_logger();
 
     let group = CurpGroup::new(3).await;
+
     let client = group.new_client().await;
 
     assert_eq!(
         client
-            .propose(&TestCommand::new_put(vec![0], 0), true)
+            .propose(&TestCommand::new_put(vec![0], 0), None, true)
             .await
             .unwrap()
             .unwrap()
@@ -40,7 +41,7 @@ async fn basic_propose() {
     );
     assert_eq!(
         client
-            .propose(&TestCommand::new_get(vec![0]), true)
+            .propose(&TestCommand::new_get(vec![0]), None, true)
             .await
             .unwrap()
             .unwrap()
@@ -58,7 +59,7 @@ async fn synced_propose() {
     let client = group.new_client().await;
     let cmd = TestCommand::new_get(vec![0]);
 
-    let (er, index) = client.propose(&cmd, false).await.unwrap().unwrap();
+    let (er, index) = client.propose(&cmd, None, false).await.unwrap().unwrap();
     assert_eq!(er, TestCommandResult::new(vec![], vec![]));
     assert_eq!(index.unwrap(), 1.into()); // log[0] is a fake one
 
@@ -84,7 +85,7 @@ async fn exe_exact_n_times() {
     let client = group.new_client().await;
     let cmd = TestCommand::new_get(vec![0]);
 
-    let er = client.propose(&cmd, true).await.unwrap().unwrap().0;
+    let er = client.propose(&cmd, None, true).await.unwrap().unwrap().0;
     assert_eq!(er, TestCommandResult::new(vec![], vec![]));
 
     for exe_rx in group.exe_rxs() {
@@ -216,7 +217,7 @@ async fn concurrent_cmd_order() {
 
     assert_eq!(
         client
-            .propose(&TestCommand::new_get(vec![1]), true)
+            .propose(&TestCommand::new_get(vec![1]), None, true)
             .await
             .unwrap()
             .unwrap()
@@ -240,7 +241,11 @@ async fn concurrent_cmd_order_should_have_correct_revision() {
     for i in sample_range.clone() {
         let rand_dur = Duration::from_millis(thread_rng().gen_range(0..500).numeric_cast());
         let _er = client
-            .propose(&TestCommand::new_put(vec![i], i).set_as_dur(rand_dur), true)
+            .propose(
+                &TestCommand::new_put(vec![i], i).set_as_dur(rand_dur),
+                None,
+                true,
+            )
             .await
             .unwrap()
             .unwrap();
@@ -249,7 +254,7 @@ async fn concurrent_cmd_order_should_have_correct_revision() {
     for i in sample_range {
         assert_eq!(
             client
-                .propose(&TestCommand::new_get(vec![i]), true)
+                .propose(&TestCommand::new_get(vec![i]), None, true)
                 .await
                 .unwrap()
                 .unwrap()
@@ -272,7 +277,7 @@ async fn shutdown_rpc_should_shutdown_the_cluster() {
         let mut collection = vec![];
         for i in 0..10 {
             let cmd = TestCommand::new_put(vec![i], i);
-            let res = req_client.propose(&cmd, true).await;
+            let res = req_client.propose(&cmd, None, true).await;
             if res.is_ok() && res.unwrap().is_ok() {
                 collection.push(i);
             }
@@ -284,7 +289,7 @@ async fn shutdown_rpc_should_shutdown_the_cluster() {
     client.propose_shutdown().await.unwrap();
 
     let res = client
-        .propose(&TestCommand::new_put(vec![888], 1), false)
+        .propose(&TestCommand::new_put(vec![888], 1), None, false)
         .await;
     assert!(matches!(
         CurpError::from(res.unwrap_err()),
@@ -299,7 +304,7 @@ async fn shutdown_rpc_should_shutdown_the_cluster() {
     let client = group.new_client().await;
     for i in collection {
         let res = client
-            .propose(&TestCommand::new_get(vec![i]), true)
+            .propose(&TestCommand::new_get(vec![i]), None, true)
             .await
             .unwrap();
         assert_eq!(res.unwrap().0.values, vec![i]);
@@ -346,7 +351,7 @@ async fn propose_remove_follower_should_success() {
         .is_finished());
     // check if the old client can propose to the new cluster
     client
-        .propose(&TestCommand::new_get(vec![1]), true)
+        .propose(&TestCommand::new_get(vec![1]), None, true)
         .await
         .unwrap()
         .unwrap();
@@ -375,7 +380,7 @@ async fn propose_remove_leader_should_success() {
     assert_ne!(new_leader_id, leader_id);
     // check if the old client can propose to the new cluster
     client
-        .propose(&TestCommand::new_get(vec![1]), true)
+        .propose(&TestCommand::new_get(vec![1]), None, true)
         .await
         .unwrap()
         .unwrap();
@@ -448,7 +453,7 @@ async fn check_new_node(is_learner: bool) {
     let mut group = CurpGroup::new(3).await;
     let client = group.new_client().await;
     let req = TestCommand::new_put(vec![123], 123);
-    let _res = client.propose(&req, true).await.unwrap().unwrap();
+    let _res = client.propose(&req, None, true).await.unwrap().unwrap();
 
     let listener = TcpListener::bind("0.0.0.0:0").await.unwrap();
     let addr = listener.local_addr().unwrap().to_string();
@@ -505,7 +510,7 @@ async fn check_new_node(is_learner: bool) {
 
     // 5. check if the old client can propose to the new cluster
     client
-        .propose(&TestCommand::new_get(vec![1]), true)
+        .propose(&TestCommand::new_get(vec![1]), None, true)
         .await
         .unwrap()
         .unwrap();

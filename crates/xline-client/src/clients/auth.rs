@@ -6,13 +6,12 @@ use pbkdf2::{
 };
 use tonic::transport::Channel;
 use xlineapi::{
-    command::command_from_request_wrapper, AuthDisableResponse, AuthEnableResponse,
-    AuthRoleAddResponse, AuthRoleDeleteResponse, AuthRoleGetResponse,
-    AuthRoleGrantPermissionResponse, AuthRoleListResponse, AuthRoleRevokePermissionResponse,
-    AuthStatusResponse, AuthUserAddResponse, AuthUserChangePasswordResponse,
-    AuthUserDeleteResponse, AuthUserGetResponse, AuthUserGrantRoleResponse, AuthUserListResponse,
-    AuthUserRevokeRoleResponse, AuthenticateResponse, RequestWithToken, RequestWrapper,
-    ResponseWrapper,
+    command::Command, AuthDisableResponse, AuthEnableResponse, AuthRoleAddResponse,
+    AuthRoleDeleteResponse, AuthRoleGetResponse, AuthRoleGrantPermissionResponse,
+    AuthRoleListResponse, AuthRoleRevokePermissionResponse, AuthStatusResponse,
+    AuthUserAddResponse, AuthUserChangePasswordResponse, AuthUserDeleteResponse,
+    AuthUserGetResponse, AuthUserGrantRoleResponse, AuthUserListResponse,
+    AuthUserRevokeRoleResponse, AuthenticateResponse, RequestWrapper, ResponseWrapper,
 };
 
 use crate::{
@@ -720,14 +719,17 @@ impl AuthClient {
         request: Req,
         use_fast_path: bool,
     ) -> Result<Res> {
-        let request = RequestWithToken::new_with_token(request.into(), self.token.clone());
-        let cmd = command_from_request_wrapper(request);
+        let request = request.into();
+        let cmd = Command::new(request.keys(), request);
 
         let res_wrapper = if use_fast_path {
-            let (cmd_res, _sync_error) = self.curp_client.propose(&cmd, true).await??;
+            let (cmd_res, _sync_error) = self
+                .curp_client
+                .propose(&cmd, self.token.as_ref(), true)
+                .await??;
             cmd_res.into_inner()
         } else {
-            let (cmd_res, Some(sync_res)) = self.curp_client.propose(&cmd, false).await?? else {
+            let (cmd_res, Some(sync_res)) = self.curp_client.propose(&cmd,self.token.as_ref(),false).await?? else {
                 unreachable!("sync_res is always Some when use_fast_path is false");
             };
             let mut res_wrapper = cmd_res.into_inner();

@@ -199,15 +199,15 @@ mod errorpb {
 
 use std::fmt::Display;
 
-use curp_external_api::cmd::PbSerializeError;
-use serde::{Deserialize, Serialize};
+use command::KeyRange;
 
 pub use self::{
     authpb::{permission::Type, Permission, Role, User, UserAddOptions},
     commandpb::{
-        command_response::ResponseWrapper, request_with_token::RequestWrapper,
+        command::{AuthInfo, RequestWrapper},
+        command_response::ResponseWrapper,
         Command as PbCommand, CommandResponse as PbCommandResponse, KeyRange as PbKeyRange,
-        RequestWithToken as PbRequestWithToken, SyncResponse as PbSyncResponse,
+        SyncResponse as PbSyncResponse,
     },
     errorpb::{
         execute_error::Error as PbExecuteError, ExecuteError as PbExecuteErrorOuter,
@@ -271,39 +271,6 @@ impl User {
     }
 }
 
-/// Wrapper for requests
-#[derive(PartialEq)] // used only in tests, doesn't work with a `cfg_attr` macro.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct RequestWithToken {
-    /// token for authentication
-    pub token: Option<String>,
-    /// Internal request
-    pub request: RequestWrapper,
-}
-
-impl TryFrom<PbRequestWithToken> for RequestWithToken {
-    type Error = PbSerializeError;
-
-    #[inline]
-    fn try_from(req: PbRequestWithToken) -> Result<Self, Self::Error> {
-        let request = req.request_wrapper.ok_or(PbSerializeError::EmptyField)?;
-        Ok(Self {
-            token: req.token,
-            request,
-        })
-    }
-}
-
-impl From<RequestWithToken> for PbRequestWithToken {
-    #[inline]
-    fn from(req: RequestWithToken) -> Self {
-        PbRequestWithToken {
-            token: req.token,
-            request_wrapper: Some(req.request),
-        }
-    }
-}
-
 impl ResponseWrapper {
     /// Update response revision
     pub fn update_revision(&mut self, revision: i64) {
@@ -354,7 +321,81 @@ pub enum RequestBackend {
     Alarm,
 }
 
+/// Get command keys from a Request for conflict check
+pub trait CommandKeys {
+    /// Key ranges
+    fn keys(&self) -> Vec<KeyRange>;
+}
+
+impl CommandKeys for RangeRequest {
+    fn keys(&self) -> Vec<KeyRange> {
+        vec![KeyRange::new(
+            self.key.as_slice(),
+            self.range_end.as_slice(),
+        )]
+    }
+}
+
+impl CommandKeys for PutRequest {
+    fn keys(&self) -> Vec<KeyRange> {
+        vec![KeyRange::new_one_key(self.key.as_slice())]
+    }
+}
+
+impl CommandKeys for DeleteRangeRequest {
+    fn keys(&self) -> Vec<KeyRange> {
+        vec![KeyRange::new(
+            self.key.as_slice(),
+            self.range_end.as_slice(),
+        )]
+    }
+}
+
+impl CommandKeys for TxnRequest {
+    fn keys(&self) -> Vec<KeyRange> {
+        let mut keys: Vec<_> = self
+            .compare
+            .iter()
+            .map(|cmp| KeyRange::new(cmp.key.as_slice(), cmp.range_end.as_slice()))
+            .collect();
+
+        for op in self
+            .success
+            .iter()
+            .chain(self.failure.iter())
+            .map(|op| &op.request)
+            .flatten()
+        {
+            match *op {
+                Request::RequestRange(ref req) => {
+                    keys.push(KeyRange::new(req.key.as_slice(), req.range_end.as_slice()));
+                }
+                Request::RequestPut(ref req) => {
+                    keys.push(KeyRange::new_one_key(req.key.as_slice()))
+                }
+                Request::RequestDeleteRange(ref req) => {
+                    keys.push(KeyRange::new(req.key.as_slice(), req.range_end.as_slice()))
+                }
+                Request::RequestTxn(ref req) => keys.append(&mut req.keys()),
+            }
+        }
+
+        keys
+    }
+}
+
 impl RequestWrapper {
+    /// Get keys of the request
+    pub fn keys(&self) -> Vec<KeyRange> {
+        match *self {
+            RequestWrapper::RangeRequest(ref req) => req.keys(),
+            RequestWrapper::PutRequest(ref req) => req.keys(),
+            RequestWrapper::DeleteRangeRequest(ref req) => req.keys(),
+            RequestWrapper::TxnRequest(ref req) => req.keys(),
+            _ => vec![],
+        }
+    }
+
     /// Get the backend of the request
     pub fn backend(&self) -> RequestBackend {
         match *self {
@@ -585,21 +626,6 @@ impl From<ResponseWrapper> for ResponseOp {
             },
             _ => panic!("wrong response type"),
         }
-    }
-}
-
-impl RequestWithToken {
-    /// New `RequestWithToken`
-    pub fn new(request: RequestWrapper) -> Self {
-        RequestWithToken {
-            token: None,
-            request,
-        }
-    }
-
-    /// New `RequestWithToken` with token
-    pub fn new_with_token(request: RequestWrapper, token: Option<String>) -> Self {
-        RequestWithToken { token, request }
     }
 }
 

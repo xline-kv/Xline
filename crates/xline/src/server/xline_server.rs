@@ -440,9 +440,9 @@ impl XlineServer {
         key_pair: Option<(EncodingKey, DecodingKey)>,
     ) -> Result<(
         KvServer<S>,
-        LockServer,
+        LockServer<S>,
         Arc<LeaseServer<S>>,
-        AuthServer,
+        AuthServer<S>,
         WatchServer<S>,
         MaintenanceServer<S>,
         ClusterServer,
@@ -555,6 +555,7 @@ impl XlineServer {
             ),
             LockServer::new(
                 Arc::clone(&client),
+                Arc::clone(&auth_storage),
                 Arc::clone(&id_gen),
                 &self.cluster_info.self_peer_urls(),
                 self.client_tls_config.as_ref(),
@@ -568,7 +569,7 @@ impl XlineServer {
                 self.client_tls_config.clone(),
                 &self.task_manager,
             ),
-            AuthServer::new(Arc::clone(&client)),
+            AuthServer::new(Arc::clone(&client), Arc::clone(&auth_storage)),
             WatchServer::new(
                 watcher,
                 Arc::clone(&header_gen),
@@ -577,6 +578,7 @@ impl XlineServer {
             ),
             MaintenanceServer::new(
                 kv_storage,
+                Arc::clone(&auth_storage),
                 Arc::clone(&client),
                 persistent,
                 Arc::clone(&header_gen),

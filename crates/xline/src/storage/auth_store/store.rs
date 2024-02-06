@@ -20,11 +20,12 @@ use utils::parking_lot_lock::RwLockMap;
 use xlineapi::{
     command::{CommandResponse, KeyRange, SyncResponse},
     execute_error::ExecuteError,
+    AuthInfo,
 };
 
 use super::{
     backend::{ROOT_ROLE, ROOT_USER},
-    perms::{JwtTokenManager, PermissionCache, TokenClaims, TokenOperate, UserPermissions},
+    perms::{JwtTokenManager, PermissionCache, TokenOperate, UserPermissions},
 };
 use crate::{
     header_gen::HeaderGenerator,
@@ -41,8 +42,7 @@ use crate::{
         AuthUserGrantRoleResponse, AuthUserListRequest, AuthUserListResponse,
         AuthUserRevokeRoleRequest, AuthUserRevokeRoleResponse, AuthenticateRequest,
         AuthenticateResponse, DeleteRangeRequest, LeaseRevokeRequest, Permission, PutRequest,
-        RangeRequest, Request, RequestOp, RequestWithToken, RequestWrapper, Role, TxnRequest, Type,
-        User,
+        RangeRequest, Request, RequestOp, RequestWrapper, Role, TxnRequest, Type, User,
     },
     storage::{
         auth_store::backend::AuthStoreBackend,
@@ -121,10 +121,11 @@ where
     }
 
     /// verify token
-    fn verify_token(&self, token: &str) -> Result<TokenClaims, ExecuteError> {
+    pub(crate) fn verify(&self, token: &str) -> Result<AuthInfo, ExecuteError> {
         match self.token_manager {
             Some(ref token_manager) => token_manager
                 .verify(token)
+                .map(Into::into)
                 .map_err(|_ignore| ExecuteError::InvalidAuthToken),
             None => Err(ExecuteError::TokenManagerNotInit),
         }
@@ -172,10 +173,10 @@ where
     /// execute a auth request
     pub(crate) fn execute(
         &self,
-        request: &RequestWithToken,
+        request: &RequestWrapper,
     ) -> Result<CommandResponse, ExecuteError> {
         #[allow(clippy::wildcard_enum_match_arm)]
-        let res = match request.request {
+        let res = match *request {
             RequestWrapper::AuthEnableRequest(ref req) => {
                 self.handle_auth_enable_request(req).map(Into::into)
             }
@@ -509,11 +510,11 @@ where
     /// sync a auth request
     pub(crate) fn after_sync<'a>(
         &self,
-        request: &'a RequestWithToken,
+        request: &'a RequestWrapper,
         revision: i64,
     ) -> Result<(SyncResponse, Vec<WriteOp<'a>>), ExecuteError> {
         #[allow(clippy::wildcard_enum_match_arm)]
-        let ops = match request.request {
+        let ops = match *request {
             RequestWrapper::AuthEnableRequest(ref req) => {
                 debug!("Sync AuthEnableRequest {:?}", req);
                 self.sync_auth_enable_request(req)?
@@ -888,9 +889,9 @@ where
     }
 
     /// Check if the request need admin permission
-    fn need_admin_permission(wrapper: &RequestWithToken) -> bool {
+    fn need_admin_permission(wrapper: &RequestWrapper) -> bool {
         matches!(
-            wrapper.request,
+            *wrapper,
             RequestWrapper::AuthEnableRequest(_)
                 | RequestWrapper::AuthDisableRequest(_)
                 | RequestWrapper::AuthStatusRequest(_)
@@ -914,49 +915,53 @@ where
     }
 
     /// check if the request is permitted
-    pub(crate) fn check_permission(&self, wrapper: &RequestWithToken) -> Result<(), ExecuteError> {
+    pub(crate) fn check_permission(
+        &self,
+        wrapper: &RequestWrapper,
+        auth_info: Option<&AuthInfo>,
+    ) -> Result<(), ExecuteError> {
         if !self.is_enabled() {
             return Ok(());
         }
-        if let RequestWrapper::AuthenticateRequest(_) = wrapper.request {
+        if let RequestWrapper::AuthenticateRequest(_) = *wrapper {
             return Ok(());
         }
-        let claims = match wrapper.token {
-            Some(ref token) => self.verify_token(token)?,
-            None => {
-                // TODO: some requests are allowed without token when auth is enabled
-                return Err(ExecuteError::TokenNotProvided);
-            }
+        let Some(auth_info) = auth_info else {
+            // TODO: some requests are allowed without token when auth is enabled
+            return Err(ExecuteError::TokenNotProvided);
         };
         let cur_rev = self.revision();
-        if claims.revision < cur_rev {
-            return Err(ExecuteError::TokenOldRevision(claims.revision, cur_rev));
+        if auth_info.auth_revision < cur_rev {
+            return Err(ExecuteError::TokenOldRevision(
+                auth_info.auth_revision,
+                cur_rev,
+            ));
         }
-        let username = claims.username;
+        let username = &auth_info.username;
         if Self::need_admin_permission(wrapper) {
-            self.check_admin_permission(&username)?;
+            self.check_admin_permission(username)?;
         } else {
             #[allow(clippy::wildcard_enum_match_arm)]
-            match wrapper.request {
+            match *wrapper {
                 RequestWrapper::RangeRequest(ref range_req) => {
-                    self.check_range_permission(&username, range_req)?;
+                    self.check_range_permission(username, range_req)?;
                 }
                 RequestWrapper::PutRequest(ref put_req) => {
-                    self.check_put_permission(&username, put_req)?;
+                    self.check_put_permission(username, put_req)?;
                 }
                 RequestWrapper::DeleteRangeRequest(ref del_range_req) => {
-                    self.check_delete_permission(&username, del_range_req)?;
+                    self.check_delete_permission(username, del_range_req)?;
                 }
                 RequestWrapper::TxnRequest(ref txn_req) => {
-                    self.check_txn_permission(&username, txn_req)?;
+                    self.check_txn_permission(username, txn_req)?;
                 }
                 RequestWrapper::LeaseRevokeRequest(ref lease_revoke_req) => {
-                    self.check_lease_revoke_permission(&username, lease_revoke_req)?;
+                    self.check_lease_revoke_permission(username, lease_revoke_req)?;
                 }
                 RequestWrapper::AuthUserGetRequest(ref user_get_req) => {
-                    self.check_admin_permission(&username).map_or_else(
+                    self.check_admin_permission(username).map_or_else(
                         |e| {
-                            if user_get_req.name == username {
+                            if user_get_req.name == *username {
                                 Ok(())
                             } else {
                                 Err(e)
@@ -966,9 +971,9 @@ where
                     )?;
                 }
                 RequestWrapper::AuthRoleGetRequest(ref role_get_req) => {
-                    self.check_admin_permission(&username).map_or_else(
+                    self.check_admin_permission(username).map_or_else(
                         |e| {
-                            let user = self.backend.get_user(&username)?;
+                            let user = self.backend.get_user(username)?;
                             if user.has_role(&role_get_req.role) {
                                 Ok(())
                             } else {
@@ -1161,27 +1166,24 @@ mod test {
         let store = init_auth_store(db);
         let current_revision = store.revision();
         let token = store.assign("xline").unwrap();
-        let claim = store.verify_token(token.as_str()).unwrap();
-        assert_eq!(claim.revision, current_revision);
-        assert_eq!(claim.username, "xline");
+        let auth_info = store.verify(token.as_str()).unwrap();
+        assert_eq!(auth_info.auth_revision, current_revision);
+        assert_eq!(auth_info.username, "xline");
     }
 
     #[test]
     fn test_role_grant_permission() -> Result<(), ExecuteError> {
         let db = DB::open(&EngineConfig::Memory)?;
         let store = init_auth_store(db);
-        let req = RequestWithToken::new(
-            AuthRoleGrantPermissionRequest {
-                name: "r".to_owned(),
-                perm: Some(Permission {
+        let req = RequestWrapper::from(AuthRoleGrantPermissionRequest {
+            name: "r".to_owned(),
+            perm: Some(Permission {
                     #[allow(clippy::as_conversions)] // This cast is always valid
                     perm_type: Type::Write as i32,
                     key: "fop".into(),
                     range_end: "foz".into(),
                 }),
-            }
-            .into(),
-        );
+        });
         assert!(exe_and_sync(&store, &req, 6).is_ok());
         assert_eq!(
             store.permission_cache(),
@@ -1206,14 +1208,11 @@ mod test {
     fn test_role_revoke_permission() -> Result<(), ExecuteError> {
         let db = DB::open(&EngineConfig::Memory)?;
         let store = init_auth_store(db);
-        let req = RequestWithToken::new(
-            AuthRoleRevokePermissionRequest {
-                role: "r".to_owned(),
-                key: "foo".into(),
-                range_end: "".into(),
-            }
-            .into(),
-        );
+        let req = RequestWrapper::from(AuthRoleRevokePermissionRequest {
+            role: "r".to_owned(),
+            key: "foo".into(),
+            range_end: "".into(),
+        });
         assert!(exe_and_sync(&store, &req, 6).is_ok());
         assert_eq!(
             store.permission_cache(),
@@ -1229,12 +1228,9 @@ mod test {
     fn test_role_delete() -> Result<(), ExecuteError> {
         let db = DB::open(&EngineConfig::Memory)?;
         let store = init_auth_store(db);
-        let req = RequestWithToken::new(
-            AuthRoleDeleteRequest {
-                role: "r".to_owned(),
-            }
-            .into(),
-        );
+        let req = RequestWrapper::from(AuthRoleDeleteRequest {
+            role: "r".to_owned(),
+        });
         assert!(exe_and_sync(&store, &req, 6).is_ok());
         assert_eq!(
             store.permission_cache(),
@@ -1250,12 +1246,9 @@ mod test {
     fn test_user_delete() -> Result<(), ExecuteError> {
         let db = DB::open(&EngineConfig::Memory)?;
         let store = init_auth_store(db);
-        let req = RequestWithToken::new(
-            AuthUserDeleteRequest {
-                name: "u".to_owned(),
-            }
-            .into(),
-        );
+        let req = RequestWrapper::from(AuthUserDeleteRequest {
+            name: "u".to_owned(),
+        });
         assert!(exe_and_sync(&store, &req, 6).is_ok());
         assert_eq!(
             store.permission_cache(),
@@ -1274,36 +1267,27 @@ mod test {
         let revision = store.revision();
         let rev_gen = Arc::clone(&store.revision);
         assert!(!store.is_enabled());
-        let enable_req = RequestWithToken::new(AuthEnableRequest {}.into());
+        let enable_req = RequestWrapper::from(AuthEnableRequest {});
 
         // AuthEnableRequest won't increase the auth revision, but AuthDisableRequest will
         assert!(exe_and_sync(&store, &enable_req, store.revision()).is_err());
-        let req_1 = RequestWithToken::new(
-            AuthUserAddRequest {
-                name: "root".to_owned(),
-                password: String::new(),
-                hashed_password: "123".to_owned(),
-                options: None,
-            }
-            .into(),
-        );
+        let req_1 = RequestWrapper::from(AuthUserAddRequest {
+            name: "root".to_owned(),
+            password: String::new(),
+            hashed_password: "123".to_owned(),
+            options: None,
+        });
         assert!(exe_and_sync(&store, &req_1, rev_gen.next()).is_ok());
 
-        let req_2 = RequestWithToken::new(
-            AuthRoleAddRequest {
-                name: "root".to_owned(),
-            }
-            .into(),
-        );
+        let req_2 = RequestWrapper::from(AuthRoleAddRequest {
+            name: "root".to_owned(),
+        });
         assert!(exe_and_sync(&store, &req_2, rev_gen.next()).is_ok());
 
-        let req_3 = RequestWithToken::new(
-            AuthUserGrantRoleRequest {
-                user: "root".to_owned(),
-                role: "root".to_owned(),
-            }
-            .into(),
-        );
+        let req_3 = RequestWrapper::from(AuthUserGrantRoleRequest {
+            user: "root".to_owned(),
+            role: "root".to_owned(),
+        });
         assert!(exe_and_sync(&store, &req_3, rev_gen.next()).is_ok());
         assert_eq!(store.revision(), revision + 3);
 
@@ -1311,7 +1295,7 @@ mod test {
         assert_eq!(store.revision(), 8);
         assert!(store.is_enabled());
 
-        let disable_req = RequestWithToken::new(AuthDisableRequest {}.into());
+        let disable_req = RequestWrapper::from(AuthDisableRequest {});
 
         assert!(exe_and_sync(&store, &disable_req, rev_gen.next()).is_ok());
         assert_eq!(store.revision(), revision + 4);
@@ -1335,43 +1319,31 @@ mod test {
     fn init_auth_store(db: Arc<DB>) -> AuthStore<DB> {
         let store = init_empty_store(db);
         let rev = Arc::clone(&store.revision);
-        let req1 = RequestWithToken::new(
-            AuthRoleAddRequest {
-                name: "r".to_owned(),
-            }
-            .into(),
-        );
+        let req1 = RequestWrapper::from(AuthRoleAddRequest {
+            name: "r".to_owned(),
+        });
         assert!(exe_and_sync(&store, &req1, rev.next()).is_ok());
-        let req2 = RequestWithToken::new(
-            AuthUserAddRequest {
-                name: "u".to_owned(),
-                password: String::new(),
-                hashed_password: "123".to_owned(),
-                options: None,
-            }
-            .into(),
-        );
+        let req2 = RequestWrapper::from(AuthUserAddRequest {
+            name: "u".to_owned(),
+            password: String::new(),
+            hashed_password: "123".to_owned(),
+            options: None,
+        });
         assert!(exe_and_sync(&store, &req2, rev.next()).is_ok());
-        let req3 = RequestWithToken::new(
-            AuthUserGrantRoleRequest {
-                user: "u".to_owned(),
-                role: "r".to_owned(),
-            }
-            .into(),
-        );
+        let req3 = RequestWrapper::from(AuthUserGrantRoleRequest {
+            user: "u".to_owned(),
+            role: "r".to_owned(),
+        });
         assert!(exe_and_sync(&store, &req3, rev.next()).is_ok());
-        let req4 = RequestWithToken::new(
-            AuthRoleGrantPermissionRequest {
-                name: "r".to_owned(),
-                perm: Some(Permission {
+        let req4 = RequestWrapper::from(AuthRoleGrantPermissionRequest {
+            name: "r".to_owned(),
+            perm: Some(Permission {
                     #[allow(clippy::as_conversions)] // This cast is always valid
                     perm_type: Type::Readwrite as i32,
                     key: b"foo".to_vec(),
                     range_end: vec![],
                 }),
-            }
-            .into(),
-        );
+        });
         assert!(exe_and_sync(&store, &req4, rev.next()).is_ok());
         assert_eq!(
             store.permission_cache(),
@@ -1398,7 +1370,7 @@ mod test {
 
     fn exe_and_sync(
         store: &AuthStore<DB>,
-        req: &RequestWithToken,
+        req: &RequestWrapper,
         revision: i64,
     ) -> Result<(CommandResponse, SyncResponse), ExecuteError> {
         let cmd_res = store.execute(req)?;

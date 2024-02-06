@@ -83,6 +83,7 @@ impl<C: Command> Unary<C> {
         &self,
         propose_id: ProposeId,
         cmd: &C,
+        token: Option<&String>,
     ) -> Result<Result<C::ER, C::Error>, CurpError> {
         let req = ProposeRequest::new(propose_id, cmd, self.state.cluster_version().await);
         let timeout = self.config.propose_timeout;
@@ -91,7 +92,8 @@ impl<C: Command> Unary<C> {
             .state
             .for_each_server(|conn| {
                 let req_c = req.clone();
-                async move { (conn.id(), conn.propose(req_c, timeout).await) }
+                let token_c = token.cloned();
+                async move { (conn.id(), conn.propose(req_c, token_c, timeout).await) }
             })
             .await;
         let super_quorum = super_quorum(responses.len());
@@ -209,9 +211,14 @@ impl<C: Command> ClientApi for Unary<C> {
 
     /// Send propose to the whole cluster, `use_fast_path` set to `false` to fallback into ordered
     /// requests (event the requests are commutative).
-    async fn propose(&self, cmd: &C, use_fast_path: bool) -> Result<ProposeResponse<C>, CurpError> {
+    async fn propose(
+        &self,
+        cmd: &C,
+        token: Option<&String>,
+        use_fast_path: bool,
+    ) -> Result<ProposeResponse<C>, CurpError> {
         let propose_id = self.gen_propose_id().await?;
-        RepeatableClientApi::propose(self, propose_id, cmd, use_fast_path).await
+        RepeatableClientApi::propose(self, propose_id, cmd, token, use_fast_path).await
     }
 
     /// Send propose configuration changes to the cluster
@@ -393,10 +400,11 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
         &self,
         propose_id: ProposeId,
         cmd: &Self::Cmd,
+        token: Option<&String>,
         use_fast_path: bool,
     ) -> Result<ProposeResponse<Self::Cmd>, Self::Error> {
         tokio::pin! {
-            let fast_round = self.fast_round(propose_id, cmd);
+            let fast_round = self.fast_round(propose_id, cmd, token);
             let slow_round = self.slow_round(propose_id);
         }
 

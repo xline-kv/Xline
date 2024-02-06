@@ -2,9 +2,8 @@ use std::{fmt::Debug, sync::Arc};
 
 use tonic::transport::Channel;
 use xlineapi::{
-    command::{command_from_request_wrapper, Command},
-    CompactionResponse, DeleteRangeResponse, PutResponse, RangeResponse, RequestWithToken,
-    TxnResponse,
+    command::Command, CompactionResponse, DeleteRangeResponse, PutResponse, RangeResponse,
+    RequestWrapper, TxnResponse,
 };
 
 use crate::{
@@ -84,12 +83,12 @@ impl KvClient {
     /// ```
     #[inline]
     pub async fn put(&self, request: PutRequest) -> Result<PutResponse> {
-        let request = RequestWithToken::new_with_token(
-            xlineapi::PutRequest::from(request).into(),
-            self.token.clone(),
-        );
-        let cmd = command_from_request_wrapper(request);
-        let (cmd_res, _sync_res) = self.curp_client.propose(&cmd, true).await??;
+        let request = RequestWrapper::from(xlineapi::PutRequest::from(request));
+        let cmd = Command::new(request.keys(), request);
+        let (cmd_res, _sync_res) = self
+            .curp_client
+            .propose(&cmd, self.token.as_ref(), true)
+            .await??;
         Ok(cmd_res.into_inner().into())
     }
 
@@ -128,12 +127,12 @@ impl KvClient {
     /// ```
     #[inline]
     pub async fn range(&self, request: RangeRequest) -> Result<RangeResponse> {
-        let request = RequestWithToken::new_with_token(
-            xlineapi::RangeRequest::from(request).into(),
-            self.token.clone(),
-        );
-        let cmd = command_from_request_wrapper(request);
-        let (cmd_res, _sync_res) = self.curp_client.propose(&cmd, true).await??;
+        let request = RequestWrapper::from(xlineapi::RangeRequest::from(request));
+        let cmd = Command::new(request.keys(), request);
+        let (cmd_res, _sync_res) = self
+            .curp_client
+            .propose(&cmd, self.token.as_ref(), true)
+            .await??;
         Ok(cmd_res.into_inner().into())
     }
 
@@ -165,12 +164,12 @@ impl KvClient {
     /// ```
     #[inline]
     pub async fn delete(&self, request: DeleteRangeRequest) -> Result<DeleteRangeResponse> {
-        let request = RequestWithToken::new_with_token(
-            xlineapi::DeleteRangeRequest::from(request).into(),
-            self.token.clone(),
-        );
-        let cmd = command_from_request_wrapper(request);
-        let (cmd_res, _sync_res) = self.curp_client.propose(&cmd, true).await??;
+        let request = RequestWrapper::from(xlineapi::DeleteRangeRequest::from(request));
+        let cmd = Command::new(request.keys(), request);
+        let (cmd_res, _sync_res) = self
+            .curp_client
+            .propose(&cmd, self.token.as_ref(), true)
+            .await??;
         Ok(cmd_res.into_inner().into())
     }
 
@@ -213,12 +212,9 @@ impl KvClient {
     /// ```
     #[inline]
     pub async fn txn(&self, request: TxnRequest) -> Result<TxnResponse> {
-        let request = RequestWithToken::new_with_token(
-            xlineapi::TxnRequest::from(request).into(),
-            self.token.clone(),
-        );
-        let cmd = command_from_request_wrapper(request);
-        let (cmd_res, Some(sync_res)) = self.curp_client.propose(&cmd, false).await?? else {
+        let request = RequestWrapper::from(xlineapi::TxnRequest::from(request));
+        let cmd = Command::new(request.keys(), request);
+        let (cmd_res, Some(sync_res)) = self.curp_client.propose(&cmd,self.token.as_ref(), false).await?? else {
             unreachable!("sync_res is always Some when use_fast_path is false");
         };
         let mut res_wrapper = cmd_res.into_inner();
@@ -272,12 +268,12 @@ impl KvClient {
                 .map(tonic::Response::into_inner)
                 .map_err(Into::into);
         }
-        let request = RequestWithToken::new_with_token(
-            xlineapi::CompactionRequest::from(request).into(),
-            self.token.clone(),
-        );
-        let cmd = Command::new(vec![], request);
-        let (cmd_res, _sync_res) = self.curp_client.propose(&cmd, true).await??;
+        let request = RequestWrapper::from(xlineapi::CompactionRequest::from(request));
+        let cmd = Command::new(request.keys(), request);
+        let (cmd_res, _sync_res) = self
+            .curp_client
+            .propose(&cmd, self.token.as_ref(), true)
+            .await??;
         Ok(cmd_res.into_inner().into())
     }
 }

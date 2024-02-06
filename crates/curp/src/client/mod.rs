@@ -64,6 +64,7 @@ pub trait ClientApi {
     async fn propose(
         &self,
         cmd: &Self::Cmd,
+        token: Option<&String>, // TODO: Allow external custom interceptors, do not pass token in parameters
         use_fast_path: bool,
     ) -> Result<ProposeResponse<Self::Cmd>, Self::Error>;
 
@@ -126,6 +127,7 @@ trait RepeatableClientApi: ClientApi {
         &self,
         propose_id: ProposeId,
         cmd: &Self::Cmd,
+        token: Option<&String>,
         use_fast_path: bool,
     ) -> Result<ProposeResponse<Self::Cmd>, Self::Error>;
 
