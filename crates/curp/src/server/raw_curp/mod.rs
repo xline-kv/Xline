@@ -101,6 +101,8 @@ pub struct RawCurp<C: Command, RC: RoleChange> {
     cst: Mutex<CandidateState<C>>,
     /// Curp logs
     log: RwLock<Log<C>>,
+    /// Contexts of fallback log entries
+    fallback_contexts: DashMap<LogIndex, FallbackContext<C>>,
     /// Relevant context
     ctx: Context<C, RC>,
     /// Task manager
@@ -195,6 +197,7 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
             cst,
             log,
             ctx,
+            fallback_contexts: DashMap::new(),
             task_manager: args.task_manager,
         };
 
@@ -556,9 +559,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let mut conflict = self.insert_sp(propose_id, conf_changes.clone());
         conflict |= self.insert_ucp(propose_id, conf_changes.clone());
 
+        let (addrs, name, is_learner) = self.apply_conf_change(conf_changes.clone());
+
         let mut log_w = self.log.write();
         let entry = log_w
-            .push(st_r.term, propose_id, conf_changes.clone())
+            .push(st_r.term, propose_id, conf_changes)
             .map_err(|e| {
                 metrics::get()
                     .proposals_failed
@@ -566,11 +571,10 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 e
             })?;
         debug!("{} gets new log[{}]", self.id(), entry.index);
-        let (addrs, name, is_learner) = self.apply_conf_change(conf_changes);
         self.ctx
             .last_conf_change_idx
             .store(entry.index, Ordering::Release);
-        let _ig = log_w.fallback_contexts.insert(
+        let _ig = self.fallback_contexts.insert(
             entry.index,
             FallbackContext::new(Arc::clone(&entry), addrs, name, is_learner),
         );
@@ -667,13 +671,22 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         self.reset_election_tick();
 
         // append log entries
-        let mut log_w = self.log.write();
-        let (cc_entries, fallback_indexes) = log_w
-            .try_append_entries(entries, prev_log_index, prev_log_term)
-            .map_err(|_ig| (term, log_w.commit_index + 1))?;
+        let (cc_entries, fallback_indexes) = {
+            let mut log_w = self.log.write();
+            let res = log_w
+                .try_append_entries(entries, prev_log_index, prev_log_term)
+                .map_err(|_ig| (term, log_w.commit_index + 1))?;
+            // update commit index
+            let prev_commit_index = log_w.commit_index;
+            log_w.commit_index = min(leader_commit, log_w.last_log_index());
+            if prev_commit_index < log_w.commit_index {
+                self.apply(&mut *log_w);
+            }
+            res
+        };
         // fallback overwritten conf change entries
         for idx in fallback_indexes.iter().sorted().rev() {
-            let info = log_w.fallback_contexts.remove(idx).unwrap_or_else(|| {
+            let (_, info) = self.fallback_contexts.remove(idx).unwrap_or_else(|| {
                 unreachable!("fall_back_infos should contain the entry need to fallback")
             });
             let EntryData::ConfChange(ref conf_change) = info.origin_entry.entry_data else {
@@ -688,17 +701,12 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 unreachable!("cc_entry should be conf change entry");
             };
             let (addrs, name, is_learner) = self.apply_conf_change(cc.clone());
-            let _ig = log_w.fallback_contexts.insert(
+            let _ig = self.fallback_contexts.insert(
                 e.index,
                 FallbackContext::new(Arc::clone(&e), addrs, name, is_learner),
             );
         }
-        // update commit index
-        let prev_commit_index = log_w.commit_index;
-        log_w.commit_index = min(leader_commit, log_w.last_log_index());
-        if prev_commit_index < log_w.commit_index {
-            self.apply(&mut *log_w);
-        }
+
         Ok(term)
     }
 
@@ -747,6 +755,15 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             let mut log_w = RwLockUpgradableReadGuard::upgrade(log_r);
             if last_sent_index > log_w.commit_index {
                 log_w.commit_to(last_sent_index);
+                self.fallback_contexts.retain(|&idx, c| {
+                    if idx > last_sent_index {
+                        return true;
+                    }
+                    if c.is_learner {
+                        metrics::get().learner_promote_succeed.add(1, &[]);
+                    }
+                    false
+                });
                 debug!("{} updates commit index to {last_sent_index}", self.id());
                 metrics::get()
                     .proposals_committed
@@ -842,20 +859,18 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let st_r = self.st.read();
         let log_r = self.log.read();
         let contains_candidate = self.cluster().contains(candidate_id);
-        let remove_candidate_is_not_committed =
-            log_r
-                .fallback_contexts
-                .iter()
-                .any(|(_, ctx)| match ctx.origin_entry.entry_data {
-                    EntryData::ConfChange(ref cc) => cc.iter().any(|c| {
-                        matches!(c.change_type(), ConfChangeType::Remove)
-                            && c.node_id == candidate_id
-                    }),
-                    EntryData::Empty
-                    | EntryData::Command(_)
-                    | EntryData::Shutdown
-                    | EntryData::SetName(_, _) => false,
-                });
+        let remove_candidate_is_not_committed = self.fallback_contexts.iter().any(|ctx| match ctx
+            .origin_entry
+            .entry_data
+        {
+            EntryData::ConfChange(ref cc) => cc.iter().any(|c| {
+                matches!(c.change_type(), ConfChangeType::Remove) && c.node_id == candidate_id
+            }),
+            EntryData::Empty
+            | EntryData::Command(_)
+            | EntryData::Shutdown
+            | EntryData::SetName(_, _) => false,
+        });
         // extra check to shutdown removed node
         if !contains_candidate && !remove_candidate_is_not_committed {
             debug!(
@@ -1614,6 +1629,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         }
         st.term = term;
         self.lst.reset_transferee();
+        self.reset_election_tick();
         st.role = Role::Follower;
         st.voted_for = None;
         st.leader_id = None;
@@ -1861,6 +1877,15 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         // check if commit_index needs to be updated
         if self.can_update_commit_index_to(log_w, index, term) && index > log_w.commit_index {
             log_w.commit_to(index);
+            self.fallback_contexts.retain(|&idx, c| {
+                if idx > index {
+                    return true;
+                }
+                if c.is_learner {
+                    metrics::get().learner_promote_succeed.add(1, &[]);
+                }
+                false
+            });
             metrics::get().proposals_committed.observe(index, &[]);
             metrics::get()
                 .proposals_pending
