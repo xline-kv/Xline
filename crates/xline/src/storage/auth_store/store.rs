@@ -16,6 +16,7 @@ use pbkdf2::{
     password_hash::{PasswordHash, PasswordVerifier},
     Pbkdf2,
 };
+use tonic::transport::Certificate;
 use utils::parking_lot_lock::RwLockMap;
 use xlineapi::{
     command::{CommandResponse, KeyRange, SyncResponse},
@@ -44,6 +45,7 @@ use crate::{
         AuthenticateResponse, DeleteRangeRequest, LeaseRevokeRequest, Permission, PutRequest,
         RangeRequest, Request, RequestOp, RequestWrapper, Role, TxnRequest, Type, User,
     },
+    server::get_token,
     storage::{
         auth_store::backend::AuthStoreBackend,
         db::WriteOp,
@@ -129,6 +131,25 @@ where
                 .map_err(|_ignore| ExecuteError::InvalidAuthToken),
             None => Err(ExecuteError::TokenManagerNotInit),
         }
+    }
+
+    /// Try get auth info from tonic request
+    pub(crate) fn try_get_auth_info_from_request<T>(
+        &self,
+        request: &tonic::Request<T>,
+    ) -> Result<Option<AuthInfo>, tonic::Status> {
+        if let Some(token) = get_token(request.metadata()) {
+            let auth_info = self.verify(&token)?;
+            return Ok(Some(auth_info));
+        }
+        if let Some(cn) = get_cn(request) {
+            let auth_info = AuthInfo {
+                username: cn,
+                auth_revision: self.revision(),
+            };
+            return Ok(Some(auth_info));
+        }
+        Ok(None)
     }
 
     /// create permission cache
@@ -1138,6 +1159,14 @@ where
         self.create_permission_cache()?;
         Ok(())
     }
+}
+
+/// Get common name from tonic request
+fn get_cn<T>(request: &tonic::Request<T>) -> Option<String> {
+    let chain = request.peer_certs()?;
+    let cert_der = chain.first()?;
+    let cert = x509_certificate::X509Certificate::from_der(cert_der.as_ref()).ok()?;
+    cert.subject_common_name()
 }
 
 #[cfg(test)]

@@ -13,10 +13,7 @@ use tracing::debug;
 use xlineapi::command::Command;
 
 use super::xline_server::CurpServer;
-use crate::{
-    server::auth_server::get_token,
-    storage::{storage_api::StorageApi, AuthStore},
-};
+use crate::storage::{storage_api::StorageApi, AuthStore};
 
 /// Auth wrapper
 pub(crate) struct AuthWrapper<S>
@@ -55,8 +52,7 @@ where
             "AuthWrapper received propose request: {}",
             request.get_ref().propose_id()
         );
-        if let Some(token) = get_token(request.metadata()) {
-            let auth_info = self.auth_store.verify(&token)?;
+        if let Some(auth_info) = self.auth_store.try_get_auth_info_from_request(&request)? {
             let mut command: Command = request
                 .get_ref()
                 .cmd()

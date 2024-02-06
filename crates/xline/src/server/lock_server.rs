@@ -15,7 +15,6 @@ use xlineapi::{
     AuthInfo, EventType,
 };
 
-use super::auth_server::get_token;
 use crate::{
     id_gen::IdGenerator,
     rpc::{
@@ -227,10 +226,7 @@ where
         request: tonic::Request<LockRequest>,
     ) -> Result<tonic::Response<LockResponse>, tonic::Status> {
         debug!("Receive LockRequest {:?}", request);
-        let auth_info = match get_token(request.metadata()) {
-            Some(token) => Some(self.auth_store.verify(&token)?),
-            None => None,
-        };
+        let auth_info = self.auth_store.try_get_auth_info_from_request(&request)?;
         let lock_req = request.into_inner();
         let lease_id = if lock_req.lease == 0 {
             self.lease_grant(auth_info.clone()).await?
@@ -304,10 +300,7 @@ where
         request: tonic::Request<UnlockRequest>,
     ) -> Result<tonic::Response<UnlockResponse>, tonic::Status> {
         debug!("Receive UnlockRequest {:?}", request);
-        let auth_info = match get_token(request.metadata()) {
-            Some(token) => Some(self.auth_store.verify(&token)?),
-            None => None,
-        };
+        let auth_info = self.auth_store.try_get_auth_info_from_request(&request)?;
         let header = self.delete_key(&request.get_ref().key, auth_info).await?;
         Ok(tonic::Response::new(UnlockResponse { header }))
     }
