@@ -20,7 +20,6 @@ use xlineapi::{
     execute_error::ExecuteError,
 };
 
-use super::auth_server::get_token;
 use crate::{
     id_gen::IdGenerator,
     metrics,
@@ -131,10 +130,7 @@ where
     where
         T: Into<RequestWrapper>,
     {
-        let auth_info = match get_token(request.metadata()) {
-            Some(token) => Some(self.auth_storage.verify(&token)?),
-            None => None,
-        };
+        let auth_info = self.auth_storage.try_get_auth_info_from_request(&request)?;
         let request = request.into_inner().into();
         let keys = {
             if let RequestWrapper::LeaseRevokeRequest(ref req) = request {
