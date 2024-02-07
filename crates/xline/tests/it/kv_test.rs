@@ -171,7 +171,7 @@ async fn test_range_redirect() -> Result<(), Box<dyn Error>> {
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;
 
-    let addr = cluster.get_client_urls(1);
+    let addr = cluster.get_client_url(1);
     let kv_client = Client::connect([addr], ClientOptions::default())
         .await?
         .kv_client();

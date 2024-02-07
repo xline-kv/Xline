@@ -210,30 +210,6 @@ pub fn timestamp() -> u64 {
         .as_secs()
 }
 
-/// Certs for tests
-pub mod certs {
-    /// Server certificate
-    #[inline]
-    #[must_use]
-    pub fn server_cert() -> &'static [u8] {
-        include_bytes!("../../../fixtures/server.crt")
-    }
-
-    /// Server private key
-    #[inline]
-    #[must_use]
-    pub fn server_key() -> &'static [u8] {
-        include_bytes!("../../../fixtures/server.key")
-    }
-
-    /// CA certificate
-    #[inline]
-    #[must_use]
-    pub fn ca_cert() -> &'static [u8] {
-        include_bytes!("../../../fixtures/ca.crt")
-    }
-}
-
 /// Create a new endpoint from addr
 /// # Errors
 /// Return error if addr or tls config is invalid
