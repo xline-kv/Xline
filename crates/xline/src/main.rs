@@ -147,8 +147,10 @@ use anyhow::Result;
 use opentelemetry::global;
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use tracing::{debug, info};
-use xline::server::XlineServer;
-use xline::utils::{init_metrics, init_subscriber, parse_config};
+use xline::{
+    server::XlineServer,
+    utils::{init_metrics, init_subscriber, parse_config},
+};
 
 #[tokio::main]
 #[allow(clippy::arithmetic_side_effects)] // Introduced by tokio::select!

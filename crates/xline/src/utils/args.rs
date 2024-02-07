@@ -14,10 +14,10 @@ use utils::{
         default_metrics_push_endpoint, default_metrics_push_protocol, default_propose_timeout,
         default_quota, default_range_retry_timeout, default_retry_count, default_rotation,
         default_rpc_timeout, default_server_wait_synced_timeout, default_sync_victims_interval,
-        default_use_backoff, default_watch_progress_notify_interval, AuthConfig, AutoCompactConfig,
-        ClientConfig, ClusterConfig, CompactConfig, CurpConfigBuilder, EngineConfig,
-        InitialClusterState, LevelConfig, LogConfig, MetricsConfig, MetricsPushProtocol,
-        RotationConfig, ServerTimeout, StorageConfig, TlsConfig, TraceConfig, XlineServerConfig,
+        default_watch_progress_notify_interval, AuthConfig, AutoCompactConfig, ClientConfig,
+        ClusterConfig, CompactConfig, CurpConfigBuilder, EngineConfig, InitialClusterState,
+        LevelConfig, LogConfig, MetricsConfig, MetricsPushProtocol, RotationConfig, ServerTimeout,
+        StorageConfig, TlsConfig, TraceConfig, XlineServerConfig,
     },
     parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_metrics_push_protocol,
     parse_rotation, parse_state, ConfigFileError,
@@ -129,9 +129,9 @@ pub struct ServerArgs {
     /// Curp client max retry timeout [default: 10_000ms]
     #[clap(long, value_parser = parse_duration)]
     client_max_retry_timeout: Option<Duration>,
-    /// Curp client use backoff [default: true]
+    /// Curp client use fixed backoff
     #[clap(long)]
-    client_use_backoff: Option<bool>,
+    client_fixed_backoff: bool,
     /// How often should the gc task run [default: 20s]
     #[clap(long, value_parser = parse_duration)]
     gc_interval: Option<Duration>,
@@ -158,7 +158,7 @@ pub struct ServerArgs {
     /// Curp command workers count
     #[clap(long, default_value_t = default_cmd_workers())]
     cmd_workers: u8,
-    /// The max number of historical versions processed in a single compact operation  [default: 1000]
+    /// The max number of historical versions processed in a single compact operation
     #[clap(long, default_value_t = default_compact_batch_size())]
     compact_batch_size: usize,
     /// Interval between two compaction operations [default: 10ms]
@@ -242,7 +242,7 @@ impl From<ServerArgs> for XlineServerConfig {
             args.client_max_retry_timeout
                 .unwrap_or_else(default_max_retry_timeout),
             args.retry_count.unwrap_or_else(default_retry_count),
-            args.client_use_backoff.unwrap_or_else(default_use_backoff),
+            args.client_fixed_backoff,
         );
         let server_timeout = ServerTimeout::new(
             args.range_retry_timeout

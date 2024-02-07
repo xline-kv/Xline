@@ -103,10 +103,12 @@ impl Metrics {
 #[allow(unsafe_code)]
 #[cfg(target_os = "macos")]
 fn fd_used_count() -> anyhow::Result<u64> {
-    use anyhow::anyhow;
+    use std::{
+        os::raw::{c_int, c_void},
+        ptr::null_mut,
+    };
 
-    use std::os::raw::{c_int, c_void};
-    use std::ptr::null_mut;
+    use anyhow::anyhow;
 
     /// Copying the related definitions from the headers
     #[repr(C)]
