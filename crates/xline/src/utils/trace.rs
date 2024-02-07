@@ -2,9 +2,7 @@ use anyhow::Result;
 use opentelemetry_contrib::trace::exporter::jaeger_json::JaegerJsonExporter;
 use opentelemetry_sdk::runtime::Tokio;
 use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::fmt::format;
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{layer::SubscriberExt, Layer};
+use tracing_subscriber::{fmt::format, layer::SubscriberExt, util::SubscriberInitExt, Layer};
 use utils::config::{file_appender, LogConfig, TraceConfig};
 
 /// init tracing subscriber

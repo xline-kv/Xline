@@ -304,15 +304,15 @@ impl ClientBuilder {
 
     /// Init retry config
     fn init_retry_config(&self) -> RetryConfig {
-        if *self.config.use_backoff() {
-            RetryConfig::new_exponential(
+        if *self.config.fixed_backoff() {
+            RetryConfig::new_fixed(
                 *self.config.initial_retry_timeout(),
-                *self.config.max_retry_timeout(),
                 *self.config.retry_count(),
             )
         } else {
-            RetryConfig::new_fixed(
+            RetryConfig::new_exponential(
                 *self.config.initial_retry_timeout(),
+                *self.config.max_retry_timeout(),
                 *self.config.retry_count(),
             )
         }

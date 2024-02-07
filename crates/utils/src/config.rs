@@ -374,8 +374,8 @@ pub const fn default_retry_count() -> usize {
 /// default use backoff
 #[must_use]
 #[inline]
-pub const fn default_use_backoff() -> bool {
-    true
+pub const fn default_fixed_backoff() -> bool {
+    false
 }
 
 /// default rpc timeout
@@ -516,8 +516,8 @@ pub struct ClientConfig {
 
     /// Whether to use exponential backoff in retries
     #[getset(get = "pub")]
-    #[serde(default = "default_use_backoff")]
-    use_backoff: bool,
+    #[serde(default = "default_fixed_backoff")]
+    fixed_backoff: bool,
 }
 
 impl ClientConfig {
@@ -534,7 +534,7 @@ impl ClientConfig {
         initial_retry_timeout: Duration,
         max_retry_timeout: Duration,
         retry_count: usize,
-        use_backoff: bool,
+        fixed_backoff: bool,
     ) -> Self {
         assert!(
             initial_retry_timeout <= max_retry_timeout,
@@ -546,7 +546,7 @@ impl ClientConfig {
             initial_retry_timeout,
             max_retry_timeout,
             retry_count,
-            use_backoff,
+            fixed_backoff,
         }
     }
 }
@@ -560,7 +560,7 @@ impl Default for ClientConfig {
             initial_retry_timeout: default_initial_retry_timeout(),
             max_retry_timeout: default_max_retry_timeout(),
             retry_count: default_retry_count(),
-            use_backoff: default_use_backoff(),
+            fixed_backoff: default_fixed_backoff(),
         }
     }
 }
@@ -1173,7 +1173,6 @@ mod tests {
             [cluster.client_config]
             initial_retry_timeout = '5s'
             max_retry_timeout = '50s'
-            use_backoff = false
 
             [storage]
             engine = { type = 'memory'}
@@ -1230,7 +1229,7 @@ mod tests {
             Duration::from_secs(5),
             Duration::from_secs(50),
             default_retry_count(),
-            false,
+            default_fixed_backoff(),
         );
 
         let server_timeout = ServerTimeout::new(
