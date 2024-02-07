@@ -1,5 +1,6 @@
 use std::{collections::HashMap, env::temp_dir, iter, path::PathBuf, sync::Arc};
 
+use futures::future::join_all;
 use rand::{distributions::Alphanumeric, thread_rng, Rng};
 use tokio::{
     net::TcpListener,
@@ -7,6 +8,7 @@ use tokio::{
     task::block_in_place,
     time::{self, Duration},
 };
+use tonic::transport::ClientTlsConfig;
 use utils::config::{
     default_quota, AuthConfig, ClusterConfig, CompactConfig, EngineConfig, InitialClusterState,
     LogConfig, MetricsConfig, StorageConfig, TlsConfig, TraceConfig, XlineServerConfig,
@@ -26,6 +28,8 @@ pub struct Cluster {
     configs: Vec<XlineServerConfig>,
     /// Xline servers
     servers: Vec<Arc<XlineServer>>,
+    /// Client tls config
+    client_tls_config: Option<ClientTlsConfig>,
     /// Client of cluster
     client: Option<Client>,
 }
@@ -59,13 +63,15 @@ impl Cluster {
                 TcpListener::bind("0.0.0.0:0").await.unwrap(),
             ));
         }
+        let server_tls_enabled = configs.iter().any(|c| c.tls().server_tls_enabled());
+        let scheme = if server_tls_enabled { "https" } else { "http" };
         let all_members_client_urls = listeners
             .iter()
-            .map(|l| l.0.local_addr().unwrap().to_string())
+            .map(|l| format!("{scheme}://{}", l.0.local_addr().unwrap()))
             .collect();
         let all_members_peer_urls = listeners
             .iter()
-            .map(|l| l.1.local_addr().unwrap().to_string())
+            .map(|l| format!("{scheme}://{}", l.1.local_addr().unwrap()))
             .collect();
         Self {
             listeners,
@@ -73,17 +79,24 @@ impl Cluster {
             all_members_client_urls,
             configs,
             servers: Vec::new(),
+            client_tls_config: None,
             client: None,
         }
     }
 
+    /// set cluster client tls config
+    pub fn set_client_tls_config(&mut self, client_tls_config: ClientTlsConfig) {
+        self.client_tls_config = Some(client_tls_config);
+    }
+
     /// Start `Cluster`
     pub async fn start(&mut self) {
+        let mut futs = Vec::new();
         for (i, config) in self.configs.iter().enumerate() {
             let name = format!("server{}", i);
             let (xline_listener, curp_listener) = self.listeners.remove(0);
-            let self_client_url = xline_listener.local_addr().unwrap().to_string();
-            let self_peer_url = curp_listener.local_addr().unwrap().to_string();
+            let self_client_url = self.get_client_url(i);
+            let self_peer_url = self.get_peer_url(i);
             let config = Self::merge_config(
                 config,
                 name,
@@ -99,23 +112,29 @@ impl Cluster {
                 InitialClusterState::New,
             );
 
-            let server = XlineServer::new(
-                config.cluster().clone(),
-                config.storage().clone(),
-                *config.compact(),
-                config.auth().clone(),
-                config.tls().clone(),
-            )
-            .await
-            .unwrap();
+            let server = Arc::new(
+                XlineServer::new(
+                    config.cluster().clone(),
+                    config.storage().clone(),
+                    *config.compact(),
+                    config.auth().clone(),
+                    config.tls().clone(),
+                )
+                .await
+                .unwrap(),
+            );
+            self.servers.push(Arc::clone(&server));
 
-            let result = server
-                .start_from_listener(xline_listener, curp_listener)
-                .await;
-            if let Err(e) = result {
-                panic!("Server start error: {e}");
-            }
+            futs.push(async move {
+                let result = server
+                    .start_from_listener(xline_listener, curp_listener)
+                    .await;
+                if let Err(e) = result {
+                    panic!("Server start error: {e}");
+                }
+            });
         }
+        join_all(futs).await;
         // Sleep 30ms, wait for the server to start
         time::sleep(Duration::from_millis(300)).await;
     }
@@ -134,12 +153,14 @@ impl Cluster {
     ) {
         let idx = self.all_members_peer_urls.len();
         let name = format!("server{}", idx);
-        let self_client_url = xline_listener.local_addr().unwrap().to_string();
-        let self_peer_url = curp_listener.local_addr().unwrap().to_string();
+        let server_tls_enabled = base_config.tls().server_tls_enabled();
+        let scheme = if server_tls_enabled { "https" } else { "http" };
+        let self_client_url = format!("{scheme}://{}", xline_listener.local_addr().unwrap());
+        let self_peer_url = format!("{scheme}://{}", curp_listener.local_addr().unwrap());
         self.all_members_client_urls.push(self_client_url.clone());
         self.all_members_peer_urls.push(self_peer_url.clone());
 
-        let members = self
+        let peers = self
             .all_members_peer_urls
             .clone()
             .into_iter()
@@ -154,7 +175,7 @@ impl Cluster {
             name,
             self_client_url,
             self_peer_url,
-            members,
+            peers,
             false,
             InitialClusterState::Existing,
         );
@@ -179,12 +200,29 @@ impl Cluster {
     /// Create or get the client with the specified index
     pub async fn client(&mut self) -> &mut Client {
         if self.client.is_none() {
-            let client = Client::connect(
-                self.all_members_client_urls.clone(),
-                ClientOptions::default(),
-            )
-            .await
-            .unwrap_or_else(|e| {
+            let opts = if let Some(ref ctf) = self.client_tls_config {
+                ClientOptions::default().with_tls_config(ctf.clone())
+            } else {
+                ClientOptions::default()
+            };
+            let client = Client::connect(self.all_members_client_urls.clone(), opts)
+                .await
+                .unwrap_or_else(|e| {
+                    panic!("Client connect error: {:?}", e);
+                });
+            self.client = Some(client);
+        }
+        self.client.as_mut().unwrap()
+    }
+
+    /// Create or get the client with the specified index
+    pub async fn client2(&mut self, tls_config: ClientTlsConfig) -> &mut Client {
+        let opts = ClientOptions::default().with_tls_config(tls_config);
+        let urls = self.all_members_client_urls.clone();
+        println!("urls: {:?}", urls);
+
+        if self.client.is_none() {
+            let client = Client::connect(urls, opts).await.unwrap_or_else(|e| {
                 panic!("Client connect error: {:?}", e);
             });
             self.client = Some(client);
@@ -200,8 +238,12 @@ impl Cluster {
             .collect()
     }
 
-    pub fn get_client_urls(&self, idx: usize) -> String {
+    pub fn get_client_url(&self, idx: usize) -> String {
         self.all_members_client_urls[idx].clone()
+    }
+
+    pub fn get_peer_url(&self, idx: usize) -> String {
+        self.all_members_peer_urls[idx].clone()
     }
 
     pub fn all_client_addrs(&self) -> Vec<String> {
@@ -242,7 +284,7 @@ impl Cluster {
         name: String,
         client_url: String,
         peer_url: String,
-        members: HashMap<String, Vec<String>>,
+        peers: HashMap<String, Vec<String>>,
         is_leader: bool,
         initial_cluster_state: InitialClusterState,
     ) -> XlineServerConfig {
@@ -253,7 +295,7 @@ impl Cluster {
             vec![peer_url],
             vec![client_url.clone()],
             vec![client_url],
-            members,
+            peers,
             is_leader,
             old_cluster.curp_config().clone(),
             *old_cluster.client_config(),

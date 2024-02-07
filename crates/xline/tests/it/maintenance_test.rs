@@ -30,7 +30,7 @@ async fn test_snapshot_and_restore() -> Result<(), Box<dyn std::error::Error>> {
         let _ignore = client.put(PutRequest::new("key", "value")).await?;
         tokio::time::sleep(Duration::from_millis(100)).await; // TODO: use `propose_index` and remove this sleep after we finished our client.
         let mut maintenance_client =
-            Client::connect(vec![cluster.get_client_urls(0)], ClientOptions::default())
+            Client::connect(vec![cluster.get_client_url(0)], ClientOptions::default())
                 .await?
                 .maintenance_client();
         let mut stream = maintenance_client.snapshot().await?;

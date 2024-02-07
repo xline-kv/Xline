@@ -183,7 +183,7 @@ impl ClusterConfig {
         peer_advertise_urls: Vec<String>,
         client_listen_urls: Vec<String>,
         client_advertise_urls: Vec<String>,
-        members: HashMap<String, Vec<String>>,
+        peers: HashMap<String, Vec<String>>,
         is_leader: bool,
         curp: CurpConfig,
         client_config: ClientConfig,
@@ -196,7 +196,7 @@ impl ClusterConfig {
             peer_advertise_urls,
             client_listen_urls,
             client_advertise_urls,
-            peers: members,
+            peers,
             is_leader,
             curp_config: curp,
             client_config,
@@ -985,6 +985,13 @@ impl TlsConfig {
             client_cert_path,
             client_key_path,
         }
+    }
+
+    /// Whether the server tls is enabled
+    #[must_use]
+    #[inline]
+    pub fn server_tls_enabled(&self) -> bool {
+        self.server_cert_path.is_some() && self.server_key_path.is_some()
     }
 }
 

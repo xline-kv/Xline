@@ -41,9 +41,9 @@ async fn xline_add_node() -> Result<(), Box<dyn Error>> {
     let kv_client = client.kv_client();
     _ = kv_client.put(PutRequest::new("key", "value")).await?;
     let new_node_peer_listener = TcpListener::bind("0.0.0.0:0").await?;
-    let new_node_peer_urls = vec![new_node_peer_listener.local_addr()?.to_string()];
+    let new_node_peer_urls = vec![format!("http://{}", new_node_peer_listener.local_addr()?)];
     let new_node_client_listener = TcpListener::bind("0.0.0.0:0").await?;
-    let new_node_client_urls = vec![new_node_client_listener.local_addr()?.to_string()];
+    let new_node_client_urls = vec![format!("http://{}", new_node_client_listener.local_addr()?)];
     let add_req = MemberAddRequest::new(new_node_peer_urls.clone(), false);
     let add_res = cluster_client.member_add(add_req).await?;
     assert_eq!(add_res.members.len(), 4);
