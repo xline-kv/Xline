@@ -9,7 +9,6 @@ use clippy_utilities::NumericCast;
 const USIZE_BITS: usize = std::mem::size_of::<usize>() * 8;
 
 /// Default bit vec queue capacity, this is the number of inflight requests that a client expects.
-/// It can reduce about `log_2(DEFAULT_BIT_VEC_QUEUE_CAP)` `VecDequeue` memory reallocations.
 const DEFAULT_BIT_VEC_QUEUE_CAP: usize = 1024;
 
 /// A one-direction bit vector queue
@@ -60,6 +59,9 @@ impl BitVecQueue {
 
     /// Get the bit value
     fn get(&self, idx: usize) -> Option<bool> {
+        if self.store.is_empty() {
+            return None;
+        }
         let idx = self.head + idx;
         let index = idx / USIZE_BITS;
         let slot = idx % USIZE_BITS;
@@ -72,6 +74,9 @@ impl BitVecQueue {
 
     /// Set the bit value
     fn set(&mut self, idx: usize, v: bool) {
+        if self.store.is_empty() {
+            return;
+        }
         let idx = self.head + idx;
         let index = idx / USIZE_BITS;
         let slot = idx % USIZE_BITS;
@@ -157,6 +162,9 @@ impl BitVecQueue {
     /// e.g.
     /// 001100 -> `split_at(2)` -> 1100
     fn split_at(&mut self, at: usize) {
+        if self.store.is_empty() {
+            return;
+        }
         let idx = self.head + at;
         let index = idx / USIZE_BITS;
         let slot = idx % USIZE_BITS;
