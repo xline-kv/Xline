@@ -3889,6 +3889,7 @@ dependencies = [
  "futures",
  "madsim-tokio",
  "rand",
+ "tonic 0.10.2",
  "utils",
  "workspace-hack",
  "xline",

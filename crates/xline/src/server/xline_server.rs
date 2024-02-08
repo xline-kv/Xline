@@ -635,28 +635,58 @@ impl XlineServer {
     async fn read_tls_config(
         tls_config: &TlsConfig,
     ) -> Result<(Option<ClientTlsConfig>, Option<ServerTlsConfig>)> {
-        let client_tls_config =
-            if let Some(ca_cert_path) = tls_config.client_ca_cert_path().as_ref() {
-                let ca = Certificate::from_pem(fs::read(ca_cert_path).await?);
-                Some(ClientTlsConfig::new().ca_certificate(ca))
-            } else {
-                None
-            };
+        let client_tls_config = match (
+            tls_config.client_ca_cert_path().as_ref(),
+            tls_config.client_cert_path().as_ref(),
+            tls_config.client_key_path().as_ref(),
+        ) {
+            (Some(ca_path), Some(cert_path), Some(key_path)) => {
+                let ca = fs::read(ca_path).await?;
+                let cert = fs::read(cert_path).await?;
+                let key = fs::read(key_path).await?;
+                Some(
+                    ClientTlsConfig::new()
+                        .ca_certificate(Certificate::from_pem(ca))
+                        .identity(Identity::from_pem(cert, key)),
+                )
+            }
+            (Some(ca_path), None, None) => {
+                let ca = fs::read(ca_path).await?;
+                Some(ClientTlsConfig::new().ca_certificate(Certificate::from_pem(ca)))
+            }
+            (_, Some(_), None) | (_, None, Some(_)) => {
+                return Err(anyhow!(
+                    "client_cert_path and client_key_path must be both set"
+                ))
+            }
+            _ => None,
+        };
         let server_tls_config = match (
+            tls_config.server_ca_cert_path().as_ref(),
             tls_config.server_cert_path().as_ref(),
             tls_config.server_key_path().as_ref(),
         ) {
-            (Some(cert_path), Some(key_path)) => {
+            (Some(ca_path), Some(cert_path), Some(key_path)) => {
+                let ca = fs::read(ca_path).await?;
+                let cert = fs::read_to_string(cert_path).await?;
+                let key = fs::read_to_string(key_path).await?;
+                Some(
+                    ServerTlsConfig::new()
+                        .client_ca_root(Certificate::from_pem(ca))
+                        .identity(Identity::from_pem(cert, key)),
+                )
+            }
+            (None, Some(cert_path), Some(key_path)) => {
                 let cert = fs::read_to_string(cert_path).await?;
                 let key = fs::read_to_string(key_path).await?;
                 Some(ServerTlsConfig::new().identity(Identity::from_pem(cert, key)))
             }
-            (None, None) => None,
-            _ => {
+            (_, Some(_), None) | (_, None, Some(_)) => {
                 return Err(anyhow!(
-                    "server_cert_path and server_key_path must be both set"
+                    "client_cert_path and client_key_path must be both set"
                 ))
             }
+            _ => None,
         };
         Ok((client_tls_config, server_tls_config))
     }
