@@ -198,6 +198,7 @@ pub mod tokio_lock;
 /// utils for pass span context
 pub mod tracing;
 
+use ::tracing::debug;
 pub use parser::*;
 
 /// Get current timestamp in seconds
@@ -219,6 +220,14 @@ pub fn build_endpoint(
     addr: &str,
     tls_config: Option<&ClientTlsConfig>,
 ) -> Result<Endpoint, tonic::transport::Error> {
+    debug!(
+        "connect to {addr}{}",
+        if tls_config.is_some() {
+            " with tls_config"
+        } else {
+            ""
+        }
+    );
     let scheme_str = addr.split_once("://").map(|(scheme, _)| scheme);
     let endpoint = match scheme_str {
         Some(_scheme) => Endpoint::from_str(addr)?,

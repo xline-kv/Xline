@@ -14,6 +14,10 @@ use utils::config::{
     LogConfig, MetricsConfig, StorageConfig, TlsConfig, TraceConfig, XlineServerConfig,
 };
 use xline::server::XlineServer;
+use xline_client::types::auth::{
+    AuthRoleAddRequest, AuthRoleGrantPermissionRequest, AuthUserAddRequest,
+    AuthUserGrantRoleRequest, Permission, PermissionType,
+};
 pub use xline_client::{types, Client, ClientOptions};
 
 /// Cluster
@@ -28,8 +32,6 @@ pub struct Cluster {
     configs: Vec<XlineServerConfig>,
     /// Xline servers
     servers: Vec<Arc<XlineServer>>,
-    /// Client tls config
-    client_tls_config: Option<ClientTlsConfig>,
     /// Client of cluster
     client: Option<Client>,
 }
@@ -79,14 +81,8 @@ impl Cluster {
             all_members_client_urls,
             configs,
             servers: Vec::new(),
-            client_tls_config: None,
             client: None,
         }
-    }
-
-    /// set cluster client tls config
-    pub fn set_client_tls_config(&mut self, client_tls_config: ClientTlsConfig) {
-        self.client_tls_config = Some(client_tls_config);
     }
 
     /// Start `Cluster`
@@ -200,34 +196,27 @@ impl Cluster {
     /// Create or get the client with the specified index
     pub async fn client(&mut self) -> &mut Client {
         if self.client.is_none() {
-            let opts = if let Some(ref ctf) = self.client_tls_config {
-                ClientOptions::default().with_tls_config(ctf.clone())
-            } else {
-                ClientOptions::default()
-            };
-            let client = Client::connect(self.all_members_client_urls.clone(), opts)
-                .await
-                .unwrap_or_else(|e| {
-                    panic!("Client connect error: {:?}", e);
-                });
+            let client = Client::connect(
+                self.all_members_client_urls.clone(),
+                ClientOptions::default(),
+            )
+            .await
+            .unwrap_or_else(|e| {
+                panic!("Client connect error: {:?}", e);
+            });
             self.client = Some(client);
         }
         self.client.as_mut().unwrap()
     }
 
     /// Create or get the client with the specified index
-    pub async fn client2(&mut self, tls_config: ClientTlsConfig) -> &mut Client {
-        let opts = ClientOptions::default().with_tls_config(tls_config);
-        let urls = self.all_members_client_urls.clone();
-        println!("urls: {:?}", urls);
-
-        if self.client.is_none() {
-            let client = Client::connect(urls, opts).await.unwrap_or_else(|e| {
+    pub async fn client_with_tls_config(&mut self, client_tls_config: ClientTlsConfig) -> Client {
+        let opts = ClientOptions::default().with_tls_config(client_tls_config);
+        Client::connect(self.all_members_client_urls.clone(), opts)
+            .await
+            .unwrap_or_else(|e| {
                 panic!("Client connect error: {:?}", e);
-            });
-            self.client = Some(client);
-        }
-        self.client.as_mut().unwrap()
+            })
     }
 
     pub fn all_members_client_urls_map(&self) -> HashMap<usize, String> {
@@ -348,4 +337,37 @@ fn random_id() -> String {
         .take(8)
         .map(char::from)
         .collect()
+}
+
+pub async fn set_user(
+    client: &Client,
+    name: &str,
+    password: &str,
+    role: &str,
+    key: &[u8],
+    range_end: &[u8],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let client = client.auth_client();
+    client
+        .user_add(AuthUserAddRequest::new(name).with_pwd(password))
+        .await?;
+    client.role_add(AuthRoleAddRequest::new(role)).await?;
+    client
+        .user_grant_role(AuthUserGrantRoleRequest::new(name, role))
+        .await?;
+    if !key.is_empty() {
+        client
+            .role_grant_permission(AuthRoleGrantPermissionRequest::new(
+                role,
+                Permission::new(PermissionType::Readwrite, key).with_range_end(range_end),
+            ))
+            .await?;
+    }
+    Ok(())
+}
+
+pub async fn enable_auth(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
+    set_user(client, "root", "123", "root", &[], &[]).await?;
+    client.auth_client().auth_enable().await?;
+    Ok(())
 }

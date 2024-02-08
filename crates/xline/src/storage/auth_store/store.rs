@@ -16,7 +16,6 @@ use pbkdf2::{
     password_hash::{PasswordHash, PasswordVerifier},
     Pbkdf2,
 };
-use tonic::transport::Certificate;
 use utils::parking_lot_lock::RwLockMap;
 use xlineapi::{
     command::{CommandResponse, KeyRange, SyncResponse},
@@ -108,7 +107,7 @@ where
     }
 
     /// Get enabled of Auth store
-    pub(super) fn is_enabled(&self) -> bool {
+    pub(crate) fn is_enabled(&self) -> bool {
         self.enabled.load(AtomicOrdering::Relaxed)
     }
 
@@ -138,6 +137,9 @@ where
         &self,
         request: &tonic::Request<T>,
     ) -> Result<Option<AuthInfo>, tonic::Status> {
+        if !self.is_enabled() {
+            return Ok(None);
+        }
         if let Some(token) = get_token(request.metadata()) {
             let auth_info = self.verify(&token)?;
             return Ok(Some(auth_info));

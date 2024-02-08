@@ -6,12 +6,9 @@ use utils::config::{
     TraceConfig, XlineServerConfig,
 };
 use xline_test_utils::{
+    enable_auth, set_user,
     types::{
-        auth::{
-            AuthRoleAddRequest, AuthRoleDeleteRequest, AuthRoleGrantPermissionRequest,
-            AuthUserAddRequest, AuthUserGetRequest, AuthUserGrantRoleRequest, Permission,
-            PermissionType,
-        },
+        auth::{AuthRoleDeleteRequest, AuthUserAddRequest, AuthUserGetRequest},
         kv::{PutRequest, RangeRequest},
     },
     Client, ClientOptions, Cluster,
@@ -225,39 +222,6 @@ async fn test_auth_wrong_password() -> Result<(), Box<dyn Error>> {
     .await;
     assert!(result.is_ok());
 
-    Ok(())
-}
-
-async fn set_user(
-    client: &Client,
-    name: &str,
-    password: &str,
-    role: &str,
-    key: &[u8],
-    range_end: &[u8],
-) -> Result<(), Box<dyn Error>> {
-    let client = client.auth_client();
-    client
-        .user_add(AuthUserAddRequest::new(name).with_pwd(password))
-        .await?;
-    client.role_add(AuthRoleAddRequest::new(role)).await?;
-    client
-        .user_grant_role(AuthUserGrantRoleRequest::new(name, role))
-        .await?;
-    if !key.is_empty() {
-        client
-            .role_grant_permission(AuthRoleGrantPermissionRequest::new(
-                role,
-                Permission::new(PermissionType::Readwrite, key).with_range_end(range_end),
-            ))
-            .await?;
-    }
-    Ok(())
-}
-
-async fn enable_auth(client: &Client) -> Result<(), Box<dyn Error>> {
-    set_user(client, "root", "123", "root", &[], &[]).await?;
-    client.auth_client().auth_enable().await?;
     Ok(())
 }
 
