@@ -343,9 +343,17 @@ impl XlineServer {
         let key_pair = Self::read_key_pair(&self.auth_config).await?;
         let (router, curp_client) = self.init_router(persistent, key_pair).await?;
         let handle = tokio::spawn(async move { router.serve_with_shutdown(addr, n.wait()).await });
-        if let Err(e) = self.publish(curp_client).await {
-            warn!("publish name to cluster failed: {:?}", e);
-        };
+        let node_id = self.cluster_info.self_id();
+        let node_name = self.cluster_info.self_name();
+        let _ig = tokio::spawn(async move {
+            /// Expected starting period
+            const START_PERIOD: Duration = Duration::from_secs(10);
+
+            tokio::time::sleep(START_PERIOD).await;
+            if let Err(e) = curp_client.propose_publish(node_id, node_name).await {
+                warn!("publish name to cluster failed: {e:?}");
+            };
+        });
         Ok(handle)
     }
 
@@ -367,9 +375,18 @@ impl XlineServer {
                     .serve_with_incoming_shutdown(incoming, n.wait())
                     .await;
             });
-        if let Err(e) = self.publish(curp_client).await {
-            warn!("publish name to cluster failed: {e:?}");
-        };
+        let node_id = self.cluster_info.self_id();
+        let node_name = self.cluster_info.self_name();
+        let _ig = tokio::spawn(async move {
+            /// Expected starting period
+            const START_PERIOD: Duration = Duration::from_secs(5);
+
+            tokio::time::sleep(START_PERIOD).await;
+            if let Err(e) = curp_client.propose_publish(node_id, node_name).await {
+                warn!("publish name to cluster failed: {e:?}");
+            };
+        });
+
         Ok(())
     }
 
@@ -577,13 +594,6 @@ impl XlineServer {
             curp_server,
             client,
         ))
-    }
-
-    /// Publish the name of current node to cluster
-    async fn publish(&self, curp_client: Arc<CurpClient>) -> Result<(), tonic::Status> {
-        curp_client
-            .propose_publish(self.cluster_info.self_id(), self.cluster_info.self_name())
-            .await
     }
 
     /// Stop `XlineServer`

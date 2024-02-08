@@ -109,6 +109,7 @@ async fn test_status() -> Result<(), Box<dyn std::error::Error>> {
     cluster.start().await;
     let client = cluster.client().await;
     let mut maintenance_client = client.maintenance_client();
+    tokio::time::sleep(Duration::from_secs(5)).await;
     let res = maintenance_client.status().await?;
     assert_eq!(res.version, env!("CARGO_PKG_VERSION"));
     assert!(res.db_size > 0);
