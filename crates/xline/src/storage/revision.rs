@@ -68,6 +68,8 @@ impl Revision {
     }
 
     /// Decode `Revision` from `&[u8]`
+    /// # Panics
+    /// This function panics if there is not enough remaining data in `buf`.
     #[must_use]
     #[inline]
     pub fn decode(mut buf: &[u8]) -> Self {
