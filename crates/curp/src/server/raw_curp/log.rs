@@ -1,7 +1,7 @@
 #![allow(clippy::arithmetic_side_effects)] // u64 is large enough and won't overflow
 
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashSet, VecDeque},
     fmt::Debug,
     ops::Range,
     sync::Arc,
@@ -18,7 +18,6 @@ use crate::{
     cmd::Command,
     log_entry::{EntryData, LogEntry},
     rpc::ProposeId,
-    server::metrics,
     snapshot::SnapshotMeta,
     LogIndex,
 };
@@ -40,8 +39,6 @@ pub(super) struct Log<C: Command> {
     pub(super) last_as: LogIndex,
     /// Index of highest log entry sent to speculatively exe. `last_exe` should always be greater than or equal to `last_as`.
     pub(super) last_exe: LogIndex,
-    /// Contexts of fallback log entries
-    pub(super) fallback_contexts: HashMap<LogIndex, FallbackContext<C>>,
     /// Tx to send log entries to persist task
     log_tx: mpsc::UnboundedSender<Arc<LogEntry<C>>>,
     /// Entries to keep in memory
@@ -228,7 +225,6 @@ impl<C: Command> Log<C> {
             last_exe: 0,
             log_tx,
             entries_cap,
-            fallback_contexts: HashMap::new(),
         }
     }
 
@@ -430,15 +426,6 @@ impl<C: Command> Log<C> {
             self.commit_index
         );
         self.commit_index = commit_index;
-        self.fallback_contexts.retain(|&idx, c| {
-            if idx > self.commit_index {
-                return true;
-            }
-            if c.is_learner {
-                metrics::get().learner_promote_succeed.add(1, &[]);
-            }
-            false
-        });
     }
 }
 
