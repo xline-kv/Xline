@@ -45,7 +45,7 @@ RUN echo "=== Install rusty stuff 🦀️ ===" && \
     echo "=== Prebuilt rocksdb ===" && \
     curl -L --proto '=https' --tlsv1.2 -sSf https://crates.io/api/v1/crates/librocksdb-sys/$LIB_ROCKS_SYS_VER/download | tar -zxf - && \
     cd librocksdb-sys-$LIB_ROCKS_SYS_VER/rocksdb/ && \
-    make install && \
+    make -j$(nproc) install && \
     cd /xline && \
     rm -rf librocksdb-sys-$LIB_ROCKS_SYS_VER/
 
