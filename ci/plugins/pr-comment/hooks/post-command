@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+REPO=$BUILDKITE_PULL_REQUEST_REPO
+PR=$BUILDKITE_PULL_REQUEST
+
+re="^(https|git)(:\/\/|@)([^\/:]+)[\/:]([^\/:]+)\/(.+).git$"
+
+if [[ $REPO =~ $re ]]; then
+    GITHUB_USER=${BASH_REMATCH[4]}
+    GITHUB_REPO=${BASH_REMATCH[5]}
+fi
+
+if [[ -z "${PR:-}" ]]; then
+  echo "Warn: PR to comment is missing. Skipping" 1>&2
+  exit 0
+fi
+
+if [[ -z "${GITHUB_USER:-}" ]]; then
+  echo "Warn: Cannot identify github user/org. Skipping" 1>&2
+  exit 0
+fi
+
+if [[ -z "${GITHUB_REPO:-}" ]]; then
+  echo "Warn: Cannot identify github repo. Skipping" 1>&2
+  exit 0
+fi
+
+if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+  echo "Error: GITHUB_TOKEN environment variable not set"  1>&2
+  echo "A Github personal access token with repo permissions is needed to comment on pull requests" 1>&2
+  exit 1
+fi
+
+if [[ -z "${BUILDKITE_PLUGIN_PR_COMMENT_COMMENT_FILE:-}" ]]; then
+  echo "Error: comment property in the plugin es mandatory" 1>&2
+  exit 1
+fi
+
+echo "Posting comment to PR $PR in ${GITHUB_USER}/${GITHUB_REPO}"  1>&2
+
+jq -n --arg msg "$(cat ${BUILDKITE_PLUGIN_PR_COMMENT_COMMENT_FILE})" '{body: $msg}' | curl -sSg \
+    -u apikey:${GITHUB_TOKEN} \
+    -H 'Accept: application/vnd.github.v3+json' \
+    -H 'Content-Type: application/json' \
+    -X POST \
+    -d@- \
+    "https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/issues/${PR}/comments"
