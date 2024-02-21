@@ -12,7 +12,7 @@ use bincode::serialized_size;
 use clippy_utilities::{NumericCast, OverflowArithmetic};
 use itertools::Itertools;
 use tokio::sync::mpsc;
-use tracing::error;
+use tracing::{error, warn};
 
 use crate::{
     cmd::Command,
@@ -82,9 +82,15 @@ impl<C: Command> FallbackContext<C> {
 struct LogEntryVecDeque<C: Command> {
     /// A VecDeque to store log entries, it will be serialized and persisted
     entries: VecDeque<Arc<LogEntry<C>>>,
-    /// The sum of serialized size of previous log entries
-    /// batch_index[i+1] = batch_index[i] + size(entries[i])
+    /// A VecDeque to store serialized size of previous log entries
+    entry_size: VecDeque<u64>,
+    /// the right index of the batch
+    /// batch_range: [i, batch_index[i]]
     batch_index: VecDeque<u64>,
+    /// the index of the first entry in the last batch
+    first_entry_at_last_batch: usize,
+    /// the size of the last batch
+    last_batch_size: u64,
     /// Batch size limit
     batch_limit: u64,
 }
@@ -92,11 +98,14 @@ struct LogEntryVecDeque<C: Command> {
 impl<C: Command> LogEntryVecDeque<C> {
     /// return a log entries with cap
     fn new(cap: usize, batch_limit: u64) -> Self {
-        let mut batch_index = VecDeque::with_capacity(cap.overflow_add(1));
-        batch_index.push_back(0);
+        let batch_index = VecDeque::with_capacity(cap.overflow_add(1));
+        // batch_index.push_back(0);
         Self {
             entries: VecDeque::with_capacity(cap),
+            entry_size: VecDeque::new(),
             batch_index,
+            first_entry_at_last_batch: 0,
+            last_batch_size: 0,
             batch_limit,
         }
     }
@@ -114,11 +123,26 @@ impl<C: Command> LogEntryVecDeque<C> {
         let entry_size = serialized_size(&entry)?;
 
         self.entries.push_back(entry);
-        let Some(&pre_entries_size) = self.batch_index.back() else {
-            unreachable!("batch_index cannot be None")
-        };
-        self.batch_index
-            .push_back(pre_entries_size.overflow_add(entry_size));
+        self.entry_size.push_back(entry_size);
+        self.batch_index.push_back(0);
+        self.last_batch_size += entry_size;
+
+        while self.last_batch_size + entry_size > self.batch_limit {
+            if let Some(value) = self.batch_index.get_mut(self.first_entry_at_last_batch) {
+                *value = self.entries.len().try_into().unwrap_or_default();
+            }
+            if let Some(size) = self.entry_size.get(self.first_entry_at_last_batch) {
+                self.last_batch_size -= size;
+            }
+            self.first_entry_at_last_batch += 1;
+            if entry_size > self.batch_limit {
+                warn!(
+                    "batch size {} exceeds batch limit {}",
+                    entry_size, self.batch_limit
+                );
+                break;
+            }
+        }
         Ok(())
     }
 
@@ -158,12 +182,19 @@ impl<C: Command> LogEntryVecDeque<C> {
 
     /// Get the range [left, right) of the log entry, whose size should be equal or smaller than `batch_limit`
     fn get_range_by_batch(&self, left: usize) -> Range<usize> {
-        #[allow(clippy::indexing_slicing)]
-        let target = self.batch_index[left].overflow_add(self.batch_limit);
-        // remove the fake index 0 in `batch_index`
-        match self.batch_index.binary_search(&target) {
-            Ok(right) => left..right,
-            Err(right) => left..right - 1,
+        let right = match self.batch_index.get(left) {
+            Some(&value) => value.try_into().unwrap_or_default(),
+            None => 0,
+        };
+        if left != 0 && right == 0 {
+            return Range {
+                start: left,
+                end: self.entries.len(),
+            };
+        }
+        Range {
+            start: left,
+            end: right,
         }
     }
 
@@ -555,83 +586,126 @@ mod tests {
     }
 
     #[test]
-    fn get_from_should_success() {
-        let (tx, _rx) = mpsc::unbounded_channel();
-        let mut log =
-            Log::<TestCommand>::new(tx, default_batch_max_size(), default_log_entries_cap());
-
+    fn get_range_should_success_when_sum_of_entries_size_no_larger_than_batch_limit() {
         // Note: this test must use the same test command to ensure the size of the entry is fixed
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut log = Log::<TestCommand>::new(tx, 78 * 10, default_log_entries_cap());
+
         let test_cmd = Arc::new(TestCommand::default());
         let _res = repeat(Arc::clone(&test_cmd))
             .take(10)
             .enumerate()
             .map(|(idx, cmd)| log.push(1, ProposeId(0, idx.numeric_cast()), cmd).unwrap())
             .collect::<Vec<_>>();
-        let log_entry_size = log.entries.batch_index[1];
 
-        set_batch_limit(&mut log, 3 * log_entry_size - 1);
-        let bound_1 = log.entries.get_range_by_batch(3);
+        let bound = log.entries.get_range_by_batch(0);
+        assert_eq!(
+            bound,
+            0..10,
+            "entry_size = {:?}, batch_index = {:?}, batch_limit = {}",
+            log.entries.entry_size,
+            log.entries.batch_index,
+            log.entries.batch_limit
+        );
+    }
+
+    #[test]
+    fn get_range_should_success_when_sum_of_entries_size_larger_than_batch_limit() {
+        // Note: this test must use the same test command to ensure the size of the entry is fixed
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut log = Log::<TestCommand>::new(tx, 78 * 3 + 78 / 2, default_log_entries_cap());
+
+        let test_cmd = Arc::new(TestCommand::default());
+        let _res = repeat(Arc::clone(&test_cmd))
+            .take(10)
+            .enumerate()
+            .map(|(idx, cmd)| log.push(1, ProposeId(0, idx.numeric_cast()), cmd).unwrap())
+            .collect::<Vec<_>>();
+
+        let bound_1 = log.entries.get_range_by_batch(0);
+        let bound_2 = log.entries.get_range_by_batch(8);
         assert_eq!(
             bound_1,
-            3..5,
-            "batch_index = {:?}, batch = {}, log_entry_size = {}",
+            0..3,
+            "entry_size = {:?}, batch_index = {:?}, batch_limit = {}",
+            log.entries.entry_size,
             log.entries.batch_index,
-            log.entries.batch_limit,
-            log_entry_size
+            log.entries.batch_limit
         );
-        assert!(log.has_next_batch(8));
-        assert!(!log.has_next_batch(9));
-
-        set_batch_limit(&mut log, 4 * log_entry_size);
-        let bound_2 = log.entries.get_range_by_batch(3);
         assert_eq!(
             bound_2,
-            3..7,
-            "batch_index = {:?}, batch = {}, log_entry_size = {}",
+            8..10,
+            "entry_size = {:?}, batch_index = {:?}, batch_limit = {}",
+            log.entries.entry_size,
             log.entries.batch_index,
-            log.entries.batch_limit,
-            log_entry_size
+            log.entries.batch_limit
         );
-        assert!(log.has_next_batch(7));
-        assert!(!log.has_next_batch(8));
+    }
 
-        set_batch_limit(&mut log, 5 * log_entry_size + 2);
-        let bound_3 = log.entries.get_range_by_batch(3);
-        assert_eq!(
-            bound_3,
-            3..8,
-            "batch_index = {:?}, batch = {}, log_entry_size = {}",
-            log.entries.batch_index,
-            log.entries.batch_limit,
-            log_entry_size
-        );
-        assert!(log.has_next_batch(5));
-        assert!(!log.has_next_batch(6));
+    #[test]
+    fn get_range_should_success_when_entry_size_equal_to_batch_limit() {
+        // Note: this test must use the same test command to ensure the size of the entry is fixed
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut log = Log::<TestCommand>::new(tx, 78, default_log_entries_cap());
 
-        set_batch_limit(&mut log, 100 * log_entry_size);
-        let bound_4 = log.entries.get_range_by_batch(3);
-        assert_eq!(
-            bound_4,
-            3..10,
-            "batch_index = {:?}, batch = {}, log_entry_size = {}",
-            log.entries.batch_index,
-            log.entries.batch_limit,
-            log_entry_size
-        );
-        assert!(!log.has_next_batch(1));
-        assert!(!log.has_next_batch(5));
+        let test_cmd = Arc::new(TestCommand::default());
+        let _res = repeat(Arc::clone(&test_cmd))
+            .take(10)
+            .enumerate()
+            .map(|(idx, cmd)| log.push(1, ProposeId(0, idx.numeric_cast()), cmd).unwrap())
+            .collect::<Vec<_>>();
 
-        set_batch_limit(&mut log, log_entry_size - 1);
-        let bound_5 = log.entries.get_range_by_batch(3);
+        let bound_1 = log.entries.get_range_by_batch(0);
+        let bound_2 = log.entries.get_range_by_batch(8);
         assert_eq!(
-            bound_5,
-            3..3,
-            "batch_index = {:?}, batch = {}, log_entry_size = {}",
+            bound_1,
+            0..1,
+            "entry_size = {:?}, batch_index = {:?}, batch_limit = {}",
+            log.entries.entry_size,
             log.entries.batch_index,
-            log.entries.batch_limit,
-            log_entry_size
+            log.entries.batch_limit
         );
-        assert!(log.has_next_batch(10));
+        assert_eq!(
+            bound_2,
+            8..9,
+            "entry_size = {:?}, batch_index = {:?}, batch_limit = {}",
+            log.entries.entry_size,
+            log.entries.batch_index,
+            log.entries.batch_limit
+        );
+    }
+
+    #[test]
+    fn get_range_should_success_when_entry_larger_than_batch_limit() {
+        // Note: this test must use the same test command to ensure the size of the entry is fixed
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut log = Log::<TestCommand>::new(tx, 78 - 1, default_log_entries_cap());
+
+        let test_cmd = Arc::new(TestCommand::default());
+        let _res = repeat(Arc::clone(&test_cmd))
+            .take(10)
+            .enumerate()
+            .map(|(idx, cmd)| log.push(1, ProposeId(0, idx.numeric_cast()), cmd).unwrap())
+            .collect::<Vec<_>>();
+
+        let bound_1 = log.entries.get_range_by_batch(0);
+        let bound_2 = log.entries.get_range_by_batch(8);
+        assert_eq!(
+            bound_1,
+            0..1,
+            "entry_size = {:?}, batch_index = {:?}, batch_limit = {}",
+            log.entries.entry_size,
+            log.entries.batch_index,
+            log.entries.batch_limit
+        );
+        assert_eq!(
+            bound_2,
+            8..9,
+            "entry_size = {:?}, batch_index = {:?}, batch_limit = {}",
+            log.entries.entry_size,
+            log.entries.batch_index,
+            log.entries.batch_limit
+        );
     }
 
     #[test]
