@@ -91,7 +91,7 @@ impl Streaming {
                             break Err(err);
                         }
                         _ => {
-                            debug!("got unexpected error {err:?} when keep heartbeat, retrying...");
+                            warn!("got unexpected error {err:?} when keep heartbeat, retrying...");
                             tokio::time::sleep(RETRY_DELAY).await;
                         }
                     }

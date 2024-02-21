@@ -742,12 +742,13 @@ impl ConnectApi for MockedStreamConnectApi {
     async fn propose(
         &self,
         _request: ProposeRequest,
+        _token: Option<String>,
         _timeout: Duration,
     ) -> Result<tonic::Response<ProposeResponse>, CurpError> {
         unreachable!("please use MockedConnectApi")
     }
 
-    /// Send `ProposeRequest`
+    /// Send `ProposeConfChange`
     async fn propose_conf_change(
         &self,
         _request: ProposeConfChangeRequest,
