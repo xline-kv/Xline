@@ -29,7 +29,7 @@ pub(super) struct State {
     mutable: RwLock<StateMut>,
     /// Immutable state
     immutable: StateStatic,
-    /// The client id. Remove from `mutable`` because the client ID will be updated in the background.
+    /// The client id. Separated from `mutable` because the client ID will be updated in the background.
     client_id: Arc<AtomicU64>,
 }
 
