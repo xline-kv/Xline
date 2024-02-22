@@ -1,12 +1,13 @@
 #!/bin/bash
 DIR="$(dirname $0)"
+source $DIR/common.sh
+source $DIR/log.sh
+
 QUICK_START="${DIR}/quick_start.sh"
 ETCDCTL="docker exec -i client etcdctl --endpoints=http://172.20.0.3:2379,http://172.20.0.4:2379"
 LOCK_CLIENT="docker exec -i client /mnt/validation_lock_client --endpoints=http://172.20.0.3:2379,http://172.20.0.4:2379,http://172.20.0.5:2379"
 
-
-LOG_PATH=${DIR}/logs LOG_LEVEL=debug bash ${QUICK_START}
-source $DIR/log.sh
+LOG_PATH=/mnt/logs LOG_LEVEL=debug bash ${QUICK_START}
 
 stop() {
     bash ${QUICK_START} stop
@@ -18,6 +19,21 @@ trap stop TERM
 
 res=""
 
+function run_new_member() {
+    common::run_container 4
+    common::run_xline 4 ${NEWMEMBERS} existing
+}
+
+function parse_result() {
+    local tmp_res=""
+    while read -r line; do
+        log::debug $line
+        tmp_res="${tmp_res}${line}\n"
+    done
+    res="${tmp_res}"
+}
+
+
 function check() {
     local pattern=$1
     if [[ $(echo -e $res) =~ $pattern ]]; then
@@ -27,13 +43,13 @@ function check() {
     fi
 }
 
-function parse_result() {
-    local tmp_res=""
-    while read -r line; do
-        log::info $line
-        tmp_res="${tmp_res}${line}\n"
-    done
-    res="${tmp_res}"
+function check_without() {
+    local pattern=$1
+    if [[ $(echo -e $res) =~ $pattern ]]; then
+        log::fatal "result not match pattern\n\tpattern: $pattern\n\tresult: $res"
+    else
+        log::info "pass"
+    fi
 }
 
 function run() {
@@ -278,20 +294,34 @@ maintenance_validation() {
 
 cluster_validation() {
     log::info "cluster validation test running..."
-
+    node4_client_url="http://${SERVERS[4]}:2379"
+    updated_node4_url="http://${SERVERS[4]}:2380"
+    node4_url="${updated_node4_url},http://${SERVERS[4]}:2381"
     run "${ETCDCTL} member list"
     check "\s*[0-9a-z]+, started, node[0-9], 172.20.0.[0-9]:2380,172.20.0.[0-9]:2381, http://172.20.0.[0-9]:2379, false"
-    run "${ETCDCTL} member add client --peer-urls=http://172.20.0.6:2379 --learner=true"
+    run "${ETCDCTL} member add node4 --peer-urls=${node4_url} --learner=true"
     check "Member\s+[a-zA-Z0-9]+ added to cluster\s+[a-zA-Z0-9]+"
     node_id=$(echo -e ${res} | awk '{print $2}')
     cluster_id=$(echo -e ${res} | awk '{print $6}')
+    run "${ETCDCTL} member list"
+    check "\s*[0-9a-z]+, unstarted, , ${node4_url}, , true"
+    run_new_member
+    sleep 2
+    run "${ETCDCTL} member list"
+    check "\s*[0-9a-z]+, started, node4, ${node4_url}, , true"
     run "${ETCDCTL} member promote ${node_id}"
     check "Member\s+${node_id} promoted in cluster\s+${cluster_id}"
-    run "${ETCDCTL} member update ${node_id} --peer-urls=http://172.20.0.6:2379"
+    run "${ETCDCTL} member list"
+    check "\s*[0-9a-z]+, started, node4, ${node4_url}, , false"
+    run "${ETCDCTL} member update ${node_id} --peer-urls=${updated_node4_url}"
     check "Member\s+${node_id} updated in cluster\s+${cluster_id}"
+    run "${ETCDCTL} member list"
+    check "\s*[0-9a-z]+, started, node4, ${updated_node4_url}, , false"
     run "${ETCDCTL} member remove ${node_id}"
     check "Member\s+${node_id} removed from cluster\s+${cluster_id}"
-
+    run "${ETCDCTL} member list"
+    check_without "\s*[0-9a-z]+, started, node4, ${updated_node4_url}, , false"
+    common::stop_container node4
     log::info "cluster validation test passed"
 }
 
