@@ -141,11 +141,12 @@ impl ClusterInfo {
         self_name: &str,
     ) -> Self {
         let mut member_id = 0;
+        let sorted_self_addr = self_peer_urls.iter().cloned().sorted().collect::<Vec<_>>();
         let members = cluster
             .members
             .into_iter()
             .map(|mut member| {
-                if member.peer_urls() == self_peer_urls {
+                if sorted_self_addr == member.peer_urls() {
                     member_id = member.id;
                     member.name = self_name.to_owned();
                 }
@@ -441,7 +442,7 @@ pub async fn get_cluster_info_from_remote(
         .collect::<FuturesUnordered<_>>();
     while let Some(result) = futs.next().await {
         if let Ok(cluster_res) = result {
-            debug!("get cluster info from remote success: {:?}", cluster_res);
+            info!("get cluster info from remote success: {:?}", cluster_res);
             return Some(ClusterInfo::from_cluster(
                 cluster_res.into_inner(),
                 self_peer_urls,
