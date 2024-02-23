@@ -82,6 +82,8 @@ pub struct ClusterInfo {
     members: DashMap<ServerId, Member>,
     /// cluster version
     cluster_version: Arc<AtomicU64>,
+    /// Whether boot up from a single node cluster
+    single_node_mode: bool,
 }
 
 impl ClusterInfo {
@@ -89,11 +91,13 @@ impl ClusterInfo {
     #[inline]
     #[must_use]
     pub fn new(cluster_id: u64, member_id: u64, members: Vec<Member>) -> Self {
+        let single_node_mode = members.len() == 1;
         Self {
             cluster_id,
             member_id,
             members: members.into_iter().map(|m| (m.id, m)).collect(),
             cluster_version: Arc::new(AtomicU64::new(0)),
+            single_node_mode,
         }
     }
 
@@ -119,12 +123,14 @@ impl ClusterInfo {
             }
             let _ig = members.insert(id, member);
         }
+        let single_node_mode = members.len() == 1;
         debug_assert!(member_id != 0, "self_id should not be 0");
         let mut cluster_info = Self {
             cluster_id: 0,
             member_id,
             members,
             cluster_version: Arc::new(AtomicU64::new(0)),
+            single_node_mode
         };
         cluster_info.gen_cluster_id();
         cluster_info
@@ -143,7 +149,7 @@ impl ClusterInfo {
     ) -> Self {
         let mut member_id = 0;
         let sorted_self_addr = self_peer_urls.iter().cloned().sorted().collect::<Vec<_>>();
-        let members = cluster
+        let members: DashMap<u64, Member> = cluster
             .members
             .into_iter()
             .map(|mut member| {
@@ -156,11 +162,13 @@ impl ClusterInfo {
             })
             .collect();
         assert!(member_id != 0, "self_id should not be 0");
+        let single_node_mode = members.len() == 1;
         Self {
             cluster_id: cluster.cluster_id,
             member_id,
             members,
             cluster_version: Arc::new(AtomicU64::new(cluster.cluster_version)),
+            single_node_mode,
         }
     }
 
@@ -365,7 +373,7 @@ impl ClusterInfo {
             .collect()
     }
 
-    /// Get length of peers
+    /// Get length of voters
     #[must_use]
     #[inline]
     pub fn voters_len(&self) -> usize {
@@ -413,6 +421,11 @@ impl ClusterInfo {
             s.name = name;
             s.client_urls = client_urls;
         }
+    }
+
+    /// whether boot up from a single node cluster
+    pub(crate) fn is_single_node_mode(&self) -> bool {
+        self.single_node_mode
     }
 }
 
