@@ -1672,7 +1672,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 .count();
             replicated_cnt + 1 >= quorum(voter_len)
         }
-
     }
 
     /// Recover from all voter's spec pools

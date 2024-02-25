@@ -130,7 +130,7 @@ impl ClusterInfo {
             member_id,
             members,
             cluster_version: Arc::new(AtomicU64::new(0)),
-            single_node_mode
+            single_node_mode,
         };
         cluster_info.gen_cluster_id();
         cluster_info

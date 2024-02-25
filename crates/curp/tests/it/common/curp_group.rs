@@ -455,7 +455,7 @@ impl CurpGroup {
             members,
             cluster_version: cluster_res_base.cluster_version,
         };
-        ClusterInfo::from_cluster(cluster_res, addrs, client_urls.as_slice() , name)
+        ClusterInfo::from_cluster(cluster_res, addrs, client_urls.as_slice(), name)
     }
 }
 
