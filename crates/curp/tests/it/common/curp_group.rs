@@ -492,6 +492,7 @@ impl CurpGroup {
     pub async fn fetch_cluster_info(&self, addrs: &[String], name: &str) -> ClusterInfo {
         let leader_id = self.get_leader().await.0;
         let mut connect = self.get_connect(&leader_id).await;
+        let client_urls: Vec<String> = vec![];
         let cluster_res_base = connect
             .fetch_cluster(tonic::Request::new(FetchClusterRequest {
                 linearizable: false,
@@ -511,7 +512,7 @@ impl CurpGroup {
             members,
             cluster_version: cluster_res_base.cluster_version,
         };
-        ClusterInfo::from_cluster(cluster_res, addrs, name)
+        ClusterInfo::from_cluster(cluster_res, addrs, client_urls.as_slice(), name)
     }
 }
 
