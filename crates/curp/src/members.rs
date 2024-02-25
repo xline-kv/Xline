@@ -138,6 +138,7 @@ impl ClusterInfo {
     pub fn from_cluster(
         cluster: FetchClusterResponse,
         self_peer_urls: &[String],
+        self_client_urls: &[String],
         self_name: &str,
     ) -> Self {
         let mut member_id = 0;
@@ -149,6 +150,7 @@ impl ClusterInfo {
                 if sorted_self_addr == member.peer_urls() {
                     member_id = member.id;
                     member.name = self_name.to_owned();
+                    member.client_urls = self_client_urls.to_vec();
                 }
                 (member.id, member)
             })
@@ -424,6 +426,7 @@ pub async fn get_cluster_info_from_remote(
     tls_config: Option<&ClientTlsConfig>,
 ) -> Option<ClusterInfo> {
     let peers = init_cluster_info.peers_addrs();
+    let self_client_urls = init_cluster_info.self_client_urls();
     let connects = rpc::connects(peers, tls_config)
         .await
         .ok()?
@@ -446,6 +449,7 @@ pub async fn get_cluster_info_from_remote(
             return Some(ClusterInfo::from_cluster(
                 cluster_res.into_inner(),
                 self_peer_urls,
+                self_client_urls.as_slice(),
                 self_name,
             ));
         }
