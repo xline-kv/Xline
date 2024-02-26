@@ -18,7 +18,7 @@ function common::run_container() {
     docker run -d -it --rm --name=node${ith} --net=xline_net \
             --ip=${SERVERS[$ith]} --cap-add=NET_ADMIN --cpu-shares=1024 \
             -m=512M ${mount_point} ${XLINE_IMAGE} bash &
-    wait
+    wait $!
     log::info container node${ith} started
 }
 
@@ -29,7 +29,7 @@ function common::stop_container() {
     if [ -n "$docker_id" ]; then
         docker stop $docker_id
     fi
-    wait
+    wait $!
     log::info container ${image_name} stopped
 }
 
@@ -39,7 +39,7 @@ function common::run_etcd_client() {
     docker run -d -it --rm  --name=client \
         --net=xline_net --ip=${SERVERS[0]} --cap-add=NET_ADMIN \
         --cpu-shares=1024 -m=512M -v ${DIR}:/mnt ${ETCDCTL_IMAGE} bash &
-    wait
+    wait $!
     log::info container etcdctl started
 }
 
