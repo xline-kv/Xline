@@ -157,12 +157,13 @@ impl WALSegment {
     /// Seal the current segment
     ///
     /// After the seal, the log index in this segment should be less than `next_index`
-    pub(super) async fn seal<C: Serialize>(&mut self, next_index: LogIndex) {
+    pub(super) async fn seal<C: Serialize>(&mut self, next_index: LogIndex) -> io::Result<()> {
         let mut framed = Framed::new(self, WAL::<C>::new());
-        framed.send(vec![DataFrame::SealIndex(next_index)]).await;
-        framed.flush().await;
-        framed.get_mut().sync_all().await;
+        framed.send(vec![DataFrame::SealIndex(next_index)]).await?;
+        framed.flush().await?;
+        framed.get_mut().sync_all().await?;
         framed.get_mut().update_seal_index(next_index);
+        Ok(())
     }
 
     /// Syncs the file of this segment
@@ -244,7 +245,7 @@ impl WALSegment {
     /// Parse the header from the given buffer
     #[allow(
         clippy::unwrap_used, // Unwraps are used to convert slice to const length and is safe
-        clippy::integer_arithmetic, // Arithmetics cannot overflow
+        clippy::arithmetic_side_effects, // Arithmetics cannot overflow
         clippy::indexing_slicing // Index slicings are checked
     )]
     fn parse_header(src: &[u8]) -> Result<(LogIndex, u64), WALError> {
@@ -410,7 +411,11 @@ impl IOState {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{path::PathBuf, time::Duration};
+
+    use curp_test_utils::test_cmd::TestCommand;
+
+    use crate::log_entry::EntryData;
 
     use super::*;
 
@@ -446,5 +451,95 @@ mod tests {
         expect_state(&segment, IOState::Fsynced);
         segment.sync_all().await;
         expect_state(&segment, IOState::Fsynced);
+    }
+
+    #[test]
+    fn gen_parse_header_is_correct() {
+        fn corrupt(mut header: Vec<u8>, pos: usize) -> Vec<u8> {
+            header[pos] ^= 1;
+            header
+        }
+
+        for idx in 0..100 {
+            for id in 0..100 {
+                let header = WALSegment::gen_header(idx, id);
+                let (idx_parsed, id_parsed) = WALSegment::parse_header(&header).unwrap();
+                assert_eq!(idx, idx_parsed);
+                assert_eq!(id, id_parsed);
+                for pos in 0..8 * 4 {
+                    assert!(WALSegment::parse_header(&corrupt(header.clone(), pos)).is_err());
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn segment_seal_is_ok() {
+        const BASE_INDEX: u64 = 17;
+        const SEGMENT_ID: u64 = 2;
+        const SIZE_LIMIT: u64 = 5;
+        let dir = tempfile::tempdir().unwrap();
+        let mut tmp_path = dir.path().to_path_buf();
+        tmp_path.push("test.tmp");
+        let segment_name = WALSegment::segment_name(SEGMENT_ID, BASE_INDEX);
+        let mut wal_path = dir.path().to_path_buf();
+        wal_path.push(segment_name);
+        let file = LockedFile::open_rw(&tmp_path).unwrap();
+        let mut segment = WALSegment::create(file, BASE_INDEX, SEGMENT_ID, SIZE_LIMIT)
+            .await
+            .unwrap();
+        segment.seal::<()>(20).await.unwrap();
+        segment.seal::<()>(30).await.unwrap();
+        segment.seal::<()>(40).await.unwrap();
+        drop(segment);
+
+        let file = LockedFile::open_rw(wal_path).unwrap();
+        let mut segment = WALSegment::open(file, SIZE_LIMIT).await.unwrap();
+        let _ignore = segment.recover_segment_logs::<()>().await.unwrap();
+        assert_eq!(segment.seal_index, 40);
+    }
+
+    #[tokio::test]
+    async fn segment_log_recovery_is_ok() {
+        const BASE_INDEX: u64 = 1;
+        const SEGMENT_ID: u64 = 1;
+        const SIZE_LIMIT: u64 = 5;
+        let dir = tempfile::tempdir().unwrap();
+        let mut tmp_path = dir.path().to_path_buf();
+        tmp_path.push("test.tmp");
+        let segment_name = WALSegment::segment_name(SEGMENT_ID, BASE_INDEX);
+        let mut wal_path = dir.path().to_path_buf();
+        wal_path.push(segment_name);
+        let file = LockedFile::open_rw(&tmp_path).unwrap();
+        let mut segment = WALSegment::create(file, BASE_INDEX, SEGMENT_ID, SIZE_LIMIT)
+            .await
+            .unwrap();
+
+        let mut seg_framed = Framed::new(&mut segment, WAL::<TestCommand>::new());
+        let frames: Vec<_> = (0..100)
+            .map(|i| {
+                DataFrame::Entry(LogEntry::new(
+                    i,
+                    1,
+                    crate::rpc::ProposeId(0, 0),
+                    EntryData::Command(Arc::new(TestCommand::new_put(vec![i as u32], i as u32))),
+                ))
+            })
+            .collect();
+        seg_framed.send(frames.clone()).await.unwrap();
+        seg_framed.flush().await.unwrap();
+        seg_framed.get_mut().sync_all().await.unwrap();
+
+        drop(segment);
+
+        let file = LockedFile::open_rw(wal_path).unwrap();
+        let mut segment = WALSegment::open(file, SIZE_LIMIT).await.unwrap();
+        let recovered: Vec<_> = segment
+            .recover_segment_logs::<TestCommand>()
+            .await
+            .unwrap()
+            .map(|e| DataFrame::Entry(e))
+            .collect();
+        assert_eq!(frames, recovered);
     }
 }
