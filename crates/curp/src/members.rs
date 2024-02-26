@@ -2,7 +2,7 @@ use std::{
     collections::{hash_map::DefaultHasher, HashMap},
     hash::{Hash, Hasher},
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
     time::Duration,
@@ -83,7 +83,7 @@ pub struct ClusterInfo {
     /// cluster version
     cluster_version: Arc<AtomicU64>,
     /// Whether boot up from a single node cluster
-    single_node_mode: bool,
+    single_node_mode: Arc<AtomicBool>,
 }
 
 impl ClusterInfo {
@@ -91,7 +91,7 @@ impl ClusterInfo {
     #[inline]
     #[must_use]
     pub fn new(cluster_id: u64, member_id: u64, members: Vec<Member>) -> Self {
-        let single_node_mode = members.len() == 1;
+        let single_node_mode = Arc::new(AtomicBool::new(members.len() == 1));
         Self {
             cluster_id,
             member_id,
@@ -123,8 +123,8 @@ impl ClusterInfo {
             }
             let _ig = members.insert(id, member);
         }
-        let single_node_mode = members.len() == 1;
         debug_assert!(member_id != 0, "self_id should not be 0");
+        let single_node_mode = Arc::new(AtomicBool::new(members.len() == 1));
         let mut cluster_info = Self {
             cluster_id: 0,
             member_id,
@@ -162,7 +162,7 @@ impl ClusterInfo {
             })
             .collect();
         assert!(member_id != 0, "self_id should not be 0");
-        let single_node_mode = members.len() == 1;
+        let single_node_mode = Arc::new(AtomicBool::new(members.len() == 1));
         Self {
             cluster_id: cluster.cluster_id,
             member_id,
@@ -425,7 +425,12 @@ impl ClusterInfo {
 
     /// whether boot up from a single node cluster
     pub(crate) fn is_single_node_mode(&self) -> bool {
-        self.single_node_mode
+        self.single_node_mode.load(Ordering::Relaxed)
+    }
+
+    /// set single node mode false
+    pub(crate) fn switch_off_single_node_mode(&self) {
+        self.single_node_mode.store(false, Ordering::Relaxed);
     }
 }
 

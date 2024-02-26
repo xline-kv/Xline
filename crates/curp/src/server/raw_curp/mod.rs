@@ -1663,6 +1663,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         // when a single node cluster scale out to 2 nodes cluster, their quorum is not equal.
         // therefore, we need to check this special case
         if self.cluster().is_single_node_mode() && voter_len == 2 {
+            self.cluster().switch_off_single_node_mode();
             true
         } else {
             let replicated_cnt = self
