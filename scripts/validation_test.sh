@@ -20,6 +20,10 @@ trap stop TERM
 res=""
 
 function run_new_member() {
+     docker_id=$(docker ps -qf "name=node4")
+    if [ -n "$docker_id" ]; then
+        docker stop $docker_id
+    fi
     common::run_container 4
     common::run_xline 4 ${NEWMEMBERS} existing
 }
@@ -307,19 +311,19 @@ cluster_validation() {
     run_new_member
     sleep 2
     run "${ETCDCTL} member list"
-    check "\s*[0-9a-z]+, started, node4, ${node4_url}, , true"
+    check "\s*[0-9a-z]+, started, node4, ${node4_url}, ${node4_client_url}, true"
     run "${ETCDCTL} member promote ${node_id}"
     check "Member\s+${node_id} promoted in cluster\s+${cluster_id}"
     run "${ETCDCTL} member list"
-    check "\s*[0-9a-z]+, started, node4, ${node4_url}, , false"
+    check "\s*[0-9a-z]+, started, node4, ${node4_url}, ${node4_client_url}, false"
     run "${ETCDCTL} member update ${node_id} --peer-urls=${updated_node4_url}"
     check "Member\s+${node_id} updated in cluster\s+${cluster_id}"
     run "${ETCDCTL} member list"
-    check "\s*[0-9a-z]+, started, node4, ${updated_node4_url}, , false"
+    check "\s*[0-9a-z]+, started, node4, ${updated_node4_url}, ${node4_client_url}, false"
     run "${ETCDCTL} member remove ${node_id}"
     check "Member\s+${node_id} removed from cluster\s+${cluster_id}"
     run "${ETCDCTL} member list"
-    check_without "\s*[0-9a-z]+, started, node4, ${updated_node4_url}, , false"
+    check_without "\s*[0-9a-z]+, started, node4, ${updated_node4_url}, ${node4_client_url}, false"
     common::stop_container node4
     log::info "cluster validation test passed"
 }
