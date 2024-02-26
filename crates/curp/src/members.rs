@@ -142,12 +142,17 @@ impl ClusterInfo {
         self_name: &str,
     ) -> Self {
         let mut member_id = 0;
-        let sorted_self_addr = self_peer_urls.iter().cloned().sorted().collect::<Vec<_>>();
+        let sorted_self_addr = self_peer_urls.iter().sorted();
         let members = cluster
             .members
             .into_iter()
             .map(|mut member| {
-                if sorted_self_addr == member.peer_urls() {
+                if member
+                    .peer_urls()
+                    .iter()
+                    .sorted()
+                    .eq(sorted_self_addr.clone())
+                {
                     member_id = member.id;
                     member.name = self_name.to_owned();
                     member.client_urls = self_client_urls.to_vec();
