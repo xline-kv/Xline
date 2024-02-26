@@ -36,7 +36,7 @@ pub(super) struct FilePipeline {
 
 impl FilePipeline {
     /// Creates a new `FilePipeline`
-    #[allow(clippy::integer_arithmetic)] // Introduced by tokio::select! macro
+    #[allow(clippy::arithmetic_side_effects)] // Introduced by tokio::select! macro
     pub(super) fn new(dir: PathBuf, file_size: u64) -> io::Result<Self> {
         Self::clean_up(&dir)?;
 
