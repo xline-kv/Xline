@@ -1,6 +1,6 @@
 # xline-client
 
-Official Xline API client for Rust that supports the [CURP](https://github.com/xline-kv/Xline/tree/master/curp) protocol
+Official Xline API client for Rust that supports the [CURP](https://github.com/xline-kv/Xline/tree/master/crates/curp) protocol
 
 # Pre-requisites
 - Install `protobuf-compiler` as mentioned in [QuickStart](https://github.com/xline-kv/Xline/blob/master/doc/quick-start/README.md#install-dependencies)
@@ -113,7 +113,7 @@ To create a xline client:
 
 ## Examples
 
-You can find them in [examples](https://github.com/xline-kv/Xline/tree/master/xline-client/examples)
+You can find them in [examples](https://github.com/xline-kv/Xline/tree/master/crates/xline-client/examples)
 
 ## Xline Compatibility
 
