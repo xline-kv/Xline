@@ -284,7 +284,7 @@ impl<C: Command> Log<C> {
         // append log entries, will erase inconsistencies
         // Find the index of the first entry that needs to be truncated
         let mut pi = self.li_to_pi(prev_log_index + 1);
-        for entry in entries.iter() {
+        for entry in &entries {
             if self
                 .entries
                 .get(pi)
@@ -306,7 +306,7 @@ impl<C: Command> Log<C> {
         for entry in entries
             .into_iter()
             .skip(pi - self.li_to_pi(prev_log_index + 1))
-            .map(|x| Arc::new(x))
+            .map(Arc::new)
         {
             if matches!(entry.entry_data, EntryData::ConfChange(_)) {
                 conf_changes.push(Arc::clone(&entry));
