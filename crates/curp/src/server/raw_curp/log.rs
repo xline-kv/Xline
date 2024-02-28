@@ -250,7 +250,7 @@ impl<C: Command> Log<C> {
     fn li_to_pi(&self, i: LogIndex) -> usize {
         assert!(
             i > self.base_index,
-            "can't access the log entry whose index is smaller than {}, might have been compacted",
+            "can't access the log entry whose index is not bigger than {}, might have been compacted",
             self.base_index
         );
         (i - self.base_index - 1).numeric_cast()
@@ -282,27 +282,35 @@ impl<C: Command> Log<C> {
             return Err(entries);
         }
         // append log entries, will erase inconsistencies
-        let mut li = prev_log_index;
-        for entry in entries {
-            let entry = Arc::new(entry);
-            li += 1;
-            let pi = self.li_to_pi(li);
+        // Find the index of the first entry that needs to be truncated
+        let mut pi = self.li_to_pi(prev_log_index + 1);
+        for entry in entries.iter() {
             if self
                 .entries
                 .get(pi)
-                .map_or(false, |old_entry| old_entry.term == entry.term)
+                .map_or(true, |old_entry| old_entry.term != entry.term)
             {
-                continue;
+                break;
             }
-            for e in self.entries.range(pi..) {
-                if matches!(e.entry_data, EntryData::ConfChange(_)) {
-                    let _ig = need_fallback_indexes.insert(e.index);
-                }
+            pi += 1;
+        }
+        // Record entries that need to be fallback in the truncated entries
+        for e in self.entries.range(pi..) {
+            if matches!(e.entry_data, EntryData::ConfChange(_)) {
+                let _ig = need_fallback_indexes.insert(e.index);
             }
+        }
+        // Truncate entries
+        self.entries.truncate(pi);
+        // Push the remaining entries and record the conf change entries
+        for entry in entries
+            .into_iter()
+            .skip(pi - self.li_to_pi(prev_log_index + 1))
+            .map(|x| Arc::new(x))
+        {
             if matches!(entry.entry_data, EntryData::ConfChange(_)) {
                 conf_changes.push(Arc::clone(&entry));
             }
-            self.entries.truncate(pi);
             #[allow(clippy::expect_used)] // It's safe to expect here.
             self.entries
                 .push_back(Arc::clone(&entry))
