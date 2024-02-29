@@ -12,7 +12,7 @@ categories = ["KV"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1.0.57"
+anyhow = "1.0.81"
 async-stream = "0.3.5"
 async-trait = "0.1.53"
 axum = "0.6.20"
@@ -29,7 +29,7 @@ futures = "0.3.25"
 hyper = "0.14.27"
 itertools = "0.11"
 jsonwebtoken = "8.1.1"
-log = "0.4.17"
+log = "0.4.21"
 merged_range = "0.1.0"
 nix = "0.27.0"
 opentelemetry = { version = "0.21.0", features = ["metrics"] }

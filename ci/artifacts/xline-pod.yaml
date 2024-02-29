@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  creationTimestamp: null
+  name: xline
+  namespace: kube-system
+spec:
+  containers:
+    - name: xline
+      image: ghcr.io/xline-kv/xline:master
+      imagePullPolicy: IfNotPresent
+      command:
+        - /bin/sh
+        - -c
+        - xline --name node1 --members node1=kind-control-plane:2379 --data-dir /tmp/xline --storage-engine rocksdb --client-listen-urls=http://kind-control-plane:2379 --peer-listen-urls=http://kind-control-plane:2380,http://kind-control-plane:2381 --client-advertise-urls=http://kind-control-plane:2379 --peer-advertise-urls=http://kind-control-plane:2380,http://kind-control-plane:2381
+  hostNetwork: true
+status: {}

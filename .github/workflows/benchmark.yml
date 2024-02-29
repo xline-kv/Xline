@@ -18,7 +18,7 @@ jobs:
           submodules: recursive
 
       - name: Configure sccache
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           script: |
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
@@ -40,7 +40,7 @@ jobs:
           docker pull datenlord/etcd:v3.5.5
           bash ./benchmark.sh
 
-      - uses: actions/upload-artifact@v1
+      - uses: actions/upload-artifact@v4
         with:
           name: benchmark-output
           path: scripts/out
