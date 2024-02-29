@@ -269,12 +269,7 @@ impl Client {
             token.clone(),
             Arc::clone(&id_gen),
         );
-        let lock = LockClient::new(
-            Arc::clone(&curp_client),
-            channel.clone(),
-            token.clone(),
-            id_gen,
-        );
+        let lock = LockClient::new(Arc::clone(&curp_client), channel.clone(), token.clone());
         let auth = AuthClient::new(curp_client, channel.clone(), token.clone());
         let maintenance = MaintenanceClient::new(channel.clone(), token.clone());
         let cluster = ClusterClient::new(channel.clone(), token.clone());
