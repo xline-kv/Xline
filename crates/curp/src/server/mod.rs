@@ -35,6 +35,9 @@ mod raw_curp;
 /// Command board is the buffer to store command execution result
 mod cmd_board;
 
+/// Conflict pools
+pub mod conflict;
+
 /// Speculative pool
 mod spec_pool;
 
