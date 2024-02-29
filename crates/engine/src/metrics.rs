@@ -2,14 +2,14 @@ use std::{io, path::Path, time::Instant};
 
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
-use opentelemetry::{metrics::Histogram, KeyValue};
+use opentelemetry::metrics::Histogram;
 use utils::define_metrics;
 
 #[cfg(madsim)]
 use crate::mock_rocksdb_engine::RocksEngine;
 #[cfg(not(madsim))]
 use crate::rocksdb_engine::RocksEngine;
-use crate::{EngineError, SnapshotApi, StorageEngine, TransactionApi, WriteOperation};
+use crate::{EngineError, SnapshotApi, StorageEngine, StorageOps, TransactionApi, WriteOperation};
 
 define_metrics! {
     "engine",
@@ -67,28 +67,6 @@ where
         Layer::new(self.engine.transaction())
     }
 
-    /// Get the value associated with a key value and the given table
-    ///
-    /// # Errors
-    /// Return `EngineError::TableNotFound` if the given table does not exist
-    /// Return `EngineError` if met some errors
-    fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
-        self.engine.get(table, key)
-    }
-
-    /// Get the values associated with the given keys
-    ///
-    /// # Errors
-    /// Return `EngineError::TableNotFound` if the given table does not exist
-    /// Return `EngineError` if met some errors
-    fn get_multi(
-        &self,
-        table: &str,
-        keys: &[impl AsRef<[u8]>],
-    ) -> Result<Vec<Option<Vec<u8>>>, EngineError> {
-        self.engine.get_multi(table, keys)
-    }
-
     /// Get all the values of the given table
     /// # Errors
     /// Return `EngineError::TableNotFound` if the given table does not exist
@@ -96,28 +74,6 @@ where
     #[allow(clippy::type_complexity)] // it's clear that (Vec<u8>, Vec<u8>) is a key-value pair
     fn get_all(&self, table: &str) -> Result<Vec<(Vec<u8>, Vec<u8>)>, EngineError> {
         self.engine.get_all(table)
-    }
-
-    /// Commit a batch of write operations
-    /// If sync is true, the write will be flushed from the operating system
-    /// buffer cache before the write is considered complete. If this
-    /// flag is true, writes will be slower.
-    ///
-    /// # Errors
-    /// Return `EngineError::TableNotFound` if the given table does not exist
-    /// Return `EngineError` if met some errors
-    fn write_batch(&self, wr_ops: Vec<WriteOperation<'_>>, sync: bool) -> Result<(), EngineError> {
-        let start = Instant::now();
-        let batch_size = wr_ops.len().to_string();
-        let res = self.engine.write_batch(wr_ops, sync);
-        get().engine_write_batch_duration_seconds.record(
-            start.elapsed().as_secs(),
-            &[
-                KeyValue::new("batch_size", batch_size),
-                KeyValue::new("sync", u8::from(sync).to_string()),
-            ],
-        );
-        res
     }
 
     /// Get a snapshot of the current state of the database
@@ -157,6 +113,31 @@ where
     /// Get the file size of the engine (Measured in bytes)
     fn file_size(&self) -> Result<u64, EngineError> {
         self.engine.file_size()
+    }
+}
+
+impl<E> StorageOps for Layer<E>
+where
+    E: StorageOps,
+{
+    fn write(&self, op: WriteOperation<'_>, sync: bool) -> Result<(), EngineError> {
+        self.engine.write(op, sync)
+    }
+
+    fn write_multi(&self, ops: Vec<WriteOperation<'_>>, sync: bool) -> Result<(), EngineError> {
+        self.engine.write_multi(ops, sync)
+    }
+
+    fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
+        self.engine.get(table, key)
+    }
+
+    fn get_multi(
+        &self,
+        table: &str,
+        keys: &[impl AsRef<[u8]>],
+    ) -> Result<Vec<Option<Vec<u8>>>, EngineError> {
+        self.engine.get_multi(table, keys)
     }
 }
 
