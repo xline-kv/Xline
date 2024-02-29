@@ -15,19 +15,20 @@ use bytes::{Buf, Bytes, BytesMut};
 use clippy_utilities::{NumericCast, OverflowArithmetic};
 use rocksdb::{
     Direction, Error as RocksError, ErrorKind as RocksErrorKind, IteratorMode,
-    OptimisticTransactionDB, Options, SstFileWriter,
+    OptimisticTransactionDB, Options, SstFileWriter, Transaction,
 };
 use serde::{Deserialize, Serialize};
 use tokio::{fs::File, io::AsyncWriteExt};
 use tokio_util::io::read_buf;
 use tracing::warn;
 
-pub(super) use self::transaction::RocksTransaction;
 use crate::{
     api::{engine_api::StorageEngine, snapshot_api::SnapshotApi},
     error::EngineError,
-    WriteOperation,
+    StorageOps, WriteOperation,
 };
+
+pub(super) use self::transaction::RocksTransaction;
 
 /// Install snapshot chunk size: 64KB
 const SNAPSHOT_CHUNK_SIZE: usize = 64 * 1024;
@@ -146,106 +147,20 @@ impl RocksEngine {
         self.apply_snapshot(rocks_snapshot, tables).await?;
         Ok(())
     }
-}
 
-#[async_trait::async_trait]
-impl StorageEngine for RocksEngine {
-    type Snapshot = RocksSnapshot;
-    type Transaction<'db> = RocksTransaction<'db>;
-
-    #[inline]
-    fn transaction(&self) -> RocksTransaction<'_> {
-        let txn = self.inner.transaction();
-        RocksTransaction::new(Arc::clone(&self.inner), txn, &self.size)
-    }
-
-    #[inline]
-    fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
-        if let Some(cf) = self.inner.cf_handle(table) {
-            Ok(self.inner.get_cf(&cf, key)?)
-        } else {
-            Err(EngineError::TableNotFound(table.to_owned()))
-        }
-    }
-
-    #[inline]
-    fn get_multi(
-        &self,
-        table: &str,
-        keys: &[impl AsRef<[u8]>],
-    ) -> Result<Vec<Option<Vec<u8>>>, EngineError> {
-        if let Some(cf) = self.inner.cf_handle(table) {
-            self.inner
-                .multi_get_cf(repeat(&cf).zip(keys.iter()))
-                .into_iter()
-                .map(|res| res.map_err(EngineError::from))
-                .collect::<Result<Vec<_>, EngineError>>()
-        } else {
-            Err(EngineError::TableNotFound(table.to_owned()))
-        }
-    }
-
-    #[inline]
-    fn get_all(&self, table: &str) -> Result<Vec<(Vec<u8>, Vec<u8>)>, EngineError> {
-        if let Some(cf) = self.inner.cf_handle(table) {
-            self.inner
-                .iterator_cf(&cf, IteratorMode::Start)
-                .map(|v| {
-                    v.map(|(key, value)| (key.to_vec(), value.to_vec()))
-                        .map_err(EngineError::from)
-                })
-                .collect()
-        } else {
-            Err(EngineError::TableNotFound(table.to_owned()))
-        }
-    }
-
-    #[inline]
-    fn write_batch(&self, wr_ops: Vec<WriteOperation<'_>>, _sync: bool) -> Result<(), EngineError> {
+    /// Executes a function with a transaction
+    /// FIXME: Removes the retry logic after curp command execution has reimplemented
+    /// FIXME: Also removes the `Clone` impl of `WriteOperation`
+    fn with_transaction<F>(&self, f: F) -> Result<(), EngineError>
+    where
+        F: Fn(&Transaction<'_, OptimisticTransactionDB>) -> Result<usize, EngineError>,
+    {
         let mut retry_interval = 10;
         let max_retry_count = 5;
         let mut retry_count = 0;
         loop {
             let transaction = self.inner.transaction();
-            let mut size = 0;
-            #[allow(clippy::pattern_type_mismatch)] // can't be fixed
-            for op in &wr_ops {
-                match op {
-                    WriteOperation::Put { table, key, value } => {
-                        let cf = self
-                            .inner
-                            .cf_handle(table)
-                            .ok_or(EngineError::TableNotFound((*table).to_owned()))?;
-                        size = size.overflow_add(Self::max_write_size(
-                            table.len(),
-                            key.len(),
-                            value.len(),
-                        ));
-                        transaction.put_cf(&cf, key, value)?;
-                    }
-                    WriteOperation::Delete { table, key } => {
-                        let cf = self
-                            .inner
-                            .cf_handle(table)
-                            .ok_or(EngineError::TableNotFound((*table).to_owned()))?;
-                        transaction.delete_cf(&cf, key)?;
-                    }
-                    WriteOperation::DeleteRange { table, from, to } => {
-                        let cf = self
-                            .inner
-                            .cf_handle(table)
-                            .ok_or(EngineError::TableNotFound((*table).to_owned()))?;
-                        let mode = IteratorMode::From(from, Direction::Forward);
-                        let kvs: Vec<_> = transaction
-                            .iterator_cf(&cf, mode)
-                            .take_while(|res| res.as_ref().is_ok_and(|(key, _)| key.as_ref() < *to))
-                            .collect::<Result<Vec<_>, _>>()?;
-                        for (key, _) in kvs {
-                            transaction.delete_cf(&cf, key)?;
-                        }
-                    }
-                }
-            }
+            let size = f(&transaction)?;
             match transaction.commit() {
                 Ok(()) => {
                     _ = self
@@ -268,6 +183,77 @@ impl StorageEngine for RocksEngine {
                 }
                 Err(err) => return Err(EngineError::UnderlyingError(err.to_string())),
             }
+        }
+    }
+
+    /// Writes an op to the db
+    #[inline]
+    fn write_op(
+        &self,
+        transaction: &Transaction<'_, OptimisticTransactionDB>,
+        op: WriteOperation<'_>,
+    ) -> Result<usize, EngineError> {
+        #[allow(clippy::pattern_type_mismatch)] // can't be fixed
+        match op {
+            WriteOperation::Put { table, key, value } => {
+                let cf = self
+                    .inner
+                    .cf_handle(table)
+                    .ok_or(EngineError::TableNotFound(table.to_owned()))?;
+                let size = Self::max_write_size(table.len(), key.len(), value.len());
+                transaction.put_cf(&cf, key, value)?;
+                Ok(size)
+            }
+            WriteOperation::Delete { table, key } => {
+                let cf = self
+                    .inner
+                    .cf_handle(table)
+                    .ok_or(EngineError::TableNotFound(table.to_owned()))?;
+                transaction.delete_cf(&cf, key)?;
+                Ok(0)
+            }
+            WriteOperation::DeleteRange { table, from, to } => {
+                let cf = self
+                    .inner
+                    .cf_handle(table)
+                    .ok_or(EngineError::TableNotFound(table.to_owned()))?;
+                let mode = IteratorMode::From(from, Direction::Forward);
+                let kvs: Vec<_> = transaction
+                    .iterator_cf(&cf, mode)
+                    .take_while(|res| res.as_ref().is_ok_and(|(key, _)| key.as_ref() < to))
+                    .collect::<Result<Vec<_>, _>>()?;
+                for (key, _) in kvs {
+                    transaction.delete_cf(&cf, key)?;
+                }
+                Ok(0)
+            }
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl StorageEngine for RocksEngine {
+    type Snapshot = RocksSnapshot;
+    type Transaction<'db> = RocksTransaction<'db>;
+
+    #[inline]
+    fn transaction(&self) -> RocksTransaction<'_> {
+        let txn = self.inner.transaction();
+        RocksTransaction::new(Arc::clone(&self.inner), txn, &self.size)
+    }
+
+    #[inline]
+    fn get_all(&self, table: &str) -> Result<Vec<(Vec<u8>, Vec<u8>)>, EngineError> {
+        if let Some(cf) = self.inner.cf_handle(table) {
+            self.inner
+                .iterator_cf(&cf, IteratorMode::Start)
+                .map(|v| {
+                    v.map(|(key, value)| (key.to_vec(), value.to_vec()))
+                        .map_err(EngineError::from)
+                })
+                .collect()
+        } else {
+            Err(EngineError::TableNotFound(table.to_owned()))
         }
     }
 
@@ -339,6 +325,53 @@ impl StorageEngine for RocksEngine {
         let size = Self::get_db_size(&self.inner, &self.tables)?;
         self.size.store(size, std::sync::atomic::Ordering::Relaxed);
         Ok(size)
+    }
+}
+
+impl StorageOps for RocksEngine {
+    #[inline]
+    fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
+        if let Some(cf) = self.inner.cf_handle(table) {
+            Ok(self.inner.get_cf(&cf, key)?)
+        } else {
+            Err(EngineError::TableNotFound(table.to_owned()))
+        }
+    }
+
+    #[inline]
+    fn get_multi(
+        &self,
+        table: &str,
+        keys: &[impl AsRef<[u8]>],
+    ) -> Result<Vec<Option<Vec<u8>>>, EngineError> {
+        if let Some(cf) = self.inner.cf_handle(table) {
+            self.inner
+                .multi_get_cf(repeat(&cf).zip(keys.iter()))
+                .into_iter()
+                .map(|res| res.map_err(EngineError::from))
+                .collect::<Result<Vec<_>, EngineError>>()
+        } else {
+            Err(EngineError::TableNotFound(table.to_owned()))
+        }
+    }
+
+    fn write(&self, op: WriteOperation<'_>, _sync: bool) -> Result<(), EngineError> {
+        self.with_transaction(|txn| self.write_op(txn, op.clone()))
+    }
+
+    #[inline]
+    fn write_multi<'a, Ops>(&self, ops: Ops, _sync: bool) -> Result<(), EngineError>
+    where
+        Ops: IntoIterator<Item = WriteOperation<'a>>,
+    {
+        let ops: Vec<_> = ops.into_iter().collect();
+        self.with_transaction(|txn| {
+            let mut size = 0;
+            for op in ops.clone() {
+                size = size.overflow_add(self.write_op(txn, op)?);
+            }
+            Ok(size)
+        })
     }
 }
 
@@ -726,7 +759,7 @@ mod test {
         let engine = RocksEngine::new(path.clone(), &TEST_TABLES).unwrap();
         let size1 = engine.file_size().unwrap();
         engine
-            .write_batch(
+            .write_multi(
                 vec![WriteOperation::new_put(
                     "t1",
                     b"key".to_vec(),

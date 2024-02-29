@@ -11,16 +11,17 @@ use std::{
 
 use bytes::{Bytes, BytesMut};
 use clippy_utilities::NumericCast;
-use parking_lot::RwLock;
+use parking_lot::{RwLock, RwLockWriteGuard};
 use tokio::io::AsyncWriteExt;
 use tokio_util::io::read_buf;
 
-pub(super) use self::transaction::MemoryTransaction;
 use crate::{
     api::{engine_api::StorageEngine, snapshot_api::SnapshotApi},
     error::EngineError,
-    WriteOperation,
+    StorageOps, WriteOperation,
 };
+
+pub(super) use self::transaction::MemoryTransaction;
 
 /// A helper type to store the key-value pairs for the `MemoryEngine`
 type MemoryTable = HashMap<Vec<u8>, Vec<u8>>;
@@ -53,6 +54,44 @@ impl MemoryEngine {
             inner: Arc::new(RwLock::new(db)),
         }
     }
+
+    /// Write an operation
+    #[inline]
+    fn write_op(
+        inner: &mut RwLockWriteGuard<'_, HashMap<String, MemoryTable>>,
+        op: WriteOperation<'_>,
+    ) -> Result<(), EngineError> {
+        match op {
+            WriteOperation::Put { table, key, value } => {
+                let table = inner
+                    .get_mut(table)
+                    .ok_or_else(|| EngineError::TableNotFound(table.to_owned()))?;
+                let _ignore = table.insert(key, value);
+            }
+            WriteOperation::Delete { table, key } => {
+                let table = inner
+                    .get_mut(table)
+                    .ok_or_else(|| EngineError::TableNotFound(table.to_owned()))?;
+                let _ignore = table.remove(key);
+            }
+            WriteOperation::DeleteRange { table, from, to } => {
+                let table = inner
+                    .get_mut(table)
+                    .ok_or_else(|| EngineError::TableNotFound(table.to_owned()))?;
+                table.retain(|key, _value| {
+                    let key_slice = key.as_slice();
+                    match key_slice.cmp(from) {
+                        Ordering::Less => true,
+                        Ordering::Equal => false,
+                        Ordering::Greater => {
+                            matches!(key_slice.cmp(to), Ordering::Equal | Ordering::Greater)
+                        }
+                    }
+                });
+            }
+        }
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -74,32 +113,6 @@ impl StorageEngine for MemoryEngine {
     }
 
     #[inline]
-    fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
-        let inner = self.inner.read();
-        let table = inner
-            .get(table)
-            .ok_or_else(|| EngineError::TableNotFound(table.to_owned()))?;
-        Ok(table.get(&key.as_ref().to_vec()).cloned())
-    }
-
-    #[inline]
-    fn get_multi(
-        &self,
-        table: &str,
-        keys: &[impl AsRef<[u8]>],
-    ) -> Result<Vec<Option<Vec<u8>>>, EngineError> {
-        let inner = self.inner.read();
-        let table = inner
-            .get(table)
-            .ok_or_else(|| EngineError::TableNotFound(table.to_owned()))?;
-
-        Ok(keys
-            .iter()
-            .map(|key| table.get(&key.as_ref().to_vec()).cloned())
-            .collect())
-    }
-
-    #[inline]
     fn get_all(&self, table: &str) -> Result<Vec<(Vec<u8>, Vec<u8>)>, EngineError> {
         let inner = self.inner.read();
         let table = inner
@@ -111,44 +124,6 @@ impl StorageEngine for MemoryEngine {
             .collect::<Vec<_>>();
         values.sort_by(|v1, v2| v1.0.cmp(&v2.0));
         Ok(values)
-    }
-
-    #[inline]
-    fn write_batch(&self, wr_ops: Vec<WriteOperation<'_>>, _sync: bool) -> Result<(), EngineError> {
-        let mut inner = self.inner.write();
-        for op in wr_ops {
-            match op {
-                WriteOperation::Put { table, key, value } => {
-                    let table = inner
-                        .get_mut(table)
-                        .ok_or_else(|| EngineError::TableNotFound(table.to_owned()))?;
-                    let _ignore = table.insert(key, value);
-                }
-                WriteOperation::Delete { table, key } => {
-                    let table = inner
-                        .get_mut(table)
-                        .ok_or_else(|| EngineError::TableNotFound(table.to_owned()))?;
-                    let _ignore = table.remove(key);
-                }
-                WriteOperation::DeleteRange { table, from, to } => {
-                    let table = inner
-                        .get_mut(table)
-                        .ok_or_else(|| EngineError::TableNotFound(table.to_owned()))?;
-                    table.retain(|key, _value| {
-                        let key_slice = key.as_slice();
-                        match key_slice.cmp(from) {
-                            Ordering::Less => true,
-                            Ordering::Equal => false,
-                            Ordering::Greater => match key_slice.cmp(to) {
-                                Ordering::Less => false,
-                                Ordering::Equal | Ordering::Greater => true,
-                            },
-                        }
-                    });
-                }
-            }
-        }
-        Ok(())
     }
 
     #[inline]
@@ -187,6 +162,49 @@ impl StorageEngine for MemoryEngine {
 
     fn file_size(&self) -> Result<u64, EngineError> {
         Ok(0)
+    }
+}
+
+impl StorageOps for MemoryEngine {
+    fn write(&self, op: WriteOperation<'_>, _sync: bool) -> Result<(), EngineError> {
+        let mut inner = self.inner.write();
+        Self::write_op(&mut inner, op)
+    }
+
+    #[inline]
+    fn write_multi<'a, Ops>(&self, ops: Ops, _sync: bool) -> Result<(), EngineError>
+    where
+        Ops: IntoIterator<Item = WriteOperation<'a>>,
+    {
+        let mut inner = self.inner.write();
+        for op in ops {
+            Self::write_op(&mut inner, op)?;
+        }
+        Ok(())
+    }
+
+    fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
+        let inner = self.inner.read();
+        let table = inner
+            .get(table)
+            .ok_or_else(|| EngineError::TableNotFound(table.to_owned()))?;
+        Ok(table.get(&key.as_ref().to_vec()).cloned())
+    }
+
+    fn get_multi(
+        &self,
+        table: &str,
+        keys: &[impl AsRef<[u8]>],
+    ) -> Result<Vec<Option<Vec<u8>>>, EngineError> {
+        let inner = self.inner.read();
+        let table = inner
+            .get(table)
+            .ok_or_else(|| EngineError::TableNotFound(table.to_owned()))?;
+
+        Ok(keys
+            .iter()
+            .map(|key| table.get(&key.as_ref().to_vec()).cloned())
+            .collect())
     }
 }
 
