@@ -835,6 +835,7 @@ impl From<CurpError> for tonic::Status {
 
 /// Entry of speculative pool
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(PartialEq))]
 pub(crate) struct PoolEntry<C> {
     /// Propose id
     pub(crate) id: ProposeId,
@@ -844,6 +845,7 @@ pub(crate) struct PoolEntry<C> {
 
 /// Inner entry of speculative pool
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(PartialEq))]
 pub(crate) enum PoolEntryInner<C> {
     /// Command entry
     Command(Arc<C>),
@@ -851,10 +853,7 @@ pub(crate) enum PoolEntryInner<C> {
     ConfChange(Vec<ConfChange>),
 }
 
-impl<C> PoolEntry<C>
-where
-    C: Command,
-{
+impl<C> PoolEntry<C> {
     /// Create a new pool entry
     pub(crate) fn new(id: ProposeId, inner: impl Into<PoolEntryInner<C>>) -> Self {
         Self {
@@ -862,7 +861,12 @@ where
             inner: inner.into(),
         }
     }
+}
 
+impl<C> PoolEntry<C>
+where
+    C: Command,
+{
     /// Check if the entry is conflict with the command
     pub(crate) fn is_conflict_with_cmd(&self, c: &C) -> bool {
         match self.inner {
