@@ -44,7 +44,7 @@ pub(super) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result
     } else {
         tokio::select! {
             _ = ctrl_c() => {}
-            result = keep_alive_loop(keeper, stream) => {
+            result = keep_alive_loop(keeper, stream, true) => {
                 return result;
             }
         }
@@ -57,11 +57,14 @@ pub(super) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result
 async fn keep_alive_loop(
     mut keeper: LeaseKeeper,
     mut stream: Streaming<LeaseKeepAliveResponse>,
+    verbose: bool,
 ) -> Result<()> {
     loop {
         keeper.keep_alive()?;
         if let Some(resp) = stream.message().await? {
-            resp.print();
+            if verbose {
+                resp.print();
+            }
             if resp.ttl < 0 {
                 return Err(XlineClientError::InvalidArgs(String::from(
                     "lease keepalive response has negative ttl",

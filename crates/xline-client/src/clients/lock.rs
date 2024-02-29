@@ -1,34 +1,359 @@
-use std::{
-    fmt::Debug,
-    pin::Pin,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-};
+use std::{fmt::Debug, sync::Arc, time::Duration};
 
+use async_dropper::{AsyncDrop, AsyncDropper};
+use async_trait::async_trait;
 use clippy_utilities::OverflowArithmetic;
-use futures::{Future, FutureExt};
+use tokio::{task::JoinHandle, time::sleep};
 use tonic::transport::Channel;
 use xlineapi::{
     command::{Command, CommandResponse, KeyRange, SyncResponse},
-    Compare, CompareResult, CompareTarget, DeleteRangeRequest, DeleteRangeResponse, EventType,
-    LockResponse, PutRequest, RangeRequest, RangeResponse, Request, RequestOp, RequestWrapper,
-    Response, ResponseHeader, SortOrder, SortTarget, TargetUnion, TxnRequest, TxnResponse,
-    UnlockResponse,
+    Compare, CompareResult, CompareTarget, DeleteRangeRequest, EventType, PutRequest, RangeRequest,
+    RangeResponse, Request, RequestOp, RequestWrapper, Response, ResponseHeader, SortOrder,
+    SortTarget, TargetUnion, TxnRequest, TxnResponse,
 };
 
 use crate::{
-    clients::{lease::LeaseClient, watch::WatchClient},
+    clients::{lease::LeaseClient, watch::WatchClient, DEFAULT_SESSION_TTL},
     error::{Result, XlineClientError},
     lease_gen::LeaseIdGenerator,
     types::{
-        lease::LeaseGrantRequest,
-        lock::{LockRequest, UnlockRequest},
+        kv::TxnRequest as KvTxnRequest,
+        lease::{LeaseGrantRequest, LeaseKeepAliveRequest},
         watch::WatchRequest,
     },
     CurpClient,
 };
+
+/// Session represents a lease kept alive for the lifetime of a client.
+#[derive(Debug)]
+pub struct Session {
+    /// The lock client that used to create the session
+    client: LockClient,
+    /// lease id
+    lease_id: i64,
+    /// `keep_alive` task will auto-renew the lease
+    keep_alive: Option<JoinHandle<Result<()>>>,
+}
+
+impl Drop for Session {
+    #[inline]
+    fn drop(&mut self) {
+        if let Some(keep_alive) = self.keep_alive.take() {
+            keep_alive.abort();
+        }
+    }
+}
+
+/// Xutex（Xline Mutex） implements the sync lock with xline
+#[derive(Debug)]
+pub struct Xutex {
+    /// Lock session
+    session: Session,
+    /// Lock
+    prefix: String,
+    /// Lock key
+    key: String,
+    /// The revision of lock key
+    rev: i64,
+    /// Request header
+    header: Option<ResponseHeader>,
+}
+
+/// An RAII implementation of  a “scoped lock” of an `Xutex`
+#[derive(Default, Debug)]
+pub struct XutexGuard {
+    /// The lock client that used to unlock `key` when `XutexGuard` is dropped
+    client: Option<LockClient>,
+    /// The key that the lock held
+    key: String,
+}
+
+impl XutexGuard {
+    /// Create a new `XutexGuard`
+    fn new(client: LockClient, key: String) -> AsyncDropper<Self> {
+        AsyncDropper::new(Self {
+            client: Some(client),
+            key,
+        })
+    }
+
+    /// Get the key of the Xutex
+    #[inline]
+    #[must_use]
+    pub fn key(&self) -> &str {
+        self.key.as_str()
+    }
+
+    /// Return a `TxnRequest` which will perform the success ops when the locked key is exist.
+    /// This method is syntactic sugar
+    #[inline]
+    #[must_use]
+    pub fn txn_check_locked_key(&self) -> KvTxnRequest {
+        let mut txn_request = KvTxnRequest::new();
+        #[allow(clippy::as_conversions)]
+        let cmp = Compare {
+            result: CompareResult::Greater as i32,
+            target: CompareTarget::Create as i32,
+            key: self.key().into(),
+            range_end: Vec::new(),
+            target_union: Some(TargetUnion::CreateRevision(0)),
+        };
+        txn_request.inner.compare.push(cmp);
+        txn_request
+    }
+}
+
+#[async_trait]
+impl AsyncDrop for XutexGuard {
+    #[inline]
+    async fn async_drop(&mut self) {
+        if let Some(ref client) = self.client {
+            let _ignore = client.delete_key(self.key.as_bytes()).await;
+        }
+    }
+}
+
+impl Xutex {
+    /// Create an Xutex
+    ///
+    /// # Errors
+    ///
+    /// Return errors when the lease client failed to grant a lease
+    #[inline]
+    pub async fn new(
+        client: LockClient,
+        prefix: &str,
+        ttl: Option<i64>,
+        lease_id: Option<i64>,
+    ) -> Result<Self> {
+        let ttl = ttl.unwrap_or(DEFAULT_SESSION_TTL);
+        let lease_id = if let Some(id) = lease_id {
+            id
+        } else {
+            let lease_response = client
+                .lease_client
+                .grant(LeaseGrantRequest::new(ttl))
+                .await?;
+            lease_response.id
+        };
+        let mut lease_client = client.lease_client.clone();
+        let keep_alive = Some(tokio::spawn(async move {
+            /// The renew interval factor of which value equals 60% of one second.
+            const RENEW_INTERVAL_FACTOR: u64 = 600;
+            let (mut keeper, mut stream) = lease_client
+                .keep_alive(LeaseKeepAliveRequest::new(lease_id))
+                .await?;
+            loop {
+                keeper.keep_alive()?;
+                if let Some(resp) = stream.message().await? {
+                    if resp.ttl < 0 {
+                        return Err(XlineClientError::InvalidArgs(String::from(
+                            "lease keepalive response has negative ttl",
+                        )));
+                    }
+                    sleep(Duration::from_millis(
+                        resp.ttl.unsigned_abs().overflow_mul(RENEW_INTERVAL_FACTOR),
+                    ))
+                    .await;
+                }
+            }
+        }));
+
+        let session = Session {
+            client,
+            lease_id,
+            keep_alive,
+        };
+
+        Ok(Self {
+            session,
+            prefix: format!("{prefix}/"),
+            key: String::new(),
+            rev: -1,
+            header: None,
+        })
+    }
+
+    /// try to acquire lock
+    async fn try_acquire(&mut self) -> Result<TxnResponse> {
+        let lease_id = self.session.lease_id;
+        let prefix = self.prefix.as_str();
+        self.key = format!("{prefix}{lease_id:x}");
+        #[allow(clippy::as_conversions)] // this cast is always safe
+        let cmp = Compare {
+            result: CompareResult::Equal as i32,
+            target: CompareTarget::Create as i32,
+            key: self.key.as_bytes().to_vec(),
+            range_end: vec![],
+            target_union: Some(TargetUnion::CreateRevision(0)),
+        };
+        let put = RequestOp {
+            request: Some(Request::RequestPut(PutRequest {
+                key: self.key.as_bytes().to_vec(),
+                value: vec![],
+                lease: lease_id,
+                ..Default::default()
+            })),
+        };
+        let get = RequestOp {
+            request: Some(Request::RequestRange(RangeRequest {
+                key: self.key.as_bytes().to_vec(),
+                ..Default::default()
+            })),
+        };
+        let range_end = KeyRange::get_prefix(prefix.as_bytes());
+        #[allow(clippy::as_conversions)] // this cast is always safe
+        let get_owner = RequestOp {
+            request: Some(Request::RequestRange(RangeRequest {
+                key: prefix.as_bytes().to_vec(),
+                range_end,
+                sort_order: SortOrder::Ascend as i32,
+                sort_target: SortTarget::Create as i32,
+                limit: 1,
+                ..Default::default()
+            })),
+        };
+        let acquire_txn = TxnRequest {
+            compare: vec![cmp],
+            success: vec![put, get_owner.clone()],
+            failure: vec![get, get_owner],
+        };
+        let (cmd_res, sync_res) = self.session.client.propose(acquire_txn, false).await?;
+        let resp = Into::<TxnResponse>::into(cmd_res.into_inner());
+        self.rev = if resp.succeeded {
+            sync_res
+                .unwrap_or_else(|| unreachable!("sync_res always has value when use slow path"))
+                .revision()
+        } else {
+            #[allow(clippy::indexing_slicing)]
+            // it's safe to do since the txn response must have two responses.
+            if let Some(Response::ResponseRange(ref res)) = resp.responses[0].response {
+                res.kvs[0].create_revision
+            } else {
+                unreachable!("The first response in txn responses should be a RangeResponse when txn failed: {:?}", resp);
+            }
+        };
+        Ok(resp)
+    }
+
+    /// Acquires a distributed shared lock on a given named lock.
+    /// On success, it will return a unique key that exists so long as the
+    /// lock is held by the caller. This key can be used in conjunction with
+    /// transactions to safely ensure updates to Xline only occur while holding
+    /// lock ownership. The lock is held until Unlock is called on the key or the
+    /// lease associate with the owner expires.
+    ///
+    /// NOTES. Due to the inherent insecurity of distributed locks, it is difficult to balance efficiency
+    ///  and correctness. You cannot have your cake and eat it too. That’s why this method is named `lock_unsafe`.
+    /// The term 'unsafe' in this context has a different meaning compared to 'unsafe' in Rust. On the grounds of
+    /// safety, we recommend users use transactions（`txn_check_locked_key`） to operate Xline while holding the lock.
+    /// FYI: [How to do distributed locking](https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html)
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Panics
+    ///
+    /// Panic if the given `LockRequest.inner.lease` less than or equal to 0
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::
+    ///     clients::{Session, Xutex},
+    ///     types::lock::{LockRequest, UnlockRequest},
+    ///     Client, ClientOptions,
+    /// };
+    /// use anyhow::Result;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     // the name and address of all curp members
+    ///     let curp_members = ["10.0.0.1:2379", "10.0.0.2:2379", "10.0.0.3:2379"];
+    ///
+    ///     let mut client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .lock_client();
+    ///
+    ///     // acquire a lock session
+    ///     let session = Session::new(client.lock_client()).build().await?;
+    ///     let mut xutex = Xutex::new(session, "lock-test");
+    ///     let lock = xutex.lock().await?;
+    ///
+    ///     let txn_req = xutex_guard
+    ///         .txn_check_locked_key()
+    ///         .when([Compare::value("key2", CompareResult::Equal, "value2")])
+    ///         .and_then([TxnOp::put(
+    ///             PutRequest::new("key2", "value3").with_prev_kv(true),
+    ///         )])
+    ///         .or_else(&[]);
+
+    ///     let _resp = kv_client.txn(txn_req).await?;
+    ///     println!("lock key: {:?}", String::from_utf8_lossy(xutex.key().as_bytes();
+    ///     // the lock will be released when the lock session is dropped.
+    ///     Ok(())
+    /// }
+    /// ```
+    #[inline]
+    pub async fn lock_unsafe(&mut self) -> Result<AsyncDropper<XutexGuard>> {
+        if self
+            .session
+            .keep_alive
+            .as_ref()
+            .is_some_and(JoinHandle::is_finished)
+        {
+            return Err(XlineClientError::LeaseError(String::from(
+                "Lock renew task exists unexpectedly",
+            )));
+        }
+        let resp = self.try_acquire().await?;
+        #[allow(clippy::indexing_slicing)]
+        if let Some(Response::ResponseRange(ref lock_owner)) = resp.responses[1].response {
+            // if no key on prefix or the key is created by current Xutex, that indicates we have already held the lock
+            if lock_owner
+                .kvs
+                .get(0)
+                .map_or(false, |kv| kv.create_revision == self.rev)
+            {
+                self.header = resp.header;
+                return Ok(XutexGuard::new(
+                    self.session.client.clone(),
+                    self.key.clone(),
+                ));
+            }
+        } else {
+            unreachable!("owner_resp should be a Get response")
+        }
+
+        self.session
+            .client
+            .wait_delete(self.prefix.clone(), self.rev)
+            .await?;
+        // make sure the session is no expired, and the owner key still exists.
+        let range_req = RangeRequest {
+            key: self.key.as_bytes().to_vec(),
+            ..Default::default()
+        };
+        match self.session.client.propose(range_req, true).await {
+            Ok((cmd_res, _sync_res)) => {
+                let res = Into::<RangeResponse>::into(cmd_res.into_inner());
+                if res.kvs.is_empty() {
+                    return Err(XlineClientError::RpcError(String::from("session expired")));
+                }
+                self.header = res.header;
+                Ok(XutexGuard::new(
+                    self.session.client.clone(),
+                    self.key.clone(),
+                ))
+            }
+            Err(e) => {
+                self.session.client.delete_key(self.key.as_bytes()).await?;
+                Err(e)
+            }
+        }
+    }
+}
 
 /// Client for Lock operations.
 #[derive(Clone)]
@@ -47,7 +372,6 @@ impl Debug for LockClient {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LockClient")
-            .field("lease_client", &self.lease_client)
             .field("watch_client", &self.watch_client)
             .field("token", &self.token)
             .finish()
@@ -73,178 +397,6 @@ impl LockClient {
         }
     }
 
-    /// Acquires a distributed shared lock on a given named lock.
-    /// On success, it will return a unique key that exists so long as the
-    /// lock is held by the caller. This key can be used in conjunction with
-    /// transactions to safely ensure updates to Xline only occur while holding
-    /// lock ownership. The lock is held until Unlock is called on the key or the
-    /// lease associate with the owner expires.
-    ///
-    /// # Errors
-    ///
-    /// This function will return an error if the inner CURP client encountered a propose failure
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use xline_client::{
-    ///     types::lock::{LockRequest, UnlockRequest},
-    ///     Client, ClientOptions,
-    /// };
-    /// use anyhow::Result;
-    ///
-    /// #[tokio::main]
-    /// async fn main() -> Result<()> {
-    ///     // the name and address of all curp members
-    ///     let curp_members = ["10.0.0.1:2379", "10.0.0.2:2379", "10.0.0.3:2379"];
-    ///
-    ///     let mut client = Client::connect(curp_members, ClientOptions::default())
-    ///         .await?
-    ///         .lock_client();
-    ///
-    ///     // acquire a lock
-    ///     let resp = client
-    ///         .lock(LockRequest::new("lock-test"))
-    ///         .await?;
-    ///
-    ///     let key = resp.key;
-    ///
-    ///     println!("lock key: {:?}", String::from_utf8_lossy(&key));
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    #[inline]
-    pub async fn lock(&self, request: LockRequest) -> Result<LockResponse> {
-        let mut lease_id = request.inner.lease;
-        if lease_id == 0 {
-            let resp = self
-                .lease_client
-                .grant(LeaseGrantRequest::new(request.ttl))
-                .await?;
-            lease_id = resp.id;
-        }
-        let prefix = format!(
-            "{}/",
-            String::from_utf8_lossy(&request.inner.name).into_owned()
-        );
-        let key = format!("{prefix}{lease_id:x}");
-        let lock_success = AtomicBool::new(false);
-        let lock_inner = self.lock_inner(prefix, key.clone(), lease_id, &lock_success);
-        tokio::pin!(lock_inner);
-
-        LockFuture {
-            key,
-            lock_success: &lock_success,
-            lock_client: self,
-            lock_inner,
-        }
-        .await
-    }
-
-    /// The inner lock logic
-    async fn lock_inner(
-        &self,
-        prefix: String,
-        key: String,
-        lease_id: i64,
-        lock_success: &AtomicBool,
-    ) -> Result<LockResponse> {
-        let txn = Self::create_acquire_txn(&prefix, lease_id);
-        let (cmd_res, sync_res) = self.propose(txn, false).await?;
-        let mut txn_res = Into::<TxnResponse>::into(cmd_res.into_inner());
-        let my_rev = sync_res
-            .unwrap_or_else(|| unreachable!("sync_res always has value when use slow path"))
-            .revision();
-        let owner_res = txn_res
-            .responses
-            .swap_remove(1)
-            .response
-            .and_then(|r| {
-                if let Response::ResponseRange(res) = r {
-                    Some(res)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_else(|| unreachable!("owner_resp should be a Get response"));
-
-        let owner_key = owner_res.kvs;
-        let header = if owner_key
-            .get(0)
-            .map_or(false, |kv| kv.create_revision == my_rev)
-        {
-            owner_res.header
-        } else {
-            self.wait_delete(prefix, my_rev).await?;
-            let range_req = RangeRequest {
-                key: key.as_bytes().to_vec(),
-                ..Default::default()
-            };
-            let result = self.propose(range_req, true).await;
-            match result {
-                Ok(res) => {
-                    let res = Into::<RangeResponse>::into(res.0.into_inner());
-                    if res.kvs.is_empty() {
-                        return Err(XlineClientError::RpcError(String::from("session expired")));
-                    }
-                    res.header
-                }
-                Err(e) => {
-                    let _ignore = self.delete_key(key.as_bytes()).await;
-                    return Err(e);
-                }
-            }
-        };
-
-        // The `Release` ordering ensures that this store will not be reordered.
-        lock_success.store(true, Ordering::Release);
-
-        Ok(LockResponse {
-            header,
-            key: key.into_bytes(),
-        })
-    }
-
-    /// Takes a key returned by Lock and releases the hold on lock. The
-    /// next Lock caller waiting for the lock will then be woken up and given
-    /// ownership of the lock.
-    ///
-    /// # Errors
-    ///
-    /// This function will return an error if the inner CURP client encountered a propose failure
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use xline_client::{
-    ///     types::lock::{LockRequest, UnlockRequest},
-    ///     Client, ClientOptions,
-    /// };
-    /// use anyhow::Result;
-    ///
-    /// #[tokio::main]
-    /// async fn main() -> Result<()> {
-    ///     // the name and address of all curp members
-    ///     let curp_members = ["10.0.0.1:2379", "10.0.0.2:2379", "10.0.0.3:2379"];
-    ///
-    ///     let mut client = Client::connect(curp_members, ClientOptions::default())
-    ///         .await?
-    ///         .lock_client();
-    ///
-    ///     // acquire a lock first
-    ///
-    ///     client.unlock(UnlockRequest::new("lock_key")).await?;
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    #[inline]
-    pub async fn unlock(&self, request: UnlockRequest) -> Result<UnlockResponse> {
-        let header = self.delete_key(&request.inner.key).await?;
-        Ok(UnlockResponse { header })
-    }
-
     /// Propose request and get result with fast/slow path
     async fn propose<T>(
         &self,
@@ -260,50 +412,6 @@ impl LockClient {
             .propose(&cmd, self.token.as_ref(), use_fast_path)
             .await?
             .map_err(Into::into)
-    }
-
-    /// Create txn for try acquire lock
-    fn create_acquire_txn(prefix: &str, lease_id: i64) -> TxnRequest {
-        let key = format!("{prefix}{lease_id:x}");
-        #[allow(clippy::as_conversions)] // this cast is always safe
-        let cmp = Compare {
-            result: CompareResult::Equal as i32,
-            target: CompareTarget::Create as i32,
-            key: key.as_bytes().to_vec(),
-            range_end: vec![],
-            target_union: Some(TargetUnion::CreateRevision(0)),
-        };
-        let put = RequestOp {
-            request: Some(Request::RequestPut(PutRequest {
-                key: key.as_bytes().to_vec(),
-                value: vec![],
-                lease: lease_id,
-                ..Default::default()
-            })),
-        };
-        let get = RequestOp {
-            request: Some(Request::RequestRange(RangeRequest {
-                key: key.as_bytes().to_vec(),
-                ..Default::default()
-            })),
-        };
-        let range_end = KeyRange::get_prefix(prefix.as_bytes());
-        #[allow(clippy::as_conversions)] // this cast is always safe
-        let get_owner = RequestOp {
-            request: Some(Request::RequestRange(RangeRequest {
-                key: prefix.as_bytes().to_vec(),
-                range_end,
-                sort_order: SortOrder::Ascend as i32,
-                sort_target: SortTarget::Create as i32,
-                limit: 1,
-                ..Default::default()
-            })),
-        };
-        TxnRequest {
-            compare: vec![cmp],
-            success: vec![put, get_owner.clone()],
-            failure: vec![get, get_owner],
-        }
     }
 
     /// Wait until last key deleted
@@ -344,65 +452,12 @@ impl LockClient {
     }
 
     /// Delete key
-    async fn delete_key(&self, key: &[u8]) -> Result<Option<ResponseHeader>> {
+    async fn delete_key(&self, key: &[u8]) -> Result<()> {
         let del_req = DeleteRangeRequest {
             key: key.into(),
             ..Default::default()
         };
-        let (cmd_res, _sync_res) = self.propose(del_req, true).await?;
-        let res = Into::<DeleteRangeResponse>::into(cmd_res.into_inner());
-        Ok(res.header)
-    }
-}
-
-/// The future that will do the lock operation
-/// This exists because we need to do some clean up after the lock operation has failed or being cancelled
-struct LockFuture<'a> {
-    /// The key associated with the lock
-    key: String,
-    /// Whether the acquire attempt is success
-    lock_success: &'a AtomicBool,
-    /// The lock client
-    lock_client: &'a LockClient,
-    /// The inner lock future
-    lock_inner: Pin<&'a mut (dyn Future<Output = Result<LockResponse>> + Send)>,
-}
-
-impl Debug for LockFuture<'_> {
-    #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "key: {}, lock_success: {:?}, lock_client:{:?}",
-            self.key, self.lock_success, self.lock_client
-        )
-    }
-}
-
-impl Future for LockFuture<'_> {
-    type Output = Result<LockResponse>;
-
-    #[inline]
-    fn poll(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        self.lock_inner.poll_unpin(cx)
-    }
-}
-
-impl Drop for LockFuture<'_> {
-    #[inline]
-    fn drop(&mut self) {
-        // We can safely use `Relaxed` ordering here as the if condition makes sure it
-        // won't be reordered.
-        if self.lock_success.load(Ordering::Relaxed) {
-            return;
-        }
-        let lock_client = self.lock_client.clone();
-        let key = self.key.clone();
-        let _ignore = tokio::spawn(async move {
-            let _ignore = lock_client.delete_key(key.as_bytes()).await;
-        });
+        let (_cmd_res, _sync_res) = self.propose(del_req, true).await?;
+        Ok(())
     }
 }

@@ -5,9 +5,6 @@ source $DIR/log.sh
 
 QUICK_START="${DIR}/quick_start.sh"
 ETCDCTL="docker exec -i client etcdctl --endpoints=http://172.20.0.3:2379,http://172.20.0.4:2379"
-LOCK_CLIENT="docker exec -i client /mnt/validation_lock_client --endpoints=http://172.20.0.3:2379,http://172.20.0.4:2379,http://172.20.0.5:2379"
-export LOG_PATH=/var/log/xline
-export LOG_LEVEL=debug
 
 bash ${QUICK_START}
 
@@ -278,17 +275,6 @@ lock_validation() {
     log::info "lock validation test passed"
 }
 
-lock_rpc_validation() {
-    log::info "lock rpc validation test running..."
-
-    run "${LOCK_CLIENT} lock mutex"
-    check_positive "mutex.*"
-    run "${LOCK_CLIENT} unlock ${res}"
-    check_positive "unlock success"
-
-    log::info "lock rpc validation test passed"
-}
-
 # validate maintenance requests
 maintenance_validation() {
     # snapshot save request only works on one endpoint
@@ -341,6 +327,5 @@ watch_validation
 lease_validation
 auth_validation
 lock_validation
-lock_rpc_validation
 maintenance_validation
 cluster_validation
