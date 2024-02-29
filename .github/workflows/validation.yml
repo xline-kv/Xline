@@ -35,6 +35,6 @@ jobs:
         cp ../fixtures/{private,public}.pem .
         docker build . -t ghcr.io/xline-kv/xline:latest
         docker pull gcr.io/etcd-development/etcd:v3.5.5
-      binaries: 'xline,benchmark,validation_lock_client'
+      binaries: 'xline,benchmark'
       script_name: 'validation_test.sh'
       uploadLogs: true

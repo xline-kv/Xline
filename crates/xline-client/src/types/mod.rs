@@ -6,8 +6,6 @@ pub mod cluster;
 pub mod kv;
 /// Lease type definitions
 pub mod lease;
-/// Lock type definitions.
-pub mod lock;
 /// Maintenance type definitions.
 pub mod maintenance;
 /// Watch type definitions.

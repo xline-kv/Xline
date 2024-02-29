@@ -18,7 +18,7 @@ use xline_client::types::auth::{
     AuthRoleAddRequest, AuthRoleGrantPermissionRequest, AuthUserAddRequest,
     AuthUserGrantRoleRequest, Permission, PermissionType,
 };
-pub use xline_client::{types, Client, ClientOptions};
+pub use xline_client::{clients, types, Client, ClientOptions};
 
 /// Cluster
 pub struct Cluster {

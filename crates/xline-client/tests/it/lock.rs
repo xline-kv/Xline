@@ -1,22 +1,17 @@
 use std::time::Duration;
 
 use test_macros::abort_on_panic;
-use xline_client::{
-    error::Result,
-    types::lock::{LockRequest, UnlockRequest},
-};
+use xline_client::{clients::lock::Xutex, error::Result};
 
 use super::common::get_cluster_client;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn lock_unlock_should_success_in_normal_path() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await.unwrap();
-    let client = client.lock_client();
+    let lock_client = client.lock_client();
+    let mut xutex = Xutex::new(lock_client, "lock-test", None, None).await?;
 
-    let resp = client.lock(LockRequest::new("lock-test")).await?;
-    assert!(resp.key.starts_with(b"lock-test/"));
-
-    client.unlock(UnlockRequest::new(resp.key)).await?;
+    assert!(xutex.lock_unsafe().await.is_ok());
     Ok(())
 }
 
@@ -24,31 +19,27 @@ async fn lock_unlock_should_success_in_normal_path() -> Result<()> {
 #[abort_on_panic]
 async fn lock_contention_should_occur_when_acquire_by_two() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await.unwrap();
-    let client = client.lock_client();
-    let client_c = client.clone();
+    let lock_client = client.lock_client();
+    let client_c = client.lock_client();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
-    let resp = client.lock(LockRequest::new("lock-test")).await.unwrap();
+    let mut xutex_1 = Xutex::new(lock_client, "lock-test", None, None).await?;
+    let lock_1 = xutex_1.lock_unsafe().await.unwrap();
+
+    let mut xutex_2 = Xutex::new(client_c, "lock-test", None, None).await?;
 
     let handle = tokio::spawn(async move {
-        let res = tokio::time::timeout(
-            Duration::from_secs(2),
-            client_c.lock(LockRequest::new("lock-test")),
-        )
-        .await;
-        assert!(res.is_err());
+        let lock_result = tokio::time::timeout(Duration::from_secs(2), xutex_2.lock_unsafe()).await;
+        assert!(lock_result.is_err());
         let _ignore = tx.send(());
 
-        let res = tokio::time::timeout(
-            Duration::from_millis(200),
-            client_c.lock(LockRequest::new("lock-test")),
-        )
-        .await;
-        assert!(res.is_ok_and(|r| r.is_ok_and(|resp| resp.key.starts_with(b"lock-test/"))));
+        let lock_result =
+            tokio::time::timeout(Duration::from_millis(200), xutex_2.lock_unsafe()).await;
+        assert!(lock_result.is_ok());
     });
 
     rx.recv().await.unwrap();
-    let _resp = client.unlock(UnlockRequest::new(resp.key)).await.unwrap();
+    std::mem::drop(lock_1);
 
     handle.await.unwrap();
 
@@ -57,56 +48,26 @@ async fn lock_contention_should_occur_when_acquire_by_two() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
-async fn lock_should_timeout_when_ttl_is_set() -> Result<()> {
-    let (_cluster, client) = get_cluster_client().await.unwrap();
-    let client = client.lock_client();
-
-    let _resp = client
-        .lock(LockRequest::new("lock-test").with_ttl(1))
-        .await
-        .unwrap();
-
-    let resp = tokio::time::timeout(
-        Duration::from_secs(2),
-        client.lock(LockRequest::new("lock-test")),
-    )
-    .await
-    .expect("timeout when trying to lock")?;
-
-    assert!(resp.key.starts_with(b"lock-test/"));
-
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread")]
-#[abort_on_panic]
 async fn lock_should_unlock_after_cancelled() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await.unwrap();
-    let client = client.lock_client();
-    let client_c = client.clone();
+    let lock_client = client.lock_client();
+    let client_c = lock_client.clone();
+    let mut xutex_1 = Xutex::new(lock_client, "lock-test", None, None).await?;
+    let mut xutex_2 = Xutex::new(client_c, "lock-test", None, None).await?;
     // first acquire the lock
-    let resp = client.lock(LockRequest::new("lock-test")).await.unwrap();
+    let lock_1 = xutex_1.lock_unsafe().await.unwrap();
 
     // acquire the lock again and then cancel it
-    let res = tokio::time::timeout(
-        Duration::from_secs(1),
-        client_c.lock(LockRequest::new("lock-test")),
-    )
-    .await;
+    let res = tokio::time::timeout(Duration::from_secs(1), xutex_2.lock_unsafe()).await;
     assert!(res.is_err());
 
     // unlock the first one
-    client.unlock(UnlockRequest::new(resp.key)).await?;
+    std::mem::drop(lock_1);
 
     // try lock again, it should success
-    let resp = tokio::time::timeout(
-        Duration::from_secs(1),
-        client.lock(LockRequest::new("lock-test")),
-    )
-    .await
-    .expect("timeout when trying to lock")?;
-
-    assert!(resp.key.starts_with(b"lock-test/"));
+    let _session = tokio::time::timeout(Duration::from_secs(1), xutex_2.lock_unsafe())
+        .await
+        .expect("timeout when trying to lock")?;
 
     Ok(())
 }

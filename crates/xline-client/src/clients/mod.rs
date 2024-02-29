@@ -3,7 +3,7 @@ pub use cluster::ClusterClient;
 pub use election::ElectionClient;
 pub use kv::KvClient;
 pub use lease::LeaseClient;
-pub use lock::LockClient;
+pub use lock::{LockClient, Session, Xutex};
 pub use maintenance::MaintenanceClient;
 pub use watch::WatchClient;
 
@@ -18,8 +18,11 @@ mod kv;
 /// Lease client.
 mod lease;
 /// Lock client.
-mod lock;
+pub mod lock;
 /// Maintenance client.
 mod maintenance;
 /// Watch client.
 mod watch;
+
+/// Default session ttl
+pub const DEFAULT_SESSION_TTL: i64 = 60;
