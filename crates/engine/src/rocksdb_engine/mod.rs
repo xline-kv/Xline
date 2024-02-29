@@ -152,7 +152,7 @@ impl StorageEngine for RocksEngine {
 
     #[inline]
     fn transaction(&self) -> RocksTransaction {
-        RocksTransaction {}
+        RocksTransaction::new(Arc::clone(&self.inner), Arc::clone(&self.size))
     }
 
     #[inline]
