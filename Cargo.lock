@@ -3740,6 +3740,7 @@ dependencies = [
  "crc32fast",
  "crossbeam-skiplist",
  "curp",
+ "curp-external-api",
  "dashmap",
  "engine",
  "etcd-client",
