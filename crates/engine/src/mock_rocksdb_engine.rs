@@ -88,28 +88,8 @@ impl StorageEngine for RocksEngine {
     }
 
     #[inline]
-    fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
-        self.inner.get(table, key)
-    }
-
-    #[inline]
-    fn get_multi(
-        &self,
-        table: &str,
-        keys: &[impl AsRef<[u8]>],
-    ) -> Result<Vec<Option<Vec<u8>>>, EngineError> {
-        self.inner.get_multi(table, keys)
-    }
-
-    #[inline]
     fn get_all(&self, table: &str) -> Result<Vec<(Vec<u8>, Vec<u8>)>, EngineError> {
         self.inner.get_all(table)
-    }
-
-    #[inline]
-    fn write_batch(&self, wr_ops: Vec<WriteOperation<'_>>, sync: bool) -> Result<(), EngineError> {
-        self.inner.write_batch(wr_ops, sync)?;
-        self.fs_sync()
     }
 
     #[inline]
@@ -141,6 +121,28 @@ impl StorageEngine for RocksEngine {
     #[inline]
     fn file_size(&self) -> Result<u64, EngineError> {
         Ok(0)
+    }
+}
+
+impl StorageOps for RocksEngine {
+    fn write(&self, op: WriteOperation<'_>, sync: bool) -> Result<(), EngineError> {
+        self.inner.write(op, sync)
+    }
+
+    fn write_multi(&self, ops: Vec<WriteOperation<'_>>, sync: bool) -> Result<(), EngineError> {
+        self.inner.write_multi(ops, sync)
+    }
+
+    fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
+        self.inner.get(table, key)
+    }
+
+    fn get_multi(
+        &self,
+        table: &str,
+        keys: &[impl AsRef<[u8]>],
+    ) -> Result<Vec<Option<Vec<u8>>>, EngineError> {
+        self.inner.get_multi(table, keys)
     }
 }
 
