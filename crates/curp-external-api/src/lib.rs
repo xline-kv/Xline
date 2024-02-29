@@ -149,3 +149,6 @@ pub type InflightId = u64;
 pub mod cmd;
 /// The command to be executed
 pub mod role_change;
+
+/// Conflict trait
+pub mod conflict;
