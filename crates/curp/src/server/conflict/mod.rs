@@ -10,6 +10,10 @@ pub(crate) mod uncommitted_pool;
 #[cfg(test)]
 mod tests;
 
+/// Conflict pool used in tests
+#[doc(hidden)]
+pub mod test_pools;
+
 use std::{ops::Deref, sync::Arc};
 
 use crate::rpc::{ConfChange, PoolEntry, PoolEntryInner, ProposeId};
@@ -39,7 +43,7 @@ impl<C> From<PoolEntry<C>> for ConflictPoolEntry<C> {
 }
 
 /// Command entry type
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct CommandEntry<C> {
     /// The propose id
     id: ProposeId,
