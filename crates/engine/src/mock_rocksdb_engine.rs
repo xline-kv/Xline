@@ -8,12 +8,12 @@ use bytes::{Bytes, BytesMut};
 use crate::{
     api::{engine_api::StorageEngine, snapshot_api::SnapshotApi},
     error::EngineError,
-    memory_engine::{MemoryEngine, MemorySnapshot},
-    TransactionApi, WriteOperation,
+    memory_engine::{MemoryEngine, MemorySnapshot, MemoryTransaction},
+    StorageOps, TransactionApi, WriteOperation,
 };
 
 /// Mock `RocksDB` Storage Engine
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct RocksEngine {
     /// The inner storage engine of Mock `RocksDB`
     inner: MemoryEngine,
@@ -81,7 +81,10 @@ impl StorageEngine for RocksEngine {
 
     #[inline]
     fn transaction(&self) -> RocksTransaction {
-        RocksTransaction {}
+        RocksTransaction {
+            db: self.clone(),
+            inner: self.inner.transaction(),
+        }
     }
 
     #[inline]
@@ -203,17 +206,45 @@ impl SnapshotApi for RocksSnapshot {
     }
 }
 
-/// A transaction of the `RocksEngine`
-#[derive(Copy, Clone, Debug, Default)]
-pub struct RocksTransaction;
+/// Mock `RocksTransaction`
+#[derive(Debug)]
+pub struct RocksTransaction {
+    /// The mock engine
+    db: RocksEngine,
+    /// The memory transaction
+    inner: MemoryTransaction,
+}
 
-#[allow(unused_qualifications)]
-impl TransactionApi for RocksTransaction {
-    fn commit(self) -> Result<(), crate::EngineError> {
-        Ok(())
+impl StorageOps for RocksTransaction {
+    fn write(&self, op: WriteOperation<'_>, sync: bool) -> Result<(), EngineError> {
+        self.inner.write(op, sync)
     }
 
-    fn rollback(&self) -> Result<(), crate::EngineError> {
-        Ok(())
+    fn write_multi(&self, ops: Vec<WriteOperation<'_>>, sync: bool) -> Result<(), EngineError> {
+        self.inner.write_multi(ops, sync)
+    }
+
+    fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
+        self.inner.get(table, key)
+    }
+
+    fn get_multi(
+        &self,
+        table: &str,
+        keys: &[impl AsRef<[u8]>],
+    ) -> Result<Vec<Option<Vec<u8>>>, EngineError> {
+        self.inner.get_multi(table, keys)
+    }
+}
+
+#[async_trait::async_trait]
+impl TransactionApi for RocksTransaction {
+    fn commit(self) -> Result<(), EngineError> {
+        self.inner.commit()?;
+        self.db.fs_sync()
+    }
+
+    fn rollback(&self) -> Result<(), EngineError> {
+        self.inner.rollback()
     }
 }
