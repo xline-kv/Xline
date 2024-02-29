@@ -1,6 +1,7 @@
 use crate::EngineError;
 
 /// Storage operations
+/// TODO: refactor this trait, require `&mut self` for write operations
 pub trait StorageOps {
     /// Write an op to the transaction
     ///
@@ -42,7 +43,7 @@ pub trait StorageOps {
 /// Write operation
 #[allow(clippy::module_name_repetitions)]
 #[non_exhaustive]
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum WriteOperation<'a> {
     /// `Put` operation
     Put {
