@@ -13,11 +13,9 @@ use tokio::io::AsyncWriteExt;
 use tokio_util::io::read_buf;
 
 use crate::{
-    api::{
-        engine_api::{StorageEngine, WriteOperation},
-        snapshot_api::SnapshotApi,
-    },
+    api::{engine_api::StorageEngine, snapshot_api::SnapshotApi},
     error::EngineError,
+    WriteOperation,
 };
 
 /// A helper type to store the key-value pairs for the `MemoryEngine`

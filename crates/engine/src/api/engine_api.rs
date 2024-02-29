@@ -1,60 +1,6 @@
 use std::path::Path;
 
-use crate::{api::snapshot_api::SnapshotApi, error::EngineError};
-
-/// Write operation
-#[non_exhaustive]
-#[derive(Debug)]
-pub enum WriteOperation<'a> {
-    /// `Put` operation
-    Put {
-        /// The table name
-        table: &'a str,
-        /// Key
-        key: Vec<u8>,
-        /// Value
-        value: Vec<u8>,
-    },
-    /// `Delete` operation
-    Delete {
-        /// The table name
-        table: &'a str,
-        /// The target key
-        key: &'a [u8],
-    },
-    /// Delete range operation, it will remove the database entries in the range [from, to)
-    DeleteRange {
-        /// The table name
-        table: &'a str,
-        /// The `from` key
-        from: &'a [u8],
-        /// The `to` key
-        to: &'a [u8],
-    },
-}
-
-impl<'a> WriteOperation<'a> {
-    /// Create a new `Put` operation
-    #[inline]
-    #[must_use]
-    pub fn new_put(table: &'a str, key: Vec<u8>, value: Vec<u8>) -> Self {
-        Self::Put { table, key, value }
-    }
-
-    /// Create a new `Delete` operation
-    #[inline]
-    #[must_use]
-    pub fn new_delete(table: &'a str, key: &'a [u8]) -> Self {
-        Self::Delete { table, key }
-    }
-
-    /// Create a new `DeleteRange` operation
-    #[inline]
-    #[must_use]
-    pub fn new_delete_range(table: &'a str, from: &'a [u8], to: &'a [u8]) -> Self {
-        Self::DeleteRange { table, from, to }
-    }
-}
+use crate::{api::snapshot_api::SnapshotApi, error::EngineError, WriteOperation};
 
 /// The `StorageEngine` trait
 #[async_trait::async_trait]

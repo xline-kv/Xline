@@ -19,11 +19,9 @@ use tokio::{fs::File, io::AsyncWriteExt};
 use tokio_util::io::read_buf;
 
 use crate::{
-    api::{
-        engine_api::{StorageEngine, WriteOperation},
-        snapshot_api::SnapshotApi,
-    },
+    api::{engine_api::StorageEngine, snapshot_api::SnapshotApi},
     error::EngineError,
+    WriteOperation,
 };
 
 /// Install snapshot chunk size: 64KB
