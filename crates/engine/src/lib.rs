@@ -183,8 +183,10 @@ mod snapshot_allocator;
 
 pub use crate::{
     api::{
-        engine_api::{StorageEngine, WriteOperation},
+        engine_api::StorageEngine,
+        operation::{StorageOps, WriteOperation},
         snapshot_api::{SnapshotAllocator, SnapshotApi},
+        transaction_api::TransactionApi,
     },
     error::EngineError,
     proxy::{Engine, EngineType, Snapshot},
