@@ -540,6 +540,11 @@ impl CurpCommand for Command {
     fn keys(&self) -> &[Self::K] {
         self.keys.as_slice()
     }
+
+    #[inline]
+    fn is_read_only(&self) -> bool {
+        self.request().is_read_only()
+    }
 }
 
 impl PbCodec for Command {

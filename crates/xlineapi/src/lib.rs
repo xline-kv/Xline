@@ -437,6 +437,42 @@ impl RequestWrapper {
         }
     }
 
+    /// Checks if this request is read only
+    ///
+    /// NOTE: A `TxnRequest` or a `DeleteRangeRequest` might be read-only, but we
+    /// assume they will mutate the state machine to simplify the implementation.
+    pub fn is_read_only(&self) -> bool {
+        match *self {
+            RequestWrapper::RangeRequest(_)
+            | RequestWrapper::AuthStatusRequest(_)
+            | RequestWrapper::AuthRoleGetRequest(_)
+            | RequestWrapper::AuthRoleListRequest(_)
+            | RequestWrapper::AuthUserGetRequest(_)
+            | RequestWrapper::AuthUserListRequest(_)
+            | RequestWrapper::LeaseLeasesRequest(_) => true,
+
+            RequestWrapper::PutRequest(_)
+            | RequestWrapper::DeleteRangeRequest(_)
+            | RequestWrapper::TxnRequest(_)
+            | RequestWrapper::CompactionRequest(_)
+            | RequestWrapper::AuthEnableRequest(_)
+            | RequestWrapper::AuthDisableRequest(_)
+            | RequestWrapper::AuthRoleAddRequest(_)
+            | RequestWrapper::AuthRoleDeleteRequest(_)
+            | RequestWrapper::AuthRoleGrantPermissionRequest(_)
+            | RequestWrapper::AuthRoleRevokePermissionRequest(_)
+            | RequestWrapper::AuthUserAddRequest(_)
+            | RequestWrapper::AuthUserChangePasswordRequest(_)
+            | RequestWrapper::AuthUserDeleteRequest(_)
+            | RequestWrapper::AuthUserGrantRoleRequest(_)
+            | RequestWrapper::AuthUserRevokeRoleRequest(_)
+            | RequestWrapper::AuthenticateRequest(_)
+            | RequestWrapper::LeaseGrantRequest(_)
+            | RequestWrapper::LeaseRevokeRequest(_)
+            | RequestWrapper::AlarmRequest(_) => false,
+        }
+    }
+
     /// Check if this request is a auth read request
     pub fn is_auth_read_request(&self) -> bool {
         matches!(
