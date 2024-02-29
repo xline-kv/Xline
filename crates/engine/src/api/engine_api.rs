@@ -1,12 +1,17 @@
 use std::path::Path;
 
-use crate::{api::snapshot_api::SnapshotApi, error::EngineError, WriteOperation};
+use crate::{api::snapshot_api::SnapshotApi, error::EngineError, TransactionApi, WriteOperation};
 
 /// The `StorageEngine` trait
 #[async_trait::async_trait]
 pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
     /// The snapshot type
     type Snapshot: SnapshotApi;
+    /// The transaction type
+    type Transaction: TransactionApi;
+
+    /// Creates a transaction
+    fn transaction(&self) -> Self::Transaction;
 
     /// Get the value associated with a key value and the given table
     ///

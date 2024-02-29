@@ -1,3 +1,6 @@
+/// Memory storage transaction implementation
+mod transaction;
+
 use std::{
     cmp::Ordering,
     collections::HashMap,
@@ -17,6 +20,8 @@ use crate::{
     error::EngineError,
     WriteOperation,
 };
+
+pub(super) use self::transaction::MemoryTransaction;
 
 /// A helper type to store the key-value pairs for the `MemoryEngine`
 type MemoryTable = HashMap<Vec<u8>, Vec<u8>>;
@@ -54,6 +59,12 @@ impl MemoryEngine {
 #[async_trait::async_trait]
 impl StorageEngine for MemoryEngine {
     type Snapshot = MemorySnapshot;
+    type Transaction = MemoryTransaction;
+
+    #[inline]
+    fn transaction(&self) -> MemoryTransaction {
+        MemoryTransaction {}
+    }
 
     #[inline]
     fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
