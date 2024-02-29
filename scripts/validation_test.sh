@@ -18,16 +18,6 @@ trap stop TERM
 
 res=""
 
-function parse_result() {
-    local tmp_res=""
-    while read -r line; do
-        log::debug $line
-        tmp_res="${tmp_res}${line}\n"
-    done
-    res="${tmp_res}"
-}
-
-
 function check() {
     local pattern=$1
     if [[ $(echo -e $res) =~ $pattern ]]; then
@@ -37,10 +27,20 @@ function check() {
     fi
 }
 
+function parse_result() {
+    local tmp_res=""
+    while read -r line; do
+        log::info $line
+        tmp_res="${tmp_res}${line}\n"
+    done
+    res="${tmp_res}"
+}
+
 function run() {
     command=$@
     log::info "running: $command"
-    parse_result <<< "$(eval $command 2>&1)"
+    local run_res="$(eval $command 2>&1)"
+    parse_result <<< $run_res
 }
 
 # validate compact requests
