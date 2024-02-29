@@ -1,5 +1,6 @@
 use std::{
     fs,
+    marker::PhantomData,
     path::{Path, PathBuf},
 };
 
@@ -77,11 +78,13 @@ impl RocksEngine {
 #[async_trait::async_trait]
 impl StorageEngine for RocksEngine {
     type Snapshot = RocksSnapshot;
-    type Transaction = RocksTransaction;
+    type Transaction<'db> = RocksTransaction<'db>;
 
     #[inline]
-    fn transaction(&self) -> RocksTransaction {
-        RocksTransaction {}
+    fn transaction(&self) -> RocksTransaction<'_> {
+        RocksTransaction {
+            _phantom: PhantomData,
+        }
     }
 
     #[inline]
@@ -205,10 +208,13 @@ impl SnapshotApi for RocksSnapshot {
 
 /// A transaction of the `RocksEngine`
 #[derive(Copy, Clone, Debug, Default)]
-pub struct RocksTransaction;
+pub struct RocksTransaction<'db> {
+    /// Phantom
+    _phantom: PhantomData<&'db ()>,
+}
 
 #[allow(unused_qualifications)]
-impl TransactionApi for RocksTransaction {
+impl TransactionApi for RocksTransaction<'_> {
     fn commit(self) -> Result<(), crate::EngineError> {
         Ok(())
     }

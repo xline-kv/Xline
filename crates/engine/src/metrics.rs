@@ -60,10 +60,10 @@ where
 {
     /// The snapshot type
     type Snapshot = Layer<E::Snapshot>;
-    type Transaction = Layer<E::Transaction>;
+    type Transaction<'db> = Layer<E::Transaction<'db>>;
 
     /// Creates a transaction
-    fn transaction(&self) -> Self::Transaction {
+    fn transaction(&self) -> Self::Transaction<'_> {
         Layer::new(self.engine.transaction())
     }
 

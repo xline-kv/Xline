@@ -28,7 +28,10 @@ impl StorageOps for MemoryTransaction {
         self.write_op(&mut state_w, op)
     }
 
-    fn write_multi(&self, ops: Vec<WriteOperation<'_>>, _sync: bool) -> Result<(), EngineError> {
+    fn write_multi<'a, Ops>(&self, ops: Ops, _sync: bool) -> Result<(), EngineError>
+    where
+        Ops: IntoIterator<Item = WriteOperation<'a>>,
+    {
         let mut state_w = self.state.write();
         for op in ops {
             self.write_op(&mut state_w, op)?;

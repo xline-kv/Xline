@@ -17,8 +17,9 @@ pub trait StorageOps {
     /// # Errors
     /// Return `EngineError::TableNotFound` if the given table does not exist
     /// Return `EngineError` if met some errors
-    fn write_multi(&self, ops: Vec<WriteOperation<'_>>, sync: bool) -> Result<(), EngineError>;
-
+    fn write_multi<'a, Ops>(&self, ops: Ops, sync: bool) -> Result<(), EngineError>
+    where
+        Ops: IntoIterator<Item = WriteOperation<'a>>;
     /// Get the value associated with a key value and the given table
     ///
     /// # Errors
