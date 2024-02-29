@@ -1,6 +1,3 @@
-#![allow(unused)]
-#![allow(unreachable_pub)]
-
 /// Speculative pool
 pub(crate) mod spec_pool_new;
 

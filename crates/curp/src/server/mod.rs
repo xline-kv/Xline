@@ -11,6 +11,7 @@ use utils::{config::CurpConfig, task_manager::TaskManager, tracing::Extract};
 
 use self::curp_node::CurpNode;
 pub use self::raw_curp::RawCurp;
+pub use self::{conflict::spec_pool_new::SpObject, conflict::uncommitted_pool::UcpObject};
 use crate::{
     cmd::{Command, CommandExecutor},
     members::{ClusterInfo, ServerId},
@@ -37,9 +38,6 @@ mod cmd_board;
 
 /// Conflict pools
 pub mod conflict;
-
-/// Speculative pool
-mod spec_pool;
 
 /// Background garbage collection for Curp server
 mod gc;
@@ -245,6 +243,8 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
         storage: Arc<DB<C>>,
         task_manager: Arc<TaskManager>,
         client_tls_config: Option<ClientTlsConfig>,
+        sps: Vec<SpObject<C>>,
+        ucps: Vec<UcpObject<C>>,
     ) -> Self {
         #[allow(clippy::panic)]
         let curp_node = match CurpNode::new(
@@ -257,6 +257,8 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
             storage,
             task_manager,
             client_tls_config,
+            sps,
+            ucps,
         )
         .await
         {

@@ -191,6 +191,13 @@ impl Command for TestCommand {
     fn keys(&self) -> &[Self::K] {
         &self.keys
     }
+
+    fn is_read_only(&self) -> bool {
+        match self.cmd_type {
+            TestCommandType::Get => true,
+            TestCommandType::Put(_) => false,
+        }
+    }
 }
 
 impl ConflictCheck for TestCommand {

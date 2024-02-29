@@ -1,31 +1,10 @@
-use std::{collections::HashSet, time::Duration};
+use std::time::Duration;
 
-use utils::{parking_lot_lock::MutexMap, task_manager::Listener};
+use utils::task_manager::Listener;
 
-use super::spec_pool::SpecPoolRef;
-use crate::{cmd::Command, rpc::ProposeId, server::cmd_board::CmdBoardRef};
+use crate::{cmd::Command, server::cmd_board::CmdBoardRef};
 
-/// Cleanup spec pool
-pub(super) async fn gc_spec_pool<C: Command>(
-    sp: SpecPoolRef<C>,
-    interval: Duration,
-    shutdown_listener: Listener,
-) {
-    let mut last_check: HashSet<ProposeId> =
-        sp.map_lock(|sp_l| sp_l.pool.keys().copied().collect());
-    #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)]
-    // introduced by tokio select
-    loop {
-        tokio::select! {
-            _ = tokio::time::sleep(interval) => {}
-            _ = shutdown_listener.wait() => break,
-        }
-        let mut sp = sp.lock();
-        sp.pool.retain(|k, _v| !last_check.contains(k));
-
-        last_check = sp.pool.keys().copied().collect();
-    }
-}
+// TODO: Speculative pool GC
 
 /// Cleanup cmd board
 pub(super) async fn gc_cmd_board<C: Command>(
@@ -78,21 +57,16 @@ pub(super) async fn gc_cmd_board<C: Command>(
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use curp_test_utils::{
-        sleep_secs,
-        test_cmd::{TestCommand, TestCommandResult},
-    };
-    use parking_lot::{Mutex, RwLock};
+    use curp_test_utils::test_cmd::{TestCommand, TestCommandResult};
+    use parking_lot::RwLock;
     use test_macros::abort_on_panic;
     use utils::task_manager::{tasks::TaskName, TaskManager};
 
-    use super::*;
     use crate::{
-        rpc::{PoolEntry, ProposeId},
+        rpc::ProposeId,
         server::{
             cmd_board::{CmdBoardRef, CommandBoard},
             gc::gc_cmd_board,
-            spec_pool::{SpecPoolRef, SpeculativePool},
         },
     };
 
@@ -143,75 +117,6 @@ mod tests {
         assert_eq!(*board.er_buffer.get_index(0).unwrap().0, ProposeId(3, 3));
         assert_eq!(board.asr_buffer.len(), 1);
         assert_eq!(*board.asr_buffer.get_index(0).unwrap().0, ProposeId(3, 3));
-        task_manager.shutdown(true).await;
-    }
-
-    #[tokio::test]
-    #[abort_on_panic]
-    async fn spec_gc_test() {
-        let task_manager = TaskManager::new();
-        let spec: SpecPoolRef<TestCommand> = Arc::new(Mutex::new(SpeculativePool::new()));
-        task_manager.spawn(TaskName::GcSpecPool, |n| {
-            gc_spec_pool(Arc::clone(&spec), Duration::from_millis(500), n)
-        });
-
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        let cmd1 = Arc::new(TestCommand::default());
-        spec.lock()
-            .pool
-            .insert(ProposeId(0, 1), PoolEntry::new(ProposeId(0, 1), cmd1));
-
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        let cmd2 = Arc::new(TestCommand::default());
-        spec.lock()
-            .pool
-            .insert(ProposeId(0, 2), PoolEntry::new(ProposeId(0, 2), cmd2));
-
-        // at 600ms
-        tokio::time::sleep(Duration::from_millis(400)).await;
-        let cmd3 = Arc::new(TestCommand::default());
-        spec.lock()
-            .pool
-            .insert(ProposeId(0, 3), PoolEntry::new(ProposeId(0, 3), cmd3));
-
-        // at 1100ms, the first two kv should be removed
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        let spec = spec.lock();
-        assert_eq!(spec.pool.len(), 1);
-        assert!(spec.pool.contains_key(&ProposeId(0, 3)));
-        task_manager.shutdown(true).await;
-    }
-
-    // To verify #206 is fixed
-    #[tokio::test]
-    #[abort_on_panic]
-    async fn spec_gc_will_not_panic() {
-        let task_manager = TaskManager::new();
-        let spec: SpecPoolRef<TestCommand> = Arc::new(Mutex::new(SpeculativePool::new()));
-
-        let cmd1 = Arc::new(TestCommand::default());
-        spec.lock()
-            .pool
-            .insert(ProposeId(0, 1), PoolEntry::new(ProposeId(0, 1), cmd1));
-
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        let cmd2 = Arc::new(TestCommand::default());
-        spec.lock()
-            .pool
-            .insert(ProposeId(0, 2), PoolEntry::new(ProposeId(0, 2), cmd2));
-
-        let cmd3 = Arc::new(TestCommand::default());
-        spec.lock()
-            .pool
-            .insert(ProposeId(0, 2), PoolEntry::new(ProposeId(0, 3), cmd3));
-
-        task_manager.spawn(TaskName::GcSpecPool, |n| {
-            gc_spec_pool(Arc::clone(&spec), Duration::from_millis(500), n)
-        });
-
-        spec.lock().remove(&ProposeId(0, 2));
-
-        sleep_secs(1).await;
         task_manager.shutdown(true).await;
     }
 }
