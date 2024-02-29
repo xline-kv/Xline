@@ -39,8 +39,8 @@ run_xline() {
     --client-advertise-urls=http://${SERVERS[$1]}:2379 \
     --peer-advertise-urls=http://${SERVERS[$1]}:2380,http://${SERVERS[$1]}:2381"
 
-    if [ -n "$LOG_PATH" ]; then
-        cmd="${cmd} --log-file ${LOG_PATH}/node${1} --log-level debug"
+    if [ -n "$LOG_LEVEL" ]; then
+        cmd="${cmd} --log-level ${LOG_LEVEL}"
     fi
 
     if [ ${1} -eq 1 ]; then
@@ -69,9 +69,14 @@ run_container() {
     size=${1}
     image="ghcr.io/xline-kv/xline:latest"
     for ((i = 1; i <= ${size}; i++)); do
+        mount_point="-v ${DIR}:/mnt"
+        if [ -n "$LOG_PATH" ]; then
+            mkdir -p ${LOG_PATH}/node${i}
+            mount_point="${mount_point} -v ${LOG_PATH}/node${i}:/var/log/xline"
+        fi
         docker run -d -it --rm --name=node${i} --net=xline_net \
             --ip=${SERVERS[$i]} --cap-add=NET_ADMIN --cpu-shares=1024 \
-            -m=512M -v ${DIR}:/mnt ${image} bash &
+            -m=512M ${mount_point} ${image} bash &
     done
     docker run -d -it --rm  --name=client \
         --net=xline_net --ip=${SERVERS[0]} --cap-add=NET_ADMIN \
