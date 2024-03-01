@@ -63,13 +63,12 @@ use crate::{
         kv_store::KvStoreInner,
         kvwatcher::KvWatcher,
         lease_store::LeaseCollection,
-        storage_api::StorageApi,
         AlarmStore, AuthStore, KvStore, LeaseStore,
     },
 };
 
 /// Rpc Server of curp protocol
-pub(crate) type CurpServer<S> = Rpc<Command, State<S, Arc<CurpClient>>>;
+pub(crate) type CurpServer = Rpc<Command, State<Arc<CurpClient>>>;
 
 /// Xline server
 #[derive(Debug)]
@@ -199,26 +198,23 @@ impl XlineServer {
     /// Construct underlying storages, including `KvStore`, `LeaseStore`, `AuthStore`
     #[allow(clippy::type_complexity)] // it is easy to read
     #[inline]
-    async fn construct_underlying_storages<S: StorageApi>(
+    async fn construct_underlying_storages(
         &self,
-        persistent: Arc<S>,
+        db: Arc<DB>,
         lease_collection: Arc<LeaseCollection>,
         header_gen: Arc<HeaderGenerator>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
     ) -> Result<(
-        Arc<KvStore<S>>,
-        Arc<LeaseStore<S>>,
-        Arc<AuthStore<S>>,
-        Arc<AlarmStore<S>>,
-        Arc<KvWatcher<S>>,
+        Arc<KvStore>,
+        Arc<LeaseStore>,
+        Arc<AuthStore>,
+        Arc<AlarmStore>,
+        Arc<KvWatcher>,
     )> {
         let (compact_task_tx, compact_task_rx) = channel(COMPACT_CHANNEL_SIZE);
         let index = Arc::new(Index::new());
         let (kv_update_tx, kv_update_rx) = channel(CHANNEL_SIZE);
-        let kv_store_inner = Arc::new(KvStoreInner::new(
-            Arc::clone(&index),
-            Arc::clone(&persistent),
-        ));
+        let kv_store_inner = Arc::new(KvStoreInner::new(Arc::clone(&index), Arc::clone(&db)));
         let kv_storage = Arc::new(KvStore::new(
             Arc::clone(&kv_store_inner),
             Arc::clone(&header_gen),
@@ -239,7 +235,7 @@ impl XlineServer {
         let lease_storage = Arc::new(LeaseStore::new(
             Arc::clone(&lease_collection),
             Arc::clone(&header_gen),
-            Arc::clone(&persistent),
+            Arc::clone(&db),
             index,
             kv_update_tx,
             *self.cluster_config.is_leader(),
@@ -248,9 +244,9 @@ impl XlineServer {
             lease_collection,
             key_pair,
             Arc::clone(&header_gen),
-            Arc::clone(&persistent),
+            Arc::clone(&db),
         ));
-        let alarm_storage = Arc::new(AlarmStore::new(header_gen, persistent));
+        let alarm_storage = Arc::new(AlarmStore::new(header_gen, db));
 
         let watcher = KvWatcher::new_arc(
             kv_store_inner,
@@ -289,9 +285,9 @@ impl XlineServer {
     ///
     /// Will return `Err` when `init_servers` return an error
     #[inline]
-    pub async fn init_router<S: StorageApi>(
+    pub async fn init_router(
         &self,
-        persistent: Arc<S>,
+        db: Arc<DB>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
     ) -> Result<(Router, Router, Arc<CurpClient>)> {
         let (
@@ -305,7 +301,7 @@ impl XlineServer {
             curp_server,
             auth_wrapper,
             curp_client,
-        ) = self.init_servers(persistent, key_pair).await?;
+        ) = self.init_servers(db, key_pair).await?;
         let mut builder = Server::builder();
         #[cfg(not(madsim))]
         if let Some(ref cfg) = self.server_tls_config {
@@ -351,10 +347,9 @@ impl XlineServer {
             .task_manager
             .get_shutdown_listener(TaskName::TonicServer);
         let n2 = n1.clone();
-        let persistent = DB::open(&self.storage_config.engine)?;
+        let db = DB::open(&self.storage_config.engine)?;
         let key_pair = Self::read_key_pair(&self.auth_config).await?;
-        let (xline_router, curp_router, curp_client) =
-            self.init_router(persistent, key_pair).await?;
+        let (xline_router, curp_router, curp_client) = self.init_router(db, key_pair).await?;
         let handle = tokio::spawn(async move {
             tokio::select! {
                 _ = xline_router.serve_with_shutdown(xline_addr, n1.wait()) => {},
@@ -378,10 +373,9 @@ impl XlineServer {
         IO::ConnectInfo: Clone + Send + Sync + 'static,
         IE: Into<Box<dyn std::error::Error + Send + Sync>> + Send,
     {
-        let persistent = DB::open(&self.storage_config.engine)?;
+        let db = DB::open(&self.storage_config.engine)?;
         let key_pair = Self::read_key_pair(&self.auth_config).await?;
-        let (xline_router, curp_router, curp_client) =
-            self.init_router(persistent, key_pair).await?;
+        let (xline_router, curp_router, curp_client) = self.init_router(db, key_pair).await?;
         self.task_manager
             .spawn(TaskName::TonicServer, |n1| async move {
                 let n2 = n1.clone();
@@ -432,23 +426,26 @@ impl XlineServer {
 
     /// Init `KvServer`, `LockServer`, `LeaseServer`, `WatchServer` and `CurpServer`
     /// for the Xline Server.
-    #[allow(clippy::type_complexity, clippy::too_many_lines)] // it is easy to read
-    #[allow(clippy::as_conversions)] // cast to dyn
-    #[allow(trivial_casts)] // same as above
-    async fn init_servers<S: StorageApi>(
+    #[allow(
+        clippy::type_complexity, // it is easy to read
+        clippy::too_many_lines, // TODO: split this into multiple functions
+        clippy::as_conversions, // cast to dyn
+        trivial_casts // same as above
+    )]
+    async fn init_servers(
         &self,
-        persistent: Arc<S>,
+        db: Arc<DB>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
     ) -> Result<(
-        KvServer<S>,
-        LockServer<S>,
-        Arc<LeaseServer<S>>,
-        AuthServer<S>,
-        WatchServer<S>,
-        MaintenanceServer<S>,
+        KvServer,
+        LockServer,
+        Arc<LeaseServer>,
+        AuthServer,
+        WatchServer,
+        MaintenanceServer,
         ClusterServer,
-        CurpServer<S>,
-        AuthWrapper<S>,
+        CurpServer,
+        AuthWrapper,
         Arc<CurpClient>,
     )> {
         let (header_gen, id_gen) = Self::construct_generator(&self.cluster_info);
@@ -459,7 +456,7 @@ impl XlineServer {
 
         let (kv_storage, lease_storage, auth_storage, alarm_storage, watcher) = self
             .construct_underlying_storages(
-                Arc::clone(&persistent),
+                Arc::clone(&db),
                 lease_collection,
                 Arc::clone(&header_gen),
                 key_pair,
@@ -474,7 +471,7 @@ impl XlineServer {
             Arc::clone(&auth_storage),
             Arc::clone(&lease_storage),
             Arc::clone(&alarm_storage),
-            Arc::clone(&persistent),
+            Arc::clone(&db),
             Arc::clone(&index_barrier),
             Arc::clone(&id_barrier),
             header_gen.general_revision_arc(),
@@ -585,7 +582,7 @@ impl XlineServer {
                 kv_storage,
                 Arc::clone(&auth_storage),
                 Arc::clone(&client),
-                persistent,
+                db,
                 Arc::clone(&header_gen),
                 Arc::clone(&self.cluster_info),
                 raw_curp,

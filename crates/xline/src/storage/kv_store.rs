@@ -1,3 +1,5 @@
+#![allow(clippy::multiple_inherent_impl)]
+
 use std::{
     cmp::Ordering,
     collections::{HashMap, VecDeque},
@@ -18,11 +20,10 @@ use xlineapi::{
 };
 
 use super::{
-    db::SCHEDULED_COMPACT_REVISION,
+    db::{DB, SCHEDULED_COMPACT_REVISION},
     index::{Index, IndexOperate},
     lease_store::LeaseCollection,
     revision::{KeyRevision, Revision},
-    storage_api::StorageApi,
 };
 use crate::{
     header_gen::HeaderGenerator,
@@ -39,12 +40,9 @@ use crate::{
 
 /// KV store
 #[derive(Debug)]
-pub(crate) struct KvStore<DB>
-where
-    DB: StorageApi,
-{
+pub(crate) struct KvStore {
     /// Kv storage inner
-    inner: Arc<KvStoreInner<DB>>,
+    inner: Arc<KvStoreInner>,
     /// Revision
     revision: Arc<RevisionNumberGenerator>,
     /// Header generator
@@ -59,10 +57,7 @@ where
 
 /// KV store inner, shared by `KvStore` and `KvWatcher`
 #[derive(Debug)]
-pub(crate) struct KvStoreInner<DB>
-where
-    DB: StorageApi,
-{
+pub(crate) struct KvStoreInner {
     /// Key Index
     index: Arc<Index>,
     /// DB to store key value
@@ -71,10 +66,7 @@ where
     compacted_rev: AtomicI64,
 }
 
-impl<DB> KvStoreInner<DB>
-where
-    DB: StorageApi,
-{
+impl KvStoreInner {
     /// Create new `KvStoreInner`
     pub(crate) fn new(index: Arc<Index>, db: Arc<DB>) -> Self {
         Self {
@@ -182,10 +174,7 @@ where
     }
 }
 
-impl<DB> KvStore<DB>
-where
-    DB: StorageApi,
-{
+impl KvStore {
     /// execute a kv request
     pub(crate) fn execute(
         &self,
@@ -276,13 +265,10 @@ where
     }
 }
 
-impl<DB> KvStore<DB>
-where
-    DB: StorageApi,
-{
+impl KvStore {
     /// New `KvStore`
     pub(crate) fn new(
-        inner: Arc<KvStoreInner<DB>>,
+        inner: Arc<KvStoreInner>,
         header_gen: Arc<HeaderGenerator>,
         kv_update_tx: mpsc::Sender<(i64, Vec<Event>)>,
         compact_task_tx: mpsc::Sender<(i64, Option<Arc<event_listener::Event>>)>,
@@ -537,10 +523,7 @@ where
 }
 
 /// handle and sync kv requests
-impl<DB> KvStore<DB>
-where
-    DB: StorageApi,
-{
+impl KvStore {
     /// Handle kv requests
     fn handle_kv_requests(
         &self,
@@ -945,7 +928,7 @@ mod test {
 
     const CHANNEL_SIZE: usize = 1024;
 
-    struct StoreWrapper(Option<Arc<KvStore<DB>>>, Arc<TaskManager>);
+    struct StoreWrapper(Option<Arc<KvStore>>, Arc<TaskManager>);
 
     impl Drop for StoreWrapper {
         fn drop(&mut self) {
@@ -959,7 +942,7 @@ mod test {
     }
 
     impl std::ops::Deref for StoreWrapper {
-        type Target = Arc<KvStore<DB>>;
+        type Target = Arc<KvStore>;
 
         fn deref(&self) -> &Self::Target {
             self.0.as_ref().unwrap()
@@ -1035,7 +1018,7 @@ mod test {
     }
 
     async fn exe_as_and_flush(
-        store: &Arc<KvStore<DB>>,
+        store: &Arc<KvStore>,
         request: &RequestWrapper,
         revision: i64,
     ) -> Result<(), ExecuteError> {
@@ -1045,7 +1028,7 @@ mod test {
         Ok(())
     }
 
-    fn index_compact(store: &Arc<KvStore<DB>>, at_rev: i64) -> Vec<Vec<u8>> {
+    fn index_compact(store: &Arc<KvStore>, at_rev: i64) -> Vec<Vec<u8>> {
         store
             .inner
             .index

@@ -7,7 +7,7 @@ use super::{db::WriteOp, revision::KeyRevision};
 
 /// The Stable Storage Api
 #[async_trait::async_trait]
-pub trait StorageApi: Send + Sync + 'static + std::fmt::Debug {
+pub(crate) trait StorageApi: Send + Sync + 'static + std::fmt::Debug {
     /// Get values by keys from storage
     ///
     /// # Errors
