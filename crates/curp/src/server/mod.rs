@@ -61,12 +61,12 @@ pub use storage::{db::DB, StorageApi, StorageError};
 /// The Rpc Server to handle rpc requests
 /// This Wrapper is introduced due to the `MadSim` rpc lib
 #[derive(Debug)]
-pub struct Rpc<C: Command, RC: RoleChange> {
+pub struct Rpc<C: Command, CE: CommandExecutor<C>, RC: RoleChange> {
     /// The inner server is wrapped in an Arc so that its state can be shared while cloning the rpc wrapper
-    inner: Arc<CurpNode<C, RC>>,
+    inner: Arc<CurpNode<C, CE, RC>>,
 }
 
-impl<C: Command, RC: RoleChange> Clone for Rpc<C, RC> {
+impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Clone for Rpc<C, CE, RC> {
     #[inline]
     fn clone(&self) -> Self {
         Self {
@@ -76,7 +76,7 @@ impl<C: Command, RC: RoleChange> Clone for Rpc<C, RC> {
 }
 
 #[tonic::async_trait]
-impl<C: Command, RC: RoleChange> crate::rpc::Protocol for Rpc<C, RC> {
+impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::Protocol for Rpc<C, CE, RC> {
     #[instrument(skip_all, name = "curp_propose")]
     async fn propose(
         &self,
@@ -176,7 +176,9 @@ impl<C: Command, RC: RoleChange> crate::rpc::Protocol for Rpc<C, RC> {
 }
 
 #[tonic::async_trait]
-impl<C: Command, RC: RoleChange> crate::rpc::InnerProtocol for Rpc<C, RC> {
+impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::InnerProtocol
+    for Rpc<C, CE, RC>
+{
     #[instrument(skip_all, name = "curp_append_entries")]
     async fn append_entries(
         &self,
@@ -229,13 +231,13 @@ impl<C: Command, RC: RoleChange> crate::rpc::InnerProtocol for Rpc<C, RC> {
     }
 }
 
-impl<C: Command, RC: RoleChange> Rpc<C, RC> {
+impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Rpc<C, CE, RC> {
     /// New `Rpc`
     /// # Panics
     /// Panic if storage creation failed
     #[inline]
     #[allow(clippy::too_many_arguments)] // TODO: refactor this use builder pattern
-    pub async fn new<CE: CommandExecutor<C>>(
+    pub async fn new(
         cluster_info: Arc<ClusterInfo>,
         is_leader: bool,
         executor: Arc<CE>,
