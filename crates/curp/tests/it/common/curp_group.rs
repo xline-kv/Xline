@@ -217,7 +217,7 @@ impl CurpGroup {
     }
 
     async fn run(
-        server: Arc<Rpc<TestCommand, TestRoleChange>>,
+        server: Arc<Rpc<TestCommand, TestCE, TestRoleChange>>,
         listener: TcpListener,
         shutdown_listener: Listener,
     ) -> Result<(), tonic::transport::Error> {
