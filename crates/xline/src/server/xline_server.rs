@@ -68,7 +68,7 @@ use crate::{
 };
 
 /// Rpc Server of curp protocol
-pub(crate) type CurpServer = Rpc<Command, State<Arc<CurpClient>>>;
+pub(crate) type CurpServer = Rpc<Command, CommandExecutor, State<Arc<CurpClient>>>;
 
 /// Xline server
 #[derive(Debug)]
