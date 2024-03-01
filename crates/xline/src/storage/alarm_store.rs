@@ -1,3 +1,5 @@
+#![allow(clippy::multiple_inherent_impl)]
+
 use std::{
     collections::HashMap,
     sync::{
@@ -16,15 +18,15 @@ use xlineapi::{
     AlarmAction, AlarmMember, AlarmResponse, AlarmType, RequestWrapper, ResponseWrapper,
 };
 
-use super::{db::WriteOp, storage_api::StorageApi};
+use super::{
+    db::{WriteOp, DB},
+    storage_api::StorageApi,
+};
 use crate::header_gen::HeaderGenerator;
 
 /// Alarm store
 #[derive(Debug)]
-pub(crate) struct AlarmStore<DB>
-where
-    DB: StorageApi,
-{
+pub(crate) struct AlarmStore {
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
     /// Persistent storage
@@ -35,10 +37,7 @@ where
     current_alarm: AtomicI32,
 }
 
-impl<DB> AlarmStore<DB>
-where
-    DB: StorageApi,
-{
+impl AlarmStore {
     /// execute a alarm request
     pub(crate) fn execute(&self, request: &RequestWrapper) -> CommandResponse {
         #[allow(clippy::wildcard_enum_match_arm)]
@@ -98,10 +97,7 @@ where
     }
 }
 
-impl<DB> AlarmStore<DB>
-where
-    DB: StorageApi,
-{
+impl AlarmStore {
     /// Create a new alarm store
     pub(crate) fn new(header_gen: Arc<HeaderGenerator>, db: Arc<DB>) -> Self {
         Self {

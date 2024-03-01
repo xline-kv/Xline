@@ -17,10 +17,7 @@ use crate::{
         RequestUnion, ResponseHeader, Watch, WatchCancelRequest, WatchCreateRequest,
         WatchProgressRequest, WatchRequest, WatchResponse,
     },
-    storage::{
-        kvwatcher::{KvWatcher, KvWatcherOps, WatchEvent, WatchId, WatchIdGenerator},
-        storage_api::StorageApi,
-    },
+    storage::kvwatcher::{KvWatcher, KvWatcherOps, WatchEvent, WatchId, WatchIdGenerator},
 };
 
 /// Default channel size
@@ -28,12 +25,9 @@ pub(crate) const CHANNEL_SIZE: usize = 1024;
 
 /// Watch Server
 #[derive(Debug)]
-pub(crate) struct WatchServer<S>
-where
-    S: StorageApi,
-{
+pub(crate) struct WatchServer {
     /// KV watcher
-    watcher: Arc<KvWatcher<S>>,
+    watcher: Arc<KvWatcher>,
     /// Watch ID generator
     next_id_gen: Arc<WatchIdGenerator>,
     /// Header Generator
@@ -44,13 +38,10 @@ where
     task_manager: Arc<TaskManager>,
 }
 
-impl<S> WatchServer<S>
-where
-    S: StorageApi,
-{
+impl WatchServer {
     /// New `WatchServer`
     pub(crate) fn new(
-        watcher: Arc<KvWatcher<S>>,
+        watcher: Arc<KvWatcher>,
         header_gen: Arc<HeaderGenerator>,
         watch_progress_notify_interval: Duration,
         task_manager: Arc<TaskManager>,
@@ -387,10 +378,7 @@ where
 }
 
 #[tonic::async_trait]
-impl<S> Watch for WatchServer<S>
-where
-    S: StorageApi,
-{
+impl Watch for WatchServer {
     ///Server streaming response type for the Watch method.
     type WatchStream = ReceiverStream<Result<WatchResponse, tonic::Status>>;
 
@@ -443,7 +431,8 @@ mod test {
         rpc::{PutRequest, WatchProgressRequest},
         storage::{
             compact::COMPACT_CHANNEL_SIZE, db::DB, index::Index, kv_store::KvStoreInner,
-            kvwatcher::MockKvWatcherOps, lease_store::LeaseCollection, KvStore,
+            kvwatcher::MockKvWatcherOps, lease_store::LeaseCollection, storage_api::StorageApi,
+            KvStore,
         },
     };
 
@@ -456,7 +445,7 @@ mod test {
     }
 
     async fn put(
-        store: &KvStore<DB>,
+        store: &KvStore,
         db: &DB,
         key: impl Into<Vec<u8>>,
         value: impl Into<Vec<u8>>,
@@ -490,7 +479,7 @@ mod test {
         let watcher = Arc::new(mock_watcher);
         let next_id = Arc::new(WatchIdGenerator::new(1));
         let n = task_manager.get_shutdown_listener(TaskName::WatchTask);
-        let handle = tokio::spawn(WatchServer::<DB>::task(
+        let handle = tokio::spawn(WatchServer::task(
             next_id,
             Arc::clone(&watcher),
             res_tx,
@@ -545,7 +534,7 @@ mod test {
         let req_stream1: ReceiverStream<Result<WatchRequest, tonic::Status>> =
             ReceiverStream::new(req_rx1);
         task_manager.spawn(TaskName::WatchTask, |n| {
-            WatchServer::<DB>::task(
+            WatchServer::task(
                 Arc::clone(&next_id_gen),
                 Arc::clone(&kv_watcher),
                 res_tx1,
@@ -561,7 +550,7 @@ mod test {
         let req_stream2: ReceiverStream<Result<WatchRequest, tonic::Status>> =
             ReceiverStream::new(req_rx2);
         task_manager.spawn(TaskName::WatchTask, |n| {
-            WatchServer::<DB>::task(
+            WatchServer::task(
                 next_id_gen,
                 kv_watcher,
                 res_tx2,
@@ -632,7 +621,7 @@ mod test {
         req_tx.send(Ok(create_watch_req(2, true))).await.unwrap();
         let (res_tx, mut res_rx) = mpsc::channel(CHANNEL_SIZE);
         task_manager.spawn(TaskName::WatchTask, |n| {
-            WatchServer::<DB>::task(
+            WatchServer::task(
                 Arc::clone(&next_id_gen),
                 Arc::clone(&kv_watcher),
                 res_tx,
@@ -679,7 +668,7 @@ mod test {
         let watcher = Arc::new(mock_watcher);
         let next_id = Arc::new(WatchIdGenerator::new(1));
         task_manager.spawn(TaskName::WatchTask, |n| {
-            WatchServer::<DB>::task(
+            WatchServer::task(
                 next_id,
                 Arc::clone(&watcher),
                 res_tx,
@@ -742,7 +731,7 @@ mod test {
         let watcher = Arc::new(mock_watcher);
         let next_id = Arc::new(WatchIdGenerator::new(1));
         let n = task_manager.get_shutdown_listener(TaskName::WatchTask);
-        let handle = tokio::spawn(WatchServer::<DB>::task(
+        let handle = tokio::spawn(WatchServer::task(
             next_id,
             Arc::clone(&watcher),
             res_tx,
@@ -819,7 +808,7 @@ mod test {
         req_tx.send(Ok(create_watch_req(1, 2))).await.unwrap();
         let (res_tx, mut res_rx) = mpsc::channel(CHANNEL_SIZE);
         task_manager.spawn(TaskName::WatchTask, |n| {
-            WatchServer::<DB>::task(
+            WatchServer::task(
                 Arc::clone(&next_id_gen),
                 Arc::clone(&kv_watcher),
                 res_tx,

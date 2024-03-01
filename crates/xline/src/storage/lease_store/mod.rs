@@ -1,3 +1,5 @@
+#![allow(clippy::multiple_inherent_impl)]
+
 /// Lease
 mod lease;
 /// Lease related structs collection
@@ -25,7 +27,11 @@ use xlineapi::{
 };
 
 pub(crate) use self::{lease::Lease, lease_collection::LeaseCollection};
-use super::{db::WriteOp, index::Index, storage_api::StorageApi};
+use super::{
+    db::{WriteOp, DB},
+    index::Index,
+    storage_api::StorageApi,
+};
 use crate::{
     header_gen::HeaderGenerator,
     rpc::{
@@ -41,10 +47,7 @@ const MAX_LEASE_TTL: i64 = 9_000_000_000;
 
 /// Lease store
 #[derive(Debug)]
-pub(crate) struct LeaseStore<DB>
-where
-    DB: StorageApi,
-{
+pub(crate) struct LeaseStore {
     /// lease collection
     lease_collection: Arc<LeaseCollection>,
     /// Db to store lease
@@ -63,10 +66,7 @@ where
     sync_event: event_listener::Event,
 }
 
-impl<DB> LeaseStore<DB>
-where
-    DB: StorageApi,
-{
+impl LeaseStore {
     /// New `LeaseStore`
     pub(crate) fn new(
         lease_collection: Arc<LeaseCollection>,
@@ -195,10 +195,7 @@ where
     }
 }
 
-impl<DB> LeaseStore<DB>
-where
-    DB: StorageApi,
-{
+impl LeaseStore {
     /// Handle lease requests
     fn handle_lease_requests(
         &self,
@@ -347,7 +344,7 @@ where
         }
 
         for (key, sub_revision) in del_keys.iter().zip(0..) {
-            let (mut del_ops, mut del_event) = KvStore::<DB>::delete_keys(
+            let (mut del_ops, mut del_event) = KvStore::delete_keys(
                 &self.index,
                 &self.lease_collection,
                 key,
@@ -504,7 +501,7 @@ mod test {
         Ok(())
     }
 
-    fn init_store(db: Arc<DB>) -> LeaseStore<DB> {
+    fn init_store(db: Arc<DB>) -> LeaseStore {
         let lease_collection = Arc::new(LeaseCollection::new(0));
         let (kv_update_tx, _) = mpsc::channel(1);
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
@@ -513,7 +510,7 @@ mod test {
     }
 
     async fn exe_and_sync_req(
-        ls: &LeaseStore<DB>,
+        ls: &LeaseStore,
         req: &RequestWrapper,
         revision: i64,
     ) -> Result<ResponseWrapper, ExecuteError> {
