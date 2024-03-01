@@ -28,18 +28,15 @@ use crate::{
         PutRequest, PutResponse, RangeRequest, RangeResponse, RequestWrapper, Response, ResponseOp,
         TxnRequest, TxnResponse,
     },
-    storage::{storage_api::StorageApi, AuthStore, KvStore},
+    storage::{AuthStore, KvStore},
 };
 
 /// KV Server
-pub(crate) struct KvServer<S>
-where
-    S: StorageApi,
-{
+pub(crate) struct KvServer {
     /// KV storage
-    kv_storage: Arc<KvStore<S>>,
+    kv_storage: Arc<KvStore>,
     /// Auth storage
-    auth_storage: Arc<AuthStore<S>>,
+    auth_storage: Arc<AuthStore>,
     /// Barrier for applied index
     index_barrier: Arc<IndexBarrier>,
     /// Barrier for propose id
@@ -56,15 +53,12 @@ where
     next_compact_id: AtomicU64,
 }
 
-impl<S> KvServer<S>
-where
-    S: StorageApi,
-{
+impl KvServer {
     /// New `KvServer`
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        kv_storage: Arc<KvStore<S>>,
-        auth_storage: Arc<AuthStore<S>>,
+        kv_storage: Arc<KvStore>,
+        auth_storage: Arc<AuthStore>,
         index_barrier: Arc<IndexBarrier>,
         id_barrier: Arc<IdBarrier>,
         range_retry_timeout: Duration,
@@ -193,10 +187,7 @@ where
 }
 
 #[tonic::async_trait]
-impl<S> Kv for KvServer<S>
-where
-    S: StorageApi,
-{
+impl Kv for KvServer {
     /// Range gets the keys in the range from the key-value store.
     #[instrument(skip_all)]
     async fn range(

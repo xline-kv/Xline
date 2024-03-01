@@ -22,7 +22,7 @@ use utils::{
 };
 use xlineapi::command::KeyRange;
 
-use super::{kv_store::KvStoreInner, storage_api::StorageApi};
+use super::kv_store::KvStoreInner;
 use crate::rpc::{Event, KeyValue};
 
 /// Watch ID
@@ -170,12 +170,9 @@ impl Watcher {
 
 /// KV watcher
 #[derive(Debug)]
-pub(crate) struct KvWatcher<S>
-where
-    S: StorageApi,
-{
+pub(crate) struct KvWatcher {
     /// KV storage Inner
-    kv_store_inner: Arc<KvStoreInner<S>>,
+    kv_store_inner: Arc<KvStoreInner>,
     /// Watch indexes
     watcher_map: Arc<RwLock<WatcherMap>>,
 }
@@ -305,10 +302,7 @@ pub(crate) trait KvWatcherOps {
 }
 
 #[async_trait::async_trait]
-impl<S> KvWatcherOps for KvWatcher<S>
-where
-    S: StorageApi,
-{
+impl KvWatcherOps for KvWatcher {
     fn watch(
         &self,
         id: WatchId,
@@ -385,13 +379,10 @@ where
     }
 }
 
-impl<S> KvWatcher<S>
-where
-    S: StorageApi,
-{
+impl KvWatcher {
     /// Create a new `Arc<KvWatcher>`
     pub(crate) fn new_arc(
-        kv_store_inner: Arc<KvStoreInner<S>>,
+        kv_store_inner: Arc<KvStoreInner>,
         kv_update_rx: mpsc::Receiver<(i64, Vec<Event>)>,
         sync_victims_interval: Duration,
         task_manager: &TaskManager,
@@ -413,7 +404,7 @@ where
     /// Background task to handle KV updates
     #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)] // Introduced by tokio::select!
     async fn kv_updates_task(
-        kv_watcher: Arc<KvWatcher<S>>,
+        kv_watcher: Arc<KvWatcher>,
         mut kv_update_rx: mpsc::Receiver<(i64, Vec<Event>)>,
         shutdown_listener: Listener,
     ) {
@@ -437,7 +428,7 @@ where
     /// Background task to sync victims
     #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)] // Introduced by tokio::select!
     async fn sync_victims_task(
-        kv_watcher: Arc<KvWatcher<S>>,
+        kv_watcher: Arc<KvWatcher>,
         sync_victims_interval: Duration,
         shutdown_listener: Listener,
     ) {
@@ -613,13 +604,11 @@ mod test {
         rpc::PutRequest,
         storage::{
             compact::COMPACT_CHANNEL_SIZE, db::DB, index::Index, lease_store::LeaseCollection,
-            KvStore,
+            storage_api::StorageApi, KvStore,
         },
     };
 
-    fn init_empty_store(
-        task_manager: &TaskManager,
-    ) -> (Arc<KvStore<DB>>, Arc<DB>, Arc<KvWatcher<DB>>) {
+    fn init_empty_store(task_manager: &TaskManager) -> (Arc<KvStore>, Arc<DB>, Arc<KvWatcher>) {
         let (compact_tx, _compact_rx) = mpsc::channel(COMPACT_CHANNEL_SIZE);
         let db = DB::open(&EngineConfig::Memory).unwrap();
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
@@ -773,7 +762,7 @@ mod test {
     }
 
     async fn put(
-        store: &KvStore<DB>,
+        store: &KvStore,
         db: &DB,
         key: impl Into<Vec<u8>>,
         value: impl Into<Vec<u8>>,

@@ -6,7 +6,7 @@ use xlineapi::execute_error::ExecuteError;
 
 use crate::{
     rpc::{Role, User},
-    storage::storage_api::StorageApi,
+    storage::{db::DB, storage_api::StorageApi},
 };
 
 /// Key of `AuthEnable`
@@ -19,18 +19,12 @@ pub(crate) const ROOT_USER: &str = "root";
 pub(crate) const ROOT_ROLE: &str = "root";
 
 /// Auth store inner
-pub(crate) struct AuthStoreBackend<DB>
-where
-    DB: StorageApi,
-{
+pub(crate) struct AuthStoreBackend {
     /// DB to store key value
     db: Arc<DB>,
 }
 
-impl<DB> fmt::Debug for AuthStoreBackend<DB>
-where
-    DB: StorageApi,
-{
+impl fmt::Debug for AuthStoreBackend {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AuthStoreBackend")
             .field("db", &self.db)
@@ -38,10 +32,7 @@ where
     }
 }
 
-impl<DB> AuthStoreBackend<DB>
-where
-    DB: StorageApi,
-{
+impl AuthStoreBackend {
     /// New `AuthStoreBackend`
     pub(crate) fn new(db: Arc<DB>) -> Self {
         Self { db }

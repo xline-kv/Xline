@@ -63,13 +63,12 @@ use crate::{
         kv_store::KvStoreInner,
         kvwatcher::KvWatcher,
         lease_store::LeaseCollection,
-        storage_api::StorageApi,
         AlarmStore, AuthStore, KvStore, LeaseStore,
     },
 };
 
 /// Rpc Server of curp protocol
-pub(crate) type CurpServer<S> = Rpc<Command, State<S, Arc<CurpClient>>>;
+pub(crate) type CurpServer = Rpc<Command, State<Arc<CurpClient>>>;
 
 /// Xline server
 #[derive(Debug)]
@@ -199,18 +198,18 @@ impl XlineServer {
     /// Construct underlying storages, including `KvStore`, `LeaseStore`, `AuthStore`
     #[allow(clippy::type_complexity)] // it is easy to read
     #[inline]
-    async fn construct_underlying_storages<S: StorageApi>(
+    async fn construct_underlying_storages(
         &self,
-        persistent: Arc<S>,
+        persistent: Arc<DB>,
         lease_collection: Arc<LeaseCollection>,
         header_gen: Arc<HeaderGenerator>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
     ) -> Result<(
-        Arc<KvStore<S>>,
-        Arc<LeaseStore<S>>,
-        Arc<AuthStore<S>>,
-        Arc<AlarmStore<S>>,
-        Arc<KvWatcher<S>>,
+        Arc<KvStore>,
+        Arc<LeaseStore>,
+        Arc<AuthStore>,
+        Arc<AlarmStore>,
+        Arc<KvWatcher>,
     )> {
         let (compact_task_tx, compact_task_rx) = channel(COMPACT_CHANNEL_SIZE);
         let index = Arc::new(Index::new());
@@ -289,9 +288,9 @@ impl XlineServer {
     ///
     /// Will return `Err` when `init_servers` return an error
     #[inline]
-    pub async fn init_router<S: StorageApi>(
+    pub async fn init_router(
         &self,
-        persistent: Arc<S>,
+        persistent: Arc<DB>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
     ) -> Result<(Router, Router, Arc<CurpClient>)> {
         let (
@@ -435,20 +434,20 @@ impl XlineServer {
     #[allow(clippy::type_complexity, clippy::too_many_lines)] // it is easy to read
     #[allow(clippy::as_conversions)] // cast to dyn
     #[allow(trivial_casts)] // same as above
-    async fn init_servers<S: StorageApi>(
+    async fn init_servers(
         &self,
-        persistent: Arc<S>,
+        persistent: Arc<DB>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
     ) -> Result<(
-        KvServer<S>,
-        LockServer<S>,
-        Arc<LeaseServer<S>>,
-        AuthServer<S>,
-        WatchServer<S>,
-        MaintenanceServer<S>,
+        KvServer,
+        LockServer,
+        Arc<LeaseServer>,
+        AuthServer,
+        WatchServer,
+        MaintenanceServer,
         ClusterServer,
-        CurpServer<S>,
-        AuthWrapper<S>,
+        CurpServer,
+        AuthWrapper,
         Arc<CurpClient>,
     )> {
         let (header_gen, id_gen) = Self::construct_generator(&self.cluster_info);

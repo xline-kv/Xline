@@ -24,35 +24,29 @@ use crate::{
         ResponseHeader, SortOrder, SortTarget, TargetUnion, TxnRequest, TxnResponse, UnlockRequest,
         UnlockResponse, WatchClient, WatchCreateRequest, WatchRequest,
     },
-    storage::{storage_api::StorageApi, AuthStore},
+    storage::AuthStore,
 };
 
 /// Default session ttl
 const DEFAULT_SESSION_TTL: i64 = 60;
 
 /// Lock Server
-pub(super) struct LockServer<S>
-where
-    S: StorageApi,
-{
+pub(super) struct LockServer {
     /// Consensus client
     client: Arc<CurpClient>,
     /// Auth store
-    auth_store: Arc<AuthStore<S>>,
+    auth_store: Arc<AuthStore>,
     /// Id Generator
     id_gen: Arc<IdGenerator>,
     /// Server addresses
     addrs: Vec<Endpoint>,
 }
 
-impl<S> LockServer<S>
-where
-    S: StorageApi,
-{
+impl LockServer {
     /// New `LockServer`
     pub(super) fn new(
         client: Arc<CurpClient>,
-        auth_store: Arc<AuthStore<S>>,
+        auth_store: Arc<AuthStore>,
         id_gen: Arc<IdGenerator>,
         addrs: &[String],
         client_tls_config: Option<&ClientTlsConfig>,
@@ -211,10 +205,7 @@ where
 }
 
 #[tonic::async_trait]
-impl<S> Lock for LockServer<S>
-where
-    S: StorageApi,
-{
+impl Lock for LockServer {
     /// Lock acquires a distributed shared lock on a given named lock.
     /// On success, it will return a unique key that exists so long as the
     /// lock is held by the caller. This key can be used in conjunction with
