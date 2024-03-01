@@ -16,8 +16,6 @@ pub(crate) mod kvwatcher;
 pub(crate) mod lease_store;
 /// Revision module
 pub(crate) mod revision;
-/// Persistent storage abstraction
-pub(crate) mod storage_api;
 
 pub use self::revision::Revision;
 pub(crate) use self::{
