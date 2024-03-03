@@ -66,7 +66,6 @@ impl Streaming {
         const RETRY_DELAY: Duration = Duration::from_millis(100);
 
         loop {
-            // is heartbeat task cancellation safety?
             let heartbeat = self.map_remote_leader::<(), _>(|conn| async move {
                 loop {
                     let err = conn
@@ -101,8 +100,6 @@ impl Streaming {
             tokio::select! {
                 _ = self.state.leader_notifier().listen() => {
                     debug!("interrupt keep heartbeat because leadership changed");
-                    // TODO release the heartbeat task unless cancellation safety is ensured, especially in the case of the tonic RPC method.
-                    // TODO how to release?
                 }
                 _ = heartbeat => {
                     break;
