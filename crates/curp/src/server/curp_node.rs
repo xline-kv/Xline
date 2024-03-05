@@ -28,10 +28,11 @@ use utils::{
 use super::{
     cmd_board::{CmdBoardRef, CommandBoard},
     cmd_worker::{conflict_checked_mpmc, start_cmd_workers},
-    gc::{gc_cmd_board, gc_spec_pool},
+    conflict::spec_pool_new::{SpObject, SpecPool},
+    conflict::uncommitted_pool::{UcpObject, UncomPool},
+    gc::gc_cmd_board,
     lease_manager::LeaseManager,
-    raw_curp::{AppendEntries, RawCurp, UncommittedPool, Vote},
-    spec_pool::{SpecPoolRef, SpeculativePool},
+    raw_curp::{AppendEntries, RawCurp, Vote},
     storage::StorageApi,
 };
 use crate::{
@@ -59,8 +60,6 @@ use crate::{
 pub(super) struct CurpNode<C: Command, RC: RoleChange> {
     /// `RawCurp` state machine
     curp: Arc<RawCurp<C, RC>>,
-    /// The speculative cmd pool, shared with executor
-    spec_pool: SpecPoolRef<C>,
     /// Cmd watch board for tracking the cmd sync results
     cmd_board: CmdBoardRef<C>,
     /// CE event tx,
@@ -336,7 +335,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     ) -> Result<FetchReadStateResponse, CurpError> {
         self.check_cluster_version(req.cluster_version)?;
         let cmd = req.cmd()?;
-        let state = self.curp.handle_fetch_read_state(&cmd);
+        let state = self.curp.handle_fetch_read_state(Arc::new(cmd));
         Ok(FetchReadStateResponse::new(state))
     }
 
@@ -612,6 +611,8 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         storage: Arc<DB<C>>,
         task_manager: Arc<TaskManager>,
         client_tls_config: Option<ClientTlsConfig>,
+        sps: Vec<SpObject<C>>,
+        ucps: Vec<UcpObject<C>>,
     ) -> Result<Self, CurpError> {
         let sync_events = cluster_info
             .peers_ids()
@@ -624,9 +625,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
             .collect();
         let (log_tx, log_rx) = mpsc::unbounded_channel();
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
-        let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
         let lease_manager = Arc::new(RwLock::new(LeaseManager::new()));
-        let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
         let last_applied = cmd_executor
             .last_applied()
             .map_err(|e| CurpError::internal(format!("get applied index error, {e}")))?;
@@ -641,9 +640,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                 .cluster_info(Arc::clone(&cluster_info))
                 .is_leader(is_leader)
                 .cmd_board(Arc::clone(&cmd_board))
-                .spec_pool(Arc::clone(&spec_pool))
                 .lease_manager(lease_manager)
-                .uncommitted_pool(uncommitted_pool)
                 .cfg(Arc::clone(&curp_cfg))
                 .cmd_tx(Arc::clone(&ce_event_tx))
                 .sync_events(sync_events)
@@ -656,6 +653,8 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                 .entries(entries)
                 .curp_storage(Arc::clone(&storage))
                 .client_tls_config(client_tls_config)
+                .new_sp(Arc::new(Mutex::new(SpecPool::new(sps))))
+                .new_ucp(Arc::new(Mutex::new(UncomPool::new(ucps))))
                 .build_raw_curp()
                 .map_err(|e| CurpError::internal(format!("build raw curp failed, {e}")))?,
         );
@@ -667,15 +666,11 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         task_manager.spawn(TaskName::GcCmdBoard, |n| {
             gc_cmd_board(Arc::clone(&cmd_board), curp_cfg.gc_interval, n)
         });
-        task_manager.spawn(TaskName::GcSpecPool, |n| {
-            gc_spec_pool(Arc::clone(&spec_pool), curp_cfg.gc_interval, n)
-        });
 
         Self::run_bg_tasks(Arc::clone(&curp), Arc::clone(&storage), log_rx);
 
         Ok(Self {
             curp,
-            spec_pool,
             cmd_board,
             ce_event_tx,
             storage,
@@ -975,7 +970,6 @@ impl<C: Command, RC: RoleChange> Debug for CurpNode<C, RC> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CurpNode")
             .field("raw_curp", &self.curp)
-            .field("spec_pool", &self.spec_pool)
             .field("cmd_board", &self.cmd_board)
             .finish()
     }

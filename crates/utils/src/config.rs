@@ -46,7 +46,7 @@ pub type LevelConfig = tracing::metadata::LevelFilter;
 pub mod duration_format {
     use std::time::Duration;
 
-    use serde::{self, Deserialize, Deserializer};
+    use serde::{Deserialize, Deserializer};
 
     use crate::parse_duration;
 
@@ -63,7 +63,7 @@ pub mod duration_format {
 
 /// batch size deserialization formatter
 pub mod bytes_format {
-    use serde::{self, Deserialize, Deserializer};
+    use serde::{Deserialize, Deserializer};
 
     use crate::parse_batch_bytes;
 
@@ -156,7 +156,7 @@ pub enum InitialClusterState {
 
 /// `InitialClusterState` deserialization formatter
 pub mod state_format {
-    use serde::{self, Deserialize, Deserializer};
+    use serde::{Deserialize, Deserializer};
 
     use super::InitialClusterState;
     use crate::parse_state;
@@ -756,7 +756,7 @@ impl Default for LogConfig {
 
 /// `LevelConfig` deserialization formatter
 pub mod level_format {
-    use serde::{self, Deserialize, Deserializer};
+    use serde::{Deserialize, Deserializer};
 
     use super::LevelConfig;
     use crate::parse_log_level;
@@ -819,7 +819,7 @@ impl std::fmt::Display for RotationConfig {
 
 /// `RotationConfig` deserialization formatter
 pub mod rotation_format {
-    use serde::{self, Deserialize, Deserializer};
+    use serde::{Deserialize, Deserializer};
 
     use super::RotationConfig;
     use crate::parse_rotation;
@@ -1012,7 +1012,7 @@ impl std::fmt::Display for MetricsPushProtocol {
 
 /// Metrics push protocol format
 pub mod protocol_format {
-    use serde::{self, Deserialize, Deserializer};
+    use serde::{Deserialize, Deserializer};
 
     use super::MetricsPushProtocol;
     use crate::parse_metrics_push_protocol;

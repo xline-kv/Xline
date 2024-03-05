@@ -10,7 +10,10 @@ use curp::{
     error::ServerError,
     members::{ClusterInfo, ServerId},
     rpc::{InnerProtocolServer, Member, ProtocolServer},
-    server::{Rpc, DB},
+    server::{
+        conflict::test_pools::{TestSpecPool, TestUncomPool},
+        Rpc, DB,
+    },
     LogIndex,
 };
 use curp_test_utils::{
@@ -136,6 +139,8 @@ impl CurpGroup {
                     curp_storage,
                     Arc::clone(&task_manager),
                     client_tls_config.clone(),
+                    vec![Box::<TestSpecPool>::default()],
+                    vec![Box::<TestUncomPool>::default()],
                 )
                 .await,
             );
@@ -266,6 +271,8 @@ impl CurpGroup {
                 curp_storage,
                 Arc::clone(&task_manager),
                 self.client_tls_config.clone(),
+                vec![],
+                vec![],
             )
             .await,
         );

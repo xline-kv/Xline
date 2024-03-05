@@ -6,7 +6,7 @@ use curp::{
     client::ClientBuilder as CurpClientBuilder,
     members::{get_cluster_info_from_remote, ClusterInfo},
     rpc::{InnerProtocolServer, ProtocolServer},
-    server::{Rpc, StorageApi as _, DB as CurpDB},
+    server::{Rpc, SpObject, StorageApi as _, UcpObject, DB as CurpDB},
 };
 use dashmap::DashMap;
 use engine::{MemorySnapshotAllocator, RocksSnapshotAllocator, SnapshotAllocator};
@@ -46,6 +46,10 @@ use super::{
     watch_server::{WatchServer, CHANNEL_SIZE},
 };
 use crate::{
+    conflict::{
+        spec_pool::{KvSpecPool, LeaseSpecPool, XorSpecPool},
+        uncommitted_pool::{KvUncomPool, LeaseUncomPool, XorUncomPool},
+    },
     header_gen::HeaderGenerator,
     id_gen::IdGenerator,
     metrics::Metrics,
@@ -508,6 +512,8 @@ impl XlineServer {
         let state = State::new(Arc::clone(&lease_storage), auto_compactor);
 
         let curp_config = Arc::new(self.cluster_config.curp_config().clone());
+
+        let (sps, ucps) = Self::init_conflict_pools();
         let curp_server = CurpServer::new(
             Arc::clone(&self.cluster_info),
             *self.cluster_config.is_leader(),
@@ -518,6 +524,8 @@ impl XlineServer {
             Arc::clone(&self.curp_storage),
             Arc::clone(&self.task_manager),
             self.client_tls_config.clone(),
+            sps,
+            ucps,
         )
         .await;
 
@@ -658,6 +666,20 @@ impl XlineServer {
             }
         };
         Ok((client_tls_config, server_tls_config))
+    }
+
+    /// Initialize conflict pools
+    fn init_conflict_pools() -> (Vec<SpObject<Command>>, Vec<UcpObject<Command>>) {
+        let kv_sp = Box::<KvSpecPool>::default();
+        let lease_sp = Box::<LeaseSpecPool>::default();
+        let xor_sp = Box::<XorSpecPool>::default();
+        let kv_ucp = Box::<KvUncomPool>::default();
+        let lease_ucp = Box::<LeaseUncomPool>::default();
+        let xor_ucp = Box::<XorUncomPool>::default();
+        (
+            vec![kv_sp, lease_sp, xor_sp],
+            vec![kv_ucp, lease_ucp, xor_ucp],
+        )
     }
 }
 

@@ -167,6 +167,8 @@ mod revision_number;
 mod rpc {
     pub(crate) use xlineapi::*;
 }
+/// Command conflict implementation
+mod conflict;
 /// Xline metrics
 pub mod metrics;
 /// restore module, only for test

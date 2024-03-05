@@ -862,14 +862,6 @@ where
             inner: inner.into(),
         }
     }
-
-    /// Check if the entry is conflict with the command
-    pub(crate) fn is_conflict_with_cmd(&self, c: &C) -> bool {
-        match self.inner {
-            PoolEntryInner::Command(ref cmd) => cmd.is_conflict(c),
-            PoolEntryInner::ConfChange(ref _conf_change) => true,
-        }
-    }
 }
 
 impl<C> ConflictCheck for PoolEntry<C>

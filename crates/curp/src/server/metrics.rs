@@ -114,7 +114,7 @@ impl Metrics {
                 observer.observe_u64(&is_learner, u64::from(learner), &[]);
                 observer.observe_u64(&server_id, id, &[]);
 
-                let sp_size = curp.spec_pool().lock().pool.len();
+                let sp_size = curp.new_spec_pool().lock().len();
                 observer.observe_u64(&sp_total, sp_size.numeric_cast(), &[]);
 
                 let client_ids = curp.lease_manager().read().expiry_queue.len();

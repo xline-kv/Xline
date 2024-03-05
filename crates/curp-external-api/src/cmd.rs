@@ -46,6 +46,9 @@ pub trait Command: pri::Serializable + ConflictCheck + PbCodec {
     /// Get keys of the command
     fn keys(&self) -> &[Self::K];
 
+    /// Returns `true` if the command is read-only
+    fn is_read_only(&self) -> bool;
+
     /// Prepare the command
     #[inline]
     fn prepare<E>(&self, e: &E) -> Result<Self::PR, Self::Error>

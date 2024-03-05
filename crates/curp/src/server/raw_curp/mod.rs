@@ -20,7 +20,6 @@ use std::{
 };
 
 use clippy_utilities::{NumericCast, OverflowArithmetic};
-use curp_external_api::cmd::ConflictCheck;
 use dashmap::DashMap;
 use derive_builder::Builder;
 use event_listener::Event;
@@ -47,7 +46,10 @@ use self::{
     log::Log,
     state::{CandidateState, LeaderState, State},
 };
-use super::{cmd_worker::CEEventTxApi, lease_manager::LeaseManagerRef, storage::StorageApi, DB};
+use super::{
+    cmd_worker::CEEventTxApi, conflict::spec_pool_new::SpecPool,
+    conflict::uncommitted_pool::UncomPool, lease_manager::LeaseManagerRef, storage::StorageApi, DB,
+};
 use crate::{
     cmd::Command,
     log_entry::{EntryData, LogEntry},
@@ -56,14 +58,13 @@ use crate::{
     role_change::RoleChange,
     rpc::{
         connect::{InnerConnectApi, InnerConnectApiWrapper},
-        ConfChange, ConfChangeType, CurpError, IdSet, Member, PoolEntry, PoolEntryInner, ProposeId,
-        PublishRequest, ReadState,
+        ConfChange, ConfChangeType, CurpError, IdSet, Member, PoolEntry, ProposeId, PublishRequest,
+        ReadState,
     },
     server::{
         cmd_board::CmdBoardRef,
         metrics,
         raw_curp::{log::FallbackContext, state::VoteResult},
-        spec_pool::SpecPoolRef,
     },
     snapshot::{Snapshot, SnapshotMeta},
     LogIndex,
@@ -78,12 +79,6 @@ mod log;
 /// test utils
 #[cfg(test)]
 mod tests;
-
-/// Uncommitted pool type
-pub(super) type UncommittedPool<C> = HashMap<ProposeId, PoolEntry<C>>;
-
-/// Reference to uncommitted pool
-pub(super) type UncommittedPoolRef<C> = Arc<Mutex<UncommittedPool<C>>>;
 
 /// Default Size of channel
 const CHANGE_CHANNEL_SIZE: usize = 128;
@@ -117,12 +112,8 @@ pub(super) struct RawCurpArgs<C: Command, RC: RoleChange> {
     is_leader: bool,
     /// Cmd board for tracking the cmd sync results
     cmd_board: CmdBoardRef<C>,
-    /// Speculative pool
-    spec_pool: SpecPoolRef<C>,
     /// Lease Manager
     lease_manager: LeaseManagerRef,
-    /// Uncommitted pool
-    uncommitted_pool: UncommittedPoolRef<C>,
     /// Config
     cfg: Arc<CurpConfig>,
     /// Tx to send cmds to execute and do after sync
@@ -151,6 +142,10 @@ pub(super) struct RawCurpArgs<C: Command, RC: RoleChange> {
     /// Log entries
     #[builder(default)]
     entries: Vec<LogEntry<C>>,
+    /// Speculative pool
+    new_sp: Arc<Mutex<SpecPool<C>>>,
+    /// Uncommitted pool
+    new_ucp: Arc<Mutex<UncomPool<C>>>,
 }
 
 impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
@@ -173,9 +168,7 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
         let ctx = Context::builder()
             .cluster_info(args.cluster_info)
             .cb(args.cmd_board)
-            .sp(args.spec_pool)
             .lm(args.lease_manager)
-            .ucp(args.uncommitted_pool)
             .cfg(args.cfg)
             .cmd_tx(args.cmd_tx)
             .sync_events(args.sync_events)
@@ -183,6 +176,8 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
             .connects(args.connects)
             .curp_storage(args.curp_storage)
             .client_tls_config(args.client_tls_config)
+            .new_sp(args.new_sp)
+            .new_ucp(args.new_ucp)
             .build()
             .map_err(|e| match e {
                 ContextBuilderError::UninitializedField(s) => {
@@ -305,12 +300,8 @@ struct Context<C: Command, RC: RoleChange> {
     client_tls_config: Option<ClientTlsConfig>,
     /// Cmd board for tracking the cmd sync results
     cb: CmdBoardRef<C>,
-    /// Speculative pool
-    sp: SpecPoolRef<C>,
     /// The lease manager
     lm: LeaseManagerRef,
-    /// Uncommitted pool
-    ucp: UncommittedPoolRef<C>,
     /// Tx to send leader changes
     #[builder(setter(skip))]
     leader_tx: broadcast::Sender<Option<ServerId>>,
@@ -339,6 +330,10 @@ struct Context<C: Command, RC: RoleChange> {
     last_conf_change_idx: AtomicU64,
     /// Curp storage
     curp_storage: Arc<DB<C>>,
+    /// Speculative pool
+    new_sp: Arc<Mutex<SpecPool<C>>>,
+    /// Uncommitted pool
+    new_ucp: Arc<Mutex<UncomPool<C>>>,
 }
 
 impl<C: Command, RC: RoleChange> Context<C, RC> {
@@ -365,17 +360,9 @@ impl<C: Command, RC: RoleChange> ContextBuilder<C, RC> {
                 Some(value) => value,
                 None => return Err(ContextBuilderError::UninitializedField("cb")),
             },
-            sp: match self.sp.take() {
-                Some(value) => value,
-                None => return Err(ContextBuilderError::UninitializedField("sp")),
-            },
             lm: match self.lm.take() {
                 Some(value) => value,
                 None => return Err(ContextBuilderError::UninitializedField("lm")),
-            },
-            ucp: match self.ucp.take() {
-                Some(value) => value,
-                None => return Err(ContextBuilderError::UninitializedField("ucp")),
             },
             leader_tx: broadcast::channel(1).0,
             election_tick: AtomicU8::new(0),
@@ -407,6 +394,14 @@ impl<C: Command, RC: RoleChange> ContextBuilder<C, RC> {
                 Some(value) => value,
                 None => return Err(ContextBuilderError::UninitializedField("client_tls_config")),
             },
+            new_sp: match self.new_sp.take() {
+                Some(value) => value,
+                None => return Err(ContextBuilderError::UninitializedField("new_sp")),
+            },
+            new_ucp: match self.new_ucp.take() {
+                Some(value) => value,
+                None => return Err(ContextBuilderError::UninitializedField("new_ucp")),
+            },
         })
     }
 }
@@ -417,8 +412,6 @@ impl<C: Command, RC: RoleChange> Debug for Context<C, RC> {
             .field("cluster_info", &self.cluster_info)
             .field("cfg", &self.cfg)
             .field("cb", &self.cb)
-            .field("sp", &self.sp)
-            .field("ucp", &self.ucp)
             .field("leader_tx", &self.leader_tx)
             .field("election_tick", &self.election_tick)
             .field("cmd_tx", &"CEEventTxApi")
@@ -467,7 +460,12 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         cmd: Arc<C>,
     ) -> Result<bool, CurpError> {
         debug!("{} gets proposal for cmd({})", self.id(), propose_id);
-        let mut conflict = self.insert_sp(propose_id, Arc::clone(&cmd));
+        let mut conflict = self
+            .ctx
+            .new_sp
+            .map_lock(|mut sp_l| sp_l.insert(PoolEntry::new(propose_id, Arc::clone(&cmd))))
+            .is_some();
+
         let st_r = self.st.read();
         // Non-leader doesn't need to sync or execute
         if st_r.role != Role::Leader {
@@ -494,7 +492,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         }
 
         // leader also needs to check if the cmd conflicts un-synced commands
-        conflict |= self.insert_ucp(propose_id, Arc::clone(&cmd));
+        conflict |= self
+            .ctx
+            .new_ucp
+            .map_lock(|mut ucp_l| ucp_l.insert(PoolEntry::new(propose_id, Arc::clone(&cmd))));
+
         let mut log_w = self.log.write();
         let entry = log_w.push(st_r.term, propose_id, cmd).map_err(|e| {
             metrics::get()
@@ -561,8 +563,17 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         }
         self.check_new_config(&conf_changes)?;
 
-        let mut conflict = self.insert_sp(propose_id, conf_changes.clone());
-        conflict |= self.insert_ucp(propose_id, conf_changes.clone());
+        let mut conflict = self
+            .ctx
+            .new_sp
+            .lock()
+            .insert(PoolEntry::new(propose_id, conf_changes.clone()))
+            .is_some();
+        conflict |= self
+            .ctx
+            .new_ucp
+            .lock()
+            .insert(PoolEntry::new(propose_id, conf_changes.clone()));
 
         let mut log_w = self.log.write();
         let entry = log_w
@@ -822,7 +833,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         // grant the vote
         debug!("{} votes for server {}", self.id(), candidate_id);
         st_w.voted_for = Some(candidate_id);
-        let self_spec_pool = self.ctx.sp.lock().pool.values().cloned().collect_vec();
+        let self_spec_pool = self.ctx.new_sp.lock().all();
         self.reset_election_tick();
         Ok((st_w.term, self_spec_pool))
     }
@@ -1045,13 +1056,14 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Handle `fetch_read_state`
-    pub(super) fn handle_fetch_read_state(&self, cmd: &C) -> ReadState {
-        let ids = self.ctx.sp.map_lock(|sp| {
-            sp.pool
-                .iter()
-                .filter_map(|(id, c)| c.is_conflict_with_cmd(cmd).then_some(*id))
-                .collect_vec()
-        });
+    pub(super) fn handle_fetch_read_state(&self, cmd: Arc<C>) -> ReadState {
+        let ids: Vec<_> = self
+            .ctx
+            .new_ucp
+            .map_lock(|ucp| ucp.all_conflict(PoolEntry::new(ProposeId::default(), cmd)))
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect();
         if ids.is_empty() {
             ReadState::CommitIndex(self.log.read().commit_index)
         } else {
@@ -1239,13 +1251,13 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Get a reference to spec pool
-    pub(super) fn spec_pool(&self) -> SpecPoolRef<C> {
-        Arc::clone(&self.ctx.sp)
+    pub(super) fn new_spec_pool(&self) -> Arc<Mutex<SpecPool<C>>> {
+        Arc::clone(&self.ctx.new_sp)
     }
 
     /// Get a reference to uncommitted pool
-    pub(super) fn uncommitted_pool(&self) -> UncommittedPoolRef<C> {
-        Arc::clone(&self.ctx.ucp)
+    pub(super) fn new_uncommitted_pool(&self) -> Arc<Mutex<UncomPool<C>>> {
+        Arc::clone(&self.ctx.new_ucp)
     }
 
     /// Get sync event
@@ -1568,10 +1580,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let _ig = self.ctx.leader_tx.send(None).ok();
         self.reset_election_tick();
 
-        let self_sp = self
-            .ctx
-            .sp
-            .map_lock(|sp| sp.pool.values().cloned().collect());
+        let self_sp = self.ctx.new_sp.map_lock(|sp| sp.all());
 
         if prev_role == Role::PreCandidate {
             debug!("PreCandidate {} starts election", self.id());
@@ -1710,7 +1719,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             .collect_vec();
 
         let mut cb_w = self.ctx.cb.write();
-        let mut sp_l = self.ctx.sp.lock();
+        let mut sp_l = self.ctx.new_sp.lock();
 
         let term = st.term;
         for entry in recovered_cmds {
@@ -1731,7 +1740,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
     /// Recover the ucp from uncommitted log entries
     fn recover_ucp_from_log(&self, log: &mut Log<C>) {
-        let mut ucp_l = self.ctx.ucp.lock();
+        let mut ucp_l = self.ctx.new_ucp.lock();
 
         for i in log.commit_index + 1..=log.last_log_index() {
             let entry = log.get(i).unwrap_or_else(|| {
@@ -1740,12 +1749,10 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             let propose_id = entry.propose_id;
             match entry.entry_data {
                 EntryData::Command(ref cmd) => {
-                    let _ignore =
-                        ucp_l.insert(propose_id, PoolEntry::new(propose_id, Arc::clone(cmd)));
+                    let _ignore = ucp_l.insert(PoolEntry::new(propose_id, Arc::clone(cmd)));
                 }
                 EntryData::ConfChange(ref conf_change) => {
-                    let _ignore =
-                        ucp_l.insert(propose_id, PoolEntry::new(propose_id, conf_change.clone()));
+                    let _ignore = ucp_l.insert(PoolEntry::new(propose_id, conf_change.clone()));
                 }
                 EntryData::Shutdown | EntryData::Empty | EntryData::SetNodeState(_, _, _) => {}
             }
@@ -1782,7 +1789,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         debug!("leader {} retires", self.id());
         self.ctx.cb.write().clear();
         self.ctx.lm.write().clear();
-        self.ctx.ucp.lock().clear();
+        self.ctx.new_ucp.lock().clear();
     }
 
     /// Switch to a new config and return old member infos for fallback
@@ -1894,25 +1901,5 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             debug!("{} updates commit index to {index}", self.id());
             self.apply(&mut *log_w);
         }
-    }
-
-    /// Insert entry to spec pool
-    fn insert_sp(&self, propose_id: ProposeId, inner: impl Into<PoolEntryInner<C>>) -> bool {
-        self.ctx
-            .sp
-            .map_lock(|mut spec_l| spec_l.insert(PoolEntry::new(propose_id, inner)).is_some())
-    }
-
-    /// Insert entry to uncommitted pool
-    fn insert_ucp(&self, propose_id: ProposeId, inner: impl Into<PoolEntryInner<C>>) -> bool {
-        let entry = PoolEntry::new(propose_id, inner);
-        self.ctx.ucp.map_lock(|mut ucp_l| {
-            let conflict_uncommitted = ucp_l.values().any(|c| c.is_conflict(&entry));
-            assert!(
-                ucp_l.insert(propose_id, entry.clone()).is_none(),
-                "cmd should never be inserted to uncommitted pool twice"
-            );
-            conflict_uncommitted
-        })
     }
 }

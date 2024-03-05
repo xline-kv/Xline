@@ -1,6 +1,6 @@
 use std::{cmp::Reverse, ops::Add, time::Duration};
 
-use curp_test_utils::{mock_role_change, test_cmd::TestCommand, TEST_CLIENT_ID};
+use curp_test_utils::{mock_role_change, test_cmd::TestCommand, TestRoleChange, TEST_CLIENT_ID};
 use test_macros::abort_on_panic;
 use tokio::{
     sync::oneshot,
@@ -18,15 +18,14 @@ use crate::{
     server::{
         cmd_board::CommandBoard,
         cmd_worker::{CEEventTxApi, MockCEEventTxApi},
+        conflict::test_pools::{TestSpecPool, TestUncomPool},
         lease_manager::LeaseManager,
-        raw_curp::UncommittedPool,
-        spec_pool::SpeculativePool,
     },
     LogIndex,
 };
 
 // Hooks for tests
-impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
+impl RawCurp<TestCommand, TestRoleChange> {
     fn role(&self) -> Role {
         self.st.read().role
     }
@@ -38,10 +37,10 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             && self.cst.lock().config.contains(id)
     }
 
-    pub(crate) fn new_test<Tx: CEEventTxApi<C>>(
+    pub(crate) fn new_test<Tx: CEEventTxApi<TestCommand>>(
         n: u64,
         exe_tx: Tx,
-        role_change: RC,
+        role_change: TestRoleChange,
         task_manager: Arc<TaskManager>,
     ) -> Self {
         let all_members: HashMap<_, _> = (0..n)
@@ -49,8 +48,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             .collect();
         let cluster_info = Arc::new(ClusterInfo::from_members_map(all_members, [], "S0"));
         let cmd_board = Arc::new(RwLock::new(CommandBoard::new()));
-        let spec_pool = Arc::new(Mutex::new(SpeculativePool::new()));
-        let uncommitted_pool = Arc::new(Mutex::new(UncommittedPool::new()));
         let lease_manager = Arc::new(RwLock::new(LeaseManager::new()));
         let (log_tx, log_rx) = mpsc::unbounded_channel();
         // prevent the channel from being closed
@@ -82,13 +79,18 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             Reverse(Instant::now().add(Duration::from_nanos(u64::MAX))),
         );
 
+        let sp = Arc::new(Mutex::new(SpecPool::new(vec![Box::new(
+            TestSpecPool::default(),
+        )])));
+        let ucp = Arc::new(Mutex::new(UncomPool::new(vec![Box::new(
+            TestUncomPool::default(),
+        )])));
+
         Self::builder()
             .cluster_info(cluster_info)
             .is_leader(true)
             .cmd_board(cmd_board)
-            .spec_pool(spec_pool)
             .lease_manager(lease_manager)
-            .uncommitted_pool(uncommitted_pool)
             .cfg(Arc::new(curp_config))
             .cmd_tx(Arc::new(exe_tx))
             .sync_events(sync_events)
@@ -97,6 +99,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             .task_manager(task_manager)
             .connects(connects)
             .curp_storage(curp_storage)
+            .new_sp(sp)
+            .new_ucp(ucp)
             .build_raw_curp()
             .unwrap()
     }
@@ -107,7 +111,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Add a new cmd to the log, will return log entry index
-    pub(crate) fn push_cmd(&self, propose_id: ProposeId, cmd: Arc<C>) -> LogIndex {
+    pub(crate) fn push_cmd(&self, propose_id: ProposeId, cmd: Arc<TestCommand>) -> LogIndex {
         let st_r = self.st.read();
         let mut log_w = self.log.write();
         log_w.push(st_r.term, propose_id, cmd).unwrap().index
@@ -751,8 +755,8 @@ fn recover_ucp_from_logs_will_pick_the_correct_cmds() {
 
     curp.recover_ucp_from_log(&mut *curp.log.write());
 
-    curp.ctx.ucp.map_lock(|ucp| {
-        let mut ids: Vec<_> = ucp.values().map(|entry| entry.id).collect();
+    curp.ctx.new_ucp.map_lock(|ucp| {
+        let mut ids: Vec<_> = ucp.all().into_iter().map(|entry| entry.id).collect();
         assert_eq!(ids.len(), 2);
         ids.sort();
         assert_eq!(ids[0], ProposeId(TEST_CLIENT_ID, 1));
@@ -809,7 +813,7 @@ fn leader_retires_should_cleanup() {
     let cb_r = curp.ctx.cb.read();
     assert!(cb_r.er_buffer.is_empty(), "er buffer should be empty");
     assert!(cb_r.asr_buffer.is_empty(), "asr buffer should be empty");
-    let ucp_l = curp.ctx.ucp.lock();
+    let ucp_l = curp.ctx.new_ucp.lock();
     assert!(ucp_l.is_empty(), "ucp should be empty");
 }
 
