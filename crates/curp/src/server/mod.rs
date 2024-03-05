@@ -292,6 +292,8 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
         storage: Arc<DB<C>>,
         task_manager: Arc<TaskManager>,
         client_tls_config: Option<ClientTlsConfig>,
+        sps: Vec<SpObject<C>>,
+        ucps: Vec<UcpObject<C>>,
     ) -> Result<(), crate::error::ServerError>
     where
         CE: CommandExecutor<C>,
@@ -311,6 +313,8 @@ impl<C: Command, RC: RoleChange> Rpc<C, RC> {
             storage,
             task_manager,
             client_tls_config,
+            sps,
+            ucps,
         )
         .await;
 

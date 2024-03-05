@@ -12,7 +12,10 @@ use curp::{
         ConfChange, FetchClusterRequest, FetchClusterResponse, Member, ProposeConfChangeRequest,
         ProposeConfChangeResponse, ReadState,
     },
-    server::{Rpc, StorageApi, DB},
+    server::{
+        conflict::test_pools::{TestSpecPool, TestUncomPool},
+        Rpc, StorageApi, DB,
+    },
     LogIndex,
 };
 use curp_test_utils::{
@@ -132,6 +135,8 @@ impl CurpGroup {
                             curp_storage,
                             task_manager,
                             None,
+                            vec![Box::<TestSpecPool>::default()],
+                            vec![Box::<TestUncomPool>::default()],
                         )
                     })
                     .build();
