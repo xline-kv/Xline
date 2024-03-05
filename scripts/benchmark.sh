@@ -56,10 +56,10 @@ run_xline() {
     --client-propose-timeout 5s \
     --batch-timeout 1ms \
     --cmd-workers 16 \
-    --client-listen-urls=http://${SERVERS[$1]}:2379 \
-    --peer-listen-urls=http://${SERVERS[$1]}:2380 \
-    --client-advertise-urls=http://${SERVERS[$1]}:2379 \
-    --peer-advertise-urls=http://${SERVERS[$1]}:2380"
+    --client-listen-urls http://${SERVERS[$1]}:2379 \
+    --peer-listen-urls http://${SERVERS[$1]}:2380 \
+    --client-advertise-urls http://${SERVERS[$1]}:2379 \
+    --peer-advertise-urls http://${SERVERS[$1]}:2380"
 
     if [ ${1} -eq 1 ]; then
         cmd="${cmd} --is-leader"
