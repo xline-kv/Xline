@@ -33,7 +33,7 @@ struct Inner {
     db: Arc<OptimisticTransactionDB>,
     /// A transaction of the DB
     txn: Option<Transaction<'static, OptimisticTransactionDB>>,
-    /// Cached write operaions
+    /// Cached write operations
     write_ops: Vec<WriteOperationOwned>,
     /// The size of the engine
     engine_size: Arc<AtomicU64>,
