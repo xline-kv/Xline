@@ -136,7 +136,7 @@ impl Inner {
 
         let txn = self.db.transaction();
         let txn_static =
-            // SAFETY: In `RocksTransaction` we hold an Arc reference to the DB, 
+            // SAFETY: In `RocksTransaction` we hold an Arc reference to the DB,
             // so a `Transaction<'db, DB>` won't outlive the lifetime of the DB.
             unsafe { std::mem::transmute::<_, Transaction<'static, OptimisticTransactionDB>>(txn) };
 
