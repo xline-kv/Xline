@@ -223,7 +223,7 @@ pub struct Command {
 }
 
 /// get all lease ids in the request wrapper
-fn get_lease_ids(wrapper: &RequestWrapper) -> HashSet<i64> {
+pub fn get_lease_ids(wrapper: &RequestWrapper) -> HashSet<i64> {
     match *wrapper {
         RequestWrapper::LeaseGrantRequest(ref req) => HashSet::from_iter(vec![req.id]),
         RequestWrapper::LeaseRevokeRequest(ref req) => HashSet::from_iter(vec![req.id]),

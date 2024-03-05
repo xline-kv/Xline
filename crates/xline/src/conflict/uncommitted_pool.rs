@@ -4,9 +4,12 @@ use curp::server::conflict::CommandEntry;
 use curp_external_api::conflict::{ConflictPoolOp, UncommittedPoolOp};
 use itertools::Itertools;
 use utils::interval_map::IntervalMap;
-use xlineapi::{command::Command, interval::BytesAffine};
+use xlineapi::{
+    command::{get_lease_ids, Command},
+    interval::BytesAffine,
+};
 
-use super::{filter_kv, intervals, is_xor_cmd, lease_id};
+use super::{filter_kv, intervals, is_xor_cmd};
 
 /// Uncommitted pool for KV commands.
 #[derive(Debug, Default)]
@@ -95,12 +98,12 @@ impl ConflictPoolOp for LeaseUncomPool {
     type Entry = CommandEntry<Command>;
 
     fn remove(&mut self, entry: Self::Entry) {
-        let Some(id) = lease_id(&entry) else {
-            return;
-        };
-        if let hash_map::Entry::Occupied(mut e) = self.leases.entry(id) {
-            if e.get_mut().remove_cmd(&entry) {
-                let _ignore = e.remove_entry();
+        let ids = get_lease_ids(entry.request());
+        for id in ids {
+            if let hash_map::Entry::Occupied(mut e) = self.leases.entry(id) {
+                if e.get_mut().remove_cmd(&entry) {
+                    let _ignore = e.remove_entry();
+                }
             }
         }
     }
@@ -128,25 +131,28 @@ impl ConflictPoolOp for LeaseUncomPool {
 
 impl UncommittedPoolOp for LeaseUncomPool {
     fn insert(&mut self, entry: Self::Entry) -> bool {
-        let Some(id) = lease_id(&entry) else {
-            return false;
-        };
-        match self.leases.entry(id) {
-            hash_map::Entry::Occupied(mut e) => {
-                e.get_mut().push_cmd(entry);
-                true
-            }
-            hash_map::Entry::Vacant(v) => {
-                let e = v.insert(Commands::default());
-                e.push_cmd(entry);
-                false
+        let mut conflict = false;
+        let ids = get_lease_ids(entry.request());
+        for id in ids {
+            match self.leases.entry(id) {
+                hash_map::Entry::Occupied(mut e) => {
+                    e.get_mut().push_cmd(entry.clone());
+                    conflict = true;
+                }
+                hash_map::Entry::Vacant(v) => {
+                    let e = v.insert(Commands::default());
+                    e.push_cmd(entry.clone());
+                }
             }
         }
+        conflict
     }
 
     fn all_conflict(&self, entry: &Self::Entry) -> Vec<Self::Entry> {
-        let id = lease_id(entry).unwrap_or_default();
-        self.leases.get(&id).map(Commands::all).unwrap_or_default()
+        let ids = get_lease_ids(entry.request());
+        ids.into_iter()
+            .flat_map(|id| self.leases.get(&id).map(Commands::all).unwrap_or_default())
+            .collect()
     }
 }
 

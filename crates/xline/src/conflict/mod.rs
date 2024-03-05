@@ -29,17 +29,6 @@ where
     matches!(entry.as_ref().request().backend(), RequestBackend::Kv).then_some(entry)
 }
 
-/// Get's the lease id from the command
-fn lease_id(cmd: &Command) -> Option<i64> {
-    #[allow(clippy::wildcard_enum_match_arm)]
-    match *cmd.request() {
-        RequestWrapper::LeaseGrantRequest(ref req) => (req.id != 0).then_some(req.id),
-        RequestWrapper::LeaseRevokeRequest(ref req) => (req.id != 0).then_some(req.id),
-        RequestWrapper::PutRequest(ref req) => (req.lease != 0).then_some(req.lease),
-        _ => None,
-    }
-}
-
 /// Returns `true` if this command conflicts with all other commands
 fn is_xor_cmd(cmd: &Command) -> bool {
     matches!(
