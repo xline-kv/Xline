@@ -2,8 +2,9 @@ use std::{error::Error, iter, path::PathBuf};
 
 use test_macros::abort_on_panic;
 use utils::config::{
-    AuthConfig, ClusterConfig, CompactConfig, LogConfig, MetricsConfig, StorageConfig, TlsConfig,
-    TraceConfig, XlineServerConfig,
+    auth_config::AuthConfig, cluster_config::ClusterConfig, compact_config::CompactConfig,
+    log_config::LogConfig, metrics_config::MetricsConfig, storage_config::StorageConfig,
+    tls_config::TlsConfig, trace_config::TraceConfig, XlineServerConfig,
 };
 use xline_test_utils::{
     enable_auth, set_user,

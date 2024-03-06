@@ -18,12 +18,9 @@ use tokio::{
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
 use tracing::{debug, error, info, trace, warn};
+use utils::{config::curp_config::CurpConfig, task_manager::{tasks::TaskName, Listener, State, TaskManager}};
 #[cfg(madsim)]
 use utils::ClientTlsConfig;
-use utils::{
-    config::CurpConfig,
-    task_manager::{tasks::TaskName, Listener, State, TaskManager},
-};
 
 use super::{
     cmd_board::{CmdBoardRef, CommandBoard},

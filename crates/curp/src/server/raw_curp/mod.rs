@@ -37,7 +37,7 @@ use tracing::{
 #[cfg(madsim)]
 use utils::ClientTlsConfig;
 use utils::{
-    config::CurpConfig,
+    config::curp_config::CurpConfig,
     parking_lot_lock::{MutexMap, RwLockMap},
     task_manager::TaskManager,
 };

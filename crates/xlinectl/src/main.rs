@@ -162,7 +162,7 @@ use std::{path::PathBuf, time::Duration};
 use anyhow::Result;
 use clap::{arg, value_parser, Command};
 use command::compaction;
-use ext_utils::config::ClientConfig;
+use ext_utils::config::client_config::ClientConfig;
 use tokio::fs;
 use tonic::transport::{Certificate, ClientTlsConfig};
 use xline_client::{Client, ClientOptions};
