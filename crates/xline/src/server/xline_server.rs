@@ -23,6 +23,7 @@ use tonic::transport::{
 use tonic::transport::{server::Router, Server};
 use tracing::{info, warn};
 use utils::{
+    barrier::IdBarrier,
     config::{
         AuthConfig, ClusterConfig, CompactConfig, EngineConfig, InitialClusterState, StorageConfig,
         TlsConfig,
@@ -36,7 +37,7 @@ use xlineapi::command::{Command, CurpClient};
 use super::{
     auth_server::AuthServer,
     auth_wrapper::AuthWrapper,
-    barriers::{IdBarrier, IndexBarrier},
+    barriers::IndexBarrier,
     cluster_server::ClusterServer,
     command::{Alarmer, CommandExecutor},
     kv_server::KvServer,

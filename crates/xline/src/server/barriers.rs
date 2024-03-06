@@ -1,7 +1,7 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use clippy_utilities::OverflowArithmetic;
-use curp::{InflightId, LogIndex};
+use curp::LogIndex;
 use event_listener::Event;
 use parking_lot::Mutex;
 
@@ -58,35 +58,6 @@ struct IndexBarrierInner {
     barriers: BTreeMap<LogIndex, Event>,
 }
 
-/// Barrier for id
-#[derive(Debug)]
-pub(crate) struct IdBarrier {
-    /// Barriers of id
-    barriers: Mutex<HashMap<InflightId, Event>>,
-}
-
-impl IdBarrier {
-    /// Create a new id barrier
-    pub(crate) fn new() -> Self {
-        Self {
-            barriers: Mutex::new(HashMap::new()),
-        }
-    }
-
-    /// Wait for the id until it is triggered.
-    pub(crate) async fn wait(&self, id: InflightId) {
-        let listener = self.barriers.lock().entry(id).or_default().listen();
-        listener.await;
-    }
-
-    /// Trigger the barrier of the given inflight id.
-    pub(crate) fn trigger(&self, id: InflightId) {
-        if let Some(event) = self.barriers.lock().remove(&id) {
-            let _ignore = event.notify(usize::MAX);
-        }
-    }
-}
-
 #[cfg(test)]
 mod test {
     use std::{sync::Arc, time::Duration};
@@ -94,6 +65,7 @@ mod test {
     use futures::future::join_all;
     use test_macros::abort_on_panic;
     use tokio::time::{sleep, timeout};
+    use utils::barrier::IdBarrier;
 
     use super::*;
 
@@ -111,7 +83,7 @@ mod test {
             .collect::<Vec<_>>();
         sleep(Duration::from_millis(10)).await;
         for i in 0..5 {
-            id_barrier.trigger(i);
+            id_barrier.trigger(&i);
         }
         timeout(Duration::from_millis(100), join_all(barriers))
             .await
