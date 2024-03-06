@@ -945,16 +945,16 @@ impl AuthConfig {
 #[non_exhaustive]
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Getters, Default)]
 pub struct TlsConfig {
-    /// The CA certificate file used by server to verify client certificates
+    /// The CA certificate file used by peer to verify client certificates
     #[getset(get = "pub")]
-    pub server_ca_cert_path: Option<PathBuf>,
-    /// The public key file used by server
+    pub peer_ca_cert_path: Option<PathBuf>,
+    /// The public key file used by peer
     #[getset(get = "pub")]
-    pub server_cert_path: Option<PathBuf>,
-    /// The private key file used by server
+    pub peer_cert_path: Option<PathBuf>,
+    /// The private key file used by peer
     #[getset(get = "pub")]
-    pub server_key_path: Option<PathBuf>,
-    /// The CA certificate file used by client to verify server certificates
+    pub peer_key_path: Option<PathBuf>,
+    /// The CA certificate file used by client to verify peer certificates
     #[getset(get = "pub")]
     pub client_ca_cert_path: Option<PathBuf>,
     /// The public key file used by client
@@ -970,17 +970,17 @@ impl TlsConfig {
     #[must_use]
     #[inline]
     pub fn new(
-        server_ca_cert_path: Option<PathBuf>,
-        server_cert_path: Option<PathBuf>,
-        server_key_path: Option<PathBuf>,
+        peer_ca_cert_path: Option<PathBuf>,
+        peer_cert_path: Option<PathBuf>,
+        peer_key_path: Option<PathBuf>,
         client_ca_cert_path: Option<PathBuf>,
         client_cert_path: Option<PathBuf>,
         client_key_path: Option<PathBuf>,
     ) -> Self {
         Self {
-            server_ca_cert_path,
-            server_cert_path,
-            server_key_path,
+            peer_ca_cert_path,
+            peer_cert_path,
+            peer_key_path,
             client_ca_cert_path,
             client_cert_path,
             client_key_path,
@@ -991,7 +991,7 @@ impl TlsConfig {
     #[must_use]
     #[inline]
     pub fn server_tls_enabled(&self) -> bool {
-        self.server_cert_path.is_some() && self.server_key_path.is_some()
+        self.peer_cert_path.is_some() && self.peer_key_path.is_some()
     }
 }
 
@@ -1237,8 +1237,8 @@ mod tests {
             auth_private_key = './private_key.pem'
 
             [tls]
-            server_cert_path = './cert.pem'
-            server_key_path = './key.pem'
+            peer_cert_path = './cert.pem'
+            peer_key_path = './key.pem'
             client_ca_cert_path = './ca.pem'
 
             [metrics]
@@ -1344,8 +1344,8 @@ mod tests {
         assert_eq!(
             config.tls,
             TlsConfig {
-                server_cert_path: Some(PathBuf::from("./cert.pem")),
-                server_key_path: Some(PathBuf::from("./key.pem")),
+                peer_cert_path: Some(PathBuf::from("./cert.pem")),
+                peer_key_path: Some(PathBuf::from("./key.pem")),
                 client_ca_cert_path: Some(PathBuf::from("./ca.pem")),
                 ..Default::default()
             }

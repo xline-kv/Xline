@@ -193,13 +193,13 @@ pub struct ServerArgs {
     quota: Option<u64>,
     /// Server ca certificate path, used to verify client certificate
     #[clap(long)]
-    server_ca_cert_path: Option<PathBuf>,
+    peer_ca_cert_path: Option<PathBuf>,
     /// Server certificate path
     #[clap(long)]
-    server_cert_path: Option<PathBuf>,
+    peer_cert_path: Option<PathBuf>,
     /// Server private key path
     #[clap(long)]
-    server_key_path: Option<PathBuf>,
+    peer_key_path: Option<PathBuf>,
     /// Client ca certificate path, used to verify server certificate
     #[clap(long)]
     client_ca_cert_path: Option<PathBuf>,
@@ -315,9 +315,9 @@ impl From<ServerArgs> for XlineServerConfig {
             auto_compactor_cfg,
         );
         let tls = TlsConfig::new(
-            args.server_ca_cert_path,
-            args.server_cert_path,
-            args.server_key_path,
+            args.peer_ca_cert_path,
+            args.peer_cert_path,
+            args.peer_key_path,
             args.client_ca_cert_path,
             args.client_cert_path,
             args.client_key_path,
