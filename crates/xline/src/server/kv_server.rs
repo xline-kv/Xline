@@ -6,12 +6,13 @@ use std::{
     time::Duration,
 };
 
-use curp::rpc::ReadState;
+use curp::{rpc::ReadState, InflightId};
 use dashmap::DashMap;
 use event_listener::Event;
 use futures::future::{join_all, Either};
 use tokio::time::timeout;
 use tracing::{debug, instrument};
+use utils::barrier::IdBarrier;
 use xlineapi::{
     command::{Command, CommandResponse, CurpClient, SyncResponse},
     execute_error::ExecuteError,
@@ -19,7 +20,7 @@ use xlineapi::{
     AuthInfo, ResponseWrapper,
 };
 
-use super::barriers::{IdBarrier, IndexBarrier};
+use super::barriers::IndexBarrier;
 use crate::{
     metrics,
     revision_check::RevisionCheck,
@@ -43,7 +44,7 @@ where
     /// Barrier for applied index
     index_barrier: Arc<IndexBarrier>,
     /// Barrier for propose id
-    id_barrier: Arc<IdBarrier>,
+    id_barrier: Arc<IdBarrier<InflightId>>,
     /// Range request retry timeout
     range_retry_timeout: Duration,
     /// Compact timeout
@@ -66,7 +67,7 @@ where
         kv_storage: Arc<KvStore<S>>,
         auth_storage: Arc<AuthStore<S>>,
         index_barrier: Arc<IndexBarrier>,
-        id_barrier: Arc<IdBarrier>,
+        id_barrier: Arc<IdBarrier<InflightId>>,
         range_retry_timeout: Duration,
         compact_timeout: Duration,
         client: Arc<CurpClient>,

@@ -11,14 +11,14 @@ use engine::Snapshot;
 use event_listener::Event;
 use parking_lot::RwLock;
 use tracing::warn;
-use utils::table_names::META_TABLE;
+use utils::{barrier::IdBarrier, table_names::META_TABLE};
 use xlineapi::{
     command::{Command, CurpClient},
     execute_error::ExecuteError,
     AlarmAction, AlarmRequest, AlarmType,
 };
 
-use super::barriers::{IdBarrier, IndexBarrier};
+use super::barriers::IndexBarrier;
 use crate::{
     revision_number::RevisionNumberGenerator,
     rpc::{RequestBackend, RequestWrapper},
@@ -76,7 +76,7 @@ where
     /// Barrier for applied index
     index_barrier: Arc<IndexBarrier>,
     /// Barrier for propose id
-    id_barrier: Arc<IdBarrier>,
+    id_barrier: Arc<IdBarrier<InflightId>>,
     /// Revision Number generator for KV request and Lease request
     general_rev: Arc<RevisionNumberGenerator>,
     /// Revision Number generator for Auth request
@@ -238,7 +238,7 @@ where
         alarm_storage: Arc<AlarmStore<S>>,
         persistent: Arc<S>,
         index_barrier: Arc<IndexBarrier>,
-        id_barrier: Arc<IdBarrier>,
+        id_barrier: Arc<IdBarrier<InflightId>>,
         general_rev: Arc<RevisionNumberGenerator>,
         auth_rev: Arc<RevisionNumberGenerator>,
         compact_events: Arc<DashMap<u64, Arc<Event>>>,
@@ -426,7 +426,7 @@ where
     }
 
     fn trigger(&self, id: InflightId, index: LogIndex) {
-        self.id_barrier.trigger(id);
+        self.id_barrier.trigger(&id);
         self.index_barrier.trigger(index);
     }
 }
