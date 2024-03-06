@@ -2,7 +2,7 @@ use opentelemetry::global;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{metrics::MeterProvider, runtime::Tokio};
 use tracing::info;
-use utils::config::{MetricsConfig, MetricsPushProtocol};
+use utils::config::metrics_config::{MetricsConfig, MetricsPushProtocol};
 
 /// Start metrics server
 /// # Errors

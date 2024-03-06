@@ -291,7 +291,7 @@ mod test {
 
     use test_macros::abort_on_panic;
     use tokio_stream::StreamExt;
-    use utils::config::EngineConfig;
+    use utils::config::engine_config::EngineConfig;
 
     use super::*;
     use crate::storage::db::DB;
