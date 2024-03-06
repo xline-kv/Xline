@@ -662,9 +662,9 @@ impl XlineServer {
             _ => None,
         };
         let server_tls_config = match (
-            tls_config.server_ca_cert_path().as_ref(),
-            tls_config.server_cert_path().as_ref(),
-            tls_config.server_key_path().as_ref(),
+            tls_config.peer_ca_cert_path().as_ref(),
+            tls_config.peer_cert_path().as_ref(),
+            tls_config.peer_key_path().as_ref(),
         ) {
             (Some(ca_path), Some(cert_path), Some(key_path)) => {
                 let ca = fs::read(ca_path).await?;
@@ -682,9 +682,7 @@ impl XlineServer {
                 Some(ServerTlsConfig::new().identity(Identity::from_pem(cert, key)))
             }
             (_, Some(_), None) | (_, None, Some(_)) => {
-                return Err(anyhow!(
-                    "client_cert_path and client_key_path must be both set"
-                ))
+                return Err(anyhow!("peer_cert_path and peer_key_path must be both set"))
             }
             _ => None,
         };
