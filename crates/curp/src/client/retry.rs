@@ -2,6 +2,7 @@ use std::{ops::SubAssign, time::Duration};
 
 use async_trait::async_trait;
 use futures::Future;
+use tokio::task::JoinHandle;
 use tracing::warn;
 
 use super::{ClientApi, LeaderStateUpdate, ProposeResponse, RepeatableClientApi};
@@ -102,6 +103,16 @@ pub(super) struct Retry<Api> {
     inner: Api,
     /// Retry config
     config: RetryConfig,
+    /// Background task handle
+    bg_handle: Option<JoinHandle<()>>,
+}
+
+impl<Api> Drop for Retry<Api> {
+    fn drop(&mut self) {
+        if let Some(handle) = self.bg_handle.as_ref() {
+            handle.abort();
+        }
+    }
 }
 
 impl<Api> Retry<Api>
@@ -109,8 +120,12 @@ where
     Api: RepeatableClientApi<Error = CurpError> + LeaderStateUpdate + Send + Sync + 'static,
 {
     /// Create a retry client
-    pub(super) fn new(inner: Api, config: RetryConfig) -> Self {
-        Self { inner, config }
+    pub(super) fn new(inner: Api, config: RetryConfig, bg_handle: Option<JoinHandle<()>>) -> Self {
+        Self {
+            inner,
+            config,
+            bg_handle,
+        }
     }
 
     /// Takes a function f and run retry.

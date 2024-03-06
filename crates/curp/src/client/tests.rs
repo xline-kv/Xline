@@ -661,7 +661,11 @@ async fn test_retry_propose_return_no_retry_error() {
                 });
         });
         let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
-        let retry = Retry::new(unary, RetryConfig::new_fixed(Duration::from_millis(100), 5));
+        let retry = Retry::new(
+            unary,
+            RetryConfig::new_fixed(Duration::from_millis(100), 5),
+            None,
+        );
         let err = retry
             .propose(&TestCommand::default(), None, false)
             .await
@@ -709,7 +713,11 @@ async fn test_retry_propose_return_retry_error() {
             }
         });
         let unary = init_unary_client(connects, None, Some(0), 1, 0, None);
-        let retry = Retry::new(unary, RetryConfig::new_fixed(Duration::from_millis(10), 5));
+        let retry = Retry::new(
+            unary,
+            RetryConfig::new_fixed(Duration::from_millis(10), 5),
+            None,
+        );
         let err = retry
             .propose(&TestCommand::default(), None, false)
             .await
