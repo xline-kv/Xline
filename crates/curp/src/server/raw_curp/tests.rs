@@ -7,7 +7,7 @@ use tokio::{
     time::{sleep, Instant},
 };
 use tracing_test::traced_test;
-use utils::config::{
+use utils::config::curp_config::{
     default_candidate_timeout_ticks, default_follower_timeout_ticks, default_heartbeat_interval,
     CurpConfigBuilder,
 };

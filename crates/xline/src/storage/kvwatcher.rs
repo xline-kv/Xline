@@ -593,7 +593,7 @@ mod test {
     use clippy_utilities::Cast;
     use test_macros::abort_on_panic;
     use tokio::time::{sleep, timeout};
-    use utils::config::EngineConfig;
+    use utils::config::engine_config::EngineConfig;
     use xlineapi::RequestWrapper;
 
     use super::*;
