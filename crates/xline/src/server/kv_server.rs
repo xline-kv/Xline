@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use await_tree::InstrumentAwait;
 use curp::rpc::ReadState;
 use dashmap::DashMap;
 use event_listener::Event;
@@ -223,7 +224,9 @@ where
         let request = RequestWrapper::from(request.into_inner());
         let cmd = Command::new_with_auth_info(request.keys(), request, auth_info);
         if !is_serializable {
-            self.wait_read_state(&cmd).await?;
+            self.wait_read_state(&cmd)
+                .instrument_await("xline wait read state for range request")
+                .await?;
             // Double check whether the range request is compacted or not since the compaction request
             // may be executed during the process of `wait_read_state` which results in the result of
             // previous `check_range_request` outdated.
@@ -259,6 +262,7 @@ where
         let is_fast_path = true;
         let (cmd_res, sync_res) = self
             .propose(request.into_inner(), auth_info, is_fast_path)
+            .instrument_await("xline propose put request")
             .await?;
         let mut res = Self::parse_response_op(cmd_res.into_inner().into());
         if let Some(sync_res) = sync_res {
@@ -291,6 +295,7 @@ where
         let is_fast_path = true;
         let (cmd_res, sync_res) = self
             .propose(request.into_inner(), auth_info, is_fast_path)
+            .instrument_await("xline propose delete range request")
             .await?;
         let mut res = Self::parse_response_op(cmd_res.into_inner().into());
         if let Some(sync_res) = sync_res {
@@ -331,7 +336,9 @@ where
             let request = RequestWrapper::from(request.into_inner());
             let cmd = Command::new_with_auth_info(request.keys(), request, auth_info);
             if !is_serializable {
-                self.wait_read_state(&cmd).await?;
+                self.wait_read_state(&cmd)
+                    .instrument_await("xline wait read state for txn request")
+                    .await?;
             }
             self.do_serializable(&cmd)?
         } else {
@@ -386,6 +393,7 @@ where
         let (cmd_res, _sync_res) = self.client.propose(&cmd, None, !physical).await??;
         let resp = cmd_res.into_inner();
         if timeout(self.compact_timeout, compact_physical_fut)
+            .instrument_await("xline wait compact physical event")
             .await
             .is_err()
         {

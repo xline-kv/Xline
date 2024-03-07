@@ -15,6 +15,7 @@ categories = ["KV"]
 anyhow = "1.0.57"
 async-stream = "0.3.5"
 async-trait = "0.1.53"
+await-tree = "0.1.2"
 axum = "0.6.20"
 bytes = "1.4.0"
 clap = { version = "4", features = ["derive"] }
