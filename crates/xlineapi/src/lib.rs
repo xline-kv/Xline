@@ -200,6 +200,7 @@ mod errorpb {
 use std::fmt::Display;
 
 use command::KeyRange;
+use utils::write_vec;
 
 pub use self::{
     authpb::{permission::Type, Permission, Role, User, UserAddOptions},
@@ -721,6 +722,294 @@ impl Display for AlarmMember {
         write!(f, "memberID:{} alarm:{} ", self.member_id, alarm_str)
     }
 }
+
+impl Display for PutRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "PutRequest {{ key: {:?}, value: {:?}, lease: {:?}, prev_kv: {:?}, ignore_value: {:?}, ignore_lease: {:?} }}",
+            String::from_utf8_lossy(&self.key),
+            String::from_utf8_lossy(&self.value),
+            self.lease, self.prev_kv,
+            self.ignore_value,
+            self.ignore_lease)
+    }
+}
+
+impl Display for PutResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(ref prev_kv) = self.prev_kv {
+            write!(
+                f,
+                "PutResponse {{ header: {:?}, prev_kv: {} }}",
+                self.header, prev_kv
+            )
+        } else {
+            write!(
+                f,
+                "PutResponse {{ header: {:?}, prev_kv: None }}",
+                self.header
+            )
+        }
+    }
+}
+
+impl Display for RangeRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "RangeRequest {{ key: {:?}, range_end: {:?}, limit: {:?}, revision: {:?}, sort_order: {:?}, sort_target: {:?}, serializable: {:?}, keys_only: {:?}, count_only: {:?}, min_mod_revision: {:?}, max_mod_revision: {:?}, min_create_revision: {:?}, max_create_revision: {:?}, key_only: {:?}, count_only: {:?}, min_mod_revision: {:?}, max_mod_revision: {:?}, min_create_revision: {:?}, max_create_revision: {:?} }}",
+            String::from_utf8_lossy(&self.key),
+            String::from_utf8_lossy(&self.range_end),
+            self.limit,
+            self.revision,
+            self.sort_order,
+            self.sort_target,
+            self.serializable,
+            self.keys_only,
+            self.count_only,
+            self.min_mod_revision,
+            self.max_mod_revision,
+            self.min_create_revision,
+            self.max_create_revision,
+            self.keys_only,
+            self.count_only,
+            self.min_mod_revision,
+            self.max_mod_revision,
+            self.min_create_revision,
+            self.max_create_revision
+        )
+    }
+}
+
+impl Display for RangeResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RangeResponse {{ header: {:?},", self.header)?;
+        write_vec!(f, "kvs", self.kvs);
+        write!(f, ", more: {:?}, count: {:?} }}", self.more, self.count)
+    }
+}
+
+impl Display for DeleteRangeRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "DeleteRangeRequest {{ key: {:?}, range_end: {:?}, prev_kv: {:?} }}",
+            String::from_utf8_lossy(&self.key),
+            String::from_utf8_lossy(&self.range_end),
+            self.prev_kv
+        )
+    }
+}
+
+impl Display for DeleteRangeResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "DeleteRangeResponse {{ header: {:?}, deleted: {:?}, ",
+            self.header, self.deleted
+        )?;
+        write_vec!(f, "prev_kvs", self.prev_kvs);
+        write!(f, "}}")
+    }
+}
+
+impl Display for RequestOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RequestOp {{")?;
+        if let Some(ref request) = self.request {
+            match request {
+                Request::RequestRange(req) => write!(f, "{}", req)?,
+                Request::RequestDeleteRange(req) => write!(f, "{}", req)?,
+                Request::RequestPut(req) => write!(f, "{}", req)?,
+                Request::RequestTxn(req) => write!(f, "{}", req)?,
+            }
+        }
+        write!(f, "}}")
+    }
+}
+
+impl Display for ResponseOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ResponseOp {{")?;
+        if let Some(ref request) = self.response {
+            match request {
+                Response::ResponseRange(req) => write!(f, "{}", req)?,
+                Response::ResponseDeleteRange(req) => write!(f, "{}", req)?,
+                Response::ResponsePut(req) => write!(f, "{}", req)?,
+                Response::ResponseTxn(req) => write!(f, "{}", req)?,
+            }
+        }
+        write!(f, "}}")
+    }
+}
+
+impl Display for Permission {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let perm = match self.perm_type {
+            0 => "Read",
+            1 => "Write",
+            2 => "Readwrite",
+            _ => "Unknown",
+        };
+        write!(
+            f,
+            "Permission {{ permType: {:?}, key: {:?}, range_end: {:?} }}",
+            perm,
+            String::from_utf8_lossy(&self.key),
+            String::from_utf8_lossy(&self.range_end)
+        )
+    }
+}
+
+impl Display for Compare {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let result = match self.result {
+            0 => "Equal",
+            1 => "Greater",
+            2 => "Less",
+            3 => "NotEqual",
+            _ => "Unknown Result",
+        };
+        let target = match self.result {
+            0 => "Version",
+            1 => "Create",
+            2 => "Mod",
+            3 => "Value",
+            4 => "Lease",
+            _ => "Unknown Target",
+        };
+        write!(
+            f,
+            "Compare {{ result: {:?}, target: {:?}, key: {}, range_end: {}, target_union: {:?} }}",
+            result,
+            target,
+            String::from_utf8_lossy(&self.key),
+            String::from_utf8_lossy(&self.range_end),
+            self.target_union
+        )
+    }
+}
+
+impl Display for AuthUserAddRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(ref option) = self.options {
+            write!(
+                f,
+                "AuthUserAddRequest {{ name: {},  no_password: {} }}",
+                self.name, option.no_password
+            )
+        } else {
+            write!(f, "AuthUserAddRequest {{ name: {} }}", self.name)
+        }
+    }
+}
+
+impl Display for AuthRoleGrantPermissionRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(ref perm) = self.perm {
+            write!(
+                f,
+                "AuthRoleGrantPermissionRequest {{ role: {}, perm: {} }}",
+                self.name, perm
+            )
+        } else {
+            write!(
+                f,
+                "AuthRoleGrantPermissionRequest {{ role: {}, perm: None }}",
+                self.name
+            )
+        }
+    }
+}
+
+impl Display for AuthRoleRevokePermissionRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "AuthRoleRevokePermissionRequest {{ role: {}, key: {}, range_end: {} }}",
+            self.role,
+            String::from_utf8_lossy(&self.key),
+            String::from_utf8_lossy(&self.key),
+        )
+    }
+}
+
+impl Display for TxnRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "TxnRequest {{ ")?;
+        write_vec!(f, "compare", self.compare);
+        write_vec!(f, ", success", self.success);
+        write_vec!(f, ", failure", self.failure);
+        write!(f, "}}")
+    }
+}
+
+impl Display for TxnResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "TxnResponse {{ header: {:?}, succeeded: {} ",
+            self.header, self.succeeded
+        )?;
+        write_vec!(f, "responses", self.responses);
+        write!(f, "}}")
+    }
+}
+
+impl Display for KeyValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "KeyValue {{ key: {:?}, create_revision: {}, mod_revision: {}, version: {}, value: {:?}, lease: {} }}",
+            String::from_utf8_lossy(&self.key),
+            self.create_revision,
+            self.mod_revision,
+            self.version,
+            String::from_utf8_lossy(&self.value),
+            self.lease,
+        )
+    }
+}
+
+impl Display for Event {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Event {{ type: {:?}, kv: ", self.r#type())?;
+        if let Some(kv) = &self.kv {
+            write!(f, "{}", kv)?;
+        }
+        write!(f, ", prev_kv: ")?;
+        if let Some(prev_kv) = &self.prev_kv {
+            write!(f, "{}", prev_kv)?;
+        }
+        write!(f, " }}")
+    }
+}
+
+impl Display for AuthRoleGetResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "AuthRoleGetResponse {{ header: {:?}", self.header)?;
+        write_vec!(f, "perm", self.perm);
+        write!(f, " }}")
+    }
+}
+
+impl Display for AuthRoleListResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "AuthRoleListResponse {{ header: {:?}", self.header)?;
+        write_vec!(f, "roles", self.roles);
+        write!(f, " }}")
+    }
+}
+
+impl Display for AlarmResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "AlarmResponse {{ header: {:?}, ", self.header)?;
+        write_vec!(f, "alarms", self.alarms);
+        write!(f, " }}")
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

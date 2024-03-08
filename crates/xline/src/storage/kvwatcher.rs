@@ -20,6 +20,7 @@ use tracing::debug;
 use utils::{
     parking_lot_lock::RwLockMap,
     task_manager::{tasks::TaskName, Listener, TaskManager},
+    write_vec,
 };
 use xlineapi::command::KeyRange;
 
@@ -550,6 +551,19 @@ pub(crate) struct WatchEvent {
     revision: i64,
     /// Compacted WatchEvent
     compacted: bool,
+}
+
+impl std::fmt::Display for WatchEvent {
+    #[allow(clippy::arithmetic_side_effects)]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "WatchEvent {{ id: {}, revision: {}, compacted: {}, ",
+            self.id, self.revision, self.compacted,
+        )?;
+        write_vec!(f, "events", self.events);
+        write!(f, " }}")
+    }
 }
 
 impl WatchEvent {

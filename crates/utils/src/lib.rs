@@ -201,6 +201,26 @@ pub mod tracing;
 use ::tracing::debug;
 pub use parser::*;
 
+/// display all elements for the given vector
+#[macro_export]
+macro_rules! write_vec {
+    ($f:expr, $name:expr, $vector:expr) => {
+        write!($f, "{}: [ ", { $name })?;
+        let last_idx = if $vector.is_empty() {
+            0
+        } else {
+            $vector.len() - 1
+        };
+        for (idx, element) in $vector.iter().enumerate() {
+            write!($f, "{}", element)?;
+            if idx != last_idx {
+                write!($f, ",")?;
+            }
+        }
+        write!($f, "]")?;
+    };
+}
+
 /// Get current timestamp in seconds
 #[must_use]
 #[inline]
