@@ -205,7 +205,7 @@ where
     ) -> Result<tonic::Response<RangeResponse>, tonic::Status> {
         let range_req = request.get_ref();
         range_req.validation()?;
-        debug!("Receive grpc request: {:?}", range_req);
+        debug!("Receive grpc request: {}", range_req);
         range_req.check_revision(
             self.kv_storage.compacted_revision(),
             self.kv_storage.revision(),
@@ -244,7 +244,7 @@ where
     ) -> Result<tonic::Response<PutResponse>, tonic::Status> {
         let put_req: &PutRequest = request.get_ref();
         put_req.validation()?;
-        debug!("Receive grpc request: {:?}", put_req);
+        debug!("Receive grpc request: {}", put_req);
         let auth_info = self.auth_storage.try_get_auth_info_from_request(&request)?;
         let is_fast_path = true;
         let (cmd_res, sync_res) = self
@@ -253,7 +253,7 @@ where
         let mut res = Self::parse_response_op(cmd_res.into_inner().into());
         if let Some(sync_res) = sync_res {
             let revision = sync_res.revision();
-            debug!("Get revision {:?} for PutRequest", revision);
+            debug!("Get revision {} for PutRequest", revision);
             Self::update_header_revision(&mut res, revision);
         }
         if let Response::ResponsePut(response) = res {
@@ -273,7 +273,7 @@ where
     ) -> Result<tonic::Response<DeleteRangeResponse>, tonic::Status> {
         let delete_range_req = request.get_ref();
         delete_range_req.validation()?;
-        debug!("Receive grpc request: {:?}", delete_range_req);
+        debug!("Receive grpc request: {}", delete_range_req);
         let auth_info = self.auth_storage.try_get_auth_info_from_request(&request)?;
         let is_fast_path = true;
         let (cmd_res, sync_res) = self
@@ -282,7 +282,7 @@ where
         let mut res = Self::parse_response_op(cmd_res.into_inner().into());
         if let Some(sync_res) = sync_res {
             let revision = sync_res.revision();
-            debug!("Get revision {:?} for DeleteRangeRequest", revision);
+            debug!("Get revision {} for DeleteRangeRequest", revision);
             Self::update_header_revision(&mut res, revision);
         }
         if let Response::ResponseDeleteRange(response) = res {
@@ -303,7 +303,7 @@ where
     ) -> Result<tonic::Response<TxnResponse>, tonic::Status> {
         let txn_req = request.get_ref();
         txn_req.validation()?;
-        debug!("Receive grpc request: {:?}", txn_req);
+        debug!("Receive grpc request: {}", txn_req);
         txn_req.check_revision(
             self.kv_storage.compacted_revision(),
             self.kv_storage.revision(),
@@ -326,7 +326,7 @@ where
             let mut res = Self::parse_response_op(cmd_res.into_inner().into());
             if let Some(sync_res) = sync_res {
                 let revision = sync_res.revision();
-                debug!("Get revision {:?} for TxnRequest", revision);
+                debug!("Get revision {} for TxnRequest", revision);
                 Self::update_header_revision(&mut res, revision);
             }
             res
