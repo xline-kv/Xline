@@ -162,9 +162,8 @@ impl std::fmt::Debug for FilePipeline {
 
 #[cfg(test)]
 mod tests {
-    use crate::server::storage::wal::util::get_file_paths_with_ext;
-
     use super::*;
+    use crate::server::storage::wal::util::get_file_paths_with_ext;
 
     #[tokio::test]
     async fn file_pipeline_is_ok() {

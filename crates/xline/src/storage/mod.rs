@@ -19,8 +19,7 @@ pub(crate) mod revision;
 /// Persistent storage abstraction
 pub(crate) mod storage_api;
 
+pub use self::revision::Revision;
 pub(crate) use self::{
     alarm_store::AlarmStore, auth_store::AuthStore, kv_store::KvStore, lease_store::LeaseStore,
 };
-
-pub use self::revision::Revision;

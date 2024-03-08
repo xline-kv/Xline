@@ -1,7 +1,9 @@
 #![allow(unused)] // TODO remove when used
 
-use std::collections::VecDeque;
-use std::ops::{AddAssign, Sub};
+use std::{
+    collections::VecDeque,
+    ops::{AddAssign, Sub},
+};
 
 use clippy_utilities::NumericCast;
 
