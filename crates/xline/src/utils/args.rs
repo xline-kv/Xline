@@ -91,7 +91,7 @@ pub struct ServerArgs {
     #[clap(long, value_parser = parse_metrics_push_protocol, default_value_t = default_metrics_push_protocol())]
     metrics_push_protocol: MetricsPushProtocol,
     /// Log file path
-    #[clap(long, default_value = "/var/log/xline")]
+    #[clap(long, default_value = "/std")]
     log_file: PathBuf,
     /// Log rotate strategy, eg: never, hourly, daily
     #[clap(long, value_parser = parse_rotation, default_value_t = default_rotation())]

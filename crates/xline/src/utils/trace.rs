@@ -1,15 +1,40 @@
 use anyhow::Result;
+
 use opentelemetry_contrib::trace::exporter::jaeger_json::JaegerJsonExporter;
 use opentelemetry_sdk::runtime::Tokio;
+use tracing::warn;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{fmt::format, layer::SubscriberExt, util::SubscriberInitExt, Layer};
-use utils::config::{file_appender, LogConfig, TraceConfig};
+use utils::config::{default_rotation, file_appender, LogConfig, TraceConfig};
 
 /// init tracing subscriber
 /// # Errors
 /// Return error if init failed
 #[inline]
 pub fn init_subscriber(
+    name: &str,
+    log_config: &LogConfig,
+    trace_config: &TraceConfig,
+) -> Result<Option<WorkerGuard>> {
+    match *log_config.path() {
+        Some(ref file_path) => {
+            if file_path.to_string_lossy() == "/std" {
+                if *log_config.rotation() != default_rotation() {
+                    warn!(
+                        "The log is output to the terminal, so the rotation parameter is ignored."
+                    );
+                }
+                return init_subscriber_std(name, log_config, trace_config);
+            }
+            init_subscriber_file(name, log_config, trace_config)
+        }
+        None => unreachable!(),
+    }
+}
+
+/// initialize the subscriber to the specific log file
+#[inline]
+fn init_subscriber_file(
     name: &str,
     log_config: &LogConfig,
     trace_config: &TraceConfig,
@@ -64,4 +89,57 @@ pub fn init_subscriber(
         .with(jaeger_offline_layer)
         .try_init()?;
     Ok(guard)
+}
+
+/// initialize the subscriber to terminal
+#[inline]
+fn init_subscriber_std(
+    name: &str,
+    log_config: &LogConfig,
+    trace_config: &TraceConfig,
+) -> Result<Option<WorkerGuard>> {
+    let stdout_layer = tracing_subscriber::fmt::layer()
+        .event_format(format().compact())
+        .with_writer(std::io::stdout)
+        .with_ansi(false)
+        .with_filter(*log_config.level());
+
+    let jaeger_level = *trace_config.jaeger_level();
+    let tmp = trace_config
+        .jaeger_online()
+        .then(|| {
+            opentelemetry_jaeger::new_agent_pipeline()
+                .with_service_name(name)
+                .install_batch(Tokio)
+                .ok()
+        })
+        .flatten();
+    let jaeger_online_layer = tmp.map(|tracer| {
+        let x = tracing_opentelemetry::layer();
+        let a = x.with_tracer(tracer);
+        a.with_filter(jaeger_level)
+    });
+    let jaeger_offline_layer = trace_config.jaeger_offline().then(|| {
+        tracing_opentelemetry::layer().with_tracer(
+            JaegerJsonExporter::new(
+                trace_config.jaeger_output_dir().clone(),
+                name.to_owned(),
+                name.to_owned(),
+                Tokio,
+            )
+            .install_batch(),
+        )
+    });
+
+    let jaeger_fmt_layer = tracing_subscriber::fmt::layer()
+        .with_filter(tracing_subscriber::EnvFilter::from_default_env());
+
+    tracing_subscriber::registry()
+        .with(stdout_layer)
+        .with(jaeger_fmt_layer)
+        .with(jaeger_online_layer)
+        .with(jaeger_offline_layer)
+        .try_init()?;
+
+    Ok(None)
 }
