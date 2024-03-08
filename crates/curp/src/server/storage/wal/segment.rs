@@ -12,14 +12,13 @@ use tokio::{
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
 
-use crate::log_entry::LogEntry;
-
 use super::{
     codec::{DataFrame, WAL},
     error::{CorruptType, WALError},
     util::{get_checksum, parse_u64, validate_data, LockedFile},
     WAL_FILE_EXT, WAL_MAGIC, WAL_VERSION,
 };
+use crate::log_entry::LogEntry;
 
 /// The size of wal file header in bytes
 const WAL_HEADER_SIZE: usize = 56;
@@ -415,9 +414,8 @@ mod tests {
 
     use curp_test_utils::test_cmd::TestCommand;
 
-    use crate::log_entry::EntryData;
-
     use super::*;
+    use crate::log_entry::EntryData;
 
     #[tokio::test]
     async fn segment_state_transition_is_correct() {
