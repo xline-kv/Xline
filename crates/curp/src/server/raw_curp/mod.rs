@@ -1659,12 +1659,20 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             return false;
         }
 
-        let replicated_cnt = self
-            .lst
-            .iter()
-            .filter(|f| !f.is_learner && f.match_index >= i)
-            .count();
-        replicated_cnt + 1 >= quorum(self.ctx.cluster_info.voters_len())
+        let voter_len = self.ctx.cluster_info.voters_len();
+        // when a single node cluster scale out to 2 nodes cluster, their quorum is not equal.
+        // therefore, we need to check this special case
+        if self.cluster().is_single_node_mode() && voter_len == 2 {
+            self.cluster().switch_off_single_node_mode();
+            true
+        } else {
+            let replicated_cnt = self
+                .lst
+                .iter()
+                .filter(|f| !f.is_learner && f.match_index >= i)
+                .count();
+            replicated_cnt + 1 >= quorum(voter_len)
+        }
     }
 
     /// Recover from all voter's spec pools
@@ -1885,7 +1893,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         });
 
         // check if commit_index needs to be updated
-        if self.can_update_commit_index_to(log_w, index, term) && index > log_w.commit_index {
+        if self.can_update_commit_index_to(log_w, index, term) {
             log_w.commit_to(index);
             metrics::get().proposals_committed.observe(index, &[]);
             metrics::get()

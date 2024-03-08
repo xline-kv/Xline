@@ -3,9 +3,7 @@ DIR=$(
     cd "$(dirname "$0")"
     pwd
 )
-SERVERS=("172.20.0.2" "172.20.0.3" "172.20.0.4" "172.20.0.5")
-MEMBERS="node1=${SERVERS[1]}:2380,${SERVERS[1]}:2381,node2=${SERVERS[2]}:2380,${SERVERS[2]}:2381,node3=${SERVERS[3]}:2380,${SERVERS[3]}:2381"
-
+source $DIR/common.sh
 source $DIR/log.sh
 
 # stop all containers
@@ -23,40 +21,12 @@ stop_all() {
     log::info stopped
 }
 
-# run xline node by index
-# args:
-#   $1: index of the node
-run_xline() {
-    cmd="/usr/local/bin/xline \
-    --name node${1} \
-    --members ${MEMBERS} \
-    --storage-engine rocksdb \
-    --data-dir /usr/local/xline/data-dir \
-    --auth-public-key /mnt/public.pem \
-    --auth-private-key /mnt/private.pem \
-    --client-listen-urls=http://${SERVERS[$1]}:2379 \
-    --peer-listen-urls=http://${SERVERS[$1]}:2380,http://${SERVERS[$1]}:2381 \
-    --client-advertise-urls=http://${SERVERS[$1]}:2379 \
-    --peer-advertise-urls=http://${SERVERS[$1]}:2380,http://${SERVERS[$1]}:2381"
-
-    if [ -n "$LOG_PATH" ]; then
-        cmd="${cmd} --log-file ${LOG_PATH}/node${1} --log-level debug"
-    fi
-
-    if [ ${1} -eq 1 ]; then
-        cmd="${cmd} --is-leader"
-    fi
-
-    docker exec -e RUST_LOG=debug -d node${1} ${cmd}
-    log::info "command is: docker exec -e RUST_LOG=debug -d node${1} ${cmd}"
-}
-
 # run cluster of xline/etcd in container
 run_cluster() {
     log::info cluster starting
-    run_xline 1 &
-    run_xline 2 &
-    run_xline 3 &
+    common::run_xline 1 ${MEMBERS} new
+    common::run_xline 2 ${MEMBERS} new
+    common::run_xline 3 ${MEMBERS} new
     wait
     log::info cluster started
 }
@@ -65,20 +35,13 @@ run_cluster() {
 # args:
 #   $1: size of cluster
 run_container() {
-    log::info container starting
     size=${1}
-    image="ghcr.io/xline-kv/xline:latest"
     for ((i = 1; i <= ${size}; i++)); do
-        docker run -d -it --rm --name=node${i} --net=xline_net \
-            --ip=${SERVERS[$i]} --cap-add=NET_ADMIN --cpu-shares=1024 \
-            -m=512M -v ${DIR}:/mnt ${image} bash &
+        common::run_container ${i}
     done
-    docker run -d -it --rm  --name=client \
-        --net=xline_net --ip=${SERVERS[0]} --cap-add=NET_ADMIN \
-        --cpu-shares=1024 -m=512M -v ${DIR}:/mnt ghcr.io/xline-kv/etcdctl:v3.5.9 bash &
-    wait
-    log::info container started
+    common::run_etcd_client
 }
+
 
 # run prometheus
 run_prometheus() {

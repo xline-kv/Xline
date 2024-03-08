@@ -2,7 +2,7 @@ use std::{
     collections::{hash_map::DefaultHasher, HashMap},
     hash::{Hash, Hasher},
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
     time::Duration,
@@ -82,6 +82,8 @@ pub struct ClusterInfo {
     members: DashMap<ServerId, Member>,
     /// cluster version
     cluster_version: Arc<AtomicU64>,
+    /// Whether boot up from a single node cluster
+    single_node_mode: Arc<AtomicBool>,
 }
 
 impl ClusterInfo {
@@ -89,11 +91,13 @@ impl ClusterInfo {
     #[inline]
     #[must_use]
     pub fn new(cluster_id: u64, member_id: u64, members: Vec<Member>) -> Self {
+        let single_node_mode = Arc::new(AtomicBool::new(members.len() == 1));
         Self {
             cluster_id,
             member_id,
             members: members.into_iter().map(|m| (m.id, m)).collect(),
             cluster_version: Arc::new(AtomicU64::new(0)),
+            single_node_mode,
         }
     }
 
@@ -120,11 +124,13 @@ impl ClusterInfo {
             let _ig = members.insert(id, member);
         }
         debug_assert!(member_id != 0, "self_id should not be 0");
+        let single_node_mode = Arc::new(AtomicBool::new(members.len() == 1));
         let mut cluster_info = Self {
             cluster_id: 0,
             member_id,
             members,
             cluster_version: Arc::new(AtomicU64::new(0)),
+            single_node_mode,
         };
         cluster_info.gen_cluster_id();
         cluster_info
@@ -138,26 +144,31 @@ impl ClusterInfo {
     pub fn from_cluster(
         cluster: FetchClusterResponse,
         self_peer_urls: &[String],
+        self_client_urls: &[String],
         self_name: &str,
     ) -> Self {
         let mut member_id = 0;
-        let members = cluster
+        let sorted_self_addr = self_peer_urls.iter().cloned().sorted().collect::<Vec<_>>();
+        let members: DashMap<u64, Member> = cluster
             .members
             .into_iter()
             .map(|mut member| {
-                if member.peer_urls() == self_peer_urls {
+                if sorted_self_addr == member.peer_urls() {
                     member_id = member.id;
                     member.name = self_name.to_owned();
+                    member.client_urls = self_client_urls.to_vec();
                 }
                 (member.id, member)
             })
             .collect();
         assert!(member_id != 0, "self_id should not be 0");
+        let single_node_mode = Arc::new(AtomicBool::new(members.len() == 1));
         Self {
             cluster_id: cluster.cluster_id,
             member_id,
             members,
             cluster_version: Arc::new(AtomicU64::new(cluster.cluster_version)),
+            single_node_mode,
         }
     }
 
@@ -362,7 +373,7 @@ impl ClusterInfo {
             .collect()
     }
 
-    /// Get length of peers
+    /// Get length of voters
     #[must_use]
     #[inline]
     pub fn voters_len(&self) -> usize {
@@ -411,6 +422,16 @@ impl ClusterInfo {
             s.client_urls = client_urls;
         }
     }
+
+    /// whether boot up from a single node cluster
+    pub(crate) fn is_single_node_mode(&self) -> bool {
+        self.single_node_mode.load(Ordering::Relaxed)
+    }
+
+    /// set single node mode false
+    pub(crate) fn switch_off_single_node_mode(&self) {
+        self.single_node_mode.store(false, Ordering::Relaxed);
+    }
 }
 
 /// Get cluster info from remote servers
@@ -423,6 +444,7 @@ pub async fn get_cluster_info_from_remote(
     tls_config: Option<&ClientTlsConfig>,
 ) -> Option<ClusterInfo> {
     let peers = init_cluster_info.peers_addrs();
+    let self_client_urls = init_cluster_info.self_client_urls();
     let connects = rpc::connects(peers, tls_config)
         .await
         .ok()?
@@ -441,10 +463,11 @@ pub async fn get_cluster_info_from_remote(
         .collect::<FuturesUnordered<_>>();
     while let Some(result) = futs.next().await {
         if let Ok(cluster_res) = result {
-            debug!("get cluster info from remote success: {:?}", cluster_res);
+            info!("get cluster info from remote success: {:?}", cluster_res);
             return Some(ClusterInfo::from_cluster(
                 cluster_res.into_inner(),
                 self_peer_urls,
+                self_client_urls.as_slice(),
                 self_name,
             ));
         }
