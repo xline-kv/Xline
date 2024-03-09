@@ -1,10 +1,12 @@
 #!/bin/bash
+
 DIR=$(
     cd "$(dirname "$0")"
     pwd
 )
 SERVERS=("172.20.0.2" "172.20.0.3" "172.20.0.4" "172.20.0.5")
 MEMBERS="node1=${SERVERS[1]}:2380,${SERVERS[1]}:2381,node2=${SERVERS[2]}:2380,${SERVERS[2]}:2381,node3=${SERVERS[3]}:2380,${SERVERS[3]}:2381"
+LOG_PATH=${LOG_PATH:-"/mnt"} # default log to /mnt (i.e. the scripts directory)
 
 source $DIR/log.sh
 
@@ -14,11 +16,12 @@ stop_all() {
     for name in "node1" "node2" "node3" "client"; do
         docker_id=$(docker ps -qf "name=${name}")
         if [ -n "$docker_id" ]; then
-            docker stop $docker_id
+            docker exec $docker_id rm -rf $LOG_PATH/$name
+            docker stop $docker_id -t 1
         fi
     done
     docker network rm xline_net >/dev/null 2>&1
-    docker stop "prometheus"
+    docker stop "prometheus" > /dev/null 2>&1
     sleep 1
     log::info stopped
 }
@@ -37,18 +40,16 @@ run_xline() {
     --client-listen-urls=http://${SERVERS[$1]}:2379 \
     --peer-listen-urls=http://${SERVERS[$1]}:2380,http://${SERVERS[$1]}:2381 \
     --client-advertise-urls=http://${SERVERS[$1]}:2379 \
-    --peer-advertise-urls=http://${SERVERS[$1]}:2380,http://${SERVERS[$1]}:2381"
-
-    if [ -n "$LOG_LEVEL" ]; then
-        cmd="${cmd} --log-level ${LOG_LEVEL}"
-    fi
+    --peer-advertise-urls=http://${SERVERS[$1]}:2380,http://${SERVERS[$1]}:2381 \
+    --log-file ${LOG_PATH}/node${1} --log-level debug"
 
     if [ ${1} -eq 1 ]; then
         cmd="${cmd} --is-leader"
     fi
 
-    docker exec -e RUST_LOG=debug -d node${1} ${cmd}
-    log::info "command is: docker exec -e RUST_LOG=debug -d node${1} ${cmd}"
+    exec="docker exec -e RUST_LOG=curp=debug,xline=debug -d node${1} ${cmd}"
+    eval $exec
+    log::info "start node${1} with command: ${exec}"
 }
 
 # run cluster of xline/etcd in container
@@ -80,7 +81,7 @@ run_container() {
     done
     docker run -d -it --rm  --name=client \
         --net=xline_net --ip=${SERVERS[0]} --cap-add=NET_ADMIN \
-        --cpu-shares=1024 -m=512M -v ${DIR}:/mnt ghcr.io/xline-kv/etcdctl:v3.5.9 bash &
+        --cpu-shares=1024 -m=512M -v ${DIR}:/mnt ghcr.io/xline-kv/etcdctl:v3.5.9 tail -F /dev/null
     wait
     log::info container started
 }
@@ -99,7 +100,7 @@ if [ -z "$1" ]; then
     run_container 3
     run_cluster
     run_prometheus "172.20.0.6"
-    echo "Prometheus starts on http://172.20.0.6:9090/graph and http://127.0.0.1:9090/graph"
+    echo "Prometheus starts on http://172.20.0.6:9090/graph and http://127.0.0.1:9090/graph (if you are using Docker Desktop)."
     exit 0
 elif [ "$1" == "stop" ]; then
     stop_all

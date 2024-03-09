@@ -1,4 +1,4 @@
-${__E2E_COMMON_LOG__:=false} && return 0 || __E2E_COMMON_LOG__=true
+${__LOG__:=false} && return 0 || __LOG__=true
 
 function log::debug() {
   echo -e "\033[00;34m" "[DEBUG]" "$@" "\033[0m"

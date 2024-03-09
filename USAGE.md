@@ -65,7 +65,7 @@ retry_timeout = '50ms'          # the rpc retry interval, of which the default i
 2. Use the following command to start cluster:
 
     ```bash
-    # Run in 3 terminals. If you want more logs, add `RUST_LOG=debug` before the command.
+    # Run in 3 terminals. If you want more logs, add `RUST_LOG=curp=debug,xline=debug` before the command.
 
     ./xline --name node1 --members node1=127.0.0.1:2379,node2=127.0.0.1:2380,node3=127.0.0.1:2381 --is-leader
 
