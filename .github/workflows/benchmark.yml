@@ -38,7 +38,7 @@ jobs:
           cp ../target/release/{xline,benchmark} .
           docker build . -t ghcr.io/xline-kv/xline:latest
           docker pull datenlord/etcd:v3.5.5
-          bash ./benchmark.sh
+          bash ./benchmark.sh xline etcd
 
       - uses: actions/upload-artifact@v1
         with:

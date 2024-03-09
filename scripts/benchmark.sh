@@ -2,7 +2,7 @@
 WORKDIR=$(pwd)
 OUTPUT_DIR="${WORKDIR}/out"
 SERVERS=("172.20.0.2" "172.20.0.3" "172.20.0.4" "172.20.0.5")
-MEMBERS="node1=${SERVERS[1]}:2379,node2=${SERVERS[2]}:2379,node3=${SERVERS[3]}:2379"
+MEMBERS="node1=${SERVERS[1]}:2380,node2=${SERVERS[2]}:2380,node3=${SERVERS[3]}:2380"
 
 # container use_curp endpoints
 # XLINE_TESTCASE[0] VS ETCD_TESTCASE[0]: In the best performance case contrast, xline uses the curp-client while the
@@ -55,7 +55,11 @@ run_xline() {
     --client-wait-synced-timeout 10s \
     --client-propose-timeout 5s \
     --batch-timeout 1ms \
-    --cmd-workers 16"
+    --cmd-workers 16 \
+    --client-listen-urls=http://${SERVERS[$1]}:2379 \
+    --peer-listen-urls=http://${SERVERS[$1]}:2380 \
+    --client-advertise-urls=http://${SERVERS[$1]}:2379 \
+    --peer-advertise-urls=http://${SERVERS[$1]}:2380"
 
     if [ ${1} -eq 1 ]; then
         cmd="${cmd} --is-leader"
@@ -127,7 +131,7 @@ stop_all() {
     for name in "node1" "node2" "node3" "client"; do
         docker_id=$(docker ps -qf "name=${name}")
         if [ -n "$docker_id" ]; then
-            docker stop $docker_id
+            docker stop $docker_id -t 1
         fi
     done
     sleep 1
@@ -216,7 +220,7 @@ rm -r ${OUTPUT_DIR} >/dev/null 2>&1
 mkdir ${OUTPUT_DIR}
 mkdir ${OUTPUT_DIR}/logs
 
-for server in "xline" "etcd"; do
+for server in $@; do
     count=0
     logs_dir=${OUTPUT_DIR}/logs/${server}_logs
     mkdir -p ${logs_dir}
@@ -229,11 +233,14 @@ for server in "xline" "etcd"; do
     etcd)
         TESTCASE=("${ETCD_TESTCASE[@]}")
         ;;
+    *)
+        echo "unknown server, only support xline/etcd"
+        exit 1
+        ;;
     esac
     run_container 3 ${server}
 
     for testcase in "${TESTCASE[@]}"; do
-
         tmp=(${testcase})
         container_name=${tmp[0]}
         case ${tmp[1]} in
