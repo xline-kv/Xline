@@ -127,7 +127,7 @@ ETCD_INITIAL_CLUSTER_STATE="existing"
 # boot up a new node
 $ docker run -d -it --rm --name=node4 --net=xline_net --ip=172.20.0.6 --cap-add=NET_ADMIN --cpu-shares=1024 -m=512M -v /home/jiawei/Xline/scripts:/mnt ghcr.io/xline-kv/xline:latest bash
 
-$ docker exec -e RUST_LOG=debug -d node4 "/usr/local/bin/xline --name node4 --members node1=172.20.0.3:2379,172.20.0.3:2380,node2=172.20.0.4:2379,172.20.0.4:2380,node3=172.20.0.5:2379,172.20.0.5:2380,node4=172.20.0.6:2379,172.20.0.6:2380 --storage-engine rocksdb --data-dir /usr/local/xline/data-dir --auth-public-key /mnt/public.pem --auth-private-key /mnt/private.pem --initial-cluster-state=existing"
+$ docker exec -d node4 "/usr/local/bin/xline --name node4 --members node1=172.20.0.3:2379,172.20.0.3:2380,node2=172.20.0.4:2379,172.20.0.4:2380,node3=172.20.0.5:2379,172.20.0.5:2380,node4=172.20.0.6:2379,172.20.0.6:2380 --storage-engine rocksdb --data-dir /usr/local/xline/data-dir --auth-public-key /mnt/public.pem --auth-private-key /mnt/private.pem --initial-cluster-state=existing"
 
 # check whether the new member adding success or not
 $ docker exec client /bin/sh -c "/usr/local/bin/etcdctl --endpoints=\"http://172.20.0.3:2379\" member list -w table"
