@@ -6,10 +6,9 @@ scrape_configs:
     static_configs:
       - targets:
           [
-            "172.20.0.2:2379",
-            "172.20.0.3:2379",
-            "172.20.0.4:2379",
-            "172.20.0.5:2379",
+            "node1:9100",
+            "node2:9100",
+            "node3:9100",
           ]
     metrics_path: /metrics
     scheme: http
