@@ -94,7 +94,7 @@ impl CurpGroup {
                 let name = format!("S{i}");
                 let mut config = CurpConfig::default();
                 let dir = path.join(&name);
-                config.engine_cfg = EngineConfig::RocksDB(dir.join("curp"));
+                config.curp_db_dir = dir.join("curp");
                 let xline_storage_config = EngineConfig::RocksDB(dir.join("xline"));
                 (name, (Arc::new(config), xline_storage_config))
             })
@@ -139,7 +139,7 @@ impl CurpGroup {
 
             let role_change_cb = TestRoleChange::default();
             let role_change_arc = role_change_cb.get_inner_arc();
-            let curp_storage = Arc::new(DB::open(&config.engine_cfg).unwrap());
+            let curp_storage = Arc::new(DB::open(&config.curp_db_dir).unwrap());
             let server = Arc::new(
                 Rpc::new(
                     cluster_info,
@@ -204,16 +204,8 @@ impl CurpGroup {
             .collect()
     }
 
-    fn get_snapshot_allocator_from_cfg(config: &CurpConfig) -> Box<dyn SnapshotAllocator> {
-        match config.engine_cfg {
-            EngineConfig::Memory => {
-                Box::<MemorySnapshotAllocator>::default() as Box<dyn SnapshotAllocator>
-            }
-            EngineConfig::RocksDB(_) => {
-                Box::<RocksSnapshotAllocator>::default() as Box<dyn SnapshotAllocator>
-            }
-            _ => unreachable!(),
-        }
+    fn get_snapshot_allocator_from_cfg(_config: &CurpConfig) -> Box<dyn SnapshotAllocator> {
+        Box::<RocksSnapshotAllocator>::default() as Box<dyn SnapshotAllocator>
     }
 
     async fn run(
@@ -271,7 +263,7 @@ impl CurpGroup {
         let id = cluster_info.self_id();
         let role_change_cb = TestRoleChange::default();
         let role_change_arc = role_change_cb.get_inner_arc();
-        let curp_storage = Arc::new(DB::open(&config.engine_cfg).unwrap());
+        let curp_storage = Arc::new(DB::open(&config.curp_db_dir).unwrap());
         let server = Arc::new(
             Rpc::new(
                 cluster_info,

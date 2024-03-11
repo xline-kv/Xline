@@ -318,9 +318,9 @@ pub struct CurpConfig {
     pub candidate_timeout_ticks: u8,
 
     /// Curp storage path
-    #[builder(default = "EngineConfig::default()")]
-    #[serde(default = "EngineConfig::default")]
-    pub engine_cfg: EngineConfig,
+    #[builder(default = "default_curp_db_dir()")]
+    #[serde(default = "default_curp_db_dir")]
+    pub curp_db_dir: PathBuf,
 
     /// Number of command execute workers
     #[builder(default = "default_cmd_workers()")]
@@ -417,6 +417,13 @@ pub const fn default_candidate_timeout_ticks() -> u8 {
     2
 }
 
+/// default curp DB dir
+#[must_use]
+#[inline]
+pub fn default_curp_db_dir() -> PathBuf {
+    "/var/lib/xline/curp/db".into()
+}
+
 /// default client wait synced timeout
 #[must_use]
 #[inline]
@@ -506,7 +513,7 @@ impl Default for CurpConfig {
             batch_max_size: default_batch_max_size(),
             follower_timeout_ticks: default_follower_timeout_ticks(),
             candidate_timeout_ticks: default_candidate_timeout_ticks(),
-            engine_cfg: EngineConfig::default(),
+            curp_db_dir: default_curp_db_dir(),
             cmd_workers: default_cmd_workers(),
             gc_interval: default_gc_interval(),
             log_entries_cap: default_log_entries_cap(),
