@@ -318,10 +318,8 @@ impl Drop for Cluster {
                     h.await.unwrap();
                 }
                 for cfg in &self.configs {
-                    if let EngineConfig::RocksDB(ref path) = cfg.cluster().curp_config().engine_cfg
-                    {
-                        let _ignore = tokio::fs::remove_dir_all(path).await;
-                    }
+                    let _ignore =
+                        tokio::fs::remove_dir_all(&cfg.cluster().curp_config().curp_db_dir).await;
                     if let EngineConfig::RocksDB(ref path) = cfg.storage().engine {
                         let _ignore = tokio::fs::remove_dir_all(path).await;
                     }

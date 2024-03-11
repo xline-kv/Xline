@@ -8,17 +8,17 @@ use utils::{
         default_batch_max_size, default_batch_timeout, default_candidate_timeout_ticks,
         default_client_id_keep_alive_interval, default_client_wait_synced_timeout,
         default_cmd_workers, default_compact_batch_size, default_compact_sleep_interval,
-        default_compact_timeout, default_follower_timeout_ticks, default_gc_interval,
-        default_heartbeat_interval, default_initial_retry_timeout, default_log_entries_cap,
-        default_log_level, default_max_retry_timeout, default_metrics_enable, default_metrics_path,
-        default_metrics_port, default_metrics_push_endpoint, default_metrics_push_protocol,
-        default_propose_timeout, default_quota, default_range_retry_timeout, default_retry_count,
-        default_rotation, default_rpc_timeout, default_server_wait_synced_timeout,
-        default_sync_victims_interval, default_watch_progress_notify_interval, AuthConfig,
-        AutoCompactConfig, ClientConfig, ClusterConfig, CompactConfig, CurpConfigBuilder,
-        EngineConfig, InitialClusterState, LevelConfig, LogConfig, MetricsConfig,
-        MetricsPushProtocol, RotationConfig, ServerTimeout, StorageConfig, TlsConfig, TraceConfig,
-        XlineServerConfig,
+        default_compact_timeout, default_curp_db_dir, default_follower_timeout_ticks,
+        default_gc_interval, default_heartbeat_interval, default_initial_retry_timeout,
+        default_log_entries_cap, default_log_level, default_max_retry_timeout,
+        default_metrics_enable, default_metrics_path, default_metrics_port,
+        default_metrics_push_endpoint, default_metrics_push_protocol, default_propose_timeout,
+        default_quota, default_range_retry_timeout, default_retry_count, default_rotation,
+        default_rpc_timeout, default_server_wait_synced_timeout, default_sync_victims_interval,
+        default_watch_progress_notify_interval, AuthConfig, AutoCompactConfig, ClientConfig,
+        ClusterConfig, CompactConfig, CurpConfigBuilder, EngineConfig, InitialClusterState,
+        LevelConfig, LogConfig, MetricsConfig, MetricsPushProtocol, RotationConfig, ServerTimeout,
+        StorageConfig, TlsConfig, TraceConfig, XlineServerConfig,
     },
     parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_metrics_push_protocol,
     parse_rotation, parse_state, ConfigFileError,
@@ -220,18 +220,12 @@ impl From<ServerArgs> for XlineServerConfig {
     #[inline]
     #[allow(clippy::too_many_lines)] // not bad
     fn from(args: ServerArgs) -> Self {
-        let (engine, curp_engine) = match args.storage_engine.as_str() {
-            "memory" => (EngineConfig::Memory, EngineConfig::Memory),
-            "rocksdb" => (
-                EngineConfig::RocksDB(args.data_dir.clone()),
-                EngineConfig::RocksDB(args.curp_dir.unwrap_or_else(|| {
-                    let mut path = args.data_dir;
-                    path.push("curp");
-                    path
-                })),
-            ),
+        let engine = match args.storage_engine.as_str() {
+            "memory" => EngineConfig::Memory,
+            "rocksdb" => EngineConfig::RocksDB(args.data_dir.clone()),
             &_ => unreachable!("xline only supports memory and rocksdb engine"),
         };
+        let curp_dir = args.curp_dir.unwrap_or_else(default_curp_db_dir);
 
         let storage = StorageConfig::new(engine, args.quota.unwrap_or_else(default_quota));
         let Ok(curp_config) = CurpConfigBuilder::default()
@@ -248,7 +242,7 @@ impl From<ServerArgs> for XlineServerConfig {
             .batch_max_size(args.batch_max_size.unwrap_or_else(default_batch_max_size))
             .follower_timeout_ticks(args.follower_timeout_ticks)
             .candidate_timeout_ticks(args.candidate_timeout_ticks)
-            .engine_cfg(curp_engine)
+            .curp_db_dir(curp_dir)
             .gc_interval(args.gc_interval.unwrap_or_else(default_gc_interval))
             .cmd_workers(args.cmd_workers)
             .build()
