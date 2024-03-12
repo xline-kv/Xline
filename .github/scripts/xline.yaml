@@ -9,9 +9,9 @@ spec:
     - name: xline
       image: ghcr.io/liangyuanpeng/xline:ffa824f
       imagePullPolicy: IfNotPresent
-      env:
-      - name: RUST_LOG
-        value: debug
+      # env:
+      # - name: RUST_LOG
+      #   value: debug
       command:
         - /bin/sh
         - -c
