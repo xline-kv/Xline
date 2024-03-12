@@ -82,7 +82,9 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         self.check_cluster_version(req.cluster_version)?;
         let cmd: Arc<C> = Arc::new(req.cmd()?);
         // handle proposal
-        let sp_exec = self.curp.handle_propose(id, Arc::clone(&cmd))?;
+        let sp_exec = self
+            .curp
+            .handle_propose(id, Arc::clone(&cmd), req.first_incomplete)?;
 
         // if speculatively executed, wait for the result and return
         if sp_exec {

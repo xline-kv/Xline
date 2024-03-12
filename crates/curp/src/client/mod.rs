@@ -21,11 +21,12 @@ mod state;
 #[cfg(test)]
 mod tests;
 
-use std::{collections::HashMap, fmt::Debug, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, ops::Deref, sync::Arc};
 
 use async_trait::async_trait;
 use curp_external_api::cmd::Command;
 use futures::{stream::FuturesUnordered, StreamExt};
+use parking_lot::RwLock;
 use tokio::task::JoinHandle;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
@@ -45,6 +46,7 @@ use crate::{
         protocol_client::ProtocolClient, ConfChange, FetchClusterRequest, FetchClusterResponse,
         Member, ProposeId, Protocol, ReadState,
     },
+    tracker::Tracker,
 };
 
 /// The response of propose command, deserialized from [`crate::rpc::ProposeResponse`] or
@@ -119,11 +121,43 @@ pub trait ClientApi {
     }
 }
 
+/// Propose id guard, used to ensure the sequence of propose id is recorded.
+struct ProposeIdGuard<'a> {
+    /// The propose id
+    propose_id: ProposeId,
+    /// The tracker
+    tracker: &'a RwLock<Tracker>,
+}
+
+impl Deref for ProposeIdGuard<'_> {
+    type Target = ProposeId;
+
+    fn deref(&self) -> &Self::Target {
+        &self.propose_id
+    }
+}
+
+impl<'a> ProposeIdGuard<'a> {
+    /// Create a new propose id guard
+    fn new(tracker: &'a RwLock<Tracker>, propose_id: ProposeId) -> Self {
+        Self {
+            propose_id,
+            tracker,
+        }
+    }
+}
+
+impl Drop for ProposeIdGuard<'_> {
+    fn drop(&mut self) {
+        let _ig = self.tracker.write().record(self.propose_id.1);
+    }
+}
+
 /// This trait override some unrepeatable methods in ClientApi, and a client with this trait will be able to retry.
 #[async_trait]
 trait RepeatableClientApi: ClientApi {
     /// Generate a unique propose id during the retry process.
-    fn gen_propose_id(&self) -> Result<ProposeId, Self::Error>;
+    fn gen_propose_id(&self) -> Result<ProposeIdGuard<'_>, Self::Error>;
 
     /// Send propose to the whole cluster, `use_fast_path` set to `false` to fallback into ordered
     /// requests (event the requests are commutative).

@@ -193,6 +193,7 @@ async fn new_leader_will_recover_spec_cmds_cond1() {
         }),
         command: bincode::serialize(&cmd1).unwrap(),
         cluster_version: 0,
+        first_incomplete: 0,
     };
     for id in group
         .all_members
