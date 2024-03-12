@@ -21,8 +21,10 @@ jobs:
           - v1.25.3
           - v1.26.0
           - v1.27.3
+          - v1.28.7
+          - v1.29.2
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: work with kubernetes
         env:
           K8SVERSION: ${{ matrix.k8s }}
