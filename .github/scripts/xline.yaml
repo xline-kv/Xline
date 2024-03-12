@@ -15,6 +15,6 @@ spec:
       command:
         - /bin/sh
         - -c
-        - xline --name node1 --members node1=172.18.0.2:2379 --data-dir /tmp/xline --storage-engine rocksdb
+        - xline --name node1 --members node1=172.18.0.2:2379 --data-dir /tmp/xline --storage-engine rocksdb --client-listen-urls=http://172.18.0.2:2379 --peer-listen-urls=http://172.18.0.2:2380,http://172.18.0.2:2381 --client-advertise-urls=http://172.18.0.2:2379 --peer-advertise-urls=http://172.18.0.2:2380,http://172.18.0.2:2381
   hostNetwork: true
 status: {}
