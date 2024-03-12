@@ -1,5 +1,3 @@
-use std::{cmp::Reverse, ops::Add, time::Duration};
-
 use curp_test_utils::{mock_role_change, test_cmd::TestCommand, TEST_CLIENT_ID};
 use test_macros::abort_on_panic;
 use tokio::{
@@ -14,13 +12,16 @@ use utils::config::{
 
 use super::*;
 use crate::{
-    rpc::{connect::MockInnerConnectApi, Redirect}, server::{
+    rpc::{connect::MockInnerConnectApi, Redirect},
+    server::{
         cmd_board::CommandBoard,
         cmd_worker::{CEEventTxApi, MockCEEventTxApi},
         lease_manager::LeaseManager,
         raw_curp::UncommittedPool,
         spec_pool::SpeculativePool,
-    }, tracker::Tracker, LogIndex
+    },
+    tracker::Tracker,
+    LogIndex,
 };
 
 // Hooks for tests
@@ -74,11 +75,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             .unwrap();
         let curp_storage = Arc::new(DB::open(&curp_config.engine_cfg).unwrap());
 
-        // grant a infinity expiry lease for test client id
-        lease_manager.write().expiry_queue.push(
-            TEST_CLIENT_ID,
-            Reverse(Instant::now().add(Duration::from_nanos(u64::MAX))),
-        );
+        // bypass test client id
+        lease_manager.write().bypass(TEST_CLIENT_ID);
 
         Self::builder()
             .cluster_info(cluster_info)

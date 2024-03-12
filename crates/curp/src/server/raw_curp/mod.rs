@@ -1506,6 +1506,12 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         None
     }
 
+    /// Mark a client id as bypassed
+    pub(super) fn mark_client_id_bypassed(&self, client_id: u64) {
+        let mut lm_w = self.ctx.lm.write();
+        lm_w.bypass(client_id);
+    }
+
     /// Get client tls config
     pub(super) fn client_tls_config(&self) -> Option<&ClientTlsConfig> {
         self.ctx.client_tls_config.as_ref()
@@ -1717,12 +1723,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             })
             .collect_vec();
 
-        let mut cb_w = self.ctx.cb.write();
+        // let mut cb_w = self.ctx.cb.write();
         let mut sp_l = self.ctx.sp.lock();
 
         let term = st.term;
         for entry in recovered_cmds {
-            let _ig_sync = cb_w.sync.insert(entry.id); // may have been inserted before
             let _ig_spec = sp_l.insert(entry.clone()); // may have been inserted before
             #[allow(clippy::expect_used)]
             let entry = log

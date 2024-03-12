@@ -27,8 +27,6 @@ pub(super) struct CommandBoard<C: Command> {
     pub(super) trackers: HashMap<u64, Tracker>,
     /// Store all conf change propose ids
     pub(super) conf_buffer: IndexSet<ProposeId>,
-    /// The cmd has been received before, this is used for dedup
-    pub(super) sync: IndexSet<ProposeId>,
     /// Store all execution results
     pub(super) er_buffer: IndexMap<ProposeId, Result<C::ER, C::Error>>,
     /// Store all after sync results
@@ -43,7 +41,6 @@ impl<C: Command> CommandBoard<C> {
             asr_notifiers: HashMap::new(),
             shutdown_notifier: Event::new(),
             trackers: HashMap::new(),
-            sync: IndexSet::new(),
             er_buffer: IndexMap::new(),
             asr_buffer: IndexMap::new(),
             conf_notifier: HashMap::new(),

@@ -11,6 +11,7 @@ use curp::{
 use curp_test_utils::{
     init_logger, sleep_millis, sleep_secs,
     test_cmd::{TestCommand, TestCommandResult, TestCommandType},
+    TEST_CLIENT_ID,
 };
 use madsim::rand::{thread_rng, Rng};
 use test_macros::abort_on_panic;
@@ -179,7 +180,7 @@ async fn concurrent_cmd_order() {
     tokio::spawn(async move {
         c.propose(ProposeRequest {
             propose_id: Some(ProposeId {
-                client_id: 0,
+                client_id: TEST_CLIENT_ID,
                 seq_num: 0,
             }),
             command: bincode::serialize(&cmd0).unwrap(),
@@ -194,7 +195,7 @@ async fn concurrent_cmd_order() {
     let response = leader_connect
         .propose(ProposeRequest {
             propose_id: Some(ProposeId {
-                client_id: 0,
+                client_id: TEST_CLIENT_ID,
                 seq_num: 1,
             }),
             command: bincode::serialize(&cmd1).unwrap(),
@@ -206,7 +207,7 @@ async fn concurrent_cmd_order() {
     let response = leader_connect
         .propose(ProposeRequest {
             propose_id: Some(ProposeId {
-                client_id: 0,
+                client_id: TEST_CLIENT_ID,
                 seq_num: 2,
             }),
             command: bincode::serialize(&cmd2).unwrap(),

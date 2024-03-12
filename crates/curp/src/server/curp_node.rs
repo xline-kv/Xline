@@ -74,13 +74,20 @@ pub(super) struct CurpNode<C: Command, RC: RoleChange> {
 /// Handlers for clients
 impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     /// Handle `Propose` requests
-    pub(super) async fn propose(&self, req: ProposeRequest) -> Result<ProposeResponse, CurpError> {
+    pub(super) async fn propose(
+        &self,
+        req: ProposeRequest,
+        bypassed: bool,
+    ) -> Result<ProposeResponse, CurpError> {
         if self.curp.is_shutdown() {
             return Err(CurpError::shutting_down());
         }
         let id = req.propose_id();
         self.check_cluster_version(req.cluster_version)?;
         let cmd: Arc<C> = Arc::new(req.cmd()?);
+        if bypassed {
+            self.curp.mark_client_id_bypassed(id.0);
+        }
         // handle proposal
         let sp_exec = self
             .curp
@@ -99,8 +106,12 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     pub(super) async fn shutdown(
         &self,
         req: ShutdownRequest,
+        bypassed: bool,
     ) -> Result<ShutdownResponse, CurpError> {
         self.check_cluster_version(req.cluster_version)?;
+        if bypassed {
+            self.curp.mark_client_id_bypassed(req.propose_id().0);
+        }
         self.curp.handle_shutdown(req.propose_id())?;
         CommandBoard::wait_for_shutdown_synced(&self.cmd_board).await;
         Ok(ShutdownResponse::default())
@@ -110,9 +121,13 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     pub(super) async fn propose_conf_change(
         &self,
         req: ProposeConfChangeRequest,
+        bypassed: bool,
     ) -> Result<ProposeConfChangeResponse, CurpError> {
         self.check_cluster_version(req.cluster_version)?;
         let id = req.propose_id();
+        if bypassed {
+            self.curp.mark_client_id_bypassed(id.0);
+        }
         self.curp.handle_propose_conf_change(id, req.changes)?;
         CommandBoard::wait_for_conf(&self.cmd_board, id).await;
         let members = self.curp.cluster().all_members_vec();
@@ -120,7 +135,14 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     }
 
     /// Handle `Publish` requests
-    pub(super) fn publish(&self, req: PublishRequest) -> Result<PublishResponse, CurpError> {
+    pub(super) fn publish(
+        &self,
+        req: PublishRequest,
+        bypassed: bool,
+    ) -> Result<PublishResponse, CurpError> {
+        if bypassed {
+            self.curp.mark_client_id_bypassed(req.propose_id().0);
+        }
         self.curp.handle_publish(req)?;
         Ok(PublishResponse::default())
     }
