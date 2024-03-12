@@ -19,17 +19,18 @@ bash ./benchmark.sh xline
 mv out out_local
 
 
-echo "=== Benchmark remote changes ==="
-export XLINE_IMAGE="ghcr.io/xline-kv/xline:latest"
-bash ./benchmark.sh xline
-mv out out_remote
+# TODO: Uncomment this after 0.7.0 release
+# echo "=== Benchmark remote changes ==="
+# export XLINE_IMAGE="ghcr.io/xline-kv/xline:latest"
+# bash ./benchmark.sh xline
+# mv out out_remote
 
 echo "=== Merge Outputs ==="
-echo -e "## Benchmark\r\n" >> outputs
-echo -e "### PR \r\n\`\`\`txt" >> outputs
-cat out_local/xline.txt >> outputs
-echo "\`\`\`" >> outputs
+echo -e "## Benchmark\r\n" >> bench_outputs
+echo -e "### PR \r\n\`\`\`txt" >> bench_outputs
+cat out_local/xline.txt >> bench_outputs
+echo "\`\`\`" >> bench_outputs
 
-echo -e "\r\n### Base \r\n\`\`\`txt" >> outputs
-cat out_remote/xline.txt >> outputs
-echo "\`\`\`" >> outputs
+# echo -e "\r\n### Base \r\n\`\`\`txt" >> bench_outputs
+# cat out_remote/xline.txt >> bench_outputs
+# echo "\`\`\`" >> bench_outputs
