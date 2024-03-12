@@ -723,6 +723,9 @@ impl Display for AlarmMember {
     }
 }
 
+/// Since the tokio-rs/prost will automatically derive Debug trait for all the structures it generates, we have to
+/// override the Display trait for these requests and responses.
+/// FYI: https://github.com/tokio-rs/prost/issues/334
 impl Display for PutRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -758,22 +761,34 @@ impl Display for RangeRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "RangeRequest {{ key: {:?}, range_end: {:?}, limit: {:?}, revision: {:?}, sort_order: {:?}, sort_target: {:?}, serializable: {:?}, keys_only: {:?}, count_only: {:?}, min_mod_revision: {:?}, max_mod_revision: {:?}, min_create_revision: {:?}, max_create_revision: {:?}, key_only: {:?}, count_only: {:?}, min_mod_revision: {:?}, max_mod_revision: {:?}, min_create_revision: {:?}, max_create_revision: {:?} }}",
+            "RangeRequest {{ key: {:?}, range_end: {:?}, limit: {:?}, revision: {:?}, sort_order: {:?}, ",
             String::from_utf8_lossy(&self.key),
             String::from_utf8_lossy(&self.range_end),
             self.limit,
             self.revision,
             self.sort_order,
+        )?;
+        write!(
+            f,
+            "sort_target: {:?}, serializable: {:?}, keys_only: {:?}, count_only: {:?}, min_mod_revision: {:?}, ",
             self.sort_target,
             self.serializable,
             self.keys_only,
             self.count_only,
-            self.min_mod_revision,
+            self.min_mod_revision
+        )?;
+        write!(
+            f,
+            "max_mod_revision: {:?}, min_create_revision: {:?}, max_create_revision: {:?}, key_only: {:?}, count_only: {:?}, ",
             self.max_mod_revision,
             self.min_create_revision,
             self.max_create_revision,
             self.keys_only,
             self.count_only,
+        )?;
+        write!(
+            f,
+            "min_mod_revision: {:?}, max_mod_revision: {:?}, min_create_revision: {:?}, max_create_revision: {:?} }}",
             self.min_mod_revision,
             self.max_mod_revision,
             self.min_create_revision,

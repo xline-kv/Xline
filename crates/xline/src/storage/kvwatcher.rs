@@ -541,7 +541,6 @@ where
 }
 
 /// Watch Event
-#[derive(Debug)]
 pub(crate) struct WatchEvent {
     /// Watch ID
     id: WatchId,
@@ -553,8 +552,7 @@ pub(crate) struct WatchEvent {
     compacted: bool,
 }
 
-impl std::fmt::Display for WatchEvent {
-    #[allow(clippy::arithmetic_side_effects)]
+impl std::fmt::Debug for WatchEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
