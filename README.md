@@ -91,7 +91,7 @@ For more information about the Xline client SDK, or the Xline client command lin
 
 ## Quick Start
 
-To get started, check out the document [QUICK_START.md](doc/quick-start/README.md) for in-depth information and step-by-step instructions.
+To get started, check out the document [QUICK_START.md](doc/QUICK_START.md) for in-depth information and step-by-step instructions.
 
 ## Contribute Guide
 
