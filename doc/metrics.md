@@ -71,13 +71,13 @@ The total number of fast path fallbacks into slow path when the client propose t
 
 ### Xline
 
-1. `slow_read_indexes_total`: Counter
+1. `slow_read_indexes`: Counter
 The total number of pending read indexes not in sync with leader's or timed out read index requests.
 
-2. `read_indexes_failed_total`: Counter
+2. `read_indexes_failed`: Counter
 The total number of failed read indexes seen.
 
-3. `lease_expired_total`: Counter
+3. `lease_expired`: Counter
 The total number of expired leases.
 
 4. `fd_used`: ObservableGauge
@@ -103,10 +103,10 @@ The backend engine write batch engine, `batch_size` refer to the size and `sync`
 
 ### Network
 
-1. `peer_sent_bytes_total`: Counter
+1. `peer_sent_bytes`: Counter
 The total number of bytes sent to peers.
 
-2. `peer_sent_failures_total`: Counter
+2. `peer_sent_failures`: Counter
 The total number of send failures to peers.
 
 3. `peer_round_trip_time_seconds`: Histogram
