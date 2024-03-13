@@ -66,7 +66,7 @@ impl Metrics {
             is_leader,
             is_learner,
             server_id,
-            sp_total,
+            sp_cnt,
             online_clients,
         ) = (
             meter
@@ -86,7 +86,7 @@ impl Metrics {
                 .with_description("Server or member ID in hexadecimal format. 1 for 'server_id' label with current ID.")
                 .init(),
             meter
-                .u64_observable_gauge("sp_total")
+                .u64_observable_gauge("sp_cnt")
                 .with_description("The speculative pool size of this server")
                 .init(),
             meter
@@ -101,7 +101,7 @@ impl Metrics {
                 is_leader.as_any(),
                 is_learner.as_any(),
                 server_id.as_any(),
-                sp_total.as_any(),
+                sp_cnt.as_any(),
                 online_clients.as_any(),
             ],
             move |observer| {
@@ -115,7 +115,7 @@ impl Metrics {
                 observer.observe_u64(&server_id, id, &[]);
 
                 let sp_size = curp.spec_pool().lock().len();
-                observer.observe_u64(&sp_total, sp_size.numeric_cast(), &[]);
+                observer.observe_u64(&sp_cnt, sp_size.numeric_cast(), &[]);
 
                 let client_ids = curp.lease_manager().read().expiry_queue.len();
                 observer.observe_u64(&online_clients, client_ids.numeric_cast(), &[]);
