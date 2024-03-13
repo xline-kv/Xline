@@ -680,7 +680,6 @@ async fn test_retry_propose_return_no_retry_error() {
 #[tokio::test]
 async fn test_retry_propose_return_retry_error() {
     for early_err in [
-        CurpError::expired_client_id(),
         CurpError::key_conflict(),
         CurpError::RpcTransport(()),
         CurpError::internal("No reason"),

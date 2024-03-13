@@ -386,6 +386,17 @@ impl ClientBuilder {
         })
     }
 
+    /// Wait for client id
+    async fn wait_for_client_id(&self, state: Arc<state::State>) {
+        let _ig = tokio::time::timeout(*self.config.wait_synced_timeout(), async move {
+            while state.client_id() == 0 {
+                tokio::time::sleep(*self.config.propose_timeout()).await;
+                debug!("waiting for client_id");
+            }
+        })
+        .await;
+    }
+
     /// Build the client
     ///
     /// # Errors
@@ -402,8 +413,9 @@ impl ClientBuilder {
         let client = Retry::new(
             Unary::new(Arc::clone(&state), self.init_unary_config()),
             self.init_retry_config(),
-            Some(self.spawn_bg_tasks(state)),
+            Some(self.spawn_bg_tasks(Arc::clone(&state))),
         );
+        self.wait_for_client_id(state).await;
         Ok(client)
     }
 }
@@ -427,8 +439,9 @@ impl<P: Protocol> ClientBuilderWithBypass<P> {
         let client = Retry::new(
             Unary::new(Arc::clone(&state), self.inner.init_unary_config()),
             self.inner.init_retry_config(),
-            Some(self.inner.spawn_bg_tasks(state)),
+            Some(self.inner.spawn_bg_tasks(Arc::clone(&state))),
         );
+        self.inner.wait_for_client_id(state).await;
         Ok(client)
     }
 }

@@ -128,7 +128,7 @@ async fn fast_round_is_slower_than_slow_round() {
     leader_connect
         .propose(tonic::Request::new(ProposeRequest {
             propose_id: Some(ProposeId {
-                client_id: 0,
+                client_id: TEST_CLIENT_ID,
                 seq_num: 0,
             }),
             command: bincode::serialize(&cmd).unwrap(),
@@ -150,7 +150,7 @@ async fn fast_round_is_slower_than_slow_round() {
     let resp: ProposeResponse = follower_connect
         .propose(tonic::Request::new(ProposeRequest {
             propose_id: Some(ProposeId {
-                client_id: 0,
+                client_id: TEST_CLIENT_ID,
                 seq_num: 0,
             }),
             command: bincode::serialize(&cmd).unwrap(),

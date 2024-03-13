@@ -2,10 +2,12 @@ use std::{
     cmp::Ordering,
     collections::{hash_map::Entry, HashMap, HashSet},
     sync::{atomic::AtomicU64, Arc},
+    time::Duration,
 };
 
 use event_listener::Event;
 use futures::{stream::FuturesUnordered, Future};
+use rand::seq::IteratorRandom;
 use tokio::sync::RwLock;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
@@ -18,7 +20,7 @@ use crate::{
     rpc::{
         self,
         connect::{BypassedConnect, ConnectApi},
-        CurpError, FetchClusterResponse, Protocol,
+        CurpError, FetchClusterRequest, FetchClusterResponse, Protocol,
     },
 };
 
@@ -125,6 +127,28 @@ impl State {
                 .store(id, std::sync::atomic::Ordering::Relaxed);
             info!("generate client id({id}) locally for bypassed client");
         }
+    }
+
+    /// Choose a random server to try to refresh the state
+    /// Use when the current leader is missing.
+    pub(crate) async fn try_refresh_state(&self) -> Result<(), CurpError> {
+        /// The timeout for refreshing the state
+        const REFRESH_TIMEOUT: Duration = Duration::from_secs(1);
+
+        let rand_conn = {
+            let state = self.mutable.read().await;
+            state
+                .connects
+                .values()
+                .choose(&mut rand::thread_rng())
+                .map(Arc::clone)
+                .ok_or_else(CurpError::wrong_cluster_version)?
+        };
+        let resp = rand_conn
+            .fetch_cluster(FetchClusterRequest::default(), REFRESH_TIMEOUT)
+            .await?;
+        self.check_and_update(&resp.into_inner()).await?;
+        Ok(())
     }
 
     /// Get the local server connection

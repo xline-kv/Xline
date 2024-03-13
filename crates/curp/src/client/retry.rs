@@ -147,14 +147,14 @@ where
                 | CurpError::ShuttingDown(_)
                 | CurpError::InvalidConfig(_)
                 | CurpError::NodeNotExists(_)
+                | CurpError::ExpiredClientId(_)
                 | CurpError::NodeAlreadyExists(_)
                 | CurpError::LearnerNotCatchUp(_) => {
                     return Err(tonic::Status::from(err));
                 }
 
                 // some errors that could have a retry
-                CurpError::ExpiredClientId(_)
-                | CurpError::KeyConflict(_)
+                CurpError::KeyConflict(_)
                 | CurpError::Internal(_)
                 | CurpError::LeaderTransfer(_) => {}
 

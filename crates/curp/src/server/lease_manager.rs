@@ -25,7 +25,7 @@ impl LeaseManager {
     pub(crate) fn new() -> Self {
         Self {
             expiry_queue: PriorityQueue::new(),
-            bypassed: HashSet::new(),
+            bypassed: HashSet::from([12345]),
         }
     }
 

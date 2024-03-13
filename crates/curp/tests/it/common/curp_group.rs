@@ -305,15 +305,13 @@ impl CurpGroup {
 
     pub async fn new_client(&self) -> impl ClientApi<Error = tonic::Status, Cmd = TestCommand> {
         let addrs = self.all_addrs().cloned().collect();
-        let client = ClientBuilder::new(ClientConfig::default(), true)
+        ClientBuilder::new(ClientConfig::default(), true)
             .discover_from(addrs)
             .await
             .unwrap()
             .build()
             .await
-            .unwrap();
-        sleep_secs(2).await; // wait for client to obtain a valid client id
-        client
+            .unwrap()
     }
 
     pub fn exe_rxs(
