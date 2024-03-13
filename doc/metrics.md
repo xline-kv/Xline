@@ -49,7 +49,7 @@ Whether or not this member is a learner. 1 if is, 0 otherwise.
 15. `server_id`: ObservableGauge
 Server or member ID in hexadecimal format. 1 for 'server_id' label with the current ID.
 
-16. `sp_total`: ObservableGauge
+16. `sp_cnt`: ObservableGauge
 The speculative pool size of this server.
 
 17. `online_clients`: ObservableGauge
