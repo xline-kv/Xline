@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use clippy_utilities::NumericCast;
+use clippy_utilities::{NumericCast, OverflowArithmetic};
 use curp_external_api::{cmd::Command, role_change::RoleChange};
-use opentelemetry::metrics::{Counter, Histogram, MetricsError, ObservableGauge};
+use opentelemetry::metrics::{Counter, Histogram, MetricsError, UpDownCounter};
 use utils::define_metrics;
 
 use super::raw_curp::RawCurp;
@@ -25,25 +25,13 @@ define_metrics! {
         .u64_counter("heartbeat_send_failures")
         .with_description("The total number of leader heartbeat send failures (likely overloaded from slow disk).")
         .init(),
-    apply_snapshot_in_progress: ObservableGauge<u64> = meter()
-        .u64_observable_gauge("apply_snapshot_in_progress")
+    apply_snapshot_in_progress: UpDownCounter<i64> = meter()
+        .i64_up_down_counter("apply_snapshot_in_progress")
         .with_description("1 if the server is applying the incoming snapshot. 0 if none.")
-        .init(),
-    proposals_committed: ObservableGauge<u64> = meter()
-        .u64_observable_gauge("proposals_committed")
-        .with_description("The total number of consensus proposals committed.")
         .init(),
     proposals_failed: Counter<u64> = meter()
         .u64_counter("proposals_failed")
         .with_description("The total number of failed proposals seen.")
-        .init(),
-    proposals_applied: ObservableGauge<u64> = meter()
-        .u64_observable_gauge("proposals_applied")
-        .with_description("The total number of consensus proposals applied.")
-        .init(),
-    proposals_pending: ObservableGauge<u64> = meter()
-        .u64_observable_gauge("proposals_pending")
-        .with_description("The current number of pending proposals to commit.")
         .init(),
     snapshot_install_total_duration_seconds: Histogram<u64> = meter()
         .u64_histogram("snapshot_install_total_duration_seconds")
@@ -68,6 +56,9 @@ impl Metrics {
             server_id,
             sp_cnt,
             online_clients,
+            proposals_committed,
+            proposals_applied,
+            proposals_pending,
         ) = (
             meter
                 .u64_observable_gauge("has_leader")
@@ -92,6 +83,18 @@ impl Metrics {
             meter
                 .u64_observable_gauge("online_clients")
                 .with_description("The online client ids count of this server if it is the leader")
+                .init(),
+            meter
+                .u64_observable_gauge("proposals_committed")
+                .with_description("The total number of consensus proposals committed.")
+                .init(),
+            meter
+                .u64_observable_gauge("proposals_applied")
+                .with_description("The total number of consensus proposals applied.")
+                .init(),
+            meter
+                .u64_observable_gauge("proposals_pending")
+                .with_description("The current number of pending proposals to commit.")
                 .init(),
         );
 
@@ -119,6 +122,17 @@ impl Metrics {
 
                 let client_ids = curp.lease_manager().read().expiry_queue.len();
                 observer.observe_u64(&online_clients, client_ids.numeric_cast(), &[]);
+
+                let commit_index = curp.commit_index();
+                let last_log_index = curp.last_log_index();
+
+                observer.observe_u64(&proposals_committed, commit_index, &[]);
+                observer.observe_u64(&proposals_applied, curp.last_applied(), &[]);
+                observer.observe_u64(
+                    &proposals_pending,
+                    last_log_index.overflow_sub(commit_index),
+                    &[],
+                );
             },
         )?;
 
