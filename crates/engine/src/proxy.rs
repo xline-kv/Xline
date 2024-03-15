@@ -167,9 +167,9 @@ impl StorageEngine for Engine {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Transaction {
-    /// Memory snapshot
+    /// Memory transaction
     Memory(MemoryTransaction),
-    /// Rocks snapshot
+    /// Rocks transaction
     Rocks(metrics::Layer<RocksTransaction>),
 }
 
