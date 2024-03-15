@@ -7,6 +7,9 @@ pub(crate) mod spec_pool_new;
 /// Uncommitted pool
 pub(crate) mod uncommitted_pool;
 
+#[cfg(test)]
+mod tests;
+
 use std::{ops::Deref, sync::Arc};
 
 use crate::rpc::{ConfChange, PoolEntry, PoolEntryInner, ProposeId};
@@ -78,22 +81,6 @@ impl<C> From<CommandEntry<C>> for PoolEntry<C> {
         }
     }
 }
-
-impl<C> std::hash::Hash for CommandEntry<C> {
-    #[inline]
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
-    }
-}
-
-impl<C> PartialEq for CommandEntry<C> {
-    #[inline]
-    fn eq(&self, other: &Self) -> bool {
-        self.id.eq(&other.id)
-    }
-}
-
-impl<C> Eq for CommandEntry<C> {}
 
 /// Conf change entry type
 #[derive(Clone, PartialEq)]
