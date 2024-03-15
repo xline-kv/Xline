@@ -1,7 +1,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 /// Insert into speculative pool
-pub trait SpeculativePool {
+pub trait SpeculativePoolOp {
     /// Entry of the pool
     type Entry;
 
@@ -27,7 +27,7 @@ pub trait SpeculativePool {
 }
 
 /// Insert into uncommitted pool
-pub trait UncommittedPool {
+pub trait UncommittedPoolOp {
     /// Entry of the pool
     type Entry;
     /// Inserts a command in to the pool

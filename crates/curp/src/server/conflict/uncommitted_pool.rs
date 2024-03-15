@@ -1,26 +1,26 @@
-use curp_external_api::conflict::UncommittedPool;
+use curp_external_api::conflict::UncommittedPoolOp;
 
 use crate::rpc::PoolEntry;
 
 use super::{CommandEntry, ConfChangeEntry, SplitEntry};
 
 /// An uncommitted pool object
-pub type UcpObject<C> = Box<dyn UncommittedPool<Entry = CommandEntry<C>> + Send + 'static>;
+pub type UcpObject<C> = Box<dyn UncommittedPoolOp<Entry = CommandEntry<C>> + Send + 'static>;
 
 /// Union type of `UncommittedPool` objects
-pub(crate) struct UncomPool<C> {
+pub(crate) struct UncommittedPool<C> {
     /// Command uncommitted pools
     command_ucps: Vec<UcpObject<C>>,
     /// Conf change uncommitted pools
-    conf_change_ucp: ConfChangeUncomPool,
+    conf_change_ucp: ConfChangeUcp,
 }
 
-impl<C> UncomPool<C> {
+impl<C> UncommittedPool<C> {
     /// Creates a new `UncomPool`
     pub(crate) fn new(command_ucps: Vec<UcpObject<C>>) -> Self {
         Self {
             command_ucps,
-            conf_change_ucp: ConfChangeUncomPool::default(),
+            conf_change_ucp: ConfChangeUcp::default(),
         }
     }
 
@@ -42,7 +42,7 @@ impl<C> UncomPool<C> {
                     .command_ucps
                     .iter()
                     .map(AsRef::as_ref)
-                    .all(UncommittedPool::is_empty);
+                    .all(UncommittedPoolOp::is_empty);
             }
         }
 
@@ -89,7 +89,7 @@ impl<C> UncomPool<C> {
                     self.command_ucps
                         .iter()
                         .map(AsRef::as_ref)
-                        .flat_map(UncommittedPool::all)
+                        .flat_map(UncommittedPoolOp::all)
                         .map(Into::into),
                 )
                 .collect(),
@@ -124,12 +124,12 @@ impl<C> UncomPool<C> {
 
 /// Conf change uncommitted pool
 #[derive(Default)]
-struct ConfChangeUncomPool {
+struct ConfChangeUcp {
     /// entry count
     conf_changes: Vec<ConfChangeEntry>,
 }
 
-impl UncommittedPool for ConfChangeUncomPool {
+impl UncommittedPoolOp for ConfChangeUcp {
     type Entry = ConfChangeEntry;
 
     fn insert(&mut self, entry: Self::Entry) -> bool {

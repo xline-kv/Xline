@@ -1,26 +1,26 @@
-use curp_external_api::conflict::SpeculativePool;
+use curp_external_api::conflict::SpeculativePoolOp;
 
 use crate::rpc::PoolEntry;
 
 use super::{CommandEntry, ConfChangeEntry, SplitEntry};
 
 /// A speculative pool object
-pub type SpObject<C> = Box<dyn SpeculativePool<Entry = CommandEntry<C>> + Send + 'static>;
+pub type SpObject<C> = Box<dyn SpeculativePoolOp<Entry = CommandEntry<C>> + Send + 'static>;
 
 /// Union type of `SpeculativePool` objects
-pub(crate) struct SpecPool<C> {
+pub(crate) struct SpeculativePool<C> {
     /// Command speculative pools
     command_sps: Vec<SpObject<C>>,
     /// Conf change speculative pool
-    conf_change_sp: ConfChangeSpecPool,
+    conf_change_sp: ConfChangeSp,
 }
 
-impl<C> SpecPool<C> {
+impl<C> SpeculativePool<C> {
     /// Creates a new pool
     pub(crate) fn new(command_sps: Vec<SpObject<C>>) -> Self {
         Self {
             command_sps,
-            conf_change_sp: ConfChangeSpecPool::default(),
+            conf_change_sp: ConfChangeSp::default(),
         }
     }
 
@@ -43,7 +43,7 @@ impl<C> SpecPool<C> {
                     .command_sps
                     .iter()
                     .map(AsRef::as_ref)
-                    .all(SpeculativePool::is_empty)
+                    .all(SpeculativePoolOp::is_empty)
                 {
                     return Some(c.into());
                 }
@@ -91,12 +91,12 @@ impl<C> SpecPool<C> {
 
 /// Speculative pool for conf change entries
 #[derive(Default)]
-struct ConfChangeSpecPool {
+struct ConfChangeSp {
     /// Store current conf change
     change: Option<ConfChangeEntry>,
 }
 
-impl SpeculativePool for ConfChangeSpecPool {
+impl SpeculativePoolOp for ConfChangeSp {
     type Entry = ConfChangeEntry;
 
     fn insert(&mut self, entry: Self::Entry) -> Option<Self::Entry> {
