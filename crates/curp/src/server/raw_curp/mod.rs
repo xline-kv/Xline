@@ -768,12 +768,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             if last_sent_index > log_w.commit_index {
                 log_w.commit_to(last_sent_index);
                 debug!("{} updates commit index to {last_sent_index}", self.id());
-                metrics::get()
-                    .proposals_committed
-                    .observe(last_sent_index, &[]);
-                metrics::get()
-                    .proposals_pending
-                    .observe(log_w.last_log_index().overflow_sub(last_sent_index), &[]);
                 self.apply(&mut *log_w);
             }
         }
@@ -1503,6 +1497,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         self.log.read().last_log_index()
     }
 
+    /// Get last applied index
+    pub(super) fn last_applied(&self) -> u64 {
+        self.log.read().last_as
+    }
+
     /// Pick a node that has the same log as the current node
     pub(super) fn pick_new_leader(&self) -> Option<ServerId> {
         let last_idx = self.log.read().last_log_index();
@@ -1766,7 +1765,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Apply new logs
     fn apply(&self, log: &mut Log<C>) {
         for i in (log.last_as + 1)..=log.commit_index {
-            metrics::get().proposals_applied.observe(i, &[]);
             let entry = log.get(i).unwrap_or_else(|| {
                 unreachable!(
                     "system corrupted, apply log[{i}] when we only have {} log entries",
@@ -1898,10 +1896,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         // check if commit_index needs to be updated
         if self.can_update_commit_index_to(log_w, index, term) && index > log_w.commit_index {
             log_w.commit_to(index);
-            metrics::get().proposals_committed.observe(index, &[]);
-            metrics::get()
-                .proposals_pending
-                .observe(log_w.last_log_index().overflow_sub(index), &[]);
             debug!("{} updates commit index to {index}", self.id());
             self.apply(&mut *log_w);
         }

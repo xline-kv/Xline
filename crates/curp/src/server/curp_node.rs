@@ -265,7 +265,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         &self,
         req_stream: impl Stream<Item = Result<InstallSnapshotRequest, E>>,
     ) -> Result<InstallSnapshotResponse, CurpError> {
-        metrics::get().apply_snapshot_in_progress.observe(1, &[]);
+        metrics::get().apply_snapshot_in_progress.add(1, &[]);
         let start = Instant::now();
         pin_mut!(req_stream);
         let mut snapshot = self
@@ -315,7 +315,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                             "failed to reset the command executor by snapshot, {err}"
                         ))
                     })?;
-                metrics::get().apply_snapshot_in_progress.observe(0, &[]);
+                metrics::get().apply_snapshot_in_progress.add(-1, &[]);
                 metrics::get()
                     .snapshot_install_total_duration_seconds
                     .record(start.elapsed().as_secs(), &[]);
