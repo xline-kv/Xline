@@ -4,7 +4,7 @@ use crate::rpc::PoolEntry;
 
 use super::{CommandEntry, ConfChangeEntry, SplitEntry};
 
-/// A ucpeculative pool object
+/// An uncommitted pool object
 pub type UcpObject<C> = Box<dyn UncommittedPool<Entry = CommandEntry<C>> + Send + 'static>;
 
 /// Union type of `UncommittedPool` objects

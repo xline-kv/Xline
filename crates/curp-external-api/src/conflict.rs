@@ -26,7 +26,7 @@ pub trait SpeculativePool {
     fn clear(&mut self);
 }
 
-/// Insert into speculative pool
+/// Insert into uncommitted pool
 pub trait UncommittedPool {
     /// Entry of the pool
     type Entry;
