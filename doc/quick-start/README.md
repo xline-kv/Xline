@@ -88,7 +88,7 @@ docker build . -t ghcr.io/xline-kv/xline -f doc/quick-start/Dockerfile
 ### Start Xline servers
 
 ```bash
-cp ./xline-test-utils/{private,public}.pem ./scripts
+cp ./fixtures/{private,public}.pem ./scripts
 
 ./scripts/quick_start.sh
 ```
