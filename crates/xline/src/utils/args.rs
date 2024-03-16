@@ -38,13 +38,13 @@ pub struct ServerArgs {
     #[clap(long)]
     name: String,
     /// Node peer listen urls
-    #[clap(long, num_args = 1.., value_delimiter = ',')]
+    #[clap(long, required = true, num_args = 1.., value_delimiter = ',')]
     peer_listen_urls: Vec<String>,
     /// Node peer advertise urls
     #[clap(long, num_args = 1.., value_delimiter = ',')]
     peer_advertise_urls: Vec<String>,
     /// Node client listen urls
-    #[clap(long, num_args = 1.., value_delimiter = ',')]
+    #[clap(long, required = true, num_args = 1.., value_delimiter = ',')]
     client_listen_urls: Vec<String>,
     /// Node client advertise urls
     #[clap(long, num_args = 1.., value_delimiter = ',')]
