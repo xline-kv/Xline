@@ -1,0 +1,69 @@
+version: "3.9"
+
+services:
+  node1:
+    image: ghcr.io/xline-kv/xline:latest
+    networks:
+      xline_network:
+        ipv4_address: 172.22.0.2
+    volumes:
+      - ./fixtures:/mnt
+    ports:
+      - "2379:2379"
+    environment:
+      RUST_LOG: curp=debug,xline=debug
+    command: >
+      xline
+      --name node1
+      --members node1=http://172.22.0.2:2379,node2=http://172.22.0.3:2379,node3=http://172.22.0.4:2379
+      --storage-engine rocksdb
+      --data-dir /usr/local/xline/data-dir
+      --auth-public-key /mnt/public.pem
+      --auth-private-key /mnt/private.pem
+
+  node2:
+    image: ghcr.io/xline-kv/xline:latest
+    networks:
+      xline_network:
+        ipv4_address: 172.22.0.3
+    volumes:
+      - ./fixtures:/mnt
+    ports:
+      - "2380:2379"
+    environment:
+      RUST_LOG: curp=debug,xline=debug
+    command: >
+      xline
+      --name node2
+      --members node1=http://172.22.0.2:2379,node2=http://172.22.0.3:2379,node3=http://172.22.0.4:2379
+      --storage-engine rocksdb
+      --data-dir /usr/local/xline/data-dir
+      --auth-public-key /mnt/public.pem
+      --auth-private-key /mnt/private.pem
+
+  node3:
+    image: ghcr.io/xline-kv/xline:latest
+    networks:
+      xline_network:
+        ipv4_address: 172.22.0.4
+    volumes:
+      - ./fixtures:/mnt
+    ports:
+      - "2381:2379"
+    environment:
+      RUST_LOG: curp=debug,xline=debug
+    command: >
+      xline
+      --name node3
+      --members node1=http://172.22.0.2:2379,node2=http://172.22.0.3:2379,node3=http://172.22.0.4:2379
+      --storage-engine rocksdb
+      --data-dir /usr/local/xline/data-dir
+      --auth-public-key /mnt/public.pem
+      --auth-private-key /mnt/private.pem
+
+networks:
+  xline_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: "172.22.0.0/16"
