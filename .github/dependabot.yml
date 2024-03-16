@@ -1,0 +1,18 @@
+version: 2
+updates:
+- package-ecosystem: "github-actions"
+  directory: "/"
+  schedule:
+    # Check for updates to GitHub Actions every day
+    interval: "daily"
+  # Allow up to 10 open pull requests for update github-actions
+  # 5 by default
+  # see https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file#open-pull-requests-limit
+  open-pull-requests-limit: 10
+- package-ecosystem: "cargo"
+  directory: "/"
+  schedule:
+    interval: "weekly"
+  labels:
+    - "dependencies"
+  open-pull-requests-limit: 10
