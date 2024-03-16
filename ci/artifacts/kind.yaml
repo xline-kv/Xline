@@ -1,0 +1,19 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  image: ghcr.io/xline-kv/kind-node-xline:${K8S_VERSION}-master
+  extraMounts:
+    - hostPath: ${WORKSPACE}/ci/artifacts/xline-pod.yaml
+      containerPath: /etc/kubernetes/manifests/xline.yaml
+  kubeadmConfigPatches:
+    - |
+      kind: ClusterConfiguration
+      etcd:
+        external:
+          endpoints:
+          - http://kind-control-plane:2379
+- role: worker
+  image: ghcr.io/xline-kv/kind-node-xline:${K8S_VERSION}-master
+- role: worker
+  image: ghcr.io/xline-kv/kind-node-xline:${K8S_VERSION}-master
