@@ -1,4 +1,3 @@
-
 #!/bin/bash
 DIR="$(dirname $0)"
 QUICK_START="${DIR}/quick_start.sh"
