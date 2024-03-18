@@ -12,7 +12,9 @@ use curp_external_api::{
     cmd::{Command, CommandExecutor, ConflictCheck, PbCodec},
     InflightId, LogIndex,
 };
-use engine::{Engine, EngineType, Snapshot, SnapshotApi, StorageEngine, WriteOperation};
+use engine::{
+    Engine, EngineType, Snapshot, SnapshotApi, StorageEngine, StorageOps, WriteOperation,
+};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -242,7 +244,7 @@ impl CommandExecutor<TestCommand> for TestCE {
                 rev.to_le_bytes().to_vec(),
             )];
             self.store
-                .write_batch(wr_ops, true)
+                .write_multi(wr_ops, true)
                 .map_err(|e| ExecuteError(e.to_string()))?;
             rev
         } else {
@@ -335,7 +337,7 @@ impl CommandExecutor<TestCommand> for TestCE {
                     })),
             );
             self.store
-                .write_batch(wr_ops, true)
+                .write_multi(wr_ops, true)
                 .map_err(|e| ExecuteError(e.to_string()))?;
         }
         debug!(
@@ -352,7 +354,7 @@ impl CommandExecutor<TestCommand> for TestCE {
             index.to_le_bytes().to_vec(),
         )];
         self.store
-            .write_batch(ops, true)
+            .write_multi(ops, true)
             .map_err(|e| ExecuteError(e.to_string()))?;
         Ok(())
     }
@@ -381,7 +383,7 @@ impl CommandExecutor<TestCommand> for TestCE {
         let Some((mut snapshot, index)) = snapshot else {
             let ops = vec![WriteOperation::new_delete_range(TEST_TABLE, &[], &[0xff]),WriteOperation::new_delete(META_TABLE, APPLIED_INDEX_KEY.as_ref())];
             self.store
-                .write_batch(ops, true)
+                .write_multi(ops, true)
                 .map_err(|e| ExecuteError(e.to_string()))?;
             return Ok(());
         };
@@ -391,7 +393,7 @@ impl CommandExecutor<TestCommand> for TestCE {
             index.to_le_bytes().to_vec(),
         )];
         self.store
-            .write_batch(ops, true)
+            .write_multi(ops, true)
             .map_err(|e| ExecuteError(e.to_string()))?;
         snapshot.rewind().unwrap();
         self.store
