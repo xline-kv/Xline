@@ -70,11 +70,6 @@ impl LockedFile {
             .unwrap_or_else(|| unreachable!("File should always exist after creation"))
     }
 
-    /// Converts self to tokio file
-    pub(super) fn into_async(self) -> TokioFile {
-        TokioFile::from_std(self.into_std())
-    }
-
     /// Gets the file wrapped inside an `Option`
     fn file(&mut self) -> &mut StdFile {
         self.file
