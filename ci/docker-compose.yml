@@ -9,7 +9,7 @@ services:
     volumes:
       - ./fixtures:/mnt
     ports:
-      - "2379:2379"
+      - "2479:2379"
     environment:
       RUST_LOG: curp=debug,xline=debug
     command: >
@@ -20,6 +20,8 @@ services:
       --data-dir /usr/local/xline/data-dir
       --auth-public-key /mnt/public.pem
       --auth-private-key /mnt/private.pem
+      --client-listen-urls http://172.22.0.2:2379
+      --peer-listen-urls http://172.22.0.2:2380
 
   node2:
     image: ghcr.io/xline-kv/xline:latest
@@ -40,6 +42,8 @@ services:
       --data-dir /usr/local/xline/data-dir
       --auth-public-key /mnt/public.pem
       --auth-private-key /mnt/private.pem
+      --client-listen-urls http://172.22.0.3:2379
+      --peer-listen-urls http://172.22.0.3:2380
 
   node3:
     image: ghcr.io/xline-kv/xline:latest
@@ -49,7 +53,7 @@ services:
     volumes:
       - ./fixtures:/mnt
     ports:
-      - "2381:2379"
+      - "2579:2379"
     environment:
       RUST_LOG: curp=debug,xline=debug
     command: >
@@ -60,6 +64,18 @@ services:
       --data-dir /usr/local/xline/data-dir
       --auth-public-key /mnt/public.pem
       --auth-private-key /mnt/private.pem
+      --client-listen-urls http://172.22.0.4:2379
+      --peer-listen-urls http://172.22.0.4:2380
+
+  client:
+    image: appropriate/curl # Using a lightweight client for demonstration purposes
+    depends_on:
+      - node1
+      - node2
+      - node3
+    networks:
+      - xline_network
+    command: sh -c "while true; do sleep 30; done" # Keeps the client running
 
 networks:
   xline_network:
