@@ -68,7 +68,7 @@ services:
       --peer-listen-urls http://172.22.0.4:2380
 
   client:
-    image: appropriate/curl # Using a lightweight client for demonstration purposes
+    image: ghcr.io/xline-kv/etcdctl:v3.5.9
     depends_on:
       - node1
       - node2
