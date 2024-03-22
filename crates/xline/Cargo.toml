@@ -26,7 +26,7 @@ dashmap = "5.5.3"
 engine = { path = "../engine" }
 event-listener = "2.5.2"
 futures = "0.3.25"
-hyper = "0.14.27"
+hyper = "1.2.0"
 itertools = "0.11"
 jsonwebtoken = "8.1.1"
 log = "0.4.21"
