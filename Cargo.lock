@@ -1566,9 +1566,9 @@ dependencies = [
 
 [[package]]
 name = "madsim-tonic"
-version = "0.4.1+0.10.0"
+version = "0.4.2+0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "813977c7870103e113a0332d97731f961bc48aaa8860edd318ef7d7754214436"
+checksum = "5e8efb0d3351b7d2cb9394a26d56b166e38909acab492821f6b3d0765bf4665d"
 dependencies = [
  "async-stream",
  "chrono",
