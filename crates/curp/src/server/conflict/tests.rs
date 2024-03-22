@@ -148,7 +148,7 @@ fn conflict_should_be_detected_in_sp() {
 }
 
 #[test]
-fn conf_change_should_conflict_should_all_entries_in_sp() {
+fn conf_change_should_conflict_with_all_entries_in_sp() {
     let mut sp = SpeculativePool::new(vec![Box::new(TestSp::default())]);
     let entry1 = PoolEntry::new(ProposeId::default(), Arc::new(0));
     let entry2 = PoolEntry::new(ProposeId::default(), Arc::new(1));
@@ -206,7 +206,7 @@ fn conflict_should_be_detected_in_ucp() {
 }
 
 #[test]
-fn conf_change_should_conflict_should_all_entries_in_ucp() {
+fn conf_change_should_conflict_with_all_entries_in_ucp() {
     let mut ucp = UncommittedPool::new(vec![Box::new(TestUcp::default())]);
     let entry1 = PoolEntry::new(ProposeId::default(), Arc::new(0));
     let entry2 = PoolEntry::new(ProposeId::default(), Arc::new(1));
