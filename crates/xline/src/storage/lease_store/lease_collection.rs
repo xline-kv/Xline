@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use clippy_utilities::Cast;
+use clippy_utilities::NumericCast;
 use itertools::Itertools;
 use parking_lot::RwLock;
 use utils::parking_lot_lock::RwLockMap;
@@ -74,7 +74,7 @@ impl LeaseCollection {
                 return Err(ExecuteError::LeaseExpired(lease_id));
             }
             let expiry = lease.refresh(Duration::default());
-            let ttl = lease.ttl().as_secs().cast();
+            let ttl = lease.ttl().as_secs().numeric_cast();
             (expiry, ttl)
         };
         let _ignore = inner.expired_queue.update(lease_id, expiry);
@@ -133,7 +133,7 @@ impl LeaseCollection {
 
     /// Grant a lease
     pub(crate) fn grant(&self, lease_id: i64, ttl: i64, is_leader: bool) -> PbLease {
-        let mut lease = Lease::new(lease_id, ttl.max(self.min_ttl).cast());
+        let mut lease = Lease::new(lease_id, ttl.max(self.min_ttl).numeric_cast());
         self.inner.map_write(|mut inner| {
             if is_leader {
                 let expiry = lease.refresh(Duration::ZERO);
@@ -145,8 +145,8 @@ impl LeaseCollection {
         });
         PbLease {
             id: lease.id(),
-            ttl: lease.ttl().as_secs().cast(),
-            remaining_ttl: lease.remaining_ttl().as_secs().cast(),
+            ttl: lease.ttl().as_secs().numeric_cast(),
+            remaining_ttl: lease.remaining_ttl().as_secs().numeric_cast(),
         }
     }
 
