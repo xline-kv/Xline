@@ -1,5 +1,5 @@
 use std::{
-    io,
+    io::{self, Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -45,15 +45,15 @@ impl SegmentRemover {
     ///  | SegmentID                                             |
     ///  |------+------+------+------+------+------+------+------|
     #[allow(clippy::arithmetic_side_effects)] // won't overflow
-    pub(super) async fn recover(dir: impl AsRef<Path>) -> io::Result<()> {
+    pub(super) fn recover(dir: impl AsRef<Path>) -> io::Result<()> {
         let wal_path = Self::rwal_path(&dir);
         if !is_exist(&wal_path) {
             return Ok(());
         }
 
-        let mut wal = LockedFile::open_rw(wal_path.clone())?.into_async();
+        let mut wal = LockedFile::open_rw(wal_path.clone())?.into_std();
         let mut buf = vec![];
-        let n = wal.read_to_end(&mut buf).await?;
+        let n = wal.read_to_end(&mut buf)?;
         /// At least checksum + one record
         if n < 32 + 16 {
             return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
@@ -77,9 +77,10 @@ impl SegmentRemover {
     }
 
     /// Creates a new removal
-    pub(super) async fn new_removal(
+    #[allow(single_use_lifetimes)]
+    pub(super) fn new_removal<'a>(
         dir: impl AsRef<Path>,
-        segments: impl Iterator<Item = &WALSegment> + Clone,
+        segments: impl Iterator<Item = &'a WALSegment> + Clone,
     ) -> io::Result<()> {
         let wal_path = Self::rwal_path(&dir);
 
@@ -100,8 +101,8 @@ impl SegmentRemover {
             .collect();
         wal_data.append(&mut get_checksum(&wal_data).to_vec());
 
-        let mut wal = LockedFile::open_rw(&wal_path)?.into_async();
-        wal.write_all(&wal_data).await?;
+        let mut wal = LockedFile::open_rw(&wal_path)?.into_std();
+        wal.write_all(&wal_data)?;
 
         let to_remove_paths = segments.map(|s| {
             let mut path = PathBuf::from(dir.as_ref());
@@ -156,8 +157,7 @@ mod tests {
 
     use super::*;
 
-    #[tokio::test]
-    async fn wal_removal_is_ok() {
+    fn wal_removal_is_ok() {
         let temp_dir = tempfile::tempdir().unwrap();
         let dir_path = PathBuf::from(temp_dir.path());
 
@@ -167,11 +167,11 @@ mod tests {
             let mut file_path = dir_path.clone();
             file_path.push(format!("{i}.tmp"));
             let lfile = LockedFile::open_rw(&file_path).unwrap();
-            segments.push(WALSegment::create(lfile, i + 1, i, 0).await.unwrap());
+            segments.push(WALSegment::create(lfile, i + 1, i, 0).unwrap());
             file_paths.push(file_path);
         }
 
-        SegmentRemover::new_removal(&dir_path, segments.iter()).await;
+        SegmentRemover::new_removal(&dir_path, segments.iter());
 
         assert!(
             file_paths.into_iter().all(|p| !is_exist(p)),
