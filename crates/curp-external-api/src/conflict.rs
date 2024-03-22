@@ -21,7 +21,7 @@ pub trait ConflictPoolOp {
     fn is_empty(&self) -> bool;
 }
 
-/// Insert into speculative pool
+/// Speculative pool operations
 pub trait SpeculativePoolOp: ConflictPoolOp {
     /// Inserts a command in to the pool
     ///
@@ -29,7 +29,7 @@ pub trait SpeculativePoolOp: ConflictPoolOp {
     fn insert_if_not_conflict(&mut self, entry: Self::Entry) -> Option<Self::Entry>;
 }
 
-/// Insert into uncommitted pool
+/// UncommittedPool operations
 pub trait UncommittedPoolOp: ConflictPoolOp {
     /// Inserts a command in to the pool
     ///
