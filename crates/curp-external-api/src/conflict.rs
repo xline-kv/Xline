@@ -7,8 +7,8 @@ pub trait SpeculativePoolOp {
 
     /// Inserts a command in to the pool
     ///
-    /// Returns `Some(Entry)` if a conflict is detected
-    fn insert(&mut self, entry: Self::Entry) -> Option<Self::Entry>;
+    /// Returns the entry if a conflict is detected
+    fn insert_if_not_conflict(&mut self, entry: Self::Entry) -> Option<Self::Entry>;
 
     /// Returns the number of commands in the pool
     fn len(&self) -> usize;

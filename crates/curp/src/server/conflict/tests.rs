@@ -17,7 +17,7 @@ struct TestSp {
 impl SpeculativePoolOp for TestSp {
     type Entry = CommandEntry<i32>;
 
-    fn insert(&mut self, entry: Self::Entry) -> Option<Self::Entry> {
+    fn insert_if_not_conflict(&mut self, entry: Self::Entry) -> Option<Self::Entry> {
         if self.entries.iter().any(|e| e.as_ref() == entry.as_ref()) {
             return Some(entry);
         }

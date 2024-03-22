@@ -1715,7 +1715,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let term = st.term;
         for entry in recovered_cmds {
             let _ig_sync = cb_w.sync.insert(entry.id); // may have been inserted before
-            let _ig_spec = sp_l.insert(entry.clone()); // may have been inserted before
+            let _ig_spec = sp_l.insert_if_not_conflict(entry.clone()); // may have been inserted before
             #[allow(clippy::expect_used)]
             let entry = log
                 .push(term, entry.id, entry.inner)
@@ -1898,9 +1898,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
     /// Insert entry to spec pool
     fn insert_sp(&self, propose_id: ProposeId, inner: impl Into<PoolEntryInner<C>>) -> bool {
-        self.ctx
-            .sp
-            .map_lock(|mut spec_l| spec_l.insert(PoolEntry::new(propose_id, inner)).is_some())
+        self.ctx.sp.map_lock(|mut spec_l| {
+            spec_l
+                .insert_if_not_conflict(PoolEntry::new(propose_id, inner))
+                .is_some()
+        })
     }
 
     /// Insert entry to uncommitted pool

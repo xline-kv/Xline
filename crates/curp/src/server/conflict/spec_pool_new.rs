@@ -33,7 +33,7 @@ impl<C> SpeculativePool<C> {
         match SplitEntry::from(entry) {
             SplitEntry::Command(c) => {
                 for csp in &mut self.command_sps {
-                    if let Some(e) = csp.insert(c.clone()) {
+                    if let Some(e) = csp.insert_if_not_conflict(c.clone()) {
                         return Some(e.into());
                     }
                 }
@@ -47,7 +47,7 @@ impl<C> SpeculativePool<C> {
                 {
                     return Some(c.into());
                 }
-                let _ignore = self.conf_change_sp.insert(c);
+                let _ignore = self.conf_change_sp.insert_if_not_conflict(c);
             }
         }
 
@@ -99,7 +99,7 @@ struct ConfChangeSp {
 impl SpeculativePoolOp for ConfChangeSp {
     type Entry = ConfChangeEntry;
 
-    fn insert(&mut self, entry: Self::Entry) -> Option<Self::Entry> {
+    fn insert_if_not_conflict(&mut self, entry: Self::Entry) -> Option<Self::Entry> {
         if self.change.is_some() {
             return Some(entry);
         }
