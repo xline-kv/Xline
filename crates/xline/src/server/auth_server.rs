@@ -76,7 +76,7 @@ where
     fn hash_password(password: &[u8]) -> String {
         let salt = SaltString::generate(&mut OsRng);
         let hashed_password = Pbkdf2
-            .hash_password(password, salt.as_ref())
+            .hash_password(password, &salt)
             .unwrap_or_else(|e| panic!("Failed to hash password: {e}"));
         hashed_password.to_string()
     }
