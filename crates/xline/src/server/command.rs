@@ -109,7 +109,7 @@ where
 
 /// functions used to estimate request write size
 mod size_estimate {
-    use clippy_utilities::{Cast, OverflowArithmetic};
+    use clippy_utilities::{NumericCast, OverflowArithmetic};
     use xlineapi::{PutRequest, Request, RequestWrapper, TxnRequest};
 
     /// Estimate the put size
@@ -118,7 +118,7 @@ mod size_estimate {
         let kv_size = req.key.len().overflow_add(req.value.len()).overflow_add(32); // size of `KeyValue` struct
         1010 // padding(1008) + cf_handle(2)
             .overflow_add(rev_size.overflow_mul(2))
-            .overflow_add(kv_size.cast())
+            .overflow_add(kv_size.numeric_cast())
     }
 
     /// Estimate the txn size

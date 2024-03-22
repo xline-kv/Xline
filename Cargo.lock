@@ -279,7 +279,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "clippy-utilities 0.2.0",
+ "clippy-utilities",
  "etcd-client",
  "indicatif",
  "rand",
@@ -475,12 +475,6 @@ checksum = "702fc72eb24e5a1e48ce58027a675bc24edd52096d5397d4aea7c6dd9eca0bd1"
 
 [[package]]
 name = "clippy-utilities"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc5b2535647ee31eb24c1e306dce64401e3dc2a5bce4733b50546d151639b0da"
-
-[[package]]
-name = "clippy-utilities"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63940bc99b494c2431ab307e373daf0181a2ad84d738a24beca52f9e724f8760"
@@ -609,7 +603,7 @@ dependencies = [
  "async-trait",
  "bincode",
  "bytes",
- "clippy-utilities 0.2.0",
+ "clippy-utilities",
  "curp-external-api",
  "curp-test-utils",
  "dashmap",
@@ -872,7 +866,7 @@ dependencies = [
  "async-trait",
  "bincode",
  "bytes",
- "clippy-utilities 0.2.0",
+ "clippy-utilities",
  "madsim-tokio",
  "opentelemetry",
  "parking_lot",
@@ -1621,7 +1615,7 @@ version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4c013377d78bca1015c5c9d56a4f65f0ab3257cbd8b3af0b98e44af889010dbb"
 dependencies = [
- "clippy-utilities 0.2.0",
+ "clippy-utilities",
 ]
 
 [[package]]
@@ -3394,7 +3388,7 @@ name = "utils"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "clippy-utilities 0.2.0",
+ "clippy-utilities",
  "dashmap",
  "derive_builder 0.13.0",
  "getset",
@@ -3812,7 +3806,7 @@ dependencies = [
  "axum",
  "bytes",
  "clap",
- "clippy-utilities 0.1.0",
+ "clippy-utilities",
  "crc32fast",
  "crossbeam-skiplist",
  "curp",
@@ -3870,7 +3864,7 @@ name = "xline-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "clippy-utilities 0.1.0",
+ "clippy-utilities",
  "curp",
  "futures",
  "getrandom",

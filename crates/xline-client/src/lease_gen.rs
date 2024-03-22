@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use clippy_utilities::Cast;
+use clippy_utilities::NumericCast;
 
 /// Generator of unique lease id
 /// Note that this Lease Id generation method may cause collisions,
@@ -37,7 +37,7 @@ impl LeaseIdGenerator {
             return self.next();
         }
         // set the highest bit to 0 as we need only need positive values
-        (id & 0x7fff_ffff_ffff_ffff).cast()
+        (id & 0x7fff_ffff_ffff_ffff).numeric_cast()
     }
 }
 

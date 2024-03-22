@@ -1,7 +1,7 @@
 use std::{pin::Pin, sync::Arc, time::Duration};
 
 use async_stream::{stream, try_stream};
-use clippy_utilities::Cast;
+use clippy_utilities::NumericCast;
 use curp::members::ClusterInfo;
 use futures::stream::Stream;
 use tokio::time;
@@ -369,8 +369,8 @@ where
                 let res = LeaseTimeToLiveResponse {
                     header: Some(self.lease_storage.gen_header()),
                     id: time_to_live_req.id,
-                    ttl: lease.remaining().as_secs().cast(),
-                    granted_ttl: lease.ttl().as_secs().cast(),
+                    ttl: lease.remaining().as_secs().numeric_cast(),
+                    granted_ttl: lease.ttl().as_secs().numeric_cast(),
                     keys,
                 };
                 return Ok(tonic::Response::new(res));

@@ -7,7 +7,7 @@ use std::{
     },
 };
 
-use clippy_utilities::Cast;
+use clippy_utilities::NumericCast;
 use itertools::Itertools;
 use jsonwebtoken::{DecodingKey, EncodingKey};
 use log::debug;
@@ -294,7 +294,7 @@ where
         debug!("handle_auth_status");
         AuthStatusResponse {
             header: Some(self.header_gen.gen_auth_header()),
-            auth_revision: self.revision().cast(),
+            auth_revision: self.revision().numeric_cast(),
             enabled: self.is_enabled(),
         }
     }

@@ -4,7 +4,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use clippy_utilities::{Cast, OverflowArithmetic};
+use clippy_utilities::{NumericCast, OverflowArithmetic};
 use curp::members::ServerId;
 
 /// Generator of unique id
@@ -30,7 +30,7 @@ impl IdGenerator {
             .as_millis();
         ts &= (u128::MAX.overflowing_shr(88).0); // lower 40 bits (128 - 40)
         ts = ts.overflowing_shl(8).0; // shift left 8 bits
-        let suffix = AtomicU64::new(ts.cast());
+        let suffix = AtomicU64::new(ts.numeric_cast());
         Self { prefix, suffix }
     }
 
@@ -38,7 +38,7 @@ impl IdGenerator {
     pub(crate) fn next(&self) -> i64 {
         let suffix = self.suffix.fetch_add(1, Ordering::Relaxed);
         let id = self.prefix | suffix;
-        (id & 0x7fff_ffff_ffff_ffff).cast()
+        (id & 0x7fff_ffff_ffff_ffff).numeric_cast()
     }
 }
 
