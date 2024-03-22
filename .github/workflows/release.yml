@@ -114,7 +114,7 @@ jobs:
 
       - name: Set up QEMU
         if: startsWith(matrix.job.platform, 'linux/')
-        uses: docker/setup-qemu-action@v1
+        uses: docker/setup-qemu-action@v3
 
       - name: Login to GHCR
         if: startsWith(matrix.job.platform, 'linux/')
