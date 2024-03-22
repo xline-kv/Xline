@@ -39,7 +39,7 @@ jobs:
           submodules: recursive
 
       - name: Configure sccache
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           script: |
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
@@ -119,7 +119,7 @@ jobs:
           submodules: recursive
 
       - name: Configure sccache
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           script: |
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
