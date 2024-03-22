@@ -1,8 +1,10 @@
 use std::{
     io::{self, Read, Write},
     path::{Path, PathBuf},
+    sync::atomic::AtomicBool,
 };
 
+use itertools::Itertools;
 use tokio::{
     fs::File,
     io::{AsyncReadExt, AsyncWriteExt},
@@ -12,6 +14,9 @@ use super::{
     segment::WALSegment,
     util::{get_checksum, get_file_paths_with_ext, is_exist, parse_u64, validate_data, LockedFile},
 };
+
+#[cfg(test)]
+static ABORT_REMOVE: AtomicBool = AtomicBool::new(false);
 
 /// The name of the RWAL file
 const REMOVER_WAL_FILE_NAME: &str = "segments.rwal";
@@ -118,6 +123,11 @@ impl SegmentRemover {
         to_remove_paths: impl Iterator<Item = impl AsRef<Path>> + Clone,
         wal_path: impl AsRef<Path>,
     ) -> io::Result<()> {
+        #[cfg(test)]
+        if ABORT_REMOVE.load(std::sync::atomic::Ordering::Relaxed) {
+            return Ok(());
+        }
+
         for path in to_remove_paths.clone() {
             let _ignore = std::fs::metadata(path.as_ref())?;
             std::fs::remove_file(path.as_ref())?;
@@ -157,6 +167,7 @@ mod tests {
 
     use super::*;
 
+    #[test]
     fn wal_removal_is_ok() {
         let temp_dir = tempfile::tempdir().unwrap();
         let dir_path = PathBuf::from(temp_dir.path());
@@ -168,7 +179,9 @@ mod tests {
             file_path.push(format!("{i}.tmp"));
             let lfile = LockedFile::open_rw(&file_path).unwrap();
             segments.push(WALSegment::create(lfile, i + 1, i, 0).unwrap());
-            file_paths.push(file_path);
+            let mut wal_path = dir_path.clone();
+            wal_path.push(WALSegment::segment_name(i, i + 1));
+            file_paths.push(wal_path);
         }
 
         SegmentRemover::new_removal(&dir_path, segments.iter());
@@ -177,5 +190,29 @@ mod tests {
             file_paths.into_iter().all(|p| !is_exist(p)),
             "wal segment files partially removed"
         );
+    }
+
+    #[test]
+    fn wal_remove_recover_is_ok() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir_path = PathBuf::from(temp_dir.path());
+        ABORT_REMOVE.store(true, std::sync::atomic::Ordering::Relaxed);
+
+        let mut segments = vec![];
+        let mut file_paths = vec![];
+        for i in 0..10 {
+            let mut file_path = dir_path.clone();
+            file_path.push(format!("{i}.tmp"));
+            let lfile = LockedFile::open_rw(&file_path).unwrap();
+            segments.push(WALSegment::create(lfile, i + 1, i, 0).unwrap());
+            let mut wal_path = dir_path.clone();
+            wal_path.push(WALSegment::segment_name(i, i + 1));
+            file_paths.push(wal_path);
+        }
+        SegmentRemover::new_removal(&dir_path, segments.iter());
+        ABORT_REMOVE.store(false, std::sync::atomic::Ordering::Relaxed);
+        assert!(file_paths.iter().find(|p| is_exist(p)).is_some());
+        SegmentRemover::recover(&dir_path).unwrap();
+        assert!(file_paths.into_iter().all(|p| !is_exist(p)));
     }
 }
