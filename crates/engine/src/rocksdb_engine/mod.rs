@@ -112,13 +112,14 @@ impl RocksEngine {
     }
 
     /// Gets the max write data size.
-    /// Max write data size = 2 * key + value + `cf_handle_size` + 1008
+    /// Max write data size = 2 * key + value + `cf_handle_size` + `ESTIMATE_WRITTEN_SIZE_OFFSET`
     pub(super) fn max_write_size(table_len: usize, key_len: usize, value_len: usize) -> usize {
+        const ESTIMATE_WRITTEN_SIZE_OFFSET: usize = 1008;
         key_len
             .overflow_mul(2)
             .overflow_add(value_len)
             .overflow_add(table_len)
-            .overflow_add(1008)
+            .overflow_add(ESTIMATE_WRITTEN_SIZE_OFFSET)
     }
 
     /// Apply snapshot from file
