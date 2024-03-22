@@ -148,7 +148,7 @@ jobs:
           docker save -o _output/xline.tar ghcr.io/xline-kv/xline:master
           ls _output
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: xline
           path: _output/xline.tar
@@ -197,7 +197,7 @@ jobs:
 
       - name: Upload logs
         if: failure()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: xline-kind-log-${{ matrix.k8s }}-${{ github.run_id }}
           path: ./_artifacts/logs

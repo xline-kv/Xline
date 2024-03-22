@@ -40,7 +40,7 @@ jobs:
           docker pull datenlord/etcd:v3.5.5
           bash ./benchmark.sh
 
-      - uses: actions/upload-artifact@v1
+      - uses: actions/upload-artifact@v4
         with:
           name: benchmark-output
           path: scripts/out
