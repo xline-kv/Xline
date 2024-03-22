@@ -63,7 +63,7 @@ jobs:
 
       - name: Set up Docker Buildx
         if: matrix.job.cross_image
-        uses: docker/setup-buildx-action@v1
+        uses: docker/setup-buildx-action@v3
 
       - name: Setup Custom Image for ${{ matrix.job.cross_image }}
         if: matrix.job.cross_image
