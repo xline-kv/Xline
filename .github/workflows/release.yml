@@ -141,7 +141,7 @@ jobs:
           touch "/tmp/digests/${digest#sha256:}"
 
       - name: Upload Digest
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: startsWith(matrix.job.platform, 'linux/')
         with:
           name: digests
