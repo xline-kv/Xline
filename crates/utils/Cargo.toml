@@ -23,7 +23,7 @@ clippy-utilities = "0.2.0"
 dashmap = "5.5.3"
 derive_builder = "0.13.0"
 getset = "0.1"
-opentelemetry = { version = "0.21.0", features = ["trace"] }
+opentelemetry = { version = "0.22.0", features = ["trace"] }
 opentelemetry_sdk = { version = "0.21.0", features = ["trace"] }
 parking_lot = { version = "0.12.1", optional = true }
 serde = { version = "1.0.137", features = ["derive"] }

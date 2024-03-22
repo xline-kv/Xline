@@ -29,6 +29,7 @@ madsim-tokio = { version = "0.2", default-features = false, features = ["fs", "i
 madsim-tonic = { version = "0.4", default-features = false, features = ["tls"] }
 memchr = { version = "2" }
 num-traits = { version = "0.2", default-features = false, features = ["i128", "std"] }
+opentelemetry = { version = "0.22", features = ["metrics"] }
 opentelemetry-jaeger = { version = "0.20", features = ["rt-tokio"] }
 opentelemetry_sdk = { version = "0.21", features = ["metrics", "rt-tokio"] }
 rand = { version = "0.8", features = ["small_rng"] }
