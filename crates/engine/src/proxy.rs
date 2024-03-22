@@ -450,4 +450,20 @@ mod test {
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
+
+    #[test]
+    fn txn_operations_should_success() {
+        let dir = PathBuf::from("/tmp/txn_operations_should_success");
+        let rocks_engine_path = dir.join("rocks_engine");
+        let engines = vec![
+            Engine::new(EngineType::Memory, &TESTTABLES).unwrap(),
+            Engine::new(EngineType::Rocks(rocks_engine_path), &TESTTABLES).unwrap(),
+        ];
+        for engine in engines {
+            let txn = engine.transaction();
+            txn.rollback().unwrap();
+            txn.commit().unwrap();
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }
