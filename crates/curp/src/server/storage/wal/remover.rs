@@ -50,6 +50,7 @@ impl SegmentRemover {
     ///  | SegmentID                                             |
     ///  |------+------+------+------+------+------+------+------|
     #[allow(clippy::arithmetic_side_effects)] // won't overflow
+    #[allow(clippy::verbose_file_reads)] // needs to create `LockedFile` first, can't direct read from a dir
     pub(super) fn recover(dir: impl AsRef<Path>) -> io::Result<()> {
         let wal_path = Self::rwal_path(&dir);
         if !is_exist(&wal_path) {
