@@ -118,7 +118,7 @@ jobs:
 
       - name: Login to GHCR
         if: startsWith(matrix.job.platform, 'linux/')
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: xline-kv
