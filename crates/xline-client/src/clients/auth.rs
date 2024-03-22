@@ -745,7 +745,7 @@ impl AuthClient {
         let salt = SaltString::generate(&mut OsRng);
         #[allow(clippy::panic)] // This doesn't seems to be fallible
         let hashed_password = Pbkdf2
-            .hash_password(password, salt.as_ref())
+            .hash_password(password, &salt)
             .unwrap_or_else(|e| panic!("Failed to hash password: {e}"));
         hashed_password.to_string()
     }
