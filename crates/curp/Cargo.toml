@@ -27,7 +27,7 @@ fs2 = "0.4.3"
 futures = "0.3.21"
 indexmap = "1.9.2"
 itertools = "0.11"
-madsim = { version = "0.2.22", features = ["rpc", "macros"] }
+madsim = { version = "0.2.26", features = ["rpc", "macros"] }
 opentelemetry = { version = "0.21.0", features = ["metrics"] }
 parking_lot = "0.12.1"
 priority-queue = "1.3.2"
