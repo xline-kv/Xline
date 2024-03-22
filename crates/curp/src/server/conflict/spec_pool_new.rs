@@ -1,4 +1,4 @@
-use curp_external_api::conflict::SpeculativePoolOp;
+use curp_external_api::conflict::{ConflictPoolOp, SpeculativePoolOp};
 
 use crate::rpc::PoolEntry;
 
@@ -43,7 +43,7 @@ impl<C> SpeculativePool<C> {
                     .command_sps
                     .iter()
                     .map(AsRef::as_ref)
-                    .all(SpeculativePoolOp::is_empty)
+                    .all(ConflictPoolOp::is_empty)
                 {
                     return Some(c.into());
                 }
@@ -96,16 +96,8 @@ struct ConfChangeSp {
     change: Option<ConfChangeEntry>,
 }
 
-impl SpeculativePoolOp for ConfChangeSp {
+impl ConflictPoolOp for ConfChangeSp {
     type Entry = ConfChangeEntry;
-
-    fn insert_if_not_conflict(&mut self, entry: Self::Entry) -> Option<Self::Entry> {
-        if self.change.is_some() {
-            return Some(entry);
-        }
-        self.change = Some(entry);
-        None
-    }
 
     fn is_empty(&self) -> bool {
         self.change.is_none()
@@ -125,5 +117,15 @@ impl SpeculativePoolOp for ConfChangeSp {
 
     fn len(&self) -> usize {
         self.change.iter().count()
+    }
+}
+
+impl SpeculativePoolOp for ConfChangeSp {
+    fn insert_if_not_conflict(&mut self, entry: Self::Entry) -> Option<Self::Entry> {
+        if self.change.is_some() {
+            return Some(entry);
+        }
+        self.change = Some(entry);
+        None
     }
 }

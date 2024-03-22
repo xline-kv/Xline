@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, sync::Arc};
 
-use curp_external_api::conflict::{SpeculativePoolOp, UncommittedPoolOp};
+use curp_external_api::conflict::{ConflictPoolOp, SpeculativePoolOp, UncommittedPoolOp};
 
 use crate::{
     rpc::{ConfChange, PoolEntry, PoolEntryInner, ProposeId},
@@ -14,16 +14,8 @@ struct TestSp {
     entries: Vec<CommandEntry<i32>>,
 }
 
-impl SpeculativePoolOp for TestSp {
+impl ConflictPoolOp for TestSp {
     type Entry = CommandEntry<i32>;
-
-    fn insert_if_not_conflict(&mut self, entry: Self::Entry) -> Option<Self::Entry> {
-        if self.entries.iter().any(|e| e.as_ref() == entry.as_ref()) {
-            return Some(entry);
-        }
-        self.entries.push(entry);
-        None
-    }
 
     fn len(&self) -> usize {
         self.entries.len()
@@ -52,14 +44,52 @@ impl SpeculativePoolOp for TestSp {
     }
 }
 
+impl SpeculativePoolOp for TestSp {
+    fn insert_if_not_conflict(&mut self, entry: Self::Entry) -> Option<Self::Entry> {
+        if self.entries.iter().any(|e| e.as_ref() == entry.as_ref()) {
+            return Some(entry);
+        }
+        self.entries.push(entry);
+        None
+    }
+}
+
 #[derive(Debug, Default)]
 struct TestUcp {
     entries: Vec<CommandEntry<i32>>,
 }
 
-impl UncommittedPoolOp for TestUcp {
+impl ConflictPoolOp for TestUcp {
     type Entry = CommandEntry<i32>;
 
+    fn all(&self) -> Vec<Self::Entry> {
+        self.entries.clone()
+    }
+
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    fn remove(&mut self, entry: Self::Entry) {
+        if let Some(pos) = self
+            .entries
+            .iter()
+            .position(|e| e.as_ref() == entry.as_ref())
+        {
+            self.entries.remove(pos);
+        }
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+    }
+}
+
+impl UncommittedPoolOp for TestUcp {
     fn insert(&mut self, entry: Self::Entry) -> bool {
         let conflict = self.entries.iter().any(|e| e.as_ref() == entry.as_ref());
         self.entries.push(entry);
@@ -71,32 +101,6 @@ impl UncommittedPoolOp for TestUcp {
             .iter()
             .filter_map(|e| (e.as_ref() == entry.as_ref()).then_some(e.clone()))
             .collect()
-    }
-
-    fn all(&self) -> Vec<Self::Entry> {
-        self.entries.clone()
-    }
-
-    fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
-    fn remove(&mut self, entry: Self::Entry) {
-        if let Some(pos) = self
-            .entries
-            .iter()
-            .position(|e| e.as_ref() == entry.as_ref())
-        {
-            self.entries.remove(pos);
-        }
-    }
-
-    fn clear(&mut self) {
-        self.entries.clear();
     }
 }
 

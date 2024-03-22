@@ -1,4 +1,4 @@
-use curp_external_api::conflict::UncommittedPoolOp;
+use curp_external_api::conflict::{ConflictPoolOp, UncommittedPoolOp};
 
 use crate::rpc::PoolEntry;
 
@@ -42,7 +42,7 @@ impl<C> UncommittedPool<C> {
                     .command_ucps
                     .iter()
                     .map(AsRef::as_ref)
-                    .all(UncommittedPoolOp::is_empty);
+                    .all(ConflictPoolOp::is_empty);
             }
         }
 
@@ -89,7 +89,7 @@ impl<C> UncommittedPool<C> {
                     self.command_ucps
                         .iter()
                         .map(AsRef::as_ref)
-                        .flat_map(UncommittedPoolOp::all)
+                        .flat_map(ConflictPoolOp::all)
                         .map(Into::into),
                 )
                 .collect(),
@@ -129,14 +129,8 @@ struct ConfChangeUcp {
     conf_changes: Vec<ConfChangeEntry>,
 }
 
-impl UncommittedPoolOp for ConfChangeUcp {
+impl ConflictPoolOp for ConfChangeUcp {
     type Entry = ConfChangeEntry;
-
-    fn insert(&mut self, entry: Self::Entry) -> bool {
-        let conflict = !self.conf_changes.is_empty();
-        self.conf_changes.push(entry);
-        conflict
-    }
 
     fn is_empty(&self) -> bool {
         self.conf_changes.is_empty()
@@ -146,10 +140,6 @@ impl UncommittedPoolOp for ConfChangeUcp {
         if let Some(pos) = self.conf_changes.iter().position(|x| *x == entry) {
             let _ignore = self.conf_changes.remove(pos);
         }
-    }
-
-    fn all_conflict(&self, _entry: &Self::Entry) -> Vec<Self::Entry> {
-        self.conf_changes.clone()
     }
 
     fn all(&self) -> Vec<Self::Entry> {
@@ -162,5 +152,17 @@ impl UncommittedPoolOp for ConfChangeUcp {
 
     fn len(&self) -> usize {
         self.conf_changes.len()
+    }
+}
+
+impl UncommittedPoolOp for ConfChangeUcp {
+    fn insert(&mut self, entry: Self::Entry) -> bool {
+        let conflict = !self.conf_changes.is_empty();
+        self.conf_changes.push(entry);
+        conflict
+    }
+
+    fn all_conflict(&self, _entry: &Self::Entry) -> Vec<Self::Entry> {
+        self.conf_changes.clone()
     }
 }

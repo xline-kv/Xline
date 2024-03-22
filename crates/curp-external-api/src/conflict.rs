@@ -1,20 +1,9 @@
 #![allow(clippy::module_name_repetitions)]
 
-/// Insert into speculative pool
-pub trait SpeculativePoolOp {
+/// Common operations for conflict pools
+pub trait ConflictPoolOp {
     /// Entry of the pool
     type Entry;
-
-    /// Inserts a command in to the pool
-    ///
-    /// Returns the entry if a conflict is detected
-    fn insert_if_not_conflict(&mut self, entry: Self::Entry) -> Option<Self::Entry>;
-
-    /// Returns the number of commands in the pool
-    fn len(&self) -> usize;
-
-    /// Checks if the pool contains some commands that will conflict with all other commands
-    fn is_empty(&self) -> bool;
 
     /// Removes a command from the pool
     fn remove(&mut self, entry: Self::Entry);
@@ -24,12 +13,24 @@ pub trait SpeculativePoolOp {
 
     /// Clears all entries in the pool
     fn clear(&mut self);
+
+    /// Returns the number of commands in the pool
+    fn len(&self) -> usize;
+
+    /// Checks if the pool contains some commands that will conflict with all other commands
+    fn is_empty(&self) -> bool;
+}
+
+/// Insert into speculative pool
+pub trait SpeculativePoolOp: ConflictPoolOp {
+    /// Inserts a command in to the pool
+    ///
+    /// Returns the entry if a conflict is detected
+    fn insert_if_not_conflict(&mut self, entry: Self::Entry) -> Option<Self::Entry>;
 }
 
 /// Insert into uncommitted pool
-pub trait UncommittedPoolOp {
-    /// Entry of the pool
-    type Entry;
+pub trait UncommittedPoolOp: ConflictPoolOp {
     /// Inserts a command in to the pool
     ///
     /// Returns `true` if a conflict is detected
@@ -37,19 +38,4 @@ pub trait UncommittedPoolOp {
 
     /// Returns all commands in the pool that conflicts with the given command
     fn all_conflict(&self, entry: &Self::Entry) -> Vec<Self::Entry>;
-
-    /// Returns all commands in the pool
-    fn all(&self) -> Vec<Self::Entry>;
-
-    /// Returns the number of commands in the pool
-    fn len(&self) -> usize;
-
-    /// Checks if the pool will conflict with all commands
-    fn is_empty(&self) -> bool;
-
-    /// Removes a command from the pool
-    fn remove(&mut self, entry: Self::Entry);
-
-    /// Clears all entries in the pool
-    fn clear(&mut self);
 }
