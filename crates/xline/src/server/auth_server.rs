@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use pbkdf2::{
     password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
-    Pbkdf2,
+    Params, Pbkdf2,
 };
 use tonic::metadata::MetadataMap;
 use tracing::debug;
@@ -75,8 +75,14 @@ where
     /// Hash password
     fn hash_password(password: &[u8]) -> String {
         let salt = SaltString::generate(&mut OsRng);
+        let simple_para = Params {
+            // The recommended rounds is 600,000 or more
+            // [OWASP cheat sheet]: https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
+            rounds: 10000,
+            output_length: 32,
+        };
         let hashed_password = Pbkdf2
-            .hash_password(password, &salt)
+            .hash_password_customized(password, None, None, simple_para, &salt)
             .unwrap_or_else(|e| panic!("Failed to hash password: {e}"));
         hashed_password.to_string()
     }
