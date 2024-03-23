@@ -202,6 +202,10 @@ pub mod tracing;
 
 use ::tracing::debug;
 pub use parser::*;
+use pbkdf2::{
+    password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
+    Params, Pbkdf2,
+};
 
 /// display all elements for the given vector
 #[macro_export]
@@ -269,4 +273,23 @@ pub fn build_endpoint(
         }
     };
     Ok(endpoint)
+}
+
+/// Hash password
+///
+/// # Errors
+///
+/// return `Error` when hash password failed
+#[inline]
+pub fn hash_password(password: &[u8]) -> Result<String, pbkdf2::password_hash::errors::Error> {
+    let salt = SaltString::generate(&mut OsRng);
+    let simple_para = Params {
+        // The recommended rounds is 600,000 or more
+        // [OWASP cheat sheet]: https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
+        rounds: 200_000,
+        output_length: 32,
+    };
+    let hashed_password =
+        Pbkdf2.hash_password_customized(password, None, None, simple_para, &salt)?;
+    Ok(hashed_password.to_string())
 }
