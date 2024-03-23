@@ -16,3 +16,8 @@ updates:
   labels:
     - "dependencies"
   open-pull-requests-limit: 10
+  ignore:
+  # We're using `AddrStream` which removed since 1.0.0, so we need to ignore this update for compatibility
+  - dependency-name: hyper
+    versions:
+    - 0.14.2
