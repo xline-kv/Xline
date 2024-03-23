@@ -17,7 +17,6 @@ curp = { path = "../curp" }
 futures = "0.3.25"
 getrandom = "0.2"
 http = "0.2.9"
-pbkdf2 = { version = "0.12.2", features = ["simple"] }
 thiserror = "1.0.37"
 tokio = { version = "0.2.23", package = "madsim-tokio", features = ["sync"] }
 tonic = { version = "0.4.1", package = "madsim-tonic" }
