@@ -39,7 +39,7 @@ jobs:
           submodules: recursive
 
       - name: Configure sccache
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           script: |
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
@@ -119,7 +119,7 @@ jobs:
           submodules: recursive
 
       - name: Configure sccache
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           script: |
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
@@ -148,7 +148,7 @@ jobs:
           docker save -o _output/xline.tar ghcr.io/xline-kv/xline:master
           ls _output
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: xline
           path: _output/xline.tar
@@ -167,7 +167,7 @@ jobs:
           - v1.29.2
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: xline
 
@@ -197,7 +197,7 @@ jobs:
 
       - name: Upload logs
         if: failure()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: xline-kind-log-${{ matrix.k8s }}-${{ github.run_id }}
           path: ./_artifacts/logs
