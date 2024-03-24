@@ -31,7 +31,7 @@ services:
     volumes:
       - ./fixtures:/mnt
     ports:
-      - "2380:2379"
+      - "2479:2379"
     environment:
       RUST_LOG: curp=debug,xline=debug
     command: >
