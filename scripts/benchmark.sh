@@ -1,5 +1,4 @@
 #!/bin/bash
-
 # Set the working directory and output directory
 WORKDIR=$(pwd)
 OUTPUT_DIR="${WORKDIR}/out"
@@ -18,7 +17,7 @@ XLINE_TESTCASE=(
 # Additional benchmark parameters
 KEY_SPACE_SIZE=("1" "100000")
 CLIENTS_TOTAL=("1 50" "10 300" "50 1000" "100 3000" "200 5000")
-FORMAT="%-8s\t%-12s\t%-8s\t%-s\n"
+FORMAT="%-8s\\t%-12s\\t%-8s\\t%-s\\n"
 
 # Function to run the benchmark command
 benchmark_cmd() {
