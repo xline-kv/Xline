@@ -24,23 +24,16 @@ jobs:
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
-      - name: Build xline
-        run: |
-          docker run -q --rm -v $(pwd):/xline \
-            -e SCCACHE_GHA_ENABLED=on \
-            -e ACTIONS_CACHE_URL=${ACTIONS_CACHE_URL} \
-            -e ACTIONS_RUNTIME_TOKEN=${ACTIONS_RUNTIME_TOKEN} \
-            ghcr.io/xline-kv/build-env:latest \
-            cargo build --release --bin xline --bin benchmark
-
-      - run: |
-          cd scripts
-          cp ../target/release/{xline,benchmark} .
-          docker build . -t ghcr.io/xline-kv/xline:latest
-          docker pull datenlord/etcd:v3.5.5
-          bash ./benchmark.sh
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: benchmark-output
-          path: scripts/out
+  call_build_xline:
+    name: Build and Upload Artifacts
+    uses: ./.github/workflows/build_xline.yml
+    with:
+      docker_xline_image: "ghcr.io/xline-kv/build-env:latest"
+      release_bin: "--bin xline --bin benchmark"
+      binaries: "xline,benchmark"
+      additional_setup_commands: |
+        docker build . -t ghcr.io/xline-kv/xline:latest
+        docker pull datenlord/etcd:v3.5.5
+      script_name: "benchmark.sh"
+      uploadLogs: false
+      uploadBenchmark: true
