@@ -1,12 +1,15 @@
 use clap::{arg, ArgMatches, Command};
-use tokio::signal;
+use tokio::signal::ctrl_c;
 use xline_client::{
     error::Result,
-    types::lock::{LockRequest, UnlockRequest},
+    types::{
+        lease::{LeaseGrantRequest, LeaseKeepAliveRequest},
+        lock::{LockRequest, UnlockRequest, DEFAULT_SESSION_TTL},
+    },
     Client,
 };
 
-use crate::utils::printer::Printer;
+use crate::{lease::keep_alive::keep_alive_loop, utils::printer::Printer};
 
 /// Definition of `lock` command
 pub(crate) fn command() -> Command {
@@ -23,20 +26,32 @@ pub(crate) fn build_request(matches: &ArgMatches) -> LockRequest {
 
 /// Execute the command
 pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result<()> {
-    let req = build_request(matches);
+    let lease_client = client.lease_client();
+    let lease_resp = lease_client
+        .grant(LeaseGrantRequest::new(DEFAULT_SESSION_TTL))
+        .await?;
+    let lock_lease_id = lease_resp.id;
+    let req = build_request(matches).with_lease(lock_lease_id);
+    let lock_resp = client.lock_client().lock(req).await?;
 
-    let resp = client.lock_client().lock(req).await?;
+    lock_resp.print();
 
-    resp.print();
+    let (keeper, stream) = client
+        .lease_client()
+        .keep_alive(LeaseKeepAliveRequest::new(lock_lease_id))
+        .await?;
 
-    signal::ctrl_c().await.expect("failed to listen for event");
-
-    println!("releasing the lock");
-
-    let unlock_req = UnlockRequest::new(resp.key);
-    let _unlock_resp = client.lock_client().unlock(unlock_req).await?;
-
-    Ok(())
+    tokio::select! {
+        _ = ctrl_c() => {
+            println!("releasing the lock");
+            let unlock_req = UnlockRequest::new(lock_resp.key);
+            let _unlock_resp = client.lock_client().unlock(unlock_req).await?;
+            Ok(())
+        }
+        result = keep_alive_loop(keeper, stream, false) => {
+            result
+        }
+    }
 }
 
 #[cfg(test)]

@@ -19,11 +19,9 @@ use xlineapi::{
 };
 
 use crate::{
-    clients::{lease::LeaseClient, watch::WatchClient},
+    clients::watch::WatchClient,
     error::{Result, XlineClientError},
-    lease_gen::LeaseIdGenerator,
     types::{
-        lease::LeaseGrantRequest,
         lock::{LockRequest, UnlockRequest},
         watch::WatchRequest,
     },
@@ -35,8 +33,6 @@ use crate::{
 pub struct LockClient {
     /// The client running the CURP protocol, communicate with all servers.
     curp_client: Arc<CurpClient>,
-    /// The lease client
-    lease_client: LeaseClient,
     /// The watch client
     watch_client: WatchClient,
     /// Auth token
@@ -47,7 +43,6 @@ impl Debug for LockClient {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LockClient")
-            .field("lease_client", &self.lease_client)
             .field("watch_client", &self.watch_client)
             .field("token", &self.token)
             .finish()
@@ -59,15 +54,9 @@ impl Debug for LockClient {
 impl LockClient {
     /// Creates a new `LockClient`
     #[inline]
-    pub fn new(
-        curp_client: Arc<CurpClient>,
-        channel: Channel,
-        token: Option<String>,
-        id_gen: Arc<LeaseIdGenerator>,
-    ) -> Self {
+    pub fn new(curp_client: Arc<CurpClient>, channel: Channel, token: Option<String>) -> Self {
         Self {
-            curp_client: Arc::clone(&curp_client),
-            lease_client: LeaseClient::new(curp_client, channel.clone(), token.clone(), id_gen),
+            curp_client,
             watch_client: WatchClient::new(channel, token.clone()),
             token,
         }
@@ -83,6 +72,10 @@ impl LockClient {
     /// # Errors
     ///
     /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Panics
+    ///
+    /// Panic if the given `LockRequest.inner.lease` less than or equal to 0
     ///
     /// # Examples
     ///
@@ -116,14 +109,11 @@ impl LockClient {
     /// ```
     #[inline]
     pub async fn lock(&self, request: LockRequest) -> Result<LockResponse> {
-        let mut lease_id = request.inner.lease;
-        if lease_id == 0 {
-            let resp = self
-                .lease_client
-                .grant(LeaseGrantRequest::new(request.ttl))
-                .await?;
-            lease_id = resp.id;
-        }
+        assert!(
+            request.inner.lease > 0,
+            "The LockRequest.lease_id should larger than 0"
+        );
+        let lease_id = request.inner.lease;
         let prefix = format!(
             "{}/",
             String::from_utf8_lossy(&request.inner.name).into_owned()

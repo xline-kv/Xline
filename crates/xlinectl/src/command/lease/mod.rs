@@ -6,7 +6,7 @@ use crate::handle_matches;
 /// `grant` command
 mod grant;
 /// `keep_alive` command
-mod keep_alive;
+pub(crate) mod keep_alive;
 /// `list` command
 mod list;
 /// `revoke` command

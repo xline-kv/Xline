@@ -3,7 +3,10 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use xline_client::{
-    types::lock::{LockRequest, UnlockRequest},
+    types::{
+        lease::LeaseGrantRequest,
+        lock::{LockRequest, UnlockRequest, DEFAULT_SESSION_TTL},
+    },
     Client, ClientOptions,
 };
 
@@ -40,16 +43,23 @@ async fn main() -> Result<()> {
     } else {
         args.endpoints
     };
-    let client = Client::connect(endpoints, ClientOptions::default())
+    let client = Client::connect(endpoints, ClientOptions::default()).await?;
+    let lock_client = client.lock_client();
+    let lease_client = client.lease_client();
+    let lease_id = lease_client
+        .grant(LeaseGrantRequest::new(DEFAULT_SESSION_TTL))
         .await?
-        .lock_client();
+        .id;
+
     match args.command {
         Commands::Lock { name } => {
-            let lock_res = client.lock(LockRequest::new(name)).await?;
+            let lock_res = lock_client
+                .lock(LockRequest::new(name).with_lease(lease_id))
+                .await?;
             println!("{}", String::from_utf8_lossy(&lock_res.key))
         }
         Commands::Unlock { key } => {
-            let _unlock_res = client.unlock(UnlockRequest::new(key)).await?;
+            let _unlock_res = lock_client.unlock(UnlockRequest::new(key)).await?;
             println!("unlock success");
         }
     };
