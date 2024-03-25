@@ -19,7 +19,7 @@ axum = "0.6.20"
 bytes = "1.4.0"
 clap = { version = "4", features = ["derive"] }
 clippy-utilities = "0.2.0"
-crc32fast = "1.3.2"
+crc32fast = "1.4.0"
 crossbeam-skiplist = "0.1.1"
 curp = { path = "../curp", version = "0.1.0", features = ["client-metrics"] }
 dashmap = "5.5.3"
