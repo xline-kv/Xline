@@ -37,7 +37,7 @@ opentelemetry-contrib = { version = "0.13.0", features = [
   "jaeger_json_exporter",
   "rt-tokio",
 ] }
-opentelemetry-jaeger = { version = "0.20.0", features = ["rt-tokio"] }
+opentelemetry-jaeger = { version = "0.21.0", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.14.0", features = [
   "metrics",
   "http-proto",

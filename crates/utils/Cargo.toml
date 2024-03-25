@@ -44,6 +44,6 @@ tracing-opentelemetry = "0.22.0"
 workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [dev-dependencies]
-opentelemetry-jaeger = "0.20.0"
+opentelemetry-jaeger = "0.21.0"
 test-macros = { path = "../test-macros" }
 tracing-subscriber = "0.3.16"
