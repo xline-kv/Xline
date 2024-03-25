@@ -19,40 +19,40 @@ The total number of leader heartbeat send failures (likely overloaded from slow 
 5. `apply_snapshot_in_progress`: UpDownCounter
 not equals to 0 if the server is applying the incoming snapshot. 0 if none.
 
-1. `proposals_committed`: ObservableGauge
+6. `proposals_committed`: ObservableGauge
 The total number of consensus proposals committed.
 
-1. `proposals_failed`: Counter
+7. `proposals_failed`: Counter
 The total number of failed proposals seen.
 
-1. `proposals_applied`: ObservableGauge
+8. `proposals_applied`: ObservableGauge
 The total number of consensus proposals applied.
 
-1. `proposals_pending`: ObservableGauge
+9. `proposals_pending`: ObservableGauge
 The current number of pending proposals to commit.
 
-1.  `snapshot_install_total_duration_seconds`: Histogram
+10.  `snapshot_install_total_duration_seconds`: Histogram
 The total latency distributions of save called by install_snapshot.
 
-1.  `client_id_revokes`: Counter
+11.  `client_id_revokes`: Counter
 The total number of client id revokes times.
 
-1.  `has_leader`: ObservableGauge
+12.  `has_leader`: ObservableGauge
 Whether or not a leader exists. 1 is existence, 0 is not.
 
-1.  `is_leader`: ObservableGauge
+13.  `is_leader`: ObservableGauge
 Whether or not this member is a leader. 1 if is, 0 otherwise.
 
-1.  `is_learner`: ObservableGauge
+14.  `is_learner`: ObservableGauge
 Whether or not this member is a learner. 1 if is, 0 otherwise.
 
-1.  `server_id`: ObservableGauge
+15.  `server_id`: ObservableGauge
 Server or member ID in hexadecimal format. 1 for 'server_id' label with the current ID.
 
-1.  `sp_cnt`: ObservableGauge
+16.  `sp_cnt`: ObservableGauge
 The speculative pool size of this server.
 
-1.  `online_clients`: ObservableGauge
+17.  `online_clients`: ObservableGauge
 The online client IDs count of this server if it is the leader.
 
 ### CURP Client
