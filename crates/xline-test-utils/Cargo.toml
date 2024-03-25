@@ -12,7 +12,7 @@ readme = "README.md"
 
 [dependencies]
 anyhow = "1.0.81"
-clap = { version = "4.4.4", features = ["derive"] }
+clap = { version = "4.5.3", features = ["derive"] }
 futures = "0.3.30"
 rand = "0.8.5"
 tokio = { version = "0.2.23", package = "madsim-tokio", features = [
