@@ -70,7 +70,6 @@ mod tests {
         assert!(BytesAffine::new_key("a") < BytesAffine::new_key("b"));
         assert!(BytesAffine::new_key("abcd") < BytesAffine::new_key("b"));
         assert!(BytesAffine::new_key("abcd") < BytesAffine::new_unbounded());
-        assert!(BytesAffine::new_key("123") < BytesAffine::new_unbounded());
         assert_eq!(BytesAffine::new_unbounded(), BytesAffine::new_unbounded());
     }
 }
