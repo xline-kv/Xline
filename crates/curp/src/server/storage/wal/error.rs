@@ -5,7 +5,7 @@ use thiserror::Error;
 /// Errors of the `WALStorage`
 #[derive(Debug, Error)]
 pub(crate) enum WALError {
-    /// Unexpected end of file of the WAL
+    /// Unexpected end-of-file
     #[error("WAL ended")]
     UnexpectedEof,
     /// The WAL corrupt error
@@ -28,4 +28,15 @@ pub(crate) enum CorruptType {
     /// Corrupt because of some logs is missing
     #[error("The recovered logs are not continue")]
     LogNotContinue,
+}
+
+impl WALError {
+    /// Converts `WALError` to `io::Result`
+    pub(super) fn io_or_corrupt(self) -> io::Result<CorruptType> {
+        match self {
+            WALError::Corrupted(e) => Ok(e),
+            WALError::IO(e) => Err(e),
+            WALError::UnexpectedEof => unreachable!("Should not call on WALError::MaybeEnded"),
+        }
+    }
 }
