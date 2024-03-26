@@ -29,7 +29,7 @@ pub trait SpeculativePoolOp: ConflictPoolOp {
     fn insert_if_not_conflict(&mut self, entry: Self::Entry) -> Option<Self::Entry>;
 }
 
-/// UncommittedPool operations
+/// Uncommitted pool operations
 pub trait UncommittedPoolOp: ConflictPoolOp {
     /// Inserts a command in to the pool
     ///
