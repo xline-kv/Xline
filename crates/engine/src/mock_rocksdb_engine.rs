@@ -6,12 +6,10 @@ use std::{
 use bytes::{Bytes, BytesMut};
 
 use crate::{
-    api::{
-        engine_api::{StorageEngine, WriteOperation},
-        snapshot_api::SnapshotApi,
-    },
+    api::{engine_api::StorageEngine, snapshot_api::SnapshotApi},
     error::EngineError,
     memory_engine::{MemoryEngine, MemorySnapshot},
+    TransactionApi, WriteOperation,
 };
 
 /// Mock `RocksDB` Storage Engine
@@ -79,6 +77,13 @@ impl RocksEngine {
 #[async_trait::async_trait]
 impl StorageEngine for RocksEngine {
     type Snapshot = RocksSnapshot;
+    type Transaction = RocksTransaction;
+
+    #[inline]
+    fn transaction(&self) -> RocksTransaction {
+        RocksTransaction {}
+    }
+
     #[inline]
     fn get(&self, table: &str, key: impl AsRef<[u8]>) -> Result<Option<Vec<u8>>, EngineError> {
         self.inner.get(table, key)
@@ -195,5 +200,20 @@ impl SnapshotApi for RocksSnapshot {
     #[inline]
     async fn clean(&mut self) -> std::io::Result<()> {
         self.inner.clean().await
+    }
+}
+
+/// A transaction of the `RocksEngine`
+#[derive(Copy, Clone, Debug, Default)]
+pub struct RocksTransaction;
+
+#[allow(unused_qualifications)]
+impl TransactionApi for RocksTransaction {
+    fn commit(self) -> Result<(), crate::EngineError> {
+        Ok(())
+    }
+
+    fn rollback(&self) -> Result<(), crate::EngineError> {
+        Ok(())
     }
 }
