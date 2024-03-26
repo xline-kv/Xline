@@ -32,3 +32,14 @@ pub(crate) enum CorruptType {
     #[error("The recovered logs are not continue")]
     LogNotContinue,
 }
+
+impl WALError {
+    /// Converts `WALError` to `io::Result`
+    pub(super) fn io_or_corrupt(self) -> io::Result<CorruptType> {
+        match self {
+            WALError::Corrupted(e) => Ok(e),
+            WALError::IO(e) => Err(e),
+            WALError::MaybeEnded => unreachable!("Should not call on WALError::MaybeEnded"),
+        }
+    }
+}
