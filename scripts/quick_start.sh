@@ -27,6 +27,9 @@ stop_all() {
 # args:
 #   $1: index of the node
 run_xline() {
+    log::info xline${1} starting
+    image="ghcr.io/xline-kv/xline:latest"
+
     cmd="/usr/local/bin/xline \
     --name node${1} \
     --members ${MEMBERS} \
@@ -47,8 +50,35 @@ run_xline() {
         cmd="${cmd} --is-leader"
     fi
 
-    docker exec -e RUST_LOG=debug -d node${1} ${cmd}
-    log::info "command is: docker exec -e RUST_LOG=debug -d node${1} ${cmd}"
+    mount_point="-v ${DIR}:/mnt"
+    if [ -n "$LOG_PATH" ]; then
+        mkdir -p ${LOG_PATH}/node${i}
+        mount_point="${mount_point} -v ${LOG_PATH}/node${i}:/var/log/xline"
+    fi
+
+    docker run -d -it --rm --name=node${1} -d --net=xline_net \
+        --ip=${SERVERS[$1]} --cap-add=NET_ADMIN --cpu-shares=1024 \
+        -m=512M -v ${DIR}:/mnt ${image} \
+        ${cmd}
+
+    log::info "run_xline node${1}: docker run -d -it --rm --name=node${1} -d --net=xline_net \
+        --ip=${SERVERS[$1]} --cap-add=NET_ADMIN --cpu-shares=1024 \
+        -m=512M ${mount_point} ${image} \
+        ${cmd}"
+    log::info xline${1} started
+}
+
+# run etcdctl
+# args:
+#   $1: size of cluster
+run_etcdctl() {
+    log::info etcdctl starting
+
+    docker run -d -it --rm --name=client \
+        --net=xline_net --ip=${SERVERS[0]} --cap-add=NET_ADMIN \
+        --cpu-shares=1024 -m=512M -v ${DIR}:/mnt ghcr.io/xline-kv/etcdctl:v3.5.9 bash &
+    wait
+    log::info etcdctl started
 }
 
 # run cluster of xline/etcd in container
@@ -59,30 +89,6 @@ run_cluster() {
     run_xline 3 &
     wait
     log::info cluster started
-}
-
-# run container of xline/etcd use specified image
-# args:
-#   $1: size of cluster
-run_container() {
-    log::info container starting
-    size=${1}
-    image="ghcr.io/xline-kv/xline:latest"
-    for ((i = 1; i <= ${size}; i++)); do
-        mount_point="-v ${DIR}:/mnt"
-        if [ -n "$LOG_PATH" ]; then
-            mkdir -p ${LOG_PATH}/node${i}
-            mount_point="${mount_point} -v ${LOG_PATH}/node${i}:/var/log/xline"
-        fi
-        docker run -d -it --rm --name=node${i} --net=xline_net \
-            --ip=${SERVERS[$i]} --cap-add=NET_ADMIN --cpu-shares=1024 \
-            -m=512M ${mount_point} ${image} bash &
-    done
-    docker run -d -it --rm  --name=client \
-        --net=xline_net --ip=${SERVERS[0]} --cap-add=NET_ADMIN \
-        --cpu-shares=1024 -m=512M -v ${DIR}:/mnt ghcr.io/xline-kv/etcdctl:v3.5.9 bash &
-    wait
-    log::info container started
 }
 
 # run prometheus
@@ -96,8 +102,8 @@ if [ -z "$1" ]; then
     stop_all
     docker network create --subnet=172.20.0.0/24 xline_net >/dev/null 2>&1
     log::warn "A Docker network named 'xline_net' is created for communication among various xline nodes. You can use the command 'docker network rm xline_net' to remove it after use."
-    run_container 3
     run_cluster
+    run_etcdctl
     run_prometheus "172.20.0.6"
     echo "Prometheus starts on http://172.20.0.6:9090/graph and http://127.0.0.1:9090/graph"
     exit 0
