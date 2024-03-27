@@ -113,7 +113,7 @@ where
         T: Into<RequestWrapper>,
     {
         let request = request.into();
-        let cmd = Command::new_with_auth_info(request.keys(), request, auth_info);
+        let cmd = Command::new_with_auth_info(request, auth_info);
         let res = self.client.propose(&cmd, None, use_fast_path).await??;
         Ok(res)
     }
@@ -214,7 +214,7 @@ where
         let range_required_revision = range_req.revision;
         let is_serializable = range_req.serializable;
         let request = RequestWrapper::from(request.into_inner());
-        let cmd = Command::new_with_auth_info(request.keys(), request, auth_info);
+        let cmd = Command::new_with_auth_info(request, auth_info);
         if !is_serializable {
             self.wait_read_state(&cmd).await?;
             // Double check whether the range request is compacted or not since the compaction request
@@ -313,7 +313,7 @@ where
             debug!("TxnRequest is read only");
             let is_serializable = txn_req.is_serializable();
             let request = RequestWrapper::from(request.into_inner());
-            let cmd = Command::new_with_auth_info(request.keys(), request, auth_info);
+            let cmd = Command::new_with_auth_info(request, auth_info);
             if !is_serializable {
                 self.wait_read_state(&cmd).await?;
             }
@@ -354,7 +354,7 @@ where
         let auth_info = self.auth_storage.try_get_auth_info_from_request(&request)?;
         let physical = req.physical;
         let request = RequestWrapper::from(request.into_inner());
-        let cmd = Command::new_with_auth_info(request.keys(), request, auth_info);
+        let cmd = Command::new_with_auth_info(request, auth_info);
         let compact_id = self.next_compact_id.fetch_add(1, Ordering::Relaxed);
         let compact_physical_fut = if physical {
             let event = Arc::new(Event::new());
