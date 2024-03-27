@@ -211,7 +211,7 @@ impl Alarmer {
     /// Propose alarm request to other nodes
     async fn alarm(&self, action: AlarmAction, alarm: AlarmType) -> Result<(), tonic::Status> {
         let request = RequestWrapper::from(AlarmRequest::new(action, self.id, alarm));
-        let cmd = Command::new(request.keys(), request);
+        let cmd = Command::new(request);
         let _ig = self.client.propose(&cmd, None, true).await?;
         Ok(())
     }

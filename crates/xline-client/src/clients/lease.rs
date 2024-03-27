@@ -100,7 +100,7 @@ impl LeaseClient {
             request.inner.id = self.id_gen.next();
         }
         let request = RequestWrapper::from(xlineapi::LeaseGrantRequest::from(request));
-        let cmd = Command::new(request.keys(), request);
+        let cmd = Command::new(request);
         let (cmd_res, _sync_res) = self
             .curp_client
             .propose(&cmd, self.token.as_ref(), true)
@@ -275,7 +275,7 @@ impl LeaseClient {
     #[inline]
     pub async fn leases(&self) -> Result<LeaseLeasesResponse> {
         let request = RequestWrapper::from(xlineapi::LeaseLeasesRequest {});
-        let cmd = Command::new(request.keys(), request);
+        let cmd = Command::new(request);
         let (cmd_res, _sync_res) = self
             .curp_client
             .propose(&cmd, self.token.as_ref(), true)

@@ -16,7 +16,7 @@ use utils::{
     task_manager::{tasks::TaskName, Listener, TaskManager},
 };
 use xlineapi::{
-    command::{Command, CommandResponse, CurpClient, KeyRange, SyncResponse},
+    command::{Command, CommandResponse, CurpClient, SyncResponse},
     execute_error::ExecuteError,
 };
 
@@ -126,18 +126,8 @@ impl LeaseServer {
     {
         let auth_info = self.auth_storage.try_get_auth_info_from_request(&request)?;
         let request = request.into_inner().into();
-        let keys = {
-            if let RequestWrapper::LeaseRevokeRequest(ref req) = request {
-                self.lease_storage
-                    .get_keys(req.id)
-                    .into_iter()
-                    .map(|k| KeyRange::new(k, ""))
-                    .collect()
-            } else {
-                vec![]
-            }
-        };
-        let cmd = Command::new_with_auth_info(keys, request, auth_info);
+        // FIXME: get the keys in the conflict pools
+        let cmd = Command::new_with_auth_info(request, auth_info);
         let res = self.client.propose(&cmd, None, use_fast_path).await??;
         Ok(res)
     }

@@ -44,7 +44,7 @@ pub trait Command: pri::Serializable + ConflictCheck + PbCodec {
     type ASR: pri::Serializable + PbCodec;
 
     /// Get keys of the command
-    fn keys(&self) -> &[Self::K];
+    fn keys(&self) -> Vec<Self::K>;
 
     /// Returns `true` if the command is read-only
     fn is_read_only(&self) -> bool;

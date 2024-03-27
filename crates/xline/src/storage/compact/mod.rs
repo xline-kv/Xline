@@ -54,7 +54,7 @@ impl Compactable
             revision,
             physical: false,
         });
-        let cmd = Command::new(request.keys(), request);
+        let cmd = Command::new(request);
         let err = match self.propose(&cmd, None, true).await? {
             Ok(_) => return Ok(revision),
             Err(err) => err,

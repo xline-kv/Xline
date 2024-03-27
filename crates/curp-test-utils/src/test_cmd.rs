@@ -190,8 +190,8 @@ impl Command for TestCommand {
 
     type ASR = LogIndexResult;
 
-    fn keys(&self) -> &[Self::K] {
-        &self.keys
+    fn keys(&self) -> Vec<Self::K> {
+        self.keys.clone()
     }
 
     fn is_read_only(&self) -> bool {

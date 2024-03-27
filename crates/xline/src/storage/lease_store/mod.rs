@@ -124,6 +124,8 @@ impl LeaseStore {
     }
 
     /// Get keys attached to a lease
+    /// FIXME: use this in conflict pools
+    #[allow(unused)]
     pub(crate) fn get_keys(&self, lease_id: i64) -> Vec<Vec<u8>> {
         self.lease_collection
             .look_up(lease_id)
