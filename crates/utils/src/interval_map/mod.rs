@@ -980,11 +980,12 @@ where
 /// The Interval stored in `IntervalMap`
 /// Represents the interval [low, high)
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub struct Interval<T> {
     /// Low value
-    low: T,
+    pub low: T,
     /// high value
-    high: T,
+    pub high: T,
 }
 
 impl<T: Ord> Interval<T> {
