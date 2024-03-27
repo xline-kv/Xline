@@ -213,8 +213,6 @@ impl From<KeyRange> for PbKeyRange {
 pub struct Command {
     /// Request data
     request: RequestWrapper,
-    /// Keys of request
-    keys: Vec<KeyRange>,
     /// Compact Id
     compact_id: u64,
     /// Auth info
@@ -357,10 +355,9 @@ impl Command {
     /// New `Command`
     #[must_use]
     #[inline]
-    pub fn new(keys: Vec<KeyRange>, request: RequestWrapper) -> Self {
+    pub fn new(request: RequestWrapper) -> Self {
         Self {
             request,
-            keys,
             compact_id: 0,
             auth_info: None,
         }
@@ -369,14 +366,9 @@ impl Command {
     /// New `Command` with auth info
     #[must_use]
     #[inline]
-    pub fn new_with_auth_info(
-        keys: Vec<KeyRange>,
-        request: RequestWrapper,
-        auth_info: Option<AuthInfo>,
-    ) -> Self {
+    pub fn new_with_auth_info(request: RequestWrapper, auth_info: Option<AuthInfo>) -> Self {
         Self {
             request,
-            keys,
             compact_id: 0,
             auth_info,
         }
@@ -537,8 +529,8 @@ impl CurpCommand for Command {
     type ASR = SyncResponse;
 
     #[inline]
-    fn keys(&self) -> &[Self::K] {
-        self.keys.as_slice()
+    fn keys(&self) -> Vec<Self::K> {
+        self.request().keys()
     }
 
     #[inline]
@@ -551,7 +543,6 @@ impl PbCodec for Command {
     #[inline]
     fn encode(&self) -> Vec<u8> {
         let rpc_cmd = PbCommand {
-            keys: self.keys.iter().cloned().map(Into::into).collect(),
             compact_id: self.compact_id,
             auth_info: self.auth_info.clone(),
             request_wrapper: Some(self.request.clone()),
@@ -563,7 +554,6 @@ impl PbCodec for Command {
     fn decode(buf: &[u8]) -> Result<Self, PbSerializeError> {
         let rpc_cmd = PbCommand::decode(buf)?;
         Ok(Self {
-            keys: rpc_cmd.keys.into_iter().map(Into::into).collect(),
             compact_id: rpc_cmd.compact_id,
             auth_info: rpc_cmd.auth_info,
             request: rpc_cmd
@@ -578,8 +568,8 @@ mod test {
     use super::*;
     use crate::{
         AuthEnableRequest, AuthStatusRequest, CommandKeys, CompactionRequest, Compare,
-        LeaseGrantRequest, LeaseLeasesRequest, LeaseRevokeRequest, PutRequest, PutResponse,
-        RangeRequest, RequestOp, TxnRequest,
+        DeleteRangeRequest, LeaseGrantRequest, LeaseLeasesRequest, LeaseRevokeRequest, PutRequest,
+        PutResponse, RangeRequest, RequestOp, TxnRequest,
     };
 
     #[test]
@@ -616,63 +606,54 @@ mod test {
 
     #[test]
     fn test_command_conflict() {
-        let cmd1 = Command::new(
-            vec![KeyRange::new("a", "e")],
-            RequestWrapper::PutRequest(PutRequest::default()),
-        );
-        let cmd2 = Command::new(
-            vec![],
-            RequestWrapper::AuthStatusRequest(AuthStatusRequest::default()),
-        );
-        let cmd3 = Command::new(
-            vec![KeyRange::new("c", "g")],
-            RequestWrapper::PutRequest(PutRequest::default()),
-        );
-        let cmd4 = Command::new(
-            vec![],
-            RequestWrapper::AuthEnableRequest(AuthEnableRequest::default()),
-        );
-        let cmd5 = Command::new(
-            vec![],
-            RequestWrapper::LeaseGrantRequest(LeaseGrantRequest { ttl: 1, id: 1 }),
-        );
-        let cmd6 = Command::new(
-            vec![],
-            RequestWrapper::LeaseRevokeRequest(LeaseRevokeRequest { id: 1 }),
-        );
+        let cmd1 = Command::new(RequestWrapper::DeleteRangeRequest(DeleteRangeRequest {
+            key: "a".into(),
+            range_end: "e".into(),
+            ..Default::default()
+        }));
+        let cmd2 = Command::new(RequestWrapper::AuthStatusRequest(
+            AuthStatusRequest::default(),
+        ));
+        let cmd3 = Command::new(RequestWrapper::DeleteRangeRequest(DeleteRangeRequest {
+            key: "c".into(),
+            range_end: "g".into(),
+            ..Default::default()
+        }));
+        let cmd4 = Command::new(RequestWrapper::AuthEnableRequest(
+            AuthEnableRequest::default(),
+        ));
+        let cmd5 = Command::new(RequestWrapper::LeaseGrantRequest(LeaseGrantRequest {
+            ttl: 1,
+            id: 1,
+        }));
+        let cmd6 = Command::new(RequestWrapper::LeaseRevokeRequest(LeaseRevokeRequest {
+            id: 1,
+        }));
 
-        let lease_grant_cmd = Command::new(
-            vec![],
-            RequestWrapper::LeaseGrantRequest(LeaseGrantRequest { ttl: 1, id: 123 }),
-        );
-        let put_with_lease_cmd = Command::new(
-            vec![KeyRange::new_one_key("foo")],
-            RequestWrapper::PutRequest(PutRequest {
-                key: b"key".to_vec(),
-                value: b"value".to_vec(),
-                lease: 123,
-                ..Default::default()
-            }),
-        );
-        let txn_with_lease_id_cmd = Command::new(
-            vec![KeyRange::new_one_key("key")],
-            RequestWrapper::TxnRequest(TxnRequest {
-                compare: vec![],
-                success: vec![RequestOp {
-                    request: Some(Request::RequestPut(PutRequest {
-                        key: b"key".to_vec(),
-                        value: b"value".to_vec(),
-                        lease: 123,
-                        ..Default::default()
-                    })),
-                }],
-                failure: vec![],
-            }),
-        );
-        let lease_leases_cmd = Command::new(
-            vec![],
-            RequestWrapper::LeaseLeasesRequest(LeaseLeasesRequest {}),
-        );
+        let lease_grant_cmd = Command::new(RequestWrapper::LeaseGrantRequest(LeaseGrantRequest {
+            ttl: 1,
+            id: 123,
+        }));
+        let put_with_lease_cmd = Command::new(RequestWrapper::PutRequest(PutRequest {
+            key: b"foo".to_vec(),
+            value: b"value".to_vec(),
+            lease: 123,
+            ..Default::default()
+        }));
+        let txn_with_lease_id_cmd = Command::new(RequestWrapper::TxnRequest(TxnRequest {
+            compare: vec![],
+            success: vec![RequestOp {
+                request: Some(Request::RequestPut(PutRequest {
+                    key: b"key".to_vec(),
+                    value: b"value".to_vec(),
+                    lease: 123,
+                    ..Default::default()
+                })),
+            }],
+            failure: vec![],
+        }));
+        let lease_leases_cmd =
+            Command::new(RequestWrapper::LeaseLeasesRequest(LeaseLeasesRequest {}));
 
         assert!(lease_grant_cmd.is_conflict(&put_with_lease_cmd)); // lease id
         assert!(lease_grant_cmd.is_conflict(&txn_with_lease_id_cmd)); // lease id
@@ -686,41 +667,30 @@ mod test {
     }
 
     fn generate_txn_command(
-        keys: Vec<KeyRange>,
         compare: Vec<Compare>,
         success: Vec<RequestOp>,
         failure: Vec<RequestOp>,
     ) -> Command {
-        Command::new(
-            keys,
-            RequestWrapper::TxnRequest(TxnRequest {
-                compare,
-                success,
-                failure,
-            }),
-        )
+        Command::new(RequestWrapper::TxnRequest(TxnRequest {
+            compare,
+            success,
+            failure,
+        }))
     }
 
     #[test]
     fn test_compaction_txn_conflict() {
-        let compaction_cmd_1 = Command::new(
-            vec![],
-            RequestWrapper::CompactionRequest(CompactionRequest {
-                revision: 3,
-                physical: false,
-            }),
-        );
+        let compaction_cmd_1 = Command::new(RequestWrapper::CompactionRequest(CompactionRequest {
+            revision: 3,
+            physical: false,
+        }));
 
-        let compaction_cmd_2 = Command::new(
-            vec![],
-            RequestWrapper::CompactionRequest(CompactionRequest {
-                revision: 5,
-                physical: false,
-            }),
-        );
+        let compaction_cmd_2 = Command::new(RequestWrapper::CompactionRequest(CompactionRequest {
+            revision: 5,
+            physical: false,
+        }));
 
         let txn_with_lease_id_cmd = generate_txn_command(
-            vec![KeyRange::new_one_key("key")],
             vec![],
             vec![RequestOp {
                 request: Some(Request::RequestPut(PutRequest {
@@ -734,7 +704,6 @@ mod test {
         );
 
         let txn_cmd_1 = generate_txn_command(
-            vec![KeyRange::new_one_key("key")],
             vec![],
             vec![RequestOp {
                 request: Some(Request::RequestRange(RangeRequest {
@@ -746,7 +715,6 @@ mod test {
         );
 
         let txn_cmd_2 = generate_txn_command(
-            vec![KeyRange::new_one_key("key")],
             vec![],
             vec![RequestOp {
                 request: Some(Request::RequestRange(RangeRequest {
@@ -759,7 +727,6 @@ mod test {
         );
 
         let txn_cmd_3 = generate_txn_command(
-            vec![KeyRange::new_one_key("key")],
             vec![],
             vec![RequestOp {
                 request: Some(Request::RequestRange(RangeRequest {
@@ -783,10 +750,7 @@ mod test {
 
     #[test]
     fn command_serialization_is_ok() {
-        let cmd = Command::new(
-            vec![KeyRange::new("a", "e")],
-            RequestWrapper::PutRequest(PutRequest::default()),
-        );
+        let cmd = Command::new(RequestWrapper::PutRequest(PutRequest::default()));
         let decoded_cmd =
             <Command as PbCodec>::decode(&cmd.encode()).expect("decode should success");
         assert_eq!(cmd, decoded_cmd);

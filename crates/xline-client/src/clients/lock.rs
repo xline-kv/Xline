@@ -255,7 +255,7 @@ impl LockClient {
         T: Into<RequestWrapper>,
     {
         let request = request.into();
-        let cmd = Command::new(request.keys(), request);
+        let cmd = Command::new(request);
         self.curp_client
             .propose(&cmd, self.token.as_ref(), use_fast_path)
             .await?
