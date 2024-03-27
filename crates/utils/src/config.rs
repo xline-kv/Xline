@@ -801,9 +801,9 @@ impl LogConfig {
     /// Generate a new `LogConfig` object
     #[must_use]
     #[inline]
-    pub fn new(path: PathBuf, rotation: RotationConfig, level: LevelConfig) -> Self {
+    pub fn new(path: Option<PathBuf>, rotation: RotationConfig, level: LevelConfig) -> Self {
         Self {
-            path: Some(path),
+            path,
             rotation,
             level,
         }
@@ -857,7 +857,7 @@ pub mod rotation_format {
 #[must_use]
 #[inline]
 pub const fn default_rotation() -> RotationConfig {
-    RotationConfig::Daily
+    RotationConfig::Never
 }
 
 /// Generates a `RollingFileAppender` from the given `RotationConfig` and `name`
@@ -1326,7 +1326,7 @@ mod tests {
         assert_eq!(
             config.log,
             LogConfig::new(
-                PathBuf::from("/var/log/xline"),
+                Some(PathBuf::from("/var/log/xline")),
                 RotationConfig::Daily,
                 LevelConfig::INFO
             )
@@ -1452,8 +1452,8 @@ mod tests {
         assert_eq!(
             config.log,
             LogConfig::new(
-                PathBuf::from("/var/log/xline"),
-                RotationConfig::Daily,
+                Some(PathBuf::from("/var/log/xline")),
+                RotationConfig::Never,
                 LevelConfig::INFO
             )
         );

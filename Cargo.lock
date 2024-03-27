@@ -3360,6 +3360,7 @@ dependencies = [
  "pbkdf2",
  "petgraph",
  "rand",
+ "regex",
  "serde",
  "test-macros",
  "thiserror",
