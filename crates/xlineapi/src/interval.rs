@@ -72,4 +72,16 @@ mod tests {
         assert!(BytesAffine::new_key("abcd") < BytesAffine::new_unbounded());
         assert_eq!(BytesAffine::new_unbounded(), BytesAffine::new_unbounded());
     }
+
+    #[test]
+    fn convert_from_key_range_is_ok() {
+        let range0 = KeyRange::new("a", "e");
+        let range1 = KeyRange::new_one_key("f");
+        let interval0: Interval<BytesAffine> = range0.into();
+        let interval1: Interval<BytesAffine> = range1.into();
+        assert_eq!(interval0.low, BytesAffine::new_key("a"));
+        assert_eq!(interval0.high, BytesAffine::new_key("e"));
+        assert_eq!(interval1.low, BytesAffine::new_key("f"));
+        assert_eq!(interval1.high, BytesAffine::new_key("f\0"));
+    }
 }
