@@ -20,8 +20,8 @@ use utils::{
         MetricsPushProtocol, RotationConfig, ServerTimeout, StorageConfig, TlsConfig, TraceConfig,
         XlineServerConfig,
     },
-    parse_batch_bytes, parse_duration, parse_log_level, parse_members, parse_metrics_push_protocol,
-    parse_rotation, parse_state, ConfigFileError,
+    parse_batch_bytes, parse_duration, parse_log_file, parse_log_level, parse_members,
+    parse_metrics_push_protocol, parse_rotation, parse_state, ConfigFileError,
 };
 
 /// Xline server config path env name
@@ -92,8 +92,8 @@ pub struct ServerArgs {
     #[clap(long, value_parser = parse_metrics_push_protocol, default_value_t = default_metrics_push_protocol())]
     metrics_push_protocol: MetricsPushProtocol,
     /// Log file path
-    #[clap(long, default_value = "/var/log/xline")]
-    log_file: PathBuf,
+    #[clap(long, value_parser = parse_log_file, default_value = None)]
+    log_file: Option<PathBuf>,
     /// Log rotate strategy, eg: never, hourly, daily
     #[clap(long, value_parser = parse_rotation, default_value_t = default_rotation())]
     log_rotate: RotationConfig,

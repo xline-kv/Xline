@@ -7,21 +7,6 @@ NEWMEMBERS="${MEMBERS},node4=${SERVERS[4]}:2380,${SERVERS[4]}:2381"
 XLINE_IMAGE="ghcr.io/xline-kv/xline:latest"
 ETCDCTL_IMAGE="ghcr.io/xline-kv/etcdctl:v3.5.9"
 
-function common::run_container() {
-    ith=${1}
-    mount_point="-v ${DIR}:/mnt"
-    if [ -n "$LOG_PATH" ]; then
-        mkdir -p ${LOG_PATH}/node${ith}
-        mount_point="${mount_point} -v ${LOG_PATH}/node${ith}:/var/log/xline"
-    fi
-    log::info starting container node${ith} ...
-    docker run -d -it --rm --name=node${ith} --net=xline_net \
-            --ip=${SERVERS[$ith]} --cap-add=NET_ADMIN --cpu-shares=1024 \
-            -m=512M ${mount_point} ${XLINE_IMAGE} bash &
-    wait $!
-    log::info container node${ith} started
-}
-
 function common::stop_container() {
     image_name=$1
     log::info stopping container ${image_name} ...
@@ -49,6 +34,14 @@ function common::run_etcd_client() {
 #   $2: members
 #   $3: initial cluster state
 function common::run_xline() {
+    ith=${1}
+    mount_point="-v ${DIR}:/mnt"
+    if [ -n "$LOG_PATH" ]; then
+        mkdir -p ${DIR}/logs/node${ith}
+        mount_point="${mount_point} -v ${DIR}/logs/node${ith}:${LOG_PATH}"
+    fi
+
+    log::info starting container node${ith} ...
     cmd="/usr/local/bin/xline \
     --name node${1} \
     --members ${2} \
@@ -63,7 +56,7 @@ function common::run_xline() {
     --initial-cluster-state=${3}"
 
     if [ -n "${LOG_PATH}" ]; then
-        cmd="${cmd} --log-file ${LOG_PATH}/node${1}"
+        cmd="${cmd} --log-file ${LOG_PATH}"
     fi
 
     if [ -n "$LOG_LEVEL" ]; then
@@ -74,6 +67,18 @@ function common::run_xline() {
         cmd="${cmd} --is-leader"
     fi
 
-    docker exec -e RUST_LOG=info -d node${1} ${cmd}
-    log::info "command is: docker exec -e RUST_LOG=debug -d node${1} ${cmd}"
+    if [ -n "$RUST_LOG" ]; then
+        debug_env="-e RUST_LOG=${RUST_LOG}"
+    fi
+
+    docker_cmd="docker run ${debug_env} -d -it --rm --name=node${ith} --net=xline_net \
+        --ip=${SERVERS[$ith]} --cap-add=NET_ADMIN --cpu-shares=1024 \
+        -m=512M ${mount_point} ${XLINE_IMAGE} ${cmd}"
+
+    eval ${docker_cmd}
+    wait $!
+
+    log::info "${docker_cmd}"
+
+
 }

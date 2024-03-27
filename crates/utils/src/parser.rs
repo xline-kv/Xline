@@ -1,6 +1,7 @@
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use clippy_utilities::OverflowArithmetic;
+use regex::Regex;
 use thiserror::Error;
 
 use crate::config::{
@@ -159,6 +160,37 @@ pub fn parse_state(s: &str) -> Result<InitialClusterState, ConfigParseError> {
         _ => Err(ConfigParseError::InvalidValue(format!(
             "the initial cluster state should be one of 'new' or 'existing' ({s})"
         ))),
+    }
+}
+
+/// Parse `LOG_PATH` from string
+/// # Errors
+/// Return error when parsing the given string to `PathBuf` failed
+#[inline]
+pub fn parse_log_file(s: &str) -> Result<PathBuf, ConfigParseError> {
+    if s.is_empty() {
+        return Err(ConfigParseError::InvalidValue(
+            "the log path should not be empty".to_owned(),
+        ));
+    }
+    // This regular expression matches file paths in a specific format.
+    // Explanation of the regex pattern:
+    // ^(\.|\.\.)?            - Matches an optional prefix consisting of a dot (.), two dots (..), or a tilde (~).
+    // (/[a-zA-Z0-9._-]+)+/?    - Matches one or more occurrences of a forward slash (/) followed by one or more alphanumeric characters, dots (.), underscores (_), or hyphens (-).
+    // /?$                      - Matches an optional trailing forward slash (/) at the end of the string.
+    // Overall, this regex pattern is used to validate file paths that follow a specific format commonly used in Linux filesystem
+    let re = Regex::new(r"^(\.|\.\.)?(/[a-zA-Z0-9._-]+)+/?$").unwrap_or_else(|err| {
+        unreachable!(
+            r"regex expression (^(\.|\.\.)?(/[a-zA-Z0-9._-]+)+/?$) should not return Error: {}",
+            err.to_string()
+        )
+    });
+    if re.is_match(s) {
+        Ok(PathBuf::from(s))
+    } else {
+        Err(ConfigParseError::InvalidValue(format!(
+            "Invalid log path {s}"
+        )))
     }
 }
 
@@ -365,5 +397,31 @@ mod test {
             MetricsPushProtocol::GRPC
         );
         assert!(parse_metrics_push_protocol("thrift").is_err());
+    }
+
+    #[test]
+    fn test_parse_log_file() {
+        // Test case 1: Valid log file path
+        assert!(parse_log_file("/path/to/log/file.log").is_ok());
+
+        // Test case 2: Empty log file path
+        assert!(parse_log_file("").is_err());
+
+        // Test case 4: Log file path with spaces
+        assert!(parse_log_file("/path/with spaces/log file.log").is_err());
+
+        // Test case 5: Log file path with special character
+        assert!(parse_log_file("/path/with@spaces/log?!file.log").is_err());
+
+        // Test case 6: Log file path with special character
+        assert!(parse_log_file("/path/with-spaces/log_file.log-123.456-789").is_ok());
+
+        // Test case 7: Log file path starts with ., .. or ~
+        assert!(parse_log_file("./path/with-spaces/log_file.log-123.456-789").is_ok());
+        assert!(parse_log_file("../path/with-spaces/log_file.log-123.456-789").is_ok());
+        assert!(parse_log_file("~/path/with-spaces/log_file.log-123.456-789").is_err());
+
+        assert!(parse_log_file(".../path/with-spaces/log_file.log-123.456-789").is_err());
+        assert!(parse_log_file("~~/path/with-spaces/log_file.log-123.456-789").is_err());
     }
 }
