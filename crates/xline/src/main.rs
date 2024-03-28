@@ -144,7 +144,7 @@
 )]
 
 use anyhow::Result;
-use opentelemetry::global;
+use opentelemetry::{global, metrics::noop::NoopMeterProvider};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use tracing::{debug, info};
 use xline::{
@@ -186,6 +186,9 @@ async fn main() -> Result<()> {
     }
 
     global::shutdown_tracer_provider();
-    global::shutdown_meter_provider();
+    // TODO: Since the `shutdown_meter_provider` has removed in the latest version of opentelemetry, we use `NoopMeterProvider` to replace it.
+    // FYI: https://github.com/open-telemetry/opentelemetry-rust/pull/1623
+    // We will replace `set_meter_provider` with `shutdown_meter_provider` when the new version release
+    global::set_meter_provider(NoopMeterProvider::new());
     Ok(())
 }

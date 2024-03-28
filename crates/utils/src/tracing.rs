@@ -112,8 +112,10 @@ mod test {
 
     /// init tracing subscriber
     fn init() -> Result<(), Box<dyn std::error::Error>> {
-        let jaeger_online_layer = opentelemetry_jaeger::new_agent_pipeline()
-            .with_service_name("test")
+        let otlp_exporter = opentelemetry_otlp::new_exporter().tonic();
+        let jaeger_online_layer = opentelemetry_otlp::new_pipeline()
+            .tracing()
+            .with_exporter(otlp_exporter)
             .install_simple()
             .map(|tracer| tracing_opentelemetry::layer().with_tracer(tracer))?;
         tracing_subscriber::registry()
