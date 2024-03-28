@@ -5,12 +5,9 @@ use thiserror::Error;
 /// Errors of the `WALStorage`
 #[derive(Debug, Error)]
 pub(crate) enum WALError {
-    /// The WAL segment might reach on end
-    ///
-    /// NOTE: This exists because we cannot tell the difference between a corrupted WAL
-    /// and a normally ended WAL, as the segment files are all preallocated with zeros
+    /// Unexpected end-of-file
     #[error("WAL ended")]
-    MaybeEnded,
+    UnexpectedEof,
     /// The WAL corrupt error
     #[error("WAL corrupted: {0}")]
     Corrupted(CorruptType),
@@ -31,4 +28,15 @@ pub(crate) enum CorruptType {
     /// Corrupt because of some logs is missing
     #[error("The recovered logs are not continue")]
     LogNotContinue,
+}
+
+impl WALError {
+    /// Converts `WALError` to `io::Result`
+    pub(super) fn io_or_corrupt(self) -> io::Result<CorruptType> {
+        match self {
+            WALError::Corrupted(e) => Ok(e),
+            WALError::IO(e) => Err(e),
+            WALError::UnexpectedEof => unreachable!("Should not call on WALError::MaybeEnded"),
+        }
+    }
 }
