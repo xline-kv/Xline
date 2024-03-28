@@ -23,24 +23,25 @@ jobs:
           github_token: ${{ secrets.github_token }}
           assignees: ${{ github.actor }}
 
-  help:
-    name: /help
+  contributing-agreement:
+    name: /contributing-agreement
     runs-on: ubuntu-latest
-    if: startsWith(github.event.comment.body, '/help')
+    if: startsWith(github.event.comment.body, '/contributing-agreement')
 
     steps:
       - uses: xt0rted/slash-command-action@v2
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-          command: help
+          command: contributing-agreement
           reaction: "true"
           reaction-type: "rocket"
+          permission-level: read
 
       - uses: peter-evans/create-or-update-comment@v4
         with:
           issue-number: ${{ github.event.issue.number }}
           body: |
-            Get help or engage by:
+            Contributing Agreements:
 
-            - `/help` : to print help messages.
-            - `/assignme` : to assign this issue to you.
+            - [pull request](https://github.com/xline-kv/Xline/blob/master/CONTRIBUTING.md#pull-requests)
+            - [merge policy](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/incorporating-changes-from-a-pull-request/about-pull-request-merges#rebase-and-merge-your-commits)
