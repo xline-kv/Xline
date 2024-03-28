@@ -23,7 +23,7 @@ tokio = { version = "0.2.23", package = "madsim-tokio", features = [
     "net",
     "signal",
 ] }
-tonic = "0.10.2"
+tonic = "0.11.0"
 utils = { path = "../utils", features = ["parking_lot"] }
 workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 xline = { path = "../xline" }
