@@ -17,5 +17,5 @@ jobs:
 
             Reply with the following command on its own line to get help or engage:
 
-            - `/help` : to print help messages.
+            - `/contributing-agreement` : to print Contributing Agreements.
             - `/assignme` : to assign this issue to you.
