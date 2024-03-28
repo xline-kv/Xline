@@ -9,11 +9,17 @@ mod error;
 /// File pipeline
 mod pipeline;
 
+/// Remover of the segment file
+mod remover;
+
 /// WAL segment
 mod segment;
 
 /// File utils
 mod util;
+
+/// Framed traits
+mod framed;
 
 /// The magic of the WAL file
 const WAL_MAGIC: u32 = 0xd86e_0be2;

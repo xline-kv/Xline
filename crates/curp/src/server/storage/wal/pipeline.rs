@@ -29,7 +29,7 @@ pub(super) struct FilePipeline {
     /// The size of the temp file
     file_size: u64,
     /// The file receive stream
-    file_stream: RecvStream<'static, LockedFile>,
+    file_stream: flume::IntoIter<LockedFile>,
     /// Stopped flag
     stopped: Arc<AtomicBool>,
 }
@@ -97,7 +97,7 @@ impl FilePipeline {
         Ok(Self {
             dir,
             file_size,
-            file_stream: file_rx.into_stream(),
+            file_stream: file_rx.into_iter(),
             stopped,
         })
     }
@@ -136,18 +136,14 @@ impl Drop for FilePipeline {
     }
 }
 
-impl Stream for FilePipeline {
+impl Iterator for FilePipeline {
     type Item = io::Result<LockedFile>;
 
-    fn poll_next(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
+    fn next(&mut self) -> Option<Self::Item> {
         if self.stopped.load(Ordering::Relaxed) {
-            return Poll::Ready(None);
+            return None;
         }
-
-        self.file_stream.poll_next_unpin(cx).map(|opt| opt.map(Ok))
+        self.file_stream.next().map(Ok)
     }
 }
 
@@ -175,11 +171,11 @@ mod tests {
             let file = file.into_std();
             assert_eq!(file.metadata().unwrap().len(), file_size,);
         };
-        let file0 = pipeline.next().await.unwrap().unwrap();
+        let file0 = pipeline.next().unwrap().unwrap();
         check_size(file0);
-        let file1 = pipeline.next().await.unwrap().unwrap();
+        let file1 = pipeline.next().unwrap().unwrap();
         check_size(file1);
         pipeline.stop();
-        assert!(pipeline.next().await.is_none());
+        assert!(pipeline.next().is_none());
     }
 }
