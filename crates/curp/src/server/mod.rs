@@ -16,13 +16,14 @@ use crate::{
     members::{ClusterInfo, ServerId},
     role_change::RoleChange,
     rpc::{
-        AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse,
-        FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,
-        InstallSnapshotResponse, LeaseKeepAliveMsg, MoveLeaderRequest, MoveLeaderResponse,
-        ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest, ProposeResponse,
-        PublishRequest, PublishResponse, ShutdownRequest, ShutdownResponse, TriggerShutdownRequest,
-        TriggerShutdownResponse, TryBecomeLeaderNowRequest, TryBecomeLeaderNowResponse,
-        VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        connect::Bypass, AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest,
+        FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
+        InstallSnapshotRequest, InstallSnapshotResponse, LeaseKeepAliveMsg, MoveLeaderRequest,
+        MoveLeaderResponse, ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest,
+        ProposeResponse, PublishRequest, PublishResponse, ShutdownRequest, ShutdownResponse,
+        TriggerShutdownRequest, TriggerShutdownResponse, TryBecomeLeaderNowRequest,
+        TryBecomeLeaderNowResponse, VoteRequest, VoteResponse, WaitSyncedRequest,
+        WaitSyncedResponse,
     },
 };
 
@@ -79,9 +80,10 @@ impl<C: Command, RC: RoleChange> crate::rpc::Protocol for Rpc<C, RC> {
         &self,
         request: tonic::Request<ProposeRequest>,
     ) -> Result<tonic::Response<ProposeResponse>, tonic::Status> {
+        let bypassed = request.metadata().is_bypassed();
         request.metadata().extract_span();
         Ok(tonic::Response::new(
-            self.inner.propose(request.into_inner()).await?,
+            self.inner.propose(request.into_inner(), bypassed).await?,
         ))
     }
 
@@ -90,9 +92,10 @@ impl<C: Command, RC: RoleChange> crate::rpc::Protocol for Rpc<C, RC> {
         &self,
         request: tonic::Request<ShutdownRequest>,
     ) -> Result<tonic::Response<ShutdownResponse>, tonic::Status> {
+        let bypassed = request.metadata().is_bypassed();
         request.metadata().extract_span();
         Ok(tonic::Response::new(
-            self.inner.shutdown(request.into_inner()).await?,
+            self.inner.shutdown(request.into_inner(), bypassed).await?,
         ))
     }
 
@@ -101,9 +104,12 @@ impl<C: Command, RC: RoleChange> crate::rpc::Protocol for Rpc<C, RC> {
         &self,
         request: tonic::Request<ProposeConfChangeRequest>,
     ) -> Result<tonic::Response<ProposeConfChangeResponse>, tonic::Status> {
+        let bypassed = request.metadata().is_bypassed();
         request.metadata().extract_span();
         Ok(tonic::Response::new(
-            self.inner.propose_conf_change(request.into_inner()).await?,
+            self.inner
+                .propose_conf_change(request.into_inner(), bypassed)
+                .await?,
         ))
     }
 
@@ -112,9 +118,10 @@ impl<C: Command, RC: RoleChange> crate::rpc::Protocol for Rpc<C, RC> {
         &self,
         request: tonic::Request<PublishRequest>,
     ) -> Result<tonic::Response<PublishResponse>, tonic::Status> {
+        let bypassed = request.metadata().is_bypassed();
         request.metadata().extract_span();
         Ok(tonic::Response::new(
-            self.inner.publish(request.into_inner())?,
+            self.inner.publish(request.into_inner(), bypassed)?,
         ))
     }
 

@@ -138,11 +138,17 @@ impl FetchClusterResponse {
 impl ProposeRequest {
     /// Create a new `Propose` request
     #[inline]
-    pub fn new<C: Command>(propose_id: ProposeId, cmd: &C, cluster_version: u64) -> Self {
+    pub fn new<C: Command>(
+        propose_id: ProposeId,
+        cmd: &C,
+        cluster_version: u64,
+        first_incomplete: u64,
+    ) -> Self {
         Self {
             propose_id: Some(propose_id.into()),
             command: cmd.encode(),
             cluster_version,
+            first_incomplete,
         }
     }
 
