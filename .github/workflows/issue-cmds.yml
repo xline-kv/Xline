@@ -36,7 +36,7 @@ jobs:
           reaction: "true"
           reaction-type: "rocket"
 
-      - uses: peter-evans/create-or-update-comment@v1
+      - uses: peter-evans/create-or-update-comment@v4
         with:
           issue-number: ${{ github.event.issue.number }}
           body: |
