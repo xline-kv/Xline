@@ -31,8 +31,10 @@ pub fn init_subscriber(
     let jaeger_online_layer = trace_config
         .jaeger_online()
         .then(|| {
-            opentelemetry_jaeger::new_agent_pipeline()
-                .with_service_name(name)
+            let otlp_exporter = opentelemetry_otlp::new_exporter().tonic();
+            opentelemetry_otlp::new_pipeline()
+                .tracing()
+                .with_exporter(otlp_exporter)
                 .install_batch(Tokio)
                 .ok()
         })

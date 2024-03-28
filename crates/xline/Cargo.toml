@@ -32,18 +32,17 @@ jsonwebtoken = "9.3.0"
 log = "0.4.21"
 merged_range = "0.1.0"
 nix = "0.28.0"
-opentelemetry = { version = "0.21.0", features = ["metrics"] }
-opentelemetry-contrib = { version = "0.13.0", features = [
+opentelemetry = { version = "0.22.0", features = ["metrics"] }
+opentelemetry-contrib = { version = "0.14.0", features = [
   "jaeger_json_exporter",
   "rt-tokio",
 ] }
-opentelemetry-jaeger = { version = "0.20.0", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.14.0", features = [
+opentelemetry-otlp = { version = "0.15.0", features = [
   "metrics",
   "http-proto",
   "reqwest-client",
 ] }
-opentelemetry-prometheus = { version = "0.14.1" }
+opentelemetry-prometheus = { version = "0.15.0" }
 opentelemetry_sdk = { version = "0.22.1", features = ["metrics", "rt-tokio"] }
 parking_lot = "0.12.0"
 pbkdf2 = { version = "0.12.2", features = ["simple"] }
@@ -62,11 +61,11 @@ tokio = { version = "0.2.23", package = "madsim-tokio", features = [
 tokio-stream = { git = "https://github.com/madsim-rs/tokio.git", rev = "ab251ad" }
 tokio-util = { version = "0.7.8", features = ["io"] }
 toml = "0.8.8"
-tonic = { version = "0.4.1", package = "madsim-tonic" }
-tonic-health = "0.10.2"
+tonic = "0.11.0"
+tonic-health = "0.11.0"
 tracing = "0.1.37"
 tracing-appender = "0.2"
-tracing-opentelemetry = "0.22.0"
+tracing-opentelemetry = "0.23.0"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 utils = { path = "../utils", features = ["parking_lot"] }
 uuid = { version = "1.1.2", features = ["v4"] }
@@ -78,7 +77,8 @@ xlineapi = { path = "../xlineapi" }
 tonic-build = { version = "0.4.2", package = "madsim-tonic-build" }
 
 [dev-dependencies]
-etcd-client = { version = "0.12.1", features = ["tls"] }
+# TODO: switch to the original etcd-client crate when new version is released
+etcd-client = { git = "https://github.com/Phoenix500526/etcd-client", branch = "update-tonic", features = ["tls"] }
 mockall = "0.12.1"
 rand = "0.8.5"
 strum = "0.26"
