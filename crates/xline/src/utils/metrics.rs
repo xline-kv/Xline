@@ -1,6 +1,6 @@
 use opentelemetry::global;
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::{metrics::MeterProvider, runtime::Tokio};
+use opentelemetry_sdk::{metrics::SdkMeterProvider, runtime::Tokio};
 use tracing::info;
 use utils::config::{MetricsConfig, MetricsPushProtocol};
 
@@ -44,7 +44,7 @@ pub fn init_metrics(config: &MetricsConfig) -> anyhow::Result<()> {
     let exporter = opentelemetry_prometheus::exporter()
         .with_registry(prometheus::default_registry().clone())
         .build()?;
-    let provider = MeterProvider::builder().with_reader(exporter).build();
+    let provider = SdkMeterProvider::builder().with_reader(exporter).build();
     global::set_meter_provider(provider);
 
     let addr = format!("0.0.0.0:{}", config.port())
