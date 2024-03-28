@@ -8,6 +8,7 @@ use std::{
 
 use async_stream::stream;
 use async_trait::async_trait;
+use await_tree::InstrumentAwait;
 use bytes::BytesMut;
 use clippy_utilities::NumericCast;
 use engine::SnapshotApi;
@@ -396,7 +397,11 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         if let Some(token) = token {
             _ = req.metadata_mut().insert("token", token.parse()?);
         }
-        client.propose(req).await.map_err(Into::into)
+        client
+            .propose(req)
+            .instrument_await("client propose")
+            .await
+            .map_err(Into::into)
     }
 
     /// Send `ShutdownRequest`
@@ -410,7 +415,11 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
         req.metadata_mut().inject_current();
-        client.shutdown(req).await.map_err(Into::into)
+        client
+            .shutdown(req)
+            .instrument_await("client shutdown")
+            .await
+            .map_err(Into::into)
     }
 
     /// Send `ProposeRequest`
@@ -424,7 +433,11 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
         req.metadata_mut().inject_current();
-        client.propose_conf_change(req).await.map_err(Into::into)
+        client
+            .propose_conf_change(req)
+            .instrument_await("client propose conf change")
+            .await
+            .map_err(Into::into)
     }
 
     /// Send `PublishRequest`
@@ -438,7 +451,11 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
         req.metadata_mut().inject_current();
-        client.publish(req).await.map_err(Into::into)
+        client
+            .publish(req)
+            .instrument_await("client publish")
+            .await
+            .map_err(Into::into)
     }
 
     /// Send `WaitSyncedRequest`
@@ -452,7 +469,11 @@ impl ConnectApi for Connect<ProtocolClient<Channel>> {
         let mut req = tonic::Request::new(request);
         req.set_timeout(timeout);
         req.metadata_mut().inject_current();
-        client.wait_synced(req).await.map_err(Into::into)
+        client
+            .wait_synced(req)
+            .instrument_await("client propose wait synced request")
+            .await
+            .map_err(Into::into)
     }
 
     /// Send `FetchClusterRequest`
