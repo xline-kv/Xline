@@ -16,3 +16,7 @@ updates:
   labels:
     - "dependencies"
   open-pull-requests-limit: 10
+  ignore:
+  - dependency-name: hyper
+    versions:
+    - 0.14.28
