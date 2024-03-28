@@ -35,12 +35,13 @@ jobs:
           command: help
           reaction: "true"
           reaction-type: "rocket"
+          permission-level: read
 
       - uses: peter-evans/create-or-update-comment@v4
         with:
           issue-number: ${{ github.event.issue.number }}
           body: |
-            Get help or engage by:
+            Contributing Agreements:
 
-            - `/help` : to print help messages.
-            - `/assignme` : to assign this issue to you.
+            - [pull request](https://github.com/xline-kv/Xline/blob/master/CONTRIBUTING.md#pull-requests)
+            - [merge policy](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/incorporating-changes-from-a-pull-request/about-pull-request-merges#rebase-and-merge-your-commits)
