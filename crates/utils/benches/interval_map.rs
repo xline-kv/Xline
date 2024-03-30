@@ -7,7 +7,6 @@ extern crate utils;
 use std::hint::black_box;
 
 use test::Bencher;
-
 use utils::interval_map::{Interval, IntervalMap};
 
 struct Rng {

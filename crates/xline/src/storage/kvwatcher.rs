@@ -604,7 +604,7 @@ mod test {
 
     use std::{collections::BTreeMap, time::Duration};
 
-    use clippy_utilities::{Cast, OverflowArithmetic};
+    use clippy_utilities::{NumericCast, OverflowArithmetic};
     use test_macros::abort_on_panic;
     use tokio::time::{sleep, timeout};
     use utils::config::EngineConfig;
@@ -673,7 +673,7 @@ mod test {
                         db.as_ref(),
                         "foo",
                         vec![i],
-                        i.overflow_add(2).cast(),
+                        i.overflow_add(2).numeric_cast(),
                     )
                     .await;
                 }
@@ -737,7 +737,14 @@ mod test {
         });
 
         for i in 0..100_u8 {
-            put(store.as_ref(), db.as_ref(), "foo", vec![i], i.cast()).await;
+            put(
+                store.as_ref(),
+                db.as_ref(),
+                "foo",
+                vec![i],
+                i.numeric_cast(),
+            )
+            .await;
         }
         handle.await.unwrap();
         drop(store);

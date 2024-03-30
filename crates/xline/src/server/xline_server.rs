@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
-use clippy_utilities::{Cast, OverflowArithmetic};
+use clippy_utilities::{NumericCast, OverflowArithmetic};
 use curp::{
     client::ClientBuilder as CurpClientBuilder,
     members::{get_cluster_info_from_remote, ClusterInfo},
@@ -187,12 +187,12 @@ impl XlineServer {
         heartbeat_interval: Duration,
         candidate_timeout_ticks: u8,
     ) -> Arc<LeaseCollection> {
-        let min_ttl = 3 * heartbeat_interval * candidate_timeout_ticks.cast() / 2;
+        let min_ttl = 3 * heartbeat_interval * candidate_timeout_ticks.numeric_cast() / 2;
         // Safe ceiling
         let min_ttl_secs = min_ttl
             .as_secs()
-            .overflow_add((min_ttl.subsec_nanos() > 0).cast());
-        Arc::new(LeaseCollection::new(min_ttl_secs.cast()))
+            .overflow_add(u64::from(min_ttl.subsec_nanos() > 0));
+        Arc::new(LeaseCollection::new(min_ttl_secs.numeric_cast()))
     }
 
     /// Construct underlying storages, including `KvStore`, `LeaseStore`, `AuthStore`

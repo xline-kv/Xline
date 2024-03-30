@@ -167,6 +167,7 @@
 
 pub mod command;
 pub mod execute_error;
+pub mod interval;
 pub mod request_validation;
 
 mod etcdserverpb {

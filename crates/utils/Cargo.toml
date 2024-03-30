@@ -26,10 +26,11 @@ getset = "0.1"
 opentelemetry = { version = "0.21.0", features = ["trace"] }
 opentelemetry_sdk = { version = "0.21.0", features = ["trace"] }
 parking_lot = { version = "0.12.1", optional = true }
+pbkdf2 = { version = "0.12.2", features = ["simple"] }
 petgraph = "0.6.4"
 rand = "0.8.5"
 serde = { version = "1.0.137", features = ["derive"] }
-thiserror = "1.0.31"
+thiserror = "1.0.58"
 tokio = { version = "0.2.23", package = "madsim-tokio", features = [
   "sync",
   "macros",

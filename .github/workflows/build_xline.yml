@@ -1,0 +1,85 @@
+name: Build Xline
+env:
+  CI_RUST_TOOLCHAIN: 1.71.0
+on:
+  workflow_call:
+    inputs:
+      additional_setup_commands:
+        description: "Additional commands to run after initial setup, before running the script"
+        required: false
+        default: ""
+        type: string
+      docker_xline_image:
+        description: "Docker image to use for building"
+        required: true
+        type: string
+      binaries:
+        description: "Comma-separated list of binaries"
+        required: true
+        type: string
+      script_name:
+        description: "Name of the script to run"
+        required: true
+        type: string
+      uploadLogs:
+        description: "Boolean to decide if logs should be uploaded"
+        required: false
+        default: false
+        type: boolean
+      uploadBenchmark:
+        description: "Boolean to decide if benchmark output should be uploaded"
+        required: false
+        default: false
+        type: boolean
+jobs:
+  build_and_test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure sccache
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+      - name: Prepare release binaries
+        id: prepare_binaries
+        run: |
+          IFS=',' read -ra binary_array <<< "${{ inputs.binaries }}"
+          release_bin=""
+          for binary in "${binary_array[@]}"; do
+            release_bin+="--bin $binary "
+          done
+          release_bin="${release_bin::-1}"
+          echo "::set-output name=release_bin::$release_bin"
+      - name: Build xline
+        run: |
+          docker run -q --rm -v $(pwd):/xline \
+            -e SCCACHE_GHA_ENABLED=on \
+            -e ACTIONS_CACHE_URL=${ACTIONS_CACHE_URL} \
+            -e ACTIONS_RUNTIME_TOKEN=${ACTIONS_RUNTIME_TOKEN} \
+            ${{ inputs.docker_xline_image }} \
+            cargo build --release ${{ steps.prepare_binaries.outputs.release_bin }}
+
+      - run: |
+          cd scripts
+          cp ../target/release/{${{ inputs.binaries }}} .
+          ${{ inputs.additional_setup_commands }}
+          bash ./${{ inputs.script_name }}
+
+      - name: Upload logs
+        if: ${{ inputs.uploadLogs }} && (failure() || cancelled())
+        uses: actions/upload-artifact@v4
+        with:
+          name: Xline logs
+          path: scripts/logs
+
+      - name: Upload benchmark output
+        if: ${{ inputs.uploadBenchmark }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-output
+          path: scripts/out

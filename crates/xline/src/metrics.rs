@@ -1,4 +1,4 @@
-use clippy_utilities::Cast;
+use clippy_utilities::NumericCast;
 use opentelemetry::{
     metrics::{Counter, MetricsError},
     KeyValue,
@@ -68,7 +68,7 @@ impl Metrics {
             }
 
             if let Some(limit) = limit {
-                observer.observe_u64(&fd_limit, limit.cast(), &[]);
+                observer.observe_u64(&fd_limit, limit.numeric_cast(), &[]);
             }
         })?;
 

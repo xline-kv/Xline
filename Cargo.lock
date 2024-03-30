@@ -279,7 +279,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "clippy-utilities 0.2.0",
+ "clippy-utilities",
  "etcd-client",
  "indicatif",
  "rand",
@@ -332,9 +332,9 @@ checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "bitflags"
-version = "2.4.2"
+version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed570934406eb16438a4e976b1b4500774099c13b8cb96eec99f620f05090ddf"
+checksum = "cf4b9d6a944f767f8e5e0db018570623c85f3d925ac718db4e06d0187adb21c1"
 
 [[package]]
 name = "block-buffer"
@@ -475,12 +475,6 @@ checksum = "702fc72eb24e5a1e48ce58027a675bc24edd52096d5397d4aea7c6dd9eca0bd1"
 
 [[package]]
 name = "clippy-utilities"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc5b2535647ee31eb24c1e306dce64401e3dc2a5bce4733b50546d151639b0da"
-
-[[package]]
-name = "clippy-utilities"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63940bc99b494c2431ab307e373daf0181a2ad84d738a24beca52f9e724f8760"
@@ -549,9 +543,9 @@ dependencies = [
 
 [[package]]
 name = "crc32fast"
-version = "1.3.2"
+version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b540bd8bc810d3885c6ea91e2018302f68baba2129ab3e88f32389ee9370880d"
+checksum = "b3855a8a784b474f333699ef2bbca9db2c4a1f6d9088a90a2d25b1eb53111eaa"
 dependencies = [
  "cfg-if",
 ]
@@ -609,11 +603,11 @@ dependencies = [
  "async-trait",
  "bincode",
  "bytes",
- "clippy-utilities 0.2.0",
+ "clippy-utilities",
  "curp-external-api",
  "curp-test-utils",
  "dashmap",
- "derive_builder 0.12.0",
+ "derive_builder",
  "engine",
  "event-listener 2.5.3",
  "flume",
@@ -749,32 +743,11 @@ dependencies = [
 
 [[package]]
 name = "derive_builder"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d67778784b508018359cbc8696edb3db78160bab2c2a28ba7f56ef6932997f8"
-dependencies = [
- "derive_builder_macro 0.12.0",
-]
-
-[[package]]
-name = "derive_builder"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "660047478bc508c0fde22c868991eec0c40a63e48d610befef466d48e2bee574"
 dependencies = [
- "derive_builder_macro 0.13.0",
-]
-
-[[package]]
-name = "derive_builder_core"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c11bdc11a0c47bc7d37d582b5285da6849c96681023680b906673c5707af7b0f"
-dependencies = [
- "darling",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
+ "derive_builder_macro",
 ]
 
 [[package]]
@@ -791,21 +764,11 @@ dependencies = [
 
 [[package]]
 name = "derive_builder_macro"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ebcda35c7a396850a55ffeac740804b40ffec779b98fffbb1738f4033f0ee79e"
-dependencies = [
- "derive_builder_core 0.12.0",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "derive_builder_macro"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a5f77d7e20ac9153428f7ca14a88aba652adfc7a0ef0a06d654386310ef663b"
 dependencies = [
- "derive_builder_core 0.13.0",
+ "derive_builder_core",
  "syn 1.0.109",
 ]
 
@@ -872,7 +835,7 @@ dependencies = [
  "async-trait",
  "bincode",
  "bytes",
- "clippy-utilities 0.2.0",
+ "clippy-utilities",
  "madsim-tokio",
  "opentelemetry",
  "parking_lot",
@@ -1335,9 +1298,9 @@ dependencies = [
 
 [[package]]
 name = "indicatif"
-version = "0.17.7"
+version = "0.17.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb28741c9db9a713d93deb3bb9515c20788cef5815265bee4980e87bde7e0f25"
+checksum = "763a5a8f45087d6bcea4222e7b72c291a054edf80e4ef6efd2a4979878c7bea3"
 dependencies = [
  "console",
  "instant",
@@ -1621,7 +1584,7 @@ version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4c013377d78bca1015c5c9d56a4f65f0ab3257cbd8b3af0b98e44af889010dbb"
 dependencies = [
- "clippy-utilities 0.2.0",
+ "clippy-utilities",
 ]
 
 [[package]]
@@ -1710,7 +1673,7 @@ version = "0.27.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2eb04e9c688eff1c89d72b407f168cf79bb9e867a9d3323ed6c01519eb9cc053"
 dependencies = [
- "bitflags 2.4.2",
+ "bitflags 2.5.0",
  "cfg-if",
  "libc",
 ]
@@ -2008,9 +1971,9 @@ dependencies = [
 
 [[package]]
 name = "password-hash"
-version = "0.4.2"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7676374caaee8a325c9e7a2ae557f216c5563a171d6997b0ef8a65af35147700"
+checksum = "346f04948ba92c43e8469c1ee6736c7563d71012b17d40745260fe106aac2166"
 dependencies = [
  "base64ct",
  "rand_core",
@@ -2019,9 +1982,9 @@ dependencies = [
 
 [[package]]
 name = "pbkdf2"
-version = "0.11.0"
+version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83a0692ec44e4cf1ef28ca317f14f8f07da2d95ec3fa01f86e4467b725e60917"
+checksum = "f8ed6a7761f76e3b9f92dfb0a60a6a6477c61024b775147ff0973a02653abaf2"
 dependencies = [
  "digest",
  "hmac",
@@ -2363,9 +2326,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.10.3"
+version = "1.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b62dbe01f0b06f9d8dc7d49e05a0785f153b00b2c227856282f671e0318c9b15"
+checksum = "c117dbdfde9c8308975b6a18d71f3f385c89461f7b3fb054288ecf2a2058ba4c"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -2497,7 +2460,7 @@ version = "0.38.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "322394588aaf33c24007e8bb3238ee3e4c5c09c084ab32bc73890b99ff326bca"
 dependencies = [
- "bitflags 2.4.2",
+ "bitflags 2.5.0",
  "errno",
  "libc",
  "linux-raw-sys",
@@ -2869,18 +2832,18 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "1.0.56"
+version = "1.0.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d54378c645627613241d077a3a79db965db602882668f9136ac42af9ecb730ad"
+checksum = "03468839009160513471e86a034bb2c5c0e4baae3b43f79ffc55c4a5427b3297"
 dependencies = [
  "thiserror-impl",
 ]
 
 [[package]]
 name = "thiserror-impl"
-version = "1.0.56"
+version = "1.0.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa0faa943b50f3db30a20aa7e265dbc66076993efed8463e8de414e5d06d3471"
+checksum = "c61f3ba182994efc43764a46c018c347bc492c79f024e705f46567b418f6d4f7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3394,9 +3357,9 @@ name = "utils"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "clippy-utilities 0.2.0",
+ "clippy-utilities",
  "dashmap",
- "derive_builder 0.13.0",
+ "derive_builder",
  "getset",
  "madsim-tokio",
  "madsim-tonic",
@@ -3404,6 +3367,7 @@ dependencies = [
  "opentelemetry-jaeger",
  "opentelemetry_sdk",
  "parking_lot",
+ "pbkdf2",
  "petgraph",
  "rand",
  "serde",
@@ -3753,10 +3717,11 @@ name = "workspace-hack"
 version = "0.1.0"
 dependencies = [
  "axum",
- "bitflags 2.4.2",
+ "bitflags 2.5.0",
  "bytes",
  "cc",
  "clap",
+ "crypto-common",
  "digest",
  "either",
  "futures-channel",
@@ -3775,6 +3740,7 @@ dependencies = [
  "rand",
  "serde",
  "serde_json",
+ "sha2",
  "syn 2.0.48",
  "time",
  "tokio",
@@ -3815,7 +3781,7 @@ dependencies = [
  "axum",
  "bytes",
  "clap",
- "clippy-utilities 0.1.0",
+ "clippy-utilities",
  "crc32fast",
  "crossbeam-skiplist",
  "curp",
@@ -3873,14 +3839,13 @@ name = "xline-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "clippy-utilities 0.1.0",
+ "clippy-utilities",
  "curp",
  "futures",
  "getrandom",
  "http",
  "madsim-tokio",
  "madsim-tonic",
- "pbkdf2",
  "rand",
  "test-macros",
  "thiserror",

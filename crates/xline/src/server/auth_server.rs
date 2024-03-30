@@ -1,11 +1,8 @@
 use std::sync::Arc;
 
-use pbkdf2::{
-    password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
-    Pbkdf2,
-};
 use tonic::metadata::MetadataMap;
 use tracing::debug;
+use utils::hash_password;
 use xlineapi::{
     command::{Command, CommandResponse, CurpClient, SyncResponse},
     request_validation::RequestValidator,
@@ -72,15 +69,6 @@ where
         Ok(res)
     }
 
-    /// Hash password
-    fn hash_password(password: &[u8]) -> String {
-        let salt = SaltString::generate(&mut OsRng);
-        let hashed_password = Pbkdf2
-            .hash_password(password, salt.as_ref())
-            .unwrap_or_else(|e| panic!("Failed to hash password: {e}"));
-        hashed_password.to_string()
-    }
-
     /// Propose request and make a response
     async fn handle_req<Req, Res>(
         &self,
@@ -145,7 +133,8 @@ where
         let user_add_req = request.get_mut();
         debug!("Receive AuthUserAddRequest {}", user_add_req);
         user_add_req.validation()?;
-        let hashed_password = Self::hash_password(user_add_req.password.as_bytes());
+        let hashed_password = hash_password(user_add_req.password.as_bytes())
+            .map_err(|err| tonic::Status::internal(format!("Failed to hash password: {err}")))?;
         user_add_req.hashed_password = hashed_password;
         user_add_req.password = String::new();
         self.handle_req(request, false).await
@@ -183,7 +172,8 @@ where
     ) -> Result<tonic::Response<AuthUserChangePasswordResponse>, tonic::Status> {
         debug!("Receive AuthUserChangePasswordRequest {:?}", request);
         let user_change_password_req = request.get_mut();
-        let hashed_password = Self::hash_password(user_change_password_req.password.as_bytes());
+        let hashed_password = hash_password(user_change_password_req.password.as_bytes())
+            .map_err(|err| tonic::Status::internal(format!("Failed to hash password: {err}")))?;
         user_change_password_req.hashed_password = hashed_password;
         user_change_password_req.password = String::new();
         self.handle_req(request, false).await
