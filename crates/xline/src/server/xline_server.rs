@@ -37,7 +37,6 @@ use xlineapi::command::{Command, CurpClient};
 use super::{
     auth_server::AuthServer,
     auth_wrapper::AuthWrapper,
-    barriers::IndexBarrier,
     cluster_server::ClusterServer,
     command::{Alarmer, CommandExecutor},
     kv_server::KvServer,
@@ -464,7 +463,6 @@ impl XlineServer {
             )
             .await?;
 
-        let index_barrier = Arc::new(IndexBarrier::new());
         let id_barrier = Arc::new(IdBarrier::new());
         let compact_events = Arc::new(DashMap::new());
         let ce = Arc::new(CommandExecutor::new(
@@ -473,7 +471,6 @@ impl XlineServer {
             Arc::clone(&lease_storage),
             Arc::clone(&alarm_storage),
             Arc::clone(&db),
-            Arc::clone(&index_barrier),
             Arc::clone(&id_barrier),
             header_gen.general_revision_arc(),
             header_gen.auth_revision_arc(),
@@ -549,9 +546,6 @@ impl XlineServer {
             KvServer::new(
                 Arc::clone(&kv_storage),
                 Arc::clone(&auth_storage),
-                index_barrier,
-                id_barrier,
-                *server_timeout.range_retry_timeout(),
                 *server_timeout.compact_timeout(),
                 Arc::clone(&client),
                 compact_events,
