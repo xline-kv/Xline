@@ -22,7 +22,7 @@ dashmap = "5.5.0"
 derive_builder = "0.13.0"
 engine = { path = "../engine" }
 event-listener = "2.5.2"
-flume = "0.10.14"
+flume = "0.11.0"
 fs2 = "0.4.3"
 futures = "0.3.21"
 indexmap = "1.9.2"
