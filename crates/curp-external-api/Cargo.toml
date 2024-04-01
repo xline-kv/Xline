@@ -11,7 +11,7 @@ categories = ["API"]
 keywords = ["API", "Curp"]
 
 [dependencies]
-async-trait = "0.1.53"
+async-trait = "0.1.79"
 engine = { path = "../engine" }
 mockall = "0.12.1"
 prost = "0.12.3"

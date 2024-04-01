@@ -18,7 +18,7 @@ tokio = ["dep:async-trait"]
 parking_lot = ["dep:parking_lot"]
 
 [dependencies]
-async-trait = { version = "0.1.60", optional = true }
+async-trait = { version = "0.1.79", optional = true }
 clippy-utilities = "0.2.0"
 dashmap = "5.5.3"
 derive_builder = "0.13.0"

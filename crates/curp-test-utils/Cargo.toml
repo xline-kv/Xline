@@ -11,7 +11,7 @@ license = "Apache-2.0"
 readme = "README.md"
 
 [dependencies]
-async-trait = "0.1.53"
+async-trait = "0.1.79"
 bincode = "1.3.3"
 curp-external-api = { path = "../curp-external-api" }
 engine = { path = "../engine" }
