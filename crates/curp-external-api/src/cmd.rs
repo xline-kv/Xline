@@ -170,7 +170,7 @@ where
     async fn reset(&self, snapshot: Option<(Snapshot, LogIndex)>) -> Result<(), C::Error>;
 
     /// Trigger the barrier of the given trigger id (based on propose id) and log index.
-    fn trigger(&self, id: InflightId, index: LogIndex);
+    fn trigger(&self, id: InflightId);
 }
 
 /// Codec for encoding and decoding data into/from the Protobuf format

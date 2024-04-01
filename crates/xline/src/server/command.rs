@@ -18,7 +18,6 @@ use xlineapi::{
     AlarmAction, AlarmRequest, AlarmType,
 };
 
-use super::barriers::IndexBarrier;
 use crate::{
     revision_number::RevisionNumberGenerator,
     rpc::{RequestBackend, RequestWrapper},
@@ -73,8 +72,6 @@ pub(crate) struct CommandExecutor {
     alarm_storage: Arc<AlarmStore>,
     /// persistent storage
     db: Arc<DB>,
-    /// Barrier for applied index
-    index_barrier: Arc<IndexBarrier>,
     /// Barrier for propose id
     id_barrier: Arc<IdBarrier<InflightId>>,
     /// Revision Number generator for KV request and Lease request
@@ -225,7 +222,6 @@ impl CommandExecutor {
         lease_storage: Arc<LeaseStore>,
         alarm_storage: Arc<AlarmStore>,
         db: Arc<DB>,
-        index_barrier: Arc<IndexBarrier>,
         id_barrier: Arc<IdBarrier<InflightId>>,
         general_rev: Arc<RevisionNumberGenerator>,
         auth_rev: Arc<RevisionNumberGenerator>,
@@ -240,7 +236,6 @@ impl CommandExecutor {
             lease_storage,
             alarm_storage,
             db,
-            index_barrier,
             id_barrier,
             general_rev,
             auth_rev,
@@ -406,9 +401,8 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
         Ok(u64::from_le_bytes(buf))
     }
 
-    fn trigger(&self, id: InflightId, index: LogIndex) {
+    fn trigger(&self, id: InflightId) {
         self.id_barrier.trigger(&id);
-        self.index_barrier.trigger(index);
     }
 }
 

@@ -414,7 +414,7 @@ impl CommandExecutor<TestCommand> for TestCE {
         Ok(())
     }
 
-    fn trigger(&self, _id: InflightId, _index: LogIndex) {}
+    fn trigger(&self, _id: InflightId) {}
 }
 
 impl TestCE {

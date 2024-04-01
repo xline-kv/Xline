@@ -137,7 +137,7 @@ async fn worker_exe<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
         | EntryData::SetNodeState(_, _, _) => true,
     };
     if !success {
-        ce.trigger(entry.inflight_id(), entry.index);
+        ce.trigger(entry.inflight_id());
     }
     success
 }
@@ -240,7 +240,7 @@ async fn worker_as<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
         }
         EntryData::Empty => true,
     };
-    ce.trigger(entry.inflight_id(), entry.index);
+    ce.trigger(entry.inflight_id());
     success
 }
 
