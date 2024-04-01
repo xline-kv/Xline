@@ -82,7 +82,7 @@ etcd-client = { version = "0.12.1", features = ["tls"] }
 mockall = "0.12.1"
 rand = "0.8.5"
 strum = "0.25"
-strum_macros = "0.25.1"
+strum_macros = "0.26.2"
 test-macros = { path = "../test-macros" }
 xline-client = { path = "../xline-client" }
 xline-test-utils = { path = "../xline-test-utils" }
