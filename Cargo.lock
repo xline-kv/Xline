@@ -613,7 +613,7 @@ dependencies = [
  "flume",
  "fs2",
  "futures",
- "indexmap 1.9.3",
+ "indexmap 2.1.0",
  "itertools 0.11.0",
  "madsim",
  "madsim-tokio",
