@@ -33,7 +33,7 @@ log = "0.4.21"
 merged_range = "0.1.0"
 nix = "0.27.0"
 opentelemetry = { version = "0.21.0", features = ["metrics"] }
-opentelemetry-contrib = { version = "0.13.0", features = [
+opentelemetry-contrib = { version = "0.14.0", features = [
   "jaeger_json_exporter",
   "rt-tokio",
 ] }
