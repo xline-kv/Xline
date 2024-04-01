@@ -25,7 +25,7 @@ event-listener = "2.5.2"
 flume = "0.10.14"
 fs2 = "0.4.3"
 futures = "0.3.21"
-indexmap = "1.9.2"
+indexmap = "2.1.0"
 itertools = "0.11"
 madsim = { version = "0.2.26", features = ["rpc", "macros"] }
 opentelemetry = { version = "0.21.0", features = ["metrics"] }
