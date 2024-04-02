@@ -21,3 +21,7 @@ updates:
   - dependency-name: hyper
     versions:
     - 0.14.2
+  # The latest version of `clap` requires to upgrade the rustc from 1.71.0 to 1.74.0 or newer.
+  - dependency-name: clap
+    versions:
+    - 4.4.18
