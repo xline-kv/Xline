@@ -108,7 +108,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check Spelling
-        uses: crate-ci/typos@v1.19.0
+        uses: crate-ci/typos@v1.20.1
 
   build:
     name: build
