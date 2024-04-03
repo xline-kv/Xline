@@ -2,7 +2,7 @@ use curp_external_api::conflict::{ConflictPoolOp, UncommittedPoolOp};
 
 use crate::rpc::PoolEntry;
 
-use super::{CommandEntry, ConfChangeEntry, SplitEntry};
+use super::{CommandEntry, ConfChangeEntry, ConflictPoolEntry};
 
 /// An uncommitted pool object
 pub type UcpObject<C> = Box<dyn UncommittedPoolOp<Entry = CommandEntry<C>> + Send + 'static>;
@@ -30,13 +30,13 @@ impl<C> UncommittedPool<C> {
 
         conflict |= !self.conf_change_ucp.is_empty();
 
-        match SplitEntry::from(entry) {
-            SplitEntry::Command(c) => {
+        match ConflictPoolEntry::from(entry) {
+            ConflictPoolEntry::Command(c) => {
                 for cucp in &mut self.command_ucps {
                     conflict |= cucp.insert(c.clone());
                 }
             }
-            SplitEntry::ConfChange(c) => {
+            ConflictPoolEntry::ConfChange(c) => {
                 let _ignore = self.conf_change_ucp.insert(c);
                 conflict |= !self
                     .command_ucps
@@ -51,13 +51,13 @@ impl<C> UncommittedPool<C> {
 
     /// Removes an entry from the pool
     pub(crate) fn remove(&mut self, entry: PoolEntry<C>) {
-        match SplitEntry::from(entry) {
-            SplitEntry::Command(c) => {
+        match ConflictPoolEntry::from(entry) {
+            ConflictPoolEntry::Command(c) => {
                 for cucp in &mut self.command_ucps {
                     cucp.remove(c.clone());
                 }
             }
-            SplitEntry::ConfChange(c) => {
+            ConflictPoolEntry::ConfChange(c) => {
                 self.conf_change_ucp.remove(c);
             }
         }
@@ -65,9 +65,9 @@ impl<C> UncommittedPool<C> {
 
     /// Returns all entries in the pool that conflict with the given entry
     pub(crate) fn all_conflict(&self, entry: PoolEntry<C>) -> Vec<PoolEntry<C>> {
-        match SplitEntry::from(entry) {
+        match ConflictPoolEntry::from(entry) {
             // A command entry conflict with other conflict entries plus all conf change entries
-            SplitEntry::Command(ref c) => self
+            ConflictPoolEntry::Command(ref c) => self
                 .conf_change_ucp
                 .all()
                 .into_iter()
@@ -80,7 +80,7 @@ impl<C> UncommittedPool<C> {
                 )
                 .collect(),
             // A conf change entry conflict with all other entries
-            SplitEntry::ConfChange(_) => self
+            ConflictPoolEntry::ConfChange(_) => self
                 .conf_change_ucp
                 .all()
                 .into_iter()

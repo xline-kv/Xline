@@ -2,7 +2,7 @@ use curp_external_api::conflict::{ConflictPoolOp, SpeculativePoolOp};
 
 use crate::rpc::PoolEntry;
 
-use super::{CommandEntry, ConfChangeEntry, SplitEntry};
+use super::{CommandEntry, ConfChangeEntry, ConflictPoolEntry};
 
 /// A speculative pool object
 pub type SpObject<C> = Box<dyn SpeculativePoolOp<Entry = CommandEntry<C>> + Send + 'static>;
@@ -30,15 +30,15 @@ impl<C> SpeculativePool<C> {
             return Some(entry);
         }
 
-        match SplitEntry::from(entry) {
-            SplitEntry::Command(c) => {
+        match ConflictPoolEntry::from(entry) {
+            ConflictPoolEntry::Command(c) => {
                 for csp in &mut self.command_sps {
                     if let Some(e) = csp.insert_if_not_conflict(c.clone()) {
                         return Some(e.into());
                     }
                 }
             }
-            SplitEntry::ConfChange(c) => {
+            ConflictPoolEntry::ConfChange(c) => {
                 if !self
                     .command_sps
                     .iter()
@@ -57,13 +57,13 @@ impl<C> SpeculativePool<C> {
     // TODO: Use reference instead of clone
     /// Removes an entry from the pool
     pub(crate) fn remove(&mut self, entry: PoolEntry<C>) {
-        match SplitEntry::from(entry) {
-            SplitEntry::Command(c) => {
+        match ConflictPoolEntry::from(entry) {
+            ConflictPoolEntry::Command(c) => {
                 for csp in &mut self.command_sps {
                     csp.remove(c.clone());
                 }
             }
-            SplitEntry::ConfChange(c) => {
+            ConflictPoolEntry::ConfChange(c) => {
                 self.conf_change_sp.remove(c);
             }
         }
