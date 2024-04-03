@@ -16,21 +16,21 @@ use crate::rpc::{ConfChange, PoolEntry, PoolEntryInner, ProposeId};
 
 // TODO: relpace `PoolEntry` with this
 /// Entry stored in conflict pools
-pub(super) enum SplitEntry<C> {
+pub(super) enum ConflictPoolEntry<C> {
     /// A command entry
     Command(CommandEntry<C>),
     /// A conf change entry
     ConfChange(ConfChangeEntry),
 }
 
-impl<C> From<PoolEntry<C>> for SplitEntry<C> {
+impl<C> From<PoolEntry<C>> for ConflictPoolEntry<C> {
     fn from(entry: PoolEntry<C>) -> Self {
         match entry.inner {
-            PoolEntryInner::Command(c) => SplitEntry::Command(CommandEntry {
+            PoolEntryInner::Command(c) => ConflictPoolEntry::Command(CommandEntry {
                 id: entry.id,
                 cmd: c,
             }),
-            PoolEntryInner::ConfChange(c) => SplitEntry::ConfChange(ConfChangeEntry {
+            PoolEntryInner::ConfChange(c) => ConflictPoolEntry::ConfChange(ConfChangeEntry {
                 id: entry.id,
                 conf_change: c,
             }),
