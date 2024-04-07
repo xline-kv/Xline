@@ -49,7 +49,8 @@ jobs:
         run: ci/scripts/check-trailing-spaces.sh
 
       - name: Audit
-        run: cargo audit
+        # remove `--ignore` when https://github.com/hyperium/tonic/pull/1670 is merged
+        run: cargo audit --ignore RUSTSEC-2024-0332
 
       - name: Format
         run: cargo fmt --all -- --check
