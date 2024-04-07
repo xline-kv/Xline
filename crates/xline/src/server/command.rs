@@ -339,14 +339,7 @@ impl CommandExecutor {
 
 #[async_trait::async_trait]
 impl CurpCommandExecutor<Command> for CommandExecutor {
-    fn prepare(
-        &self,
-        _cmd: &Command,
-    ) -> Result<<Command as CurpCommand>::PR, <Command as CurpCommand>::Error> {
-        Ok(-1)
-    }
-
-    async fn execute(
+    fn execute(
         &self,
         cmd: &Command,
     ) -> Result<<Command as CurpCommand>::ER, <Command as CurpCommand>::Error> {
