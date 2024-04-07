@@ -124,7 +124,7 @@ fn red_black_tree_properties_is_satisfied() {
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "invalid range")]
 fn invalid_range_should_panic() {
     let _interval = Interval::new(3, 1);
 }

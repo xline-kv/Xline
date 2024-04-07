@@ -24,7 +24,7 @@ impl LeaseIdGenerator {
         getrandom::getrandom(&mut buf).unwrap_or_else(|err| {
             panic!("Failed to generate random bytes for lease id generator: {err}");
         });
-        let id = AtomicU64::new(u64::from_be_bytes(buf));
+        let id = AtomicU64::new(u64::from_le_bytes(buf));
         Self { id }
     }
 

@@ -353,7 +353,7 @@ async fn test_unary_fast_round_less_quorum() {
 /// TODO: fix in subsequence PR
 #[traced_test]
 #[tokio::test]
-#[should_panic]
+#[should_panic(expected = "should not set exe result twice")]
 async fn test_unary_fast_round_with_two_leader() {
     let connects = init_mocked_connects(5, |id, conn| {
         conn.expect_propose()
@@ -928,6 +928,7 @@ async fn test_stream_client_keep_alive_hang_up_on_bypassed() {
 
 #[traced_test]
 #[tokio::test]
+#[allow(clippy::ignored_unit_patterns)] // tokio select internal triggered
 async fn test_stream_client_keep_alive_resume_on_leadership_changed() {
     let connects = init_mocked_stream_connects(5, 1, 2, move |client_id| {
         Box::pin(async move {

@@ -942,8 +942,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         // TODO: Generate client id in the same way as client
         let propose_id = ProposeId(rand::random(), 0);
         let _ignore = log_w.push(st_w.term, propose_id, EntryData::Empty);
-        self.recover_from_spec_pools(&mut st_w, &mut log_w, spec_pools);
-        self.recover_ucp_from_log(&mut log_w);
+        self.recover_from_spec_pools(&st_w, &mut log_w, spec_pools);
+        self.recover_ucp_from_log(&log_w);
         let last_log_index = log_w.last_log_index();
 
         self.become_leader(&mut st_w);
@@ -1593,7 +1593,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             let spec_pools = cst.sps.drain().collect();
             let mut log_w = RwLockUpgradableReadGuard::upgrade(log);
             self.recover_from_spec_pools(st, &mut log_w, spec_pools);
-            self.recover_ucp_from_log(&mut log_w);
+            self.recover_ucp_from_log(&log_w);
             self.become_leader(st);
             None
         } else {
@@ -1673,7 +1673,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Recover from all voter's spec pools
     fn recover_from_spec_pools(
         &self,
-        st: &mut State,
+        st: &State,
         log: &mut Log<C>,
         spec_pools: HashMap<ServerId, Vec<PoolEntry<C>>>,
     ) {
@@ -1733,7 +1733,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Recover the ucp from uncommitted log entries
-    fn recover_ucp_from_log(&self, log: &mut Log<C>) {
+    fn recover_ucp_from_log(&self, log: &Log<C>) {
         let mut ucp_l = self.ctx.ucp.lock();
 
         for i in log.commit_index + 1..=log.last_log_index() {

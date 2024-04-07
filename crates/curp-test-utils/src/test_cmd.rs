@@ -265,7 +265,7 @@ impl CommandExecutor<TestCommand> for TestCE {
         let keys = cmd
             .keys
             .iter()
-            .map(|k| k.to_be_bytes().to_vec())
+            .map(|k| k.to_le_bytes().to_vec())
             .collect_vec();
         let result: TestCommandResult = match cmd.cmd_type {
             TestCommandType::Get => {
@@ -275,7 +275,7 @@ impl CommandExecutor<TestCommand> for TestCE {
                     .map_err(|e| ExecuteError(e.to_string()))?
                     .into_iter()
                     .flatten()
-                    .map(|v| u32::from_be_bytes(v.as_slice().try_into().unwrap()))
+                    .map(|v| u32::from_le_bytes(v.as_slice().try_into().unwrap()))
                     .collect();
                 let revision = self
                     .store
@@ -283,7 +283,7 @@ impl CommandExecutor<TestCommand> for TestCE {
                     .map_err(|e| ExecuteError(e.to_string()))?
                     .into_iter()
                     .flatten()
-                    .map(|v| i64::from_be_bytes(v.as_slice().try_into().unwrap()))
+                    .map(|v| i64::from_le_bytes(v.as_slice().try_into().unwrap()))
                     .collect_vec();
                 TestCommandResult::new(value, revision)
             }
@@ -316,11 +316,11 @@ impl CommandExecutor<TestCommand> for TestCE {
         )];
         if let TestCommandType::Put(v) = cmd.cmd_type {
             debug!("cmd {:?}-{:?} revision is {}", cmd.cmd_type, cmd, revision);
-            let value = v.to_be_bytes().to_vec();
+            let value = v.to_le_bytes().to_vec();
             let keys = cmd
                 .keys
                 .iter()
-                .map(|k| k.to_be_bytes().to_vec())
+                .map(|k| k.to_le_bytes().to_vec())
                 .collect_vec();
             wr_ops.extend(
                 keys.clone()
@@ -330,7 +330,7 @@ impl CommandExecutor<TestCommand> for TestCE {
                         WriteOperation::new_put(
                             REVISION_TABLE,
                             key,
-                            revision.to_be_bytes().to_vec(),
+                            revision.to_le_bytes().to_vec(),
                         )
                     })),
             );

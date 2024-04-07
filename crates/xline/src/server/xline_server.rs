@@ -716,5 +716,5 @@ fn bind_addrs(
                 .map_err(|e| anyhow::anyhow!("Failed to bind to {}, err: {e}", addr))
         })
         .collect::<Result<Vec<_>>>()?;
-    Ok(futures::stream::select_all(incoming.into_iter()))
+    Ok(futures::stream::select_all(incoming))
 }

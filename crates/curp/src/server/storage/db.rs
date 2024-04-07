@@ -53,7 +53,7 @@ impl<C: Command> StorageApi for DB<C> {
     #[inline]
     async fn put_log_entry(&self, entry: &LogEntry<Self::Command>) -> Result<(), StorageError> {
         let bytes = bincode::serialize(entry)?;
-        let op = WriteOperation::new_put(LOGS_CF, entry.index.to_be_bytes().to_vec(), bytes);
+        let op = WriteOperation::new_put(LOGS_CF, entry.index.to_le_bytes().to_vec(), bytes);
         self.db.write_batch(vec![op], false)?;
 
         Ok(())
@@ -63,14 +63,14 @@ impl<C: Command> StorageApi for DB<C> {
     fn put_member(&self, member: &Member) -> Result<(), StorageError> {
         let id = member.id;
         let data = member.encode_to_vec();
-        let op = WriteOperation::new_put(MEMBERS_CF, id.to_be_bytes().to_vec(), data);
+        let op = WriteOperation::new_put(MEMBERS_CF, id.to_le_bytes().to_vec(), data);
         self.db.write_batch(vec![op], true)?;
         Ok(())
     }
 
     #[inline]
     fn remove_member(&self, id: ServerId) -> Result<(), StorageError> {
-        let id_bytes = id.to_be_bytes();
+        let id_bytes = id.to_le_bytes();
         let op = WriteOperation::new_delete(MEMBERS_CF, &id_bytes);
         self.db.write_batch(vec![op], true)?;
         Ok(())
@@ -82,17 +82,17 @@ impl<C: Command> StorageApi for DB<C> {
         ops.push(WriteOperation::new_put(
             CF,
             CLUSTER_ID.to_vec(),
-            cluster_info.cluster_id().to_be_bytes().to_vec(),
+            cluster_info.cluster_id().to_le_bytes().to_vec(),
         ));
         ops.push(WriteOperation::new_put(
             CF,
             MEMBER_ID.to_vec(),
-            cluster_info.self_id().to_be_bytes().to_vec(),
+            cluster_info.self_id().to_le_bytes().to_vec(),
         ));
         for m in cluster_info.all_members_vec() {
             ops.push(WriteOperation::new_put(
                 MEMBERS_CF,
-                m.id.to_be_bytes().to_vec(),
+                m.id.to_le_bytes().to_vec(),
                 m.encode_to_vec(),
             ));
         }
@@ -103,7 +103,7 @@ impl<C: Command> StorageApi for DB<C> {
     #[inline]
     fn recover_cluster_info(&self) -> Result<Option<ClusterInfo>, StorageError> {
         let cluster_id = self.db.get(CF, CLUSTER_ID)?.map(|bytes| {
-            u64::from_be_bytes(
+            u64::from_le_bytes(
                 bytes
                     .as_slice()
                     .try_into()
@@ -111,7 +111,7 @@ impl<C: Command> StorageApi for DB<C> {
             )
         });
         let member_id = self.db.get(CF, MEMBER_ID)?.map(|bytes| {
-            u64::from_be_bytes(
+            u64::from_le_bytes(
                 bytes
                     .as_slice()
                     .try_into()

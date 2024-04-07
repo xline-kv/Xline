@@ -38,6 +38,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             && self.cst.lock().config.contains(id)
     }
 
+    #[allow(clippy::mem_forget)] // we should prevent the channel from being dropped
     pub(crate) fn new_test<Tx: CEEventTxApi<C>>(
         n: u64,
         exe_tx: Tx,
@@ -163,12 +164,12 @@ fn leader_handle_propose_will_reject_conflicted() {
 
     let cmd2 = Arc::new(TestCommand::new_put(vec![1, 2], 1));
     let res = curp.handle_propose(ProposeId(TEST_CLIENT_ID, 1), cmd2);
-    assert!(matches!(res, Err(CurpError::KeyConflict(_))));
+    assert!(matches!(res, Err(CurpError::KeyConflict(()))));
 
     // leader will also reject cmds that conflict un-synced cmds
     let cmd3 = Arc::new(TestCommand::new_put(vec![2], 1));
     let res = curp.handle_propose(ProposeId(TEST_CLIENT_ID, 2), cmd3);
-    assert!(matches!(res, Err(CurpError::KeyConflict(_))));
+    assert!(matches!(res, Err(CurpError::KeyConflict(()))));
 }
 
 #[traced_test]
@@ -186,7 +187,7 @@ fn leader_handle_propose_will_reject_duplicated() {
         .unwrap());
 
     let res = curp.handle_propose(ProposeId(TEST_CLIENT_ID, 0), cmd);
-    assert!(matches!(res, Err(CurpError::Duplicated(_))));
+    assert!(matches!(res, Err(CurpError::Duplicated(()))));
 }
 
 #[traced_test]
@@ -237,7 +238,7 @@ fn follower_handle_propose_will_reject_conflicted() {
 
     let cmd2 = Arc::new(TestCommand::new_get(vec![1]));
     let res = curp.handle_propose(ProposeId(TEST_CLIENT_ID, 1), cmd2);
-    assert!(matches!(res, Err(CurpError::KeyConflict(_))));
+    assert!(matches!(res, Err(CurpError::KeyConflict(()))));
 }
 
 /*************** tests for append_entries(heartbeat) **************/

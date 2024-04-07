@@ -63,7 +63,7 @@ impl Streaming {
     pub(super) async fn keep_heartbeat(&self) {
         /// Prevent lock contention when leader crashed or some unknown errors
         const RETRY_DELAY: Duration = Duration::from_millis(100);
-
+        #[allow(clippy::ignored_unit_patterns)] // tokio select internal triggered
         loop {
             let heartbeat = self.map_remote_leader::<(), _>(|conn| async move {
                 loop {
@@ -78,13 +78,13 @@ impl Streaming {
                         CurpError::Redirect(Redirect { leader_id, term }) => {
                             let _ig = self.state.check_and_update_leader(leader_id, term).await;
                         }
-                        CurpError::WrongClusterVersion(_) => {
+                        CurpError::WrongClusterVersion(()) => {
                             warn!(
                                 "cannot find the leader in connects, wait for  leadership update"
                             );
                             self.state.leader_notifier().listen().await;
                         }
-                        CurpError::ShuttingDown(_) => {
+                        CurpError::ShuttingDown(()) => {
                             debug!("shutting down stream client background task");
                             break Err(err);
                         }

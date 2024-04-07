@@ -80,7 +80,7 @@ where
     S: StorageApi,
 {
     /// New `AuthStore`
-    #[allow(clippy::arithmetic_side_effects)] // Introduced by tokio::select!
+    #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)] // Introduced by tokio::select!
     pub(crate) fn new(
         lease_collection: Arc<LeaseCollection>,
         key_pair: Option<(EncodingKey, DecodingKey)>,
@@ -164,7 +164,7 @@ where
                 permission_cache
                     .role_to_users_map
                     .entry(role)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(username.clone());
             }
             let _ignore = permission_cache
@@ -712,17 +712,14 @@ where
         if let Ok(role) = role {
             let perms = role.key_permission;
             self.permission_cache.map_write(|mut cache| {
-                let entry = cache
-                    .user_permissions
-                    .entry(req.user.clone())
-                    .or_insert_with(UserPermissions::new);
+                let entry = cache.user_permissions.entry(req.user.clone()).or_default();
                 for perm in perms {
                     entry.insert(perm);
                 }
                 cache
                     .role_to_users_map
                     .entry(req.role.clone())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(req.user.clone());
             });
         }
@@ -795,7 +792,7 @@ where
             }
         }
         self.permission_cache.map_write(|mut cache| {
-            cache.user_permissions.extend(new_perms.into_iter());
+            cache.user_permissions.extend(new_perms);
             let _ignore = cache.role_to_users_map.remove(&req.role);
         });
         Ok(ops)
@@ -833,10 +830,7 @@ where
                 .cloned()
                 .unwrap_or_default();
             for user in users {
-                let entry = cache
-                    .user_permissions
-                    .entry(user)
-                    .or_insert_with(UserPermissions::new);
+                let entry = cache.user_permissions.entry(user).or_default();
                 entry.insert(permission.clone());
             }
         });
@@ -993,7 +987,7 @@ where
                                 Err(e)
                             }
                         },
-                        |_| Ok(()),
+                        |()| Ok(()),
                     )?;
                 }
                 RequestWrapper::AuthRoleGetRequest(ref role_get_req) => {
@@ -1006,7 +1000,7 @@ where
                                 Err(e)
                             }
                         },
-                        |_| Ok(()),
+                        |()| Ok(()),
                     )?;
                 }
                 _ => {}

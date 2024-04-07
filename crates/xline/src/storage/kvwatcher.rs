@@ -148,7 +148,7 @@ impl Watcher {
         };
 
         match self.event_tx.try_send(watch_event) {
-            Ok(_) => {
+            Ok(()) => {
                 let _ignore = self.notified_set.insert(revision);
                 Ok(())
             }
@@ -210,10 +210,7 @@ impl WatcherMap {
             "can't insert a watcher to watchers twice"
         );
         assert!(
-            self.index
-                .entry(key_range)
-                .or_insert_with(HashSet::new)
-                .insert(watch_id),
+            self.index.entry(key_range).or_default().insert(watch_id),
             "can't insert a watcher to index twice"
         );
     }
@@ -414,7 +411,7 @@ where
     }
 
     /// Background task to handle KV updates
-    #[allow(clippy::arithmetic_side_effects)] // Introduced by tokio::select!
+    #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)] // Introduced by tokio::select!
     async fn kv_updates_task(
         kv_watcher: Arc<KvWatcher<S>>,
         mut kv_update_rx: mpsc::Receiver<(i64, Vec<Event>)>,
@@ -438,7 +435,7 @@ where
     }
 
     /// Background task to sync victims
-    #[allow(clippy::arithmetic_side_effects)] // Introduced by tokio::select!
+    #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)] // Introduced by tokio::select!
     async fn sync_victims_task(
         kv_watcher: Arc<KvWatcher<S>>,
         sync_victims_interval: Duration,

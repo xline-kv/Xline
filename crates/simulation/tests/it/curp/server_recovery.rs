@@ -330,7 +330,7 @@ async fn old_leader_will_keep_original_states() {
         .unwrap();
     assert_eq!(
         res,
-        vec![(0u32.to_be_bytes().to_vec(), 0u32.to_be_bytes().to_vec())]
+        vec![(0u32.to_le_bytes().to_vec(), 0u32.to_le_bytes().to_vec())]
     );
 
     // 5: the client should also get the original state
@@ -460,7 +460,7 @@ async fn recovery_after_compaction() {
     {
         let node = group.nodes.get_mut(&node_id).unwrap();
         for i in 0..50_u32 {
-            let kv = i.to_be_bytes().to_vec();
+            let kv = i.to_le_bytes().to_vec();
             let val = node
                 .store
                 .lock()

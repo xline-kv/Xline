@@ -126,7 +126,6 @@
     clippy::impl_trait_in_params,
     clippy::let_underscore_untyped,
     clippy::missing_assert_message,
-    clippy::multiple_unsafe_ops_per_block,
     clippy::semicolon_inside_block,
     // clippy::semicolon_outside_block, already used `semicolon_inside_block`
     clippy::tests_outside_test_module,
@@ -153,7 +152,7 @@ use xline::{
 };
 
 #[tokio::main]
-#[allow(clippy::arithmetic_side_effects)] // Introduced by tokio::select!
+#[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)] // Introduced by tokio::select!
 async fn main() -> Result<()> {
     global::set_text_map_propagator(TraceContextPropagator::new());
     let config = parse_config().await?;
