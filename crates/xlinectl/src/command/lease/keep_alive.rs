@@ -34,7 +34,8 @@ pub(super) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result
 
     let (mut keeper, mut stream) = client.lease_client().keep_alive(req).await?;
 
-    #[allow(clippy::arithmetic_side_effects)] // introduced by tokio::select
+    #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)]
+    // introduced by tokio::select
     if once {
         keeper.keep_alive()?;
         if let Some(resp) = stream.message().await? {

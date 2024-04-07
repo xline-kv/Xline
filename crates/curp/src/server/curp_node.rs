@@ -396,7 +396,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
 /// Spawned tasks
 impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     /// Tick periodically
-    #[allow(clippy::arithmetic_side_effects)]
+    #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)]
     async fn election_task(curp: Arc<RawCurp<C, RC>>, shutdown_listener: Listener) {
         let heartbeat_interval = curp.cfg().heartbeat_interval;
         // wait for some random time before tick starts to minimize vote split possibility
@@ -439,7 +439,8 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
     ) {
         let task_manager = curp.task_manager();
         let change_rx = curp.change_rx();
-        #[allow(clippy::arithmetic_side_effects)] // introduced by tokio select
+        #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)]
+        // introduced by tokio select
         loop {
             let change: ConfChange = tokio::select! {
                 _ = shutdown_listener.wait() => break,
@@ -506,6 +507,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
 
     /// This task will keep a follower up-to-data when current node is leader,
     /// and it will wait for `leader_event` if current node is not leader
+    #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)] // tokio select internal triggered
     async fn sync_follower_task(
         curp: Arc<RawCurp<C, RC>>,
         connect: InnerConnectApiWrapper,
@@ -521,53 +523,50 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         let batch_timeout = curp.cfg().batch_timeout;
         let leader_event = curp.leader_event();
 
-        #[allow(clippy::arithmetic_side_effects)] // tokio select internal triggered
-        'outer: loop {
-            if !curp.is_leader() {
-                tokio::select! {
-                    _ = shutdown_listener.wait_state() => return,
-                    _ = remove_event.listen() => return,
-                    _ = leader_event.listen() => {}
-                }
+        if !curp.is_leader() {
+            tokio::select! {
+                _ = shutdown_listener.wait_state() => return,
+                _ = remove_event.listen() => return,
+                _ = leader_event.listen() => {}
             }
-            let mut hb_opt = false;
-            let mut is_shutdown_state = false;
-            let mut ae_fail_count = 0;
-            loop {
-                // a sync is either triggered by an heartbeat timeout event or when new log entries arrive
-                tokio::select! {
-                    state = shutdown_listener.wait_state(), if !is_shutdown_state => {
-                        match state {
-                            State::Running => unreachable!("wait state should not return Run"),
-                            State::Shutdown => return,
-                            State::ClusterShutdown => is_shutdown_state = true,
-                        }
-                    },
-                    _ = remove_event.listen() => return,
-                    _now = ticker.tick() => hb_opt = false,
-                    res = tokio::time::timeout(batch_timeout, sync_event.listen()) => {
-                        if let Err(_e) = res {
-                            hb_opt = true;
-                        }
+        }
+        let mut hb_opt = false;
+        let mut is_shutdown_state = false;
+        let mut ae_fail_count = 0;
+        loop {
+            // a sync is either triggered by an heartbeat timeout event or when new log entries arrive
+            tokio::select! {
+                state = shutdown_listener.wait_state(), if !is_shutdown_state => {
+                    match state {
+                        State::Running => unreachable!("wait state should not return Run"),
+                        State::Shutdown => return,
+                        State::ClusterShutdown => is_shutdown_state = true,
+                    }
+                },
+                _ = remove_event.listen() => return,
+                _now = ticker.tick() => hb_opt = false,
+                res = tokio::time::timeout(batch_timeout, sync_event.listen()) => {
+                    if let Err(_e) = res {
+                        hb_opt = true;
                     }
                 }
-
-                let Some(sync_action) = curp.sync(connect_id) else {
-                    break 'outer;
-                };
-                if Self::handle_sync_action(
-                    sync_action,
-                    &mut hb_opt,
-                    is_shutdown_state,
-                    &mut ae_fail_count,
-                    connect.as_ref(),
-                    curp.as_ref(),
-                )
-                .await
-                {
-                    break 'outer;
-                };
             }
+
+            let Some(sync_action) = curp.sync(connect_id) else {
+                break;
+            };
+            if Self::handle_sync_action(
+                sync_action,
+                &mut hb_opt,
+                is_shutdown_state,
+                &mut ae_fail_count,
+                connect.as_ref(),
+                curp.as_ref(),
+            )
+            .await
+            {
+                break;
+            };
         }
         debug!("{} to {} sync follower task exits", curp.id(), connect.id());
     }
@@ -578,7 +577,8 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         storage: Arc<dyn StorageApi<Command = C>>,
         shutdown_listener: Listener,
     ) {
-        #[allow(clippy::arithmetic_side_effects)] // introduced by tokio select
+        #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)]
+        // introduced by tokio select
         loop {
             tokio::select! {
                 e = log_rx.recv() => {
@@ -700,7 +700,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
         });
 
         let mut remove_events = HashMap::new();
-        for c in curp.connects().iter() {
+        for c in curp.connects() {
             let sync_event = curp.sync_event(c.id());
             let remove_event = Arc::new(Event::new());
 

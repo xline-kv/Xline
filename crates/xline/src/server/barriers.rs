@@ -30,11 +30,7 @@ impl IndexBarrier {
             if inner_l.last_trigger_index >= index {
                 return;
             }
-            inner_l
-                .barriers
-                .entry(index)
-                .or_insert_with(Event::new)
-                .listen()
+            inner_l.barriers.entry(index).or_default().listen()
         };
         listener.await;
     }
@@ -79,12 +75,7 @@ impl IdBarrier {
 
     /// Wait for the id until it is triggered.
     pub(crate) async fn wait(&self, id: InflightId) {
-        let listener = self
-            .barriers
-            .lock()
-            .entry(id)
-            .or_insert_with(Event::new)
-            .listen();
+        let listener = self.barriers.lock().entry(id).or_default().listen();
         listener.await;
     }
 

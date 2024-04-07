@@ -143,30 +143,30 @@ where
 
             match err {
                 // some errors that should not retry
-                CurpError::Duplicated(_)
-                | CurpError::ShuttingDown(_)
-                | CurpError::InvalidConfig(_)
-                | CurpError::NodeNotExists(_)
-                | CurpError::NodeAlreadyExists(_)
-                | CurpError::LearnerNotCatchUp(_) => {
+                CurpError::Duplicated(())
+                | CurpError::ShuttingDown(())
+                | CurpError::InvalidConfig(())
+                | CurpError::NodeNotExists(())
+                | CurpError::NodeAlreadyExists(())
+                | CurpError::LearnerNotCatchUp(()) => {
                     return Err(tonic::Status::from(err));
                 }
 
                 // some errors that could have a retry
-                CurpError::ExpiredClientId(_)
-                | CurpError::KeyConflict(_)
+                CurpError::ExpiredClientId(())
+                | CurpError::KeyConflict(())
                 | CurpError::Internal(_)
                 | CurpError::LeaderTransfer(_) => {}
 
                 // update leader state if we got a rpc transport error
-                CurpError::RpcTransport(_) => {
+                CurpError::RpcTransport(()) => {
                     if let Err(e) = self.inner.fetch_leader_id(true).await {
                         warn!("fetch leader failed, error {e:?}");
                     }
                 }
 
                 // update the cluster state if got WrongClusterVersion
-                CurpError::WrongClusterVersion(_) => {
+                CurpError::WrongClusterVersion(()) => {
                     // the inner client should automatically update cluster state when fetch_cluster
                     if let Err(e) = self.inner.fetch_cluster(true).await {
                         warn!("fetch cluster failed, error {e:?}");

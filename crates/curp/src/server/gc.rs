@@ -13,7 +13,8 @@ pub(super) async fn gc_spec_pool<C: Command>(
 ) {
     let mut last_check: HashSet<ProposeId> =
         sp.map_lock(|sp_l| sp_l.pool.keys().copied().collect());
-    #[allow(clippy::arithmetic_side_effects)] // introduced by tokio select
+    #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)]
+    // introduced by tokio select
     loop {
         tokio::select! {
             _ = tokio::time::sleep(interval) => {}
@@ -36,7 +37,8 @@ pub(super) async fn gc_cmd_board<C: Command>(
     let mut last_check_len_asr = 0;
     let mut last_check_len_sync = 0;
     let mut last_check_len_conf = 0;
-    #[allow(clippy::arithmetic_side_effects)] // introduced by tokio select
+    #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)]
+    // introduced by tokio select
     loop {
         tokio::select! {
             _ = tokio::time::sleep(interval) => {}

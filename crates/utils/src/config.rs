@@ -1386,7 +1386,7 @@ mod tests {
     #[test]
     fn test_xline_server_default_config_should_be_loaded() {
         let config: XlineServerConfig = toml::from_str(
-            r#"[cluster]
+            "[cluster]
                 name = 'node1'
                 is_leader = true
                 peer_listen_urls = ['127.0.0.1:2380']
@@ -1418,7 +1418,7 @@ mod tests {
                 [auth]
 
                 [tls]
-                "#,
+                ",
         )
         .unwrap();
 
@@ -1475,7 +1475,7 @@ mod tests {
     #[test]
     fn test_auto_revision_compactor_config_should_be_loaded() {
         let config: XlineServerConfig = toml::from_str(
-            r#"[cluster]
+            "[cluster]
                 name = 'node1'
                 is_leader = true
                 peer_listen_urls = ['127.0.0.1:2380']
@@ -1511,7 +1511,7 @@ mod tests {
                 [auth]
 
                 [tls]
-                "#,
+                ",
         )
         .unwrap();
 

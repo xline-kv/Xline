@@ -301,7 +301,7 @@ impl FrameType for CommitFrame {
 
 impl FrameEncoder for CommitFrame {
     fn encode(&self) -> Vec<u8> {
-        let header = std::iter::once(self.frame_type()).chain([0u8; 7].into_iter());
+        let header = std::iter::once(self.frame_type()).chain([0u8; 7]);
         header.chain(self.checksum.clone()).collect()
     }
 }

@@ -101,7 +101,7 @@ impl<C: Command> CommandBoard<C> {
 
     /// Get a listener for execution result
     fn er_listener(&mut self, id: ProposeId) -> EventListener {
-        let event = self.er_notifiers.entry(id).or_insert_with(Event::new);
+        let event = self.er_notifiers.entry(id).or_default();
         let listener = event.listen();
         if self.er_buffer.contains_key(&id) {
             event.notify(usize::MAX);
@@ -116,7 +116,7 @@ impl<C: Command> CommandBoard<C> {
 
     /// Get a listener for after sync result
     fn asr_listener(&mut self, id: ProposeId) -> EventListener {
-        let event = self.asr_notifiers.entry(id).or_insert_with(Event::new);
+        let event = self.asr_notifiers.entry(id).or_default();
         let listener = event.listen();
         if self.asr_buffer.contains_key(&id) {
             event.notify(usize::MAX);
@@ -126,7 +126,7 @@ impl<C: Command> CommandBoard<C> {
 
     /// Get a listener for conf change result
     fn conf_listener(&mut self, id: ProposeId) -> EventListener {
-        let event = self.conf_notifier.entry(id).or_insert_with(Event::new);
+        let event = self.conf_notifier.entry(id).or_default();
         let listener = event.listen();
         if self.conf_buffer.contains(&id) {
             event.notify(usize::MAX);

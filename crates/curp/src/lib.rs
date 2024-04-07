@@ -50,7 +50,6 @@
     clippy::create_dir,
     clippy::dbg_macro,
     clippy::decimal_literal_representation,
-    // clippy::default_numeric_fallback, too verbose when dealing with numbers
     clippy::disallowed_script_idents,
     clippy::else_if_without_else,
     clippy::exhaustive_enums,
@@ -62,7 +61,6 @@
     clippy::float_cmp_const,
     clippy::get_unwrap,
     clippy::if_then_some_else_none,
-    // clippy::implicit_return, it's idiomatic Rust code.
     clippy::indexing_slicing,
     // clippy::inline_asm_x86_att_syntax, stick to intel syntax
     clippy::inline_asm_x86_intel_syntax,
@@ -114,7 +112,6 @@
     clippy::iter_on_empty_collections,
     clippy::iter_on_single_items,
     clippy::large_include_file,
-    clippy::manual_clamp,
     clippy::suspicious_xor_used_as_pow,
     clippy::unnecessary_safety_comment,
     clippy::unnecessary_safety_doc,
@@ -126,20 +123,27 @@
     clippy::impl_trait_in_params,
     clippy::let_underscore_untyped,
     clippy::missing_assert_message,
-    clippy::multiple_unsafe_ops_per_block,
     clippy::semicolon_inside_block,
     // clippy::semicolon_outside_block, already used `semicolon_inside_block`
     clippy::tests_outside_test_module,
-    // 1.71.0
-    clippy::default_constructed_unit_structs,
-    clippy::items_after_test_module,
-    clippy::manual_next_back,
-    clippy::manual_while_let_some,
-    clippy::needless_bool_assign,
-    clippy::non_minimal_cfg,
+
+    // The followings are selected lints from 1.71.0 to 1.74.0
+    clippy::large_stack_frames,
+    clippy::tuple_array_conversions,
+    clippy::pub_without_shorthand,
+    clippy::needless_raw_strings,
+    clippy::redundant_type_annotations,
+    clippy::host_endian_bytes,
+    clippy::big_endian_bytes,
+    clippy::error_impl_error,
+    clippy::string_lit_chars_any,
+    clippy::needless_pass_by_ref_mut,
+    clippy::redundant_as_str,
+    clippy::missing_asserts_for_indexing,
 )]
 #![allow(
     clippy::multiple_crate_versions, // caused by the dependency, can't be fixed
+    clippy::missing_fields_in_debug
 )]
 #![cfg_attr(
     test,

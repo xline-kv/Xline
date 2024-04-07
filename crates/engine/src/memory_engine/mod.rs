@@ -38,7 +38,7 @@ impl MemoryEngine {
     pub(crate) fn new(tables: &[&'static str]) -> Self {
         let mut inner: HashMap<String, HashMap<Vec<u8>, Vec<u8>>> = HashMap::new();
         for table in tables {
-            let _ignore = inner.entry((*table).to_owned()).or_insert(HashMap::new());
+            let _ignore = inner.entry((*table).to_owned()).or_default();
         }
         Self {
             inner: Arc::new(RwLock::new(inner)),

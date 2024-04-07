@@ -75,8 +75,8 @@ impl Metrics {
         _ = meter.register_callback(
             &[current_version.as_any(), current_rust_version.as_any()],
             move |observer| {
-                let crate_version: &str = env!("CARGO_PKG_VERSION");
-                let rust_version: &str = env!("CARGO_PKG_RUST_VERSION");
+                let crate_version = env!("CARGO_PKG_VERSION");
+                let rust_version = env!("CARGO_PKG_RUST_VERSION");
                 observer.observe_u64(
                     &current_version,
                     1,

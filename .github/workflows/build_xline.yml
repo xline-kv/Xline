@@ -1,6 +1,6 @@
 name: Build Xline
 env:
-  CI_RUST_TOOLCHAIN: 1.71.0
+  CI_RUST_TOOLCHAIN: 1.74.0
 on:
   workflow_call:
     inputs:

@@ -72,5 +72,8 @@ pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
     fn estimated_file_size(&self) -> u64;
 
     /// Get the file size of the engine (Measured in bytes)
+    ///
+    /// # Errors
+    /// Return `EngineError` if met some errors when get file size
     fn file_size(&self) -> Result<u64, EngineError>;
 }

@@ -347,7 +347,7 @@ impl Eq for WALSegment {}
 
 impl PartialOrd for WALSegment {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.segment_id.partial_cmp(&other.segment_id)
+        Some(self.cmp(other))
     }
 }
 
