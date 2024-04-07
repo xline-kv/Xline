@@ -28,7 +28,7 @@ impl<T> pri::Serializable for T where T: pri::ThreadSafe + Clone + Serialize + D
 #[async_trait]
 pub trait Command: pri::Serializable + ConflictCheck + PbCodec {
     /// Error type
-    type Error: pri::Serializable + PbCodec + std::error::Error;
+    type Error: pri::Serializable + PbCodec + std::error::Error + Clone;
 
     /// K (key) is used to tell confliction
     ///
@@ -74,24 +74,6 @@ pub trait Command: pri::Serializable + ConflictCheck + PbCodec {
         E: CommandExecutor<Self> + Send + Sync,
     {
         <E as CommandExecutor<Self>>::execute(e, self).await
-    }
-
-    /// Execute the command after_sync callback
-    ///
-    /// # Errors
-    ///
-    /// Return `Self::Error` when `CommandExecutor::after_sync` goes wrong
-    #[inline]
-    async fn after_sync<E>(
-        &self,
-        e: &E,
-        index: LogIndex,
-        prepare_res: Self::PR,
-    ) -> Result<Self::ASR, Self::Error>
-    where
-        E: CommandExecutor<Self> + Send + Sync,
-    {
-        <E as CommandExecutor<Self>>::after_sync(e, self, index, prepare_res).await
     }
 }
 
@@ -141,17 +123,12 @@ where
     /// This function may return an error if there is a problem executing the command.
     async fn execute(&self, cmd: &C) -> Result<C::ER, C::Error>;
 
-    /// Execute the after_sync callback
-    ///
-    /// # Errors
-    ///
-    /// This function may return an error if there is a problem executing the after_sync callback.
+    /// Batch execute the after_sync callback
     async fn after_sync(
         &self,
-        cmd: &C,
-        index: LogIndex,
-        prepare_res: C::PR,
-    ) -> Result<C::ASR, C::Error>;
+        cmds: Vec<AfterSyncCmd<'_, C>>,
+        highest_index: LogIndex,
+    ) -> Result<Vec<(C::ASR, Option<C::ER>)>, C::Error>;
 
     /// Set the index of the last log entry that has been successfully applied to the command executor
     ///
@@ -213,5 +190,31 @@ impl From<DecodeError> for PbSerializeError {
     #[inline]
     fn from(err: DecodeError) -> Self {
         PbSerializeError::RpcDecode(err)
+    }
+}
+
+/// After sync command type
+#[derive(Debug)]
+pub struct AfterSyncCmd<'a, C> {
+    /// The command
+    cmd: &'a C,
+    /// Whether the command needs to be executed in after sync stage
+    to_exectue: bool,
+}
+
+impl<'a, C> AfterSyncCmd<'a, C> {
+    /// Creates a new `AfterSyncCmd`
+    pub fn new(cmd: &'a C, to_exectue: bool) -> Self {
+        Self { cmd, to_exectue }
+    }
+
+    /// Gets the command
+    pub fn cmd(&self) -> &'a C {
+        self.cmd
+    }
+
+    /// Convert self into parts
+    pub fn into_parts(self) -> (&'a C, bool) {
+        (self.cmd, self.to_exectue)
     }
 }

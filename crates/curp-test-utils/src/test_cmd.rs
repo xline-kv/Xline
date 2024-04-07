@@ -9,7 +9,7 @@ use std::{
 
 use async_trait::async_trait;
 use curp_external_api::{
-    cmd::{Command, CommandExecutor, ConflictCheck, PbCodec},
+    cmd::{AfterSyncCmd, Command, CommandExecutor, ConflictCheck, PbCodec},
     InflightId, LogIndex,
 };
 use engine::{
@@ -307,51 +307,72 @@ impl CommandExecutor<TestCommand> for TestCE {
 
     async fn after_sync(
         &self,
-        cmd: &TestCommand,
-        index: LogIndex,
-        revision: <TestCommand as Command>::PR,
-    ) -> Result<<TestCommand as Command>::ASR, <TestCommand as Command>::Error> {
-        sleep(cmd.as_dur).await;
-        if cmd.as_should_fail {
+        cmds: Vec<AfterSyncCmd<'_, TestCommand>>,
+        highest_index: LogIndex,
+    ) -> Result<
+        Vec<(
+            <TestCommand as Command>::ASR,
+            Option<<TestCommand as Command>::ER>,
+        )>,
+        <TestCommand as Command>::Error,
+    > {
+        let as_duration = cmds
+            .iter()
+            .fold(Duration::default(), |acc, c| acc + c.cmd().as_dur);
+        sleep(as_duration).await;
+        if cmds.iter().any(|c| c.cmd().as_should_fail) {
             return Err(ExecuteError("fail".to_owned()));
         }
-        self.after_sync_sender
-            .send((cmd.clone(), index))
-            .expect("failed to send after sync msg");
+        let total = cmds.len();
+        for (i, cmd) in cmds.iter().enumerate() {
+            let index = highest_index - (total - i - 1) as u64;
+            self.after_sync_sender
+                .send((cmd.cmd().clone(), index))
+                .expect("failed to send after sync msg");
+        }
         let mut wr_ops = vec![WriteOperation::new_put(
             META_TABLE,
             APPLIED_INDEX_KEY.into(),
-            index.to_le_bytes().to_vec(),
+            highest_index.to_le_bytes().to_vec(),
         )];
-        if let TestCommandType::Put(v) = cmd.cmd_type {
-            debug!("cmd {:?}-{:?} revision is {}", cmd.cmd_type, cmd, revision);
-            let value = v.to_le_bytes().to_vec();
-            let keys = cmd
-                .keys
-                .iter()
-                .map(|k| k.to_le_bytes().to_vec())
-                .collect_vec();
-            wr_ops.extend(
-                keys.clone()
-                    .into_iter()
-                    .map(|key| WriteOperation::new_put(TEST_TABLE, key, value.clone()))
-                    .chain(keys.into_iter().map(|key| {
-                        WriteOperation::new_put(
-                            REVISION_TABLE,
-                            key,
-                            revision.to_le_bytes().to_vec(),
-                        )
-                    })),
+
+        let mut asrs = Vec::new();
+        for (i, c) in cmds.iter().enumerate() {
+            let cmd = c.cmd();
+            let index = highest_index - (total - i) as u64;
+            asrs.push((LogIndexResult(index), None));
+            if let TestCommandType::Put(v) = cmd.cmd_type {
+                let revision = self.revision.fetch_add(1, Ordering::Relaxed);
+                debug!("cmd {:?}-{:?} revision is {}", cmd.cmd_type, cmd, revision);
+                let value = v.to_le_bytes().to_vec();
+                let keys = cmd
+                    .keys
+                    .iter()
+                    .map(|k| k.to_le_bytes().to_vec())
+                    .collect_vec();
+                wr_ops.extend(
+                    keys.clone()
+                        .into_iter()
+                        .map(|key| WriteOperation::new_put(TEST_TABLE, key, value.clone()))
+                        .chain(keys.into_iter().map(|key| {
+                            WriteOperation::new_put(
+                                REVISION_TABLE,
+                                key,
+                                revision.to_le_bytes().to_vec(),
+                            )
+                        })),
+                );
+            }
+            debug!(
+                "{} after sync cmd({:?} - {:?}), index: {index}",
+                self.server_name, cmd.cmd_type, cmd
             );
-            self.store
-                .write_multi(wr_ops, true)
-                .map_err(|e| ExecuteError(e.to_string()))?;
         }
-        debug!(
-            "{} after sync cmd({:?} - {:?}), index: {index}",
-            self.server_name, cmd.cmd_type, cmd
-        );
-        Ok(index.into())
+
+        self.store
+            .write_multi(wr_ops, true)
+            .map_err(|e| ExecuteError(e.to_string()))?;
+        Ok(asrs)
     }
 
     fn set_last_applied(&self, index: LogIndex) -> Result<(), <TestCommand as Command>::Error> {

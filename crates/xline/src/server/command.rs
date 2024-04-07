@@ -2,7 +2,7 @@ use std::{fmt::Debug, sync::Arc};
 
 use clippy_utilities::OverflowArithmetic;
 use curp::{
-    cmd::{Command as CurpCommand, CommandExecutor as CurpCommandExecutor},
+    cmd::{AfterSyncCmd, Command as CurpCommand, CommandExecutor as CurpCommandExecutor},
     members::ServerId,
     InflightId, LogIndex,
 };
@@ -19,7 +19,6 @@ use xlineapi::{
 };
 
 use crate::{
-    revision_number::RevisionNumberGenerator,
     rpc::{RequestBackend, RequestWrapper},
     storage::{
         db::{WriteOp, DB},
@@ -75,10 +74,6 @@ pub(crate) struct CommandExecutor {
     db: Arc<DB>,
     /// Barrier for propose id
     id_barrier: Arc<IdBarrier<InflightId>>,
-    /// Revision Number generator for KV request and Lease request
-    general_rev: Arc<RevisionNumberGenerator>,
-    /// Revision Number generator for Auth request
-    auth_rev: Arc<RevisionNumberGenerator>,
     /// Compact events
     compact_events: Arc<DashMap<u64, Arc<Event>>>,
     /// Quota checker
@@ -224,8 +219,6 @@ impl CommandExecutor {
         alarm_storage: Arc<AlarmStore>,
         db: Arc<DB>,
         id_barrier: Arc<IdBarrier<InflightId>>,
-        general_rev: Arc<RevisionNumberGenerator>,
-        auth_rev: Arc<RevisionNumberGenerator>,
         compact_events: Arc<DashMap<u64, Arc<Event>>>,
         quota: u64,
     ) -> Self {
@@ -238,8 +231,6 @@ impl CommandExecutor {
             alarm_storage,
             db,
             id_barrier,
-            general_rev,
-            auth_rev,
             compact_events,
             quota_checker,
             alarmer,
@@ -278,41 +269,16 @@ impl CommandExecutor {
 
 #[async_trait::async_trait]
 impl CurpCommandExecutor<Command> for CommandExecutor {
-    fn prepare(
-        &self,
-        cmd: &Command,
-    ) -> Result<<Command as CurpCommand>::PR, <Command as CurpCommand>::Error> {
-        self.check_alarm(cmd)?;
-        let wrapper = cmd.request();
-        let auth_info = cmd.auth_info();
-        self.auth_storage.check_permission(wrapper, auth_info)?;
-        let revision = match wrapper.backend() {
-            RequestBackend::Auth => {
-                if wrapper.skip_auth_revision() {
-                    self.auth_rev.get()
-                } else {
-                    self.auth_rev.next()
-                }
-            }
-            RequestBackend::Kv | RequestBackend::Lease => {
-                if wrapper.skip_general_revision() {
-                    self.general_rev.get()
-                } else {
-                    self.general_rev.next()
-                }
-            }
-            RequestBackend::Alarm => -1,
-        };
-        Ok(revision)
-    }
-
     async fn execute(
         &self,
         cmd: &Command,
     ) -> Result<<Command as CurpCommand>::ER, <Command as CurpCommand>::Error> {
+        self.check_alarm(cmd)?;
+        let auth_info = cmd.auth_info();
         let wrapper = cmd.request();
+        self.auth_storage.check_permission(wrapper, auth_info)?;
         match wrapper.backend() {
-            RequestBackend::Kv => self.kv_storage.execute(wrapper),
+            RequestBackend::Kv => self.kv_storage.execute(wrapper, None),
             RequestBackend::Auth => self.auth_storage.execute(wrapper),
             RequestBackend::Lease => self.lease_storage.execute(wrapper),
             RequestBackend::Alarm => Ok(self.alarm_storage.execute(wrapper)),
@@ -321,48 +287,83 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
 
     async fn after_sync(
         &self,
-        cmd: &Command,
-        index: LogIndex,
-        _revision: i64,
-    ) -> Result<<Command as CurpCommand>::ASR, <Command as CurpCommand>::Error> {
-        let quota_enough = self.quota_checker.check(cmd);
-        let wrapper = cmd.request();
-        let auth_info = cmd.auth_info();
-        self.auth_storage.check_permission(wrapper, auth_info)?;
-        let txn_db = self.db.transaction();
-        txn_db.write_op(WriteOp::PutAppliedIndex(index))?;
+        cmds: Vec<AfterSyncCmd<'_, Command>>,
+        highest_index: LogIndex,
+    ) -> Result<
+        Vec<(
+            <Command as CurpCommand>::ASR,
+            Option<<Command as CurpCommand>::ER>,
+        )>,
+        <Command as CurpCommand>::Error,
+    > {
+        if cmds.is_empty() {
+            return Ok(Vec::new());
+        }
+        cmds.iter()
+            .map(AfterSyncCmd::cmd)
+            .map(|c| self.check_alarm(c))
+            .collect::<Result<_, _>>()?;
+        let quota_enough = cmds
+            .iter()
+            .map(AfterSyncCmd::cmd)
+            .all(|c| self.quota_checker.check(c));
+        cmds.iter()
+            .map(AfterSyncCmd::cmd)
+            .map(|c| {
+                self.auth_storage
+                    .check_permission(c.request(), c.auth_info())
+            })
+            .collect::<Result<_, _>>()?;
 
-        let res = match wrapper.backend() {
-            RequestBackend::Kv => self.kv_storage.after_sync(wrapper, txn_db).await?,
-            RequestBackend::Auth | RequestBackend::Lease | RequestBackend::Alarm => {
-                let (res, wr_ops) = match wrapper.backend() {
-                    RequestBackend::Auth => self.auth_storage.after_sync(wrapper)?,
-                    RequestBackend::Lease => self.lease_storage.after_sync(wrapper).await?,
-                    RequestBackend::Alarm => self.alarm_storage.after_sync(wrapper),
-                    RequestBackend::Kv => unreachable!(),
-                };
-                txn_db.write_ops(wr_ops)?;
-                txn_db
-                    .commit()
-                    .map_err(|e| ExecuteError::DbError(e.to_string()))?;
-                res
+        let txn_db = self.db.transaction();
+        txn_db.write_op(WriteOp::PutAppliedIndex(highest_index))?;
+
+        let mut resps = Vec::with_capacity(cmds.len());
+        for (cmd, to_execute) in cmds.into_iter().map(AfterSyncCmd::into_parts) {
+            let wrapper = cmd.request();
+            let er = to_execute
+                .then(|| match wrapper.backend() {
+                    RequestBackend::Kv => self.kv_storage.execute(wrapper, Some(&txn_db)),
+                    RequestBackend::Auth => self.auth_storage.execute(wrapper),
+                    RequestBackend::Lease => self.lease_storage.execute(wrapper),
+                    RequestBackend::Alarm => Ok(self.alarm_storage.execute(wrapper)),
+                })
+                .transpose()?;
+            tracing::info!("sync cmd: {cmd:?}");
+            if to_execute {
+                tracing::info!("execute in after sync for: {cmd:?}");
             }
-        };
-        if let RequestWrapper::CompactionRequest(ref compact_req) = *wrapper {
-            if compact_req.physical {
-                if let Some(n) = self.compact_events.get(&cmd.compact_id()) {
-                    let _ignore = n.notify(usize::MAX);
+            let (asr, wr_ops) = match wrapper.backend() {
+                RequestBackend::Kv => (self.kv_storage.after_sync(wrapper, &txn_db).await?, vec![]),
+                RequestBackend::Auth => self.auth_storage.after_sync(wrapper)?,
+                RequestBackend::Lease => self.lease_storage.after_sync(wrapper).await?,
+                RequestBackend::Alarm => self.alarm_storage.after_sync(wrapper),
+            };
+            txn_db.write_ops(wr_ops)?;
+            resps.push((asr, er));
+
+            if let RequestWrapper::CompactionRequest(ref compact_req) = *wrapper {
+                if compact_req.physical {
+                    if let Some(n) = self.compact_events.get(&cmd.compact_id()) {
+                        n.notify(usize::MAX);
+                    }
                 }
-            }
-        };
-        if let RequestWrapper::CompactionRequest(ref compact_req) = *wrapper {
-            if compact_req.physical {
-                if let Some(n) = self.compact_events.get(&cmd.compact_id()) {
-                    let _ignore = n.notify(usize::MAX);
+            };
+            if let RequestWrapper::CompactionRequest(ref compact_req) = *wrapper {
+                if compact_req.physical {
+                    if let Some(n) = self.compact_events.get(&cmd.compact_id()) {
+                        n.notify(usize::MAX);
+                    }
                 }
-            }
-        };
-        self.lease_storage.mark_lease_synced(wrapper);
+            };
+
+            self.lease_storage.mark_lease_synced(wrapper);
+        }
+        // FIXME: revision needs to fallback when commit failed
+        txn_db
+            .commit()
+            .map_err(|e| ExecuteError::DbError(e.to_string()))?;
+
         if !quota_enough {
             if let Some(alarmer) = self.alarmer.read().clone() {
                 let _ig = tokio::spawn(async move {
@@ -375,7 +376,8 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
                 });
             }
         }
-        Ok(res)
+
+        Ok(resps)
     }
 
     async fn reset(
