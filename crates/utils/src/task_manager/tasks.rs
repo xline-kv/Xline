@@ -1,10 +1,8 @@
-//  CONFLICT_CHECKED_MPMC
-//            |
-//       CMD_WORKER            LEASE_KEEP_ALIVE
-//         /     \                    |
-//  COMPACT_BG  KV_UPDATES      TONIC_SERVER       ELECTION
-//                    \        /      |      \       /
-//                   WATCH_TASK  CONF_CHANGE  LOG_PERSIST
+//                LEASE_KEEP_ALIVE
+//                       |
+// KV_UPDATES      TONIC_SERVER       ELECTION
+//       \        /      |      \       /
+//      WATCH_TASK  CONF_CHANGE  LOG_PERSIST
 
 // NOTE: In integration tests, we use bottom tasks, like `WatchTask`, `ConfChange`, and `LogPersist`,
 // which are not dependent on other tasks to detect the curp group is closed or not. If you want
@@ -35,8 +33,6 @@ macro_rules! enum_with_iter {
     }
 }
 enum_with_iter! {
-    ConflictCheckedMpmc,
-    CmdWorker,
     CompactBg,
     KvUpdates,
     WatchTask,
@@ -54,10 +50,7 @@ enum_with_iter! {
 }
 
 /// All edges of task graph, the first item in each pair must be shut down before the second item
-pub const ALL_EDGES: [(TaskName, TaskName); 9] = [
-    (TaskName::ConflictCheckedMpmc, TaskName::CmdWorker),
-    (TaskName::CmdWorker, TaskName::CompactBg),
-    (TaskName::CmdWorker, TaskName::KvUpdates),
+pub const ALL_EDGES: [(TaskName, TaskName); 6] = [
     (TaskName::KvUpdates, TaskName::WatchTask),
     (TaskName::LeaseKeepAlive, TaskName::TonicServer),
     (TaskName::TonicServer, TaskName::WatchTask),
