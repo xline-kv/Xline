@@ -35,7 +35,10 @@ use crate::{
         PutResponse, RangeRequest, RangeResponse, Request, RequestWrapper, ResponseWrapper,
         SortOrder, SortTarget, TargetUnion, TxnRequest, TxnResponse,
     },
-    storage::db::{WriteOp, FINISHED_COMPACT_REVISION},
+    storage::{
+        db::{WriteOp, FINISHED_COMPACT_REVISION},
+        storage_api::XlineStorageOps,
+    },
 };
 
 /// KV store
