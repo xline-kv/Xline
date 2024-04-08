@@ -55,11 +55,7 @@ pub use commandpb::{
 
 /// `BOTTOM_TASKS` are tasks which not dependent on other tasks in the task group.
 /// `CurpGroup` uses `BOTTOM_TASKS` to detect whether the curp group is closed or not.
-const BOTTOM_TASKS: [TaskName; 3] = [
-    TaskName::WatchTask,
-    TaskName::ConfChange,
-    TaskName::LogPersist,
-];
+const BOTTOM_TASKS: [TaskName; 2] = [TaskName::WatchTask, TaskName::ConfChange];
 
 /// The default shutdown timeout used in `wait_for_targets_shutdown`
 pub(crate) const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(7);

@@ -15,7 +15,7 @@ async fn read_state() {
     init_logger();
     let group = CurpGroup::new(3).await;
     let put_client = group.new_client().await;
-    let put_cmd = TestCommand::new_put(vec![0], 0).set_exe_dur(Duration::from_millis(100));
+    let put_cmd = TestCommand::new_put(vec![0], 0).set_exe_dur(Duration::from_millis(200));
     tokio::spawn(async move {
         assert_eq!(
             put_client

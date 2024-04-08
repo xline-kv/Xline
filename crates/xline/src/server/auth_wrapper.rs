@@ -4,11 +4,13 @@ use curp::{
     cmd::PbCodec,
     rpc::{
         FetchClusterRequest, FetchClusterResponse, FetchReadStateRequest, FetchReadStateResponse,
-        LeaseKeepAliveMsg, MoveLeaderRequest, MoveLeaderResponse, ProposeConfChangeRequest,
-        ProposeConfChangeResponse, ProposeRequest, ProposeResponse, Protocol, PublishRequest,
-        PublishResponse, ShutdownRequest, ShutdownResponse, WaitSyncedRequest, WaitSyncedResponse,
+        LeaseKeepAliveMsg, MoveLeaderRequest, MoveLeaderResponse, OpResponse,
+        ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest, Protocol,
+        PublishRequest, PublishResponse, RecordRequest, RecordResponse, ShutdownRequest,
+        ShutdownResponse,
     },
 };
+use flume::r#async::RecvStream;
 use tracing::debug;
 use xlineapi::command::Command;
 
@@ -35,10 +37,12 @@ impl AuthWrapper {
 
 #[tonic::async_trait]
 impl Protocol for AuthWrapper {
-    async fn propose(
+    type ProposeStreamStream = RecvStream<'static, Result<OpResponse, tonic::Status>>;
+
+    async fn propose_stream(
         &self,
         mut request: tonic::Request<ProposeRequest>,
-    ) -> Result<tonic::Response<ProposeResponse>, tonic::Status> {
+    ) -> Result<tonic::Response<Self::ProposeStreamStream>, tonic::Status> {
         debug!(
             "AuthWrapper received propose request: {}",
             request.get_ref().propose_id()
@@ -51,7 +55,14 @@ impl Protocol for AuthWrapper {
             command.set_auth_info(auth_info);
             request.get_mut().command = command.encode();
         };
-        self.curp_server.propose(request).await
+        self.curp_server.propose_stream(request).await
+    }
+
+    async fn record(
+        &self,
+        request: tonic::Request<RecordRequest>,
+    ) -> Result<tonic::Response<RecordResponse>, tonic::Status> {
+        self.curp_server.record(request).await
     }
 
     async fn shutdown(
@@ -73,13 +84,6 @@ impl Protocol for AuthWrapper {
         request: tonic::Request<PublishRequest>,
     ) -> Result<tonic::Response<PublishResponse>, tonic::Status> {
         self.curp_server.publish(request).await
-    }
-
-    async fn wait_synced(
-        &self,
-        request: tonic::Request<WaitSyncedRequest>,
-    ) -> Result<tonic::Response<WaitSyncedResponse>, tonic::Status> {
-        self.curp_server.wait_synced(request).await
     }
 
     async fn fetch_cluster(

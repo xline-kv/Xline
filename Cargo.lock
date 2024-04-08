@@ -3777,6 +3777,7 @@ dependencies = [
  "engine",
  "etcd-client",
  "event-listener",
+ "flume",
  "futures",
  "hyper",
  "itertools",

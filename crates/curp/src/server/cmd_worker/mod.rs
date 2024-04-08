@@ -105,8 +105,7 @@ async fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
             for ((asr, er_opt), tx) in resps
                 .into_iter()
                 .zip(resp_txs)
-                .map(|(resp, tx_opt)| tx_opt.as_ref().map(|tx| (resp, tx)))
-                .flatten()
+                .filter_map(|(resp, tx_opt)| tx_opt.as_ref().map(|tx| (resp, tx)))
             {
                 if let Some(er) = er_opt {
                     tx.send_propose(ProposeResponse::new_result::<C>(&Ok(er), true));
@@ -122,7 +121,7 @@ async fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     }
 
     for (entry, _) in &cmd_entries {
-        curp.trigger(entry.propose_id);
+        curp.trigger(&entry.propose_id);
         ce.trigger(entry.inflight_id());
     }
     let mut sp_l = sp.lock();
