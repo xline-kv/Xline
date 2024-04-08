@@ -10,7 +10,7 @@
 #![allow(clippy::arithmetic_side_effects)] // u64 is large enough and won't overflow
 
 use std::{
-    cmp::min,
+    cmp::{self, min},
     collections::{HashMap, HashSet},
     fmt::Debug,
     sync::{
@@ -23,10 +23,11 @@ use clippy_utilities::{NumericCast, OverflowArithmetic};
 use dashmap::DashMap;
 use derive_builder::Builder;
 use event_listener::Event;
+use futures::Future;
 use itertools::Itertools;
 use opentelemetry::KeyValue;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{broadcast, oneshot};
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
 use tracing::{
@@ -37,6 +38,7 @@ use tracing::{
 #[cfg(madsim)]
 use utils::ClientTlsConfig;
 use utils::{
+    barrier::IdBarrier,
     config::CurpConfig,
     parking_lot_lock::{MutexMap, RwLockMap},
     task_manager::TaskManager,
@@ -47,8 +49,8 @@ use self::{
     state::{CandidateState, LeaderState, State},
 };
 use super::{
-    cmd_worker::CEEventTxApi,
     conflict::{spec_pool_new::SpeculativePool, uncommitted_pool::UncommittedPool},
+    curp_node::TaskType,
     lease_manager::LeaseManagerRef,
     storage::StorageApi,
     DB,
@@ -58,11 +60,12 @@ use crate::{
     log_entry::{EntryData, LogEntry},
     members::{ClusterInfo, ServerId},
     quorum, recover_quorum,
+    response::ResponseSender,
     role_change::RoleChange,
     rpc::{
         connect::{InnerConnectApi, InnerConnectApiWrapper},
         ConfChange, ConfChangeType, CurpError, IdSet, Member, PoolEntry, ProposeId, PublishRequest,
-        ReadState,
+        ReadState, Redirect,
     },
     server::{
         cmd_board::CmdBoardRef,
@@ -119,10 +122,6 @@ pub(super) struct RawCurpArgs<C: Command, RC: RoleChange> {
     lease_manager: LeaseManagerRef,
     /// Config
     cfg: Arc<CurpConfig>,
-    /// Tx to send cmds to execute and do after sync
-    cmd_tx: Arc<dyn CEEventTxApi<C>>,
-    /// Tx to send log entries
-    log_tx: mpsc::UnboundedSender<Arc<LogEntry<C>>>,
     /// Role change callback
     role_change: RC,
     /// Task manager
@@ -149,6 +148,12 @@ pub(super) struct RawCurpArgs<C: Command, RC: RoleChange> {
     spec_pool: Arc<Mutex<SpeculativePool<C>>>,
     /// Uncommitted pool
     uncommitted_pool: Arc<Mutex<UncommittedPool<C>>>,
+    /// Tx to send entries to after_sync
+    as_tx: flume::Sender<TaskType<C>>,
+    /// Response Senders
+    resp_txs: Arc<Mutex<HashMap<LogIndex, Arc<ResponseSender>>>>,
+    /// Barrier for waiting unsynced commands
+    id_barrier: Arc<IdBarrier<ProposeId>>,
 }
 
 impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
@@ -162,18 +167,13 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
         ));
         let lst = LeaderState::new(&args.cluster_info.peers_ids());
         let cst = Mutex::new(CandidateState::new(args.cluster_info.all_ids().into_iter()));
-        let log = RwLock::new(Log::new(
-            args.log_tx,
-            args.cfg.batch_max_size,
-            args.cfg.log_entries_cap,
-        ));
+        let log = RwLock::new(Log::new(args.cfg.batch_max_size, args.cfg.log_entries_cap));
 
         let ctx = Context::builder()
             .cluster_info(args.cluster_info)
             .cb(args.cmd_board)
             .lm(args.lease_manager)
             .cfg(args.cfg)
-            .cmd_tx(args.cmd_tx)
             .sync_events(args.sync_events)
             .role_change(args.role_change)
             .connects(args.connects)
@@ -181,6 +181,9 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
             .client_tls_config(args.client_tls_config)
             .spec_pool(args.spec_pool)
             .uncommitted_pool(args.uncommitted_pool)
+            .as_tx(args.as_tx)
+            .resp_txs(args.resp_txs)
+            .id_barrier(args.id_barrier)
             .build()
             .map_err(|e| match e {
                 ContextBuilderError::UninitializedField(s) => {
@@ -313,8 +316,6 @@ struct Context<C: Command, RC: RoleChange> {
     /// Election tick
     #[builder(setter(skip))]
     election_tick: AtomicU8,
-    /// Tx to send cmds to execute and do after sync
-    cmd_tx: Arc<dyn CEEventTxApi<C>>,
     /// Followers sync event trigger
     sync_events: DashMap<ServerId, Arc<Event>>,
     /// Become leader event
@@ -339,6 +340,13 @@ struct Context<C: Command, RC: RoleChange> {
     spec_pool: Arc<Mutex<SpeculativePool<C>>>,
     /// Uncommitted pool
     uncommitted_pool: Arc<Mutex<UncommittedPool<C>>>,
+    /// Tx to send entries to after_sync
+    as_tx: flume::Sender<TaskType<C>>,
+    /// Response Senders
+    // TODO: this could be replaced by a queue
+    resp_txs: Arc<Mutex<HashMap<LogIndex, Arc<ResponseSender>>>>,
+    /// Barrier for waiting unsynced commands
+    id_barrier: Arc<IdBarrier<ProposeId>>,
 }
 
 impl<C: Command, RC: RoleChange> Context<C, RC> {
@@ -371,10 +379,6 @@ impl<C: Command, RC: RoleChange> ContextBuilder<C, RC> {
             },
             leader_tx: broadcast::channel(1).0,
             election_tick: AtomicU8::new(0),
-            cmd_tx: match self.cmd_tx.take() {
-                Some(value) => value,
-                None => return Err(ContextBuilderError::UninitializedField("cmd_tx")),
-            },
             sync_events: match self.sync_events.take() {
                 Some(value) => value,
                 None => return Err(ContextBuilderError::UninitializedField("sync_events")),
@@ -406,6 +410,18 @@ impl<C: Command, RC: RoleChange> ContextBuilder<C, RC> {
             uncommitted_pool: match self.uncommitted_pool.take() {
                 Some(value) => value,
                 None => return Err(ContextBuilderError::UninitializedField("uncommitted_pool")),
+            },
+            as_tx: match self.as_tx.take() {
+                Some(value) => value,
+                None => return Err(ContextBuilderError::UninitializedField("as_tx")),
+            },
+            resp_txs: match self.resp_txs.take() {
+                Some(value) => value,
+                None => return Err(ContextBuilderError::UninitializedField("resp_txs")),
+            },
+            id_barrier: match self.id_barrier.take() {
+                Some(value) => value,
+                None => return Err(ContextBuilderError::UninitializedField("id_barrier")),
             },
         })
     }
@@ -457,70 +473,131 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
 // Curp handlers
 impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
-    /// Handle `propose` request
-    /// Return `true` if the leader speculatively executed the command
-    pub(super) fn handle_propose(
-        &self,
-        propose_id: ProposeId,
-        cmd: Arc<C>,
-    ) -> Result<bool, CurpError> {
-        debug!("{} gets proposal for cmd({})", self.id(), propose_id);
-        let mut conflict = self
+    /// Checks the if term are up-to-date
+    pub(super) fn check_term(&self, term: u64) -> Result<(), CurpError> {
+        let st_r = self.st.read();
+
+        // Rejects the request
+        // When `st_r.term > term`, the client is using an outdated leader
+        // When `st_r.term < term`, the current node is a zombie
+        match st_r.term.cmp(&term) {
+            // Current node is a zombie
+            cmp::Ordering::Less => Err(CurpError::Zombie(())),
+            cmp::Ordering::Greater => Err(CurpError::Redirect(Redirect {
+                leader_id: st_r.leader_id,
+                term: st_r.term,
+            })),
+            cmp::Ordering::Equal => Ok(()),
+        }
+    }
+
+    /// Handles record
+    pub(super) fn follower_record(&self, propose_id: ProposeId, cmd: Arc<C>) -> bool {
+        let conflict = self
             .ctx
             .spec_pool
-            .map_lock(|mut sp_l| sp_l.insert(PoolEntry::new(propose_id, Arc::clone(&cmd))))
+            .lock()
+            .insert(PoolEntry::new(propose_id, Arc::clone(&cmd)))
             .is_some();
-
-        let st_r = self.st.read();
-        // Non-leader doesn't need to sync or execute
-        if st_r.role != Role::Leader {
-            if conflict {
-                metrics::get()
-                    .proposals_failed
-                    .add(1, &[KeyValue::new("reason", "follower key conflict")]);
-                return Err(CurpError::key_conflict());
-            }
-            return Ok(false);
-        }
-        if self.lst.get_transferee().is_some() {
-            return Err(CurpError::LeaderTransfer("leader transferring".to_owned()));
-        }
-        if !self
-            .ctx
-            .cb
-            .map_write(|mut cb_w| cb_w.sync.insert(propose_id))
-        {
-            metrics::get()
-                .proposals_failed
-                .add(1, &[KeyValue::new("reason", "duplicated proposal")]);
-            return Err(CurpError::duplicated());
-        }
-
-        // leader also needs to check if the cmd conflicts un-synced commands
-        conflict |= self
-            .ctx
-            .uncommitted_pool
-            .map_lock(|mut ucp_l| ucp_l.insert(PoolEntry::new(propose_id, Arc::clone(&cmd))));
-
-        let mut log_w = self.log.write();
-        let entry = log_w.push(st_r.term, propose_id, cmd).map_err(|e| {
-            metrics::get()
-                .proposals_failed
-                .add(1, &[KeyValue::new("reason", "log serialize failed")]);
-            e
-        })?;
-        debug!("{} gets new log[{}]", self.id(), entry.index);
-
-        self.entry_process(&mut log_w, entry, conflict, st_r.term);
-
         if conflict {
             metrics::get()
                 .proposals_failed
-                .add(1, &[KeyValue::new("reason", "leader key conflict")]);
-            return Err(CurpError::key_conflict());
+                .add(1, &[KeyValue::new("reason", "follower key conflict")]);
         }
+        conflict
+    }
 
-        Ok(true)
+    /// Handles record
+    pub(super) fn leader_record(&self, entries: impl Iterator<Item = PoolEntry<C>>) -> Vec<bool> {
+        let mut sp_l = self.ctx.spec_pool.lock();
+        let mut ucp_l = self.ctx.uncommitted_pool.lock();
+        let mut conflicts = Vec::new();
+        for entry in entries {
+            let mut conflict = sp_l.insert(entry.clone()).is_some();
+            conflict |= ucp_l.insert(entry);
+            conflicts.push(conflict);
+        }
+        metrics::get().proposals_failed.add(
+            conflicts.iter().filter(|c| **c).count() as u64,
+            &[KeyValue::new("reason", "leader key conflict")],
+        );
+        conflicts
+    }
+
+    /// Handles leader propose
+    pub(super) fn push_logs(
+        &self,
+        proposes: Vec<(Arc<C>, ProposeId, u64, Arc<ResponseSender>)>,
+    ) -> Vec<Arc<LogEntry<C>>> {
+        let term = proposes
+            .first()
+            .unwrap_or_else(|| unreachable!("no propose in proposes"))
+            .2;
+        let mut log_entries = Vec::with_capacity(proposes.len());
+        let mut to_process = Vec::with_capacity(proposes.len());
+        let mut log_w = self.log.write();
+        let mut tx_map_l = self.ctx.resp_txs.lock();
+        for propose in proposes {
+            let (cmd, id, _term, resp_tx) = propose;
+            let entry = log_w.push(term, id, cmd);
+            let index = entry.index;
+            let conflict = resp_tx.is_conflict();
+            to_process.push((index, conflict));
+            log_entries.push(entry);
+            assert!(
+                tx_map_l.insert(index, Arc::clone(&resp_tx)).is_none(),
+                "Should not insert resp_tx twice"
+            );
+        }
+        self.entry_process_multi(&mut log_w, to_process, term);
+
+        let log_r = RwLockWriteGuard::downgrade(log_w);
+        self.persistent_log_entries(
+            &log_entries.iter().map(Arc::as_ref).collect::<Vec<_>>(),
+            &log_r,
+        );
+
+        log_entries
+    }
+
+    /// Persistent log entries
+    ///
+    /// NOTE: A `&Log<C>` is required because we do not want the `Log` structure gets mutated
+    /// during the persistent
+    #[allow(clippy::panic)]
+    #[allow(dropping_references)]
+    fn persistent_log_entries(&self, entries: &[&LogEntry<C>], _log: &Log<C>) {
+        // We panic when the log persistence fails because it likely indicates an unrecoverable error.
+        // Our WAL implementation does not support rollback on failure, as a file write syscall is not
+        // guaranteed to be atomic.
+        if let Err(e) = self.ctx.curp_storage.put_log_entries(entries) {
+            panic!("log persistent failed: {e}");
+        }
+    }
+
+    /// Wait synced for all conflict commands
+    pub(super) fn wait_conflicts_synced(&self, cmd: Arc<C>) -> impl Future<Output = ()> {
+        let conflict_cmds: Vec<_> = self
+            .ctx
+            .uncommitted_pool
+            .lock()
+            .all_conflict(PoolEntry::new(ProposeId::default(), cmd))
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        self.ctx.id_barrier.wait_all(conflict_cmds)
+    }
+
+    pub(super) fn trigger(&self, propose_id: &ProposeId) {
+        self.ctx.id_barrier.trigger(propose_id);
+    }
+
+    /// Returns `CurpError::LeaderTransfer` if the leadership is transferring
+    pub(super) fn check_leader_transfer(&self) -> Result<(), CurpError> {
+        if self.lst.get_transferee().is_some() {
+            return Err(CurpError::LeaderTransfer("leader transferring".to_owned()));
+        }
+        Ok(())
     }
 
     /// Handle `shutdown` request
@@ -533,16 +610,13 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             return Err(CurpError::LeaderTransfer("leader transferring".to_owned()));
         }
         let mut log_w = self.log.write();
-        let entry = log_w
-            .push(st_r.term, propose_id, EntryData::Shutdown)
-            .map_err(|e| {
-                metrics::get()
-                    .proposals_failed
-                    .add(1, &[KeyValue::new("reason", "log serialize failed")]);
-                e
-            })?;
+        let entry = log_w.push(st_r.term, propose_id, EntryData::Shutdown);
         debug!("{} gets new log[{}]", self.id(), entry.index);
-        self.entry_process(&mut log_w, entry, true, st_r.term);
+        self.entry_process_single(&mut log_w, Arc::clone(&entry), true, st_r.term);
+
+        let log_r = RwLockWriteGuard::downgrade(log_w);
+        self.persistent_log_entries(&[entry.as_ref()], &log_r);
+
         Ok(())
     }
 
@@ -581,14 +655,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             .insert(PoolEntry::new(propose_id, conf_changes.clone()));
 
         let mut log_w = self.log.write();
-        let entry = log_w
-            .push(st_r.term, propose_id, conf_changes.clone())
-            .map_err(|e| {
-                metrics::get()
-                    .proposals_failed
-                    .add(1, &[KeyValue::new("reason", "log serialize failed")]);
-                e
-            })?;
+        let entry = log_w.push(st_r.term, propose_id, conf_changes.clone());
         debug!("{} gets new log[{}]", self.id(), entry.index);
         let (addrs, name, is_learner) = self.apply_conf_change(conf_changes);
         self.ctx
@@ -598,7 +665,11 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             entry.index,
             FallbackContext::new(Arc::clone(&entry), addrs, name, is_learner),
         );
-        self.entry_process(&mut log_w, entry, conflict, st_r.term);
+        self.entry_process_single(&mut log_w, Arc::clone(&entry), conflict, st_r.term);
+
+        let log_r = RwLockWriteGuard::downgrade(log_w);
+        self.persistent_log_entries(&[entry.as_ref()], &log_r);
+
         Ok(())
     }
 
@@ -617,14 +688,13 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             return Err(CurpError::leader_transfer("leader transferring"));
         }
         let mut log_w = self.log.write();
-        let entry = log_w.push(st_r.term, req.propose_id(), req).map_err(|e| {
-            metrics::get()
-                .proposals_failed
-                .add(1, &[KeyValue::new("reason", "log serialize failed")]);
-            e
-        })?;
+        let entry = log_w.push(st_r.term, req.propose_id(), req);
         debug!("{} gets new log[{}]", self.id(), entry.index);
-        self.entry_process(&mut log_w, entry, false, st_r.term);
+        self.entry_process_single(&mut log_w, Arc::clone(&entry), false, st_r.term);
+
+        let log_r = RwLockWriteGuard::downgrade(log_w);
+        self.persistent_log_entries(&[entry.as_ref()], &log_r);
+
         Ok(())
     }
 
@@ -655,7 +725,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         prev_log_term: u64,
         entries: Vec<LogEntry<C>>,
         leader_commit: LogIndex,
-    ) -> Result<u64, (u64, LogIndex)> {
+    ) -> Result<(u64, Vec<Arc<LogEntry<C>>>), (u64, LogIndex)> {
         if entries.is_empty() {
             trace!(
                 "{} received heartbeat from {}: term({}), commit({}), prev_log_index({}), prev_log_term({})",
@@ -692,7 +762,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
         // append log entries
         let mut log_w = self.log.write();
-        let (cc_entries, fallback_indexes) = log_w
+        let (to_persist, cc_entries, fallback_indexes) = log_w
             .try_append_entries(entries, prev_log_index, prev_log_term)
             .map_err(|_ig| (term, log_w.commit_index + 1))?;
         // fallback overwritten conf change entries
@@ -723,7 +793,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         if prev_commit_index < log_w.commit_index {
             self.apply(&mut *log_w);
         }
-        Ok(term)
+        Ok((term, to_persist))
     }
 
     /// Handle `append_entries` response
@@ -1195,12 +1265,15 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             // the leader will take a snapshot itself every time `sync` is called in effort to
             // calibrate it. Since taking a snapshot will block the leader's execute workers, we should
             // not take snapshot so often. A better solution would be to keep a snapshot cache.
-            Some(SyncAction::Snapshot(self.ctx.cmd_tx.send_snapshot(
-                SnapshotMeta {
-                    last_included_index: entry.index,
-                    last_included_term: entry.term,
-                },
-            )))
+            let meta = SnapshotMeta {
+                last_included_index: entry.index,
+                last_included_term: entry.term,
+            };
+            let (tx, rx) = oneshot::channel();
+            if let Err(e) = self.ctx.as_tx.send(TaskType::Snapshot(meta, tx)) {
+                error!("failed to send task to after sync: {e}");
+            }
+            Some(SyncAction::Snapshot(rx))
         } else {
             let (prev_log_index, prev_log_term) = log_r.get_prev_entry_info(next_index);
             let entries = log_r.get_from(next_index);
@@ -1729,20 +1802,22 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let mut sp_l = self.ctx.spec_pool.lock();
 
         let term = st.term;
+        let mut entries = vec![];
         for entry in recovered_cmds {
             let _ig_sync = cb_w.sync.insert(entry.id); // may have been inserted before
             let _ig_spec = sp_l.insert(entry.clone()); // may have been inserted before
             #[allow(clippy::expect_used)]
-            let entry = log
-                .push(term, entry.id, entry.inner)
-                .expect("cmd {cmd:?} cannot be serialized");
+            let entry = log.push(term, entry.id, entry.inner);
             debug!(
                 "{} recovers speculatively executed cmd({}) in log[{}]",
                 self.id(),
                 entry.propose_id,
                 entry.index,
             );
+            entries.push(entry);
         }
+
+        self.persistent_log_entries(&entries.iter().map(Arc::as_ref).collect::<Vec<_>>(), log);
     }
 
     /// Recover the ucp from uncommitted log entries
@@ -1768,6 +1843,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
     /// Apply new logs
     fn apply(&self, log: &mut Log<C>) {
+        let mut entries = Vec::new();
         for i in (log.last_as + 1)..=log.commit_index {
             let entry = log.get(i).unwrap_or_else(|| {
                 unreachable!(
@@ -1775,7 +1851,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                     log.last_log_index()
                 )
             });
-            self.ctx.cmd_tx.send_after_sync(Arc::clone(entry));
+            let tx = self.ctx.resp_txs.lock().remove(&i);
+            entries.push((Arc::clone(&entry), tx));
             log.last_as = i;
             if log.last_exe < log.last_as {
                 log.last_exe = log.last_as;
@@ -1787,6 +1864,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 i
             );
         }
+        debug!("sending {} entries to after sync task", entries.len());
+        let _ignore = self.ctx.as_tx.send(TaskType::Entries(entries));
         log.compact();
     }
 
@@ -1876,8 +1955,47 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         fallback_info
     }
 
+    /// Notify sync events
+    fn notify_sync_events(&self, log: &Log<C>) {
+        self.ctx.sync_events.iter().for_each(|e| {
+            if let Some(next) = self.lst.get_next_index(*e.key()) {
+                if next > log.base_index && log.has_next_batch(next) {
+                    let _ignore = e.notify(1);
+                }
+            }
+        });
+    }
+
+    /// Update index in single node cluster
+    fn update_index_single_node(&self, log: &mut Log<C>, index: u64, term: u64) {
+        // check if commit_index needs to be updated
+        if self.can_update_commit_index_to(log, index, term) && index > log.commit_index {
+            log.commit_to(index);
+            debug!("{} updates commit index to {index}", self.id());
+            self.apply(&mut *log);
+        }
+    }
+
     /// Entry process shared by `handle_xxx`
-    fn entry_process(
+    fn entry_process_multi(&self, log: &mut Log<C>, entries: Vec<(u64, bool)>, term: u64) {
+        if let Some(last_no_conflict) = entries
+            .iter()
+            .rev()
+            .find(|(_, conflict)| *conflict)
+            .map(|(index, _)| *index)
+        {
+            log.last_exe = last_no_conflict;
+        }
+        let highest_index = entries
+            .last()
+            .unwrap_or_else(|| unreachable!("no log in entries"))
+            .0;
+        self.notify_sync_events(log);
+        self.update_index_single_node(log, highest_index, term);
+    }
+
+    /// Entry process shared by `handle_xxx`
+    fn entry_process_single(
         &self,
         log_w: &mut RwLockWriteGuard<'_, Log<C>>,
         entry: Arc<LogEntry<C>>,
@@ -1887,21 +2005,8 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let index = entry.index;
         if !conflict {
             log_w.last_exe = index;
-            self.ctx.cmd_tx.send_sp_exe(entry);
         }
-        self.ctx.sync_events.iter().for_each(|e| {
-            if let Some(next) = self.lst.get_next_index(*e.key()) {
-                if next > log_w.base_index && log_w.has_next_batch(next) {
-                    let _ignore = e.notify(1);
-                }
-            }
-        });
-
-        // check if commit_index needs to be updated
-        if self.can_update_commit_index_to(log_w, index, term) && index > log_w.commit_index {
-            log_w.commit_to(index);
-            debug!("{} updates commit index to {index}", self.id());
-            self.apply(&mut *log_w);
-        }
+        self.notify_sync_events(log_w);
+        self.update_index_single_node(log_w, index, term);
     }
 }

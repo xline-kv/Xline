@@ -177,6 +177,13 @@ where
                 CurpError::Redirect(Redirect { leader_id, term }) => {
                     let _ig = self.inner.update_leader(leader_id, term).await;
                 }
+
+                // update the cluster state if got Zombie
+                CurpError::Zombie(()) => {
+                    if let Err(e) = self.inner.fetch_cluster(true).await {
+                        warn!("fetch cluster failed, error {e:?}");
+                    }
+                }
             }
 
             #[cfg(feature = "client-metrics")]
