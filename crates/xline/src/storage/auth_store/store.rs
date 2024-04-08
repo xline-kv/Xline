@@ -527,8 +527,12 @@ impl AuthStore {
     pub(crate) fn after_sync<'a>(
         &self,
         request: &'a RequestWrapper,
-        revision: i64,
     ) -> Result<(SyncResponse, Vec<WriteOp<'a>>), ExecuteError> {
+        let revision = if request.skip_auth_revision() {
+            self.revision.get()
+        } else {
+            self.revision.next()
+        };
         #[allow(clippy::wildcard_enum_match_arm)]
         let ops = match *request {
             RequestWrapper::AuthEnableRequest(ref req) => {
@@ -1205,7 +1209,7 @@ mod test {
                     range_end: "foz".into(),
                 }),
         });
-        assert!(exe_and_sync(&store, &req, 6).is_ok());
+        assert!(exe_and_sync(&store, &req).is_ok());
         assert_eq!(
             store.permission_cache(),
             PermissionCache {
@@ -1234,7 +1238,7 @@ mod test {
             key: "foo".into(),
             range_end: "".into(),
         });
-        assert!(exe_and_sync(&store, &req, 6).is_ok());
+        assert!(exe_and_sync(&store, &req).is_ok());
         assert_eq!(
             store.permission_cache(),
             PermissionCache {
@@ -1252,7 +1256,7 @@ mod test {
         let req = RequestWrapper::from(AuthRoleDeleteRequest {
             role: "r".to_owned(),
         });
-        assert!(exe_and_sync(&store, &req, 6).is_ok());
+        assert!(exe_and_sync(&store, &req).is_ok());
         assert_eq!(
             store.permission_cache(),
             PermissionCache {
@@ -1270,7 +1274,7 @@ mod test {
         let req = RequestWrapper::from(AuthUserDeleteRequest {
             name: "u".to_owned(),
         });
-        assert!(exe_and_sync(&store, &req, 6).is_ok());
+        assert!(exe_and_sync(&store, &req).is_ok());
         assert_eq!(
             store.permission_cache(),
             PermissionCache {
@@ -1286,39 +1290,39 @@ mod test {
         let db = DB::open(&EngineConfig::Memory).unwrap();
         let store = init_auth_store(db);
         let revision = store.revision();
-        let rev_gen = Arc::clone(&store.revision);
         assert!(!store.is_enabled());
         let enable_req = RequestWrapper::from(AuthEnableRequest {});
 
         // AuthEnableRequest won't increase the auth revision, but AuthDisableRequest will
-        assert!(exe_and_sync(&store, &enable_req, store.revision()).is_err());
+        assert!(exe_and_sync(&store, &enable_req).is_err());
         let req_1 = RequestWrapper::from(AuthUserAddRequest {
             name: "root".to_owned(),
             password: String::new(),
             hashed_password: "123".to_owned(),
             options: None,
         });
-        assert!(exe_and_sync(&store, &req_1, rev_gen.next()).is_ok());
+        assert!(exe_and_sync(&store, &req_1).is_ok());
 
         let req_2 = RequestWrapper::from(AuthRoleAddRequest {
             name: "root".to_owned(),
         });
-        assert!(exe_and_sync(&store, &req_2, rev_gen.next()).is_ok());
+        assert!(exe_and_sync(&store, &req_2).is_ok());
 
         let req_3 = RequestWrapper::from(AuthUserGrantRoleRequest {
             user: "root".to_owned(),
             role: "root".to_owned(),
         });
-        assert!(exe_and_sync(&store, &req_3, rev_gen.next()).is_ok());
+        assert!(exe_and_sync(&store, &req_3).is_ok());
+
         assert_eq!(store.revision(), revision + 3);
 
-        assert!(exe_and_sync(&store, &enable_req, -1).is_ok());
+        assert!(exe_and_sync(&store, &enable_req).is_ok());
         assert_eq!(store.revision(), 8);
         assert!(store.is_enabled());
 
         let disable_req = RequestWrapper::from(AuthDisableRequest {});
 
-        assert!(exe_and_sync(&store, &disable_req, rev_gen.next()).is_ok());
+        assert!(exe_and_sync(&store, &disable_req).is_ok());
         assert_eq!(store.revision(), revision + 4);
         assert!(!store.is_enabled());
     }
@@ -1339,33 +1343,33 @@ mod test {
 
     fn init_auth_store(db: Arc<DB>) -> AuthStore {
         let store = init_empty_store(db);
-        let rev = Arc::clone(&store.revision);
         let req1 = RequestWrapper::from(AuthRoleAddRequest {
             name: "r".to_owned(),
         });
-        assert!(exe_and_sync(&store, &req1, rev.next()).is_ok());
+        assert!(exe_and_sync(&store, &req1).is_ok());
         let req2 = RequestWrapper::from(AuthUserAddRequest {
             name: "u".to_owned(),
             password: String::new(),
             hashed_password: "123".to_owned(),
             options: None,
         });
-        assert!(exe_and_sync(&store, &req2, rev.next()).is_ok());
+        assert!(exe_and_sync(&store, &req2).is_ok());
         let req3 = RequestWrapper::from(AuthUserGrantRoleRequest {
             user: "u".to_owned(),
             role: "r".to_owned(),
         });
-        assert!(exe_and_sync(&store, &req3, rev.next()).is_ok());
+        assert!(exe_and_sync(&store, &req3).is_ok());
         let req4 = RequestWrapper::from(AuthRoleGrantPermissionRequest {
             name: "r".to_owned(),
             perm: Some(Permission {
+
                     #[allow(clippy::as_conversions)] // This cast is always valid
                     perm_type: Type::Readwrite as i32,
                     key: b"foo".to_vec(),
                     range_end: vec![],
                 }),
         });
-        assert!(exe_and_sync(&store, &req4, rev.next()).is_ok());
+        assert!(exe_and_sync(&store, &req4).is_ok());
         assert_eq!(
             store.permission_cache(),
             PermissionCache {
@@ -1392,10 +1396,9 @@ mod test {
     fn exe_and_sync(
         store: &AuthStore,
         req: &RequestWrapper,
-        revision: i64,
     ) -> Result<(CommandResponse, SyncResponse), ExecuteError> {
         let cmd_res = store.execute(req)?;
-        let (sync_res, ops) = store.after_sync(req, revision)?;
+        let (sync_res, ops) = store.after_sync(req)?;
         store.backend.flush_ops(ops)?;
         Ok((cmd_res, sync_res))
     }

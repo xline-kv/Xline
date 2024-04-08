@@ -7,7 +7,7 @@ use curp::{
     InflightId, LogIndex,
 };
 use dashmap::DashMap;
-use engine::Snapshot;
+use engine::{Snapshot, TransactionApi};
 use event_listener::Event;
 use parking_lot::RwLock;
 use tracing::warn;
@@ -323,22 +323,29 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
         &self,
         cmd: &Command,
         index: LogIndex,
-        revision: i64,
+        _revision: i64,
     ) -> Result<<Command as CurpCommand>::ASR, <Command as CurpCommand>::Error> {
         let quota_enough = self.quota_checker.check(cmd);
-        let mut ops = vec![WriteOp::PutAppliedIndex(index)];
         let wrapper = cmd.request();
-        let (res, mut wr_ops) = match wrapper.backend() {
-            RequestBackend::Kv => self.kv_storage.after_sync(wrapper, revision).await?,
-            RequestBackend::Auth => self.auth_storage.after_sync(wrapper, revision)?,
-            RequestBackend::Lease => self.lease_storage.after_sync(wrapper, revision).await?,
-            RequestBackend::Alarm => self.alarm_storage.after_sync(wrapper, revision),
-        };
-        if let RequestWrapper::CompactionRequest(ref compact_req) = *wrapper {
-            if compact_req.physical {
-                if let Some(n) = self.compact_events.get(&cmd.compact_id()) {
-                    let _ignore = n.notify(usize::MAX);
-                }
+        let auth_info = cmd.auth_info();
+        self.auth_storage.check_permission(wrapper, auth_info)?;
+        let txn_db = self.db.transaction();
+        txn_db.write_op(WriteOp::PutAppliedIndex(index))?;
+
+        let res = match wrapper.backend() {
+            RequestBackend::Kv => self.kv_storage.after_sync(wrapper, txn_db).await?,
+            RequestBackend::Auth | RequestBackend::Lease | RequestBackend::Alarm => {
+                let (res, wr_ops) = match wrapper.backend() {
+                    RequestBackend::Auth => self.auth_storage.after_sync(wrapper)?,
+                    RequestBackend::Lease => self.lease_storage.after_sync(wrapper).await?,
+                    RequestBackend::Alarm => self.alarm_storage.after_sync(wrapper),
+                    RequestBackend::Kv => unreachable!(),
+                };
+                txn_db.write_ops(wr_ops)?;
+                txn_db
+                    .commit()
+                    .map_err(|e| ExecuteError::DbError(e.to_string()))?;
+                res
             }
         };
         if let RequestWrapper::CompactionRequest(ref compact_req) = *wrapper {
@@ -348,8 +355,13 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
                 }
             }
         };
-        ops.append(&mut wr_ops);
-        self.db.write_ops(ops)?;
+        if let RequestWrapper::CompactionRequest(ref compact_req) = *wrapper {
+            if compact_req.physical {
+                if let Some(n) = self.compact_events.get(&cmd.compact_id()) {
+                    let _ignore = n.notify(usize::MAX);
+                }
+            }
+        };
         self.lease_storage.mark_lease_synced(wrapper);
         if !quota_enough {
             if let Some(alarmer) = self.alarmer.read().clone() {
