@@ -1,6 +1,10 @@
+#![allow(clippy::multiple_inherent_impl)]
+
 use std::{collections::HashMap, path::Path, sync::Arc};
 
-use engine::{Engine, EngineType, Snapshot, StorageEngine, StorageOps, WriteOperation};
+use engine::{
+    Engine, EngineType, Snapshot, StorageEngine, StorageOps, Transaction, WriteOperation,
+};
 use prost::Message;
 use utils::{
     config::EngineConfig,
@@ -13,7 +17,7 @@ use xlineapi::{execute_error::ExecuteError, AlarmMember};
 
 use super::{
     auth_store::{AUTH_ENABLE_KEY, AUTH_REVISION_KEY},
-    revision::KeyRevision,
+    storage_api::XlineStorageOps,
 };
 use crate::{
     rpc::{KeyValue, PbLease, Role, User},
@@ -28,8 +32,6 @@ pub(crate) const SCHEDULED_COMPACT_REVISION: &str = "scheduled_compact_revision"
 
 /// Key and value pair
 type KeyValuePair = (Vec<u8>, Vec<u8>);
-/// Key and revision pair
-type KeyRevisionPair = (Vec<u8>, KeyRevision);
 
 /// Database to store revision to kv mapping
 #[derive(Debug)]
@@ -57,76 +59,46 @@ impl DB {
             engine: Arc::new(engine),
         }))
     }
+}
 
-    /// Get del lease key buffer
+impl StorageOps for DB {
     #[inline]
-    fn get_del_lease_key_buffer(ops: &[WriteOp]) -> HashMap<i64, Vec<u8>> {
-        ops.iter()
-            .filter_map(|op| {
-                if let WriteOp::DeleteLease(lease_id) = *op {
-                    Some((lease_id, lease_id.encode_to_vec()))
-                } else {
-                    None
-                }
-            })
-            .collect::<HashMap<_, _>>()
+    fn write(&self, op: WriteOperation<'_>, sync: bool) -> Result<(), engine::EngineError> {
+        self.engine.write(op, sync)
     }
 
-    /// get del alarm buffer
     #[inline]
-    fn get_del_alarm_buffer(ops: &[WriteOp]) -> Vec<u8> {
-        ops.iter()
-            .find_map(|op| {
-                if let WriteOp::DeleteAlarm(ref key) = *op {
-                    Some(key.encode_to_vec())
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_default()
+    fn write_multi<'a, Ops>(&self, ops: Ops, sync: bool) -> Result<(), engine::EngineError>
+    where
+        Ops: IntoIterator<Item = WriteOperation<'a>>,
+    {
+        self.engine.write_multi(ops, sync)
     }
 
-    /// Get values by keys from storage
-    ///
-    /// # Errors
-    ///
-    /// if error occurs in storage, return `Err(error)`
-    pub(crate) fn get_values<K>(
+    #[inline]
+    fn get(
         &self,
-        table: &'static str,
-        keys: &[K],
-    ) -> Result<Vec<Option<Vec<u8>>>, ExecuteError>
-    where
-        K: AsRef<[u8]> + std::fmt::Debug + Sized,
-    {
-        let values = self
-            .engine
-            .get_multi(table, keys)
-            .map_err(|e| ExecuteError::DbError(format!("Failed to get keys {keys:?}: {e}")))?
-            .into_iter()
-            .collect::<Vec<_>>();
-
-        assert_eq!(values.len(), keys.len(), "Index doesn't match with DB");
-
-        Ok(values)
+        table: &str,
+        key: impl AsRef<[u8]>,
+    ) -> Result<Option<Vec<u8>>, engine::EngineError> {
+        self.engine.get(table, key)
     }
 
-    /// Get values by keys from storage
-    ///
-    /// # Errors
-    ///
-    /// if error occurs in storage, return `Err(error)`
-    pub(crate) fn get_value<K>(
+    #[inline]
+    fn get_multi(
         &self,
-        table: &'static str,
-        key: K,
-    ) -> Result<Option<Vec<u8>>, ExecuteError>
-    where
-        K: AsRef<[u8]> + std::fmt::Debug,
-    {
-        self.engine
-            .get(table, key.as_ref())
-            .map_err(|e| ExecuteError::DbError(format!("Failed to get key {key:?}: {e}")))
+        table: &str,
+        keys: &[impl AsRef<[u8]>],
+    ) -> Result<Vec<Option<Vec<u8>>>, engine::EngineError> {
+        self.engine.get_multi(table, keys)
+    }
+}
+
+impl DB {
+    /// Creates a transaction
+    #[allow(unused)] // TODO: use this in the following refactor
+    pub(crate) fn transaction(&self) -> Transaction {
+        self.engine.transaction()
     }
 
     /// Get all values of the given table from storage
@@ -173,27 +145,50 @@ impl DB {
         }
     }
 
-    /// Flush the operations to storage
-    pub(crate) fn flush_ops(
-        &self,
-        ops: Vec<WriteOp>,
-    ) -> Result<Vec<KeyRevisionPair>, ExecuteError> {
+    /// Calculate the hash of the storage
+    pub(crate) fn hash(&self) -> Result<u32, ExecuteError> {
+        let mut hasher = crc32fast::Hasher::new();
+        for table in XLINE_TABLES {
+            hasher.update(table.as_bytes());
+            let kv_pairs = self.engine.get_all(table).map_err(|e| {
+                ExecuteError::DbError(format!("Failed to get all keys from {table:?}: {e}"))
+            })?;
+            for (k, v) in kv_pairs {
+                hasher.update(&k);
+                hasher.update(&v);
+            }
+        }
+        Ok(hasher.finalize())
+    }
+
+    /// Get the cached size of the engine
+    pub(crate) fn estimated_file_size(&self) -> u64 {
+        self.engine.estimated_file_size()
+    }
+
+    /// Get the file size of the engine
+    pub(crate) fn file_size(&self) -> Result<u64, ExecuteError> {
+        self.engine
+            .file_size()
+            .map_err(|e| ExecuteError::DbError(format!("Failed to get file size, error: {e}")))
+    }
+}
+
+impl<T> XlineStorageOps for T
+where
+    T: StorageOps,
+{
+    fn write_op(&self, op: WriteOp) -> Result<(), ExecuteError> {
+        self.write_ops(vec![op])
+    }
+
+    fn write_ops(&self, ops: Vec<WriteOp>) -> Result<(), ExecuteError> {
         let mut wr_ops = Vec::new();
-        let mut revs = Vec::new();
-        let del_lease_key_buffer = Self::get_del_lease_key_buffer(&ops);
-        let del_alarm_buffer = Self::get_del_alarm_buffer(&ops);
+        let del_lease_key_buffer = get_del_lease_key_buffer(&ops);
+        let del_alarm_buffer = get_del_alarm_buffer(&ops);
         for op in ops {
             let wop = match op {
                 WriteOp::PutKeyValue(rev, value) => {
-                    revs.push((
-                        value.key.clone(),
-                        KeyRevision::new(
-                            value.create_revision,
-                            value.version,
-                            rev.revision(),
-                            rev.sub_revision(),
-                        ),
-                    ));
                     let key = rev.encode_to_vec();
                     WriteOperation::new_put(KV_TABLE, key, value.encode_to_vec())
                 }
@@ -258,39 +253,64 @@ impl DB {
             };
             wr_ops.push(wop);
         }
-        self.engine
-            .write_multi(wr_ops, false)
-            .map_err(|e| ExecuteError::DbError(format!("Failed to flush ops, error: {e}")))?;
-        Ok(revs)
+        self.write_multi(wr_ops, false)
+            .map_err(|e| ExecuteError::DbError(format!("Failed to flush ops, error: {e}")))
     }
 
-    /// Calculate the hash of the storage
-    pub(crate) fn hash(&self) -> Result<u32, ExecuteError> {
-        let mut hasher = crc32fast::Hasher::new();
-        for table in XLINE_TABLES {
-            hasher.update(table.as_bytes());
-            let kv_pairs = self.engine.get_all(table).map_err(|e| {
-                ExecuteError::DbError(format!("Failed to get all keys from {table:?}: {e}"))
-            })?;
-            for (k, v) in kv_pairs {
-                hasher.update(&k);
-                hasher.update(&v);
+    fn get_value<K>(&self, table: &'static str, key: K) -> Result<Option<Vec<u8>>, ExecuteError>
+    where
+        K: AsRef<[u8]> + std::fmt::Debug,
+    {
+        self.get(table, key.as_ref())
+            .map_err(|e| ExecuteError::DbError(format!("Failed to get key {key:?}: {e}")))
+    }
+
+    fn get_values<K>(
+        &self,
+        table: &'static str,
+        keys: &[K],
+    ) -> Result<Vec<Option<Vec<u8>>>, ExecuteError>
+    where
+        K: AsRef<[u8]> + std::fmt::Debug,
+    {
+        let values = self
+            .get_multi(table, keys)
+            .map_err(|e| ExecuteError::DbError(format!("Failed to get keys {keys:?}: {e}")))?
+            .into_iter()
+            .collect::<Vec<_>>();
+
+        assert_eq!(values.len(), keys.len(), "Index doesn't match with DB");
+
+        Ok(values)
+    }
+}
+
+/// Get del lease key buffer
+#[inline]
+fn get_del_lease_key_buffer(ops: &[WriteOp]) -> HashMap<i64, Vec<u8>> {
+    ops.iter()
+        .filter_map(|op| {
+            if let WriteOp::DeleteLease(lease_id) = *op {
+                Some((lease_id, lease_id.encode_to_vec()))
+            } else {
+                None
             }
-        }
-        Ok(hasher.finalize())
-    }
+        })
+        .collect::<HashMap<_, _>>()
+}
 
-    /// Get the cached size of the engine
-    pub(crate) fn estimated_file_size(&self) -> u64 {
-        self.engine.estimated_file_size()
-    }
-
-    /// Get the file size of the engine
-    pub(crate) fn file_size(&self) -> Result<u64, ExecuteError> {
-        self.engine
-            .file_size()
-            .map_err(|e| ExecuteError::DbError(format!("Failed to get file size, error: {e}")))
-    }
+/// get del alarm buffer
+#[inline]
+fn get_del_alarm_buffer(ops: &[WriteOp]) -> Vec<u8> {
+    ops.iter()
+        .find_map(|op| {
+            if let WriteOp::DeleteAlarm(ref key) = *op {
+                Some(key.encode_to_vec())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
 }
 
 /// Buffered Write Operation
@@ -351,7 +371,7 @@ mod test {
             ..Default::default()
         };
         let ops = vec![WriteOp::PutKeyValue(revision, kv.clone())];
-        _ = db.flush_ops(ops)?;
+        db.write_ops(ops)?;
         let res = db.get_value(KV_TABLE, &key)?;
         assert_eq!(res, Some(kv.encode_to_vec()));
 
@@ -382,7 +402,7 @@ mod test {
             ..Default::default()
         };
         let ops = vec![WriteOp::PutKeyValue(revision, kv.clone())];
-        _ = origin_db.flush_ops(ops)?;
+        origin_db.write_ops(ops)?;
 
         let snapshot = origin_db.get_snapshot(snapshot_path)?;
 
@@ -463,7 +483,7 @@ mod test {
             WriteOp::PutUser(user),
             WriteOp::PutRole(role),
         ];
-        _ = db.flush_ops(write_ops).unwrap();
+        db.write_ops(write_ops).unwrap();
         assert_eq!(
             db.get_value(KV_TABLE, Revision::new(1, 2).encode_to_vec())
                 .unwrap(),
@@ -493,7 +513,7 @@ mod test {
             WriteOp::DeleteUser("user"),
             WriteOp::DeleteRole("role"),
         ];
-        _ = db.flush_ops(del_ops).unwrap();
+        db.write_ops(del_ops).unwrap();
         assert_eq!(
             db.get_value(LEASE_TABLE, 1i64.encode_to_vec()).unwrap(),
             None

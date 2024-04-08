@@ -23,6 +23,7 @@ use crate::{
     rpc::{RequestBackend, RequestWrapper},
     storage::{
         db::{WriteOp, DB},
+        storage_api::XlineStorageOps,
         AlarmStore, AuthStore, KvStore, LeaseStore,
     },
 };
@@ -348,7 +349,7 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
             }
         };
         ops.append(&mut wr_ops);
-        let _key_revisions = self.db.flush_ops(ops)?;
+        self.db.write_ops(ops)?;
         self.lease_storage.mark_lease_synced(wrapper);
         if !quota_enough {
             if let Some(alarmer) = self.alarmer.read().clone() {
@@ -370,7 +371,7 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
         snapshot: Option<(Snapshot, LogIndex)>,
     ) -> Result<(), <Command as CurpCommand>::Error> {
         let s = if let Some((snapshot, index)) = snapshot {
-            _ = self.db.flush_ops(vec![WriteOp::PutAppliedIndex(index)])?;
+            self.db.write_ops(vec![WriteOp::PutAppliedIndex(index)])?;
             Some(snapshot)
         } else {
             None
@@ -384,7 +385,7 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
     }
 
     fn set_last_applied(&self, index: LogIndex) -> Result<(), <Command as CurpCommand>::Error> {
-        _ = self.db.flush_ops(vec![WriteOp::PutAppliedIndex(index)])?;
+        self.db.write_ops(vec![WriteOp::PutAppliedIndex(index)])?;
         Ok(())
     }
 

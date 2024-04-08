@@ -35,7 +35,10 @@ use crate::{
         PutResponse, RangeRequest, RangeResponse, Request, RequestWrapper, ResponseWrapper,
         SortOrder, SortTarget, TargetUnion, TxnRequest, TxnResponse,
     },
-    storage::db::{WriteOp, FINISHED_COMPACT_REVISION},
+    storage::{
+        db::{WriteOp, FINISHED_COMPACT_REVISION},
+        storage_api::XlineStorageOps,
+    },
 };
 
 /// KV store
@@ -476,14 +479,14 @@ impl KvStore {
         revisions
             .iter()
             .for_each(|rev| ops.push(WriteOp::DeleteKeyValue(rev.as_ref())));
-        _ = self.inner.db.flush_ops(ops)?;
+        self.inner.db.write_ops(ops)?;
         Ok(())
     }
 
     /// Compact kv storage
     pub(crate) fn compact_finished(&self, revision: i64) -> Result<(), ExecuteError> {
         let ops = vec![WriteOp::PutFinishedCompactRevision(revision)];
-        _ = self.inner.db.flush_ops(ops)?;
+        self.inner.db.write_ops(ops)?;
         self.update_compacted_revision(revision);
         Ok(())
     }
@@ -1018,7 +1021,7 @@ mod test {
         revision: i64,
     ) -> Result<(), ExecuteError> {
         let (_sync_res, ops) = store.after_sync(request, revision).await?;
-        let _key_revs = store.inner.db.flush_ops(ops)?;
+        store.inner.db.write_ops(ops)?;
         Ok(())
     }
 
@@ -1155,7 +1158,7 @@ mod test {
     async fn test_recover() -> Result<(), ExecuteError> {
         let db = DB::open(&EngineConfig::Memory)?;
         let ops = vec![WriteOp::PutScheduledCompactRevision(8)];
-        db.flush_ops(ops)?;
+        db.write_ops(ops)?;
         let (store, _rev_gen) = init_store(Arc::clone(&db)).await?;
         assert_eq!(store.inner.index.get_from_rev(b"z", b"", 5).len(), 3);
 
