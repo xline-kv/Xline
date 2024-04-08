@@ -21,7 +21,7 @@ parking_lot = ["dep:parking_lot"]
 async-trait = { version = "0.1.79", optional = true }
 clippy-utilities = "0.2.0"
 dashmap = "5.5.3"
-derive_builder = "0.13.0"
+derive_builder = "0.20.0"
 getset = "0.1"
 opentelemetry = { version = "0.21.0", features = ["trace"] }
 opentelemetry_sdk = { version = "0.21.0", features = ["trace"] }

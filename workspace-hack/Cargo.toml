@@ -58,7 +58,8 @@ log = { version = "0.4", default-features = false, features = ["std"] }
 memchr = { version = "2" }
 petgraph = { version = "0.6" }
 predicates = { version = "3", default-features = false, features = ["diff"] }
-syn = { version = "2", features = ["extra-traits", "full", "visit", "visit-mut"] }
+syn-dff4ba8e3ae991db = { package = "syn", version = "1", features = ["extra-traits", "full"] }
+syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "full", "visit", "visit-mut"] }
 tokio = { version = "1", features = ["fs", "io-std", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 
 ### END HAKARI SECTION
