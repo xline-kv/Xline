@@ -6,7 +6,7 @@ use xlineapi::execute_error::ExecuteError;
 
 use crate::{
     rpc::{Role, User},
-    storage::{db::DB, storage_api::StorageApi},
+    storage::{db::DB, storage_api::XlineStorageOps},
 };
 
 /// Key of `AuthEnable`
@@ -117,7 +117,7 @@ impl AuthStoreBackend {
         &self,
         ops: Vec<crate::storage::db::WriteOp>,
     ) -> Result<(), ExecuteError> {
-        _ = self.db.flush_ops(ops)?;
+        self.db.write_ops(ops)?;
         Ok(())
     }
 }

@@ -23,7 +23,7 @@ use crate::{
         StatusResponse,
     },
     state::State,
-    storage::{db::DB, storage_api::StorageApi, AlarmStore, AuthStore, KvStore},
+    storage::{db::DB, AlarmStore, AuthStore, KvStore},
 };
 
 /// Minimum page size
