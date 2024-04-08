@@ -122,7 +122,7 @@ async fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     }
 
     for (entry, _) in &cmd_entries {
-        curp.trigger(entry.propose_id);
+        curp.trigger(&entry.propose_id);
         ce.trigger(entry.inflight_id());
     }
     let mut sp_l = sp.lock();

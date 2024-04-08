@@ -1,3 +1,4 @@
+#![allow(unused)]
 use std::{collections::HashMap, sync::Arc};
 
 use event_listener::{Event, EventListener};

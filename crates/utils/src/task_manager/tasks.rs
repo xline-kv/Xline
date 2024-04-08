@@ -1,10 +1,10 @@
 //                LEASE_KEEP_ALIVE
 //                       |
-// KV_UPDATES      TONIC_SERVER       ELECTION
-//       \        /      |      \       /
-//      WATCH_TASK  CONF_CHANGE  LOG_PERSIST
+// KV_UPDATES      TONIC_SERVER
+//       \        /      |
+//      WATCH_TASK  CONF_CHANGE
 
-// NOTE: In integration tests, we use bottom tasks, like `WatchTask`, `ConfChange`, and `LogPersist`,
+// NOTE: In integration tests, we use bottom tasks, like `WatchTask` and `ConfChange`,
 // which are not dependent on other tasks to detect the curp group is closed or not. If you want
 // to refactor the task group, don't forget to modify the `BOTTOM_TASKS` in `crates/curp/tests/it/common/curp_group.rs`
 // to prevent the integration tests from failing.
@@ -38,7 +38,6 @@ enum_with_iter! {
     WatchTask,
     LeaseKeepAlive,
     TonicServer,
-    LogPersist,
     Election,
     SyncFollower,
     ConfChange,
@@ -47,14 +46,14 @@ enum_with_iter! {
     RevokeExpiredLeases,
     SyncVictims,
     AutoCompactor,
+    AfterSync,
+    HandlePropose,
 }
 
 /// All edges of task graph, the first item in each pair must be shut down before the second item
-pub const ALL_EDGES: [(TaskName, TaskName); 6] = [
+pub const ALL_EDGES: [(TaskName, TaskName); 4] = [
     (TaskName::KvUpdates, TaskName::WatchTask),
     (TaskName::LeaseKeepAlive, TaskName::TonicServer),
     (TaskName::TonicServer, TaskName::WatchTask),
     (TaskName::TonicServer, TaskName::ConfChange),
-    (TaskName::TonicServer, TaskName::LogPersist),
-    (TaskName::Election, TaskName::LogPersist),
 ];

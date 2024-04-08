@@ -1,6 +1,7 @@
 use std::{fmt::Debug, sync::Arc};
 
 use engine::SnapshotAllocator;
+use flume::r#async::RecvStream;
 use tokio::sync::broadcast;
 #[cfg(not(madsim))]
 use tonic::transport::ClientTlsConfig;
@@ -14,6 +15,8 @@ pub use self::{
     conflict::{spec_pool_new::SpObject, uncommitted_pool::UcpObject},
     raw_curp::RawCurp,
 };
+use crate::response::ResponseSender;
+use crate::rpc::{OpResponse, RecordRequest, RecordResponse};
 use crate::{
     cmd::{Command, CommandExecutor},
     members::{ClusterInfo, ServerId},
@@ -22,10 +25,10 @@ use crate::{
         AppendEntriesRequest, AppendEntriesResponse, FetchClusterRequest, FetchClusterResponse,
         FetchReadStateRequest, FetchReadStateResponse, InstallSnapshotRequest,
         InstallSnapshotResponse, LeaseKeepAliveMsg, MoveLeaderRequest, MoveLeaderResponse,
-        ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest, ProposeResponse,
-        PublishRequest, PublishResponse, ShutdownRequest, ShutdownResponse, TriggerShutdownRequest,
+        ProposeConfChangeRequest, ProposeConfChangeResponse, ProposeRequest, PublishRequest,
+        PublishResponse, ShutdownRequest, ShutdownResponse, TriggerShutdownRequest,
         TriggerShutdownResponse, TryBecomeLeaderNowRequest, TryBecomeLeaderNowResponse,
-        VoteRequest, VoteResponse, WaitSyncedRequest, WaitSyncedResponse,
+        VoteRequest, VoteResponse,
     },
 };
 
@@ -77,14 +80,27 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Clone for Rpc<C, CE, RC
 
 #[tonic::async_trait]
 impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::Protocol for Rpc<C, CE, RC> {
-    #[instrument(skip_all, name = "curp_propose")]
-    async fn propose(
+    type ProposeStreamStream = RecvStream<'static, Result<OpResponse, tonic::Status>>;
+
+    async fn propose_stream(
         &self,
         request: tonic::Request<ProposeRequest>,
-    ) -> Result<tonic::Response<ProposeResponse>, tonic::Status> {
-        request.metadata().extract_span();
+    ) -> Result<tonic::Response<Self::ProposeStreamStream>, tonic::Status> {
+        let (tx, rx) = flume::bounded(2);
+        let resp_tx = Arc::new(ResponseSender::new(tx));
+        self.inner
+            .propose_stream(request.into_inner(), resp_tx)
+            .await?;
+
+        Ok(tonic::Response::new(rx.into_stream()))
+    }
+
+    async fn record(
+        &self,
+        request: tonic::Request<RecordRequest>,
+    ) -> Result<tonic::Response<RecordResponse>, tonic::Status> {
         Ok(tonic::Response::new(
-            self.inner.propose(request.into_inner()).await?,
+            self.inner.record(request.into_inner()).await?,
         ))
     }
 
@@ -118,17 +134,6 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::Protocol fo
         request.metadata().extract_span();
         Ok(tonic::Response::new(
             self.inner.publish(request.into_inner())?,
-        ))
-    }
-
-    #[instrument(skip_all, name = "curp_wait_synced")]
-    async fn wait_synced(
-        &self,
-        request: tonic::Request<WaitSyncedRequest>,
-    ) -> Result<tonic::Response<WaitSyncedResponse>, tonic::Status> {
-        request.metadata().extract_span();
-        Ok(tonic::Response::new(
-            self.inner.wait_synced(request.into_inner()).await?,
         ))
     }
 
@@ -185,7 +190,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::InnerProtoc
         request: tonic::Request<AppendEntriesRequest>,
     ) -> Result<tonic::Response<AppendEntriesResponse>, tonic::Status> {
         Ok(tonic::Response::new(
-            self.inner.append_entries(request.get_ref())?,
+            self.inner.append_entries(request.get_ref()).await?,
         ))
     }
 

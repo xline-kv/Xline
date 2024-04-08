@@ -11,8 +11,7 @@ use std::{
 
 use clippy_utilities::NumericCast;
 use itertools::Itertools;
-use tokio::sync::mpsc;
-use tracing::{error, warn};
+use tracing::warn;
 
 use crate::{
     cmd::Command,
@@ -115,8 +114,6 @@ pub(super) struct Log<C: Command> {
     pub(super) last_exe: LogIndex,
     /// Contexts of fallback log entries
     pub(super) fallback_contexts: HashMap<LogIndex, FallbackContext<C>>,
-    /// Tx to send log entries to persist task
-    log_tx: mpsc::UnboundedSender<Arc<LogEntry<C>>>,
     /// Entries to keep in memory
     entries_cap: usize,
 }
@@ -316,11 +313,7 @@ type FallbackIndexes = HashSet<LogIndex>;
 
 impl<C: Command> Log<C> {
     /// Create a new log
-    pub(super) fn new(
-        log_tx: mpsc::UnboundedSender<Arc<LogEntry<C>>>,
-        batch_limit: u64,
-        entries_cap: usize,
-    ) -> Self {
+    pub(super) fn new(batch_limit: u64, entries_cap: usize) -> Self {
         Self {
             entries: VecDeque::with_capacity(entries_cap),
             batch_end: VecDeque::with_capacity(entries_cap),
@@ -332,7 +325,6 @@ impl<C: Command> Log<C> {
             base_term: 0,
             last_as: 0,
             last_exe: 0,
-            log_tx,
             fallback_contexts: HashMap::new(),
             entries_cap,
         }
@@ -377,7 +369,9 @@ impl<C: Command> Log<C> {
         entries: Vec<LogEntry<C>>,
         prev_log_index: LogIndex,
         prev_log_term: u64,
-    ) -> Result<(ConfChangeEntries<C>, FallbackIndexes), Vec<LogEntry<C>>> {
+    ) -> Result<(Vec<Arc<LogEntry<C>>>, ConfChangeEntries<C>, FallbackIndexes), Vec<LogEntry<C>>>
+    {
+        let mut to_persist = Vec::with_capacity(entries.len());
         let mut conf_changes = vec![];
         let mut need_fallback_indexes = HashSet::new();
         // check if entries can be appended
@@ -423,17 +417,10 @@ impl<C: Command> Log<C> {
                 bincode::serialized_size(&entry).expect("log entry {entry:?} cannot be serialized"),
             );
 
-            self.send_persist(entry);
+            to_persist.push(entry);
         }
 
-        Ok((conf_changes, need_fallback_indexes))
-    }
-
-    /// Send log entries to persist task
-    pub(super) fn send_persist(&self, entry: Arc<LogEntry<C>>) {
-        if let Err(err) = self.log_tx.send(entry) {
-            error!("failed to send log to persist, {err}");
-        }
+        Ok((to_persist, conf_changes, need_fallback_indexes))
     }
 
     /// Check if the candidate's log is up-to-date
@@ -448,6 +435,8 @@ impl<C: Command> Log<C> {
     }
 
     /// Push a log entry into the end of log
+    // FIXME: persistent other log entries
+    // TODO: Avoid allocation during locking
     pub(super) fn push(
         &mut self,
         term: u64,
@@ -458,7 +447,6 @@ impl<C: Command> Log<C> {
         let entry = Arc::new(LogEntry::new(index, term, propose_id, entry));
         let size = bincode::serialized_size(&entry)?;
         self.push_back(Arc::clone(&entry), size);
-        self.send_persist(Arc::clone(&entry));
         Ok(entry)
     }
 
@@ -615,9 +603,7 @@ mod tests {
 
     #[test]
     fn test_log_up_to_date() {
-        let (log_tx, _log_rx) = mpsc::unbounded_channel();
-        let mut log =
-            Log::<TestCommand>::new(log_tx, default_batch_max_size(), default_log_entries_cap());
+        let mut log = Log::<TestCommand>::new(default_batch_max_size(), default_log_entries_cap());
         let result = log.try_append_entries(
             vec![
                 LogEntry::new(1, 1, ProposeId(0, 0), Arc::new(TestCommand::default())),
@@ -637,9 +623,7 @@ mod tests {
 
     #[test]
     fn try_append_entries_will_remove_inconsistencies() {
-        let (log_tx, _log_rx) = mpsc::unbounded_channel();
-        let mut log =
-            Log::<TestCommand>::new(log_tx, default_batch_max_size(), default_log_entries_cap());
+        let mut log = Log::<TestCommand>::new(default_batch_max_size(), default_log_entries_cap());
         let result = log.try_append_entries(
             vec![
                 LogEntry::new(1, 1, ProposeId(0, 1), Arc::new(TestCommand::default())),
@@ -666,9 +650,7 @@ mod tests {
 
     #[test]
     fn try_append_entries_will_not_append() {
-        let (log_tx, _log_rx) = mpsc::unbounded_channel();
-        let mut log =
-            Log::<TestCommand>::new(log_tx, default_batch_max_size(), default_log_entries_cap());
+        let mut log = Log::<TestCommand>::new(default_batch_max_size(), default_log_entries_cap());
         let result = log.try_append_entries(
             vec![LogEntry::new(
                 1,
@@ -704,9 +686,7 @@ mod tests {
 
     #[test]
     fn get_from_should_success() {
-        let (tx, _rx) = mpsc::unbounded_channel();
-        let mut log =
-            Log::<TestCommand>::new(tx, default_batch_max_size(), default_log_entries_cap());
+        let mut log = Log::<TestCommand>::new(default_batch_max_size(), default_log_entries_cap());
 
         // Note: this test must use the same test command to ensure the size of the entry is fixed
         let test_cmd = Arc::new(TestCommand::default());
@@ -798,9 +778,7 @@ mod tests {
                 )
             })
             .collect::<Vec<LogEntry<TestCommand>>>();
-        let (tx, _rx) = mpsc::unbounded_channel();
-        let mut log =
-            Log::<TestCommand>::new(tx, default_batch_max_size(), default_log_entries_cap());
+        let mut log = Log::<TestCommand>::new(default_batch_max_size(), default_log_entries_cap());
 
         log.restore_entries(entries).unwrap();
         assert_eq!(log.entries.len(), 10);
@@ -809,8 +787,7 @@ mod tests {
 
     #[test]
     fn compact_test() {
-        let (log_tx, _log_rx) = mpsc::unbounded_channel();
-        let mut log = Log::<TestCommand>::new(log_tx, default_batch_max_size(), 10);
+        let mut log = Log::<TestCommand>::new(default_batch_max_size(), 10);
 
         for i in 0..30 {
             log.push(0, ProposeId(0, i), Arc::new(TestCommand::default()))
@@ -827,8 +804,7 @@ mod tests {
 
     #[test]
     fn get_from_should_success_after_compact() {
-        let (log_tx, _log_rx) = mpsc::unbounded_channel();
-        let mut log = Log::<TestCommand>::new(log_tx, default_batch_max_size(), 10);
+        let mut log = Log::<TestCommand>::new(default_batch_max_size(), 10);
         for i in 0..30 {
             log.push(0, ProposeId(0, i), Arc::new(TestCommand::default()))
                 .unwrap();
@@ -867,8 +843,7 @@ mod tests {
 
     #[test]
     fn batch_info_should_update_correctly_after_truncated() {
-        let (log_tx, _log_rx) = mpsc::unbounded_channel();
-        let mut log = Log::<TestCommand>::new(log_tx, 11, 10);
+        let mut log = Log::<TestCommand>::new(11, 10);
         let mock_entries_sizes = vec![1, 5, 6, 2, 3, 4, 5];
         let test_cmd = Arc::new(TestCommand::default());
 

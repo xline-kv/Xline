@@ -215,9 +215,9 @@ impl TaskManager {
         let _ig = tokio::spawn(async move {
             info!("cluster shutdown start");
             state.store(2, Ordering::Release);
-            for name in [TaskName::SyncFollower] {
-                _ = tasks.get(&name).map(|n| n.notifier.notify_waiters());
-            }
+            _ = tasks
+                .get(&TaskName::SyncFollower)
+                .map(|n| n.notifier.notify_waiters());
             loop {
                 if tracker.check() {
                     break;
@@ -242,7 +242,6 @@ impl TaskManager {
         for t in self.tasks.iter() {
             for h in &t.handle {
                 if !h.is_finished() {
-                    println!("task: {:?} not finished", t.name);
                     return false;
                 }
             }
@@ -361,6 +360,14 @@ impl Listener {
         }
         self.notify.notified().await;
         self.state()
+    }
+
+    /// Checks whether self has shutdown.
+    #[inline]
+    #[must_use]
+    pub fn is_shutdown(&self) -> bool {
+        let state = self.state();
+        matches!(state, State::Shutdown)
     }
 
     /// Get a sync follower guard
