@@ -431,7 +431,8 @@ mod test {
         rpc::{PutRequest, WatchProgressRequest},
         storage::{
             compact::COMPACT_CHANNEL_SIZE, db::DB, index::Index, kv_store::KvStoreInner,
-            kvwatcher::MockKvWatcherOps, lease_store::LeaseCollection, KvStore,
+            kvwatcher::MockKvWatcherOps, lease_store::LeaseCollection,
+            storage_api::XlineStorageOps, KvStore,
         },
     };
 
@@ -456,7 +457,7 @@ mod test {
             ..Default::default()
         });
         let (_sync_res, ops) = store.after_sync(&req, revision).await.unwrap();
-        let _key_revisions = db.flush_ops(ops).unwrap();
+        db.write_ops(ops).unwrap();
     }
 
     #[tokio::test]
