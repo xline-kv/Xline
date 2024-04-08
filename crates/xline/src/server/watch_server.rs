@@ -431,8 +431,7 @@ mod test {
         rpc::{PutRequest, WatchProgressRequest},
         storage::{
             compact::COMPACT_CHANNEL_SIZE, db::DB, index::Index, kv_store::KvStoreInner,
-            kvwatcher::MockKvWatcherOps, lease_store::LeaseCollection,
-            storage_api::XlineStorageOps, KvStore,
+            kvwatcher::MockKvWatcherOps, lease_store::LeaseCollection, KvStore,
         },
     };
 
@@ -444,20 +443,15 @@ mod test {
             && wr.header.as_ref().map_or(false, |h| h.revision != 0)
     }
 
-    async fn put(
-        store: &KvStore,
-        db: &DB,
-        key: impl Into<Vec<u8>>,
-        value: impl Into<Vec<u8>>,
-        revision: i64,
-    ) {
+    async fn put(store: &KvStore, key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) {
         let req = RequestWrapper::from(PutRequest {
             key: key.into(),
             value: value.into(),
             ..Default::default()
         });
-        let (_sync_res, ops) = store.after_sync(&req, revision).await.unwrap();
-        db.write_ops(ops).unwrap();
+
+        let txn = store.db().transaction();
+        store.after_sync(&req, &txn).await.unwrap();
     }
 
     #[tokio::test]
@@ -602,8 +596,8 @@ mod test {
             Duration::from_millis(10),
             &task_manager,
         );
-        put(&kv_store, &db, "foo", "old_bar", 2).await;
-        put(&kv_store, &db, "foo", "bar", 3).await;
+        put(&kv_store, "foo", "old_bar").await;
+        put(&kv_store, "foo", "bar").await;
 
         let (req_tx, req_rx) = mpsc::channel(CHANNEL_SIZE);
         let req_stream = ReceiverStream::new(req_rx);
@@ -788,9 +782,9 @@ mod test {
             Duration::from_millis(10),
             &task_manager,
         );
-        put(&kv_store, &db, "foo", "old_bar", 2).await;
-        put(&kv_store, &db, "foo", "bar", 3).await;
-        put(&kv_store, &db, "foo", "new_bar", 4).await;
+        put(&kv_store, "foo", "old_bar").await;
+        put(&kv_store, "foo", "bar").await;
+        put(&kv_store, "foo", "new_bar").await;
 
         kv_store.update_compacted_revision(3);
 
