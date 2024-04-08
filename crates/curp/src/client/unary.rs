@@ -1,19 +1,21 @@
-use std::{cmp::Ordering, marker::PhantomData, ops::AddAssign, sync::Arc, time::Duration};
+use std::{cmp::Ordering, marker::PhantomData, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use curp_external_api::cmd::Command;
-use futures::{Future, StreamExt};
+use futures::{future, stream::FuturesUnordered, Future, Stream, StreamExt};
 use tonic::Response;
 use tracing::{debug, warn};
 
 use super::{state::State, ClientApi, LeaderStateUpdate, ProposeResponse, RepeatableClientApi};
 use crate::{
     members::ServerId,
-    quorum, recover_quorum,
+    quorum,
+    response::ResponseReceiver,
     rpc::{
         connect::ConnectApi, ConfChange, CurpError, FetchClusterRequest, FetchClusterResponse,
-        FetchReadStateRequest, Member, MoveLeaderRequest, ProposeConfChangeRequest, ProposeId,
-        ProposeRequest, PublishRequest, ReadState, ShutdownRequest, WaitSyncedRequest,
+        FetchReadStateRequest, Member, MoveLeaderRequest, OpResponse, ProposeConfChangeRequest,
+        ProposeId, ProposeRequest, PublishRequest, ReadState, RecordRequest, RecordResponse,
+        ShutdownRequest,
     },
     super_quorum,
 };
@@ -83,128 +85,70 @@ impl<C: Command> Unary<C> {
         self.state.map_server(leader_id, f).await
     }
 
-    /// Send proposal to all servers
-    pub(super) async fn fast_round(
-        &self,
-        propose_id: ProposeId,
-        cmd: &C,
-        token: Option<&String>,
-    ) -> Result<Result<C::ER, C::Error>, CurpError> {
-        let req = ProposeRequest::new(propose_id, cmd, self.state.cluster_version().await);
-        let timeout = self.config.propose_timeout;
-
-        let mut responses = self
-            .state
-            .for_each_server(|conn| {
-                let req_c = req.clone();
-                let token_c = token.cloned();
-                async move { (conn.id(), conn.propose(req_c, token_c, timeout).await) }
-            })
-            .await;
-        let super_quorum = super_quorum(responses.len());
-        let recover_quorum = recover_quorum(responses.len());
-
-        let mut err: Option<CurpError> = None;
-        let mut execute_result: Option<C::ER> = None;
-        let (mut ok_cnt, mut key_conflict_cnt) = (0, 0);
-
-        while let Some((id, resp)) = responses.next().await {
-            if key_conflict_cnt >= recover_quorum {
-                return Err(CurpError::KeyConflict(()));
-            }
-
-            let resp = match resp {
-                Ok(resp) => resp.into_inner(),
-                Err(e) => {
-                    warn!("propose cmd({propose_id}) to server({id}) error: {e:?}");
-                    if e.should_abort_fast_round() {
-                        return Err(e);
-                    }
-                    if matches!(e, CurpError::KeyConflict(())) {
-                        key_conflict_cnt.add_assign(1);
-                    }
-                    if let Some(old_err) = err.as_ref() {
-                        if old_err.priority() <= e.priority() {
-                            err = Some(e);
-                        }
-                    } else {
-                        err = Some(e);
-                    }
-                    continue;
-                }
-            };
-            let deserialize_res = resp.map_result::<C, _, Result<(), C::Error>>(|res| {
-                let er = match res {
-                    Ok(er) => er,
-                    Err(cmd_err) => return Err(cmd_err),
-                };
-                if let Some(er) = er {
-                    assert!(execute_result.is_none(), "should not set exe result twice");
-                    execute_result = Some(er);
-                }
-                ok_cnt.add_assign(1);
-                Ok(())
-            });
-            let dr = match deserialize_res {
-                Ok(dr) => dr,
-                Err(ser_err) => {
-                    warn!("serialize error: {ser_err}");
-                    // We blame this error to the server, although it may be a local error.
-                    // We need to retry as same as a server error.
-                    err = Some(CurpError::from(ser_err));
-                    continue;
-                }
-            };
-            if let Err(cmd_err) = dr {
-                // got a command execution error early, abort the next requests and return the cmd error
-                return Ok(Err(cmd_err));
-            }
-            // if the propose meets the super quorum and we got the execute result,
-            // that means we can safely abort the next requests
-            if ok_cnt >= super_quorum {
-                if let Some(er) = execute_result {
-                    debug!("fast round for cmd({}) succeed", propose_id);
-                    return Ok(Ok(er));
-                }
-            }
+    /// Gets the leader id
+    async fn leader_id(&self) -> Result<u64, CurpError> {
+        let cached_leader = self.state.leader_id().await;
+        match cached_leader {
+            Some(id) => Ok(id),
+            None => <Unary<C> as ClientApi>::fetch_leader_id(self, false).await,
         }
-
-        if let Some(err) = err {
-            return Err(err);
-        }
-
-        // We will at least send the request to the leader if no `WrongClusterVersion` returned.
-        // If no errors occur, the leader should return the ER
-        // If it is because the super quorum has not been reached, an error will definitely occur.
-        // Otherwise, there is no leader in the cluster state currently, return wrong cluster version
-        // and attempt to retrieve the cluster state again.
-        Err(CurpError::wrong_cluster_version())
-    }
-
-    /// Wait synced result from server
-    pub(super) async fn slow_round(
-        &self,
-        propose_id: ProposeId,
-    ) -> Result<Result<(C::ASR, C::ER), C::Error>, CurpError> {
-        let timeout = self.config.wait_synced_timeout;
-        let req = WaitSyncedRequest::new(propose_id, self.state.cluster_version().await);
-        let resp = self
-            .map_leader(|conn| async move { conn.wait_synced(req, timeout).await })
-            .await?
-            .into_inner();
-        let synced_res = resp.map_result::<C, _, _>(|res| res).map_err(|ser_err| {
-            warn!("serialize error: {ser_err}");
-            // Same as fast round, we blame the server for the serializing error.
-            CurpError::from(ser_err)
-        })?;
-        debug!("slow round for cmd({}) succeed", propose_id);
-        Ok(synced_res)
     }
 
     /// New a seq num and record it
     #[allow(clippy::unused_self)] // TODO: implement request tracker
     fn new_seq_num(&self) -> u64 {
         rand::random()
+    }
+}
+
+impl<C: Command> Unary<C> {
+    /// Propose for read only commands
+    ///
+    /// For read-only commands, we only need to send propose to leader
+    async fn propose_read_only<PF>(propose_fut: PF) -> Result<ProposeResponse<C>, CurpError>
+    where
+        PF: Future<
+            Output = Result<
+                Response<Box<dyn Stream<Item = tonic::Result<OpResponse>> + Send>>,
+                CurpError,
+            >,
+        >,
+    {
+        let propose_res = propose_fut.await;
+        let resp_stream = propose_res?.into_inner();
+        let mut response_rx = ResponseReceiver::new(resp_stream);
+        response_rx.recv::<C>(false).await
+    }
+
+    /// Propose for mutative commands
+    async fn propose_mutative<PF, RF>(
+        propose_fut: PF,
+        record_futs: FuturesUnordered<RF>,
+        use_fast_path: bool,
+        superquorum: usize,
+    ) -> Result<ProposeResponse<C>, CurpError>
+    where
+        PF: Future<
+            Output = Result<
+                Response<Box<dyn Stream<Item = tonic::Result<OpResponse>> + Send>>,
+                CurpError,
+            >,
+        >,
+        RF: Future<Output = Result<Response<RecordResponse>, CurpError>>,
+    {
+        let record_futs_filtered = record_futs
+            .filter_map(|res| future::ready(res.ok()))
+            .filter(|resp| future::ready(!resp.get_ref().conflict))
+            .take(superquorum.wrapping_sub(1))
+            .collect::<Vec<_>>();
+        let (propose_res, record_resps) = tokio::join!(propose_fut, record_futs_filtered);
+
+        let resp_stream = propose_res?.into_inner();
+        let mut response_rx = ResponseReceiver::new(resp_stream);
+        let fast_path_failed = record_resps.len() < superquorum.wrapping_sub(1);
+        response_rx
+            .recv::<C>(fast_path_failed || !use_fast_path)
+            .await
     }
 }
 
@@ -410,93 +354,36 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
         token: Option<&String>,
         use_fast_path: bool,
     ) -> Result<ProposeResponse<Self::Cmd>, Self::Error> {
-        tokio::pin! {
-            let fast_round = self.fast_round(propose_id, cmd, token);
-            let slow_round = self.slow_round(propose_id);
-        }
+        let cmd_arc = Arc::new(cmd);
+        let propose_req = ProposeRequest::new::<C>(
+            propose_id,
+            cmd_arc.as_ref(),
+            self.state.cluster_version().await,
+            self.state.term().await,
+            !use_fast_path,
+        );
+        let record_req = RecordRequest::new::<C>(propose_id, cmd_arc.as_ref());
+        let superquorum = super_quorum(self.state.connects_len().await);
+        let leader_id = self.leader_id().await?;
+        let timeout = self.config.propose_timeout;
 
-        let res: ProposeResponse<C> = if use_fast_path {
-            match futures::future::select(fast_round, slow_round).await {
-                futures::future::Either::Left((fast_result, slow_round)) => match fast_result {
-                    Ok(er) => er.map(|e| {
-                        #[cfg(feature = "client-metrics")]
-                        super::metrics::get().client_fast_path_count.add(1, &[]);
+        let propose_fut = self.state.map_server(leader_id, |conn| async move {
+            conn.propose_stream(propose_req, token.cloned(), timeout)
+                .await
+        });
+        let record_futs = self
+            .state
+            .for_each_follower(leader_id, |conn| {
+                let record_req_c = record_req.clone();
+                async move { conn.record(record_req_c, timeout).await }
+            })
+            .await;
 
-                        (e, None)
-                    }),
-                    Err(fast_err) => {
-                        if fast_err.should_abort_slow_round() {
-                            return Err(fast_err);
-                        }
-                        // fallback to slow round if fast round failed
-                        let sr = match slow_round.await {
-                            Ok(sr) => sr,
-                            Err(slow_err) => {
-                                return Err(std::cmp::max_by_key(fast_err, slow_err, |err| {
-                                    err.priority()
-                                }))
-                            }
-                        };
-                        sr.map(|(asr, er)| {
-                            #[cfg(feature = "client-metrics")]
-                            {
-                                super::metrics::get().client_slow_path_count.add(1, &[]);
-                                super::metrics::get()
-                                    .client_fast_path_fallback_slow_path_count
-                                    .add(1, &[]);
-                            }
-
-                            (er, Some(asr))
-                        })
-                    }
-                },
-                futures::future::Either::Right((slow_result, fast_round)) => match slow_result {
-                    Ok(er) => er.map(|(asr, e)| {
-                        #[cfg(feature = "client-metrics")]
-                        super::metrics::get().client_slow_path_count.add(1, &[]);
-
-                        (e, Some(asr))
-                    }),
-                    Err(slow_err) => {
-                        if slow_err.should_abort_fast_round() {
-                            return Err(slow_err);
-                        }
-                        // try to poll fast round
-                        let fr = match fast_round.await {
-                            Ok(fr) => fr,
-                            Err(fast_err) => {
-                                return Err(std::cmp::max_by_key(fast_err, slow_err, |err| {
-                                    err.priority()
-                                }))
-                            }
-                        };
-                        fr.map(|er| {
-                            #[cfg(feature = "client-metrics")]
-                            super::metrics::get().client_fast_path_count.add(1, &[]);
-
-                            (er, None)
-                        })
-                    }
-                },
-            }
+        if cmd.is_read_only() {
+            Self::propose_read_only(propose_fut).await
         } else {
-            match futures::future::join(fast_round, slow_round).await {
-                (_, Ok(sr)) => sr.map(|(asr, er)| {
-                    #[cfg(feature = "client-metrics")]
-                    super::metrics::get().client_slow_path_count.add(1, &[]);
-
-                    (er, Some(asr))
-                }),
-                (Ok(_), Err(err)) => return Err(err),
-                (Err(fast_err), Err(slow_err)) => {
-                    return Err(std::cmp::max_by_key(fast_err, slow_err, |err| {
-                        err.priority()
-                    }))
-                }
-            }
-        };
-
-        Ok(res)
+            Self::propose_mutative(propose_fut, record_futs, use_fast_path, superquorum).await
+        }
     }
 
     /// Send propose configuration changes to the cluster

@@ -12,15 +12,14 @@ use curp_test_utils::{
     init_logger, sleep_millis, sleep_secs,
     test_cmd::{TestCommand, TestCommandResult, TestCommandType},
 };
+use futures::stream::FuturesUnordered;
 use madsim::rand::{thread_rng, Rng};
 use test_macros::abort_on_panic;
 use tokio::net::TcpListener;
+use tokio_stream::StreamExt;
 use utils::{config::ClientConfig, timestamp};
 
-use crate::common::curp_group::{
-    commandpb::ProposeId, CurpGroup, FetchClusterRequest, ProposeRequest, ProposeResponse,
-    DEFAULT_SHUTDOWN_TIMEOUT,
-};
+use crate::common::curp_group::{CurpGroup, FetchClusterRequest, DEFAULT_SHUTDOWN_TIMEOUT};
 
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
@@ -58,17 +57,22 @@ async fn synced_propose() {
 
     let mut group = CurpGroup::new(5).await;
     let client = group.new_client().await;
-    let cmd = TestCommand::new_get(vec![0]);
+    let cmd = TestCommand::new_put(vec![0], 0);
 
     let (er, index) = client.propose(&cmd, None, false).await.unwrap().unwrap();
     assert_eq!(er, TestCommandResult::new(vec![], vec![]));
     assert_eq!(index.unwrap(), 1.into()); // log[0] is a fake one
 
-    for exe_rx in group.exe_rxs() {
-        let (cmd1, er) = exe_rx.recv().await.unwrap();
+    {
+        let mut exe_futs = group
+            .exe_rxs()
+            .map(|rx| rx.recv())
+            .collect::<FuturesUnordered<_>>();
+        let (cmd1, er) = exe_futs.next().await.unwrap().unwrap();
         assert_eq!(cmd1, cmd);
         assert_eq!(er, TestCommandResult::new(vec![], vec![]));
     }
+
     for as_rx in group.as_rxs() {
         let (cmd1, index) = as_rx.recv().await.unwrap();
         assert_eq!(cmd1, cmd);
@@ -76,23 +80,27 @@ async fn synced_propose() {
     }
 }
 
-// Each command should be executed once and only once on each node
+// Each command should be executed once and only once on leader
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
-async fn exe_exact_n_times() {
+async fn exe_exactly_once_on_leader() {
     init_logger();
 
     let mut group = CurpGroup::new(3).await;
     let client = group.new_client().await;
-    let cmd = TestCommand::new_get(vec![0]);
+    let cmd = TestCommand::new_put(vec![0], 0);
 
     let er = client.propose(&cmd, None, true).await.unwrap().unwrap().0;
     assert_eq!(er, TestCommandResult::new(vec![], vec![]));
 
-    for exe_rx in group.exe_rxs() {
-        let (cmd1, er) = exe_rx.recv().await.unwrap();
+    {
+        let mut exe_futs = group
+            .exe_rxs()
+            .map(|rx| rx.recv())
+            .collect::<FuturesUnordered<_>>();
+        let (cmd1, er) = exe_futs.next().await.unwrap().unwrap();
         assert!(
-            tokio::time::timeout(Duration::from_millis(100), exe_rx.recv())
+            tokio::time::timeout(Duration::from_millis(100), exe_futs.next())
                 .await
                 .is_err()
         );
@@ -112,6 +120,8 @@ async fn exe_exact_n_times() {
     }
 }
 
+// TODO: rewrite this test for propose_stream
+#[cfg(ignore)]
 // To verify PR #86 is fixed
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
@@ -133,6 +143,7 @@ async fn fast_round_is_slower_than_slow_round() {
             }),
             command: bincode::serialize(&cmd).unwrap(),
             cluster_version: 0,
+            term: 0,
         }))
         .await
         .unwrap();
@@ -154,6 +165,7 @@ async fn fast_round_is_slower_than_slow_round() {
             }),
             command: bincode::serialize(&cmd).unwrap(),
             cluster_version: 0,
+            term: 0,
         }))
         .await
         .unwrap()
@@ -161,6 +173,8 @@ async fn fast_round_is_slower_than_slow_round() {
     assert!(resp.result.is_none());
 }
 
+// TODO: rewrite this test for propose_stream
+#[cfg(ignore)]
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn concurrent_cmd_order() {
@@ -183,6 +197,7 @@ async fn concurrent_cmd_order() {
             }),
             command: bincode::serialize(&cmd0).unwrap(),
             cluster_version: 0,
+            term: 0,
         })
         .await
         .expect("propose failed");
@@ -197,6 +212,7 @@ async fn concurrent_cmd_order() {
             }),
             command: bincode::serialize(&cmd1).unwrap(),
             cluster_version: 0,
+            term: 0,
         })
         .await;
     assert!(response.is_err());
@@ -208,6 +224,7 @@ async fn concurrent_cmd_order() {
             }),
             command: bincode::serialize(&cmd2).unwrap(),
             cluster_version: 0,
+            term: 0,
         })
         .await;
     assert!(response.is_err());
@@ -498,9 +515,9 @@ async fn check_new_node(is_learner: bool) {
         .iter()
         .any(|m| m.id == node_id && m.name == "new_node" && is_learner == m.is_learner));
 
-    // 4. check if the new node executes the command from old cluster
+    // 4. check if the new node syncs the command from old cluster
     let new_node = group.nodes.get_mut(&node_id).unwrap();
-    let (cmd, res) = new_node.exe_rx.recv().await.unwrap();
+    let (cmd, _) = new_node.as_rx.recv().await.unwrap();
     assert_eq!(
         cmd,
         TestCommand {
@@ -509,7 +526,6 @@ async fn check_new_node(is_learner: bool) {
             ..Default::default()
         }
     );
-    assert!(res.values.is_empty());
 
     // 5. check if the old client can propose to the new cluster
     client
