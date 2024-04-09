@@ -34,7 +34,7 @@ use super::{
 };
 use crate::{
     header_gen::HeaderGenerator,
-    revision_number::RevisionNumberGenerator,
+    revision_number::RevisionNumberGeneratorState,
     rpc::{
         Event, LeaseGrantRequest, LeaseGrantResponse, LeaseLeasesRequest, LeaseLeasesResponse,
         LeaseRevokeRequest, LeaseRevokeResponse, LeaseStatus, PbLease, RequestWrapper,
@@ -55,8 +55,6 @@ pub(crate) struct LeaseStore {
     db: Arc<DB>,
     /// Key to revision index
     index: Arc<Index>,
-    /// Revision
-    revision: Arc<RevisionNumberGenerator>,
     /// Header generator
     header_gen: Arc<HeaderGenerator>,
     /// KV update sender
@@ -83,7 +81,6 @@ impl LeaseStore {
             lease_collection,
             db,
             index,
-            revision: header_gen.general_revision_arc(),
             header_gen,
             kv_update_tx,
             is_primary: AtomicBool::new(is_leader),
@@ -105,11 +102,12 @@ impl LeaseStore {
     pub(crate) async fn after_sync(
         &self,
         request: &RequestWrapper,
+        revision_gen: &RevisionNumberGeneratorState<'_>,
     ) -> Result<(SyncResponse, Vec<WriteOp>), ExecuteError> {
         let revision = if request.skip_lease_revision() {
-            self.revision.get()
+            revision_gen.get()
         } else {
-            self.revision.next()
+            revision_gen.next()
         };
         self.sync_request(request, revision)
             .await
@@ -382,16 +380,20 @@ mod test {
     use utils::config::EngineConfig;
 
     use super::*;
-    use crate::storage::{db::DB, storage_api::XlineStorageOps};
+    use crate::{
+        revision_number::RevisionNumberGenerator,
+        storage::{db::DB, storage_api::XlineStorageOps},
+    };
 
     #[tokio::test(flavor = "multi_thread")]
     #[abort_on_panic]
     async fn test_lease_storage() -> Result<(), Box<dyn Error>> {
         let db = DB::open(&EngineConfig::Memory)?;
-        let lease_store = init_store(db);
+        let (lease_store, rev_gen) = init_store(db);
+        let rev_gen_state = rev_gen.state();
 
         let req1 = RequestWrapper::from(LeaseGrantRequest { ttl: 10, id: 1 });
-        let _ignore1 = exe_and_sync_req(&lease_store, &req1).await?;
+        let _ignore1 = exe_and_sync_req(&lease_store, &req1, &rev_gen_state).await?;
 
         let lo = lease_store.look_up(1).unwrap();
         assert_eq!(lo.id(), 1);
@@ -405,7 +407,7 @@ mod test {
         lease_store.lease_collection.detach(1, "key".as_bytes())?;
 
         let req2 = RequestWrapper::from(LeaseRevokeRequest { id: 1 });
-        let _ignore2 = exe_and_sync_req(&lease_store, &req2).await?;
+        let _ignore2 = exe_and_sync_req(&lease_store, &req2, &rev_gen_state).await?;
         assert!(lease_store.look_up(1).is_none());
         assert!(lease_store.leases().is_empty());
 
@@ -413,9 +415,9 @@ mod test {
         let req4 = RequestWrapper::from(LeaseGrantRequest { ttl: 10, id: 4 });
         let req5 = RequestWrapper::from(LeaseRevokeRequest { id: 3 });
         let req6 = RequestWrapper::from(LeaseLeasesRequest {});
-        let _ignore3 = exe_and_sync_req(&lease_store, &req3).await?;
-        let _ignore4 = exe_and_sync_req(&lease_store, &req4).await?;
-        let resp_1 = exe_and_sync_req(&lease_store, &req6).await?;
+        let _ignore3 = exe_and_sync_req(&lease_store, &req3, &rev_gen_state).await?;
+        let _ignore4 = exe_and_sync_req(&lease_store, &req4, &rev_gen_state).await?;
+        let resp_1 = exe_and_sync_req(&lease_store, &req6, &rev_gen_state).await?;
 
         let ResponseWrapper::LeaseLeasesResponse(leases_1) = resp_1 else {
             panic!("wrong response type: {resp_1:?}");
@@ -423,8 +425,8 @@ mod test {
         assert_eq!(leases_1.leases[0].id, 3);
         assert_eq!(leases_1.leases[1].id, 4);
 
-        let _ignore5 = exe_and_sync_req(&lease_store, &req5).await?;
-        let resp_2 = exe_and_sync_req(&lease_store, &req6).await?;
+        let _ignore5 = exe_and_sync_req(&lease_store, &req5, &rev_gen_state).await?;
+        let resp_2 = exe_and_sync_req(&lease_store, &req6, &rev_gen_state).await?;
         let ResponseWrapper::LeaseLeasesResponse(leases_2) = resp_2 else {
             panic!("wrong response type: {resp_2:?}");
         };
@@ -436,7 +438,8 @@ mod test {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_lease_sync() -> Result<(), Box<dyn Error>> {
         let db = DB::open(&EngineConfig::Memory)?;
-        let lease_store = init_store(db);
+        let (lease_store, rev_gen) = init_store(db);
+        let rev_gen_state = rev_gen.state();
         let wait_duration = Duration::from_millis(1);
 
         let req1 = RequestWrapper::from(LeaseGrantRequest { ttl: 10, id: 1 });
@@ -449,7 +452,7 @@ mod test {
             "the future should block until the lease is synced"
         );
 
-        let (_ignore, ops) = lease_store.after_sync(&req1).await?;
+        let (_ignore, ops) = lease_store.after_sync(&req1, &rev_gen_state).await?;
         lease_store.db.write_ops(ops)?;
         lease_store.mark_lease_synced(&req1);
 
@@ -470,7 +473,7 @@ mod test {
             "the future should block until the lease is synced"
         );
 
-        let (_ignore, ops) = lease_store.after_sync(&req2).await?;
+        let (_ignore, ops) = lease_store.after_sync(&req2, &rev_gen_state).await?;
         lease_store.db.write_ops(ops)?;
         lease_store.mark_lease_synced(&req2);
 
@@ -488,13 +491,14 @@ mod test {
     #[abort_on_panic]
     async fn test_recover() -> Result<(), ExecuteError> {
         let db = DB::open(&EngineConfig::Memory)?;
-        let store = init_store(Arc::clone(&db));
+        let (store, rev_gen) = init_store(Arc::clone(&db));
+        let rev_gen_state = rev_gen.state();
 
         let req1 = RequestWrapper::from(LeaseGrantRequest { ttl: 10, id: 1 });
-        let _ignore1 = exe_and_sync_req(&store, &req1).await?;
+        let _ignore1 = exe_and_sync_req(&store, &req1, &rev_gen_state).await?;
         store.lease_collection.attach(1, "key".into())?;
 
-        let new_store = init_store(db);
+        let (new_store, _) = init_store(db);
         assert!(new_store.look_up(1).is_none());
         new_store.recover()?;
 
@@ -509,21 +513,26 @@ mod test {
         Ok(())
     }
 
-    fn init_store(db: Arc<DB>) -> LeaseStore {
+    fn init_store(db: Arc<DB>) -> (LeaseStore, RevisionNumberGenerator) {
         let lease_collection = Arc::new(LeaseCollection::new(0));
         let (kv_update_tx, _) = mpsc::channel(1);
         let header_gen = Arc::new(HeaderGenerator::new(0, 0));
         let index = Arc::new(Index::new());
-        LeaseStore::new(lease_collection, header_gen, db, index, kv_update_tx, true)
+        (
+            LeaseStore::new(lease_collection, header_gen, db, index, kv_update_tx, true),
+            RevisionNumberGenerator::new(1),
+        )
     }
 
     async fn exe_and_sync_req(
         ls: &LeaseStore,
         req: &RequestWrapper,
+        rev_gen: &RevisionNumberGeneratorState<'_>,
     ) -> Result<ResponseWrapper, ExecuteError> {
         let cmd_res = ls.execute(req)?;
-        let (_ignore, ops) = ls.after_sync(req).await?;
+        let (_ignore, ops) = ls.after_sync(req, rev_gen).await?;
         ls.db.write_ops(ops)?;
+        rev_gen.commit();
         Ok(cmd_res.into_inner())
     }
 }

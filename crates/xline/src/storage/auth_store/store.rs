@@ -29,7 +29,7 @@ use super::{
 };
 use crate::{
     header_gen::HeaderGenerator,
-    revision_number::RevisionNumberGenerator,
+    revision_number::{RevisionNumberGenerator, RevisionNumberGeneratorState},
     rpc::{
         AuthDisableRequest, AuthDisableResponse, AuthEnableRequest, AuthEnableResponse,
         AuthRoleAddRequest, AuthRoleAddResponse, AuthRoleDeleteRequest, AuthRoleDeleteResponse,
@@ -527,11 +527,12 @@ impl AuthStore {
     pub(crate) fn after_sync<'a>(
         &self,
         request: &'a RequestWrapper,
+        revision_gen: &RevisionNumberGeneratorState,
     ) -> Result<(SyncResponse, Vec<WriteOp<'a>>), ExecuteError> {
         let revision = if request.skip_auth_revision() {
-            self.revision.get()
+            revision_gen.get()
         } else {
-            self.revision.next()
+            revision_gen.next()
         };
         #[allow(clippy::wildcard_enum_match_arm)]
         let ops = match *request {
@@ -1165,6 +1166,13 @@ fn get_cn<T>(request: &tonic::Request<T>) -> Option<String> {
     cert.subject_common_name()
 }
 
+impl AuthStore {
+    /// Gets the auth revision generator
+    pub(crate) fn revision_gen(&self) -> Arc<RevisionNumberGenerator> {
+        Arc::clone(&self.revision)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::collections::HashMap;
@@ -1398,7 +1406,10 @@ mod test {
         req: &RequestWrapper,
     ) -> Result<(CommandResponse, SyncResponse), ExecuteError> {
         let cmd_res = store.execute(req)?;
-        let (sync_res, ops) = store.after_sync(req)?;
+        let rev_gen = store.revision_gen();
+        let rev_gen_state = rev_gen.state();
+        let (sync_res, ops) = store.after_sync(req, &rev_gen_state)?;
+        rev_gen_state.commit();
         store.backend.flush_ops(ops)?;
         Ok((cmd_res, sync_res))
     }

@@ -451,7 +451,15 @@ mod test {
         });
 
         let txn = store.db().transaction();
-        store.after_sync(&req, &txn).await.unwrap();
+        store
+            .after_sync(
+                &req,
+                &txn,
+                &store.index().state(),
+                &store.revision_gen().state(),
+            )
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
