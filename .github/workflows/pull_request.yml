@@ -155,7 +155,7 @@ jobs:
           path: _output/xline.tar
 
   e2e:
-    name: e2e_kube
+    name: E2E Kube
     runs-on: ubuntu-latest
     needs:
       - build
