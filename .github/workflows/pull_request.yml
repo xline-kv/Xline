@@ -113,7 +113,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check Spelling
-        uses: crate-ci/typos@v1.20.4
+        uses: crate-ci/typos@v1.20.5
 
   build:
     name: build
