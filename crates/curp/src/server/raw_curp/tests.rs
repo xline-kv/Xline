@@ -80,10 +80,10 @@ impl RawCurp<TestCommand, TestRoleChange> {
             Reverse(Instant::now().add(Duration::from_nanos(u64::MAX))),
         );
 
-        let sp = Arc::new(Mutex::new(SpecPool::new(vec![Box::new(
+        let sp = Arc::new(Mutex::new(SpeculativePool::new(vec![Box::new(
             TestSpecPool::default(),
         )])));
-        let ucp = Arc::new(Mutex::new(UncomPool::new(vec![Box::new(
+        let ucp = Arc::new(Mutex::new(UncommittedPool::new(vec![Box::new(
             TestUncomPool::default(),
         )])));
 
