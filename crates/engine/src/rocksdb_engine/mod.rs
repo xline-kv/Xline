@@ -114,6 +114,7 @@ impl RocksEngine {
     /// Gets the max write data size.
     /// Max write data size = 2 * key + value + `cf_handle_size` + `ESTIMATE_WRITTEN_SIZE_OFFSET`
     pub(super) fn max_write_size(table_len: usize, key_len: usize, value_len: usize) -> usize {
+        /// Estimate size offset for a write operation
         const ESTIMATE_WRITTEN_SIZE_OFFSET: usize = 1008;
         key_len
             .overflow_mul(2)
@@ -201,7 +202,6 @@ impl StorageEngine for RocksEngine {
     fn write_batch(&self, wr_ops: Vec<WriteOperation<'_>>, _sync: bool) -> Result<(), EngineError> {
         let transaction = self.inner.transaction();
         let mut size = 0;
-        #[allow(clippy::pattern_type_mismatch)] // can't be fixed
         for op in wr_ops {
             match op {
                 WriteOperation::Put { table, key, value } => {
@@ -231,7 +231,7 @@ impl StorageEngine for RocksEngine {
                     let mode = IteratorMode::From(from, Direction::Forward);
                     let kvs: Vec<_> = transaction
                         .iterator_cf(&cf, mode)
-                        .take_while(|res| res.as_ref().is_ok_and(|(key, _)| key.as_ref() < to))
+                        .take_while(|res| res.as_ref().is_ok_and(|kv| kv.0.as_ref() < to))
                         .collect::<Result<Vec<_>, _>>()?;
                     for (key, _) in kvs {
                         transaction.delete_cf(&cf, key)?;
