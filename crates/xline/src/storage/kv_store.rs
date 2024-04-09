@@ -22,14 +22,14 @@ use xlineapi::{
 
 use super::{
     db::{DB, SCHEDULED_COMPACT_REVISION},
-    index::{Index, IndexOperate, IndexState},
+    index::{Index, IndexOperate},
     lease_store::LeaseCollection,
     revision::{KeyRevision, Revision},
 };
 use crate::{
     header_gen::HeaderGenerator,
     revision_check::RevisionCheck,
-    revision_number::RevisionNumberGenerator,
+    revision_number::{RevisionNumberGenerator, RevisionNumberGeneratorState},
     rpc::{
         CompactionRequest, CompactionResponse, Compare, CompareResult, CompareTarget,
         DeleteRangeRequest, DeleteRangeResponse, Event, EventType, KeyValue, PutRequest,
@@ -199,12 +199,16 @@ impl KvStore {
     pub(crate) fn execute(
         &self,
         request: &RequestWrapper,
-        txn_db: Option<&Transaction>,
+        as_ctx: Option<(&Transaction, &mut dyn IndexOperate)>,
     ) -> Result<CommandResponse, ExecuteError> {
-        if let Some(db) = txn_db {
-            self.execute_request(request, db)
+        if let Some((db, index)) = as_ctx {
+            self.execute_request(request, db, index)
         } else {
-            self.execute_request(request, &self.inner.db.transaction())
+            self.execute_request(
+                request,
+                &self.inner.db.transaction(),
+                &mut self.inner.index.state(),
+            )
         }
         .map(CommandResponse::new)
     }
@@ -214,11 +218,14 @@ impl KvStore {
         &self,
         request: &RequestWrapper,
         txn_db: &T,
+        index: &(dyn IndexOperate + Send + Sync),
+        revision_gen: &RevisionNumberGeneratorState<'_>,
     ) -> Result<SyncResponse, ExecuteError>
     where
         T: XlineStorageOps + TransactionApi,
     {
-        self.sync_request(request, txn_db).await
+        self.sync_request(request, txn_db, index, revision_gen)
+            .await
     }
 
     /// Recover data from persistent storage
@@ -565,26 +572,26 @@ impl KvStore {
         &self,
         wrapper: &RequestWrapper,
         txn_db: &Transaction,
+        index: &mut dyn IndexOperate,
     ) -> Result<ResponseWrapper, ExecuteError> {
         debug!("Execute {:?}", wrapper);
 
         #[allow(clippy::wildcard_enum_match_arm)]
         let res: ResponseWrapper = match *wrapper {
-            RequestWrapper::RangeRequest(ref req) => self
-                .execute_range(txn_db, self.inner.index.as_ref(), req)
-                .map(Into::into)?,
-            RequestWrapper::PutRequest(ref req) => self
-                .execute_put(txn_db, &self.inner.index, req)
-                .map(Into::into)?,
+            RequestWrapper::RangeRequest(ref req) => {
+                self.execute_range(txn_db, index, req).map(Into::into)?
+            }
+            RequestWrapper::PutRequest(ref req) => {
+                self.execute_put(txn_db, index, req).map(Into::into)?
+            }
             RequestWrapper::DeleteRangeRequest(ref req) => self
-                .execute_delete_range(txn_db, &self.inner.index, req)
+                .execute_delete_range(txn_db, index, req)
                 .map(Into::into)?,
             RequestWrapper::TxnRequest(ref req) => {
-                let mut index = self.inner.index.state();
                 // As we store use revision as key in the DB storage,
                 // a fake revision needs to be used during speculative execution
                 let fake_revision = i64::MAX;
-                self.execute_txn(&txn_db, &mut index, req, fake_revision, &mut 0)
+                self.execute_txn(&txn_db, index, req, fake_revision, &mut 0)
                     .map(Into::into)?
             }
             RequestWrapper::CompactionRequest(ref req) => {
@@ -687,7 +694,7 @@ impl KvStore {
     fn execute_put(
         &self,
         txn_db: &Transaction,
-        index: &Index,
+        index: &dyn IndexOperate,
         req: &PutRequest,
     ) -> Result<PutResponse, ExecuteError> {
         let prev_rev = (req.prev_kv || req.ignore_lease || req.ignore_value)
@@ -705,7 +712,7 @@ impl KvStore {
     fn execute_txn_put(
         &self,
         txn_db: &Transaction,
-        index: &mut IndexState,
+        index: &mut dyn IndexOperate,
         req: &PutRequest,
         revision: i64,
         sub_revision: &mut i64,
@@ -773,7 +780,7 @@ impl KvStore {
     fn execute_delete_range<T>(
         &self,
         txn_db: &T,
-        index: &Index,
+        index: &dyn IndexOperate,
         req: &DeleteRangeRequest,
     ) -> Result<DeleteRangeResponse, ExecuteError>
     where
@@ -786,7 +793,7 @@ impl KvStore {
     fn execute_txn_delete_range<T>(
         &self,
         txn_db: &T,
-        index: &mut IndexState,
+        index: &mut dyn IndexOperate,
         req: &DeleteRangeRequest,
         revision: i64,
         sub_revision: &mut i64,
@@ -811,7 +818,7 @@ impl KvStore {
     fn execute_txn(
         &self,
         txn_db: &Transaction,
-        index: &mut IndexState,
+        index: &mut dyn IndexOperate,
         request: &TxnRequest,
         revision: i64,
         sub_revision: &mut i64,
@@ -820,7 +827,7 @@ impl KvStore {
             .compare
             .iter()
             .all(|compare| Self::check_compare(txn_db, index, compare));
-        tracing::info!("txn success in execute: {success}");
+        tracing::warn!("txn success in execute: {success}");
         let requests = if success {
             request.success.iter()
         } else {
@@ -878,15 +885,16 @@ impl KvStore {
         &self,
         wrapper: &RequestWrapper,
         txn_db: &T,
+        index: &(dyn IndexOperate + Send + Sync),
+        revision_gen: &RevisionNumberGeneratorState<'_>,
     ) -> Result<SyncResponse, ExecuteError>
     where
         T: XlineStorageOps + TransactionApi,
     {
         debug!("Execute {:?}", wrapper);
+        warn!("after sync: {wrapper:?}");
 
-        let index = self.inner.index.as_ref();
-        let next_revision = self.revision.get().overflow_add(1);
-        tracing::info!("with revision: {next_revision}");
+        let next_revision = revision_gen.get().overflow_add(1);
 
         #[allow(clippy::wildcard_enum_match_arm)]
         let events = match *wrapper {
@@ -907,13 +915,13 @@ impl KvStore {
         };
 
         let response = if events.is_empty() {
-            SyncResponse::new(self.revision.get())
+            SyncResponse::new(revision_gen.get())
         } else {
             self.notify_updates(next_revision, events).await;
-            SyncResponse::new(self.revision.next())
+            SyncResponse::new(revision_gen.next())
         };
 
-        tracing::info!("sync response: {response:?}");
+        tracing::warn!("sync response: {response:?}");
 
         Ok(response)
     }
@@ -922,7 +930,7 @@ impl KvStore {
     fn sync_put<T>(
         &self,
         txn_db: &T,
-        index: &Index,
+        index: &dyn IndexOperate,
         req: &PutRequest,
         revision: i64,
         sub_revision: &mut i64,
@@ -980,7 +988,7 @@ impl KvStore {
     fn sync_delete_range<T>(
         &self,
         txn_db: &T,
-        index: &Index,
+        index: &dyn IndexOperate,
         req: &DeleteRangeRequest,
         revision: i64,
         sub_revision: &mut i64,
@@ -1006,7 +1014,7 @@ impl KvStore {
     fn sync_txn<T>(
         &self,
         txn_db: &T,
-        index: &Index,
+        index: &dyn IndexOperate,
         request: &TxnRequest,
         revision: i64,
         sub_revision: &mut i64,
@@ -1019,7 +1027,7 @@ impl KvStore {
             .compare
             .iter()
             .all(|compare| Self::check_compare(txn_db, index, compare));
-        tracing::info!("txn success: {success}");
+        tracing::warn!("txn success: {success}");
         let requests = if success {
             request.success.iter()
         } else {
@@ -1157,6 +1165,18 @@ impl KvStore {
     }
 }
 
+impl KvStore {
+    /// Gets the index
+    pub(crate) fn index(&self) -> Arc<Index> {
+        Arc::clone(&self.inner.index)
+    }
+
+    /// Gets the general revision generator
+    pub(crate) fn revision_gen(&self) -> Arc<RevisionNumberGenerator> {
+        Arc::clone(&self.revision)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::time::Duration;
@@ -1275,7 +1295,15 @@ mod test {
         request: &RequestWrapper,
     ) -> Result<(), ExecuteError> {
         let txn_db = store.db().transaction();
-        store.after_sync(request, &txn_db).await.map(|_| ())
+        let index = store.index();
+        let index_state = index.state();
+        let rev_gen_state = store.revision.state();
+        let _res = store
+            .after_sync(request, &txn_db, &index_state, &rev_gen_state)
+            .await?;
+        index_state.commit();
+        rev_gen_state.commit();
+        Ok(())
     }
 
     fn index_compact(store: &Arc<KvStore>, at_rev: i64) -> Vec<Vec<u8>> {

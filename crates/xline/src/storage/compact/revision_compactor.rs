@@ -129,16 +129,17 @@ mod test {
         let mut compactable = MockCompactable::new();
         compactable.expect_compact().times(3).returning(Ok);
         let revision_gen = Arc::new(RevisionNumberGenerator::new(110));
+        let revision_gen_state = revision_gen.state();
         let revision_compactor = RevisionCompactor::new_arc(true, Arc::clone(&revision_gen), 100);
         revision_compactor.set_compactable(compactable).await;
         // auto_compactor works successfully
         assert_eq!(revision_compactor.do_compact(None).await, Some(10));
-        revision_gen.next(); // current revision: 111
+        revision_gen_state.next(); // current revision: 111
         assert_eq!(revision_compactor.do_compact(Some(10)).await, Some(11));
         revision_compactor.pause();
-        revision_gen.next(); // current revision 112
+        revision_gen_state.next(); // current revision 112
         assert!(revision_compactor.do_compact(Some(11)).await.is_none());
-        revision_gen.next(); // current revision 113
+        revision_gen_state.next(); // current revision 113
         assert!(revision_compactor.do_compact(Some(11)).await.is_none());
         revision_compactor.resume();
         assert_eq!(revision_compactor.do_compact(Some(11)).await, Some(13));

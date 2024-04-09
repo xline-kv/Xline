@@ -753,6 +753,15 @@ mod test {
             ..Default::default()
         });
         let txn = store.db().transaction();
-        store.after_sync(&req, &txn).await.unwrap();
+        let index = store.index();
+        let index_state = index.state();
+        let rev_gen = store.revision_gen();
+        let rev_gen_state = rev_gen.state();
+        store
+            .after_sync(&req, &txn, &index_state, &rev_gen_state)
+            .await
+            .unwrap();
+        index_state.commit();
+        rev_gen_state.commit();
     }
 }
