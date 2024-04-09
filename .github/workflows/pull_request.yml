@@ -83,7 +83,11 @@ jobs:
 
       - name: Upload coverage to Codecov
         if: matrix.config.name == 'Normal'
-        run: ci/scripts/upload-codecov.sh codecov.info
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: codecov.info
+          verbose: true
 
   commit:
     name: Commit Message Validation
