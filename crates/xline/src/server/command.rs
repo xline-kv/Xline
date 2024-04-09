@@ -315,6 +315,13 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
             })
             .collect::<Result<_, _>>()?;
 
+        let index = self.kv_storage.index();
+        let mut index_state = index.state();
+        let general_revision_gen = self.kv_storage.revision_gen();
+        let auth_revision_gen = self.auth_storage.revision_gen();
+        let general_revision_state = general_revision_gen.state();
+        let auth_revision_state = auth_revision_gen.state();
+
         let txn_db = self.persistent.transaction();
         txn_db.write_op(WriteOp::PutAppliedIndex(highest_index))?;
 
@@ -323,7 +330,9 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
             let wrapper = cmd.request();
             let er = to_execute
                 .then(|| match wrapper.backend() {
-                    RequestBackend::Kv => self.kv_storage.execute(wrapper, Some(&txn_db)),
+                    RequestBackend::Kv => self
+                        .kv_storage
+                        .execute(wrapper, Some((&txn_db, &mut index_state))),
                     RequestBackend::Auth => self.auth_storage.execute(wrapper),
                     RequestBackend::Lease => self.lease_storage.execute(wrapper),
                     RequestBackend::Alarm => Ok(self.alarm_storage.execute(wrapper)),
@@ -334,10 +343,23 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
                 tracing::info!("execute in after sync for: {cmd:?}");
             }
             let (asr, wr_ops) = match wrapper.backend() {
-                RequestBackend::Kv => (self.kv_storage.after_sync(wrapper, &txn_db).await?, vec![]),
-                RequestBackend::Auth => self.auth_storage.after_sync(wrapper)?,
-                RequestBackend::Lease => self.lease_storage.after_sync(wrapper).await?,
-                RequestBackend::Alarm => self.alarm_storage.after_sync(wrapper),
+                RequestBackend::Kv => (
+                    self.kv_storage
+                        .after_sync(wrapper, &txn_db, &index_state, &general_revision_state)
+                        .await?,
+                    vec![],
+                ),
+                RequestBackend::Auth => self
+                    .auth_storage
+                    .after_sync(wrapper, &auth_revision_state)?,
+                RequestBackend::Lease => {
+                    self.lease_storage
+                        .after_sync(wrapper, &general_revision_state)
+                        .await?
+                }
+                RequestBackend::Alarm => self
+                    .alarm_storage
+                    .after_sync(wrapper, &general_revision_state),
             };
             txn_db.write_ops(wr_ops)?;
             resps.push((asr, er));
@@ -359,10 +381,12 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
 
             self.lease_storage.mark_lease_synced(wrapper);
         }
-        // FIXME: revision needs to fallback when commit failed
         txn_db
             .commit()
             .map_err(|e| ExecuteError::DbError(e.to_string()))?;
+        index_state.commit();
+        general_revision_state.commit();
+        auth_revision_state.commit();
 
         if !quota_enough {
             if let Some(alarmer) = self.alarmer.read().clone() {
