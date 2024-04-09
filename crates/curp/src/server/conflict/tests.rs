@@ -182,7 +182,7 @@ fn sp_should_returns_all_entries() {
     for e in entries.clone() {
         sp.insert(e);
     }
-    /// conflict entries should not be inserted
+    // conflict entries should not be inserted
     for e in entries.clone() {
         assert!(sp.insert(e).is_some());
     }

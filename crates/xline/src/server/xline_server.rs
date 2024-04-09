@@ -47,8 +47,8 @@ use super::{
 };
 use crate::{
     conflict::{
-        spec_pool::{KvSpecPool, LeaseSpecPool, XorSpecPool},
-        uncommitted_pool::{KvUncomPool, LeaseUncomPool, XorUncomPool},
+        spec_pool::{ExclusiveSpecPool, KvSpecPool, LeaseSpecPool},
+        uncommitted_pool::{ExclusiveUncomPool, KvUncomPool, LeaseUncomPool},
     },
     header_gen::HeaderGenerator,
     id_gen::IdGenerator,
@@ -701,10 +701,10 @@ impl XlineServer {
     fn init_conflict_pools() -> (Vec<SpObject<Command>>, Vec<UcpObject<Command>>) {
         let kv_sp = Box::<KvSpecPool>::default();
         let lease_sp = Box::<LeaseSpecPool>::default();
-        let xor_sp = Box::<XorSpecPool>::default();
+        let xor_sp = Box::<ExclusiveSpecPool>::default();
         let kv_ucp = Box::<KvUncomPool>::default();
         let lease_ucp = Box::<LeaseUncomPool>::default();
-        let xor_ucp = Box::<XorUncomPool>::default();
+        let xor_ucp = Box::<ExclusiveUncomPool>::default();
         (
             vec![kv_sp, lease_sp, xor_sp],
             vec![kv_ucp, lease_ucp, xor_ucp],
