@@ -359,6 +359,7 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
 
             self.lease_storage.mark_lease_synced(wrapper);
         }
+        // FIXME: revision needs to fallback when commit failed
         txn_db
             .commit()
             .map_err(|e| ExecuteError::DbError(e.to_string()))?;
