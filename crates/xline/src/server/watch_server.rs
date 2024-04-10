@@ -457,6 +457,7 @@ mod test {
                 &txn,
                 &store.index().state(),
                 &store.revision_gen().state(),
+                false,
             )
             .await
             .unwrap();

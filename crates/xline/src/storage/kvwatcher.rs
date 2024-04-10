@@ -758,7 +758,7 @@ mod test {
         let rev_gen = store.revision_gen();
         let rev_gen_state = rev_gen.state();
         store
-            .after_sync(&req, &txn, &index_state, &rev_gen_state)
+            .after_sync(&req, &txn, &index_state, &rev_gen_state, false)
             .await
             .unwrap();
         index_state.commit();
