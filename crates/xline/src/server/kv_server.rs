@@ -76,7 +76,7 @@ impl KvServer {
     fn do_serializable(&self, command: &Command) -> Result<Response, tonic::Status> {
         self.auth_storage
             .check_permission(command.request(), command.auth_info())?;
-        let cmd_res = self.kv_storage.execute(command.request())?;
+        let cmd_res = self.kv_storage.execute(command.request(), None)?;
         Ok(Self::parse_response_op(cmd_res.into_inner().into()))
     }
 

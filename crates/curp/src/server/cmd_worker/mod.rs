@@ -5,6 +5,7 @@ use std::{fmt::Debug, iter, sync::Arc};
 
 use async_trait::async_trait;
 use clippy_utilities::NumericCast;
+use curp_external_api::cmd::AfterSyncCmd;
 #[cfg(test)]
 use mockall::automock;
 use tokio::sync::oneshot;
@@ -145,6 +146,7 @@ async fn worker_exe<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
 }
 
 /// Cmd worker after sync handler
+#[allow(clippy::too_many_lines)] // TODO: split this to multiple fns
 async fn worker_as<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     entry: Arc<LogEntry<C>>,
     prepare: Option<C::PR>,
@@ -155,10 +157,20 @@ async fn worker_as<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     let id = curp.id();
     let success = match entry.entry_data {
         EntryData::Command(ref cmd) => {
-            let Some(prepare) = prepare else {
+            let Some(_prepare) = prepare else {
                 unreachable!("prepare should always be Some(_) when entry is a command");
             };
-            let asr = ce.after_sync(cmd.as_ref(), entry.index, prepare).await;
+            let asr = ce
+                .after_sync(vec![AfterSyncCmd::new(cmd.as_ref(), false)], entry.index)
+                .await
+                .map(|res| {
+                    #[allow(clippy::expect_used)]
+                    let (asr, _) = res
+                        .into_iter()
+                        .next()
+                        .expect("the asr should always be Some");
+                    asr
+                });
             let asr_ok = asr.is_ok();
             cb.write().insert_asr(entry.propose_id, asr);
             sp.lock()
@@ -328,7 +340,8 @@ pub(crate) trait CEEventTxApi<C: Command>: Send + Sync + 'static {
     /// Send cmd to background cmd worker for speculative execution
     fn send_sp_exe(&self, entry: Arc<LogEntry<C>>);
 
-    /// Send after sync event to the background cmd worker so that after sync can be called
+    /// Send after sync event to the background cmd worker so that after sync
+    /// can be called
     fn send_after_sync(&self, entry: Arc<LogEntry<C>>);
 
     /// Send reset
@@ -398,7 +411,8 @@ impl<C: Command> TaskRxApi<C> for TaskRx<C> {
     }
 }
 
-/// Run cmd execute workers. Each cmd execute worker will continually fetch task to perform from `task_rx`.
+/// Run cmd execute workers. Each cmd execute worker will continually fetch task
+/// to perform from `task_rx`.
 pub(super) fn start_cmd_workers<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     cmd_executor: Arc<CE>,
     curp: Arc<RawCurp<C, RC>>,
@@ -476,7 +490,8 @@ mod tests {
         task_manager.shutdown(true).await;
     }
 
-    // When the execution takes more time than sync, `as` should be called after exe has finished
+    // When the execution takes more time than sync, `as` should be called after exe
+    // has finished
     #[traced_test]
     #[tokio::test]
     #[abort_on_panic]
@@ -524,7 +539,8 @@ mod tests {
         task_manager.shutdown(true).await;
     }
 
-    // When the execution takes more time than sync and fails, after sync should not be called
+    // When the execution takes more time than sync and fails, after sync should not
+    // be called
     #[traced_test]
     #[tokio::test]
     #[abort_on_panic]
@@ -663,7 +679,8 @@ mod tests {
         task_manager.shutdown(true).await;
     }
 
-    // If cmd1 and cmd2 conflict, order will be (cmd1 exe) -> (cmd1 as) -> (cmd2 exe) -> (cmd2 as)
+    // If cmd1 and cmd2 conflict, order will be (cmd1 exe) -> (cmd1 as) -> (cmd2
+    // exe) -> (cmd2 as)
     #[traced_test]
     #[tokio::test]
     #[abort_on_panic]

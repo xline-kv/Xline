@@ -19,9 +19,11 @@ use xlineapi::{
 };
 
 use crate::{
+    revision_number::RevisionNumberGeneratorState,
     rpc::{RequestBackend, RequestWrapper},
     storage::{
         db::{WriteOp, DB},
+        index::IndexOperate,
         storage_api::XlineStorageOps,
         AlarmStore, AuthStore, KvStore, LeaseStore,
     },
@@ -265,10 +267,85 @@ impl CommandExecutor {
             _ => Ok(()),
         }
     }
+
+    /// After sync KV commands
+    async fn after_sync_kv<T>(
+        &self,
+        wrapper: &RequestWrapper,
+        txn_db: &T,
+        index: &(dyn IndexOperate + Send + Sync),
+        revision_gen: &RevisionNumberGeneratorState<'_>,
+        to_execute: bool,
+    ) -> Result<
+        (
+            <Command as CurpCommand>::ASR,
+            Option<<Command as CurpCommand>::ER>,
+        ),
+        ExecuteError,
+    >
+    where
+        T: XlineStorageOps + TransactionApi,
+    {
+        let (asr, er) = self
+            .kv_storage
+            .after_sync(wrapper, txn_db, index, revision_gen, to_execute)
+            .await?;
+        Ok((asr, er))
+    }
+
+    /// After sync other type of commands
+    async fn after_sync_others<T>(
+        &self,
+        wrapper: &RequestWrapper,
+        txn_db: &T,
+        general_revision: &RevisionNumberGeneratorState<'_>,
+        auth_revision: &RevisionNumberGeneratorState<'_>,
+        to_execute: bool,
+    ) -> Result<
+        (
+            <Command as CurpCommand>::ASR,
+            Option<<Command as CurpCommand>::ER>,
+        ),
+        ExecuteError,
+    >
+    where
+        T: XlineStorageOps + TransactionApi,
+    {
+        let er = to_execute
+            .then(|| match wrapper.backend() {
+                RequestBackend::Auth => self.auth_storage.execute(wrapper),
+                RequestBackend::Lease => self.lease_storage.execute(wrapper),
+                RequestBackend::Alarm => Ok(self.alarm_storage.execute(wrapper)),
+                RequestBackend::Kv => unreachable!("Should not execute kv commands"),
+            })
+            .transpose()?;
+
+        let (asr, wr_ops) = match wrapper.backend() {
+            RequestBackend::Auth => self.auth_storage.after_sync(wrapper, auth_revision)?,
+            RequestBackend::Lease => {
+                self.lease_storage
+                    .after_sync(wrapper, general_revision)
+                    .await?
+            }
+            RequestBackend::Alarm => self.alarm_storage.after_sync(wrapper, general_revision),
+            RequestBackend::Kv => unreachable!("Should not sync kv commands"),
+        };
+
+        txn_db.write_ops(wr_ops)?;
+
+        Ok((asr, er))
+    }
 }
 
 #[async_trait::async_trait]
 impl CurpCommandExecutor<Command> for CommandExecutor {
+    fn prepare(
+        &self,
+        _cmd: &Command,
+    ) -> Result<<Command as CurpCommand>::PR, <Command as CurpCommand>::Error> {
+        Ok(-1)
+    }
+
     async fn execute(
         &self,
         cmd: &Command,
@@ -301,22 +378,18 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
         }
         cmds.iter()
             .map(AfterSyncCmd::cmd)
-            .map(|c| self.check_alarm(c))
-            .collect::<Result<_, _>>()?;
+            .try_for_each(|c| self.check_alarm(c))?;
         let quota_enough = cmds
             .iter()
             .map(AfterSyncCmd::cmd)
             .all(|c| self.quota_checker.check(c));
-        cmds.iter()
-            .map(AfterSyncCmd::cmd)
-            .map(|c| {
-                self.auth_storage
-                    .check_permission(c.request(), c.auth_info())
-            })
-            .collect::<Result<_, _>>()?;
+        cmds.iter().map(AfterSyncCmd::cmd).try_for_each(|c| {
+            self.auth_storage
+                .check_permission(c.request(), c.auth_info())
+        })?;
 
         let index = self.kv_storage.index();
-        let mut index_state = index.state();
+        let index_state = index.state();
         let general_revision_gen = self.kv_storage.revision_gen();
         let auth_revision_gen = self.auth_storage.revision_gen();
         let general_revision_state = general_revision_gen.state();
@@ -328,53 +401,41 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
         let mut resps = Vec::with_capacity(cmds.len());
         for (cmd, to_execute) in cmds.into_iter().map(AfterSyncCmd::into_parts) {
             let wrapper = cmd.request();
-            let er = to_execute
-                .then(|| match wrapper.backend() {
-                    RequestBackend::Kv => self
-                        .kv_storage
-                        .execute(wrapper, Some((&txn_db, &mut index_state))),
-                    RequestBackend::Auth => self.auth_storage.execute(wrapper),
-                    RequestBackend::Lease => self.lease_storage.execute(wrapper),
-                    RequestBackend::Alarm => Ok(self.alarm_storage.execute(wrapper)),
-                })
-                .transpose()?;
-            tracing::info!("sync cmd: {cmd:?}");
-            if to_execute {
-                tracing::info!("execute in after sync for: {cmd:?}");
-            }
-            let (asr, wr_ops) = match wrapper.backend() {
-                RequestBackend::Kv => (
-                    self.kv_storage
-                        .after_sync(wrapper, &txn_db, &index_state, &general_revision_state)
-                        .await?,
-                    vec![],
-                ),
-                RequestBackend::Auth => self
-                    .auth_storage
-                    .after_sync(wrapper, &auth_revision_state)?,
-                RequestBackend::Lease => {
-                    self.lease_storage
-                        .after_sync(wrapper, &general_revision_state)
-                        .await?
+            let (asr, er) = match wrapper.backend() {
+                RequestBackend::Kv => {
+                    self.after_sync_kv(
+                        wrapper,
+                        &txn_db,
+                        &index_state,
+                        &general_revision_state,
+                        to_execute,
+                    )
+                    .await
                 }
-                RequestBackend::Alarm => self
-                    .alarm_storage
-                    .after_sync(wrapper, &general_revision_state),
-            };
-            txn_db.write_ops(wr_ops)?;
+                RequestBackend::Auth | RequestBackend::Lease | RequestBackend::Alarm => {
+                    self.after_sync_others(
+                        wrapper,
+                        &txn_db,
+                        &general_revision_state,
+                        &auth_revision_state,
+                        to_execute,
+                    )
+                    .await
+                }
+            }?;
             resps.push((asr, er));
 
             if let RequestWrapper::CompactionRequest(ref compact_req) = *wrapper {
                 if compact_req.physical {
                     if let Some(n) = self.compact_events.get(&cmd.compact_id()) {
-                        n.notify(usize::MAX);
+                        let _ignore = n.notify(usize::MAX);
                     }
                 }
             };
             if let RequestWrapper::CompactionRequest(ref compact_req) = *wrapper {
                 if compact_req.physical {
                     if let Some(n) = self.compact_events.get(&cmd.compact_id()) {
-                        n.notify(usize::MAX);
+                        let _ignore = n.notify(usize::MAX);
                     }
                 }
             };
