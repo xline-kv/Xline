@@ -135,11 +135,14 @@ mod test {
         // auto_compactor works successfully
         assert_eq!(revision_compactor.do_compact(None).await, Some(10));
         revision_gen_state.next(); // current revision: 111
+        revision_gen_state.commit();
         assert_eq!(revision_compactor.do_compact(Some(10)).await, Some(11));
         revision_compactor.pause();
         revision_gen_state.next(); // current revision 112
+        revision_gen_state.commit();
         assert!(revision_compactor.do_compact(Some(11)).await.is_none());
         revision_gen_state.next(); // current revision 113
+        revision_gen_state.commit();
         assert!(revision_compactor.do_compact(Some(11)).await.is_none());
         revision_compactor.resume();
         assert_eq!(revision_compactor.do_compact(Some(11)).await, Some(13));

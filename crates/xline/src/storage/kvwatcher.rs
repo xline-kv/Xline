@@ -592,6 +592,7 @@ mod test {
 
     use std::{collections::BTreeMap, time::Duration};
 
+    use engine::TransactionApi;
     use test_macros::abort_on_panic;
     use tokio::time::{sleep, timeout};
     use utils::config::EngineConfig;
@@ -758,9 +759,10 @@ mod test {
         let rev_gen = store.revision_gen();
         let rev_gen_state = rev_gen.state();
         store
-            .after_sync(&req, &txn, &index_state, &rev_gen_state)
+            .after_sync(&req, &txn, &index_state, &rev_gen_state, false)
             .await
             .unwrap();
+        txn.commit().unwrap();
         index_state.commit();
         rev_gen_state.commit();
     }

@@ -193,6 +193,7 @@ impl From<DecodeError> for PbSerializeError {
     }
 }
 
+#[allow(clippy::module_name_repetitions)]
 /// After sync command type
 #[derive(Debug)]
 pub struct AfterSyncCmd<'a, C> {
@@ -204,16 +205,21 @@ pub struct AfterSyncCmd<'a, C> {
 
 impl<'a, C> AfterSyncCmd<'a, C> {
     /// Creates a new `AfterSyncCmd`
+    #[inline]
     pub fn new(cmd: &'a C, to_exectue: bool) -> Self {
         Self { cmd, to_exectue }
     }
 
     /// Gets the command
+    #[inline]
+    #[must_use]
     pub fn cmd(&self) -> &'a C {
         self.cmd
     }
 
     /// Convert self into parts
+    #[inline]
+    #[must_use]
     pub fn into_parts(self) -> (&'a C, bool) {
         (self.cmd, self.to_exectue)
     }

@@ -342,17 +342,11 @@ impl LeaseStore {
         }
 
         let txn_db = self.db.transaction();
-        let mut txn_index = self.index.state();
+        let txn_index = self.index.state();
 
         for (key, mut sub_revision) in del_keys.iter().zip(0..) {
-            let deleted = KvStore::delete_keys(
-                &txn_db,
-                &mut txn_index,
-                key,
-                &[],
-                revision,
-                &mut sub_revision,
-            )?;
+            let deleted =
+                KvStore::delete_keys(&txn_db, &txn_index, key, &[], revision, &mut sub_revision)?;
             KvStore::detach_leases(&deleted, &self.lease_collection);
             let mut del_event = KvStore::new_deletion_events(revision, deleted);
             updates.append(&mut del_event);
