@@ -24,9 +24,8 @@ pub(crate) fn parse_user(matches: &ArgMatches) -> Result<Option<(String, String)
             Ok(Some((user, passwd)))
         } else {
             let Some(password) = password_opt else {
-                    bail!("Password not set in `--user`, please set it in `--password`"
-                        .to_owned());
-                };
+                bail!("Password not set in `--user`, please set it in `--password`".to_owned());
+            };
             Ok(Some((user, password.clone())))
         }
     } else {

@@ -181,7 +181,7 @@ where
         let cmd_size = size_estimate::cmd_size(cmd.request());
         if self.persistent.estimated_file_size().overflow_add(cmd_size) > self.quota {
             let Ok(file_size) = self.persistent.file_size() else {
-                return false
+                return false;
             };
             if file_size.overflow_add(cmd_size) > self.quota {
                 warn!(

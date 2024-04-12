@@ -214,7 +214,11 @@ impl KvClient {
     pub async fn txn(&self, request: TxnRequest) -> Result<TxnResponse> {
         let request = RequestWrapper::from(xlineapi::TxnRequest::from(request));
         let cmd = Command::new(request.keys(), request);
-        let (cmd_res, Some(sync_res)) = self.curp_client.propose(&cmd,self.token.as_ref(), false).await?? else {
+        let (cmd_res, Some(sync_res)) = self
+            .curp_client
+            .propose(&cmd, self.token.as_ref(), false)
+            .await??
+        else {
             unreachable!("sync_res is always Some when use_fast_path is false");
         };
         let mut res_wrapper = cmd_res.into_inner();

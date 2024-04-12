@@ -264,11 +264,8 @@ where
 
     /// Get compact revision from db
     fn get_compact_revision(&self, revision_key: &str) -> Result<Option<i64>, ExecuteError> {
-        let Some(revision_bytes)=  self.inner
-            .db
-            .get_value(META_TABLE, revision_key)?
-        else {
-            return  Ok(None);
+        let Some(revision_bytes) = self.inner.db.get_value(META_TABLE, revision_key)? else {
+            return Ok(None);
         };
         let bytes = revision_bytes.try_into().map_err(|e| {
             ExecuteError::DbError(format!(

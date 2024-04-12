@@ -730,7 +730,11 @@ impl AuthClient {
                 .await??;
             cmd_res.into_inner()
         } else {
-            let (cmd_res, Some(sync_res)) = self.curp_client.propose(&cmd,self.token.as_ref(),false).await?? else {
+            let (cmd_res, Some(sync_res)) = self
+                .curp_client
+                .propose(&cmd, self.token.as_ref(), false)
+                .await??
+            else {
                 unreachable!("sync_res is always Some when use_fast_path is false");
             };
             let mut res_wrapper = cmd_res.into_inner();

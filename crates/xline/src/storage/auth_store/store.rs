@@ -702,8 +702,11 @@ where
         if (req.role != ROOT_ROLE) && role.is_err() {
             return Err(ExecuteError::RoleNotFound(req.role.clone()));
         }
-        let Err(idx) =  user.roles.binary_search(&req.role) else {
-            return Err(ExecuteError::UserAlreadyHasRole(req.user.clone(), req.role.clone()));
+        let Err(idx) = user.roles.binary_search(&req.role) else {
+            return Err(ExecuteError::UserAlreadyHasRole(
+                req.user.clone(),
+                req.role.clone(),
+            ));
         };
         user.roles.insert(idx, req.role.clone());
         if let Ok(role) = role {

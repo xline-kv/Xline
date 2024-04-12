@@ -2,12 +2,11 @@ use std::{cmp::Ordering, sync::Arc};
 
 use curp_external_api::conflict::{ConflictPoolOp, SpeculativePoolOp, UncommittedPoolOp};
 
+use super::{spec_pool_new::SpeculativePool, CommandEntry};
 use crate::{
     rpc::{ConfChange, PoolEntry, PoolEntryInner, ProposeId},
     server::conflict::uncommitted_pool::UncommittedPool,
 };
-
-use super::{spec_pool_new::SpeculativePool, CommandEntry};
 
 #[derive(Debug, Default)]
 struct TestSp {
