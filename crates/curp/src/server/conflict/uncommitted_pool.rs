@@ -1,8 +1,7 @@
 use curp_external_api::conflict::{ConflictPoolOp, UncommittedPoolOp};
 
-use crate::rpc::PoolEntry;
-
 use super::{CommandEntry, ConfChangeEntry, ConflictPoolEntry};
+use crate::rpc::PoolEntry;
 
 /// An uncommitted pool object
 pub type UcpObject<C> = Box<dyn UncommittedPoolOp<Entry = CommandEntry<C>> + Send + 'static>;

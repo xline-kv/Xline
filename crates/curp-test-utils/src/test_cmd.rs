@@ -361,7 +361,8 @@ impl CommandExecutor<TestCommand> for TestCE {
         let Some(index) = self
             .store
             .get(META_TABLE, APPLIED_INDEX_KEY)
-            .map_err(|e| ExecuteError(e.to_string()))? else {
+            .map_err(|e| ExecuteError(e.to_string()))?
+        else {
             return Ok(0);
         };
         let index = LogIndex::from_le_bytes(index.as_slice().try_into().unwrap());
@@ -379,7 +380,10 @@ impl CommandExecutor<TestCommand> for TestCE {
         snapshot: Option<(Snapshot, LogIndex)>,
     ) -> Result<(), <TestCommand as Command>::Error> {
         let Some((mut snapshot, index)) = snapshot else {
-            let ops = vec![WriteOperation::new_delete_range(TEST_TABLE, &[], &[0xff]),WriteOperation::new_delete(META_TABLE, APPLIED_INDEX_KEY.as_ref())];
+            let ops = vec![
+                WriteOperation::new_delete_range(TEST_TABLE, &[], &[0xff]),
+                WriteOperation::new_delete(META_TABLE, APPLIED_INDEX_KEY.as_ref()),
+            ];
             self.store
                 .write_batch(ops, true)
                 .map_err(|e| ExecuteError(e.to_string()))?;

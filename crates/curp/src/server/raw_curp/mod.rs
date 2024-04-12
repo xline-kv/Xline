@@ -1165,7 +1165,10 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         };
 
         let Some(next_index) = self.lst.get_next_index(follower_id) else {
-            warn!("follower {} is not found, it maybe has been removed", follower_id);
+            warn!(
+                "follower {} is not found, it maybe has been removed",
+                follower_id
+            );
             return None;
         };
         let log_r = self.log.read();

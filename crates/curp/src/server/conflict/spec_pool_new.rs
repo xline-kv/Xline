@@ -1,8 +1,7 @@
 use curp_external_api::conflict::{ConflictPoolOp, SpeculativePoolOp};
 
-use crate::rpc::PoolEntry;
-
 use super::{CommandEntry, ConfChangeEntry, ConflictPoolEntry};
+use crate::rpc::PoolEntry;
 
 /// A speculative pool object
 pub type SpObject<C> = Box<dyn SpeculativePoolOp<Entry = CommandEntry<C>> + Send + 'static>;

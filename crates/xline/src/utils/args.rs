@@ -235,19 +235,26 @@ impl From<ServerArgs> for XlineServerConfig {
 
         let storage = StorageConfig::new(engine, args.quota.unwrap_or_else(default_quota));
         let Ok(curp_config) = CurpConfigBuilder::default()
-        .heartbeat_interval(args.heartbeat_interval
-            .unwrap_or_else(default_heartbeat_interval))
-        .wait_synced_timeout(args.server_wait_synced_timeout
-            .unwrap_or_else(default_server_wait_synced_timeout))
-        .rpc_timeout(args.rpc_timeout.unwrap_or_else(default_rpc_timeout))
-        .batch_timeout(args.batch_timeout.unwrap_or_else(default_batch_timeout))
-        .batch_max_size(args.batch_max_size.unwrap_or_else(default_batch_max_size))
-        .follower_timeout_ticks(args.follower_timeout_ticks)
-        .candidate_timeout_ticks(args.candidate_timeout_ticks)
-        .engine_cfg(curp_engine)
-        .gc_interval(args.gc_interval.unwrap_or_else(default_gc_interval))
-        .cmd_workers(args.cmd_workers)
-        .build() else { panic!("failed to create curp config") };
+            .heartbeat_interval(
+                args.heartbeat_interval
+                    .unwrap_or_else(default_heartbeat_interval),
+            )
+            .wait_synced_timeout(
+                args.server_wait_synced_timeout
+                    .unwrap_or_else(default_server_wait_synced_timeout),
+            )
+            .rpc_timeout(args.rpc_timeout.unwrap_or_else(default_rpc_timeout))
+            .batch_timeout(args.batch_timeout.unwrap_or_else(default_batch_timeout))
+            .batch_max_size(args.batch_max_size.unwrap_or_else(default_batch_max_size))
+            .follower_timeout_ticks(args.follower_timeout_ticks)
+            .candidate_timeout_ticks(args.candidate_timeout_ticks)
+            .engine_cfg(curp_engine)
+            .gc_interval(args.gc_interval.unwrap_or_else(default_gc_interval))
+            .cmd_workers(args.cmd_workers)
+            .build()
+        else {
+            panic!("failed to create curp config")
+        };
         let client_config = ClientConfig::new(
             args.client_wait_synced_timeout
                 .unwrap_or_else(default_client_wait_synced_timeout),

@@ -15,13 +15,12 @@ use parking_lot::RwLock;
 use tokio::io::AsyncWriteExt;
 use tokio_util::io::read_buf;
 
+pub(super) use self::transaction::MemoryTransaction;
 use crate::{
     api::{engine_api::StorageEngine, snapshot_api::SnapshotApi},
     error::EngineError,
     WriteOperation,
 };
-
-pub(super) use self::transaction::MemoryTransaction;
 
 /// A helper type to store the key-value pairs for the `MemoryEngine`
 type MemoryTable = HashMap<Vec<u8>, Vec<u8>>;

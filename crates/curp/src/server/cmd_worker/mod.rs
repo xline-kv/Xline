@@ -151,8 +151,8 @@ async fn worker_as<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     let success = match entry.entry_data {
         EntryData::Command(ref cmd) => {
             let Some(prepare) = prepare else {
-            unreachable!("prepare should always be Some(_) when entry is a command");
-        };
+                unreachable!("prepare should always be Some(_) when entry is a command");
+            };
             let asr = ce.after_sync(cmd.as_ref(), entry.index, prepare).await;
             let asr_ok = asr.is_ok();
             cb.write().insert_asr(entry.propose_id, asr);

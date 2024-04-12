@@ -485,7 +485,11 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                         break;
                     }
                     let Some(event) = remove_events.remove(&change.node_id) else {
-                        unreachable!("({:?}) shutdown_event of removed follower ({:x}) should exist", curp.id(), change.node_id);
+                        unreachable!(
+                            "({:?}) shutdown_event of removed follower ({:x}) should exist",
+                            curp.id(),
+                            change.node_id
+                        );
                     };
                     event.notify(1);
                 }

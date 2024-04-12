@@ -14,20 +14,20 @@ use std::{
 use bytes::{Buf, Bytes, BytesMut};
 use clippy_utilities::{NumericCast, OverflowArithmetic};
 use rocksdb::{
-    Direction, Error as RocksError, IteratorMode, OptimisticTransactionDB, Options, SstFileWriter, ErrorKind as RocksErrorKind,
+    Direction, Error as RocksError, ErrorKind as RocksErrorKind, IteratorMode,
+    OptimisticTransactionDB, Options, SstFileWriter,
 };
 use serde::{Deserialize, Serialize};
 use tokio::{fs::File, io::AsyncWriteExt};
 use tokio_util::io::read_buf;
 use tracing::warn;
 
+pub(super) use self::transaction::RocksTransaction;
 use crate::{
     api::{engine_api::StorageEngine, snapshot_api::SnapshotApi},
     error::EngineError,
     WriteOperation,
 };
-
-pub(super) use self::transaction::RocksTransaction;
 
 /// Install snapshot chunk size: 64KB
 const SNAPSHOT_CHUNK_SIZE: usize = 64 * 1024;
@@ -246,13 +246,15 @@ impl StorageEngine for RocksEngine {
                 }
             }
             match transaction.commit() {
-                Ok(_) => {
+                Ok(()) => {
                     _ = self
-                    .size
-                    .fetch_add(size.numeric_cast(), std::sync::atomic::Ordering::Relaxed);
+                        .size
+                        .fetch_add(size.numeric_cast(), std::sync::atomic::Ordering::Relaxed);
                     return Ok(());
                 }
-                Err(err) if matches!(err.kind(), RocksErrorKind::Busy | RocksErrorKind::TryAgain) => {
+                Err(err)
+                    if matches!(err.kind(), RocksErrorKind::Busy | RocksErrorKind::TryAgain) =>
+                {
                     if retry_count > max_retry_count {
                         warn!("Oops, txn commit retry count reach the max_retry_count: {max_retry_count}");
                         return Err(EngineError::UnderlyingError(err.to_string()));
@@ -501,7 +503,11 @@ impl RocksSnapshot {
 
     /// path of current file
     fn current_file_path(&self, tmp: bool) -> PathBuf {
-        let Some(current_filename) = self.snap_files.get(self.snap_file_idx).map(|sf| &sf.filename) else {
+        let Some(current_filename) = self
+            .snap_files
+            .get(self.snap_file_idx)
+            .map(|sf| &sf.filename)
+        else {
             unreachable!("this method must be called when self.file_index < self.snap_files.len()")
         };
         let filename = if tmp {
