@@ -297,7 +297,7 @@ async fn shutdown_rpc_should_shutdown_the_cluster() {
     ));
 
     let collection = collection_task.await.unwrap();
-    sleep_secs(7).await; // wait for the cluster to shutdown
+    sleep_secs(1).await; // wait for the cluster to shutdown
     assert!(group.is_finished());
 
     let group = CurpGroup::new_rocks(3, tmp_path).await;

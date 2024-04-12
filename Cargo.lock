@@ -849,6 +849,7 @@ dependencies = [
  "test-macros",
  "thiserror",
  "tokio-util",
+ "tracing",
  "utils",
  "uuid",
  "workspace-hack",
