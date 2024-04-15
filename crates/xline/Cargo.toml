@@ -43,7 +43,7 @@ opentelemetry-otlp = { version = "0.14.0", features = [
   "http-proto",
   "reqwest-client",
 ] }
-opentelemetry-prometheus = { version = "0.14.1" }
+opentelemetry-prometheus = { version = "0.15.0" }
 opentelemetry_sdk = { version = "0.21.0", features = ["metrics", "rt-tokio"] }
 parking_lot = "0.12.0"
 pbkdf2 = { version = "0.12.2", features = ["simple"] }
