@@ -1,15 +1,55 @@
 pull_request_rules:
   - name: Automatic merge on approval
     conditions:
-      - "#approved-reviews-by>=2"
-      - check-success=Validation
-      - check-success=Tests Normal
-      - check-success=Tests Madsim
-      - check-success=Commit Message Validation
-      - check-success=Spell Check
-      - check-success=DCO
-      - status-success="codecov/patch"
-      - status-success="codecov/project"
+      - or:
+        - "#approved-reviews-by >= 2"
+        - and:
+          - author = dependabot[bot]
+          - "#approved-reviews-by>=1"
+      - "#check-failure=0"
     actions:
       merge:
         method: rebase
+
+  - name: convert to draft
+    conditions:
+      - and:
+          - "#check-failure>0"
+          - -check-failure~=codecov/.*
+    actions:
+      comment:
+        message: "@{{author}} Convert your pr to draft since CI failed"
+      edit:
+        draft: true
+
+  - name: automatic approval for Dependabot pull requests
+    conditions:
+      - author=dependabot[bot]
+    actions:
+      review:
+        type: APPROVE
+        message: Automatically approving dependabot
+
+  - name: comment when a pull request cannot be merged
+    conditions:
+      - conflict
+    actions:
+      comment:
+        message: "@{{author}} Your PR is in conflict and cannot be merged."
+
+  - name: rebase pull request when it's more than 10 commits behind main
+    conditions:
+      - base=main
+      - "#commits-behind>=10"
+    actions:
+      rebase:
+
+  - name: balanced review assignment
+    conditions:
+      - base=main
+      - author!=dependabot[bot]
+    actions:
+      request_reviews:
+        teams:
+          - "@XlineTeam"
+        random_count: 2
