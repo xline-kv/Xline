@@ -5,9 +5,12 @@ use thiserror::Error;
 /// Errors of the `WALStorage`
 #[derive(Debug, Error)]
 pub(crate) enum WALError {
-    /// Unexpected end of file of the WAL
+    /// The WAL segment might reach on end
+    ///
+    /// NOTE: This exists because we cannot tell the difference between a corrupted WAL
+    /// and a normally ended WAL, as the segment files are all preallocated with zeros    
     #[error("WAL ended")]
-    UnexpectedEof,
+    MaybeEnded,
     /// The WAL corrupt error
     #[error("WAL corrupted: {0}")]
     Corrupted(CorruptType),

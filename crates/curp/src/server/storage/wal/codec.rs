@@ -126,13 +126,13 @@ where
     fn decode(&mut self, src: &[u8]) -> Result<(Self::Item, usize), Self::Error> {
         let mut current = 0;
         while current < src.len() {
-            let next = src.get(current..).ok_or(WALError::UnexpectedEof)?;
+            let next = src.get(current..).ok_or(WALError::MaybeEnded)?;
             let Some((frame, len)) = WALFrame::<C>::decode(next)? else {
-                return Err(WALError::UnexpectedEof);
+                return Err(WALError::MaybeEnded);
             };
             let decoded_bytes = src
                 .get(current..current + len)
-                .ok_or(WALError::UnexpectedEof)?;
+                .ok_or(WALError::MaybeEnded)?;
             current += len;
             match frame {
                 WALFrame::Data(data) => {
@@ -149,7 +149,7 @@ where
                 }
             }
         }
-        Err(WALError::UnexpectedEof)
+        Err(WALError::MaybeEnded)
     }
 }
 
@@ -190,7 +190,7 @@ where
             .unwrap_or_else(|_| unreachable!("this conversion will always succeed"));
         let frame_type = header[0];
         match frame_type {
-            INVALID => Err(WALError::UnexpectedEof),
+            INVALID => Err(WALError::MaybeEnded),
             ENTRY => Self::decode_entry(header, &src[8..]),
             SEAL => Self::decode_seal_index(header),
             COMMIT => Self::decode_commit(&src[8..]),
@@ -352,10 +352,7 @@ mod tests {
         encoded[0] = 0;
 
         let err = codec.decode(&encoded).unwrap_err();
-        assert!(
-            matches!(err, WALError::UnexpectedEof),
-            "error {err} not match"
-        );
+        assert!(matches!(err, WALError::MaybeEnded), "error {err} not match");
     }
 
     #[tokio::test]
