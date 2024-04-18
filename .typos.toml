@@ -1,0 +1,3 @@
+[files]
+# ignore the generated workspace-hack/Cargo.toml file
+extend-exclude = ["workspace-hack/Cargo.toml"]
