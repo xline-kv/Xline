@@ -116,7 +116,7 @@ jobs:
         uses: crate-ci/typos@v1.20.7
 
   build:
-    name: build
+    name: Build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -159,7 +159,7 @@ jobs:
           path: _output/xline.tar
 
   e2e:
-    name: e2e_kube
+    name: E2E_kube
     runs-on: ubuntu-latest
     needs:
       - build
@@ -176,7 +176,7 @@ jobs:
         with:
           name: xline
 
-      - name: build kind node image with xline
+      - name: Build kind node image with xline
         run: |
           docker build . -f ci/artifacts/kind-node-xline.Dockerfile -t ghcr.io/xline-kv/kind-node-xline:${{ matrix.k8s }}-master --build-arg K8S_VERSION=${{ matrix.k8s }}
 
