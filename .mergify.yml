@@ -3,9 +3,11 @@ pull_request_rules:
     conditions:
       - check-success="Tests Normal"
       - check-success="Tests Madsim"
-      - check-success="Validation"
       - check-success="Commit Message Validation"
       - check-success="Spell Check"
+      - check-success="Build"
+      - check-success="E2E kube"
+      - check-success="Validation"
       - check-success="DCO"
       - check-success="codecov/project"
       - check-success="codecov/patch"
@@ -34,9 +36,11 @@ pull_request_rules:
       - author=dependabot[bot]
       - check-success="Tests Normal"
       - check-success="Tests Madsim"
-      - check-success="Validation"
       - check-success="Commit Message Validation"
       - check-success="Spell Check"
+      - check-success="Build"
+      - check-success="E2E kube"
+      - check-success="Validation"
       - check-success="DCO"
     actions:
       review:
