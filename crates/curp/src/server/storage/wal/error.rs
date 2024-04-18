@@ -8,7 +8,7 @@ pub(crate) enum WALError {
     /// The WAL segment might reach on end
     ///
     /// NOTE: This exists because we cannot tell the difference between a corrupted WAL
-    /// and a normally ended WAL, as the segment files are all preallocated with zeros    
+    /// and a normally ended WAL, as the segment files are all preallocated with zeros
     #[error("WAL ended")]
     MaybeEnded,
     /// The WAL corrupt error

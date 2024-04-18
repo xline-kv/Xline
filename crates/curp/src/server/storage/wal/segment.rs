@@ -159,7 +159,18 @@ impl WALSegment {
         let mut pos = 0;
         let mut entries = Vec::new();
         while pos < buf.len() {
-            let (item, n) = decoder.decode(&buf[pos..])?;
+            let (item, n) = match decoder.decode(&buf[pos..]) {
+                Ok(d) => d,
+                Err(WALError::MaybeEnded) => {
+                    if !buf[pos..].iter().all(|b| *b == 0) {
+                        return Err(WALError::Corrupted(CorruptType::Codec(
+                            "Read zero".to_owned(),
+                        )));
+                    }
+                    return Ok(entries);
+                }
+                Err(e) => return Err(e),
+            };
             entries.push(item);
             pos += n;
         }
