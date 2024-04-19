@@ -1,21 +1,23 @@
 pull_request_rules:
   - name: Automatic merge on approval
     conditions:
-      - check-success="Tests Normal"
-      - check-success="Tests Madsim"
-      - check-success="Commit Message Validation"
-      - check-success="Spell Check"
-      - check-success="Build"
-      - check-success="E2E kube"
-      - check-success="Validation"
-      - check-success="DCO"
-      - check-success="codecov/project"
-      - check-success="codecov/patch"
+      - check-success = "Tests Normal"
+      - check-success = "Tests Madsim"
+      - check-success = "Commit Message Validation"
+      - check-success = "Spell Check"
+      - check-success = "Build"
+      - check-success = "E2E kube (v1.27.3)"
+      - check-success = "E2E kube (v1.28.7)"
+      - check-success = "E2E kube (v1.29.2)"
+      - check-success = "Validation"
+      - check-success = "DCO"
+      - check-success = "codecov/project"
+      - check-success = "codecov/patch"
       - or:
         - "#approved-reviews-by >= 2"
         - and:
           - author = dependabot[bot]
-          - "#approved-reviews-by>=1"
+          - "#approved-reviews-by >= 1"
     actions:
       merge:
         method: rebase
@@ -23,8 +25,8 @@ pull_request_rules:
   - name: convert to draft
     conditions:
       - and:
-          - "#check-failure>0"
-          - -check-failure~=codecov/.*
+          - "#check-failure > 0"
+          - -check-failure ~= codecov/.*
     actions:
       comment:
         message: "@{{author}} Convert your pr to draft since CI failed"
@@ -33,15 +35,18 @@ pull_request_rules:
 
   - name: automatic approval for Dependabot pull requests
     conditions:
-      - author=dependabot[bot]
-      - check-success="Tests Normal"
-      - check-success="Tests Madsim"
-      - check-success="Commit Message Validation"
-      - check-success="Spell Check"
-      - check-success="Build"
-      - check-success="E2E kube"
-      - check-success="Validation"
-      - check-success="DCO"
+      - -draft
+      - author = dependabot[bot]
+      - check-success = "Tests Normal"
+      - check-success = "Tests Madsim"
+      - check-success = "Commit Message Validation"
+      - check-success = "Spell Check"
+      - check-success = "Build"
+      - check-success = "E2E kube (v1.27.3)"
+      - check-success = "E2E kube (v1.28.7)"
+      - check-success = "E2E kube (v1.29.2)"
+      - check-success = "Validation"
+      - check-success = "DCO"
     actions:
       review:
         type: APPROVE
@@ -49,13 +54,14 @@ pull_request_rules:
 
   - name: rebase pull request when it's more than 10 commits behind main
     conditions:
-      - "#commits-behind>=10"
+      - "#commits-behind >= 10"
     actions:
       rebase:
 
   - name: balanced review assignment
     conditions:
-      - author!=dependabot[bot]
+      - -draft
+      - author != dependabot[bot]
     actions:
       request_reviews:
         teams:
@@ -64,6 +70,7 @@ pull_request_rules:
 
   - name: comment when a pull request cannot be merged
     conditions:
+      - -draft
       - conflict
     actions:
       comment:
@@ -71,6 +78,7 @@ pull_request_rules:
 
   - name: comment when modify workflow
     conditions:
+      - author != dependabot[bot]
       - files ~= ^\.github/workflows/
     actions:
       comment:
