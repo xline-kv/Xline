@@ -124,16 +124,14 @@ where
 
     #[allow(clippy::arithmetic_side_effects)] // the arithmetic only used as slice indices
     fn decode(&mut self, src: &[u8]) -> Result<(Self::Item, usize), Self::Error> {
-        let mut current = 0;
-        while current < src.len() {
-            let next = src.get(current..).ok_or(WALError::MaybeEnded)?;
+        let mut cursor = 0;
+        while cursor < src.len() {
+            let next = src.get(cursor..).ok_or(WALError::MaybeEnded)?;
             let Some((frame, len)) = WALFrame::<C>::decode(next)? else {
                 return Err(WALError::MaybeEnded);
             };
-            let decoded_bytes = src
-                .get(current..current + len)
-                .ok_or(WALError::MaybeEnded)?;
-            current += len;
+            let decoded_bytes = src.get(cursor..cursor + len).ok_or(WALError::MaybeEnded)?;
+            cursor += len;
             match frame {
                 WALFrame::Data(data) => {
                     self.frames.push(data);
@@ -143,7 +141,7 @@ where
                     let checksum = self.hasher.clone().finalize();
                     self.hasher.reset();
                     if commit.validate(&checksum) {
-                        return Ok((self.frames.drain(..).collect(), current));
+                        return Ok((self.frames.drain(..).collect(), cursor));
                     }
                     return Err(WALError::Corrupted(CorruptType::Checksum));
                 }
