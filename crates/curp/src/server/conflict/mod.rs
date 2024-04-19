@@ -51,6 +51,14 @@ pub struct CommandEntry<C> {
     cmd: Arc<C>,
 }
 
+impl<C> CommandEntry<C> {
+    /// Creates a new `CommandEntry`
+    #[inline]
+    pub fn new(id: ProposeId, cmd: Arc<C>) -> Self {
+        Self { id, cmd }
+    }
+}
+
 impl<C> Clone for CommandEntry<C> {
     #[inline]
     fn clone(&self) -> Self {

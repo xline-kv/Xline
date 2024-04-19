@@ -54,7 +54,7 @@ impl ConflictPoolOp for KvUncomPool {
     }
 
     fn len(&self) -> usize {
-        self.map.len()
+        self.map.iter().flat_map(|(_, v)| v.all()).unique().count()
     }
 }
 
@@ -125,7 +125,11 @@ impl ConflictPoolOp for LeaseUncomPool {
     }
 
     fn len(&self) -> usize {
-        self.leases.len()
+        self.leases
+            .iter()
+            .flat_map(|(_, v)| v.all())
+            .unique()
+            .count()
     }
 }
 

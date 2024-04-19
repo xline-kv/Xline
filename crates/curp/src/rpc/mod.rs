@@ -909,7 +909,7 @@ impl<C> From<Vec<ConfChange>> for PoolEntryInner<C> {
     Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Ord, PartialOrd, Default,
 )]
 #[allow(clippy::exhaustive_structs)] // It is exhaustive
-pub struct ProposeId(pub(crate) u64, pub(crate) u64);
+pub struct ProposeId(pub u64, pub u64);
 
 impl std::fmt::Display for ProposeId {
     #[inline]

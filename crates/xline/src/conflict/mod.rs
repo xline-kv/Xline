@@ -7,6 +7,10 @@ pub(crate) mod spec_pool;
 /// Uncommitted pool implementations
 pub(crate) mod uncommitted_pool;
 
+/// Tests
+#[cfg(test)]
+mod tests;
+
 /// Returns command intervals
 fn intervals<C>(entry: &C) -> Vec<Interval<BytesAffine>>
 where
