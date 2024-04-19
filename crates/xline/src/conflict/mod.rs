@@ -30,7 +30,7 @@ where
 }
 
 /// Returns `true` if this command conflicts with all other commands
-fn is_xor_cmd(cmd: &Command) -> bool {
+fn is_exclusive_cmd(cmd: &Command) -> bool {
     matches!(
         *cmd.request(),
         RequestWrapper::CompactionRequest(_)
