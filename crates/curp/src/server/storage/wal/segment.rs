@@ -140,7 +140,7 @@ impl WALSegment {
     {
         let encoded_bytes = encoder.encode(item)?;
         self.file.write_all(&encoded_bytes)?;
-        self.size = self.size.overflow_add(encoded_bytes.len().numeric_cast());
+        self.update_size(encoded_bytes.len().numeric_cast());
         self.file.flush()?;
         self.file.sync_data()?;
 
@@ -173,8 +173,14 @@ impl WALSegment {
             };
             entries.push(item);
             pos += n;
+            self.update_size(n.numeric_cast());
         }
         Ok(entries)
+    }
+
+    /// Updates the size of this segment
+    pub(super) fn update_size(&mut self, increment: u64) {
+        self.size = self.size.overflow_add(increment);
     }
 
     /// Updates the seal index
