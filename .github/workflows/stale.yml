@@ -21,3 +21,11 @@ jobs:
         exempt-all-milestones: true
         days-before-stale: 30
         days-before-close: 14
+
+  unassign:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Auto unassign stale assignments
+      uses: JasonEtco/slash-assign-action@v1
+      with:
+        required_label: 'good-first-issue'
