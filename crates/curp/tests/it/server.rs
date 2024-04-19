@@ -297,8 +297,7 @@ async fn shutdown_rpc_should_shutdown_the_cluster() {
     ));
 
     let collection = collection_task.await.unwrap();
-    sleep_secs(1).await; // wait for the cluster to shutdown
-    assert!(group.is_finished());
+    group.wait_for_group_shutdown().await;
 
     let group = CurpGroup::new_rocks(3, tmp_path).await;
     let client = group.new_client().await;
@@ -419,8 +418,7 @@ async fn shutdown_rpc_should_shutdown_the_cluster_when_client_has_wrong_leader()
         .unwrap();
     client.propose_shutdown().await.unwrap();
 
-    sleep_secs(7).await; // wait for the cluster to shutdown
-    assert!(group.is_finished());
+    group.wait_for_group_shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -550,8 +548,7 @@ async fn shutdown_rpc_should_shutdown_the_cluster_when_client_has_wrong_cluster(
         .await;
     client.propose_shutdown().await.unwrap();
 
-    sleep_secs(7).await; // wait for the cluster to shutdown
-    assert!(group.is_finished());
+    group.wait_for_group_shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -577,13 +574,7 @@ async fn propose_conf_change_rpc_should_work_when_client_has_wrong_cluster() {
     let members = client.propose_conf_change(changes).await.unwrap();
     assert_eq!(members.len(), 3);
     assert!(members.iter().all(|m| m.id != node_id));
-    sleep_secs(7).await;
-    assert!(group
-        .nodes
-        .get(&node_id)
-        .unwrap()
-        .task_manager
-        .is_finished());
+    group.wait_for_node_shutdown(node_id).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -25,7 +25,7 @@ use engine::{
     Engine, EngineType, MemorySnapshotAllocator, RocksSnapshotAllocator, Snapshot,
     SnapshotAllocator,
 };
-use futures::{future::join_all, Future};
+use futures::{future::join_all, stream::FuturesUnordered, Future};
 use itertools::Itertools;
 use tokio::{
     net::TcpListener,
@@ -337,6 +337,42 @@ impl CurpGroup {
         self.nodes
             .values()
             .all(|node| node.task_manager.is_finished())
+    }
+
+    pub async fn wait_for_node_shutdown(&self, node_id: u64) {
+        let node = self
+            .nodes
+            .get(&node_id)
+            .expect("{node_id} should exist in nodes");
+        let res = std::iter::once(node);
+        Self::wait_for_targets_shutdown(res).await;
+        assert!(
+            node.task_manager.is_finished(),
+            "The target node({node_id}) is not finished yet"
+        );
+    }
+
+    pub async fn wait_for_group_shutdown(&self) {
+        Self::wait_for_targets_shutdown(self.nodes.values()).await;
+        assert!(self.is_finished(), "The group is not finished yet");
+    }
+
+    async fn wait_for_targets_shutdown(targets: impl Iterator<Item = &CurpNode>) {
+        let final_tasks: [TaskName; 3] = [
+            TaskName::WatchTask,
+            TaskName::ConfChange,
+            TaskName::LogPersist,
+        ];
+        let listeners = targets
+            .flat_map(|node| {
+                final_tasks
+                    .iter()
+                    .map(|task| node.task_manager.get_shutdown_listener(task.to_owned()))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let waiters: Vec<_> = listeners.iter().map(|l| l.wait()).collect();
+        futures::future::join_all(waiters.into_iter()).await;
     }
 
     async fn stop(&mut self) {
