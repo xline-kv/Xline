@@ -407,7 +407,7 @@ pub const fn default_fixed_backoff() -> bool {
 #[must_use]
 #[inline]
 pub const fn default_rpc_timeout() -> Duration {
-    Duration::from_millis(50)
+    Duration::from_millis(150)
 }
 
 /// default candidate timeout ticks
