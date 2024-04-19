@@ -8,7 +8,7 @@ use xlineapi::{
     interval::BytesAffine,
 };
 
-use super::{filter_kv, intervals, is_xor_cmd};
+use super::{filter_kv, intervals, is_exclusive_cmd};
 
 /// Speculative pool for KV commands.
 #[derive(Debug, Default)]
@@ -113,12 +113,12 @@ impl SpeculativePoolOp for LeaseSpecPool {
 
 /// Speculative pool for commands that conflict with all other commands.
 #[derive(Debug, Default)]
-pub(crate) struct XorSpecPool {
+pub(crate) struct ExclusiveSpecPool {
     /// Stores the command
     conflict: Option<CommandEntry<Command>>,
 }
 
-impl ConflictPoolOp for XorSpecPool {
+impl ConflictPoolOp for ExclusiveSpecPool {
     type Entry = CommandEntry<Command>;
 
     fn is_empty(&self) -> bool {
@@ -126,7 +126,7 @@ impl ConflictPoolOp for XorSpecPool {
     }
 
     fn remove(&mut self, entry: Self::Entry) {
-        if is_xor_cmd(&entry) {
+        if is_exclusive_cmd(&entry) {
             self.conflict = None;
         }
     }
@@ -144,13 +144,13 @@ impl ConflictPoolOp for XorSpecPool {
     }
 }
 
-impl SpeculativePoolOp for XorSpecPool {
+impl SpeculativePoolOp for ExclusiveSpecPool {
     fn insert_if_not_conflict(&mut self, entry: Self::Entry) -> Option<Self::Entry> {
         if self.conflict.is_some() {
             return Some(entry);
         }
 
-        if is_xor_cmd(&entry) {
+        if is_exclusive_cmd(&entry) {
             self.conflict = Some(entry.clone());
             // Always returns conflict when the command conflicts with all other commands
             return Some(entry);

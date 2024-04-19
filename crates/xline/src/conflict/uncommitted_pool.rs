@@ -9,7 +9,7 @@ use xlineapi::{
     interval::BytesAffine,
 };
 
-use super::{filter_kv, intervals, is_xor_cmd};
+use super::{filter_kv, intervals, is_exclusive_cmd};
 
 /// Uncommitted pool for KV commands.
 #[derive(Debug, Default)]
@@ -158,12 +158,12 @@ impl UncommittedPoolOp for LeaseUncomPool {
 
 /// Uncommitted pool for commands that conflict with all other commands.
 #[derive(Debug, Default)]
-pub(crate) struct XorUncomPool {
+pub(crate) struct ExclusiveUncomPool {
     /// All commands in the pool
     conflicts: Commands,
 }
 
-impl ConflictPoolOp for XorUncomPool {
+impl ConflictPoolOp for ExclusiveUncomPool {
     type Entry = CommandEntry<Command>;
 
     fn all(&self) -> Vec<Self::Entry> {
@@ -175,7 +175,7 @@ impl ConflictPoolOp for XorUncomPool {
     }
 
     fn remove(&mut self, entry: Self::Entry) {
-        if is_xor_cmd(&entry) {
+        if is_exclusive_cmd(&entry) {
             let _ignore = self.conflicts.remove_cmd(&entry);
         }
     }
@@ -189,10 +189,10 @@ impl ConflictPoolOp for XorUncomPool {
     }
 }
 
-impl UncommittedPoolOp for XorUncomPool {
+impl UncommittedPoolOp for ExclusiveUncomPool {
     fn insert(&mut self, entry: Self::Entry) -> bool {
         let mut conflict = !self.conflicts.is_empty();
-        if is_xor_cmd(&entry) {
+        if is_exclusive_cmd(&entry) {
             self.conflicts.push_cmd(entry);
             // Always returns conflict when the command conflicts with all other commands
             conflict = true;
