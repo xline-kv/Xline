@@ -6,6 +6,11 @@
 //                    \        /      |      \       /
 //                   WATCH_TASK  CONF_CHANGE  LOG_PERSIST
 
+// NOTE: In integration tests, we use bottom tasks, like `WatchTask`, `ConfChange`, and `LogPersist`,
+// which are not dependent on other tasks to detect the curp group is closed or not. If you want
+// to refactor the task group, don't forget to modify the `BOTTOM_TASKS` in `crates/curp/tests/it/common/curp_group.rs`
+// to prevent the integration tests from failing.
+
 /// Generate enum with iterator
 macro_rules! enum_with_iter {
     ( $($variant:ident),* $(,)? ) => {

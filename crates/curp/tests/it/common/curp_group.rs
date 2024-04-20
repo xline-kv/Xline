@@ -29,6 +29,7 @@ use tokio::{
     runtime::{Handle, Runtime},
     sync::{mpsc, watch},
     task::{block_in_place, JoinHandle},
+    time::timeout,
 };
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, ServerTlsConfig};
@@ -48,6 +49,17 @@ pub use commandpb::{
     protocol_client::ProtocolClient, FetchClusterRequest, FetchClusterResponse, ProposeRequest,
     ProposeResponse,
 };
+
+/// `BOTTOM_TASKS` are tasks which not dependent on other tasks in the task group.
+/// `CurpGroup` uses `BOTTOM_TASKS` to detect whether the curp group is closed or not.
+const BOTTOM_TASKS: [TaskName; 3] = [
+    TaskName::WatchTask,
+    TaskName::ConfChange,
+    TaskName::LogPersist,
+];
+
+/// The default shutdown timeout used in `wait_for_targets_shutdown`
+pub(crate) const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(7);
 
 pub struct CurpNode {
     pub id: ServerId,
@@ -332,33 +344,35 @@ impl CurpGroup {
             .all(|node| node.task_manager.is_finished())
     }
 
-    pub async fn wait_for_node_shutdown(&self, node_id: u64) {
+    pub async fn wait_for_node_shutdown(&self, node_id: u64, duration: Duration) {
         let node = self
             .nodes
             .get(&node_id)
             .expect("{node_id} should exist in nodes");
         let res = std::iter::once(node);
-        Self::wait_for_targets_shutdown(res).await;
+        timeout(duration, Self::wait_for_targets_shutdown(res))
+            .await
+            .expect("wait for group to shutdown timeout");
         assert!(
             node.task_manager.is_finished(),
             "The target node({node_id}) is not finished yet"
         );
     }
 
-    pub async fn wait_for_group_shutdown(&self) {
-        Self::wait_for_targets_shutdown(self.nodes.values()).await;
+    pub async fn wait_for_group_shutdown(&self, duration: Duration) {
+        timeout(
+            duration,
+            Self::wait_for_targets_shutdown(self.nodes.values()),
+        )
+        .await
+        .expect("wait for group to shutdown timeout");
         assert!(self.is_finished(), "The group is not finished yet");
     }
 
     async fn wait_for_targets_shutdown(targets: impl Iterator<Item = &CurpNode>) {
-        let final_tasks: [TaskName; 3] = [
-            TaskName::WatchTask,
-            TaskName::ConfChange,
-            TaskName::LogPersist,
-        ];
         let listeners = targets
             .flat_map(|node| {
-                final_tasks
+                BOTTOM_TASKS
                     .iter()
                     .map(|task| node.task_manager.get_shutdown_listener(task.to_owned()))
                     .collect::<Vec<_>>()
