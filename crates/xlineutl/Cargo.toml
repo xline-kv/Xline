@@ -18,7 +18,7 @@ crc32fast = "1.4.0"
 engine = { path = "../engine" }
 serde = { version = "1.0.137", features = ["derive"] }
 serde_json = "1.0.107"
-tempfile = "3.9.0"
+tempfile = "3.10.1"
 tokio = "1"
 utils = { path = "../utils" }
 workspace-hack = { version = "0.1", path = "../../workspace-hack" }
