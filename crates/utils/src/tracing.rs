@@ -89,8 +89,8 @@ mod test {
     };
 
     use super::*;
-    #[test]
-    fn test_inject_and_extract() -> Result<(), Box<dyn std::error::Error>> {
+    #[tokio::test]
+    async fn test_inject_and_extract() -> Result<(), Box<dyn std::error::Error>> {
         init()?;
         global::set_text_map_propagator(TraceContextPropagator::new());
         let span = info_span!("test span");
