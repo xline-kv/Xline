@@ -20,3 +20,9 @@ resolver = "2"
 
 [workspace.metadata.cargo-machete]
 ignored = ["prost", "workspace-hack"]
+
+[patch.crates-io]
+madsim = { git = "https://github.com/Phoenix500526/madsim.git", branch = "update-tonic" }
+madsim-tonic = { git = "https://github.com/Phoenix500526/madsim.git", branch = "update-tonic" }
+madsim-tonic-build = { git = "https://github.com/Phoenix500526/madsim.git", branch = "update-tonic" }
+madsim-tokio = { git = "https://github.com/Phoenix500526/madsim.git", branch = "update-tonic" }

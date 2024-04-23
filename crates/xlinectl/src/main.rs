@@ -164,7 +164,10 @@ use clap::{arg, value_parser, Command};
 use command::compaction;
 use ext_utils::config::ClientConfig;
 use tokio::fs;
+// #[cfg(not(madsim))]
 use tonic::transport::{Certificate, ClientTlsConfig};
+// #[cfg(madsim)]
+// use utils::ClientTlsConfig;
 use xline_client::{Client, ClientOptions};
 
 use crate::{

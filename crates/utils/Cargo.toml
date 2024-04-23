@@ -31,13 +31,13 @@ petgraph = "0.6.4"
 rand = "0.8.5"
 serde = { version = "1.0.137", features = ["derive"] }
 thiserror = "1.0.58"
-tokio = { version = "0.2.23", package = "madsim-tokio", features = [
+tokio = { version = "0.2.25", package = "madsim-tokio", features = [
   "sync",
   "macros",
   "rt-multi-thread",
 ] }
 toml = "0.8.8"
-tonic = { version = "0.4.1", package = "madsim-tonic" }
+tonic = { version = "0.4.2", package = "madsim-tonic" }
 tracing = "0.1.37"
 tracing-appender = "0.2"
 tracing-opentelemetry = "0.23.0"

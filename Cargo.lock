@@ -1514,8 +1514,7 @@ dependencies = [
 [[package]]
 name = "madsim"
 version = "0.2.27"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4d58385da6b81328e3e3ccb60426c0da8069a547d9979e2b11aae831089a37c"
+source = "git+https://github.com/Phoenix500526/madsim.git?branch=update-tonic#4df254ae43fe7921a8403873460005379ccb8247"
 dependencies = [
  "ahash",
  "async-channel",
@@ -1545,8 +1544,7 @@ dependencies = [
 [[package]]
 name = "madsim-macros"
 version = "0.2.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3d248e97b1a48826a12c3828d921e8548e714394bf17274dd0a93910dc946e1"
+source = "git+https://github.com/Phoenix500526/madsim.git?branch=update-tonic#4df254ae43fe7921a8403873460005379ccb8247"
 dependencies = [
  "darling 0.14.4",
  "proc-macro2",
@@ -1557,8 +1555,7 @@ dependencies = [
 [[package]]
 name = "madsim-tokio"
 version = "0.2.25"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b9058422c4daa76c2b20ff86a3288bf80e09ac749b5198112a28ff47db76f5f"
+source = "git+https://github.com/Phoenix500526/madsim.git?branch=update-tonic#4df254ae43fe7921a8403873460005379ccb8247"
 dependencies = [
  "madsim",
  "spin",
@@ -1567,9 +1564,8 @@ dependencies = [
 
 [[package]]
 name = "madsim-tonic"
-version = "0.4.2+0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e8efb0d3351b7d2cb9394a26d56b166e38909acab492821f6b3d0765bf4665d"
+version = "0.4.2+0.11.0"
+source = "git+https://github.com/Phoenix500526/madsim.git?branch=update-tonic#4df254ae43fe7921a8403873460005379ccb8247"
 dependencies = [
  "async-stream",
  "chrono",
@@ -1583,9 +1579,8 @@ dependencies = [
 
 [[package]]
 name = "madsim-tonic-build"
-version = "0.4.3+0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "add7a2b4120f55cf92f897c1fd87ff9866ded15ae6c69aff73905846229918de"
+version = "0.4.3+0.11.0"
+source = "git+https://github.com/Phoenix500526/madsim.git?branch=update-tonic#4df254ae43fe7921a8403873460005379ccb8247"
 dependencies = [
  "prettyplease",
  "proc-macro2",
@@ -3767,6 +3762,7 @@ dependencies = [
  "jsonwebtoken",
  "log",
  "madsim-tokio",
+ "madsim-tonic",
  "madsim-tonic-build",
  "merged_range",
  "mockall",
@@ -3790,7 +3786,6 @@ dependencies = [
  "tokio-stream 0.1.12",
  "tokio-util",
  "toml",
- "tonic",
  "tonic-health",
  "tracing",
  "tracing-appender",
@@ -3835,8 +3830,8 @@ dependencies = [
  "clap",
  "futures",
  "madsim-tokio",
+ "madsim-tonic",
  "rand",
- "tonic",
  "utils",
  "workspace-hack",
  "xline",
@@ -3868,12 +3863,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "madsim-tonic",
  "regex",
  "serde",
  "serde_json",
  "shlex",
  "tokio",
- "tonic",
  "utils",
  "workspace-hack",
  "xline-client",

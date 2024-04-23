@@ -18,8 +18,8 @@ futures = "0.3.25"
 getrandom = "0.2"
 http = "0.2.9"
 thiserror = "1.0.58"
-tokio = { version = "0.2.23", package = "madsim-tokio", features = ["sync"] }
-tonic = { version = "0.4.1", package = "madsim-tonic" }
+tokio = { version = "0.2.25", package = "madsim-tokio", features = ["sync"] }
+tonic = { version = "0.4.2", package = "madsim-tonic" }
 tower = { version = "0.4", features = ["discover"] }
 utils = { path = "../utils", features = ["parking_lot"] }
 workspace-hack = { version = "0.1", path = "../../workspace-hack" }
