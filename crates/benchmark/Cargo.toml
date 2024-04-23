@@ -16,8 +16,7 @@ repository = "https://github.com/xline-kv/Xline/tree/master/benchmark"
 anyhow = "1.0.82"
 clap = { version = "4", features = ["derive"] }
 clippy-utilities = "0.2.0"
-# TODO: switch to the original etcd-client crate when new version is released
-etcd-client = { git = "https://github.com/Phoenix500526/etcd-client", branch = "update-tonic", features = ["tls"] }
+etcd-client = { version = "0.12.5", features = ["tls"] }
 indicatif = "0.17.8"
 rand = "0.8.5"
 thiserror = "1.0.58"

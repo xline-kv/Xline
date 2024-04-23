@@ -78,8 +78,7 @@ xlineapi = { path = "../xlineapi" }
 tonic-build = { version = "0.4.3", package = "madsim-tonic-build" }
 
 [dev-dependencies]
-# TODO: switch to the original etcd-client crate when new version is released
-etcd-client = { git = "https://github.com/Phoenix500526/etcd-client", branch = "update-tonic", features = ["tls"] }
+etcd-client = { version = "0.12.5", features = ["tls"] }
 mockall = "0.12.1"
 rand = "0.8.5"
 strum = "0.26"
