@@ -21,7 +21,7 @@ parking_lot = "0.12.1"
 rocksdb = { version = "0.22.0", features = ["multi-threaded-cf"] }
 serde = { version = "1.0.152", features = ["derive"] }
 thiserror = "1.0.58"
-tokio = { version = "0.2.23", package = "madsim-tokio", features = [
+tokio = { version = "0.2.25", package = "madsim-tokio", features = [
     "fs",
     "macros",
     "rt-multi-thread",

@@ -15,7 +15,7 @@ anyhow = "1.0.82"
 clap = { version = "4.4.4", features = ["derive"] }
 futures = "0.3.30"
 rand = "0.8.5"
-tokio = { version = "0.2.23", package = "madsim-tokio", features = [
+tokio = { version = "0.2.25", package = "madsim-tokio", features = [
     "rt-multi-thread",
     "time",
     "fs",
@@ -23,7 +23,8 @@ tokio = { version = "0.2.23", package = "madsim-tokio", features = [
     "net",
     "signal",
 ] }
-tonic = "0.11.0"
+# tonic = "0.11.0"
+tonic = { version = "0.4.2", package = "madsim-tonic" }
 utils = { path = "../utils", features = ["parking_lot"] }
 workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 xline = { path = "../xline" }
