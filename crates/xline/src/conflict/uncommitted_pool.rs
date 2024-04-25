@@ -1,3 +1,7 @@
+//! An uncommitted pool is used to store unsynced commands.
+//! CURP requires that a master will only execute client operations speculatively,
+//! if that operation is commutative with every other unsynced operation.
+
 use std::collections::{hash_map, HashMap};
 
 use curp::server::conflict::CommandEntry;
