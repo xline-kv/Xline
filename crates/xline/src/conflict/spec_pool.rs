@@ -1,3 +1,7 @@
+//! A speculative pool(witness) is used to store commands that are speculatively executed.
+//! CURP requires that a witness only accepts and saves an operation if it is commutative
+//! with every other operation currently stored by that witness
+
 use std::collections::HashMap;
 
 use curp::server::conflict::CommandEntry;
