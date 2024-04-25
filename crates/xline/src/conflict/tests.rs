@@ -16,7 +16,7 @@ use crate::conflict::{
 use super::spec_pool::{KvSpecPool, LeaseSpecPool};
 
 #[test]
-fn kv_sp_operations_is_ok() {
+fn kv_sp_operations_are_ok() {
     let mut sp = KvSpecPool::default();
     let mut gen = EntryGenerator::default();
     let entry1 = gen.gen_put("a");
@@ -42,7 +42,7 @@ fn kv_sp_operations_is_ok() {
 }
 
 #[test]
-fn kv_ucp_operations_is_ok() {
+fn kv_ucp_operations_are_ok() {
     let mut ucp = KvUncomPool::default();
     let mut gen = EntryGenerator::default();
     let entry1 = gen.gen_put("a");
@@ -69,7 +69,7 @@ fn kv_ucp_operations_is_ok() {
 }
 
 #[test]
-fn lease_sp_operations_is_ok() {
+fn lease_sp_operations_are_ok() {
     let mut sp = LeaseSpecPool::default();
     let mut gen = EntryGenerator::default();
     let entry1 = gen.gen_lease_grant(0);
@@ -93,7 +93,7 @@ fn lease_sp_operations_is_ok() {
 }
 
 #[test]
-fn lease_ucp_operations_is_ok() {
+fn lease_ucp_operations_are_ok() {
     let mut ucp = LeaseUncomPool::default();
     let mut gen = EntryGenerator::default();
     let entry1 = gen.gen_lease_grant(0);
@@ -119,7 +119,7 @@ fn lease_ucp_operations_is_ok() {
 }
 
 #[test]
-fn exclusive_sp_operations_is_ok() {
+fn exclusive_sp_operations_are_ok() {
     let mut sp = ExclusiveSpecPool::default();
     let mut gen = EntryGenerator::default();
     let entry1 = gen.gen_auth_enable();
@@ -137,7 +137,7 @@ fn exclusive_sp_operations_is_ok() {
 }
 
 #[test]
-fn exclusive_ucp_operations_is_ok() {
+fn exclusive_ucp_operations_are_ok() {
     let mut ucp = ExclusiveUncomPool::default();
     let mut gen = EntryGenerator::default();
     let entry1 = gen.gen_auth_enable();
