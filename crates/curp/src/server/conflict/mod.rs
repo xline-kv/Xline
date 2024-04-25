@@ -101,6 +101,20 @@ impl<C> PartialEq for CommandEntry<C> {
 
 impl<C> Eq for CommandEntry<C> {}
 
+impl<C> PartialOrd for CommandEntry<C> {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<C> Ord for CommandEntry<C> {
+    #[inline]
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.id.cmp(&other.id)
+    }
+}
+
 impl<C> From<CommandEntry<C>> for PoolEntry<C> {
     fn from(entry: CommandEntry<C>) -> Self {
         PoolEntry {
