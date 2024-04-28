@@ -16,7 +16,7 @@ clippy-utilities = "0.2.0"
 curp = { path = "../curp" }
 futures = "0.3.25"
 getrandom = "0.2"
-http = "0.2.9"
+http = "1.1.0"
 thiserror = "1.0.58"
 tokio = { version = "0.2.25", package = "madsim-tokio", features = ["sync"] }
 tonic = { version = "0.4.2", package = "madsim-tonic" }
