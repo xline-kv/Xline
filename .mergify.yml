@@ -1,6 +1,7 @@
 pull_request_rules:
   - name: Automatic merge on approval
     conditions:
+      - -draft
       - check-success = "Tests Normal"
       - check-success = "Tests Madsim"
       - check-success = "Commit Message Validation"
@@ -24,14 +25,42 @@ pull_request_rules:
 
   - name: convert to draft
     conditions:
-      - and:
-          - "#check-failure > 0"
-          - -check-failure ~= codecov/.*
+      - -draft
+      - -label = "CI:fail"
+      - or:
+          - check-failure = "Tests Normal"
+          - check-failure = "Tests Madsim"
+          - check-failure = "Validation"
+          - check-failure = "Build"
+          - check-failure = "E2E kube (v1.27.3)"
+          - check-failure = "E2E kube (v1.28.7)"
+          - check-failure = "E2E kube (v1.29.2)"
     actions:
       comment:
         message: "@{{author}} Convert your pr to draft since CI failed"
       edit:
         draft: true
+      label:
+        add:
+          - "CI:fail"
+
+  - name: convert to ready-to-review
+    conditions:
+      - label = "CI:fail"
+      - draft
+      - check-success = "Tests Normal"
+      - check-success = "Tests Madsim"
+      - check-success = "Build"
+      - check-success = "E2E kube (v1.27.3)"
+      - check-success = "E2E kube (v1.28.7)"
+      - check-success = "E2E kube (v1.29.2)"
+      - check-success = "Validation"
+    actions:
+      edit:
+        draft: false
+      label:
+        remove:
+          - "CI:fail"
 
   - name: automatic approval for Dependabot pull requests
     conditions:
@@ -51,12 +80,6 @@ pull_request_rules:
       review:
         type: APPROVE
         message: Automatically approving dependabot
-
-  - name: rebase pull request when it's more than 10 commits behind main
-    conditions:
-      - "#commits-behind >= 10"
-    actions:
-      rebase:
 
   - name: balanced review assignment
     conditions:
