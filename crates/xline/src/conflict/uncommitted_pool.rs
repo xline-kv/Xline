@@ -1,13 +1,14 @@
 //! An uncommitted pool is used to store unsynced commands.
-//! CURP requires that a master will only execute client operations speculatively,
-//! if that operation is commutative with every other unsynced operation.
+//! CURP requires that a master will only execute client operations
+//! speculatively, if that operation is commutative with every other unsynced
+//! operation.
 
 use std::{
     collections::{hash_map, HashMap},
     sync::Arc,
 };
 
-use curp::server::conflict::CommandEntry;
+use curp::rpc::PoolEntry;
 use curp_external_api::conflict::{ConflictPoolOp, EntryId, UncommittedPoolOp};
 use itertools::Itertools;
 use utils::interval_map::{Interval, IntervalMap};
@@ -27,9 +28,9 @@ pub(crate) struct KvUncomPool {
     lease_collection: Arc<LeaseCollection>,
     /// Id to intervals map
     ///
-    /// NOTE: To avoid potential side-effects from the `LeaseCollection`, we store
-    /// The lookup results from `LeaseCollection` during entry insert and use
-    /// these result in entry remove.
+    /// NOTE: To avoid potential side-effects from the `LeaseCollection`, we
+    /// store The lookup results from `LeaseCollection` during entry insert
+    /// and use these result in entry remove.
     intervals:
         HashMap<<<Self as ConflictPoolOp>::Entry as EntryId>::Id, Vec<Interval<BytesAffine>>>,
 }
@@ -46,7 +47,7 @@ impl KvUncomPool {
 }
 
 impl ConflictPoolOp for KvUncomPool {
-    type Entry = CommandEntry<Command>;
+    type Entry = PoolEntry<Command>;
 
     fn remove(&mut self, entry: &Self::Entry) {
         for interval in self.intervals.remove(&entry.id()).into_iter().flatten() {
@@ -114,9 +115,9 @@ pub(crate) struct LeaseUncomPool {
     lease_collection: Arc<LeaseCollection>,
     /// Id to lease ids map
     ///
-    /// NOTE: To avoid potential side-effects from the `LeaseCollection`, we store
-    /// The lookup results from `LeaseCollection` during entry insert and use
-    /// these result in entry remove.
+    /// NOTE: To avoid potential side-effects from the `LeaseCollection`, we
+    /// store The lookup results from `LeaseCollection` during entry insert
+    /// and use these result in entry remove.
     ids: HashMap<<<Self as ConflictPoolOp>::Entry as EntryId>::Id, Vec<i64>>,
 }
 
@@ -132,7 +133,7 @@ impl LeaseUncomPool {
 }
 
 impl ConflictPoolOp for LeaseUncomPool {
-    type Entry = CommandEntry<Command>;
+    type Entry = PoolEntry<Command>;
 
     fn remove(&mut self, entry: &Self::Entry) {
         for id in self.ids.remove(&entry.id()).into_iter().flatten() {
@@ -205,7 +206,7 @@ pub(crate) struct ExclusiveUncomPool {
 }
 
 impl ConflictPoolOp for ExclusiveUncomPool {
-    type Entry = CommandEntry<Command>;
+    type Entry = PoolEntry<Command>;
 
     fn all(&self) -> Vec<Self::Entry> {
         self.conflicts.all()
@@ -253,19 +254,19 @@ struct Commands {
     ///
     /// As we may need to insert multiple commands with the same
     /// set of keys, we store a vector of commands as the value.
-    cmds: Vec<CommandEntry<Command>>,
+    cmds: Vec<PoolEntry<Command>>,
 }
 
 impl Commands {
     /// Appends a cmd to the value
-    fn push_cmd(&mut self, cmd: CommandEntry<Command>) {
+    fn push_cmd(&mut self, cmd: PoolEntry<Command>) {
         self.cmds.push(cmd);
     }
 
     /// Removes a cmd from the value
     ///
     /// Returns `true` if the value is empty
-    fn remove_cmd(&mut self, cmd: &CommandEntry<Command>) -> bool {
+    fn remove_cmd(&mut self, cmd: &PoolEntry<Command>) -> bool {
         let Some(idx) = self.cmds.iter().position(|c| c == cmd) else {
             return self.is_empty();
         };
@@ -279,7 +280,7 @@ impl Commands {
     }
 
     /// Gets all commands
-    fn all(&self) -> Vec<CommandEntry<Command>> {
+    fn all(&self) -> Vec<PoolEntry<Command>> {
         self.cmds.clone()
     }
 
