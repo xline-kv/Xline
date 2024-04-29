@@ -4,15 +4,15 @@ use curp_external_api::{
 };
 use curp_test_utils::test_cmd::TestCommand;
 
-use super::CommandEntry;
+use crate::rpc::PoolEntry;
 
 #[derive(Debug, Default)]
 pub struct TestSpecPool {
-    cmds: Vec<CommandEntry<TestCommand>>,
+    cmds: Vec<PoolEntry<TestCommand>>,
 }
 
 impl ConflictPoolOp for TestSpecPool {
-    type Entry = CommandEntry<TestCommand>;
+    type Entry = PoolEntry<TestCommand>;
 
     #[inline]
     fn len(&self) -> usize {
@@ -55,11 +55,11 @@ impl SpeculativePoolOp for TestSpecPool {
 
 #[derive(Debug, Default)]
 pub struct TestUncomPool {
-    cmds: Vec<CommandEntry<TestCommand>>,
+    cmds: Vec<PoolEntry<TestCommand>>,
 }
 
 impl ConflictPoolOp for TestUncomPool {
-    type Entry = CommandEntry<TestCommand>;
+    type Entry = PoolEntry<TestCommand>;
 
     #[inline]
     fn all(&self) -> Vec<Self::Entry> {
