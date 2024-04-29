@@ -365,10 +365,14 @@ impl Inner {
     }
 }
 
+#[allow(clippy::missing_fields_in_debug)] // `Transaction` does not implement `Debug`
 impl std::fmt::Debug for Inner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RocksTransaction")
             .field("db", &self.db)
+            .field("write_ops", &self.write_ops)
+            .field("engine_size", &self.engine_size)
+            .field("txn_size", &self.txn_size)
             .finish()
     }
 }
