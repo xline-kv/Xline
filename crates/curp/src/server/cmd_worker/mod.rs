@@ -28,15 +28,11 @@ fn remove_from_sp_ucp<C: Command>(
     ucp: &mut UncommittedPool<C>,
     entry: &LogEntry<C>,
 ) {
-    let pool_entry = match entry.entry_data {
-        EntryData::Command(ref c) => PoolEntry::new(entry.propose_id, Arc::clone(c)),
-        EntryData::ConfChange(ref c) => PoolEntry::new(entry.propose_id, c.clone()),
-        EntryData::Empty | EntryData::Shutdown | EntryData::SetNodeState(_, _, _) => {
-            unreachable!()
-        }
+    if let EntryData::Command(ref c) = entry.entry_data {
+        let pool_entry = PoolEntry::new(entry.propose_id, Arc::clone(c));
+        sp.remove(&pool_entry);
+        ucp.remove(&pool_entry);
     };
-    sp.remove(pool_entry.clone());
-    ucp.remove(pool_entry);
 }
 
 /// Cmd worker execute handler
