@@ -201,7 +201,7 @@ impl State {
                     info!("client term updates to {term}, client leader id updates to {new_leader_id}");
                     state.term = term;
                     state.leader = Some(new_leader_id);
-                    self.immutable.leader_notifier.notify(usize::MAX);
+                    let _ignore = self.immutable.leader_notifier.notify(usize::MAX);
                 }
             }
             Ordering::Equal => {
@@ -209,7 +209,7 @@ impl State {
                     if state.leader.is_none() {
                         info!("client leader id updates to {new_leader_id}");
                         state.leader = Some(new_leader_id);
-                        self.immutable.leader_notifier.notify(usize::MAX);
+                        let _ignore = self.immutable.leader_notifier.notify(usize::MAX);
                     }
                     assert_eq!(
                         state.leader,

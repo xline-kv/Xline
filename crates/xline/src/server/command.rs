@@ -356,14 +356,14 @@ where
         if let RequestWrapper::CompactionRequest(ref compact_req) = *wrapper {
             if compact_req.physical {
                 if let Some(n) = self.compact_events.get(&cmd.compact_id()) {
-                    n.notify(usize::MAX);
+                    let _ignore = n.notify(usize::MAX);
                 }
             }
         };
         if let RequestWrapper::CompactionRequest(ref compact_req) = *wrapper {
             if compact_req.physical {
                 if let Some(n) = self.compact_events.get(&cmd.compact_id()) {
-                    n.notify(usize::MAX);
+                    let _ignore = n.notify(usize::MAX);
                 }
             }
         };

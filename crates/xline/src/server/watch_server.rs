@@ -211,7 +211,7 @@ where
                 req.watch_id
             )));
             if self.response_tx.send(result).await.is_err() {
-                self.stop_notify.notify(1);
+                let _ignore = self.stop_notify.notify(1);
             }
             return;
         };
@@ -249,7 +249,7 @@ where
             ..WatchResponse::default()
         };
         if self.response_tx.send(Ok(response)).await.is_err() {
-            self.stop_notify.notify(1);
+            let _ignore = self.stop_notify.notify(1);
         }
     }
 
@@ -273,7 +273,7 @@ where
             )))
         };
         if self.response_tx.send(result).await.is_err() {
-            self.stop_notify.notify(1);
+            let _ignore = self.stop_notify.notify(1);
         }
     }
 
@@ -329,7 +329,7 @@ where
         };
 
         if self.response_tx.send(Ok(response)).await.is_err() {
-            self.stop_notify.notify(1);
+            let _ignore = self.stop_notify.notify(1);
         }
         if let Some(progress) = self.progress.get_mut(&watch_id) {
             *progress = false;
@@ -348,7 +348,7 @@ where
             .await
             .is_err()
         {
-            self.stop_notify.notify(1);
+            let _ignore = self.stop_notify.notify(1);
         }
     }
 
@@ -366,7 +366,7 @@ where
                     .await
                     .is_err()
                 {
-                    self.stop_notify.notify(1);
+                    let _ignore = self.stop_notify.notify(1);
                 }
             } else {
                 *progress = true;

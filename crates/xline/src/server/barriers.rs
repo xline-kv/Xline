@@ -44,7 +44,7 @@ impl IndexBarrier {
         let mut split_barriers = inner_l.barriers.split_off(&(index.overflow_add(1)));
         std::mem::swap(&mut inner_l.barriers, &mut split_barriers);
         for (_, barrier) in split_barriers {
-            barrier.notify(usize::MAX);
+            let _ignore = barrier.notify(usize::MAX);
         }
     }
 }
@@ -82,7 +82,7 @@ impl IdBarrier {
     /// Trigger the barrier of the given inflight id.
     pub(crate) fn trigger(&self, id: InflightId) {
         if let Some(event) = self.barriers.lock().remove(&id) {
-            event.notify(usize::MAX);
+            let _ignore = event.notify(usize::MAX);
         }
     }
 }

@@ -179,7 +179,7 @@ where
         };
 
         _ = self.unsynced_cache.write().remove(&lease_id);
-        self.sync_event.notify(usize::MAX);
+        let _ignore = self.sync_event.notify(usize::MAX);
     }
 
     /// Wait for the lease id to be removed from the cache
