@@ -10,6 +10,7 @@ use engine::{SnapshotAllocator, SnapshotApi};
 use event_listener::Event;
 use futures::{pin_mut, stream::FuturesUnordered, Stream, StreamExt};
 use madsim::rand::{thread_rng, Rng};
+use opentelemetry::KeyValue;
 use parking_lot::{Mutex, RwLock};
 use tokio::{
     sync::{broadcast, oneshot},
@@ -157,6 +158,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         &self,
         req: &ProposeRequest,
         resp_tx: Arc<ResponseSender>,
+        bypassed: bool,
     ) -> Result<(), CurpError> {
         if self.curp.is_shutdown() {
             return Err(CurpError::shutting_down());
@@ -170,6 +172,18 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         } else {
             info!("not using slow path for: {req:?}");
         }
+
+        if bypassed {
+            self.curp.mark_client_id_bypassed(req.propose_id().0);
+        }
+        self.curp
+            .deduplicate(req.propose_id(), Some(req.first_incomplete))
+            .map_err(|e| {
+                metrics::get()
+                    .proposals_failed
+                    .add(1, &[KeyValue::new("reason", "duplicated proposal")]);
+                e
+            })?;
 
         let propose = Propose::try_new(req, resp_tx)?;
         let _ignore = self.propose_tx.send(propose);
@@ -290,8 +304,12 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     pub(super) async fn shutdown(
         &self,
         req: ShutdownRequest,
+        bypassed: bool,
     ) -> Result<ShutdownResponse, CurpError> {
         self.check_cluster_version(req.cluster_version)?;
+        if bypassed {
+            self.curp.mark_client_id_bypassed(req.propose_id().0);
+        }
         self.curp.handle_shutdown(req.propose_id())?;
         CommandBoard::wait_for_shutdown_synced(&self.cmd_board).await;
         Ok(ShutdownResponse::default())
@@ -301,9 +319,13 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     pub(super) async fn propose_conf_change(
         &self,
         req: ProposeConfChangeRequest,
+        bypassed: bool,
     ) -> Result<ProposeConfChangeResponse, CurpError> {
         self.check_cluster_version(req.cluster_version)?;
         let id = req.propose_id();
+        if bypassed {
+            self.curp.mark_client_id_bypassed(id.0);
+        }
         self.curp.handle_propose_conf_change(id, req.changes)?;
         CommandBoard::wait_for_conf(&self.cmd_board, id).await;
         let members = self.curp.cluster().all_members_vec();
@@ -311,7 +333,14 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
     }
 
     /// Handle `Publish` requests
-    pub(super) fn publish(&self, req: PublishRequest) -> Result<PublishResponse, CurpError> {
+    pub(super) fn publish(
+        &self,
+        req: PublishRequest,
+        bypassed: bool,
+    ) -> Result<PublishResponse, CurpError> {
+        if bypassed {
+            self.curp.mark_client_id_bypassed(req.propose_id().0);
+        }
         self.curp.handle_publish(req)?;
         Ok(PublishResponse::default())
     }

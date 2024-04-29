@@ -17,6 +17,7 @@ use crate::{
         conflict::test_pools::{TestSpecPool, TestUncomPool},
         lease_manager::LeaseManager,
     },
+    tracker::Tracker,
     LogIndex,
 };
 
@@ -67,11 +68,8 @@ impl RawCurp<TestCommand, TestRoleChange> {
         let curp_storage = Arc::new(DB::open(&curp_config.engine_cfg).unwrap());
         let _ignore = curp_storage.recover().unwrap();
 
-        // grant a infinity expiry lease for test client id
-        lease_manager.write().expiry_queue.push(
-            TEST_CLIENT_ID,
-            Reverse(Instant::now().add(Duration::from_nanos(u64::MAX))),
-        );
+        // bypass test client id
+        lease_manager.write().bypass(TEST_CLIENT_ID);
 
         let sp = Arc::new(Mutex::new(SpeculativePool::new(vec![Box::new(
             TestSpecPool::default(),
@@ -109,6 +107,16 @@ impl RawCurp<TestCommand, TestRoleChange> {
         self.ctx.connects.entry(id).and_modify(|c| *c = connect);
     }
 
+    pub(crate) fn tracker(&self, client_id: u64) -> Tracker {
+        self.ctx
+            .cb
+            .read()
+            .trackers
+            .get(&client_id)
+            .cloned()
+            .unwrap_or_else(|| unreachable!("cannot find {client_id} in result trackers"))
+    }
+
     /// Add a new cmd to the log, will return log entry index
     pub(crate) fn push_cmd(&self, propose_id: ProposeId, cmd: Arc<TestCommand>) -> LogIndex {
         let st_r = self.st.read();
@@ -143,7 +151,7 @@ fn leader_handle_propose_will_succeed() {
     let curp = { RawCurp::new_test(3, mock_role_change(), task_manager) };
     let cmd = Arc::new(TestCommand::default());
     assert!(curp
-        .handle_propose(ProposeId(TEST_CLIENT_ID, 0), cmd)
+        .handle_propose(ProposeId(TEST_CLIENT_ID, 0), cmd, 0)
         .unwrap());
 }
 
@@ -157,16 +165,16 @@ fn leader_handle_propose_will_reject_conflicted() {
 
     let cmd1 = Arc::new(TestCommand::new_put(vec![1], 0));
     assert!(curp
-        .handle_propose(ProposeId(TEST_CLIENT_ID, 0), cmd1)
+        .handle_propose(ProposeId(TEST_CLIENT_ID, 0), cmd1, 0)
         .unwrap());
 
     let cmd2 = Arc::new(TestCommand::new_put(vec![1, 2], 1));
-    let res = curp.handle_propose(ProposeId(TEST_CLIENT_ID, 1), cmd2);
+    let res = curp.handle_propose(ProposeId(TEST_CLIENT_ID, 1), cmd2, 1);
     assert!(matches!(res, Err(CurpError::KeyConflict(()))));
 
     // leader will also reject cmds that conflict un-synced cmds
     let cmd3 = Arc::new(TestCommand::new_put(vec![2], 1));
-    let res = curp.handle_propose(ProposeId(TEST_CLIENT_ID, 2), cmd3);
+    let res = curp.handle_propose(ProposeId(TEST_CLIENT_ID, 2), cmd3, 2);
     assert!(matches!(res, Err(CurpError::KeyConflict(()))));
 }
 
@@ -179,10 +187,10 @@ fn leader_handle_propose_will_reject_duplicated() {
     let curp = { RawCurp::new_test(3, mock_role_change(), task_manager) };
     let cmd = Arc::new(TestCommand::default());
     assert!(curp
-        .handle_propose(ProposeId(TEST_CLIENT_ID, 0), Arc::clone(&cmd))
+        .handle_propose(ProposeId(TEST_CLIENT_ID, 0), Arc::clone(&cmd), 0)
         .unwrap());
 
-    let res = curp.handle_propose(ProposeId(TEST_CLIENT_ID, 0), cmd);
+    let res = curp.handle_propose(ProposeId(TEST_CLIENT_ID, 0), cmd, 0);
     assert!(matches!(res, Err(CurpError::Duplicated(()))));
 }
 
@@ -196,7 +204,7 @@ fn follower_handle_propose_will_succeed() {
     curp.update_to_term_and_become_follower(&mut *curp.st.write(), 1);
     let cmd = Arc::new(TestCommand::new_get(vec![1]));
     assert!(!curp
-        .handle_propose(ProposeId(TEST_CLIENT_ID, 0), cmd)
+        .handle_propose(ProposeId(TEST_CLIENT_ID, 0), cmd, 0)
         .unwrap());
 }
 
@@ -211,11 +219,11 @@ fn follower_handle_propose_will_reject_conflicted() {
 
     let cmd1 = Arc::new(TestCommand::new_get(vec![1]));
     assert!(!curp
-        .handle_propose(ProposeId(TEST_CLIENT_ID, 0), cmd1)
+        .handle_propose(ProposeId(TEST_CLIENT_ID, 0), cmd1, 0)
         .unwrap());
 
     let cmd2 = Arc::new(TestCommand::new_get(vec![1]));
-    let res = curp.handle_propose(ProposeId(TEST_CLIENT_ID, 1), cmd2);
+    let res = curp.handle_propose(ProposeId(TEST_CLIENT_ID, 1), cmd2, 1);
     assert!(matches!(res, Err(CurpError::KeyConflict(()))));
 }
 
@@ -618,10 +626,12 @@ fn leader_retires_should_cleanup() {
     let _ignore = curp.handle_propose(
         ProposeId(TEST_CLIENT_ID, 0),
         Arc::new(TestCommand::new_put(vec![1], 0)),
+        0,
     );
     let _ignore = curp.handle_propose(
         ProposeId(TEST_CLIENT_ID, 1),
         Arc::new(TestCommand::new_get(vec![1])),
+        0,
     );
 
     curp.leader_retires();
@@ -924,7 +934,7 @@ fn leader_will_reject_propose_when_transferring() {
 
     let propose_id = ProposeId(0, 0);
     let cmd = Arc::new(TestCommand::new_put(vec![1], 1));
-    let res = curp.handle_propose(propose_id, cmd);
+    let res = curp.handle_propose(propose_id, cmd, 0);
     assert!(res.is_err());
 }
 

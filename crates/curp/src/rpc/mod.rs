@@ -150,6 +150,7 @@ impl ProposeRequest {
         cluster_version: u64,
         term: u64,
         slow_path: bool,
+        first_incomplete: u64,
     ) -> Self {
         Self {
             propose_id: Some(propose_id.into()),
@@ -157,6 +158,7 @@ impl ProposeRequest {
             cluster_version,
             term,
             slow_path,
+            first_incomplete,
         }
     }
 

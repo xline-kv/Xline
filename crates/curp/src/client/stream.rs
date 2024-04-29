@@ -86,9 +86,12 @@ impl Streaming {
                             );
                             self.state.leader_notifier().listen().await;
                         }
-                        CurpError::ShuttingDown(()) => {
-                            debug!("shutting down stream client background task");
-                            break Err(err);
+                        CurpError::RpcTransport(()) => {
+                            warn!(
+                                "got rpc transport error when keep heartbeat, refreshing state..."
+                            );
+                            let _ig = self.state.try_refresh_state().await;
+                            tokio::time::sleep(RETRY_DELAY).await;
                         }
                         CurpError::RpcTransport(()) => {
                             warn!(
