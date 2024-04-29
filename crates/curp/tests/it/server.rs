@@ -11,6 +11,7 @@ use curp::{
 use curp_test_utils::{
     init_logger, sleep_millis, sleep_secs,
     test_cmd::{TestCommand, TestCommandResult, TestCommandType},
+    TEST_CLIENT_ID,
 };
 use futures::stream::FuturesUnordered;
 use madsim::rand::{thread_rng, Rng};
@@ -138,12 +139,13 @@ async fn fast_round_is_slower_than_slow_round() {
     leader_connect
         .propose(tonic::Request::new(ProposeRequest {
             propose_id: Some(ProposeId {
-                client_id: 0,
+                client_id: TEST_CLIENT_ID,
                 seq_num: 0,
             }),
             command: bincode::serialize(&cmd).unwrap(),
             cluster_version: 0,
             term: 0,
+            first_incomplete: 0,
         }))
         .await
         .unwrap();
@@ -160,12 +162,13 @@ async fn fast_round_is_slower_than_slow_round() {
     let resp: ProposeResponse = follower_connect
         .propose(tonic::Request::new(ProposeRequest {
             propose_id: Some(ProposeId {
-                client_id: 0,
+                client_id: TEST_CLIENT_ID,
                 seq_num: 0,
             }),
             command: bincode::serialize(&cmd).unwrap(),
             cluster_version: 0,
             term: 0,
+            first_incomplete: 0,
         }))
         .await
         .unwrap()
@@ -192,12 +195,13 @@ async fn concurrent_cmd_order() {
     tokio::spawn(async move {
         c.propose(ProposeRequest {
             propose_id: Some(ProposeId {
-                client_id: 0,
+                client_id: TEST_CLIENT_ID,
                 seq_num: 0,
             }),
             command: bincode::serialize(&cmd0).unwrap(),
             cluster_version: 0,
             term: 0,
+            first_incomplete: 0,
         })
         .await
         .expect("propose failed");
@@ -207,24 +211,26 @@ async fn concurrent_cmd_order() {
     let response = leader_connect
         .propose(ProposeRequest {
             propose_id: Some(ProposeId {
-                client_id: 0,
+                client_id: TEST_CLIENT_ID,
                 seq_num: 1,
             }),
             command: bincode::serialize(&cmd1).unwrap(),
             cluster_version: 0,
             term: 0,
+            first_incomplete: 0,
         })
         .await;
     assert!(response.is_err());
     let response = leader_connect
         .propose(ProposeRequest {
             propose_id: Some(ProposeId {
-                client_id: 0,
+                client_id: TEST_CLIENT_ID,
                 seq_num: 2,
             }),
             command: bincode::serialize(&cmd2).unwrap(),
             cluster_version: 0,
             term: 0,
+            first_incomplete: 0,
         })
         .await;
     assert!(response.is_err());
