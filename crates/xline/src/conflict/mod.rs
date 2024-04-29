@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use curp::{
     cmd::Command as CurpCommand,
-    server::{conflict::CommandEntry, SpObject, UcpObject},
+    rpc::PoolEntry,
+    server::{SpObject, UcpObject},
 };
 use utils::interval_map::Interval;
 use xlineapi::{
@@ -94,10 +95,7 @@ fn is_exclusive_cmd(cmd: &Command) -> bool {
 /// Gets all lease id
 /// * lease ids in the requests field
 /// * lease ids associated with the keys
-pub(super) fn all_leases(
-    lease_collection: &LeaseCollection,
-    req: &CommandEntry<Command>,
-) -> Vec<i64> {
+pub(super) fn all_leases(lease_collection: &LeaseCollection, req: &PoolEntry<Command>) -> Vec<i64> {
     req.leases()
         .into_iter()
         .chain(lookup_lease(lease_collection, req))
@@ -109,7 +107,7 @@ pub(super) fn all_leases(
 /// We also needs to handle `PutRequest` and `DeleteRangeRequest` in
 /// lease conflict pools, as they may conflict with a `LeaseRevokeRequest`.
 /// Therefore, we should lookup the lease ids from lease collection.
-fn lookup_lease(lease_collection: &LeaseCollection, req: &CommandEntry<Command>) -> Vec<i64> {
+fn lookup_lease(lease_collection: &LeaseCollection, req: &PoolEntry<Command>) -> Vec<i64> {
     req.request()
         .keys()
         .into_iter()

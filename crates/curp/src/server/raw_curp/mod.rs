@@ -523,7 +523,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let mut conflicts = Vec::new();
         for entry in entries {
             let mut conflict = sp_l.insert(entry.clone()).is_some();
-            conflict |= ucp_l.insert(entry);
+            conflict |= ucp_l.insert(&entry);
             conflicts.push(conflict);
         }
         metrics::get().proposals_failed.add(
@@ -590,7 +590,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             .ctx
             .uncommitted_pool
             .lock()
-            .all_conflict(PoolEntry::new(ProposeId::default(), cmd))
+            .all_conflict(&PoolEntry::new(ProposeId::default(), cmd))
             .into_iter()
             .map(|e| e.id)
             .collect();
@@ -652,18 +652,6 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         }
         self.check_new_config(&conf_changes)?;
 
-        let mut conflict = self
-            .ctx
-            .spec_pool
-            .lock()
-            .insert(PoolEntry::new(propose_id, conf_changes.clone()))
-            .is_some();
-        conflict |= self
-            .ctx
-            .uncommitted_pool
-            .lock()
-            .insert(PoolEntry::new(propose_id, conf_changes.clone()));
-
         let mut log_w = self.log.write();
         let entry = log_w.push(st_r.term, propose_id, conf_changes.clone());
         debug!("{} gets new log[{}]", self.id(), entry.index);
@@ -675,7 +663,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             entry.index,
             FallbackContext::new(Arc::clone(&entry), addrs, name, is_learner),
         );
-        self.entry_process_single(&mut log_w, &entry, conflict, st_r.term);
+        self.entry_process_single(&mut log_w, &entry, false, st_r.term);
 
         let log_r = RwLockWriteGuard::downgrade(log_w);
         self.persistent_log_entries(&[entry.as_ref()], &log_r);
@@ -1140,7 +1128,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let ids: Vec<_> = self
             .ctx
             .uncommitted_pool
-            .map_lock(|ucp| ucp.all_conflict(PoolEntry::new(ProposeId::default(), cmd)))
+            .map_lock(|ucp| ucp.all_conflict(&PoolEntry::new(ProposeId::default(), cmd)))
             .into_iter()
             .map(|entry| entry.id)
             .collect();
@@ -1819,7 +1807,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             let _ig_sync = cb_w.sync.insert(entry.id); // may have been inserted before
             let _ig_spec = sp_l.insert(entry.clone()); // may have been inserted before
             #[allow(clippy::expect_used)]
-            let entry = log.push(term, entry.id, entry.inner);
+            let entry = log.push(term, entry.id, entry.cmd);
             debug!(
                 "{} recovers speculatively executed cmd({}) in log[{}]",
                 self.id(),
@@ -1843,12 +1831,12 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             let propose_id = entry.propose_id;
             match entry.entry_data {
                 EntryData::Command(ref cmd) => {
-                    let _ignore = ucp_l.insert(PoolEntry::new(propose_id, Arc::clone(cmd)));
+                    let _ignore = ucp_l.insert(&PoolEntry::new(propose_id, Arc::clone(cmd)));
                 }
-                EntryData::ConfChange(ref conf_change) => {
-                    let _ignore = ucp_l.insert(PoolEntry::new(propose_id, conf_change.clone()));
-                }
-                EntryData::Shutdown | EntryData::Empty | EntryData::SetNodeState(_, _, _) => {}
+                EntryData::ConfChange(_)
+                | EntryData::Shutdown
+                | EntryData::Empty
+                | EntryData::SetNodeState(_, _, _) => {}
             }
         }
     }

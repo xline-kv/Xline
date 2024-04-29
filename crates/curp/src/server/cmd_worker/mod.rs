@@ -28,15 +28,11 @@ where
     let (mut sp, mut ucp) = (curp.spec_pool().lock(), curp.uncommitted_pool().lock());
     for entry in entries {
         let entry = entry.as_ref();
-        let pool_entry = match entry.entry_data {
-            EntryData::Command(ref c) => PoolEntry::new(entry.propose_id, Arc::clone(c)),
-            EntryData::ConfChange(ref c) => PoolEntry::new(entry.propose_id, c.clone()),
-            EntryData::Empty | EntryData::Shutdown | EntryData::SetNodeState(_, _, _) => {
-                unreachable!("should never exist in sp and ucp {:?}", entry.entry_data)
-            }
+        if let EntryData::Command(ref c) = entry.entry_data {
+            let pool_entry = PoolEntry::new(entry.propose_id, Arc::clone(c));
+            sp.remove(&pool_entry);
+            ucp.remove(&pool_entry);
         };
-        sp.remove(pool_entry.clone());
-        ucp.remove(pool_entry);
     }
 }
 
