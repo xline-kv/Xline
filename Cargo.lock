@@ -312,7 +312,7 @@ dependencies = [
  "bitflags 2.5.0",
  "cexpr",
  "clang-sys",
- "itertools 0.12.1",
+ "itertools",
  "lazy_static",
  "lazycell",
  "proc-macro2",
@@ -620,7 +620,7 @@ dependencies = [
  "fs2",
  "futures",
  "indexmap 2.2.6",
- "itertools 0.11.0",
+ "itertools",
  "madsim",
  "madsim-tokio",
  "madsim-tonic",
@@ -669,7 +669,7 @@ dependencies = [
  "bincode",
  "curp-external-api",
  "engine",
- "itertools 0.11.0",
+ "itertools",
  "madsim-tokio",
  "prost",
  "serde",
@@ -1366,15 +1366,6 @@ name = "ipnet"
 version = "2.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f518f335dce6725a761382244631d86cf0ccb2863413590b31338feb467f9c3"
-
-[[package]]
-name = "itertools"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1c173a5686ce8bfa551b3563d0c2170bf24ca44da99c7ca4bfdab5418c3fe57"
-dependencies = [
- "either",
-]
 
 [[package]]
 name = "itertools"
@@ -2232,7 +2223,7 @@ checksum = "80b776a1b2dc779f5ee0641f8ade0125bc1298dd41a9a0c16d8bd57b42d222b1"
 dependencies = [
  "bytes",
  "heck 0.5.0",
- "itertools 0.12.1",
+ "itertools",
  "log",
  "multimap",
  "once_cell",
@@ -2252,7 +2243,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19de2de2a00075bf566bee3bd4db014b11587e84184d3f7a791bc17f1a8e9e48"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools",
  "proc-macro2",
  "quote",
  "syn 2.0.60",
@@ -2647,7 +2638,7 @@ dependencies = [
  "curp-test-utils",
  "engine",
  "futures",
- "itertools 0.11.0",
+ "itertools",
  "madsim",
  "madsim-tokio",
  "madsim-tonic",
@@ -3681,7 +3672,7 @@ dependencies = [
  "futures-channel",
  "futures-util",
  "getrandom",
- "itertools 0.12.1",
+ "itertools",
  "libc",
  "log",
  "madsim-tokio",
@@ -3747,7 +3738,7 @@ dependencies = [
  "event-listener 2.5.3",
  "futures",
  "hyper",
- "itertools 0.11.0",
+ "itertools",
  "jsonwebtoken",
  "log",
  "madsim-tokio",
@@ -3834,7 +3825,7 @@ dependencies = [
  "async-trait",
  "curp",
  "curp-external-api",
- "itertools 0.11.0",
+ "itertools",
  "madsim-tonic",
  "madsim-tonic-build",
  "prost",

@@ -17,7 +17,7 @@ curp = { path = "../curp" }
 curp-test-utils = { path = "../curp-test-utils" }
 engine = { path = "../engine" }
 futures = "0.3.29"
-itertools = "0.11"
+itertools = "0.12"
 madsim = "0.2.27"
 parking_lot = "0.12.1"
 prost = "0.12.3"
