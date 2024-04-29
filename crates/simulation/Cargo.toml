@@ -19,7 +19,7 @@ engine = { path = "../engine" }
 futures = "0.3.29"
 itertools = "0.11"
 madsim = "0.2.27"
-parking_lot = "0.12.1"
+parking_lot = "0.12.2"
 prost = "0.12.3"
 tempfile = "3"
 tokio = { version = "0.2.25", package = "madsim-tokio", features = [
