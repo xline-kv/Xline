@@ -154,7 +154,7 @@ impl Watcher {
             }
             Err(TrySendError::Closed(_)) => {
                 warn!(watch_id, revision, "watcher is closed");
-                self.stop_notify.notify(1);
+                let _ignore = self.stop_notify.notify(1);
                 Ok(())
             }
             Err(TrySendError::Full(watch_event)) => {

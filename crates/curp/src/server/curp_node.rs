@@ -492,7 +492,7 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                             change.node_id
                         );
                     };
-                    event.notify(1);
+                    let _ignore = event.notify(1);
                 }
                 ConfChangeType::Update => {
                     if let Err(e) = curp.update_connect(change.node_id, change.address).await {

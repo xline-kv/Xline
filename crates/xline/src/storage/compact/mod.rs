@@ -134,7 +134,7 @@ pub(crate) async fn compact_bg_task<DB>(
             panic!("failed to set finished compact revision {revision:?} due to {e}");
         }
         if let Some(notifier) = listener {
-            notifier.notify(usize::MAX);
+            let _ignore = notifier.notify(usize::MAX);
         }
     }
 }

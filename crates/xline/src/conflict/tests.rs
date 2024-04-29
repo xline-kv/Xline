@@ -8,12 +8,11 @@ use xlineapi::{
     LeaseRevokeRequest, PutRequest, RequestWrapper,
 };
 
+use super::spec_pool::{KvSpecPool, LeaseSpecPool};
 use crate::conflict::{
     spec_pool::ExclusiveSpecPool,
     uncommitted_pool::{ExclusiveUncomPool, KvUncomPool, LeaseUncomPool},
 };
-
-use super::spec_pool::{KvSpecPool, LeaseSpecPool};
 
 #[test]
 fn kv_sp_operations_are_ok() {
