@@ -286,6 +286,7 @@ async fn old_leader_will_keep_original_states() {
         cluster_version: 0,
         term: 1,
         slow_path: false,
+        first_incomplete: 0,
     };
     let mut leader1_connect = group.get_connect(&leader1).await;
     leader1_connect.propose_stream(req1).await.unwrap();

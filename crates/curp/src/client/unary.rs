@@ -1,12 +1,21 @@
-use std::{cmp::Ordering, marker::PhantomData, sync::Arc, time::Duration};
+use std::{
+    cmp::Ordering,
+    marker::PhantomData,
+    sync::{atomic::AtomicU64, Arc},
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use curp_external_api::cmd::Command;
 use futures::{future, stream::FuturesUnordered, Future, Stream, StreamExt};
+use parking_lot::RwLock;
 use tonic::{Response, Status};
 use tracing::{debug, warn};
 
-use super::{state::State, ClientApi, LeaderStateUpdate, ProposeResponse, RepeatableClientApi};
+use super::{
+    state::State, ClientApi, LeaderStateUpdate, ProposeIdGuard, ProposeResponse,
+    RepeatableClientApi,
+};
 use crate::{
     members::ServerId,
     quorum,
@@ -18,6 +27,7 @@ use crate::{
         ShutdownRequest,
     },
     super_quorum,
+    tracker::Tracker,
 };
 
 /// The unary client config
@@ -48,6 +58,10 @@ pub(super) struct Unary<C: Command> {
     state: Arc<State>,
     /// Unary config
     config: UnaryConfig,
+    /// Request tracker
+    tracker: RwLock<Tracker>,
+    /// Last sent sequence number
+    last_sent_seq: AtomicU64,
     /// marker
     phantom: PhantomData<C>,
 }
@@ -58,6 +72,8 @@ impl<C: Command> Unary<C> {
         Self {
             state,
             config,
+            tracker: RwLock::new(Tracker::default()),
+            last_sent_seq: AtomicU64::new(0),
             phantom: PhantomData,
         }
     }
@@ -97,7 +113,8 @@ impl<C: Command> Unary<C> {
     /// New a seq num and record it
     #[allow(clippy::unused_self)] // TODO: implement request tracker
     fn new_seq_num(&self) -> u64 {
-        rand::random()
+        self.last_sent_seq
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -169,7 +186,7 @@ impl<C: Command> ClientApi for Unary<C> {
         use_fast_path: bool,
     ) -> Result<ProposeResponse<C>, CurpError> {
         let propose_id = self.gen_propose_id()?;
-        RepeatableClientApi::propose(self, propose_id, cmd, token, use_fast_path).await
+        RepeatableClientApi::propose(self, *propose_id, cmd, token, use_fast_path).await
     }
 
     /// Send propose configuration changes to the cluster
@@ -178,13 +195,13 @@ impl<C: Command> ClientApi for Unary<C> {
         changes: Vec<ConfChange>,
     ) -> Result<Vec<Member>, CurpError> {
         let propose_id = self.gen_propose_id()?;
-        RepeatableClientApi::propose_conf_change(self, propose_id, changes).await
+        RepeatableClientApi::propose_conf_change(self, *propose_id, changes).await
     }
 
     /// Send propose to shutdown cluster
     async fn propose_shutdown(&self) -> Result<(), CurpError> {
         let propose_id = self.gen_propose_id()?;
-        RepeatableClientApi::propose_shutdown(self, propose_id).await
+        RepeatableClientApi::propose_shutdown(self, *propose_id).await
     }
 
     /// Send propose to publish a node id and name
@@ -195,8 +212,14 @@ impl<C: Command> ClientApi for Unary<C> {
         node_client_urls: Vec<String>,
     ) -> Result<(), Self::Error> {
         let propose_id = self.gen_propose_id()?;
-        RepeatableClientApi::propose_publish(self, propose_id, node_id, node_name, node_client_urls)
-            .await
+        RepeatableClientApi::propose_publish(
+            self,
+            *propose_id,
+            node_id,
+            node_name,
+            node_client_urls,
+        )
+        .await
     }
 
     /// Send move leader request
@@ -348,10 +371,13 @@ impl<C: Command> ClientApi for Unary<C> {
 #[async_trait]
 impl<C: Command> RepeatableClientApi for Unary<C> {
     /// Generate a unique propose id during the retry process.
-    fn gen_propose_id(&self) -> Result<ProposeId, Self::Error> {
+    fn gen_propose_id(&self) -> Result<ProposeIdGuard<'_>, Self::Error> {
         let client_id = self.state.client_id();
         let seq_num = self.new_seq_num();
-        Ok(ProposeId(client_id, seq_num))
+        Ok(ProposeIdGuard::new(
+            &self.tracker,
+            ProposeId(client_id, seq_num),
+        ))
     }
 
     /// Send propose to the whole cluster, `use_fast_path` set to `false` to fallback into ordered
@@ -370,6 +396,7 @@ impl<C: Command> RepeatableClientApi for Unary<C> {
             self.state.cluster_version().await,
             self.state.term().await,
             !use_fast_path,
+            self.tracker.read().first_incomplete(),
         );
         let record_req = RecordRequest::new::<C>(propose_id, cmd_arc.as_ref());
         let superquorum = super_quorum(self.state.connects_len().await);
