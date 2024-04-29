@@ -120,7 +120,7 @@ impl Metrics {
                 let sp_size = curp.spec_pool().lock().len();
                 observer.observe_u64(&sp_cnt, sp_size.numeric_cast(), &[]);
 
-                let client_ids = curp.lease_manager().read().expiry_queue.len();
+                let client_ids = curp.lease_manager().read().online_clients();
                 observer.observe_u64(&online_clients, client_ids.numeric_cast(), &[]);
 
                 let commit_index = curp.commit_index();
