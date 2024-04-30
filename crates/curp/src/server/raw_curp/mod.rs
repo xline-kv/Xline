@@ -1861,6 +1861,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     /// Apply new logs
     fn apply(&self, log: &mut Log<C>) {
         let mut entries = Vec::new();
+        let mut resp_txs_l = self.ctx.resp_txs.lock();
         for i in (log.last_as + 1)..=log.commit_index {
             let entry = log.get(i).unwrap_or_else(|| {
                 unreachable!(
@@ -1868,7 +1869,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                     log.last_log_index()
                 )
             });
-            let tx = self.ctx.resp_txs.lock().remove(&i);
+            let tx = resp_txs_l.remove(&i);
             entries.push((Arc::clone(entry), tx));
             log.last_as = i;
             if log.last_exe < log.last_as {
