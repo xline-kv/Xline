@@ -444,12 +444,13 @@ impl<C: Command> Log<C> {
         term: u64,
         propose_id: ProposeId,
         entry: impl Into<EntryData<C>>,
-    ) -> Result<Arc<LogEntry<C>>, bincode::Error> {
+    ) -> Arc<LogEntry<C>> {
         let index = self.last_log_index() + 1;
         let entry = Arc::new(LogEntry::new(index, term, propose_id, entry));
-        let size = bincode::serialized_size(&entry)?;
+        let size = bincode::serialized_size(&entry)
+            .unwrap_or_else(|_| unreachable!("bindcode serialization should always succeed"));
         self.push_back(Arc::clone(&entry), size);
-        Ok(entry)
+        entry
     }
 
     /// check whether the log entry range [li,..) exceeds the batch limit or not
@@ -695,7 +696,7 @@ mod tests {
         let _res = repeat(Arc::clone(&test_cmd))
             .take(10)
             .enumerate()
-            .map(|(idx, cmd)| log.push(1, ProposeId(0, idx.numeric_cast()), cmd).unwrap())
+            .map(|(idx, cmd)| log.push(1, ProposeId(0, idx.numeric_cast()), cmd))
             .collect::<Vec<_>>();
         let log_entry_size = log.entries[0].size;
 
@@ -792,8 +793,7 @@ mod tests {
         let mut log = Log::<TestCommand>::new(default_batch_max_size(), 10);
 
         for i in 0..30 {
-            log.push(0, ProposeId(0, i), Arc::new(TestCommand::default()))
-                .unwrap();
+            log.push(0, ProposeId(0, i), Arc::new(TestCommand::default()));
         }
         log.last_as = 22;
         log.last_exe = 22;
@@ -808,8 +808,7 @@ mod tests {
     fn get_from_should_success_after_compact() {
         let mut log = Log::<TestCommand>::new(default_batch_max_size(), 10);
         for i in 0..30 {
-            log.push(0, ProposeId(0, i), Arc::new(TestCommand::default()))
-                .unwrap();
+            log.push(0, ProposeId(0, i), Arc::new(TestCommand::default()));
         }
         let log_entry_size = log.entries[0].size;
         log.set_batch_limit(2 * log_entry_size);

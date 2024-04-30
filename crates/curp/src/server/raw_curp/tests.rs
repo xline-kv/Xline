@@ -116,7 +116,7 @@ impl RawCurp<TestCommand, TestRoleChange> {
     pub(crate) fn push_cmd(&self, propose_id: ProposeId, cmd: Arc<TestCommand>) -> LogIndex {
         let st_r = self.st.read();
         let mut log_w = self.log.write();
-        log_w.push(st_r.term, propose_id, cmd).unwrap().index
+        log_w.push(st_r.term, propose_id, cmd).index
     }
 
     pub(crate) fn check_learner(&self, node_id: ServerId, is_learner: bool) -> bool {
@@ -599,7 +599,7 @@ fn leader_retires_after_log_compact_will_succeed() {
     let mut log_w = curp.log.write();
     for i in 1..=20 {
         let cmd = Arc::new(TestCommand::default());
-        log_w.push(0, ProposeId(TEST_CLIENT_ID, i), cmd).unwrap();
+        log_w.push(0, ProposeId(TEST_CLIENT_ID, i), cmd);
     }
     log_w.last_as = 20;
     log_w.last_exe = 20;

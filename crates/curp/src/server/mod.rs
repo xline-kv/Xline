@@ -82,25 +82,25 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> Clone for Rpc<C, CE, RC
 impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::Protocol for Rpc<C, CE, RC> {
     type ProposeStreamStream = RecvStream<'static, Result<OpResponse, tonic::Status>>;
 
+    #[instrument(skip_all, name = "propose_stream")]
     async fn propose_stream(
         &self,
         request: tonic::Request<ProposeRequest>,
     ) -> Result<tonic::Response<Self::ProposeStreamStream>, tonic::Status> {
         let (tx, rx) = flume::bounded(2);
         let resp_tx = Arc::new(ResponseSender::new(tx));
-        self.inner
-            .propose_stream(request.into_inner(), resp_tx)
-            .await?;
+        self.inner.propose_stream(&request.into_inner(), resp_tx)?;
 
         Ok(tonic::Response::new(rx.into_stream()))
     }
 
+    #[instrument(skip_all, name = "record")]
     async fn record(
         &self,
         request: tonic::Request<RecordRequest>,
     ) -> Result<tonic::Response<RecordResponse>, tonic::Status> {
         Ok(tonic::Response::new(
-            self.inner.record(request.into_inner()).await?,
+            self.inner.record(&request.into_inner())?,
         ))
     }
 
@@ -190,7 +190,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> crate::rpc::InnerProtoc
         request: tonic::Request<AppendEntriesRequest>,
     ) -> Result<tonic::Response<AppendEntriesResponse>, tonic::Status> {
         Ok(tonic::Response::new(
-            self.inner.append_entries(request.get_ref()).await?,
+            self.inner.append_entries(request.get_ref())?,
         ))
     }
 
