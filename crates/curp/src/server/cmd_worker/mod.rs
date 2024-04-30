@@ -41,7 +41,7 @@ pub(super) fn execute<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     ce: &CE,
     curp: &RawCurp<C, RC>,
 ) -> Result<<C as Command>::ER, <C as Command>::Error> {
-    let (sp, ucp) = (curp.spec_pool(), curp.uncommitted_pool());
+    let (sp, ucp, cb) = (curp.spec_pool(), curp.uncommitted_pool(), curp.cmd_board());
     let id = curp.id();
     match entry.entry_data {
         EntryData::Command(ref cmd) => {
@@ -50,6 +50,8 @@ pub(super) fn execute<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
                 remove_from_sp_ucp(&mut sp.lock(), &mut ucp.lock(), entry);
                 ce.trigger(entry.inflight_id());
             }
+            let mut cb_w = cb.write();
+            cb_w.insert_er(entry.propose_id, er.clone());
             debug!(
                 "{id} cmd({}) is speculatively executed, exe status: {}",
                 entry.propose_id,
@@ -72,6 +74,7 @@ fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     cmd_entries: Vec<AfterSyncEntry<C>>,
     ce: &CE,
     curp: &RawCurp<C, RC>,
+    cb: &RwLock<CommandBoard<C>>,
     sp: &Mutex<SpeculativePool<C>>,
     ucp: &Mutex<UncommittedPool<C>>,
 ) {
@@ -80,6 +83,7 @@ fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     }
     info!("after sync: {cmd_entries:?}");
     let resp_txs = cmd_entries.iter().map(|(_, tx)| tx);
+    let propose_ids = cmd_entries.iter().map(|(e, _)| e.propose_id);
     let highest_index = cmd_entries
         .last()
         .map_or_else(|| unreachable!(), |(entry, _)| entry.index);
@@ -102,19 +106,27 @@ fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
 
     let results = ce.after_sync(cmds, highest_index);
 
+    let mut cb_w = cb.write();
     for ((result, id), tx_opt) in results.into_iter().zip(propose_ids).zip(resp_txs) {
         match result {
             Ok(r) => {
                 let (asr, er_opt) = r.into_parts();
                 if let Some(er) = er_opt {
-                    tx.send_propose(ProposeResponse::new_result::<C>(&Ok(er), true));
+                    let _ignore = tx_opt.as_ref().map(|tx| {
+                        tx.send_propose(ProposeResponse::new_result::<C>(&Ok(er.clone()), true));
+                    });
+                    cb_w.insert_er(id, Ok(er));
                 }
-                tx.send_synced(SyncedResponse::new_result::<C>(&Ok(asr)));
+                let _ignore = tx_opt
+                    .as_ref()
+                    .map(|tx| tx.send_synced(SyncedResponse::new_result::<C>(&Ok(asr.clone()))));
+                cb_w.insert_asr(id, Ok(asr));
             }
             Err(e) => {
                 let _ignore = tx_opt
                     .as_ref()
                     .map(|tx| tx.send_synced(SyncedResponse::new_result::<C>(&Err(e.clone()))));
+                cb_w.insert_asr(id, Err(e.clone()));
             }
         }
     }
@@ -229,7 +241,7 @@ pub(super) async fn after_sync<C: Command, CE: CommandExecutor<C>, RC: RoleChang
     let (cmd_entries, others): (Vec<_>, Vec<_>) = entries
         .into_iter()
         .partition(|(entry, _)| matches!(entry.entry_data, EntryData::Command(_)));
-    after_sync_cmds(cmd_entries, ce, curp, &sp, &ucp);
+    after_sync_cmds(cmd_entries, ce, curp, &cb, &sp, &ucp);
     after_sync_others(others, ce, curp, &cb, &sp, &ucp).await;
 }
 
