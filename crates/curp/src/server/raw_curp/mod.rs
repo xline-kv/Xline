@@ -2064,6 +2064,9 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Acknowledge the propose id and GC it's cmd board result
-    #[allow(clippy::unused_self)] // TODO refactor cmd board gc
-    fn ack(&self, _id: ProposeId) {}
+    fn ack(&self, id: ProposeId) {
+        let _ignore = self.ctx.cb.write().er_buffer.swap_remove(&id);
+        let _ignore = self.ctx.cb.write().asr_buffer.swap_remove(&id);
+        let _ignore = self.ctx.cb.write().conf_buffer.swap_remove(&id);
+    }
 }
