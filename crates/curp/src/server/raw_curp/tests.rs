@@ -100,8 +100,8 @@ impl RawCurp<TestCommand, TestRoleChange> {
             .task_manager(task_manager)
             .connects(connects)
             .curp_storage(curp_storage)
-            .new_sp(sp)
-            .new_ucp(ucp)
+            .spec_pool(sp)
+            .uncommitted_pool(ucp)
             .build_raw_curp()
             .unwrap()
     }
@@ -756,7 +756,7 @@ fn recover_ucp_from_logs_will_pick_the_correct_cmds() {
 
     curp.recover_ucp_from_log(&mut *curp.log.write());
 
-    curp.ctx.new_ucp.map_lock(|ucp| {
+    curp.ctx.uncommitted_pool.map_lock(|ucp| {
         let mut ids: Vec<_> = ucp.all().into_iter().map(|entry| entry.id).collect();
         assert_eq!(ids.len(), 2);
         ids.sort();
@@ -814,7 +814,7 @@ fn leader_retires_should_cleanup() {
     let cb_r = curp.ctx.cb.read();
     assert!(cb_r.er_buffer.is_empty(), "er buffer should be empty");
     assert!(cb_r.asr_buffer.is_empty(), "asr buffer should be empty");
-    let ucp_l = curp.ctx.new_ucp.lock();
+    let ucp_l = curp.ctx.uncommitted_pool.lock();
     assert!(ucp_l.is_empty(), "ucp should be empty");
 }
 

@@ -657,8 +657,8 @@ impl<C: Command, RC: RoleChange> CurpNode<C, RC> {
                 .entries(entries)
                 .curp_storage(Arc::clone(&storage))
                 .client_tls_config(client_tls_config)
-                .new_sp(Arc::new(Mutex::new(SpeculativePool::new(sps))))
-                .new_ucp(Arc::new(Mutex::new(UncommittedPool::new(ucps))))
+                .spec_pool(Arc::new(Mutex::new(SpeculativePool::new(sps))))
+                .uncommitted_pool(Arc::new(Mutex::new(UncommittedPool::new(ucps))))
                 .build_raw_curp()
                 .map_err(|e| CurpError::internal(format!("build raw curp failed, {e}")))?,
         );
