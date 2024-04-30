@@ -2,19 +2,19 @@ use std::time::Duration;
 
 use utils::task_manager::Listener;
 
-use crate::{cmd::Command, server::cmd_board::CmdBoardRef};
+use crate::{cmd::Command, rpc::ProposeId, server::cmd_board::CmdBoardRef};
+
+use super::lease_manager::LeaseManagerRef;
 
 // TODO: Speculative pool GC
 
 /// Cleanup cmd board
 pub(super) async fn gc_cmd_board<C: Command>(
     cmd_board: CmdBoardRef<C>,
+    lease_mamanger: LeaseManagerRef,
     interval: Duration,
     shutdown_listener: Listener,
 ) {
-    let mut last_check_len_er = 0;
-    let mut last_check_len_asr = 0;
-    let mut last_check_len_conf = 0;
     #[allow(clippy::arithmetic_side_effects, clippy::ignored_unit_patterns)]
     // introduced by tokio select
     loop {
@@ -23,25 +23,23 @@ pub(super) async fn gc_cmd_board<C: Command>(
             _ = shutdown_listener.wait() => break,
         }
         let mut board = cmd_board.write();
-
-        // last_check_len_xxx should always be smaller than board.xxx_.len(), the check is just for precaution
-
-        if last_check_len_er <= board.er_buffer.len() {
-            let new_er_buffer = board.er_buffer.split_off(last_check_len_er);
-            board.er_buffer = new_er_buffer;
-            last_check_len_er = board.er_buffer.len();
+        let expired_er_ids: Vec<_> = board
+            .er_buffer
+            .keys()
+            .copied()
+            .filter(|ProposeId(client_id, _)| !lease_mamanger.read().check_alive(*client_id))
+            .collect();
+        for id in expired_er_ids {
+            let _ignore = board.er_buffer.swap_remove(&id);
         }
-
-        if last_check_len_asr <= board.asr_buffer.len() {
-            let new_asr_buffer = board.asr_buffer.split_off(last_check_len_asr);
-            board.asr_buffer = new_asr_buffer;
-            last_check_len_asr = board.asr_buffer.len();
-        }
-
-        if last_check_len_conf <= board.conf_buffer.len() {
-            let new_conf = board.conf_buffer.split_off(last_check_len_conf);
-            board.conf_buffer = new_conf;
-            last_check_len_conf = board.conf_buffer.len();
+        let expired_asr_ids: Vec<_> = board
+            .asr_buffer
+            .keys()
+            .copied()
+            .filter(|ProposeId(client_id, _)| !lease_mamanger.read().check_alive(*client_id))
+            .collect();
+        for id in expired_asr_ids {
+            let _ignore = board.asr_buffer.swap_remove(&id);
         }
     }
 }
@@ -60,6 +58,7 @@ mod tests {
         server::{
             cmd_board::{CmdBoardRef, CommandBoard},
             gc::gc_cmd_board,
+            lease_manager::LeaseManager,
         },
     };
 
@@ -68,8 +67,14 @@ mod tests {
     async fn cmd_board_gc_test() {
         let task_manager = TaskManager::new();
         let board: CmdBoardRef<TestCommand> = Arc::new(RwLock::new(CommandBoard::new()));
+        let lease_manager = Arc::new(RwLock::new(LeaseManager::new()));
         task_manager.spawn(TaskName::GcCmdBoard, |n| {
-            gc_cmd_board(Arc::clone(&board), Duration::from_millis(500), n)
+            gc_cmd_board(
+                Arc::clone(&board),
+                lease_manager,
+                Duration::from_millis(500),
+                n,
+            )
         });
 
         tokio::time::sleep(Duration::from_millis(100)).await;
