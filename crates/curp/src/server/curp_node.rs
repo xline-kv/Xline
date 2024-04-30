@@ -862,7 +862,7 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
                 .cluster_info(Arc::clone(&cluster_info))
                 .is_leader(is_leader)
                 .cmd_board(Arc::clone(&cmd_board))
-                .lease_manager(lease_manager)
+                .lease_manager(Arc::clone(&lease_manager))
                 .cfg(Arc::clone(&curp_cfg))
                 .sync_events(sync_events)
                 .role_change(role_change)
@@ -885,7 +885,12 @@ impl<C: Command, CE: CommandExecutor<C>, RC: RoleChange> CurpNode<C, CE, RC> {
         metrics::Metrics::register_callback(Arc::clone(&curp))?;
 
         task_manager.spawn(TaskName::GcCmdBoard, |n| {
-            gc_cmd_board(Arc::clone(&cmd_board), curp_cfg.gc_interval, n)
+            gc_cmd_board(
+                Arc::clone(&cmd_board),
+                lease_manager,
+                curp_cfg.gc_interval,
+                n,
+            )
         });
 
         Self::run_bg_tasks(
