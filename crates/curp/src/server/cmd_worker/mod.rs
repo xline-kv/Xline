@@ -13,7 +13,7 @@ use crate::{
     log_entry::{EntryData, LogEntry},
     response::ResponseSender,
     role_change::RoleChange,
-    rpc::{ConfChangeType, PoolEntry, ProposeResponse, SyncedResponse},
+    rpc::{ConfChangeType, PoolEntry, ProposeId, ProposeResponse, SyncedResponse},
     snapshot::{Snapshot, SnapshotMeta},
 };
 
@@ -42,10 +42,13 @@ pub(super) fn execute<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     ce: &CE,
     curp: &RawCurp<C, RC>,
 ) -> Result<<C as Command>::ER, <C as Command>::Error> {
+    let cb = curp.cmd_board();
     let id = curp.id();
     match entry.entry_data {
         EntryData::Command(ref cmd) => {
             let er = ce.execute(cmd);
+            let mut cb_w = cb.write();
+            cb_w.insert_er(entry.propose_id, er.clone());
             debug!(
                 "{id} cmd({}) is speculatively executed, exe status: {}",
                 entry.propose_id,
@@ -95,9 +98,11 @@ fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
             )
         })
         .collect();
+    let propose_ids = cmd_entries.iter().map(|(e, _)| e.propose_id);
 
     let results = ce.after_sync(cmds, highest_index);
-    send_results(results.into_iter(), resp_txs);
+
+    send_results(curp, results.into_iter(), resp_txs, propose_ids);
 
     for (entry, _) in cmd_entries {
         curp.trigger(&entry.propose_id);
@@ -107,27 +112,35 @@ fn after_sync_cmds<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
 }
 
 /// Send cmd results to clients
-fn send_results<'a, C, R, S>(results: R, txs: S)
+fn send_results<'a, C, RC, R, S, P>(curp: &RawCurp<C, RC>, results: R, txs: S, propose_ids: P)
 where
     C: Command,
+    RC: RoleChange,
     R: Iterator<Item = Result<AfterSyncOk<C>, C::Error>>,
     S: Iterator<Item = Option<&'a ResponseSender>>,
+    P: Iterator<Item = ProposeId>,
 {
-    for (result, tx_opt) in results.zip(txs) {
+    let cb = curp.cmd_board();
+    let mut cb_w = cb.write();
+
+    for ((result, tx_opt), id) in results.zip(txs).zip(propose_ids) {
         match result {
             Ok(r) => {
                 let (asr, er_opt) = r.into_parts();
                 let _ignore_er = tx_opt.as_ref().zip(er_opt.as_ref()).map(|(tx, er)| {
                     tx.send_propose(ProposeResponse::new_result::<C>(&Ok(er.clone()), true));
                 });
+                let _ignore = er_opt.map(|er| cb_w.insert_er(id, Ok(er)));
                 let _ignore_asr = tx_opt
                     .as_ref()
                     .map(|tx| tx.send_synced(SyncedResponse::new_result::<C>(&Ok(asr.clone()))));
+                cb_w.insert_asr(id, Ok(asr));
             }
             Err(e) => {
                 let _ignore = tx_opt
                     .as_ref()
                     .map(|tx| tx.send_synced(SyncedResponse::new_result::<C>(&Err(e.clone()))));
+                cb_w.insert_asr(id, Err(e.clone()));
             }
         }
     }
