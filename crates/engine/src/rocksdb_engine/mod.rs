@@ -209,11 +209,12 @@ impl RocksEngine {
 #[async_trait::async_trait]
 impl StorageEngine for RocksEngine {
     type Snapshot = RocksSnapshot;
-    type Transaction = RocksTransaction;
+    type Transaction<'db> = RocksTransaction<'db>;
 
     #[inline]
-    fn transaction(&self) -> RocksTransaction {
-        RocksTransaction::new(Arc::clone(&self.inner), Arc::clone(&self.size))
+    fn transaction(&self) -> RocksTransaction<'_> {
+        let txn = self.inner.transaction();
+        RocksTransaction::new(Arc::clone(&self.inner), txn, Arc::clone(&self.size))
     }
 
     #[inline]

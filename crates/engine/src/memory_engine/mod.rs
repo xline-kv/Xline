@@ -98,7 +98,7 @@ impl MemoryEngine {
 #[async_trait::async_trait]
 impl StorageEngine for MemoryEngine {
     type Snapshot = MemorySnapshot;
-    type Transaction = MemoryTransaction;
+    type Transaction<'db> = MemoryTransaction;
 
     #[inline]
     fn transaction(&self) -> MemoryTransaction {

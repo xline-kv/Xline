@@ -1,6 +1,7 @@
 use crate::EngineError;
 
 /// Storage operations
+/// TODO: refactor this trait, require `&mut self` for write operations
 pub trait StorageOps {
     /// Write an op to the transaction
     ///

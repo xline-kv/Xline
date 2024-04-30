@@ -8,10 +8,10 @@ pub trait StorageEngine: Send + Sync + 'static + std::fmt::Debug {
     /// The snapshot type
     type Snapshot: SnapshotApi;
     /// The transaction type
-    type Transaction: TransactionApi;
+    type Transaction<'db>: TransactionApi;
 
     /// Creates a transaction
-    fn transaction(&self) -> Self::Transaction;
+    fn transaction(&self) -> Self::Transaction<'_>;
 
     /// Get all the values of the given table
     /// # Errors
