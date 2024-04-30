@@ -108,11 +108,7 @@ async fn worker_exe<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     ce: &CE,
     curp: &RawCurp<C, RC>,
 ) -> bool {
-    let (cb, sp, ucp) = (
-        curp.cmd_board(),
-        curp.new_spec_pool(),
-        curp.new_uncommitted_pool(),
-    );
+    let (cb, sp, ucp) = (curp.cmd_board(), curp.spec_pool(), curp.uncommitted_pool());
     let id = curp.id();
     let success = match entry.entry_data {
         EntryData::Command(ref cmd) => {
@@ -153,11 +149,7 @@ async fn worker_as<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     ce: &CE,
     curp: &RawCurp<C, RC>,
 ) -> bool {
-    let (cb, sp, ucp) = (
-        curp.cmd_board(),
-        curp.new_spec_pool(),
-        curp.new_uncommitted_pool(),
-    );
+    let (cb, sp, ucp) = (curp.cmd_board(), curp.spec_pool(), curp.uncommitted_pool());
     let id = curp.id();
     let success = match entry.entry_data {
         EntryData::Command(ref cmd) => {

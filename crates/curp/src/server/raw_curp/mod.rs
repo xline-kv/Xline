@@ -144,9 +144,9 @@ pub(super) struct RawCurpArgs<C: Command, RC: RoleChange> {
     #[builder(default)]
     entries: Vec<LogEntry<C>>,
     /// Speculative pool
-    new_sp: Arc<Mutex<SpeculativePool<C>>>,
+    spec_pool: Arc<Mutex<SpeculativePool<C>>>,
     /// Uncommitted pool
-    new_ucp: Arc<Mutex<UncommittedPool<C>>>,
+    uncommitted_pool: Arc<Mutex<UncommittedPool<C>>>,
 }
 
 impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
@@ -177,8 +177,8 @@ impl<C: Command, RC: RoleChange> RawCurpBuilder<C, RC> {
             .connects(args.connects)
             .curp_storage(args.curp_storage)
             .client_tls_config(args.client_tls_config)
-            .new_sp(args.new_sp)
-            .new_ucp(args.new_ucp)
+            .spec_pool(args.spec_pool)
+            .uncommitted_pool(args.uncommitted_pool)
             .build()
             .map_err(|e| match e {
                 ContextBuilderError::UninitializedField(s) => {
@@ -332,9 +332,9 @@ struct Context<C: Command, RC: RoleChange> {
     /// Curp storage
     curp_storage: Arc<DB<C>>,
     /// Speculative pool
-    new_sp: Arc<Mutex<SpeculativePool<C>>>,
+    spec_pool: Arc<Mutex<SpeculativePool<C>>>,
     /// Uncommitted pool
-    new_ucp: Arc<Mutex<UncommittedPool<C>>>,
+    uncommitted_pool: Arc<Mutex<UncommittedPool<C>>>,
 }
 
 impl<C: Command, RC: RoleChange> Context<C, RC> {
@@ -395,13 +395,13 @@ impl<C: Command, RC: RoleChange> ContextBuilder<C, RC> {
                 Some(value) => value,
                 None => return Err(ContextBuilderError::UninitializedField("client_tls_config")),
             },
-            new_sp: match self.new_sp.take() {
+            spec_pool: match self.spec_pool.take() {
                 Some(value) => value,
-                None => return Err(ContextBuilderError::UninitializedField("new_sp")),
+                None => return Err(ContextBuilderError::UninitializedField("spec_pool")),
             },
-            new_ucp: match self.new_ucp.take() {
+            uncommitted_pool: match self.uncommitted_pool.take() {
                 Some(value) => value,
-                None => return Err(ContextBuilderError::UninitializedField("new_ucp")),
+                None => return Err(ContextBuilderError::UninitializedField("uncommitted_pool")),
             },
         })
     }
@@ -463,7 +463,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         debug!("{} gets proposal for cmd({})", self.id(), propose_id);
         let mut conflict = self
             .ctx
-            .new_sp
+            .spec_pool
             .map_lock(|mut sp_l| sp_l.insert(PoolEntry::new(propose_id, Arc::clone(&cmd))))
             .is_some();
 
@@ -495,7 +495,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         // leader also needs to check if the cmd conflicts un-synced commands
         conflict |= self
             .ctx
-            .new_ucp
+            .uncommitted_pool
             .map_lock(|mut ucp_l| ucp_l.insert(PoolEntry::new(propose_id, Arc::clone(&cmd))));
 
         let mut log_w = self.log.write();
@@ -566,13 +566,13 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
         let mut conflict = self
             .ctx
-            .new_sp
+            .spec_pool
             .lock()
             .insert(PoolEntry::new(propose_id, conf_changes.clone()))
             .is_some();
         conflict |= self
             .ctx
-            .new_ucp
+            .uncommitted_pool
             .lock()
             .insert(PoolEntry::new(propose_id, conf_changes.clone()));
 
@@ -834,7 +834,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         // grant the vote
         debug!("{} votes for server {}", self.id(), candidate_id);
         st_w.voted_for = Some(candidate_id);
-        let self_spec_pool = self.ctx.new_sp.lock().all();
+        let self_spec_pool = self.ctx.spec_pool.lock().all();
         self.reset_election_tick();
         Ok((st_w.term, self_spec_pool))
     }
@@ -1060,7 +1060,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     pub(super) fn handle_fetch_read_state(&self, cmd: Arc<C>) -> ReadState {
         let ids: Vec<_> = self
             .ctx
-            .new_ucp
+            .uncommitted_pool
             .map_lock(|ucp| ucp.all_conflict(PoolEntry::new(ProposeId::default(), cmd)))
             .into_iter()
             .map(|entry| entry.id)
@@ -1255,13 +1255,13 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Get a reference to spec pool
-    pub(super) fn new_spec_pool(&self) -> Arc<Mutex<SpeculativePool<C>>> {
-        Arc::clone(&self.ctx.new_sp)
+    pub(super) fn spec_pool(&self) -> Arc<Mutex<SpeculativePool<C>>> {
+        Arc::clone(&self.ctx.spec_pool)
     }
 
     /// Get a reference to uncommitted pool
-    pub(super) fn new_uncommitted_pool(&self) -> Arc<Mutex<UncommittedPool<C>>> {
-        Arc::clone(&self.ctx.new_ucp)
+    pub(super) fn uncommitted_pool(&self) -> Arc<Mutex<UncommittedPool<C>>> {
+        Arc::clone(&self.ctx.uncommitted_pool)
     }
 
     /// Get sync event
@@ -1584,7 +1584,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         let _ig = self.ctx.leader_tx.send(None).ok();
         self.reset_election_tick();
 
-        let self_sp = self.ctx.new_sp.map_lock(|sp| sp.all());
+        let self_sp = self.ctx.spec_pool.map_lock(|sp| sp.all());
 
         if prev_role == Role::PreCandidate {
             debug!("PreCandidate {} starts election", self.id());
@@ -1723,7 +1723,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
             .collect_vec();
 
         let mut cb_w = self.ctx.cb.write();
-        let mut sp_l = self.ctx.new_sp.lock();
+        let mut sp_l = self.ctx.spec_pool.lock();
 
         let term = st.term;
         for entry in recovered_cmds {
@@ -1744,7 +1744,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
 
     /// Recover the ucp from uncommitted log entries
     fn recover_ucp_from_log(&self, log: &Log<C>) {
-        let mut ucp_l = self.ctx.new_ucp.lock();
+        let mut ucp_l = self.ctx.uncommitted_pool.lock();
 
         for i in log.commit_index + 1..=log.last_log_index() {
             let entry = log.get(i).unwrap_or_else(|| {
@@ -1793,7 +1793,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
         debug!("leader {} retires", self.id());
         self.ctx.cb.write().clear();
         self.ctx.lm.write().clear();
-        self.ctx.new_ucp.lock().clear();
+        self.ctx.uncommitted_pool.lock().clear();
     }
 
     /// Switch to a new config and return old member infos for fallback

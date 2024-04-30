@@ -701,13 +701,13 @@ impl XlineServer {
     fn init_conflict_pools() -> (Vec<SpObject<Command>>, Vec<UcpObject<Command>>) {
         let kv_sp = Box::<KvSpecPool>::default();
         let lease_sp = Box::<LeaseSpecPool>::default();
-        let xor_sp = Box::<ExclusiveSpecPool>::default();
+        let exclusive_sp = Box::<ExclusiveSpecPool>::default();
         let kv_ucp = Box::<KvUncomPool>::default();
         let lease_ucp = Box::<LeaseUncomPool>::default();
-        let xor_ucp = Box::<ExclusiveUncomPool>::default();
+        let exclusive_ucp = Box::<ExclusiveUncomPool>::default();
         (
-            vec![kv_sp, lease_sp, xor_sp],
-            vec![kv_ucp, lease_ucp, xor_ucp],
+            vec![kv_sp, lease_sp, exclusive_sp],
+            vec![kv_ucp, lease_ucp, exclusive_ucp],
         )
     }
 }
