@@ -1,6 +1,12 @@
-use curp_external_api::conflict::SpeculativePoolOp;
+use std::{collections::HashMap, sync::Arc};
 
-use crate::rpc::PoolEntry;
+use curp_external_api::conflict::SpeculativePoolOp;
+use parking_lot::Mutex;
+
+use crate::rpc::{PoolEntry, ProposeId};
+
+/// Ref to `SpeculativePool`
+pub(crate) type SpeculativePoolRef<C> = Arc<Mutex<SpeculativePool<C>>>;
 
 /// A speculative pool object
 pub type SpObject<C> = Box<dyn SpeculativePoolOp<Entry = PoolEntry<C>> + Send + 'static>;
@@ -9,12 +15,17 @@ pub type SpObject<C> = Box<dyn SpeculativePoolOp<Entry = PoolEntry<C>> + Send + 
 pub(crate) struct SpeculativePool<C> {
     /// Command speculative pools
     command_sps: Vec<SpObject<C>>,
+    /// propose id to entry mapping
+    entrys: HashMap<ProposeId, PoolEntry<C>>,
 }
 
 impl<C> SpeculativePool<C> {
     /// Creates a new pool
     pub(crate) fn new(command_sps: Vec<SpObject<C>>) -> Self {
-        Self { command_sps }
+        Self {
+            command_sps,
+            entrys: HashMap::new(),
+        }
     }
 
     /// Inserts an entry into the pool
@@ -26,6 +37,8 @@ impl<C> SpeculativePool<C> {
             }
         }
 
+        let _ignore = self.entrys.insert(entry.id, entry);
+
         None
     }
 
@@ -33,6 +46,17 @@ impl<C> SpeculativePool<C> {
     pub(crate) fn remove(&mut self, entry: &PoolEntry<C>) {
         for csp in &mut self.command_sps {
             csp.remove(entry);
+        }
+
+        let _ignore = self.entrys.remove(&entry.id);
+    }
+
+    /// Removes an entry from the pool by it's propose id
+    pub(crate) fn remove_by_id(&mut self, id: &ProposeId) {
+        if let Some(entry) = self.entrys.remove(id) {
+            for csp in &mut self.command_sps {
+                csp.remove(&entry);
+            }
         }
     }
 

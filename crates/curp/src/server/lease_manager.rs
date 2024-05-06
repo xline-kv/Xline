@@ -43,34 +43,38 @@ impl LeaseManager {
     }
 
     /// Generate a new client id and grant a lease
-    pub(crate) fn grant(&mut self) -> u64 {
+    pub(crate) fn grant(&mut self, ttl: Option<Duration>) -> u64 {
         let mut client_id: u64 = rand::random();
         while self.expiry_queue.get(&client_id).is_some() {
             client_id = rand::random();
         }
-        let expiry = Instant::now().add(DEFAULT_LEASE_TTL);
+        let expiry = Instant::now().add(ttl.unwrap_or(DEFAULT_LEASE_TTL));
         _ = self.expiry_queue.push(client_id, Reverse(expiry));
-        // gc all expired client id while granting a new client id
-        self.gc_expired();
         client_id
     }
 
     /// GC the expired client ids
-    pub(crate) fn gc_expired(&mut self) {
+    pub(crate) fn gc_expired(&mut self) -> Vec<u64> {
+        let mut expired = Vec::new();
         while let Some(expiry) = self.expiry_queue.peek().map(|(_, v)| v.0) {
             if expiry > Instant::now() {
-                return;
+                break;
             }
-            _ = self.expiry_queue.pop();
+            let (id, _) = self
+                .expiry_queue
+                .pop()
+                .unwrap_or_else(|| unreachable!("Expiry queue should not be empty"));
+            expired.push(id);
         }
+        expired
     }
 
     /// Renew a client id
-    pub(crate) fn renew(&mut self, client_id: u64) {
+    pub(crate) fn renew(&mut self, client_id: u64, ttl: Option<Duration>) {
         if self.bypassed.contains(&client_id) {
             return;
         }
-        let expiry = Instant::now().add(DEFAULT_LEASE_TTL);
+        let expiry = Instant::now().add(ttl.unwrap_or(DEFAULT_LEASE_TTL));
         _ = self
             .expiry_queue
             .change_priority(&client_id, Reverse(expiry));
@@ -111,7 +115,7 @@ mod test {
     fn test_basic_lease_manager() {
         let mut lm = LeaseManager::new();
 
-        let client_id = lm.grant();
+        let client_id = lm.grant(None);
         assert!(lm.check_alive(client_id));
         lm.revoke(client_id);
         assert!(!lm.check_alive(client_id));
@@ -126,7 +130,7 @@ mod test {
     async fn test_lease_expire() {
         let mut lm = LeaseManager::new();
 
-        let client_id = lm.grant();
+        let client_id = lm.grant(None);
         assert!(lm.check_alive(client_id));
         tokio::time::sleep(DEFAULT_LEASE_TTL).await;
         assert!(!lm.check_alive(client_id));
@@ -136,10 +140,10 @@ mod test {
     async fn test_renew_lease() {
         let mut lm = LeaseManager::new();
 
-        let client_id = lm.grant();
+        let client_id = lm.grant(None);
         assert!(lm.check_alive(client_id));
         tokio::time::sleep(DEFAULT_LEASE_TTL / 2).await;
-        lm.renew(client_id);
+        lm.renew(client_id, None);
         tokio::time::sleep(DEFAULT_LEASE_TTL / 2).await;
         assert!(lm.check_alive(client_id));
     }
