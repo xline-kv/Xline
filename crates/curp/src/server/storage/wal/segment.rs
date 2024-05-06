@@ -140,9 +140,9 @@ impl WALSegment {
     {
         let encoded_bytes = encoder.encode(item)?;
         self.file.write_all(&encoded_bytes)?;
-        self.update_size(encoded_bytes.len().numeric_cast());
         self.file.flush()?;
         self.file.sync_data()?;
+        self.update_size(encoded_bytes.len().numeric_cast());
 
         Ok(())
     }
