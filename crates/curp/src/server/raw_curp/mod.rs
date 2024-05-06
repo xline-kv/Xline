@@ -49,6 +49,7 @@ use self::{
     state::{CandidateState, LeaderState, State},
 };
 use super::{
+    cmd_board::CommandBoard,
     conflict::{spec_pool_new::SpeculativePool, uncommitted_pool::UncommittedPool},
     curp_node::TaskType,
     lease_manager::LeaseManagerRef,
@@ -707,15 +708,15 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     pub(super) fn handle_lease_keep_alive(&self, client_id: u64) -> Option<u64> {
         let mut lm_w = self.ctx.lm.write();
         if client_id == 0 {
-            return Some(lm_w.grant());
+            return Some(lm_w.grant(None));
         }
         if lm_w.check_alive(client_id) {
-            lm_w.renew(client_id);
+            lm_w.renew(client_id, None);
             None
         } else {
             metrics::get().client_id_revokes.add(1, &[]);
             lm_w.revoke(client_id);
-            Some(lm_w.grant())
+            Some(lm_w.grant(None))
         }
     }
 
@@ -2046,7 +2047,7 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
                 let before = tracker.first_incomplete();
                 if tracker.must_advance_to(first_incomplete) {
                     for seq_num_ack in before..first_incomplete {
-                        self.ack(ProposeId(client_id, seq_num_ack));
+                        Self::ack(ProposeId(client_id, seq_num_ack), &mut cb_w);
                     }
                 }
             }
@@ -2058,9 +2059,9 @@ impl<C: Command, RC: RoleChange> RawCurp<C, RC> {
     }
 
     /// Acknowledge the propose id and GC it's cmd board result
-    fn ack(&self, id: ProposeId) {
-        let _ignore = self.ctx.cb.write().er_buffer.swap_remove(&id);
-        let _ignore = self.ctx.cb.write().asr_buffer.swap_remove(&id);
-        let _ignore = self.ctx.cb.write().conf_buffer.swap_remove(&id);
+    fn ack(id: ProposeId, cb: &mut CommandBoard<C>) {
+        let _ignore_er = cb.er_buffer.swap_remove(&id);
+        let _ignore_asr = cb.asr_buffer.swap_remove(&id);
+        let _ignore_conf = cb.conf_buffer.swap_remove(&id);
     }
 }
