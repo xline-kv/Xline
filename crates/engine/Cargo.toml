@@ -27,7 +27,7 @@ tokio = { version = "0.2.25", package = "madsim-tokio", features = [
     "rt-multi-thread",
     "io-util",
 ] }
-tokio-util = { version = "0.7.8", features = ["io"] }
+tokio-util = { version = "0.7.11", features = ["io"] }
 tracing = "0.1.40"
 utils = { path = "../utils" }
 uuid = { version = "1", features = ["v4"] }
