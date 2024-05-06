@@ -266,6 +266,17 @@ impl Tracker {
     pub(crate) fn first_incomplete(&self) -> u64 {
         self.first_incomplete
     }
+
+    /// Gets all uncompleted seq number
+    pub(crate) fn all_incompleted(&self) -> Vec<u64> {
+        let mut result = Vec::new();
+        for i in 0..self.inflight.len() {
+            if self.inflight.get(i).unwrap_or(false) {
+                result.push(self.first_incomplete.wrapping_add(i.numeric_cast()));
+            }
+        }
+        result
+    }
 }
 
 #[cfg(test)]
