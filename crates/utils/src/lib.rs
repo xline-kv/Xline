@@ -207,6 +207,8 @@ pub mod task_manager;
 pub mod tokio_lock;
 /// utils for pass span context
 pub mod tracing;
+/// WAL utils
+pub mod wal;
 
 use ::tracing::debug;
 pub use parser::*;
