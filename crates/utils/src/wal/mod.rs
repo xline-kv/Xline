@@ -12,7 +12,6 @@ use std::{
 
 use fs2::FileExt;
 use sha2::{digest::Output, Digest, Sha256};
-use tokio::fs::File as TokioFile;
 
 /// File that is exclusively locked
 #[derive(Debug)]
@@ -151,20 +150,18 @@ pub fn parse_u64(bytes_le: &[u8]) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use std::{io::Read, process::Command};
-
     use super::*;
 
     #[test]
     fn file_rename_is_ok() {
-        let mut tempdir = tempfile::tempdir().unwrap();
+        let tempdir = tempfile::tempdir().unwrap();
         let mut path = PathBuf::from(tempdir.path());
         path.push("file.test");
         let lfile = LockedFile::open_rw(&path).unwrap();
         let new_name = "new_name.test";
         let mut new_path = parent_dir(&path);
         new_path.push(new_name);
-        lfile.rename(new_name);
+        lfile.rename(new_name).unwrap();
         assert!(!is_exist(path));
         assert!(is_exist(new_path));
     }
@@ -172,10 +169,10 @@ mod tests {
     #[test]
     #[allow(clippy::verbose_file_reads)] // false positive
     fn file_open_is_exclusive() {
-        let mut tempdir = tempfile::tempdir().unwrap();
+        let tempdir = tempfile::tempdir().unwrap();
         let mut path = PathBuf::from(tempdir.path());
         path.push("file.test");
-        let mut lfile = LockedFile::open_rw(&path).unwrap();
+        let _lfile = LockedFile::open_rw(&path).unwrap();
         assert!(
             LockedFile::open_rw(&path).is_err(),
             "acquire lock should failed"
