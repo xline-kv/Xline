@@ -54,6 +54,9 @@ mod lease_manager;
 /// Curp metrics
 mod metrics;
 
+/// Speculative pool storage
+mod sp_storage;
+
 pub use storage::{db::DB, StorageApi, StorageError};
 
 /// The Rpc Server to handle rpc requests

@@ -11,7 +11,7 @@ use std::{
 };
 
 use fs2::FileExt;
-use sha2::{digest::Output, Digest, Sha256};
+use sha2::{digest::Output, Digest};
 
 /// File that is exclusively locked
 #[derive(Debug)]
@@ -122,15 +122,15 @@ pub fn sync_parent_dir(dir: impl AsRef<Path>) -> io::Result<()> {
 }
 
 /// Gets the checksum of the slice, we use Sha256 as the hash function
-pub fn get_checksum(data: &[u8]) -> Output<Sha256> {
-    let mut hasher = Sha256::new();
+pub fn get_checksum<H: Digest>(data: &[u8]) -> Output<H> {
+    let mut hasher = H::new();
     hasher.update(data);
     hasher.finalize()
 }
 
 /// Validates the the data with the given checksum
-pub fn validate_data(data: &[u8], checksum: &[u8]) -> bool {
-    AsRef::<[u8]>::as_ref(&get_checksum(data)) == checksum
+pub fn validate_data<H: Digest>(data: &[u8], checksum: &[u8]) -> bool {
+    AsRef::<[u8]>::as_ref(&get_checksum::<H>(data)) == checksum
 }
 
 /// Checks whether the file exist
