@@ -338,6 +338,13 @@ impl CommandExecutor {
 
 #[async_trait::async_trait]
 impl CurpCommandExecutor<Command> for CommandExecutor {
+    fn prepare(
+        &self,
+        _cmd: &Command,
+    ) -> Result<<Command as CurpCommand>::PR, <Command as CurpCommand>::Error> {
+        Ok(-1)
+    }
+
     async fn execute(
         &self,
         cmd: &Command,
@@ -424,14 +431,14 @@ impl CurpCommandExecutor<Command> for CommandExecutor {
             if let RequestWrapper::CompactionRequest(ref compact_req) = *wrapper {
                 if compact_req.physical {
                     if let Some(n) = self.compact_events.get(&cmd.compact_id()) {
-                        n.notify(usize::MAX);
+                        let _ignore = n.notify(usize::MAX);
                     }
                 }
             };
             if let RequestWrapper::CompactionRequest(ref compact_req) = *wrapper {
                 if compact_req.physical {
                     if let Some(n) = self.compact_events.get(&cmd.compact_id()) {
-                        n.notify(usize::MAX);
+                        let _ignore = n.notify(usize::MAX);
                     }
                 }
             };

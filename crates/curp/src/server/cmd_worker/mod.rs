@@ -5,6 +5,7 @@ use std::{fmt::Debug, iter, sync::Arc};
 
 use async_trait::async_trait;
 use clippy_utilities::NumericCast;
+use curp_external_api::cmd::AfterSyncCmd;
 #[cfg(test)]
 use mockall::automock;
 use tokio::sync::oneshot;
@@ -137,7 +138,7 @@ async fn worker_exe<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
         | EntryData::SetNodeState(_, _, _) => true,
     };
     if !success {
-        ce.trigger(entry.inflight_id(), entry.index);
+        ce.trigger(entry.inflight_id());
     }
     success
 }
@@ -153,10 +154,16 @@ async fn worker_as<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
     let id = curp.id();
     let success = match entry.entry_data {
         EntryData::Command(ref cmd) => {
-            let Some(prepare) = prepare else {
+            let Some(_prepare) = prepare else {
                 unreachable!("prepare should always be Some(_) when entry is a command");
             };
-            let asr = ce.after_sync(cmd.as_ref(), entry.index, prepare).await;
+            let asr = ce
+                .after_sync(vec![AfterSyncCmd::new(cmd.as_ref(), false)], entry.index)
+                .await
+                .map(|res| {
+                    let (asr, _) = res.into_iter().next().unwrap();
+                    asr
+                });
             let asr_ok = asr.is_ok();
             cb.write().insert_asr(entry.propose_id, asr);
             sp.lock()
@@ -240,7 +247,7 @@ async fn worker_as<C: Command, CE: CommandExecutor<C>, RC: RoleChange>(
         }
         EntryData::Empty => true,
     };
-    ce.trigger(entry.inflight_id(), entry.index);
+    ce.trigger(entry.inflight_id());
     success
 }
 

@@ -36,6 +36,7 @@ impl IndexBarrier {
     }
 
     /// Trigger all barriers whose index is less than or equal to the given index.
+    #[allow(dead_code)]
     pub(crate) fn trigger(&self, index: LogIndex) {
         let mut inner_l = self.inner.lock();
         if inner_l.last_trigger_index < index {
