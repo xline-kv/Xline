@@ -2,7 +2,7 @@ use std::{io, marker::PhantomData, sync::Arc};
 
 use clippy_utilities::NumericCast;
 use serde::{de::DeserializeOwned, Serialize};
-use sha2::{digest::Reset, Digest, Sha256};
+use sha2::{digest::Reset, Digest};
 use utils::wal::{
     framed::{Decoder, Encoder},
     get_checksum,
@@ -36,7 +36,7 @@ trait FrameEncoder {
 /// The WAL codec
 #[allow(clippy::upper_case_acronyms)] // The WAL needs to be all upper cases
 #[derive(Debug)]
-pub(super) struct WAL<C, H = Sha256> {
+pub(super) struct WAL<C, H> {
     /// Frames stored in decoding
     frames: Vec<DataFrame<C>>,
     /// The hasher state for decoding
@@ -45,7 +45,7 @@ pub(super) struct WAL<C, H = Sha256> {
 
 /// Union type of WAL frames
 #[derive(Debug)]
-enum WALFrame<C, H = Sha256> {
+enum WALFrame<C, H> {
     /// Data frame type
     Data(DataFrame<C>),
     /// Commit frame type
@@ -64,6 +64,16 @@ pub(crate) enum DataFrame<C> {
     Remove(ProposeId),
 }
 
+impl<C> DataFrame<C> {
+    /// Gets the propose id encoded in this frame
+    pub(crate) fn propose_id(&self) -> ProposeId {
+        match *self {
+            DataFrame::Insert { propose_id, .. } => propose_id,
+            DataFrame::Remove(propose_id) => propose_id,
+        }
+    }
+}
+
 /// The commit frame
 ///
 /// This frames contains a SHA256 checksum of all previous frames since last commit
@@ -75,12 +85,15 @@ struct CommitFrame<H> {
     phantom: PhantomData<H>,
 }
 
-impl<C> WAL<C> {
+impl<C, H> WAL<C, H>
+where
+    H: Digest,
+{
     /// Creates a new WAL codec
     pub(super) fn new() -> Self {
         Self {
             frames: Vec::new(),
-            hasher: Sha256::new(),
+            hasher: H::new(),
         }
     }
 }
@@ -117,7 +130,7 @@ where
     fn decode(&mut self, src: &[u8]) -> Result<(Self::Item, usize), Self::Error> {
         let mut current = 0;
         loop {
-            let Some((frame, len)) = WALFrame::<C>::decode(&src[current..])? else {
+            let Some((frame, len)) = WALFrame::<C, H>::decode(&src[current..])? else {
                 return Err(WALError::UnexpectedEof);
             };
             let decoded_bytes = &src[current..current + len];

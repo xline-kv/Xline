@@ -1,10 +1,14 @@
 use std::{
+    collections::HashSet,
     fs::File,
     io::{self, Read, Write},
+    path::PathBuf,
 };
 
 use clippy_utilities::{NumericCast, OverflowArithmetic};
+use itertools::Itertools;
 use sha2::Sha256;
+use tracing::error;
 use utils::wal::{
     framed::{Decoder, Encoder},
     get_checksum, parse_u64, validate_data, LockedFile,
@@ -29,12 +33,19 @@ const WAL_HEADER_SIZE: usize = 48;
 pub trait SegmentAttr {
     /// Segment file extension
     fn ext() -> String;
+    /// The type of this segment
+    fn r#type() -> Self;
 }
 
 // TODO: merge reusable wal code
-struct Segment<T, Codec> {
+/// WAL segment
+///
+/// The underlying file of this segment will be removed on drop.
+pub(super) struct Segment<T, Codec> {
     /// The opened file of this segment
     file: File,
+    /// The path of the segment file,
+    path: PathBuf,
     /// The id of this segment
     segment_id: u64,
     /// The soft size limit of this segment
@@ -42,7 +53,7 @@ struct Segment<T, Codec> {
     /// The file size of the segment
     size: u64,
     /// Propose ids of this segment
-    propose_ids: Vec<ProposeId>,
+    propose_ids: HashSet<ProposeId>,
     /// Codec of this segment
     codec: Codec,
     /// Type of this Segment
@@ -63,6 +74,7 @@ where
     ) -> io::Result<Self> {
         let segment_name = Self::segment_name(segment_id);
         let lfile = tmp_file.rename(segment_name)?;
+        let path = lfile.path();
         let mut file = lfile.into_std();
         file.write_all(&Self::gen_header(segment_id))?;
         file.flush()?;
@@ -70,10 +82,11 @@ where
 
         Ok(Self {
             file,
+            path,
             segment_id,
             size_limit,
             size: 0,
-            propose_ids: Vec::new(),
+            propose_ids: HashSet::new(),
             codec,
             r#type,
         })
@@ -86,6 +99,7 @@ where
         codec: Codec,
         r#type: T,
     ) -> Result<Self, WALError> {
+        let path = lfile.path();
         let mut file = lfile.into_std();
         let size = file.metadata()?.len();
         let mut buf = vec![0; WAL_HEADER_SIZE];
@@ -94,10 +108,11 @@ where
 
         Ok(Self {
             file,
+            path,
             segment_id,
             size_limit,
             size,
-            propose_ids: Vec::new(),
+            propose_ids: HashSet::new(),
             codec,
             r#type,
         })
@@ -198,24 +213,104 @@ impl<T, Codec> Segment<T, Codec> {
     }
 
     /// Recover all entries of this segment
-    fn recover<C>(&mut self) -> Result<Vec<C>, WALError>
+    pub(super) fn recover<C>(&mut self) -> Result<Vec<DataFrame<C>>, WALError>
     where
         Codec: Decoder<Item = Vec<DataFrame<C>>, Error = WALError>,
     {
         let frames: Vec<_> = self.get_all()?.into_iter().flatten().collect();
-        for frame in frames {
-            match frame {
-                DataFrame::Insert { propose_id, cmd } => todo!(),
-                DataFrame::Remove(_) => todo!(),
-            }
+        assert!(
+            frames.iter().map(std::mem::discriminant).all_equal(),
+            "Recovered frames containing different variants"
+        );
+        self.propose_ids = frames.iter().map(DataFrame::propose_id).collect();
+
+        Ok(frames)
+    }
+
+    /// Gets all propose ids stored in this WAL
+    pub(super) fn propose_ids(&self) -> Vec<ProposeId> {
+        self.propose_ids.clone().into_iter().collect()
+    }
+
+    /// Remove invalid propose ids
+    ///
+    /// Returns `true` if this segment is obsolete and can be removed
+    pub(super) fn invalidate_propose_ids(&mut self, propose_ids: &[ProposeId]) -> bool {
+        for id in propose_ids {
+            let _ignore = self.propose_ids.remove(id);
+        }
+        self.is_obsolete()
+    }
+
+    /// Returns `true` if this segment is obsolete and can be removed
+    pub(super) fn is_obsolete(&self) -> bool {
+        self.propose_ids.is_empty()
+    }
+
+    /// Checks if the segment is full
+    pub(super) fn is_full(&self) -> bool {
+        self.size >= self.size_limit
+    }
+
+    /// Gets the segment id
+    pub(super) fn segment_id(&self) -> u64 {
+        self.segment_id
+    }
+}
+
+impl<T, Codec> Drop for Segment<T, Codec> {
+    fn drop(&mut self) {
+        if let Err(err) = std::fs::remove_file(&self.path) {
+            error!("Failed to remove segment file: {err}");
         }
     }
 }
 
-struct Insert {}
+impl<T, Codec> PartialEq for Segment<T, Codec> {
+    fn eq(&self, other: &Self) -> bool {
+        self.segment_id.eq(&other.segment_id)
+    }
+}
+
+impl<T, Codec> Eq for Segment<T, Codec> {}
+
+impl<T, Codec> PartialOrd for Segment<T, Codec> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.segment_id.cmp(&other.segment_id))
+    }
+}
+
+impl<T, Codec> Ord for Segment<T, Codec> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.segment_id.cmp(&other.segment_id)
+    }
+}
+
+pub(super) struct Insert;
 
 impl SegmentAttr for Insert {
     fn ext() -> String {
         ".inswal".to_string()
     }
+
+    fn r#type() -> Insert {
+        Insert
+    }
+}
+
+pub(super) struct Remove;
+
+impl SegmentAttr for Remove {
+    fn ext() -> String {
+        ".rmwal".to_string()
+    }
+
+    fn r#type() -> Remove {
+        Remove
+    }
+}
+
+pub(super) enum ToDrop<Codec> {
+    Insert(Segment<Insert, Codec>),
+    Remove(Segment<Remove, Codec>),
 }
