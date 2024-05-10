@@ -9,6 +9,12 @@ updates:
   # 5 by default
   # see https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file#open-pull-requests-limit
   open-pull-requests-limit: 10
+  ignore:
+  - dependency-name: 'actions/upload-artifact'
+  #ignore all updates greater than or equal to version 4
+    versions: '>= 4'
+  - dependency-name: 'actions/download-artifact'
+    versions: '>= 4'
 - package-ecosystem: "cargo"
   directory: "/"
   schedule:
