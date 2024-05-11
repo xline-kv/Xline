@@ -6,17 +6,8 @@ mod codec;
 /// WAL errors
 mod error;
 
-/// File pipeline
-mod pipeline;
-
 /// WAL segment
 mod segment;
-
-/// File utils
-mod util;
-
-/// Framed traits
-mod framed;
 
 /// The magic of the WAL file
 const WAL_MAGIC: u32 = 0xd86e_0be2;
