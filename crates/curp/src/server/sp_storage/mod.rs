@@ -35,6 +35,10 @@ mod config;
 /// WAL segment
 mod segment;
 
+/// WAL tests
+#[cfg(test)]
+mod tests;
+
 /// WAL Result
 type Result<T> = std::result::Result<T, WALError>;
 
