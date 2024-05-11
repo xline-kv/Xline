@@ -1,3 +1,4 @@
+#![allow(unused)] // TODO: remove this
 use std::{
     collections::{HashMap, HashSet},
     io,
@@ -14,7 +15,7 @@ use sha2::Sha256;
 use tracing::{debug, error};
 use utils::wal::{get_file_paths_with_ext, pipeline::FilePipeline, LockedFile};
 
-use crate::rpc::{PoolEntry, ProposeId};
+use crate::rpc::{PoolEntry, PoolEntryInner, ProposeId};
 
 use self::{
     codec::DataFrame,
@@ -342,9 +343,12 @@ where
 
 impl<C> From<PoolEntry<C>> for DataFrame<C> {
     fn from(entry: PoolEntry<C>) -> Self {
-        DataFrame::Insert {
-            propose_id: entry.id,
-            cmd: entry.cmd,
+        match entry.inner {
+            PoolEntryInner::Command(cmd) => DataFrame::Insert {
+                propose_id: entry.id,
+                cmd,
+            },
+            PoolEntryInner::ConfChange(_) => unreachable!("should not insert conf change entry"),
         }
     }
 }

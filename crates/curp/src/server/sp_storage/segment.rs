@@ -30,7 +30,7 @@ const WAL_VERSION: u8 = 0x00;
 /// The size of wal file header in bytes
 const WAL_HEADER_SIZE: usize = 48;
 
-pub trait SegmentAttr {
+pub(super) trait SegmentAttr {
     /// Segment file extension
     fn ext() -> String;
     /// The type of this segment
